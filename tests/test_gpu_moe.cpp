@@ -179,8 +179,12 @@ DEEPMOE_TEST(gpu_moe, matches_the_oracle_across_every_variant) {
         {{1, 32, 32, 0, 0}, "constant-table FP4 decode"},
         {{1, 32, 32, 2, 0}, "select-tree FP4 decode"},
         {{1, 32, 32, 1, 1}, "fp32 h"},
+        {{1, 32, 32, 0, 0, 2}, "2 weight rows per lane"},
+        {{1, 16, 32, 0, 0, 4}, "4 weight rows per lane, 16 lanes"},
+        {{1, 64, 64, 0, 0, 2}, "2 rows per lane, wave64, 64 lanes"},
         {{6, 32, 32, 1, 0}, "M=6, fp16 h"},
         {{6, 32, 32, 1, 1}, "M=6, fp32 h"},
+        {{6, 16, 32, 0, 0, 2}, "M=6, 2 rows per lane"},
     };
 
     for (const Case& c : cases) {

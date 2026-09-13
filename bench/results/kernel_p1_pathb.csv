@@ -1,0 +1,2 @@
+variant,m,lanes_per_row,rows_per_lane,subgroup,decode_mode,h_precision,slots,layer_cycle,iters,path,bytes_a,bytes_b,gbps_a,gbps_b,gbps_total,ms_a,ms_b,ms_total,ms_wall,raw_read_gbps,launch_us
+M1 L16 R2 sg32 dec0 hfp16,1,16,2,32,0,0,7,8,48,B external_memory_host,87736320,43868160,98.699,136.854,158.361,0.8889,0.3205,0.8310,0.8337,0.477,106.800

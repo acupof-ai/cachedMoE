@@ -36,6 +36,7 @@ struct MoeSpec {
     uint32_t subgroup_size = 0;    // 0 = driver default, else 32 or 64
     uint32_t decode_mode   = 1;    // 0 = const table, 1 = arithmetic, 2 = select tree
     uint32_t h_precision   = 0;    // 0 = fp16 h, 1 = fp32 h
+    uint32_t rows_per_lane = 1;    // {1, 2, 4}: weight rows per lane
     std::string name() const;
 };
 
@@ -65,6 +66,7 @@ struct MoeTiming {
     double   seconds_b = 0.0;      // dispatch B (down)
     double   seconds_total = 0.0;  // both, including the barrier between them
     double   wall_seconds = 0.0;   // submit to queue-idle, for the launch-overhead number
+    double   record_seconds = 0.0; // CPU cost of recording the command buffer (design §3.4)
     bool     gpu_timed = false;
     uint32_t iterations = 0;
 };

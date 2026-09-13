@@ -11,7 +11,7 @@
 namespace deepmoe::gpu {
 
 std::string MoeSpec::name() const {
-    return std::format("M{} L{} sg{} dec{} h{}", m, lanes_per_row,
+    return std::format("M{} L{} R{} sg{} dec{} h{}", m, lanes_per_row, rows_per_lane,
                        subgroup_size ? std::to_string(subgroup_size) : std::string("auto"),
                        decode_mode, h_precision ? "fp32" : "fp16");
 }
@@ -96,7 +96,10 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     if (spec.m == 0 || spec.m > 6) return fail(Err::InvalidArgument, "M must be 1..6 (design §1.2)");
     if (spec.lanes_per_row != 16 && spec.lanes_per_row != 32 && spec.lanes_per_row != 64)
         return fail(Err::InvalidArgument, "lanes_per_row must be 16, 32 or 64 (design §7.1 rule 3)");
-    if (dims.inter % (256 / spec.lanes_per_row) || dims.hidden % (256 / spec.lanes_per_row))
+    if (spec.rows_per_lane != 1 && spec.rows_per_lane != 2 && spec.rows_per_lane != 4)
+        return fail(Err::InvalidArgument, "rows_per_lane must be 1, 2 or 4");
+    const uint32_t rows_per_group = (256 / spec.lanes_per_row) * spec.rows_per_lane;
+    if (dims.inter % rows_per_group || dims.hidden % rows_per_group)
         return fail(Err::InvalidArgument, "row count must divide by the workgroup's rows");
     device_ = &device;
     alloc_  = &alloc;
@@ -109,7 +112,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     ps.lanes_per_row = spec.lanes_per_row;
     ps.rows_per_wg   = 256 / spec.lanes_per_row;
     ps.subgroup_size = spec.subgroup_size;
-    ps.extra = {spec.decode_mode, spec.h_precision};
+    ps.extra = {spec.decode_mode, spec.h_precision, spec.rows_per_lane};
 
     PipelineLayoutSpec la;
     la.storage_buffers   = 7;
@@ -191,7 +194,7 @@ void MoeRunner::destroy() {
 }
 
 Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
-    const uint32_t rows_per_wg = 256 / spec_.lanes_per_row;
+    const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter  / rows_per_wg;
     const uint32_t groups_b = dims_.hidden / rows_per_wg;
 
@@ -245,15 +248,18 @@ Result<MoeTiming> MoeRunner::run(uint32_t iterations, MoePhase phase) {
     if (iterations == 0) return fail(Err::InvalidArgument, "iterations must be >= 1");
     if (list_count_ == 0 || list_count_ > dims_.slots)
         return fail(Err::InvalidArgument, "list_count must be 1..slots");
+    const auto t_rec = Clock::now();
     if (auto r = record(iterations, phase); !r) return std::unexpected(r.error());
+    const double record_s = std::chrono::duration<double>(Clock::now() - t_rec).count();
 
     const auto t0 = Clock::now();
     if (auto r = submit_and_wait(*device_, cmd_); !r) return std::unexpected(r.error());
     const double wall = std::chrono::duration<double>(Clock::now() - t0).count();
 
     MoeTiming t;
-    t.iterations   = iterations;
-    t.wall_seconds = wall;
+    t.iterations     = iterations;
+    t.wall_seconds   = wall;
+    t.record_seconds = record_s;
     t.seconds_total = wall / iterations;
     if (queries_.count() >= 4) {
         auto a = queries_.elapsed_seconds(0, 1);

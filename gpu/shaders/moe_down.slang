@@ -7,6 +7,10 @@
 // is linear, the per-lane partials of all slots are accumulated first and
 // reduced across the row exactly once at the end.
 //
+// RowsPerLane matters more here than in dispatch A: w2 is half the bytes of
+// w1+w3 but h is read for every row of every slot, so at RowsPerLane = 1 the
+// h traffic is 3.7x the weight traffic in L0 requests.
+//
 // h comes from moe_gateup; HPrecision selects whether it is fp16 or fp32. Both
 // are read through a raw uint view so one binding covers the two cases.
 
@@ -62,14 +66,15 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint rowsPerWg = kWgSize / LanesPerRow;
     const uint sublane   = tid % LanesPerRow;
     const uint rowInWg   = tid / LanesPerRow;
-    const uint row       = gid.x * rowsPerWg + rowInWg;
+    const uint rowBase   = (gid.x * rowsPerWg + rowInWg) * RowsPerLane;
 
     const uint blocks   = pc.k / kBlockK;   // 72
     const uint rowBytes = pc.k / 2;         // 1152
-    const bool live     = row < pc.n_rows;
+    const bool live     = rowBase + RowsPerLane <= pc.n_rows;
 
-    float acc[kMaxM];
-    [unroll] for (uint i = 0; i < kMaxM; ++i) acc[i] = 0.0f;
+    float acc[kMaxRows][kMaxM];
+    [unroll] for (uint i = 0; i < kMaxRows; ++i)
+        [unroll] for (uint j = 0; j < kMaxM; ++j) acc[i][j] = 0.0f;
 
     if (live) {
         for (uint ci = 0; ci < pc.list_count; ++ci) {
@@ -80,34 +85,42 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             const uint64_t s2Base = ExpertAddr[tbase + 3];
             if (w2Base == 0) continue;
 
-            const uint64_t w2Row = w2Base + (uint64_t)row * rowBytes;
-            const uint64_t s2Row = s2Base + (uint64_t)row * blocks;
-
             for (uint blk = sublane; blk < blocks; blk += LanesPerRow) {
-                const uint4 w2q = load_fp4_block(w2Row + (uint64_t)blk * 16);
-                const int   e2  = (int)load_scale_byte(s2Row + blk) - 127;
+                uint4 w2q[kMaxRows];
+                int   e2[kMaxRows];
+                for (uint r = 0; r < RowsPerLane; ++r) {
+                    w2q[r] = load_fp4_block(w2Base + (uint64_t)(rowBase + r) * rowBytes
+                                                   + (uint64_t)blk * 16);
+                    e2[r]  = (int)load_scale_byte(s2Base + (uint64_t)(rowBase + r) * blocks + blk) - 127;
+                }
 
-                float p[kMaxM];
-                [unroll] for (uint i = 0; i < kMaxM; ++i) p[i] = 0.0f;
+                float p[kMaxRows][kMaxM];
+                [unroll] for (uint i = 0; i < kMaxRows; ++i)
+                    [unroll] for (uint j = 0; j < kMaxM; ++j) p[i][j] = 0.0f;
 
                 [unroll] for (uint w = 0; w < 4; ++w) {
-                    const uint pw = w2q[w];
-                    float d[8];
-                    [unroll] for (uint j = 0; j < 8; ++j)
-                        d[j] = fp4_decode((pw >> (4 * j)) & 0xFu);
+                    float d[kMaxRows][8];
+                    for (uint r = 0; r < RowsPerLane; ++r) {
+                        const uint pw = w2q[r][w];
+                        [unroll] for (uint j = 0; j < 8; ++j)
+                            d[r][j] = fp4_decode((pw >> (4 * j)) & 0xFu);
+                    }
                     for (uint m = 0; m < M; ++m) {
                         float hv[8];
                         load_h8((m * pc.num_slots + slot) * pc.k + blk * kBlockK + w * 8, hv);
-                        [unroll] for (uint j = 0; j < 8; ++j) p[m] += d[j] * hv[j];
+                        [unroll] for (uint j = 0; j < 8; ++j)
+                            for (uint r = 0; r < RowsPerLane; ++r) p[r][m] += d[r][j] * hv[j];
                     }
                 }
-                for (uint m = 0; m < M; ++m) acc[m] += ldexp(p[m], e2);
+                for (uint r = 0; r < RowsPerLane; ++r)
+                    for (uint m = 0; m < M; ++m) acc[r][m] += ldexp(p[r][m], e2[r]);
             }
         }
     }
 
-    for (uint m = 0; m < M; ++m) {
-        const float s = row_reduce(acc[m], tid, sublane);
-        if (live && sublane == 0) Y[m * pc.n_rows + row] = s;
-    }
+    for (uint r = 0; r < RowsPerLane; ++r)
+        for (uint m = 0; m < M; ++m) {
+            const float s = row_reduce(acc[r][m], tid, sublane);
+            if (live && sublane == 0) Y[m * pc.n_rows + rowBase + r] = s;
+        }
 }

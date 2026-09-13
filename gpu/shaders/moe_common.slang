@@ -25,9 +25,14 @@
 [vk::constant_id(3)] const uint SubgroupSize = 32;   // applied via VK_EXT_subgroup_size_control
 [vk::constant_id(4)] const uint DecodeMode   = 1;    // 0 = const table, 1 = arithmetic, 2 = select tree
 [vk::constant_id(5)] const uint HPrecision   = 0;    // 0 = fp16 h, 1 = fp32 h
+// Weight rows per lane: the dual of M. M reads the weights once and uses them
+// for M activation columns; RowsPerLane reads the activation once and uses it
+// for RowsPerLane weight rows. Both are pure register-blocking knobs.
+[vk::constant_id(6)] const uint RowsPerLane  = 1;
 
 static const uint kWgSize    = 256;
 static const uint kMaxM      = 6;      // design §1.2: verify batch <= 6
+static const uint kMaxRows   = 4;      // upper bound on RowsPerLane
 static const uint kBlockK    = 32;     // elements per UE8M0 scale
 static const uint kChunkBlks = 64;     // blocks staged per outer iteration
 
