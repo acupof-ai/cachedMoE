@@ -25,15 +25,83 @@
 
 已知噱头：Zig 0.16 首次以 gnu 目标构建时会从源码编译 libc++，并输出大量 `-Wnullability-completeness` 警告；只发生一次（结果缓存在 `%LOCALAPPDATA%\zig`），工具链文件里已加 `-Wno-nullability-completeness`。
 
+## C++ 标准：代码是 C++20，编译用 `-std=c++23`
+
+设计写的是 C++20，代码也按 C++20 写（除 `std::expected` 外不用 C++23 特性）。但
+`std::expected` 定义在 `<expected>` 里，libc++ 把整个头文件挡在 `_LIBCPP_STD_VER >= 23`
+之后，`-std=c++20` 下 `core/status.h` 直接编不过。因此 `cmake/deepmoe_options.cmake` 里
+`DEEPMOE_CXX_STANDARD = 23`。这是骨架阶段唯一被迫偏离设计文档的地方。
+
+另一个 libc++/mingw 的小坑：带 size 的对齐 `operator delete(void*, size_t, align_val_t)`
+在这个目标下没有声明，`core/align.h` 用的是两参数的 `operator delete(void*, align_val_t)`。
+
 ## 配置与构建
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/zig-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
-```
-
-```powershell
 cmake --build build
 ```
+
+选项（`cmake/deepmoe_options.cmake`）：
+
+| 选项 | 默认 | 作用 |
+|---|---|---|
+| `DEEPMOE_BUILD_TESTS` | ON | 构建 `deepmoe_tests` 并注册到 ctest |
+| `DEEPMOE_ENABLE_VULKAN` | ON | Vulkan 后端；关掉后 `gpu/` 各类返回 `Unavailable`，其余照常编译 |
+| `DEEPMOE_ENABLE_DIRECTSTORAGE` | OFF | DirectStorage 后端；还要 `dstorage.h` 在 include 路径上（SDK 不在仓库里，也不下载） |
+
+产物：
+
+```
+build/deepmoe.exe              CLI: info / bench nvme / run
+build/nvme_bench.exe           design §9.1 Q6/Q7 微基准
+build/bw_matrix.exe            design §9.2 带宽矩阵
+build/envcheck.exe             环境自检
+build/tests/deepmoe_tests.exe  单元测试
+build/shaders/*.spv            §7.14 的 12 个 kernel，每个都过 spirv-val
+```
+
+Git Bash 下（首次 zig 构建 libc++ 会刷一屏 `-Wnullability-completeness`，过滤掉再看）：
+
+```bash
+export PATH="/c/Program Files/CMake/bin:/c/msys64/ucrt64/bin:$PATH" VULKAN_SDK="C:/VulkanSDK/1.4.357.0"
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/zig-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build 2>&1 | grep -vE 'warning:|note:|_Nullable|_Nonnull|In file included'
+```
+
+## 测试
+
+```powershell
+.\build\tests\deepmoe_tests.exe            # 全部
+.\build\tests\deepmoe_tests.exe io         # 只跑名字含 "io" 的用例
+.\build\tests\deepmoe_tests.exe --list
+ctest --test-dir build --output-on-failure  # 整体 + 按 suite 各注册一遍
+```
+
+测试框架是 `tests/test_framework.h`，约 150 行，自写（设计 §14：不引第三方依赖）。
+`tests/data/v41_config.json` 是 ModelScope 上 V4.1-Flash 的真实 `config.json` 原样拷贝，
+`tests/test_model.cpp` 拿它逐字段核对 §2.1 的每一个数字。
+
+## Linux 交叉编译（CI）
+
+Linux 不是目标平台；交叉编译只是为了让可移植的一半（core/model/cpu/storage/store）
+在没有 Windows 的 CI 上也能编译并跑单元测试，并且保证 `storage/linux/io_uring.cpp`
+不腐烂：
+
+```bash
+zig c++ -target x86_64-linux-gnu -std=c++23 -I. -c storage/linux/io_uring.cpp -o /tmp/io_uring.o
+```
+
+## 基准
+
+```powershell
+.\build\nvme_bench.exe --help
+.\build\nvme_bench.exe --reads 48 --csv bench\results\nvme_q6_q7.csv
+.\build\bw_matrix.exe --size-gb 4
+```
+
+`nvme_bench` 默认在 `%TEMP%` 建一个 2 GB 测试文件，跑完删除（`--keep` 保留，`--file`
+指定已有文件）。实测结果写回 design.md §9.2.1。
 
 MSVC 目标 A/B：
 
@@ -51,14 +119,14 @@ Shader：CMake 规则对 `vulkan/shaders/*.slang` 调用
 
 ## 环境自检
 
-`tools/envcheck/` 里有两份文件：`vkinfo.cpp`（C++20 + Vulkan + AVX-512 VNNI）与 `gemv.slang`（FP4 解码 GEMV 骨架，用到 `WaveActiveSum` 与 int8 存储）。手工验证：
+`tools/envcheck/vkinfo.cpp` 是环境自检（C++20 + Vulkan + AVX-512 VNNI）。原来与它放在一起的 `gemv.slang` 已移到 `gpu/shaders/moe_gemv_fp4.slang`（它是 §7.9 所有 routed-expert kernel 的模板，不再只是一个冒烟测试），由 `shaders` target 统一编译。手工验证：
 
 ```powershell
 zig c++ -std=c++20 -O2 -march=znver5 -Wno-nullability-completeness -I"$env:VULKAN_SDK\Include" tools\envcheck\vkinfo.cpp -L"$env:VULKAN_SDK\Lib" -lvulkan-1 -o build\vkinfo.exe; .\build\vkinfo.exe
 ```
 
 ```powershell
-& "$env:VULKAN_SDK\Bin\slangc.exe" tools\envcheck\gemv.slang -target spirv -profile spirv_1_6 -entry main -O2 -o build\gemv.spv; & "$env:VULKAN_SDK\Bin\spirv-val.exe" --target-env vulkan1.3 build\gemv.spv
+& "$env:VULKAN_SDK\Bin\slangc.exe" gpu\shaders\moe_gemv_fp4.slang -target spirv -profile spirv_1_6 -entry main -O2 -o build\gemv.spv; & "$env:VULKAN_SDK\Bin\spirv-val.exe" --target-env vulkan1.3 build\gemv.spv
 ```
 
 2026-09-13 在开发机上的输出：

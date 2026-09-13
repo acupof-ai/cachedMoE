@@ -6,7 +6,7 @@
 
 **核心目标：** 在一台 Ryzen AI Max+ 395 / Radeon 8060S / 128 GB / 单 NVMe 的机器上，把 DeepSeek-V4.1-Flash 的本地 decode 打到这台机器的物理上限，并且能用数据解释"上限在哪、为什么没到"。
 
-文档状态：**v0.3（2026-09-13）**。v0.1 为初始 docx；v0.2 按开发机实测修订内存模型；v0.3 锁定目标模型为 V4.1-Flash，据其真实权重布局重写内存/存储/kernel/prefetch/投机解码设计。修订记录见 [附录 C](#附录-c-修订记录)。
+文档状态：**v0.4（2026-09-14）**。v0.1 为初始 docx；v0.2 按开发机实测修订内存模型；v0.3 锁定目标模型为 V4.1-Flash，据其真实权重布局重写内存/存储/kernel/prefetch/投机解码设计；v0.4 落地代码骨架，写回 Q6/Q7 实测（§9.2.1），更正 §11.3 的 indexer KV 体积，固定 §14.1 目录。修订记录见 [附录 C](#附录-c-修订记录)。
 
 ---
 
@@ -493,6 +493,54 @@ CPU/GPU 协同分担 expert（v0.1 的核心假设）降级为 **P6 实验**：�
 - `bench/nvme_bench.cpp`：Win32 overlapped I/O 微基准，回答 Q6/Q7。
 - `bench/bw_matrix.cpp`：CPU/GPU 单独与并发读带宽（P-1）。
 
+### 9.2.1 Q6 / Q7 实测结果（2026-09-14，P-1 部分完成）
+
+`bench/nvme_bench.exe`（经 `storage::IoEngine`，FILE_FLAG_NO_BUFFERING + IOCP，
+2 GB 测试文件在 C: 上，48 次请求/点）。完整矩阵见
+`bench/results/nvme_q6_q7.csv`。
+
+**Q6：吞吐 vs 请求大小 × 队列深度**（GB/s，WD SN740，PCIe 4.0 x4）
+
+| chunk | QD1 seq | QD4 seq | QD8 seq | QD32 seq | QD8 rand | QD32 rand |
+|---|---|---|---|---|---|---|
+| 64 KiB | 0.09 | 1.13 | 1.71 | 2.35 | 0.34 | 0.53 |
+| 256 KiB | 0.94 | 2.01 | 2.64 | 3.43 | 0.87 | 1.57 |
+| 1 MiB | 2.03 | 3.77 | 4.17 | 4.09 | 2.30 | 2.94 |
+| 2 MiB | 2.60 | 4.29 | 4.41 | 4.58 | 4.54 | 4.40 |
+| 4 MiB | 3.19 | **4.52** | **4.54** | 4.67 | **4.68** | 4.46 |
+| 8 MiB | 2.44 | 3.57 | 3.68 | 3.93 | 4.62 | 4.61 |
+| 18.36 MiB（整个 expert） | 2.62 | 4.04 | 4.15 | 4.02 | 4.69 | 4.75 |
+
+结论：
+
+1. **饱和带宽 ≈ 4.5–4.75 GB/s**，比 §3.1 假设的 5 GB/s 低约 8%。§3.1 的 TPS 表因此
+   略微乐观，但结论（NVMe 主导）不变。
+2. **§9.6 猜的 2–4 MiB chunk 是对的。** 4 MiB × QD 4–8 已达 4.5 GB/s，且延迟只有
+   3.6–6.9 ms；再往上只换来更高延迟（4 MiB × QD64 = 4.56 GB/s 但 37.7 ms 平均延迟）。
+   **定为 chunk = 4 MiB、目标 QD = 8**（在途 32 MB，而非 §9.6 写的 ≥ 64 MB——64 MB
+   在途只增加延迟，不增加吞吐）。
+3. **≥ 2 MiB 时随机读与顺序读几乎无差别**（4 MiB：4.54 seq vs 4.68 rand）。这块盘在
+   expert 粒度上不在乎局部性。**§9.7 的 expert-major 顺序流式因此不是为了带宽，而是
+   为了一次读进整层后能按到达顺序算**；prefill 若改成按路由顺序随机读，带宽代价可忽略。
+4. 一个 expert（18.8 MB）单发 ≈ 4.0–4.7 ms，与 §9.4 估的 T_io ≈ 3.8 ms 吻合，
+   故 **lookahead 提前量 d ≥ 3–4 的推导成立**。
+5. 6 个 expert 全 miss 的一层 ≈ 23.7 ms；40 层全 miss ≈ 0.95 s/token。
+
+**Q7：engram 行读取（4 KiB 随机，QD 48）**
+
+| 指标 | 实测 |
+|---|---|
+| IOPS | 83,700 |
+| 吞吐 | 0.343 GB/s |
+| 平均延迟 | 0.55 ms |
+| 最大延迟 | 0.99 ms |
+
+每 token 每 engram 层 24 行、两层共 48 行，一批 < 1 ms。**EngramPrefetcher 只需要
+一个 token 的提前量**，草稿 token 一确定就下单绰绰有余（§9.5）。
+
+**仍未完成的 P-1 项**：带宽矩阵的 GPU 与 CPU+GPU 并发部分（需要 §7 的 Vulkan 内存与
+dispatch 路径，P2）；两种 VGM 设置下的重测。
+
 ### 9.3 分层驻留策略
 
 ```
@@ -519,7 +567,7 @@ Cache 策略基线为 **LRU + score-aware 提升**：router 每层输出 top-16 
 ### 9.6 IoEngine
 
 - `CreateFileW(FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED)` + IOCP，专用 2 个完成线程。
-- 一个 expert = 18.8 MB 切成 `chunk`（Q6 决定，预期 2–4 MB）并发下发；目标在途字节 ≥ 64 MB（QD ≥ 16 × 4 MB）以吃满 PCIe 4.0 x4。
+- 一个 expert = 18.8 MB 切成 `chunk` 并发下发。**Q6 已实测（§9.2.1）：chunk = 4 MiB、目标 QD = 8（在途 32 MB）** 即达饱和 4.5 GB/s；更高的在途字节只增加延迟（4 MiB × QD64 仍是 4.56 GB/s，但平均延迟从 6.9 ms 涨到 37.7 ms）。默认值见 `core/config.h` 的 `IoConfig`。
 - 目标缓冲直接是 slab 槽（路径 A：CPU 映射的 device 内存；路径 B：导入的 host 内存），**零拷贝**。4 KiB 对齐由布局保证。
 - 优先级队列：P0 当前层缺失（阻塞 GPU）> P1 lookahead > P2 engram 行 > P3 后台回填（空闲时按静态热度填 free 槽）。P0 到达时可抢占：暂停下发 P1–P3 的新 chunk。
 - 每次完成更新 Profiler：字节、延迟、队列深度；每 token 输出 `nvme_busy_ms`、`stall_ms`（GPU 在 timeline wait 上的时间）。
@@ -592,11 +640,11 @@ decode 每周期常驻 8.5 GB 读一次，若平均接受 a 个 token，则常�
 |---|---|---|
 | window KV（40 + 3 层） | 128 × (512 B + 16 B scale) | 2.8 MB |
 | 压缩 KV（源层 2, 8, 14 ratio 2；20 ratio 1） | C/ratio × 512 B（fp8）或 256 B + 32 B（fp4） | 84 MB fp8 / 48 MB fp4 |
-| indexer K（8 源层） | C/ratio × 128 × 0.5 B + scale | ~2 MB |
+| indexer K（8 源层） | C/ratio × (128 × 0.5 B + 128/32 B) = C/ratio × 68 B | **~29 MB**（v0.4 更正：原记 ~2 MB，那是*单个* ratio=2 源层的量；8 个源层中 5 个 ratio=1，合计 28.97 MB） |
 | 候选块池（层 20 → 24..36） | 2048 块索引 | KB 级 |
 | Engram hash cache | C × 8 B | 0.5 MB |
 
-KV 不是内存问题；全部放 GPU heap。
+合计 ≈ 116 MB（fp8 压缩 KV）/ 80 MB（fp4）。KV 不是内存问题；全部放 GPU heap。上表由 `runtime/kvcache.h` 的 `KvGeometry` 按 config.json 实算，`tests/test_model.cpp` 回归。
 
 ### 11.4 Prefix KV 持久化
 
@@ -677,25 +725,60 @@ KV 不是内存问题；全部放 GPU heap。
 
 ### 14.1 目录
 
+骨架已落地（2026-09-14）。顶层即模块目录，没有 `src/`；平台代码只存在于
+`storage/windows/` 与 `storage/linux/`。模块依赖 DAG 与线程模型见
+[architecture.md](architecture.md)。
+
 ```
 deepmoe/
-├─ docs/            design.md  build.md
-├─ cmake/           zig-toolchain.cmake  zig-cc.cmd  zig-cxx.cmd ...
-├─ tools/
-│  ├─ envcheck/     vkinfo.cpp  gemv.slang        # 环境自检
-│  ├─ repack.py     safetensors → hot.bin / experts.bin / engram.bin / mtp.bin / manifest.json
-│  ├─ oracle.py     fp32 参考实现（§12）
-│  ├─ route_trace.py  cache_sim.py  bench_report.py
-├─ bench/           bw_matrix.cpp  nvme_bench.cpp  kernel_bench.cpp
-├─ runtime/         engine  model  block  attention  moe  engram  dspark  sampler  kvcache
-├─ store/           expert_store  slab  planner  predictor  io_engine  engram_prefetch
-├─ vulkan/          device  memory  cmdbuf  timeline  pipelines  + shaders/*.slang
-├─ cpu/             gemv_avx512  dequant  gate  oracle_forward
-├─ model/           v41_config  v41_weights (manifest 读取)
-└─ tests/           L0–L2 oracle 测试、cache_sim 回归
+├─ CMakeLists.txt          根；选项 DEEPMOE_BUILD_TESTS / _ENABLE_VULKAN / _ENABLE_DIRECTSTORAGE
+├─ cmake/
+│  ├─ zig-toolchain.cmake  zig-{cc,cxx,ar,ranlib,rc}.cmd.in
+│  └─ deepmoe_options.cmake  选项与各模块源文件清单
+├─ docs/                   design.md  build.md  architecture.md
+├─ core/                   types.h status.h align.h bytes.h log.h config.h
+│                          json.{h,cpp}      自写的最小 JSON 读取器（无第三方依赖）
+│                          profiler.{h,cpp}  每 token 时间线 → JSONL（§13.1）
+├─ model/                  layout.h          编译期常量（EXPERT_BYTES=18800640 等）
+│                          v41_config.{h,cpp}  config.json → struct（§2.1 全字段）
+│                          manifest.{h,cpp}    manifest.json 读取与自洽校验
+├─ runtime/                engine.{h,cpp}    token 循环编排（仅编排）
+│                          block.h attention.h moe.h engram.h dspark.h
+│                          sampler.h kvcache.h
+├─ store/                  slab.{h,cpp}         slab 池 + SlabBacking 接口
+│                          expert_store.{h,cpp} 槽状态机 + GPU 指针表（§5.3/§5.4）
+│                          planner.{h,cpp}      LRU 基线已实现，其余策略待 P1
+│                          predictor.h/.cpp     lookahead 接口（§9.4，待 Q4）
+│                          engram_prefetch.h/.cpp  接口（§7.10）
+├─ storage/                file.h file_common.cpp  打开的文件抽象（unbuffered/扇区）
+│                          backend.h               抽象后端 {submit, poll, caps}
+│                          io_engine.{h,cpp}       优先级队列 + 切分 + QD 控制（§9.6）
+│                          windows/ file_win.cpp iocp.cpp directstorage.cpp
+│                          linux/   file_posix.cpp io_uring.cpp   （仅 CI 编译）
+├─ gpu/
+│  ├─ vulkan/              device.{h,cpp} memory.{h,cpp} timeline.{h,cpp}
+│  │                       cmdbuf.{h,cpp} pipeline.{h,cpp}
+│  └─ shaders/             §7.14 dispatch 清单，每个都过 slangc + spirv-val：
+│                          mega_mhc  wq_a  wq_b  wkv  sparse_attn  wo_a  wo_b
+│                          gate  moe_gateup  moe_down  head  moe_gemv_fp4
+├─ cpu/                    dequant.{h,cpp}      FP4/FP8/E8M0 解码（L0 oracle，已实现）
+│                          gemv_avx512.{h,cpp}  标量参考已实现，AVX-512 为桩
+│                          gate.{h,cpp}         router 数学（已实现）
+├─ bench/                  nvme_bench.cpp   Q6/Q7 微基准（P-1 产物，已实现）
+│                          bw_matrix.cpp    带宽矩阵（CPU 部分已实现）
+│                          results/          实测 CSV
+├─ tools/                  envcheck/vkinfo.cpp
+│                          repack.py oracle.py route_trace.py cache_sim.py
+├─ tests/                  test_framework.h  自写的 header-only 测试框架
+│                          fake_backend.h    确定性的 Backend 假实现
+│                          test_core / test_dequant / test_store / test_io / test_model
+│                          data/v41_config.json   ModelScope 上的真实 config.json
+└─ cli/                    deepmoe_main.cpp  `info` / `bench nvme` / `run`
 ```
 
----
+**C++ 标准：代码写作 C++20，但必须用 `-std=c++23` 编译。** `std::expected`
+在 `<expected>` 里，libc++ 把它整体挡在 `_LIBCPP_STD_VER >= 23` 之后。
+`cmake/deepmoe_options.cmake` 里的 `DEEPMOE_CXX_STANDARD=23` 是唯一的开关。
 
 ## 15. 开发阶段
 
@@ -781,4 +864,5 @@ FP4 打包：`I8 [rows, K/2]`，每字节 2 个 E2M1（低 nibble = 偶数元素
 |---|---|---|
 | v0.1 | 初始 docx 方案 | |
 | v0.2 | CPU+GPU 协同降为待验证假设；补 Windows UMA 拓扑、2 GiB 分配限制、GGUF 对照、oracle 定义、attention/KV/prefill、cost model 查表、单盘、带宽利用率、MTP、工具链 | 开发机实测 |
+| v0.4 | 代码骨架落地（§14.1 目录重写、新增 [architecture.md](architecture.md)）；**Q6/Q7 实测写回 §9.2.1**，据此把 chunk 定为 4 MiB、目标 QD 定为 8（原 §9.6 写的"在途 ≥ 64 MB"改为 32 MB：实测 64 MB 在途只增延迟不增吞吐）；**更正 §11.3 indexer K 体积 ~2 MB → ~29 MB**（原值是单个 ratio=2 源层的量）；记录 C++20 代码必须以 `-std=c++23` 编译（libc++ 把 `std::expected` 挡在 C++23 之后） | `bench/nvme_bench` 实测、`tests/test_model.cpp` 回归 |
 | v0.3 | 目标模型锁定 DeepSeek-V4.1-Flash 并解剖；结论改为 **NVMe 主导**；pinned/cached/cold 三层与 slab 池；精度锁定原生 FP4/FP8；按 V4.1 结构逐 kernel 设计（mHC、MQA-latent 稀疏 attention、分组 O 投影、FP4 融合 MoE、Engram、DSpark、head）；每 token 单 command buffer + timeline semaphore；NVMe 测量问题 Q1–Q7 与 trace/模拟工具；lookahead gating 预取；expert-major 流式 prefill；DSpark 验证循环与 confidence 调度；CED / bounded replay / prefix 持久化；四层自建 oracle；阶段重排（P-1、P0、P1 测量前置）；CPU 协同降为 P6；写下预期数字 | ModelScope 权重 header 统计、`inference/model.py`、V4.1 技术报告、工具链实测 |
