@@ -1,5 +1,5 @@
 // Byte-span aliases and little-endian scalar readers used by the manifest
-// reader, the repacked-file readers and the dequant reference paths.
+// reader, the safetensors shard readers and the dequant reference paths.
 //
 // Ownership/threading: non-owning views. A ByteSpan never outlives the buffer
 // it points into; the callers are single-threaded parsers.

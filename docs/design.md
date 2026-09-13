@@ -6,7 +6,7 @@
 
 **核心目标：** 在一台 Ryzen AI Max+ 395 / Radeon 8060S / 128 GB / 单 NVMe 的机器上，把 DeepSeek-V4.1-Flash 的本地 decode 打到这台机器的物理上限，并且能用数据解释"上限在哪、为什么没到"。
 
-文档状态：**v0.4（2026-09-14）**。v0.1 为初始 docx；v0.2 按开发机实测修订内存模型；v0.3 锁定目标模型为 V4.1-Flash，据其真实权重布局重写内存/存储/kernel/prefetch/投机解码设计；v0.4 落地代码骨架，写回 Q6/Q7 实测（§9.2.1），更正 §11.3 的 indexer KV 体积，固定 §14.1 目录。修订记录见 [附录 C](#附录-c-修订记录)。
+文档状态：**v0.5（2026-09-14）**。v0.1 为初始 docx；v0.2 按开发机实测修订内存模型；v0.3 锁定目标模型为 V4.1-Flash，据其真实权重布局重写内存/存储/kernel/prefetch/投机解码设计；v0.4 落地代码骨架，写回 Q6/Q7 实测（§9.2.1），更正 §11.3 的 indexer KV 体积，固定 §14.1 目录；**v0.5 取消 repack，改为直读原始 safetensors 分片（§5.1 重写）**。修订记录见 [附录 C](#附录-c-修订记录)。
 
 ---
 
@@ -227,8 +227,8 @@ P-1 在 VGM ∈ {64 GB, 最小值} 两种设置下各测一次，选带宽 × �
    │  1 cmd buf/token │   │  (host_ptr, device_addr) per expert│
    └──────────────────┘   └────────────────────────────────────┘
    ┌──────────────────┐   ┌────────────────────────────────────┐
-   │  CPU Executor    │   │  NVMe layout: hot.bin experts.bin   │
-   │  AVX-512 oracle/ │   │  engram.bin mtp.bin kvcache/        │
+   │  CPU Executor    │   │  NVMe: 48 个原始 safetensors 分片   │
+   │  AVX-512 oracle/ │   │  + deepmoe_manifest.json + kvcache/│
    │  fallback / A-B  │   └────────────────────────────────────┘
    └──────────────────┘
    ┌──────────────────────────────────────────────────────────────┐
@@ -254,18 +254,89 @@ P-1 在 VGM ∈ {64 GB, 最小值} 两种设置下各测一次，选带宽 × �
 
 ## 5. 内存与存储布局
 
-### 5.1 NVMe 文件布局（由 `tools/repack.py` 从 safetensors 生成一次）
+### 5.1 NVMe 布局：**不 repack，直接读原始分片**（v0.5 改写）
 
-| 文件 | 内容 | 布局 |
+**决定：磁盘上只增加一个文件 `deepmoe_manifest.json`，它是原始 48 个 safetensors 分片的纯地址簿。** 由 `tools/manifest.py` 生成（替代已删除的 `tools/repack.py`）。
+
+**为什么改**
+
+1. **磁盘放不下第二份。** checkpoint 510.3 GB 在 D:，而 D: 只剩 ~196 GB 空闲。`hot.bin/experts.bin/engram.bin/mtp.bin` 合计仍是 510 GB，物理上不存在。
+2. **权重只有一份。** 没有"repack 输出与原始分片不一致"这类只会在 L2/L3 才暴露的 bug 面。
+3. **不承担重下风险。** repack 一旦写坏要重跑；真删错了原始分片就是 1 小时重新下载（附录 B）。
+
+**代价（下面量化）：一个 expert 从 1 次读变成 2 次读**，字节数多 8,192 B（+0.044%）。
+
+#### 5.1.1 实测的分片结构（`tools/manifest.py` 扫过全部 48 个 header、96,085 个 tensor）
+
+| 事实 | 值 | 后果 |
 |---|---|---|
-| `hot.bin` | attention、shared expert、router、mHC、norm、engram wkv、embed、head | 按层顺序，每 tensor 4 KiB 对齐；启动时整体顺序读入（~10.5 GB，≈2 s） |
-| `experts.bin` | 40 × 384 routed experts | `[layer][expert]`，每个 18,800,640 B；层内连续 7.22 GB → prefill 顺序流式 |
-| `mtp.bin` | DSpark 3 块全部权重 | 启动时读入并 pin（7.9 GB） |
-| `engram.L1.bin` / `engram.L14.bin` | 384M 行 | 每行 **264 B 交错**（256 B fp8 + 8 B E8M0），一次 4 KiB 读取同时拿到值和 scale |
-| `manifest.json` | 每 tensor 的 offset、shape、dtype、块 scale 布局、sha256 | 校验与寻址 |
-| `kvcache/` | 持久化 prefix KV（§11.4） | 按 prompt hash 分文件 |
+| 分片数据区起点 `8 + header_len` | 每片不同，`% 4096 ∈ {96, 184, 352, 664, 672, 1056, 2432, 2696, 2768, 2808, 3016, 3240, 3400, 3704}` | **tensor 的绝对偏移是 8 的倍数，永远不是 4096 的倍数** |
+| expert tensor 的**长度** | w1/w2/w3.weight 各 5,898,240 B；各 .scale 368,640 B，全是 4096 的倍数 | 只有起点要对齐，长度天然对齐 |
+| 一个 expert 的 3 个 `.scale` | 在分片内**连续**，共 1,105,920 B | 合成 1 个 run |
+| 一个 expert 的 3 个 `.weight` | 在分片内**连续**，共 17,694,720 B | 合成 1 个 run |
+| 一个 expert 是否跨分片 | **0 个**（15,744 个 expert 全部不跨） | 一个 expert 永远只涉及一个文件 |
+| 一层的 384 个 expert 是否跨分片 | **0 层**（layer L 全在 `model-{L+3:05d}`，mtp.N 全在 `model-{44+N:05d}`） | §9.7 的 expert-major 顺序流仍然是单文件顺序读 |
+| engram 表 | `[rows,256] F8_E4M3` 与 `[rows,8] F8_E8M0` 是**两个独立平面**（分片 47/48），不是交错的 264 B 行 | 取一行 = 2 次 4 KiB 读；一次 4 KiB 覆盖 16 个 value 行或 512 个 scale 行 |
 
-expert 块内部布局：`[w1 rows | w3 rows | w2 rows | s1 | s3 | s2]`，另提供 `w1/w3 行交错` 变体（fused gate/up kernel 一个 wave 同时读到两行）；P2 A/B 后固定一种。
+#### 5.1.2 Run 与 skew
+
+FILE_FLAG_NO_BUFFERING 要求 offset / 长度 / 目标指针都是扇区倍数（§9.6）。**对齐纪律整体搬进 manifest，I/O 层一个字节都不用改。** 对每组字节连续的 tensor：
+
+```
+aligned_off   = floor(off / 4096) * 4096
+aligned_bytes = ceil((off + len) / 4096) * 4096 − aligned_off
+skew          = off − aligned_off                    // 0 ≤ skew < 4096
+```
+
+这样的一段就是一个 **run**，也就是一个 `IoRequest`。ExpertStore 把一个 expert 的所有 run **首尾相接**填进一个槽，kernel 拿到的每个 part 地址是 `slot_base + run.slot_offset + part.skew`。
+
+实测每个 expert **恰好 2 个 run**（15,744/15,744）：
+
+| run | payload | aligned_bytes | 说明 |
+|---|---|---|---|
+| scales | 1,105,920 B | **1,110,016 B** | w1/w2/w3.scale |
+| weights | 17,694,720 B | **17,698,816 B** | w1/w2/w3.weight |
+| 合计 | 18,800,640 B (`kExpertBytes`) | **18,808,832 B (`kExpertSlotBytes`)** | = 4592 × 4 KiB |
+
+`kExpertSlotBytes` 是所有 15,744 个 expert 的最大值，写在 `model/layout.h`，`Manifest::validate()` 与 `tests/test_model.cpp`、`tests/test_integration.cpp` 三处交叉校验；`tools/manifest.py` 的 summary 直接打印这个数。
+
+#### 5.1.3 代价量化（对照 §9.2.1 实测）
+
+| 项 | 数字 |
+|---|---|
+| 每个 expert 多读的字节 | 8,192 B / 18,800,640 B = **+0.044%** |
+| slab 槽变大 | 18,800,640 → 18,808,832 B；90 GB cache 少装 **约 2 个** expert（4,787 → 4,785） |
+| 每个 expert 的 I/O 次数 | 1 → 2 |
+| 切成 4 MiB chunk 后的 chunk 数 | 5 → 6（weights run 4+4+4+4+1.88 MiB，scales run 1 个 1.06 MiB） |
+| 新增的那个 chunk 大小 | 1.06 MiB，**低于 §9.2.1 的 2 MiB 带宽平台**（1 MiB QD8 随机 = 2.30 GB/s，2 MiB = 4.54 GB/s，4 MiB = 4.68 GB/s） |
+| 单个 expert 冷取的最坏情况 | weights 17.70 MB @ 4.68 GB/s = 3.78 ms；scales 1.11 MB 若**单发**则 0.48 ms（而非 0.24 ms）→ 4.26 ms vs 原来 18.36 MiB 单发实测 4.02 ms，**+6%** |
+| 实际情况 | P0 一层 6 个 miss = 12 个 request、36 个 chunk 同时在途，聚合 QD ≥ 8，盘仍在 4.5–4.75 GB/s 平台上。§9.2.1 结论 3（≥2 MiB 时随机读≈顺序读）说明**这块盘在 expert 粒度上不在乎局部性**，所以 6 个 miss 的一层仍是 ~23.7 ms，40 层全 miss 仍是 ~0.95 s/token |
+
+结论：**代价在噪声里**。真正的收益（省下不存在的 510 GB、不承担重下风险）是决定性的。若将来 §9.2.1 的小请求带宽塌得更厉害，补救办法是把同一层 6 个 expert 的 scales run 合并下发（它们在分片内并不相邻，所以只能靠 QD 而不能靠合并），或把 scales 常驻内存——15,360 × 1.11 MB = 17.0 GB，超出 pin 预算，**不做**。
+
+#### 5.1.4 EOF 尾部：I/O 层唯一必要的让步
+
+分片的**最后一个** tensor 结束在文件字节长度处，而文件长度不是 4096 的倍数。把它的读扩到扇区边界必然越过 EOF 几百字节。实测有 **43 个 run**（每个含 expert 的分片各一个，即每层的 expert 99 的 weights run）与 **5 个非 expert tensor** 属于这种情况，最多越界 3,336 B。
+
+Windows 对这种读返回 EOF 之前的有效字节并报告"短读"，这是正确行为而不是错误。因此 `ChunkRequest` 增加 `min_bytes`（落在文件内的那部分），三个 backend 与 `IoEngine::finish` 都按它判定短读。**这是 I/O 层为直读付出的全部代价。**
+
+#### 5.1.5 磁盘上的东西
+
+| 路径 | 内容 |
+|---|---|
+| `model-000NN-of-00048.safetensors` × 48 | 原始权重，510.3 GB，**只读，绝不修改** |
+| `model.safetensors.index.json`、`config.json`、`inference/` | 原样保留；`manifest.py --verify` 用 index 校验大小与 sha256 |
+| `deepmoe_manifest.json` | 唯一新增文件，9.9 MB（紧凑 JSON）。schema v2 见 `model/manifest.h` 头注释 |
+| `kvcache/` | 持久化 prefix KV（§11.4），按 prompt hash 分文件 |
+
+manifest v2 的四张表：
+
+- `files[]`：分片路径、字节数、`data_start`（= `8 + header_len`）。**数组下标就是别处引用的 file id。**
+- `tensors{}`：每个非 expert tensor 的 `{file, offset, bytes, dtype, shape, scale{...}}`，绝对偏移，`.scale` 平面折叠进所属 weight 条目。
+- `experts[layer][expert]`：run 列表，每个 run `{file, aligned_off, aligned_bytes, slot_offset, parts:[{tensor, skew, bytes, slot_offset}]}`。逻辑层号沿用 `ExpertKey`：0–39 主模型（各 384），40–42 是 DSpark 的 3 块（各 128）。
+- `engram[]`：两个平面的基址与行宽 + 行数；384M 行不可能枚举，`Manifest::engram_row(layer, row)` 按算术生成那两个对齐读。
+
+**expert 在槽内的布局不再由我们选择**，它就是分片里的物理顺序（scales run 在前，weights run 在后）。原设计中 `w1/w3 行交错` 的 A/B 方案随之作废——要做这件事必须 repack，而 repack 已被否决。fused gate/up kernel（§7.9）改为靠 `w1`/`w3` 两个 buffer_device_address 并行取址。
 
 ### 5.2 内存布局（以路径 A、VGM=64 GB 为例）
 
@@ -397,7 +468,7 @@ int8 dot4 备选路径：E2M1 的取值 {0, .5, 1, 1.5, 2, 3, 4, 6} × 2 全是�
 **Dispatch A：`gate/up + SwiGLU`**，7 个 expert（6 routed + 1 shared，shared 为 fp8 路径的模板实例）。
 
 - workgroup 索引 → `(expert_slot, row_block)`；expert 基址 = 指针表 `addr[layer][ids[slot]]`。
-- 每 wave 读 `w1` 行 i 与 `w3` 行 i（交错布局时相邻），K=5120：每 lane 32 个 K 元素 = 16 B 的 FP4 + 1 个 E8M0 scale；解码 → 与 LDS 中 `x` 的对应 32 个 fp16 做 FMA（packed fp16 或 fp32），块内和 `ldexp` 后 fp32 累加；wave 归约得 `gate_i`, `up_i`。
+- 每 wave 读 `w1` 行 i 与 `w3` 行 i（§5.1 v0.5：两者在分片里相隔 5,898,240 B，靠两个 buffer_device_address 并行取址），K=5120：每 lane 32 个 K 元素 = 16 B 的 FP4 + 1 个 E8M0 scale；解码 → 与 LDS 中 `x` 的对应 32 个 fp16 做 FMA（packed fp16 或 fp32），块内和 `ldexp` 后 fp32 累加；wave 归约得 `gate_i`, `up_i`。
 - 尾处理：`gate = min(gate, 10)`, `up = clamp(up, ±10)`, `h_i = silu(gate) × up × route_weight`；写 `h[slot][2304]` fp16（7 × 4.5 KiB）。
 - ALU 预算：每字节权重（2 个 FP4）≈ 2 次 nibble 提取 + 2 次查表 + 2 次 FMA ≈ 6 op；200 GB/s → 1.2 Top/s，gfx1151 fp32 峰值 ~30 Top/s（fp16 packed 翻倍）；**M=1 时 ALU 富余 20×，M=6 时 3×**，int8 dot4（每指令 4 个 MAC）作为 M≥4 的备选。
 - 备注：`w1`、`w3` 的 scale 布局 `[2304][160]`，每行 160 B，与权重行同步读。
@@ -432,7 +503,7 @@ int8 dot4 备选路径：E2M1 的取值 {0, .5, 1, 1.5, 2, 3, 4, 6} × 2 全是�
 ### 7.13 Prefill kernel（M ≥ 16）
 
 - 所有线性层切换为 cooperative matrix（`VK_KHR_cooperative_matrix`，fp16 累加 fp32）GEMM，权重解码 FP4/FP8 → fp16 在加载到 LDS 时完成。
-- MoE prefill 按 **expert-major**：对每个 expert，收集路由到它的 token 行（gather），做 M=n_e 的 GEMM，scatter-add 回去。expert 顺序按 `experts.bin` 的物理顺序，和 NVMe 顺序流式一致（§9.7）。
+- MoE prefill 按 **expert-major**：对每个 expert，收集路由到它的 token 行（gather），做 M=n_e 的 GEMM，scatter-add 回去。expert 顺序按分片内的物理顺序（§5.1 实测：一层的 384 个 expert 全在同一个分片里），和 NVMe 顺序流式一致（§9.7）。
 - Attention prefill：window 部分为 band attention；压缩部分需先完成 Compressor 的全序列压缩与 Indexer 打分 — 分块（block 128）实现，正确性对齐参考的因果可见性规则（压缩块只有在完整后才可见）。
 
 ### 7.14 每层 dispatch 清单（Reuse 模式层，decode）
@@ -544,9 +615,10 @@ dispatch 路径，P2）；两种 VGM 设置下的重测。
 ### 9.3 分层驻留策略
 
 ```
-Pinned : hot.bin + mtp.bin + embed        （~17.7 GB，永不淘汰）
+Pinned : attention / shared expert / router / mHC / norm / engram wkv
+         / embed / head / mtp                （~17.7 GB，永不淘汰）
 Cached : routed experts，slab 池           （~90 GB，策略淘汰）
-Cold   : experts.bin 其余 + engram 表       （NVMe）
+Cold   : 其余 routed expert + engram 表    （NVMe，原始分片）
 ```
 
 Cache 策略基线为 **LRU + score-aware 提升**：router 每层输出 top-16 分数，未被选中但分数高的 expert（"近似命中"）也刷新 `heat`，淘汰按 `(heat, last_use)` 排序。是否优于纯 LRU 由 `cache_sim` 决定。按层的容量分配先用全局 LRU，若 Q2 显示各层重用距离差异大则改为按层配额。
@@ -571,11 +643,12 @@ Cache 策略基线为 **LRU + score-aware 提升**：router 每层输出 top-16 
 - 目标缓冲直接是 slab 槽（路径 A：CPU 映射的 device 内存；路径 B：导入的 host 内存），**零拷贝**。4 KiB 对齐由布局保证。
 - 优先级队列：P0 当前层缺失（阻塞 GPU）> P1 lookahead > P2 engram 行 > P3 后台回填（空闲时按静态热度填 free 槽）。P0 到达时可抢占：暂停下发 P1–P3 的新 chunk。
 - 每次完成更新 Profiler：字节、延迟、队列深度；每 token 输出 `nvme_busy_ms`、`stall_ms`（GPU 在 timeline wait 上的时间）。
-- 双盘：按各盘实测带宽比例分配 expert（静态哈希到盘），而非按盘数平均；`experts.bin` 允许分成 `experts.0.bin`/`experts.1.bin`。
+- 双盘：按各盘实测带宽比例分配 expert（静态哈希到盘），而非按盘数平均。**直读模式下这要求把分片复制到第二块盘**（每个分片整体 7.4 GB，复制粒度就是分片），manifest 的 `files[]` 记各自路径。
+- **EOF 尾部**：manifest 的 run 允许越过文件末尾不足一个扇区（§5.1.4）。`ChunkRequest::min_bytes` 告诉 backend 真正必须到达的字节数；短读只在这一种情况下合法。
 
 ### 9.7 Prefill 流式模式
 
-- prompt ≥ 阈值（由 Q1 与 prompt 长度推算的"预计激活 expert 数 > 容量"）时切换为 **expert-major 顺序流**：按 `experts.bin` 物理顺序读整层 7.22 GB（顺序读，满带宽），每到达一个 expert 就对路由到它的 token 做 GEMM，然后决定它留在 cache 还是丢弃（按 decode 阶段的预测热度）。
+- prompt ≥ 阈值（由 Q1 与 prompt 长度推算的"预计激活 expert 数 > 容量"）时切换为 **expert-major 顺序流**：按分片内物理顺序读整层 7.22 GB（§5.1 实测一层不跨分片，仍是单文件顺序读，满带宽），每到达一个 expert 就对路由到它的 token 做 GEMM，然后决定它留在 cache 还是丢弃（按 decode 阶段的预测热度）。
 - 短 prompt 走 decode 同一套按需路径。
 - 无论哪种模式，encoder 20 层先做完，decoder 用 bounded replay（§11.2）只算最后 128 个 token。
 
@@ -658,10 +731,18 @@ decode 每周期常驻 8.5 GB 读一次，若平均接受 a 个 token，则常�
 
 | 层级 | 内容 | 判据 |
 |---|---|---|
-| L0 解码 | FP4/FP8/E8M0 → fp32 解码函数与 numpy 参考逐位相同 | 逐位 |
-| L1 kernel | 每个 GPU kernel 对随机输入与 fp32 CPU 实现比较 | 相对误差 ≤ 1e-3（fp16 传递）；int8 路径 ≤ 5e-3 |
+| L0 解码 | FP4/FP8/E8M0 → fp32 解码函数与参考逐位相同。`oracle.py --level l0` 把三张表导出到 `tests/data/l0_dequant.bin`（2,132 B），`tests/test_dequant.cpp` 逐位比对 | 逐位 |
+| L1 kernel | 每个 GPU kernel 对随机输入与 fp32 CPU 实现比较；**外加 expert FFN 的真权重版**（下） | 相对误差 ≤ 1e-3（fp16 传递）；int8 路径 ≤ 5e-3 |
 | L2 逐层 | 用真实权重跑单层：`tools/oracle.py`（纯 torch fp32，从 safetensors 直接解码权重，逐函数对照 `model.py` 移植）vs deepMoE 每层输出 | 每层输出余弦相似度 ≥ 0.999，最大相对误差记录并画曲线 |
 | L3 端到端 | 多 prompt × 64 token greedy：deepMoE 与 `oracle.py` 全模型 CPU fp32 前向（每 token 数分钟，跑 ≥ 5 个 prompt）逐 token 一致；投机开/关一致；logits KL 记录 | token 一致率 = 100%（允许在极低 margin 处出现分歧并记录 margin） |
+
+**L0 的三张表分别来自哪里**（信任锚点必须写清楚）：
+
+- **FP8 E4M3 / UE8M0** 由 torch 本身生成（`torch.float8_e4m3fn` / `torch.float8_e8m0fnu`），这正是 `inference/kernel.py` 里 `T.Cast` 走的路径。
+- **FP4 E2M1** 在 CPU 上 torch 无法转换（`copy_kernel not implemented for Float4_e2m1fn_x2`），所以 16 项表由 OCP E2M1 定义构造，并在 `ml_dtypes.float4_e2m1fn` 可导入时逐位交叉校验——实测**完全一致**：`{0, .5, 1, 1.5, 2, 3, 4, 6}` 加符号位，也与 `inference/kernel.py` 的 `fp4_max = 6.0` 吻合。
+- **nibble 顺序**（低半字节 = K 方向的偶数元素）取自 PyTorch `float4_e2m1fn_x2` 的打包约定，`inference/kernel.py` 的 `B: [N, K//2] FP4, logical [N, K]` 依赖它。**L0 以下没有任何实验能证伪这个顺序**——在一个字节内交换两个 nibble，不会改变任何 32 元素 scale 块内的取值多重集，所以每块统计量完全相同。它作为**假设**记录在 `tools/oracle.py` 里，是 L2 出现偏差时第一个要翻的石头。
+
+**L1 的真权重扩展（v0.5 新增）**：`oracle.py --level l1` 对给定 `(layer, expert)` 把 6 个 tensor **各读两遍**——一遍走 `deepmoe_manifest.json` 的 run/skew 算术，一遍走 `safetensors` 库——要求字节完全一致，然后在 torch fp32 里算 `w2(silu(clamp(w1 x,max=10)) * clamp(w3 x,±10))`，把 `x`、`y`、每个 part 的 64 位校验和与 sha256 写进 `tests/data/l1_layer{L}_expert{E}.bin`（各 41,528 B）。`tests/test_integration.cpp` 用**真正的 IoEngine + IOCP + ExpertStore** 把同一个 expert 填进槽，按指针表的六个地址重算校验和，再用 `cpu/gemv_fp4_ref` 复算 FFN 与 oracle 比对。这一条同时验证了：manifest 的 run/skew 算术、槽内布局、指针表的 skew 加法、FP4/E8M0 解码。当前实测见 §15 的 P0 行。
 
 - `oracle.py` 的正确性靠代码评审对照 `model.py` + 小规模合成模型的双实现一致性测试保证；这是无法绕开的信任锚点，要写清楚。
 - 额外 sanity：与 DeepSeek 官方 API 同 prompt 的 greedy 输出比较，只作参考不作判据。
@@ -719,7 +800,7 @@ decode 每周期常驻 8.5 GB 读一次，若平均接受 a 个 token，则常�
 | Shader | Slang → SPIR-V（Vulkan SDK 1.4.357 自带 `slangc`） | 泛型 kernel 模板、`WaveActive*`、int8 dot |
 | CPU | AVX-512 / VNNI intrinsics | |
 | I/O | Win32 Overlapped + IOCP | |
-| 工具 | Python 3.12 + uv（numpy, safetensors, torch-cpu, pyarrow） | repack、oracle、trace、模拟、报告 |
+| 工具 | Python 3.12 + uv（numpy, safetensors, torch-cpu, pyarrow；`ml_dtypes` 可选，仅用于 L0 的 FP4 交叉校验） | manifest、oracle、trace、模拟、报告 |
 
 构建、环境与验证命令见 [docs/build.md](build.md)。
 
@@ -739,9 +820,9 @@ deepmoe/
 ├─ core/                   types.h status.h align.h bytes.h log.h config.h
 │                          json.{h,cpp}      自写的最小 JSON 读取器（无第三方依赖）
 │                          profiler.{h,cpp}  每 token 时间线 → JSONL（§13.1）
-├─ model/                  layout.h          编译期常量（EXPERT_BYTES=18800640 等）
+├─ model/                  layout.h          编译期常量（kExpertBytes=18800640、kExpertSlotBytes=18808832 等）
 │                          v41_config.{h,cpp}  config.json → struct（§2.1 全字段）
-│                          manifest.{h,cpp}    manifest.json 读取与自洽校验
+│                          manifest.{h,cpp}    deepmoe_manifest.json v2（run/skew）读取与自洽校验
 ├─ runtime/                engine.{h,cpp}    token 循环编排（仅编排）
 │                          block.h attention.h moe.h engram.h dspark.h
 │                          sampler.h kvcache.h
@@ -750,6 +831,7 @@ deepmoe/
 │                          planner.{h,cpp}      LRU 基线已实现，其余策略待 P1
 │                          predictor.h/.cpp     lookahead 接口（§9.4，待 Q4）
 │                          engram_prefetch.h/.cpp  接口（§7.10）
+│                          shard_set.h          48 个原始分片的打开与索引（§5.1，header-only）
 ├─ storage/                file.h file_common.cpp  打开的文件抽象（unbuffered/扇区）
 │                          backend.h               抽象后端 {submit, poll, caps}
 │                          io_engine.{h,cpp}       优先级队列 + 切分 + QD 控制（§9.6）
@@ -768,11 +850,15 @@ deepmoe/
 │                          bw_matrix.cpp    带宽矩阵（CPU 部分已实现）
 │                          results/          实测 CSV
 ├─ tools/                  envcheck/vkinfo.cpp
-│                          repack.py oracle.py route_trace.py cache_sim.py
+│                          manifest.py oracle.py route_trace.py cache_sim.py
 ├─ tests/                  test_framework.h  自写的 header-only 测试框架
 │                          fake_backend.h    确定性的 Backend 假实现
 │                          test_core / test_dequant / test_store / test_io / test_model
+│                          test_integration.cpp   真 checkpoint 端到端（DEEPMOE_MODEL_DIR 门控）
 │                          data/v41_config.json   ModelScope 上的真实 config.json
+│                          data/manifest_v2_slice.json  真 manifest 的切片（48 个 file 条目 + 9 个 expert）
+│                          data/l0_dequant.bin    oracle L0 黄金表（2,132 B）
+│                          data/l1_layer*.bin     oracle L1 黄金向量（各 41,528 B）
 └─ cli/                    deepmoe_main.cpp  `info` / `bench nvme` / `run`
 ```
 
@@ -785,7 +871,7 @@ deepmoe/
 | 阶段 | 范围 | 产物 | 准出条件 |
 |---|---|---|---|
 | **P-1 可行性**（1–2 周） | 带宽矩阵（两种 VGM × 两条路径）、NVMe 微基准、2 GiB slab 分配 + `external_memory_host` 导入 + NVMe 直读进 GPU 内存的原型 | `bench/` 数字与报告；选定路径 A/B | 三组带宽、Q6/Q7 全部有数；直读零拷贝跑通 |
-| **P0 权重与 oracle**（2–3 周） | `repack.py`、`manifest`、`oracle.py`、C++ fp32 CPU 前向（无 GPU） | 能用 CPU 产出正确 token（慢） | L0–L3 全过；trace 工具可跑 |
+| **P0 权重与 oracle**（2–3 周） | `manifest.py`（直读地址簿，替代 repack）、`model/manifest`、`oracle.py` L0/L1、C++ fp32 CPU 前向（无 GPU） | 能用 CPU 产出正确 token（慢） | L0–L3 全过；trace 工具可跑。**已完成：manifest v2、oracle L0/L1、`tests/test_integration.cpp` 对真实 checkpoint 的端到端读路径校验** |
 | **P1 测量**（1 周，与 P0 后半并行） | `route_trace` 跑 ≥ 20K token；`cache_sim` 出策略/容量/d/K 曲线 | 回答 Q1–Q5；选定 cache 策略与预取参数 | 报告写回本文档 §9 |
 | **P2 GPU 常驻路径**（3–4 周） | §7 全部 decode kernel，M=1，所有 expert 假设驻留（用小 prompt + 固定 expert 集） | 单 token GPU decode，kernel benchmark 表 | 每 kernel 有效 GB/s ≥ raw read 的 80%；L1/L2 通过；dispatch 开销测出 |
 | **P3 流式 decode**（3 周） | ExpertStore、Planner、IoEngine、lookahead、Profiler | 端到端 decode，hit/miss/stall 报告 | h、stall 与 `cache_sim` 预测一致（±5 点）；NVMe 利用率 > 80% 在 miss 期 |
@@ -794,6 +880,16 @@ deepmoe/
 | **P6 实验** | CPU 分担 expert、int8 dot4 路径、Wave64、双盘 stripe | A/B 报告 | 只保留有数据支持的改动 |
 
 **P-1 与 P1 的结论必须写回本文档后才开始 P2 / P3。**
+
+**P0 已完成的部分（2026-09-14，v0.5）**
+
+| 项 | 结果 |
+|---|---|
+| `tools/manifest.py` 扫全部 48 个分片 | **0.9 s**（header 0.10 s，建表 0.43 s），输出 9.9 MB manifest；一致性：分片字节数、header 覆盖范围、`index.json` 的 `weight_map` 与 `total_size = 510,286,023,000` 全部吻合 |
+| runs/expert 直方图 | **2 : 15,744**（无一例外），最大 run 17,698,816 B，`kExpertSlotBytes = 18,808,832` |
+| 跨分片 | expert 0 个、层 0 层 |
+| oracle L1 `(0,0)` / `(39,383)` | manifest 路径与 safetensors 路径**六个 tensor 字节完全一致**；`‖y‖₂ = 168.288` / `180.752` |
+| `tests/test_integration.cpp`（真 checkpoint） | 六个 part 的校验和与 oracle 一致；C++ `gemv_fp4_ref` 复算 FFN 对 oracle：`(0,0)` cos = 1.000000000000、`max\|Δy\| = 8.58e-6`（输出尺度的 4.5e-7）；`(39,383)` cos = 0.999999999999、`1.10e-5`（1.2e-6）。差异只来自 2304/5120 项求和顺序 |
 
 ---
 
@@ -856,7 +952,7 @@ FP4 打包：`I8 [rows, K/2]`，每字节 2 个 E2M1（低 nibble = 偶数元素
 - 源：ModelScope `deepseek-ai/DeepSeek-V4.1-Flash`，48 个 safetensors 共 510.3 GB，含 `mtp.*`（DSpark）、`inference/`、技术报告。
 - 目标：`D:\models\DeepSeek-V4.1-Flash`（D: 671 GB 空闲）。
 - **必须直连，不走代理**：开发机 shell 环境有 `HTTP_PROXY/HTTPS_PROXY=127.0.0.1:7078`，下载前清空；WinHTTP 系统代理为"直接访问"。实测直连 ModelScope CDN 8 并发 ≈ 115 MB/s。
-- 命令见 [docs/build.md](build.md#模型权重下载)；完成后 `tools/repack.py --verify` 用 `model.safetensors.index.json` + header 校验大小并生成 `manifest.json`（sha256）。
+- 命令见 [docs/build.md](build.md#模型权重下载)；完成后 `tools/manifest.py` 用 `model.safetensors.index.json` + 各分片 header 校验大小并生成 `deepmoe_manifest.json`（`--verify` 另外并行算 48 个分片的 sha256）。**原始分片不动，只往目录里写这一个文件。**
 
 ## 附录 C：修订记录
 
@@ -865,4 +961,5 @@ FP4 打包：`I8 [rows, K/2]`，每字节 2 个 E2M1（低 nibble = 偶数元素
 | v0.1 | 初始 docx 方案 | |
 | v0.2 | CPU+GPU 协同降为待验证假设；补 Windows UMA 拓扑、2 GiB 分配限制、GGUF 对照、oracle 定义、attention/KV/prefill、cost model 查表、单盘、带宽利用率、MTP、工具链 | 开发机实测 |
 | v0.4 | 代码骨架落地（§14.1 目录重写、新增 [architecture.md](architecture.md)）；**Q6/Q7 实测写回 §9.2.1**，据此把 chunk 定为 4 MiB、目标 QD 定为 8（原 §9.6 写的"在途 ≥ 64 MB"改为 32 MB：实测 64 MB 在途只增延迟不增吞吐）；**更正 §11.3 indexer K 体积 ~2 MB → ~29 MB**（原值是单个 ratio=2 源层的量）；记录 C++20 代码必须以 `-std=c++23` 编译（libc++ 把 `std::expected` 挡在 C++23 之后） | `bench/nvme_bench` 实测、`tests/test_model.cpp` 回归 |
+| v0.5 | **取消 repack：§5.1 整节重写为"`deepmoe_manifest.json` 是原始 48 个分片的地址簿"**。理由：D: 只剩 196 GB，第二份 510 GB 放不下；权重只有一份；不承担重下风险。代价已量化（每 expert 2 次读而非 1 次、+8,192 B = +0.044%、新增的 1.06 MiB scales chunk 低于 §9.2.1 的 2 MiB 平台，最坏 +6%、实际在噪声里）。连带：`tools/repack.py` 删除并由 `tools/manifest.py` 取代；manifest schema 升到 v2（run/skew/slot_offset）；`kExpertSlotBytes = 18,808,832` 进 `model/layout.h`；ExpertStore 指针表变成每 expert 6 项；`ChunkRequest::min_bytes` 让越过 EOF 不足一扇区的读合法（§5.1.4）；§7.9 的 `w1/w3 行交错` A/B 作废；§12 的 L0 golden 表与 L1 真权重 expert FFN 落地，并新增 `tests/test_integration.cpp` | 48 个分片 header 全量统计、`tools/manifest.py` 实测、`tools/oracle.py` L0/L1、`tests/test_integration.cpp` |
 | v0.3 | 目标模型锁定 DeepSeek-V4.1-Flash 并解剖；结论改为 **NVMe 主导**；pinned/cached/cold 三层与 slab 池；精度锁定原生 FP4/FP8；按 V4.1 结构逐 kernel 设计（mHC、MQA-latent 稀疏 attention、分组 O 投影、FP4 融合 MoE、Engram、DSpark、head）；每 token 单 command buffer + timeline semaphore；NVMe 测量问题 Q1–Q7 与 trace/模拟工具；lookahead gating 预取；expert-major 流式 prefill；DSpark 验证循环与 confidence 调度；CED / bounded replay / prefix 持久化；四层自建 oracle；阶段重排（P-1、P0、P1 测量前置）；CPU 协同降为 P6；写下预期数字 | ModelScope 权重 header 统计、`inference/model.py`、V4.1 技术报告、工具链实测 |

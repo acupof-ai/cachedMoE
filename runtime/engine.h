@@ -5,7 +5,7 @@
 //
 //   Engine
 //    +- V41Config, Manifest                    parsed once, immutable
-//    +- storage::File x{hot, experts, mtp, engram.L1, engram.L14}
+//    +- store::ShardSet         the 48 original safetensors shards (no repack)
 //    +- storage::IoEngine  -> Backend          owns 1 dispatcher thread,
 //    |                                         the backend owns 2 IOCP threads
 //    +- store::ExpertStore -> SlabPool -> SlabBacking
@@ -47,6 +47,7 @@
 #include "storage/io_engine.h"
 #include "store/expert_store.h"
 #include "store/planner.h"
+#include "store/shard_set.h"
 
 namespace deepmoe::runtime {
 
@@ -121,7 +122,7 @@ private:
     Manifest      manifest_{};
     Profiler      profiler_;
 
-    storage::File hot_, experts_, mtp_, engram_l1_, engram_l14_;
+    store::ShardSet     shards_;    // the 48 original safetensors shards (design §5.1 v0.5)
     storage::IoEngine   io_;
     store::ExpertStore  store_;
     store::Planner      planner_;

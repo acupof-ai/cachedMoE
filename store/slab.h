@@ -4,8 +4,14 @@
 // cache cannot be one buffer. A slab is a single allocation holding
 // `slots_per_slab` fixed-size expert slots:
 //
-//   slab bytes = slots * 18,800,640 = 1.88 GB at 100 slots
-//   slot addr  = slab_base + slot * 18,800,640          (both host and device)
+//   slab bytes = slots * 18,808,832 = 1.88 GB at 100 slots
+//   slot addr  = slab_base + slot * 18,808,832          (both host and device)
+//
+// The slot is layout::kExpertSlotBytes, not the 18,800,640 B payload: since
+// design §5.1 v0.5 the runtime reads the original safetensors shards, whose
+// tensor offsets are not sector-aligned, so a slot holds the two sector-aligned
+// *runs* of an expert (17,698,816 + 1,110,016 B) laid back to back. The extra
+// 8,192 B is the skew padding at the head of each run.
 //
 // A SlabBacking supplies the memory. Two exist:
 //   HostSlabBacking    plain 4 KiB-aligned host memory. Fully implemented; it
@@ -62,7 +68,7 @@ private:
 
 struct SlabConfig {
     uint32_t slots_per_slab = 100;                        // design §5.3
-    uint64_t slot_bytes     = layout::kExpertBytes;       // 18,800,640
+    uint64_t slot_bytes     = layout::kExpertSlotBytes;   // 18,808,832 (payload + skew)
     uint64_t budget_bytes   = 2ull << 30;                 // total pool budget
 };
 

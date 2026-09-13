@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include "core/align.h"
 #include "core/config.h"
 #include "store/expert_store.h"
 #include "store/planner.h"
@@ -17,13 +18,58 @@ using namespace deepmoe::store;
 namespace {
 
 // A small pool: 4 slots per slab, 2 slabs = 8 slots, so eviction is reachable
-// in a test without allocating 1.88 GB.
+// in a test without allocating 1.88 GB. A slot is kExpertSlotBytes -- the two
+// sector-aligned runs of an expert, not the 18,800,640 B payload (design §5.1).
 CacheConfig small_cache(uint32_t slots_per_slab = 4, uint32_t slabs = 2) {
     CacheConfig c;
     c.slots_per_slab = slots_per_slab;
-    c.budget_bytes   = uint64_t(slots_per_slab) * layout::kExpertBytes * slabs;
+    c.budget_bytes   = uint64_t(slots_per_slab) * layout::kExpertSlotBytes * slabs;
     c.policy         = CachePolicy::Lru;
     return c;
+}
+
+// The manifest entry of a two-run expert, shaped exactly like the real ones:
+// a 1,110,016 B scales run followed by a 17,698,816 B weights run, each with
+// three skewed parts inside it.
+ExpertEntry two_run_entry(uint32_t file = 0, uint64_t scale_off = 8'269'824,
+                          uint64_t weight_off = 594'984'960) {
+    ExpertEntry e;
+    Run scales;
+    scales.file = file;
+    scales.aligned_off = scale_off;
+    scales.aligned_bytes = 1'110'016;
+    scales.slot_offset = 0;
+    const uint32_t scale_skew = 3896;
+    for (uint8_t i = 0; i < 3; ++i) {
+        RunPart p;
+        p.part = static_cast<ExpertPart>(2 * i + 1);          // w1/w2/w3 .scale
+        p.skew = scale_skew + i * static_cast<uint32_t>(layout::kExpertScaleBytesPerMat);
+        p.bytes = layout::kExpertScaleBytesPerMat;
+        p.slot_offset = scales.slot_offset + p.skew;
+        scales.parts.push_back(p);
+    }
+    Run weights;
+    weights.file = file;
+    weights.aligned_off = weight_off;
+    weights.aligned_bytes = 17'698'816;
+    weights.slot_offset = scales.aligned_bytes;
+    const uint32_t weight_skew = 1592;
+    for (uint8_t i = 0; i < 3; ++i) {
+        RunPart p;
+        p.part = static_cast<ExpertPart>(2 * i);              // w1/w2/w3 .weight
+        p.skew = weight_skew + i * static_cast<uint32_t>(layout::kExpertWeightBytesPerMat);
+        p.bytes = layout::kExpertWeightBytesPerMat;
+        p.slot_offset = weights.slot_offset + p.skew;
+        weights.parts.push_back(p);
+    }
+    e.runs = {scales, weights};
+    e.slot_bytes = scales.aligned_bytes + weights.aligned_bytes;
+    for (const Run& r : e.runs)
+        for (const RunPart& p : r.parts) {
+            e.part_offset[static_cast<uint8_t>(p.part)] = p.slot_offset;
+            e.part_bytes[static_cast<uint8_t>(p.part)]  = p.bytes;
+        }
+    return e;
 }
 
 Result<void> fill(ExpertStore& s, ExpertKey k, TokenIndex token, Tier tier = Tier::Cached) {
@@ -37,14 +83,14 @@ Result<void> fill(ExpertStore& s, ExpertKey k, TokenIndex token, Tier tier = Tie
 DEEPMOE_TEST(slab, pool_geometry_and_addressing) {
     SlabConfig cfg;
     cfg.slots_per_slab = 4;
-    cfg.slot_bytes     = layout::kExpertBytes;
-    cfg.budget_bytes   = 4ull * layout::kExpertBytes * 3;   // room for 3 slabs
+    cfg.slot_bytes     = layout::kExpertSlotBytes;
+    cfg.budget_bytes   = 4ull * layout::kExpertSlotBytes * 3;   // room for 3 slabs
     SlabPool pool;
     REQUIRE_OK(pool.init(std::make_unique<HostSlabBacking>(), cfg));
 
     CHECK_EQ(pool.slab_count(), 3u);
     CHECK_EQ(pool.slot_count(), 12u);
-    CHECK_EQ(pool.slot_bytes(), layout::kExpertBytes);
+    CHECK_EQ(pool.slot_bytes(), layout::kExpertSlotBytes);
 
     auto a0 = pool.address(0);
     REQUIRE_OK(a0);
@@ -52,7 +98,7 @@ DEEPMOE_TEST(slab, pool_geometry_and_addressing) {
     REQUIRE_OK(a1);
     // Slots inside one slab are contiguous at the expert stride.
     CHECK_EQ(static_cast<std::byte*>(a1->host_ptr) - static_cast<std::byte*>(a0->host_ptr),
-             static_cast<ptrdiff_t>(layout::kExpertBytes));
+             static_cast<ptrdiff_t>(layout::kExpertSlotBytes));
     CHECK(is_aligned(a0->host_ptr));
     CHECK(is_aligned(a1->host_ptr));
 
@@ -67,7 +113,7 @@ DEEPMOE_TEST(slab, rejects_a_slab_over_the_two_gib_vulkan_limit) {
     // entire reason slabs exist.
     SlabConfig cfg;
     cfg.slots_per_slab = 200;                       // 200 x 18.8 MB = 3.76 GB
-    cfg.slot_bytes     = layout::kExpertBytes;
+    cfg.slot_bytes     = layout::kExpertSlotBytes;
     cfg.budget_bytes   = 8ull << 30;
     SlabPool pool;
     CHECK_ERR(pool.init(std::make_unique<HostSlabBacking>(), cfg), Err::InvalidArgument);
@@ -75,7 +121,7 @@ DEEPMOE_TEST(slab, rejects_a_slab_over_the_two_gib_vulkan_limit) {
     // A budget smaller than one slab is also an error, not a silent zero pool.
     SlabConfig tiny = cfg;
     tiny.slots_per_slab = 4;
-    tiny.budget_bytes   = layout::kExpertBytes;     // less than 4 slots
+    tiny.budget_bytes   = layout::kExpertSlotBytes;  // less than 4 slots
     SlabPool p2;
     CHECK_ERR(p2.init(std::make_unique<HostSlabBacking>(), tiny), Err::ResourceExhausted);
 
@@ -142,6 +188,113 @@ DEEPMOE_TEST(expert_store, failed_fill_releases_the_slot) {
     CHECK_EQ(s.stats().fills_failed, 1u);
     // The key is free again, so a retry works.
     CHECK_OK(s.begin_fill(ExpertKey{1, 1}));
+}
+
+DEEPMOE_TEST(expert_store, two_run_fill_publishes_every_part) {
+    // design §5.1 (v0.5): a slot is filled by one IoRequest per run, and the
+    // pointer table hands out slot_base + run.slot_offset + part.skew per part.
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
+    const ExpertEntry entry = two_run_entry(3);
+    const ExpertKey k{1, 2};
+
+    auto res = s.begin_fill(k, entry);
+    REQUIRE_OK(res);
+    REQUIRE_EQ(res->run_count, 2u);
+    CHECK_EQ(s.free_slots(), 7u);
+
+    // Every run is a legal unbuffered read into a sector-aligned destination.
+    auto* base = static_cast<std::byte*>(res->addr.host_ptr);
+    uint64_t covered = 0;
+    for (uint32_t i = 0; i < res->run_count; ++i) {
+        const FillRun& r = res->runs[i];
+        CHECK_EQ(r.file, 3u);
+        CHECK(is_aligned(r.file_off));
+        CHECK(is_aligned(r.bytes));
+        CHECK(is_aligned(r.dst));
+        CHECK_EQ(r.dst, base + entry.runs[i].slot_offset);
+        covered += r.bytes;
+    }
+    CHECK_EQ(covered, layout::kExpertSlotBytes);
+    CHECK(covered <= s.slot_bytes());
+
+    // Filling ends only when BOTH runs have reported, and the table stays empty
+    // until then -- a half-filled slot must never be addressable.
+    auto first = s.finish_run(res->slot, true, 7);
+    REQUIRE_OK(first);
+    CHECK(!*first);
+    CHECK(!s.resident(k));
+    CHECK_EQ(s.table_entry(k, ExpertPart::W1Weight).value_or(1), kNoDeviceAddress);
+
+    auto second = s.finish_run(res->slot, true, 7);
+    REQUIRE_OK(second);
+    CHECK(*second);
+    CHECK(s.resident(k));
+    CHECK_ERR(s.finish_run(res->slot, true, 7), Err::FailedPrecondition);
+
+    // Six entries per expert, each at its own skew inside the slot.
+    const uint64_t b = reinterpret_cast<uint64_t>(base);
+    for (uint8_t i = 0; i < kExpertPartCount; ++i) {
+        const auto part = static_cast<ExpertPart>(i);
+        auto a = s.table_entry(k, part);
+        REQUIRE_OK(a);
+        CHECK_EQ(*a, b + entry.offset_of(part));
+        // Nothing may point outside its own slot.
+        CHECK(entry.offset_of(part) + entry.bytes_of(part) <= s.slot_bytes());
+    }
+    CHECK_EQ(s.pointer_table_stride(), kExpertPartCount);
+    CHECK_EQ(s.pointer_table_entries(), size_t{4} * 8 * kExpertPartCount);
+    // The default accessor is part 0, which is NOT the slot base here: the
+    // weights run sits behind the scales run.
+    CHECK_EQ(s.table_entry(k).value_or(0), b + entry.offset_of(ExpertPart::W1Weight));
+    CHECK(entry.offset_of(ExpertPart::W1Weight) != 0u);
+
+    // Eviction clears all six.
+    REQUIRE_OK(s.evict_key(k));
+    for (uint8_t i = 0; i < kExpertPartCount; ++i)
+        CHECK_EQ(s.table_entry(k, static_cast<ExpertPart>(i)).value_or(1), kNoDeviceAddress);
+}
+
+DEEPMOE_TEST(expert_store, one_bad_run_fails_the_whole_fill) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
+    const ExpertEntry entry = two_run_entry();
+    const ExpertKey k{0, 4};
+
+    auto res = s.begin_fill(k, entry);
+    REQUIRE_OK(res);
+    // The failure arrives first; the slot still waits for the other run rather
+    // than being recycled under an in-flight read.
+    auto a = s.finish_run(res->slot, false, 1);
+    REQUIRE_OK(a);
+    CHECK(!*a);
+    CHECK_EQ(s.free_slots(), 7u);
+    auto b = s.finish_run(res->slot, true, 1);
+    REQUIRE_OK(b);
+    CHECK(*b);
+    CHECK(!s.resident(k));
+    CHECK_EQ(s.free_slots(), 8u);
+    CHECK_EQ(s.stats().fills_failed, 1u);
+    CHECK_EQ(s.stats().runs_started, 2u);
+    CHECK_EQ(s.stats().runs_done, 2u);
+    CHECK_EQ(s.table_entry(k).value_or(1), kNoDeviceAddress);
+}
+
+DEEPMOE_TEST(expert_store, rejects_an_entry_that_does_not_fit_a_slot) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
+    ExpertEntry big = two_run_entry();
+    big.slot_bytes += 4096;
+    CHECK_ERR(s.begin_fill(ExpertKey{0, 0}, big), Err::InvalidArgument);
+
+    ExpertEntry empty;
+    CHECK_ERR(s.begin_fill(ExpertKey{0, 0}, empty), Err::InvalidArgument);
+
+    ExpertEntry many = two_run_entry();
+    many.runs.resize(layout::kMaxExpertRuns + 1, many.runs[0]);
+    CHECK_ERR(s.begin_fill(ExpertKey{0, 0}, many), Err::InvalidArgument);
+    // None of the rejections may consume a slot.
+    CHECK_EQ(s.free_slots(), 8u);
 }
 
 DEEPMOE_TEST(expert_store, exhaustion_and_range_checks) {

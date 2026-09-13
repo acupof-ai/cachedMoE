@@ -52,7 +52,7 @@ constexpr uint32_t quant_bits(QuantType q) noexcept {
 
 // --- residency (design §9.3) ------------------------------------------------
 enum class Tier : uint8_t {
-    Pinned,  // hot.bin + mtp.bin + embed, never evicted (~17.7 GB)
+    Pinned,  // attention, shared experts, mtp, embed and head (~17.7 GB), never evicted
     Cached,  // routed experts living in the slab pool, evicted by policy
     Cold,    // only on NVMe
 };

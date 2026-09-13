@@ -4,9 +4,11 @@
 // This is the test that fails loudly if the checkpoint ever changes shape: every
 // number in design §2.1 is asserted against the file, not against a constant
 // copied into the test.
+#include <algorithm>
 #include <string>
 #include <vector>
 
+#include "core/align.h"
 #include "model/layout.h"
 #include "model/manifest.h"
 #include "model/v41_config.h"
@@ -181,120 +183,322 @@ DEEPMOE_TEST(v41_config, rejects_a_truncated_or_wrong_config) {
     CHECK_ERR(V41Config::load("tests/data/definitely_not_here.json"), Err::Io);
 }
 
-DEEPMOE_TEST(manifest, parses_and_validates) {
-    // The schema tools/repack.py writes (design §5.1).
+DEEPMOE_TEST(manifest, parses_schema_v2) {
+    // The shape tools/manifest.py writes (design §5.1 v0.5): an address book
+    // over the original shards, with sector-aligned runs and per-part skews.
     const std::string json = R"({
-      "version": 1,
+      "version": 2,
       "model": "DeepSeek-V4.1-Flash",
-      "files": {
-        "hot":      {"path": "hot.bin",        "bytes": 11274289152, "sha256": "ab"},
-        "experts":  {"path": "experts.bin",    "bytes": 288777830400},
-        "engramL1": {"path": "engram.L1.bin",  "bytes": 101377628352}
-      },
+      "alignment": 4096,
+      "expert_slot_bytes": 18808832,
+      "expert_parts": ["w1.weight","w1.scale","w2.weight","w2.scale","w3.weight","w3.scale"],
+      "files": [
+        {"path": "model-00001-of-00048.safetensors", "bytes": 970533624, "data_start": 4184},
+        {"path": "model-00003-of-00048.safetensors", "bytes": 7389759032, "data_start": 3800,
+         "sha256": "ab"}
+      ],
       "tensors": {
-        "layers.5.attn.wq_a.weight": {
-          "file": "hot", "offset": 4096, "bytes": 6553600, "dtype": "fp8_e4m3",
+        "layers.0.attn.wq_a.weight": {
+          "file": 1, "offset": 510842328, "bytes": 6553600, "dtype": "fp8_e4m3",
           "shape": [1280, 5120],
-          "scale": {"offset": 6557696, "bytes": 6400, "dtype": "e8m0",
+          "scale": {"file": 1, "offset": 7968216, "bytes": 6400, "dtype": "e8m0",
                     "shape": [40, 160], "block": [32, 32]}
         },
-        "layers.5.ffn.gate.weight": {
-          "file": "hot", "offset": 6565888, "bytes": 3932160, "dtype": "bf16",
+        "layers.0.ffn.gate.weight": {
+          "file": 1, "offset": 3949528, "bytes": 3932160, "dtype": "bf16",
           "shape": [384, 5120]
         }
       },
-      "experts": {"file": "experts", "stride": 18800640, "layers": 40, "per_layer": 384, "base": 0},
-      "engram":  [{"layer": 1, "file": "engramL1", "rows": 384006168, "row_bytes": 264, "base": 0}]
+      "experts": [
+        {"layer": 0, "name": "layers.0", "experts": [
+          [ {"file": 1, "aligned_off": 8269824, "aligned_bytes": 1110016, "slot_offset": 0,
+             "parts": [
+               {"tensor": "w1.scale", "skew": 3896,   "bytes": 368640, "slot_offset": 3896},
+               {"tensor": "w2.scale", "skew": 372536, "bytes": 368640, "slot_offset": 372536},
+               {"tensor": "w3.scale", "skew": 741176, "bytes": 368640, "slot_offset": 741176}]},
+            {"file": 1, "aligned_off": 594984960, "aligned_bytes": 17698816,
+             "slot_offset": 1110016,
+             "parts": [
+               {"tensor": "w1.weight", "skew": 1592,     "bytes": 5898240, "slot_offset": 1111608},
+               {"tensor": "w2.weight", "skew": 5899832,  "bytes": 5898240, "slot_offset": 7009848},
+               {"tensor": "w3.weight", "skew": 11798072, "bytes": 5898240, "slot_offset": 12908088}]}
+          ]
+        ]}
+      ],
+      "engram": [
+        {"layer": 1, "rows": 1000,
+         "value": {"file": 0, "offset": 664, "bytes": 256000, "row_bytes": 256,
+                   "dtype": "fp8_e4m3"},
+         "scale": {"file": 0, "offset": 300000, "bytes": 8000, "row_bytes": 8,
+                   "dtype": "e8m0"}}
+      ]
     })";
 
     auto m = Manifest::parse(json);
     REQUIRE_OK(m);
-    CHECK_EQ(m->version(), 1u);
+    CHECK_EQ(m->version(), 2u);
     CHECK_EQ(m->model(), std::string("DeepSeek-V4.1-Flash"));
-    REQUIRE_EQ(m->files().size(), 3u);
-    REQUIRE(m->file("experts") != nullptr);
-    CHECK_EQ(m->file("experts")->path, std::string("experts.bin"));
-    CHECK(m->file("nope") == nullptr);
+    CHECK_EQ(m->alignment(), 4096u);
+    CHECK_EQ(m->expert_slot_bytes(), layout::kExpertSlotBytes);
 
-    auto t = m->require_tensor("layers.5.attn.wq_a.weight");
+    // files are an ordered array; the index is the id every entry references.
+    REQUIRE_EQ(m->files().size(), 2u);
+    REQUIRE(m->file(1) != nullptr);
+    CHECK_EQ(m->file(1)->path, std::string("model-00003-of-00048.safetensors"));
+    CHECK_EQ(m->file(1)->data_start, 3800u);
+    CHECK(m->file(2) == nullptr);
+    CHECK_EQ(m->file_index("model-00001-of-00048.safetensors").value_or(99), 0u);
+    CHECK(!m->file_index("nope").has_value());
+
+    auto t = m->require_tensor("layers.0.attn.wq_a.weight");
     REQUIRE_OK(t);
     CHECK_EQ((*t)->dtype, QuantType::Fp8E4M3);
-    CHECK_EQ((*t)->offset, 4096u);
-    CHECK_EQ((*t)->bytes, 6553600u);
-    REQUIRE_EQ((*t)->shape.size(), 2u);
-    CHECK_EQ((*t)->shape[0], 1280u);
+    CHECK_EQ((*t)->file, 1u);
+    CHECK_EQ((*t)->offset, 510842328u);
     CHECK_EQ((*t)->elements(), 1280ull * 5120ull);
     CHECK((*t)->scale.present());
-    CHECK_EQ((*t)->scale.dtype, QuantType::E8M0);
     CHECK_EQ((*t)->scale.block_m, 32u);
     CHECK_EQ((*t)->scale.block_k, 32u);
-
-    auto g = m->require_tensor("layers.5.ffn.gate.weight");
-    REQUIRE_OK(g);
-    CHECK_EQ((*g)->dtype, QuantType::Bf16);
-    CHECK(!(*g)->scale.present());
+    CHECK(!(*m->require_tensor("layers.0.ffn.gate.weight"))->scale.present());
     CHECK_ERR(m->require_tensor("nope"), Err::NotFound);
 
-    // Arithmetic expert addressing (design §5.1).
-    CHECK_EQ(m->experts().stride, layout::kExpertBytes);
-    auto off = m->expert_offset(ExpertKey{0, 0});
-    REQUIRE_OK(off);
-    CHECK_EQ(*off, 0u);
-    auto off2 = m->expert_offset(ExpertKey{1, 3});
-    REQUIRE_OK(off2);
-    CHECK_EQ(*off2, layout::expert_file_offset(1, 3));
-    CHECK_ERR(m->expert_offset(ExpertKey{40, 0}), Err::OutOfRange);
-    CHECK_ERR(m->expert_offset(ExpertKey{0, 384}), Err::OutOfRange);
+    // Reading a tensor means one widened, sector-aligned read plus a skew. The
+    // offsets in the shards are multiples of 8, never of 4096, which is the
+    // whole reason this schema exists.
+    CHECK(!is_aligned((*t)->offset));
+    auto rd = m->tensor_read("layers.0.attn.wq_a.weight");
+    REQUIRE_OK(rd);
+    CHECK(is_aligned(rd->aligned_off));
+    CHECK(is_aligned(rd->aligned_bytes));
+    CHECK_EQ(rd->aligned_off + rd->skew, (*t)->offset);
+    CHECK(rd->skew + rd->bytes <= rd->aligned_bytes);
+    CHECK_OK(m->tensor_scale_read("layers.0.attn.wq_a.weight"));
+    CHECK_ERR(m->tensor_scale_read("layers.0.ffn.gate.weight"), Err::NotFound);
 
+    // --- the expert run table --------------------------------------------
+    CHECK_EQ(m->experts_in_layer(0), 1u);
+    auto e = m->require_expert(ExpertKey{0, 0});
+    REQUIRE_OK(e);
+    const ExpertEntry& x = **e;
+    REQUIRE_EQ(x.runs.size(), 2u);
+    CHECK_EQ(x.slot_bytes, 1110016ull + 17698816ull);
+    CHECK_EQ(x.slot_bytes, layout::kExpertSlotBytes);
+
+    // Every run is a legal unbuffered read and the runs tile the slot.
+    uint64_t cursor = 0, payload = 0;
+    for (const Run& r : x.runs) {
+        CHECK(is_aligned(r.aligned_off));
+        CHECK(is_aligned(r.aligned_bytes));
+        CHECK_EQ(r.slot_offset, cursor);
+        cursor += r.aligned_bytes;
+        for (const RunPart& p : r.parts) {
+            CHECK_EQ(p.slot_offset, r.slot_offset + p.skew);
+            CHECK(p.skew + p.bytes <= r.aligned_bytes);
+            payload += p.bytes;
+        }
+    }
+    CHECK_EQ(payload, layout::kExpertBytes);
+
+    // The six parts land where the pointer table will point.
+    CHECK_EQ(x.offset_of(ExpertPart::W1Scale), 3896ull);
+    CHECK_EQ(x.offset_of(ExpertPart::W3Scale), 741176ull);
+    CHECK_EQ(x.offset_of(ExpertPart::W1Weight), 1111608ull);
+    CHECK_EQ(x.offset_of(ExpertPart::W3Weight), 12908088ull);
+    CHECK_EQ(x.bytes_of(ExpertPart::W1Weight), layout::kExpertWeightBytesPerMat);
+    CHECK_EQ(x.bytes_of(ExpertPart::W2Scale), layout::kExpertScaleBytesPerMat);
+
+    CHECK_ERR(m->require_expert(ExpertKey{0, 1}), Err::OutOfRange);
+    CHECK_ERR(m->require_expert(ExpertKey{7, 0}), Err::OutOfRange);
+
+    // --- engram rows ------------------------------------------------------
     REQUIRE_EQ(m->engram().size(), 1u);
     REQUIRE(m->engram_for_layer(1) != nullptr);
-    CHECK_EQ(m->engram_for_layer(1)->row_bytes, 264u);
+    CHECK_EQ(m->engram_for_layer(1)->value.row_bytes, layout::kEngramValueRowBytes);
+    CHECK_EQ(m->engram_for_layer(1)->scale.row_bytes, layout::kEngramScaleRowBytes);
     CHECK(m->engram_for_layer(14) == nullptr);
 
+    auto row = m->engram_row(1, 17);
+    REQUIRE_OK(row);
+    CHECK(is_aligned(row->value.aligned_off));
+    CHECK(is_aligned(row->scale.aligned_off));
+    CHECK_EQ(row->value.aligned_off + row->value.skew, 664ull + 17ull * 256);
+    CHECK_EQ(row->scale.aligned_off + row->scale.skew, 300000ull + 17ull * 8);
+    CHECK_EQ(row->value.bytes, 256ull);
+    CHECK_ERR(m->engram_row(1, 1000), Err::OutOfRange);
+    CHECK_ERR(m->engram_row(2, 0), Err::NotFound);
+
     CHECK_OK(m->validate());
-    CHECK(m->total_bytes() > layout::kRoutedExpertTotalBytes);
+    CHECK_EQ(m->total_bytes(), 6553600ull + 6400 + 3932160 + layout::kExpertBytes);
+    CHECK_EQ(m->file_bytes(), 970533624ull + 7389759032ull);
+}
+
+DEEPMOE_TEST(manifest, parses_a_slice_of_the_real_checkpoint) {
+    // tests/data/manifest_v2_slice.json is a verbatim cut of the manifest
+    // tools/manifest.py wrote for the real 48-shard D:\models checkpoint: all 48
+    // file entries, a handful of tensors, three experts each from layers 0, 39
+    // and 40 (mtp.0), and both engram tables. The point is that the schema is
+    // pinned to bytes that actually exist, not to a hand-written fixture.
+    auto m = Manifest::load(data_path("manifest_v2_slice.json"));
+    REQUIRE_OK(m);
+    CHECK_EQ(m->version(), 2u);
+    REQUIRE_EQ(m->files().size(), 48u);
+    CHECK_EQ(m->files()[0].path, std::string("model-00001-of-00048.safetensors"));
+    // design §2.2: 510.3 GB of shards on disk.
+    CHECK_CLOSE(m->file_bytes() / 1e9, 510.3, 0.001);
+
+    // Not one shard's data section is sector-aligned, which is the premise of
+    // the whole runs-and-skews design.
+    uint32_t aligned_starts = 0;
+    for (const FileEntry& f : m->files())
+        if (is_aligned(f.data_start)) ++aligned_starts;
+    CHECK_EQ(aligned_starts, 0u);
+
+    // Every expert in the slice is two runs -- one weights run, one scales run
+    // -- and no expert needs more than one slot.
+    uint64_t widest = 0;
+    uint32_t experts = 0;
+    for (uint32_t layer : {0u, 39u, 40u}) {
+        REQUIRE_EQ(m->experts_in_layer(layer), 3u);
+        for (uint16_t id = 0; id < 3; ++id) {
+            auto e = m->require_expert(ExpertKey{static_cast<uint16_t>(layer), id});
+            REQUIRE_OK(e);
+            CHECK_EQ((*e)->runs.size(), 2u);
+            CHECK_EQ((*e)->runs[0].aligned_bytes, 1110016ull);    // the three scales
+            CHECK_EQ((*e)->runs[1].aligned_bytes, 17698816ull);   // the three weights
+            CHECK_EQ((*e)->runs[0].file, (*e)->runs[1].file);     // and one shard holds both
+            widest = std::max(widest, (*e)->slot_bytes);
+            ++experts;
+        }
+    }
+    CHECK_EQ(experts, 9u);
+    // model/layout.h's compile-time slot size must be what the real manifest
+    // needs; tools/manifest.py prints the maximum over all 15,744 experts.
+    CHECK_EQ(widest, layout::kExpertSlotBytes);
+    CHECK_EQ(m->expert_slot_bytes(), layout::kExpertSlotBytes);
+
+    // The engram tables are two planes, not the interleaved 264 B rows the
+    // pre-v0.5 repack produced.
+    REQUIRE_EQ(m->engram().size(), 2u);
+    for (uint32_t layer : {1u, 14u}) {
+        const EngramEntry* e = m->engram_for_layer(layer);
+        REQUIRE(e != nullptr);
+        CHECK(e->rows > 384'000'000ull);
+        CHECK_EQ(e->value.file, e->scale.file);
+        auto row = m->engram_row(layer, e->rows - 1);
+        REQUIRE_OK(row);
+        // One 4 KiB read covers 16 value rows, another covers 512 scale rows.
+        CHECK_EQ(row->value.aligned_bytes, 4096ull);
+        CHECK_EQ(row->scale.aligned_bytes, 4096ull);
+    }
+
+    CHECK_OK(m->validate());
 }
 
 DEEPMOE_TEST(manifest, catches_inconsistencies) {
-    // A tensor pointing past the end of its file.
-    auto over = Manifest::parse(R"({
-      "version": 1, "files": {"hot": {"path": "hot.bin", "bytes": 4096}},
-      "tensors": {"t": {"file": "hot", "offset": 0, "bytes": 8192, "dtype": "bf16", "shape": [1]}}
-    })");
+    auto base = [](std::string_view experts, std::string_view tensors = R"("t": {
+            "file": 0, "offset": 0, "bytes": 16, "dtype": "bf16", "shape": [8]})") {
+        return std::string(R"({"version": 2, "alignment": 4096,
+          "expert_slot_bytes": 18808832,
+          "files": [{"path": "a.safetensors", "bytes": 1048576, "data_start": 100}],
+          "tensors": {)") + std::string(tensors) + "}" +
+          (experts.empty() ? std::string() : ", \"experts\": " + std::string(experts)) + "}";
+    };
+
+    // A tensor pointing past the end of its shard.
+    auto over = Manifest::parse(base("", R"("t": {
+        "file": 0, "offset": 1048568, "bytes": 8192, "dtype": "bf16", "shape": [4096]})"));
     REQUIRE_OK(over);
-    auto r = over->validate();
-    CHECK(!r);
-    CHECK(r.error().message.find("runs past the end") != std::string::npos);
+    CHECK(over->validate().error().message.find("runs past the end") != std::string::npos);
 
-    // A tensor whose offset is not sector-aligned breaks unbuffered I/O.
-    auto mis = Manifest::parse(R"({
-      "version": 1, "files": {"hot": {"path": "hot.bin", "bytes": 1048576}},
-      "tensors": {"t": {"file": "hot", "offset": 100, "bytes": 16, "dtype": "bf16", "shape": [8]}}
-    })");
-    REQUIRE_OK(mis);
-    CHECK(mis->validate().error().message.find("4 KiB aligned") != std::string::npos);
-
-    // A wrong expert stride would silently misaddress every expert.
-    auto stride = Manifest::parse(R"({
-      "version": 1, "files": {"e": {"path": "e.bin", "bytes": 1048576}}, "tensors": {},
-      "experts": {"file": "e", "stride": 1024, "layers": 1, "per_layer": 1}
-    })");
-    REQUIRE_OK(stride);
-    CHECK(stride->validate().error().message.find("kExpertBytes") != std::string::npos);
-
-    // Unknown file reference.
-    auto unknown = Manifest::parse(R"({
-      "version": 1, "files": {"hot": {"path": "hot.bin", "bytes": 1048576}},
-      "tensors": {"t": {"file": "cold", "offset": 0, "bytes": 16, "dtype": "bf16", "shape": [8]}}
-    })");
+    // A tensor in a shard that does not exist.
+    auto unknown = Manifest::parse(base("", R"("t": {
+        "file": 3, "offset": 0, "bytes": 16, "dtype": "bf16", "shape": [8]})"));
     REQUIRE_OK(unknown);
-    CHECK(unknown->validate().error().message.find("unknown file") != std::string::npos);
+    CHECK(unknown->validate().error().message.find("only 1 are listed") != std::string::npos);
+
+    // A run that is not sector-aligned would be illegal for unbuffered I/O --
+    // this is the invariant that moved from the I/O layer into the manifest.
+    auto misaligned = Manifest::parse(base(R"([{"layer":0,"experts":[[
+        {"file":0,"aligned_off":100,"aligned_bytes":4096,"slot_offset":0,
+         "parts":[{"tensor":"w1.weight","skew":0,"bytes":16,"slot_offset":0}]}]]}])"));
+    REQUIRE_OK(misaligned);
+    CHECK(misaligned->validate().error().message.find("not 4 KiB aligned") != std::string::npos);
+
+    // Runs must tile the slot with no gap, or the parts' slot offsets lie.
+    auto gapped = Manifest::parse(base(R"([{"layer":0,"experts":[[
+        {"file":0,"aligned_off":0,"aligned_bytes":4096,"slot_offset":0,
+         "parts":[{"tensor":"w1.weight","skew":0,"bytes":16,"slot_offset":0}]},
+        {"file":0,"aligned_off":8192,"aligned_bytes":4096,"slot_offset":8192,
+         "parts":[{"tensor":"w1.scale","skew":0,"bytes":16,"slot_offset":8192}]}]]}])"));
+    REQUIRE_OK(gapped);
+    CHECK(gapped->validate().error().message.find("running total") != std::string::npos);
+
+    // An expert whose parts do not add up to 18,800,640 B would silently
+    // misaddress every GEMV that reads it.
+    auto shortfall = Manifest::parse(base(R"([{"layer":0,"experts":[[
+        {"file":0,"aligned_off":0,"aligned_bytes":4096,"slot_offset":0,
+         "parts":[{"tensor":"w1.weight","skew":0,"bytes":16,"slot_offset":0},
+                  {"tensor":"w1.scale","skew":16,"bytes":16,"slot_offset":16},
+                  {"tensor":"w2.weight","skew":32,"bytes":16,"slot_offset":32},
+                  {"tensor":"w2.scale","skew":48,"bytes":16,"slot_offset":48},
+                  {"tensor":"w3.weight","skew":64,"bytes":16,"slot_offset":64},
+                  {"tensor":"w3.scale","skew":80,"bytes":16,"slot_offset":80}]}]]}])"));
+    REQUIRE_OK(shortfall);
+    CHECK(shortfall->validate().error().message.find("kExpertBytes") != std::string::npos);
+
+    // A slot size that disagrees with model/layout.h means the C++ constant is
+    // stale; tools/manifest.py prints the value to paste in.
+    auto slot = Manifest::parse(R"({"version": 2, "expert_slot_bytes": 4096,
+      "files": [{"path": "a", "bytes": 4096}], "tensors": {}})");
+    REQUIRE_OK(slot);
+    CHECK(slot->validate().error().message.find("kExpertSlotBytes") != std::string::npos);
+
+    // An unknown part name is a schema mismatch, not something to guess at.
+    CHECK_ERR(Manifest::parse(base(R"([{"layer":0,"experts":[[
+        {"file":0,"aligned_off":0,"aligned_bytes":4096,"slot_offset":0,
+         "parts":[{"tensor":"w4.weight","skew":0,"bytes":16,"slot_offset":0}]}]]}])")),
+              Err::Corrupt);
 
     // Version and structure.
-    CHECK_ERR(Manifest::parse(R"({"version": 2})"), Err::Corrupt);
-    CHECK_ERR(Manifest::parse(R"({"version": 1})"), Err::Corrupt);          // no files
-    CHECK_ERR(Manifest::parse(R"({"version": 1, "files": {}})"), Err::Corrupt);  // no tensors
-    CHECK_ERR(Manifest::load("tests/data/no_such_manifest.json"), Err::Io);
+    CHECK_ERR(Manifest::parse(R"({"version": 1})"), Err::Corrupt);   // the repack schema
+    CHECK_ERR(Manifest::parse(R"({"version": 2})"), Err::Corrupt);   // no files
+    CHECK_ERR(Manifest::parse(R"({"version": 2, "files": []})"), Err::Corrupt);
+    CHECK_ERR(Manifest::parse(R"({"version": 2, "files": [{"path":"a"}]})"), Err::Corrupt);
+    CHECK_ERR(Manifest::load(data_path("no_such_manifest.json")), Err::Io);
+}
+
+DEEPMOE_TEST(manifest, expert_part_names_round_trip) {
+    for (uint8_t i = 0; i < kExpertPartCount; ++i) {
+        const auto p = static_cast<ExpertPart>(i);
+        auto back = expert_part_from_string(expert_part_name(p));
+        REQUIRE(back.has_value());
+        CHECK_EQ(*back, p);
+    }
+    CHECK_EQ(std::string(expert_part_name(ExpertPart::W2Scale)), std::string("w2.scale"));
+    CHECK(!expert_part_from_string("w1").has_value());
+    CHECK(!expert_part_from_string("").has_value());
+}
+
+DEEPMOE_TEST(manifest, align_read_widens_to_sectors) {
+    // The arithmetic every run in the manifest is built from.
+    auto r = align_read(3, 4100, 8);
+    CHECK_EQ(r.file, 3u);
+    CHECK_EQ(r.aligned_off, 4096ull);
+    CHECK_EQ(r.aligned_bytes, 4096ull);
+    CHECK_EQ(r.skew, 4u);
+    CHECK_EQ(r.bytes, 8ull);
+
+    // A payload that straddles a sector boundary costs two sectors.
+    auto s = align_read(0, 4094, 8);
+    CHECK_EQ(s.aligned_off, 0ull);
+    CHECK_EQ(s.aligned_bytes, 8192ull);
+    CHECK_EQ(s.skew, 4094u);
+
+    // An already-aligned payload costs nothing extra.
+    auto t = align_read(0, 8192, 4096);
+    CHECK_EQ(t.aligned_off, 8192ull);
+    CHECK_EQ(t.aligned_bytes, 4096ull);
+    CHECK_EQ(t.skew, 0u);
 }
 
 DEEPMOE_TEST(manifest, dtype_names_round_trip) {

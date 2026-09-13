@@ -163,21 +163,71 @@ Get-NetTCPConnection -State Established | ? { (Get-Process -Id $_.OwningProcess)
 
 应看到 ModelScope CDN 的公网 IP（如 `116.136.x.x`、`47.92.x.x`），而不是 `127.0.0.1`。
 
-下载完成后：
+下载完成后**不要 repack**（design §5.1 v0.5：D: 放不下第二份 510 GB）。只生成地址簿：
 
 ```powershell
-uv run python tools/repack.py --src D:\models\DeepSeek-V4.1-Flash --dst D:\models\deepmoe-v41 --verify
+uv run python tools/manifest.py --src D:\models\DeepSeek-V4.1-Flash
 ```
 
-（`repack.py` 为 P0 产物；`--verify` 用 `model.safetensors.index.json` 与各分片 header 校验大小并写出 `manifest.json`。）
+它读 `model.safetensors.index.json` 与 48 个分片 header，校验大小与 `total_size`，把
+`deepmoe_manifest.json` 写进**同一个目录**（这是 deepMoE 往 checkpoint 目录里写的唯一文件；
+原始分片只读）。实测 **0.9 s**，输出 9.9 MB。常用选项：
+
+| 选项 | 作用 |
+|---|---|
+| `--out PATH` | 换个输出路径（默认 `<src>/deepmoe_manifest.json`） |
+| `--verify` | 另外并行算 48 个分片的 sha256 并记进 manifest（要读 510 GB，几十分钟） |
+| `--workers N` | 并行读 header / 算 hash 的线程数，默认 8 |
+| `--dry-run` | 只扫描与打印 summary，不写文件 |
+| `--indent N` | 输出可读的缩进 JSON（默认紧凑） |
+
+summary 会打印 runs/expert 直方图、对齐后的 run 大小、**`kExpertSlotBytes`**、跨分片的层，
+以及一致性问题列表。`kExpertSlotBytes` 必须与 `model/layout.h` 里的常量相同——
+`Manifest::validate()` 和 `tests/test_model.cpp` 会因为不一致而失败，`manifest.py` 打印的就是要填的值。
 
 ## Python 环境
 
 ```powershell
-uv venv; uv pip install numpy safetensors pyarrow torch --index-url https://download.pytorch.org/whl/cpu
+uv venv
+uv pip install numpy safetensors pyarrow
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+uv pip install ml_dtypes      # 可选：oracle L0 的 FP4 表交叉校验
 ```
 
-torch 只用 CPU 版，供 `tools/oracle.py`。
+torch 只用 CPU 版。注意 **PyTorch 的 wheel index 里没有 `safetensors` / `numpy`**，所以要分两条
+命令：普通包走 PyPI，torch 走 `download.pytorch.org`。开发机 shell 里的
+`HTTP_PROXY` / `HTTPS_PROXY` 对 PyPI 通常是需要的（与 ModelScope 相反），先带着代理试，
+不通再清掉重试。
+
+## Oracle（design §12）
+
+```powershell
+uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l0 --out tests/data
+uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l1 --out tests/data
+```
+
+- `--level l0` 导出 FP4 E2M1 / FP8 E4M3 / UE8M0 三张解码表到 `tests/data/l0_dequant.bin`（2,132 B），
+  `tests/test_dequant.cpp` 逐位比对。
+- `--level l1` 默认跑 `(layer 0, expert 0)` 与 `(layer 39, expert 383)`（用 `--expert L:E` 指定，可重复）：
+  六个 tensor 各读两遍（一遍走 manifest 的 run/skew，一遍走 `safetensors` 库）要求字节一致，
+  再在 torch fp32 里算 expert FFN，把 `x`/`y`/校验和写进 `tests/data/l1_layer{L}_expert{E}.bin`。
+  加 `--report out.json` 可以把数字存下来。
+
+## 测试
+
+```powershell
+ctest --test-dir build --output-on-failure
+```
+
+需要真 checkpoint 的那一条（`suite.integration`）默认**自动跳过**并说明原因。要跑它：
+
+```powershell
+$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'; ctest --test-dir build --output-on-failure
+```
+
+它用真正的 `IoEngine` + IOCP + `ExpertStore` 把 `(0,0)` 和 `(39,383)` 填进槽，
+比对六个 part 的校验和与 `cpu/gemv_fp4_ref` 复算的 FFN 输出（对照 `oracle.py` 的 torch fp32 结果）。
+按标签筛选：`ctest -L needs-model` 只跑它，`ctest -LE needs-model` 完全不跑。
 
 ## BIOS 提示
 

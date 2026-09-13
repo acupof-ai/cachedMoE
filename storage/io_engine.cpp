@@ -30,7 +30,7 @@ std::vector<IoEngine::Chunk> IoEngine::plan_chunks(uint64_t off, uint64_t bytes,
     std::vector<Chunk> out;
     if (bytes == 0 || max_chunk == 0) return out;
     // Round the step down to the alignment so every chunk but the last starts
-    // and ends on a sector boundary. The repacked layout (design §5.1) makes
+    // and ends on a sector boundary. The manifest's runs (design §5.1) make
     // `bytes` itself a 4 KiB multiple, so the last chunk is aligned too.
     uint32_t step = alignment ? static_cast<uint32_t>(align_down(max_chunk, alignment)) : max_chunk;
     if (step == 0) step = alignment ? alignment : max_chunk;
@@ -96,11 +96,22 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& req, IoCallback cb) {
                         std::format("unbuffered read length {} is not {}-aligned", req.bytes, a));
     }
 
+    // design §5.1 (v0.5): the last tensor of a shard ends at the file's byte
+    // length, so the sector-aligned read that covers it asks for up to one
+    // sector past EOF. Only the in-file part has to arrive.
+    const uint64_t size = req.file->size();
+    const uint64_t in_file = (size > req.file_off) ? (size - req.file_off) : 0;
+
     auto p = std::make_shared<Pending>();
     p->req       = req;
     p->cb        = std::move(cb);
     p->chunks    = plan_chunks(req.file_off, req.bytes, cfg_.chunk_bytes, a);
+    p->required_bytes = std::min<uint64_t>(req.bytes, in_file);
     p->queued_at = Clock::now();
+    if (p->required_bytes == 0)
+        return fail(Err::OutOfRange,
+                    std::format("read at {} is entirely past the end of '{}' ({} B)",
+                                req.file_off, req.file->path(), size));
 
     IoRequestId id;
     {
@@ -212,6 +223,10 @@ size_t IoEngine::issue_ready_chunks() {
         cr.file     = p->req.file;
         cr.file_off = ch.off;
         cr.bytes    = ch.bytes;
+        // Only the part of this chunk that lies inside the file has to arrive.
+        const uint64_t fsize = p->req.file->size();
+        cr.min_bytes = static_cast<uint32_t>(
+            std::min<uint64_t>(ch.bytes, fsize > ch.off ? fsize - ch.off : 0));
         cr.dst      = static_cast<std::byte*>(p->req.dst) + (ch.off - p->req.file_off);
 
         auto r = backend_->submit(cr);
@@ -304,8 +319,9 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
     r.bytes_moved = p->bytes_moved;
     r.latency     = Clock::now() - p->queued_at;
     r.status      = p->status;
-    if (!p->failed && p->bytes_moved != p->req.bytes)
-        r.status = Status{Err::Io, std::format("short read: {} of {} bytes", p->bytes_moved, p->req.bytes)};
+    if (!p->failed && p->bytes_moved < p->required_bytes)
+        r.status = Status{Err::Io, std::format("short read: {} of {} bytes (needed {})",
+                                               p->bytes_moved, p->req.bytes, p->required_bytes)};
 
     {
         std::lock_guard lk(stats_mutex_);

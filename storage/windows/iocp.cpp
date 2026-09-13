@@ -39,6 +39,7 @@ struct IocpOp {
     OVERLAPPED ov{};          // must be first: the completion packet points at it
     uint64_t   chunk_id = 0;
     uint32_t   bytes    = 0;
+    uint32_t   min_bytes = 0;   // the part of `bytes` that is inside the file
 };
 
 class IocpBackend final : public Backend {
@@ -75,6 +76,7 @@ public:
         IocpOp* op = acquire_op();
         op->chunk_id = req.chunk_id;
         op->bytes    = req.bytes;
+        op->min_bytes = req.min_bytes ? req.min_bytes : req.bytes;
         op->ov = OVERLAPPED{};
         op->ov.Offset     = static_cast<DWORD>(req.file_off & 0xFFFFFFFFull);
         op->ov.OffsetHigh = static_cast<DWORD>(req.file_off >> 32);
@@ -184,8 +186,12 @@ private:
                 c.status = (e == ERROR_OPERATION_ABORTED)
                              ? Status{Err::Cancelled, "io cancelled", e}
                              : Status{Err::Io, "overlapped read failed", e};
-            } else if (moved != op->bytes) {
-                c.status = Status{Err::Io, std::format("short read: {} of {}", moved, op->bytes)};
+            } else if (moved < op->min_bytes) {
+                // A read that straddles EOF is allowed to come back short by up
+                // to one sector (storage/backend.h ChunkRequest::min_bytes);
+                // anything shorter than that is a real failure.
+                c.status = Status{Err::Io, std::format("short read: {} of {} (need {})",
+                                                       moved, op->bytes, op->min_bytes)};
             }
             const uint32_t expected = op->bytes;
             (void)expected;

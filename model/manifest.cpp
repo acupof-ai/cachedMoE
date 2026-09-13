@@ -33,6 +33,36 @@ const char* quant_to_string(QuantType q) {
     return "unknown";
 }
 
+const char* expert_part_name(ExpertPart p) {
+    switch (p) {
+        case ExpertPart::W1Weight: return "w1.weight";
+        case ExpertPart::W1Scale:  return "w1.scale";
+        case ExpertPart::W2Weight: return "w2.weight";
+        case ExpertPart::W2Scale:  return "w2.scale";
+        case ExpertPart::W3Weight: return "w3.weight";
+        case ExpertPart::W3Scale:  return "w3.scale";
+    }
+    return "?";
+}
+
+std::optional<ExpertPart> expert_part_from_string(std::string_view s) {
+    for (uint8_t i = 0; i < kExpertPartCount; ++i) {
+        const auto p = static_cast<ExpertPart>(i);
+        if (s == expert_part_name(p)) return p;
+    }
+    return std::nullopt;
+}
+
+AlignedRead align_read(uint32_t file, uint64_t off, uint64_t bytes) {
+    AlignedRead r;
+    r.file          = file;
+    r.aligned_off   = align_down(off);
+    r.aligned_bytes = align_up(off + bytes) - r.aligned_off;
+    r.skew          = static_cast<uint32_t>(off - r.aligned_off);
+    r.bytes         = bytes;
+    return r;
+}
+
 uint64_t TensorEntry::elements() const {
     uint64_t n = shape.empty() ? 0 : 1;
     for (uint64_t d : shape) n *= d;
@@ -64,6 +94,7 @@ Result<ScaleEntry> parse_scale(const JsonValue& t) {
     if (!off) return std::unexpected(off.error());
     auto by = n->uint_at("bytes");
     if (!by) return std::unexpected(by.error());
+    s.file   = static_cast<uint32_t>(n->int_or("file", 0));
     s.offset = *off;
     s.bytes  = *by;
     s.dtype  = quant_from_string(n->string_or("dtype", "e8m0"));
@@ -78,12 +109,49 @@ Result<ScaleEntry> parse_scale(const JsonValue& t) {
     return s;
 }
 
+Result<Run> parse_run(const JsonValue& v) {
+    if (!v.is_object()) return fail(Err::Corrupt, "a run is not an object");
+    Run r;
+    r.file = static_cast<uint32_t>(v.int_or("file", 0));
+    auto off = v.uint_at("aligned_off");
+    if (!off) return std::unexpected(off.error());
+    auto by = v.uint_at("aligned_bytes");
+    if (!by) return std::unexpected(by.error());
+    r.aligned_off   = *off;
+    r.aligned_bytes = *by;
+    r.slot_offset   = static_cast<uint64_t>(v.int_or("slot_offset", 0));
+
+    const JsonValue* parts = v.find("parts");
+    if (!parts) return fail(Err::Corrupt, "a run has no 'parts'");
+    auto arr = parts->as_array();
+    if (!arr) return fail(Err::Corrupt, "'parts' is not an array");
+    r.parts.reserve((*arr)->size());
+    for (const JsonValue& pv : **arr) {
+        auto name = pv.string_at("tensor");
+        if (!name) return std::unexpected(name.error());
+        auto part = expert_part_from_string(*name);
+        if (!part) return fail(Err::Corrupt, std::format("unknown expert part '{}'", *name));
+        RunPart p;
+        p.part        = *part;
+        p.skew        = static_cast<uint32_t>(pv.int_or("skew", 0));
+        p.bytes       = static_cast<uint64_t>(pv.int_or("bytes", 0));
+        p.slot_offset = static_cast<uint64_t>(pv.int_or("slot_offset",
+                            static_cast<int64_t>(r.slot_offset + p.skew)));
+        r.parts.push_back(p);
+    }
+    return r;
+}
+
 }  // namespace
 
-const FileEntry* Manifest::file(std::string_view id) const {
-    auto it = std::find_if(files_.begin(), files_.end(),
-                           [&](const FileEntry& f) { return f.id == id; });
-    return it == files_.end() ? nullptr : &*it;
+const FileEntry* Manifest::file(uint32_t index) const {
+    return index < files_.size() ? &files_[index] : nullptr;
+}
+
+std::optional<uint32_t> Manifest::file_index(std::string_view path) const {
+    for (size_t i = 0; i < files_.size(); ++i)
+        if (files_[i].path == path) return static_cast<uint32_t>(i);
+    return std::nullopt;
 }
 
 const TensorEntry* Manifest::tensor(std::string_view name) const {
@@ -96,20 +164,55 @@ Result<const TensorEntry*> Manifest::require_tensor(std::string_view name) const
     return fail(Err::NotFound, std::format("manifest has no tensor '{}'", name));
 }
 
+Result<AlignedRead> Manifest::tensor_read(std::string_view name) const {
+    auto t = require_tensor(name);
+    if (!t) return std::unexpected(t.error());
+    return align_read((*t)->file, (*t)->offset, (*t)->bytes);
+}
+
+Result<AlignedRead> Manifest::tensor_scale_read(std::string_view name) const {
+    auto t = require_tensor(name);
+    if (!t) return std::unexpected(t.error());
+    if (!(*t)->scale.present())
+        return fail(Err::NotFound, std::format("tensor '{}' has no scale plane", name));
+    const ScaleEntry& s = (*t)->scale;
+    return align_read(s.file, s.offset, s.bytes);
+}
+
+uint32_t Manifest::experts_in_layer(uint32_t layer) const {
+    return layer < experts_.size() ? static_cast<uint32_t>(experts_[layer].size()) : 0;
+}
+
+const ExpertEntry* Manifest::expert(ExpertKey key) const {
+    if (key.layer >= experts_.size()) return nullptr;
+    const auto& row = experts_[key.layer];
+    return key.expert < row.size() ? &row[key.expert] : nullptr;
+}
+
+Result<const ExpertEntry*> Manifest::require_expert(ExpertKey key) const {
+    if (const ExpertEntry* e = expert(key)) return e;
+    return fail(Err::OutOfRange,
+                std::format("manifest has no expert ({}, {}); layer holds {} of {} layers",
+                            key.layer, key.expert, experts_in_layer(key.layer), experts_.size()));
+}
+
 const EngramEntry* Manifest::engram_for_layer(uint32_t layer) const {
     auto it = std::find_if(engram_.begin(), engram_.end(),
                            [&](const EngramEntry& e) { return e.layer == layer; });
     return it == engram_.end() ? nullptr : &*it;
 }
 
-Result<uint64_t> Manifest::expert_offset(ExpertKey key) const {
-    if (experts_.stride == 0) return fail(Err::FailedPrecondition, "manifest has no 'experts' section");
-    if (key.layer >= experts_.layers)
-        return fail(Err::OutOfRange, std::format("layer {} >= {}", key.layer, experts_.layers));
-    if (key.expert >= experts_.per_layer)
-        return fail(Err::OutOfRange, std::format("expert {} >= {}", key.expert, experts_.per_layer));
-    return experts_.base
-         + (uint64_t(key.layer) * experts_.per_layer + key.expert) * experts_.stride;
+Result<EngramRowPlan> Manifest::engram_row(uint32_t layer, uint64_t row) const {
+    const EngramEntry* e = engram_for_layer(layer);
+    if (!e) return fail(Err::NotFound, std::format("no engram table for layer {}", layer));
+    if (row >= e->rows)
+        return fail(Err::OutOfRange, std::format("engram row {} >= {}", row, e->rows));
+    EngramRowPlan plan;
+    plan.value = align_read(e->value.file, e->value.offset + row * e->value.row_bytes,
+                            e->value.row_bytes);
+    plan.scale = align_read(e->scale.file, e->scale.offset + row * e->scale.row_bytes,
+                            e->scale.row_bytes);
+    return plan;
 }
 
 Result<Manifest> Manifest::parse(std::string_view json_text) {
@@ -119,37 +222,40 @@ Result<Manifest> Manifest::parse(std::string_view json_text) {
 
     Manifest m;
     m.version_ = static_cast<uint32_t>(doc->int_or("version", 0));
-    if (m.version_ != 1)
-        return fail(Err::Corrupt, std::format("manifest version {} is not supported (expected 1)", m.version_));
-    m.model_ = doc->string_or("model", "");
+    if (m.version_ != 2)
+        return fail(Err::Corrupt,
+                    std::format("manifest version {} is not supported (expected 2; "
+                                "re-run tools/manifest.py)", m.version_));
+    m.model_             = doc->string_or("model", "");
+    m.alignment_         = static_cast<uint32_t>(doc->int_or("alignment", kPageSize));
+    m.expert_slot_bytes_ = static_cast<uint64_t>(doc->int_or("expert_slot_bytes", 0));
 
-    // files
-    if (auto fp = doc->at("files"); fp) {
-        auto obj = (*fp)->as_object();
-        if (!obj) return fail(Err::Corrupt, "'files' is not an object");
-        for (const auto& [id, v] : **obj) {
+    // --- files: an ordered array; the index is the file id used everywhere ---
+    if (const JsonValue* fp = doc->find("files")) {
+        auto arr = fp->as_array();
+        if (!arr) return fail(Err::Corrupt, "'files' is not an array");
+        m.files_.reserve((*arr)->size());
+        for (const JsonValue& v : **arr) {
             FileEntry f;
-            f.id   = id;
-            f.path = v.string_or("path", id);
-            f.bytes = static_cast<uint64_t>(v.int_or("bytes", 0));
-            f.sha256 = v.string_or("sha256", "");
+            f.path       = v.string_or("path", "");
+            f.bytes      = static_cast<uint64_t>(v.int_or("bytes", 0));
+            f.data_start = static_cast<uint64_t>(v.int_or("data_start", 0));
+            f.sha256     = v.string_or("sha256", "");
+            if (f.path.empty()) return fail(Err::Corrupt, "a 'files' entry has no path");
             m.files_.push_back(std::move(f));
         }
-    } else {
-        return fail(Err::Corrupt, "manifest has no 'files' section");
     }
+    if (m.files_.empty()) return fail(Err::Corrupt, "manifest has no 'files' section");
 
-    // tensors
-    if (auto tp = doc->at("tensors"); tp) {
-        auto obj = (*tp)->as_object();
+    // --- tensors ----------------------------------------------------------
+    if (const JsonValue* tp = doc->find("tensors")) {
+        auto obj = tp->as_object();
         if (!obj) return fail(Err::Corrupt, "'tensors' is not an object");
-        m.tensors_.reserve((*obj)->size());
+        m.tensors_.reserve((*obj)->size() * 2);
         for (const auto& [name, v] : **obj) {
             TensorEntry t;
             t.name = name;
-            auto fileid = v.string_at("file");
-            if (!fileid) return fail(Err::Corrupt, std::format("tensor '{}': {}", name, fileid.error().message));
-            t.file = *std::move(fileid);
+            t.file = static_cast<uint32_t>(v.int_or("file", 0));
             auto off = v.uint_at("offset");
             if (!off) return fail(Err::Corrupt, std::format("tensor '{}': {}", name, off.error().message));
             t.offset = *off;
@@ -169,26 +275,65 @@ Result<Manifest> Manifest::parse(std::string_view json_text) {
         return fail(Err::Corrupt, "manifest has no 'tensors' section");
     }
 
-    // experts (arithmetic addressing, design §5.1)
-    if (const JsonValue* e = doc->find("experts")) {
-        m.experts_.file      = e->string_or("file", "experts");
-        m.experts_.stride    = static_cast<uint64_t>(e->int_or("stride", 0));
-        m.experts_.layers    = static_cast<uint32_t>(e->int_or("layers", 0));
-        m.experts_.per_layer = static_cast<uint32_t>(e->int_or("per_layer", 0));
-        m.experts_.base      = static_cast<uint64_t>(e->int_or("base", 0));
+    // --- experts: runs with skews (design §5.1) ---------------------------
+    if (const JsonValue* ep = doc->find("experts")) {
+        auto arr = ep->as_array();
+        if (!arr) return fail(Err::Corrupt, "'experts' is not an array");
+        for (const JsonValue& lv : **arr) {
+            const auto layer = static_cast<uint32_t>(lv.int_or("layer", 0));
+            const JsonValue* ev = lv.find("experts");
+            if (!ev) return fail(Err::Corrupt, std::format("expert layer {} has no 'experts'", layer));
+            auto earr = ev->as_array();
+            if (!earr) return fail(Err::Corrupt, std::format("expert layer {}: not an array", layer));
+            if (m.experts_.size() <= layer) m.experts_.resize(layer + 1);
+            auto& row = m.experts_[layer];
+            row.clear();
+            row.reserve((*earr)->size());
+            for (const JsonValue& xv : **earr) {
+                auto runs = xv.as_array();
+                if (!runs)
+                    return fail(Err::Corrupt,
+                                std::format("expert layer {}: an expert is not a list of runs", layer));
+                ExpertEntry e;
+                e.runs.reserve((*runs)->size());
+                for (const JsonValue& rv : **runs) {
+                    auto r = parse_run(rv);
+                    if (!r) return fail(Err::Corrupt,
+                                        std::format("expert layer {}, expert {}: {}",
+                                                    layer, row.size(), r.error().message));
+                    for (const RunPart& p : r->parts) {
+                        const auto i = static_cast<uint8_t>(p.part);
+                        e.part_offset[i] = p.slot_offset;
+                        e.part_bytes[i]  = p.bytes;
+                    }
+                    e.slot_bytes += r->aligned_bytes;
+                    e.runs.push_back(*std::move(r));
+                }
+                row.push_back(std::move(e));
+            }
+        }
     }
 
-    // engram tables
+    // --- engram tables ----------------------------------------------------
     if (const JsonValue* g = doc->find("engram")) {
         auto arr = g->as_array();
         if (!arr) return fail(Err::Corrupt, "'engram' is not an array");
+        auto plane = [](const JsonValue* v) {
+            EngramPlane p;
+            if (!v) return p;
+            p.file      = static_cast<uint32_t>(v->int_or("file", 0));
+            p.offset    = static_cast<uint64_t>(v->int_or("offset", 0));
+            p.bytes     = static_cast<uint64_t>(v->int_or("bytes", 0));
+            p.row_bytes = static_cast<uint32_t>(v->int_or("row_bytes", 0));
+            p.dtype     = quant_from_string(v->string_or("dtype", "unknown"));
+            return p;
+        };
         for (const JsonValue& v : **arr) {
             EngramEntry e;
-            e.layer     = static_cast<uint32_t>(v.int_or("layer", 0));
-            e.file      = v.string_or("file", "");
-            e.rows      = static_cast<uint64_t>(v.int_or("rows", 0));
-            e.row_bytes = static_cast<uint32_t>(v.int_or("row_bytes", layout::kEngramRowBytes));
-            e.base      = static_cast<uint64_t>(v.int_or("base", 0));
+            e.layer = static_cast<uint32_t>(v.int_or("layer", 0));
+            e.rows  = static_cast<uint64_t>(v.int_or("rows", 0));
+            e.value = plane(v.find("value"));
+            e.scale = plane(v.find("scale"));
             m.engram_.push_back(std::move(e));
         }
     }
@@ -199,7 +344,7 @@ Result<Manifest> Manifest::load(const std::string& path) {
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return fail(Err::Io, std::format("cannot open '{}'", path));
     std::string buf;
-    char chunk[65536];
+    char chunk[1 << 20];
     size_t n;
     while ((n = std::fread(chunk, 1, sizeof chunk, f)) > 0) buf.append(chunk, n);
     bool bad = std::ferror(f) != 0;
@@ -212,46 +357,134 @@ Result<Manifest> Manifest::load(const std::string& path) {
 
 Result<void> Manifest::validate() const {
     std::string bad;
-    auto file_bytes = [&](std::string_view id) -> uint64_t {
-        const FileEntry* f = file(id);
-        return f ? f->bytes : 0;
+    const uint64_t align = alignment_ ? alignment_ : kPageSize;
+    if (align != kPageSize)
+        bad += std::format("  alignment {} != the 4 KiB the I/O layer requires\n", align);
+
+    // A payload must lie wholly inside its shard.
+    auto check_range = [&](const char* what, uint32_t fi, uint64_t off, uint64_t bytes) {
+        const FileEntry* f = file(fi);
+        if (!f) {
+            bad += std::format("  {} references file index {} but only {} are listed\n",
+                               what, fi, files_.size());
+            return;
+        }
+        if (f->bytes && off + bytes > f->bytes)
+            bad += std::format("  {} runs past the end of '{}' ({} + {} > {})\n",
+                               what, f->path, off, bytes, f->bytes);
     };
+
+    // A sector-widened *read*, by contrast, is allowed to overshoot EOF by less
+    // than one sector: the last tensor of a shard ends at the file's byte
+    // length, which is never a multiple of 4096. Windows serves the valid bytes
+    // and reports a short read; storage/backend.h ChunkRequest::min_bytes is how
+    // the I/O layer is told that is legal. What must not happen is a read that
+    // starts past EOF, or one that overshoots by a whole sector or more.
+    auto check_read = [&](const std::string& what, uint32_t fi,
+                          uint64_t aligned_off, uint64_t aligned_bytes) {
+        const FileEntry* f = file(fi);
+        if (!f) {
+            bad += std::format("  {} references file index {} but only {} are listed\n",
+                               what, fi, files_.size());
+            return;
+        }
+        if (!f->bytes) return;
+        if (aligned_off >= f->bytes) {
+            bad += std::format("  {} starts at {}, past the end of '{}' ({} B)\n",
+                               what, aligned_off, f->path, f->bytes);
+        } else if (aligned_off + aligned_bytes > align_up(f->bytes)) {
+            bad += std::format("  {} overshoots '{}' by a whole sector ({} + {} vs {})\n",
+                               what, f->path, aligned_off, aligned_bytes, f->bytes);
+        }
+    };
+
     for (const auto& [name, t] : tensors_) {
-        const FileEntry* f = file(t.file);
-        if (!f) { bad += std::format("  tensor '{}' references unknown file '{}'\n", name, t.file); continue; }
-        if (f->bytes && t.offset + t.bytes > f->bytes)
-            bad += std::format("  tensor '{}' runs past the end of '{}'\n", name, t.file);
-        if (t.scale.present() && f->bytes && t.scale.offset + t.scale.bytes > f->bytes)
-            bad += std::format("  tensor '{}' scale runs past the end of '{}'\n", name, t.file);
+        check_range(name.c_str(), t.file, t.offset, t.bytes);
         if (t.dtype == QuantType::Unknown)
             bad += std::format("  tensor '{}' has an unknown dtype\n", name);
-        if (!is_aligned(t.offset))
-            bad += std::format("  tensor '{}' offset {} is not 4 KiB aligned\n", name, t.offset);
+        if (t.scale.present())
+            check_range(name.c_str(), t.scale.file, t.scale.offset, t.scale.bytes);
+        // Offsets are deliberately NOT 4 KiB aligned here: the shards are
+        // whatever safetensors wrote. What must hold is that widening the read
+        // to sector boundaries still lands inside the file.
+        const AlignedRead r = align_read(t.file, t.offset, t.bytes);
+        const FileEntry* f = file(t.file);
+        if (f && f->bytes && r.aligned_off + r.aligned_bytes > align_up(f->bytes))
+            bad += std::format("  tensor '{}' cannot be read sector-aligned inside '{}'\n",
+                               name, f->path);
     }
-    if (experts_.stride) {
-        if (experts_.stride != layout::kExpertBytes)
-            bad += std::format("  experts.stride {} != layout::kExpertBytes {}\n",
-                               experts_.stride, layout::kExpertBytes);
-        if (!file(experts_.file))
-            bad += std::format("  experts.file '{}' is not in 'files'\n", experts_.file);
-        else {
-            uint64_t need = experts_.base
-                          + uint64_t(experts_.layers) * experts_.per_layer * experts_.stride;
-            uint64_t have = file_bytes(experts_.file);
-            if (have && need > have)
-                bad += std::format("  experts region needs {} B but '{}' is {} B\n",
-                                   need, experts_.file, have);
+
+    if (expert_slot_bytes_ == 0 && !experts_.empty())
+        bad += "  'expert_slot_bytes' is missing\n";
+    if (expert_slot_bytes_ && expert_slot_bytes_ % kPageSize != 0)
+        bad += std::format("  expert_slot_bytes {} is not a 4 KiB multiple\n", expert_slot_bytes_);
+    if (expert_slot_bytes_ && expert_slot_bytes_ != layout::kExpertSlotBytes)
+        bad += std::format("  expert_slot_bytes {} != layout::kExpertSlotBytes {}; "
+                           "update model/layout.h from tools/manifest.py's summary\n",
+                           expert_slot_bytes_, layout::kExpertSlotBytes);
+
+    for (uint32_t layer = 0; layer < experts_.size(); ++layer) {
+        for (uint32_t id = 0; id < experts_[layer].size(); ++id) {
+            const ExpertEntry& e = experts_[layer][id];
+            const std::string what = std::format("expert ({}, {})", layer, id);
+            if (e.runs.empty()) { bad += std::format("  {} has no runs\n", what); continue; }
+            if (e.runs.size() > layout::kMaxExpertRuns)
+                bad += std::format("  {} has {} runs, more than kMaxExpertRuns {}\n",
+                                   what, e.runs.size(), layout::kMaxExpertRuns);
+            if (e.slot_bytes > expert_slot_bytes_)
+                bad += std::format("  {} needs {} B but a slot is {} B\n",
+                                   what, e.slot_bytes, expert_slot_bytes_);
+            uint64_t cursor = 0, payload = 0;
+            for (const Run& r : e.runs) {
+                if (!is_aligned(r.aligned_off) || !is_aligned(r.aligned_bytes))
+                    bad += std::format("  {} has a run that is not 4 KiB aligned ({} + {})\n",
+                                       what, r.aligned_off, r.aligned_bytes);
+                if (r.slot_offset != cursor)
+                    bad += std::format("  {} run slot_offset {} != the running total {}\n",
+                                       what, r.slot_offset, cursor);
+                if (!is_aligned(r.slot_offset))
+                    bad += std::format("  {} run slot_offset {} is not 4 KiB aligned\n",
+                                       what, r.slot_offset);
+                check_read(what, r.file, r.aligned_off, r.aligned_bytes);
+                for (const RunPart& p : r.parts) {
+                    // The payload itself always lies inside the shard; only the
+                    // sector padding at the tail may spill past EOF.
+                    check_range(what.c_str(), r.file, r.aligned_off + p.skew, p.bytes);
+                    if (p.skew + p.bytes > r.aligned_bytes)
+                        bad += std::format("  {} part '{}' spills out of its run\n",
+                                           what, expert_part_name(p.part));
+                    if (p.slot_offset != r.slot_offset + p.skew)
+                        bad += std::format("  {} part '{}' slot_offset {} != run {} + skew {}\n",
+                                           what, expert_part_name(p.part), p.slot_offset,
+                                           r.slot_offset, p.skew);
+                    payload += p.bytes;
+                }
+                cursor += r.aligned_bytes;
+            }
+            if (cursor != e.slot_bytes)
+                bad += std::format("  {} slot_bytes {} != the sum of its runs {}\n",
+                                   what, e.slot_bytes, cursor);
+            if (payload != layout::kExpertBytes)
+                bad += std::format("  {} payload {} B != layout::kExpertBytes {}\n",
+                                   what, payload, layout::kExpertBytes);
+            for (uint8_t p = 0; p < kExpertPartCount; ++p)
+                if (e.part_bytes[p] == 0)
+                    bad += std::format("  {} is missing part '{}'\n",
+                                       what, expert_part_name(static_cast<ExpertPart>(p)));
         }
     }
+
     for (const EngramEntry& e : engram_) {
-        if (!file(e.file)) { bad += std::format("  engram layer {} references unknown file '{}'\n", e.layer, e.file); continue; }
-        if (e.row_bytes != layout::kEngramRowBytes)
-            bad += std::format("  engram layer {} row_bytes {} != {}\n", e.layer, e.row_bytes, layout::kEngramRowBytes);
-        uint64_t need = e.base + e.rows * e.row_bytes;
-        uint64_t have = file_bytes(e.file);
-        if (have && need > have)
-            bad += std::format("  engram layer {} needs {} B but '{}' is {} B\n", e.layer, need, e.file, have);
+        if (e.value.row_bytes != layout::kEngramValueRowBytes)
+            bad += std::format("  engram layer {} value row is {} B, expected {}\n",
+                               e.layer, e.value.row_bytes, layout::kEngramValueRowBytes);
+        if (e.scale.row_bytes != layout::kEngramScaleRowBytes)
+            bad += std::format("  engram layer {} scale row is {} B, expected {}\n",
+                               e.layer, e.scale.row_bytes, layout::kEngramScaleRowBytes);
+        check_range("engram values", e.value.file, e.value.offset, e.rows * e.value.row_bytes);
+        check_range("engram scales", e.scale.file, e.scale.offset, e.rows * e.scale.row_bytes);
     }
+
     if (!bad.empty()) return fail(Err::Corrupt, "manifest is inconsistent:\n" + bad);
     return {};
 }
@@ -259,8 +492,15 @@ Result<void> Manifest::validate() const {
 uint64_t Manifest::total_bytes() const {
     uint64_t n = 0;
     for (const auto& [name, t] : tensors_) n += t.bytes + t.scale.bytes;
-    n += uint64_t(experts_.layers) * experts_.per_layer * experts_.stride;
-    for (const EngramEntry& e : engram_) n += e.rows * e.row_bytes;
+    for (const auto& row : experts_)
+        for (const ExpertEntry& e : row)
+            for (uint8_t p = 0; p < kExpertPartCount; ++p) n += e.part_bytes[p];
+    return n;
+}
+
+uint64_t Manifest::file_bytes() const {
+    uint64_t n = 0;
+    for (const FileEntry& f : files_) n += f.bytes;
     return n;
 }
 

@@ -32,8 +32,10 @@
 #include "core/config.h"
 #include "core/status.h"
 #include "core/types.h"
+#include "model/manifest.h"
 #include "storage/io_engine.h"
 #include "store/expert_store.h"
+#include "store/shard_set.h"
 
 namespace deepmoe::store {
 
@@ -51,8 +53,8 @@ struct LayerPlan {
     uint32_t layer = 0;
     std::vector<ExpertKey> hits;
     std::vector<ExpertKey> misses;
-    std::vector<storage::IoRequestId> issued;   // P0 requests now in flight
-    uint64_t miss_bytes = 0;
+    std::vector<storage::IoRequestId> issued;   // P0 requests now in flight, one per run
+    uint64_t miss_bytes = 0;                    // aligned bytes actually read
 };
 
 struct PlannerStats {
@@ -95,10 +97,12 @@ public:
     Planner(const Planner&) = delete;
     Planner& operator=(const Planner&) = delete;
 
-    // `experts_file` is the opened experts.bin; the Planner computes offsets
-    // arithmetically from model/layout.h (design §5.1).
+    // `manifest` is the address book over the original safetensors shards and
+    // `shards` the matching open files; the Planner turns one expert into one
+    // IoRequest per run (design §5.1 v0.5). Both are borrowed and must outlive
+    // the Planner.
     Result<void> init(ExpertStore& store, storage::IoEngine& io,
-                      const storage::File& experts_file,
+                      const Manifest& manifest, const ShardSet& shards,
                       const CacheConfig& cache, const PrefetchConfig& prefetch,
                       Profiler* profiler = nullptr);
 
@@ -112,13 +116,21 @@ public:
     uint32_t reclaim(size_t count);
 
     // Fetches one expert at the given priority. Used by plan_layer for P0, by
-    // the predictor for P1 and by the idle backfill for P3.
-    Result<storage::IoRequestId> fetch(ExpertKey key, IoPriority priority,
-                                       TokenIndex token, uint32_t deadline_layer,
-                                       std::function<void(bool)> on_done = {});
+    // the predictor for P1 and by the idle backfill for P3. One expert is one
+    // IoRequest per manifest run, so the id list has as many entries as the
+    // expert has runs (two, in the shipped checkpoint). `on_done` fires exactly
+    // once, when the last run has landed and the slot has settled.
+    struct Fetch {
+        uint32_t                     slot = 0;
+        std::vector<storage::IoRequestId> ids;
+        uint64_t                     bytes = 0;   // aligned bytes submitted
+    };
+    Result<Fetch> fetch(ExpertKey key, IoPriority priority,
+                        TokenIndex token, uint32_t deadline_layer,
+                        std::function<void(bool)> on_done = {});
 
     // Marks a key as pinned once it is resident; pinned slots never evict
-    // (design §9.3: hot.bin, mtp.bin and embed live here).
+    // (design §9.3: the attention, shared-expert, mtp and embed set lives here).
     Result<void> pin(ExpertKey key);
 
     // --- lookahead (design §9.4) ------------------------------------------
@@ -137,7 +149,8 @@ public:
 private:
     ExpertStore*       store_ = nullptr;
     storage::IoEngine* io_    = nullptr;
-    const storage::File* experts_ = nullptr;
+    const Manifest*    manifest_ = nullptr;
+    const ShardSet*    shards_   = nullptr;
     Profiler*          profiler_ = nullptr;
     CacheConfig        cache_{};
     PrefetchConfig     prefetch_{};

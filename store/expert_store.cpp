@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 
+#include "core/align.h"
 #include "core/log.h"
 
 namespace deepmoe::store {
@@ -10,9 +11,11 @@ namespace deepmoe::store {
 std::string ExpertStoreStats::to_string() const {
     return std::format(
         "expert store: {} slots ({} resident, {} filling, {} free, {} pinned)  "
-        "lookups {} hits {} ({:.3f})  fills {}/{} ok  evictions {} (+{} guard-blocked)",
+        "lookups {} hits {} ({:.3f})  fills {}/{} ok  runs {}/{}  "
+        "evictions {} (+{} guard-blocked)",
         resident + filling + free, resident, filling, free, pinned,
-        lookups, hits, hit_rate(), fills_ok, fills_started, evictions, eviction_blocked_by_guard);
+        lookups, hits, hit_rate(), fills_ok, fills_started, runs_done, runs_started,
+        evictions, eviction_blocked_by_guard);
 }
 
 Result<void> ExpertStore::init(std::unique_ptr<SlabBacking> backing,
@@ -23,7 +26,7 @@ Result<void> ExpertStore::init(std::unique_ptr<SlabBacking> backing,
 
     SlabConfig sc;
     sc.slots_per_slab = cache.slots_per_slab;
-    sc.slot_bytes     = layout::kExpertBytes;
+    sc.slot_bytes     = layout::kExpertSlotBytes;
     sc.budget_bytes   = cache.budget_bytes;
     if (auto r = pool_.init(std::move(backing), sc); !r) return r;
 
@@ -51,27 +54,33 @@ Result<void> ExpertStore::init(std::unique_ptr<SlabBacking> backing,
     }
     index_.clear();
     index_.reserve(n * 2);
-    table_.assign(static_cast<size_t>(layers_) * experts_per_layer_, kNoDeviceAddress);
+    table_.assign(static_cast<size_t>(layers_) * experts_per_layer_ * kExpertPartCount,
+                  kNoDeviceAddress);
     stats_ = ExpertStoreStats{};
     stats_.free = n;
 
-    log_info("expert store: {} slots x {} ({:.2f} GiB) on '{}', table {} entries",
+    log_info("expert store: {} slots x {} ({:.2f} GiB) on '{}', table {} entries ({} per expert)",
              n, pool_.slot_bytes(), pool_.bytes() / 1073741824.0, pool_.backing_name(),
-             table_.size());
+             table_.size(), kExpertPartCount);
     return {};
 }
 
 void ExpertStore::publish_locked(uint32_t slot) {
-    ExpertSlot& s = slots_[slot];
+    const ExpertSlot& s = slots_[slot];
     // A host-only backing has no device address; publish the host pointer so
     // the table is exercised identically by tests and the CPU oracle.
-    const uint64_t addr = s.dev_addr ? s.dev_addr
+    const uint64_t base = s.dev_addr ? s.dev_addr
                                      : reinterpret_cast<uint64_t>(s.host_ptr);
-    table_[table_index(s.key)] = addr;
+    for (uint8_t p = 0; p < kExpertPartCount; ++p) {
+        table_[table_index(s.key, static_cast<ExpertPart>(p))] =
+            base ? base + s.part_offset[p] : kNoDeviceAddress;
+    }
 }
 
 void ExpertStore::unpublish_locked(uint32_t slot) {
-    table_[table_index(slots_[slot].key)] = kNoDeviceAddress;
+    const ExpertSlot& s = slots_[slot];
+    for (uint8_t p = 0; p < kExpertPartCount; ++p)
+        table_[table_index(s.key, static_cast<ExpertPart>(p))] = kNoDeviceAddress;
 }
 
 std::optional<SlotAddress> ExpertStore::lookup(ExpertKey key, TokenIndex token) {
@@ -94,8 +103,7 @@ bool ExpertStore::resident(ExpertKey key) const {
     return it != index_.end() && slots_[it->second].state == SlotState::Resident;
 }
 
-Result<ExpertStore::Reservation> ExpertStore::begin_fill(ExpertKey key, Tier tier) {
-    std::lock_guard lk(mutex_);
+Result<ExpertStore::Reservation> ExpertStore::reserve_locked(ExpertKey key, Tier tier) {
     if (!key_in_range(key))
         return fail(Err::OutOfRange, std::format("expert ({}, {}) is outside the table",
                                                  key.layer, key.expert));
@@ -115,21 +123,102 @@ Result<ExpertStore::Reservation> ExpertStore::begin_fill(ExpertKey key, Tier tie
     s.state = SlotState::Filling;
     s.tier  = tier;
     s.guard_timeline = 0;
+    s.runs_done  = 0;
+    s.run_failed = false;
     index_.emplace(key, slot);
 
     --stats_.free;
     ++stats_.filling;
     ++stats_.fills_started;
-    return Reservation{slot, SlotAddress{s.host_ptr, s.dev_addr}};
+
+    Reservation r;
+    r.slot = slot;
+    r.addr = SlotAddress{s.host_ptr, s.dev_addr};
+    return r;
 }
 
-Result<void> ExpertStore::finish_fill(uint32_t slot, bool ok, TokenIndex token) {
+Result<ExpertStore::Reservation> ExpertStore::begin_fill(ExpertKey key, const ExpertEntry& entry,
+                                                         Tier tier) {
+    if (entry.runs.empty())
+        return fail(Err::InvalidArgument,
+                    std::format("expert ({}, {}) has no runs in the manifest",
+                                key.layer, key.expert));
+    if (entry.runs.size() > layout::kMaxExpertRuns)
+        return fail(Err::InvalidArgument,
+                    std::format("expert ({}, {}) has {} runs, more than kMaxExpertRuns {}",
+                                key.layer, key.expert, entry.runs.size(), layout::kMaxExpertRuns));
+    if (entry.slot_bytes > pool_.slot_bytes())
+        return fail(Err::InvalidArgument,
+                    std::format("expert ({}, {}) needs {} B but a slot is {} B",
+                                key.layer, key.expert, entry.slot_bytes, pool_.slot_bytes()));
+
     std::lock_guard lk(mutex_);
-    if (slot >= slots_.size()) return fail(Err::OutOfRange, std::format("slot {} out of range", slot));
+    auto res = reserve_locked(key, tier);
+    if (!res) return res;
+
+    ExpertSlot& s = slots_[res->slot];
+    s.runs_total = static_cast<uint32_t>(entry.runs.size());
+    for (uint8_t p = 0; p < kExpertPartCount; ++p) {
+        s.part_offset[p] = entry.part_offset[p];
+        s.part_bytes[p]  = entry.part_bytes[p];
+    }
+
+    res->run_count = s.runs_total;
+    for (size_t i = 0; i < entry.runs.size(); ++i) {
+        const Run& run = entry.runs[i];
+        FillRun& f = res->runs[i];
+        f.file     = run.file;
+        f.file_off = run.aligned_off;
+        f.bytes    = run.aligned_bytes;
+        f.dst      = s.host_ptr ? static_cast<std::byte*>(s.host_ptr) + run.slot_offset : nullptr;
+        f.dev_dst  = s.dev_addr ? s.dev_addr + run.slot_offset : kNoDeviceAddress;
+    }
+    stats_.runs_started += s.runs_total;
+    return res;
+}
+
+Result<ExpertStore::Reservation> ExpertStore::begin_fill(ExpertKey key, Tier tier) {
+    std::lock_guard lk(mutex_);
+    auto res = reserve_locked(key, tier);
+    if (!res) return res;
+
+    ExpertSlot& s = slots_[res->slot];
+    s.runs_total = 1;
+    // Planar synthetic layout: w1 | w1.scale | w2 | w2.scale | w3 | w3.scale.
+    uint64_t off = 0;
+    for (uint8_t p = 0; p < kExpertPartCount; ++p) {
+        const bool is_scale = (p & 1) != 0;
+        s.part_offset[p] = off;
+        s.part_bytes[p]  = is_scale ? layout::kExpertScaleBytesPerMat
+                                    : layout::kExpertWeightBytesPerMat;
+        off += s.part_bytes[p];
+    }
+    res->run_count   = 1;
+    res->runs[0].file     = 0;
+    res->runs[0].file_off = 0;
+    res->runs[0].bytes    = pool_.slot_bytes();
+    res->runs[0].dst      = s.host_ptr;
+    res->runs[0].dev_dst  = s.dev_addr;
+    ++stats_.runs_started;
+    return res;
+}
+
+void ExpertStore::release_locked(uint32_t slot) {
     ExpertSlot& s = slots_[slot];
-    if (s.state != SlotState::Filling)
-        return fail(Err::FailedPrecondition,
-                    std::format("slot {} is {}, not filling", slot, slot_state_name(s.state)));
+    index_.erase(s.key);
+    s.key   = ExpertKey{};
+    s.state = SlotState::Free;
+    s.heat  = 0.0f;
+    s.guard_timeline = 0;
+    s.runs_total = s.runs_done = 0;
+    s.run_failed = false;
+    for (uint8_t p = 0; p < kExpertPartCount; ++p) { s.part_offset[p] = 0; s.part_bytes[p] = 0; }
+    free_list_.push_back(slot);
+    ++stats_.free;
+}
+
+void ExpertStore::settle_locked(uint32_t slot, bool ok, TokenIndex token) {
+    ExpertSlot& s = slots_[slot];
     --stats_.filling;
     if (ok) {
         s.state = SlotState::Resident;
@@ -139,14 +228,39 @@ Result<void> ExpertStore::finish_fill(uint32_t slot, bool ok, TokenIndex token) 
         ++stats_.fills_ok;
         if (s.tier == Tier::Pinned) ++stats_.pinned;
     } else {
-        index_.erase(s.key);
-        s.key = ExpertKey{};
-        s.state = SlotState::Free;
-        s.heat = 0.0f;
-        free_list_.push_back(slot);
-        ++stats_.free;
+        release_locked(slot);
         ++stats_.fills_failed;
     }
+}
+
+Result<bool> ExpertStore::finish_run(uint32_t slot, bool ok, TokenIndex token) {
+    std::lock_guard lk(mutex_);
+    if (slot >= slots_.size()) return fail(Err::OutOfRange, std::format("slot {} out of range", slot));
+    ExpertSlot& s = slots_[slot];
+    if (s.state != SlotState::Filling)
+        return fail(Err::FailedPrecondition,
+                    std::format("slot {} is {}, not filling", slot, slot_state_name(s.state)));
+    if (s.runs_done >= s.runs_total)
+        return fail(Err::FailedPrecondition,
+                    std::format("slot {} already has all {} runs reported", slot, s.runs_total));
+    ++s.runs_done;
+    ++stats_.runs_done;
+    if (!ok) s.run_failed = true;
+    if (s.runs_done < s.runs_total) return false;
+    settle_locked(slot, !s.run_failed, token);
+    return true;
+}
+
+Result<void> ExpertStore::finish_fill(uint32_t slot, bool ok, TokenIndex token) {
+    std::lock_guard lk(mutex_);
+    if (slot >= slots_.size()) return fail(Err::OutOfRange, std::format("slot {} out of range", slot));
+    ExpertSlot& s = slots_[slot];
+    if (s.state != SlotState::Filling)
+        return fail(Err::FailedPrecondition,
+                    std::format("slot {} is {}, not filling", slot, slot_state_name(s.state)));
+    stats_.runs_done += s.runs_total - s.runs_done;
+    s.runs_done = s.runs_total;
+    settle_locked(slot, ok && !s.run_failed, token);
     return {};
 }
 
@@ -168,14 +282,8 @@ Result<void> ExpertStore::evict(uint32_t slot) {
                                 slot, s.guard_timeline, completed_timeline_));
     }
     unpublish_locked(slot);
-    index_.erase(s.key);
-    s.key   = ExpertKey{};
-    s.state = SlotState::Free;
-    s.heat  = 0.0f;
-    s.guard_timeline = 0;
-    free_list_.push_back(slot);
+    release_locked(slot);
     --stats_.resident;
-    ++stats_.free;
     ++stats_.evictions;
     return {};
 }
@@ -247,12 +355,12 @@ uint32_t ExpertStore::free_slots() const {
     return static_cast<uint32_t>(free_list_.size());
 }
 
-Result<uint64_t> ExpertStore::table_entry(ExpertKey key) const {
+Result<uint64_t> ExpertStore::table_entry(ExpertKey key, ExpertPart part) const {
     std::lock_guard lk(mutex_);
     if (!key_in_range(key))
         return fail(Err::OutOfRange, std::format("expert ({}, {}) is outside the table",
                                                  key.layer, key.expert));
-    return table_[table_index(key)];
+    return table_[table_index(key, part)];
 }
 
 ExpertStoreStats ExpertStore::stats() const {

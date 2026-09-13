@@ -1,0 +1,1072 @@
+{
+ "version": 2,
+ "model": "DeepSeek-V4.1-Flash",
+ "generator": "tools/manifest.py (sliced fixture for tests/test_model.cpp)",
+ "alignment": 4096,
+ "expert_slot_bytes": 18808832,
+ "expert_parts": [
+  "w1.weight",
+  "w1.scale",
+  "w2.weight",
+  "w2.scale",
+  "w3.weight",
+  "w3.scale"
+ ],
+ "files": [
+  {
+   "path": "model-00001-of-00048.safetensors",
+   "bytes": 970533624,
+   "data_start": 27384,
+   "sha256": ""
+  },
+  {
+   "path": "model-00002-of-00048.safetensors",
+   "bytes": 1323858272,
+   "data_start": 352,
+   "sha256": ""
+  },
+  {
+   "path": "model-00003-of-00048.safetensors",
+   "bytes": 7389759032,
+   "data_start": 258144,
+   "sha256": ""
+  },
+  {
+   "path": "model-00004-of-00048.safetensors",
+   "bytes": 7389759032,
+   "data_start": 258144,
+   "sha256": ""
+  },
+  {
+   "path": "model-00005-of-00048.safetensors",
+   "bytes": 7405953784,
+   "data_start": 259104,
+   "sha256": ""
+  },
+  {
+   "path": "model-00006-of-00048.safetensors",
+   "bytes": 7389759032,
+   "data_start": 258144,
+   "sha256": ""
+  },
+  {
+   "path": "model-00007-of-00048.safetensors",
+   "bytes": 7389759032,
+   "data_start": 258144,
+   "sha256": ""
+  },
+  {
+   "path": "model-00008-of-00048.safetensors",
+   "bytes": 7389759032,
+   "data_start": 258144,
+   "sha256": ""
+  },
+  {
+   "path": "model-00009-of-00048.safetensors",
+   "bytes": 7389759032,
+   "data_start": 258144,
+   "sha256": ""
+  },
+  {
+   "path": "model-00010-of-00048.safetensors",
+   "bytes": 7389759032,
+   "data_start": 258144,
+   "sha256": ""
+  },
+  {
+   "path": "model-00011-of-00048.safetensors",
+   "bytes": 7405953784,
+   "data_start": 259104,
+   "sha256": ""
+  },
+  {
+   "path": "model-00012-of-00048.safetensors",
+   "bytes": 7389759032,
+   "data_start": 258144,
+   "sha256": ""
+  },
+  {
+   "path": "model-00013-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00014-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00015-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00016-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00017-of-00048.safetensors",
+   "bytes": 7405956128,
+   "data_start": 261448,
+   "sha256": ""
+  },
+  {
+   "path": "model-00018-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00019-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00020-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00021-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00022-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00023-of-00048.safetensors",
+   "bytes": 7400713088,
+   "data_start": 261288,
+   "sha256": ""
+  },
+  {
+   "path": "model-00024-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00025-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00026-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00027-of-00048.safetensors",
+   "bytes": 7395337384,
+   "data_start": 260816,
+   "sha256": ""
+  },
+  {
+   "path": "model-00028-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00029-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00030-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00031-of-00048.safetensors",
+   "bytes": 7395337384,
+   "data_start": 260816,
+   "sha256": ""
+  },
+  {
+   "path": "model-00032-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00033-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00034-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00035-of-00048.safetensors",
+   "bytes": 7395337384,
+   "data_start": 260816,
+   "sha256": ""
+  },
+  {
+   "path": "model-00036-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00037-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00038-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00039-of-00048.safetensors",
+   "bytes": 7395337384,
+   "data_start": 260816,
+   "sha256": ""
+  },
+  {
+   "path": "model-00040-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00041-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00042-of-00048.safetensors",
+   "bytes": 7389761368,
+   "data_start": 260480,
+   "sha256": ""
+  },
+  {
+   "path": "model-00043-of-00048.safetensors",
+   "bytes": 1323837624,
+   "data_start": 184,
+   "sha256": ""
+  },
+  {
+   "path": "model-00044-of-00048.safetensors",
+   "bytes": 2652728736,
+   "data_start": 84936,
+   "sha256": ""
+  },
+  {
+   "path": "model-00045-of-00048.safetensors",
+   "bytes": 2573998176,
+   "data_start": 84616,
+   "sha256": ""
+  },
+  {
+   "path": "model-00046-of-00048.safetensors",
+   "bytes": 2706402896,
+   "data_start": 85624,
+   "sha256": ""
+  },
+  {
+   "path": "model-00047-of-00048.safetensors",
+   "bytes": 101535150936,
+   "data_start": 664,
+   "sha256": ""
+  },
+  {
+   "path": "model-00048-of-00048.safetensors",
+   "bytes": 101537926640,
+   "data_start": 672,
+   "sha256": ""
+  }
+ ],
+ "tensors": {
+  "layers.5.attn.wq_a.weight": {
+   "file": 7,
+   "offset": 511100472,
+   "bytes": 6553600,
+   "dtype": "fp8_e4m3",
+   "shape": [
+    1280,
+    5120
+   ],
+   "scale": {
+    "file": 7,
+    "offset": 8226360,
+    "bytes": 6400,
+    "dtype": "e8m0",
+    "shape": [
+     40,
+     160
+    ],
+    "block": [
+     32,
+     32
+    ]
+   }
+  },
+  "layers.5.attn.wq_b.weight": {
+   "file": 7,
+   "offset": 517654072,
+   "bytes": 41943040,
+   "dtype": "fp8_e4m3",
+   "shape": [
+    32768,
+    1280
+   ],
+   "scale": {
+    "file": 7,
+    "offset": 8232760,
+    "bytes": 40960,
+    "dtype": "e8m0",
+    "shape": [
+     1024,
+     40
+    ],
+    "block": [
+     32,
+     32
+    ]
+   }
+  },
+  "layers.5.ffn.gate.weight": {
+   "file": 7,
+   "offset": 4207672,
+   "bytes": 3932160,
+   "dtype": "bf16",
+   "shape": [
+    384,
+    5120
+   ]
+  },
+  "layers.5.ffn.gate.bias": {
+   "file": 7,
+   "offset": 258400,
+   "bytes": 1536,
+   "dtype": "f32",
+   "shape": [
+    384
+   ]
+  },
+  "layers.0.hc_attn_fn": {
+   "file": 2,
+   "offset": 261568,
+   "bytes": 1966080,
+   "dtype": "f32",
+   "shape": [
+    24,
+    20480
+   ]
+  },
+  "layers.0.ffn.shared_experts.w1.weight": {
+   "file": 2,
+   "offset": 559597112,
+   "bytes": 11796480,
+   "dtype": "fp8_e4m3",
+   "shape": [
+    2304,
+    5120
+   ],
+   "scale": {
+    "file": 2,
+    "offset": 432947000,
+    "bytes": 11520,
+    "dtype": "e8m0",
+    "shape": [
+     72,
+     160
+    ],
+    "block": [
+     32,
+     32
+    ]
+   }
+  },
+  "embed.weight": {
+   "file": 1,
+   "offset": 352,
+   "bytes": 1323827200,
+   "dtype": "bf16",
+   "shape": [
+    129280,
+    5120
+   ]
+  },
+  "head.weight": {
+   "file": 42,
+   "offset": 184,
+   "bytes": 1323827200,
+   "dtype": "bf16",
+   "shape": [
+    129280,
+    5120
+   ]
+  },
+  "layers.1.engram.embed.weight": {
+   "file": 46,
+   "offset": 664,
+   "bytes": 98305579008,
+   "dtype": "fp8_e4m3",
+   "shape": [
+    384006168,
+    256
+   ],
+   "scale": {
+    "file": 46,
+    "offset": 98305579672,
+    "bytes": 3072049344,
+    "dtype": "e8m0",
+    "shape": [
+     384006168,
+     8
+    ],
+    "block": [
+     1,
+     32
+    ]
+   }
+  },
+  "layers.14.engram.embed.weight": {
+   "file": 47,
+   "offset": 672,
+   "bytes": 98308270592,
+   "dtype": "fp8_e4m3",
+   "shape": [
+    384016682,
+    256
+   ],
+   "scale": {
+    "file": 47,
+    "offset": 98308271264,
+    "bytes": 3072133456,
+    "dtype": "e8m0",
+    "shape": [
+     384016682,
+     8
+    ],
+    "block": [
+     1,
+     32
+    ]
+   }
+  },
+  "layers.1.engram.wkv.weight": {
+   "file": 46,
+   "offset": 101377710936,
+   "bytes": 157286400,
+   "dtype": "fp8_e4m3",
+   "shape": [
+    25600,
+    6144
+   ],
+   "scale": {
+    "file": 46,
+    "offset": 101534997336,
+    "bytes": 153600,
+    "dtype": "e8m0",
+    "shape": [
+     800,
+     192
+    ],
+    "block": [
+     32,
+     32
+    ]
+   }
+  },
+  "mtp.0.main_proj.weight": {
+   "file": 43,
+   "offset": 309161376,
+   "bytes": 78643200,
+   "dtype": "fp8_e4m3",
+   "shape": [
+    5120,
+    15360
+   ],
+   "scale": {
+    "file": 43,
+    "offset": 147079584,
+    "bytes": 76800,
+    "dtype": "e8m0",
+    "shape": [
+     160,
+     480
+    ],
+    "block": [
+     32,
+     32
+    ]
+   }
+  }
+ },
+ "experts": [
+  {
+   "layer": 0,
+   "name": "layers.0",
+   "experts": [
+    [
+     {
+      "file": 2,
+      "aligned_off": 8269824,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 3896,
+        "bytes": 368640,
+        "slot_offset": 3896
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 372536,
+        "bytes": 368640,
+        "slot_offset": 372536
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 741176,
+        "bytes": 368640,
+        "slot_offset": 741176
+       }
+      ]
+     },
+     {
+      "file": 2,
+      "aligned_off": 594984960,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 1592,
+        "bytes": 5898240,
+        "slot_offset": 1111608
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5899832,
+        "bytes": 5898240,
+        "slot_offset": 7009848
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11798072,
+        "bytes": 5898240,
+        "slot_offset": 12908088
+       }
+      ]
+     }
+    ],
+    [
+     {
+      "file": 2,
+      "aligned_off": 9375744,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 3896,
+        "bytes": 368640,
+        "slot_offset": 3896
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 372536,
+        "bytes": 368640,
+        "slot_offset": 372536
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 741176,
+        "bytes": 368640,
+        "slot_offset": 741176
+       }
+      ]
+     },
+     {
+      "file": 2,
+      "aligned_off": 612679680,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 1592,
+        "bytes": 5898240,
+        "slot_offset": 1111608
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5899832,
+        "bytes": 5898240,
+        "slot_offset": 7009848
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11798072,
+        "bytes": 5898240,
+        "slot_offset": 12908088
+       }
+      ]
+     }
+    ],
+    [
+     {
+      "file": 2,
+      "aligned_off": 132132864,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 3896,
+        "bytes": 368640,
+        "slot_offset": 3896
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 372536,
+        "bytes": 368640,
+        "slot_offset": 372536
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 741176,
+        "bytes": 368640,
+        "slot_offset": 741176
+       }
+      ]
+     },
+     {
+      "file": 2,
+      "aligned_off": 2576793600,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 1592,
+        "bytes": 5898240,
+        "slot_offset": 1111608
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5899832,
+        "bytes": 5898240,
+        "slot_offset": 7009848
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11798072,
+        "bytes": 5898240,
+        "slot_offset": 12908088
+       }
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "layer": 39,
+   "name": "layers.39",
+   "experts": [
+    [
+     {
+      "file": 41,
+      "aligned_off": 8273920,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 2136,
+        "bytes": 368640,
+        "slot_offset": 2136
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 370776,
+        "bytes": 368640,
+        "slot_offset": 370776
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 739416,
+        "bytes": 368640,
+        "slot_offset": 739416
+       }
+      ]
+     },
+     {
+      "file": 41,
+      "aligned_off": 594984960,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 3928,
+        "bytes": 5898240,
+        "slot_offset": 1113944
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5902168,
+        "bytes": 5898240,
+        "slot_offset": 7012184
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11800408,
+        "bytes": 5898240,
+        "slot_offset": 12910424
+       }
+      ]
+     }
+    ],
+    [
+     {
+      "file": 41,
+      "aligned_off": 9379840,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 2136,
+        "bytes": 368640,
+        "slot_offset": 2136
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 370776,
+        "bytes": 368640,
+        "slot_offset": 370776
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 739416,
+        "bytes": 368640,
+        "slot_offset": 739416
+       }
+      ]
+     },
+     {
+      "file": 41,
+      "aligned_off": 612679680,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 3928,
+        "bytes": 5898240,
+        "slot_offset": 1113944
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5902168,
+        "bytes": 5898240,
+        "slot_offset": 7012184
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11800408,
+        "bytes": 5898240,
+        "slot_offset": 12910424
+       }
+      ]
+     }
+    ],
+    [
+     {
+      "file": 41,
+      "aligned_off": 132136960,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 2136,
+        "bytes": 368640,
+        "slot_offset": 2136
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 370776,
+        "bytes": 368640,
+        "slot_offset": 370776
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 739416,
+        "bytes": 368640,
+        "slot_offset": 739416
+       }
+      ]
+     },
+     {
+      "file": 41,
+      "aligned_off": 2576793600,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 3928,
+        "bytes": 5898240,
+        "slot_offset": 1113944
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5902168,
+        "bytes": 5898240,
+        "slot_offset": 7012184
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11800408,
+        "bytes": 5898240,
+        "slot_offset": 12910424
+       }
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "layer": 40,
+   "name": "mtp.0",
+   "experts": [
+    [
+     {
+      "file": 43,
+      "aligned_off": 5484544,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 2720,
+        "bytes": 368640,
+        "slot_offset": 2720
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 371360,
+        "bytes": 368640,
+        "slot_offset": 371360
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 740000,
+        "bytes": 368640,
+        "slot_offset": 740000
+       }
+      ]
+     },
+     {
+      "file": 43,
+      "aligned_off": 387801088,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 3488,
+        "bytes": 5898240,
+        "slot_offset": 1113504
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5901728,
+        "bytes": 5898240,
+        "slot_offset": 7011744
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11799968,
+        "bytes": 5898240,
+        "slot_offset": 12909984
+       }
+      ]
+     }
+    ],
+    [
+     {
+      "file": 43,
+      "aligned_off": 6590464,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 2720,
+        "bytes": 368640,
+        "slot_offset": 2720
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 371360,
+        "bytes": 368640,
+        "slot_offset": 371360
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 740000,
+        "bytes": 368640,
+        "slot_offset": 740000
+       }
+      ]
+     },
+     {
+      "file": 43,
+      "aligned_off": 405495808,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 3488,
+        "bytes": 5898240,
+        "slot_offset": 1113504
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5901728,
+        "bytes": 5898240,
+        "slot_offset": 7011744
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11799968,
+        "bytes": 5898240,
+        "slot_offset": 12909984
+       }
+      ]
+     }
+    ],
+    [
+     {
+      "file": 43,
+      "aligned_off": 49721344,
+      "aligned_bytes": 1110016,
+      "slot_offset": 0,
+      "parts": [
+       {
+        "tensor": "w1.scale",
+        "skew": 2720,
+        "bytes": 368640,
+        "slot_offset": 2720
+       },
+       {
+        "tensor": "w2.scale",
+        "skew": 371360,
+        "bytes": 368640,
+        "slot_offset": 371360
+       },
+       {
+        "tensor": "w3.scale",
+        "skew": 740000,
+        "bytes": 368640,
+        "slot_offset": 740000
+       }
+      ]
+     },
+     {
+      "file": 43,
+      "aligned_off": 1095589888,
+      "aligned_bytes": 17698816,
+      "slot_offset": 1110016,
+      "parts": [
+       {
+        "tensor": "w1.weight",
+        "skew": 3488,
+        "bytes": 5898240,
+        "slot_offset": 1113504
+       },
+       {
+        "tensor": "w2.weight",
+        "skew": 5901728,
+        "bytes": 5898240,
+        "slot_offset": 7011744
+       },
+       {
+        "tensor": "w3.weight",
+        "skew": 11799968,
+        "bytes": 5898240,
+        "slot_offset": 12909984
+       }
+      ]
+     }
+    ]
+   ]
+  }
+ ],
+ "engram": [
+  {
+   "layer": 1,
+   "rows": 384006168,
+   "value": {
+    "file": 46,
+    "offset": 664,
+    "bytes": 98305579008,
+    "row_bytes": 256,
+    "dtype": "fp8_e4m3",
+    "tensor": "layers.1.engram.embed.weight"
+   },
+   "scale": {
+    "file": 46,
+    "offset": 98305579672,
+    "bytes": 3072049344,
+    "row_bytes": 8,
+    "dtype": "e8m0",
+    "tensor": "layers.1.engram.embed.scale"
+   }
+  },
+  {
+   "layer": 14,
+   "rows": 384016682,
+   "value": {
+    "file": 47,
+    "offset": 672,
+    "bytes": 98308270592,
+    "row_bytes": 256,
+    "dtype": "fp8_e4m3",
+    "tensor": "layers.14.engram.embed.weight"
+   },
+   "scale": {
+    "file": 47,
+    "offset": 98308271264,
+    "bytes": 3072133456,
+    "row_bytes": 8,
+    "dtype": "e8m0",
+    "tensor": "layers.14.engram.embed.scale"
+   }
+  }
+ ]
+}

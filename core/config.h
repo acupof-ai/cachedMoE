@@ -72,8 +72,9 @@ struct SpeculationConfig {
 };
 
 struct RuntimeConfig {
-    // Repacked model directory produced by tools/repack.py: hot.bin,
-    // experts.bin, engram.L*.bin, mtp.bin, manifest.json (design §5.1).
+    // The checkpoint directory: the 48 original safetensors shards, config.json
+    // and the deepmoe_manifest.json that tools/manifest.py writes beside them
+    // (design §5.1 v0.5 -- there is no repack).
     std::string model_dir;
     std::string profile_jsonl;    // empty = no JSONL sink
     std::string kvcache_dir;      // design §11.4 prefix KV persistence

@@ -25,30 +25,10 @@ std::string join_path(const std::string& dir, const std::string& name) {
 Engine::~Engine() { shutdown(); }
 
 Result<void> Engine::open_model_files() {
-    const std::string& dir = cfg_.model_dir;
-
-    auto open_one = [&](storage::File& f, const char* logical, bool required) -> Result<void> {
-        // Honour the manifest's path when it has one, else the default name.
-        std::string name = logical;
-        if (const FileEntry* e = manifest_.file(logical); e && !e->path.empty()) name = e->path;
-        storage::FileFlags flags = storage::FileFlags::Overlapped | storage::FileFlags::Random;
-        if (cfg_.io.unbuffered) flags = flags | storage::FileFlags::Unbuffered;
-        auto r = storage::File::open(join_path(dir, name), flags);
-        if (!r) {
-            if (required) return std::unexpected(r.error());
-            log_warn("engine: optional blob '{}' not opened: {}", name, r.error().str());
-            return {};
-        }
-        f = *std::move(r);
-        log_debug("engine: {} = {} ({})", logical, f.path(), human_bytes(f.size()));
-        return {};
-    };
-
-    if (auto r = open_one(experts_, "experts", true); !r) return r;
-    if (auto r = open_one(hot_, "hot", false); !r) return r;
-    if (auto r = open_one(mtp_, "mtp", false); !r) return r;
-    if (auto r = open_one(engram_l1_, "engramL1", false); !r) return r;
-    if (auto r = open_one(engram_l14_, "engramL14", false); !r) return r;
+    // design §5.1 (v0.5): there are no repacked blobs. Every file the runtime
+    // reads is an original safetensors shard named by the manifest.
+    if (auto r = shards_.open_all(cfg_.model_dir, manifest_, cfg_.io.unbuffered); !r) return r;
+    log_info("engine: {} shards open, {}", shards_.size(), human_bytes(shards_.total_bytes()));
     return {};
 }
 
@@ -64,7 +44,7 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     if (cfg_.model_dir.empty())
         return fail(Err::InvalidArgument, "RuntimeConfig::model_dir is empty");
 
-    // config.json travels with the repacked model so a run is self-describing.
+    // config.json ships with the checkpoint, so a run is self-describing.
     auto mc = V41Config::load(join_path(cfg_.model_dir, "config.json"));
     if (!mc) return std::unexpected(mc.error());
     model_cfg_ = *std::move(mc);
@@ -91,7 +71,8 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
                              layout::kTotalLogicalLayers, layout::kRoutedExperts); !r)
         return r;
 
-    if (auto r = planner_.init(store_, io_, experts_, cfg_.cache, cfg_.prefetch, &profiler_); !r)
+    if (auto r = planner_.init(store_, io_, manifest_, shards_, cfg_.cache, cfg_.prefetch,
+                               &profiler_); !r)
         return r;
 
     token_ = 0;
@@ -115,6 +96,7 @@ Result<void> Engine::init_gpu() {
 
 void Engine::shutdown() {
     io_.stop();
+    shards_.close();
     timeline_.destroy();
     device_.destroy();
     kv_.reset();
@@ -143,7 +125,8 @@ Result<GenerateResult> Engine::generate(std::span<const uint32_t>, const Generat
 std::string Engine::status() const {
     std::string s;
     s += std::format("model     {}\n", ready_ ? model_cfg_.summary() : std::string("(not loaded)"));
-    s += std::format("experts   {} ({})\n", experts_.path(), human_bytes(experts_.size()));
+    s += std::format("weights   {} shards, {} (direct read, no repack)\n",
+                     shards_.size(), human_bytes(shards_.total_bytes()));
     s += std::format("io        {}\n", io_.running() ? io_.backend_caps().name : "stopped");
     s += "          " + io_.stats().to_string();
     s += std::format("store     {}\n", store_.stats().to_string());

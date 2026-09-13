@@ -8,9 +8,16 @@
 #include "cpu/gemv_avx512.h"
 
 #include <array>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 #include "tests/test_framework.h"
+
+// Set by tests/CMakeLists.txt so the test finds its data whatever the cwd is.
+#ifndef DEEPMOE_TEST_DATA_DIR
+#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#endif
 
 using namespace deepmoe;
 using namespace deepmoe::cpu;
@@ -219,4 +226,54 @@ DEEPMOE_TEST(dequant, gate_topk_is_deterministic_on_ties) {
     CHECK_EQ(a->ids[1], 1);
     CHECK_EQ(a->ids[0], b->ids[0]);
     CHECK_EQ(a->ids[1], b->ids[1]);
+}
+
+// --- L0 golden vectors (design §12 L0) ---------------------------------------
+// tests/data/l0_dequant.bin is produced by `tools/oracle.py --level l0`. The FP8
+// and UE8M0 tables in it come straight from torch (torch.float8_e4m3fn /
+// torch.float8_e8m0fnu), which is what inference/kernel.py casts through, and
+// the FP4 table is cross-checked there against ml_dtypes.float4_e2m1fn. This
+// test is therefore pinned to the checkpoint's semantics rather than to our own
+// reading of the OCP spec -- which is the entire point of design §12's L0.
+DEEPMOE_TEST(dequant, matches_the_oracle_golden_tables) {
+    const std::string path = std::string(DEEPMOE_TEST_DATA_DIR) + "/l0_dequant.bin";
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    REQUIRE(f != nullptr);
+
+    char magic[4] = {};
+    uint32_t header[4] = {};
+    const bool head_ok = std::fread(magic, 1, 4, f) == 4 &&
+                         std::fread(header, sizeof(uint32_t), 4, f) == 4;
+    if (!head_ok) { std::fclose(f); REQUIRE(head_ok); }
+    CHECK_EQ(std::string(magic, 4), std::string("DMQ0"));
+    CHECK_EQ(header[0], 1u);          // version
+    REQUIRE_EQ(header[1], 16u);       // fp4 codes
+    REQUIRE_EQ(header[2], 256u);      // fp8 codes
+    REQUIRE_EQ(header[3], 256u);      // e8m0 codes
+
+    std::vector<float> fp4(16), fp8(256), e8m0(256);
+    const bool body_ok = std::fread(fp4.data(), 4, 16, f) == 16 &&
+                         std::fread(fp8.data(), 4, 256, f) == 256 &&
+                         std::fread(e8m0.data(), 4, 256, f) == 256;
+    std::fclose(f);
+    REQUIRE(body_ok);
+
+    // Bit-for-bit, not "close": a decode table that is 1 ULP out is a wrong
+    // table, and -0.0 must stay negative so the FP4 codes round-trip.
+    for (size_t i = 0; i < 16; ++i) {
+        CHECK_EQ(kFp4E2M1Table[i], fp4[i]);
+        CHECK_EQ(std::signbit(kFp4E2M1Table[i]), std::signbit(fp4[i]));
+    }
+    for (size_t i = 0; i < 256; ++i) {
+        const float got = kFp8E4M3Table[i];
+        if (std::isnan(fp8[i])) {
+            CHECK(std::isnan(got));
+        } else {
+            CHECK_EQ(got, fp8[i]);
+            CHECK_EQ(std::signbit(got), std::signbit(fp8[i]));
+        }
+        const float scale = e8m0_to_float(static_cast<uint8_t>(i));
+        if (std::isnan(e8m0[i])) CHECK(std::isnan(scale));
+        else                     CHECK_EQ(scale, e8m0[i]);
+    }
 }

@@ -7,17 +7,28 @@
 // and the (host_ptr, device_addr) pair, and keeps the LRU/heat metadata that
 // the Planner's policy reads, but never decides a victim itself.
 //
+// Since design §5.1 v0.5 there is no repack: the runtime reads the original
+// safetensors shards, whose tensor offsets are 8-byte but never 4 KiB aligned.
+// The manifest widens every read to sector boundaries and merges byte-adjacent
+// tensors into *runs*, so filling one expert is one IoRequest per run (two, in
+// the shipped checkpoint: 17,698,816 B of weights and 1,110,016 B of scales).
+// A slot is layout::kExpertSlotBytes and holds those runs back to back;
+// `Filling` ends when every run has reported in.
+//
 // The GPU-side expert pointer table (design §5.3) lives here too: a flat
-// uint64[layers][experts_per_layer] of device addresses, 0 when not resident,
-// which the MoE kernel indexes through buffer_device_address instead of a
-// descriptor per expert. With a host-memory backing the table carries host
-// pointers, so the same code path is exercised by tests and the CPU oracle.
+// uint64[layers][experts_per_layer][6] of device addresses, 0 when not
+// resident, which the MoE kernel indexes through buffer_device_address instead
+// of a descriptor per expert. Six entries per expert, because each of the six
+// tensors sits at `slot_base + run.slot_offset + part.skew` and the skews differ
+// per expert. 43 x 384 x 6 x 8 B = 793 KB. With a host-memory backing the table
+// carries host pointers, so the same code path is exercised by tests and the
+// CPU oracle.
 //
 // Ownership/threading: ExpertStore owns the SlabPool and all slot metadata.
 // Every public method is safe from any thread -- one mutex guards the tables,
 // held only for pointer bookkeeping, never across I/O. The typical callers are
 // the planner thread (reserve/evict), the IoEngine dispatcher thread
-// (finish_fill from a completion callback) and the GPU submit thread (lookup).
+// (finish_run from a completion callback) and the GPU submit thread (lookup).
 #pragma once
 
 #include <cstdint>
@@ -30,9 +41,20 @@
 #include "core/config.h"
 #include "core/status.h"
 #include "core/types.h"
+#include "model/manifest.h"
 #include "store/slab.h"
 
 namespace deepmoe::store {
+
+// One sector-aligned read that has to land in a slot before it is Resident.
+// A copy of the manifest's Run with the destination resolved (design §5.1).
+struct FillRun {
+    uint32_t      file     = 0;          // index into Manifest::files()
+    uint64_t      file_off = 0;          // == Run::aligned_off, 4 KiB aligned
+    uint64_t      bytes    = 0;          // == Run::aligned_bytes, 4 KiB multiple
+    void*         dst      = nullptr;    // slot_base + slot_offset, 4 KiB aligned
+    DeviceAddress dev_dst  = kNoDeviceAddress;
+};
 
 // design §5.4
 struct ExpertSlot {
@@ -46,11 +68,20 @@ struct ExpertSlot {
     TokenIndex    last_use_token = 0;   // LRU key
     float         heat = 0.0f;          // EWMA of router score, incl. near-misses (§9.3)
     TimelineValue guard_timeline = 0;   // must be <= the GPU's completed value before eviction
+
+    // Fill bookkeeping: Filling ends when every run has reported in.
+    uint32_t runs_total = 0;
+    uint32_t runs_done  = 0;
+    bool     run_failed = false;
+    // Slot-relative position of each of the six parts, copied from the manifest.
+    uint64_t part_offset[kExpertPartCount] = {};
+    uint64_t part_bytes [kExpertPartCount] = {};
 };
 
 struct ExpertStoreStats {
     uint64_t lookups = 0, hits = 0, misses = 0;
     uint64_t fills_started = 0, fills_ok = 0, fills_failed = 0;
+    uint64_t runs_started = 0, runs_done = 0;
     uint64_t evictions = 0, eviction_blocked_by_guard = 0;
     uint32_t resident = 0, filling = 0, free = 0, pinned = 0;
 
@@ -76,7 +107,8 @@ public:
     // --- hot path ---------------------------------------------------------
 
     // Resident lookup. On a hit the slot's LRU stamp is refreshed to `token`.
-    // Counts one lookup in the stats either way.
+    // Counts one lookup in the stats either way. The returned address is the
+    // slot's base; the six parts are at pointer_table() offsets from it.
     std::optional<SlotAddress> lookup(ExpertKey key, TokenIndex token);
 
     // Same but without touching LRU or the stats; used by the planner when it
@@ -85,18 +117,35 @@ public:
 
     // --- fill path --------------------------------------------------------
 
-    // Takes a Free slot for `key` and moves it to Filling. The returned slot
-    // index and address are where the IoEngine must land the bytes.
+    // Takes a Free slot for `key` and moves it to Filling. `entry` is the
+    // manifest's record for this expert: it decides how many IoRequests the
+    // caller must issue (one per run, `file_off = run.aligned_off`, 4 KiB
+    // aligned dst) and where the six parts end up inside the slot.
     // ResourceExhausted when nothing is free -- the caller (Planner) must evict
     // first. AlreadyExists when `key` is resident or already filling.
     struct Reservation {
         uint32_t    slot = 0;
-        SlotAddress addr{};
+        SlotAddress addr{};                        // the slot's base
+        uint32_t    run_count = 0;
+        FillRun     runs[layout::kMaxExpertRuns]{};
     };
+    Result<Reservation> begin_fill(ExpertKey key, const ExpertEntry& entry,
+                                   Tier tier = Tier::Cached);
+    // Synthetic single-run fill covering the whole slot, with the six parts laid
+    // out planar (w1 | w1.scale | w2 | w2.scale | w3 | w3.scale). No manifest is
+    // involved, so this is for tests, benchmarks and the CPU oracle -- the
+    // runtime always goes through the overload above.
     Result<Reservation> begin_fill(ExpertKey key, Tier tier = Tier::Cached);
 
-    // Completion. `ok` publishes the slot (Filling -> Resident, pointer table
-    // updated); on failure the slot returns to Free and the key stays absent.
+    // One run has landed. Returns true when that was the last outstanding run
+    // and the slot has settled (Resident on success, Free on failure). Runs may
+    // complete out of order and from different threads; the first failure
+    // poisons the fill, but the slot is only released once every run reported.
+    Result<bool> finish_run(uint32_t slot, bool ok, TokenIndex token = 0);
+
+    // Completes the whole fill at once, whatever is still outstanding. `ok`
+    // publishes the slot (Filling -> Resident, pointer table updated); on
+    // failure the slot returns to Free and the key stays absent.
     Result<void> finish_fill(uint32_t slot, bool ok, TokenIndex token = 0);
 
     // --- eviction ---------------------------------------------------------
@@ -133,26 +182,31 @@ public:
     uint64_t capacity_bytes() const { return pool_.bytes(); }
     const SlabPool& pool()    const { return pool_; }
 
-    // Flat [layer][expert] address table (design §5.3). Stable for the life of
-    // the store; the Vulkan path maps this buffer host-coherently so the GPU
-    // sees updates without a descriptor rewrite.
+    // Flat [layer][expert][part] address table (design §5.3). Stable for the
+    // life of the store; the Vulkan path maps this buffer host-coherently so the
+    // GPU sees updates without a descriptor rewrite.
     const uint64_t* pointer_table() const { return table_.data(); }
     size_t          pointer_table_entries() const { return table_.size(); }
     size_t          pointer_table_bytes()   const { return table_.size() * sizeof(uint64_t); }
-    Result<uint64_t> table_entry(ExpertKey key) const;
+    static constexpr uint32_t pointer_table_stride() { return kExpertPartCount; }
+    Result<uint64_t> table_entry(ExpertKey key, ExpertPart part = ExpertPart::W1Weight) const;
 
     ExpertStoreStats stats() const;
     void             reset_stats();
 
 private:
-    size_t table_index(ExpertKey k) const {
-        return static_cast<size_t>(k.layer) * experts_per_layer_ + k.expert;
+    size_t table_index(ExpertKey k, ExpertPart p = ExpertPart::W1Weight) const {
+        return (static_cast<size_t>(k.layer) * experts_per_layer_ + k.expert) * kExpertPartCount
+             + static_cast<uint8_t>(p);
     }
     bool key_in_range(ExpertKey k) const {
         return k.layer < layers_ && k.expert < experts_per_layer_;
     }
+    Result<Reservation> reserve_locked(ExpertKey key, Tier tier);
     void publish_locked(uint32_t slot);
     void unpublish_locked(uint32_t slot);
+    void release_locked(uint32_t slot);
+    void settle_locked(uint32_t slot, bool ok, TokenIndex token);
 
     mutable std::mutex mutex_;
     SlabPool    pool_;

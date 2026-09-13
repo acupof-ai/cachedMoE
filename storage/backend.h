@@ -33,11 +33,22 @@ namespace deepmoe::storage {
 
 // One 4 KiB-aligned transfer. The engine never issues a chunk larger than
 // BackendCaps::max_chunk_bytes.
+//
+// `min_bytes` exists because of design §5.1 v0.5: the runtime reads the original
+// safetensors shards, and a shard's last tensor ends at the file's byte length,
+// not on a sector boundary. Widening that read to sector boundaries -- which
+// FILE_FLAG_NO_BUFFERING requires -- necessarily asks for a few bytes past EOF.
+// Windows serves the valid bytes and reports a short read, which is correct, not
+// an error. The engine therefore tells the backend how many bytes actually have
+// to arrive: `min_bytes` is the part of the chunk that is inside the file.
+// It equals `bytes` for every chunk that does not straddle EOF -- 15,701 of the
+// checkpoint's 15,744 experts -- and 0 means "the whole chunk must arrive".
 struct ChunkRequest {
     uint64_t chunk_id = 0;      // engine-assigned, unique while in flight
     const File* file  = nullptr;  // borrowed; outlives the transfer
     uint64_t file_off = 0;      // sector-aligned
     uint32_t bytes    = 0;      // sector multiple
+    uint32_t min_bytes = 0;     // 0 == require all of `bytes`; else the in-file part
     void*    dst      = nullptr;  // sector-aligned; slab slot or staging buffer
 };
 

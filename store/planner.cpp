@@ -1,7 +1,9 @@
 #include "store/planner.h"
 
 #include <algorithm>
+#include <atomic>
 #include <format>
+#include <memory>
 
 #include "core/log.h"
 #include "model/layout.h"
@@ -72,19 +74,25 @@ std::unique_ptr<EvictionPolicy> make_policy(CachePolicy which) {
 }
 
 Result<void> Planner::init(ExpertStore& store, storage::IoEngine& io,
-                           const storage::File& experts_file,
+                           const Manifest& manifest, const ShardSet& shards,
                            const CacheConfig& cache, const PrefetchConfig& prefetch,
                            Profiler* profiler) {
-    if (!experts_file.is_open()) return fail(Err::InvalidArgument, "experts.bin is not open");
+    if (shards.empty()) return fail(Err::InvalidArgument, "no safetensors shards are open");
+    if (shards.size() != manifest.files().size())
+        return fail(Err::InvalidArgument,
+                    std::format("{} shards open but the manifest lists {}",
+                                shards.size(), manifest.files().size()));
     store_    = &store;
     io_       = &io;
-    experts_  = &experts_file;
+    manifest_ = &manifest;
+    shards_   = &shards;
     cache_    = cache;
     prefetch_ = prefetch;
     profiler_ = profiler;
     policy_   = make_policy(cache.policy);
-    log_info("planner: policy '{}', cache {} slots, lookahead d={} K={}",
-             policy_->name(), store.slot_count(), prefetch.lookahead_depth, prefetch.lookahead_width);
+    log_info("planner: policy '{}', cache {} slots, {} shards, lookahead d={} K={}",
+             policy_->name(), store.slot_count(), shards.size(),
+             prefetch.lookahead_depth, prefetch.lookahead_width);
     return {};
 }
 
@@ -112,51 +120,93 @@ uint32_t Planner::reclaim(size_t count) {
     return freed;
 }
 
-Result<storage::IoRequestId> Planner::fetch(ExpertKey key, IoPriority priority,
-                                            TokenIndex token, uint32_t deadline_layer,
-                                            std::function<void(bool)> on_done) {
-    if (!store_ || !io_) return fail(Err::FailedPrecondition, "planner is not initialised");
+namespace {
+// Shared between the N run callbacks of one expert fetch: the last one to
+// report calls the user's callback, and any failure poisons the result.
+struct FetchState {
+    std::function<void(bool)> cb;
+    std::atomic<bool>         ok{true};
+};
+}  // namespace
 
-    auto res = store_->begin_fill(key, Tier::Cached);
+Result<Planner::Fetch> Planner::fetch(ExpertKey key, IoPriority priority,
+                                      TokenIndex token, uint32_t deadline_layer,
+                                      std::function<void(bool)> on_done) {
+    if (!store_ || !io_ || !manifest_ || !shards_)
+        return fail(Err::FailedPrecondition, "planner is not initialised");
+
+    // design §5.1 (v0.5): the expert's address is looked up, not computed --
+    // there is no experts.bin any more. One IoRequest per run; the manifest has
+    // already widened each to 4 KiB boundaries, so the I/O layer sees nothing
+    // unusual.
+    auto entry = manifest_->require_expert(key);
+    if (!entry) return std::unexpected(entry.error());
+
+    auto res = store_->begin_fill(key, **entry, Tier::Cached);
     if (!res && res.error().code == Err::ResourceExhausted) {
         if (reclaim(1) == 0)
             return fail(Err::ResourceExhausted,
                         std::format("cache is full and nothing is evictable for ({}, {})",
                                     key.layer, key.expert));
-        res = store_->begin_fill(key, Tier::Cached);
+        res = store_->begin_fill(key, **entry, Tier::Cached);
     }
     if (!res) return std::unexpected(res.error());
 
     const uint32_t slot = res->slot;
-    // design §5.1: experts.bin is addressed arithmetically, layer-major, so a
-    // whole layer is 7.22 GB of contiguous blocks for the prefill stream.
-    storage::IoRequest req;
-    req.key            = key;
-    req.priority       = priority;
-    req.file           = experts_;
-    req.file_off       = layout::expert_file_offset(key.layer, key.expert);
-    req.bytes          = layout::kExpertBytes;
-    req.dst            = res->addr.host_ptr;
-    req.issue_token    = token;
-    req.deadline_layer = deadline_layer;
+    ExpertStore* store  = store_;
+    auto state = std::make_shared<FetchState>();
+    state->cb = std::move(on_done);
 
-    ExpertStore* store = store_;
-    auto id = io_->submit(req, [store, slot, token, cb = std::move(on_done)](const storage::IoResult& r) {
-        // Runs on the IoEngine dispatcher thread: publish the slot and hand
-        // control straight back (design §9.6).
-        (void)store->finish_fill(slot, r.ok(), token);
-        if (cb) cb(r.ok());
-    });
-    if (!id) {
-        (void)store_->finish_fill(slot, false, token);
-        return std::unexpected(id.error());
+    Fetch out;
+    out.slot = slot;
+    out.ids.reserve(res->run_count);
+
+    Status first_error{Err::Ok};
+    for (uint32_t i = 0; i < res->run_count; ++i) {
+        const FillRun& run = res->runs[i];
+        auto file = shards_->require(run.file);
+        if (!file) { first_error = file.error(); break; }
+
+        storage::IoRequest req;
+        req.key            = key;
+        req.priority       = priority;
+        req.file           = *file;
+        req.file_off       = run.file_off;   // 4 KiB aligned by construction
+        req.bytes          = run.bytes;      // 4 KiB multiple by construction
+        req.dst            = run.dst;        // slot_base + slot_offset, aligned
+        req.issue_token    = token;
+        req.deadline_layer = deadline_layer;
+
+        auto id = io_->submit(req, [store, slot, token, state](const storage::IoResult& r) {
+            // Runs on the IoEngine dispatcher thread: count the run in, publish
+            // the slot when it was the last one, hand control straight back
+            // (design §9.6, docs/architecture.md §2.2).
+            if (!r.ok()) state->ok.store(false, std::memory_order_relaxed);
+            auto settled = store->finish_run(slot, r.ok(), token);
+            if (settled && *settled && state->cb)
+                state->cb(state->ok.load(std::memory_order_relaxed));
+        });
+        if (!id) { first_error = id.error(); break; }
+        out.ids.push_back(*id);
+        out.bytes += run.bytes;
     }
+
+    if (first_error.code != Err::Ok) {
+        // Account for the runs that were never handed to the engine, so the
+        // slot cannot sit in Filling for ever. The ones already in flight still
+        // report on their own.
+        state->ok.store(false, std::memory_order_relaxed);
+        for (uint32_t i = static_cast<uint32_t>(out.ids.size()); i < res->run_count; ++i)
+            (void)store_->finish_run(slot, false, token);
+        return std::unexpected(first_error);
+    }
+
     if (priority == IoPriority::Lookahead || priority == IoPriority::Backfill) {
         std::lock_guard lk(stats_mutex_);
         ++stats_.prefetch_issued;
         if (profiler_) profiler_->note_prefetch_issued();
     }
-    return *id;
+    return out;
 }
 
 Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex token) {
@@ -192,14 +242,14 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
     }
 
     for (ExpertKey key : plan.misses) {
-        auto id = fetch(key, IoPriority::BlockingMiss, token, route.layer);
-        if (!id) {
+        auto f = fetch(key, IoPriority::BlockingMiss, token, route.layer);
+        if (!f) {
             log_warn("planner: P0 fetch of ({}, {}) failed: {}", key.layer, key.expert,
-                     id.error().str());
+                     f.error().str());
             continue;
         }
-        plan.issued.push_back(*id);
-        plan.miss_bytes += layout::kExpertBytes;
+        plan.issued.insert(plan.issued.end(), f->ids.begin(), f->ids.end());
+        plan.miss_bytes += f->bytes;
     }
 
     {
@@ -222,7 +272,7 @@ Result<void> Planner::pin(ExpertKey key) {
     // Tier is set at begin_fill; re-filling as Pinned is the clean path, so
     // this is deliberately a stub rather than a mutation behind the store's back.
     // TODO(design §9.3): give ExpertStore a retier(slot, Tier) once the pinned
-    // set is loaded from hot.bin/mtp.bin at startup rather than promoted here.
+    // set is loaded at startup from the manifest rather than promoted here.
     return unimplemented("Planner::pin (design §9.3 pinned set is loaded at startup)");
 }
 

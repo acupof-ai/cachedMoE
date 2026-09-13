@@ -18,7 +18,7 @@
 //
 // Ownership/threading: a Predictor is owned by the Planner and called from the
 // planner thread only. It borrows the gate weights (which live in the pinned
-// hot.bin region) and never copies them.
+// pinned region) and never copies them.
 #pragma once
 
 #include <cstdint>
@@ -73,7 +73,7 @@ public:
     virtual PredictorAccuracy accuracy(uint32_t layer) const = 0;
 };
 
-// Gate weights for one layer, borrowed from the pinned hot.bin region.
+// Gate weights for one layer, borrowed from the pinned region.
 struct GateWeights {
     std::span<const uint16_t> w;      // [n_experts, hidden] bf16
     std::span<const float>    bias;   // [n_experts] fp32, `noaux_tc`

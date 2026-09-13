@@ -93,12 +93,15 @@ int cmd_info() {
     namespace L = layout;
     std::puts("");
     std::puts("== model budget (design section 2.3) ==");
-    std::puts(std::format("  routed expert block   {} B = {} x 4 KiB", L::kExpertBytes, L::kExpertSectors).c_str());
+    std::puts(std::format("  routed expert payload {} B = {} x 4 KiB", L::kExpertBytes, L::kExpertSectors).c_str());
+    std::puts(std::format("  slab slot             {} B = {} x 4 KiB (2 aligned runs, design section 5.1)",
+                          L::kExpertSlotBytes, L::kExpertSlotSectors).c_str());
     std::puts(std::format("  experts per layer     {} ({:.2f} GB contiguous)",
                           L::kRoutedExperts, L::kExpertsPerLayerBytes / 1e9).c_str());
     std::puts(std::format("  routed experts total  {} ({:.1f} GB)",
                           L::kRoutedExpertCount, L::kRoutedExpertTotalBytes / 1e9).c_str());
-    std::puts(std::format("  engram row            {} B interleaved", L::kEngramRowBytes).c_str());
+    std::puts(std::format("  engram row            {} B = {} value + {} scale, in two planes",
+                          L::kEngramRowBytes, L::kEngramValueRowBytes, L::kEngramScaleRowBytes).c_str());
     std::puts(std::format("  resident per token    {:.2f} GB", L::kHotBytesPerToken / 1e9).c_str());
     std::puts(std::format("  routed per token      {:.2f} GB ({} layers x {} experts)",
                           double(L::kNumLayers) * L::kExpertsPerTok * L::kExpertBytes / 1e9,

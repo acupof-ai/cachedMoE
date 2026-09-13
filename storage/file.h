@@ -6,7 +6,7 @@
 // and O_DIRECT on Linux both require the file offset, the transfer length and
 // the destination pointer to be multiples of the volume's sector size
 // (design §9.6). `sector_size()` reports what the volume actually demands;
-// the repacked layout of design §5.1 guarantees 4 KiB everywhere, so the
+// deepmoe_manifest.json widens every read to 4 KiB (design §5.1), so the
 // runtime asserts sector_size() <= 4096 at open time.
 //
 // Ownership/threading: File owns the OS handle and closes it in the destructor;
@@ -106,7 +106,7 @@ private:
 };
 
 // Sector size of the volume holding `path`, without opening a file. Used by the
-// startup check that the repacked 4 KiB layout is legal on this volume.
+// startup check that the manifest's 4 KiB reads are legal on this volume.
 Result<uint32_t> volume_sector_size(const std::string& path);
 
 // Deletes a file, ignoring "already gone". Portable (std::remove).

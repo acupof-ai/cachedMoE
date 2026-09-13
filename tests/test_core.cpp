@@ -67,12 +67,15 @@ DEEPMOE_TEST(layout, constants_match_the_design_document) {
     CHECK_EQ(L::kTotalLogicalLayers, 43u);               // 40 + 3 mtp
     CHECK_EQ(L::kEngramWkvCols, L::kEngramRowsPerToken * L::kEngramHeadDim);
 
-    // Arithmetic addressing (design §5.1).
-    CHECK_EQ(L::expert_file_offset(0, 0), 0ull);
-    CHECK_EQ(L::expert_file_offset(0, 1), L::kExpertBytes);
-    CHECK_EQ(L::expert_file_offset(1, 0), L::kExpertsPerLayerBytes);
-    CHECK_EQ(L::expert_file_offset(39, 383),
-             39ull * L::kExpertsPerLayerBytes + 383ull * L::kExpertBytes);
+    // design §5.1 (v0.5, direct read): a slot holds the two sector-aligned runs
+    // of an expert, so it is the payload plus one sector of skew per run.
+    // tests/test_model.cpp re-derives this from the real manifest.
+    CHECK_EQ(L::kExpertSlotBytes, 18808832ull);
+    CHECK_EQ(L::kExpertSlotSectors, 4592ull);
+    CHECK_EQ(L::kExpertSlotBytes % 4096, 0ull);
+    CHECK_EQ(L::kExpertSlotBytes - L::kExpertBytes, 2ull * 4096);
+    CHECK_EQ(L::kExpertParts, 6u);
+    CHECK_EQ(L::kEngramValueRowBytes + L::kEngramScaleRowBytes, L::kEngramRowBytes);
     // 288.8 GB of routed experts, per design §2.2.
     CHECK_CLOSE(L::kRoutedExpertTotalBytes / 1e9, 288.8, 0.01);
 }

@@ -66,7 +66,7 @@ inline constexpr uint32_t kFp4ScaleBlock     = 32;     // one UE8M0 exponent per
 inline constexpr uint32_t kFp8ScaleBlockK    = 32;     // fp8 scales are per 32x32 tile
 inline constexpr uint32_t kFp8ScaleBlockM    = 32;
 
-// --- byte sizes (design §2.3, appendix A) -----------------------------------
+// --- byte sizes (design §2.3, §5.1, appendix A) -----------------------------
 // One routed expert: w1/w3/w2 each [.., K/2] packed FP4 plus its E8M0 scales.
 inline constexpr uint64_t kExpertWeightBytesPerMat = 5'898'240;   // e.g. [2304, 2560] packed fp4
 inline constexpr uint64_t kExpertScaleBytesPerMat  =   368'640;   // e.g. [2304, 160] E8M0
@@ -74,16 +74,44 @@ inline constexpr uint64_t kExpertMats              = 3;           // w1, w3, w2
 inline constexpr uint64_t kExpertBytes =
     kExpertMats * (kExpertWeightBytesPerMat + kExpertScaleBytesPerMat);   // 18,800,640
 static_assert(kExpertBytes == 18'800'640, "design §2.3: one routed expert is 18,800,640 B");
-static_assert(kExpertBytes % 4096 == 0, "design §5.1: an expert block is a whole number of 4 KiB sectors");
+static_assert(kExpertBytes % 4096 == 0, "design §5.1: an expert's payload is a whole number of sectors");
 inline constexpr uint64_t kExpertSectors = kExpertBytes / 4096;   // 4590
 
-// Engram row: 256 B of FP8 values interleaved with 8 B of E8M0 scale, so one
-// 4 KiB read picks up whole rows with their scales (design §5.1).
-inline constexpr uint64_t kEngramRowBytes = 256 + 8;              // 264
-static_assert(kEngramRowBytes == 264, "design §5.1: engram rows are 264 B interleaved");
+// The six tensors of one routed expert, in the order model/manifest.h's
+// ExpertPart enumerates them: w1.weight, w1.scale, w2.weight, w2.scale,
+// w3.weight, w3.scale.
+inline constexpr uint32_t kExpertParts = 6;
 
-// Whole-layer stride in experts.bin: 384 x 18,800,640 = 7.22 GB, read
-// sequentially by the expert-major prefill path (design §9.7).
+// design §5.1 (v0.5, direct read): the runtime reads the original safetensors
+// shards, whose tensor offsets are 8-byte but never 4 KiB aligned. Each read is
+// widened to sector boundaries, so a slot holds the aligned *runs* rather than
+// the bare payload. Measured over all 15,744 experts (40 x 384 routed + 3 x 128
+// DSpark) by tools/manifest.py: every expert is exactly two runs -- one
+// 17,698,816 B weights run and one 1,110,016 B scales run -- and the worst case
+// sum is the constant below. tests/test_model.cpp re-derives it from the real
+// manifest, so a checkpoint reshuffle fails the build's tests, not the runtime.
+inline constexpr uint64_t kExpertSlotBytes = 18'808'832;
+static_assert(kExpertSlotBytes % 4096 == 0, "design §5.1: a slot is a whole number of 4 KiB sectors");
+static_assert(kExpertSlotBytes >= kExpertBytes, "a slot must hold the whole expert payload");
+static_assert(kExpertSlotBytes - kExpertBytes == 2 * 4096,
+              "design §5.1: two runs, each losing at most one sector to skew");
+inline constexpr uint64_t kExpertSlotSectors = kExpertSlotBytes / 4096;   // 4592
+
+// Upper bound on runs per expert. Two in the shipped checkpoint; the cap is one
+// run per part, which is what a fully scattered layout would produce.
+inline constexpr uint32_t kMaxExpertRuns = kExpertParts;
+
+// Engram rows live in two separate planes in shards 47/48: [rows, 256] F8_E4M3
+// values and [rows, 8] UE8M0 scales. One logical row is therefore two aligned
+// reads, not the single interleaved 264 B read the pre-v0.5 repack produced.
+inline constexpr uint64_t kEngramValueRowBytes = 256;
+inline constexpr uint64_t kEngramScaleRowBytes = 8;
+inline constexpr uint64_t kEngramRowBytes = kEngramValueRowBytes + kEngramScaleRowBytes;  // 264
+static_assert(kEngramRowBytes == 264, "design §5.1: 256 B of values + 8 B of scale per row");
+
+// One layer's routed experts: 384 x 18,800,640 = 7.22 GB. They are contiguous
+// inside a single shard (tools/manifest.py verifies no layer straddles two), so
+// the expert-major prefill stream of design §9.7 is still one sequential range.
 inline constexpr uint64_t kExpertsPerLayerBytes = uint64_t(kRoutedExperts) * kExpertBytes;
 
 // Totals used for budgeting and for the bytes-per-token model of design §2.3.
@@ -94,17 +122,9 @@ inline constexpr uint64_t kRoutedExpertTotalBytes = kRoutedExpertCount * kExpert
 // LPDDR utilisation figure in §1.3 and as a sanity bound in the profiler.
 inline constexpr uint64_t kHotBytesPerToken = 8'500'000'000ull;
 
-// --- file names produced by tools/repack.py (design §5.1) -------------------
-inline constexpr const char* kHotFile      = "hot.bin";
-inline constexpr const char* kExpertsFile  = "experts.bin";
-inline constexpr const char* kMtpFile      = "mtp.bin";
-inline constexpr const char* kManifestFile = "manifest.json";
-inline constexpr const char* kEngramL1File  = "engram.L1.bin";
-inline constexpr const char* kEngramL14File = "engram.L14.bin";
-
-// Byte offset of routed expert (layer, expert) inside experts.bin.
-constexpr uint64_t expert_file_offset(uint32_t layer, uint32_t expert) noexcept {
-    return uint64_t(layer) * kExpertsPerLayerBytes + uint64_t(expert) * kExpertBytes;
-}
+// --- the only file tools/manifest.py writes (design §5.1) -------------------
+// Everything else the runtime opens is an original shard, named by the
+// manifest's `files` array.
+inline constexpr const char* kManifestFile = "deepmoe_manifest.json";
 
 }  // namespace deepmoe::layout

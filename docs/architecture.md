@@ -3,7 +3,9 @@
 本文描述 deepMoE 代码骨架的**模块边界、依赖 DAG 与线程模型**。设计意图见
 [design.md](design.md)；本文只回答"哪个模块能 include 哪个模块""哪段代码跑在哪个线程上"。
 
-状态：v0.1（2026-09-14），对应骨架提交。实现进度见 design.md §15。
+状态：v0.2（2026-09-14）。v0.1 对应骨架提交；v0.2 跟进 design §5.1 v0.5 的直读改动
+（新增 `store/shard_set.h`，`ExpertStore` 改为每 run 计数、每 expert 6 项指针表）。
+实现进度见 design.md §15。
 
 ---
 
@@ -39,6 +41,7 @@ core ← model ← store ← storage ← gpu / cpu ← runtime ← cli
      │ slab ← expert_store   │◄───┼────────────────┼─────────────┼─────────┘
      │ planner  predictor    │    │   (slab.h 被 gpu/memory.h 引用：
      │ engram_prefetch       │    │    SlabBacking 是两条路径的公共接口)
+     │ shard_set             │    │
      └────────────▲──────────┘    │
                   │               │
           ┌───────┴───────────────┴──────────────────────────┐
@@ -57,9 +60,9 @@ core ← model ← store ← storage ← gpu / cpu ← runtime ← cli
 | 模块 | 做 | 明确不做 |
 |---|---|---|
 | `core/` | 值类型、`Result<T>`、4 KiB 对齐、JSON 读取、日志、Profiler、运行时配置 | 不知道模型、不做 I/O、不碰 GPU |
-| `model/` | `layout.h` 编译期常量；解析 `config.json` 与 `manifest.json` | 不读权重字节，不分配内存 |
-| `storage/` | 平台无关的异步 I/O：`IoRequest` 优先级队列、切分、队列深度；`File` 抽象 | 不知道 expert 是什么（`IoRequest::key` 只是给 Profiler 归因用的标签） |
-| `store/` | slab 池、`Free→Filling→Resident` 状态机、`(host_ptr, dev_addr)`、GPU 指针表；Planner 的淘汰与取数策略 | 不做前向计算；ExpertStore 不选淘汰对象（那是 Planner 的事） |
+| `model/` | `layout.h` 编译期常量；解析 `config.json` 与 `deepmoe_manifest.json`（v2：原始分片的 run/skew 地址簿，design §5.1） | 不读权重字节，不分配内存 |
+| `storage/` | 平台无关的异步 I/O：`IoRequest` 优先级队列、切分、队列深度；`File` 抽象 | 不知道 expert 是什么（`IoRequest::key` 只是给 Profiler 归因用的标签），也不知道 manifest —— 4 KiB 对齐由 manifest 保证（design §5.1），I/O 层只搬对齐好的块 |
+| `store/` | slab 池、`Free→Filling→Resident` 状态机（每 expert 的所有 run 到齐才 Resident）、`(host_ptr, dev_addr)`、每 expert 6 项的 GPU 指针表、`ShardSet`（48 个原始分片的打开与索引）；Planner 的淘汰与取数策略 | 不做前向计算；ExpertStore 不选淘汰对象（那是 Planner 的事） |
 | `cpu/` | FP4/FP8/E8M0 解码（L0 oracle）、标量与 AVX-512 GEMV、router 数学 | 不做调度、不做 I/O |
 | `gpu/vulkan/` | device/queue、内存路径 A/B、timeline、command buffer、pipeline | 不知道层结构；kernel 语义在 `gpu/shaders/` |
 | `runtime/` | token 循环编排：block/attention/moe/engram/dspark/sampler/kvcache | 不实现 I/O 策略，不直接 `ReadFile` |
@@ -113,13 +116,14 @@ submit 线程                     io dispatcher              iocp 线程
    ├─ Planner::plan_layer()
    │    ├─ ExpertStore::lookup() × 6        命中/缺失
    │    ├─ Planner::reclaim()               按 LRU 淘汰腾槽
-   │    └─ IoEngine::submit() × miss  ──────►│
+   │    └─ IoEngine::submit() × (miss × run) ►│   每个 expert 2 个 run（§5.1）
    │                                         ├─ 切成 4 MiB chunk
    │                                         ├─ ReadFile(OVERLAPPED) ──►│
    │                                         │                          ├─ 完成包
    │                                         │◄─────────────────────────┘
-   │                                         ├─ ExpertStore::finish_fill()
-   │                                         │   （在 dispatcher 线程上！）
+   │                                         ├─ ExpertStore::finish_run()
+   │                                         │   （在 dispatcher 线程上！全部 run
+   │                                         │    到齐才 Filling→Resident）
    │◄─ 最后一个 fill 完成后 ──────────────────┘
    ├─ Timeline::signal(token_base + layer)  ──────────────────────►  GPU 继续跑 MoE
    │
@@ -131,7 +135,7 @@ submit 线程                     io dispatcher              iocp 线程
 `IoEngine` 的完成回调**跑在 dispatcher 线程上**，而 dispatcher 线程同时负责给所有其他在途
 请求下发 chunk。回调里做实事就会卡住整条 I/O 流水线。允许做的只有：
 
-- `ExpertStore::finish_fill()`（拿一次锁，改几个指针）
+- `ExpertStore::finish_run()`（拿一次锁，计一个数；最后一个 run 到达时改几个指针）
 - `Timeline::signal()`
 - 通知一个条件变量
 
@@ -139,7 +143,7 @@ submit 线程                     io dispatcher              iocp 线程
 
 | 数据 | 保护方式 | 争用面 |
 |---|---|---|
-| `ExpertStore` 的 slot 表、free list、指针表 | 一把 `std::mutex`，只在指针记账期间持有，绝不跨 I/O | submit 线程 lookup / dispatcher 线程 finish_fill / planner 线程 reclaim |
+| `ExpertStore` 的 slot 表、free list、指针表 | 一把 `std::mutex`，只在指针记账期间持有，绝不跨 I/O | submit 线程 lookup / dispatcher 线程 finish_run / planner 线程 reclaim |
 | `IoEngine` 的四条优先级队列与 `chunk_owner_` | 一把 `std::mutex` | 任意线程 submit / dispatcher |
 | `IoEngine` / `Planner` 的统计 | 各自一把 mutex，与热路径分开 | 读取方是报告代码 |
 | `Profiler` 的分段累加器与计数器 | relaxed 原子；token 边界是同步点 | 所有线程 |
@@ -184,5 +188,5 @@ Planner 决定淘汰 slot
 | `nvme_bench` | design §9.1 Q6/Q7 的微基准（P-1 产物） |
 | `bw_matrix` | design §9.2 的带宽矩阵（CPU 部分已实现，GPU 部分待 P2） |
 | `envcheck` | 环境自检，见 docs/build.md |
-| `deepmoe_tests` | 单元测试；`ctest` 另按 suite 注册一遍 |
+| `deepmoe_tests` | 单元测试；`ctest` 另按 suite 注册一遍。`suite.integration` 需要 `DEEPMOE_MODEL_DIR`（标签 `needs-model`），不给就自动跳过 |
 | `shaders` | `gpu/shaders/*.slang` → SPIR-V，每个都过 `spirv-val` |

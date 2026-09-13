@@ -11,6 +11,7 @@
 // thread, so both are mutex-guarded.
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <deque>
@@ -50,11 +51,18 @@ public:
 
         storage::ChunkCompletion c;
         c.chunk_id = req.chunk_id;
-        if (req.file_off + req.bytes > content_.size()) {
+        // Same EOF rule as the real backends: a read may run past the end of the
+        // file by less than one sector and come back short, but never shorter
+        // than ChunkRequest::min_bytes (storage/backend.h).
+        const uint64_t avail = req.file_off < content_.size()
+                                 ? content_.size() - req.file_off : 0;
+        const uint32_t moved = static_cast<uint32_t>(std::min<uint64_t>(req.bytes, avail));
+        const uint32_t need  = req.min_bytes ? req.min_bytes : req.bytes;
+        if (moved < need) {
             c.status = Status{Err::OutOfRange, "read past end of fake file"};
         } else {
-            std::memcpy(req.dst, content_.data() + req.file_off, req.bytes);
-            c.bytes_moved = req.bytes;
+            if (moved) std::memcpy(req.dst, content_.data() + req.file_off, moved);
+            c.bytes_moved = moved;
         }
         if (hold_) held_.push_back(c); else pending_.push_back(c);
         return {};

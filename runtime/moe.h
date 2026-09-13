@@ -41,7 +41,7 @@ public:
     // TODO(design §7.8, §7.9): implement in P2.
     virtual Result<void> record_decode(uint32_t layer, uint32_t batch_m) = 0;
 
-    // Expert-major streaming prefill: iterate experts in experts.bin order,
+    // Expert-major streaming prefill: iterate experts in shard order,
     // gather the tokens routed to each, one GEMM, scatter-add back
     // (design §7.13, §9.7).
     // TODO(design §7.13, §9.7): implement in P5.

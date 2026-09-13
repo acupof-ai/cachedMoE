@@ -48,7 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("--model", required=True, help="repacked model directory")
+    p.add_argument("--model", required=True,
+                   help="the safetensors directory, with deepmoe_manifest.json in it")
     p.add_argument("--corpus", required=True, action="append",
                    help="text file to trace; repeatable. Design section 9.2 asks "
                         "for a Chinese/English/code mix over several prompts")

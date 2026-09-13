@@ -94,8 +94,8 @@ Result<File> File::open(const std::string& path, FileFlags flags) {
 
     auto ss = volume_sector_size(path);
     f.sector_size_ = ss ? *ss : 4096u;
-    // The repacked layout of design §5.1 is built on 4 KiB; a 4K-native volume
-    // with a larger physical sector would need repack.py re-run.
+    // deepmoe_manifest.json widens every read to 4 KiB (design §5.1); a volume
+    // demanding a larger logical sector would need the manifest regenerated.
     if (f.unbuffered_ && f.sector_size_ > kPageSize) {
         ::CloseHandle(h);
         f.handle_ = invalid_handle();

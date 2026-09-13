@@ -143,6 +143,9 @@ private:
         IoRequest   req{};
         IoCallback  cb;
         std::vector<Chunk> chunks;
+        // How many bytes must actually arrive. Less than req.bytes only when the
+        // aligned read runs past EOF (storage/backend.h ChunkRequest::min_bytes).
+        uint64_t required_bytes = 0;
         size_t   next_chunk    = 0;  // index of the first not-yet-issued chunk
         size_t   issued_chunks = 0;  // handed to the backend (<= next_chunk after a rollback)
         size_t   done_chunks   = 0;

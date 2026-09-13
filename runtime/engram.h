@@ -48,7 +48,7 @@ public:
 // The compressed vocabulary the hash is computed over: NFKC, lowercased,
 // whitespace-normalised, 99,092 entries out of the 129,280 token vocabulary
 // (engram_compressed_vocab_size in config.json).
-// TODO(design §2.4): built by tools/repack.py from the tokenizer.
+// TODO(design §2.4): built from the tokenizer by a P0 tool.
 class CompressedVocab {
 public:
     virtual ~CompressedVocab() = default;

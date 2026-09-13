@@ -138,7 +138,10 @@ public:
         const int r = sys_io_uring_enter(ring_fd_, 1, 0, 0);
         if (r < 0) return fail(Err::Io, "io_uring_enter(submit)", static_cast<uint32_t>(errno));
         ++inflight_;
-        pending_bytes_[req.chunk_id & (kPendingMask)] = req.bytes;
+        // The in-file part of the chunk is what must arrive; a read that
+        // straddles EOF is legally short (storage/backend.h).
+        pending_bytes_[req.chunk_id & (kPendingMask)] =
+            req.min_bytes ? req.min_bytes : req.bytes;
         return {};
     }
 
@@ -177,7 +180,7 @@ private:
             } else {
                 c.bytes_moved = static_cast<uint32_t>(cqe.res);
                 const uint32_t want = pending_bytes_[c.chunk_id & kPendingMask];
-                if (want && c.bytes_moved != want)
+                if (want && c.bytes_moved < want)
                     c.status = Status{Err::Io, std::format("short read: {} of {}", c.bytes_moved, want)};
             }
             out[n++] = c;
