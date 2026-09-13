@@ -9,6 +9,7 @@ add_executable(deepmoe_tests
     test_io.cpp
     test_model.cpp
     test_integration.cpp
+    test_gpu_core.cpp
     test_gpu_moe.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
@@ -31,6 +32,12 @@ add_test(NAME "suite.integration" COMMAND deepmoe_tests "integration.")
 set_tests_properties("suite.integration" PROPERTIES
     LABELS "needs-model"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR")
+
+# The Vulkan plumbing of design §3.3 / §5.3 / §7.1. Needs a GPU but no weights.
+add_test(NAME "suite.gpu" COMMAND deepmoe_tests "gpu.")
+set_tests_properties("suite.gpu" PROPERTIES
+    LABELS "needs-gpu"
+    SKIP_REGULAR_EXPRESSION "SKIP gpu:")
 
 # The design §7.9 kernels on the real checkpoint. Same gate, and it additionally
 # skips itself when there is no usable Vulkan device.
