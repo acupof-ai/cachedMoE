@@ -123,6 +123,7 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.max_storage_buffer_range = p.limits.maxStorageBufferRange;
     c.max_compute_shared_memory = p.limits.maxComputeSharedMemorySize;
     c.max_compute_workgroup_invocations = p.limits.maxComputeWorkGroupInvocations;
+    c.timestamp_period_ns = p.limits.timestampPeriod;
     c.max_buffer_size = m4.maxBufferSize;
     c.subgroup_size     = v11.subgroupSize;
     c.min_subgroup_size = sgc.minSubgroupSize;
@@ -137,8 +138,12 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
 
     VkPhysicalDeviceShaderFloat16Int8Features f16i8{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES};
+    VkPhysicalDeviceSynchronization2Features sync2{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES, &f16i8};
+    VkPhysicalDevice16BitStorageFeatures s16{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES, &sync2};
     VkPhysicalDevice8BitStorageFeatures s8{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, &f16i8};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, &s16};
     VkPhysicalDeviceTimelineSemaphoreFeatures ts{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES, &s8};
     VkPhysicalDeviceBufferDeviceAddressFeatures bda{
@@ -150,6 +155,11 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.shader_float16       = f16i8.shaderFloat16 == VK_TRUE;
     c.shader_int8          = f16i8.shaderInt8 == VK_TRUE;
     c.storage_buffer_8bit  = s8.storageBuffer8BitAccess == VK_TRUE;
+    c.storage_buffer_16bit = s16.storageBuffer16BitAccess == VK_TRUE &&
+                             s16.uniformAndStorageBuffer16BitAccess == VK_TRUE;
+    c.shader_int16         = feat.features.shaderInt16 == VK_TRUE;
+    c.shader_int64         = feat.features.shaderInt64 == VK_TRUE;
+    c.synchronization2     = sync2.synchronization2 == VK_TRUE;
     c.timeline_semaphore   = ts.timelineSemaphore == VK_TRUE;
     c.buffer_device_address = bda.bufferDeviceAddress == VK_TRUE;
     c.integer_dot_product  = idp.shaderIntegerDotProduct == VK_TRUE;
@@ -250,25 +260,42 @@ Result<void> Device::create(const DeviceOptions& opts) {
     auto fam = pick_compute_family(physical_);
     if (!fam) { destroy(); return std::unexpected(fam.error()); }
     compute_family_ = *fam;
+    {
+        uint32_t nq = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(physical_, &nq, nullptr);
+        std::vector<VkQueueFamilyProperties> qp(nq);
+        vkGetPhysicalDeviceQueueFamilyProperties(physical_, &nq, qp.data());
+        if (compute_family_ < nq) caps_.timestamp_valid_bits = qp[compute_family_].timestampValidBits;
+    }
 
     std::vector<const char*> exts;
     if (caps_.external_memory_host)  exts.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (caps_.subgroup_size_control) exts.push_back(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
     if (caps_.cooperative_matrix)    exts.push_back("VK_KHR_cooperative_matrix");
 
-    VkPhysicalDeviceShaderFloat16Int8Features f16i8{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES};
-    f16i8.shaderFloat16 = caps_.shader_float16 ? VK_TRUE : VK_FALSE;
-    f16i8.shaderInt8    = caps_.shader_int8 ? VK_TRUE : VK_FALSE;
-    VkPhysicalDeviceVulkan12Features v12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f16i8};
+    // Everything promoted into a VkPhysicalDeviceVulkanNNFeatures struct has to
+    // be requested *there* and nowhere else: mixing the promoted struct with the
+    // original extension struct is VUID-VkDeviceCreateInfo-pNext-02830.
+    // 1.1: 16-bit storage for the fp16 activation buffers of design §6.
+    VkPhysicalDeviceVulkan11Features v11f{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
+    v11f.storageBuffer16BitAccess           = caps_.storage_buffer_16bit ? VK_TRUE : VK_FALSE;
+    v11f.uniformAndStorageBuffer16BitAccess = caps_.storage_buffer_16bit ? VK_TRUE : VK_FALSE;
+    VkPhysicalDeviceVulkan12Features v12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &v11f};
     v12.timelineSemaphore       = caps_.timeline_semaphore ? VK_TRUE : VK_FALSE;
     v12.bufferDeviceAddress     = caps_.buffer_device_address ? VK_TRUE : VK_FALSE;
     v12.storageBuffer8BitAccess = caps_.storage_buffer_8bit ? VK_TRUE : VK_FALSE;
+    v12.shaderFloat16           = caps_.shader_float16 ? VK_TRUE : VK_FALSE;
+    v12.shaderInt8              = caps_.shader_int8 ? VK_TRUE : VK_FALSE;
     VkPhysicalDeviceVulkan13Features v13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &v12};
-    v13.subgroupSizeControl = caps_.subgroup_size_control ? VK_TRUE : VK_FALSE;
+    v13.subgroupSizeControl  = caps_.subgroup_size_control ? VK_TRUE : VK_FALSE;
     v13.computeFullSubgroups = caps_.subgroup_size_control ? VK_TRUE : VK_FALSE;
     v13.shaderIntegerDotProduct = caps_.integer_dot_product ? VK_TRUE : VK_FALSE;
+    v13.synchronization2     = caps_.synchronization2 ? VK_TRUE : VK_FALSE;
     VkPhysicalDeviceFeatures2 feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v13};
+    // SPIR-V PhysicalStorageBuffer64 addressing (the expert pointer table of
+    // design §5.3) needs Int64; `half` in a storage buffer needs Int16.
+    feat.features.shaderInt64 = caps_.shader_int64 ? VK_TRUE : VK_FALSE;
+    feat.features.shaderInt16 = caps_.shader_int16 ? VK_TRUE : VK_FALSE;
 
     const float prio = 1.0f;
     VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};

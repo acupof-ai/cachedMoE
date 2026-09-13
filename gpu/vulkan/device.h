@@ -61,6 +61,13 @@ struct DeviceCaps {
     uint32_t subgroup_size = 0;                // 64 by default, 32..64 controllable
     uint32_t min_subgroup_size = 0, max_subgroup_size = 0;
 
+    // design §7.2 bench: GPU-side timing for the kernel benchmark. `period_ns`
+    // is VkPhysicalDeviceLimits::timestampPeriod, `valid_bits` the compute
+    // queue family's timestampValidBits (0 = the queue cannot timestamp).
+    float    timestamp_period_ns = 0.0f;
+    uint32_t timestamp_valid_bits = 0;
+    uint32_t compute_units = 0;                // shaderCoreProperties CU count, 0 if unknown
+
     // VK_EXT_external_memory_host: the import alignment must divide 4 KiB for
     // the zero-copy NVMe path of design §9.6 to work.
     uint64_t min_imported_host_pointer_alignment = 0;
@@ -73,7 +80,11 @@ struct DeviceCaps {
     bool cooperative_matrix     = false;
     bool shader_float16         = false;
     bool shader_int8            = false;
+    bool shader_int16           = false;   // SPIR-V Int16: half-typed storage buffers
+    bool shader_int64           = false;   // SPIR-V Int64: PhysicalStorageBuffer addressing (§5.3)
+    bool synchronization2       = false;   // vkCmdPipelineBarrier2 / vkCmdWriteTimestamp2
     bool storage_buffer_8bit    = false;
+    bool storage_buffer_16bit   = false;   // half-typed storage buffers (fp16 activations, §6)
 
     std::vector<HeapInfo>       heaps;
     std::vector<MemoryTypeInfo> memory_types;

@@ -6,6 +6,7 @@
 // per dispatch that would be 3-9 ms if re-recorded every token, which is 5-14%
 // of the 65 ms floor (design §3.4) -- hence recording once and parameterising
 // through push constants and the expert pointer table rather than descriptors.
+// bench/kernel_bench measures the real per-dispatch cost; see docs/kernel_p1.md.
 //
 // Expert readiness is expressed as a wait on gpu/vulkan/timeline.h inside the
 // submit info, not as a mid-buffer host round trip.
@@ -22,6 +23,7 @@
 #include "core/status.h"
 #include "core/types.h"
 #include "gpu/vulkan/device.h"
+#include "gpu/vulkan/pipeline.h"
 #include "gpu/vulkan/timeline.h"
 
 namespace deepmoe::gpu {
@@ -39,9 +41,8 @@ public:
     Result<void> create(Device& device);
     void         destroy();
 
-    // A buffer that is recorded once and submitted many times.
-    // TODO(design §7.1): implement with VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS?
-    // no -- one token at a time, so a plain re-submittable primary buffer.
+    // A buffer that is recorded once and submitted many times. One token at a
+    // time, so a plain re-submittable primary buffer is enough.
     Result<CommandBuffer> acquire();
     void                  reset();
 
@@ -56,6 +57,38 @@ private:
 #endif
 };
 
+// GPU-side timing. `timestampPeriod` nanoseconds per tick; the compute queue's
+// timestampValidBits must be non-zero (device.h reports both). Used by
+// bench/kernel_bench to separate kernel time from submit overhead.
+class QueryPool {
+public:
+    QueryPool() = default;
+    ~QueryPool();
+
+    QueryPool(const QueryPool&) = delete;
+    QueryPool& operator=(const QueryPool&) = delete;
+
+    Result<void> create(Device& device, uint32_t count);
+    void         destroy();
+    uint32_t     count() const { return count_; }
+
+    // Raw tick values, one per query slot.
+    Result<std::vector<uint64_t>> read() const;
+    // Seconds between two slots, using timestampPeriod.
+    Result<double> elapsed_seconds(uint32_t first, uint32_t last) const;
+
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    VkQueryPool handle() const { return pool_; }
+#endif
+
+private:
+    Device*  device_ = nullptr;
+    uint32_t count_  = 0;
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    VkQueryPool pool_ = VK_NULL_HANDLE;
+#endif
+};
+
 class CommandBuffer {
 public:
     CommandBuffer() = default;
@@ -63,25 +96,31 @@ public:
     Result<void> begin();
     Result<void> end();
 
-    // A compute dispatch with its push constants. The expert addresses come
-    // from the pointer table (design §5.3), so nothing is rebound per expert.
-    // TODO(design §7).
-    Result<void> dispatch(uint32_t gx, uint32_t gy, uint32_t gz);
-
-    // The barrier between two dispatches of design §7.14's list.
-    // TODO(design §7.1): a single global memory barrier is enough for the
-    // strictly serial decode chain; the kernel bench measures its real cost.
+    // The barrier between two dispatches of design §7.14's list: a single
+    // global shader-write -> shader-read dependency, which is all a strictly
+    // serial decode chain needs.
     Result<void> barrier();
 
+    // A compute dispatch. `bind` and `push` first; the expert addresses come
+    // from the pointer table (design §5.3), so nothing is rebound per expert.
+    Result<void> dispatch(uint32_t gx, uint32_t gy = 1, uint32_t gz = 1);
+
 #if defined(DEEPMOE_ENABLE_VULKAN)
+    Result<void> bind(const Pipeline& pipeline, VkDescriptorSet set = VK_NULL_HANDLE);
+    Result<void> push(const Pipeline& pipeline, const void* data, uint32_t bytes);
+    Result<void> reset_queries(const QueryPool& q, uint32_t first, uint32_t count);
+    Result<void> write_timestamp(const QueryPool& q, uint32_t index, bool bottom = true);
+
     VkCommandBuffer handle() const { return cb_; }
     explicit CommandBuffer(VkCommandBuffer cb) : cb_(cb) {}
+
 private:
     VkCommandBuffer cb_ = VK_NULL_HANDLE;
 #endif
 };
 
-// One submission: wait on `wait` values of `timeline`, signal `signal_value`.
+// One submission: wait on `wait_values` of `timeline`, signal `signal_value`.
+// A null timeline means "no synchronisation", which is what the benchmarks use.
 struct Submission {
     const CommandBuffer* cmd = nullptr;
     Timeline*            timeline = nullptr;
@@ -89,7 +128,10 @@ struct Submission {
     TimelineValue        signal_value = 0;
 };
 
-// TODO(design §7.1): vkQueueSubmit2 with a timeline wait per MoE layer.
 Result<void> submit(Device& device, const Submission& s);
+
+// Submit and block until the queue is idle. Benchmarks and tests only -- the
+// decode loop never waits on the host (design §7.1).
+Result<void> submit_and_wait(Device& device, const CommandBuffer& cmd);
 
 }  // namespace deepmoe::gpu

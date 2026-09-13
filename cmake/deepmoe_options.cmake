@@ -50,14 +50,19 @@ set(DEEPMOE_GPU_SOURCES
     gpu/vulkan/memory.cpp
     gpu/vulkan/timeline.cpp
     gpu/vulkan/cmdbuf.cpp
-    gpu/vulkan/pipeline.cpp)
+    gpu/vulkan/pipeline.cpp
+    gpu/vulkan/descriptor.cpp
+    gpu/vulkan/rawread.cpp
+    gpu/vulkan/moe_kernels.cpp)
 
 set(DEEPMOE_RUNTIME_SOURCES
     runtime/engine.cpp)
 
-# design §7.14 dispatch list, plus the FP4 GEMV template.
+# design §7.14 dispatch list, plus the FP4 GEMV template and the raw-read
+# upper bound every kernel is scored against (design §7.1 rule 2).
 set(DEEPMOE_SHADERS
     gpu/shaders/moe_gemv_fp4.slang
+    gpu/shaders/rawread.slang
     gpu/shaders/mega_mhc.slang
     gpu/shaders/wq_a.slang
     gpu/shaders/wq_b.slang

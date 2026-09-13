@@ -22,9 +22,10 @@ function(add_slang_shader target src)
     add_custom_command(
         OUTPUT "${out}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/shaders"
-        COMMAND "${SLANGC_EXECUTABLE}" "${src}" -target spirv -profile spirv_1_6 -entry main -O2 -o "${out}"
+        COMMAND "${SLANGC_EXECUTABLE}" "${src}" -target spirv -profile spirv_1_6 -entry main -O2
+                -I "${CMAKE_SOURCE_DIR}/gpu/shaders" -o "${out}"
         COMMAND "${SPIRV_VAL_EXECUTABLE}" --target-env vulkan1.3 "${out}"
-        DEPENDS "${src}"
+        DEPENDS "${src}" "${CMAKE_SOURCE_DIR}/gpu/shaders/moe_common.slang"
         COMMENT "slangc ${name}.slang"
         VERBATIM)
     add_custom_target("${target}" DEPENDS "${out}")
@@ -58,6 +59,9 @@ endif()
 add_library(deepmoe_core STATIC ${_deepmoe_sources})
 target_include_directories(deepmoe_core PUBLIC "${CMAKE_SOURCE_DIR}")
 target_compile_features(deepmoe_core PUBLIC cxx_std_${DEEPMOE_CXX_STANDARD})
+# Where `shaders` drops the .spv files; the environment variable of the same
+# name overrides it so a relocated build tree still runs.
+target_compile_definitions(deepmoe_core PUBLIC DEEPMOE_SHADER_DIR="${CMAKE_BINARY_DIR}/shaders")
 
 if(DEEPMOE_ENABLE_VULKAN)
     target_link_libraries(deepmoe_core PUBLIC Vulkan::Vulkan)
@@ -91,6 +95,13 @@ target_link_libraries(nvme_bench PRIVATE deepmoe_core)
 
 add_executable(bw_matrix bench/bw_matrix.cpp)
 target_link_libraries(bw_matrix PRIVATE deepmoe_core)
+add_dependencies(bw_matrix shaders)
+
+# design §7.1 rule 2 / §7.9: effective GB/s of the two MoE dispatches against
+# the raw-read ceiling, over the real checkpoint's experts (P1).
+add_executable(kernel_bench bench/kernel_bench.cpp)
+target_link_libraries(kernel_bench PRIVATE deepmoe_core)
+add_dependencies(kernel_bench shaders)
 
 # --- environment self-check (design docs/build.md) ---------------------------
 if(DEEPMOE_ENABLE_VULKAN)
