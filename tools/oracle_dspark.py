@@ -1634,6 +1634,7 @@ def run_tree(args: argparse.Namespace) -> int:
                 log(f"{P['name']}/{mode}: already has {len(state['cycles'])} cycles")
                 return
         rng = np.random.default_rng(1000 + 17 * pi + (1 if mode == "sampling" else 0))
+        tgen = torch.Generator().manual_seed(5000 + 17 * pi)
         n = len(P["ids"])
         if state is not None and os.path.exists(ckpt):
             blob = torch.load(ckpt, weights_only=False)
@@ -1688,7 +1689,10 @@ def run_tree(args: argparse.Namespace) -> int:
                 path = lat.path("eal")
                 u_path = u_acc = u_res = None
             else:
-                lat = lattice_for(dd, with_tail=False)
+                idx32, cl32, lse32, e_in, e_cand32, h_cand32 = dt.lattice_inputs(
+                    dd["B"], dd["input_token"], E, H, 32)
+                lat = dt.Lattice(idx32[:, :K], cl32[:, :K], e_in, e_cand32[:, :K],
+                                 h_cand32[:, :K], None)
                 u_path, u_acc, u_res = rng.random(5), rng.random(5), rng.random(6)
                 path = lat.sample(u_path)
             t_tree = time.perf_counter() - t1
@@ -1707,10 +1711,31 @@ def run_tree(args: argparse.Namespace) -> int:
             if mode == "greedy":
                 a, emitted = dt.accept_greedy(ptoks, [int(v) for v in rows["argmax"]], 5)
             else:
-                a, emitted = dt.accept_sampling(lat, path, 5,
-                                                rows["top_ids"][:, :TREE_VERIFY_TOPK],
-                                                rows["top_logits"][:, :TREE_VERIFY_TOPK],
-                                                u_acc, u_res)
+                # exactly lossless against plain temperature-1 sampling: candidate
+                # logits, row logsumexp, a C_j-masked sample and a full-row sample
+                lg = vlogits.float()
+                gum = -torch.log(torch.empty_like(lg, dtype=torch.float64).exponential_(
+                    generator=tgen)).float()
+                cand_rows = torch.stack([lg[j, torch.from_numpy(idx32[j]).long()]
+                                         for j in range(5)]).numpy()
+                lse_rows = torch.logsumexp(lg.double(), dim=-1).float().numpy()
+                masked = {}
+                for Kx in dt.KS:
+                    ms = []
+                    for j in range(5):
+                        z = lg[j] + gum[j]
+                        z[torch.from_numpy(idx32[j][:Kx]).long()] = -float("inf")
+                        ms.append(int(z.argmax()))
+                    masked[Kx] = ms
+                full = [int((lg[j] + gum[j]).argmax()) for j in range(len(batch))]
+                a, emitted = dt.accept_sampling_exact(lat, path, 5, cand_rows, lse_rows,
+                                                      np.asarray(masked[K]), np.asarray(full),
+                                                      u_acc, u_res)
+                rows["cand_logit32"] = cand_rows
+                rows["masked_samples"] = np.asarray([masked[Kx] for Kx in dt.KS], dtype=np.int32)
+                rows["full_samples"] = np.asarray(full, dtype=np.int32)
+                rows["emit_logit"] = np.asarray([float(lg[j, emitted[j]]) for j in range(a + 1)],
+                                                dtype=np.float32)
             t_accept = time.perf_counter() - t1
             ci = len(state["cycles"])
             np.savez(os.path.join(pdir, f"v{ci:03d}.npz"), **rows)

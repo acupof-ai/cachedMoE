@@ -399,6 +399,69 @@ def accept_sampling(lat: Lattice, path: list[int], k: int, ver_ids: np.ndarray,
     return k, out
 
 
+def accept_sampling_exact(lat: Lattice, path: list[int], k: int, cand_logit: np.ndarray,
+                          lse: np.ndarray, masked: np.ndarray, full: np.ndarray,
+                          u_acc: np.ndarray, u_res: np.ndarray):
+    """Speculative sampling that is exactly lossless against plain temperature-1
+    sampling of the main model (generate.py's default). -> (a, emitted tokens).
+
+    Needs from the verify forward, per row j (all computable in one pass over the
+    row the head already produced; the candidate ids are known before verify):
+      cand_logit [>=k, >=K]  main logits at the draft candidates C_j (path-independent)
+      lse        [k+1]       full-vocab logsumexp of each row
+      masked     [>=k]       one sample from row j with C_j masked out (Gumbel-max)
+      full       [k+1]       one sample from the whole row j (only row k is used)
+
+    Row j < k: p(c) = exp(l_c - lse) on C_j, q = the lattice conditionals given the
+    accepted prev (zero outside C_j). Accept iff u_acc[j] * q(x) < p(x). On rejection
+    the residual max(0, p - q) is w_c = max(0, p(c) - q(c)) on C_j plus p itself
+    outside C_j, whose mass is 1 - sum_c p(c): with t = u_res[j] * Z, Z = sum w + that
+    mass, pick inside C_j by cumulative w if t < sum w, else take the masked sample.
+    All k accepted: the bonus token is the full-row sample of row k."""
+    K = lat.K
+    out = []
+    for j in range(k):
+        la = np.float64(lse[j])
+        pc = dm_exp(np.asarray(cand_logit[j][:K], dtype=np.float64) - la)
+        prev = 0 if j == 0 else path[j - 1]
+        qrow = dm_exp(lat.logq[j][prev])
+        c = path[j]
+        x = int(lat.cand_ids[j][c])
+        if float(u_acc[j]) * float(qrow[c]) < float(pc[c]):
+            out.append(x)
+            continue
+        w = np.zeros(K, dtype=np.float64)
+        sw, sp = 0.0, 0.0
+        for i in range(K):
+            d = float(pc[i]) - float(qrow[i])
+            w[i] = d if d > 0.0 else 0.0
+            sw = sw + float(w[i])
+            sp = sp + float(pc[i])
+        rest = 1.0 - sp
+        if not rest > 0.0:
+            rest = 0.0
+        t = float(u_res[j]) * (sw + rest)
+        if t < sw:
+            cum = 0.0
+            pick = -1
+            last = 0
+            for i in range(K):
+                if w[i] > 0.0:
+                    last = i
+                cum = cum + float(w[i])
+                if cum > t:
+                    pick = i
+                    break
+            if pick < 0:
+                pick = last
+            out.append(int(lat.cand_ids[j][pick]))
+        else:
+            out.append(int(masked[j]))
+        return j, out
+    out.append(int(full[k]))
+    return k, out
+
+
 def _residual_token(ids, r, pv, u) -> int:
     total = 0.0
     for x in r:
@@ -758,9 +821,59 @@ def cmd_lossless(args) -> int:
                   "tv_vs_topKv": round(tv, 5), "tv_noise_floor": round(noise, 5),
                   "chi2": round(chi2, 2), "dof": dof, "tokens_outside_topKv": outside}
         print(K, res[K], flush=True)
+    # exact variant: treat the stored top-256 row as the whole vocabulary (the
+    # procedure is exact for any distribution), so the target is softmax over 256
+    ids256 = vids_full = ver["top_ids"][0].astype(np.int64)
+    l256 = ver["top_logits"][0].astype(np.float64)
+    lse256 = float(np.logaddexp.reduce(l256))
+    p256 = np.exp(l256 - lse256)
+    pos_of = {int(t): i for i, t in enumerate(ids256)}
+    res_exact = {}
+    for K in (4, 16):
+        idx, cl, lse, e_in, e_cand, h_cand = lattice_inputs(d["B"], d["input_token"], E, H, K)
+        lat = Lattice(idx, cl, e_in, e_cand, h_cand, None)
+        cand = np.full((1, K), -np.inf, dtype=np.float32)
+        for c in range(K):
+            if int(idx[0][c]) in pos_of:
+                cand[0, c] = l256[pos_of[int(idx[0][c])]]
+        mask = np.zeros(256, dtype=bool)
+        for c in range(K):
+            if int(idx[0][c]) in pos_of:
+                mask[pos_of[int(idx[0][c])]] = True
+        counts = np.zeros(256)
+        acc0 = 0
+        for _ in range(args.n):
+            g = l256 - np.log(rng.exponential(size=256))
+            gm = np.where(mask, -np.inf, g)
+            sp = lat.sample(rng.random(5))
+            a, em = accept_sampling_exact(lat, sp, 1, cand, np.asarray([lse256, lse256], np.float32),
+                                          np.asarray([int(ids256[int(np.argmax(gm))])]),
+                                          np.asarray([0, int(ids256[int(np.argmax(g))])]),
+                                          rng.random(5), rng.random(6))
+            counts[pos_of[em[0]]] += 1
+            acc0 += a
+        freq = counts / args.n
+        exp_ = p256 * args.n
+        big = exp_ >= 5
+        chi2 = float((((counts[big] - exp_[big]) ** 2) / exp_[big]).sum())
+        dof = int(big.sum()) - 1
+        pe, po = float(exp_[~big].sum()), float(counts[~big].sum())
+        if pe >= 5:
+            chi2 += (po - pe) ** 2 / pe
+            dof += 1
+        q0 = dm_exp(lat.logq[0][0])
+        expect = sum(min(float(p256[pos_of[int(t)]]) if int(t) in pos_of else 0.0, float(q0[c]))
+                     for c, t in enumerate(idx[0]))
+        res_exact[K] = {"n": args.n, "accept_rate_pos0": acc0 / args.n,
+                        "expected_accept_rate": round(expect, 5),
+                        "tv_vs_target": round(0.5 * float(np.abs(freq - p256).sum()), 5),
+                        "tv_noise_floor": round(float(np.sqrt(p256 * (1 - p256) / (2 * np.pi * args.n)).sum()), 5),
+                        "chi2": round(chi2, 2), "dof": dof}
+        print("exact", K, res_exact[K], flush=True)
     tail = 1.0 - float(np.exp(np.logaddexp.reduce(vlog[0].astype(np.float64)) - ver["lse"][0]))
     out = {"prompt": prompt, "mode": mode, "cycle": args.cycle,
-           "tail_mass_beyond_Kv_row0": tail, "results": res}
+           "tail_mass_beyond_Kv_row0": tail, "results_top32_truncated": res,
+           "results_exact_on_top256_as_vocab": res_exact}
     print(out)
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
@@ -832,6 +945,8 @@ def cmd_analyse(args) -> int:
     tailmass: dict = {kv: [] for kv in (8, 16, 32, 64, 256)}
     unions = []
     drivers = []
+    replay_mismatch = [0, 0]
+    base_rank = [[] for _ in range(5)]
 
     def put(d, key, val):
         d.setdefault(key, []).append(val)
@@ -859,6 +974,16 @@ def cmd_analyse(args) -> int:
             yprev = [dmeta["input_token"]] + y[:4]
             d = load_draft(pdir, di)
             n_events += 1
+            # the matrix claim, checked: B + H.E[prev] replays forward_head's chain, and
+            # how uninformative B alone is (rank of the chain token in the base row)
+            prev = dmeta["input_token"]
+            for i in range(5):
+                row = d["B"][i] + H @ E[prev]
+                c = int(np.argmax(row))
+                replay_mismatch[0] += int(c != dmeta["ref_chain"][i])
+                replay_mismatch[1] += 1
+                base_rank[i].append(int((d["B"][i] > d["B"][i][dmeta["ref_chain"][i]]).sum()))
+                prev = dmeta["ref_chain"][i]
             if mode == "greedy":
                 # the reference chain (old scheme) straight from forward_head
                 a = 0
@@ -1031,6 +1156,11 @@ def cmd_analyse(args) -> int:
     out["union_experts_by_M"] = [round(float(np.mean(v)) * 6 * (m + 1), 3) if v else None
                                  for m, v in enumerate(per_m)]
     out["verify_cycles"] = len(drivers)
+    out["chain_replay"] = {"mismatched_tokens": replay_mismatch[0], "tokens": replay_mismatch[1]}
+    out["chain_token_rank_in_base_logits"] = [
+        {"pos": i, "median": float(np.median(v)), "p90": float(np.quantile(v, 0.9)),
+         "frac_in_top16": round(float(np.mean(np.asarray(v) < 16)), 4)}
+        for i, v in enumerate(base_rank) if v]
     out["batch_boundary"] = batch_boundary_stats(trajs)
     out["seconds"] = round(time.time() - t_start, 1)
     with open(args.out_stats, "w", encoding="utf-8") as f:
