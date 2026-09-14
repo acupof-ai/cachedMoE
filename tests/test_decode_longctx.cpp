@@ -25,9 +25,10 @@
 //     cosines at the probe layers, every index layer's top-k against the
 //     reference's (tie-aware in OUR scores: a reference pick we did not make
 //     must sit at our threshold within the input drift), top-1; (b) eight steps
-//     teacher-forced; (c) the state reloaded and eight steps free-running, which
-//     must retrieve `kestrel-4471-amber`; (d) per-step attention time and the
-//     KV bytes a step reads.
+//     teacher-forced; (c) eight steps free-running, which must retrieve
+//     `kestrel-4471-amber`; (d) per-step attention time and the KV bytes a step
+//     reads; (e) a control pass with the reference's compressed KV and top-k
+//     loaded, which separates indexer drift from the rest.
 //
 // Data: DEEPMOE_LONGCTX_DIR (default <repo>/traces/longctx), the committed
 // subset in tests/data/longctx, DEEPMOE_LONGCTX_NAMES (default "ctx4k,ctx16k").
