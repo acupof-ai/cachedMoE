@@ -118,4 +118,19 @@ Accept accept_sampling(const Lattice& lat, const Path& path, uint32_t k,
                        uint32_t Kv, std::span<const double, kPositions> u_acc,
                        std::span<const double, kPositions + 1> u_res) noexcept;
 
+// Speculative sampling exactly lossless against plain temperature-1 sampling.
+// Per verify row j (one pass over the row the head already produced):
+//   cand_logit [P*stride]  main logits at C_j (the draft candidates, path-independent),
+//                          row j at offset j*stride, the first K entries used
+//   lse        [k+1]       full-vocab logsumexp of each row
+//   masked     [k]         a sample of row j with C_j masked out
+//   full       [k+1]       a sample of the whole row (only row k is used: the bonus)
+// See tools/dspark_tree.py::accept_sampling_exact for the rule.
+Accept accept_sampling_exact(const Lattice& lat, const Path& path, uint32_t k,
+                             std::span<const float> cand_logit, uint32_t stride,
+                             std::span<const float> lse, std::span<const int32_t> masked,
+                             std::span<const int32_t> full,
+                             std::span<const double, kPositions> u_acc,
+                             std::span<const double, kPositions + 1> u_res) noexcept;
+
 }  // namespace deepmoe::cpu::dspark

@@ -476,7 +476,7 @@ def _residual_token(ids, r, pv, u) -> int:
 # --------------------------------------------------------------------------- #
 
 GOLDEN_MAGIC = b"DMTR"
-GOLDEN_VERSION = 1
+GOLDEN_VERSION = 2
 
 
 CAND_RULES = ("anchor", "base", "union2", "union4")
@@ -658,6 +658,26 @@ def golden_case(d: dict, ver: dict, E, H, W, u_path, u_acc, u_res) -> bytes:
     out += vids.tobytes() + vlog.tobytes() + ver["argmax"].astype("<i4").tobytes()
     out += np.asarray(u_path, "<f8").tobytes() + np.asarray(u_acc, "<f8").tobytes()
     out += np.asarray(u_res, "<f8").tobytes()
+    # exact temperature-1 acceptance inputs: recorded by a sampling-mode cycle, or
+    # synthesised from the top-256 rows for a greedy one (absent logits = -inf)
+    if "cand_logit32" in ver:
+        lcand = ver["cand_logit32"].astype("<f4")
+        masked = ver["masked_samples"].astype("<i4")
+        full = ver["full_samples"].astype("<i4")
+    else:
+        lcand = np.full((5, 32), -np.inf, dtype="<f4")
+        masked = np.zeros((len(KS), 5), dtype="<i4")
+        for j in range(5):
+            pos = {int(t): i for i, t in enumerate(ver["top_ids"][j])}
+            for c in range(32):
+                if int(idx[j][c]) in pos:
+                    lcand[j, c] = ver["top_logits"][j][pos[int(idx[j][c])]]
+            for ki, K in enumerate(KS):
+                excl = set(int(t) for t in idx[j][:K])
+                masked[ki, j] = next(int(t) for t in ver["top_ids"][j] if int(t) not in excl)
+        full = ver["argmax"].astype("<i4")
+    lse6 = ver["lse"].astype("<f4")
+    out += lcand.tobytes() + lse6.tobytes() + masked.tobytes() + full.tobytes()
     diag = None
     for K in KS:
         for tail in (True, False):
@@ -679,6 +699,9 @@ def golden_case(d: dict, ver: dict, E, H, W, u_path, u_acc, u_res) -> bytes:
             a, em = accept_sampling(lat, sp, 5, vids, vlog, np.asarray(u_acc), np.asarray(u_res))
             out += struct.pack("<II", a, len(em)) + np.asarray(em + [0] * (6 - len(em)), "<i4").tobytes()
             a, em = accept_greedy(lat.tokens(paths[1]), [int(v) for v in ver["argmax"]], 5)
+            out += struct.pack("<II", a, len(em)) + np.asarray(em + [0] * (6 - len(em)), "<i4").tobytes()
+            a, em = accept_sampling_exact(lat, sp, 5, lcand, lse6, masked[KS.index(K)], full,
+                                          np.asarray(u_acc), np.asarray(u_res))
             out += struct.pack("<II", a, len(em)) + np.asarray(em + [0] * (6 - len(em)), "<i4").tobytes()
             if K == 16 and tail:
                 diag = lq

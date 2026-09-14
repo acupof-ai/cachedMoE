@@ -65,6 +65,8 @@ struct Expect {
     int32_t  s_tok[6]{};
     uint32_t g_a = 0, g_n = 0;
     int32_t  g_tok[6]{};
+    uint32_t x_a = 0, x_n = 0;
+    int32_t  x_tok[6]{};
 };
 
 struct Case {
@@ -75,6 +77,8 @@ struct Case {
     std::vector<int32_t> vids, argmax; // [6*32], [6]
     std::vector<float> vlog;
     double u_path[kP]{}, u_acc[kP]{}, u_res[kP + 1]{};
+    std::vector<float> lcand, lse6;    // [5*32], [6]
+    std::vector<int32_t> masked, full; // [4*5], [6]
     Expect exp[4][2];
     std::vector<double> diag;          // K = 16, tail: logq [5*16*16]
 };
@@ -104,7 +108,7 @@ bool load_golden(Golden& g) {
     const uint32_t version = r.get<uint32_t>(), n = r.get<uint32_t>();
     g.Kf = r.get<uint32_t>();
     g.Kv = r.get<uint32_t>();
-    if (version != 1 || g.Kf != 32 || g.Kv != 32) return false;
+    if (version != 2 || g.Kf != 32 || g.Kv != 32) return false;
     g.w = r.bf16(kHidden + kRank);
     for (uint32_t ci = 0; ci < n; ++ci) {
         Case c;
@@ -123,6 +127,10 @@ bool load_golden(Golden& g) {
         r.raw(c.u_path, sizeof c.u_path);
         r.raw(c.u_acc, sizeof c.u_acc);
         r.raw(c.u_res, sizeof c.u_res);
+        c.lcand = r.vec<float>(kP * K);
+        c.lse6 = r.vec<float>(kP + 1);
+        c.masked = r.vec<int32_t>(4 * kP);
+        c.full = r.vec<int32_t>(kP + 1);
         for (auto& perk : c.exp)
             for (auto& e : perk) {
                 e.hash_logq = r.get<uint64_t>();
@@ -133,6 +141,7 @@ bool load_golden(Golden& g) {
                 r.raw(e.sample, sizeof e.sample);
                 e.s_a = r.get<uint32_t>(); e.s_n = r.get<uint32_t>(); r.raw(e.s_tok, sizeof e.s_tok);
                 e.g_a = r.get<uint32_t>(); e.g_n = r.get<uint32_t>(); r.raw(e.g_tok, sizeof e.g_tok);
+                e.x_a = r.get<uint32_t>(); e.x_n = r.get<uint32_t>(); r.raw(e.x_tok, sizeof e.x_tok);
             }
         c.diag = r.vec<double>(kP * 16 * 16);
         g.cases.push_back(std::move(c));
@@ -254,6 +263,15 @@ DEEPMOE_TEST(dspark_tree, matches_python_bit_exactly) {
                 CHECK_EQ(ag.accepted, e.g_a);
                 CHECK_EQ(ag.n_emitted, e.g_n);
                 for (uint32_t i = 0; i < ag.n_emitted && i < 6; ++i) CHECK_EQ(ag.tokens[i], e.g_tok[i]);
+
+                const Accept ax = accept_sampling_exact(
+                    lat, sp, 5, c.lcand, g.Kf, c.lse6,
+                    std::span<const int32_t>(c.masked.data() + ki * kP, kP), c.full,
+                    std::span<const double, kP>(c.u_acc, kP),
+                    std::span<const double, kP + 1>(c.u_res, kP + 1));
+                CHECK_EQ(ax.accepted, e.x_a);
+                CHECK_EQ(ax.n_emitted, e.x_n);
+                for (uint32_t i = 0; i < ax.n_emitted && i < 6; ++i) CHECK_EQ(ax.tokens[i], e.x_tok[i]);
             }
         }
     }
@@ -267,7 +285,7 @@ DEEPMOE_TEST(dspark_tree, cpu_cost_microseconds) {
     for (uint32_t K : kKs) {
         const Sub sub = make_sub(c, g.Kf, K);
         const int iters = K >= 32 ? 400 : 2000;
-        double t_build = 0, t_path = 0, t_conf = 0, t_greedy = 0, t_build_nt = 0, t_samp = 0, t_acc = 0;
+        double t_exact = 0, t_build = 0, t_path = 0, t_conf = 0, t_greedy = 0, t_build_nt = 0, t_samp = 0, t_acc = 0;
         using clk = std::chrono::steady_clock;
         auto us = [](clk::time_point a, clk::time_point b) {
             return std::chrono::duration<double, std::micro>(b - a).count();
@@ -294,14 +312,20 @@ DEEPMOE_TEST(dspark_tree, cpu_cost_microseconds) {
                                   std::span<const double, kP>(c.u_acc, kP),
                                   std::span<const double, kP + 1>(c.u_res, kP + 1));
             const auto t7 = clk::now();
+            const auto t8 = clk::now();
+            (void)accept_sampling_exact(lat2, sp, 5, c.lcand, g.Kf, c.lse6,
+                                        std::span<const int32_t>(c.masked.data(), kP), c.full,
+                                        std::span<const double, kP>(c.u_acc, kP),
+                                        std::span<const double, kP + 1>(c.u_res, kP + 1));
+            t_exact += us(t8, clk::now());
             (void)cs;
             t_build += us(t0, t1); t_path += us(t1, t2); t_conf += us(t2, t3); t_greedy += us(t3, t4);
             t_build_nt += us(t4, t5); t_samp += us(t5, t6); t_acc += us(t6, t7);
         }
         std::printf("  K=%2u  lattice %.1f us  eal path %.2f us  confidence x5 %.2f us  accept_greedy %.3f us"
-                    " | lattice(no tail) %.1f us  sample %.2f us  accept_sampling(Kv=%u) %.2f us\n",
+                    " | lattice(no tail) %.1f us  sample %.2f us  accept_sampling(Kv=%u) %.2f us  exact %.2f us\n",
                     K, t_build / iters, t_path / iters, t_conf / iters, t_greedy / iters,
-                    t_build_nt / iters, t_samp / iters, g.Kv, t_acc / iters);
+                    t_build_nt / iters, t_samp / iters, g.Kv, t_acc / iters, t_exact / iters);
     }
     DM_UNUSED_CTX();
 }

@@ -366,4 +366,56 @@ Accept accept_sampling(const Lattice& lat, const Path& path, uint32_t k,
     return r;
 }
 
+Accept accept_sampling_exact(const Lattice& lat, const Path& path, uint32_t k,
+                             std::span<const float> cand_logit, uint32_t stride,
+                             std::span<const float> lse, std::span<const int32_t> masked,
+                             std::span<const int32_t> full,
+                             std::span<const double, kPositions> u_acc,
+                             std::span<const double, kPositions + 1> u_res) noexcept {
+    const uint32_t K = lat.K();
+    Accept r;
+    std::array<double, kMaxK> pc{}, qrow{}, w{};
+    for (uint32_t j = 0; j < k; ++j) {
+        const double la = static_cast<double>(lse[j]);
+        for (uint32_t c = 0; c < K; ++c) pc[c] = dm_exp(static_cast<double>(cand_logit[j * stride + c]) - la);
+        const uint32_t prev = j == 0 ? 0 : path[j - 1];
+        for (uint32_t c = 0; c < K; ++c) qrow[c] = dm_exp(lat.logq(j, prev, c));
+        const uint32_t c = path[j];
+        if (u_acc[j] * qrow[c] < pc[c]) {
+            r.tokens[j] = lat.token(j, c);
+            continue;
+        }
+        double sw = 0.0, sp = 0.0;
+        for (uint32_t i = 0; i < K; ++i) {
+            const double d = pc[i] - qrow[i];
+            w[i] = d > 0.0 ? d : 0.0;
+            sw = sw + w[i];
+            sp = sp + pc[i];
+        }
+        double rest = 1.0 - sp;
+        if (!(rest > 0.0)) rest = 0.0;
+        const double t = u_res[j] * (sw + rest);
+        if (t < sw) {
+            double cum = 0.0;
+            int pick = -1;
+            uint32_t last = 0;
+            for (uint32_t i = 0; i < K; ++i) {
+                if (w[i] > 0.0) last = i;
+                cum = cum + w[i];
+                if (cum > t) { pick = static_cast<int>(i); break; }
+            }
+            r.tokens[j] = lat.token(j, pick < 0 ? last : static_cast<uint32_t>(pick));
+        } else {
+            r.tokens[j] = masked[j];
+        }
+        r.accepted = j;
+        r.n_emitted = j + 1;
+        return r;
+    }
+    r.tokens[k] = full[k];
+    r.accepted = k;
+    r.n_emitted = k + 1;
+    return r;
+}
+
 }  // namespace deepmoe::cpu::dspark
