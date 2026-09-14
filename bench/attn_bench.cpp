@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -160,12 +161,22 @@ int main(int argc, char** argv) {
     spec.lanes_per_row = o.lanes;
     spec.subgroup_size = o.subgroup;
     spec.rows_per_lane = o.rows;
-    gpu::AttnRunner runner;
-    if (auto r = runner.create(device, alloc, gpu::default_shader_dir(), spec); !r) {
-        std::printf("runner: %s\n", r.error().str().c_str());
-        io.stop();
-        return 1;
+    // ONE RUNNER PER LAYER. A runner owns one address table, so with a single
+    // runner every iteration inside a command buffer reads the same layer's
+    // weights and anything under the 32 MB MALL reports a fantasy -- the first
+    // version of this benchmark had wq_a at 374 GB/s and wo_a at 397 against a
+    // 217 GB/s memory system. Iteration i uses runner i % layers, which is what
+    // a decode token does.
+    std::vector<std::unique_ptr<gpu::AttnRunner>> runners(o.layers);
+    for (uint32_t i = 0; i < o.layers; ++i) {
+        runners[i] = std::make_unique<gpu::AttnRunner>();
+        if (auto r = runners[i]->create(device, alloc, gpu::default_shader_dir(), spec); !r) {
+            std::printf("runner %u: %s\n", i, r.error().str().c_str());
+            io.stop();
+            return 1;
+        }
     }
+    gpu::AttnRunner& runner = *runners[0];
     gpu::GpuScratch scratch;
     if (auto r = scratch.create(alloc, 128ull << 20); !r) {
         std::printf("scratch: %s\n", r.error().str().c_str());
@@ -227,9 +238,9 @@ int main(int argc, char** argv) {
     auto run = [&](const char* label, gpu::AttnStage stage, uint64_t bytes,
                    auto set_slots, const void* push, uint32_t push_bytes,
                    uint32_t groups) -> Row {
-        // Warm the caches and the pipeline before timing.
-        set_slots(0u);
-        (void)runner.dispatch_now(stage, push, push_bytes, groups);
+        for (uint32_t i = 0; i < o.layers; ++i) set_slots(*runners[i], i);
+        // Warm the caches and the pipelines before timing.
+        (void)runners[0]->dispatch_now(stage, push, push_bytes, groups);
 
         auto cb = pool.acquire();
         if (!cb) return Row{label, 0, bytes};
@@ -240,20 +251,14 @@ int main(int argc, char** argv) {
             (void)cmd.write_timestamp(queries, 0, false);
         }
         for (uint32_t i = 0; i < o.iters; ++i) {
-            // The slot table is host-visible and not double-buffered, so the
-            // layer cycle has to be applied before recording, not during. One
-            // command buffer per layer index would be the alternative; with
-            // `layers` small the simple thing is to record `iters` dispatches
-            // against whatever the table holds and rotate between submissions.
-            (void)runner.record(cmd, stage, push, push_bytes, groups);
+            (void)runners[i % o.layers]->record(cmd, stage, push, push_bytes, groups);
             (void)cmd.barrier();
         }
         if (timed) (void)cmd.write_timestamp(queries, 1, true);
         (void)cmd.end();
 
         double best = 1e9;
-        for (uint32_t rep = 0; rep < o.layers; ++rep) {
-            set_slots(rep % o.layers);
+        for (uint32_t rep = 0; rep < 3; ++rep) {
             if (auto r = gpu::submit_and_wait(device, cmd); !r) return Row{label, 0, bytes};
             if (timed) {
                 if (auto s = queries.elapsed_seconds(0, 1); s)
@@ -277,7 +282,7 @@ int main(int argc, char** argv) {
     // --- mega_mhc -------------------------------------------------------
     gpu::MhcPush mp{d.dim, d.hc, (2 + d.hc) * d.hc, d.dim / 256, 20, gpu::kMhcFlagPost,
                     1e-20f, 1e-6f};
-    auto mhc_slots = [&](uint32_t L) {
+    auto mhc_slots = [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::MhcPost);
         s[gpu::slot::kX] = X.addr;         s[gpu::slot::kA] = A.addr;
         s[gpu::slot::kPostIn] = Post.addr; s[gpu::slot::kCombIn] = Comb.addr;
@@ -302,7 +307,7 @@ int main(int argc, char** argv) {
 
     // --- wq_a -----------------------------------------------------------
     gpu::GemvPush qa{d.q_lora, d.dim, d.dim / 32, 0};
-    rows.push_back(run("wq_a", gpu::AttnStage::WqA, fp8_bytes(d.q_lora, d.dim), [&](uint32_t L) {
+    rows.push_back(run("wq_a", gpu::AttnStage::WqA, fp8_bytes(d.q_lora, d.dim), [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::WqA);
         s[gpu::slot::kGemvW] = addr(L, "attn.wq_a.weight");
         s[gpu::slot::kGemvS] = sc_addr(L, "attn.wq_a.weight");
@@ -312,7 +317,7 @@ int main(int argc, char** argv) {
     // --- wq_b -----------------------------------------------------------
     gpu::WqbPush qb{d.qrows(), d.q_lora, d.q_lora / 32, d.head_dim, d.rope_dim, 1e-20f};
     rows.push_back(run("wq_b", gpu::AttnStage::WqB, fp8_bytes(d.qrows(), d.q_lora),
-                       [&](uint32_t L) {
+                       [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::WqB);
         s[gpu::slot::kWqbW] = addr(L, "attn.wq_b.weight");
         s[gpu::slot::kWqbS] = sc_addr(L, "attn.wq_b.weight");
@@ -324,7 +329,7 @@ int main(int argc, char** argv) {
     // --- wkv ------------------------------------------------------------
     const uint32_t kvg = runner.gemv_groups(gpu::AttnStage::WkvGemv, d.head_dim);
     gpu::WkvPush kp{d.head_dim, d.dim, d.dim / 32, d.rope_dim, 64 % d.window, kvg, 1e-20f};
-    auto kv_slots = [&](uint32_t L) {
+    auto kv_slots = [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::WkvGemv);
         s[gpu::slot::kWkvW] = addr(L, "attn.wkv.weight");
         s[gpu::slot::kWkvS] = sc_addr(L, "attn.wkv.weight");
@@ -343,7 +348,7 @@ int main(int argc, char** argv) {
     // --- sparse_attn ----------------------------------------------------
     gpu::AttnPush ap{n_kv, d.window, d.head_dim, d.rope_dim, 1024,
                      1.0f / std::sqrt(float(d.head_dim))};
-    auto at_slots = [&](uint32_t L) {
+    auto at_slots = [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::AttnScore);
         s[gpu::slot::kAttnQ] = Q.addr; s[gpu::slot::kAttnWinVal] = WinV.addr;
         s[gpu::slot::kAttnWinScale] = WinS.addr; s[gpu::slot::kAttnCmpKv] = Cmp.addr;
@@ -366,7 +371,7 @@ int main(int argc, char** argv) {
     // --- wo_a / wo_b ----------------------------------------------------
     gpu::WoaPush wa{d.orows(), d.ocols(), d.ocols() / 32, d.o_lora};
     rows.push_back(run("wo_a", gpu::AttnStage::WoA, fp8_bytes(d.orows(), d.ocols()),
-                       [&](uint32_t L) {
+                       [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::WoA);
         s[gpu::slot::kWoaW] = addr(L, "attn.wo_a.weight");
         s[gpu::slot::kWoaS] = sc_addr(L, "attn.wo_a.weight");
@@ -375,7 +380,7 @@ int main(int argc, char** argv) {
 
     gpu::GemvPush wb{d.dim, d.orows(), d.orows() / 32, 0};
     rows.push_back(run("wo_b", gpu::AttnStage::WoB, fp8_bytes(d.dim, d.orows()),
-                       [&](uint32_t L) {
+                       [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::WoB);
         s[gpu::slot::kGemvW] = addr(L, "attn.wo_b.weight");
         s[gpu::slot::kGemvS] = sc_addr(L, "attn.wo_b.weight");
@@ -384,7 +389,7 @@ int main(int argc, char** argv) {
 
     // --- gate -----------------------------------------------------------
     gpu::GatePush gp{d.n_experts, d.dim, 6, 16, 1.0f, 1.5f};
-    auto gate_slots = [&](uint32_t L) {
+    auto gate_slots = [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::GateScore);
         s[gpu::slot::kGateW] = addr(L, "ffn.gate.weight");
         s[gpu::slot::kGateBias] = addr(L, "ffn.gate.bias");
@@ -403,7 +408,7 @@ int main(int argc, char** argv) {
     if (head && head->data) {
         gpu::HeadPush hp{d.vocab, d.dim, 0};
         rows.push_back(run("head", gpu::AttnStage::Head, bf16_bytes(d.vocab, d.dim),
-                           [&](uint32_t) {
+                           [&](gpu::AttnRunner& runner, uint32_t) {
             uint64_t* s = runner.slots(gpu::AttnStage::Head);
             s[gpu::slot::kHeadW] = head->data;
             s[gpu::slot::kHeadX] = U.addr; s[gpu::slot::kHeadLogits] = Logits.addr;

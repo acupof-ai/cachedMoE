@@ -81,6 +81,8 @@ void stage_scores(uint gid, uint tid) {
 // a layer, 58 ms a token. Staging first makes the same scan 6 us.
 groupshared float gScore[kMaxExperts];
 groupshared float gBiased[kMaxExperts];
+groupshared float gArgV[kWg];
+groupshared uint  gArgI[kWg];
 
 void stage_topk(uint tid) {
     const uint64_t sc = Ptr[kScores], bi = Ptr[kBias];
@@ -90,34 +92,47 @@ void stage_topk(uint tid) {
         gBiased[e] = gScore[e] + load_f32(bi + (uint64_t)e * 4);
     }
     GroupMemoryBarrierWithGroupSync();
-    if (tid != 0) return;
 
-    // The rank loop is bounded by the COMPILE-TIME kMaxRecord with a runtime
-    // guard inside, not by pc.record. With a push-constant bound `raw[r]` is a
-    // dynamically indexed local array, which the compiler puts in scratch
-    // memory -- VRAM -- and 16 ranks of that measured 55 us against 2 us here.
-    // Same lesson as mega_mhc's Sinkhorn matrix.
-    float raw[kMaxRecord];
-    [unroll] for (uint z = 0; z < kMaxRecord; ++z) raw[z] = 0.0f;
+    // Sixteen rounds of a WORKGROUP argmax, not a serial scan in one lane.
+    // The serial version was 384 dependent compares per rank, 6144 in total,
+    // and measured 56 us a layer -- 2.2 ms a token for picking six numbers out
+    // of 384. Each round here is two compares per thread and an eight-deep LDS
+    // tree. Repeated masking rather than a sort because topk is 6 of 384: the
+    // reference does the same thing and ties have to break the same way.
     const uint record = min(pc.record, kMaxRecord);
     float sum = 0.0f;
+    float raw[kMaxRecord];
+    [unroll] for (uint z = 0; z < kMaxRecord; ++z) raw[z] = 0.0f;
     [unroll] for (uint r = 0; r < kMaxRecord; ++r) {
-        if (r >= record) continue;
+        if (r >= record) break;
         float best = -3.0e38f;
         uint  arg = 0;
-        for (uint e = 0; e < pc.n_experts; ++e) {
-            const float v = gBiased[e];
-            if (v > best) { best = v; arg = e; }
+        for (uint e = tid; e < pc.n_experts; e += kWg)
+            if (gBiased[e] > best) { best = gBiased[e]; arg = e; }
+        gArgV[tid] = best;
+        gArgI[tid] = arg;
+        GroupMemoryBarrierWithGroupSync();
+        for (uint s = kWg >> 1; s > 0; s >>= 1) {
+            if (tid < s && gArgV[tid + s] > gArgV[tid]) {
+                gArgV[tid] = gArgV[tid + s];
+                gArgI[tid] = gArgI[tid + s];
+            }
+            GroupMemoryBarrierWithGroupSync();
         }
-        raw[r] = gScore[arg];
+        const uint pick = gArgI[0];
+        raw[r] = gScore[pick];
         if (r < pc.topk) sum += raw[r];
-        gBiased[arg] = -3.0e38f;      // mask it out of the next round
-        *(uint*)(ids + (uint64_t)r * 4) = arg;
+        if (tid == 0) {
+            gBiased[pick] = -3.0e38f;      // mask it out of the next round
+            *(uint*)(ids + (uint64_t)r * 4) = pick;
+        }
+        GroupMemoryBarrierWithGroupSync();
     }
+    if (tid != 0) return;
 
     const float inv = pc.route_scale / (sum + 1e-20f);   // 1e-20 matches training
     [unroll] for (uint r = 0; r < kMaxRecord; ++r) {
-        if (r >= record) continue;
+        if (r >= record) break;
         *(float*)(wts + (uint64_t)r * 4) = (r < pc.topk) ? raw[r] * inv : raw[r];
     }
 

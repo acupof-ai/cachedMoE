@@ -105,9 +105,12 @@ struct StageDef {
 // wo_a is the one entry with act_quant = 0: `Attention.forward` reaches its
 // weight through an einsum, not `linear()`, so its activation never makes the
 // fp8 round trip (attn_common.slang explains why that matters).
-// rows_cap is a workgroup-count question: 40 CUs want a few hundred
-// workgroups, so the cap follows the kernel's row count. wq_b has 32768 rows
-// and wkv has 512.
+// rows_cap is per stage because row blocking trades workgroups and register
+// pressure for activation reuse, and which side wins is not predictable from
+// the shape alone. The numbers in the comments are bench/attn_bench at
+// --layers 8, one runner per layer, idle machine: the two tall-and-narrow
+// kernels gain from it and everything else loses, including the head, whose
+// activation is only 20 KiB and already in LDS.
 constexpr StageDef kStages[] = {
     {AttnStage::MhcPost,     "mega_mhc",    0, 1, 1},
     {AttnStage::MhcMix,      "mega_mhc",    1, 1, 1},
@@ -116,17 +119,17 @@ constexpr StageDef kStages[] = {
     {AttnStage::MhcMixB,     "mega_mhc",    1, 1, 1},
     {AttnStage::MhcFinalB,   "mega_mhc",    2, 1, 1},
     {AttnStage::MhcClose,    "mega_mhc",    0, 1, 1},
-    {AttnStage::WqA,         "wq_a",        0, 1, 2},   // 1280 rows
-    {AttnStage::WqB,         "wq_b",        0, 1, 4},   // 32768
+    {AttnStage::WqA,         "wq_a",        0, 1, 2},   // 1280 rows: 125 -> 147 GB/s
+    {AttnStage::WqB,         "wq_b",        0, 1, 2},   // 32768:      114 -> 160
     {AttnStage::WkvGemv,     "wkv",         0, 1, 1},   // 512: workgroup-starved
     {AttnStage::WkvFinish,   "wkv",         1, 1, 1},
     {AttnStage::AttnScore,   "sparse_attn", 0, 1, 1},
     {AttnStage::AttnCombine, "sparse_attn", 1, 1, 1},
-    {AttnStage::WoA,         "wo_a",        0, 0, 2},   // 8192, in 1024-row groups
-    {AttnStage::WoB,         "wo_b",        0, 1, 2},   // 5120
+    {AttnStage::WoA,         "wo_a",        0, 0, 1},   // 8192:  166 -> 132, so 1
+    {AttnStage::WoB,         "wo_b",        0, 1, 1},   // 5120:  124 -> 114, so 1
     {AttnStage::GateScore,   "gate",        0, 1, 1},   // 384: no row blocking
     {AttnStage::GateTopK,    "gate",        1, 1, 1},
-    {AttnStage::Head,        "head",        0, 1, 4},   // 129280
+    {AttnStage::Head,        "head",        0, 1, 1},   // 129280: 235 -> 208, so 1
 };
 static_assert(sizeof(kStages) / sizeof(kStages[0]) ==
               static_cast<size_t>(AttnStage::Count));
