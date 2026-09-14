@@ -18,10 +18,14 @@
 //    +- Profiler                               JSONL sink
 //
 // Threading model:
-//   engine/submit thread  records and submits the per-layer command buffers,
-//                         reads the gate's ids out of host-coherent memory,
-//                         host-signals the timeline, samples. Vulkan queue
-//                         submission happens only here.
+//   engine/submit thread  records the token loop's command buffers -- cut at
+//                         each gate, so one submit carries a layer's MoE and
+//                         the next layer's attention -- submits them gated on
+//                         the residency timeline, fences on a second timeline,
+//                         reads the gate's ids, runs the Planner, host-signals
+//                         the residency timeline, issues the engram reads at
+//                         token start, samples. Vulkan queue submission happens
+//                         only here.
 //   io dispatcher thread  owned by IoEngine: priority, chunking, completions.
 //   iocp completion x2    owned by the backend: GetQueuedCompletionStatus.
 //   planner thread        background prefetch and backfill between tokens
@@ -31,12 +35,12 @@
 // What a decode step really does, and what it is handed
 // ----------------------------------------------------
 // Real: the embedding lookup, forty layers of design §7.14's dispatches 1-11
-// with the §7.1 residency gate between 9 and 10, the engram at layers 1 and 14
-// including its NVMe row fetch, the final collapse, the 1.32 GB head and the
-// argmax. Handed to it: the window KV the prompt left and, per step, the
-// compressed KV and the indexer's top-k list -- design §7.4's kernels are
-// another track's and were not there when this was written. `status()` says so
-// in one line, and docs/p2_decode.md says it at length.
+// including §7.4's compressor and indexer on their source layers, the §7.1
+// residency gate between 9 and 10, the engram at layers 1 and 14 including its
+// NVMe row fetch, the final collapse, the 1.32 GB head and the argmax. Handed
+// to it: the state the prompt left behind -- from the L3 export's prefill
+// record, or from `slow_prefill`, in which case nothing at all. `status()` says
+// which in one line, and docs/p2_decode.md §9 says it at length.
 #pragma once
 
 #include <cstdint>
@@ -156,10 +160,11 @@ public:
 
     // --- token loop (design §15 P2-P5) ------------------------------------
 
-    // Loads the oracle's L3 export: the window KV every layer holds after the
-    // prompt, the per-step compressed KV and top-k lists, the engram hash
-    // tables, and the reference trajectory to check against. This stands in for
-    // prefill, which is P5.
+    // Loads the oracle's L3 export: the state every layer holds after the
+    // prompt (window KV; on the kv sources the compressed-KV cache, the index
+    // keys and the compressor state), the engram hash tables, and the
+    // reference trajectory and per-step tensors to check against. Seeds the
+    // prompt's state; nothing per step is seeded unless `set_produce_ced(false)`.
     Result<void> load_decode_state(const std::string& dir);
     const DecodeState* decode_state() const { return state_.get(); }
 
