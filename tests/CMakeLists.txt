@@ -14,6 +14,7 @@ add_executable(deepmoe_tests
     test_gpu_attn.cpp
     test_gpu_layer.cpp
     test_decode.cpp
+    test_decode_longctx.cpp
     test_gpu_dspark.cpp
     test_gpu_prefill.cpp
     test_dspark_tree.cpp
@@ -65,6 +66,13 @@ add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")
 set_tests_properties("suite.decode" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP decode")
+
+# Long-context decode (4K / 17K) against Track M's exports, tie-aware. The
+# kernel case needs a GPU and traces/longctx; the engine case the model too.
+add_test(NAME "suite.decode_longctx" COMMAND deepmoe_tests "decode_longctx.")
+set_tests_properties("suite.decode_longctx" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP decode_longctx")
 
 # The design §7.9 kernels on the real checkpoint. Same gate, and it additionally
 # skips itself when there is no usable Vulkan device.
