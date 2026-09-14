@@ -93,6 +93,7 @@ import struct
 import sys
 import time
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -263,10 +264,35 @@ def install_batched_decode(ref) -> None:
         ref.apply_rotary_emb(q[..., -rd:], self.freqs_cis[start_pos:end_pos])
         ref.fp4_act_quant(q, ref.fp4_block_size, True)
 
-        index_k = ref.shared_attn.index_k[:bsz, : end_pos // ratio]
         weights = self.weights_proj(x) * (self.softmax_scale * self.n_heads ** -0.5)
-        index_score = torch.einsum("bshd,btd->bsht", q, index_k)
-        index_score = (index_score.relu_() * weights.unsqueeze(-1)).sum(dim=2)
+        emu = getattr(ref, "_dm_emulate_decode", None)
+        if emu is not None and start_pos > 0 and seqlen > 1:
+            # Track K2's batch-boundary isolation (docs/p3_dspark.md section 6):
+            # score every query against the key cache it would have seen had the
+            # batch been decoded one token at a time. A key source publishes for
+            # query j only if query j's position completes one of its groups;
+            # otherwise query j keeps whatever was published before -- ultimately
+            # the previous forward's last publisher (layer 20). `emu` is that
+            # per-query source list, seeded by `forward_emulated`.
+            if self.owns_k:
+                for j in range(seqlen):
+                    if (start_pos + j + 1) % ratio == 0:
+                        emu[j] = self.k_cache
+            T = end_pos // ratio
+            groups: dict = {}
+            for j, src in enumerate(emu):
+                groups.setdefault(id(src), (src, []))[1].append(j)
+            index_score = None
+            for src, js in groups.values():
+                sc = torch.einsum("bshd,btd->bsht", q[:, js], src[:bsz, :T])
+                sc = (sc.relu_() * weights[:, js].unsqueeze(-1)).sum(dim=2)
+                if index_score is None:
+                    index_score = sc.new_empty(bsz, seqlen, T)
+                index_score[:, js] = sc
+        else:
+            index_k = ref.shared_attn.index_k[:bsz, : end_pos // ratio]
+            index_score = torch.einsum("bshd,btd->bsht", q, index_k)
+            index_score = (index_score.relu_() * weights.unsqueeze(-1)).sum(dim=2)
 
         # per-query visibility: query at position P sees (P + 1) // ratio groups.
         # start_pos == 0 gives (i + 1) // ratio, the reference's prefill form; a
@@ -1362,6 +1388,445 @@ def summarise(cycles: list[dict], margs, t_draft_golden: float,
     }
 
 
+# --------------------------------------------------------------------------- #
+# 8. Track K2: tree-sampled speculation on five normal prompts
+# --------------------------------------------------------------------------- #
+#
+# Track K's loop above verified a single greedy chain. The owner's scheme is
+# different (tools/dspark_tree.py's docstring): the draft forward is a matrix,
+# the CPU samples one path from a top-K lattice over it, and the verify matrix is
+# compared through its top-K. This driver generates the data every scheme needs:
+#
+#   * one trajectory per (prompt, mode), mode in {greedy, sampling}, driven by
+#     the real speculative loop with tree K = 16 (greedy: `eal` path; sampling:
+#     ancestral path + lossless top-32 acceptance), k = 5, M = 6;
+#   * a draft event at EVERY accepted position (the reference's M = 1 order:
+#     forward_spec(token at p+1, main_hidden[p], start_pos = p)), saving the base
+#     logits B [5, V] and the confidence head's hidden x [5, 5120];
+#   * the verify rows' top-256 / logsumexp / argmax for every trajectory position.
+#
+# From these, `dspark_tree.py analyse` evaluates every other scheme offline:
+# greedy acceptance is "path prefix == the greedy trajectory", and sampling
+# acceptance uses the exact coupling P(accept_j | output y_j) = min(1, q(y_j)/p(y_j))
+# along the sampled trajectory (docs/p3_dspark.md section 3.3).
+#
+# No rerun on rejection: the state the verify forward leaves at rejected positions
+# is overwritten before it can be read (window slots by the next batch's writes,
+# ratio-2 group slots before their group pools, compressed rows before their group
+# is visible), which is exactly what a runtime does.
+
+TREE_SOURCE_REV = "0170339"
+TREE_PROMPTS = (
+    ("en_prose", "model:README.md", "**Architecture.** DeepSeek-V4.1-Flash adopts"),
+    ("zh_prose", f"git:{TREE_SOURCE_REV}:docs/design.md", "deepMoE 是一个针对 Windows Strix Halo"),
+    ("python", f"git:{TREE_SOURCE_REV}:tools/dsref.py", "        import queue\n"),
+    ("cpp", f"git:{TREE_SOURCE_REV}:cpu/gate.cpp", "Result<GateResult> gate_topk("),
+    ("markdown", f"git:{TREE_SOURCE_REV}:docs/p2_decode.md", "1. **The MoE's 30 ms of host work"),
+)
+TREE_BOS = 0
+TREE_K = 16
+TREE_VERIFY_TOPK = 32           # Kv: the target distribution of sampling mode
+TREE_TRACE_TOPK = 256
+
+
+def _tree_source_text(model_dir: str, source: str) -> str:
+    import subprocess
+    kind, _, rest = source.partition(":")
+    if kind == "model":
+        with open(os.path.join(model_dir, rest), encoding="utf-8") as f:
+            return f.read()
+    rev, _, path = rest.partition(":")
+    repo = os.path.dirname(_HERE)
+    out = subprocess.run(["git", "-C", repo, "show", f"{rev}:{path}"], capture_output=True)
+    if out.returncode != 0:
+        raise SystemExit(f"git show {rev}:{path} failed")
+    return out.stdout.decode("utf-8")
+
+
+def build_tree_prompts(model_dir: str, tokenizer, n_tokens: int) -> list[dict]:
+    out = []
+    for name, source, locator in TREE_PROMPTS:
+        text = _tree_source_text(model_dir, source)
+        at = text.find(locator)
+        if at < 0:
+            raise SystemExit(f"{name}: locator not found in {source}")
+        body = tokenizer.encode(text[at: at + 4000])[:n_tokens]
+        ids = [TREE_BOS] + body
+        out.append({"name": name, "source": source, "locator": locator,
+                    "ids": [int(i) for i in ids], "text": tokenizer.decode(body)})
+    return out
+
+
+class TreeDraft:
+    """`DraftRunner` plus the two tensors the matrix view needs: the head's output
+    before the Markov loop adds anything to it (the base logits B), and the
+    confidence head's hidden x (`hc_pre` output = the final norm's input)."""
+
+    def __init__(self, draft: DraftRunner, head_mod: ChunkedHead):
+        self.draft = draft
+        self._grab: dict = {}
+        last = draft.blocks[-1]
+        # temperature 0 so the reference's own output_ids are the greedy chain
+        for b in draft.blocks:
+            b.temperature = 0.0
+        head_mod.register_forward_hook(
+            lambda _m, _i, o: self._grab.__setitem__("B", o.detach().float().clone()))
+        last.norm.register_forward_hook(
+            lambda _m, i, _o: self._grab.__setitem__("x", i[0].detach().float().clone()))
+        mh = last.markov_head
+        self.E = mh.embed.weight.detach().float().numpy().copy()          # [V, 256]
+        self.H = mh.head.weight.detach().float().numpy().copy()           # [V, 256]
+        proj = last.confidence_head.proj
+        assert proj.bias is None
+        self.W = proj.weight.detach().float().numpy()[0].copy()           # [5376]
+
+    def run(self, input_token: int, main_hidden: torch.Tensor, start_pos: int) -> dict:
+        self._grab.clear()
+        t0 = time.perf_counter()
+        out_ids, _logits, conf, _r = self.draft.draft(input_token, main_hidden, start_pos)
+        B = self._grab["B"][0]                                            # [5, V] fp32
+        x = self._grab["x"][0]                                            # [5, 5120]
+        lse = torch.logsumexp(B.double(), dim=-1).float()
+        return {"start_pos": int(start_pos), "input_token": int(input_token),
+                "ref_chain": [int(v) for v in out_ids[0, 1:].tolist()],
+                "ref_conf": [float(v) for v in conf[0].tolist()],
+                "B": B.numpy(), "x": x.numpy(), "lse_base": lse.numpy(),
+                "t_s": time.perf_counter() - t0}
+
+
+def _full_snapshot(ref, main: MainRunner, draft: DraftRunner, ngram) -> dict:
+    sa = ref.shared_attn
+    return {"kv": main.snapshot(),
+            "shared": {k: (getattr(sa, k).clone() if getattr(sa, k) is not None else None)
+                       for k in ("compress_kv", "index_k", "topk_idxs", "candidates")},
+            "mtp": [b.attn.window_kv_cache.clone() for b in draft.blocks],
+            "ngram": ngram.cache.clone()}
+
+
+def _full_restore(ref, main: MainRunner, draft: DraftRunner, ngram, snap: dict) -> None:
+    main.restore(snap["kv"])
+    sa = ref.shared_attn
+    for k, v in snap["shared"].items():
+        setattr(sa, k, v.clone() if v is not None else None)
+    for b, w in zip(draft.blocks, snap["mtp"]):
+        b.attn.window_kv_cache.copy_(w)
+    ngram.cache.copy_(snap["ngram"])
+
+
+def _atomic_save(obj, path: str) -> None:
+    tmp = path + ".tmp"
+    torch.save(obj, tmp)
+    os.replace(tmp, path)
+
+
+def _atomic_json(obj, path: str) -> None:
+    tmp = path + ".tmp"
+    with io.open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def forward_emulated(ref, main: MainRunner, tokens: list[int], pos: int):
+    """A verify forward whose indexer reproduces one-token-at-a-time decoding."""
+    ref._dm_emulate_decode = [ref.shared_attn.index_k] * len(tokens)
+    try:
+        return main.forward(tokens, pos, want_all_logits=True)
+    finally:
+        ref._dm_emulate_decode = None
+
+
+def verify_rows(logits: torch.Tensor, batch: list[int]) -> dict:
+    lg = logits.float()
+    vals, idx = torch.topk(lg, TREE_TRACE_TOPK, dim=-1)
+    lse = torch.logsumexp(lg.double(), dim=-1)
+    tok = [float(lg[j, batch[j + 1]]) for j in range(len(batch) - 1)]
+    return {"top_ids": idx.int().numpy(), "top_logits": vals.numpy(),
+            "lse": lse.numpy(), "argmax": idx[:, 0].int().numpy(),
+            "tok_logit": np.asarray(tok, dtype=np.float32)}
+
+
+def _save_draft(d: dict, path: str) -> None:
+    meta = {k: v for k, v in d.items() if k not in ("B", "x", "lse_base")}
+    np.savez(path, B=d["B"], x=d["x"], lse_base=d["lse_base"],
+             meta=np.frombuffer(json.dumps(meta).encode(), dtype=np.uint8))
+
+
+def run_tree(args: argparse.Namespace) -> int:
+    import dspark_tree as dt
+    import oracle_longctx as olc
+
+    log = olc.log
+    # the venv launcher is a second process with our own command line; do not wait on it
+    _scan = olc.other_processes
+
+    def other_processes():
+        heavy, gpu = _scan()
+        return [h for h in heavy if "oracle_dspark" not in h], gpu
+    olc.other_processes = other_processes
+    tdir = args.tree_traces
+    os.makedirs(tdir, exist_ok=True)
+    run_log_path = os.path.join(tdir, "run_log.json")
+    run_log = {"runs": []}
+    if os.path.exists(run_log_path):
+        with io.open(run_log_path, encoding="utf-8") as f:
+            run_log = json.load(f)
+    env = olc.wait_quiet(args.need_gb, args.poll_s, args.max_wait_h)
+    this_run = {"start": olc.now(), "env_start": env, "phases": []}
+    run_log["runs"].append(this_run)
+    _atomic_json(run_log, run_log_path)
+    t_start = time.perf_counter()
+
+    torch.set_grad_enabled(False)
+    if args.threads:
+        torch.set_num_threads(args.threads)
+    inference_dir = os.path.join(args.model, "inference")
+    ref = dsref.load_reference(inference_dir)
+    ref.ParallelEngramEmbedding = olc._NoEngramTable        # the 98 GB commit placeholder
+    install_batched_decode(ref)
+    store = dsref.WeightStore(args.model, args.manifest)
+    tokenizer = dsref.TokenizerAdapter(os.path.join(args.model, "tokenizer.json"))
+    prompts = build_tree_prompts(args.model, tokenizer, args.tree_tokens)
+    _atomic_json(prompts, os.path.join(tdir, "prompts.json"))
+    margs = dsref.build_args(ref, inference_dir, max_seq_len=256)
+    assert margs.dspark_block_size == 5 and margs.n_mtp_layers == 3
+    layout_e = ref.EngramLayout.from_args(margs)
+    sys.path.insert(0, inference_dir)
+    import engram as eng                                          # noqa: E402
+    cached = dsref.CachedTokenMap.build(tokenizer, os.path.join(tdir, "token_map.npz"))
+    orig_build = eng.build_compressed_token_map
+    eng.build_compressed_token_map = lambda _t: (cached.lookup, cached.size)
+    try:
+        ngram = ref.NgramHashState(margs, layout_e, tokenizer)
+    finally:
+        eng.build_compressed_token_map = orig_build
+
+    embed_w = store.tensor("embed.weight")
+    norm_w = store.tensor("norm.weight")
+    head_w = store.tensor("head.weight")
+    with ref.set_dtype(torch.bfloat16):
+        embed_mod = ref.ParallelEmbedding(margs.vocab_size, margs.dim)
+    embed_mod.weight.data = embed_w
+    head_mod = ChunkedHead(head_w)
+    main = MainRunner(ref, store, margs, layout_e, ngram, embed_w, norm_w, head_w,
+                      args.engram_threads, verbose=False)
+    draft = DraftRunner(ref, store, margs, embed_mod, head_mod)
+    td = TreeDraft(draft, head_mod)
+    E, H = td.E, td.H
+    K = TREE_K
+
+    def out_of_time() -> bool:
+        return time.perf_counter() - t_start > args.max_seconds
+
+    def lattice_for(dd: dict, with_tail: bool):
+        idx, cl, lse, e_in, e_cand, h_cand = dt.lattice_inputs(dd["B"], dd["input_token"], E, H, K)
+        return dt.Lattice(idx, cl, e_in, e_cand, h_cand, lse if with_tail else None)
+
+    def run_mode(pi: int, P: dict, mode: str) -> None:
+        pdir = os.path.join(tdir, P["name"], mode)
+        os.makedirs(pdir, exist_ok=True)
+        lpath = os.path.join(pdir, "log.json")
+        ckpt = os.path.join(pdir, "ckpt.pt")
+        state = None
+        if os.path.exists(lpath):
+            with io.open(lpath, encoding="utf-8") as f:
+                state = json.load(f)
+            if state.get("done") or len(state["cycles"]) >= args.tree_cycles:
+                log(f"{P['name']}/{mode}: already has {len(state['cycles'])} cycles")
+                return
+        rng = np.random.default_rng(1000 + 17 * pi + (1 if mode == "sampling" else 0))
+        n = len(P["ids"])
+        if state is not None and os.path.exists(ckpt):
+            blob = torch.load(ckpt, weights_only=False)
+            _full_restore(ref, main, draft, ngram, blob["snap"])
+            rng.bit_generator.state = blob["rng"]
+            log(f"{P['name']}/{mode}: resumed at cycle {len(state['cycles'])}")
+        else:
+            ppath = os.path.join(tdir, P["name"], "prefill.pt")
+            if os.path.exists(ppath):
+                blob = torch.load(ppath, weights_only=False)
+                _full_restore(ref, main, draft, ngram, blob["snap"])
+                tok0, mh_last, (ids32, lg32) = blob["tok0"], blob["mh_last"], blob["rows"]
+                log(f"{P['name']}: prefill restored")
+            else:
+                main.reset()
+                t0 = time.perf_counter()
+                logits, mh_pre, _r, _u, _n = main.forward(P["ids"], 0, want_all_logits=False)
+                tok0 = int(logits[0].argmax().item())
+                v32, i32 = torch.topk(logits[0].float(), TREE_VERIFY_TOPK)
+                ids32, lg32 = i32.int().numpy(), v32.numpy()
+                draft.seed(mh_pre, tok0)
+                mh_last = mh_pre[:, -1:].clone()
+                t_pre = time.perf_counter() - t0
+                _atomic_save({"snap": _full_snapshot(ref, main, draft, ngram), "tok0": tok0,
+                              "mh_last": mh_last, "rows": (ids32, lg32),
+                              "t_prefill_s": t_pre}, ppath)
+                log(f"{P['name']}: prefill {n} tokens in {t_pre:.0f}s, argmax {tok0}")
+            if mode == "sampling":
+                # position n itself is a plain top-32 sample from the prefill's last row
+                l64 = lg32.astype(np.float64)
+                pv = dt.dm_exp(l64 - dt.lse_seq(l64))
+                tok0 = int(ids32[dt._sample_index(pv, float(rng.random()))])
+            state = {"prompt": P, "mode": mode, "K": K, "k": 5, "prefill_len": n,
+                     "first_token": tok0, "produced": [tok0], "cycles": [], "drafts": []}
+            dd = td.run(tok0, mh_last, n - 1)
+            _save_draft(dd, os.path.join(pdir, "d0000.npz"))
+            state["drafts"].append({k: v for k, v in dd.items() if k not in ("B", "x", "lse_base")})
+            state["pending_draft"] = 0
+            state["pos"] = n
+            state["cur"] = tok0
+
+        while len(state["cycles"]) < args.tree_cycles and not out_of_time():
+            cyc_t0 = time.perf_counter()
+            pos, cur = state["pos"], state["cur"]
+            dpath = os.path.join(pdir, f"d{state['pending_draft']:04d}.npz")
+            with np.load(dpath) as z:
+                dd = {"B": z["B"], "x": z["x"], "lse_base": z["lse_base"],
+                      **json.loads(bytes(z["meta"]).decode())}
+            t1 = time.perf_counter()
+            if mode == "greedy":
+                lat = lattice_for(dd, with_tail=True)
+                path = lat.path("eal")
+                u_path = u_acc = u_res = None
+            else:
+                lat = lattice_for(dd, with_tail=False)
+                u_path, u_acc, u_res = rng.random(5), rng.random(5), rng.random(6)
+                path = lat.sample(u_path)
+            t_tree = time.perf_counter() - t1
+            ptoks = lat.tokens(path)
+            conf = dt.confidence(dd["x"], lat.prev_embed(path), td.W)
+            batch = [cur] + ptoks
+            snap_path = None
+            if mode == "greedy" and len(state["cycles"]) < args.bb_cycles:
+                snap_path = os.path.join(pdir, f"bb_snap{len(state['cycles']):03d}.pt")
+                _atomic_save(_full_snapshot(ref, main, draft, ngram), snap_path)
+            t0 = time.perf_counter()
+            vlogits, vmh, vroute, _vu, _n = main.forward(batch, pos, want_all_logits=True)
+            t_verify = time.perf_counter() - t0
+            rows = verify_rows(vlogits, batch)
+            t1 = time.perf_counter()
+            if mode == "greedy":
+                a, emitted = dt.accept_greedy(ptoks, [int(v) for v in rows["argmax"]], 5)
+            else:
+                a, emitted = dt.accept_sampling(lat, path, 5,
+                                                rows["top_ids"][:, :TREE_VERIFY_TOPK],
+                                                rows["top_logits"][:, :TREE_VERIFY_TOPK],
+                                                u_acc, u_res)
+            t_accept = time.perf_counter() - t1
+            ci = len(state["cycles"])
+            np.savez(os.path.join(pdir, f"v{ci:03d}.npz"), **rows)
+            # drafts at every accepted position pos + j, j = 0..a
+            new_drafts = []
+            t_d = 0.0
+            for j in range(a + 1):
+                dj = td.run(emitted[j], vmh[:, j:j + 1], pos + j)
+                t_d += dj["t_s"]
+                di = len(state["drafts"])
+                _save_draft(dj, os.path.join(pdir, f"d{di:04d}.npz"))
+                state["drafts"].append({k: v for k, v in dj.items()
+                                        if k not in ("B", "x", "lse_base")})
+                new_drafts.append(di)
+            rec = {"cycle": ci, "pos": pos, "M": len(batch), "batch": batch,
+                   "draft": state["pending_draft"], "path": path, "path_tokens": ptoks,
+                   "path_conf": [float(c) for c in conf], "accepted": int(a),
+                   "emitted": [int(t) for t in emitted],
+                   "u_path": None if u_path is None else u_path.tolist(),
+                   "u_acc": None if u_acc is None else u_acc.tolist(),
+                   "u_res": None if u_res is None else u_res.tolist(),
+                   "union": prefix_unions(vroute),
+                   "verify_margins": [float(rows["top_logits"][j, 0] - rows["top_logits"][j, 1])
+                                      for j in range(len(batch))],
+                   "new_drafts": new_drafts, "bb_snapshot": snap_path is not None,
+                   "t_verify_s": round(t_verify, 2), "t_drafts_s": round(t_d, 2),
+                   "t_tree_py_ms": round(t_tree * 1e3, 3), "t_accept_py_ms": round(t_accept * 1e3, 3),
+                   "t_cycle_s": round(time.perf_counter() - cyc_t0, 2), "time": olc.now()}
+            state["cycles"].append(rec)
+            state["produced"].extend(int(t) for t in emitted)
+            state["pos"] = pos + a + 1
+            state["cur"] = int(emitted[a])
+            state["pending_draft"] = new_drafts[-1]
+            state["text"] = tokenizer.decode(state["produced"])
+            _atomic_save({"snap": _full_snapshot(ref, main, draft, ngram),
+                          "rng": rng.bit_generator.state}, ckpt)
+            _atomic_json(state, lpath)
+            log(f"{P['name']}/{mode} cycle {ci} @pos {pos}: path {ptoks} a={a} -> {emitted} "
+                f"(verify {t_verify:.0f}s, drafts {t_d:.0f}s, tree {t_tree * 1e3:.1f} ms)")
+        if len(state["cycles"]) >= args.tree_cycles:
+            state["done"] = True
+            _atomic_json(state, lpath)
+
+    modes = [m for m in args.tree_modes.split(",") if m]
+    for mode in modes:
+        this_run["phases"].append({"phase": mode, "start": olc.now()})
+        _atomic_json(run_log, run_log_path)
+        for pi, P in enumerate(prompts):
+            if out_of_time():
+                break
+            run_mode(pi, P, mode)
+        this_run["phases"][-1]["end"] = olc.now()
+        _atomic_json(run_log, run_log_path)
+
+    # --- phase 3: batch-boundary isolation from the saved snapshots ------------
+    if args.bb_cycles > 0 and not out_of_time():
+        this_run["phases"].append({"phase": "batch_boundary", "start": olc.now()})
+        _atomic_json(run_log, run_log_path)
+        for pi, P in enumerate(prompts):
+            pdir = os.path.join(tdir, P["name"], "greedy")
+            lpath = os.path.join(pdir, "log.json")
+            if not os.path.exists(lpath):
+                continue
+            with io.open(lpath, encoding="utf-8") as f:
+                st = json.load(f)
+            for rec in st["cycles"]:
+                if out_of_time():
+                    break
+                sp = os.path.join(pdir, f"bb_snap{rec['cycle']:03d}.pt")
+                ep = os.path.join(pdir, f"e{rec['cycle']:03d}.npz")
+                if not os.path.exists(sp) or os.path.exists(ep):
+                    continue
+                _full_restore(ref, main, draft, ngram, torch.load(sp, weights_only=False))
+                t0 = time.perf_counter()
+                elog, _mh, _r, _u, _n = forward_emulated(ref, main, rec["batch"], rec["pos"])
+                erows = verify_rows(elog, rec["batch"])
+                extra = {}
+                if pi == 0 and rec["cycle"] == 0 and args.seq_check:
+                    _full_restore(ref, main, draft, ngram, torch.load(sp, weights_only=False))
+                    seq = []
+                    for j, tok in enumerate(rec["batch"]):
+                        lg1, _m1, _r1, _u1, _n1 = main.forward([tok], rec["pos"] + j, True)
+                        seq.append(lg1[0].float())
+                    srows = verify_rows(torch.stack(seq), rec["batch"])
+                    extra = {f"seq_{k}": v for k, v in srows.items()}
+                    # cosines need full rows, so the plain verify runs once more; its
+                    # top-256 must equal the trajectory's v file (determinism check)
+                    _full_restore(ref, main, draft, ngram, torch.load(sp, weights_only=False))
+                    plog, _m2, _r2, _u2, _n2 = main.forward(rec["batch"], rec["pos"], True)
+                    prow = verify_rows(plog, rec["batch"])
+                    with np.load(os.path.join(pdir, f"v{rec['cycle']:03d}.npz")) as z:
+                        extra["plain_rerun_identical"] = np.asarray(
+                            [bool(np.array_equal(z["top_logits"], prow["top_logits"]))])
+                    extra["cos_plain_seq"] = np.asarray(
+                        [cos(plog[j], seq[j]) for j in range(len(seq))])
+                    extra["cos_emul_seq"] = np.asarray(
+                        [cos(elog[j], seq[j]) for j in range(len(seq))])
+                    extra["cos_plain_emul"] = np.asarray(
+                        [cos(plog[j], elog[j]) for j in range(len(seq))])
+                np.savez(ep, **{f"emul_{k}": v for k, v in erows.items()}, **extra)
+                log(f"batch-boundary {P['name']} cycle {rec['cycle']}: emulated verify "
+                    f"{time.perf_counter() - t0:.0f}s, argmax plain "
+                    f"{[int(v) for v in np.load(os.path.join(pdir, 'v%03d.npz' % rec['cycle']))['argmax']]}"
+                    f" emul {[int(v) for v in erows['argmax']]}"
+                    + (f" cos(plain,seq) {extra['cos_plain_seq'].round(6).tolist()} "
+                       f"cos(emul,seq) {extra['cos_emul_seq'].round(6).tolist()}" if extra else ""))
+        this_run["phases"][-1]["end"] = olc.now()
+
+    this_run["end"] = olc.now()
+    this_run["seconds"] = round(time.perf_counter() - t_start, 1)
+    _atomic_json(run_log, run_log_path)
+    store.close()
+    log(f"tree run finished in {this_run['seconds']}s")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="oracle_dspark.py",
@@ -1380,6 +1845,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="recompute stats from an existing --out index.json (no model run)")
     p.add_argument("--crosscheck", action="store_true",
                    help="validate install_batched_decode against a full prefill (one cycle)")
+    p.add_argument("--tree", action="store_true",
+                   help="Track K2: tree-sampled trajectories on five normal prompts")
+    p.add_argument("--tree-traces", default=os.path.join(os.path.dirname(_HERE), "traces",
+                                                         "dspark_tree"))
+    p.add_argument("--tree-tokens", type=int, default=56, help="prompt tokens after BOS")
+    p.add_argument("--tree-cycles", type=int, default=6, help="verify cycles per prompt and mode")
+    p.add_argument("--tree-modes", default="greedy,sampling")
+    p.add_argument("--bb-cycles", type=int, default=2,
+                   help="greedy cycles per prompt re-verified with decode-emulated indexing")
+    p.add_argument("--seq-check", type=int, default=1,
+                   help="also decode prompt 0's first verify batch one token at a time")
+    p.add_argument("--need-gb", type=float, default=8.0)
+    p.add_argument("--poll-s", type=int, default=120)
+    p.add_argument("--max-wait-h", type=float, default=6.0)
     return p
 
 
@@ -1387,6 +1866,8 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.resummarise:
         return resummarise(args)
+    if args.tree:
+        return run_tree(args)
     return run(args)
 
 
