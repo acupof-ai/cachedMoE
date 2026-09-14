@@ -819,6 +819,27 @@ only check against a CPU transcription, sits inside the same envelope. A
 two-step export of `attn_norm_out` at a source layer would close that last gap
 with an equality instead of an envelope.
 
+### 11.4 Found on the way
+
+* **`IoEngine::finish` told `drain()` a request was done before running its
+  callback.** For an expert fill the callback is what settles the slot, so
+  `drain()` could return while the last run's `finish_run` was still on its
+  way and the MoE dispatch found the slot `Filling`. It surfaced twice, rarely
+  enough to look like something else: once as "not resident at the MoE
+  dispatch" at step 117 of a 128-step run (which §12.2's first draft blamed on
+  path B), and once as "not resident after the gate: it was a miss this
+  layer, its slot is filling" in `suite.decode`, where the store's own
+  counters printed a moment later already said 0 filling. The callback now
+  runs first. The check that caught the second one -- every routed expert
+  resident after the gate, and if not, whether it was a hit evicted in the
+  same layer or a fill -- stays in the token loop.
+* **`slow_prefill` wound the LRU clock back** (§9.5) and **a failed expert read
+  released its slot silently**; both are fixed, the second by logging which
+  expert and slot.
+* **Three `VkCommandBuffer` allocations per call that were never freed** on
+  the token path (§10.2 item 4), and **the engram's bytes counted twice** in
+  the profiler (§11.1).
+
 ## 12. Cache policy, and 64 steps
 
 ### 12.1 The Planner is the simulated global LRU
@@ -933,7 +954,8 @@ does not see.
   one 7-slot MoE with `HQuant = 3` and `y` on the GPU, a vectorised host
   act_quant, the FFN input in cached host pages, the engram prefetched, GPU
   timestamps for the breakdown.
-* Bugs: the profiler's NVMe busy time is the in-flight union; the engram's
+* Bugs: the profiler's NVMe busy time is the in-flight union; `drain()`
+  returning before a fill's callback had settled its slot; the engram's
   double-counted bytes; three `VkCommandBuffer` leaks on the token path; the
   LRU clock wound back by `slow_prefill`; the auto-sized cache ignoring path B
   and the pinned set, and then losing the device when path B was sized by
@@ -958,10 +980,8 @@ does not see.
 * The eviction guard. Still safe for the reason §8 gave — nothing is in flight
   when the Planner evicts — and it stops being safe the moment the item above
   lands.
-* A 5,200-slot run once failed at step 117 with an expert not resident at the
-  MoE dispatch, on a cache whose path B was 28 GiB -- near the import limit of
-  §12.2. It did not recur at 4,500 slots over 128 steps with evictions, and a
-  failed read now names itself, but the cause was not caught in the act.
+* A second L3 prompt, and the two-step `attn_norm_out` export that would turn
+  §11.3's ratio-2 envelope into an equality.
 * design §2.1's candidate-block mask past 16,384 compressed positions; chunked
   prefill (§11); a second L3 prompt; DSpark on this path.
 * `gate.slang`'s softplus (§11.3) — Track J's file.
