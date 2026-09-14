@@ -21,7 +21,9 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
+#include <span>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -49,6 +51,7 @@ inline constexpr uint32_t kPfFlagGather     = 4u;
 inline constexpr uint32_t kPfFlagScatter    = 8u;
 inline constexpr uint32_t kPfFlagRowScale   = 16u;
 inline constexpr uint32_t kPfFlagInverse    = 32u;
+inline constexpr uint32_t kPfFlagRoundPre   = 64u;
 
 // One pipeline: which .spv, and its specialisation constants 4.. (Stage, WFmt,
 // XFmt, TileM, then two kernel-specific ones).
@@ -171,6 +174,224 @@ private:
 #if defined(DEEPMOE_ENABLE_VULKAN)
     std::vector<VkDescriptorSet> sets_;
 #endif
+};
+
+// =============================================================================
+// The prefill itself: docs/p3_prefill.md §2's schedule over the kernels above.
+// =============================================================================
+
+// prefill_elem.slang / prefill_attn.slang push constants.
+struct PfElemPush {
+    uint32_t n = 0, d = 0, a0 = 0, a1 = 0, a2 = 0, a3 = 0, flags = 0;
+    float    eps = 0.0f, f1 = 0.0f;
+    uint32_t pos0 = 0, pos_step = 1, row_off = 0;
+};
+struct PfAttnPush {
+    uint32_t b = 0, n_idx = 0, n_heads = 0, head_dim = 0, n_win = 0, g = 0;
+    float    scale = 1.0f;
+    uint32_t ratio = 1, pos0 = 0, flags = 0;
+};
+
+// A weight as a GEMM sees it.
+struct PfWeight {
+    uint64_t data = 0, scale = 0;
+    uint32_t fmt = kPfFp8, rows = 0, k = 0;
+    uint64_t bytes = 0;         // data + scale, for the bandwidth accounting
+};
+
+struct PrefillConfig {
+    // Decoder rows (design §11.2's bounded replay). >= the prompt length is the
+    // oracle mode, which is exactly `inference/model.py`.
+    uint32_t replay = 128;
+    uint32_t query_block = 512;
+    uint32_t tile = 8;
+    // Routed-expert transit slots per half of the read-ahead (two halves:
+    // one computing, one filling).
+    uint32_t transit_slots = 32;
+    // Round onto bf16 wherever the reference holds a bf16 tensor.
+    bool     round = true;
+    // The largest prompt the activation buffers are sized for.
+    uint32_t max_tokens = 1024;
+    // Validation only: hand every layer's per-stage buffers to `probe`.
+    bool     probe_layers = false;
+};
+
+// What a decode engine inherits (docs/p3_prefill.md §8.1).
+struct PrefillHandoff {
+    std::vector<uint32_t> prompt;
+    uint32_t first_token = 0;
+    float    top1 = 0.0f, top2 = 0.0f;
+    std::vector<float> logits;              // the last position's, [vocab]
+    struct Layer {
+        std::vector<float> win_kv;          // [128][512], slot p % 128 holds position p
+        std::vector<float> cmp_cache;       // [n_cmp][512], kv sources only
+        std::vector<float> index_k;         // [n_cmp][128], kv sources only
+        std::vector<float> cmp_state_kv;    // [ratio][512], ratio > 1 sources only
+        std::vector<float> cmp_state_score; // [ratio][512]
+        uint32_t n_cmp = 0, ratio = 0;
+    };
+    std::vector<Layer> layers;
+};
+
+// The §10 breakdown. Wall milliseconds on the host clock, each GPU bucket
+// including its submit and wait.
+struct PrefillTimes {
+    double embed = 0, engram_io = 0, engram = 0, mhc = 0, attention = 0, gate = 0;
+    double shared_expert = 0, expert_io = 0, expert_gpu = 0, host = 0, head = 0, total = 0;
+    uint64_t expert_bytes = 0, engram_reads = 0;
+    uint32_t experts_read = 0, dispatches = 0, submits = 0;
+};
+
+// Host views of one layer's buffers, valid only inside the probe callback.
+// Rows are this layer's rows; `row0` is the absolute position of row 0.
+struct PrefillProbe {
+    uint32_t layer = 0, rows = 0, row0 = 0, attn_rows = 0, attn_row0 = 0;
+    const float* block_in = nullptr;        // [rows][hc][dim], copied before the layer ran
+    const float* engram_out = nullptr;      // engram layers only
+    const float* attn_norm_out = nullptr;   // [front rows][dim] (N at layer 20)
+    uint32_t     front_rows = 0;
+    const float* mix_attn = nullptr;        // [front rows][24]
+    const float* kv = nullptr;              // [front rows][512]
+    const float* cmp_latent = nullptr;      // [G][512] pre-RoPE, kv sources
+    const float* cmp_cache = nullptr;       // [G][512]
+    const float* index_k = nullptr;         // [G][128]
+    uint32_t     n_cmp = 0;
+    const int32_t* topk_first = nullptr;    // [first block rows][n_idx]
+    uint32_t     n_idx = 0;
+    const float* attn_out = nullptr;        // [attn rows][dim] (wo_b)
+    const float* attn_block_out = nullptr;  // [attn rows][hc][dim]
+    const float* mix_ffn = nullptr;         // [attn rows][24]
+    const float* ffn_norm_out = nullptr;    // [attn rows][dim]
+    const float* moe_out = nullptr;         // [attn rows][dim]
+    const float* block_out = nullptr;       // [attn rows][hc][dim]
+    const uint32_t* gate_ids = nullptr;     // [attn rows][6]
+    const float* gate_weights = nullptr;
+};
+
+}  // namespace deepmoe::gpu
+
+namespace deepmoe::store { class PinnedStore; }
+namespace deepmoe { struct TextConfig; }
+namespace deepmoe::runtime { struct EngramTables; }
+
+namespace deepmoe::gpu {
+
+class Prefill {
+public:
+    Prefill() = default;
+    ~Prefill() { destroy(); }
+    Prefill(const Prefill&) = delete;
+    Prefill& operator=(const Prefill&) = delete;
+
+    Result<void> create(Device& device, MemoryAllocator& alloc, PrefillRunner& runner,
+                        const Manifest& manifest, const store::ShardSet& shards,
+                        storage::IoEngine& io, const store::PinnedStore& pinned,
+                        const TextConfig& cfg, const runtime::EngramTables* engram,
+                        const PrefillConfig& pcfg);
+    void destroy();
+
+    // The whole prompt through the forty layers and the head.
+    Result<PrefillHandoff> run(std::span<const uint32_t> prompt);
+
+    std::function<void(const PrefillProbe&)> probe;
+    const PrefillTimes& times() const { return times_; }
+    const PrefillConfig& config() const { return pcfg_; }
+
+    // Writes `h` as an L3-format directory `Engine::load_decode_state` reads
+    // (docs/p3_prefill.md §8.2): our prefill record, plus the reference's step
+    // records and engram tables copied from `reference_l3` so the loader's
+    // `steps_exported > 0` holds and the steps are there to compare against.
+    static Result<void> write_l3_dir(const PrefillHandoff& h, const TextConfig& cfg,
+                                     const std::string& reference_l3, const std::string& dir);
+
+    // --- the ops, immediate (record, submit, wait): what the per-stage test
+    // --- drives with golden inputs, and what `run` is built from -----------
+    Result<PfWeight> weight(const std::string& name, uint32_t fmt) const;
+    Result<void> op_act_quant(uint64_t x, uint32_t n, uint32_t d, uint64_t q16, uint64_t sc);
+    Result<void> op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs, uint32_t n,
+                         uint32_t x_stride, uint64_t y, uint32_t flags, float out_scale = 1.0f,
+                         uint32_t rows_per_group = 0, uint64_t row_scale = 0);
+    Result<void> op_rmsnorm(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint64_t w);
+    Result<void> op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff, uint32_t coeff_stride,
+                                 uint64_t norm_w, uint64_t out, uint64_t rs);
+    Result<void> op_sinkhorn(uint64_t raw, uint64_t out, uint32_t n, uint64_t base, uint64_t scale);
+    Result<void> op_mhc_post(uint64_t h, uint64_t a, uint64_t coeff, uint64_t out, uint32_t n);
+    // mode: 0 RoPE only, 1 fp8/UE8M0-32, 2 FP4/UE8M0-32, 3 FP4/E4M3-16
+    Result<void> op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint32_t head_dim,
+                         uint32_t mode, uint32_t block, bool compressed_theta, uint32_t pos0,
+                         uint32_t pos_step, bool inverse);
+    Result<void> op_cmp_pool(uint64_t kv, uint64_t score, uint64_t out, uint32_t groups,
+                             uint32_t ratio);
+    Result<void> op_engram_gate(uint64_t h, uint64_t kv, uint64_t qw, uint64_t kw, uint64_t out,
+                                uint32_t n);
+    Result<void> op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
+                              uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b);
+    Result<void> op_index_score(uint64_t q, uint64_t keys, uint32_t g, uint64_t w, uint64_t score,
+                                uint32_t b, uint32_t ratio, uint32_t pos0);
+    // The window band plus the compressed picks for queries at positions
+    // pos0..pos0+b-1 (docs/p3_prefill.md §1), host side. `scores` is
+    // [b][g] or null (every visible block kept).
+    static void topk_rows(uint32_t b, uint32_t pos0, uint32_t kv_pos0, uint32_t n_kv_rows,
+                          uint32_t window, uint32_t ratio, uint32_t g, uint32_t index_topk,
+                          const float* scores, int32_t* out, uint32_t n_idx);
+
+    // Scratch the test can borrow: a host-visible, device-addressable buffer.
+    Result<GpuBuffer> scratch(uint64_t bytes);
+
+    // The engram rows of every prompt position of layer L, dequantised onto
+    // bf16, into `engram_x()` ([n][6144] f32). Reads 48 x n rows off NVMe.
+    Result<void> op_engram_rows(uint32_t L, std::span<const uint32_t> prompt);
+    uint64_t engram_x() const { return b_.eng_x.dev_addr; }
+    // The MoE of layer L over `rows` rows of x (f32 [rows][dim], the FFN
+    // input): the activation round trip, the shared expert and/or the routed
+    // experts of `ids`/`wts` ([rows][6]) streamed expert-major, accumulated into
+    // `y` (which the caller zeroes).
+    Result<void> op_moe(uint32_t L, uint32_t rows, uint64_t x, std::vector<uint32_t>& ids,
+                        std::vector<float>& wts, uint64_t y, bool shared = true, bool routed = true);
+
+private:
+    Result<void> flush_one(uint32_t kernel, const void* push, uint32_t bytes, uint32_t gx,
+                           uint32_t gy = 1);
+    Result<void> build_rope(uint32_t positions);
+    Result<void> run_layer(uint32_t L, std::span<const uint32_t> prompt, PrefillHandoff& out);
+    Result<void> run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq, uint64_t xs,
+                         uint64_t y, std::vector<uint32_t>& ids, std::vector<float>& wts,
+                         bool shared = true, bool routed = true);
+    Result<void> engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out);
+
+    Device*                   device_ = nullptr;
+    MemoryAllocator*          alloc_  = nullptr;
+    PrefillRunner*            runner_ = nullptr;
+    const Manifest*           manifest_ = nullptr;
+    const store::ShardSet*    shards_ = nullptr;
+    storage::IoEngine*        io_ = nullptr;
+    const store::PinnedStore* pinned_ = nullptr;
+    const TextConfig*         cfg_ = nullptr;
+    const runtime::EngramTables* engram_ = nullptr;
+    PrefillConfig             pcfg_{};
+    PrefillTimes              times_{};
+    CommandBuffer             cmd_{};
+    bool                      cmd_valid_ = false;
+
+    std::vector<GpuBuffer> owned_;
+    struct Bufs {
+        GpuBuffer h_a, h_b, h_in_copy, x, rs, mix_raw, mix_a, mix_f, mix_prev, xq, xs;
+        GpuBuffer kv_raw, kv_norm, kv;
+        GpuBuffer ckv, cscore, latent_pre, latent, key_raw, key_norm;
+        GpuBuffer qr_raw, qr, qrq, qrs, q, iq, iw, iscore, idx, score, o, woa, woaq, woas, attn;
+        GpuBuffer fx, fxq, fxs, gate, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
+        GpuBuffer eng_x, eng_xq, eng_xs, eng_kv;
+        GpuBuffer transit, rope_win, rope_cmp, logits, nrm;
+    } b_{};
+    struct SourceState { GpuBuffer cache, keys; uint32_t n = 0; bool valid = false; };
+    std::vector<SourceState> sources_;      // per layer; only kv sources fill theirs
+    uint32_t cmp_src_ = 0, key_src_ = 0, idx_src_ = 0;
+    std::vector<int32_t> topk_shared_;      // the last index source's compressed picks, [rows][k]
+    uint32_t topk_k_ = 0;
+    uint32_t rope_positions_ = 0;
+    std::vector<int32_t>  probe_idx_;       // the first query block's index rows
+    std::vector<uint32_t> probe_ids_;       // this layer's top-6, [rows][6]
+    std::vector<float>    probe_wts_;
 };
 
 }  // namespace deepmoe::gpu

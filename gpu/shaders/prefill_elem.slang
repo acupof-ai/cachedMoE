@@ -214,7 +214,9 @@ void s_mhc_post(uint3 gid, uint tid) {
     const uint64_t o = Ptr[kOut] + (uint64_t)row * hc * d * 4;
     [unroll] for (uint q = 0; q < 16; ++q) {
         const uint e = c0 + q;
-        const float a = load_f32(Ptr[kA2] + ((uint64_t)row * d + e) * 4);
+        // The sublayer output enters as the bf16 tensor the reference hands
+        // hc_post (`ffn_out.to(residual.dtype)`); a no-op for wo_b's rounded one.
+        const float a = maybe_round(load_f32(Ptr[kA2] + ((uint64_t)row * d + e) * 4), pc.flags);
         float r[kMaxHc];
         [unroll] for (uint i = 0; i < kMaxHc; ++i) r[i] = load_f32(h + ((uint64_t)i * d + e) * 4);
         [unroll] for (uint j = 0; j < kMaxHc; ++j) {

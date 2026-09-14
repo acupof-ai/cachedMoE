@@ -182,7 +182,9 @@ void stage_dense(uint3 gid, uint tid) {
         if (lane != 0 || m >= pc.n || !live_row) continue;
         const uint yrow = ((pc.flags & kFlagScatter) != 0u)
                               ? load_u32(Ptr[kIdx] + (uint64_t)(pc.idx_off + m) * 4) : m;
-        float v = s * pc.out_scale;
+        // kFlagRoundPre: the GEMM's own bf16 output is scaled by a bf16 constant
+        // (`weights_proj(x) * scale`), so the reference rounds twice.
+        float v = (((pc.flags & kFlagRoundPre) != 0u) ? bf16_round(s) : s) * pc.out_scale;
         if ((pc.flags & kFlagRowScale) != 0u) v *= load_f32(Ptr[kRowScale] + (uint64_t)m * 4);
         const uint64_t ya = Ptr[kY] + ((uint64_t)yrow * pc.y_stride + (row - pc.row_base)) * 4;
         if ((pc.flags & kFlagAccumulate) != 0u) v += load_f32(ya);

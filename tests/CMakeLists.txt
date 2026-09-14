@@ -14,7 +14,8 @@ add_executable(deepmoe_tests
     test_gpu_attn.cpp
     test_gpu_layer.cpp
     test_decode.cpp
-    test_gpu_dspark.cpp)
+    test_gpu_dspark.cpp
+    test_gpu_prefill.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -94,3 +95,11 @@ set_tests_properties("suite.gpu_dspark" PROPERTIES
 add_executable(dspark_bench "${CMAKE_SOURCE_DIR}/bench/dspark_bench.cpp")
 target_link_libraries(dspark_bench PRIVATE deepmoe_core)
 add_dependencies(dspark_bench shaders)
+
+# The batched prefill kernels of docs/p3_prefill.md against tools/oracle_prefill.py's
+# start_pos == 0 tensors, then a whole forty-layer GPU prefill handed to the decode
+# engine (Track L). Needs tests/data/prefill and tests/data/l3.
+add_test(NAME "suite.gpu_prefill" COMMAND deepmoe_tests "gpu_prefill.")
+set_tests_properties("suite.gpu_prefill" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_prefill")
