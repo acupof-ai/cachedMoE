@@ -127,6 +127,14 @@ float swiglu(float gate, float up, float limit) {
 //   5 GlobI8   no staging either: the lane quantises its own 32-element block
 //              to int8 in registers and uses dot4add_i8packed, so one
 //              instruction covers four MACs for every weight row the lane owns.
+//   6 PreI8    dispatch A only: x arrives ALREADY int8 with a per-block-32
+//              scale, quantised once per token by gpu/shaders/moe_xquant.slang
+//              into the tail of the same x allocation. This is mode 5 with the
+//              quantisation hoisted out of the (2304/rows_per_wg) x slots row
+//              groups that each redo it -- the design docs/kernel_p2_moe.md
+//              §3.6 models at ~187 GB/s for dispatch A. It is an approximation
+//              of x, so it is off by default; §8 item 2 has the accuracy.
+//              Dispatch B never uses it: its activation is h, not x.
 [vk::constant_id(7)] const uint XMode = 0;
 // True when XMode stages the activation in LDS, which is what costs the two
 // workgroup barriers per K-chunk.
@@ -139,7 +147,45 @@ static bool x_mode_tiles() { return XMode >= 1 && XMode <= 3; }
 //            reads; no layout change, no extra traffic, every variant supports it
 //   2 Fp8H   dispatch A writes fp8 h plus a UE8M0 scale plane and dispatch B
 //            consumes those; halves the h bytes, needs >= 32 rows per workgroup
+//   3 Fp8HP  the same fp8 h and scale plane, written by a third, negligible
+//            dispatch (gpu/shaders/moe_hquant.slang) between A and B. A stays
+//            bit for bit the HQuant = 0 kernel, so mode 2's 32-row constraint
+//            disappears and M = 1 keeps the L32 R1 champion of §3.5. Mode 2
+//            overwrites h in place; mode 3 cannot -- its reader and its writer
+//            are different workgroups over overlapping bytes -- so its fp8
+//            plane sits AFTER the fp16 one and the h allocation is
+//            3.125 B/element instead of 2.
 [vk::constant_id(8)] const uint HQuant = 0;
+
+// Word offsets of the fp8 `h` values and of the UE8M0 scale plane inside the h
+// allocation, given the number of h elements (M x slots x inter). Mode 2 starts
+// at word 0 because nothing reads the fp16 h any more; mode 3 starts past the
+// fp16 plane it was quantised from.
+uint hq_value_words(uint h_elems) { return (HQuant == 3) ? (h_elems / 2) : 0u; }
+uint hq_scale_words(uint h_elems) { return hq_value_words(h_elems) + h_elems / 4; }
+
+// The same idea for the pre-quantised int8 x of XMode == 6: the int8 plane and
+// its per-block-32 fp32 scales live past the fp16 x inside the x allocation, so
+// no new descriptor and no new binding point are needed. x_elems = M x hidden.
+uint xq_value_words(uint x_elems) { return x_elems / 2; }
+uint xq_scale_words(uint x_elems) { return x_elems / 2 + x_elems / 4; }
+
+// The int8 activation quantiser both the pre-pass and the in-kernel XMode == 5
+// use: a symmetric per-block scale amax/127, round to nearest. Kept here so the
+// two cannot drift apart -- a kernel comparing its output against the pre-pass
+// would otherwise be comparing two different quantisers.
+float i8_block_scale(float amax) { return max(amax, 1e-30f) * (1.0f / 127.0f); }
+
+// Four consecutive activations as packed signed int8.
+uint i8_pack4(float v0, float v1, float v2, float v3, float inv) {
+    const float4 f = float4(v0, v1, v2, v3) * inv;
+    uint packed = 0;
+    [unroll] for (uint j = 0; j < 4; ++j) {
+        const int q = clamp(int(floor(f[j] + 0.5f)), -127, 127);
+        packed |= (uint(q) & 0xFFu) << (8 * j);
+    }
+    return packed;
+}
 
 // Compile the FP8 E4M3 weight path (the shared expert of design §7.9). A slot
 // is fp8 when bit 31 of its `Ids` entry is set, so one dispatch pair covers the

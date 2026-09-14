@@ -203,6 +203,14 @@ DEEPMOE_TEST(gpu_moe, matches_the_oracle_across_every_variant) {
         {{6, 16, 32, 0, 0, 2, 4}, "M=6, packed fp16 from global", 2e-3},
         {{1, 32, 32, 0, 0, 1, 5}, "int8 dot4 from global, no LDS", 6e-3},
         {{6, 16, 32, 0, 0, 2, 5}, "M=6, int8 dot4 from global", 6e-3},
+        // XMode 6: x pre-quantised to int8 by gpu/shaders/moe_xquant.slang and
+        // consumed by dispatch A only (dispatch B's activation is h, so it
+        // falls back to the fp32 path). This is the §3.6 design whose accuracy
+        // decides whether it can ever be a default -- the printed
+        // rel_to_scale is the number docs/kernel_p2_moe.md §8 item 2 quotes.
+        {{1, 32, 32, 0, 0, 1, 6}, "int8 x from the pre-pass, A only", 6e-3},
+        {{1, 16, 32, 0, 0, 2, 6}, "int8 x pre-pass, 16 lanes, 2 rows", 6e-3},
+        {{6, 16, 32, 0, 0, 2, 6}, "M=6, int8 x pre-pass", 6e-3},
     };
 
     for (const Case& c : cases) {
@@ -291,6 +299,49 @@ DEEPMOE_TEST(gpu_moe, the_indirection_list_picks_the_expert) {
                 g.layer, g.expert, cmp.cosine, cmp.max_abs, cmp.rel_to_scale);
     CHECK(cmp.rel_to_scale <= 1e-3);
     CHECK(cmp.cosine >= 1.0 - 1e-6);
+}
+
+// docs/kernel_p2_moe.md §8 item 2: XMode 6 replaces x with an int8 + block-32
+// approximation, so its error is a property of *x*, not of the kernel -- and it
+// therefore varies from expert to expert. Expert (0, 0) lands at 2.9e-3, inside
+// design §12's 5e-3 int8 bar; this is the other golden, which does not. The
+// same two numbers come out of tools/oracle_shared.py's x_quant_study on the
+// CPU, which is what makes the per-row / residual comparison there trustworthy.
+DEEPMOE_TEST(gpu_moe, the_int8_x_pre_pass_is_expert_dependent) {
+    if (skip_without_model("gpu_moe.the_int8_x_pre_pass_is_expert_dependent")) return;
+
+    Rig rig;
+    if (!rig.bring_up(/*slots=*/2)) {
+        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        return;
+    }
+    const char* files[2] = {"l1_layer0_expert0.bin", "l1_layer39_expert383.bin"};
+    double worst = 0.0;
+    for (const char* file : files) {
+        auto golden = load_golden(data_path(file));
+        REQUIRE_OK(golden);
+        const Golden& g = *golden;
+        const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
+        REQUIRE(rig.fill(key));
+        for (uint32_t x_mode : {0u, 6u}) {
+            gpu::MoeSpec spec{1, 32, 32, 0, 0, 1, x_mode};
+            auto y = run_variant(rig, spec, key, g.x, /*slots=*/1, /*slot_of_interest=*/0);
+            REQUIRE_OK(y);
+            std::vector<float> col0(y->begin(), y->begin() + layout::kHiddenSize);
+            const Compare cmp = compare(col0, g.y);
+            std::printf("       (%2u,%3u) %-6s cos %.9f  %.3e of |y|max\n", g.layer, g.expert,
+                        x_mode == 6 ? "int8 x" : "fp16 x", cmp.cosine, cmp.rel_to_scale);
+            if (x_mode == 6) worst = std::fmax(worst, cmp.rel_to_scale);
+            else CHECK(cmp.rel_to_scale <= 1e-3);
+        }
+    }
+    // Not an assertion that int8 x is good enough -- it is the opposite. The
+    // bound is here so the number cannot silently get worse, and so that
+    // anything claiming int8 x is within §12's 5e-3 has to explain this test.
+    std::printf("       worst int8-x error over the two goldens: %.3e "
+                "(design §12's int8 bar is 5e-3)\n", worst);
+    CHECK(worst > 5e-3);
+    CHECK(worst <= 1.5e-2);
 }
 
 // The route weight of design §7.9 is applied inside dispatch A, and dispatch B
@@ -590,6 +641,8 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_computes_one_answer_per_column) {
         {{kM, 16, 32, 0, 0, 2, 3}, "LDS x tile, int8 dot4", 1.5e-2},
         {{kM, 16, 32, 0, 0, 2, 4}, "packed fp16 from global", 3e-3},
         {{kM, 16, 32, 0, 0, 2, 5}, "int8 dot4 from global", 1.5e-2},
+        {{kM, 16, 32, 0, 0, 2, 6}, "int8 x from the pre-pass", 1.5e-2},
+        {{kM, 32, 32, 0, 0, 1, 6}, "int8 x pre-pass, 32 lanes", 1.5e-2},
     };
     for (const Case& c : cases) {
         gpu::MoeDims dims;
@@ -744,6 +797,16 @@ DEEPMOE_TEST(gpu_moe, the_fp8_h_quantisation_matches_the_reference) {
         {{1, 16, 32, 0, 0, 2, 1, 2}, "fp8 h written by dispatch A, LDS x tile"},
         {{6, 16, 32, 0, 0, 2, 1, 2}, "M=6, fp8 h written by dispatch A"},
         {{6, 16, 32, 0, 0, 2, 4, 2}, "M=6, fp8 h, packed fp16 gate/up", 5e-3},
+        // HQuant 3 is the same arithmetic as HQuant 2 moved into its own
+        // dispatch, so it must land on the same answer -- and, unlike 2, it
+        // must do so on the L32 R1 shape that owns only 8 rows of h per
+        // workgroup (docs/kernel_p2_moe.md §8 item 1).
+        {{1, 32, 32, 0, 0, 1, 0, 3}, "fp8 h by the third dispatch, L32 R1"},
+        {{1, 16, 32, 0, 0, 2, 0, 3}, "fp8 h by the third dispatch, L16 R2"},
+        {{1, 64, 32, 0, 0, 1, 0, 3}, "fp8 h by the third dispatch, 64 lanes"},
+        {{6, 32, 32, 0, 0, 1, 0, 3}, "M=6, fp8 h by the third dispatch"},
+        {{6, 16, 32, 0, 0, 2, 4, 3}, "M=6, fp8 h by the third dispatch, packed "
+                                     "fp16 gate/up", 5e-3},
     };
     std::vector<float> first_quantised;
     for (const Case& c : cases) {
@@ -816,6 +879,7 @@ DEEPMOE_TEST(gpu_moe, a_partial_dispatch_reduces_to_the_same_y) {
         {{1, 32, 32, 0, 0, 1, 0}, 3},
         {{6, 16, 32, 0, 0, 2, 4}, 3},
         {{6, 16, 32, 0, 0, 2, 4, 2}, 4},   // with fp8 h, which dispatch A writes
+        {{1, 32, 32, 0, 0, 1, 0, 3}, 3},   // with fp8 h from the third dispatch
         {{1, 32, 32, 0, 0, 1, 0}, 1},
         {{1, 32, 32, 0, 0, 1, 0}, 6},
     };
@@ -876,5 +940,34 @@ DEEPMOE_TEST(gpu_moe, a_partial_dispatch_reduces_to_the_same_y) {
         // counted twice.
         CHECK(cmp.rel_to_scale <= 1e-6);
         CHECK(cmp.cosine >= 1.0 - 1e-12);
+
+        // The schedule docs/kernel_p2_moe.md §6.3 recommends instead: split
+        // only dispatch A -- whose work is exactly proportional to the slots it
+        // is given -- and run dispatch B once, at the end, over the whole list.
+        // Dispatch B then does the *same* reduction in the *same* order as the
+        // one-shot run, so this is bit-identical rather than 1-2 ULP away, and
+        // it is what makes "compute the experts that arrived first" nearly
+        // free (§6.2's +0.193 ms is almost all the second dispatch B).
+        setup();
+        std::memset(runner.y(), 0, once.size() * sizeof(float));
+        for (uint32_t phase = 0; phase < 2; ++phase) {
+            const uint32_t lo = phase ? c.split : 0;
+            const uint32_t hi = phase ? kSlots : c.split;
+            for (uint32_t i = lo; i < hi; ++i) runner.slot_list()[i - lo] = i;
+            runner.set_list_count(hi - lo);
+            runner.set_accumulate(false);
+            REQUIRE_OK(runner.run(1, gpu::MoePhase::GateUpOnly));
+        }
+        for (uint32_t i = 0; i < kSlots; ++i) runner.slot_list()[i] = i;
+        runner.set_list_count(kSlots);
+        runner.set_accumulate(false);
+        REQUIRE_OK(runner.run(1, gpu::MoePhase::DownOnly));
+        std::vector<float> deferred(once.size());
+        std::memcpy(deferred.data(), runner.y(), deferred.size() * sizeof(float));
+        size_t same = 0;
+        for (size_t i = 0; i < once.size(); ++i) same += (once[i] == deferred[i]) ? 1 : 0;
+        std::printf("       %-32s split A + one B: %zu/%zu words bit-identical\n",
+                    c.spec.name().c_str(), same, once.size());
+        CHECK_EQ(same, once.size());
     }
 }

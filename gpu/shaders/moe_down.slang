@@ -18,6 +18,9 @@
 //             round trip applied here. A lane already holds all 32 elements of
 //             a block, so the block amax costs no extra traffic at all.
 //   HQuant 2  fp8 bytes plus a UE8M0 scale plane, both written by dispatch A
+//   HQuant 3  the same two planes, written by the tiny moe_hquant dispatch that
+//             runs between A and B, so A keeps the shape it wants. Only the
+//             base offsets differ from mode 2 (moe_common.slang hq_value_words)
 //
 // Partial dispatch (design §7.9 "compute the experts that arrived first"):
 // `list_count` entries of SlotList are summed and `flags & 1` says whether to
@@ -51,7 +54,7 @@ static const uint kXTileU  = (XMode == 0) ? 1u
 groupshared uint  sX[kXTileU];
 static const uint kXScaleN = (XMode == 3) ? (M * LanesPerRow) : 1u;
 groupshared float sXS[kXScaleN];
-static const uint kFp8TblN = (Fp8Slots == 0 && HQuant != 2) ? 1u : kFp8TableN;
+static const uint kFp8TblN = (Fp8Slots == 0 && HQuant < 2) ? 1u : kFp8TableN;
 groupshared float sFp8[kFp8TblN];
 
 float row_reduce(float v, uint tid, uint sublane) {
@@ -101,10 +104,10 @@ void load_h_block_raw(uint row, uint blk, out float v[32]) {
 // and with design §7.9 v0.6's fp8 round trip already applied.
 void load_h_block(uint m, uint slot, uint blk, out float v[32]) {
     const uint row = m * pc.num_slots + slot;
-    if (HQuant == 2) {
-        const uint sBase = (M * pc.num_slots * pc.k) / 4;
-        const float s = asfloat(H[sBase + row * (pc.k / kBlockK) + blk]);
-        const uint  w0 = (row * pc.k + blk * kBlockK) / 4;
+    if (HQuant >= 2) {
+        const uint elems = M * pc.num_slots * pc.k;
+        const float s = asfloat(H[hq_scale_words(elems) + row * (pc.k / kBlockK) + blk]);
+        const uint  w0 = hq_value_words(elems) + (row * pc.k + blk * kBlockK) / 4;
         [unroll] for (uint u = 0; u < 8; ++u) {
             const uint w = H[w0 + u];
             [unroll] for (uint j = 0; j < 4; ++j)
@@ -131,8 +134,10 @@ void load_h_block(uint m, uint slot, uint blk, out float v[32]) {
 // hits on a 4.5 KiB working set.
 float h_block_scale(uint m, uint slot, uint blk) {
     const uint row = m * pc.num_slots + slot;
-    if (HQuant == 2)
-        return asfloat(H[(M * pc.num_slots * pc.k) / 4 + row * (pc.k / kBlockK) + blk]);
+    if (HQuant >= 2) {
+        const uint elems = M * pc.num_slots * pc.k;
+        return asfloat(H[hq_scale_words(elems) + row * (pc.k / kBlockK) + blk]);
+    }
     float v[32];
     load_h_block_raw(row, blk, v);
     float amax = 0.0f;
@@ -140,23 +145,29 @@ float h_block_scale(uint m, uint slot, uint blk) {
     return fast_round_scale(max(amax, kFp8ActMin), 1.0f / kFp8ActMax);
 }
 
-// Eight h values of element group `w` of block `blk`, with the fp8 round trip
-// applied using an already-known block scale.
+// Eight h values of element group `w` of block `blk` with the fp8 round trip
+// applied, but left ON the quantised grid: the caller multiplies the finished
+// per-(row, column, block) partial by the block scale exactly once instead of
+// scaling all 32 elements. The block scale is a power of two, so pulling it out
+// of the sum is bit-exact, and at RowsPerLane = 1 those 32 multiplies were
+// pure overhead against 32 FMAs -- the +18% dispatch B paid for fp8 h on the
+// M=1 decode shape (docs/kernel_p2_moe.md §9).
 void load_h8q(uint m, uint slot, uint blk, uint w, float s, out float v[8]) {
     const uint row = m * pc.num_slots + slot;
-    if (HQuant == 2) {
-        const uint w0 = (row * pc.k + blk * kBlockK) / 4 + w * 2;
+    if (HQuant >= 2) {
+        const uint w0 = hq_value_words(M * pc.num_slots * pc.k)
+                      + (row * pc.k + blk * kBlockK) / 4 + w * 2;
         [unroll] for (uint u = 0; u < 2; ++u) {
             const uint word = H[w0 + u];
             [unroll] for (uint j = 0; j < 4; ++j)
-                v[u * 4 + j] = sFp8[(word >> (8 * j)) & 0xFFu] * s;
+                v[u * 4 + j] = sFp8[(word >> (8 * j)) & 0xFFu];
         }
         return;
     }
     load_h8(row * pc.k + blk * kBlockK + w * 8, v);
     const float inv = 1.0f / s;
     [unroll] for (uint j = 0; j < 8; ++j)
-        v[j] = fp8_e4m3_round(clamp(v[j] * inv, -kFp8ActMax, kFp8ActMax)) * s;
+        v[j] = fp8_e4m3_round(clamp(v[j] * inv, -kFp8ActMax, kFp8ActMax));
 }
 
 // Stage blocks [base, base + LanesPerRow) of h for every column into LDS. One
@@ -229,7 +240,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint blocks = pc.k / kBlockK;   // 72
     const bool live   = rowBase + RowsPerLane <= pc.n_rows;
 
-    if (Fp8Slots != 0 || HQuant == 2) {
+    if (Fp8Slots != 0 || HQuant >= 2) {
         if (tid < kFp8TableN) sFp8[tid] = fp8_e4m3_decode(tid);
         GroupMemoryBarrierWithGroupSync();
     }
@@ -440,8 +451,12 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                     }
                 }
                 const int esh = asI8 ? 1 : 0;
+                // `hs[m]` is 1 unless the generic path above left h on its fp8
+                // grid, in which case this is where the block scale lands.
+                const bool folded = (HQuant != 0) && !packed && !asI8;
                 for (uint r = 0; r < RowsPerLane; ++r)
-                    for (uint m = 0; m < M; ++m) acc[r][m] += ldexp(p[r][m], e2[r] - esh);
+                    for (uint m = 0; m < M; ++m)
+                        acc[r][m] += ldexp(folded ? (p[r][m] * hs[m]) : p[r][m], e2[r] - esh);
             }
         }
     }

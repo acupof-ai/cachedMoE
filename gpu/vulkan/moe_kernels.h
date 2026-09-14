@@ -39,10 +39,16 @@ struct MoeSpec {
     uint32_t rows_per_lane = 1;    // {1, 2, 4}: weight rows per lane
     // --- P2 knobs (docs/kernel_p2_moe.md) -------------------------------
     // How the activation reaches the FMA: 0 global (the P1 kernel), 1 LDS
-    // K-tile, 2 LDS + packed fp16, 3 LDS + int8 dot4 (design §7.9).
+    // K-tile, 2 LDS + packed fp16, 3 LDS + int8 dot4, 4 global + packed fp16,
+    // 5 global + in-kernel int8 dot4 (design §7.9), 6 dispatch A consumes an
+    // int8 x quantised once per token by a tiny pre-pass. Mode 6 approximates x
+    // and is therefore never a default; docs/kernel_p2_moe.md §8 item 2.
     uint32_t x_mode        = 0;
     // The fp8 quantisation of h before w2 (design §7.9 v0.6): 0 off,
-    // 1 reproduced inside dispatch B, 2 fp8 h written by dispatch A.
+    // 1 reproduced inside dispatch B, 2 fp8 h written by dispatch A,
+    // 3 fp8 h written by a third tiny dispatch between A and B. 3 is the one to
+    // use: it is numerically identical to 2 and, unlike 2, does not force a
+    // 32-row workgroup on dispatch A (docs/kernel_p2_moe.md §8 item 1).
     uint32_t h_quant       = 0;
     // Compile the FP8 E4M3 weight path so a slot flagged with kSlotFp8 can be
     // the fp8 shared expert.
@@ -54,7 +60,12 @@ struct MoeSpec {
     // ~0u means "whatever x_mode says".
     static constexpr uint32_t kFollowA = ~0u;
     uint32_t x_mode_b      = kFollowA;
-    uint32_t b_mode() const { return x_mode_b == kFollowA ? x_mode : x_mode_b; }
+    // Mode 6 is a property of x, and dispatch B's activation is h, so a
+    // following B falls back to the plain global path rather than to 6.
+    uint32_t b_mode() const {
+        if (x_mode_b != kFollowA) return x_mode_b;
+        return x_mode == 6 ? 0u : x_mode;
+    }
     std::string name() const;
 };
 
@@ -133,6 +144,27 @@ public:
     // design §7.9 partial dispatch: when set, dispatch B adds its slot sum into
     // y instead of overwriting it, so a layer can be computed as several
     // dispatches over disjoint subsets of the slot list.
+    //
+    // Two schedules are possible and they do NOT cost the same
+    // (docs/kernel_p2_moe.md §6.3):
+    //
+    //   pairs     run(Both) over slots [0, c), then set_accumulate(true) and
+    //             run(Both) over [c, n). Every group produces its own y
+    //             contribution, so nothing has to be held back -- but dispatch
+    //             B pays a second time for 640 workgroups' worth of ramp,
+    //             cross-lane reduction and y read-modify-write, and the answer
+    //             is 1-2 ULP from the one-shot one because the reduction is
+    //             re-associated.
+    //   deferred  run(GateUpOnly) over [0, c), run(GateUpOnly) over [c, n),
+    //             then one run(DownOnly) over the whole list with accumulate
+    //             off. Dispatch A is ~2/3 of a layer and its work is exactly
+    //             proportional to the slots it is handed, so this is what
+    //             overlaps with the I/O wait; dispatch B needs every slot's h
+    //             anyway, so deferring it loses nothing. Measurably cheaper and
+    //             bit-identical to the one-shot run.
+    //
+    // Prefer `deferred` unless a partial y is needed before the last expert
+    // lands, which decode never needs.
     void set_accumulate(bool on) { accumulate_ = on; }
     bool accumulate() const { return accumulate_; }
 
@@ -160,7 +192,10 @@ private:
     uint32_t         recorded_   = 0;
     bool             accumulate_ = false;
 
-    Pipeline       gateup_, down_;
+    // The optional third and pre-dispatches: `hquant_` quantises h between A
+    // and B when spec.h_quant == 3, `xquant_` quantises x before A when
+    // spec.x_mode == 6. Both are tiny and both are absent otherwise.
+    Pipeline       gateup_, down_, hquant_, xquant_;
     DescriptorPool descriptors_;
     CommandPool    pool_;
     CommandBuffer  cmd_{};
@@ -170,6 +205,8 @@ private:
 #if defined(DEEPMOE_ENABLE_VULKAN)
     VkDescriptorSet set_a_ = VK_NULL_HANDLE;
     VkDescriptorSet set_b_ = VK_NULL_HANDLE;
+    VkDescriptorSet set_hq_ = VK_NULL_HANDLE;
+    VkDescriptorSet set_xq_ = VK_NULL_HANDLE;
 #endif
 };
 

@@ -519,25 +519,346 @@ shared expert 所在的 dispatch: Fp8Slots=1，槽的 ids 带 kSlotFp8
 
 ---
 
-## 8. 未解决的问题
+## 8. v0.1 未解决的问题，与 v0.2 的处置
 
-1. **`hq8` 的 32 行约束（§5.3）**。M=1 因此损失 27%，折合 6.3 ms/token。
-   修法：把 `h` 的量化与计算的 workgroup 形状解耦（LDS 转置），或拆成第三个
-   极小的 dispatch。**这是 P2 之后 kernel 侧收益最大的一项。**
-2. **x 在 kernel 之外量化成 int8（§3.6）**。模型算下来 dispatch A 能到 ~187 GB/s，
-   是唯一能让 M=6 摸到 §15 P2 那条 80% 线的设计。代价是一个新 buffer、一个
-   前置 dispatch，以及 int8 的 ~1% 输出误差——需要 L2 来定这个误差能不能接受。
-3. **§15 P2 的 M=6 准出条件应该改写**。M=6 是 VALU 受限的，「有效 GB/s ÷ 内存上限」
-   在那里不是一个有意义的效率指标。建议改成 `ms/token` 的绝对值
-   （本文 0.162 ms，含真 shared expert 0.218 ms）。
-4. **A 和 B 的 `RowsPerLane` 也应该分开**（§3.3）。B 在 R=4 上还在涨而 A 已经塌方；
-   补一个 spec 常量，预估收益 < 2%，优先级低。
-5. **分组 dispatch 的启用条件（§6.2）**。需要 Planner 侧的一个判据，
-   而不是无条件默认开启。
-6. **§12 的 int8 判据（§3.4）**。5e-3 这个数字没有实测依据，而 int8 激活的
-   定价就是 ~5.4e-3。要么调判据，要么放弃 int8 走 packed fp16。
-7. **run 间 ~7% 的漂移（§2）**。比 P1 记录的 1.5% 大。同一轮内的对照是可信的，
-   跨轮的绝对值不是。CI 上的 kernel 带宽回归需要同轮对照，不能比绝对值。
+v0.2（2026-09-14，Track H）只动了 §8 自己列出的头两项，加上 §6.2 的那个测量，
+机器与口径和 v0.1 相同（Ryzen AI Max+ 395 / Radeon 8060S / VGM 64 GB，路径 A，
+`--iters 48 --layer-cycle 8 --repeats 3 --sweeps 2`）。
+**新的 CSV 是 `bench/results/kernel_p2b_moe.csv`**，v0.1 的
+`kernel_p2_moe.csv` 原样保留；§2 的漂移规则照旧，
+**两个文件之间不要比绝对值**，§9–§11 的每一个对照都在同一节、同一轮里。
+
+| # | v0.1 的问题 | v0.2 |
+|---|---|---|
+| 1 | `hq8` 的 32 行约束让 M=1 损失 27%（6.3 ms/token） | **解决**（§9）。`HQuant = 3` 把量化搬进第三个 dispatch，M=1 回到 `L32 R1`，代价从 +23% 降到 **−0.5% / +2.2% / +3.9%（三轮，落在 §2 的漂移里）** |
+| 2 | x 在 kernel 外量化成 int8 能不能到 187 GB/s | **实现了，A 快 15–30%，但两条都不达标**（§10）。A+B 在 M=6 上仍只有 65–67% 上限，端到端收益 0–7%（漂移量级）；精度在第二个 golden 上 **8.9e-3**，超 §12 的 5e-3。`XMode = 6` **默认关闭** |
+| 3 | §15 P2 的 M=6 准出条件应该改写 | 不变，§3.6 的论据仍然成立 |
+| 4 | A 和 B 的 `RowsPerLane` 应该分开 | 未做，优先级仍然低（预估 < 2%） |
+| 5 | 分组 dispatch 的启用条件 | **前提错了**（§11）。真实代价是**每层 +0.006…0.025 ms**（只拆 A）或 **+0.014…0.046 ms**（两对 A+B），不是 §6.2 写的 0.193 ms；那个数字是漂移，不是代价 |
+| 6 | §12 的 int8 判据 | §10 给出两个 expert 的实测。**判据不该为 int8 x 放宽**：错误是 x 的，不是 kernel 的，而且逐 expert 变化 2 倍以上 |
+| 7 | run 间 ~7% 的漂移 | 不变，而且 §11 说明它比想象的更能伤人 |
+
+v0.2 那一轮的 M 扫描（不量化的最优变体，上限 215.4–217.8 GB/s，
+`bench/results/kernel_p2b_moe.csv`）——**和 §3.5 是同一个形状、同一个量级，
+v0.2 没有让任何 M 变慢**：
+
+| M | 最优变体 | A+B GB/s | %上限 | ms/pair | **ms/token** |
+|---|---|---|---|---|---|
+| 1 | `L32 R1 xglob` | 221.9 | 102% | 0.593 | **0.5930** |
+| 2 | `L32 R1 xprei8`（int8 x，§10） | 207.6 | 95% | 0.634 | **0.3170** |
+| 3 | `L32 R2 xgf16` | 178.1 | 82% | 0.739 | **0.2463** |
+| 4 | `L32 R2 xgf16` | 164.1 | 75% | 0.802 | **0.2004** |
+| 5 | `L16 R2 xprei8`（int8 x，§10） | 153.7 | 71% | 0.857 | **0.1713** |
+| 6 | `L16 R2 xgf16/ldsi8` | 145.2 | 67% | 0.906 | **0.1511** |
+
+M=2 和 M=5 的赢家是 `XMode = 6`，但那两格的领先都在 §2 的漂移里，
+而且 `XMode = 6` 因为 §10.4 的精度默认关着；**不含 int8 x 的最优是
+M=2 `L32 R1 xgf16`、M=5 `L16 R2 xgf16/ldsi8`，ms/token 各高 2–6%。**
+开着 `HQuant = 3`（也就是 design §7.9 v0.6 要求的 `h` 量化）的同一张表在 §9.4。
+
+---
+
+## 9. `HQuant = 3`：把 `h` 的量化拆成第三个 dispatch（§8 第 1 项）
+
+### 9.1 为什么不是 LDS 转置
+
+§5.3 给了两条路：给 dispatch A 的写出阶段解耦 workgroup 形状（LDS 转置），
+或者拆成第三个极小的 dispatch。选了后者，理由是前者做不到：
+fp8 的块是 **`h` 沿 2304 维连续的 32 行**，而 `L32 R1` 的一个 workgroup 只拥有
+`256/32 × 1 = 8` 行。LDS 转置只能在 workgroup 内部换轴，换不来它根本没有的
+另外 24 行；要凑够 32 行就得 `L16 R2` 或 `L32 R4`——正是要躲开的那个约束。
+跨 workgroup 交换块 scale 则需要一次全局 barrier，也就退化成了第三个 dispatch。
+
+### 9.2 实现：`gpu/shaders/moe_hquant.slang`
+
+一个线程一个 32 元素块：读 64 B 的 fp16 `h`，求 amax，`fast_round_scale`，
+写 32 B 的 fp8 + 一个 scale word。整个 `h` 是 `M × slots × 2304` 个值——
+M=1 时 32 KB，M=6 时 194 KB——所以 M=1 是 504 个线程 2 个 workgroup。
+`SlotList` 是它的第一个 binding，所以 §7.9 的「先到的先算」照样切得开。
+
+**唯一的代价是它不能就地量化。** 线程 t 读 fp16 字节 `[64t, 64t+64)`，
+要写的 fp8 字节 `[32t, 32t+32)` 落在线程 t/2 的读区间里。所以 fp8 平面放在
+fp16 平面**之后**（`moe_common.slang` 的 `hq_value_words`），`h` 的 allocation
+从 2 B/元素变成 **3.125 B/元素**（fp16 2 + fp8 1 + scale 0.125）。
+M=6、7 槽时是 302 KB，和 132 MB 的权重流比可以忽略。
+`HQuant = 2` 的就地布局一个字节没改。
+
+### 9.3 还顺手修掉了 dispatch B 的一笔冤枉钱
+
+第一版 `HQuant = 3` 在 M=1 上仍然贵 5.2%，拆开看有 0.040 ms 在 **dispatch B**：
+`load_h8q` 对 fp8 `h` 的每个元素做一次 `sFp8[byte] * s`，也就是每 (列, 块)
+32 次乘法，而块 scale 在整块里是常数。把它提到块外——
+`acc += ldexp(p * hs[m], e2)`——**每 (行, 列, 块) 一次乘法**取代 32 次。
+块 scale 是 2 的幂，提取是逐位精确的，`tests/test_gpu_moe.cpp` 里
+`vs y_hq16` 的 5.030e-08 改动前后一个数字都没变。
+`RowsPerLane = 1` 时这 32 次乘法完全没有被摊薄，正是 M=1 decode 形状的那笔钱。
+
+### 9.4 M 扫描，HQuant 开着（同一节内成对测量，`--only "h fp8"`，机器空闲）
+
+每一行的「不量化」和「hqP」是**相邻测量**的（§11.1 说明为什么这很重要）。
+两种形状都列出来，因为 M ≤ 2 的赢家是 `L32 R1`、M ≥ 3 的是 `L16 R2`：
+
+| M | 形状 | 不量化 ms/pair | `hqP` ms/pair | 代价 | `hqP` ms/token |
+|---|---|---|---|---|---|
+| 1 | `L32 R1 xglob` | 0.608 | **0.632** | **+3.9%** | **0.632** |
+| 1 | `L16 R2 xgf16/ldsi8` | 0.781 | 0.795 | +1.8% | 0.795 |
+| 2 | `L32 R1 xglob` | 0.692 | 0.833 | +20.4% | 0.416 |
+| 2 | `L16 R2 xgf16/ldsi8` | 0.865 | **0.872** | **+0.8%** | 0.436 |
+| 3 | `L32 R1 xglob` | 0.805 | 0.984 | +22.2% | 0.328 |
+| 3 | `L16 R2 xgf16/ldsi8` | 0.808 | **0.788** | **−2.5%** | **0.263** |
+| 4 | `L16 R2 xgf16/ldsi8` | 0.837 | **0.848** | **+1.3%** | **0.212** |
+| 5 | `L16 R2 xgf16/ldsi8` | 0.901 | **0.871** | **−3.3%** | **0.174** |
+| 6 | `L16 R2 xgf16/ldsi8` | 0.950 | **0.992** | **+4.4%** | **0.165** |
+
+**在每个 M 真正会用的形状上，`hqP` 的代价落在 −3.3% … +4.4% 之间，
+也就是落在 §2 的漂移里。** 对比 v0.1 的 `hq8`（M=1 +27%）：
+M=1 量了三轮，分别是 **−0.5% / +2.2% / +3.9%**（`--only` 两轮 + 全 sweep 一轮），
+中位数 +2.2%——**decode 的 6.3 ms/token 量化税降到 0.4–0.9 ms/token**。
+
+`L32 R1` 在 M ≥ 2 上那 20% 不是 `hqP` 的问题、也不是第三个 dispatch 的问题：
+是 **dispatch B 在 R=1 上给 M 个列做 fp8 反量化**（M=2 时 B 从 169.7 掉到
+116.2 GB/s），而 `L32 R1` 在 M ≥ 2 上本来就不是赢家。
+
+### 9.4.1 和另外两种实现比（同一节，全 sweep 的那一轮）
+
+| 变体 | A GB/s | B GB/s | A+B GB/s | ms/pair | 对同节对照 |
+|---|---|---|---|---|---|
+| M=1 `L32 R1 xglob`（不量化，对照） | 218.4 | 196.8 | 218.2 | **0.603** | — |
+| M=1 `L32 R1 xglob hqP` | 217.3 | 190.4 | 213.6 | **0.616** | **+2.2%** |
+| M=1 `L16 R2 xglob hq8` | 167.7 | 202.4 | 176.9 | 0.744 | +23.4% |
+| M=1 `L32 R4 xglob hq8` | 178.9 | 156.3 | 172.4 | 0.763 | +26.5% |
+| M=1 `L32 R1 xglob hqB` | 222.9 | 84.8 | 151.1 | 0.871 | +44.4% |
+| M=6 `L16 R2 xgf16/ldsi8`（不量化，对照） | 133.2 | 122.2 | 137.2 | **0.959** | — |
+| M=6 `L16 R2 xgf16/ldsi8 hqP` | 139.2 | 118.3 | 139.2 | **0.945** | **−1.5%** |
+| M=6 `L16 R2 xgf16/ldsi8 hq8` | 136.0 | 118.5 | 135.8 | 0.969 | +1.0% |
+| M=6 `L16 R2 xgf16 hqB` | 142.6 | 36.2 | 72.8 | 1.807 | +88.4% |
+
+**M=6 上 `hqP` 不比 `hq8` 慢**（两者都在对照的 ±1.5% 内），
+所以换过去没有任何代价。`hqB` 在 `L32 R1` 上 dispatch B 只有 84.8 GB/s：
+它要为**每个权重行**重算同一个块 amax，R=1 时一个都摊不掉。
+`runtime/moe_bridge.h` 现在的默认就是 `h_quant = 1`，那是 **+44%**（§12）。
+
+### 9.5 数值
+
+`HQuant = 3` 与 `HQuant = 2` 是同一段算术换了个 dispatch，所以
+`tests/test_gpu_moe.cpp::the_fp8_h_quantisation_matches_the_reference` 里
+两者对 `y_hq16` 都是 **5.030e-08**，和 §5.2 的表逐位相同；
+`L32 R1` / `L16 R2` / `L64 R1` / M=6 四种形状给出同一个数，
+这正是 §5.3 说 `hq8` 做不到的事。
+
+---
+
+## 10. `XMode = 6`：x 在 kernel 外量化成 int8（§8 第 2 项）
+
+### 10.1 实现
+
+`gpu/shaders/moe_xquant.slang`，一个线程一个 32 元素块：
+x `[M][5120]` fp16 → int8 + 每块一个 fp32 scale，追加在同一块 x allocation 的
+fp16 之后（`xq_value_words`）。写区间从 `M·k/2` 个 word 开始、读区间到它为止，
+所以这里就地量化是安全的（`h` 不行，见 §9.2）。
+**这是每 *token* 一次，不是每层一次**——同一个 x 喂 40 层 MoE——但 bench 每次
+迭代都重录一遍，所以下面的 `ms_a` 只会高估它。
+
+dispatch A 侧 (`XMode = 6`) 每 (列, 块) 是 2 条 `global_load_dwordx4` + 1 个
+scale + 每 `RowsPerLane` 行 16 条 `dot4add_i8packed`，没有 `f16tof32`、
+没有 amax、没有取整。
+
+### 10.2 §3.6 的模型漏了权重解码
+
+第一版量到 dispatch A 在 M=6 上只有 147 GB/s，和 packed fp16 打平。拆开看：
+§3.6 的模型只数了**激活侧**的指令，而 int8 路径的瓶颈在**权重侧**——
+`fp4_nibbles_to_i8x4` 每 (块, 行, 矩阵) 要调 8 次，每次 4 个 nibble 查表 +
+移位 + 拼装，粗算是每块 512 条，而 M=6 个列一共才 150 条。**权重解码占 3/4。**
+
+修法和 §4 的 fp8 解码同一套：**256 项 LDS 表**，一个 FP4 字节（两个元素）
+直接给出两个 `2×E2M1` 的 int8，于是一个输出 word = 2 次 `ds_read` + 一次
+移位或。加上把 8 条标量 word 读换成 2 条 `dwordx4`，M=6 的 dispatch A 从
+147 走到 **168.1 GB/s**。
+
+### 10.3 速度：dispatch A 快 15–30%，端到端在漂移里
+
+同一节内对照（`int8 x` 那一节带着自己的 fp16 对照），全 sweep 的那一轮：
+
+| M | 最优 fp16 对照 ms/token | 最优 int8-x ms/token | 变化 |
+|---|---|---|---|
+| 1 | `L32 R1 xglob` **0.596** | `L32 R1 prei8` 0.603 | +1.2% |
+| 2 | `L32 R1 xglob` 0.337 | `L32 R1 prei8` **0.317** | **−5.9%** |
+| 3 | `L16 R2 xgf16/ldsi8` 0.255 | `L32 R1 prei8` **0.249** | −2.4% |
+| 4 | `L16 R2 xgf16/ldsi8` **0.202** | `L16 R2 prei8` 0.206 | +2.1% |
+| 5 | `L16 R2 xgf16/ldsi8` 0.173 | `L16 R2 prei8` **0.171** | −1.2% |
+| 6 | `L16 R2 xgf16/ldsi8` **0.153** | `L16 R2 prei8` 0.154 | +0.7% |
+
+第二轮（`--only "int8 x"`，独立运行）在 M=6 上给出 0.161 → **0.150（−7.0%）**，
+M=2 给出 −11.5%。**两轮的方向一致、幅度差一倍**，所以诚实的说法是：
+**端到端 M ≥ 2 的收益在 0…7% 之间，和 §2 的漂移同一量级。**
+
+拆开看，dispatch A 上的收益是真的、也是稳定的：M=6 的 A 从 137.5 走到
+**158.8 GB/s（+15%）**，另一轮是 129.6 → **168.1（+30%）**，
+两轮里它都是 M=6 全场最好的 A。
+
+**但 §3.6 的结论仍然不成立**：M=6 的 A+B 只有 **142.6–146.6 GB/s = 上限的
+65–67%**，离 §15 P2 的 80% 还差得远。原因很直接——瓶颈换到了 dispatch B
+（M=6 时 105–108 GB/s），而 **B 的激活是 `h` 不是 x**，这条路对它无能为力。
+§3.6 写的「这是唯一能让 M=6 摸到 80% 线的设计」，实测是错的。
+
+`RowsPerLane` 这次确实能往上开一格——int8 路径不持有 `float d[R][8]`，
+寄存器压力只有 fp32 路径的一半，M=1 时 `L16 R4` 甚至是最好的 int8 变体
+（0.689–0.700 ms）——但 R=8 依然塌方（M=6 的 A 只有 47.4 GB/s），
+而且 R=4 在 M ≥ 3 上没赢过 R=2。§3.3 的结论往后挪了一格，没有被推翻。
+
+### 10.4 精度：**不达标**，而且逐 expert 差两倍
+
+`tools/oracle_shared.py` 现在对每个 routed golden 跑一遍 `x_quant_study`：
+权重侧在 int8 路径上是**精确的**（`2×E2M1` 就是 int8，那个 2 折进块指数），
+所以误差全部是 x 自己的，torch 模型和 GPU 应该对得上——实测对得上到三位有效数字。
+
+| x 的形式 | (0, 0) 占 \|y\|max | (39, 383) 占 \|y\|max |
+|---|---|---|
+| fp16（`XMode 0/4`，design §6） | 1.37e-4 | 3.65e-4 |
+| **int8 + 每 32 元素一个 scale（`XMode 6`）** | **2.90e-3** | **8.85e-3** |
+| int8 + 每行一个 scale | 4.45e-3 | 1.40e-2 |
+| int8 + fp16 残差 | 1.36e-4 | 3.67e-4 |
+
+GPU 侧（`tests/test_gpu_moe.cpp::the_int8_x_pre_pass_is_expert_dependent`）：
+(0, 0) **2.902e-3**、(39, 383) **8.856e-3**，与上表吻合。
+
+三条结论，都是 §8 第 2 项直接问的：
+
+1. **过不了 §12 的 5e-3。** (0, 0) 的 2.9e-3 过得去，(39, 383) 的 8.9e-3 过不去。
+   一个判据不能靠挑 expert 来满足。
+2. **每行一个 scale 只会更糟**，不是更好：块内 amax ≈ 2.5σ，整行 amax ≈ 4σ，
+   量化步长粗 1.6 倍，实测误差就是 1.5 倍。它省的是每 (列, 块) 一条标量读，
+   不是精度。
+3. **int8 + fp16 残差确实能修好**（回到 1.4e-4 / 3.7e-4），但那只是把 fp16 的
+   乘加拆成两段做：要多一个 fp16 残差平面、多一条 FMA 流，**比直接用
+   `XMode = 4` 的 packed fp16 更贵**。它证明的是「误差确实全部来自 x 的量化」，
+   不是一条可用的实现。
+
+**处置**：`XMode = 6` 实现完整、有测试、**spec 常量默认 0（关闭）**。
+它唯一说得通的用法是 §10 的**投机验证批**：那里 M ≥ 4（收益最大的区间），
+而且接受检查本来就要拿 draft 和 target 对比，对 MoE 输出的近似有容忍度。
+**不要把它设成 decode 的默认**——M=1 上它本来就是负收益（+3.2%）。
+
+---
+
+## 11. §6.2 的 0.193 ms 是漂移，不是代价
+
+### 11.1 v0.1 怎么测错的
+
+§6.2 的三个数是**依次**测出来的：先 `whole`（7 槽），再 `first`（3 槽），
+再 `rest`（4 槽），每个都是「预热 + 3 次取最快」。§2 自己写着
+「同一轮不同小节之间有 8% 的漂移（后跑的节更热）」——
+这三个数就隔着几秒钟，而要测的差是 1–3%。于是后跑的 `first + rest` 被系统性
+地拉高，差额被记成了「分组 dispatch 的代价」。
+
+一个能自我检查的信号在 v0.2 的第一次全 sweep 里露了出来：
+分组 dispatch 那一节跑在 25 分钟 sweep 的最后，量到
+`one pair 0.652 ms (A 0.520 + B 0.290)`——**A + B = 0.810 > 0.652**，
+物理上不可能，纯粹是三个数取自三个热状态。
+
+v0.2 把这一节改成**九个配置轮转测量、各取自己的最好值**
+（`bench/kernel_bench.cpp`），同一次运行里 `A + B` 就和 `whole` 对得上了
+（0.391 + 0.201 = 0.591 对 0.592）。
+
+### 11.2 真实的代价
+
+机器空闲、同一节内轮转：
+
+| 轮次 | M | 一次 7 槽 | 两对 A+B（3 + 4） | split A + 一次 B |
+|---|---|---|---|---|
+| 冷（`--only`） | 1 | 0.592（A 0.391 + B 0.201） | 0.613（**+0.021**, +3.5%） | 0.605（**+0.013**, +2.2%） |
+| 冷（`--only`） | 6 | 0.960（A 0.628 + B 0.330） | 0.985（**+0.025**, +2.6%） | 0.970（**+0.010**, +1.1%） |
+| 冷（第二轮） | 1 | 0.634（A 0.407 + B 0.229） | 0.668（**+0.034**, +5.4%） | 0.652（**+0.018**, +2.9%） |
+| 冷（第二轮） | 6 | 0.942（A 0.622 + B 0.326） | 0.987（**+0.045**, +4.7%） | 0.966（**+0.023**, +2.5%） |
+| 热（25 分钟 sweep 之后） | 1 | 0.728（A 0.449 + B 0.276） | 0.743（**+0.014**, +1.9%） | 0.734（**+0.006**, +0.8%） |
+| 热（25 分钟 sweep 之后） | 6 | 1.018（A 0.666 + B 0.359） | 1.063（**+0.046**, +4.5%） | 1.043（**+0.025**, +2.5%） |
+
+（单位 ms/层。热的那两行绝对值高 10–20%——这正是 §2 的漂移——
+但**差额**在冷热两种状态下是一致的，因为现在是轮转测量的。
+`A + B` 与 `whole` 在每一行都对得上，这是这一节以前没有的自检。）
+
+**六行里没有一行超过 0.05 ms/层，`split A + 一次 B` 全部 ≤ 0.025 ms/层。**
+40 层是 **0.2–1.0 ms/token**，不是 §6.2 写的 7.7 ms/token。
+
+### 11.3 推荐的调度：只拆 dispatch A
+
+两种切法差别不大，但**「只拆 A、B 在最后跑一次」更好，而且更省事**：
+
+- dispatch A 占一层的 **2/3**（M=1 时 0.391 / 0.592），而且它的工作量与
+  `list_count` **严格成正比**（`gid.y` 就是槽）——所以能和 I/O 等待重叠的
+  正是它，拆开不浪费任何字节。
+- dispatch B **本来就要等所有槽的 `h`**，推迟到最后不损失任何重叠机会，
+  而且省掉了第二次 640 个 workgroup 的跨 lane 归约与 `y` 读改写。
+- **它与一次算完逐位相同**：归约没有被重新结合，
+  `tests/test_gpu_moe.cpp::a_partial_dispatch_reduces_to_the_same_y` 对五种切法
+  都量到 `5120/5120`（M=1）/ `30720/30720`（M=6）个字完全一致。
+  两对 A+B 的切法仍然是 §6.1 的 1–2 ULP。
+
+写法（`MoeRunner`，无接口变化）：
+
+```cpp
+runner.set_list_count(3);  runner.set_accumulate(false);
+runner.run(1, gpu::MoePhase::GateUpOnly);     // 先到的三个
+/* ... 等 I/O ... */
+runner.slot_list()[0..3] = {3,4,5,6};
+runner.set_list_count(4);
+runner.run(1, gpu::MoePhase::GateUpOnly);     // 后到的四个
+runner.slot_list()[0..6] = {0..6};
+runner.set_list_count(7);  runner.set_accumulate(false);
+runner.run(1, gpu::MoePhase::DownOnly);       // 一次归约
+```
+
+**对 §6.2 建议的修正**：那条「只在预计等待 > 0.2 ms 时才分组」的门槛可以拿掉。
+每层 0.01–0.03 ms 的代价意味着**只要真有一个 expert 迟到，拆就是划算的**；
+Planner 需要判断的只是「这一层是不是真的有 expert 没就位」，
+不需要再去估等待时长。§9.4 把 lookahead 预取降级为不做的那条结论不受影响。
+
+---
+
+## 12. Track G 需要知道的接口变化（v0.2）
+
+仍然全部是**加法**，v0.1 §7 列的东西一个语义都没改。
+
+**`gpu/vulkan/moe_kernels.h`**
+
+- `MoeSpec::h_quant` 多一个取值 **3**：`h` 的 fp8 量化由 A 与 B 之间的第三个
+  dispatch 做。**这是现在应该用的那个值**——数值上与 2 逐位相同，而且不对
+  dispatch A 的 workgroup 形状提任何要求。
+  `runtime/moe_bridge.h` 的 `MoeBridgeConfig::h_quant` 现在默认 1（`hqB`），
+  在 `L32 R1` 上那是 **+40%**；改成 3 是一行的事，代价 −0.5%。
+  **限制**：`h_quant = 3` 要求 `h_precision == 0`（它量化的就是 A 写出的 fp16 `h`）。
+- `MoeSpec::x_mode` 多一个取值 **6**：dispatch A 消费预量化的 int8 x。
+  **默认仍是 0，不要打开它做 decode**（§10）。`x_mode_b` 取 `kFollowA` 时
+  遇到 `x_mode == 6` 会落回 0，因为 dispatch B 的激活是 `h` 不是 x。
+- `set_accumulate` 的注释里写清了两种分组调度和该选哪个（§11.3）。
+- **`MoeRunner` 内部多了两条 pipeline**（`hquant_` / `xquant_`）和两个
+  descriptor set，只在 `h_quant == 3` / `x_mode == 6` 时创建。
+  `run()` 会自动把它们录进同一个 command buffer，**调用方什么都不用做**。
+  `MoePhase::GateUpOnly` 的计时包含 `moe_hquant`（它是「产出 h」的一部分），
+  `MoePhase::DownOnly` 不包含。
+
+**descriptor / buffer**
+
+- **dispatch A 的 storage buffer 从 8 个变成 9 个**：binding 8 是 x 那块
+  allocation 的 `StructuredBuffer<uint>` 别名（`XMode = 6` 读 int8 与 scale 用）。
+  binding 0–7 不变。这是 v0.2 唯一的 descriptor 布局变更。
+- **`h` 的 allocation 在 `h_quant == 3` 时是 3.125 B/元素**（其余情况不变）；
+  **x 的 allocation 在 `x_mode == 6` 时是 3.125 B/元素**（其余情况 2 B/元素）。
+  两者都由 `MoeRunner::create` 自己分配，`h()` 和 `x_fp16()` 指向的还是
+  各自平面的开头，**调用方的写法一个字都不用改**。
+- 新 shader 两个：`gpu/shaders/moe_hquant.slang`、`gpu/shaders/moe_xquant.slang`，
+  已经进 `cmake/deepmoe_options.cmake` 的 `DEEPMOE_SHADERS`，
+  和其余 kernel 一样每次编译都过 `spirv-val --target-env vulkan1.3`。
+
+**推荐的默认特化（取代 v0.1 §7 的那一段）**
+
+```
+decode（M=1）        : L32 R1, sg32, dec0, h=fp16, XMode=0, HQuant=3
+投机验证（M=6）      : L16 R2, sg32, dec0, h=fp16, XMode=4, x_mode_b=3, HQuant=3
+                       —— 若接受检查容得下 x 的近似，XMode=6 再快 7%（§10）
+shared expert 的 dispatch : Fp8Slots=1，槽的 ids 带 kSlotFp8
+分组 dispatch        : 只拆 dispatch A，dispatch B 最后跑一次（§11.3）
+```
 
 ---
 
@@ -550,16 +871,30 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 uv run python tools/oracle_shared.py --model D:/models/DeepSeek-V4.1-Flash `
     --shared 0 --expert 0:0 --expert 39:383 --out tests/data
 
-# 正确性：七个用例，含 M>1 逐列、fp8 shared expert、h 量化、分组 dispatch
+# 正确性：八个用例，含 M>1 逐列、fp8 shared expert、h 量化（含 HQuant=3）、
+# int8 x 的逐 expert 误差、分组 dispatch 的两种切法
 ctest --test-dir build -R suite.gpu_moe --output-on-failure
 
-# P2 sweep（本文所有表）
+# v0.1 的 sweep（§0–§7 的表）
 .\build\kernel_bench.exe --csv bench\results\kernel_p2_moe.csv `
     --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+
+# v0.2 的 sweep（§9–§11 的表）。同一条命令，因为 v0.2 的变体是加上去的
+.\build\kernel_bench.exe --csv bench\results\kernel_p2b_moe.csv `
+    --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+
+# 只重测一节 —— 一整轮 25 分钟，足够让芯片热几度（§2 / §11.1）。
+# --only 过滤 section 名；不匹配任何东西就只剩分组 dispatch 那一节
+.\build\kernel_bench.exe --only "h fp8"  --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+.\build\kernel_bench.exe --only "int8 x" --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+.\build\kernel_bench.exe --only none     --iters 48 --layer-cycle 8 --repeats 3
 
 # P1 的旋钮 sweep（解码方式 / lane 数 / wave 宽度）仍然可以跑
 .\build\kernel_bench.exe --p1 --csv bench\results\kernel_p1.csv
 ```
+
+`tools/oracle_shared.py` 现在顺带打印 §10.4 的 x 量化对照
+（fp16 / int8 每块 / int8 每行 / int8 + fp16 残差），不需要 GPU。
 
 带 validation layer 跑一遍（两个 GPU 测试与 bench 当前都是干净的，
 `spirv-val --target-env vulkan1.3` 由 `add_slang_shader()` 每次编译都跑）：
@@ -570,3 +905,7 @@ $env:VK_LOADER_LAYERS_ENABLE='VK_LAYER_KHRONOS_validation'
 ```
 
 **测量时不要同时编译**（kernel_p1.md §1），并且**跨轮只比同轮内的相对值**（§2）。
+§11.1 是这条规矩被违反一次的代价：v0.1 §6.2 的「分组 dispatch 每层 +0.193 ms」
+整个是漂移。凡是要量 1–5% 的差，**对照必须和被测量的东西轮转着测**——
+`bench/kernel_bench.cpp` 的分组 dispatch 那一节现在就是这么做的，
+`h fp8` 与 `int8 x` 两节也各自带上了同节的不量化对照。

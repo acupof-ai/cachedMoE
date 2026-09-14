@@ -84,6 +84,8 @@ set(DEEPMOE_SHADERS
     gpu/shaders/gate.slang
     gpu/shaders/moe_gateup.slang
     gpu/shaders/moe_down.slang
+    gpu/shaders/moe_hquant.slang
+    gpu/shaders/moe_xquant.slang
     gpu/shaders/head.slang)
 
 function(deepmoe_report)

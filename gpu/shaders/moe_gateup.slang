@@ -30,7 +30,9 @@
 //              packed fp16 or to int8 dot4.
 //   HQuant     design §7.9 v0.6: `silu(gate)*up` is fp8-quantised before w2.
 //              HQuant == 2 does it here, writing fp8 h plus a UE8M0 scale
-//              plane; HQuant == 1 leaves it to dispatch B.
+//              plane; HQuant == 1 leaves it to dispatch B; HQuant == 3 leaves
+//              it to gpu/shaders/moe_hquant.slang and changes nothing here,
+//              which is how M=1 keeps L32 R1 (docs/kernel_p2_moe.md §8 item 1).
 //   Fp8Slots   the shared expert is fp8 E4M3 with a [rows/32][K/32] scale
 //              plane. Its slot carries kSlotFp8Bit in Ids, so the same
 //              dispatch covers both weight formats.
@@ -45,6 +47,7 @@
 [[vk::binding(5, 0)]] RWStructuredBuffer<half>   H16;         // h[M][slots][N] fp16
 [[vk::binding(6, 0)]] RWStructuredBuffer<float>  H32;         // h[M][slots][N] fp32
 [[vk::binding(7, 0)]] RWStructuredBuffer<uint>   HU;          // the same allocation, raw words
+[[vk::binding(8, 0)]] StructuredBuffer<uint>     XU;          // x, raw words (XMode 6's int8 tail)
 
 struct GateUpPush {
     uint layer;
@@ -72,6 +75,22 @@ static const uint kFp8TblN = (Fp8Slots == 0) ? 1u : kFp8TableN;
 groupshared float sFp8[kFp8TblN];
 static const uint kHqN     = (HQuant == 2) ? (M * kWgRows) : 1u;
 groupshared float sHq[kHqN];
+// XMode 6's weight decode. Measuring the first version of the pre-quantised
+// int8 path showed dispatch A was not limited by the activation at all any
+// more: with 8 dot4add_i8packed per (column, block, row) against
+// fp4_nibbles_to_i8x4 called 8 times per (block, row, matrix), the FP4 -> int8
+// weight decode is ~3/4 of the VALU work, which is why docs/kernel_p2_moe.md
+// §3.6's model (which counted only the activation side) came out too
+// optimistic. One byte of packed FP4 is two elements, so a 256-entry table
+// turns the whole decode into two LDS reads and a shift-or per output word.
+static const uint kI8TblN = (XMode == 6) ? kFp8TableN : 1u;
+groupshared uint sI8[kI8TblN];
+
+// Four consecutive elements of `pw` as packed signed int8, through that table.
+uint fp4_i8x4_tbl(uint pw, uint g) {
+    const uint n = pw >> (16u * g);
+    return sI8[n & 0xFFu] | (sI8[(n >> 8) & 0xFFu] << 16);
+}
 
 // Sum `v` across the LanesPerRow lanes of one row group and broadcast it.
 // An LDS tree rather than WaveActiveSum: LanesPerRow is independent of the
@@ -176,6 +195,14 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
         // design §7.1 rule 5: a 256-entry table in LDS, built once per
         // workgroup by 256 threads doing one arithmetic decode each.
         if (tid < kFp8TableN) sFp8[tid] = fp8_e4m3_decode(tid);
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (XMode == 6) {
+        // byte of packed FP4 -> the two 2*E2M1 int8 it holds, low nibble first
+        // (design appendix A). Same shape as the fp8 table above.
+        if (tid < kFp8TableN)
+            sI8[tid] = (uint(kE2M1x2[tid & 15u]) & 0xFFu)
+                     | ((uint(kE2M1x2[tid >> 4]) & 0xFFu) << 8);
         GroupMemoryBarrierWithGroupSync();
     }
 
@@ -381,6 +408,42 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         p1[r][m] = float(t1[r][m].x) + float(t1[r][m].y);
                         p3[r][m] = float(t3[r][m].x) + float(t3[r][m].y);
                     }
+            } else if (XMode == 6 && !isFp8) {
+                // The activation is already int8 with a per-block-32 scale
+                // (gpu/shaders/moe_xquant.slang), so the lane's whole cost per
+                // (column, block) is 8 loads and 16 dot4add_i8packed for every
+                // RowsPerLane weight rows -- no f16tof32, no amax, no rounding.
+                // 2*E2M1 is the exact int8, hence the `esh` shift below.
+                uint q1[RowsPerLane][8];
+                uint q3[RowsPerLane][8];
+                for (uint r = 0; r < RowsPerLane; ++r)
+                    [unroll] for (uint w = 0; w < 4; ++w)
+                        [unroll] for (uint g = 0; g < 2; ++g) {
+                            q1[r][w * 2 + g] = fp4_i8x4_tbl(w1q[r][w], g);
+                            q3[r][w * 2 + g] = fp4_i8x4_tbl(w3q[r][w], g);
+                        }
+                const uint xElems = M * pc.k;
+                const uint xBase4 = xq_value_words(xElems) / 4;   // in uint4
+                const uint xScale = xq_scale_words(xElems);
+                for (uint m = 0; m < M; ++m) {
+                    const float sx = asfloat(XU[xScale + m * blocks + blk]);
+                    // 32 int8 are two uint4, i.e. two global_load_dwordx4 --
+                    // the same instruction count as one fp16 element group of
+                    // the fp32 path, for the whole block.
+                    const uint4 xa = X[xBase4 + m * (pc.k / 16) + blk * 2];
+                    const uint4 xb = X[xBase4 + m * (pc.k / 16) + blk * 2 + 1];
+                    uint xq[8];
+                    [unroll] for (uint j = 0; j < 4; ++j) { xq[j] = xa[j]; xq[4 + j] = xb[j]; }
+                    for (uint r = 0; r < RowsPerLane; ++r) {
+                        int a1 = 0, a3 = 0;
+                        [unroll] for (uint u = 0; u < 8; ++u) {
+                            a1 = dot4add_i8packed(q1[r][u], xq[u], a1);
+                            a3 = dot4add_i8packed(q3[r][u], xq[u], a3);
+                        }
+                        p1[r][m] += float(a1) * sx;
+                        p3[r][m] += float(a3) * sx;
+                    }
+                }
             } else if (XMode == 5 && !isFp8) {
                 // int8 dot4 straight from global (design §7.9's "int8 dot4 as
                 // the M>=4 fallback"): the weights are decoded to packed int8
@@ -461,7 +524,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             }
             // 2*E2M1 is the exact int8, so the int8 path's block exponent is
             // one lower than the fp4 path's.
-            const int esh = (XMode == 5 && !isFp8) ? 1 : 0;
+            const int esh = ((XMode == 5 || XMode == 6) && !isFp8) ? 1 : 0;
             for (uint r = 0; r < RowsPerLane; ++r)
                 for (uint m = 0; m < M; ++m) {
                     accGate[r][m] += ldexp(p1[r][m], e1[r] - esh);

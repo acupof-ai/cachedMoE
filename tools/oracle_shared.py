@@ -167,6 +167,75 @@ def expert_ffn3(w1: np.ndarray, w2: np.ndarray, w3: np.ndarray,
     }
 
 
+# --------------------------------------------------------------------------- #
+# int8 x -- docs/kernel_p2_moe.md section 3.6 / section 8 item 2
+#
+# `XMode = 6` has gpu/shaders/moe_xquant.slang quantise x to int8 with a
+# per-block-32 scale once per token, and dispatch A then consumes it with
+# dot4add_i8packed. The weight side of that dot product is exact -- 2*E2M1 is
+# an int8 and the factor 2 rides in the UE8M0 block exponent -- so the *only*
+# error is x's own quantisation, which makes this study a faithful model of the
+# kernel rather than an approximation of it. Dispatch B is left on the fp16
+# path (its activation is h, not x), which is what the kernel does too.
+#
+# Three quantisers are compared, because section 8 item 2 asks whether a
+# cheaper or a more accurate one changes the verdict:
+#   i8_blk32   what the kernel does: amax/127 per 32 elements along K
+#   i8_row     one scale for the whole 5120-element row -- one fewer scalar
+#              load per (column, block) in the kernel
+#   i8_resid   int8 plus the fp16 rounding of what int8 threw away, i.e. a
+#              second activation plane and a second FMA stream
+# --------------------------------------------------------------------------- #
+
+def quant_i8(x: torch.Tensor, block: int | None) -> torch.Tensor:
+    """Symmetric int8 round trip, amax/127 per `block` elements (None = per row).
+    Identical to moe_common.slang i8_block_scale + i8_pack4."""
+    n = x.numel() if block is None else block
+    xf = x.float().reshape(-1, n)
+    s = xf.abs().amax(dim=-1, keepdim=True).clamp_min(1e-30) / 127.0
+    q = torch.clamp(torch.floor(xf / s + 0.5), -127.0, 127.0)
+    return (q * s).reshape(x.shape)
+
+
+def x_quant_study(w1: np.ndarray, w2: np.ndarray, w3: np.ndarray,
+                  x: np.ndarray, y_ref: np.ndarray,
+                  limit: float = SWIGLU_LIMIT) -> dict[str, float]:
+    t1 = torch.from_numpy(w1).to(torch.float32)
+    t2 = torch.from_numpy(w2).to(torch.float32)
+    t3 = torch.from_numpy(w3).to(torch.float32)
+    # design section 6: the kernel's x is fp16 before anything else happens.
+    x16 = torch.from_numpy(x).to(torch.float16).to(torch.float32)
+
+    def run(xin: torch.Tensor) -> np.ndarray:
+        gate = torch.clamp(t1 @ xin, max=limit)
+        up = torch.clamp(t3 @ xin, min=-limit, max=limit)
+        h = (torch.nn.functional.silu(gate) * up).to(torch.float16).to(torch.float32)
+        return (t2 @ h).numpy()
+
+    q_blk = quant_i8(x16, FP8_BLOCK)
+    q_row = quant_i8(x16, None)
+    variants = {
+        "fp16 x (XMode 0/4)": x16,
+        "i8_blk32 (XMode 6)": q_blk,
+        "i8_row": q_row,
+        # The residual is what int8 dropped, carried in fp16. It needs a second
+        # activation plane and a second FMA stream in the kernel, so it costs
+        # more than just staying on packed fp16 -- the number is here to show
+        # that the error really is x's quantisation and nothing else.
+        "i8_blk32 + fp16 residual": q_blk + (x16 - q_blk).to(torch.float16).to(torch.float32),
+    }
+    scale = float(np.abs(y_ref).max())
+    out = {}
+    for name, xin in variants.items():
+        y = run(xin)
+        d = float(np.abs(y - y_ref).max())
+        cos = float(np.dot(y, y_ref) / (np.linalg.norm(y) * np.linalg.norm(y_ref)))
+        out[name] = d / scale
+        print(f"    x as {name:<26} cos {cos:.9f}  "
+              f"max|d| {d:.4g} ({d / scale:.3e} of |y|max)")
+    return out
+
+
 def report_deltas(name: str, ys: dict[str, np.ndarray]) -> None:
     ref = ys["y_ref"]
     scale = float(np.abs(ref).max())
@@ -296,10 +365,12 @@ def routed_expert_quantised(reader: "oracle.ManifestReader", layer: int, expert:
     print(f"routed ({layer}, {expert}): |y|max {np.abs(ys['y_ref']).max():.6g}  "
           f"||y||2 {np.linalg.norm(ys['y_ref']):.6g}")
     report_deltas(f"routed({layer},{expert})", ys)
+    xq = x_quant_study(w1, w2, w3, x, ys["y_ref"])
 
     rep = {"kind": "routed", "layer": layer, "expert": expert, "dim": dim,
            "inter_dim": inter, "seed": seed,
-           "y_absmax": float(np.abs(ys["y_ref"]).max())}
+           "y_absmax": float(np.abs(ys["y_ref"]).max()),
+           "x_quant_rel": xq}
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, f"l1q_layer{layer}_expert{expert}.bin")

@@ -12,13 +12,14 @@
 namespace deepmoe::gpu {
 
 std::string MoeSpec::name() const {
-    static const char* kXMode[] = {"glob", "lds", "ldsf16", "ldsi8", "gf16", "gi8"};
+    static const char* kXMode[] = {"glob", "lds", "ldsf16", "ldsi8", "gf16", "gi8", "prei8"};
+    static const char* kHQuant[] = {"", " hqB", " hq8", " hqP"};
     std::string s = std::format("M{} L{} R{} sg{} dec{} h{} x{}", m, lanes_per_row, rows_per_lane,
                                 subgroup_size ? std::to_string(subgroup_size) : std::string("auto"),
                                 decode_mode, h_precision ? "fp32" : "fp16",
-                                kXMode[x_mode < 6 ? x_mode : 0]);
-    if (b_mode() != x_mode) s += std::format("/{}", kXMode[b_mode() < 6 ? b_mode() : 0]);
-    if (h_quant)   s += h_quant == 1 ? " hqB" : " hq8";
+                                kXMode[x_mode < 7 ? x_mode : 0]);
+    if (b_mode() != x_mode) s += std::format("/{}", kXMode[b_mode() < 7 ? b_mode() : 0]);
+    if (h_quant)   s += kHQuant[h_quant < 4 ? h_quant : 0];
     if (fp8_slots) s += " fp8";
     return s;
 }
@@ -97,6 +98,13 @@ struct GateUpPush {
 struct DownPush {
     uint32_t layer, experts_per_layer, num_slots, list_count, n_rows, k, flags;
 };
+// The two tiny pre/post passes; mirror HQuantPush and XQuantPush.
+struct HQuantPush {
+    uint32_t num_slots, list_count, k;
+};
+struct XQuantPush {
+    uint32_t k;
+};
 
 }  // namespace
 
@@ -117,9 +125,17 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     const uint32_t rows_per_group = (256 / spec.lanes_per_row) * spec.rows_per_lane;
     if (dims.inter % rows_per_group || dims.hidden % rows_per_group)
         return fail(Err::InvalidArgument, "row count must divide by the workgroup's rows");
-    if (spec.x_mode > 5 || spec.b_mode() > 5)
-        return fail(Err::InvalidArgument, "x_mode must be 0..5");
-    if (spec.h_quant > 2) return fail(Err::InvalidArgument, "h_quant must be 0..2");
+    if (spec.x_mode > 6 || spec.b_mode() > 5)
+        return fail(Err::InvalidArgument,
+                    "x_mode must be 0..6 and dispatch B's 0..5 (mode 6 is about x)");
+    if (spec.h_quant > 3) return fail(Err::InvalidArgument, "h_quant must be 0..3");
+    if (spec.h_quant == 3 && spec.h_precision)
+        return fail(Err::InvalidArgument,
+                    "h_quant=3 quantises the fp16 h dispatch A wrote; h_precision must be 0");
+    // The int8 x plane and its scales are appended to the x allocation at word
+    // granularity, and moe_xquant writes one block per thread.
+    if (spec.x_mode == 6 && dims.hidden % (4 * layout::kFp4ScaleBlock))
+        return fail(Err::InvalidArgument, "x_mode=6 needs hidden to be a multiple of 128");
     if ((spec.x_mode == 3 || spec.b_mode() == 3) && spec.m * spec.lanes_per_row > 256)
         return fail(Err::InvalidArgument,
                     "the int8 x path stages one (column, block) per thread: M * lanes <= 256");
@@ -156,7 +172,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     ps_b.extra[3] = spec.b_mode();
 
     PipelineLayoutSpec la;
-    la.storage_buffers   = 8;   // + the raw-word alias of h (design §7.9 v0.6)
+    la.storage_buffers   = 9;   // + the raw-word aliases of h (§7.9 v0.6) and x (XMode 6)
     la.push_constant_size = sizeof(GateUpPush);
     if (auto r = gateup_.create(device, shader_dir + "/moe_gateup.spv", la, ps); !r) {
         destroy(); return r;
@@ -167,16 +183,44 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     if (auto r = down_.create(device, shader_dir + "/moe_down.spv", lb, ps_b); !r) {
         destroy(); return r;
     }
-    if (auto r = descriptors_.create(device, 4, 32); !r) { destroy(); return r; }
+    if (spec.h_quant == 3) {
+        PipelineLayoutSpec lh;
+        lh.storage_buffers   = 2;
+        lh.push_constant_size = sizeof(HQuantPush);
+        if (auto r = hquant_.create(device, shader_dir + "/moe_hquant.spv", lh, ps); !r) {
+            destroy(); return r;
+        }
+    }
+    if (spec.x_mode == 6) {
+        PipelineLayoutSpec lx;
+        lx.storage_buffers   = 1;
+        lx.push_constant_size = sizeof(XQuantPush);
+        if (auto r = xquant_.create(device, shader_dir + "/moe_xquant.spv", lx, ps); !r) {
+            destroy(); return r;
+        }
+    }
+    if (auto r = descriptors_.create(device, 8, 64); !r) { destroy(); return r; }
 
     const uint64_t h_elem = spec.h_precision ? 4 : 2;
+    // h_quant 3 cannot quantise in place (gpu/shaders/moe_hquant.slang), so the
+    // fp8 plane and its UE8M0 scales sit past the fp16 h: 3.125 B/element.
+    // x_mode 6 appends the same way: fp16 x, then int8 x, then one fp32 scale
+    // per 32 elements = 3.125 B/element as well.
+    const uint64_t h_elems = uint64_t(spec.m) * dims.slots * dims.inter;
+    const uint64_t h_bytes = spec.h_quant == 3
+        ? h_elems * 3 + h_elems / layout::kFp4ScaleBlock * 4
+        : h_elems * h_elem;
+    const uint64_t x_elems = uint64_t(spec.m) * dims.hidden;
+    const uint64_t x_bytes = spec.x_mode == 6
+        ? x_elems * 3 + x_elems / layout::kFp4ScaleBlock * 4
+        : x_elems * 2;
     struct { GpuBuffer* b; uint64_t bytes; } bufs[] = {
         {&table_,  uint64_t(pointer_table_entries()) * sizeof(uint64_t)},
         {&ids_,    uint64_t(dims.slots) * sizeof(uint32_t)},
         {&list_,   uint64_t(dims.slots) * sizeof(uint32_t)},
         {&routew_, uint64_t(spec.m) * dims.slots * sizeof(float)},
-        {&x_,      uint64_t(spec.m) * dims.hidden * 2},
-        {&h_,      uint64_t(spec.m) * dims.slots * dims.inter * h_elem},
+        {&x_,      x_bytes},
+        {&h_,      h_bytes},
         {&y_,      uint64_t(spec.m) * dims.hidden * sizeof(float)},
     };
     for (auto& e : bufs) {
@@ -186,7 +230,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         std::memset(e.b->host_ptr, 0, static_cast<size_t>(e.bytes));
     }
 
-    std::vector<BufferBinding> ba(8);
+    std::vector<BufferBinding> ba(9);
     ba[0] = {0, 0, 0, table_.buffer};
     ba[1] = {1, 0, 0, ids_.buffer};
     ba[2] = {2, 0, 0, list_.buffer};
@@ -195,6 +239,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     ba[5] = {5, 0, 0, h_.buffer};
     ba[6] = {6, 0, 0, h_.buffer};        // H16, H32 and HU alias one allocation
     ba[7] = {7, 0, 0, h_.buffer};
+    ba[8] = {8, 0, 0, x_.buffer};        // X and XU alias one allocation
     auto sa = descriptors_.allocate(gateup_, ba);
     if (!sa) { destroy(); return std::unexpected(sa.error()); }
     set_a_ = *sa;
@@ -208,6 +253,22 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     auto sb = descriptors_.allocate(down_, bb);
     if (!sb) { destroy(); return std::unexpected(sb.error()); }
     set_b_ = *sb;
+
+    if (hquant_.valid()) {
+        std::vector<BufferBinding> bh(2);
+        bh[0] = {0, 0, 0, list_.buffer};
+        bh[1] = {1, 0, 0, h_.buffer};
+        auto sh = descriptors_.allocate(hquant_, bh);
+        if (!sh) { destroy(); return std::unexpected(sh.error()); }
+        set_hq_ = *sh;
+    }
+    if (xquant_.valid()) {
+        std::vector<BufferBinding> bx(1);
+        bx[0] = {0, 0, 0, x_.buffer};
+        auto sx = descriptors_.allocate(xquant_, bx);
+        if (!sx) { destroy(); return std::unexpected(sx.error()); }
+        set_xq_ = *sx;
+    }
 
     if (auto r = pool_.create(device); !r) { destroy(); return r; }
     auto cb = pool_.acquire();
@@ -224,12 +285,14 @@ void MoeRunner::destroy() {
     descriptors_.destroy();
     gateup_.destroy();
     down_.destroy();
+    hquant_.destroy();
+    xquant_.destroy();
     if (alloc_) {
         for (GpuBuffer* b : {&table_, &ids_, &list_, &routew_, &x_, &h_, &y_})
             if (b->valid()) alloc_->free(*b);
     }
     table_ = ids_ = list_ = routew_ = x_ = h_ = y_ = GpuBuffer{};
-    set_a_ = set_b_ = VK_NULL_HANDLE;
+    set_a_ = set_b_ = set_hq_ = set_xq_ = VK_NULL_HANDLE;
     device_ = nullptr;
     alloc_  = nullptr;
     recorded_ = 0;
@@ -244,6 +307,13 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
                   dims_.inter, dims_.hidden, dims_.swiglu_limit};
     DownPush   pb{dims_.layer, dims_.experts_per_layer, dims_.slots, list_count_,
                   dims_.hidden, dims_.inter, accumulate_ ? 1u : 0u};
+    // One thread per 32-element block of the thing being quantised.
+    HQuantPush ph{dims_.slots, list_count_, dims_.inter};
+    XQuantPush px{dims_.hidden};
+    const uint32_t hq_groups =
+        (spec_.m * list_count_ * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
+    const uint32_t xq_groups =
+        (spec_.m * (dims_.hidden / layout::kFp4ScaleBlock) + 255) / 256;
 
     const bool run_a = phase != MoePhase::DownOnly;
     const bool run_b = phase != MoePhase::GateUpOnly;
@@ -264,9 +334,28 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
         pa.layer = pb.layer = dims_.layer + (it % cycle);
         if (run_a) {
             if (!first) { if (auto r = cmd_.barrier(); !r) return r; }
+            // XMode 6: x becomes int8 + per-block scales before dispatch A
+            // reads it. It is a per-*token* cost, not a per-layer one -- the
+            // same x feeds all 40 MoE layers -- but it is recorded every
+            // iteration here so the measured ms_a can only overstate it.
+            if (xquant_.valid()) {
+                if (auto r = cmd_.bind(xquant_, set_xq_); !r) return r;
+                if (auto r = cmd_.push(xquant_, &px, sizeof(px)); !r) return r;
+                if (auto r = cmd_.dispatch(xq_groups); !r) return r;
+                if (auto r = cmd_.barrier(); !r) return r;
+            }
             if (auto r = cmd_.bind(gateup_, set_a_); !r) return r;
             if (auto r = cmd_.push(gateup_, &pa, sizeof(pa)); !r) return r;
             if (auto r = cmd_.dispatch(groups_a, list_count_); !r) return r;
+            // HQuant 3: the fp8 round trip of design §7.9 v0.6, as its own
+            // dispatch, so dispatch A above is free to keep the workgroup shape
+            // that is fastest for it (docs/kernel_p2_moe.md §8 item 1).
+            if (hquant_.valid()) {
+                if (auto r = cmd_.barrier(); !r) return r;
+                if (auto r = cmd_.bind(hquant_, set_hq_); !r) return r;
+                if (auto r = cmd_.push(hquant_, &ph, sizeof(ph)); !r) return r;
+                if (auto r = cmd_.dispatch(hq_groups); !r) return r;
+            }
             first = false;
             if (timed && it == 0) (void)cmd_.write_timestamp(queries_, 1, true);
         }

@@ -66,6 +66,7 @@ struct Options {
     bool        quick       = false;
     bool        p1          = false;   // the design §7.1 knob sweep of P1
     bool        no_fp8      = false;   // skip the shared expert (saves the NVMe read)
+    std::string only;                  // run only the sections whose name contains this
 };
 
 const char* env(const char* name) {
@@ -89,7 +90,9 @@ int usage() {
         "  --quick           only the default variant\n"
         "  --p1              the P1 knob sweep (decode mode, lanes, wave size)\n"
         "                    instead of the P2 sweep (M x activation staging)\n"
-        "  --no-fp8          skip the fp8 shared expert section\n");
+        "  --no-fp8          skip the fp8 shared expert section\n"
+        "  --only SUBSTR     only variants whose section name contains SUBSTR\n"
+        "                    (none of them = the partial-dispatch section alone)\n");
     return 2;
 }
 
@@ -194,6 +197,7 @@ int main(int argc, char** argv) {
         else if (a == "--quick")       o.quick = true;
         else if (a == "--p1")          o.p1 = true;
         else if (a == "--no-fp8")      o.no_fp8 = true;
+        else if (a == "--only")        o.only = next();
         else return usage();
     }
     if (o.model_dir.empty()) {
@@ -395,6 +399,20 @@ int main(int argc, char** argv) {
         // The fp8 quantisation of h before w2 (design §7.9 v0.6). L16 R2 owns
         // 32 rows of h per workgroup, which is what writing whole fp8 blocks
         // from dispatch A requires.
+        //
+        // The unquantised M sweep winners are repeated inside this section as
+        // its control. §2's drift is 8% *between sections of one run*, and the
+        // thing being measured here is 1-5%, so "what does HQuant cost" can
+        // only be read off rows that were measured next to each other.
+        // Both shapes at every M, with and without HQuant = 3, so the
+        // "what does the fp8 h cost per M" table is a set of adjacent pairs.
+        for (uint32_t m = 1; m <= 6; ++m)
+            for (uint32_t hq : {0u, 3u}) {
+                add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, 0, hq}, "h fp8");
+                gpu::MoeSpec sp{m, 16, 32, 0, 0, 2, 4, hq};
+                sp.x_mode_b = 3;
+                add(sp, "h fp8");
+            }
         for (uint32_t m : {1u, 6u})
             for (uint32_t x : {0u, 4u})
                 for (uint32_t hq : {1u, 2u})
@@ -406,12 +424,45 @@ int main(int argc, char** argv) {
             for (uint32_t x : {0u, 4u})
                 add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, x, 1}, "h fp8");
         add(gpu::MoeSpec{1, 32, 32, 0, 0, 4, 0, 2}, "h fp8");   // 32 rows per wg via R=4
+        // HQuant 3 moves the same quantisation into its own dispatch, which
+        // frees dispatch A from the 32-row constraint: the point of the section
+        // is whether L32 R1 + hqP gets back the 27% §5.3 lost. The L16 R2 rows
+        // are the control -- 3 and 2 must cost the same there.
+        for (uint32_t m : {1u, 6u}) {
+            add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, 0, 3}, "h fp8");
+            add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, 0, 3}, "h fp8");
+            add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, 4, 3}, "h fp8");
+        }
         // The production pair: the gate/up half packed fp16, the down half
         // int8-through-LDS, with the fp8 h of design §7.9 v0.6 in between.
-        for (uint32_t m : {1u, 6u}) {
-            gpu::MoeSpec sp{m, 16, 32, 0, 0, 2, 4, 2};
-            sp.x_mode_b = 3;
-            add(sp, "h fp8");
+        for (uint32_t m : {1u, 6u})
+            for (uint32_t hq : {2u, 3u}) {
+                gpu::MoeSpec sp{m, 16, 32, 0, 0, 2, 4, hq};
+                sp.x_mode_b = 3;
+                add(sp, "h fp8");
+            }
+        // docs/kernel_p2_moe.md §3.6 / §8 item 2: x quantised to int8 once per
+        // token by a tiny pre-dispatch, so dispatch A's per (column, block,
+        // row) cost is 8 dot4add_i8packed and nothing else. The knob that could
+        // not pay for itself at XMode 5 is RowsPerLane -- the int8 path holds
+        // no per-row float arrays, so the register cliff §3.3 found at R >= 4
+        // may not be there. Hence R up to 8.
+        for (uint32_t m = 1; m <= 6; ++m) {
+            // Same reasoning as the h fp8 section: the fp16 winners are the
+            // in-section control, not a row from somewhere else in the run.
+            add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, 0}, "int8 x");
+            {
+                gpu::MoeSpec sp{m, 16, 32, 0, 0, 2, 4};
+                sp.x_mode_b = 3;
+                add(sp, "int8 x");
+            }
+            add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, 6}, "int8 x");
+            add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, 6}, "int8 x");
+            add(gpu::MoeSpec{m, 16, 32, 0, 0, 4, 6}, "int8 x");
+            add(gpu::MoeSpec{m, 16, 32, 0, 0, 8, 6}, "int8 x");
+            gpu::MoeSpec sp{m, 16, 32, 0, 0, 4, 6};
+            sp.x_mode_b = 3;                      // B on int8 h through LDS
+            add(sp, "int8 x");
         }
     }
     // The fp8 shared expert (design §7.9): slot 6 stops being an FP4 stand-in
@@ -436,6 +487,18 @@ int main(int argc, char** argv) {
     dims_base.slots             = o.slots;
     dims_base.layer_cycle       = o.layer_cycle;
     dims_base.experts_per_layer = experts_per_layer;
+
+    // A whole sweep is ~25 minutes, which is long enough for the part to warm
+    // several degrees (section 2's drift). --only re-measures one section on a
+    // machine in a known state.
+    if (!o.only.empty()) {
+        std::vector<Variant> keep;
+        for (const Variant& v : variants)
+            if (std::string_view(v.section).find(o.only) != std::string_view::npos)
+                keep.push_back(v);
+        variants.swap(keep);
+        std::puts(std::format("--only \"{}\": {} variants", o.only, variants.size()).c_str());
+    }
 
     const std::string shader_dir = gpu::default_shader_dir();
     std::vector<Row> rows(variants.size());
@@ -713,25 +776,75 @@ int main(int argc, char** argv) {
                 runner.x_fp16()[i] =
                     cpu::float_to_fp16((float(seed >> 8) / float(1u << 24) - 0.5f) * 0.1f);
             }
-            auto timed = [&](uint32_t lo, uint32_t hi, bool accumulate) -> double {
-                for (uint32_t i = lo; i < hi; ++i) runner.slot_list()[i - lo] = i;
-                runner.set_list_count(hi - lo);
-                runner.set_accumulate(accumulate);
-                (void)runner.run(4);
-                double best = 1e9;
-                for (uint32_t r = 0; r < o.repeats; ++r)
-                    if (auto t = runner.run(o.iters); t) best = std::min(best, t->seconds_total);
-                return best * 1e3;
+            // Nine measurements that have to be comparable with each other,
+            // taken over a couple of seconds during which the part's clocks
+            // move (section 2: 7% between runs, 8% between sections of one
+            // run). Measuring all the repeats of one configuration before
+            // starting the next would put each of them in a different thermal
+            // state and the differences here are 1-3%, so the loop is
+            // round-robin over the configurations and each keeps its own best.
+            struct Cfg { uint32_t lo, hi; bool acc; gpu::MoePhase ph; const char* what; };
+            const uint32_t cut = 3;
+            const Cfg cfgs[] = {
+                {0, o.slots, false, gpu::MoePhase::Both,       "whole pair"},
+                {0, o.slots, false, gpu::MoePhase::GateUpOnly, "whole A"},
+                {0, o.slots, false, gpu::MoePhase::DownOnly,   "whole B"},
+                {0, cut,     false, gpu::MoePhase::GateUpOnly, "A lo"},
+                {cut, o.slots, false, gpu::MoePhase::GateUpOnly, "A hi"},
+                {0, cut,     false, gpu::MoePhase::DownOnly,   "B lo"},
+                {cut, o.slots, true,  gpu::MoePhase::DownOnly, "B hi"},
+                {0, cut,     false, gpu::MoePhase::Both,       "pair lo"},
+                {cut, o.slots, true,  gpu::MoePhase::Both,     "pair hi"},
             };
-            const double whole = timed(0, o.slots, false);
-            const double first = timed(0, 3, false);
-            const double rest  = timed(3, o.slots, true);
-            std::puts(std::format("  M={}  one pair over {} slots {:.3f} ms; "
-                                  "3 + {} as two pairs {:.3f} + {:.3f} = {:.3f} ms "
-                                  "(+{:.3f} ms, {:+.1f}%)",
-                                  m, o.slots, whole, o.slots - 3, first, rest, first + rest,
-                                  first + rest - whole,
-                                  100.0 * (first + rest - whole) / whole).c_str());
+            constexpr size_t kCfg = sizeof(cfgs) / sizeof(cfgs[0]);
+            double best[kCfg];
+            for (size_t i = 0; i < kCfg; ++i) best[i] = 1e9;
+            auto run_cfg = [&](const Cfg& c) -> double {
+                for (uint32_t i = c.lo; i < c.hi; ++i) runner.slot_list()[i - c.lo] = i;
+                runner.set_list_count(c.hi - c.lo);
+                runner.set_accumulate(c.acc);
+                auto t = runner.run(o.iters, c.ph);
+                return t ? t->seconds_total * 1e3 : 1e9;
+            };
+            for (const Cfg& c : cfgs) (void)run_cfg(c);         // one warm pass
+            for (uint32_t r = 0; r < o.repeats + 2; ++r)
+                for (size_t i = 0; i < kCfg; ++i)
+                    best[i] = std::min(best[i], run_cfg(cfgs[i]));
+
+            const double whole = best[0], whole_a = best[1], whole_b = best[2];
+            const double a_lo = best[3], a_hi = best[4];
+            const double b_lo = best[5], b_hi = best[6];
+            // Schedule 1 (what P2 v0.1 section 6.2 measured): every arrival
+            // group is a full A+B pair, the second accumulating into y. Timed
+            // as pairs, because the A->B barrier inside a pair is part of what
+            // the split costs.
+            const double pairs = best[7] + best[8];
+            // Schedule 2: split only dispatch A -- whose work is exactly
+            // proportional to the slots it is handed -- and run dispatch B once
+            // at the end over the whole list. B needs every slot's h anyway, so
+            // nothing is lost by waiting, and the result is bit-identical to
+            // the one-shot run (tests/test_gpu_moe.cpp).
+            const double deferred = a_lo + a_hi + whole_b;
+            std::puts(std::format("  M={}  {}  one pair over {} slots {:.3f} ms "
+                                  "(A {:.3f} + B {:.3f} = {:.3f})",
+                                  m, sp.name(), o.slots, whole, whole_a, whole_b,
+                                  whole_a + whole_b).c_str());
+            std::puts(std::format("        A {} + {} slots  {:.3f} + {:.3f} = {:.3f} ms "
+                                  "({:+.3f} vs A whole)",
+                                  cut, o.slots - cut, a_lo, a_hi, a_lo + a_hi,
+                                  a_lo + a_hi - whole_a).c_str());
+            std::puts(std::format("        B {} + {} slots  {:.3f} + {:.3f} = {:.3f} ms "
+                                  "({:+.3f} vs B whole)",
+                                  cut, o.slots - cut, b_lo, b_hi, b_lo + b_hi,
+                                  b_lo + b_hi - whole_b).c_str());
+            std::puts(std::format("        two A+B pairs      {:.3f} + {:.3f} = {:.3f} ms  "
+                                  "({:+.3f} ms, {:+.1f}%)",
+                                  best[7], best[8], pairs, pairs - whole,
+                                  100.0 * (pairs - whole) / whole).c_str());
+            std::puts(std::format("        split A, one B     {:.3f} ms  "
+                                  "({:+.3f} ms, {:+.1f}%)",
+                                  deferred, deferred - whole,
+                                  100.0 * (deferred - whole) / whole).c_str());
         }
     }
 
