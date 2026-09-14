@@ -15,7 +15,8 @@ add_executable(deepmoe_tests
     test_gpu_layer.cpp
     test_decode.cpp
     test_gpu_dspark.cpp
-    test_gpu_prefill.cpp)
+    test_gpu_prefill.cpp
+    test_dspark_tree.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -103,3 +104,8 @@ add_test(NAME "suite.gpu_prefill" COMMAND deepmoe_tests "gpu_prefill.")
 set_tests_properties("suite.gpu_prefill" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_prefill")
+
+# Track K2: the CPU half of DSpark tree sampling (cpu/dspark_tree) bit-exact against
+# tools/dspark_tree.py's golden cycles. No model, no GPU.
+add_test(NAME "suite.dspark_tree" COMMAND deepmoe_tests "dspark_tree.")
+set_tests_properties("suite.dspark_tree" PROPERTIES LABELS "unit")

@@ -23,7 +23,8 @@ set(DEEPMOE_MODEL_SOURCES
 set(DEEPMOE_CPU_SOURCES
     cpu/dequant.cpp
     cpu/gemv_avx512.cpp
-    cpu/gate.cpp)
+    cpu/gate.cpp
+    cpu/dspark_tree.cpp)
 
 set(DEEPMOE_STORAGE_SOURCES
     storage/file_common.cpp

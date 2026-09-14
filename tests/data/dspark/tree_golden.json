@@ -1,0 +1,25 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "prompt": "en_prose",
+   "mode": "greedy",
+   "cycle": 0,
+   "draft": 0
+  }
+ ],
+ "Ks": [
+  4,
+  8,
+  16,
+  32
+ ],
+ "Kv": 32,
+ "objectives": [
+  "viterbi",
+  "eal",
+  "chain"
+ ],
+ "theta": 0.5,
+ "layout": "see tests/test_dspark_tree.cpp::read_case"
+}

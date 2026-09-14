@@ -64,7 +64,7 @@ P_BLOCK = 5
 LANES = 16
 LN2 = 0.6931471805599453
 SQRT_HALF = 0.7071067811865476
-EXP_TERMS = 18
+EXP_TERMS = 16
 LOG_TERMS = 14
 EXP_LO = -745.0
 
@@ -78,7 +78,7 @@ OBJECTIVES = ("viterbi", "eal", "chain")
 def dm_exp(x) -> np.ndarray:
     """exp(x) for float64 x from +,-,*,/,floor,ldexp only.
 
-    k = floor(x / ln2 + 0.5), r = x - k ln2 (|r| <= 0.35), exp(r) by an 18-term Horner
+    k = floor(x / ln2 + 0.5), r = x - k ln2 (|r| <= 0.35), exp(r) by a 16-term Horner
     Taylor series, then ldexp(., k). 0 below -745 (and for -inf)."""
     x = np.asarray(x, dtype=np.float64)
     lo = ~(x >= EXP_LO)                       # also catches -inf / nan
@@ -87,7 +87,7 @@ def dm_exp(x) -> np.ndarray:
     r = xs - k * LN2
     p = np.ones_like(xs)
     for n in range(EXP_TERMS, 0, -1):
-        p = 1.0 + (p * r) / float(n)
+        p = 1.0 + (p * r) * (1.0 / float(n))
     out = np.ldexp(p, k.astype(np.int64))
     return np.where(lo, 0.0, out)
 
