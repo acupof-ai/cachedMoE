@@ -41,6 +41,7 @@
 #include "cpu/dequant.h"
 #include "model/layout.h"
 #include "runtime/engine.h"
+#include "runtime/sampling.h"
 #include "tests/l1_golden.h"
 #include "tests/l2_golden.h"
 #include "tests/test_framework.h"
@@ -553,4 +554,163 @@ DEEPMOE_TEST(decode, engram_matches_the_l2_export) {
                     L, d.rel_l2, d.cos);
         CHECK(d.rel_l2 > 1e-4);   // it must actually do something
     }
+}
+
+// --- Track P: sampling (docs/p3_chat.md §2) ---------------------------------
+//
+// CPU only. The distribution a sampled token is drawn from is the reference's
+// own: the L3 export records, at every step, the top-64 logits and the
+// logsumexp of the WHOLE vocabulary, so softmax(top_p) over those 64 is exact
+// whenever they hold top_p of the mass. 200,000 draws from runtime/sampling's
+// nucleus and counter-based RNG must reproduce it.
+
+DEEPMOE_TEST(sampling, frequencies_match_top_p_softmax_on_l3_logits) {
+    auto st = runtime::DecodeState::load(l3_dir());
+    if (!st) { std::printf("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
+    // The (record, top_p) whose nucleus is widest while still provably exact:
+    // the informative case (a one-token nucleus would pass trivially). 0.95 is
+    // the model README's value; 0.7 reaches into the flatter records.
+    int best = -1;
+    size_t best_n = 0;
+    float top_p = 0.95f;
+    for (float tp : {0.95f, 0.7f}) {
+        for (uint32_t r = 0; r <= st->steps(); ++r) {
+            const runtime::RefLogits& lg = st->logits(r);
+            const runtime::Nucleus n = runtime::nucleus_from_partial(lg.top_ids, lg.top_logits,
+                                                                     lg.logsumexp, 1.0f, tp);
+            std::printf("      top_p %.2f record %u: top-64 mass %.6f, nucleus %zu tokens (%s)\n", tp, r,
+                        n.retained, n.ids.size(), n.exact ? "exact" : "needs the full vocabulary");
+            if (n.exact && n.ids.size() > best_n) { best = int(r); best_n = n.ids.size(); top_p = tp; }
+        }
+    }
+    REQUIRE(best >= 0);
+    const runtime::RefLogits& lg = st->logits(uint32_t(best));
+    const runtime::Nucleus nuc = runtime::nucleus_from_partial(lg.top_ids, lg.top_logits,
+                                                               lg.logsumexp, 1.0f, top_p);
+    REQUIRE(nuc.ids.size() >= 2);
+
+    // The exact target, written out independently of runtime/sampling.cpp:
+    // sort by logit, p = exp(l - lse), keep until the running sum reaches top_p,
+    // renormalise.
+    std::vector<std::pair<float, uint32_t>> by;
+    for (size_t i = 0; i < lg.top_ids.size(); ++i) by.emplace_back(lg.top_logits[i], lg.top_ids[i]);
+    std::sort(by.begin(), by.end(), [](auto& a, auto& b) {
+        return a.first != b.first ? a.first > b.first : a.second < b.second;
+    });
+    std::vector<uint32_t> ids;
+    std::vector<double> q;
+    double cum = 0;
+    for (auto& [l, id] : by) {
+        const double p = std::exp(double(l) - double(lg.logsumexp));
+        ids.push_back(id);
+        q.push_back(p);
+        cum += p;
+        if (cum >= top_p) break;
+    }
+    for (double& v : q) v /= cum;
+    REQUIRE_EQ(ids.size(), nuc.ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) CHECK_EQ(ids[i], nuc.ids[i]);
+
+    const uint32_t N = 200000;
+    std::vector<uint32_t> count(ids.size(), 0);
+    uint32_t outside = 0;
+    for (uint32_t d = 0; d < N; ++d) {
+        const uint32_t tok = runtime::sample_nucleus(nuc, runtime::uniform01(20260915, d));
+        auto it = std::find(ids.begin(), ids.end(), tok);
+        if (it == ids.end()) { ++outside; continue; }
+        ++count[size_t(it - ids.begin())];
+    }
+    CHECK_EQ(outside, 0u);
+    // Pearson chi-square over buckets with expectation >= 5, the rest pooled.
+    double chi2 = 0, pooled_e = 0, pooled_o = 0, worst_z = 0;
+    uint32_t buckets = 0;
+    for (size_t i = 0; i < ids.size(); ++i) {
+        const double e = q[i] * N, o = count[i];
+        const double sd = std::sqrt(N * q[i] * (1 - q[i]));
+        if (sd > 0) worst_z = std::max(worst_z, std::fabs(o - e) / sd);
+        if (e >= 5) { chi2 += (o - e) * (o - e) / e; ++buckets; }
+        else { pooled_e += e; pooled_o += o; }
+    }
+    if (pooled_e >= 5) { chi2 += (pooled_o - pooled_e) * (pooled_o - pooled_e) / pooled_e; ++buckets; }
+    const double df = double(buckets - 1);
+    std::printf("      top_p %.2f record %d: %zu-token nucleus (kept %.6f of the mass, top token %u p=%.4f), "
+                "%u draws: chi2 %.2f on %.0f df (5-sigma bound %.2f), worst |z| %.2f\n",
+                top_p, best, ids.size(), cum, ids[0], q[0], N, chi2, df, df + 5 * std::sqrt(2 * df), worst_z);
+    CHECK(chi2 < df + 5 * std::sqrt(2 * df));
+    CHECK(worst_z < 5.0);
+    for (size_t i = 0; i < std::min<size_t>(ids.size(), 8); ++i)
+        std::printf("        id %6u  p %.5f  freq %.5f\n", ids[i], q[i], double(count[i]) / N);
+
+    // The RNG: uniform, and a pure function of (seed, counter).
+    double mean = 0;
+    for (uint32_t d = 0; d < N; ++d) {
+        const double u = runtime::uniform01(7, d);
+        CHECK(u >= 0.0 && u < 1.0);
+        mean += u;
+    }
+    CHECK(std::fabs(mean / N - 0.5) < 0.005);
+    CHECK_EQ(runtime::uniform01(7, 12345), runtime::uniform01(7, 12345));
+    CHECK(runtime::uniform01(7, 12345) != runtime::uniform01(8, 12345));
+}
+
+// The GPU top-k's arithmetic (runtime::emulate_topk, which mirrors
+// gpu/shaders/sample_topk.slang float for float) gives the full-vocabulary
+// nucleus whenever it says it does, and says it does not when it cannot.
+DEEPMOE_TEST(sampling, topk_nucleus_equals_full_vocabulary_nucleus) {
+    auto st = runtime::DecodeState::load(l3_dir());
+    if (!st) { std::printf("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
+    const uint32_t V = 129280;
+    uint32_t exact_cases = 0, fallback_cases = 0;
+    for (uint32_t r = 0; r <= st->steps(); ++r) {
+        const runtime::RefLogits& lg = st->logits(r);
+        // A whole logit vector: the recorded top-64 where they were, and a
+        // seeded Gaussian body below the smallest of them (a real head's tail
+        // is not recorded, only its logsumexp).
+        std::vector<float> logits(V);
+        uint64_t s = 0x9E3779B97F4A7C15ull * (r + 1);
+        const float floor_l = *std::min_element(lg.top_logits.begin(), lg.top_logits.end()) - 0.05f;
+        for (uint32_t i = 0; i < V; ++i) {
+            s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+            const double u1 = (double((s >> 11) & ((1ull << 26) - 1)) + 0.5) / double(1ull << 26);
+            const double u2 = double((s >> 37) & ((1ull << 26) - 1)) / double(1ull << 26);
+            const double g = std::sqrt(-2 * std::log(u1)) * std::cos(6.283185307179586 * u2);
+            logits[i] = std::min(floor_l, float(lg.top_logits.back() - 6.0 + 2.5 * g));
+        }
+        for (size_t i = 0; i < lg.top_ids.size(); ++i) logits[lg.top_ids[i]] = lg.top_logits[i];
+
+        for (float T : {1.0f, 0.7f, 1.5f}) {
+            const runtime::TopKLogits tk = runtime::emulate_topk(logits, runtime::kTopKDefaultK, T);
+            // a true top set: every non-candidate is below every candidate
+            float cmin = 3e38f;
+            std::vector<uint8_t> is_c(V, 0);
+            for (auto& c : tk.cand) { cmin = std::min(cmin, c.logit); is_c[c.id] = 1; }
+            uint32_t above = 0;
+            for (uint32_t i = 0; i < V; ++i) above += (!is_c[i] && logits[i] >= cmin);
+            CHECK_EQ(above, 0u);
+            for (float top_p : {0.5f, 0.95f, 0.99f, 1.0f}) {
+                const runtime::Nucleus a = runtime::nucleus_from_topk(tk, T, top_p);
+                const runtime::Nucleus b = runtime::nucleus_from_full(logits, T, top_p);
+                if (top_p >= 1.0f) CHECK(!a.exact);
+                if (!a.exact) { ++fallback_cases; continue; }
+                ++exact_cases;
+                REQUIRE_EQ(a.ids.size(), b.ids.size());
+                double worst = 0;
+                for (size_t i = 0; i < a.ids.size(); ++i) {
+                    CHECK_EQ(a.ids[i], b.ids[i]);
+                    worst = std::max(worst, std::fabs(a.p[i] - b.p[i]) / b.p[i]);
+                }
+                CHECK(worst < 1e-5);
+                CHECK(std::fabs(a.logsumexp - b.logsumexp) < 1e-5);
+            }
+        }
+    }
+    // A flat distribution: more than 32 candidates per thread -> overflow -> the
+    // caller must copy the whole vector.
+    std::vector<float> flat(V, 1.0f);
+    const runtime::TopKLogits tk = runtime::emulate_topk(flat, runtime::kTopKDefaultK, 1.0f);
+    CHECK(tk.overflow);
+    CHECK(!runtime::nucleus_from_topk(tk, 1.0f, 0.95f).exact);
+    std::printf("      %u (record, T, top_p) cases exact from the top set, %u fell back\n",
+                exact_cases, fallback_cases);
+    CHECK(exact_cases >= 40);
 }

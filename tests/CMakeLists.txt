@@ -16,7 +16,8 @@ add_executable(deepmoe_tests
     test_decode.cpp
     test_gpu_dspark.cpp
     test_gpu_prefill.cpp
-    test_dspark_tree.cpp)
+    test_dspark_tree.cpp
+    test_tokenizer.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -109,3 +110,13 @@ set_tests_properties("suite.gpu_prefill" PROPERTIES
 # tools/dspark_tree.py's golden cycles. No model, no GPU.
 add_test(NAME "suite.dspark_tree" COMMAND deepmoe_tests "dspark_tree.")
 set_tests_properties("suite.dspark_tree" PROPERTIES LABELS "unit")
+
+# Track P: the C++ tokenizer against HF tokenizers' golden cases (needs
+# tokenizer.json from DEEPMOE_MODEL_DIR, nothing else), and the sampler against
+# the L3 export's recorded logits (no model, no GPU).
+add_test(NAME "suite.tokenizer" COMMAND deepmoe_tests "tokenizer.")
+set_tests_properties("suite.tokenizer" PROPERTIES
+    LABELS "needs-model"
+    SKIP_REGULAR_EXPRESSION "SKIP tokenizer")
+add_test(NAME "suite.sampling" COMMAND deepmoe_tests "sampling.")
+set_tests_properties("suite.sampling" PROPERTIES LABELS "unit")

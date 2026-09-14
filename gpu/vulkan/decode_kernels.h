@@ -38,6 +38,7 @@ enum class DecodeStage : uint32_t {
     EngramGemv = 0,   // §7.10: the 6144 -> 25600 fp8 GEMV over 24 hashed rows
     EngramGate,       // §7.10: the gate and the residual update
     Argmax,           // §7.11: 129,280 logits -> (id, top1, top2)
+    SampleTopK,       // §7.11 sampled: logits -> top set + tail mass (sample_topk.slang)
     Count,
 };
 
@@ -60,7 +61,18 @@ enum : uint32_t { kRowVal = 0, kRowSc = 1, kW = 2, kS = 3, kKv = 4,
 // head stage 1 -- the same slice layout as gpu/shaders/head.slang's GEMV, plus
 // the four-word sample result at slot 3.
 enum : uint32_t { kHeadW = 0, kHeadX = 1, kHeadLogits = 2, kHeadSample = 3 };
+// sample_topk: the logits, the output (header + candidate segments), the
+// per-thread histograms.
+enum : uint32_t { kTopKLogits = 0, kTopKOut = 1, kTopKHist = 2 };
 }  // namespace dslot
+
+// Mirrors gpu/shaders/sample_topk.slang's TopKPush.
+struct TopKPush {
+    uint32_t rows = 0;
+    uint32_t k = 0;
+    float    inv_t = 1.0f;
+    float    bins_per_logit = 16.0f;
+};
 
 // What gpu/shaders/head.slang's argmax stage writes: the token, its logit, the
 // runner-up's logit (design §12 L3 wants the margin at a divergence) and the

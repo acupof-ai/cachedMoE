@@ -67,7 +67,12 @@ set(DEEPMOE_RUNTIME_SOURCES
     runtime/decode_layer.cpp
     runtime/moe_bridge.cpp
     runtime/decode_state.cpp
-    runtime/engram.cpp)
+    runtime/engram.cpp
+    runtime/sampling.cpp)
+
+# Track P: the tokenizer (docs/p3_chat.md).
+set(DEEPMOE_TEXT_SOURCES
+    text/tokenizer.cpp)
 
 # Headers every shader in DEEPMOE_SHADERS may include; touching one rebuilds all.
 set(DEEPMOE_SHADER_DEPS
@@ -100,6 +105,7 @@ set(DEEPMOE_SHADERS
     gpu/shaders/moe_xquant.slang
     gpu/shaders/engram.slang
     gpu/shaders/head.slang
+    gpu/shaders/sample_topk.slang
     gpu/shaders/dspark_gemv.slang
     gpu/shaders/dspark_attn.slang
     gpu/shaders/dspark_head.slang

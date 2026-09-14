@@ -17,6 +17,8 @@
 #include <vector>
 
 #include "core/config.h"
+#include "core/json.h"
+#include "core/json_write.h"
 #include "core/log.h"
 #include "core/status.h"
 #include <cmath>
@@ -28,6 +30,7 @@
 #include "model/layout.h"
 #include "runtime/engine.h"
 #include "storage/backend.h"
+#include "text/tokenizer.h"
 
 using namespace deepmoe;
 
@@ -60,6 +63,12 @@ int usage(int code = 2) {
         "      and indexer top-k of section 7.4. Default --state tests/data/l3.\n"
         "      --cache-gb 0 (the default) sizes the routed-expert cache from the\n"
         "      machine. See docs/p2_decode.md.\n"
+        "\n"
+        "  deepmoe tokenize --model DIR --in CASES.json --out IDS.jsonl\n"
+        "      Encode every {\"text\": ...} of CASES.json (a JSON array, or an\n"
+        "      object with a \"cases\" array) with the C++ tokenizer and write one\n"
+        "      line per case: ids, decode, decode with specials skipped, and the\n"
+        "      streaming decode. tools/tokenizer_golden.py compares it with HF.\n"
         "\n"
         "  common: -v / -vv raise the log level\n");
     return code;
@@ -607,6 +616,59 @@ int cmd_run(int argc, char** argv) {
     return 0;
 }
 
+std::string model_dir_default() {
+    const char* e = std::getenv("DEEPMOE_MODEL_DIR");
+    return e ? std::string(e) : std::string();
+}
+
+int cmd_tokenize(int argc, char** argv) {
+    std::string model = model_dir_default(), in, out;
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view a = argv[i];
+        if (a == "--model")    model = arg_value(argc, argv, i, a);
+        else if (a == "--in")  in = arg_value(argc, argv, i, a);
+        else if (a == "--out") out = arg_value(argc, argv, i, a);
+        else { std::fprintf(stderr, "unknown option %.*s\n", static_cast<int>(a.size()), a.data()); return usage(); }
+    }
+    if (model.empty() || in.empty() || out.empty()) {
+        std::fputs("tokenize needs --model DIR (or DEEPMOE_MODEL_DIR), --in and --out\n", stderr);
+        return 2;
+    }
+    const TimePoint t0 = Clock::now();
+    auto tok = text::Tokenizer::load(model + "/tokenizer.json");
+    if (!tok) { std::fprintf(stderr, "tokenizer: %s\n", tok.error().str().c_str()); return 1; }
+    const double load_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    auto doc = json_parse_file(in);
+    if (!doc) { std::fprintf(stderr, "%s\n", doc.error().str().c_str()); return 1; }
+    const JsonValue* cases = doc->is_array() ? &*doc : doc->find("cases");
+    if (!cases || !cases->is_array()) { std::fputs("no cases array\n", stderr); return 1; }
+    std::FILE* f = std::fopen(out.c_str(), "wb");
+    if (!f) { std::fprintf(stderr, "cannot write %s\n", out.c_str()); return 1; }
+    uint64_t n_ids = 0, n_bytes = 0;
+    const TimePoint t1 = Clock::now();
+    for (const JsonValue& c : **cases->as_array()) {
+        const std::string t = c.is_string() ? std::string(*c.as_string()) : c.string_or("text", "");
+        const std::vector<uint32_t> ids = tok->encode(t);
+        text::StreamDecoder sd(*tok);
+        std::string stream;
+        for (uint32_t id : ids) stream += sd.push(id);
+        stream += sd.flush();
+        std::string line = "{\"ids\":" + json_uint_array(ids) +
+                           ",\"decode\":" + json_quote(tok->decode(ids)) +
+                           ",\"decode_skip\":" + json_quote(tok->decode(ids, true)) +
+                           ",\"stream\":" + json_quote(stream) + "}\n";
+        std::fwrite(line.data(), 1, line.size(), f);
+        n_ids += ids.size();
+        n_bytes += t.size();
+    }
+    std::fclose(f);
+    const double enc_ms = std::chrono::duration<double, std::milli>(Clock::now() - t1).count();
+    std::fprintf(stderr, "tokenizer loaded in %.0f ms; %zu cases, %llu bytes -> %llu ids in %.0f ms "
+                 "(%.1f MB/s)\n", load_ms, cases->size(), (unsigned long long)n_bytes,
+                 (unsigned long long)n_ids, enc_ms, n_bytes / 1e6 / (enc_ms / 1e3));
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -628,6 +690,7 @@ int main(int argc, char** argv) {
     if (cmd == "info")  return cmd_info();
     if (cmd == "bench") return cmd_bench(argc, argv);
     if (cmd == "run")   return cmd_run(argc, argv);
+    if (cmd == "tokenize") return cmd_tokenize(argc, argv);
     if (cmd == "-h" || cmd == "--help" || cmd == "help") return usage(0);
     std::fprintf(stderr, "unknown command %.*s\n", static_cast<int>(cmd.size()), cmd.data());
     return usage();

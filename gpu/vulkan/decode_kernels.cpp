@@ -10,6 +10,7 @@ const char* decode_stage_name(DecodeStage s) {
         case DecodeStage::EngramGemv: return "engram.gemv";
         case DecodeStage::EngramGate: return "engram.gate";
         case DecodeStage::Argmax:     return "head.argmax";
+        case DecodeStage::SampleTopK: return "sample_topk";
         case DecodeStage::Count:      break;
     }
     return "?";
@@ -45,6 +46,7 @@ constexpr StageDef kStages[] = {
     {DecodeStage::EngramGemv, "engram", 0},
     {DecodeStage::EngramGate, "engram", 1},
     {DecodeStage::Argmax,     "head",   1},
+    {DecodeStage::SampleTopK, "sample_topk", 0},
 };
 static_assert(sizeof(kStages) / sizeof(kStages[0]) ==
               static_cast<size_t>(DecodeStage::Count));
