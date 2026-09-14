@@ -51,6 +51,14 @@
 // third of its L2 traffic re-staging the same 1280-wide activation. Same knob
 // moe_common.slang carries for the FP4 path.
 [vk::constant_id(6)] const uint RowsPerLane     = 1;
+// Attention heads one sparse_attn workgroup covers. Its only effect is how
+// many times the 320 KiB of KV is pulled through L2 -- once per workgroup --
+// and it is opt-in: sparse_attn.slang ignores it unless the caller pushes a
+// head count. Nothing else in this family reads it.
+[vk::constant_id(7)] const uint HeadsPerWg      = 1;
+// Whether `row_reduce` collapses to one WaveActiveSum. Per stage, and measured
+// rather than reasoned about: see the function itself.
+[vk::constant_id(8)] const uint WaveReduce      = 1;
 
 static const uint  kWg          = 256;
 static const uint  kMaxRowsPerLane = 4;
@@ -142,7 +150,41 @@ uint fp8_encode_rn(float v) {
     return sign | mag;
 }
 
-float fp8_round(float v) { return fp8_decode(fp8_encode_rn(v)); }
+// The same rounding, branchless, returning the VALUE and never the byte.
+//
+// `fp8_encode_rn` above is the definition; this is what the GEMV activation
+// staging actually runs, and it is here because the staging turned out to be
+// the thing wq_b and wo_b were spending their time on rather than reading
+// weights. wo_b stages 8192 activations across 256 threads, so every thread
+// runs this 32 times before the first weight byte is touched; at ~25
+// instructions and three branches the encode alone was more work than the 256
+// multiply-adds that lane then performs. This form is nine instructions and
+// branch-free.
+//
+// Two ranges, selected rather than branched:
+//
+//   * |v| >= 2^-6 is a normal. Keeping three mantissa bits with
+//     round-to-nearest-even is an integer add of (0x7FFFF + lsb) followed by a
+//     mask -- the carry out of the mantissa walks into the exponent by itself,
+//     which is why no exponent arithmetic appears. The caller has already
+//     clamped to +-448, which is exactly representable, so the add can never
+//     reach the 0x7F/0xFF NaN codes.
+//   * |v| < 2^-6 is a subnormal, i.e. a multiple of 2^-9. `(a + M) - M` with
+//     M = 1.5 * 2^14 rounds to that grid with round-to-nearest-even in two
+//     instructions: every number in [2^14, 2^15) has ulp 2^-9, and a is small
+//     enough that a + M stays in that binade. 8 * 2^-9 comes out as 2^-6,
+//     which is the smallest normal and the same answer `fp8_encode_rn` gives
+//     by carrying its mantissa into the exponent field.
+static const float kE4M3SubMagic = 24576.0f;   // 1.5 * 2^14
+
+float fp8_round(float v) {
+    const float a = abs(v);
+    const uint  b = asuint(a);
+    const uint  r = (b + 0x7FFFFu + ((b >> 20) & 1u)) & 0xFFF00000u;
+    const float mag = (a < kE4M3MinN) ? ((a + kE4M3SubMagic) - kE4M3SubMagic)
+                                      : asfloat(r);
+    return asfloat(asuint(mag) | (asuint(v) & 0x80000000u));
+}
 
 // One 32-element activation block through `act_quant`, in place.
 // `ActQuant == 0` leaves it alone: that is the wo_a path, and the A/B that
@@ -155,6 +197,40 @@ void act_quant_block(inout float v[32]) {
     const float inv = 1.0f / s;
     [unroll] for (uint i = 0; i < 32; ++i)
         v[i] = fp8_round(clamp(v[i] * inv, -kFp8MaxF, kFp8MaxF)) * s;
+}
+
+// --- FP4 E2M1 ---------------------------------------------------------------
+// The compressor's compressed KV (block 16, E4M3 scale) and the indexer's q/k
+// (block 32, UE8M0 scale) both quantise to E2M1 -- design §7.4, §11.3. This is
+// the encode side, which moe_common.slang does not have: the MoE path only ever
+// DECODES fp4, because its weights arrive quantised from the checkpoint.
+//
+// Eight magnitudes and the seven midpoints between them. Ties round to even
+// MANTISSA, which alternates along the list, so a tie on an odd boundary index
+// takes the upper value: 0.25 -> 0, 0.75 -> 1.0, 1.25 -> 1.0, 1.75 -> 2.0,
+// 2.5 -> 2.0, 3.5 -> 4.0, 5.0 -> 4.0. tools/dsref.py `_round_to_fp4` is the
+// same rule and the oracle asserts against the reference's own bytes.
+static const float kFp4Mag[8]   = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f};
+static const float kFp4Bound[7] = {0.25f, 0.75f, 1.25f, 1.75f, 2.5f, 3.5f, 5.0f};
+
+// Round-to-nearest-even onto the 16 E2M1 values. `v` must already be clamped
+// to +-6.
+float fp4_round(float v) {
+    const float mag = abs(v);
+    uint i = 0;
+    [unroll] for (uint j = 0; j < 7; ++j) if (kFp4Bound[j] < mag) i = j + 1;
+    if (i < 7 && mag == kFp4Bound[i] && (i & 1u) != 0u) i += 1;
+    return (v < 0.0f) ? -kFp4Mag[i] : kFp4Mag[i];
+}
+
+// The 4-bit code of an already-rounded E2M1 value: the magnitude's index in
+// `kFp4Mag` (which is the E2M1 bit pattern) plus the sign bit. Negative zero
+// codes as +0, the way `_pack_fp4`'s `v < 0` test does.
+uint fp4_code(float v) {
+    const float mag = abs(v);
+    uint i = 0;
+    [unroll] for (uint j = 1; j < 8; ++j) if (kFp4Mag[j] <= mag) i = j;
+    return (v < 0.0f) ? (i | 8u) : i;
 }
 
 // --- BF16 -------------------------------------------------------------------
@@ -181,10 +257,25 @@ float bf16_round(float f) { return bf16_decode(bf16_encode(f)); }
 
 // --- reductions -------------------------------------------------------------
 
-// Sum `v` across the LanesPerRow lanes of one row group and broadcast it. An
-// LDS tree rather than WaveActiveSum, for the reason moe_gateup gives: the row
-// width is a specialisation constant and need not sit inside one subgroup.
+// Sum `v` across the LanesPerRow lanes of one row group and broadcast it.
+//
+// When a row group IS a subgroup -- LanesPerRow == SubgroupSize, which is the
+// measured configuration (32 lanes a row, Wave32) -- this can be one
+// `WaveActiveSum` and no barriers at all, instead of an LDS tree costing
+// log2(LanesPerRow) + 2 = seven workgroup barriers per row. (It MUST be the
+// tree when a 64-lane row spans two Wave32 subgroups, which is the case
+// moe_gateup.slang's comment is about.)
+//
+// Which is faster is not a question of instruction count, and the sweep said
+// so: the wave form is worth +32% on wq_b and +24% on wkv and **-12% on wq_a
+// and -14% on wo_a**. The two that lose are the two whose workgroups each
+// re-stage a wide activation (K = 5120 and 4096) over many workgroups; the
+// barriers evidently pace those workgroups against each other in a way the
+// memory system likes, and removing them lets them all pile into L2 at once.
+// So it is a per-stage specialisation constant, with the numbers in
+// gpu/vulkan/attn_kernels.cpp's kStages table, not a global improvement.
 float row_reduce(float v, uint tid, uint sublane) {
+    if (WaveReduce != 0 && LanesPerRow == SubgroupSize) return WaveActiveSum(v);
     gRed[tid] = v;
     GroupMemoryBarrierWithGroupSync();
     for (uint s = LanesPerRow >> 1; s > 0; s >>= 1) {

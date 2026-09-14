@@ -1,4 +1,4 @@
-# P2 step 1 — the non-MoE decode path
+# P2 — the non-MoE decode path
 
 > The design §7.2–§7.8 and §7.11 kernels, validated stage by stage against
 > `inference/model.py`, plus one whole decoder layer end to end.
@@ -7,7 +7,14 @@
 
 Status: **2026-09-14**. Everything measured here is on the real
 `DeepSeek-V4.1-Flash` checkpoint, one decode token at position 64 of a 64-token
-prefill. Raw data: `tests/data/l2/`, `bench/results/attn_p2.csv`.
+prefill. Raw data: `tests/data/l2/`, `tests/data/l2x/`,
+`bench/results/attn_p2.csv`.
+
+**§0–§8 are step 1** and are left as they were written, because the numbers in
+them are what the numbers in step 2 are measured against. **§9–§12 are step 2**:
+the §7.4 compressor and indexer, which §6 listed as "loaded", and the bandwidth
+items §7 opened. Where the two disagree — §5's table, §6's status table, §7's
+list — step 2 is the current one.
 
 ---
 
@@ -424,7 +431,7 @@ prefill left are golden.
 | the window KV ring | **real**, written by `wkv.slang` every step as `Attention._window_kv` writes it |
 | the routed experts | **real**, fetched through `store::Planner` on the gate's ids and computed by the §7.9 kernels |
 | the shared expert | **real**, fp8, from the pinned set through its own one-slot runner |
-| the compressed KV and the indexer's top-k list | **LOADED** from the oracle's prefill. The compressor and indexer kernels of §7.4 are not written. Everything downstream of them is real and is measured |
+| the compressed KV and the indexer's top-k list | **LOADED** from the oracle's prefill when this was written; **produced** since — see §9. Everything downstream of them was real and measured either way |
 | prefill, the engram write, DSpark | not started |
 
 The compressed half is stored **bf16**, not design §11.3's packed FP4 E2M1 +
@@ -454,7 +461,7 @@ that needs it for the timeline waits.
 
 ---
 
-## 7. What is next, in order
+## 7. What is next, in order (step 1's list; superseded by §11)
 
 1. **`wo_b` and `wq_b`**, 121 and 157 GB/s against 217. They are 84 MB of the
    133 MB a layer reads, so the layer is 57% of the ceiling largely because of
@@ -479,7 +486,7 @@ that needs it for the timeline waits.
    × 80 = 0.18 ms — small, but it is a pure `hc_post` and `hc_pre` over 20480
    floats and should be near the ceiling.
 
-## 8. Done / not done
+## 8. Done / not done (step 1; §12 is the current one)
 
 **Done**
 
@@ -505,3 +512,346 @@ that needs it for the timeline waits.
   still the interfaces they were.
 * The pinned set is loaded a layer at a time by the tests; nothing has yet
   loaded all 17.7 GB in one go and measured it.
+
+---
+
+## 9. P2 step 2 — the compressor and the indexer, and where the bandwidth went
+
+Status: **2026-09-14**, same machine, same checkpoint, same decode token.
+Raw data: `tests/data/l2x/`, `bench/results/attn_p2.csv`.
+
+Two things §7 asked for. The compressed KV and the top-k list are **produced**
+now, not loaded — §6's one remaining gap is closed. And the two GEMVs §7 named
+went 157 → 204 and 121 → 135 GB/s, with `sparse_attn` halving on the way past.
+
+### 9.1 What is produced now
+
+| piece | before | now |
+|---|---|---|
+| compressed KV (`cmp_kv`) | loaded from the oracle's prefill | `compressor.slang`, three dispatches |
+| the index keys | loaded | `indexer.slang` stage 2 |
+| the indexer's queries, weights, scores | loaded | `indexer.slang` stages 0, 1, 3, 4 |
+| `topk_idxs`, compressed half | loaded | `indexer.slang` stage 5 |
+| `topk_idxs`, window half | host, `get_window_topk_idxs` | unchanged |
+
+Ten new pipelines on two new shaders, appended to `AttnStage`. A layer that is
+not a `kv_source_layer` dispatches none of the `Cmp*`; one that is not an
+`index_source_layer` dispatches none of the `Idx*`. Four layers of forty have a
+compressor, eight an indexer.
+
+### 9.2 Accuracy, against the reference's own tensors
+
+`tests/test_gpu_attn.cpp` `gpu_attn.l2_compressor_indexer`, layers 2, 14 and 20
+(a ratio-2 source, a second one with an engram, and the ratio-1 decoder
+source). Every stage is fed the reference's own input:
+
+| stage | layer 2 (ratio 2) | layer 14 (ratio 2) | layer 20 (ratio 1) |
+|---|---|---|---|
+| `compressor.wkv` | 1.000000000 | 1.000000000 | 0.999998848 |
+| `compressor.wgate` | 1.000000000 | 1.000000000 | — (no gate) |
+| `kv_state[slot]` write | **bit-exact** | **bit-exact** | — |
+| `score_state[slot]` write | **bit-exact** | **bit-exact** | — |
+| pooling + `compressor.norm` | **bit-exact** vs fp64 CPU | **bit-exact** | **bit-exact** vs the oracle |
+| RoPE + FP4(16, E4M3) + cache write | — | — | **bit-exact**, 0/256 nibble bytes and 0/32 scale bytes differ |
+| `indexer.wq_b` (+ `q_norm`, act_quant) | 0.999998575 | 0.999998615 | 0.999998719 |
+| RoPE + FP4(32, UE8M0) on q | **bit-exact** | **bit-exact** | **bit-exact** |
+| `wk` + `k_norm` | — | — | **bit-exact** |
+| RoPE + FP4 on the key | — | — | **bit-exact**, 0/64 and 0/4 bytes differ |
+| `weights_proj` × scale | **bit-exact** | **bit-exact** | **bit-exact** |
+| `index_score` | **bit-exact** | **bit-exact** | **bit-exact** |
+| `topk_idxs` | 32/32 | 32/32 | 65/65 |
+
+Eleven of the sixteen are bit-exact against the reference, and the three that
+are not are the three that end in an fp8 GEMV, sitting exactly on the 1.6e-3
+bf16 noise floor §3 describes. The fp4 byte planes agree **byte for byte**,
+which pins the E2M1 rounding rule (ties to even mantissa), the nibble order and
+both scale formats — E4M3 for the compressed KV and UE8M0 for the indexer — at
+the same time.
+
+`index_score` being bit-exact is worth a sentence, because it was not at first:
+0.99999 until the three bf16 roundings the reference performs went in (the
+einsum's output, the multiply by `weights`, and the sum over the head axis).
+Being more precise than the reference costs agreement here for the same reason
+§3 gives about `act_quant`, one step removed.
+
+### 9.3 What the reference does that is not obvious
+
+Five things the L2 data made visible and which `compressor.slang` and
+`indexer.slang` had to be written around:
+
+1. **The pooling softmax is over the ratio axis, per element.** `kv_state` and
+   `score_state` are [ratio, head_dim] and the pooling is
+   `(kv_state * score_state.softmax(dim=1)).sum(dim=1)`, so each of the 512
+   dims gets its own two-way softmax. It is not one weight per token.
+
+2. **The dtype changes in different places on the two paths.** At ratio > 1 the
+   reference runs `x.float()` and holds both projections and the pooling in
+   fp32 — the checkpoint's bf16 weights are promoted at load — and rounds to
+   bf16 exactly once, where `kv.to(dtype)` feeds the norm. At ratio 1 there is
+   no gate and no fp32: `self.norm(self.wkv(x))` is a plain bf16 `Linear`. The
+   table above shows it: `compressor.wkv` is exact to 2e-7 on the two fp32
+   layers and to the bf16 floor on the ratio-1 one.
+
+3. **A latent stands for the FIRST token of its group.** It is rotated at
+   `start_pos + 1 - ratio`, not at `start_pos`, and so is the index key derived
+   from it — while the indexer's *queries* are rotated at `start_pos`. Two RoPE
+   tables per source layer, from the same per-layer configuration.
+
+4. **Two FP4 formats in one layer.** The compressed KV is block 16 with an E4M3
+   scale and an amax floor of 6·2⁻⁹; the indexer's q and k are block 32 with a
+   power-of-two scale and a floor of 6·2⁻¹²⁶. Mixing them up is invisible in a
+   cosine and visible in the bytes, which is why the test compares bytes.
+
+5. **The key owner is the layer that compresses, not the layer that scores.**
+   At decode position 64 a ratio-2 source's group does not complete, so it
+   publishes nothing and scores against whatever key cache was published last —
+   layer 20's, not its own. §1.2 already recorded that for the oracle; the
+   kernel side of it is that the host, not the shader, decides which cache
+   address goes in the slot.
+
+### 9.4 Two tensors the oracle did not export, and one it cannot
+
+`tools/oracle.py --level l2` exports the ONE index key this step produced, which
+pins the key derivation and says nothing about the scoring, because the other 64
+keys came out of the prefill. `tools/oracle_l2_extra.py` is a separate script —
+`oracle.py` belongs to another track — that imports it, wraps `L2Capture.attach`
+and `_l2_collect`, and writes a superset into `tests/data/l2x/`:
+`index_k_all`, `index_score`, `index_weights_scaled`, the ratio-2 compressor's
+`kv_state` / `score_state` and the raw `wkv` / `wgate` projections behind them.
+2.35 MB for three layers, 305 s to produce.
+
+Two gaps remain, both stated in the test:
+
+* **`index_score` is recomputed, not captured.** `Indexer.forward` keeps it in a
+  local and returns only indices, so the extra script recomputes it with torch
+  from the reference's own post-fp4 q, its live `shared_attn.index_k` slice and
+  its `weights_proj` output, in the reference's op order. A misreading of the
+  formula would be reproduced on both sides; everything else is caught.
+* **The ratio-2 pooling has no reference output at this position.**
+  `(64 + 1) % 2 != 0`, so `Compressor.forward` returns None. What it *does* do —
+  write slot 0 of both states — is checked against the reference. The pooling
+  itself then runs on a synthetic complete group against an fp64 CPU
+  transcription. Catching a wrong pooling against the reference needs a
+  two-step decode export, which is the obvious next extension of that script.
+
+And one that is not a gap so much as a fact about the context: **the top-k has
+never yet been asked to select.** `index_topk` is 512, a 64-token prefill at
+ratio 2 leaves 32 compressed positions and at ratio 1 leaves 65, so
+`min(index_topk, n)` is `n` and the reference keeps everything. The comparison
+against `topk_idxs` is real but degenerate. `gpu_attn.indexer_topk_select`
+therefore drives the radix select directly — 512 of 4096 with a deliberate tie
+cluster — against a CPU stable sort: **512/512**, ties included.
+
+---
+
+## 10. Bandwidth, after §7 items 1 and 2
+
+`bench/attn_bench --layers 8 --iters 64 --rows 2`, idle machine (`head` at 234
+GB/s in both halves of the A/B, which is what says so), 2026-09-14. The "before"
+column is the *same binary and the same machine minutes apart*, running the
+shaders as of the previous commit out of a separate `.spv` directory, so the
+two columns are not from two different days.
+
+| kernel | before µs | before GB/s | after µs | after GB/s | % of 217 |
+|---|---:|---:|---:|---:|---:|
+| `mega_mhc.post` | 2.38 | 69 | 2.39 | 69 | latency |
+| `mega_mhc.mix` | 5.33 | 369 | 5.34 | 368 | *MALL* |
+| `mega_mhc.final` | 2.96 | 14 | 3.01 | 14 | latency |
+| `wq_a` | 44.5 | 147 | **38.5** | **171** | 79% |
+| `wq_b` | 258.3 | 163 | **205.4** | **204** | **94%** |
+| `wkv.gemv` | 19.9 | 132 | **17.1** | **154** | 71% |
+| `wkv.finish` | 8.4 | — | 9.2 | — | latency |
+| `sparse_attn.score` | 54.7 | — | **42.1** | — | latency |
+| `sparse_attn.combine` | 85.9 | — | **27.3** | — | latency |
+| `wo_a` | 199.2 | 169 | 201.4 | 167 | 77% |
+| `wo_b` | 341.9 | 123 | **312.2** | **135** | 62% |
+| `gate.score` | 16.7 | 236 | 16.3 | 241 | *MALL* |
+| `gate.topk` | 12.4 | — | 12.5 | — | latency |
+| **one layer, 1–9** | **1052.6** | 127 | **892.6** | **149** | 69% |
+| `head` | 5618 | 236 | 5653 | 234 | 108% |
+| **40 layers + head** | **47.7 ms** | | **41.4 ms** | | |
+
+Plus the §7.4 kernels, which run on some layers only:
+
+| kernel | µs | bytes | GB/s |
+|---|---:|---:|---:|
+| `compressor.wkv` | 13.9 | 5.24 MB | 377 *(4 layers: partly MALL)* |
+| `compressor.wgate` | 13.9 | 5.24 MB | 378 *(same)* |
+| `compressor.norm` | 3.2 | 8 KB | latency |
+| `compressor.store` | 6.4 | 3 KB | latency |
+| `indexer.wq_b` | 16.9 | 5.25 MB | 311 *(4 layers: partly MALL)* |
+| `indexer.q_finish` | 9.7 | 25 KB | latency |
+| `indexer.key` | 17.0 | 131 KB | latency |
+| `indexer.weights` | 21.7 | 328 KB | latency |
+| `indexer.score` | 16.1 | 17 KB | latency, and the only one that grows with context |
+| `indexer.topk` | 0.8 | 260 B | latency |
+| **compressor, 4 of 40 layers** | **37.3** | | |
+| **indexer, 8 of 40 layers** | **82.2** | | |
+
+**0.81 ms a token** for both together — 2% on top of the 41.4 ms. The GB/s
+columns for the two 5 MB projections are cache numbers: only four layers have
+them, so 21 MB of weights cycles inside the 32 MB MALL. The microseconds are
+real; the bandwidth is not a memory-system number.
+
+`indexer.score` is the one entry that will move. At 64K context and ratio 2 it
+is 32K positions against 32 × 128 query dims — 134 MFLOP and 2 MB of keys
+against the 16 KB and 8 keys it reads here — so its 16 µs is a floor, not a
+measurement of the production case.
+
+### 10.1 What actually made the difference, and what did not
+
+Four changes, all in `fp8_gemv.slang` / `attn_common.slang` / `sparse_attn.slang`,
+and the interesting part is which of the §7 suspects turned out to be wrong.
+
+1. **The LDS budget, per shader rather than per family.** `gXQ` was sized for
+   wo_b's K = 8192 unconditionally, so `wq_b` reserved 16 KiB to use 2.5 KiB.
+   `DEEPMOE_GEMV_MAX_K` is now a `#define` in each including shader.
+   It is **not** "make it as small as K": `wq_a` measured **152 GB/s at a
+   5120 budget against 166 at 8192**, and `wo_a` the same way. More resident
+   workgroups each re-staging a 4–5K-wide activation is more L2 traffic, not
+   less. The two kernels that gain are the ones whose activation is already
+   small — `wq_b` and the indexer's `wq_b`, both K = 1280 — where the occupancy
+   is free. Both numbers are in the per-shader comment.
+
+2. **The `act_quant` staging was running on a sixth of the workgroup.** One
+   thread owned one 32-element block, so `wq_b` staged 1280 activations on 40
+   of its 256 threads while 216 idled through the most expensive arithmetic in
+   the kernel. Threads per block is now a compile-time function of the same K
+   (4 at K = 1280, 2 at 4096, 1 at 8192) with the block amax an LDS reduction
+   over them. Two smaller things came with it: `fp8_round` is now nine
+   instructions and branchless (see `attn_common.slang`), and the threads with
+   no block to quantise no longer run the rounding anyway — that one alone was
+   8% of `wq_a`.
+
+3. **`row_reduce` as one `WaveActiveSum` is not a free win.** Replacing the LDS
+   tree's seven workgroup barriers per row with a subgroup reduction is worth
+   **+30% on `wq_b` and +20% on `wkv` and −14% on `wq_a` and `wo_a`**. The two
+   that lose are the two whose workgroups each re-stage a wide activation over
+   many workgroups; the barriers evidently pace those workgroups against each
+   other in a way the memory system likes. It is a per-stage specialisation
+   constant now (`WaveReduce`), with the four numbers in `kStages`.
+
+4. **`sparse_attn` was never bandwidth-bound; it was doing scalar byte loads.**
+   Stage 0 gave one thread one (head, position) pair and walked 512 dims
+   serially: 512 loads of q, 512 of the E4M3 byte and 512 of its scale, per
+   pair. Across 64 heads and 640 positions that is 63 million load instructions
+   for 320 KiB of data. A KV row is now covered by the 32 lanes of one wave,
+   sixteen dims each, so the window half is one 16-byte load and one scale byte
+   per lane and the dot product is a `WaveActiveSum`. Stage 1 does the same for
+   P·V, with a lane owning sixteen output dims **whatever the head grouping**
+   and the partials from the disjoint KV subsets meeting in LDS — giving a lane
+   two dims instead, which is what a one-head workgroup used to do, turns every
+   element back into a byte load and measured 106 µs against 27.
+
+And the suspect §7 named that turned out not to be one:
+
+> **The `act_quant` round trip costs `wo_b` nothing.** Compiling it with
+> `ActQuant = 0` — wrong arithmetic, timing only — measures **150.2 GB/s
+> against 151.7** with it on. So the pre-quantisation dispatch that would have
+> been the structural fix buys nothing, and `wo_b`'s remaining gap is not the
+> quantiser. Nor is it DRAM: 42 MB in 312 µs is 135 GB/s against a 217 GB/s
+> memory system, and the 20 MB of re-staged activation is a 32 KB working set
+> that lives in the MALL. What is left is LDS (19 KiB, three workgroups a CU)
+> and the single accumulator per lane, which is the K-split kernel_p1.md §3.3
+> wanted — see §11.
+
+### 10.2 `sparse_attn`: 41 MB of L2 traffic for 320 KiB, still
+
+§7 item 2 asked for the KV to be read once. The machinery is there —
+`AttnSpec::heads_per_wg` puts G heads in a workgroup, which divides the L2
+traffic by G — and it is **off**, because it is slower:
+
+| heads per workgroup | workgroups | score + combine | L2 traffic |
+|---|---:|---:|---:|
+| **1** | **64** | **69 µs** | 41 MB |
+| 2 | 32 | 100 µs | 20 MB |
+| 4 | 16 | 169 µs | 10 MB |
+| 8 | 8 | 288 µs | 5 MB |
+
+64 heads at 8 a workgroup is eight workgroups on forty CUs. The traffic and the
+occupancy are being traded along the wrong axis: what design §7.5 actually
+describes is a head-group × KV-tile split, which keeps 64 workgroups AND reads
+the KV eight times, at the cost of a partial-softmax combine across the tiles.
+That is the remaining half of this item and it is in §11.
+
+Meanwhile the vectorisation took the two stages from 141 µs to **69 µs a
+layer** — 2.8 ms a token, 7% of the path instead of 13% — without touching the
+traffic at all.
+
+### 10.3 Interfaces: what changed, all of it additive
+
+Track G calls these kernels. Nothing existing moved:
+
+* **`AttnStage` gained ten enumerators** (`CmpKvGemv`, `CmpGateGemv`,
+  `CmpNorm`, `CmpStore`, `IdxQGemv`, `IdxQFinish`, `IdxKey`, `IdxWeights`,
+  `IdxScore`, `IdxTopK`), appended before `Count`. No existing value changed.
+* **`AttnPush` gained a trailing `n_heads`, defaulted to 0**, and 0 means "one
+  workgroup per head", which is the geometry every existing caller already
+  dispatches. `runtime/decode_layer.cpp` needs no change and gets the
+  vectorisation regardless; a caller that fills it in must dispatch
+  `AttnRunner::attn_groups(n_heads)` workgroups instead of `n_heads`. Both
+  geometries are checked against the oracle in `gpu_attn.l2_per_stage`, and
+  they agree to the last bit.
+* **`AttnSpec` gained `heads_per_wg` (default 1)**, which does nothing unless
+  `AttnPush::n_heads` is set.
+* **`CmpPush` and `IdxPush` are new**, as are `slot::kCmp*` / `slot::kIdx*` and
+  `kIdxScoreTile`.
+* `AttnRunner::create` now **rejects** `subgroup_size != 32` and
+  `heads_per_wg` outside 1..8. Both `sparse_attn`'s score stage and the
+  indexer's reduce across exactly one Wave32, and a silent wrong answer is the
+  alternative. Every existing caller already passes 32.
+
+---
+
+## 11. What is next, in order (replacing §7)
+
+1. **`wo_b`, 135 GB/s against 217.** Still 42 of the 133 MB a layer reads. §10.1
+   rules out the activation quantisation and rules out DRAM; what is left is the
+   19 KiB of LDS holding three workgroups to a CU and the single accumulator per
+   lane. The structural answer is the K-split with a second reduction pass, and
+   it needs one extra dispatch and therefore a runtime change, which is why it
+   did not happen here.
+2. **`sparse_attn`'s 41 MB of L2 traffic**, now that the instruction count is
+   dealt with. The shape is a head-group × KV-tile grid: 64 workgroups, each
+   covering 8 heads and an eighth of the KV, with a partial-softmax combine
+   across the eight tiles of a head. It keeps the occupancy that §10.2 shows is
+   worth more than the traffic, and takes the traffic too. Worth ~1 ms a token.
+3. **`wq_a` at 171 and `wkv` at 154**, the two remaining GEMVs under 80%. Both
+   are now limited by the same thing: a workgroup stages 5120 activations to
+   retire 8 or 16 rows.
+4. **A layer-indexed address table**, so §7.1's per-token command buffer is
+   expressible (§6.2). Unchanged from §7.
+5. **`mega_mhc.post` at 69 GB/s.** Unchanged from §7.
+6. **A two-step decode L2 export**, so the ratio-2 compressor's pooling can be
+   checked against the reference rather than against a CPU transcription of it
+   (§9.4), and so the indexer's top-k has something to select from.
+
+## 12. Done / not done, after P2 step 2
+
+**Newly done**
+
+* `gpu/shaders/compressor.slang` and `gpu/shaders/indexer.slang`, ten pipelines,
+  through `slangc` and `spirv-val`; the compressed KV and the top-k list are
+  produced, not loaded.
+* `tools/oracle_l2_extra.py` and `tests/data/l2x/` (2.35 MB, three source
+  layers): the index-key cache, the index scores and the compressor's carried
+  state.
+* `tests/test_gpu_attn.cpp` `gpu_attn.l2_compressor_indexer` and
+  `gpu_attn.indexer_topk_select`.
+* The §7 bandwidth items: one layer's dispatches 1–9 from 1.071 ms to
+  **0.893 ms**, and 40 layers + head from 48.5 ms to **41.4 ms**.
+* A run of the whole `gpu_attn` suite under the Khronos validation layers, with
+  nothing reported. (It found one thing on the way: `Rig` left a `VkBuffer` and
+  its memory alive past `vkDestroyDevice` because `PinnedStore` does not release
+  its regions on destruction. Fixed in the test.)
+
+**Still not done** — §8's list, minus the compressor and indexer:
+
+* The engram kernels (§7.10), prefill (§7.13), DSpark (§7.12).
+* Sampling on the GPU (§7.11's Philox / Gumbel-max half).
+* `KvCache::snapshot` / `rollback` (§10.2) and prefix persistence (§11.4).
+* The pinned set loaded all at once and measured.
+* Prefill's side of the compressor and indexer: everything above is the decode
+  step, where a group holds one token and a query is one row. The prefill forms
+  (`start_pos == 0`, a whole chunk pooled at once, a per-query `compress_lens`
+  mask) are in the reference and are not written.

@@ -56,6 +56,7 @@ struct Opts {
     uint32_t    lanes  = 32;
     uint32_t    subgroup = 32;
     uint32_t    rows   = 4;
+    uint32_t    heads  = 1;   // sparse_attn heads per workgroup (§7.5); AttnSpec default
 };
 
 // design §2.3's per-layer byte budget, recomputed here from the shapes so the
@@ -99,6 +100,8 @@ int main(int argc, char** argv) {
     o.iters  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--iters", "64").c_str()));
     o.lanes  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--lanes", "32").c_str()));
     o.rows   = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--rows", "4").c_str()));
+    o.heads  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--heads", "1").c_str()));
+    o.subgroup = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--subgroup", "32").c_str()));
     if (o.model.empty()) {
         std::printf("usage: attn_bench --model <checkpoint dir> [--layers N] [--iters N]\n"
                     "                  [--lanes 16|32|64] [--csv PATH] [--note TEXT]\n");
@@ -143,8 +146,18 @@ int main(int argc, char** argv) {
         io.stop();
         return 1;
     }
+    // design §7.4's compressor and indexer live only on a source layer, so the
+    // benchmark pins those four as well and cycles the Cmp*/Idx* rows over them
+    // -- otherwise every iteration would read layer 2's 10 MB out of the MALL.
+    static const uint32_t kSrcLayers[] = {2, 8, 14, 20};
+    static const uint32_t kNumSrc = 4;
     std::vector<std::string> names;
     for (uint32_t L = 0; L < o.layers; ++L) {
+        auto n = store::pinned_layer_tensors(*mf, L);
+        names.insert(names.end(), n.begin(), n.end());
+    }
+    for (uint32_t L : kSrcLayers) {
+        if (L < o.layers) continue;
         auto n = store::pinned_layer_tensors(*mf, L);
         names.insert(names.end(), n.begin(), n.end());
     }
@@ -161,6 +174,7 @@ int main(int argc, char** argv) {
     spec.lanes_per_row = o.lanes;
     spec.subgroup_size = o.subgroup;
     spec.rows_per_lane = o.rows;
+    spec.heads_per_wg  = o.heads;
     // ONE RUNNER PER LAYER. A runner owns one address table, so with a single
     // runner every iteration inside a command buffer reads the same layer's
     // weights and anything under the 32 MB MALL reports a fantasy -- the first
@@ -201,6 +215,22 @@ int main(int argc, char** argv) {
     auto O = take(uint64_t(d.qrows()) * 4), Woa = take(d.orows() * 4), Wob = take(d.dim * 4);
     auto Gs = take(d.n_experts * 4), Gid = take(64), Gw = take(64), Done = take(64);
     auto Logits = take(uint64_t(d.vocab) * 4);
+    // design §7.4: the compressor's two projections and its carried state, the
+    // indexer's queries, its key cache and its scores.
+    const uint32_t idx_heads = 32, idx_dim = 128, n_cmp_max = 1024;
+    auto CmpY = take(d.head_dim * 4), CmpG = take(d.head_dim * 4);
+    auto CmpKvSt = take(uint64_t(8) * d.head_dim * 4);
+    auto CmpScSt = take(uint64_t(8) * d.head_dim * 4);
+    auto CmpLat = take(d.head_dim * 4), CmpLatQ = take(d.head_dim * 4);
+    auto CmpFp4 = take(d.head_dim / 2), CmpScB = take(d.head_dim / 16);
+    auto IdxQRaw = take(uint64_t(idx_heads) * idx_dim * 4);
+    auto IdxQv  = take(uint64_t(idx_heads) * idx_dim * 2);
+    auto IdxQFp4 = take(uint64_t(idx_heads) * idx_dim / 2);
+    auto IdxQSc = take(uint64_t(idx_heads) * idx_dim / 32);
+    auto IdxKRaw = take(idx_dim * 4);
+    auto IdxKC  = take(uint64_t(n_cmp_max) * idx_dim * 2);
+    auto IdxKFp4 = take(idx_dim / 2), IdxKSc = take(idx_dim / 32 + 4);
+    auto IdxWt  = take(idx_heads * 4), IdxSc = take(n_cmp_max * 4);
     if (!Logits.valid()) { std::printf("scratch exhausted\n"); io.stop(); return 1; }
 
     // A plausible activation: the kernels are bandwidth-bound and the values
@@ -347,7 +377,8 @@ int main(int argc, char** argv) {
 
     // --- sparse_attn ----------------------------------------------------
     gpu::AttnPush ap{n_kv, d.window, d.head_dim, d.rope_dim, 1024,
-                     1.0f / std::sqrt(float(d.head_dim))};
+                     1.0f / std::sqrt(float(d.head_dim)), d.n_heads};
+    const uint32_t at_groups = runner.attn_groups(d.n_heads);
     auto at_slots = [&](gpu::AttnRunner& runner, uint32_t L) {
         uint64_t* s = runner.slots(gpu::AttnStage::AttnScore);
         s[gpu::slot::kAttnQ] = Q.addr; s[gpu::slot::kAttnWinVal] = WinV.addr;
@@ -364,9 +395,9 @@ int main(int argc, char** argv) {
     const uint64_t kv_unique = uint64_t(d.window) * (d.head_dim + d.head_dim / 32)
                              + uint64_t(n_cmp) * d.head_dim * 2;
     rows.push_back(run("sparse_attn.score", gpu::AttnStage::AttnScore, kv_unique,
-                       at_slots, &ap, sizeof ap, d.n_heads));
+                       at_slots, &ap, sizeof ap, at_groups));
     rows.push_back(run("sparse_attn.combine", gpu::AttnStage::AttnCombine, kv_unique,
-                       at_slots, &ap, sizeof ap, d.n_heads));
+                       at_slots, &ap, sizeof ap, at_groups));
 
     // --- wo_a / wo_b ----------------------------------------------------
     gpu::WoaPush wa{d.orows(), d.ocols(), d.ocols() / 32, d.o_lora};
@@ -415,29 +446,124 @@ int main(int argc, char** argv) {
         }, &hp, sizeof hp, runner.gemv_groups(gpu::AttnStage::Head, d.vocab)));
     }
 
+    // --- compressor / indexer (design §7.4) ------------------------------
+    // Only four layers have a compressor and eight an indexer, so these rows
+    // are cycled over the pinned SOURCE layers, not over 0..layers-1.
+    auto src = [&](uint32_t i) { return kSrcLayers[i % kNumSrc]; };
+
+    gpu::CmpPush cp{d.head_dim, d.dim, 2, 0, 1, d.rope_dim, 32, 1e-20f};
+    auto cmp_slots = [&](gpu::AttnRunner& r, uint32_t i) {
+        const uint32_t L = src(i);
+        uint64_t* s = r.slots(gpu::AttnStage::CmpKvGemv);
+        s[gpu::slot::kCmpW] = addr(L, "attn.compressor.wkv.weight");
+        s[gpu::slot::kCmpX] = U.addr;  s[gpu::slot::kCmpY] = CmpY.addr;
+        s[gpu::slot::kCmpG] = CmpG.addr;
+        s[gpu::slot::kCmpKvState] = CmpKvSt.addr;
+        s[gpu::slot::kCmpScoreState] = CmpScSt.addr;
+        s[gpu::slot::kCmpNormW] = addr(L, "attn.compressor.norm.weight");
+        s[gpu::slot::kCmpLatent] = CmpLat.addr;
+        s[gpu::slot::kCmpRope] = Rope.addr;
+        s[gpu::slot::kCmpVal] = Cmp.addr;
+        s[gpu::slot::kCmpFp4] = CmpFp4.addr;
+        s[gpu::slot::kCmpScaleB] = CmpScB.addr;
+        s[gpu::slot::kCmpLatentQ] = CmpLatQ.addr;
+        std::memcpy(r.slots(gpu::AttnStage::CmpNorm), s, gpu::kAttnStageStride);
+        std::memcpy(r.slots(gpu::AttnStage::CmpStore), s, gpu::kAttnStageStride);
+        uint64_t* g = r.slots(gpu::AttnStage::CmpGateGemv);
+        std::memcpy(g, s, gpu::kAttnStageStride);
+        // layer 20 is ratio 1 and has no wgate; fall back to wkv so the
+        // dispatch still reads 5.2 MB of real weights.
+        const uint64_t wg = addr(L, "attn.compressor.wgate.weight");
+        g[gpu::slot::kCmpW] = wg ? wg : addr(L, "attn.compressor.wkv.weight");
+        g[gpu::slot::kCmpY] = CmpG.addr;
+    };
+    const uint32_t cmp_groups = runner.gemv_groups(gpu::AttnStage::CmpKvGemv, d.head_dim);
+    rows.push_back(run("compressor.wkv", gpu::AttnStage::CmpKvGemv,
+                       bf16_bytes(d.head_dim, d.dim), cmp_slots, &cp, sizeof cp, cmp_groups));
+    rows.push_back(run("compressor.wgate", gpu::AttnStage::CmpGateGemv,
+                       bf16_bytes(d.head_dim, d.dim), cmp_slots, &cp, sizeof cp, cmp_groups));
+    rows.push_back(run("compressor.norm", gpu::AttnStage::CmpNorm,
+                       uint64_t(d.head_dim) * 4 * 4, cmp_slots, &cp, sizeof cp, 1));
+    rows.push_back(run("compressor.store", gpu::AttnStage::CmpStore,
+                       uint64_t(d.head_dim) * 6, cmp_slots, &cp, sizeof cp, 1));
+
+    const float idx_wscale = 1.0f / std::sqrt(float(idx_dim)) / std::sqrt(float(idx_heads));
+    auto idx_slots = [&](gpu::AttnRunner& r, uint32_t i) {
+        const uint32_t L = src(i);
+        uint64_t* s = r.slots(gpu::AttnStage::IdxQGemv);
+        s[gpu::slot::kIdxW] = addr(L, "attn.indexer.wq_b.weight");
+        s[gpu::slot::kIdxS] = sc_addr(L, "attn.indexer.wq_b.weight");
+        s[gpu::slot::kIdxQr] = Qr.addr;
+        s[gpu::slot::kIdxQNormW] = addr(L, "attn.q_norm.weight");
+        s[gpu::slot::kIdxRope] = Rope.addr;
+        s[gpu::slot::kIdxQRaw] = IdxQRaw.addr;  s[gpu::slot::kIdxQ] = IdxQv.addr;
+        s[gpu::slot::kIdxWk] = addr(L, "attn.indexer.wk.weight");
+        s[gpu::slot::kIdxKNormW] = addr(L, "attn.indexer.k_norm.weight");
+        s[gpu::slot::kIdxLatent] = CmpLat.addr;
+        s[gpu::slot::kIdxKRaw] = IdxKRaw.addr;  s[gpu::slot::kIdxKCache] = IdxKC.addr;
+        s[gpu::slot::kIdxKFp4] = IdxKFp4.addr;  s[gpu::slot::kIdxKScale] = IdxKSc.addr;
+        s[gpu::slot::kIdxWProjW] = addr(L, "attn.indexer.weights_proj.weight");
+        s[gpu::slot::kIdxX] = U.addr;           s[gpu::slot::kIdxWeights] = IdxWt.addr;
+        s[gpu::slot::kIdxScore] = IdxSc.addr;   s[gpu::slot::kIdxOut] = Top.addr;
+        s[gpu::slot::kIdxQFp4] = IdxQFp4.addr;  s[gpu::slot::kIdxQScale] = IdxQSc.addr;
+        for (gpu::AttnStage st : {gpu::AttnStage::IdxQFinish, gpu::AttnStage::IdxKey,
+                                  gpu::AttnStage::IdxWeights, gpu::AttnStage::IdxScore,
+                                  gpu::AttnStage::IdxTopK})
+            std::memcpy(r.slots(st), s, gpu::kAttnStageStride);
+    };
+    const uint32_t idx_rows = idx_heads * idx_dim;
+    gpu::IdxPush iq{idx_rows, d.q_lora, d.q_lora / 32, idx_heads, idx_dim, d.rope_dim,
+                    n_cmp, n_cmp, d.window, 32, 1e-20f, idx_wscale};
+    rows.push_back(run("indexer.wq_b", gpu::AttnStage::IdxQGemv,
+                       fp8_bytes(idx_rows, d.q_lora), idx_slots, &iq, sizeof iq,
+                       runner.gemv_groups(gpu::AttnStage::IdxQGemv, idx_rows)));
+    rows.push_back(run("indexer.q_finish", gpu::AttnStage::IdxQFinish,
+                       uint64_t(idx_rows) * 6, idx_slots, &iq, sizeof iq, 1));
+    gpu::IdxPush ik = iq; ik.k = d.head_dim;
+    rows.push_back(run("indexer.key", gpu::AttnStage::IdxKey,
+                       bf16_bytes(idx_dim, d.head_dim), idx_slots, &ik, sizeof ik, 1));
+    gpu::IdxPush iw = iq; iw.rows = idx_heads; iw.k = d.dim;
+    rows.push_back(run("indexer.weights", gpu::AttnStage::IdxWeights,
+                       bf16_bytes(idx_heads, d.dim), idx_slots, &iw, sizeof iw, 1));
+    rows.push_back(run("indexer.score", gpu::AttnStage::IdxScore,
+                       uint64_t(n_cmp) * idx_dim * 2, idx_slots, &iq, sizeof iq,
+                       (n_cmp + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile));
+    rows.push_back(run("indexer.topk", gpu::AttnStage::IdxTopK,
+                       uint64_t(n_cmp) * 4, idx_slots, &iq, sizeof iq, 1));
+
     // --- report ---------------------------------------------------------
-    std::printf("\ndesign 7.14 decode path, lanes=%u subgroup=%u, %u layers cycled, "
-                "%u iterations/submit\n", o.lanes, o.subgroup, o.layers, o.iters);
+    std::printf("\ndesign 7.14 decode path, lanes=%u subgroup=%u rows=%u heads/wg=%u, "
+                "%u layers cycled, %u iterations/submit\n", o.lanes, o.subgroup, o.rows,
+                o.heads, o.layers, o.iters);
     if (!o.note.empty()) std::printf("note: %s\n", o.note.c_str());
     std::printf("%-22s %10s %12s %10s\n", "kernel", "us", "bytes", "GB/s");
-    double layer_us = 0, layer_bytes = 0;
+    // The 7.14 dispatches 1-9 run on every layer; the 7.4 compressor runs on
+    // four layers of forty and the indexer on eight, so they are totalled
+    // separately and the per-token line weights them by that.
+    double layer_us = 0, layer_bytes = 0, head_us = 0, cmp_us = 0, idx_us = 0;
     for (const Row& r : rows) {
         std::printf("%-22s %10.2f %12llu %10.1f\n", r.name, r.ms * 1e3,
                     static_cast<unsigned long long>(r.bytes), r.gbps());
-        if (std::strcmp(r.name, "head") != 0) { layer_us += r.ms * 1e3; layer_bytes += double(r.bytes); }
+        if (std::strcmp(r.name, "head") == 0)                  head_us += r.ms * 1e3;
+        else if (std::strncmp(r.name, "compressor.", 11) == 0) cmp_us  += r.ms * 1e3;
+        else if (std::strncmp(r.name, "indexer.", 8) == 0)     idx_us  += r.ms * 1e3;
+        else { layer_us += r.ms * 1e3; layer_bytes += double(r.bytes); }
     }
     std::printf("%-22s %10.2f %12.0f %10.1f\n", "  (one layer, 1-9)", layer_us, layer_bytes,
                 layer_us > 0 ? layer_bytes / (layer_us * 1e-6) / 1e9 : 0.0);
-    std::printf("  40 layers + head: %.2f ms/token\n",
-                (layer_us * 40 + (rows.empty() ? 0 : rows.back().ms * 1e3)) / 1e3);
+    std::printf("%-22s %10.2f   (4 of 40 layers)\n", "  (compressor, 7.4)", cmp_us);
+    std::printf("%-22s %10.2f   (8 of 40 layers)\n", "  (indexer, 7.4)", idx_us);
+    std::printf("  40 layers + head: %.2f ms/token, + %.3f ms for the 4 compressor and "
+                "8 indexer layers\n", (layer_us * 40 + head_us) / 1e3,
+                (cmp_us * 4 + idx_us * 8) / 1e3);
 
     if (!o.csv.empty()) {
         std::FILE* f = std::fopen(o.csv.c_str(), "w");
         if (f) {
-            std::fprintf(f, "kernel,lanes,subgroup,layers,iters,us,bytes,gbps,note\n");
+            std::fprintf(f, "kernel,lanes,subgroup,rows,heads_per_wg,layers,iters,us,bytes,gbps,note\n");
             for (const Row& r : rows)
-                std::fprintf(f, "%s,%u,%u,%u,%u,%.4f,%llu,%.2f,\"%s\"\n", r.name, o.lanes,
-                             o.subgroup, o.layers, o.iters, r.ms * 1e3,
+                std::fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%.4f,%llu,%.2f,\"%s\"\n", r.name, o.lanes,
+                             o.subgroup, o.rows, o.heads, o.layers, o.iters, r.ms * 1e3,
                              static_cast<unsigned long long>(r.bytes), r.gbps(), o.note.c_str());
             std::fclose(f);
             std::printf("-> %s\n", o.csv.c_str());

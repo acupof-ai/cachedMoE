@@ -15,6 +15,14 @@
 // a workgroup retires (256 / LanesPerRow) * RowsPerLane rows and stages x once
 // for all of them.
 
+// The LDS budget for the staged activation. wq_a's own K is the model dim,
+// 5120, but this is deliberately left at the 8192 maximum: sizing it down to
+// 5120 raised occupancy and measured 152 GB/s against 166: more resident
+// workgroups each re-staging a 5120-wide activation is more L2 traffic, not
+// less. wq_a is also the generic fp8 GEMV of the family, so 8192 keeps it able
+// to run any K in the model (fp8_gemv.slang).
+#define DEEPMOE_GEMV_MAX_K 8192
+
 #include "fp8_gemv.slang"
 
 static const uint kW = 0, kS = 1, kX = 2, kY = 3;
@@ -40,7 +48,10 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint rowBase = pc.row_base + gemv_row_base(gid.x, tid);
     float acc[kMaxRowsPerLane];
     gemv8_rows(Ptr[kW], Ptr[kS], rowBase, pc.k, pc.scale_cols, sublane, acc);
-    for (uint r = 0; r < RowsPerLane; ++r) {
+    // Unrolled against the compile-time bound, predicated on the
+    // specialisation constant: see gemv8_rows in fp8_gemv.slang.
+    [unroll] for (uint r = 0; r < kMaxRowsPerLane; ++r) {
+        if (r >= RowsPerLane) continue;
         const float y = row_reduce(acc[r], tid, sublane);
         if (sublane == 0 && rowBase + r < pc.rows)
             *(float*)(Ptr[kY] + (uint64_t)(rowBase + r) * 4) = y;

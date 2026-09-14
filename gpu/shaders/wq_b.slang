@@ -19,6 +19,10 @@
 // divides that block size, a rotation pair never straddles two workgroups: the
 // partner value is always in this workgroup's row results.
 
+// The LDS budget for the staged activation: wq_b's K is q_lora_rank = 1280, and a
+// workgroup never stages more (fp8_gemv.slang).
+#define DEEPMOE_GEMV_MAX_K 1280
+
 #include "fp8_gemv.slang"
 
 static const uint kW = 0, kS = 1, kQr = 2, kNormW = 3, kRope = 4, kQ = 5;
@@ -53,7 +57,10 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
 
     float acc[kMaxRowsPerLane];
     gemv8_rows(Ptr[kW], Ptr[kS], rowBase, pc.k, pc.scale_cols, sublane, acc);
-    for (uint r = 0; r < RowsPerLane; ++r) {
+    // Unrolled against the compile-time bound, predicated on the
+    // specialisation constant: see gemv8_rows in fp8_gemv.slang.
+    [unroll] for (uint r = 0; r < kMaxRowsPerLane; ++r) {
+        if (r >= RowsPerLane) continue;
         const float y = row_reduce(acc[r], tid, sublane);
         if (sublane == 0) gYrow[rowBase - base + r] = y;
     }

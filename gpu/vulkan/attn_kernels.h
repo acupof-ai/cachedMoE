@@ -63,6 +63,21 @@ enum class AttnStage : uint32_t {
     GateScore,     // §7.8
     GateTopK,      // §7.8: noaux_tc selection into host-coherent memory
     Head,          // §7.11
+    // --- §7.4's compressor and indexer, source layers only -------------------
+    // Appended, never inserted: runtime/ names these by enumerator and the
+    // table above is what the decode path indexes. A layer that is not a
+    // kv_source_layer dispatches none of the Cmp* stages, and one that is not
+    // an index_source_layer dispatches none of the Idx*.
+    CmpKvGemv,     // §7.4: compressor.wkv,   bf16 [512 x 5120]
+    CmpGateGemv,   // §7.4: compressor.wgate, bf16 [512 x 5120], ratio > 1 only
+    CmpNorm,       // §7.4: the state write, the softmax pooling, compressor.norm
+    CmpStore,      // §7.4: RoPE, FP4 block-16/E4M3, the compressed-KV write
+    IdxQGemv,      // §7.4: indexer.wq_b, fp8 [4096 x 1280] + q_norm
+    IdxQFinish,    // §7.4: RoPE + FP4 block-32/UE8M0 on the index queries
+    IdxKey,        // §7.4: k_norm(wk(latent)) -> the index-key cache
+    IdxWeights,    // §7.4: indexer.weights_proj, bf16 [32 x 5120]
+    IdxScore,      // §7.4: sum_h relu(q[h].k[t]) * w[h]
+    IdxTopK,       // §7.4: the index_topk best positions, in index order
     Count,
 };
 
@@ -81,6 +96,19 @@ struct AttnSpec {
     // traffic. 4 makes that 32 rows. Must divide the row count of every kernel
     // it is applied to, including wo_a's 1024-row groups.
     uint32_t rows_per_lane = 4;
+    // Heads one sparse_attn workgroup covers (§7.5). 1..8, and only sparse_attn
+    // reads it, and only when the caller pushes AttnPush::n_heads.
+    //
+    // It is 1, i.e. the KV is still read once per head, and that is a MEASURED
+    // choice rather than a default nobody touched. Grouping heads is what makes
+    // the 320 KiB of KV cross L2 8x instead of 64x, and it costs more than it
+    // saves, because 64 heads at 8 a workgroup is eight workgroups on forty CUs
+    // (us, score + combine, --layers 8): 1 -> 72, 2 -> 100, 4 -> 169, 8 -> 288.
+    // The traffic and the occupancy are traded against each other along the
+    // wrong axis; what design §7.5 actually wants is a head-group x KV-tile
+    // split with a partial-softmax combine, which keeps 64 workgroups AND reads
+    // the KV eight times. See docs/p2_attention.md §7.
+    uint32_t heads_per_wg = 1;
 };
 
 // --- push constants, mirroring the shaders exactly --------------------------
@@ -96,9 +124,34 @@ struct GemvPush { uint32_t rows, k, scale_cols, row_base; };
 struct WqbPush  { uint32_t rows, k, scale_cols, head_dim, rope_dim; float norm_eps; };
 struct WkvPush  { uint32_t rows, k, scale_cols, rope_dim, slot, n_wg0; float norm_eps; };
 struct WoaPush  { uint32_t rows, k, scale_cols, rows_per_group; };
-struct AttnPush { uint32_t n_kv, n_win, head_dim, rope_dim, score_stride; float softmax_scale; };
+// `n_heads` is ADDITIVE and optional: a caller that leaves it out (aggregate
+// initialisation zero-fills it) gets the pre-existing geometry, one workgroup
+// per head. Passing the real head count lets sparse_attn.slang put
+// AttnSpec::heads_per_wg heads in a workgroup, which divides both the
+// workgroup count -- see `attn_groups` -- and the 41 MB of L2 traffic
+// docs/p2_attention.md §7 item 2 is about.
+struct AttnPush {
+    uint32_t n_kv, n_win, head_dim, rope_dim, score_stride;
+    float    softmax_scale;
+    uint32_t n_heads = 0;
+};
 struct GatePush { uint32_t n_experts, k, topk, record; float gate_temp, route_scale; };
 struct HeadPush { uint32_t rows, k, row_base; };
+// §7.4. `complete` is `(start_pos + 1) % ratio == 0`: at ratio 1 it is always
+// true and at ratio 2 it is true every other token, which is the whole reason
+// the compressor carries state.
+struct CmpPush {
+    uint32_t rows, k, ratio, slot, complete, rope_dim, cmp_row;
+    float    norm_eps;
+};
+// §7.4. One struct for all six indexer stages; each fills the fields its stage
+// reads, because the dimensions differ per stage (stage 0 is [4096 x 1280],
+// stage 2 is [128 x 512], stage 3 is [32 x 5120]).
+struct IdxPush {
+    uint32_t rows, k, scale_cols, n_heads, head_dim, rope_dim;
+    uint32_t n_pos, topk, offset, k_row;
+    float    norm_eps, wscale;
+};
 
 // Slot indices inside a stage's address table. They are the `static const uint`
 // names at the top of each shader; keeping both lists in one place is the only
@@ -125,7 +178,24 @@ enum : uint32_t { kGateW = 0, kGateBias = 1, kGateX = 2, kGateScores = 3,
                   kGateIds = 4, kGateWeights = 5, kGateLayerDone = 6 };
 // head
 enum : uint32_t { kHeadW = 0, kHeadX = 1, kHeadLogits = 2 };
+// compressor (§7.4). kCmpY is the wkv projection and kCmpG the wgate one, so
+// the two stage-0 dispatches differ only in kCmpW and kCmpY.
+enum : uint32_t { kCmpW = 0, kCmpX = 1, kCmpY = 2, kCmpG = 3, kCmpKvState = 4,
+                  kCmpScoreState = 5, kCmpNormW = 6, kCmpLatent = 7, kCmpRope = 8,
+                  kCmpVal = 9, kCmpFp4 = 10, kCmpScaleB = 11, kCmpLatentQ = 12 };
+// indexer (§7.4)
+enum : uint32_t { kIdxW = 0, kIdxS = 1, kIdxQr = 2, kIdxQNormW = 3, kIdxRope = 4,
+                  kIdxQRaw = 5, kIdxQ = 6, kIdxWk = 7, kIdxKNormW = 8,
+                  kIdxLatent = 9, kIdxKRaw = 10, kIdxKCache = 11, kIdxKFp4 = 12,
+                  kIdxKScale = 13, kIdxWProjW = 14, kIdxX = 15, kIdxWeights = 16,
+                  kIdxScore = 17, kIdxOut = 18, kIdxQFp4 = 19, kIdxQScale = 20 };
 }  // namespace slot
+
+// Positions the §7.4 indexer's score stage covers in one workgroup, and the
+// head count its wave reduction assumes. `AttnRunner::create` rejects a spec
+// whose lanes_per_row is not the head count, because stage 4 puts the 32 heads
+// of one position in the 32 lanes of one wave.
+inline constexpr uint32_t kIdxScoreTile = 8;
 
 // A bump allocator over one host-visible, device-addressable buffer: every
 // activation of design §7.14 for one token fits in a couple of MB, so there is
@@ -190,6 +260,14 @@ public:
     // against 122 at rows_per_lane 2 -- and the gate's 384 rows are worse
     // still, so both are capped at 1.
     uint32_t rows_per_lane(AttnStage s) const;
+
+    // Workgroups for one sparse_attn stage over `n_heads` heads. A caller that
+    // pushes AttnPush::n_heads MUST dispatch this many; one that does not must
+    // dispatch `n_heads`, which is what this returns when heads_per_wg is 1.
+    uint32_t attn_groups(uint32_t n_heads) const {
+        const uint32_t g = spec_.heads_per_wg ? spec_.heads_per_wg : 1u;
+        return (n_heads + g - 1) / g;
+    }
 
     // Workgroups for a `rows`-tall GEMV of that stage.
     uint32_t gemv_groups(AttnStage s, uint32_t rows) const {

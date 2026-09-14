@@ -81,4 +81,5 @@ reports/
 
 # tools/oracle.py --level l2 caches the compressed token map next to its output
 tests/data/l2/token_map.npz
+tests/data/l2x/token_map.npz
 tests/data/l3/token_map.npz

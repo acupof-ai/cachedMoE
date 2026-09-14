@@ -15,8 +15,10 @@
 //
 // Gated on DEEPMOE_MODEL_DIR, on tests/data/l2 existing, and on a working
 // Vulkan device; a skip is a pass.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <string>
@@ -71,11 +73,26 @@ struct Rig {
     bool                  io_started = false;
     std::string           why;
 
-    ~Rig() { if (io_started) io.stop(); }
+    // `scratch` and `runner` go first by declaration order, but PinnedStore
+    // holds its regions through a SlabBacking and does not give them back on
+    // destruction, so the validation layers see one VkBuffer and one
+    // VkDeviceMemory outliving vkDestroyDevice unless it is reset by hand --
+    // the same call bench/attn_bench makes at the end of main.
+    ~Rig() {
+        scratch.destroy();
+        runner.destroy();
+        pinned.reset();
+        if (io_started) io.stop();
+    }
 
     bool bring_up() {
         const std::string dir = model_dir() ? model_dir() : "";
-        if (auto r = device.create({}); !r) { why = r.error().str(); return false; }
+        // The same switch bench/kernel_bench uses: VK_INSTANCE_LAYERS set in the
+        // environment turns the validation layers on, so a run with them is one
+        // env var rather than a rebuild.
+        gpu::DeviceOptions dopts;
+        dopts.enable_validation = std::getenv("VK_INSTANCE_LAYERS") != nullptr;
+        if (auto r = device.create(dopts); !r) { why = r.error().str(); return false; }
         if (auto r = device.caps().check_required(); !r) { why = r.error().str(); return false; }
         if (auto r = alloc.init(device, MemoryPath::DeviceLocalHostVisible); !r) {
             why = r.error().str(); return false;
@@ -422,6 +439,20 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::AttnScore, &ap, sizeof ap, d.n_heads));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::AttnCombine, &ap, sizeof ap, d.n_heads));
             CHECK(ok("sparse_attn+irope", agree(bO.read(qrows), g.f("attn_out_irope")), 0.99999, 1e-2));
+
+            // The same thing again with AttnPush::n_heads filled in, which puts
+            // AttnSpec::heads_per_wg heads in a workgroup instead of one and
+            // divides the 41 MB of L2 traffic by the same factor. The geometry
+            // is opt-in (see the field's comment), so both have to be right:
+            // the dispatch above is what a caller that predates it gets.
+            bO.zero();
+            gpu::AttnPush gp = ap;
+            gp.n_heads = d.n_heads;
+            const uint32_t ag = rig.runner.attn_groups(d.n_heads);
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::AttnScore, &gp, sizeof gp, ag));
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::AttnCombine, &gp, sizeof gp, ag));
+            CHECK(ok("  same, heads/wg grouped",
+                     agree(bO.read(qrows), g.f("attn_out_irope")), 0.99999, 1e-2));
         }
 
         // --- 6. wo_a, grouped and unquantised (design §7.6) --------------
@@ -562,4 +593,403 @@ DEEPMOE_TEST(gpu_attn, head_bf16_gemv) {
     const Agreement a = agree(bL.read(kRows), ref);
     std::printf("      %-22s %s\n", "head vs cpu fp64", a.str().c_str());
     CHECK(a.cos > 0.9999999 && a.rel < 1e-5);
+}
+
+// ---------------------------------------------------------------------------
+// design §7.4's compressor and indexer, against tests/data/l2x.
+//
+// These are the two stages docs/p2_attention.md §6 listed as "LOADED": until
+// they existed the decode step read the compressed KV and the top-k list out of
+// the oracle's prefill instead of producing them. Everything here is fed the
+// reference's own input and compared against the reference's own output, the
+// same contract as `l2_per_stage`.
+//
+// It runs against `tests/data/l2x`, not `tests/data/l2`, because three of the
+// tensors it needs are not in the oracle's own export -- the whole index-key
+// cache, the score it produces, and the ratio-2 compressor's carried state.
+// `tools/oracle_l2_extra.py` writes a superset of the L2 files with those
+// added; see its header for what each one is and, for `index_score`, what is
+// weaker about it than a capture point.
+//
+// Two things this CANNOT check against the reference, and why:
+//
+//   * **The ratio-2 pooling.** At decode position 64 a ratio-2 source's group
+//     does not complete ((64 + 1) % 2 != 0), so `Compressor.forward` returns
+//     None and there is no reference latent to compare to. What the reference
+//     does do is write slot 0 of both states, and that write IS checked. The
+//     pooling itself is then run on a synthetic complete group and compared
+//     against an fp64 CPU transcription of the reference expression.
+//   * **The top-k selection.** `index_topk` is 512 and a 64-token prefill at
+//     ratio 2 leaves 32 compressed positions, so `min(index_topk, n)` is n and
+//     the reference selects ALL of them. The comparison against `topk_idxs` is
+//     therefore real but degenerate; the radix select that runs when it is not
+//     degenerate is exercised by `gpu_attn.indexer_topk_select` below.
+DEEPMOE_TEST(gpu_attn, l2_compressor_indexer) {
+    if (skip_without_model("gpu_attn 7.4")) return;
+    const std::string dir = std::string(DEEPMOE_TEST_DATA_DIR) + "/l2x";
+    auto set = load_l2(dir);
+    if (!set) {
+        std::printf("      SKIP gpu_attn 7.4: no L2 extra data (%s). Run "
+                    "tools/oracle_l2_extra.py --out tests/data/l2x\n",
+                    set.error().str().c_str());
+        return;
+    }
+    Rig rig;
+    if (!rig.bring_up()) { std::printf("      SKIP gpu_attn 7.4: %s\n", rig.why.c_str()); return; }
+
+    Dims d;
+    d.dim      = static_cast<uint32_t>(set->cfg("dim", 5120));
+    d.head_dim = static_cast<uint32_t>(set->cfg("head_dim", 512));
+    d.rope_dim = static_cast<uint32_t>(set->cfg("rope_head_dim", 64));
+    d.q_lora   = static_cast<uint32_t>(set->cfg("q_lora_rank", 1280));
+    d.window   = static_cast<uint32_t>(set->cfg("window_size", 128));
+    const uint32_t nih = static_cast<uint32_t>(set->cfg("index_n_heads", 32));
+    const uint32_t ihd = static_cast<uint32_t>(set->cfg("index_head_dim", 128));
+    const uint32_t irows = nih * ihd;
+    const uint32_t pos = set->decode_pos;
+    const uint32_t kMaxPos = 1024;
+
+    gpu::GpuScratch& S = rig.scratch;
+    Buf bU     = take(S, d.dim * 4),          bQr   = take(S, d.q_lora * 4);
+    Buf bRopeQ = take(S, 256),                bRopeL = take(S, 256);
+    Buf bCmpY  = take(S, d.head_dim * 4),     bCmpG = take(S, d.head_dim * 4);
+    Buf bKvSt  = take(S, 8ull * d.head_dim * 4), bScSt = take(S, 8ull * d.head_dim * 4);
+    Buf bLat   = take(S, d.head_dim * 4),     bLatQ = take(S, d.head_dim * 4);
+    Buf bCFp4  = take(S, d.head_dim / 2),     bCScB = take(S, d.head_dim / 16);
+    Buf bCmp   = take(S, uint64_t(kMaxPos) * d.head_dim * 2);
+    Buf bIQRaw = take(S, irows * 4),          bIQ   = take(S, irows * 2);
+    Buf bIQFp4 = take(S, irows / 2),          bIQSc = take(S, irows / 32);
+    Buf bIKRaw = take(S, ihd * 4),            bIKC  = take(S, uint64_t(kMaxPos) * ihd * 2);
+    Buf bIKFp4 = take(S, ihd / 2),            bIKSc = take(S, 64);
+    Buf bIWt   = take(S, nih * 4),            bISc  = take(S, kMaxPos * 4);
+    Buf bTop   = take(S, (kMaxPos + 256) * 4);
+    REQUIRE(bTop.v.valid());
+
+    // How many bytes of a u8 plane differ from the oracle's. A difference is
+    // not automatically a bug -- our input differs from the reference's in the
+    // last bf16 bits, so a value on a rounding boundary codes one step away --
+    // which is why the dequantised value is what the cosine gate sees and the
+    // byte count is reported beside it.
+    auto byte_diff = [](const uint8_t* got, const std::vector<float>& want) {
+        size_t n = 0;
+        for (size_t i = 0; i < want.size(); ++i)
+            if (static_cast<float>(got[i]) != want[i]) ++n;
+        return n;
+    };
+
+    uint32_t checked = 0;
+    for (const L2Step& g : set->steps) {
+        const uint32_t L = g.layer;
+        const uint32_t ratio = static_cast<uint32_t>(g.f("cmp_ratio")[0]);
+        std::printf("    layer %u (%s, compress_ratio %u)\n", L, g.step.c_str(), ratio);
+        REQUIRE(rig.load_layer(L));
+        const std::string p = std::format("layers.{}", L);
+
+        // Two positions, not one. q is rotated at this token's position; a
+        // latent stands for the FIRST token of its group, so it and the index
+        // key derived from it are rotated at start_pos + 1 - ratio.
+        const runtime::RopeConfig rc = runtime::rope_for_layer(ratio, d.rope_dim);
+        const std::vector<float> rq = runtime::rope_table(rc, pos);
+        const std::vector<float> rl = runtime::rope_table(rc, pos + 1 - ratio);
+        std::memcpy(bRopeQ.v.host, rq.data(), rq.size() * 4);
+        std::memcpy(bRopeL.v.host, rl.data(), rl.size() * 4);
+
+        const uint32_t slot = pos % ratio;
+        const uint32_t complete = ((pos + 1) % ratio == 0) ? 1u : 0u;
+        gpu::CmpPush cp{d.head_dim, d.dim, ratio, slot, complete, d.rope_dim,
+                        pos / ratio, d.norm_eps};
+
+        auto cmp_slots = [&](gpu::AttnStage st, const char* wname, Buf& y) {
+            uint64_t* s = rig.runner.slots(st);
+            s[gpu::slot::kCmpW] = rig.addr(p + "." + wname);
+            s[gpu::slot::kCmpX] = bU.a();
+            s[gpu::slot::kCmpY] = y.a();
+            s[gpu::slot::kCmpG] = bCmpG.a();
+            s[gpu::slot::kCmpKvState] = bKvSt.a();
+            s[gpu::slot::kCmpScoreState] = bScSt.a();
+            s[gpu::slot::kCmpNormW] = rig.addr(p + ".attn.compressor.norm.weight");
+            s[gpu::slot::kCmpLatent] = bLat.a();
+            s[gpu::slot::kCmpRope] = bRopeL.a();
+            s[gpu::slot::kCmpVal] = bCmp.a();
+            s[gpu::slot::kCmpFp4] = bCFp4.a();
+            s[gpu::slot::kCmpScaleB] = bCScB.a();
+            s[gpu::slot::kCmpLatentQ] = bLatQ.a();
+            return s;
+        };
+
+        // --- compressor.wkv, and wgate when the layer pools (7.4) ---------
+        {
+            bU.set(g.f("attn_norm_out"));
+            cmp_slots(gpu::AttnStage::CmpKvGemv, "attn.compressor.wkv.weight", bCmpY);
+            const uint32_t gw = rig.runner.gemv_groups(gpu::AttnStage::CmpKvGemv, d.head_dim);
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::CmpKvGemv, &cp, sizeof cp, gw));
+            CHECK(ok("compressor.wkv", agree(bCmpY.read(d.head_dim), g.f("cmp_wkv_out")),
+                     0.99999, 5e-3));
+            if (ratio > 1) {
+                cmp_slots(gpu::AttnStage::CmpGateGemv, "attn.compressor.wgate.weight", bCmpG);
+                REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::CmpGateGemv, &cp, sizeof cp, gw));
+                CHECK(ok("compressor.wgate", agree(bCmpG.read(d.head_dim), g.f("cmp_wgate_out")),
+                         0.99999, 5e-3));
+            }
+        }
+
+        // --- compressor state + pooling + norm (7.4) ----------------------
+        {
+            bCmpY.set(g.f("cmp_wkv_out"));
+            if (ratio > 1) bCmpG.set(g.f("cmp_wgate_out"));
+            bKvSt.zero(); bScSt.zero(); bLat.zero();
+            cmp_slots(gpu::AttnStage::CmpNorm, "attn.compressor.wkv.weight", bCmpY);
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::CmpNorm, &cp, sizeof cp, 1));
+
+            if (ratio > 1) {
+                // The group does not complete here, so what the reference did
+                // was write slot pos % ratio of both states and return None.
+                const std::vector<float>& gk = g.f("cmp_state_kv");
+                const std::vector<float>& gs = g.f("cmp_state_score");
+                std::vector<float> wantk(gk.begin() + size_t(slot) * d.head_dim,
+                                         gk.begin() + size_t(slot + 1) * d.head_dim);
+                std::vector<float> wants(gs.begin() + size_t(slot) * d.head_dim,
+                                         gs.begin() + size_t(slot + 1) * d.head_dim);
+                std::vector<float> gotk(d.head_dim), gots(d.head_dim);
+                std::memcpy(gotk.data(), bKvSt.f() + size_t(slot) * d.head_dim, d.head_dim * 4);
+                std::memcpy(gots.data(), bScSt.f() + size_t(slot) * d.head_dim, d.head_dim * 4);
+                CHECK(ok("cmp kv_state[slot]", agree(gotk, wantk), 0.99999, 5e-3));
+                CHECK(ok("cmp score_state[slot]", agree(gots, wants), 0.99999, 5e-3));
+
+                // The pooling itself, on a synthetic complete group, compared
+                // against an fp64 transcription of the reference expression --
+                // at this position the reference produced no latent at all.
+                for (uint32_t j = 0; j < ratio; ++j) {
+                    std::memcpy(bKvSt.f() + size_t(j) * d.head_dim,
+                                g.f("cmp_wkv_out").data(), d.head_dim * 4);
+                    for (uint32_t i = 0; i < d.head_dim; ++i)
+                        bScSt.f()[size_t(j) * d.head_dim + i] =
+                            g.f("cmp_wgate_out")[i] * (1.0f + 0.25f * float(j));
+                }
+                gpu::CmpPush cf = cp;
+                cf.slot = ratio - 1;
+                cf.complete = 1;
+                bLat.zero();
+                REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::CmpNorm, &cf, sizeof cf, 1));
+
+                const auto* nw = static_cast<const uint16_t*>(
+                    rig.pinned.find(p + ".attn.compressor.norm.weight")->data_host);
+                std::vector<float> ref(d.head_dim);
+                double sq = 0;
+                for (uint32_t i = 0; i < d.head_dim; ++i) {
+                    double mx = -1e300, den = 0, num = 0;
+                    for (uint32_t j = 0; j < ratio; ++j)
+                        mx = std::max(mx, double(bScSt.f()[size_t(j) * d.head_dim + i]));
+                    for (uint32_t j = 0; j < ratio; ++j) {
+                        const double e = std::exp(double(bScSt.f()[size_t(j) * d.head_dim + i]) - mx);
+                        den += e;
+                        num += e * double(bKvSt.f()[size_t(j) * d.head_dim + i]);
+                    }
+                    // kv.to(dtype) before the norm: the reference's one bf16
+                    // rounding on the ratio > 1 path.
+                    ref[i] = cpu::bf16_to_float(cpu::float_to_bf16(float(num / den)));
+                    sq += double(ref[i]) * double(ref[i]);
+                }
+                const double rs = 1.0 / std::sqrt(sq / d.head_dim + d.norm_eps);
+                for (uint32_t i = 0; i < d.head_dim; ++i)
+                    ref[i] = cpu::bf16_to_float(cpu::float_to_bf16(
+                        float(double(ref[i]) * rs * double(cpu::bf16_to_float(nw[i])))));
+                CHECK(ok("cmp pool+norm (cpu)", agree(bLat.read(d.head_dim), ref), 0.9999999, 1e-5));
+            } else {
+                CHECK(ok("compressor.norm", agree(bLat.read(d.head_dim), g.f("latent_pre_rope")),
+                         0.99999, 5e-3));
+            }
+        }
+
+        // --- compressor RoPE + FP4 block-16/E4M3 + the cache write ---------
+        if (g.find("latent") != nullptr) {
+            bLat.set(g.f("latent_pre_rope"));
+            bCmp.zero(); bLatQ.zero();
+            cmp_slots(gpu::AttnStage::CmpStore, "attn.compressor.wkv.weight", bCmpY);
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::CmpStore, &cp, sizeof cp, 1));
+            CHECK(ok("compressor.store", agree(bLatQ.read(d.head_dim), g.f("latent")),
+                     0.9999, 2e-2));
+            std::printf("      %-22s %zu/%zu E2M1 nibble bytes, %zu/%zu E4M3 scale bytes differ\n",
+                        "cmp_kv fp4 bytes",
+                        byte_diff(bCFp4.u8(), g.f("latent_fp4")), g.f("latent_fp4").size(),
+                        byte_diff(bCScB.u8(), g.f("latent_scale_e4m3")),
+                        g.f("latent_scale_e4m3").size());
+            // The compressed-KV cache row sparse_attn will read.
+            std::vector<float> row(d.head_dim);
+            for (uint32_t i = 0; i < d.head_dim; ++i)
+                row[i] = bf16_to_f32(bCmp.u16()[size_t(cp.cmp_row) * d.head_dim + i]);
+            CHECK(ok("cmp_kv cache row", agree(row, g.f("latent")), 0.9999, 2e-2));
+        }
+
+        // --- the indexer (7.4) --------------------------------------------
+        const float wscale = 1.0f / std::sqrt(float(ihd)) / std::sqrt(float(nih));
+        gpu::IdxPush ip{irows, d.q_lora, d.q_lora / 32, nih, ihd, d.rope_dim,
+                        0, 0, d.window, pos / ratio, d.norm_eps, wscale};
+        auto idx_slots = [&](gpu::AttnStage st, uint64_t rope) {
+            uint64_t* s = rig.runner.slots(st);
+            s[gpu::slot::kIdxW] = rig.addr(p + ".attn.indexer.wq_b.weight");
+            s[gpu::slot::kIdxS] = rig.scale_addr(p + ".attn.indexer.wq_b.weight");
+            s[gpu::slot::kIdxQr] = bQr.a();
+            s[gpu::slot::kIdxQNormW] = rig.addr(p + ".attn.q_norm.weight");
+            s[gpu::slot::kIdxRope] = rope;
+            s[gpu::slot::kIdxQRaw] = bIQRaw.a();
+            s[gpu::slot::kIdxQ] = bIQ.a();
+            s[gpu::slot::kIdxWk] = rig.addr(p + ".attn.indexer.wk.weight");
+            s[gpu::slot::kIdxKNormW] = rig.addr(p + ".attn.indexer.k_norm.weight");
+            s[gpu::slot::kIdxLatent] = bLat.a();
+            s[gpu::slot::kIdxKRaw] = bIKRaw.a();
+            s[gpu::slot::kIdxKCache] = bIKC.a();
+            s[gpu::slot::kIdxKFp4] = bIKFp4.a();
+            s[gpu::slot::kIdxKScale] = bIKSc.a();
+            s[gpu::slot::kIdxWProjW] = rig.addr(p + ".attn.indexer.weights_proj.weight");
+            s[gpu::slot::kIdxX] = bU.a();
+            s[gpu::slot::kIdxWeights] = bIWt.a();
+            s[gpu::slot::kIdxScore] = bISc.a();
+            s[gpu::slot::kIdxOut] = bTop.a();
+            s[gpu::slot::kIdxQFp4] = bIQFp4.a();
+            s[gpu::slot::kIdxQScale] = bIQSc.a();
+            return s;
+        };
+
+        {   // indexer.wq_b, with q_norm and the act_quant round trip fused
+            bQr.set(g.f("wq_a_out"));
+            idx_slots(gpu::AttnStage::IdxQGemv, bRopeQ.a());
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::IdxQGemv, &ip, sizeof ip,
+                          rig.runner.gemv_groups(gpu::AttnStage::IdxQGemv, irows)));
+            CHECK(ok("indexer.wq_b", agree(bIQRaw.read(irows), g.f("index_q_pre_rope")),
+                     0.99999, 5e-3));
+        }
+        {   // RoPE + FP4 block-32/UE8M0 on q
+            bIQRaw.set(g.f("index_q_pre_rope"));
+            idx_slots(gpu::AttnStage::IdxQFinish, bRopeQ.a());
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::IdxQFinish, &ip, sizeof ip, 1));
+            CHECK(ok("indexer.q rope+fp4", agree(bIQ.read_bf16(irows), g.f("index_q")),
+                     0.9999, 2e-2));
+        }
+        if (g.find("index_k") != nullptr) {
+            // The index key, off the compressor's pre-RoPE latent.
+            bLat.set(g.f("latent_pre_rope"));
+            bIKC.zero();
+            gpu::IdxPush ik = ip;
+            ik.k = d.head_dim;
+            idx_slots(gpu::AttnStage::IdxKey, bRopeL.a());
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::IdxKey, &ik, sizeof ik, 1));
+            CHECK(ok("indexer.wk+k_norm", agree(bIKRaw.read(ihd), g.f("index_k_pre_rope")),
+                     0.99999, 5e-3));
+            std::vector<float> krow(ihd);
+            for (uint32_t i = 0; i < ihd; ++i)
+                krow[i] = bf16_to_f32(bIKC.u16()[size_t(ik.k_row) * ihd + i]);
+            CHECK(ok("indexer.key rope+fp4", agree(krow, g.f("index_k")), 0.9999, 2e-2));
+            std::printf("      %-22s %zu/%zu E2M1 nibble bytes, %zu/%zu UE8M0 scale bytes differ\n",
+                        "index_k fp4 bytes",
+                        byte_diff(bIKFp4.u8(), g.f("index_k_fp4")), g.f("index_k_fp4").size(),
+                        byte_diff(bIKSc.u8(), g.f("index_k_scale_e8m0")),
+                        g.f("index_k_scale_e8m0").size());
+        }
+        {   // weights_proj, already scaled by softmax_scale * n_heads ** -0.5
+            bU.set(g.f("attn_norm_out"));
+            gpu::IdxPush iw = ip;
+            iw.rows = nih;
+            iw.k = d.dim;
+            idx_slots(gpu::AttnStage::IdxWeights, bRopeQ.a());
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::IdxWeights, &iw, sizeof iw, 1));
+            CHECK(ok("indexer.weights_proj", agree(bIWt.read(nih), g.f("index_weights_scaled")),
+                     0.99999, 5e-3));
+        }
+        const uint32_t npos = static_cast<uint32_t>(g.f("index_compress_len")[0]);
+        const uint32_t ntop = static_cast<uint32_t>(g.f("index_topk_n")[0]);
+        {   // the scores, against the reference's own q, keys and weights
+            const std::vector<float>& kall = g.f("index_k_all");
+            for (size_t i = 0; i < kall.size(); ++i) bIKC.u16()[i] = cpu::float_to_bf16(kall[i]);
+            for (size_t i = 0; i < g.f("index_q").size(); ++i)
+                bIQ.u16()[i] = cpu::float_to_bf16(g.f("index_q")[i]);
+            bIWt.set(g.f("index_weights_scaled"));
+            bISc.zero();
+            gpu::IdxPush is = ip;
+            is.n_pos = npos;
+            is.topk = ntop;
+            idx_slots(gpu::AttnStage::IdxScore, bRopeQ.a());
+            const uint32_t sg = (npos + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile;
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::IdxScore, &is, sizeof is, sg));
+            CHECK(ok("indexer.score", agree(bISc.read(npos), g.f("index_score")), 0.99999, 5e-3));
+
+            // ... and the selection. topk == n_pos at this context, so the
+            // reference keeps every compressed position and the comparison is
+            // exact but degenerate; the non-degenerate path has its own case.
+            bISc.set(g.f("index_score"));
+            for (uint32_t i = 0; i < ntop; ++i) bTop.u32()[d.window + i] = 0xFFFFFFFFu;
+            // A stage owns its OWN slice of the address table, so the top-k
+            // needs its slots written even though it reads the same buffers.
+            idx_slots(gpu::AttnStage::IdxTopK, bRopeQ.a());
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::IdxTopK, &is, sizeof is, 1));
+            const std::vector<float>& want = g.f("topk_idxs");
+            uint32_t bad = 0;
+            for (uint32_t i = 0; i < ntop; ++i)
+                if (static_cast<int32_t>(bTop.u32()[d.window + i]) !=
+                    static_cast<int32_t>(want[d.window + i])) ++bad;
+            std::printf("      %-22s %u/%u positions match the reference's set "
+                        "(topk=%u of %u reachable)\n", "indexer.topk", ntop - bad, ntop,
+                        ntop, npos);
+            CHECK_EQ(bad, 0u);
+        }
+        ++checked;
+    }
+    std::printf("    %u source layers checked\n", checked);
+    CHECK(checked > 0);
+}
+
+// The radix select of indexer.slang stage 5, on a case the checkpoint's own
+// geometry never reaches.
+//
+// index_topk is 512 and the L2 export's context leaves 32 or 65 compressed
+// positions, so min(index_topk, n) is always n and the selection above is the
+// identity. At a real 64K context it is 512 of 32768, which is a different code
+// path entirely: four 8-bit histogram passes to find the key of the k-th
+// largest, then a chunked prefix sum to emit the winners in ascending position
+// order. This drives that path and checks it against a CPU stable sort.
+DEEPMOE_TEST(gpu_attn, indexer_topk_select) {
+    if (skip_without_model("gpu_attn topk")) return;
+    Rig rig;
+    if (!rig.bring_up()) { std::printf("      SKIP gpu_attn topk: %s\n", rig.why.c_str()); return; }
+
+    constexpr uint32_t kN = 4096, kK = 512, kOffset = 128;
+    gpu::GpuScratch& S = rig.scratch;
+    Buf bSc = take(S, kN * 4), bOut = take(S, (kN + kOffset) * 4);
+    REQUIRE(bOut.v.valid());
+
+    // A deterministic spread with both signs and exact duplicates, so the tie
+    // rule is exercised as well as the ordering.
+    std::vector<float> sc(kN);
+    for (uint32_t i = 0; i < kN; ++i)
+        sc[i] = std::sin(float(i) * 0.7913f) * 10.0f + ((i % 37 == 0) ? 3.5f : 0.0f);
+    for (uint32_t i = 0; i < 64; ++i) sc[i * 61 % kN] = 2.5f;       // a tie cluster
+    bSc.set(sc);
+    for (uint32_t i = 0; i < kN + kOffset; ++i) bOut.u32()[i] = 0xFFFFFFFFu;
+
+    uint64_t* s = rig.runner.slots(gpu::AttnStage::IdxTopK);
+    s[gpu::slot::kIdxScore] = bSc.a();
+    s[gpu::slot::kIdxOut] = bOut.a();
+    gpu::IdxPush ip{};
+    ip.n_pos = kN;
+    ip.topk = kK;
+    ip.offset = kOffset;
+    REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::IdxTopK, &ip, sizeof ip, 1));
+
+    // The reference set: the kK largest, ties broken towards the lowest index,
+    // which is what stage 5's chunked tie rank does.
+    std::vector<uint32_t> order(kN);
+    for (uint32_t i = 0; i < kN; ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(),
+                     [&](uint32_t a, uint32_t b) { return sc[a] > sc[b]; });
+    std::vector<uint32_t> want(order.begin(), order.begin() + kK);
+    std::sort(want.begin(), want.end());
+
+    uint32_t bad = 0;
+    for (uint32_t i = 0; i < kK; ++i) {
+        const int32_t got = static_cast<int32_t>(bOut.u32()[kOffset + i]);
+        if (got != static_cast<int32_t>(want[i] + kOffset)) ++bad;
+    }
+    std::printf("      %-22s %u/%u of the top-%u match a CPU stable sort over %u positions\n",
+                "indexer.topk select", kK - bad, kK, kK, kN);
+    CHECK_EQ(bad, 0u);
 }

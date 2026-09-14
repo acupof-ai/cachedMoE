@@ -27,6 +27,16 @@ const char* attn_stage_name(AttnStage s) {
         case AttnStage::GateScore:   return "gate.score";
         case AttnStage::GateTopK:    return "gate.topk";
         case AttnStage::Head:        return "head";
+        case AttnStage::CmpKvGemv:   return "compressor.wkv";
+        case AttnStage::CmpGateGemv: return "compressor.wgate";
+        case AttnStage::CmpNorm:     return "compressor.norm";
+        case AttnStage::CmpStore:    return "compressor.store";
+        case AttnStage::IdxQGemv:    return "indexer.wq_b";
+        case AttnStage::IdxQFinish:  return "indexer.q_finish";
+        case AttnStage::IdxKey:      return "indexer.key";
+        case AttnStage::IdxWeights:  return "indexer.weights";
+        case AttnStage::IdxScore:    return "indexer.score";
+        case AttnStage::IdxTopK:     return "indexer.topk";
         case AttnStage::Count:       break;
     }
     return "?";
@@ -100,6 +110,9 @@ struct StageDef {
     uint32_t    stage_const;
     uint32_t    act_quant;
     uint32_t    rows_cap;     // largest rows_per_lane this shader may use
+    // Whether row_reduce is one WaveActiveSum (1) or the LDS tree (0). Not a
+    // free win either way -- attn_common.slang's row_reduce has the sweep.
+    uint32_t    wave_reduce;
 };
 
 // wo_a is the one entry with act_quant = 0: `Attention.forward` reaches its
@@ -112,24 +125,40 @@ struct StageDef {
 // kernels gain from it and everything else loses, including the head, whose
 // activation is only 20 KiB and already in LDS.
 constexpr StageDef kStages[] = {
-    {AttnStage::MhcPost,     "mega_mhc",    0, 1, 1},
-    {AttnStage::MhcMix,      "mega_mhc",    1, 1, 1},
-    {AttnStage::MhcFinal,    "mega_mhc",    2, 1, 1},
-    {AttnStage::MhcPostB,    "mega_mhc",    0, 1, 1},
-    {AttnStage::MhcMixB,     "mega_mhc",    1, 1, 1},
-    {AttnStage::MhcFinalB,   "mega_mhc",    2, 1, 1},
-    {AttnStage::MhcClose,    "mega_mhc",    0, 1, 1},
-    {AttnStage::WqA,         "wq_a",        0, 1, 2},   // 1280 rows: 125 -> 147 GB/s
-    {AttnStage::WqB,         "wq_b",        0, 1, 2},   // 32768:      114 -> 160
-    {AttnStage::WkvGemv,     "wkv",         0, 1, 1},   // 512: workgroup-starved
-    {AttnStage::WkvFinish,   "wkv",         1, 1, 1},
-    {AttnStage::AttnScore,   "sparse_attn", 0, 1, 1},
-    {AttnStage::AttnCombine, "sparse_attn", 1, 1, 1},
-    {AttnStage::WoA,         "wo_a",        0, 0, 1},   // 8192:  166 -> 132, so 1
-    {AttnStage::WoB,         "wo_b",        0, 1, 1},   // 5120:  124 -> 114, so 1
-    {AttnStage::GateScore,   "gate",        0, 1, 1},   // 384: no row blocking
-    {AttnStage::GateTopK,    "gate",        1, 1, 1},
-    {AttnStage::Head,        "head",        0, 1, 1},   // 129280: 235 -> 208, so 1
+    {AttnStage::MhcPost,     "mega_mhc",    0, 1, 1, 1},
+    {AttnStage::MhcMix,      "mega_mhc",    1, 1, 1, 1},
+    {AttnStage::MhcFinal,    "mega_mhc",    2, 1, 1, 1},
+    {AttnStage::MhcPostB,    "mega_mhc",    0, 1, 1, 1},
+    {AttnStage::MhcMixB,     "mega_mhc",    1, 1, 1, 1},
+    {AttnStage::MhcFinalB,   "mega_mhc",    2, 1, 1, 1},
+    {AttnStage::MhcClose,    "mega_mhc",    0, 1, 1, 1},
+    {AttnStage::WqA,         "wq_a",        0, 1, 2, 0},   // 1280 rows: 125 -> 147 GB/s
+    {AttnStage::WqB,         "wq_b",        0, 1, 2, 1},   // 32768:      114 -> 160
+    {AttnStage::WkvGemv,     "wkv",         0, 1, 1, 1},   // 512: workgroup-starved
+    {AttnStage::WkvFinish,   "wkv",         1, 1, 1, 1},
+    {AttnStage::AttnScore,   "sparse_attn", 0, 1, 1, 1},
+    {AttnStage::AttnCombine, "sparse_attn", 1, 1, 1, 1},
+    {AttnStage::WoA,         "wo_a",        0, 0, 1, 0},   // 8192:  166 -> 132, so 1
+    {AttnStage::WoB,         "wo_b",        0, 1, 1, 1},   // 5120:  124 -> 114, so 1
+    {AttnStage::GateScore,   "gate",        0, 1, 1, 1},   // 384: no row blocking
+    {AttnStage::GateTopK,    "gate",        1, 1, 1, 1},
+    {AttnStage::Head,        "head",        0, 1, 1, 1},   // 129280: 235 -> 208, so 1
+    // §7.4. The compressor's two projections are bf16 [512 x 5120], the same
+    // shape wkv is fp8, and workgroup-starved for the same reason: 512 rows at
+    // eight a workgroup is 64 of them on 40 CUs, and row blocking would make it
+    // worse, not better.
+    {AttnStage::CmpKvGemv,   "compressor",  0, 1, 1, 1},
+    {AttnStage::CmpGateGemv, "compressor",  0, 1, 1, 1},
+    {AttnStage::CmpNorm,     "compressor",  1, 1, 1, 1},
+    {AttnStage::CmpStore,    "compressor",  2, 1, 1, 1},
+    // The indexer's wq_b is [4096 x 1280] -- tall and narrow like the main
+    // wq_b, so the same rows_per_lane cap of 2.
+    {AttnStage::IdxQGemv,    "indexer",     0, 1, 2, 1},
+    {AttnStage::IdxQFinish,  "indexer",     1, 1, 1, 1},
+    {AttnStage::IdxKey,      "indexer",     2, 1, 1, 1},
+    {AttnStage::IdxWeights,  "indexer",     3, 1, 1, 1},
+    {AttnStage::IdxScore,    "indexer",     4, 1, 1, 1},
+    {AttnStage::IdxTopK,     "indexer",     5, 1, 1, 1},
 };
 static_assert(sizeof(kStages) / sizeof(kStages[0]) ==
               static_cast<size_t>(AttnStage::Count));
@@ -147,7 +176,8 @@ Result<void> AttnRunner::make(AttnStage s, const std::string& spv, uint32_t stag
     ps.lanes_per_row = spec_.lanes_per_row;
     ps.rows_per_wg   = 256 / spec_.lanes_per_row;
     ps.subgroup_size = spec_.subgroup_size;
-    ps.extra = {stage_const, act_quant, rows_per_lane(s)};
+    ps.extra = {stage_const, act_quant, rows_per_lane(s), spec_.heads_per_wg,
+                kStages[static_cast<uint32_t>(s)].wave_reduce};
     PipelineLayoutSpec la;
     la.storage_buffers    = 1;    // the address table slice, and nothing else
     la.push_constant_size = kPushBytes;
@@ -162,6 +192,17 @@ Result<void> AttnRunner::create(Device& device, MemoryAllocator& alloc,
         return fail(Err::InvalidArgument, "lanes_per_row must be 16, 32 or 64 (design §7.1 rule 3)");
     if (spec.rows_per_lane != 1 && spec.rows_per_lane != 2 && spec.rows_per_lane != 4)
         return fail(Err::InvalidArgument, "rows_per_lane must be 1, 2 or 4");
+    // sparse_attn.slang sizes its staged-q LDS at kMaxHeadsPerWg * 512, and its
+    // stage 1 gives a thread head_dim * heads_per_wg / 256 output dims against
+    // a 16-wide register array.
+    if (spec.heads_per_wg < 1 || spec.heads_per_wg > 8)
+        return fail(Err::InvalidArgument, "heads_per_wg must be 1..8 (design §7.5)");
+    // The indexer's score stage (§7.4) puts the 32 heads of one position in the
+    // 32 lanes of one wave, and sparse_attn's score stage does the same for the
+    // 32 lanes of a KV row.
+    if (spec.subgroup_size != 32)
+        return fail(Err::InvalidArgument,
+                    "sparse_attn and indexer.score both reduce across one Wave32");
     // wo_a's block-diagonal groups are o_lora_rank = 1024 rows; a workgroup
     // that straddled two of them would stage the wrong slice of `o`.
     const uint32_t per_wg = (256 / spec.lanes_per_row) * spec.rows_per_lane;

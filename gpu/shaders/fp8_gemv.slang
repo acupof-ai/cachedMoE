@@ -9,93 +9,178 @@
 //
 // The activation
 // --------------
-// x is staged once per workgroup into LDS *already quantised*, as the E4M3
-// byte plus the block's power-of-two scale. Three things fall out of that:
+// x is staged once per workgroup into LDS *already quantised*, as BF16 holding
+// the E4M3-rounded value plus the block's power-of-two scale. Three things
+// fall out of that:
 //
 //   * the `act_quant` round trip design §6 does not mention but every fp8
 //     `Linear` performs (see attn_common.slang) happens once per workgroup
-//     instead of once per row group -- with 8 row groups in a 256-thread
-//     workgroup that is an 8x saving on the only expensive arithmetic here;
-//   * x costs 1 B + 1/32 float per element in LDS instead of 4 B, so the
-//     largest case (wo_b, K = 8192) needs 9 KiB and still leaves room for the
-//     decode table inside the 32 KiB of design §1.1;
-//   * the inner loop becomes two table lookups and an FMA, which is exactly
-//     the shape kernel_p1.md §3.2 found to be 1.4x the arithmetic decode.
+//     instead of once per row group;
+//   * the inner loop becomes two LDS reads, a table lookup and an FMA, which is
+//     the shape kernel_p1.md §3.2 found to be 1.4x the arithmetic decode;
+//   * the block scale is a power of two and rejoins the accumulator through
+//     `ldexp`, so folding it out of the inner loop is exact.
 //
-// The block scale is a power of two and the accumulator is scaled with `ldexp`,
-// so folding it out of the inner loop is exact, not an approximation.
+// x is staged as BF16, not as the E4M3 byte. The byte would be half the LDS but
+// costs a second LDS access per element -- one for the byte's word, one to
+// index the decode table -- and LDS ports are what this kernel runs out of.
+// Measured: the byte form ran wq_b at 165 GB/s and wo_b at 141, while wo_a,
+// which stages bf16 because its activation is not quantised at all, hit 260 on
+// the same recipe. Storing the quantised VALUE as bf16 is exact, an E4M3
+// number having three mantissa bits.
+//
+// What the P2 bandwidth pass changed (docs/p2_attention.md §7 item 1)
+// ------------------------------------------------------------------
+// wq_b and wo_b sat at 157 and 121 GB/s against a 217 GB/s ceiling while wo_a,
+// the same kernel with the quantisation switched off, reached 167. The gap was
+// never the weight stream; it was three things in the staging and the
+// reduction, none of which had anything to do with reading weights:
+//
+//   1. **The LDS budget was wo_b's for everyone.** `gXQ` was sized for
+//      K = 8192 unconditionally, so wq_b -- whose K is 1280 -- reserved 16 KiB
+//      to use 2.5 KiB and ran at a third of the occupancy it could have.
+//      `DEEPMOE_GEMV_MAX_K` is now defined by the including shader. It is NOT
+//      simply "make it as small as K": wq_a and wo_a both measured slower with
+//      a tight budget (152 against 166 GB/s for wq_a), because more resident
+//      workgroups each re-staging a 4-5K-wide activation is more L2 traffic,
+//      not less. The kernels that gain are the ones whose activation is small
+//      to begin with -- wq_b and the indexer's wq_b at K = 1280 -- where the
+//      occupancy is free. Both sides are in the per-shader #define.
+//   2. **Only K/32 of the 256 threads staged anything.** One thread owned one
+//      32-element `act_quant` block, so wq_b staged 1280 activations on 40
+//      threads while 216 idled through the most expensive arithmetic in the
+//      kernel. Threads per block is now a compile-time function of the same
+//      K, and the block amax becomes a reduction over those threads.
+//   3. **`fp8_round` was branchy.** See attn_common.slang: it is now nine
+//      instructions and no branches, which matters because wo_b runs it 32
+//      times per thread before the first weight byte is read.
+//
+// Plus `row_reduce` collapsing to one `WaveActiveSum` (attn_common.slang). The
+// row loop was also tried unrolled against `kMaxRowsPerLane` with a
+// specialisation-constant predicate, on the theory that a loop bounded by
+// RowsPerLane leaves `acc[]` dynamically indexed and therefore in scratch --
+// p2_attention.md §4.4's trap, one step removed. It measured 1% SLOWER on
+// every one of the five, so the driver evidently folds the specialisation
+// constant before it decides where `acc` lives, and the plain loop stays.
 
 #include "attn_common.slang"
 
-// K <= 8192 (wo_b): 16 KiB of staged x, plus the 1 KiB decode table and the
-// 1 KiB reduction scratch, inside the 32 KiB of design §1.1.
-//
-// x is staged as BF16, not as the E4M3 byte, even on the quantised path. The
-// byte would be half the LDS, but it costs a second LDS access per element --
-// one to fetch the byte's word, one to index the decode table -- and LDS ports
-// are what this kernel runs out of. Measured: the byte form ran wq_b at 165
-// GB/s and wo_b at 141, while wo_a, which stages bf16 because its activation
-// is not quantised at all, hit 260 on the same recipe. Storing the quantised
-// VALUE as bf16 is exact (an E4M3 number has three mantissa bits) and makes
-// both paths one shift and one table lookup.
-//
-// The power-of-two block scale stays out of the stored value and is folded
-// into the accumulator with `ldexp`, which keeps the staged number in a safe
-// range whatever the block's magnitude.
-static const uint kMaxK      = 8192;
-static const uint kMaxBlocks = kMaxK / kBlockK;      // 256, = one block per thread
+// The widest activation this .spv will ever stage, which sets the LDS budget.
+// Each including shader defines it before the include; 8192 (wo_b's K, the
+// widest in the model) is the safe default. A dispatch whose pushed `k`
+// exceeds it would walk off gXQ, so the host side keeps the two in step:
+// gpu/vulkan/attn_kernels.cpp's kStages table carries the same number.
+#ifndef DEEPMOE_GEMV_MAX_K
+#define DEEPMOE_GEMV_MAX_K 8192
+#endif
+
+static const uint kMaxK      = DEEPMOE_GEMV_MAX_K;
+static const uint kMaxBlocks = kMaxK / kBlockK;
 
 groupshared uint  gXQ[kMaxK / 2];     // the staged activation, two bf16 per word
 groupshared float gXS[kMaxBlocks];    // one power-of-two scale per 32 elements
 
-// Write one 32-element block of already-scaled activation into LDS as bf16.
-void store_x_block(uint blk, const float v[32]) {
-    [unroll] for (uint i = 0; i < 16; ++i)
-        gXQ[blk * 16 + i] = bf16_encode(v[i * 2]) | (bf16_encode(v[i * 2 + 1]) << 16);
+// Threads that cooperate on one 32-element act_quant block, and the elements
+// each of them owns. A power of two <= 8 so the amax reduction is a handful of
+// LDS reads, and chosen so the whole workgroup is busy whenever K is small
+// enough for that: K = 1280 gives 40 blocks and 4 threads each (160 of 256
+// busy instead of 40), K = 4096 gives 2, K >= 8192 gives 1 with all 256 busy
+// on one block apiece.
+static const uint kStageRaw = kWg / kMaxBlocks;
+static const uint kStageTPB = (kStageRaw >= 8u) ? 8u
+                            : ((kStageRaw >= 4u) ? 4u
+                            : ((kStageRaw >= 2u) ? 2u : 1u));
+static const uint kStageE   = kBlockK / kStageTPB;    // 32, 16, 8 or 4
+
+// amax over the kStageTPB threads of one block, broadcast to all of them.
+// Whole workgroup, uniform control flow.
+float stage_amax(float a, uint tid, uint sub) {
+    if (kStageTPB == 1) return a;
+    gRed[tid] = a;
+    GroupMemoryBarrierWithGroupSync();
+    float m = 0.0f;
+    [unroll] for (uint j = 0; j < kStageTPB; ++j) m = max(m, gRed[tid - sub + j]);
+    GroupMemoryBarrierWithGroupSync();
+    return m;
 }
 
-// `act_quant` one block in place and return its scale; 1.0 when ActQuant is off.
-float quant_x_block(inout float v[32]) {
-    if (ActQuant == 0) return 1.0f;
-    float amax = 0.0f;
-    [unroll] for (uint i = 0; i < 32; ++i) amax = max(amax, abs(v[i]));
-    const float s = act_scale(amax);
-    const float inv = 1.0f / s;
-    // The stored value is q, not q * s: bf16 holds every E4M3 number exactly,
-    // and the scale rejoins the accumulator through ldexp.
-    [unroll] for (uint i = 0; i < 32; ++i)
-        v[i] = fp8_round(clamp(v[i] * inv, -kFp8MaxF, kFp8MaxF));
-    return s;
+// This thread's slice of one block, into LDS as bf16.
+void stage_store(uint blk, uint sub, const float v[kStageE]) {
+    [unroll] for (uint i = 0; i < kStageE / 2; ++i)
+        gXQ[blk * 16 + sub * (kStageE / 2) + i] =
+            bf16_encode(v[i * 2]) | (bf16_encode(v[i * 2 + 1]) << 16);
 }
 
 // Stage `k` activations from `xaddr` (fp32) into gXQ/gXS. Whole workgroup,
-// uniform control flow, barrier afterwards. One thread owns one 32-element
-// block, which is also exactly the granularity `act_quant` works at.
+// uniform control flow, barrier afterwards.
 void stage_x_fp8(uint64_t xaddr, uint k, uint tid) {
     const uint blocks = k / kBlockK;
-    if (tid < blocks) {
-        float v[32];
-        [unroll] for (uint i = 0; i < 8; ++i) {
-            const uint4 w = load16(xaddr + (uint64_t)tid * 128 + (uint64_t)i * 16);
-            [unroll] for (uint j = 0; j < 4; ++j) v[i * 4 + j] = asfloat(w[j]);
+    // wo_a's path: nothing to quantise, so nothing to share a block for, and
+    // splitting one anyway measured 144 GB/s against 167. kStageTPB exists to
+    // spread the `act_quant` arithmetic; with no arithmetic it is pure cost.
+    if (ActQuant == 0) {
+        if (tid < blocks) {
+            float w[32];
+            [unroll] for (uint i = 0; i < 8; ++i) {
+                const uint4 q = load16(xaddr + (uint64_t)tid * 128 + (uint64_t)i * 16);
+                [unroll] for (uint j = 0; j < 4; ++j) w[i * 4 + j] = asfloat(q[j]);
+            }
+            [unroll] for (uint i = 0; i < 16; ++i)
+                gXQ[tid * 16 + i] = bf16_encode(w[i * 2]) | (bf16_encode(w[i * 2 + 1]) << 16);
+            gXS[tid] = 1.0f;
         }
-        gXS[tid] = quant_x_block(v);
-        store_x_block(tid, v);
+        return;
+    }
+
+    const uint blk = tid / kStageTPB, sub = tid % kStageTPB;
+    const bool active = blk < blocks;
+    float v[kStageE];
+    float amax = 0.0f;
+    [unroll] for (uint z = 0; z < kStageE; ++z) v[z] = 0.0f;
+    if (active) {
+        const uint64_t base = xaddr + ((uint64_t)blk * kBlockK + sub * kStageE) * 4;
+        [unroll] for (uint i = 0; i < kStageE / 4; ++i) {
+            const uint4 w = load16(base + (uint64_t)i * 16);
+            [unroll] for (uint j = 0; j < 4; ++j) {
+                v[i * 4 + j] = asfloat(w[j]);
+                amax = max(amax, abs(v[i * 4 + j]));
+            }
+        }
+    }
+    // Every thread reaches the reduction -- it has barriers in it whenever
+    // kStageTPB > 1 -- but only the ones with a block to quantise pay for the
+    // rounding. K = 5120 leaves 96 of 256 threads with nothing, and letting
+    // them run 32 `fp8_round`s each is 8% off wq_a.
+    const float a = stage_amax(amax, tid, sub);
+    if (active) {
+        const float s = act_scale(a);
+        const float inv = 1.0f / s;
+        // The stored value is q, not q * s: bf16 holds every E4M3 number
+        // exactly, and the scale rejoins the accumulator through ldexp.
+        [unroll] for (uint i = 0; i < kStageE; ++i)
+            v[i] = fp8_round(clamp(v[i] * inv, -kFp8MaxF, kFp8MaxF));
+        stage_store(blk, sub, v);
+        if (sub == 0) gXS[blk] = s;
     }
 }
 
 // The same staging with an RMSNorm folded in, which is how design §7.3's
 // `q_norm` disappears into wq_b: the norm needs a statistic over all of x, and
-// the staging pass already has all of x in registers one block per thread.
-// `normw` is a bf16 vector. All 256 threads must call this.
+// the staging pass already has all of x in registers. `normw` is a bf16 vector.
+// All 256 threads must call this.
 void stage_x_fp8_rmsnorm(uint64_t xaddr, uint64_t normw, uint k, uint tid, float eps) {
     const uint blocks = k / kBlockK;
-    float v[32];
-    [unroll] for (uint z = 0; z < 32; ++z) v[z] = 0.0f;
+    const uint blk = tid / kStageTPB, sub = tid % kStageTPB;
+    const bool active = blk < blocks;
+    const uint d0 = blk * kBlockK + sub * kStageE;
+
+    float v[kStageE];
+    [unroll] for (uint z = 0; z < kStageE; ++z) v[z] = 0.0f;
     float sq = 0.0f;
-    if (tid < blocks) {
-        [unroll] for (uint i = 0; i < 8; ++i) {
-            const uint4 w = load16(xaddr + (uint64_t)tid * 128 + (uint64_t)i * 16);
+    if (active) {
+        const uint64_t base = xaddr + (uint64_t)d0 * 4;
+        [unroll] for (uint i = 0; i < kStageE / 4; ++i) {
+            const uint4 w = load16(base + (uint64_t)i * 16);
             [unroll] for (uint j = 0; j < 4; ++j) {
                 v[i * 4 + j] = asfloat(w[j]);
                 sq += v[i * 4 + j] * v[i * 4 + j];
@@ -103,16 +188,31 @@ void stage_x_fp8_rmsnorm(uint64_t xaddr, uint64_t normw, uint k, uint tid, float
         }
     }
     const float rs = rsqrt(wg_reduce(sq, tid) / float(k) + eps);
-    if (tid < blocks) {
-        [unroll] for (uint i = 0; i < 32; ++i) {
+
+    float amax = 0.0f;
+    if (active) {
+        [unroll] for (uint i = 0; i < kStageE; ++i) {
             // bf16_round: RMSNorm.forward ends in `.to(dtype)` and the default
             // dtype is bf16. See attn_common.slang for why keeping fp32 here
             // costs agreement rather than buying precision.
             v[i] = bf16_round(v[i] * rs *
-                              bf16_decode(load_u16(normw + (uint64_t)(tid * 32 + i) * 2)));
+                              bf16_decode(load_u16(normw + (uint64_t)(d0 + i) * 2)));
+            amax = max(amax, abs(v[i]));
         }
-        gXS[tid] = quant_x_block(v);
-        store_x_block(tid, v);
+    }
+    float s = 1.0f;
+    if (ActQuant != 0) {
+        const float a = stage_amax(amax, tid, sub);
+        if (active) {
+            s = act_scale(a);
+            const float inv = 1.0f / s;
+            [unroll] for (uint i = 0; i < kStageE; ++i)
+                v[i] = fp8_round(clamp(v[i] * inv, -kFp8MaxF, kFp8MaxF));
+        }
+    }
+    if (active) {
+        stage_store(blk, sub, v);
+        if (sub == 0) gXS[blk] = s;
     }
 }
 
@@ -131,7 +231,7 @@ void read_x_block(uint blk, out float v[32]) {
 // per-lane partials; the caller reduces each.
 //
 // The rows are walked together so their weight loads are independent streams
-// in flight at once -- the same reason kernel_p1.md ss3.3 found RowsPerLane
+// in flight at once -- the same reason kernel_p1.md §3.3 found RowsPerLane
 // worth 13% on the FP4 path at M=6 -- and so the LDS read of x is shared
 // across them instead of repeated.
 void gemv8_rows(uint64_t wbase, uint64_t sbase, uint rowBase, uint k,
@@ -142,6 +242,10 @@ void gemv8_rows(uint64_t wbase, uint64_t sbase, uint rowBase, uint k,
         float x[32];
         read_x_block(blk, x);
         const float xs = gXS[blk];
+        // Unrolled against the compile-time bound with a specialisation
+        // constant predicate: a loop bounded by RowsPerLane itself would leave
+        // acc[] dynamically indexed, and p2_attention.md §4.4 is the record of
+        // what that costs when the compiler then spills it to scratch.
         for (uint r = 0; r < RowsPerLane; ++r) {
             const uint     row    = rowBase + r;
             const uint64_t rowoff = (uint64_t)row * (uint64_t)k;

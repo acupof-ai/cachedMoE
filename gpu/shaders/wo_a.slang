@@ -16,6 +16,11 @@
 //    workgroup never straddles two groups and can stage the one 4096-wide
 //    slice of `o` its group needs.
 
+// The LDS budget for the staged activation. wo_a's K is one group's 4096-wide
+// slice of o; like wq_a it is left at 8192, because the smaller budget buys
+// occupancy this kernel does not want (fp8_gemv.slang).
+#define DEEPMOE_GEMV_MAX_K 8192
+
 #include "fp8_gemv.slang"
 
 static const uint kW = 0, kS = 1, kO = 2, kY = 3;
@@ -44,7 +49,10 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint rowBase = gemv_row_base(gid.x, tid);
     float acc[kMaxRowsPerLane];
     gemv8_rows(Ptr[kW], Ptr[kS], rowBase, pc.k, pc.scale_cols, sublane, acc);
-    for (uint r = 0; r < RowsPerLane; ++r) {
+    // Unrolled against the compile-time bound, predicated on the
+    // specialisation constant: see gemv8_rows in fp8_gemv.slang.
+    [unroll] for (uint r = 0; r < kMaxRowsPerLane; ++r) {
+        if (r >= RowsPerLane) continue;
         const float y = row_reduce(acc[r], tid, sublane);
         if (sublane == 0 && rowBase + r < pc.rows)
             *(float*)(Ptr[kY] + (uint64_t)(rowBase + r) * 4) = y;

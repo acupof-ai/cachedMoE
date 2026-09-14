@@ -82,6 +82,8 @@ set(DEEPMOE_SHADERS
     gpu/shaders/wq_b.slang
     gpu/shaders/wkv.slang
     gpu/shaders/sparse_attn.slang
+    gpu/shaders/compressor.slang
+    gpu/shaders/indexer.slang
     gpu/shaders/wo_a.slang
     gpu/shaders/wo_b.slang
     gpu/shaders/gate.slang
