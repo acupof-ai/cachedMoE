@@ -64,9 +64,9 @@ struct Opts {
     uint32_t    arith  = 0;   // 1 = arithmetic E4M3 decode instead of the LDS table
     // AttnSpec's sweep hooks, as comma-separated stage names.
     std::string rows4, wave_on, wave_off;
-    uint32_t    tiles  = 8;   // KV tiles for sparse_attn_t
+    uint32_t    tiles  = 32;  // KV tiles for sparse_attn_t.score (§13.5 optimum)
     uint32_t    theads = 8;   // heads per workgroup for sparse_attn_t.score
-    uint32_t    pvtiles = 0;  // KV tiles for sparse_attn_t.pv; 0 = --tiles
+    uint32_t    pvtiles = 1;  // KV tiles for sparse_attn_t.pv; 0 = --tiles
     uint32_t    pvheads = 1;  // heads per workgroup for sparse_attn_t.pv
     // Synthetic KV length for the §7.5 rows. 0 = the L3 decode geometry, i.e.
     // the 128-slot window plus the 65 compressed positions a 64-token prefill
@@ -140,9 +140,9 @@ int main(int argc, char** argv) {
     o.rows4    = arg_after(argc, argv, "--rows4", "");
     o.wave_on  = arg_after(argc, argv, "--wave-on", "");
     o.wave_off = arg_after(argc, argv, "--wave-off", "");
-    o.tiles  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--tiles", "8").c_str()));
+    o.tiles  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--tiles", "32").c_str()));
     o.theads = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--tile-heads", "8").c_str()));
-    o.pvtiles = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--pv-tiles", "0").c_str()));
+    o.pvtiles = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--pv-tiles", "1").c_str()));
     o.pvheads = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--pv-heads", "1").c_str()));
     o.kv     = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--kv", "0").c_str()));
     o.subgroup = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--subgroup", "32").c_str()));
@@ -481,10 +481,15 @@ int main(int argc, char** argv) {
     // through L2 is 64x this, once per head; see docs/p2_attention.md.
     const uint64_t kv_unique = uint64_t(d.window) * (d.head_dim + d.head_dim / 32)
                              + uint64_t(n_cmp) * d.head_dim * 2;
-    rows.push_back(run("sparse_attn.score", gpu::AttnStage::AttnScore, kv_unique,
-                       at_slots, &ap, sizeof ap, at_groups));
-    rows.push_back(run("sparse_attn.combine", gpu::AttnStage::AttnCombine, kv_unique,
-                       at_slots, &ap, sizeof ap, at_groups));
+    // The classic kernel stages the index list in a 1024-entry LDS table; past
+    // that it falls back to a load per position, which is a different kernel,
+    // so --kv beyond it measures only sparse_attn_t.
+    if (n_kv <= 1024) {
+        rows.push_back(run("sparse_attn.score", gpu::AttnStage::AttnScore, kv_unique,
+                           at_slots, &ap, sizeof ap, at_groups));
+        rows.push_back(run("sparse_attn.combine", gpu::AttnStage::AttnCombine, kv_unique,
+                           at_slots, &ap, sizeof ap, at_groups));
+    }
 
     // --- sparse_attn_t: the head-group x KV-tile grid (§13) ---------------
     gpu::AttnTPush tp{n_kv, d.window, d.head_dim, d.rope_dim, n_kv,
@@ -703,11 +708,13 @@ int main(int argc, char** argv) {
     gpu::IdxPush iw = iq; iw.rows = idx_heads; iw.k = d.dim;
     rows.push_back(run("indexer.weights", gpu::AttnStage::IdxWeights,
                        bf16_bytes(idx_heads, d.dim), idx_slots, &iw, sizeof iw, 1));
-    rows.push_back(run("indexer.score", gpu::AttnStage::IdxScore,
-                       uint64_t(n_cmp) * idx_dim * 2, idx_slots, &iq, sizeof iq,
-                       (n_cmp + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile));
-    rows.push_back(run("indexer.topk", gpu::AttnStage::IdxTopK,
-                       uint64_t(n_cmp) * 4, idx_slots, &iq, sizeof iq, 1));
+    if (n_cmp <= n_cmp_max) {   // the index-key scratch is sized for 1024
+        rows.push_back(run("indexer.score", gpu::AttnStage::IdxScore,
+                           uint64_t(n_cmp) * idx_dim * 2, idx_slots, &iq, sizeof iq,
+                           (n_cmp + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile));
+        rows.push_back(run("indexer.topk", gpu::AttnStage::IdxTopK,
+                           uint64_t(n_cmp) * 4, idx_slots, &iq, sizeof iq, 1));
+    }
 
     // --- report ---------------------------------------------------------
     std::printf("\ndesign 7.14 decode path, lanes=%u subgroup=%u rows=%u heads/wg=%u, "

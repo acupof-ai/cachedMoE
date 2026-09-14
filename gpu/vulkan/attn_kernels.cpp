@@ -167,13 +167,13 @@ constexpr StageDef kStages[] = {
     // quantised, and the row blocking. The combine half is the same .spv's
     // stage 1 and has no knobs at all. `ksplit` comes from AttnSpec at create
     // time; docs/p2_attention.md §13 has the sweep behind each number.
-    {AttnStage::WqAKSplit,   "gemv_ksplit", 0, 1, 4, 0},
+    {AttnStage::WqAKSplit,   "gemv_ksplit", 0, 1, 1, 0},
     {AttnStage::WqAKCombine, "gemv_ksplit", 1, 1, 1, 1},
-    {AttnStage::WkvKSplit,   "gemv_ksplit", 0, 1, 4, 1},
+    {AttnStage::WkvKSplit,   "gemv_ksplit", 0, 1, 1, 1},
     {AttnStage::WkvKFinish,  "wkv",         2, 1, 1, 1},
-    {AttnStage::WoAKSplit,   "gemv_ksplit", 0, 0, 4, 0},
+    {AttnStage::WoAKSplit,   "gemv_ksplit", 0, 0, 1, 0},
     {AttnStage::WoAKCombine, "gemv_ksplit", 1, 1, 1, 1},
-    {AttnStage::WoBKSplit,   "gemv_ksplit", 0, 1, 4, 1},
+    {AttnStage::WoBKSplit,   "gemv_ksplit", 0, 1, 1, 1},
     {AttnStage::WoBKCombine, "gemv_ksplit", 1, 1, 1, 1},
     {AttnStage::AttnScoreT,  "sparse_attn_t", 0, 1, 1, 1},
     {AttnStage::AttnPvT,     "sparse_attn_t", 1, 1, 1, 1},

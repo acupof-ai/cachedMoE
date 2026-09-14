@@ -157,13 +157,22 @@ float grp_sum(float v, uint tid, uint n) {
 }
 
 // The final row max of `head`: the largest of its n_tiles tile maxima, clamped
-// the way the reference clamps its running max. Cheap enough that stages 1 and
-// 2 each just do it rather than pay a dispatch to share it.
+// the way the reference clamps its running max. Every P.V and finish thread
+// evaluates it, so it is written as four independent max chains meeting at the
+// end rather than one chain `n_tiles` long: at 32 tiles the single chain cost
+// the P.V stage 3 us against 4 tiles (§13.5). Bounded by the compile-time
+// kMaxTiles, never by the push constant (p2_attention.md §4.4).
+static const uint kMaxTiles = 64;
 float row_max(uint head) {
-    float m = -3.0e38f;
-    for (uint z = 0; z < pc.n_tiles; ++z)
-        m = max(m, load_f32(Ptr[kTileMax] + ((uint64_t)head * pc.n_tiles + z) * 4));
-    return max(m, -1.0e30f);
+    const uint64_t b = Ptr[kTileMax] + (uint64_t)head * pc.n_tiles * 4;
+    float m0 = -3.0e38f, m1 = -3.0e38f, m2 = -3.0e38f, m3 = -3.0e38f;
+    [unroll] for (uint z = 0; z < kMaxTiles; z += 4) {
+        if (z     < pc.n_tiles) m0 = max(m0, load_f32(b + (uint64_t)z * 4));
+        if (z + 1 < pc.n_tiles) m1 = max(m1, load_f32(b + (uint64_t)(z + 1) * 4));
+        if (z + 2 < pc.n_tiles) m2 = max(m2, load_f32(b + (uint64_t)(z + 2) * 4));
+        if (z + 3 < pc.n_tiles) m3 = max(m3, load_f32(b + (uint64_t)(z + 3) * 4));
+    }
+    return max(max(max(m0, m1), max(m2, m3)), -1.0e30f);
 }
 
 // --- stage 0: scores, and one max per (head, tile) --------------------------

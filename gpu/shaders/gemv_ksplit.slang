@@ -25,9 +25,11 @@
 // The activation IS re-staged per slice, so the staging traffic is unchanged
 // as well: KSplit times as many workgroups each staging 1/KSplit of x.
 //
-// The cost is one fp32 partial per (slice, row) and a combine dispatch. For
-// wo_b that is 5120 x KSplit floats and a dispatch of 20 workgroups, i.e. about
-// a microsecond against the 85 the split is worth.
+// The cost is one fp32 partial per (slice, row) and a combine dispatch of
+// ceil(rows / 256) workgroups: 1.0-1.4 us measured. What it buys, idle,
+// docs/p2_attention.md §13.3: wo_b 260 -> 204 us at 8 slices, wo_a 195 -> 162
+// at 4, wq_a 38 -> 35 at 2, wkv (with its finish folded in) 19 -> 17 at 2 --
+// and only at ONE row a lane; at two rows a lane the split loses.
 //
 // Re-association
 // --------------
@@ -36,8 +38,10 @@
 // where the `WaveActiveSum` across the 32 lanes of a row group falls: it now
 // happens once per slice instead of once per row, so the result is the same sum
 // re-associated, not a different sum. `tests/test_gpu_attn.cpp` measures the
-// difference against the unsplit kernel and prints it; it is a couple of ULP,
-// two orders below the bf16 floor the reference itself sits on (§3).
+// difference against the unsplit kernel and prints it: relative L2 5e-8 to 7e-8
+// on every layer, i.e. fp32 round-off, four orders of magnitude under the
+// 1.6e-3 bf16 floor the reference itself sits on (§3). Agreement with the
+// oracle is unchanged to nine digits.
 //
 // Geometry
 // --------

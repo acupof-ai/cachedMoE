@@ -176,7 +176,16 @@ float grp_max(float v, uint tid, uint n) {
 }
 
 void load_idx(uint tid) {
-    for (uint t = tid; t < pc.n_kv; t += kWg) gIdx[t] = (int)load_u32(Ptr[kTopIdx] + (uint64_t)t * 4);
+    const uint n = min(pc.n_kv, kMaxKv);
+    for (uint t = tid; t < n; t += kWg) gIdx[t] = (int)load_u32(Ptr[kTopIdx] + (uint64_t)t * 4);
+}
+
+// The index at `t`: from LDS inside the staged range, from memory past it. The
+// real decode geometry never gets past it -- window 128 + index_topk 512 -- but a
+// caller that pushes a longer list must get a slower answer, not a corrupted
+// workgroup. sparse_attn_t.slang is the kernel for long lists (§13.5).
+int idx_at(uint t) {
+    return (t < kMaxKv) ? gIdx[t] : (int)load_u32(Ptr[kTopIdx] + (uint64_t)t * 4);
 }
 
 // --- stage 0: the scores ----------------------------------------------------
@@ -197,7 +206,7 @@ void stage_score(uint gid, uint tid) {
     const uint waves = kWg / 32;
     const uint d0 = lane * span;
     for (uint t = wave; t < pc.n_kv; t += waves) {
-        const int idx = gIdx[t];
+        const int idx = idx_at(t);
         float v[kMaxSpan];
         [unroll] for (uint z = 0; z < kMaxSpan; ++z) v[z] = 0.0f;
         if (idx >= 0) kv_span((uint)idx, d0, span, v);
@@ -254,7 +263,7 @@ void stage_combine(uint gid, uint tid) {
     float lsum = 0.0f;
     for (uint t = sub; t < pc.n_kv; t += tph) {
         float p = 0.0f;
-        if (gIdx[t] >= 0) p = bf16_decode(bf16_encode(exp(load_f32(sc + (uint64_t)t * 4) - mx)));
+        if (idx_at(t) >= 0) p = bf16_decode(bf16_encode(exp(load_f32(sc + (uint64_t)t * 4) - mx)));
         *(float*)(sc + (uint64_t)t * 4) = p;
         lsum += p;
     }
@@ -276,7 +285,7 @@ void stage_combine(uint gid, uint tid) {
     float acc[kMaxSpan];
     [unroll] for (uint i = 0; i < kMaxSpan; ++i) acc[i] = 0.0f;
     for (uint t = grp; t < pc.n_kv; t += ngrp) {
-        const int idx = gIdx[t];
+        const int idx = idx_at(t);
         if (idx < 0) continue;
         const float p = load_f32(sc + (uint64_t)t * 4);
         if (p == 0.0f) continue;

@@ -127,7 +127,9 @@ struct AttnSpec {
     // reads it, and only when the caller pushes AttnPush::n_heads.
     //
     // It is 1, i.e. the KV is still read once per head, and that is a MEASURED
-    // choice rather than a default nobody touched. Grouping heads is what makes
+    // choice rather than a default nobody touched -- re-measured after the P3
+    // LDS fix at 1 -> 54, 2 -> 76, 4 -> 117, 8 -> 209 us (docs/p2_attention.md
+    // §13.5); the replacement is AttnScoreT/AttnPvT, not this knob. Grouping heads is what makes
     // the 320 KiB of KV cross L2 8x instead of 64x, and it costs more than it
     // saves, because 64 heads at 8 a workgroup is eight workgroups on forty CUs
     // (us, score + combine, --layers 8): 1 -> 72, 2 -> 100, 4 -> 169, 8 -> 288.
@@ -149,6 +151,8 @@ struct AttnSpec {
     // the trade: the slice is narrower, so the LDS a workgroup holds is
     // smaller, so it can afford to retire more rows against one staged
     // activation than the unsplit kernel could. 0 = follow `rows_per_lane`.
+    // Measured, it could not: kStages caps all four split stages at 1 row a
+    // lane (§13.3), and the bench lifts the cap with `sweep_rows_cap4`.
     uint32_t rows_per_lane_ksplit = 0;
     // Decode E4M3 arithmetically instead of through the 256-entry LDS table
     // (attn_common.slang `fp8_tbl`). Applies to every fp8 kernel in the family.
@@ -161,11 +165,13 @@ struct AttnSpec {
     uint64_t sweep_wave_on     = 0;   // force WaveReduce = 1
     uint64_t sweep_wave_off    = 0;   // force WaveReduce = 0
     // K-split factors, per family, for the *KSplit stages. Each must divide
-    // K/32 and leave K / ksplit <= kGemvKSplitMaxSlice.
+    // K/32 and leave K / ksplit <= kGemvKSplitMaxSlice. Measured optima
+    // (docs/p2_attention.md §13.3): wq_a 5120/2, wkv 5120/2, wo_a 4096/4 and
+    // wo_b 8192/8, all at one row a lane.
     uint32_t ksplit_wq_a = 2;
-    uint32_t ksplit_wkv  = 4;
-    uint32_t ksplit_wo_a = 1;
-    uint32_t ksplit_wo_b = 2;
+    uint32_t ksplit_wkv  = 2;
+    uint32_t ksplit_wo_a = 4;
+    uint32_t ksplit_wo_b = 8;
 };
 
 // The widest K slice gemv_ksplit.slang stages, i.e. its `DEEPMOE_GEMV_MAX_K`.
@@ -217,6 +223,9 @@ struct AttnPush {
 // `(n_heads / pv_heads_per_wg) * pv_tiles` over tiles of `pv_tile_len`, and the
 // kPartO / kPartD planes are laid out by `pv_tiles`. kTileMax is always
 // [n_heads][n_tiles].
+// n_tiles <= 64 (sparse_attn_t.slang kMaxTiles). Measured geometry, §13.5:
+// n_tiles 32, pv_tiles 1 at the decode geometry (n_kv <= 640); n_tiles 64,
+// pv_tiles 8 at a synthetic 4K-32K list.
 struct AttnTPush {
     uint32_t n_kv, n_win, head_dim, rope_dim, score_stride;
     float    softmax_scale;

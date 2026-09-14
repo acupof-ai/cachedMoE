@@ -14,7 +14,9 @@ prefill. Raw data: `tests/data/l2/`, `tests/data/l2x/`,
 them are what the numbers in step 2 are measured against. **§9–§12 are step 2**:
 the §7.4 compressor and indexer, which §6 listed as "loaded", and the bandwidth
 items §7 opened. Where the two disagree — §5's table, §6's status table, §7's
-list — step 2 is the current one.
+list — step 2 is the current one. **§13 is P3 Track J** (the LDS bank-conflict
+fix, the K-split GEMVs and the tiled sparse attention: one layer 893 → 696 µs)
+and supersedes §10’s bandwidth table and §11’s list.
 
 ---
 
@@ -855,3 +857,442 @@ Track G calls these kernels. Nothing existing moved:
   step, where a group holds one token and a query is one row. The prefill forms
   (`start_pos == 0`, a whole chunk pooled at once, a per-query `compress_lens`
   mask) are in the reference and are not written.
+
+---
+
+## 13. P3 Track J — the attention path at 696 µs a layer
+
+Status: **2026-09-14**, same machine and checkpoint. Raw data:
+`bench/results/attn_p3.csv`. Commits: the kernels, then this section.
+
+**How "idle" was established this time.** Two other tracks were running CPU
+oracles and GPU benchmarks for most of the session. A CPU-only load turned out
+not to matter — with a 12-core Python oracle running, `head` still read 233.4
+GB/s and every kernel matched the idle numbers. GPU work from another process
+does matter, and it comes in bursts short enough that `head` alone can miss one
+(a run with `head` at 233 had every other kernel 3× slow). Every number below
+is from a run with `head` ≥ 230 GB/s **and** `mega_mhc.post` ≤ 2.6 µs, taken
+while no other GPU process was alive; runs that failed the gate were thrown away
+and repeated. Run-to-run noise at that gate is ±3%.
+
+### 13.0 The result in one table
+
+`bench/attn_bench --layers 8 --iters 64 --rows 2`, the same binary for both
+columns; "P2" is the shader directory of commit 0964e5e, "P3" the defaults this
+section ends with.
+
+| kernel | P2 µs | P2 GB/s | P3 µs | P3 GB/s | % of 217 | P3 stage(s) |
+|---|---:|---:|---:|---:|---:|---|
+| `wq_a` | 38.2 | 172 | **35.6** | **184** | 85% | `WqAKSplit` + `WqAKCombine` (2 slices) |
+| `wq_b` | 207.5 | 202 | **194.7** | **216** | **99%** | unchanged stage, LDS fix only |
+| `wkv` gemv + finish | 17.2 + 9.2 | 153 | **7.9 + 9.1** | 334 *(8 layers: partly MALL)* | — | `WkvKSplit` + `WkvKFinish` (2 slices, no extra dispatch) |
+| `sparse_attn` | 42.2 + 27.4 | — | **17.4 + 26.9** | — | — | `AttnScoreT` + `AttnPvT` (32 × 1 tiles, no finish) |
+| `wo_a` | 202.1 | 166 | **162.4** | **207** | **95%** | `WoAKSplit` + `WoAKCombine` (4 slices) |
+| `wo_b` | 317.8 | 132 | **204.9** | **205** | **94%** | `WoBKSplit` + `WoBKCombine` (8 slices) |
+| **one layer, 1–9** | **898.8** | 148 | **696.3** | **191** | 88% | |
+| `head` | 5679 | 233 | 5650 | 234 | 108% | |
+| **40 layers + head** | **41.6 ms** | | **33.5 ms** | | | |
+
+(CSV runs `fin_p2` and `fin_p3`; a repeat of the defaults, `fin_tbl`, read
+696.8. The P3 microseconds include each combine dispatch, 1.1–1.4 µs.)
+
+Against §11's asks: `wo_b` **135 → 205 GB/s** (asked ≥ 185); one layer **893 →
+696 µs** (asked ≤ 700); sparse attention **68 → 44 µs** with the KV read by 8
+head groups instead of 64 heads (asked ≤ 40 — **not met**, §13.5 says where the
+last 4 µs are); long context measured at 4096 and 32768 entries and exact
+against fp64.
+
+Two separate things did it, and it is worth keeping them apart because the one
+§11 predicted is not the one that moved first:
+
+1. an **LDS bank conflict** on every read of the staged activation, fixed by a
+   layout change that is bit-identical (§13.1) — 899 → 800 µs on the stages
+   the runtime already calls;
+2. the **K-split** (§13.3) — 800 → 710 µs — which on its first measurement
+   *lost* on every kernel but wkv, because it was measured at two rows a lane.
+
+### 13.1 A 16-way bank conflict on every read of the staged activation
+
+`fp8_gemv.slang` stored a 32-element block of the staged activation as 16 LDS
+words (two bf16 to a word), block `blk` at `gXQ[16 blk .. 16 blk + 15]`. The
+inner loop gives lane `sublane` the blocks `sublane, sublane + 32, …`, so the
+32 lanes of one row group read word `i` at index `16 l + i`, `l = 0..31`.
+
+LDS has 32 banks of one dword, and `(16 l + i) mod 32` takes exactly **two**
+values over 32 lanes: every even lane lands in bank `i`, every odd lane in bank
+`i + 16`. Sixteen lanes to a bank is sixteen LDS cycles where one would do, on
+all sixteen reads `read_x_block` issues per block, per lane, per row.
+
+The fix is one word of padding: a block is 17 words (`kXStride`). 17 is odd, so
+`17 l mod 32` is a bijection and every lane owns a bank. It costs 1/16 more LDS
+(wo_b's `gXQ` 16 → 17 KiB).
+
+`sparse_attn.slang` had the same pattern twice: stage 0 staged q as
+`[head][dim]` with a lane reading dims `16 l .. 16 l + 15`, and stage 1 stored
+P.V partials at `16 tid + i`. q is now stored transposed,
+`[head][dim-within-span][lane]`, so lane `l` reads `32 i + l`; the partials use
+the odd 17 stride.
+
+**It is a layout change and nothing else.** With `DEEPMOE_SKIP_P3=1`, the L2
+suite pointed at the P2 shader directory and at the new one prints identical
+lines — every cosine, `max|d|` and relative L2 of every classic stage on all
+seven layers.
+
+Idle, same binary: P2 shaders (`fin_p2`) against the new ones (`fin_tbl`,
+`fin_p3`), classic stages only:
+
+| kernel | P2 µs | new µs | Δ |
+|---|---:|---:|---:|
+| `wq_a` | 38.2 | 38.1 / 38.2 | 0 |
+| `wq_b` | 207.5 | **193.6 / 194.7** | −7%, now **216–217 GB/s** |
+| `wkv.gemv` | 17.2 | **9.5 / 9.8** | −44% |
+| `sparse_attn.score` | 42.2 | **26.3 / 26.8** | −37% |
+| `sparse_attn.combine` | 27.4 | 27.3 / 27.9 | 0 |
+| `wo_a` | 202.1 | 196.0 / 195.7 | −3% |
+| `wo_b` | 317.8 | **260.8 / 263.1** | −18%, 132 → 161 GB/s |
+| `indexer.wq_b` | 20.5 | 15.2 / 17.5 | −20% |
+| **one layer, 1–9** | **898.8** | **799.5 / 803.8** | **−11%** |
+| **40 layers + head** | **41.6 ms** | **37.7 / 37.8 ms** | |
+
+(A first pair of runs earlier in the session, not in the CSV, read 891.0 /
+892.6 against 799.8 / 796.6.)
+
+`runtime/decode_layer.cpp` calls exactly these classic stages, so it already has
+this, with no interface change.
+
+§10.1 item 1 recorded that `wq_a` and `wo_a` got *slower* with a tighter LDS
+budget, and explained it as L2 traffic from more resident workgroups. With every
+staged read queueing sixteen lanes to a bank, "more resident workgroups" also
+meant more lanes stuck behind the same two banks; that explanation should be read
+with this in mind.
+
+### 13.2 Three things that did not help, measured
+
+**The arithmetic E4M3 decode.** With the staged reads conflict-free, the
+remaining LDS traffic in the inner loop is the 256-entry decode table, which 32
+lanes index with 32 unrelated weight bytes. design §7.1 rule 5 measured "table
+beats arithmetic" on a 16-entry *constant array* in registers, which is not this
+situation, so it was measured again. `fp8_bits_decode` (attn_common.slang) is
+six ALU instructions — `(b & 0x7F) << 20` already puts exponent and mantissa
+where an fp32 wants them, `+ (120 << 23)` rebiases, exponent 0 is fixed up by
+removing the implicit one and doubling — and it is exact:
+`gpu_attn.fp8_arith_decode_matches_table` checks all 256 codes, and
+`DEEPMOE_FP8_ARITH=1` gives output identical to the table on every stage of the
+L2 suite. It loses:
+
+| kernel | table µs (`fin_tbl`) | arithmetic µs (`fin_arith`) |
+|---|---:|---:|
+| `wq_a` | 38.1 | 57.5 (+51%) |
+| `wq_b` | 193.6 | 221.5 (+14%) |
+| `wkv.gemv` | 9.5 | 12.8 (+35%) |
+| `wo_a` | 196.0 | 206.2 (+5%) |
+| `wo_b` | 260.8 | 259.0 (−1%) |
+| `wo_b.ksplit` ×8 | 204.7 | 211.5 (+3%) |
+| one layer, classic / P3 | 799.5 / 696.8 | 861.8 / 748.1 |
+
+Rule 5 now has an fp8 data point: a 256-entry LDS table indexed at random still
+beats six ALU instructions. `AttnSpec::fp8_arith_decode` stays, off.
+
+**Four accumulators per block** (`DEEPMOE_GEMV_ACC=4`). §10.1 named "the single
+accumulator per lane" as a suspect: a block is a chain of 32 dependent FMAs and
+wo_b walks eight of them per lane per row. Dealing them over four accumulators
+that meet in a balanced tree makes the chain eight deep. wo_b 259.0 / 266.5 µs
+(one accumulator) against 271.8 / 259.2 (four): nothing. Agreement with the oracle
+is unchanged to nine digits, so it is only a performance knob, and it is off.
+
+**Folding the UE8M0 weight scale into the staged block factor**
+(`DEEPMOE_GEMV_FOLD_SCALE=1`). Every row a workgroup retires lies in one 32-row
+band of the scale plane, so `2^(e−127)` can be multiplied into the activation's
+power-of-two scale once per workgroup — exact, both being powers of two — which
+removes a byte load and an `ldexp` per lane per block per row. wo_b 267.7 /
+271.9 µs: nothing, and combined with the K-split it was *worse* (wo_b.ksplit at
+2 slices 411 µs against 303). Off.
+
+All three are compile-time or specialisation switches with the default being
+the P2 arithmetic, so the measurements can be repeated.
+
+### 13.3 The K-split: slices of 1024–2560, one row a lane
+
+`gemv_ksplit.slang` is the fp8 GEMV cut along K. Stage 0 runs
+`gemv_groups × KSplit` workgroups, `gid = row_group × KSplit + slice`; each
+stages one K slice of the activation (so its LDS is the slice width, not K) and
+writes one fp32 partial per (slice, row). Stage 1 adds the KSplit partials, one
+thread a row. wkv's combine is `wkv.slang` stage 2, which adds the partials, takes
+the RMS statistic in the same workgroup and runs the kv_norm / RoPE / fp8 ring
+write, so for wkv the split costs no dispatch at all. `rows_per_group` carries
+wo_a's block-diagonal structure.
+
+The first measurement said the split loses on three of four kernels (wo_b 304
+µs against 261). That run had `--rows 2`, and the split stages followed it. At
+one row a lane the picture reverses — idle, `(µs / GB/s)`, the unsplit kernel in
+the first column:
+
+| kernel | unsplit | ×2 r1 | ×4 r1 | ×8 r1 | ×16 r1 | ×2 r2 | ×4 r2 | ×8 r2 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `wq_a` | 37.7 / 174 | **34.7 / 189** | 36.2 / 181 | 36.3 / 181 | — | 54.9 / 120 | 41.4 / 158 | — |
+| `wkv` (split stage only; finish ≈ 9 µs either way) | 9.2 | **7.4–8.1** | 9.9 | — | 17.2 | 7.8 | 10.0 | 9.8 |
+| `wo_a` | 194.2 / 173 | 218.6 / 154 *(×1)* | **161.5 / 208** | 165.5 / 203 | — | 192.8 / 174 | 162.5 / 207 | 165.0 / 204 |
+| `wo_b` | 259.0 / 162 | 283.2 / 148 | 218.3 / 192 | **204.0 / 206** | 216.3 / 194 | 304.3 / 138 | 232.0 / 181 | 211.0 / 199 |
+
+(Each column is a different run, so a row's neighbours come from different
+runs of the same idle machine; all are in the CSV as `ks*` and `k_*`. wo_a's ×1
+is the split kernel with no split: the same arithmetic as `wo_a` in a
+4096-wide LDS budget instead of 8192, and it is slower, which is §10.1's
+observation again.)
+
+So the defaults are **wq_a 2, wkv 2, wo_a 4, wo_b 8, one row a lane**
+(`AttnSpec::ksplit_*`, and a rows cap of 1 on the four split stages in
+`kStages`). Three repeats of the default: one layer 711.3 / 708.9 / 710.1 µs
+with the 8-tile attention, 696–699 µs with the 32-tile one (§13.5).
+`WaveReduce` flipped on or off per split stage changed nothing measurable.
+
+Why it works where §11 said it would, and not at two rows a lane: every slice
+retires the same rows against a 1/KSplit-wide staged activation, so the
+activation re-read per retired weight byte is unchanged, while the LDS a
+workgroup holds and the blocks each lane walks shrink by KSplit. Occupancy and
+chain length go up and down together. Row blocking works the other way — it
+amortises one staged activation over more rows by lengthening every lane's
+work — and at slices this narrow there is nothing left for it to amortise.
+
+**Re-association.** A split sums the same products in a different association:
+the `WaveActiveSum` over a row group's 32 lanes happens per slice instead of per
+row. Against the unsplit kernel, worst over seven layers:
+
+| stage | relative L2 vs the kernel it replaces | max ULP | cosine vs oracle, worst layer |
+|---|---:|---:|---:|
+| `wq_a` K-split | 5.95e-08 | 1024 | 0.999998495 (= unsplit) |
+| `wkv` K-split raw | 6.67e-08 | 64 | 0.999998342 (= unsplit) |
+| `wkv` K-split after the fp8 ring write | — | — | 0.999859835 (= unsplit); **0 of 512 ring bytes differ** |
+| `wo_a` K-split | 1.34e-07 | 8192 | 0.999998557 (= unsplit) |
+| `wo_b` K-split | 8.26e-08 | 3072 | 0.999998527 (= unsplit) |
+
+The ULP column looks large and is not the right measure: an output element that
+is a small difference of 8192 large products has a large relative error and a
+tiny absolute one. Relative L2 is at fp32 round-off (1e-7) on every stage,
+four orders of magnitude under the 1.6e-3 bf16 floor the oracle sits on, and
+the cosine against the oracle is the same to nine digits as the unsplit
+kernel's. The fp8 ring bytes wkv writes are identical.
+
+### 13.4 wo_b, specifically
+
+| step | µs | GB/s | % of 217 |
+|---|---:|---:|---:|
+| P2 step 2 (§10) | 312–314 | 134 | 62% |
+| + 17-word LDS stride (§13.1) | 259–266 | 158–162 | 73–75% |
+| + arithmetic decode / 4 accumulators / folded scale (§13.2) | 258–272 | 154–163 | — |
+| **+ K-split ×8, one row a lane (§13.3)** | **203.5–205.4** | **204–206** | **94–95%** |
+| K-split ×16 | 216–220 | 191–194 | |
+
+§10.1 said "what is left is LDS … and the single accumulator per lane". Of the
+two, LDS — once its bank conflict was gone — was half the answer and the
+workgroup geometry the K-split gives was the other half; the accumulator was
+not measurably part of it.
+
+### 13.5 sparse_attn on a head-group × KV-tile grid
+
+`sparse_attn_t.slang`, three stages, `AttnTPush`:
+
+* **`AttnScoreT`**, `(n_heads / tile_heads_per_wg) × n_tiles` workgroups: eight
+  heads and one KV tile a workgroup. A wave takes a position, its 32 lanes hold
+  sixteen dims of the KV row each, and the row is dotted against all eight
+  heads' staged q — so the KV is read by 8 head groups, not 64 heads. Scores go
+  to the score plane and one maximum per (head, tile) to `kAttnTileMax`.
+* **`AttnPvT`**, on its own grid `(n_heads / pv_heads_per_wg) × pv_tiles`.
+  Reads the head's `n_tiles` tile maxima — that is the whole reduction, no
+  dispatch — takes the final row max (sink excluded, clamped at −1e30), and in
+  one pass per wave computes `p = bf16(exp(s − mx))` exactly where
+  `acc_s_cast` rounds it, adds it to the denominator partial and accumulates
+  P.V. The classic combine does this in three steps with thirteen workgroup
+  barriers; this is two.
+* **`AttnFinishT`**, only when `pv_tiles > 1`: adds the tiles, adds
+  `exp(sink − mx)` once, divides, inverse RoPE. At `pv_tiles == 1` AttnPvT
+  finishes itself (`AttnRunner::attn_tiled_finish_needed`).
+
+This is the two-pass structure F asked for — tile maxima first, exp/sum against
+the *final* max second — so the bf16 rounding of p sees the reference's number.
+It does not stage the index list in LDS, which is why it runs at any `n_kv`;
+the classic kernel's 1024-entry index table now falls back to a load past its
+end instead of walking off LDS (it lost the device at 4096 before).
+
+**Why P.V has its own grid.** Scores can share a KV read across heads because a
+dot product per head is one accumulator. P.V cannot: a lane owns sixteen
+*output* dims of *one* head, so eight heads a workgroup is eight waves each
+re-reading the tile for its own head — fewer workgroups and no traffic saved.
+Measured: `pv_heads_per_wg` 8 is **120 µs**, 1 is 25–27.
+
+**Accuracy at the L3 context** (193 entries), worst of seven layers: cosine
+0.999997368 — identical to the classic kernel's — at one P.V tile and at four;
+relative L2 against the classic kernel 5.2e-8 and 8.2e-8.
+
+**Accuracy at long context**, against an fp64 CPU transcription of
+`sparse_attn_kernel` (random fp8 window through the real E4M3/UE8M0 encode,
+random bf16 compressed rows, a −1 hole every 401 positions, random sinks):
+
+| n_kv | score tiles | P.V tiles | heads checked | cosine | max\|Δ\| | relative L2 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4096 | 8 | 1 | 64 of 64 | 1.000000000 | 2.8e-9 | 1.3e-7 |
+| 4096 | 16 | 4 | 64 of 64 | 1.000000000 | 2.8e-9 | 1.0e-7 |
+| 32768 | 32 | 16 | 4 | 1.000000000 | 9.3e-10 | 1.3e-7 |
+| 32768 | 16 | 1 | 4 | 1.000000000 | 1.9e-9 | 3.9e-7 |
+
+**Speed at the L3 context**, idle (µs; the classic kernel after §13.1 is 25.8–
+27.2 + 26.8–27.8 ≈ 53):
+
+| score tiles | P.V tiles | score | P.V | finish | total |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 1 | 28.0 | 23.2 | — | 51.2 |
+| 8 | 1 | 18.6 | 25.1 | — | 43.7 |
+| 8 | 2 | 18.0 | 26.1 | 2.2 | 46.3 |
+| 16 | 1 | 20.1 | 24.8 | — | 44.9 |
+| **32** | **1** | **16.6–17.4** | **25.9–26.9** | — | **42.5–44.3** |
+| 32 | 4 | 16.8 | 29.5 | 3.6 | 49.9 |
+| 64 | 1 | 29.4 | 26.7 | — | 56.1 |
+
+So **32 × 1 is the default geometry, ≈ 43 µs a layer, not the ≤ 40 asked.**
+The score stage is at 17 µs; P.V is where the rest is, and it is the same work
+as the classic combine (≈ 26 µs) — the one-pass rewrite and a balanced
+tile-max reduction each measured neutral. Getting P.V under that means reading
+the KV once for several heads, which needs `16 × G` accumulators a lane; that is
+the next step and it was not taken here.
+
+**Speed at long context** (`--kv`, 64 score tiles, 8 P.V tiles, µs a layer):
+
+| n_kv | score | P.V | finish | total |
+|---:|---:|---:|---:|---:|
+| 4096 | 200 | 336 | 5.8 | **542** |
+| 32768 | 1585 | 3323 | 6.5 | **4914** |
+
+These are synthetic lists: the real decode geometry never exceeds window 128 +
+`index_topk` 512 = 640 entries whatever the context, which is exactly why
+§9.4's indexer, not this kernel, is the one that grows with context. At 32768
+entries the score stage reads 21 GB/s of KV and P.V 10 — both are latency, not
+bandwidth — and `pv_tiles` 8 against 1 is worth 23% there (sweep: 3251 against
+4237 µs), where at 193 entries it was a loss. (`fin_kv4k`, `fin_kv32k`; a sweep
+pair earlier read 552 and 4829.)
+
+**The n_heads-grouped classic geometry, re-measured for the runtime.**
+`AttnPush::n_heads` with `heads_per_wg` G, after §13.1 (score + combine, µs):
+**G = 1: 54, 2: 76, 4: 117, 8: 209.** Still a loss, for the same reason §10.2
+gave. The runtime should not adopt it; it should adopt `AttnScoreT` + `AttnPvT`
+(44 µs), which gets the traffic reduction grouping was for without giving up
+the workgroup count.
+
+### 13.6 The whole layer
+
+| | µs a layer (1–9) | 40 layers + head |
+|---|---:|---:|
+| P2 step 2 (§10, doc) | 892.6 | 41.4 ms |
+| P2 shaders, this session, same binary | 891.0–898.8 | 41.3–41.6 ms |
+| + LDS stride fix, classic stages (what the runtime calls today) | 797–804 | 37.6–37.8 ms |
+| + K-split, 8-tile attention | 709–711 | 34.0 ms |
+| **+ K-split, 32 × 1 tile attention — the P3 defaults** | **696.3–696.8** | **33.5 ms** |
+
+In GB/s: 133 MB in 696 µs is **191 GB/s, 88% of 217**. What is left, by kernel,
+at the ceiling: wq_b is there; wo_b and wo_a are at 94–95%; wq_a is at 85%
+(5 µs); the attention is 43 µs of latency; the gate's 27 µs and mega_mhc's 11
+are outside this track's list.
+
+### 13.7 Interfaces Track I has to adopt
+
+All additive; every stage and push struct that existed is unchanged in layout
+and in behaviour (§13.1's layout change is invisible to callers).
+
+* **Eleven `AttnStage` enumerators**, appended before `Count`:
+  `WqAKSplit, WqAKCombine, WkvKSplit, WkvKFinish, WoAKSplit, WoAKCombine,
+  WoBKSplit, WoBKCombine, AttnScoreT, AttnPvT, AttnFinishT`.
+* **Replacements, dispatch by dispatch:**
+
+  | today | P3 | workgroups | push |
+  |---|---|---|---|
+  | `WqA` | `WqAKSplit` → `WqAKCombine` | `ksplit_groups(WqAKSplit, 1280)` → `combine_groups(1280)` | `KSplitPush{1280, 5120, 160, 0, 1280, 0}` for both |
+  | `WkvGemv` → `WkvFinish` | `WkvKSplit` → `WkvKFinish` | `ksplit_groups(WkvKSplit, 512)` → 1 | `KSplitPush{512, 5120, 160, 0, 512, 0}`; `WkvPush{…, n_wg0 = 1, eps, part_stride = 512}` |
+  | `WoA` | `WoAKSplit` → `WoAKCombine` | `ksplit_groups(WoAKSplit, 8192)` → `combine_groups(8192)` | `KSplitPush{8192, 4096, 128, 1024, 8192, 0}` |
+  | `WoB` | `WoBKSplit` → `WoBKCombine` | `ksplit_groups(WoBKSplit, 5120)` → `combine_groups(5120)` | `KSplitPush{5120, 8192, 256, 0, 5120, 0}` |
+  | `AttnScore` → `AttnCombine` | `AttnScoreT` → `AttnPvT` [→ `AttnFinishT` iff `pv_tiles > 1`] | `attn_tile_groups(64, n_tiles)` → `attn_pv_groups(64, pv_tiles)` [→ `attn_finish_groups(64, 512)`] | `AttnTPush{n_kv, 128, 512, 64, score_stride, scale, 64, 32, ceil(n_kv/32), 32768, 1, n_kv}` |
+
+* **New push structs** `KSplitPush` and `AttnTPush`; **`WkvPush` gained a
+  trailing `part_stride`** (defaulted 0, read only by `WkvKFinish`).
+* **New slots:** `slot::kKsp{W,S,X,Y,Part}` (the first four are the same indices
+  as `kGemv*`), `slot::kWkvPart = 10`, `slot::kAttnTileMax = 9, kAttnPartO = 10,
+  kAttnPartD = 11` on top of the nine `kAttn*`.
+* **New buffers the caller owns:** a partial plane of `ksplit × rows` floats per
+  split GEMV (the four can share one of 8 × 8192 floats, since they run in
+  sequence); `n_heads × n_tiles` floats of tile maxima; and, only for
+  `pv_tiles > 1`, `pv_tiles × 32768` + `pv_tiles × 64` floats of partials.
+* **`AttnSpec` gained** `tile_heads_per_wg` (8), `pv_heads_per_wg` (1),
+  `ksplit_wq_a/wkv/wo_a/wo_b` (2/2/4/8), `rows_per_lane_ksplit`,
+  `fp8_arith_decode` (0), and three `sweep_*` bitmasks that must stay 0 outside
+  the bench. `AttnRunner` gained `ksplit()`, `ksplit_groups()`,
+  `combine_groups()`, `attn_tile_groups()`, `attn_pv_groups()`,
+  `attn_finish_groups()`, `attn_tiled_finish_needed()`.
+* **Specialisation constants** 9 (`KSplit`) and 10 (`Fp8Arith`) are new in
+  `attn_common.slang`; `PipelineSpec::extra` carries seven values now.
+* **Limits:** `n_tiles ≤ 64`; `k / ksplit ≤ 4096` (`kGemvKSplitMaxSlice`);
+  split factors are powers of two ≤ 16 (checked in `create`); head_dim 512.
+
+The runtime gets §13.1 (−95 µs a layer) with no change. Adopting the table
+above is another −100 µs a layer, 4 ms a token.
+
+### 13.8 Accuracy, all stages, after this section's changes
+
+`gpu_attn.l2_per_stage`, worst of the seven layers, with the P3 defaults; every
+P3 stage fed the same golden input as the stage it replaces.
+
+| stage | worst cosine vs the oracle | relative L2 there |
+|---|---:|---:|
+| mega-mHC pre / post / comb | 1.000000000 | ≤ 2.2e-7 |
+| mega-mHC `attn_norm` output | **1.000000000, bit-exact** | 0 |
+| `wq_a` / **`wq_a` K-split** | 0.999998495 / **0.999998495** | 1.7e-3 |
+| `wq_b` + `q_norm` + RoPE | 0.999997972 | 2.0e-3 |
+| `wkv` raw / **K-split** | 0.999998342 / **0.999998342** | 1.8e-3 |
+| `wkv` after the fp8 ring write / **K-split** | 0.999859835 / **0.999859835** | 1.7e-2 |
+| sparse attention + inverse RoPE / grouped / **tiled, 1 and 4 P.V tiles** | 0.999997368 all four | 2.3e-3 |
+| `wo_a` / **K-split** | 0.999998557 / **0.999998557** | 1.7e-3 |
+| `wo_b` / **K-split** | 0.999998527 / **0.999998527** | 1.7e-3 |
+| `hc_post` into the stream | 0.999998535 | 1.7e-3 |
+| mega-mHC `ffn_norm` output | 0.999994284 | 3.4e-3 |
+| gate scores | 0.999999996, 6/6 experts on every layer | 9.1e-5 |
+| `head`, vs fp64 CPU | 1.000000000 | 2.3e-7 |
+| compressor / indexer (§9.2) | unchanged: 11 of 16 bit-exact, the rest ≥ 0.999998575 | |
+| **`sparse_attn_t` at 4096 and 32768 entries, vs fp64** | **1.000000000** | ≤ 3.9e-7 |
+
+The `wkv` post-fp8 line is 0.99986 on layer 2, below §0's 0.99991; it is not a
+regression — the P2 shader directory gives the same number on the same layer
+(§13.1's line-for-line comparison), and §0's table predates step 2. It is the
+E4M3 re-rounding of §3.1: 11 of 512 bytes land on the other side of a boundary.
+
+Every shader went through `slangc` and `spirv-val` (the two new ones, the
+modified ones, and each sweep variant). The whole `gpu_attn` suite ran once
+under the Khronos validation layers, logging to stdout, with the final defaults:
+6 cases, 0 failures, **0 validation messages**.
+
+### 13.9 Done / not done
+
+**Done**
+
+* The LDS bank-conflict fix in `fp8_gemv.slang` and `sparse_attn.slang`,
+  bit-identical, already live for the runtime.
+* `gemv_ksplit.slang` and `wkv.slang` stage 2: the K-split for all four fp8
+  GEMVs; wo_b at 205 GB/s, wo_a at 207.
+* `sparse_attn_t.slang`: head-group × KV-tile scores, P.V on its own grid,
+  finish only when needed; exact at 193, 4096 and 32768 entries.
+* One layer 899 → **696 µs**, 40 layers + head 41.6 → **33.5 ms**.
+* Measured and switched off: arithmetic E4M3 decode, four accumulators a block,
+  folded weight scale, row blocking on split stages, `WaveReduce` flips,
+  eight heads a P.V workgroup, the n_heads-grouped classic geometry.
+* `gpu_attn.sparse_attn_long_context`, `gpu_attn.fp8_arith_decode_matches_table`,
+  P3 checks in `gpu_attn.l2_per_stage`, and `DEEPMOE_SKIP_P3` / the
+  `DEEPMOE_KSPLIT_*` / `DEEPMOE_FP8_ARITH` / `DEEPMOE_TILE_HEADS` /
+  `DEEPMOE_PV_HEADS` environment knobs on the test.
+* `bench/attn_bench`: every P3 stage beside the stage it replaces, a P3 layer
+  total, `--ksplit-*`, `--tiles`, `--pv-tiles`, `--pv-heads`, `--kv`,
+  `--fp8-arith`, `--rows4`, `--wave-on/off`.
+
+**Not done**
+
+* **Sparse attention ≤ 40 µs**: 43. P.V needs to read the KV once for several
+  heads (`16 × G` accumulators a lane).
+* **`wq_a` at 85%**: 5 µs to the ceiling.
+* The runtime adopting §13.7 (Track I).
+* §11 items 4–6 (layer-indexed address table, `mega_mhc.post`, a two-step L2
+  export) are unchanged.
