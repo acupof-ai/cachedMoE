@@ -52,7 +52,7 @@ struct ElemPush {
 };
 [[vk::push_constant]] ElemPush pc;
 
-uint thread_index(uint3 gid, uint tid) { return gid.x * kWg + tid; }
+uint thread_index(uint3 gid, uint tid) { return gid_linear(gid) * kWg + tid; }
 
 void load_row32(uint64_t base, out float v[32]) {
     [unroll] for (uint i = 0; i < 8; ++i) {

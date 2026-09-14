@@ -54,6 +54,8 @@ inline constexpr uint32_t kPfFlagRowScale   = 16u;
 inline constexpr uint32_t kPfFlagInverse    = 32u;
 inline constexpr uint32_t kPfFlagRoundPre   = 64u;
 inline constexpr uint32_t kPfFlagFromJob    = 128u;
+// prefill_common.slang kWgRowX: a split 1-D dispatch's workgroups per gid.y row.
+inline constexpr uint32_t kPfWgRowX = 16384u;
 
 // One pipeline: which .spv, and its specialisation constants 4.. (Stage, WFmt,
 // XFmt, TileM, then two kernel-specific ones).

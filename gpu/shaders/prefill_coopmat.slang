@@ -79,7 +79,7 @@ void stage_gemm(uint3 gid, uint tid) {
 
 void stage_stage_x(uint3 gid, uint tid) {
     const uint blocks = pc.k / kBlockK;
-    const uint idx = gid.x * 32 + tid;
+    const uint idx = gid_linear(gid) * 32 + tid;
     const uint m = idx / blocks, blk = idx % blocks;
     if (m >= pc.n) return;
     const uint src = ((pc.flags & kFlagGather) != 0u)
@@ -95,7 +95,7 @@ void stage_stage_x(uint3 gid, uint tid) {
 
 void stage_stage_f32(uint3 gid, uint tid) {
     const uint blocks = pc.k / kBlockK;
-    const uint idx = gid.x * 32 + tid;
+    const uint idx = gid_linear(gid) * 32 + tid;
     const uint m = idx / blocks, blk = idx % blocks;
     if (m >= pc.n) return;
     const uint64_t xa = Ptr[kQ] + ((uint64_t)(pc.idx_off + m) * pc.k + (uint64_t)blk * 32) * 4;

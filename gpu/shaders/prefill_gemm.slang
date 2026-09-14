@@ -295,7 +295,7 @@ void stage_decode(uint3 gid, uint tid) {
     gTbl[tid] = fp8_decode(tid);
     GroupMemoryBarrierWithGroupSync();
     const uint blocks = pc.k / kBlockK;
-    const uint idx = gid.x * kWg + tid;
+    const uint idx = gid_linear(gid) * kWg + tid;
     const uint row = pc.row_base + idx / blocks;
     const uint blk = idx % blocks;
     if (row >= pc.row_base + pc.rows) return;

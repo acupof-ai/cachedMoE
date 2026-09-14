@@ -38,6 +38,11 @@
 [vk::constant_id(7)] const uint TileM         = 8;
 
 static const uint kWg       = 256;
+// A 1-D kernel whose workgroup count passes 65535 is dispatched as
+// kWgRowX x ceil(n / kWgRowX) (PrefillRunner::record): gid.y counts rows of
+// kWgRowX workgroups. Only kernels indexed through gid_linear may be split.
+static const uint kWgRowX   = 16384;
+uint gid_linear(uint3 gid) { return gid.y * kWgRowX + gid.x; }
 static const uint kBlockK   = 32;
 static const float kFp8MaxF = 448.0f;
 static const float kActAmaxMin = 1e-4f;

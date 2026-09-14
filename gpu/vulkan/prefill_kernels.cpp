@@ -169,6 +169,13 @@ Result<void> PrefillRunner::record(CommandBuffer& cmd, uint32_t h, const void* p
     if (h >= pipes_.size()) return fail(Err::InvalidArgument, "unknown prefill kernel");
     if (bytes > kPfPushBytes) return fail(Err::InvalidArgument, "push constants exceed 64 B");
     if (gx == 0 || gy == 0) return fail(Err::InvalidArgument, "zero workgroups");
+    // A 1-D kernel past the per-axis limit (a 17K prompt's hc_post is 85,050
+    // workgroups) goes out as rows of kWgRowX; its shader indexes through
+    // gid_linear (prefill_common.slang) and discards the overshoot.
+    if (gy == 1 && gx > 65535) {
+        gy = (gx + kPfWgRowX - 1) / kPfWgRowX;
+        gx = kPfWgRowX;
+    }
     if (gx > 65535 || gy > 65535)
         return fail(Err::InvalidArgument,
                     std::format("{} x {} workgroups is past the 65535 dispatch limit", gx, gy));
