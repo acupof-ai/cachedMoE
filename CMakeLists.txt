@@ -97,6 +97,12 @@ add_executable(bw_matrix bench/bw_matrix.cpp)
 target_link_libraries(bw_matrix PRIVATE deepmoe_core)
 add_dependencies(bw_matrix shaders)
 
+# design §3.3 / §5.3: the *allocatable* ceiling on both heaps at the current
+# BIOS setting, as opposed to the heap sizes the driver reports.
+add_executable(heap_capacity bench/heap_capacity.cpp)
+target_link_libraries(heap_capacity PRIVATE deepmoe_core)
+add_dependencies(heap_capacity shaders)
+
 # design §7.1 rule 2 / §7.9: effective GB/s of the two MoE dispatches against
 # the raw-read ceiling, over the real checkpoint's experts (P1).
 add_executable(kernel_bench bench/kernel_bench.cpp)
