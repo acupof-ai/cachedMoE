@@ -223,18 +223,21 @@ sequential are the same above 2 MiB). One layer's expert set is read in shard
 order as one queue; nothing waits on it except the GPU batches, so reads and
 compute overlap by construction:
 
-* **read-ahead** is bounded by transit memory, not by policy: `K_ra` slots
-  (default 64 = 1.2 GB) are filled as fast as the drive allows; the GPU consumes
-  them in arrival order; a slot is recycled after its batch's submit completes.
+* **read-ahead** is bounded by transit memory, not by policy. As built, the
+  transit is two halves of `transit_slots` = 32 slots each (1.2 GB together):
+  batch i+1's reads are issued into one half *before* batch i computes on the
+  other, so the drive fills the next batch while the GPU works, and a half is
+  reused two batches later. (The first design had a free-running 64-slot queue
+  consumed in arrival order; the two-half form needs no slot bookkeeping and
+  measured the same, because the GPU is never the one waiting — §10.)
 * **the next layer's reads start** as soon as the gate of the next layer has
   been read back — which is after this layer's attention half, i.e. while this
   layer's experts are still computing. Layer L+1's top-6 needs layer L's MoE
   output, so there is no earlier moment that knows the ids; a lookahead would be
   §9.4's predictor, which measured net negative.
 * The GPU is the idle one. Expert compute at the measured GEMM rate (§5) is
-  ~0.1–0.5 ms per expert against ~4 ms of NVMe per expert, so batches are small
-  and frequent: the right batch size is "whatever has arrived", capped so one
-  submit is ≤ ~50 ms of work.
+  ~0.2–3 ms per expert against ~4 ms of NVMe per expert, so batches are small
+  and frequent: one submit per 32 experts.
 
 ### 3.4 Keep or drop: handing the decode cache what decode will need
 

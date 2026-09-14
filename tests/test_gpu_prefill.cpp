@@ -202,6 +202,18 @@ GBuf take(gpu::Prefill& p, uint64_t bytes) {
     return g;
 }
 
+// DEEPMOE_PF_COOP_MOE / DEEPMOE_PF_COOP_DENSE override the option (a)/(b)
+// thresholds (PrefillConfig::coopmat_min_rows / coopmat_dense_min_rows; -1 =
+// tiled only, 0 = cooperative matrix everywhere it applies) for an A/B run.
+void apply_kernel_env(gpu::PrefillConfig& pc) {
+    if (const char* e = std::getenv("DEEPMOE_PF_COOP_MOE"))
+        pc.coopmat_min_rows = static_cast<uint32_t>(std::atoi(e));
+    if (const char* e = std::getenv("DEEPMOE_PF_COOP_DENSE"))
+        pc.coopmat_dense_min_rows = static_cast<uint32_t>(std::atoi(e));
+    std::printf("    kernels: MoE coopmat at n >= %d, dense coopmat at n >= %d (-1 = never)\n",
+                static_cast<int32_t>(pc.coopmat_min_rows), static_cast<int32_t>(pc.coopmat_dense_min_rows));
+}
+
 std::vector<uint32_t> prompt_ids(const std::string& dir) {
     std::vector<uint32_t> out;
     auto doc = json_parse_file(dir + "/index.json");
@@ -233,6 +245,7 @@ DEEPMOE_TEST(gpu_prefill, stages) {
     gpu::PrefillConfig pc;
     pc.max_tokens = kN;
     pc.transit_slots = 16;
+    apply_kernel_env(pc);
     Rig rig;
     std::vector<uint32_t> layers;
     for (const L2Step& s : set->steps) if (s.layer < 40) layers.push_back(s.layer);
@@ -626,6 +639,7 @@ DEEPMOE_TEST(gpu_prefill, forty_layers) {
     gpu::PrefillConfig pc;
     pc.max_tokens = kN;
     pc.transit_slots = 16;
+    apply_kernel_env(pc);
     pc.probe_layers = true;
     gpu::Prefill prefill;
     REQUIRE_OK(prefill.create(engine.device(), alloc, runner, engine.manifest(), shards, engine.io(),

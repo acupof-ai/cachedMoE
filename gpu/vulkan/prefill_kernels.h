@@ -20,6 +20,7 @@
 // and the activations to whoever allocated them.
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -52,6 +53,7 @@ inline constexpr uint32_t kPfFlagScatter    = 8u;
 inline constexpr uint32_t kPfFlagRowScale   = 16u;
 inline constexpr uint32_t kPfFlagInverse    = 32u;
 inline constexpr uint32_t kPfFlagRoundPre   = 64u;
+inline constexpr uint32_t kPfFlagFromJob    = 128u;
 
 // One pipeline: which .spv, and its specialisation constants 4.. (Stage, WFmt,
 // XFmt, TileM, then two kernel-specific ones).
@@ -138,6 +140,8 @@ public:
     Result<uint32_t> kernel(const PfKernel& k);
     // Its 32 slots, host-writable.
     uint64_t* slots(uint32_t handle);
+    // The spec a handle was created from.
+    const PfKernel* spec(uint32_t handle) const;
     uint32_t  kernels() const { return static_cast<uint32_t>(pipes_.size()); }
 
     Result<void> record(CommandBuffer& cmd, uint32_t handle, const void* push, uint32_t bytes,
@@ -212,6 +216,15 @@ struct PrefillConfig {
     bool     round = true;
     // The largest prompt the activation buffers are sized for.
     uint32_t max_tokens = 1024;
+    // An expert (routed or shared) with at least this many tokens runs on
+    // cooperative-matrix GEMM (docs/p3_prefill.md §5 option (a)); fewer tokens
+    // run on the tiled GEMV job table (b), whose cost has no fixed per-matrix
+    // decode. 0 = every expert on (a); UINT32_MAX = every expert on (b).
+    uint32_t coopmat_min_rows = 16;
+    // A dense linear over at least this many rows runs on cooperative-matrix
+    // GEMM when its shape allows (rows and cols multiples of 16, no grouping,
+    // row scale or output scale); fewer on the tiled GEMV. UINT32_MAX = never.
+    uint32_t coopmat_dense_min_rows = 64;
     // Validation only: hand every layer's per-stage buffers to `probe`.
     bool     probe_layers = false;
 };
@@ -240,6 +253,9 @@ struct PrefillTimes {
     double shared_expert = 0, expert_io = 0, expert_gpu = 0, host = 0, head = 0, total = 0;
     uint64_t expert_bytes = 0, engram_reads = 0;
     uint32_t experts_read = 0, dispatches = 0, submits = 0;
+    // Wall time of every single-dispatch op (submit + wait), by kernel shape:
+    // "gemm RxK w<fmt> x<fmt>" or "<shader> s<stage>". ms and calls.
+    std::map<std::string, std::pair<double, uint32_t>> per_op;
 };
 
 // Host views of one layer's buffers, valid only inside the probe callback.
@@ -311,6 +327,11 @@ public:
     Result<void> op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs, uint32_t n,
                          uint32_t x_stride, uint64_t y, uint32_t flags, float out_scale = 1.0f,
                          uint32_t rows_per_group = 0, uint64_t row_scale = 0);
+    // op_gemm's option (a) branch: decode W to fp16 (skipped when the transit
+    // already holds it), stage x as fp16, cooperative-matrix GEMM into a padded
+    // plane, copy (and round) into y. One submit. False = not applicable.
+    Result<bool> op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
+                              uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags);
     Result<void> op_rmsnorm(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint64_t w);
     Result<void> op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff, uint32_t coeff_stride,
                                  uint64_t norm_w, uint64_t out, uint64_t rs);
@@ -372,6 +393,14 @@ private:
     PrefillTimes              times_{};
     CommandBuffer             cmd_{};
     bool                      cmd_valid_ = false;
+    uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
+    // A host-side step's wall time into times_.per_op.
+    void host_op(const char* name, std::chrono::steady_clock::time_point t0) {
+        auto& slot = times_.per_op[name];
+        slot.first += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        ++slot.second;
+    }
+    std::string               tag_;   // per_op key of the next flush_one, "" = the kernel spec
 
     std::vector<GpuBuffer> owned_;
     struct Bufs {
@@ -380,6 +409,7 @@ private:
         GpuBuffer ckv, cscore, latent_pre, latent, key_raw, key_norm;
         GpuBuffer qr_raw, qr, qrq, qrs, q, iq, iw, iscore, idx, score, o, woa, woaq, woas, attn;
         GpuBuffer fx, fxq, fxs, gate, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
+        GpuBuffer x16, h16, gu, dout, w16;          // the cooperative-matrix MoE
         GpuBuffer eng_x, eng_xq, eng_xs, eng_kv;
         GpuBuffer transit, rope_win, rope_cmp, logits, nrm;
     } b_{};

@@ -22,17 +22,26 @@
 //
 // Section `prefill`
 // -----------------
-// Filled by the driver in gpu/vulkan/prefill_kernels.h once it exists.
+// A whole prefill through gpu/vulkan/prefill_kernels.h: wall time and the
+// per-stage breakdown (PrefillTimes), experts and bytes streamed, first token.
+// N equal to the L3 prompt length uses that prompt; larger N take the first N
+// ids of --ids (a whitespace-separated token-id file). --replay 0 = oracle
+// mode (every layer-20+ row replayed). --coop-min sweeps
+// PrefillConfig::coopmat_min_rows (-1 = tiled MoE only, 0 = coopmat only),
+// --coop-dense PrefillConfig::coopmat_dense_min_rows the same way.
 //
 // Usage:
 //   prefill_bench --model-dir D:\models\DeepSeek-V4.1-Flash --csv bench/results/prefill_p3.csv
 //                 [--reps 5] [--load "shared: tracks I/J/K on the GPU"]
+//   prefill_bench --section prefill --n 64,512,4096 --ids ids.txt [--replay 128,0]
+//                 [--coop-min -1,16,0] [--coop-dense -1,64] [--transit 32] [--handoff-dir dir]
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <future>
 #include <random>
@@ -40,6 +49,7 @@
 #include <vector>
 
 #include "core/align.h"
+#include "core/json.h"
 #include "core/config.h"
 #include "core/log.h"
 #include "core/status.h"
@@ -52,6 +62,8 @@
 #include "gpu/vulkan/prefill_kernels.h"
 #include "model/layout.h"
 #include "model/manifest.h"
+#include "model/v41_config.h"
+#include "runtime/engram.h"
 #include "storage/backend.h"
 #include "storage/io_engine.h"
 #include "store/pinned.h"
@@ -70,6 +82,13 @@ struct Options {
     std::vector<uint32_t> ns = {16, 64, 256, 1024};
     std::vector<uint32_t> tiles = {4, 8, 16};
     bool        coopmat = true;
+    std::string ids;                       // section prefill: token ids for N > the L3 prompt
+    std::string l3 = "tests/data/l3";      // engram tables and the 64-token prompt
+    std::vector<uint32_t> replays = {128};  // 0 = oracle mode
+    uint32_t    transit = 32;
+    std::vector<uint32_t> coop_min = {16};    // section prefill: PrefillConfig::coopmat_min_rows (-1 = never)
+    std::vector<uint32_t> coop_dense = {64};  // PrefillConfig::coopmat_dense_min_rows (-1 = never)
+    std::string handoff_dir;
 };
 
 const char* env(const char* name) {
@@ -232,15 +251,6 @@ int run_gemm(const Options& o) {
                            static_cast<float*>(xs.host_ptr));
     gpu::pf_act_quant_host(xq_host.data(), npad, qk, static_cast<uint16_t*>(qq.host_ptr),
                            static_cast<float*>(qs.host_ptr));
-    if (const char* dbg = std::getenv("PF_DEBUG_ONES")) {
-        // every activation 1.0 with scale 1 (or a single 1.0 at element atoi(dbg))
-        const int only = std::atoi(dbg);
-        for (size_t i = 0; i < size_t(npad) * dim; ++i)
-            static_cast<uint16_t*>(xq.host_ptr)[i] =
-                cpu::float_to_fp16((only <= 0 || int(i % dim) == only) ? 1.0f : 0.0f);
-        for (size_t i = 0; i < size_t(npad) * (dim / 32); ++i)
-            static_cast<float*>(xs.host_ptr)[i] = 1.0f;
-    }
     for (uint32_t i = 0; i < npad; ++i) {
         static_cast<uint32_t*>(idx.host_ptr)[i] = i;
         static_cast<float*>(rw.host_ptr)[i] = 1.0f;
@@ -320,8 +330,6 @@ int run_gemm(const Options& o) {
             uint64_t* sl = rig.runner.slots(*kh);
             sl[gpu::kPgW] = e0->addr[0]; sl[gpu::kPgS] = e0->addr[1];
             sl[gpu::kPgX] = xq.dev_addr; sl[gpu::kPgXS] = xs.dev_addr; sl[gpu::kPgY] = h.dev_addr;
-            static gpu::GpuBuffer dbg = must_alloc(rig.alloc, 4096);
-            if (std::getenv("PF_DEBUG")) sl[gpu::kPgRowScale] = dbg.dev_addr;
             gpu::PfGemmPush p;
             p.rows = inter; p.k = dim; p.scale_cols = dim / 32; p.n = n; p.x_stride = dim;
             p.y_stride = inter;
@@ -336,17 +344,6 @@ int run_gemm(const Options& o) {
             }
             double cs = 0;
             const double rl = rel_l2(static_cast<const float*>(h.host_ptr), ref_w1.data(), inter, &cs);
-            if (std::getenv("PF_DEBUG")) {
-                const auto* g = static_cast<const float*>(h.host_ptr);
-                for (uint32_t r : {0u, 1u, 7u, 8u, 100u, 2303u})
-                    std::printf("    row %4u gpu %12.6f cpu %12.6f  (token1 %12.6f)\n", r, g[r],
-                                ref_w1[r], g[inter + r]);
-                const auto* d = static_cast<const float*>(dbg.host_ptr);
-                for (uint32_t l = 0; l < 32; ++l)
-                    std::printf("    lane %2u acc %10.6f lane %4.0f tid %4.0f e %5.0f w %8.3f dot %10.5f s8 %4.0f host s8 %u\n",
-                                l, d[l], d[32 + l], d[64 + l], d[96 + l], d[128 + l], d[160 + l],
-                                d[192 + l], static_cast<const uint8_t*>(e0->host(1))[l]);
-            }
             emit("expert.w1", std::format("tiled M{}", t), n, inter, dim, fp4_bytes, best, rl, cs);
         }
         for (uint32_t t : o.tiles) {
@@ -443,6 +440,149 @@ int run_gemm(const Options& o) {
     return 0;
 }
 
+
+// --- section `prefill`: a whole prefill, per stage -----------------------------------
+
+std::vector<uint32_t> read_ids(const std::string& path) {
+    std::vector<uint32_t> ids;
+    if (path.empty()) return ids;
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return ids;
+    unsigned long v;
+    while (std::fscanf(f, "%lu", &v) == 1) ids.push_back(static_cast<uint32_t>(v));
+    std::fclose(f);
+    return ids;
+}
+
+std::vector<uint32_t> l3_prompt(const std::string& dir) {
+    std::vector<uint32_t> out;
+    auto doc = json_parse_file(dir + "/index.json");
+    if (!doc) return out;
+    if (const JsonValue* a = doc->find("prompt_ids"))
+        if (auto arr = a->as_array())
+            for (const JsonValue& e : **arr) out.push_back(static_cast<uint32_t>(e.as_int().value_or(0)));
+    return out;
+}
+
+int run_prefill(const Options& o) {
+    Rig rig;
+    if (auto r = rig.up(o.model_dir); !r) {
+        std::fprintf(stderr, "bring-up: %s\n", r.error().str().c_str());
+        return 1;
+    }
+    auto cfgj = V41Config::load(store::ShardSet::join(o.model_dir, "config.json"));
+    if (!cfgj) { std::fprintf(stderr, "config: %s\n", cfgj.error().str().c_str()); return 1; }
+    const TextConfig& c = cfgj->text;
+    auto tables = runtime::EngramTables::load(o.l3);
+    if (!tables) { std::fprintf(stderr, "engram tables (%s): %s\n", o.l3.c_str(), tables.error().str().c_str()); return 1; }
+    {
+        std::vector<std::string> names = store::pinned_global_tensors(rig.manifest);
+        for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+            auto n = store::pinned_layer_tensors(rig.manifest, L);
+            names.insert(names.end(), n.begin(), n.end());
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        if (auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names); !r) {
+            std::fprintf(stderr, "pinned: %s\n", r.error().str().c_str());
+            return 1;
+        }
+        std::printf("pinned set %.2f GiB in %.1f s\n", rig.pinned.bytes_loaded() / double(1ull << 30),
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    }
+    const std::vector<uint32_t> text_ids = read_ids(o.ids);
+    const std::vector<uint32_t> l3_ids = l3_prompt(o.l3);
+    Csv csv;
+    csv.open(o.csv);
+
+    for (uint32_t n : o.ns) {
+        std::vector<uint32_t> prompt;
+        std::string source;
+        if (n == l3_ids.size()) { prompt = l3_ids; source = "L2/L3 prompt"; }
+        else if (text_ids.size() >= n) { prompt.assign(text_ids.begin(), text_ids.begin() + n); source = o.ids; }
+        else { std::fprintf(stderr, "N=%u: no %u token ids (--ids)\n", n, n); return 1; }
+
+        for (uint32_t replay : o.replays)
+        for (uint32_t cmin : o.coop_min)
+        for (uint32_t cden : o.coop_dense) {
+            gpu::PrefillConfig pc;
+            pc.max_tokens = n;
+            pc.replay = replay ? replay : n;
+            pc.tile = o.tiles.empty() ? 8 : o.tiles[0];
+            pc.transit_slots = o.transit;
+            pc.coopmat_min_rows = cmin;
+            pc.coopmat_dense_min_rows = cden;
+            gpu::Prefill pf;
+            if (auto r = pf.create(rig.device, rig.alloc, rig.runner, rig.manifest, rig.shards, rig.io,
+                                   rig.pinned, c, &*tables, pc); !r) {
+                std::fprintf(stderr, "prefill create: %s\n", r.error().str().c_str());
+                return 1;
+            }
+            const std::string moe = cmin == UINT32_MAX ? "MoE tiled"
+                                    : cmin == 0 ? "MoE coopmat" : std::format("MoE coopmat n>={}", cmin);
+            const std::string dense = cden == UINT32_MAX ? "dense tiled" : std::format("dense coopmat n>={}", cden);
+            const std::string mode = (pc.replay >= n ? std::string("oracle mode") : std::format("replay {}", pc.replay)) +
+                                     " " + moe + " " + dense;
+            std::printf("\nN=%u (%s), %s, load = %s\n", n, source.c_str(), mode.c_str(), o.load.c_str());
+            auto out = pf.run(prompt);
+            if (!out) { std::fprintf(stderr, "prefill: %s\n", out.error().str().c_str()); return 1; }
+            const gpu::PrefillTimes& t = pf.times();
+            bool finite = true;
+            for (float v : out->logits) finite = finite && std::isfinite(v);
+            std::printf("  total %.2f s = %.0f tok/s | embed %.0f  engram io %.0f gpu %.0f  mHC %.0f  attention %.0f  "
+                        "gate+route %.0f  shared %.0f  expert io %.0f  expert gpu %.0f  head %.0f  host/other %.0f ms\n",
+                        t.total / 1e3, n / (t.total / 1e3), t.embed, t.engram_io, t.engram, t.mhc, t.attention,
+                        t.gate, t.shared_expert, t.expert_io, t.expert_gpu, t.head, t.host);
+            std::printf("  %u experts streamed = %.2f GB in %.1f s of waiting (%.2f GB/s against that wait), "
+                        "%llu engram reads, %u dispatches in %u submits\n",
+                        t.experts_read, t.expert_bytes / 1e9, t.expert_io / 1e3,
+                        t.expert_io > 0 ? t.expert_bytes / 1e9 / (t.expert_io / 1e3) : 0.0,
+                        (unsigned long long)t.engram_reads, t.dispatches, t.submits);
+            std::printf("  first token %u, margin %.3f, logits finite: %s\n", out->first_token,
+                        out->top1 - out->top2, finite ? "yes" : "NO");
+            {
+                // single-dispatch ops by wall time (the batched MoE submits are not in here)
+                std::vector<std::pair<std::string, std::pair<double, uint32_t>>> ops(t.per_op.begin(),
+                                                                                   t.per_op.end());
+                std::sort(ops.begin(), ops.end(),
+                          [](const auto& a, const auto& b) { return a.second.first > b.second.first; });
+                std::printf("  ops by wall time:");
+                for (size_t i = 0; i < ops.size() && i < 14; ++i)
+                    std::printf("%s %s %.0f ms/%u", i % 3 ? "," : "\n   ", ops[i].first.c_str(),
+                                ops[i].second.first, ops[i].second.second);
+                std::printf("\n");
+            }
+            if (csv.f) {
+                const std::string v = std::format("N={} {}", n, mode);
+                const std::pair<const char*, double> buckets[] = {
+                    {"total", t.total}, {"embed", t.embed}, {"engram_io", t.engram_io},
+                    {"engram_gpu", t.engram}, {"mhc", t.mhc}, {"attention", t.attention},
+                    {"gate_route", t.gate}, {"shared_expert", t.shared_expert},
+                    {"expert_io", t.expert_io}, {"expert_gpu", t.expert_gpu}, {"head", t.head},
+                    {"host_other", t.host}};
+                for (const auto& [name, ms] : buckets)
+                    std::fprintf(csv.f, "prefill,%s,%s,%u,%u,0,%llu,%.1f,%.1f,0,0,0,\"%s\"\n", v.c_str(), name, n,
+                                 t.experts_read, (unsigned long long)t.expert_bytes, ms,
+                                 name == std::string("total") ? n / (ms / 1e3) : 0.0, o.load.c_str());
+                std::fflush(csv.f);
+            }
+            if (!o.handoff_dir.empty()) {
+                const std::string d = std::format("{}/N{}_{}_c{}_d{}", o.handoff_dir, n, pc.replay >= n ? "oracle" : "replay",
+                                                  static_cast<int32_t>(cmin), static_cast<int32_t>(cden));
+                std::filesystem::create_directories(d);
+                // just the window rings, for a production-vs-oracle comparison
+                std::FILE* f = std::fopen((d + "/win_kv.f32").c_str(), "wb");
+                if (f) {
+                    for (const auto& l : out->layers) std::fwrite(l.win_kv.data(), sizeof(float), l.win_kv.size(), f);
+                    std::fwrite(out->logits.data(), sizeof(float), out->logits.size(), f);
+                    std::fclose(f);
+                }
+            }
+            pf.destroy();
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -474,10 +614,18 @@ int main(int argc, char** argv) {
         else if (a == "--n")       o.ns = list(next());
         else if (a == "--tiles")   o.tiles = list(next());
         else if (a == "--no-coopmat") o.coopmat = false;
+        else if (a == "--ids")     o.ids = next();
+        else if (a == "--l3")      o.l3 = next();
+        else if (a == "--replay")  o.replays = list(next());
+        else if (a == "--coop-min") o.coop_min = list(next());
+        else if (a == "--coop-dense") o.coop_dense = list(next());
+        else if (a == "--transit") o.transit = static_cast<uint32_t>(std::atoi(next().c_str()));
+        else if (a == "--handoff-dir") o.handoff_dir = next();
         else { std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data()); return 2; }
     }
     if (o.model_dir.empty()) { std::fputs("set --model-dir or DEEPMOE_MODEL_DIR\n", stderr); return 2; }
     if (o.section == "gemm") return run_gemm(o);
+    if (o.section == "prefill") return run_prefill(o);
     std::fprintf(stderr, "unknown section '%s'\n", o.section.c_str());
     return 2;
 }

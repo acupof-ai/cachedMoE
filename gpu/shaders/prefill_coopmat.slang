@@ -26,6 +26,8 @@
 //          fp32 block scale) and writes value x scale as fp16. The scale has to
 //          be folded in -- a tile multiply cannot apply a per-(token, block)
 //          factor -- which is an fp16 range question the bench measures.
+// Stage 2  x -> the fp16 plane from an fp32 activation [n][K] (the bf16 / fp32
+//          linears: the gate, the compressor, wo_a's input), rows m + idx_off.
 
 #include "prefill_common.slang"
 
@@ -69,8 +71,9 @@ void stage_gemm(uint3 gid, uint tid) {
             c0 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b0, c0);
             c1 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b1, c1);
         }
-        c0.Store<linalg.CoopMatMatrixLayout.ColumnMajor>(Y, m0 * R + r, R);
-        c1.Store<linalg.CoopMatMatrixLayout.ColumnMajor>(Y, (m0 + 16) * R + r, R);
+        // pc.idx_off shifts the output rows, so gate and up can share a plane
+        c0.Store<linalg.CoopMatMatrixLayout.ColumnMajor>(Y, (pc.idx_off + m0) * R + r, R);
+        c1.Store<linalg.CoopMatMatrixLayout.ColumnMajor>(Y, (pc.idx_off + m0 + 16) * R + r, R);
     }
 }
 
@@ -80,7 +83,7 @@ void stage_stage_x(uint3 gid, uint tid) {
     const uint m = idx / blocks, blk = idx % blocks;
     if (m >= pc.n) return;
     const uint src = ((pc.flags & kFlagGather) != 0u)
-                         ? load_u32(Ptr[kIdx] + (uint64_t)(pc.idx_off + m) * 4) : m;
+                         ? load_u32(Ptr[kIdx] + (uint64_t)(pc.idx_off + m) * 4) : (pc.idx_off + m);
     const float s = load_f32(Ptr[kQS] + ((uint64_t)src * blocks + blk) * 4);
     const uint64_t qa = Ptr[kQ] + ((uint64_t)src * pc.k + (uint64_t)blk * 32) * 2;
     const uint64_t xa = Ptr[kX] + ((uint64_t)m * pc.k + (uint64_t)blk * 32) * 2;
@@ -90,9 +93,21 @@ void stage_stage_x(uint3 gid, uint tid) {
     }
 }
 
+void stage_stage_f32(uint3 gid, uint tid) {
+    const uint blocks = pc.k / kBlockK;
+    const uint idx = gid.x * 32 + tid;
+    const uint m = idx / blocks, blk = idx % blocks;
+    if (m >= pc.n) return;
+    const uint64_t xa = Ptr[kQ] + ((uint64_t)(pc.idx_off + m) * pc.k + (uint64_t)blk * 32) * 4;
+    const uint64_t ya = Ptr[kX] + ((uint64_t)m * pc.k + (uint64_t)blk * 32) * 2;
+    [unroll] for (uint i = 0; i < 32; ++i)
+        *(uint16_t*)(ya + (uint64_t)i * 2) = (uint16_t)f32tof16(load_f32(xa + (uint64_t)i * 4));
+}
+
 [shader("compute")]
 [numthreads(32, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-    if (Stage == 0) stage_gemm(gid, tid);
-    else            stage_stage_x(gid, tid);
+    if (Stage == 0)      stage_gemm(gid, tid);
+    else if (Stage == 1) stage_stage_x(gid, tid);
+    else                 stage_stage_f32(gid, tid);
 }

@@ -299,9 +299,20 @@ void stage_decode(uint3 gid, uint tid) {
     const uint row = pc.row_base + idx / blocks;
     const uint blk = idx % blocks;
     if (row >= pc.row_base + pc.rows) return;
+    // kFlagFromJob: the weight is job[pc.job]'s part pc.idx_off (0 w1, 1 w3,
+    // 2 w2) in the job's own format, so one command buffer decodes a whole
+    // batch of experts into the same transit buffer, one after another.
+    uint64_t wa = Ptr[kW], sa = Ptr[kS];
+    uint fmt = WFmt;
+    if ((pc.flags & kFlagFromJob) != 0u) {
+        const Job jb = load_job(pc.job);
+        fmt = jb.fmt;
+        wa = (pc.idx_off == 0u) ? jb.w1 : ((pc.idx_off == 1u) ? jb.w3 : jb.w2);
+        sa = (pc.idx_off == 0u) ? jb.s1 : ((pc.idx_off == 1u) ? jb.s3 : jb.s2);
+    }
     float w[32];
     int e;
-    load_wblock(WFmt, Ptr[kW], Ptr[kS], row, pc.k, pc.scale_cols, blk, w, e);
+    load_wblock(fmt, wa, sa, row, pc.k, pc.scale_cols, blk, w, e);
     const uint64_t o = Ptr[kY] + ((uint64_t)(row - pc.row_base) * pc.k + (uint64_t)blk * 32) * 2;
     [unroll] for (uint i = 0; i < 32; ++i)
         *(uint16_t*)(o + (uint64_t)i * 2) = (uint16_t)f32tof16(ldexp(w[i], e));

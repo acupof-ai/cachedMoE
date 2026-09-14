@@ -19,6 +19,10 @@
 //                          q and k); FP4 / E4M3-16 (the compressed KV)
 //   6  cmp_pool            ratio-way softmax pooling per element (`Compressor`)
 //   7  engram_gate         the engram's normalised-dot gate and residual write
+//   8  swiglu              the cooperative-matrix MoE's SwiGLU x route weight
+//   9  scatter_add         y[idx] += expert rows
+//  10  copy_round          [n][d] -> [n][d], bf16-rounded under kFlagRound (a
+//                          cooperative-matrix GEMM's padded output into y)
 //
 // Every stage is one thread per row or per (row, block): no stage here needs a
 // reduction across rows, so there are no barriers and no LDS beyond registers.
@@ -63,8 +67,9 @@ void load_row32(uint64_t base, out float v[32]) {
 void s_act_quant(uint3 gid, uint tid) {
     const uint blocks = pc.d / kBlockK;
     const uint idx = thread_index(gid, tid);
-    const uint row = idx / blocks, blk = idx % blocks;
-    if (row >= pc.n) return;
+    const uint rr = idx / blocks, blk = idx % blocks;
+    if (rr >= pc.n) return;
+    const uint row = rr + pc.row_off;      // rows [row_off, row_off + n)
     float v[32];
     load_row32(Ptr[kIn] + ((uint64_t)row * pc.d + (uint64_t)blk * 32) * 4, v);
     float amax = 0.0f;
@@ -367,10 +372,66 @@ void s_engram_gate(uint3 gid, uint tid) {
                   bf16_round(load_f32(h + (uint64_t)e * 4) + g * load_f32(val + (uint64_t)e * 4)));
 }
 
+// --- 8: swiglu --------------------------------------------------------------------
+// The cooperative-matrix MoE's elementwise middle (prefill_gemm.slang stage 1
+// does it inside the GEMV). kIn = gate rows [0, n) and up rows [a0, a0 + n)
+// of one plane, kOut = h rows [a1, a1 + n), kA2 = route weights at [a2, a2 + n).
+// f1 = swiglu_limit. `Expert.forward`: bf16 gate and up widened, clamp, SiLU,
+// times the route weight, `.to(dtype)`.
+void s_swiglu(uint3 gid, uint tid) {
+    const uint chunks = pc.d / 16;
+    const uint idx = thread_index(gid, tid);
+    const uint row = idx / chunks, c0 = (idx % chunks) * 16;
+    if (row >= pc.n) return;
+    const float rw = load_f32(Ptr[kA2] + (uint64_t)(pc.a2 + row) * 4);
+    const uint64_t gi = Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4;
+    const uint64_t ui = Ptr[kIn] + ((uint64_t)(pc.a0 + row) * pc.d + c0) * 4;
+    const uint64_t ho = Ptr[kOut] + ((uint64_t)(pc.a1 + row) * pc.d + c0) * 4;
+    [unroll] for (uint q = 0; q < 16; ++q) {
+        const float g = maybe_round(load_f32(gi + (uint64_t)q * 4), pc.flags);
+        const float u = maybe_round(load_f32(ui + (uint64_t)q * 4), pc.flags);
+        store_f32(ho + (uint64_t)q * 4, maybe_round(swiglu(g, u, pc.f1) * rw, pc.flags));
+    }
+}
+
+// --- 9: scatter_add ---------------------------------------------------------------
+// `y[idx] += expert(x[idx])`: kIn = the expert's output rows [n][d], kOut = y,
+// kA2 = the token list, rows at [a2, a2 + n). Tokens are distinct within one
+// expert, so no two threads of a dispatch write the same element.
+void s_scatter_add(uint3 gid, uint tid) {
+    const uint chunks = pc.d / 16;
+    const uint idx = thread_index(gid, tid);
+    const uint row = idx / chunks, c0 = (idx % chunks) * 16;
+    if (row >= pc.n) return;
+    const uint t = load_u32(Ptr[kA2] + (uint64_t)(pc.a2 + row) * 4);
+    const uint64_t src = Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4;
+    const uint64_t dst = Ptr[kOut] + ((uint64_t)t * pc.d + c0) * 4;
+    [unroll] for (uint q = 0; q < 16; ++q)
+        store_f32(dst + (uint64_t)q * 4,
+                  load_f32(dst + (uint64_t)q * 4) + maybe_round(load_f32(src + (uint64_t)q * 4), pc.flags));
+}
+
+// --- 10: copy_round -----------------------------------------------------------------
+// kIn rows [0, n) -> kOut rows [0, n), 16 elements a thread, rounded onto bf16
+// under kFlagRound. d is a multiple of 16.
+void s_copy_round(uint3 gid, uint tid) {
+    const uint chunks = pc.d / 16;
+    const uint idx = thread_index(gid, tid);
+    const uint row = idx / chunks, c0 = (idx % chunks) * 16;
+    if (row >= pc.n) return;
+    const uint64_t src = Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4;
+    const uint64_t dst = Ptr[kOut] + ((uint64_t)row * pc.d + c0) * 4;
+    [unroll] for (uint q = 0; q < 16; ++q)
+        store_f32(dst + (uint64_t)q * 4, maybe_round(load_f32(src + (uint64_t)q * 4), pc.flags));
+}
+
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-    if (Stage == 0)      s_act_quant(gid, tid);
+    if (Stage == 10)     s_copy_round(gid, tid);
+    else if (Stage == 8) s_swiglu(gid, tid);
+    else if (Stage == 9) s_scatter_add(gid, tid);
+    else if (Stage == 0) s_act_quant(gid, tid);
     else if (Stage == 1) s_rmsnorm(gid, tid);
     else if (Stage == 2) s_mhc_pre_norm(gid, tid);
     else if (Stage == 3) s_sinkhorn(gid, tid);
