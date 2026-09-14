@@ -6,7 +6,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB / NVMe）专用�
 - 模块依赖与线程模型：[docs/architecture.md](docs/architecture.md)
 - 构建与环境：[docs/build.md](docs/build.md)
 
-核心思路：权重原生 FP4/FP8 不再量化；**运行时直接读 ModelScope 下下来的 48 个 safetensors 分片，不 repack**（`deepmoe_manifest.json` 是一份纯地址簿，design §5.1）；常驻部分 pin 在统一内存，routed expert 在 NVMe 与内存之间由数据驱动的 Planner 流式调度；Vulkan Compute（Slang）每 token 一个 command buffer；DSpark 投机解码摊薄带宽；所有优化以 oracle 与可分解的每 token 时间线为准。
+核心思路：权重原生 FP4/FP8 不再量化；**运行时直接读 ModelScope 下下来的 48 个 safetensors 分片，不 repack**（`deepmoe_manifest.json` 是一份纯地址簿，design §5.1）；常驻部分 pin 在统一内存，routed expert 在 NVMe 与内存之间由数据驱动的 Planner 流式调度；Vulkan Compute（Slang）每 token 一个 command buffer；DSpark 投机解码是**一个有门槛的决策**——它是唯一能摊薄常驻读的手段，但要实测证明在这台机器上赚钱才接入（design §10.1）；所有优化以 oracle 与可分解的每 token 时间线为准。
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/zig-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
@@ -15,7 +15,27 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-## 当前状态：**第一个 token**
+## 当前状态：**第一个 token → 设计 v0.9-draft（结构调整，数字待填）**
+
+**design.md v0.9-draft（2026-09-15）改了计划的结构，不是数字**（详见 design §15.2 与附录 C）：
+
+1. **成功标准换成四条可验证的绝对判据**（design §1.3 / §13.3）。外部对照删除：llama.cpp / Colibri / 任何 GGUF runtime
+   **都跑不了 V4.1-Flash**（没有 GGUF，FP4/FP8、Engram、DSpark、CED 都不支持），"显著快于通用 runtime"没有对手。
+   新判据：**(a)** L3 每 prompt 教师强制 8/8，短上下文与 4K / 16K 都要，自由运行只在参考 margin < 1.0 处分歧；
+   **(b)** 实测 decode TPS 对模型 ±15%，kernel bench 解释非 stall 时间的 ≥ 90%；
+   **(c)** 常驻路径有效带宽 ≥ 80% × 217 GB/s（≈ 热步 ≤ 75 ms）；**(d)** 内部 A/B：无投机 vs DSpark、冷 vs 热 cache、路径 A vs A+B。
+2. **DSpark 挂到一个 go / no-go 门槛上**（design §10.1）。Track K 实测（[docs/p3_dspark.md](docs/p3_dspark.md)）：
+   接受 1.93 tokens / verify（单条退化轨迹）、`T_draft` ≈ 19 ms（M = 5 head）、只有 MoE 支持 M > 1、
+   fp8 投影 M = 5 时 ×2.2–4.8 → **h = 0.92 下最好 +5%，按实测 M 缩放每个 k 都亏**；stall 在 k = 5 从 80 涨到 286 ms。
+   **今天 NO-GO**，等 G1（≥ 5 个正常 prompt 的接受率）、G2（M > 1 的 fp8 投影 kernel）、G3（参考实现的批边界依赖）。
+3. **prefill 升格为一等章节**（design §7.13 / §9.7）：已有的慢 prefill、真正 prefill 的五个部件、
+   TTFT 模型（冷 cache：64 / 512 / 4K / 16K token ≈ 34 s / 58 s / 62–65 s / 78–88 s，NVMe 主导；kernel 速率 `TBD(Track L)`）、五条验收。
+4. **长上下文进入计划**：迄今全部验证在 64–72 token 上（indexer top-k 退化、window 环不回绕、ratio-2 池化几乎没跑），
+   **4K / 16K 的 L3 是必需的里程碑**（design §11.5 / §12.1，oracle 与统计 `TBD(Track M)`）。
+5. **里程碑顺序**：无 LOADED 状态 → 热步 ≤ 90 ms → **真正的 prefill + 长上下文 L3** → DSpark（过门之后）→ Planner 重叠 → tokenizer。
+   前两项 Track I 的提交信息报告已达成（LOADED 已去、热步 **86.7 ms**），**正式写回在下一次集成**。
+
+**以下是 v0.8 的"第一个 token"快照，数字未更新。**
 
 **deepMoE 第一次自己产出了 token。** 四十层、engram、head、greedy 采样全在 GPU 上跑，
 routed expert 由 gate 自己的 ids 经 Planner 从 NVMe 取回。对 fp32 参考（`tools/oracle.py --level l3`）：
@@ -48,13 +68,13 @@ step  in     -> out     wall      | attn    moe  (gpu   host)  stall   engram ot
 6/8 tokens match the fp32 reference before divergence
 ```
 
-**P-1、P1 与 P2（step 1 + step 2）已完成，结论写回 [design.md](docs/design.md) v0.8。**
-五份原始报告：[docs/kernel_p1.md](docs/kernel_p1.md)（P1：GPU 微内核与内存路径）、
+**P-1、P1 与 P2（step 1 + step 2）已完成，结论写回 [design.md](docs/design.md) v0.8；v0.9-draft 是其上的结构调整。**
+六份原始报告（第六份是 P3 的 DSpark 规格与实测 [docs/p3_dspark.md](docs/p3_dspark.md)，Track K）；前五份：[docs/kernel_p1.md](docs/kernel_p1.md)（P1：GPU 微内核与内存路径）、
 [docs/route_trace.md](docs/route_trace.md)（P1：路由 trace 与 cache 模拟器）、
 [docs/kernel_p2_moe.md](docs/kernel_p2_moe.md)（P2 Track D/H：MoE kernel 为投机解码做准备）、
 [docs/p2_attention.md](docs/p2_attention.md)（P2 Track E/F：非 MoE decode 路径、compressor/indexer）、
 [docs/p2_decode.md](docs/p2_decode.md)（P2 Track G：整个 decode step 与第一个 token）。
-下一批里程碑与逐模块完成度见 design.md §15.1–§15.3。
+下一批里程碑与逐模块完成度见 design.md §15.1–§15.3（v0.9-draft 已重排）。
 
 **P2 step 2 改变了设计的五件事**：
 
@@ -99,7 +119,7 @@ step  in     -> out     wall      | attn    moe  (gpu   host)  stall   engram ot
 | `store/`：slab 池、`Free→Filling→Resident`（每 run 计数）状态机、每 expert 6 项的 GPU 指针表、timeline 淘汰保护；**LRU 基线即最终策略**（§9.3 定案）；`ShardSet`；**`pinned`：decode 用的 884 个 tensor / 9.17 GiB 一次性加载已实测（3.4 s / 2.9 GB/s）** | score-aware（可选开关，默认关）；engram prefetch；**淘汰守卫与逐层 LRU 时间戳都还没有消费者** |
 | `runtime/`：`rope`（按层的 RoPE/YaRN）、`kvstore`、`decode_layer`、`moe_bridge`（gate ids → Planner → timeline）、**`engram`（hash + 48 次 P2 读）**、**`engine`（`init_gpu` / `decode_step` / `generate` / §13.1 的逐层时间线 / `layer_probe`）**、`decode_state`（LOADED 的那一半，到处都标着） | prefill；把 compressor/indexer 接进 `Engine`；dspark；温度 > 0 的采样 |
 | `gpu/vulkan`：device + 能力查询、timeline semaphore、command pool、pipeline、descriptor；**两条内存路径的分配与导入已实测**（§3.3）；`moe_kernels`、`attn_kernels`（十八 + 十个 pipeline + 共享地址表）、`decode_kernels` | 每 token 一个预录制 command buffer（需要按层索引的地址表，P3） |
-| `gpu/shaders`：**二十一个 kernel，全部过 `slangc` + `spirv-val`**；MoE 侧（`moe_gateup` / `moe_down` / `moe_common` / **`moe_hquant`** / **`moe_xquant`**）、attention 侧（`mega_mhc` / `wq_a` / `wq_b` / `wkv` / `sparse_attn` / `wo_a` / `wo_b` / `gate` / `head` / `attn_common` / `fp8_gemv` / **`compressor`** / **`indexer`**）与 **`engram`** | prefill（§7.13）、DSpark（§7.12）；compressor/indexer 的 **prefill 形态** |
+| `gpu/shaders`：**二十一个 kernel，全部过 `slangc` + `spirv-val`**；MoE 侧（`moe_gateup` / `moe_down` / `moe_common` / **`moe_hquant`** / **`moe_xquant`**）、attention 侧（`mega_mhc` / `wq_a` / `wq_b` / `wkv` / `sparse_attn` / `wo_a` / `wo_b` / `gate` / `head` / `attn_common` / `fp8_gemv` / **`compressor`** / **`indexer`**）与 **`engram`** | prefill（§7.13）；**v0.9-draft：DSpark 草稿 kernel 已由 Track K 提交（`dspark_{common,gemv,attn,head}.slang`）**，缺的是 verify batch 要的 M > 1 attention 族 / `head` / `engram`（design §10.1.5 的 G2）；compressor/indexer 的 **prefill 形态** |
 | `bench/nvme_bench`：Q6/Q7（§9.2.1） | — |
 | `bench/bw_matrix`：**CPU / GPU / 并发全部完成**（§8.0、§3.3） | — |
 | `bench/kernel_bench`：**P1 的 60 变体 + P2 的两轮 sweep（261 + 336 行：M 扫描、`XMode` 含 int8 预量化、`HQuant` 三种实现、fp8 shared expert、分组 dispatch 的轮转测量）**（§7.9.1–§7.9.3、§3.4） | — |
