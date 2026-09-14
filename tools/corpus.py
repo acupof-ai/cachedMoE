@@ -24,6 +24,7 @@ one big Chinese file does not drown out the code.
 from __future__ import annotations
 
 import glob
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -135,66 +136,79 @@ def build(sources: list[Source], tokenizer, target_tokens: int, min_prompts: int
           min_len: int, max_len: int, seed: int) -> list[Prompt]:
     """Cut the sources into prompts of `min_len`..`max_len` tokens.
 
-    The token budget is split equally across whichever kinds have sources. Within a
-    kind, sources are visited round-robin so one long document cannot monopolise the
-    budget, and each prompt is a contiguous run of blocks from a single source.
+    The token budget and the prompt-count floor are both split equally across
+    whichever kinds have sources, so one big Chinese document cannot crowd out the
+    code. Within a kind, documents are visited round-robin, and a prompt is always a
+    contiguous run of blocks from a single document.
+
+    Blocks are tokenised once up front so a target length can be met accurately; a
+    character-count proxy overshoots badly on Chinese (~1.5 chars per token) and
+    undershoots on English (~4), which is enough to push the whole distribution off
+    the requested range.
     """
     import random
     rng = random.Random(seed)
 
-    by_kind: dict[str, list[tuple[Source, list[str]]]] = {k: [] for k in KINDS}
+    by_kind: dict[str, list[tuple[Source, list[str], list[int]]]] = {}
     for src in sources:
         text = read_source(src)
         if not text.strip():
             continue
         blocks = _blocks(text)
-        if blocks:
-            by_kind.setdefault(src.kind, []).append((src, blocks))
+        if not blocks:
+            continue
+        lens = [max(1, len(tokenizer.encode(b))) for b in blocks]
+        by_kind.setdefault(src.kind, []).append((src, blocks, lens))
 
     active = [k for k in KINDS if by_kind.get(k)]
     if not active:
         raise SystemExit("no usable corpus sources")
-    per_kind = target_tokens / len(active)
+    per_kind_tokens = target_tokens / len(active)
+    per_kind_prompts = math.ceil(min_prompts / len(active))
 
     prompts: list[Prompt] = []
     for kind in active:
         docs = by_kind[kind]
-        # where each doc's cursor sits, so round-robin resumes rather than repeats
-        cursors = [0] * len(docs)
+        cursors = [0] * len(docs)          # resume where this doc left off
         got = 0
+        made = 0
         doc_i = 0
         stalled = 0
-        while got < per_kind and stalled < len(docs):
-            src, blocks = docs[doc_i % len(docs)]
+        while (got < per_kind_tokens or made < per_kind_prompts) and stalled < len(docs):
             ci = doc_i % len(docs)
+            src, blocks, lens = docs[ci]
             doc_i += 1
             if cursors[ci] >= len(blocks):
                 stalled += 1
                 continue
             stalled = 0
+            # log-uniform over [min_len, max_len]: most prompts in the low hundreds,
+            # with a real 1-2K tail, which is what a chat or agent workload looks like
             want = int(round(min_len * (max_len / min_len) ** rng.random()))
             chunk: list[str] = []
             n = 0
             while cursors[ci] < len(blocks) and n < want:
-                block = blocks[cursors[ci]]
+                bl = lens[cursors[ci]]
+                # stop *before* a block that would overshoot badly, once the prompt is
+                # already long enough to be worth keeping -- otherwise one 900-token
+                # code block drags every prompt in that document up to 900
+                if chunk and n + bl > want and n >= min_len // 2:
+                    break
+                chunk.append(blocks[cursors[ci]])
+                n += bl
                 cursors[ci] += 1
-                chunk.append(block)
-                # cheap length proxy; the real count happens once, below
-                n += max(1, len(block) // 3)
             text = "\n\n".join(chunk)
-            ids = tokenizer.encode(text)
-            if len(ids) > max_len:
-                ids = ids[:max_len]
+            ids = tokenizer.encode(text)[:max_len]
             if len(ids) < min_len // 4:
                 continue
             prompts.append(Prompt(text=text, ids=ids, kind=kind, source=src.path))
             got += len(ids)
+            made += 1
 
     rng.shuffle(prompts)
-    # Keep adding until both the token floor and the prompt-count floor are met; the
-    # shuffle above means truncating the tail does not bias the kind mix much.
     total = sum(p.n_tokens for p in prompts)
     if total < target_tokens or len(prompts) < min_prompts:
+        # everything the sources had; the caller reports the shortfall
         return prompts
     kept: list[Prompt] = []
     n = 0

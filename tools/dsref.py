@@ -244,17 +244,22 @@ def _fp8_rows_to_bf16(value_bytes: bytes, scale_bytes: bytes, rows: int, cols: i
 # ---------------------------------------------------------------------------
 
 def _k_act_quant(x, block_size=128, scale_fmt=None, scale_dtype=torch.float32, inplace=False):
-    """inference/kernel.py `act_quant`. Only the two call shapes model.py uses are
-    supported: `inplace=True` (the window KV cache) and the (y, s) form consumed by
-    `fp8_gemm`, which we serve pre-dequantised because our weights are already bf16."""
+    """inference/kernel.py `act_quant`.
+
+    The `inplace=True` form is the live one: `Attention._window_kv` uses it to
+    quantise the sliding-window KV to fp8 before it enters the cache, which design
+    section 2.4 calls out as semantic rather than a kernel detail.
+
+    The (y, s) form is what model.py's `linear` feeds to `fp8_gemm`. `_linear`
+    replaces that path entirely (our weights are already dequantised), so it is
+    unreachable in normal use -- it stays correct, and paired with `_k_fp8_gemm`,
+    so that unpatching `model.linear` still produces the right answer.
+    """
     assert scale_fmt == "ue8m0" and scale_dtype == torch.float8_e8m0fnu, (scale_fmt, scale_dtype)
     y = act_quant_dequant(x, block_size)
     if inplace:
         x.copy_(y)
         return x
-    # `_k_fp8_gemm` below ignores the scale and multiplies the dequantised value, so
-    # handing back (dequantised x, ones) keeps fp8_gemm's contract without a second
-    # quantisation. Nothing else in model.py reads these scales.
     s = x.new_ones(*x.shape[:-1], x.size(-1) // block_size, dtype=torch.float32)
     return y, s
 
@@ -267,16 +272,19 @@ def _k_fp4_act_quant(x, block_size=32, inplace=False, scale_dtype=torch.float8_e
 
 
 def _k_fp8_gemm(a, a_s, b, b_s, scale_dtype=torch.float32, block_size=128):
-    """`C[M,N] = A[M,K] @ B[N,K]^T`. `a` arrives already dequantised from
-    `_k_act_quant`, and `b` has been dequantised to bf16 at load time (lossless: see
-    the module docstring), so this is one bf16 matmul with an fp32 accumulator --
-    the same thing fp8_gemm_kernel computes, modulo accumulation order."""
+    """`C[M,N] = A[M,K] @ B[N,K]^T`, with the scales already folded into both sides.
+
+    `a` arrives dequantised from `_k_act_quant` and `b` was dequantised to bf16 at
+    load time (lossless: see the module docstring), so this is one bf16 matmul with
+    an fp32 accumulator and a bf16 result -- exactly what fp8_gemm_kernel computes,
+    modulo accumulation order. Unreachable while `_linear` is installed.
+    """
     return F.linear(a, b)
 
 
 def _k_fp4_gemm(a, a_s, b, b_s, scale_dtype=torch.float32, act_block_size=128):
-    """Same argument as `_k_fp8_gemm`; only reached if a routed expert is ever run
-    through model.py's own `Expert` (the streaming path below bypasses it)."""
+    """Same argument as `_k_fp8_gemm`. Unreachable: the routed experts go through
+    `expert_ffn` and the shared expert's Linears go through `_linear`."""
     return F.linear(a, b)
 
 
@@ -431,31 +439,57 @@ class WeightStore:
         if self.m["version"] != 2:
             raise SystemExit(f"manifest version {self.m['version']}, expected 2")
         self.align = self.m["alignment"]
-        self._handles: dict[int, object] = {}
-        self._lock = threading.Lock()
+        # One set of file handles *per thread*. A seek+read pair is not atomic, so a
+        # shared handle needs a lock -- and a lock turns the engram's 4 KiB random
+        # reads into a QD-1 stream, which section 9.2.1 measured at a fraction of the
+        # 83,700 IOPS the drive does at QD 48.
+        self._tls = threading.local()
+        self._all_handles: list = []
+        self._reg_lock = threading.Lock()
         self._expert_index = {L["layer"]: L for L in self.m["experts"]}
         self._engram_index = {E["layer"]: E for E in self.m["engram"]}
+        self._pool: ThreadPoolExecutor | None = None
+
+    def _row_pool(self, threads: int) -> ThreadPoolExecutor:
+        """One long-lived pool, so the per-thread file handles above survive between
+        prompts instead of being reopened 80 times."""
+        if self._pool is None:
+            self._pool = ThreadPoolExecutor(max_workers=threads,
+                                            thread_name_prefix="engram-row")
+        return self._pool
 
     # -- raw io ------------------------------------------------------------
 
     def _file(self, index: int):
-        h = self._handles.get(index)
+        handles = getattr(self._tls, "handles", None)
+        if handles is None:
+            handles = self._tls.handles = {}
+        h = handles.get(index)
         if h is None:
             h = open(os.path.join(self.dir, self.m["files"][index]["path"]), "rb",
                      buffering=0)
-            self._handles[index] = h
+            handles[index] = h
+            with self._reg_lock:
+                self._all_handles.append(h)
         return h
 
     def close(self):
-        for h in self._handles.values():
-            h.close()
-        self._handles.clear()
+        if self._pool is not None:
+            self._pool.shutdown(wait=True)
+            self._pool = None
+        with self._reg_lock:
+            for h in self._all_handles:
+                try:
+                    h.close()
+                except OSError:
+                    pass
+            self._all_handles.clear()
+        self._tls = threading.local()
 
     def _read(self, file_index: int, offset: int, nbytes: int) -> bytes:
-        with self._lock:
-            f = self._file(file_index)
-            f.seek(offset)
-            buf = f.read(nbytes)
+        f = self._file(file_index)
+        f.seek(offset)
+        buf = f.read(nbytes)
         if len(buf) != nbytes:
             raise SystemExit(f"short read of {nbytes} B at {offset} in file {file_index}")
         return buf
@@ -621,8 +655,7 @@ class WeightStore:
             scs[i * sb:(i + 1) * sb] = self._read(sfile, sbase + r * sb, sb)
 
         if threads > 1 and len(uniq) > threads:
-            with ThreadPoolExecutor(max_workers=threads) as pool:
-                list(pool.map(fetch, range(len(uniq))))
+            list(self._row_pool(threads).map(fetch, range(len(uniq)), chunksize=64))
         else:
             for i in range(len(uniq)):
                 fetch(i)

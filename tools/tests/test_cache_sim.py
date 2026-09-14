@@ -224,11 +224,47 @@ def test_tps_model_matches_section_3_1():
     a = default_args()
     r = cs.run_one(trace, "lru", 8, a, set(), "global", 0, 0)
     expect = (cs.RESIDENT_MS
-              + r["miss_bytes_per_token"] / (a.nvme_gbps * 1e9) * 1e3
-              + (6 * cs.EXPERT_BYTES - r["miss_bytes_per_token"])
+              + r["nvme_bytes_per_token"] / (a.nvme_gbps * 1e9) * 1e3
+              + (6 * cs.EXPERT_BYTES - r["nvme_bytes_per_token"])
               / (a.lpddr_gbps * 1e9) * 1e3)
-    assert abs(r["ms_per_token"] - expect) < 0.2, (r["ms_per_token"], expect)
-    print(f"ok  tok/s model matches section 3.1 ({r['ms_per_token']} ms/token)")
+    assert abs(r["ms_per_token_serial"] - expect) < 0.2, (r["ms_per_token_serial"], expect)
+    # with no prefetch the overlapped model must agree with the serial one
+    assert abs(r["ms_per_token"] - r["ms_per_token_serial"]) < 1.0, r
+    assert r["effective_hit_rate"] == r["hit_rate"], r
+    print(f"ok  tok/s model matches section 3.1 ({r['ms_per_token_serial']} ms/token)")
+
+
+def test_arc_invariants():
+    """ARC must never hold more than `capacity` resident keys, must never lose a key
+    it reports as resident, and must not crash on a long adversarial stream.
+
+    The crash it is guarding against is real: an earlier version trimmed the ghost
+    lists inside REPLACE, which could evict the very key being promoted out of B2 and
+    then KeyError on the delete. It survived a 4,000-access random trace and died on
+    the smoke trace at 116,000.
+    """
+    rng = np.random.default_rng(23)
+    cap, M = 40, 400
+    p = cs.ARC(cap)
+    resident = set()
+    for _ in range(200000):
+        # a mix of a small hot set and a long cold tail, which is what makes ARC
+        # move its T1/T2 split around
+        k = int(rng.integers(0, 20) if rng.random() < 0.5 else rng.integers(0, M))
+        if p.contains(k):
+            assert k in resident, k
+            p.touch(k)
+        else:
+            v = p.admit(k)
+            resident.add(k)
+            if v is not None:
+                resident.discard(v)
+        assert p.size() <= cap, (p.size(), cap)
+        assert len(p.t1) + len(p.b1) <= cap, (len(p.t1), len(p.b1))
+        assert len(p.t1) + len(p.t2) + len(p.b1) + len(p.b2) <= 2 * cap
+    assert {k for k in range(M) if p.contains(k)} == resident
+    print(f"ok  ARC holds its invariants over 200k accesses (p = {p.p:.1f}, "
+          f"|T1| = {len(p.t1)}, |T2| = {len(p.t2)})")
 
 
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

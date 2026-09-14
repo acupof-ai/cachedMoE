@@ -311,15 +311,28 @@ class Tracer:
         scores = moe.gate_scores(ffn_in)                     # raw, unbiased
         bias = moe.gate.bias.float()
         biased = scores + bias
-        top16 = biased.topk(TOPK_RECORD, dim=-1)
-        top16_ids = top16.indices
+        topk = moe.n_activated_experts
+
+        # Our understanding of the gate, checked by *value* rather than by id: the six
+        # the reference picked must be six of the highest `score + bias`. Comparing
+        # ids would fire on an exact tie -- fp32 `score + bias` really does collide
+        # (one row in ~10^5: layer 33 of the smoke slice had experts 101 and 198 at
+        # a bit-identical 16.548782348632812), and `topk(6)` and `topk(16)` are then
+        # free to break it differently.
+        ref_vals = biased.gather(1, indices).sort(-1, descending=True).values
+        best_vals = biased.topk(topk, dim=-1).values
+        if not torch.allclose(ref_vals, best_vals, rtol=0, atol=0):
+            raise SystemExit(f"layer {layer_id}: Gate did not select the top-{topk} "
+                             f"of score+bias -- the trace is not the model")
+
+        # The top-16 is built *around* the gate's own six so `top16_ids[:6]` is always
+        # exactly `top6_ids`, ties included.
+        rest = biased.scatter(1, indices, float("-inf"))
+        rest_ids = rest.topk(TOPK_RECORD - topk, dim=-1).indices
+        top16_ids = torch.cat([indices, rest_ids], dim=1)
         top16_scores = scores.gather(1, top16_ids)
-        # The gate selects by score+bias, so the first six of our top-16 must be
-        # exactly what it chose. If this ever fires, the trace is not the model.
-        if not torch.equal(top16_ids[:, :moe.n_activated_experts].sort(-1).values,
-                           indices.sort(-1).values):
-            raise SystemExit(f"layer {layer_id}: recomputed top-6 disagrees with Gate")
-        raw_top6 = scores.topk(moe.n_activated_experts, dim=-1).indices
+
+        raw_top6 = scores.topk(topk, dim=-1).indices
         bias_applied = (raw_top6.sort(-1).values != indices.sort(-1).values).any(-1)
         t_gate = time.perf_counter() - t0
 
@@ -596,6 +609,15 @@ def trace(args: argparse.Namespace) -> int:
             del snapshots[old]
         del block
 
+        d = rec["timing"]
+        # Recorded before the checkpoint, so a resumed run does not lose this layer's
+        # numbers: the state file is written from `timings` as it stands right now.
+        timings[str(L)] = {"total": 0.0, "load": round(t_load, 2),
+                           **{k: round(v, 2) for k, v in d.items()},
+                           "checkpoint": 0.0,
+                           "experts_used": rec["experts_used"],
+                           "parquet_bytes": nbytes}
+
         t_ckpt = 0.0
         if args.checkpoint_every and ((L + 1) % args.checkpoint_every == 0 or L == todo[-1]):
             tc = time.perf_counter()
@@ -610,13 +632,9 @@ def trace(args: argparse.Namespace) -> int:
             os.replace(tmp, state_path)
             t_ckpt = time.perf_counter() - tc
 
-        d = rec["timing"]
         dt = time.perf_counter() - t0
-        timings[str(L)] = {"total": round(dt, 2), "load": round(t_load, 2),
-                           **{k: round(v, 2) for k, v in d.items()},
-                           "checkpoint": round(t_ckpt, 2),
-                           "experts_used": rec["experts_used"],
-                           "parquet_bytes": nbytes}
+        timings[str(L)]["total"] = round(dt, 2)
+        timings[str(L)]["checkpoint"] = round(t_ckpt, 2)
         print(f"layer {L:2d}  {dt:7.1f}s  load {t_load:5.1f}  attn {d['attn']:6.1f}  "
               f"gate {d['gate']:5.1f}  look {d['lookahead']:5.1f}  "
               f"expert {d['expert']:7.1f}  ckpt {t_ckpt:5.1f}  "

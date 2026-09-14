@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import heapq
 import json
 import math
 import os
@@ -89,9 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allocation", default="global", choices=["global", "per-layer", "both"],
                    help="one pool or per-layer quotas; Q2 decides whether the latter "
                         "is worth it")
-    p.add_argument("--prefetch-depths", default="0,2,3,4,6",
-                   help="lookahead depth d; 0 disables prefetch (design section 9.4)")
-    p.add_argument("--prefetch-widths", default="6,8,12,16",
+    p.add_argument("--prefetch-depths", default="0",
+                   help="lookahead depth d; 0 disables prefetch (design section 9.4). "
+                        "The full grid is capacities x policies x allocations x "
+                        "depths x widths and each configuration is a full replay, so "
+                        "sweep in two stages: policies at depth 0 first, then (d, K) "
+                        "for the winner")
+    p.add_argument("--prefetch-widths", default="16",
                    help="lookahead width K (design section 9.4)")
     p.add_argument("--lookahead-input", default="pre0", choices=["mean", "pre0"],
                    help="which of the two section 9.4 approximations to prefetch from")
@@ -177,12 +182,15 @@ class Trace:
         if not files:
             raise SystemExit(f"no trace files matched {paths}")
 
-        cols = {}
-        parts = []
-        for f in files:
-            parts.append(pq.read_table(f))
         import pyarrow as pa
-        table = pa.concat_tables(parts, promote_options="default")
+
+        # Read only what is used: the trace carries both section 9.4 approximations
+        # and the unused one is half the file.
+        names = pq.ParquetFile(files[0]).schema_arrow.names
+        wanted = [n for n in names
+                  if not n.startswith("pred_d") or n.endswith("_" + lookahead_input)]
+        table = pa.concat_tables([pq.read_table(f, columns=wanted) for f in files],
+                                 promote_options="default")
 
         def fsl(name: str, dtype) -> np.ndarray | None:
             if name not in table.column_names:
@@ -272,38 +280,80 @@ class LRU(Policy):
     def size(self): return len(self.od)
 
 
-class LFUDecay(Policy):
+class HeatPolicy(Policy):
+    """Shared machinery for the two heat-ordered policies.
+
+    Both want "evict the coldest", with heat decaying over time. Scanning the
+    resident set for the minimum is O(capacity) per eviction, and at 4,600 slots and
+    millions of evictions that does not finish -- so heat is kept *monotonically
+    increasing* (the standard aging trick: instead of decaying every counter by
+    `decay`, inflate the increment by `1/decay`) and eviction uses a lazy heap. A
+    popped entry whose stored heat is below the current one is simply re-pushed,
+    which terminates because heat only ever goes up.
+
+    `gain` is rescaled before it can overflow; the ordering is unaffected because
+    every counter is divided by the same number.
+    """
+
+    RESCALE_AT = 1e100
+
+    def __init__(self, capacity: int, decay: float):
+        super().__init__(capacity)
+        self.decay = decay
+        self.gain = 1.0
+        self.heat: dict[int, float] = {}
+        self.last: dict[int, int] = {}
+        self.resident: set[int] = set()
+        self.heap: list = []
+        self.clock = 0
+
+    def contains(self, key): return key in self.resident
+
+    def _bump(self, key: int, weight: float):
+        self.clock += 1
+        self.gain /= self.decay
+        if self.gain > self.RESCALE_AT:
+            inv = 1.0 / self.gain
+            for k in self.heat:
+                self.heat[k] *= inv
+            self.heap = [(h * inv, c, k) for h, c, k in self.heap]
+            heapq.heapify(self.heap)
+            self.gain = 1.0
+        self.heat[key] = self.heat.get(key, 0.0) + weight * self.gain
+        self.last[key] = self.clock
+        heapq.heappush(self.heap, (self.heat[key], self.clock, key))
+
+    def admit(self, key):
+        self.resident.add(key)
+        if key not in self.heat:
+            self._bump(key, 1.0)
+        if len(self.resident) <= self.capacity:
+            return None
+        while self.heap:
+            h, clk, k = heapq.heappop(self.heap)
+            if k not in self.resident:
+                continue
+            cur = self.heat[k]
+            if h < cur:                      # stale entry: this key got hotter
+                heapq.heappush(self.heap, (cur, self.last[k], k))
+                continue
+            self.resident.discard(k)
+            return k
+        return None
+
+    def size(self): return len(self.resident)
+
+
+class LFUDecay(HeatPolicy):
     """Counts with exponential decay, so an expert that was hot an hour ago loses to
     one that is hot now. Ties break on last use, which makes it LRU at equal counts."""
 
     name = "lfu-decay"
 
     def __init__(self, capacity: int, decay: float = 0.98):
-        super().__init__(capacity)
-        self.decay = decay
-        self.count: dict[int, float] = {}
-        self.last: dict[int, int] = {}
-        self.resident: set[int] = set()
-        self.clock = 0
+        super().__init__(capacity, decay)
 
-    def contains(self, key): return key in self.resident
-
-    def touch(self, key):
-        self.clock += 1
-        self.count[key] = self.count.get(key, 0.0) * self.decay + 1.0
-        self.last[key] = self.clock
-
-    def admit(self, key):
-        self.resident.add(key)
-        self.count.setdefault(key, 1.0)
-        self.last.setdefault(key, self.clock)
-        if len(self.resident) > self.capacity:
-            victim = min(self.resident, key=lambda k: (self.count[k], self.last[k]))
-            self.resident.discard(victim)
-            return victim
-        return None
-
-    def size(self): return len(self.resident)
+    def touch(self, key): self._bump(key, 1.0)
 
 
 class ARC(Policy):
@@ -336,6 +386,8 @@ class ARC(Policy):
         self.t2.move_to_end(key)
 
     def _replace(self, key_in_b2: bool) -> int | None:
+        """ARC's REPLACE(x, p): take the victim from T1 when T1 is over its target
+        size p, otherwise from T2. The victim becomes a ghost in the matching B."""
         if self.t1 and (len(self.t1) > self.p or (key_in_b2 and len(self.t1) == self.p)):
             victim = self.t1.popitem(last=False)[0]
             self.b1[victim] = None
@@ -344,24 +396,39 @@ class ARC(Policy):
             self.b2[victim] = None
         else:
             return None
-        while len(self.b1) + len(self.b2) > self.c:
-            (self.b1 if self.b1 else self.b2).popitem(last=False)
         return victim
 
     def admit(self, key):
+        """Cases II, III and IV of the published algorithm (Case I -- a hit in T1 or
+        T2 -- is `touch`). The ghost lists are bounded by Case IV rather than by a
+        blanket trim: trimming inside REPLACE can evict the very key being promoted,
+        which is how this first went wrong."""
+        c = self.c
         victim = None
-        if key in self.b1:
-            self.p = min(self.c, self.p + max(1.0, len(self.b2) / max(1, len(self.b1))))
+        if key in self.b1:                                   # Case II
+            delta = 1.0 if len(self.b1) >= len(self.b2) else len(self.b2) / len(self.b1)
+            self.p = min(float(c), self.p + delta)
             victim = self._replace(False)
-            del self.b1[key]
+            self.b1.pop(key, None)
             self.t2[key] = None
-        elif key in self.b2:
-            self.p = max(0.0, self.p - max(1.0, len(self.b1) / max(1, len(self.b2))))
+        elif key in self.b2:                                 # Case III
+            delta = 1.0 if len(self.b2) >= len(self.b1) else len(self.b1) / len(self.b2)
+            self.p = max(0.0, self.p - delta)
             victim = self._replace(True)
-            del self.b2[key]
+            self.b2.pop(key, None)
             self.t2[key] = None
-        else:
-            if len(self.t1) + len(self.t2) >= self.c:
+        else:                                                # Case IV
+            l1 = len(self.t1) + len(self.b1)
+            total = l1 + len(self.t2) + len(self.b2)
+            if l1 == c:
+                if len(self.t1) < c:
+                    self.b1.popitem(last=False)
+                    victim = self._replace(False)
+                else:
+                    victim = self.t1.popitem(last=False)[0]
+            elif l1 < c and total >= c:
+                if total >= 2 * c and self.b2:
+                    self.b2.popitem(last=False)
                 victim = self._replace(False)
             self.t1[key] = None
         return victim
@@ -369,52 +436,29 @@ class ARC(Policy):
     def size(self): return len(self.t1) + len(self.t2)
 
 
-class ScoreAware(Policy):
+class ScoreAware(HeatPolicy):
     """Design section 9.3's baseline: LRU plus score-aware promotion.
 
     The router already produces the top-16 scores every layer. An expert that lands
     in the top-16 but outside the top-6 is a "near hit": the text is drifting toward
-    it, so it refreshes `heat` even though it was not read. Eviction orders by
-    (heat, last_use), so a near-miss expert survives a plain-LRU sweep.
+    it, so it refreshes `heat` even though it was never read. Eviction orders by
+    heat, so a near-miss expert survives a sweep that plain LRU would not let it.
 
-    `heat` decays multiplicatively on every request to the same layer, which keeps it
-    comparable across layers that are visited equally often.
+    A demand hit is worth a full unit; a near hit is worth its router score, which
+    `sqrt(softplus(.))` keeps positive and on the order of 1.
     """
 
     name = "score-aware"
 
     def __init__(self, capacity: int, decay: float = 0.9):
-        super().__init__(capacity)
-        self.decay = decay
-        self.resident: set[int] = set()
-        self.heat: dict[int, float] = {}
-        self.last: dict[int, int] = {}
-        self.clock = 0
+        super().__init__(capacity, decay)
 
-    def contains(self, key): return key in self.resident
-
-    def touch(self, key):
-        self.clock += 1
-        self.heat[key] = self.heat.get(key, 0.0) * self.decay + 1.0
-        self.last[key] = self.clock
+    def touch(self, key): self._bump(key, 1.0)
 
     def observe(self, keys, scores):
-        # near hits: everything the router scored, weighted by that score
         for k, s in zip(keys, scores):
             if k in self.resident:
-                self.heat[k] = self.heat.get(k, 0.0) * self.decay + float(s)
-
-    def admit(self, key):
-        self.resident.add(key)
-        self.heat.setdefault(key, 1.0)
-        self.last.setdefault(key, self.clock)
-        if len(self.resident) > self.capacity:
-            victim = min(self.resident, key=lambda k: (self.heat[k], self.last[k]))
-            self.resident.discard(victim)
-            return victim
-        return None
-
-    def size(self): return len(self.resident)
+                self._bump(k, float(s))
 
 
 class StaticPinLRU(Policy):
@@ -424,11 +468,17 @@ class StaticPinLRU(Policy):
 
     name = "static-pin+lru"
 
-    def __init__(self, capacity: int, pinned: set[int]):
-        pinned = set(list(pinned)[:max(0, capacity - 1)])
+    def __init__(self, capacity: int, pinned: set[int], keyspace: range | None = None):
+        # Inside a per-layer pool, only this layer's share of the pinned set is
+        # relevant -- pinning the global set into a 115-slot pool leaves nothing for
+        # the LRU and the hit rate collapses to a few percent.
+        if keyspace is not None:
+            pinned = {k for k in pinned if k in keyspace}
+        if len(pinned) >= capacity:
+            pinned = set(sorted(pinned)[:max(0, capacity - 1)])
         super().__init__(capacity)
         self.pinned = pinned
-        self.lru = LRU(capacity - len(pinned))
+        self.lru = LRU(max(1, capacity - len(pinned)))
 
     def contains(self, key): return key in self.pinned or self.lru.contains(key)
 
@@ -458,7 +508,8 @@ class PerLayerPool(Policy):
         super().__init__(capacity)
         self.n_experts = n_experts
         quota = max(1, capacity // n_layers)
-        self.pools = [make(quota) for _ in range(n_layers)]
+        self.pools = [make(quota, range(L * n_experts, (L + 1) * n_experts))
+                      for L in range(n_layers)]
         self.name = f"{self.pools[0].name}/per-layer"
 
     def _pool(self, key): return self.pools[key // self.n_experts]
@@ -475,12 +526,15 @@ class PerLayerPool(Policy):
 
 
 def policy_factory(name: str, args, pinned: set[int] | None):
+    """-> make(capacity, keyspace=None). `keyspace` is the range of global keys the
+    pool will ever see, which only `static-pin+lru` needs (to keep one layer's pool
+    from pinning every other layer's experts)."""
     base = {
-        "lru": lambda c: LRU(c),
-        "lfu-decay": lambda c: LFUDecay(c, args.lfu_decay),
-        "arc": lambda c: ARC(c),
-        "score-aware": lambda c: ScoreAware(c),
-        "static-pin+lru": lambda c: StaticPinLRU(c, pinned or set()),
+        "lru": lambda c, ks=None: LRU(c),
+        "lfu-decay": lambda c, ks=None: LFUDecay(c, args.lfu_decay),
+        "arc": lambda c, ks=None: ARC(c),
+        "score-aware": lambda c, ks=None: ScoreAware(c),
+        "static-pin+lru": lambda c, ks=None: StaticPinLRU(c, pinned or set(), ks),
     }
     if name not in base:
         raise SystemExit(f"unknown policy {name!r}")
@@ -511,6 +565,15 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
 
     A miss at layer L counts as *hidden* if the expert was prefetched at L-d and had
     time to land, and *exposed* otherwise. Exposed misses are what `stall_ms` is.
+
+    `hit_rate` is section 9.8's definition -- resident hits over requests -- and a
+    hidden miss is **not** one of them: the bytes still crossed the NVMe. What a
+    hidden miss buys is that the GPU did not wait, which `effective_hit_rate` and
+    `stall_ms_per_token` report instead.
+
+    Prefetch only ever runs inside one token: the prediction on row L came from that
+    token's own layer L-d, so a planner at layer 39 has nothing to say about the next
+    token's layer 2 -- the next token does not exist yet.
 
     Prefetched slots enter as probes at the LRU tail (section 9.4's last line): they
     are admitted but not touched, so an unused prefetch is the first thing evicted.
@@ -572,8 +635,6 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
                         issued.discard(k)
                     policy.admit(k)
                     policy.touch(k)
-                    if counted:
-                        hits[L] += 1
                 else:
                     misses.append(k)
         if misses:
@@ -591,7 +652,7 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
             policy.observe([L * n_exp + int(e) for e in top16[i]], scores16[i])
 
         # --- issue the lookahead for the layer `depth` rows ahead ---------
-        if pred is not None and i + depth < rows:
+        if pred is not None and i + depth < rows and L + depth < n_layers:
             tgt = i + depth
             if int(trace.prompt[tgt]) == int(trace.prompt[i]):
                 tl = int(trace.layer[tgt])
@@ -612,29 +673,40 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
     total_req = int(reqs.sum()) or 1
     total_hit = int(hits.sum())
     tokens = max(1, (rows - warm) // n_layers)
-    miss_bytes = (total_req - total_hit) * EXPERT_BYTES / tokens
-    hit_bytes = total_hit * EXPERT_BYTES / tokens
-    t_ms = RESIDENT_MS + hit_bytes / (args.lpddr_gbps * 1e9) * 1e3 \
-        + miss_bytes / (args.nvme_gbps * 1e9) * 1e3
+    wasted = max(0, prefetch_issued - prefetch_used)
+    # Every byte that crossed the NVMe: demand misses the planner did not hide,
+    # prefetches that arrived in time, and prefetches nobody used.
+    nvme_bytes = (exposed + hidden + wasted) * EXPERT_BYTES / tokens
+    lpddr_bytes = total_hit * EXPERT_BYTES / tokens
+    stall = stall_ms / tokens
+    t_serial = (RESIDENT_MS + lpddr_bytes / (args.lpddr_gbps * 1e9) * 1e3
+                + nvme_bytes / (args.nvme_gbps * 1e9) * 1e3)
+    # With prefetch the NVMe runs alongside the GPU, so the floor is whichever of the
+    # two is longer -- but nothing overlaps the bandwidth itself.
+    t_overlap = max(RESIDENT_MS + lpddr_bytes / (args.lpddr_gbps * 1e9) * 1e3 + stall,
+                    nvme_bytes / (args.nvme_gbps * 1e9) * 1e3)
     return {
         "policy": policy.name,
         "capacity": policy.capacity,
         "depth": depth,
         "width": width,
         "hit_rate": round(total_hit / total_req, 4),
+        "effective_hit_rate": round((total_hit + hidden) / total_req, 4),
         "hit_rate_per_layer": [round(float(h) / max(1, r), 4)
                                for h, r in zip(hits, reqs)],
-        "miss_bytes_per_token": int(miss_bytes),
-        "ms_per_token": round(t_ms, 1),
-        "tokens_per_s": round(1000.0 / t_ms, 2),
+        "nvme_bytes_per_token": int(nvme_bytes),
+        "miss_bytes_per_token": int((exposed + hidden) * EXPERT_BYTES / tokens),
+        "ms_per_token_serial": round(t_serial, 1),
+        "ms_per_token": round(t_overlap, 1),
+        "tokens_per_s": round(1000.0 / t_overlap, 2),
+        "tokens_per_s_serial": round(1000.0 / t_serial, 2),
         "hidden_misses": hidden,
         "exposed_misses": exposed,
-        "stall_ms_per_token": round(stall_ms / tokens, 2),
+        "stall_ms_per_token": round(stall, 2),
         "prefetch_issued": prefetch_issued,
         "prefetch_used": prefetch_used,
         "prefetch_precision": round(prefetch_used / max(1, prefetch_issued), 4),
-        "prefetch_waste_bytes_per_token":
-            int((prefetch_issued - prefetch_used) * EXPERT_BYTES / tokens),
+        "prefetch_waste_bytes_per_token": int(wasted * EXPERT_BYTES / tokens),
     }
 
 
@@ -979,6 +1051,7 @@ def main(argv: list[str] | None = None) -> int:
                         if not args.quiet:
                             print(f"  {cap_label:>6} {alloc:9} {name:15} "
                                   f"d={d} K={w or '-':>2}  hit {r['hit_rate']:.4f}  "
+                                  f"eff {r['effective_hit_rate']:.4f}  "
                                   f"{r['ms_per_token']:7.1f} ms  "
                                   f"{r['tokens_per_s']:5.2f} tok/s  "
                                   f"stall {r['stall_ms_per_token']:6.1f} ms  "
