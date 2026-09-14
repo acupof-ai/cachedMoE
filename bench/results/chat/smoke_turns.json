@@ -1,0 +1,51 @@
+{
+ "turns": [
+  {
+   "label": "greedy, zh",
+   "user": "你好！请用两三句话介绍一下你自己。",
+   "temperature": 0,
+   "max_tokens": 200
+  },
+  {
+   "label": "greedy, en",
+   "user": "What is the capital of France, and what is one interesting fact about it? Answer in English.",
+   "max_tokens": 200
+  },
+  {
+   "label": "greedy, zh follow-up",
+   "user": "把你上一个回答翻译成中文。",
+   "max_tokens": 200
+  },
+  {
+   "label": "greedy, code",
+   "reset": true,
+   "user": "Write a Python function that returns the n-th Fibonacci number iteratively, with a short docstring and one example.",
+   "max_tokens": 300
+  },
+  {
+   "label": "sampled, zh",
+   "reset": true,
+   "user": "你好！请用两三句话介绍一下你自己。",
+   "temperature": 1.0,
+   "top_p": 0.95,
+   "seed": 20260915,
+   "max_tokens": 200
+  },
+  {
+   "label": "sampled, en",
+   "user": "What is the capital of France, and what is one interesting fact about it? Answer in English.",
+   "max_tokens": 200
+  },
+  {
+   "label": "sampled, zh follow-up",
+   "user": "把你上一个回答翻译成中文。",
+   "max_tokens": 200
+  },
+  {
+   "label": "sampled, code",
+   "reset": true,
+   "user": "Write a Python function that returns the n-th Fibonacci number iteratively, with a short docstring and one example.",
+   "max_tokens": 300
+  }
+ ]
+}

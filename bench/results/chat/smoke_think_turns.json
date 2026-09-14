@@ -1,0 +1,1 @@
+{"turns": [{"label": "thinking, sampled", "user": "9.11 和 9.9 哪个大？简短回答。", "think": true, "temperature": 1.0, "top_p": 0.95, "seed": 7, "max_tokens": 500}, {"label": "thinking follow-up", "user": "Why do people often get this wrong? One sentence.", "max_tokens": 500}]}

@@ -127,7 +127,8 @@ class Chat:
             kind = ev.get("event")
             if kind == "prefill":
                 if echo and ev["total"] > 32:
-                    self.out.write(f"\r{YELLOW}[prefill {ev['done']}/{ev['total']}]{RESET_C if self.color else ''}")
+                    tag = f"[prefill {ev['done']}/{ev['total']}]"
+                    self.out.write(f"\r{YELLOW}{tag}{RESET_C}" if self.color else f"\r{tag}")
                     self.out.flush()
                 continue
             if kind == "token":
