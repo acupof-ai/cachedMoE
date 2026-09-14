@@ -1284,7 +1284,29 @@ def batch_boundary_stats(trajs) -> dict:
                 row["cos_plain_emul"] = [round(float(x), 7) for x in e["cos_plain_emul"]]
                 row["plain_rerun_identical"] = bool(e["plain_rerun_identical"][0])
                 row["accept_sequential"] = accept_greedy(path, row["argmax_sequential"], 5)[0]
+                # logit perturbation between the batch and one-token-at-a-time, on the ids both top-32s share
+                diffs = []
+                for j in range(len(am_p)):
+                    sp_ = {int(t): float(l) for t, l in zip(e["seq_top_ids"][j][:32], e["seq_top_logits"][j][:32])}
+                    diffs += [abs(float(l) - sp_[int(t)]) for t, l in zip(v["top_ids"][j][:32], v["top_logits"][j][:32])
+                              if int(t) in sp_]
+                row["seq_vs_plain_top32_logit_absdiff"] = {"mean": round(float(np.mean(diffs)), 4),
+                                                           "max": round(float(np.max(diffs)), 4)}
+                row["emul_vs_plain_bit_identical"] = bool(np.array_equal(v["top_logits"], e["emul_top_logits"]))
             res["cycles"].append(row)
+    # exposure: how many accept-relevant verify rows (rows 0..a of every greedy cycle) have a
+    # top-1 margin small enough for a batch-shape perturbation of that size to flip
+    margins = []
+    for prompt, mode, pdir, log in trajs:
+        if mode != "greedy":
+            continue
+        for rec in log["cycles"]:
+            margins += rec["verify_margins"][: rec["accepted"] + 1]
+    if margins:
+        m = np.asarray(margins)
+        res["greedy_row_margins"] = {"n": int(m.size), "median": round(float(np.median(m)), 3),
+                                     **{f"frac_below_{t}": round(float((m < t).mean()), 4)
+                                        for t in (0.05, 0.1, 0.25, 0.5, 1.0)}}
     if res["cycles"]:
         res["rows_compared"] = sum(len(c["rows_differ"]) for c in res["cycles"])
         res["rows_argmax_differ"] = sum(sum(c["rows_differ"]) for c in res["cycles"])
