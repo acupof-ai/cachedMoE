@@ -932,8 +932,9 @@ def _traj_rows(pdir: str, log: dict) -> dict:
     for rec in log["cycles"]:
         v = load_verify(pdir, rec["cycle"])
         for j in range(rec["accepted"] + 1):
+            emit = float(v["emit_logit"][j]) if "emit_logit" in v else None
             rows[rec["pos"] + j + 1] = (v["top_ids"][j], v["top_logits"][j], float(v["lse"][j]),
-                                        int(v["argmax"][j]))
+                                        int(v["argmax"][j]), emit)
     return rows
 
 
@@ -944,6 +945,12 @@ def _ptilde(top_ids, top_logits, tok: int, Kv: int = KV) -> float:
         return 0.0
     l64 = top_logits[:Kv].astype(np.float64)
     return float(dm_exp(l64[hit[0]] - lse_seq(l64)))
+
+
+def _p_exact(row) -> float:
+    """p(y) of the emitted trajectory token under plain temperature-1 sampling."""
+    _ids, _lg, lse, _am, emit = row
+    return float(np.exp(emit - lse)) if emit is not None else 0.0
 
 
 def _stats(vals: list) -> dict:
@@ -982,7 +989,7 @@ def cmd_analyse(args) -> int:
             unions.append(rec["union"])
             drivers.append({"prompt": prompt, "mode": mode, "cycle": rec["cycle"],
                             "accepted": rec["accepted"]})
-        for pos, (ids, lg, lse, _am) in rows.items():
+        for pos, (ids, lg, lse, _am, _em) in rows.items():
             l64 = lg.astype(np.float64)
             for kv in tailmass:
                 tailmass[kv].append(1.0 - float(np.exp(np.logaddexp.reduce(l64[:kv]) - lse)))
@@ -1064,8 +1071,7 @@ def cmd_analyse(args) -> int:
                         ids_l = [list(int(t) for t in idx[i]) for i in range(5)]
                         r = []
                         for i in range(5):
-                            ids_row, lg_row, _lse, _am = rows[s + 2 + i]
-                            pt = _ptilde(ids_row, lg_row, y[i])
+                            pt = _p_exact(rows[s + 2 + i])
                             prev_c = 0 if i == 0 else (ids_l[i - 1].index(yprev[i])
                                                        if yprev[i] in ids_l[i - 1] else None)
                             if prev_c is None or y[i] not in ids_l[i] or pt <= 0.0:
@@ -1092,8 +1098,7 @@ def cmd_analyse(args) -> int:
                 for i in range(5):
                     row = (d["B"][i] + H @ E[yprev[i]]).astype(np.float64)
                     lq = row[y[i]] - _lse_f64(row[None])[0]
-                    ids_row, lg_row, _lse, _am = rows[s + 2 + i]
-                    pt = _ptilde(ids_row, lg_row, y[i])
+                    pt = _p_exact(rows[s + 2 + i])
                     r.append(min(1.0, float(np.exp(lq)) / pt) if pt > 0 else 0.0)
                 put(S, "chain_ref/sample", r)
                 prev_e = np.stack([E[t] for t in yprev])
