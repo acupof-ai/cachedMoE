@@ -1106,14 +1106,377 @@ def level2_layer(args: argparse.Namespace) -> int:
     return 0
 
 
-def level3_end_to_end(args: argparse.Namespace) -> int:
-    """Full-model fp32 greedy decode.
+# --------------------------------------------------------------------------- #
+# L3: the whole model, end to end -- prefill state + N greedy decode steps
+# --------------------------------------------------------------------------- #
+#
+# What L3 is for
+# --------------
+# L2 proved the eleven dispatches of one layer against the reference's own
+# per-stage tensors. It cannot say whether forty of them compose into the right
+# token: the residual stream carries an error forward, the engram writes into it
+# at layers 1 and 14, the final collapse and the 1.32 GB head turn it into
+# 129,280 logits, and only the argmax of those is the thing a user sees. So this
+# exports what a decode loop has to reproduce:
+#
+#   * the token ids the reference greedily produces, N steps deep,
+#   * the top-64 (id, logit) of every step, so a disagreement can be ranked and
+#     measured rather than just noticed,
+#   * the state a decode step starts from -- the window KV ring every layer
+#     holds after prefill -- and, per step, the two things the runtime cannot
+#     yet produce for itself: the compressed KV and the indexer's top-k list
+#     (design section 7.4's kernels are not written).
+#
+# Why the logits are stored as a top-64 and not in full
+# ----------------------------------------------------
+# 129,280 fp32 logits is 517 KB a step, 4.7 MB for eight, and every question
+# design section 12 L3 asks -- does the argmax match, at what margin, how far
+# down does the ranking agree -- is answered by the top of the distribution.
+# The max, the log-sum-exp and the min of the FULL vector are stored beside it,
+# so a runtime whose top-64 agrees but whose normalisation does not is still
+# caught.
+#
+# Cost
+# ----
+# The opposite of layer streaming: a decode step needs every layer's weights, so
+# there is no ordering that reads less than the whole ~13 GB of attention and
+# shared-expert weights plus the routed experts the gate picks. It is run once
+# and the result is cached in tests/data/l3/.
 
-    TODO(design section 12 L3): minutes per token, >= 5 prompts x 64 tokens.
-    Report per-token agreement and, at any divergence, the top1-top2 margin --
-    a disagreement at a margin of 1e-6 is a different finding from one at 0.5.
+L3_MAGIC = b"DML3"
+L3_VERSION = 1
+
+
+class L3Writer:
+    """Same container as L2Writer -- a JSON index plus flat binaries -- but one
+    file per *step* holding every layer, because 40 layers x 9 steps of separate
+    files would be 360 files for 8 MB."""
+
+    def __init__(self, out_dir: str):
+        self.dir = out_dir
+        os.makedirs(out_dir, exist_ok=True)
+        self.steps: list[dict] = []
+
+    def write(self, name: str, tensors: dict) -> dict:
+        fname = f"l3_{name}.bin"
+        entries, blob = [], bytearray()
+        # A compressed-KV cache and a top-k list are PUBLISHED by a source layer
+        # and read verbatim by every reuse layer under it (model.py's
+        # `shared_attn`), so of forty entries only four or eight are distinct.
+        # Two index entries pointing at the same offset cost the reader nothing
+        # and take the export from 22 MB to 6.
+        seen: dict[bytes, int] = {}
+        for key, (kind, t) in tensors.items():
+            dtype, width = _L2_DTYPES[kind]
+            a = t.detach().contiguous()
+            if a.dtype != dtype:
+                a = a.to(dtype)
+            raw = a.view(torch.uint8).numpy().tobytes() if kind == "bf16" \
+                else a.numpy().tobytes()
+            assert len(raw) == a.numel() * width, (key, len(raw), a.numel())
+            at = seen.get(raw)
+            if at is None:
+                at = seen[raw] = len(blob)
+                blob += raw
+            entries.append({"name": key, "dtype": kind, "shape": list(a.shape),
+                            "offset": at, "bytes": len(raw)})
+        with open(os.path.join(self.dir, fname), "wb") as f:
+            f.write(L3_MAGIC)
+            f.write(struct.pack("<II", L3_VERSION, len(entries)))
+            f.write(bytes(blob))
+        rec = {"step": name, "file": fname, "data_offset": len(L3_MAGIC) + 8,
+               "bytes": len(blob), "tensors": entries}
+        self.steps.append(rec)
+        return rec
+
+    def finish(self, meta: dict) -> str:
+        meta = dict(meta)
+        meta["steps"] = self.steps
+        path = os.path.join(self.dir, "index.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=1, ensure_ascii=False)
+        return path
+
+
+class _L3Sparse:
+    """Records the `kv` matrix and the top-k list `sparse_attn` was handed.
+
+    Deliberately thinner than L2Capture: L3 needs no per-stage tensors, and
+    L2Capture's `act_quant` / `fp4_act_quant` interception would clone a tensor
+    per call for 64 prefill positions x 40 layers.
     """
-    raise NotImplementedError("oracle.level3_end_to_end (design section 12 L3)")
+
+    def __init__(self, ref):
+        self.kv = None
+        self.idx = None
+        orig = ref.sparse_attn
+
+        def sparse_attn(q, kv, sink, topk_idxs, scale):
+            self.kv = kv
+            self.idx = topk_idxs
+            return orig(q, kv, sink, topk_idxs, scale)
+
+        ref.sparse_attn = sparse_attn
+
+
+def _l3_run_layer(dsref_mod, store, margs, layout_e, L, block, h, pre_mix, hashes,
+                  start_pos: int):
+    """One Block over one chunk, with the routed experts streamed expert-major.
+
+    The same arithmetic as `level2_layer.run_layer` with the capture taken out;
+    kept separate rather than shared because L2's version exists to export and
+    this one exists to run forty times a step.
+    """
+    if block.b.engram is not None and hashes is not None:
+        hi = layout_e.layer_ids.index(L)
+        h = block.b.engram(h, hashes[:, :, hi, :], None)
+    ffn_in, resid, fpre, fpost, fcomb = block.forward_attn(h, start_pos, pre_mix)
+
+    moe = block.b.ffn
+    flat = ffn_in.view(-1, margs.dim)
+    weights, indices = moe.route(flat)
+    y = torch.zeros(flat.size(0), margs.dim, dtype=torch.float32)
+    used = sorted(set(indices.reshape(-1).tolist()))
+    for e, w1, w2, w3 in store.expert_stream(L, used, margs.dim, margs.moe_inter_dim):
+        r, s = torch.where(indices == e)
+        y[r] += dsref_mod.expert_ffn(flat[r], w1, w2, w3, weights[r, s, None],
+                                     margs.swiglu_limit).float()
+        del w1, w2, w3
+    y += moe.shared_experts(flat).float()
+    return block.finish_ffn(y.unsqueeze(0), resid, fpost, fcomb), fpre, len(used), indices
+
+
+def _l3_collapse_and_head(h, pre_mix, norm_w, head_w, norm_eps: float, chunk: int = 16384):
+    """`Transformer.forward`'s tail: hc_pre, RMSNorm, head.
+
+    `head_w` is bf16 on disk and fp32 in the reference (`ParallelHead` keeps it
+    as fp32 "so the logits come out in fp32 directly"); promoting a chunk at a
+    time keeps the 2.6 GB fp32 copy from existing, and bf16 -> fp32 is exact so
+    the arithmetic is the reference's.
+    """
+    x = torch.sum(pre_mix.unsqueeze(-1) * h.float(), dim=2).to(h.dtype)   # hc_pre
+    x = x[:, -1]                                                          # ParallelHead
+    xf = x.float()
+    var = xf.square().mean(-1, keepdim=True)
+    normed = (norm_w.float() * (xf * torch.rsqrt(var + norm_eps))).to(h.dtype)
+    q = normed.float()
+    parts = [torch.nn.functional.linear(q, head_w[i:i + chunk].float())
+             for i in range(0, head_w.size(0), chunk)]
+    return torch.cat(parts, dim=-1)[0], normed[0]
+
+
+def _l3_logit_record(logits: torch.Tensor, top_k: int = 64) -> dict:
+    """top-k (id, logit) plus the three whole-vector statistics."""
+    vals, idx = torch.topk(logits.float(), top_k)
+    lse = torch.logsumexp(logits.float(), dim=-1)
+    return {
+        "top_ids": ("i32", idx.int()),
+        "top_logits": ("f32", vals.float()),
+        "logit_stats": ("f32", torch.tensor([float(logits.max()), float(lse),
+                                             float(logits.min())])),
+    }
+
+
+def _l3_kv_tensors(cap: "_L3Sparse", L: int, n_win: int) -> dict:
+    """The two things a decode step cannot produce for itself yet."""
+    out: dict = {}
+    kv_all = cap.kv[0]
+    if kv_all.size(0) > n_win:
+        out[f"L{L:02d}.cmp_kv"] = ("bf16", kv_all[n_win:].clone().contiguous())
+    out[f"L{L:02d}.topk_idxs"] = ("i32", cap.idx[0, -1].clone().contiguous())
+    return out
+
+
+def _l3_engram_tables(ngram, layout_e, margs, out_dir: str) -> dict:
+    """The constant tables `NgramHashState` derives, so the runtime can hash on
+    its own trajectory instead of replaying the reference's row ids.
+
+    Everything here is a pure function of tokenizer.json and config.json -- the
+    compressed-vocabulary map, the per-(layer, lookback) multipliers, the prime
+    bucket moduli and their offsets. None of it is golden data, and a runtime
+    that hashes with these is computing the addresses itself; that is why the
+    map is exported rather than the 24 row ids a step.
+    """
+    token_map = ngram.token_map.cpu().numpy().astype(np.int32)
+    with open(os.path.join(out_dir, "engram_token_map.bin"), "wb") as f:
+        f.write(token_map.tobytes())
+    return {
+        "compressed_vocab_size": int(margs.engram_compressed_vocab_size),
+        "token_map_entries": int(token_map.size),
+        "token_map_file": "engram_token_map.bin",
+        "max_ngram_size": int(layout_e.max_ngram_size),
+        "n_heads": int(layout_e.n_heads),
+        "head_dim": int(layout_e.head_dim),
+        "pad_id": int(ngram.pad_id),
+        "layers": [
+            {"layer": int(lid),
+             "num_embeddings": int(layout_e.num_embeddings[i]),
+             "multipliers": [int(v) for v in ngram.multipliers[i].tolist()],
+             "primes": [int(p) for per in layout_e.primes[i] for p in per],
+             "offsets": [int(v) for v in ngram.offsets[i].tolist()]}
+            for i, lid in enumerate(layout_e.layer_ids)
+        ],
+    }
+
+
+def level3_end_to_end(args: argparse.Namespace) -> int:
+    """Prefill the L2 prompt, then N greedy decode steps, and export both.
+
+    Structure follows `level2_layer`: one pass over the forty layers at a time,
+    each Block built from the shards, run, and dropped, with only the ~200 KiB
+    of per-layer KV buffers carried between passes. Nine passes instead of two.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import dsref  # noqa: E402
+
+    torch.set_grad_enabled(False)
+    inference_dir = os.path.join(args.model, "inference")
+    ref = dsref.load_reference(inference_dir)
+    store = dsref.WeightStore(args.model, args.manifest)
+    tokenizer = dsref.TokenizerAdapter(os.path.join(args.model, "tokenizer.json"))
+
+    ids = tokenizer.encode(L2_PROMPT)[: args.l3_tokens]
+    n_prefill = len(ids)
+    n_steps = args.l3_steps
+    if n_prefill < 8:
+        raise SystemExit(f"the L3 prompt tokenises to only {n_prefill} tokens")
+    max_seq_len = max(128, n_prefill + n_steps + 8)
+    margs = dsref.build_args(ref, inference_dir, max_seq_len=max_seq_len)
+    layout_e = ref.EngramLayout.from_args(margs)
+    os.makedirs(args.out, exist_ok=True)
+
+    # The engram is not optional here: it writes into the residual stream at
+    # layers 1 and 14, so a run without it is a different model and its tokens
+    # would be a golden answer to nothing.
+    sys.path.insert(0, inference_dir)
+    import engram as eng  # noqa: E402
+    cached = dsref.CachedTokenMap.build(tokenizer, os.path.join(args.out, "token_map.npz"))
+    orig_build = eng.build_compressed_token_map
+    eng.build_compressed_token_map = lambda _t: (cached.lookup, cached.size)
+    try:
+        ngram = ref.NgramHashState(margs, layout_e, tokenizer)
+    finally:
+        eng.build_compressed_token_map = orig_build
+
+    embed = store.tensor("embed.weight")
+    norm_w = store.tensor("norm.weight")
+    head_w = store.tensor("head.weight")
+    print(f"L3: {n_prefill} prefill tokens + {n_steps} greedy decode steps; "
+          f"head {list(head_w.shape)} {head_w.dtype}, out -> {args.out}", flush=True)
+
+    shared = ref.shared_attn
+    shared.compress_kv = shared.index_k = shared.topk_idxs = shared.candidates = None
+    cap = _L3Sparse(ref)
+    writer = L3Writer(args.out)
+    kv_state: dict[int, dict] = {}
+    t_start = time.perf_counter()
+
+    def embed_of(tokens: list[int], pos0: int):
+        t = torch.tensor(tokens, dtype=torch.long).unsqueeze(0)
+        h = embed[t[0]].unsqueeze(1).repeat(1, margs.hc_mult, 1).unsqueeze(0).to(torch.bfloat16)
+        return t, h, ngram(t, pos0, None)
+
+    # --- pass 0: prefill ---------------------------------------------------
+    _pre_t, h, hashes = embed_of(ids, 0)
+    pre_mix = ref.make_identity_pre_mix(h, margs.hc_mult)
+    prefill_tensors: dict = {}
+    for L in range(margs.n_layers):
+        t0 = time.perf_counter()
+        block = dsref.make_block(ref, margs, L, layout_e, store, args.l3_engram_threads)
+        h, pre_mix, n_used, _ = _l3_run_layer(dsref, store, margs, layout_e, L, block,
+                                              h, pre_mix, hashes, 0)
+        kv_state[L] = _l2_save_attn_state(block)
+        # The ring every decode step starts from. Prefill wrote positions
+        # 0..n-1 into slots 0..n-1 (n <= window), which is the layout
+        # runtime/kvstore.h seeds and gpu/shaders/wkv.slang continues.
+        prefill_tensors[f"L{L:02d}.win_kv"] = ("bf16",
+                                               block.b.attn.window_kv_cache[0].clone())
+        del block
+        print(f"    prefill layer {L:2d}  {n_used:3d} experts  "
+              f"{time.perf_counter() - t0:5.1f}s  |h| {h.float().norm().item():.4e}",
+              flush=True)
+
+    logits, normed = _l3_collapse_and_head(h, pre_mix, norm_w, head_w, margs.norm_eps)
+    tok = int(logits.argmax().item())
+    prefill_tensors.update(_l3_logit_record(logits, args.l3_topk))
+    prefill_tensors["collapse_in"] = ("bf16", h[0, -1].contiguous())
+    prefill_tensors["pre_mix_final"] = ("f32", pre_mix[0, -1].contiguous())
+    prefill_tensors["norm_out"] = ("bf16", normed.contiguous())
+    prefill_tensors["argmax"] = ("i32", torch.tensor([tok], dtype=torch.int32))
+    rec = writer.write("prefill", prefill_tensors)
+    print(f"  prefill -> {rec['file']} ({rec['bytes'] / 1e6:.2f} MB), "
+          f"next token {tok}", flush=True)
+
+    # --- passes 1..N: greedy decode ---------------------------------------
+    produced = [tok]
+    for s in range(n_steps):
+        pos = n_prefill + s
+        in_tok = produced[-1]
+        t_step = time.perf_counter()
+        _dt, h, hashes = embed_of([in_tok], pos)
+        pre_mix = ref.make_identity_pre_mix(h, margs.hc_mult)
+        step_tensors: dict = {}
+        for L in range(margs.n_layers):
+            block = dsref.make_block(ref, margs, L, layout_e, store, args.l3_engram_threads)
+            _l2_load_attn_state(block, kv_state[L])
+            h, pre_mix, _n, _idx = _l3_run_layer(dsref, store, margs, layout_e, L, block,
+                                                 h, pre_mix, hashes, pos)
+            kv_state[L] = _l2_save_attn_state(block)
+            step_tensors.update(_l3_kv_tensors(cap, L, margs.window_size))
+            del block
+        logits, normed = _l3_collapse_and_head(h, pre_mix, norm_w, head_w, margs.norm_eps)
+        nxt = int(logits.argmax().item())
+        step_tensors.update(_l3_logit_record(logits, args.l3_topk))
+        step_tensors["collapse_in"] = ("bf16", h[0, -1].contiguous())
+        step_tensors["pre_mix_final"] = ("f32", pre_mix[0, -1].contiguous())
+        step_tensors["norm_out"] = ("bf16", normed.contiguous())
+        step_tensors["in_token"] = ("i32", torch.tensor([in_tok], dtype=torch.int32))
+        step_tensors["argmax"] = ("i32", torch.tensor([nxt], dtype=torch.int32))
+        rec = writer.write(f"step{s:02d}", step_tensors)
+        produced.append(nxt)
+        print(f"  step {s} @pos {pos}: {in_tok} -> {nxt}  "
+              f"({time.perf_counter() - t_step:5.1f}s, {rec['bytes'] / 1e6:.2f} MB)",
+              flush=True)
+
+    meta = {
+        "version": L3_VERSION,
+        "model": "DeepSeek-V4.1-Flash",
+        "generator": "tools/oracle.py --level l3",
+        "prompt": L2_PROMPT,
+        "prompt_ids": [int(i) for i in ids],
+        "prefill_len": n_prefill,
+        "decode_pos": n_prefill,
+        "steps_exported": n_steps,
+        "top_k": args.l3_topk,
+        "greedy_tokens": [int(t) for t in produced],
+        "text": tokenizer.decode(produced),
+        "engram": _l3_engram_tables(ngram, layout_e, margs, args.out),
+        "notes": (
+            "Greedy decode straight out of inference/model.py behind tools/dsref.py's "
+            "CPU kernel shims. 'prefill' holds every layer's window KV ring after the "
+            "prompt and the logits at the last prompt position, whose argmax is "
+            "greedy_tokens[0] and the input to step00. Each 'stepNN' holds the "
+            "compressed KV and the indexer top-k list each layer saw at that step -- "
+            "the two inputs design section 7.4's kernels do not yet produce -- plus "
+            "the logits of that step, whose argmax is greedy_tokens[NN+1]."),
+        "config": {"dim": margs.dim, "hc_mult": margs.hc_mult, "n_heads": margs.n_heads,
+                   "head_dim": margs.head_dim, "window_size": margs.window_size,
+                   "vocab_size": margs.vocab_size, "n_layers": margs.n_layers,
+                   "norm_eps": margs.norm_eps,
+                   "compress_ratios": list(margs.compress_ratios),
+                   "kv_source_layers": list(margs.kv_source_layers),
+                   "index_source_layers": list(margs.index_source_layers),
+                   "max_seq_len": max_seq_len},
+        "seconds": round(time.perf_counter() - t_start, 1),
+    }
+    path = writer.finish(meta)
+    total = sum(s["bytes"] for s in writer.steps)
+    print(f"\nwrote {len(writer.steps)} records, {total / 1e6:.2f} MB -> {path} "
+          f"in {meta['seconds']}s")
+    print(f"tokens: {produced}")
+    print(f"text:   {meta['text']!r}")
+    store.close()
+    return 0
 
 
 # --------------------------------------------------------------------------- #
@@ -1159,6 +1522,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "not the model)")
     p.add_argument("--no-l2-engram", dest="l2_engram", action="store_false")
     p.add_argument("--l2-engram-threads", type=int, default=32)
+    # --- L3 ---------------------------------------------------------------
+    p.add_argument("--l3-tokens", type=int, default=64,
+                   help="prefill length; decode starts at this position")
+    p.add_argument("--l3-steps", type=int, default=8,
+                   help="how many greedy decode steps to export")
+    p.add_argument("--l3-topk", type=int, default=64,
+                   help="how much of each step's logit vector to store")
+    p.add_argument("--l3-engram-threads", type=int, default=32)
     p.add_argument("--compare", default=None, help=".npy produced by deepMoE to compare against")
     p.add_argument("--prompts", default=None, help="one prompt per line, for --level l3")
     p.add_argument("--max-tokens", type=int, default=64)
