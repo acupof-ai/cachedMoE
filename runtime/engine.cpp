@@ -133,12 +133,23 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
 
     // Without a GPU the host backing is the honest choice and the only one the
     // storage tests need (design §3.3). init_gpu() re-backs the store.
+    //
+    // `budget_bytes == 0` means "size it from the machine", which only
+    // init_gpu() can do -- and it would be absurd to commit gigabytes of host
+    // memory here only to hand them straight back. A single slot is enough to
+    // keep the store, the planner and the pointer table well-formed for a
+    // caller that never brings up a GPU.
+    CacheConfig boot = cfg_.cache;
+    if (boot.budget_bytes == 0) {
+        boot.slots_per_slab = 1;
+        boot.budget_bytes   = layout::kExpertSlotBytes;
+    }
     std::unique_ptr<store::SlabBacking> backing = std::make_unique<store::HostSlabBacking>();
-    if (auto r = store_.init(std::move(backing), cfg_.cache,
+    if (auto r = store_.init(std::move(backing), boot,
                              layout::kTotalLogicalLayers, layout::kRoutedExperts); !r)
         return r;
 
-    if (auto r = planner_.init(store_, io_, manifest_, shards_, cfg_.cache, cfg_.prefetch,
+    if (auto r = planner_.init(store_, io_, manifest_, shards_, boot, cfg_.prefetch,
                                &profiler_); !r)
         return r;
 
@@ -151,7 +162,10 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
 
 Result<void> Engine::load_pinned() {
     // design §9.3's pinned set: attention, shared experts, router, mHC, norms,
-    // engram wkv, embed, head, mtp. ~17.7 GB, read once, never evicted.
+    // engram wkv, embed and head, read once and never evicted. §9.3's 17.7 GB
+    // also counts the three DSpark (mtp) blocks; decode does not touch them, so
+    // what is loaded here is the forty backbone layers plus the three globals
+    // and it measures 9.17 GiB (docs/p2_decode.md §2.1).
     std::vector<std::string> names = store::pinned_global_tensors(manifest_);
     for (uint32_t L = 0; L < model_cfg_.text.num_hidden_layers; ++L) {
         auto per = store::pinned_layer_tensors(manifest_, L);
@@ -241,10 +255,22 @@ Result<void> Engine::init_gpu() {
 
     cache_budget_ = cfg_.cache.budget_bytes;
     if (cache_budget_ == 0) {
-        // "As much as the machine will give", which on Windows means the commit
-        // charge (design §5.2), minus the pinned set and a working margin.
-        cache_budget_ = 56ull << 30;
-        log_info("engine: cache budget auto -> {}", human_bytes(cache_budget_));
+        // "As much as the machine will give". On Windows that is the commit
+        // charge (design §5.2 / §9.2.2), minus the pinned set and a margin for
+        // everything else the process does. The pool itself stops early and
+        // says so if an allocation refuses before the budget is spent, so an
+        // over-estimate costs a log line rather than a failure; the ceiling is
+        // there so a machine with a very large pagefile does not spend a minute
+        // allocating memory a decode step will never touch.
+        constexpr uint64_t kMargin  = 8ull << 30;
+        constexpr uint64_t kCeiling = 74ull << 30;   // heap_capacity_idle.csv, path A
+        const uint64_t avail = store::available_commit_bytes();
+        const uint64_t pinned_est = 10ull << 30;
+        uint64_t want = 8ull << 30;
+        if (avail > pinned_est + kMargin) want = avail - pinned_est - kMargin;
+        cache_budget_ = want > kCeiling ? kCeiling : want;
+        log_info("engine: cache budget auto -> {} ({} of commit available)",
+                 human_bytes(cache_budget_), human_bytes(avail));
     }
 
     if (auto r = load_pinned(); !r) return r;

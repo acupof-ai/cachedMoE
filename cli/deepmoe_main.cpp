@@ -43,10 +43,17 @@ int usage(int code = 2) {
         "      Delegates to the nvme_bench executable when it is on PATH; the\n"
         "      same sweep is available directly as `nvme_bench`.\n"
         "\n"
-        "  deepmoe run --model DIR [--prompt TEXT] [--max-tokens N]\n"
-        "              [--profile FILE.jsonl] [--cache-gb N] [--no-gpu]\n"
-        "      Load the repacked model and decode. Not implemented yet: the\n"
-        "      kernels of design section 7 land in P2/P3.\n"
+        "  deepmoe run --model DIR [--prompt-ids FILE] [--steps N]\n"
+        "              [--state DIR] [--teacher-force] [--per-layer]\n"
+        "              [--cache-gb N] [--profile FILE.jsonl] [--chunk-kb N] [--qd N]\n"
+        "      Decode N tokens and print the section 13.1 per-token breakdown.\n"
+        "      --prompt-ids is a file of token ids (there is no tokenizer in the\n"
+        "      runtime yet, section 15 P0); --state is the oracle's L3 export,\n"
+        "      which supplies the state prefill will supply once it exists --\n"
+        "      the window KV after the prompt and, per step, the compressed KV\n"
+        "      and indexer top-k of section 7.4. Default --state tests/data/l3.\n"
+        "      --cache-gb 0 (the default) sizes the routed-expert cache from the\n"
+        "      machine. See docs/p2_decode.md.\n"
         "\n"
         "  common: -v / -vv raise the log level\n");
     return code;
@@ -166,6 +173,20 @@ void print_token_line(uint32_t step, uint32_t in, const runtime::DecodeStepResul
                 hits, hits + misses, bytes / 1e6, r.margin());
 }
 
+// design 13.1 asks for the breakdown PER LAYER, which is where an anomaly is
+// actually visible: one layer stalling for 200 ms, or what the two engram
+// layers cost. The aggregate line hides all of it.
+void print_layer_table(const runtime::Engine& engine) {
+    std::puts("      layer  engram    attn    stall     moe    gpu   host  hit  nvme MB");
+    uint32_t L = 0;
+    for (const runtime::LayerTiming& t : engine.layer_timings()) {
+        std::printf("      %5u  %6.2f  %6.2f  %7.1f  %6.2f %6.2f %6.2f  %u/6  %7.1f\n",
+                    L, t.engram_ms, t.attn_ms, t.gate_ms, t.moe_ms, t.moe_gpu_ms,
+                    t.moe_host_ms, t.hits, t.miss_bytes / 1e6);
+        ++L;
+    }
+}
+
 int cmd_run(int argc, char** argv) {
     RuntimeConfig cfg;
     cfg.cache.budget_bytes = 0;     // 0 = size it from the machine (see init_gpu)
@@ -173,6 +194,7 @@ int cmd_run(int argc, char** argv) {
     std::string state_dir = "tests/data/l3";
     uint32_t steps = 8;
     bool teacher_force = false;
+    bool per_layer = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
@@ -183,6 +205,7 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--kvcache")     cfg.kvcache_dir = arg_value(argc, argv, i, a);
         else if (a == "--steps")       steps = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--teacher-force") teacher_force = true;
+        else if (a == "--per-layer")   per_layer = true;
         else if (a == "--cache-gb")    cfg.cache.budget_bytes = uint64_t(std::atoll(arg_value(argc, argv, i, a).data())) << 30;
         else if (a == "--chunk-kb")    cfg.io.chunk_bytes = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data())) << 10;
         else if (a == "--qd")          cfg.io.max_inflight_ops = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
@@ -247,6 +270,7 @@ int cmd_run(int argc, char** argv) {
         auto r = engine.decode_step(in, st->decode_pos() + s, static_cast<int32_t>(s));
         if (!r) { std::fprintf(stderr, "step %u: %s\n", s, r.error().str().c_str()); return 1; }
         print_token_line(s, in, *r, engine);
+        if (per_layer) print_layer_table(engine);
         produced.push_back(r->token);
         next = r->token;
     }
@@ -255,8 +279,18 @@ int cmd_run(int argc, char** argv) {
     for (uint32_t t : produced) std::printf("%u ", t);
     std::printf("\nreference");
     for (uint32_t s = 0; s < n; ++s) std::printf(" %u", st->greedy_tokens()[s + 1]);
+    // Teacher-forced, every step starts from the reference's own input, so
+    // every step is an independent comparison and all of them count. Free
+    // running, a step after the first mismatch is decoding a sequence the
+    // reference never produced -- and against LOADED compressed KV that belongs
+    // to the reference's trajectory -- so only the leading run means anything.
     uint32_t match = 0;
-    for (uint32_t s = 0; s < n && produced[s] == st->greedy_tokens()[s + 1]; ++s) ++match;
+    if (teacher_force) {
+        for (uint32_t s = 0; s < n; ++s)
+            match += (produced[s] == st->greedy_tokens()[s + 1]) ? 1 : 0;
+    } else {
+        while (match < n && produced[match] == st->greedy_tokens()[match + 1]) ++match;
+    }
     std::printf("\n%u/%u tokens match the fp32 reference%s\n", match, n,
                 teacher_force ? " (teacher-forced)" : " before divergence");
     std::fputs(engine.profiler().summary().to_string().c_str(), stdout);

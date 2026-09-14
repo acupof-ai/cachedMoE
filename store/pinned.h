@@ -78,6 +78,12 @@ struct PinnedConfig {
 // docs/build.md when it does not. Always succeeds off Windows.
 Result<void> check_commit_available(uint64_t bytes, const char* what);
 
+// The same quantity as a number: `ullAvailPageFile`, which design §5.2 measured
+// as the real ceiling on this machine and the one a bigger pagefile raises.
+// Zero when it cannot be determined (including off Windows), which a caller
+// should read as "no budget advice available" rather than as "nothing free".
+uint64_t available_commit_bytes();
+
 class PinnedStore {
 public:
     PinnedStore() = default;
