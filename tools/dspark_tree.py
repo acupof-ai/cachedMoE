@@ -769,6 +769,321 @@ def cmd_lossless(args) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# 7b. offline evaluation of every scheme on the recorded trajectories
+# --------------------------------------------------------------------------- #
+#
+# Greedy (temperature 0): a scheme's path is accepted up to the first position
+# where it differs from the greedy trajectory -- the verify argmax at each
+# position given an accepted prefix IS the trajectory token (docs/p3_dspark.md
+# section 3.3; the batch-boundary caveat is section 6).
+#
+# Sampling (temperature 1, top-Kv target): along a trajectory sampled from p~,
+# a speculative-sampling scheme with proposal q accepts position j, given all
+# earlier positions were accepted, with probability
+#     P(accept_j | y_j) = min(p~(y_j), q(y_j | y_{j-1})) / p~(y_j) = min(1, q/p~),
+# because P(accept, y) = min(p~(y), q(y)) and P(y) = p~(y) under any lossless
+# scheme. So E[accepted | trajectory] = sum_j prod_{i<=j} r_i exactly -- a
+# Rao-Blackwellised estimate that needs no extra main-model forward. A
+# deterministic path (q = point mass) gives r_i = [y_i == path_i].
+
+THETAS = (0.3, 0.5, 0.7)
+
+
+def _traj_rows(pdir: str, log: dict) -> dict:
+    """position -> (top_ids [256], top_logits [256], lse, argmax) for every
+    trajectory position covered by an accepted verify row."""
+    rows = {}
+    for rec in log["cycles"]:
+        v = load_verify(pdir, rec["cycle"])
+        for j in range(rec["accepted"] + 1):
+            rows[rec["pos"] + j + 1] = (v["top_ids"][j], v["top_logits"][j], float(v["lse"][j]),
+                                        int(v["argmax"][j]))
+    return rows
+
+
+def _ptilde(top_ids, top_logits, tok: int, Kv: int = KV) -> float:
+    ids = top_ids[:Kv]
+    hit = np.nonzero(ids == tok)[0]
+    if not hit.size:
+        return 0.0
+    l64 = top_logits[:Kv].astype(np.float64)
+    return float(dm_exp(l64[hit[0]] - lse_seq(l64)))
+
+
+def _stats(vals: list) -> dict:
+    a = np.asarray(vals, dtype=np.float64)
+    return {"n": int(a.size), "mean": round(float(a.mean()), 4) if a.size else None}
+
+
+def cmd_analyse(args) -> int:
+    E, H, W = load_tables(args.model)
+    t_start = time.time()
+    trajs = mode_dirs(args.traces)
+    out: dict = {"generated": time.strftime("%Y-%m-%d %H:%M:%S"), "Ks": list(KS), "Kv": KV,
+                 "trajectories": [], "greedy": {}, "sampling": {}}
+    # accumulators: scheme -> list of per-event records
+    G: dict = {}          # greedy: scheme -> list of a (k = 5 path, full lookahead only)
+    Gconf: dict = {}      # scheme -> theta -> list of (k, tokens)
+    S: dict = {}          # sampling: scheme -> list of r-vectors (len 5)
+    Sconf: dict = {}
+    norm_cmp: dict = {}   # K -> {"events", "viterbi_diff_none", ...}
+    coverage: dict = {}   # rule -> K -> list of prefix-coverage lengths
+    calib: list = []      # (position, sigmoid(conf), accepted) along greedy eal K16
+    tailmass: dict = {kv: [] for kv in (8, 16, 32, 64, 256)}
+    unions = []
+    drivers = []
+
+    def put(d, key, val):
+        d.setdefault(key, []).append(val)
+
+    for prompt, mode, pdir, log in trajs:
+        n = log["prefill_len"]
+        produced = log["produced"]
+        rows = _traj_rows(pdir, log)
+        for rec in log["cycles"]:
+            unions.append(rec["union"])
+            drivers.append({"prompt": prompt, "mode": mode, "cycle": rec["cycle"],
+                            "accepted": rec["accepted"]})
+        for pos, (ids, lg, lse, _am) in rows.items():
+            l64 = lg.astype(np.float64)
+            for kv in tailmass:
+                tailmass[kv].append(1.0 - float(np.exp(np.logaddexp.reduce(l64[:kv]) - lse)))
+        n_events = 0
+        for di, dmeta in enumerate(log["drafts"]):
+            s = dmeta["start_pos"]
+            first = s + 2 - n                       # index into produced of the draft's position 0
+            L = min(5, len(produced) - first)
+            if L < 5 or any((s + 2 + i) not in rows for i in range(5)):
+                continue                              # full lookahead only
+            y = produced[first:first + 5]
+            yprev = [dmeta["input_token"]] + y[:4]
+            d = load_draft(pdir, di)
+            n_events += 1
+            if mode == "greedy":
+                # the reference chain (old scheme) straight from forward_head
+                a = 0
+                while a < 5 and dmeta["ref_chain"][a] == y[a]:
+                    a += 1
+                put(G, "chain_ref", a)
+            for rule in (CAND_RULES if mode == "greedy" else ("anchor",)):
+                for K in (KS if rule == "anchor" else (16,)):
+                    idx, cl, lse_a, e_in, e_cand, h_cand = lattice_inputs(
+                        d["B"], d["input_token"], E, H, K, rule)
+                    # lattice ceiling: longest prefix whose trajectory tokens are all candidates
+                    cov = 0
+                    while cov < 5 and int(y[cov]) in set(int(t) for t in idx[cov]):
+                        cov += 1
+                    coverage.setdefault(rule, {}).setdefault(K, []).append(cov)
+                    if mode == "greedy":
+                        lat_t = Lattice(idx, cl, e_in, e_cand, h_cand, lse_a)
+                        lat_n = Lattice(idx, cl, e_in, e_cand, h_cand, None)
+                        variants = {"tail": lat_t, "none": lat_n}
+                        exact = None
+                        if rule == "anchor":
+                            lq = exact_logq(d["B"], d["input_token"], idx, E, H)
+                            exact = Lattice(idx, cl, e_in, e_cand, h_cand, None)
+                            exact.logq = lq
+                            variants["exact"] = exact
+                        paths = {}
+                        for vname, lat in variants.items():
+                            for obj in OBJECTIVES:
+                                pth = lat.path(obj)
+                                paths[(vname, obj)] = pth
+                                toks = lat.tokens(pth)
+                                a = 0
+                                while a < 5 and toks[a] == y[a]:
+                                    a += 1
+                                name = f"{rule}/K{K}/{obj}/{vname}"
+                                put(G, name, a)
+                                if vname == "tail":
+                                    conf = confidence(d["x"], lat.prev_embed(pth), W)
+                                    for th in THETAS:
+                                        kk = k_from_confidence(conf, th)
+                                        Gconf.setdefault(name, {}).setdefault(th, []).append(
+                                            (kk, 1 + min(a, kk)))
+                                    if rule == "anchor" and K == 16 and obj == "eal":
+                                        for i in range(min(a + 1, 5)):
+                                            calib.append((i, float(sigmoid(conf[i])), int(i < a)))
+                        if exact is not None:
+                            nc = norm_cmp.setdefault(K, {"events": 0})
+                            nc["events"] += 1
+                            for obj in ("viterbi", "eal"):
+                                for vname in ("tail", "none"):
+                                    key = f"{obj}_{vname}_differs_from_exact"
+                                    nc[key] = nc.get(key, 0) + int(paths[(vname, obj)] != paths[("exact", obj)])
+                    else:
+                        lat = Lattice(idx, cl, e_in, e_cand, h_cand, None)
+                        ids_l = [list(int(t) for t in idx[i]) for i in range(5)]
+                        r = []
+                        for i in range(5):
+                            ids_row, lg_row, _lse, _am = rows[s + 2 + i]
+                            pt = _ptilde(ids_row, lg_row, y[i])
+                            prev_c = 0 if i == 0 else (ids_l[i - 1].index(yprev[i])
+                                                       if yprev[i] in ids_l[i - 1] else None)
+                            if prev_c is None or y[i] not in ids_l[i] or pt <= 0.0:
+                                r.append(0.0)
+                                continue
+                            q = float(dm_exp(lat.logq[i][prev_c][ids_l[i].index(y[i])]))
+                            r.append(min(1.0, q / pt))
+                        name = f"anchor/K{K}/sample"
+                        put(S, name, r)
+                        prev_e = np.stack([E[t] for t in yprev])
+                        conf = confidence(d["x"], prev_e, W)
+                        for th in THETAS:
+                            Sconf.setdefault(name, {}).setdefault(th, []).append(
+                                (k_from_confidence(conf, th), r))
+                        # deterministic eal path verified by sampling: r_i = [y_i == path_i]
+                        if K == 16:
+                            lat_t = Lattice(idx, cl, e_in, e_cand, h_cand, lse_a)
+                            toks = lat_t.tokens(lat_t.path("eal"))
+                            put(S, "anchor/K16/eal-deterministic",
+                                [1.0 if toks[i] == y[i] else 0.0 for i in range(5)])
+            if mode == "sampling":
+                # the old chain at temperature 1: q = full-vocab softmax(B_i + bias(y_{i-1}))
+                r = []
+                for i in range(5):
+                    row = (d["B"][i] + H @ E[yprev[i]]).astype(np.float64)
+                    lq = row[y[i]] - _lse_f64(row[None])[0]
+                    ids_row, lg_row, _lse, _am = rows[s + 2 + i]
+                    pt = _ptilde(ids_row, lg_row, y[i])
+                    r.append(min(1.0, float(np.exp(lq)) / pt) if pt > 0 else 0.0)
+                put(S, "chain_ref/sample", r)
+                prev_e = np.stack([E[t] for t in yprev])
+                conf = confidence(d["x"], prev_e, W)
+                for th in THETAS:
+                    Sconf.setdefault("chain_ref/sample", {}).setdefault(th, []).append(
+                        (k_from_confidence(conf, th), r))
+        out["trajectories"].append({"prompt": prompt, "mode": mode, "cycles": len(log["cycles"]),
+                                    "tokens": len(produced), "draft_events_full_lookahead": n_events,
+                                    "driver_mean_accepted_k5": round(
+                                        float(np.mean([c["accepted"] for c in log["cycles"]])), 4),
+                                    "text": log.get("text", "")[:400]})
+        print(f"{prompt}/{mode}: {n_events} events ({time.time() - t_start:.0f}s)", flush=True)
+
+    # --- greedy tables ---------------------------------------------------------
+    def greedy_row(avals):
+        a = np.asarray(avals)
+        row = {"n": int(a.size), "mean_a_k5": round(float(a.mean()), 4)}
+        for k in range(1, 6):
+            row[f"E_tokens_k{k}"] = round(1.0 + float(np.minimum(a, k).mean()), 4)
+        row["dist_a"] = [int((a == i).sum()) for i in range(6)]
+        return row
+
+    out["greedy"]["schemes"] = {name: greedy_row(v) for name, v in sorted(G.items())}
+    out["greedy"]["confidence_k"] = {
+        name: {str(th): {"mean_k": round(float(np.mean([x[0] for x in v])), 3),
+                         "E_tokens": round(float(np.mean([x[1] for x in v])), 4),
+                         "k_hist": [sum(1 for x in v if x[0] == i) for i in range(6)]}
+               for th, v in per.items()}
+        for name, per in sorted(Gconf.items())}
+    out["greedy"]["normalisation"] = {str(K): v for K, v in sorted(norm_cmp.items())}
+    out["lattice_coverage"] = {rule: {str(K): {"mean_prefix": round(float(np.mean(v)), 4),
+                                               "full5": round(float(np.mean(np.asarray(v) == 5)), 4)}
+                                      for K, v in sorted(per.items())}
+                               for rule, per in coverage.items()}
+
+    # --- sampling tables -------------------------------------------------------
+    def samp_row(rvecs):
+        R = np.asarray(rvecs, dtype=np.float64)          # [n, 5]
+        cum = np.cumprod(R, axis=1)
+        row = {"n": int(R.shape[0])}
+        for k in range(1, 6):
+            row[f"E_tokens_k{k}"] = round(1.0 + float(cum[:, :k].sum(axis=1).mean()), 4)
+        row["mean_r_by_pos"] = [round(float(x), 4) for x in R.mean(axis=0)]
+        return row
+
+    out["sampling"]["schemes"] = {name: samp_row(v) for name, v in sorted(S.items())}
+    sc = {}
+    for name, per in sorted(Sconf.items()):
+        sc[name] = {}
+        for th, v in per.items():
+            toks, ks = [], []
+            for kk, r in v:
+                cum = np.cumprod(np.asarray(r))
+                toks.append(1.0 + float(cum[:kk].sum()))
+                ks.append(kk)
+            sc[name][str(th)] = {"mean_k": round(float(np.mean(ks)), 3),
+                                 "E_tokens": round(float(np.mean(toks)), 4),
+                                 "k_hist": [ks.count(i) for i in range(6)]}
+    out["sampling"]["confidence_k"] = sc
+
+    # --- confidence calibration (greedy, anchor K16 eal path) -----------------
+    cal = []
+    for lo, hi in ((0.0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 0.9), (0.9, 1.01)):
+        sel = [c for c in calib if lo <= c[1] < hi]
+        if sel:
+            cal.append({"sigmoid": [lo, min(hi, 1.0)], "n": len(sel),
+                        "mean_sigmoid": round(float(np.mean([c[1] for c in sel])), 3),
+                        "accept_rate": round(float(np.mean([c[2] for c in sel])), 3)})
+    out["confidence_calibration"] = cal
+
+    # --- verify-matrix truncation and expert union --------------------------------
+    out["verify_tail_mass"] = {str(kv): {"mean": round(float(np.mean(v)), 5),
+                                         "p90": round(float(np.quantile(v, 0.9)), 5),
+                                         "max": round(float(np.max(v)), 5)}
+                               for kv, v in tailmass.items() if v}
+    per_m = [[] for _ in range(6)]
+    for u in unions:
+        for _L, sizes in u.items():
+            for m, sz in enumerate(sizes):
+                per_m[m].append(sz / ((m + 1) * 6))
+    out["union_frac_by_M"] = [round(float(np.mean(v)), 4) if v else None for v in per_m]
+    out["union_experts_by_M"] = [round(float(np.mean(v)) * 6 * (m + 1), 3) if v else None
+                                 for m, v in enumerate(per_m)]
+    out["verify_cycles"] = len(drivers)
+    out["batch_boundary"] = batch_boundary_stats(trajs)
+    out["seconds"] = round(time.time() - t_start, 1)
+    with open(args.out_stats, "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=1, ensure_ascii=False)
+    print(json.dumps({k: v for k, v in out.items() if k not in ("trajectories",)}, indent=1,
+                     ensure_ascii=False)[:20000])
+    return 0
+
+
+def batch_boundary_stats(trajs) -> dict:
+    """Phase 3 of the tree run: the same verify batch through decode-emulated
+    indexing (and, once, one token at a time)."""
+    res = {"cycles": []}
+    for prompt, mode, pdir, log in trajs:
+        if mode != "greedy":
+            continue
+        for rec in log["cycles"]:
+            ep = os.path.join(pdir, f"e{rec['cycle']:03d}.npz")
+            if not os.path.exists(ep):
+                continue
+            with np.load(ep) as z:
+                e = {k: z[k] for k in z.files}
+            v = load_verify(pdir, rec["cycle"])
+            path = rec["path_tokens"]
+            am_p = [int(t) for t in v["argmax"]]
+            am_e = [int(t) for t in e["emul_argmax"]]
+            a_p, _ = accept_greedy(path, am_p, 5)
+            a_e, _ = accept_greedy(path, am_e, 5)
+            row = {"prompt": prompt, "cycle": rec["cycle"], "pos": rec["pos"],
+                   "argmax_plain": am_p, "argmax_emulated": am_e,
+                   "rows_differ": [int(x != y) for x, y in zip(am_p, am_e)],
+                   "accept_plain": a_p, "accept_emulated": a_e,
+                   "margins_plain": [round(float(v["top_logits"][j, 0] - v["top_logits"][j, 1]), 4)
+                                     for j in range(len(am_p))],
+                   "top32_logit_maxabs": round(float(np.max(np.abs(
+                       v["top_logits"][:, :32] - e["emul_top_logits"][:, :32]))), 5)}
+            if "seq_argmax" in e:
+                row["argmax_sequential"] = [int(t) for t in e["seq_argmax"]]
+                row["cos_plain_seq"] = [round(float(x), 7) for x in e["cos_plain_seq"]]
+                row["cos_emul_seq"] = [round(float(x), 7) for x in e["cos_emul_seq"]]
+                row["cos_plain_emul"] = [round(float(x), 7) for x in e["cos_plain_emul"]]
+                row["plain_rerun_identical"] = bool(e["plain_rerun_identical"][0])
+                row["accept_sequential"] = accept_greedy(path, row["argmax_sequential"], 5)[0]
+            res["cycles"].append(row)
+    if res["cycles"]:
+        res["rows_compared"] = sum(len(c["rows_differ"]) for c in res["cycles"])
+        res["rows_argmax_differ"] = sum(sum(c["rows_differ"]) for c in res["cycles"])
+        res["accept_decisions_differ"] = sum(int(c["accept_plain"] != c["accept_emulated"])
+                                             for c in res["cycles"])
+    return res
+
+
+# --------------------------------------------------------------------------- #
 # 8. CLI
 # --------------------------------------------------------------------------- #
 
