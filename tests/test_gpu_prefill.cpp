@@ -935,7 +935,10 @@ DEEPMOE_TEST(gpu_prefill, forty_layers) {
 // ref-free / ref-forced (no prefill: the same steps from the export's own
 // state, the engine's baseline). One decode mode per process: a second pass
 // over the same positions would pool a ratio-2 group with the first pass's
-// state at odd N.
+// state at odd N. DEEPMOE_PF_TRUNCATE=n prefills only the first n prompt
+// tokens and decodes from there with no reference to compare against -- an
+// engine sanity check at a context between 64 and the export's (a garbage
+// step shows as token 0 at margin 0).
 DEEPMOE_TEST(gpu_prefill, longctx) {
     const char* dir_env = std::getenv("DEEPMOE_PF_LONGCTX");
     if (!dir_env) {
@@ -949,7 +952,11 @@ DEEPMOE_TEST(gpu_prefill, longctx) {
     const std::string mode = std::getenv("DEEPMOE_PF_DECODE") ? std::getenv("DEEPMOE_PF_DECODE") : "free";
     auto st = runtime::DecodeState::load(dir);
     REQUIRE_OK(st);
-    const std::vector<uint32_t> prompt = prompt_ids(dir);
+    std::vector<uint32_t> prompt = prompt_ids(dir);
+    const uint32_t truncate = std::getenv("DEEPMOE_PF_TRUNCATE")
+                                  ? static_cast<uint32_t>(std::atoi(std::getenv("DEEPMOE_PF_TRUNCATE"))) : 0;
+    if (truncate && truncate < prompt.size()) prompt.resize(truncate);
+    const bool truncated = truncate && truncate == prompt.size();
     const uint32_t N = static_cast<uint32_t>(prompt.size());
     REQUIRE(N > 0);
     const std::vector<uint32_t>& greedy = st->greedy_tokens();
@@ -1013,14 +1020,44 @@ DEEPMOE_TEST(gpu_prefill, longctx) {
         std::printf("    first token %u (reference %u) %s, margin ours %.4f ref %.4f, rho %.4f, max|dlogit| %.3f\n",
                     out->first_token, ref0.argmax, out->first_token == ref0.argmax ? "MATCH" : "DIFFER",
                     out->top1 - out->top2, ref0.margin(), rank_rho(ref0.top_ids, out->logits.data()), maxd);
-        CHECK_EQ(out->first_token, ref0.argmax);
         first = out->first_token;
-        const HandoffAgreement h = compare_handoff(*out, *st, c, N,
-                                                   std::filesystem::exists(small + "/index.json") ? small : "");
-        CHECK(h.win > 0.8);
+        if (!truncated) {
+            CHECK_EQ(out->first_token, ref0.argmax);
+            const HandoffAgreement h = compare_handoff(*out, *st, c, N,
+                                                       std::filesystem::exists(small + "/index.json") ? small : "");
+            CHECK(h.win > 0.8);
+        }
         if (mode == "none") return;
         std::filesystem::create_directories(tmp);
         REQUIRE_OK(gpu::Prefill::write_l3_dir(*out, c, dir, tmp.string()));
+        if (truncated) {
+            // our prompt, not the export's: prompt_ids / prefill_len / decode_pos
+            const std::string path = (tmp / "index.json").string();
+            std::FILE* f = std::fopen(path.c_str(), "rb");
+            REQUIRE(f != nullptr);
+            std::string text;
+            char buf[65536];
+            for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+            std::fclose(f);
+            auto set_int = [&](const std::string& key) {
+                const size_t k = text.find("\"" + key + "\"");
+                if (k == std::string::npos) return;
+                const size_t a = text.find_first_of("0123456789", k + key.size() + 2);
+                const size_t b = text.find_first_not_of("0123456789", a);
+                text = text.substr(0, a) + std::to_string(N) + text.substr(b);
+            };
+            set_int("prefill_len");
+            set_int("decode_pos");
+            const size_t k = text.find("\"prompt_ids\"");
+            const size_t a = text.find('[', k), b = text.find(']', a);
+            std::string ids;
+            for (uint32_t i = 0; i < N; ++i) ids += (i ? ", " : "") + std::to_string(prompt[i]);
+            text = text.substr(0, a + 1) + ids + text.substr(b);
+            f = std::fopen(path.c_str(), "wb");
+            REQUIRE(f != nullptr);
+            std::fwrite(text.data(), 1, text.size(), f);
+            std::fclose(f);
+        }
     }
     st = {};
 
