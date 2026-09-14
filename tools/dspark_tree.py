@@ -19,10 +19,13 @@ forward of M = k + 1 tokens. Only the CPU-side sampling and comparison change.
    draft, q0(1 + q1(1 + q2(1 + q3(1 + q4))))), `chain` (sequential argmax inside
    the lattice), or ancestral `sample` (temperature 1, truncated to the lattice).
 3. **Verify** is unchanged: `[last token, path[:k]]`, M = k + 1.
-4. **Compare on the verify matrix's top-K (CPU).** Greedy: longest prefix with
-   `path[j] == argmax[j]` plus the bonus token. Sampling: speculative-sampling
-   acceptance against the verify rows' top-Kv distribution (see `accept_sampling`
-   for the truncation rule).
+4. **Compare on the verify matrix (CPU).** Greedy: longest prefix with
+   `path[j] == argmax[j]` plus the bonus token. Temperature 1: `accept_sampling_exact`
+   (candidate logits + row logsumexp + one masked sample per row; exactly lossless
+   against plain sampling) or `accept_sampling` (top-Kv truncated target).
+
+Candidates come from the ANCHOR rows (`lattice_inputs`): base logits alone carry
+almost no sequence information for this model (docs/p3_dspark.md section 12.1).
 
 Bit-exactness contract with cpu/dspark_tree.cpp
 -----------------------------------------------
@@ -913,16 +916,17 @@ def cmd_lossless(args) -> int:
 # Greedy (temperature 0): a scheme's path is accepted up to the first position
 # where it differs from the greedy trajectory -- the verify argmax at each
 # position given an accepted prefix IS the trajectory token (docs/p3_dspark.md
-# section 3.3; the batch-boundary caveat is section 6).
+# section 3.4; the batch-boundary caveat is section 14).
 #
-# Sampling (temperature 1, top-Kv target): along a trajectory sampled from p~,
-# a speculative-sampling scheme with proposal q accepts position j, given all
-# earlier positions were accepted, with probability
-#     P(accept_j | y_j) = min(p~(y_j), q(y_j | y_{j-1})) / p~(y_j) = min(1, q/p~),
-# because P(accept, y) = min(p~(y), q(y)) and P(y) = p~(y) under any lossless
+# Sampling (temperature 1, exact target p): along a trajectory sampled from p
+# (the driver uses accept_sampling_exact), a speculative-sampling scheme with
+# proposal q accepts position j, given all earlier positions were accepted, with
+#     P(accept_j | y_j) = min(p(y_j), q(y_j | y_{j-1})) / p(y_j) = min(1, q/p),
+# because P(accept, y) = min(p(y), q(y)) and P(y) = p(y) under any lossless
 # scheme. So E[accepted | trajectory] = sum_j prod_{i<=j} r_i exactly -- a
-# Rao-Blackwellised estimate that needs no extra main-model forward. A
-# deterministic path (q = point mass) gives r_i = [y_i == path_i].
+# Rao-Blackwellised estimate that needs no extra main-model forward. p(y_j) is
+# exp(emit_logit - lse) from the verify row. A deterministic path (q = point
+# mass) gives r_i = [y_i == path_i].
 
 THETAS = (0.3, 0.5, 0.7)
 

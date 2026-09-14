@@ -1399,7 +1399,7 @@ def summarise(cycles: list[dict], margs, t_draft_golden: float,
 #
 #   * one trajectory per (prompt, mode), mode in {greedy, sampling}, driven by
 #     the real speculative loop with tree K = 16 (greedy: `eal` path; sampling:
-#     ancestral path + lossless top-32 acceptance), k = 5, M = 6;
+#     ancestral path + dspark_tree.accept_sampling_exact), k = 5, M = 6;
 #   * a draft event at EVERY accepted position (the reference's M = 1 order:
 #     forward_spec(token at p+1, main_hidden[p], start_pos = p)), saving the base
 #     logits B [5, V] and the confidence head's hidden x [5, 5120];
@@ -1408,7 +1408,7 @@ def summarise(cycles: list[dict], margs, t_draft_golden: float,
 # From these, `dspark_tree.py analyse` evaluates every other scheme offline:
 # greedy acceptance is "path prefix == the greedy trajectory", and sampling
 # acceptance uses the exact coupling P(accept_j | output y_j) = min(1, q(y_j)/p(y_j))
-# along the sampled trajectory (docs/p3_dspark.md section 3.3).
+# along the sampled trajectory (docs/p3_dspark.md section 3.4).
 #
 # No rerun on rejection: the state the verify forward leaves at rejected positions
 # is overwritten before it can be read (window slots by the next batch's writes,
