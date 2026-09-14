@@ -1205,8 +1205,8 @@ def cmd_analyse(args) -> int:
         for i, v in enumerate(base_rank) if v]
     out["batch_boundary"] = batch_boundary_stats(trajs)
     out["seconds"] = round(time.time() - t_start, 1)
-    with open(args.out_stats, "w", encoding="utf-8") as f:
-        json.dump(out, f, indent=1, ensure_ascii=False)
+    with open(args.out_stats, "w", encoding="utf-8") as f:     # compact: tests/data budget
+        json.dump(out, f, separators=(",", ":"), ensure_ascii=False)
     print(json.dumps({k: v for k, v in out.items() if k not in ("trajectories",)}, indent=1,
                      ensure_ascii=False)[:20000])
     return 0

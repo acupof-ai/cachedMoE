@@ -3,6 +3,12 @@
  "cases": [
   {
    "prompt": "en_prose",
+   "mode": "sampling",
+   "cycle": 0,
+   "draft": 0
+  },
+  {
+   "prompt": "cpp",
    "mode": "greedy",
    "cycle": 0,
    "draft": 0
