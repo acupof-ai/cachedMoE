@@ -57,7 +57,8 @@ set(DEEPMOE_GPU_SOURCES
     gpu/vulkan/moe_kernels.cpp
     gpu/vulkan/attn_kernels.cpp
     gpu/vulkan/decode_kernels.cpp
-    gpu/vulkan/dspark_kernels.cpp)
+    gpu/vulkan/dspark_kernels.cpp
+    gpu/vulkan/prefill_kernels.cpp)
 
 set(DEEPMOE_RUNTIME_SOURCES
     runtime/engine.cpp
@@ -72,7 +73,8 @@ set(DEEPMOE_SHADER_DEPS
     gpu/shaders/moe_common.slang
     gpu/shaders/attn_common.slang
     gpu/shaders/fp8_gemv.slang
-    gpu/shaders/dspark_common.slang)
+    gpu/shaders/dspark_common.slang
+    gpu/shaders/prefill_common.slang)
 
 # design §7.14 dispatch list, plus the FP4 GEMV template and the raw-read
 # upper bound every kernel is scored against (design §7.1 rule 2).
@@ -99,7 +101,11 @@ set(DEEPMOE_SHADERS
     gpu/shaders/head.slang
     gpu/shaders/dspark_gemv.slang
     gpu/shaders/dspark_attn.slang
-    gpu/shaders/dspark_head.slang)
+    gpu/shaders/dspark_head.slang
+    gpu/shaders/prefill_gemm.slang
+    gpu/shaders/prefill_coopmat.slang
+    gpu/shaders/prefill_elem.slang
+    gpu/shaders/prefill_attn.slang)
 
 function(deepmoe_report)
     message(STATUS "deepmoe: tests=${DEEPMOE_BUILD_TESTS} vulkan=${DEEPMOE_ENABLE_VULKAN} "

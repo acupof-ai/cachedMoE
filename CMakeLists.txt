@@ -120,6 +120,12 @@ add_executable(attn_bench bench/attn_bench.cpp)
 target_link_libraries(attn_bench PRIVATE deepmoe_core)
 add_dependencies(attn_bench shaders)
 
+# design 7.13 / docs/p3_prefill.md: the prefill GEMM choice and a whole prefill's
+# wall time (P3, Track L).
+add_executable(prefill_bench bench/prefill_bench.cpp)
+target_link_libraries(prefill_bench PRIVATE deepmoe_core)
+add_dependencies(prefill_bench shaders)
+
 # --- environment self-check (design docs/build.md) ---------------------------
 if(DEEPMOE_ENABLE_VULKAN)
     add_executable(envcheck tools/envcheck/vkinfo.cpp)
