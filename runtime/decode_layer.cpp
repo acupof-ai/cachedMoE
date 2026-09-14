@@ -1,5 +1,6 @@
 #include "runtime/decode_layer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -77,7 +78,10 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
     const uint32_t irows = cfg.index_n_heads * cfg.index_head_dim;
     // The score plane is [heads][stride]; 1024 covers the 128 + 512 of design
     // §7.5 with room for a longer window.
-    const uint32_t score_stride = 1024;
+    const uint32_t score_stride = kAttnScoreStride;
+    // §2.1's block planes, one uint32 per block of the largest scorable run.
+    const uint32_t cand_bs = std::max<uint32_t>(1, cfg.candidate_block_size);
+    const uint64_t cand_blocks = (uint64_t(kMaxIndexPositions) + cand_bs - 1) / cand_bs;
 
     struct Want { gpu::GpuScratch::View* v; uint64_t bytes; };
     const Want wants[] = {
@@ -122,6 +126,8 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
         {&idx_k_scale,  256},
         {&idx_w,        uint64_t(cfg.index_n_heads) * 4},
         {&idx_score,    uint64_t(kMaxIndexPositions) * 4},
+        {&idx_blk_key,  cand_blocks * 4},
+        {&idx_cand,     cand_blocks * 4},
     };
     for (const Want& w : wants) {
         auto v = s.alloc(w.bytes);
@@ -385,6 +391,8 @@ Result<void> DecodeLayer::bind_ced(const LayerWeights& w, const LayerStep& st,
             p[gpu::slot::kIdxOut]     = st.kv.top_idx;
             p[gpu::slot::kIdxQFp4]    = b.idx_q_fp4.addr;
             p[gpu::slot::kIdxQScale]  = b.idx_q_scale.addr;
+            p[gpu::slot::kIdxBlkKey]  = b.idx_blk_key.addr;
+            p[gpu::slot::kIdxCand]    = b.idx_cand.addr;
         };
         idx(gpu::AttnStage::IdxQGemv,   b.rope.addr,     st.kv.idx_key);
         idx(gpu::AttnStage::IdxQFinish, b.rope.addr,     st.kv.idx_key);
@@ -392,6 +400,9 @@ Result<void> DecodeLayer::bind_ced(const LayerWeights& w, const LayerStep& st,
         idx(gpu::AttnStage::IdxWeights, b.rope.addr,     st.kv.idx_key);
         idx(gpu::AttnStage::IdxScore,   b.rope.addr,     st.kv.idx_key);
         idx(gpu::AttnStage::IdxTopK,    b.rope.addr,     st.kv.idx_key);
+        idx(gpu::AttnStage::IdxBlockKeys,   b.rope.addr, st.kv.idx_key);
+        idx(gpu::AttnStage::IdxBlockSelect, b.rope.addr, st.kv.idx_key);
+        idx(gpu::AttnStage::IdxApplyCand,   b.rope.addr, st.kv.idx_key);
     }
     (void)c;
     return {};
@@ -406,6 +417,30 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     const uint32_t orows = c.o_groups * c.o_lora_rank;
     const uint32_t ocols = qrows / c.o_groups;
     const uint32_t n_wg0 = (dim + 255) / 256;
+
+    // The list sparse_attn walks. Its length is window + min(index_topk, n_cmp)
+    // -- model.py's `topk = min(self.index_topk, end_pos // ratio)` -- and
+    // every entry past the window must have been written by THIS step's
+    // indexer. Both ways of getting that wrong have happened once (a list of
+    // window + n_cmp, which read hundreds of never-written zeros and, past
+    // 1,024 entries, ran off the end of the per-head score row into the next
+    // head), so both are refused here, before anything is recorded.
+    {
+        const uint32_t n_kv = st.kv.n_kv;
+        if (n_kv > kAttnScoreStride || n_kv > c.sliding_window + c.index_topk)
+            return fail(Err::Internal,
+                        std::format("layer {} position {}: a top-k list of {} entries; "
+                                    "sparse_attn takes at most window {} + index_topk {} "
+                                    "and its score row holds {}", st.layer, st.position,
+                                    n_kv, c.sliding_window, c.index_topk, kAttnScoreStride));
+        if (st.n_cmp > 0 &&
+            n_kv != c.sliding_window + std::min(c.index_topk, st.n_cmp))
+            return fail(Err::Internal,
+                        std::format("layer {} position {}: {} compressed positions want a "
+                                    "list of {} + {} entries, the store says {}", st.layer,
+                                    st.position, st.n_cmp, c.sliding_window,
+                                    std::min(c.index_topk, st.n_cmp), n_kv));
+    }
 
     auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                     uint32_t groups) -> Result<void> {
@@ -449,7 +484,8 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     if (auto r = record_ced(cmd, st); !r) return r;
 
     // 5. Sparse attention over the window plus the compressed picks.
-    gpu::AttnPush ap{st.kv.n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim, 1024,
+    gpu::AttnPush ap{st.kv.n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim,
+                     kAttnScoreStride,
                      1.0f / std::sqrt(static_cast<float>(c.head_dim))};
     if (auto r = step(gpu::AttnStage::AttnScore, &ap, sizeof ap, c.num_attention_heads); !r)
         return r;
@@ -559,9 +595,50 @@ Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& s
         gpu::IdxPush is = ip;
         is.n_pos = st.n_cmp;
         is.topk  = std::min(c.index_topk, st.n_cmp);
+        if (st.n_cmp > kMaxIndexPositions)
+            return fail(Err::ResourceExhausted,
+                        std::format("layer {} scores {} compressed positions; one indexer "
+                                    "dispatch covers {}", st.layer, st.n_cmp,
+                                    kMaxIndexPositions));
         const uint32_t sg = (st.n_cmp + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile;
         if (sg) {
             if (auto r = step(gpu::AttnStage::IdxScore, &is, sizeof is, sg); !r) return r;
+
+            // design §2.1. The source keeps the candidate_topk_blocks best
+            // blocks of its own scores; a consumer masks its scores to them
+            // before its own top-k. A consumer needs the SAME step's mask,
+            // which the shared scratch holds from the source's dispatch on.
+            gpu::IdxPush cb = is;
+            cb.k    = c.candidate_block_size;
+            cb.topk = c.candidate_topk_blocks;
+            if (candidate_source(st)) {
+                const uint32_t nb = (st.n_cmp + cb.k - 1) / cb.k;
+                if (auto r = step(gpu::AttnStage::IdxBlockKeys, &cb, sizeof cb,
+                                  (nb + 255) / 256); !r)
+                    return r;
+                if (auto r = step(gpu::AttnStage::IdxBlockSelect, &cb, sizeof cb, 1); !r)
+                    return r;
+                cand_position_ = st.position;
+                cand_n_cmp_    = st.n_cmp;
+            } else if (candidate_consumer(st)) {
+                if (cand_position_ != st.position || cand_n_cmp_ != st.n_cmp)
+                    return fail(Err::FailedPrecondition,
+                                std::format("layer {} needs design 2.1's candidate blocks for "
+                                            "position {} over {} positions, but layer {} last "
+                                            "built them for position {} over {}", st.layer,
+                                            st.position, st.n_cmp,
+                                            c.candidate_source_layer_id, cand_position_,
+                                            cand_n_cmp_));
+                if (auto r = step(gpu::AttnStage::IdxApplyCand, &cb, sizeof cb, 1); !r)
+                    return r;
+            }
+
+            // Poison the compressed half so `verify_after_attention` can tell a
+            // list the kernel wrote from one it did not.
+            if (st.kv.top_idx_host) {
+                auto* out = reinterpret_cast<int32_t*>(st.kv.top_idx_host);
+                std::fill(out + c.sliding_window, out + c.sliding_window + is.topk, -1);
+            }
             if (auto r = step(gpu::AttnStage::IdxTopK, &is, sizeof is, 1); !r) return r;
         }
     }
@@ -581,7 +658,43 @@ Result<void> DecodeLayer::submit(gpu::CommandBuffer& cmd) {
 Result<void> DecodeLayer::run_attention(const LayerStep& st) {
     if (auto r = cmd_.begin(); !r) return r;
     if (auto r = record_attention(cmd_, st); !r) return r;
-    return submit(cmd_);
+    if (auto r = submit(cmd_); !r) return r;
+    return verify_after_attention(st);
+}
+
+bool DecodeLayer::candidate_source(const LayerStep& st) const {
+    const TextConfig& c = *cfg_;
+    return st.run_indexer && c.candidate_topk_blocks && c.candidate_block_size &&
+           st.layer == c.candidate_source_layer_id &&
+           uint64_t(st.n_cmp) > uint64_t(c.candidate_topk_blocks) * c.candidate_block_size;
+}
+
+bool DecodeLayer::candidate_consumer(const LayerStep& st) const {
+    const TextConfig& c = *cfg_;
+    return st.run_indexer && c.candidate_topk_blocks && c.candidate_block_size &&
+           st.layer > c.candidate_source_layer_id &&
+           uint64_t(st.n_cmp) > uint64_t(c.candidate_topk_blocks) * c.candidate_block_size;
+}
+
+Result<void> DecodeLayer::verify_after_attention(const LayerStep& st) const {
+    if (!st.run_indexer || st.n_cmp == 0 || !st.kv.top_idx_host) return {};
+    const TextConfig& c = *cfg_;
+    const uint32_t w = c.sliding_window;
+    const uint32_t n_sel = std::min(c.index_topk, st.n_cmp);
+    const auto* idx = reinterpret_cast<const int32_t*>(st.kv.top_idx_host);
+    int32_t prev = int32_t(w) - 1;
+    for (uint32_t i = 0; i < n_sel; ++i) {
+        const int32_t v = idx[w + i];
+        if (v <= prev || v >= int32_t(w + st.n_cmp))
+            return fail(Err::Internal,
+                        std::format("layer {} position {}: top-k entry {} of {} is {} (previous "
+                                    "{}); the indexer must write {} strictly increasing "
+                                    "compressed rows in [{}, {}){}", st.layer, st.position,
+                                    i, n_sel, v, prev, n_sel, w, w + st.n_cmp,
+                                    v == -1 ? " -- never written this step" : ""));
+        prev = v;
+    }
+    return {};
 }
 
 Result<void> DecodeLayer::run_moe(MoeBridge& moe, const LayerStep& st, gpu::Timeline* timeline,

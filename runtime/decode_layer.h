@@ -91,14 +91,32 @@ struct DecodeScratch {
     gpu::GpuScratch::View idx_q_raw, idx_q, idx_q_fp4, idx_q_scale;
     gpu::GpuScratch::View idx_k_raw, idx_k_fp4, idx_k_scale;
     gpu::GpuScratch::View idx_w, idx_score;
+    // design §2.1's candidate blocks: the source's per-block radix keys and the
+    // keep flags every consumer layer of the same step reads.
+    gpu::GpuScratch::View idx_blk_key, idx_cand;
 
     Result<void> create(gpu::GpuScratch& s, const TextConfig& cfg);
 };
 
-// Compressed positions one `indexer.score` dispatch can be asked for. The
-// score plane is the only per-step buffer whose size grows with the context,
-// and at 16,384 (the candidate-block mask starts past it) it is 64 KB; the KV store's `max_context` is checked against it.
-inline constexpr uint32_t kMaxIndexPositions = 16384;
+// Compressed positions one `indexer.score` dispatch can be asked for. This is
+// the KERNEL's limit, not a buffer size anyone chose: stage 4 covers
+// kIdxScoreTile positions a workgroup and a dispatch has at most 65,535
+// workgroups, so 524,280 positions -- eight times V4.1's original 65,536-token
+// context. The score plane is sized for it once (2 MB of the 32 MB scratch)
+// and so are the candidate-block planes (0.5 MB). What really bounds a decode's
+// context is the KV store's memory (KvStoreConfig::total_bytes), which the
+// caller sizes from the context it wants.
+//
+// History: this was 4,096 (then 16,384) and doubled as the context cap, which
+// hid that sparse_attn was being handed window + n_cmp entries instead of
+// window + min(index_topk, n_cmp) -- Track P's fix in Engine::prepare_ced.
+inline constexpr uint32_t kMaxIndexPositions = 65535u * gpu::kIdxScoreTile;
+
+// Row stride of sparse_attn's [heads][stride] score plane. A top-k list is
+// window + min(index_topk, n_cmp) = 640 entries in V4.1; `record_attention`
+// refuses any list longer than the stride, which is exactly the overrun that
+// produced NaN logits past 1K tokens of context.
+inline constexpr uint32_t kAttnScoreStride = 1024;
 
 // What the MoE track is asked to do for one layer. Deliberately in terms of
 // the model, not of their kernels: expert ids, routing weights, an input and
@@ -153,6 +171,10 @@ struct LayerStep {
     // compressor pools and publishes and the indexer derives a key from it. At
     // ratio 1 it is every step; at ratio 2 every other one.
     bool     cmp_complete = false;
+    // design §2.1's two-level top-k, which only matters once n_cmp exceeds
+    // candidate_topk_blocks * candidate_block_size. Derived by DecodeLayer from
+    // the config and n_cmp -- the Engine does not have to set anything.
+    //
     // This layer's OWN index-key cache, which only a kv_source_layer has. The
     // one being scored against is `kv.idx_key`, and the two differ whenever a
     // ratio-2 source's group is incomplete: it publishes nothing and scores
@@ -189,6 +211,18 @@ public:
     // recorded between the window-KV write and sparse_attn, which is where
     // `Attention.forward` runs them.
     Result<void> record_attention(gpu::CommandBuffer& cmd, const LayerStep& s);
+
+    // After the command buffer holding `record_attention(s)` has run: proves
+    // the indexer wrote the whole compressed half of this step's top-k list --
+    // `record_attention` poisons it with -1 first -- and that what it wrote is
+    // a strictly increasing run of in-range compressed rows. A layer that is
+    // not an index source has nothing to check. `run_attention` calls it; the
+    // token loop should call it after its wait. ~512 host reads a source.
+    Result<void> verify_after_attention(const LayerStep& s) const;
+    // Whether this step, on this layer, runs design §2.1's level one (the
+    // candidate source) or level two (a consumer).
+    bool candidate_source(const LayerStep& s) const;
+    bool candidate_consumer(const LayerStep& s) const;
 
     // Records + submits + waits. The decode loop will not wait here -- §7.1 is
     // explicit about that -- but a layer-at-a-time validator does.
@@ -272,6 +306,8 @@ private:
     // token and never gave it back until the pool died.
     gpu::CommandBuffer cmd_{};
     uint64_t          moe_out_addr_ = 0;
+    // The step design §2.1's candidate mask in the scratch was built for.
+    uint32_t          cand_position_ = ~0u, cand_n_cmp_ = 0;
     uint64_t          ffn_in_addr_ = 0;
     float*            ffn_in_host_ = nullptr;
     const float*      moe_out_host_ = nullptr;
