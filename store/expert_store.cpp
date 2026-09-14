@@ -362,6 +362,30 @@ std::vector<ExpertSlot> ExpertStore::evictable() const {
     return out;
 }
 
+Result<uint32_t> ExpertStore::evict_lru() {
+    std::lock_guard lk(mutex_);
+    uint32_t best = UINT32_MAX;
+    TokenIndex oldest = 0;
+    for (uint32_t i = 0; i < slots_.size(); ++i) {
+        const ExpertSlot& s = slots_[i];
+        if (s.state != SlotState::Resident || s.tier == Tier::Pinned ||
+            s.guard_timeline > completed_timeline_)
+            continue;
+        // Strictly older wins, so equal stamps keep the lowest slot index --
+        // the same deterministic tie-break as the policy's sort.
+        if (best == UINT32_MAX || s.last_use_token < oldest) {
+            best = i;
+            oldest = s.last_use_token;
+        }
+    }
+    if (best == UINT32_MAX) return fail(Err::NotFound, "no evictable slot");
+    unpublish_locked(best);
+    release_locked(best);
+    --stats_.resident;
+    ++stats_.evictions;
+    return best;
+}
+
 uint32_t ExpertStore::free_slots() const {
     std::lock_guard lk(mutex_);
     return static_cast<uint32_t>(free_list_.size());

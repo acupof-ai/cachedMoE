@@ -175,6 +175,21 @@ public:
     // submit cost; launch overhead is measured by comparing 1 and N.
     Result<MoeTiming> run(uint32_t iterations = 1, MoePhase phase = MoePhase::Both);
 
+    // ADDITIVE (Track I, docs/p2_decode.md §9): the same dispatch sequence as
+    // one iteration of `run` -- x-quant if spec.x_mode == 6, dispatch A,
+    // h-quant if spec.h_quant == 3, dispatch B -- recorded into a command
+    // buffer the CALLER has begun and will submit. Barriers between the
+    // dispatches, none before the first (the caller's last dispatch decides
+    // that) and one after the last, so whatever the caller records next can
+    // read `y`. No timestamps and no submit. This is what lets a decode layer
+    // put its MoE and the next layer's attention into ONE submit instead of
+    // three.
+    Result<void> record_into(CommandBuffer& cmd, MoePhase phase = MoePhase::Both);
+
+    // Device address of `y`, so the caller's next dispatch can read the MoE
+    // output through buffer-device-address instead of the host copying it.
+    uint64_t y_address() const { return y_.dev_addr; }
+
     // Bytes of weights + scales one A+B pair touches, the numerator of the
     // effective GB/s of design §7.1 rule 2.
     uint64_t bytes_per_iteration() const;

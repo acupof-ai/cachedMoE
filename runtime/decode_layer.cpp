@@ -138,7 +138,11 @@ Result<void> DecodeLayer::create(gpu::Device& device, gpu::AttnRunner& runner,
     cfg_    = &cfg;
     hcdim_  = cfg.hc_mult * cfg.hidden_size;
     if (auto r = buf_.create(scratch, cfg); !r) return r;
-    return pool_.create(device);
+    if (auto r = pool_.create(device); !r) return r;
+    auto cb = pool_.acquire();
+    if (!cb) return std::unexpected(cb.error());
+    cmd_ = *cb;
+    return {};
 }
 
 namespace {
@@ -206,7 +210,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     bind_mhc(*runner_, gpu::AttnStage::MhcPost, gpu::AttnStage::MhcMix,
              gpu::AttnStage::MhcFinal, b,
              w.hc_attn_fn, w.hc_attn_base, w.hc_attn_scale, w.attn_norm,
-             b.mix_a, b.mix_b, b.moe_y, b.x, b.xout);
+             b.mix_a, b.mix_b, moe_view(), b.x, b.xout);
     // FFN half: reads the stream the attention half wrote, folds in wo_b's
     // output, and writes back to `x`. In-place would also be safe -- a thread
     // reads all hc copies of its own element before writing any -- but keeping
@@ -221,7 +225,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     bind_mhc(*runner_, gpu::AttnStage::MhcClose, gpu::AttnStage::MhcClose,
              gpu::AttnStage::MhcClose, b,
              w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
-             b.mix_a, b.mix_b, b.moe_y, b.x, b.xout);
+             b.mix_a, b.mix_b, moe_view(), b.x, b.xout);
 
     uint64_t* qa = runner_->slots(gpu::AttnStage::WqA);
     qa[gpu::slot::kGemvW] = w.wq_a;
@@ -547,12 +551,9 @@ Result<void> DecodeLayer::submit(gpu::CommandBuffer& cmd) {
 }
 
 Result<void> DecodeLayer::run_attention(const LayerStep& st) {
-    auto cb = pool_.acquire();
-    if (!cb) return std::unexpected(cb.error());
-    gpu::CommandBuffer cmd = *cb;
-    if (auto r = cmd.begin(); !r) return r;
-    if (auto r = record_attention(cmd, st); !r) return r;
-    return submit(cmd);
+    if (auto r = cmd_.begin(); !r) return r;
+    if (auto r = record_attention(cmd_, st); !r) return r;
+    return submit(cmd_);
 }
 
 Result<void> DecodeLayer::run_moe(MoeBridge& moe, const LayerStep& st, gpu::Timeline* timeline,
@@ -604,12 +605,9 @@ Result<void> DecodeLayer::record_close(gpu::CommandBuffer& cmd, const LayerStep&
 }
 
 Result<void> DecodeLayer::run_close(const LayerStep& st) {
-    auto cb = pool_.acquire();
-    if (!cb) return std::unexpected(cb.error());
-    gpu::CommandBuffer cmd = *cb;
-    if (auto r = cmd.begin(); !r) return r;
-    if (auto r = record_close(cmd, st); !r) return r;
-    return submit(cmd);
+    if (auto r = cmd_.begin(); !r) return r;
+    if (auto r = record_close(cmd_, st); !r) return r;
+    return submit(cmd_);
 }
 
 const float*    DecodeLayer::block_out()    const { return static_cast<const float*>(buf_.xout.host); }

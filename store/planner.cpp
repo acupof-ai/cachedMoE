@@ -4,6 +4,7 @@
 #include <atomic>
 #include <format>
 #include <memory>
+#include <string_view>
 
 #include "core/log.h"
 #include "model/layout.h"
@@ -154,6 +155,9 @@ Result<Planner::Fetch> Planner::fetch(ExpertKey key, IoPriority priority,
 
     const uint32_t slot = res->slot;
     ExpertStore* store  = store_;
+    // The slot's LRU age is the moment it was ASKED for, not the moment its
+    // last run lands: that is when the simulator's `admit` touches it.
+    const TokenIndex stamp = next_stamp();
     auto state = std::make_shared<FetchState>();
     state->cb = std::move(on_done);
 
@@ -177,12 +181,12 @@ Result<Planner::Fetch> Planner::fetch(ExpertKey key, IoPriority priority,
         req.issue_token    = token;
         req.deadline_layer = deadline_layer;
 
-        auto id = io_->submit(req, [store, slot, token, state](const storage::IoResult& r) {
+        auto id = io_->submit(req, [store, slot, stamp, state](const storage::IoResult& r) {
             // Runs on the IoEngine dispatcher thread: count the run in, publish
             // the slot when it was the last one, hand control straight back
             // (design §9.6, docs/architecture.md §2.2).
             if (!r.ok()) state->ok.store(false, std::memory_order_relaxed);
-            auto settled = store->finish_run(slot, r.ok(), token);
+            auto settled = store->finish_run(slot, r.ok(), stamp);
             if (settled && *settled && state->cb)
                 state->cb(state->ok.load(std::memory_order_relaxed));
         });
@@ -197,7 +201,7 @@ Result<Planner::Fetch> Planner::fetch(ExpertKey key, IoPriority priority,
         // report on their own.
         state->ok.store(false, std::memory_order_relaxed);
         for (uint32_t i = static_cast<uint32_t>(out.ids.size()); i < res->run_count; ++i)
-            (void)store_->finish_run(slot, false, token);
+            (void)store_->finish_run(slot, false, stamp);
         return std::unexpected(first_error);
     }
 
@@ -223,25 +227,34 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
         store_->note_heat(ExpertKey{static_cast<uint16_t>(route.layer), route.near_ids[i]},
                           route.near_scores[i]);
 
+    // One key at a time, in the gate's order, exactly as tools/cache_sim.py's
+    // `simulate` walks a trace: a hit is touched; a miss evicts the oldest
+    // resident if the cache is full and is admitted, which also touches it.
+    // Doing the evictions for all of a layer's misses up front -- what this
+    // did before -- decides victims before the layer's later hits have been
+    // touched, and a key that is both this layer's hit and the cache's oldest
+    // would be thrown out under it. The fills themselves still run
+    // concurrently; only the bookkeeping is ordered.
+    const bool lru = std::string_view(policy_->name()) == "lru";
     for (uint16_t id : route.chosen) {
         const ExpertKey key{static_cast<uint16_t>(route.layer), id};
-        if (store_->lookup(key, token)) {
+        if (store_->lookup(key, next_stamp())) {
             plan.hits.push_back(key);
             if (profiler_) profiler_->note_expert_lookup(true);
-        } else {
-            plan.misses.push_back(key);
-            if (profiler_) profiler_->note_expert_lookup(false);
+            continue;
         }
-    }
-
-    // Free the room for every miss up front, so the fills do not serialise
-    // behind one eviction each.
-    if (!plan.misses.empty()) {
-        const uint32_t free_now = store_->free_slots();
-        if (free_now < plan.misses.size()) reclaim(plan.misses.size() - free_now);
-    }
-
-    for (ExpertKey key : plan.misses) {
+        plan.misses.push_back(key);
+        if (profiler_) profiler_->note_expert_lookup(false);
+        if (store_->free_slots() == 0) {
+            if (lru) {
+                if (auto v = store_->evict_lru(); v) {
+                    std::lock_guard lk(stats_mutex_);
+                    ++stats_.evictions;
+                }
+            } else {
+                reclaim(1);
+            }
+        }
         auto f = fetch(key, IoPriority::BlockingMiss, token, route.layer);
         if (!f) {
             log_warn("planner: P0 fetch of ({}, {}) failed: {}", key.layer, key.expert,

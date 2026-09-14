@@ -89,15 +89,38 @@ struct GenerateResult {
 };
 
 // The §13.1 breakdown for one layer of one token.
+//
+// The GPU halves are GPU TIMESTAMPS, not host wall clocks around a submit: since
+// a layer's MoE and the next layer's attention share one command buffer, a host
+// clock can no longer split them, and it never could separate the kernel from
+// the queue.
 struct LayerTiming {
-    double   engram_ms = 0.0;
-    double   attn_ms   = 0.0;   // dispatches 1-9
+    double   engram_ms = 0.0;   // row fetch (host) + the two dispatches (GPU)
+    double   attn_ms   = 0.0;   // dispatches 1-9 plus design 7.4's, GPU
     double   gate_ms   = 0.0;   // the §7.1 residency gate: plan + wait for NVMe
-    double   moe_ms    = 0.0;   // dispatches 10-11, routed + shared
-    double   moe_gpu_ms = 0.0;  // of which the two kernels themselves
-    double   moe_host_ms = 0.0; // of which the activation round trip and the sums
+    double   moe_ms    = 0.0;   // moe_gpu_ms + moe_host_ms
+    double   moe_gpu_ms = 0.0;  // dispatch A, the h quantisation, dispatch B: GPU
+    double   moe_host_ms = 0.0; // x out of GPU memory, act_quant, the table rows
     uint32_t hits = 0, misses = 0;
     uint64_t miss_bytes = 0;
+};
+
+// One token, summed over its layers, in the buckets docs/p2_decode.md reports.
+struct StepBreakdown {
+    double   attn_ms = 0.0, moe_gpu_ms = 0.0, moe_host_ms = 0.0;
+    double   gate_ms = 0.0, engram_ms = 0.0, tail_ms = 0.0;
+    double   other_ms = 0.0;    // wall minus everything above: record, submit, fence, bind
+    // `other_ms`, taken apart on the host clock. What is left of it after
+    // these is the part of each fence wait the GPU timestamps do not cover:
+    // queue latency, the wake-up, and the dispatches outside a stamped span.
+    double   record_ms = 0.0;   // vkCmd* calls, every buffer of the token
+    double   submit_ms = 0.0;   // vkQueueSubmit2
+    double   wait_ms   = 0.0;   // host blocked on the completion fence
+    double   bind_ms   = 0.0;   // slot tables, RoPE tables, design 7.4 bookkeeping
+    // `moe_host_ms`, taken apart.
+    double   moe_x_ms = 0.0, moe_quant_ms = 0.0, moe_table_ms = 0.0;
+    uint32_t submits = 0;
+    bool     gpu_timed = false; // false if the device has no timestamp queries
 };
 
 struct DecodeStepResult {
@@ -106,6 +129,7 @@ struct DecodeStepResult {
     float    top1 = 0.0f, top2 = 0.0f;
     float    margin() const { return top1 - top2; }
     double   wall_ms = 0.0;
+    StepBreakdown breakdown{};
     TokenRecord record{};
 };
 
@@ -248,6 +272,20 @@ private:
     Result<void> run_layer(uint32_t layer, uint32_t position, bool& apply_post,
                            LayerTiming& t);
     Result<DecodeStepResult> collapse_and_sample(uint32_t position);
+
+    // --- the token loop's command buffer (design §7.1) ----------------------
+    // One buffer is open at a time. It is cut where the host HAS to look at
+    // the GPU's output -- after the gate, for the ids -- so a layer's MoE and
+    // the next layer's attention travel in one submit.
+    Result<void> cmd_open();
+    uint32_t     cmd_stamp();                           // ~0u when untimed
+    Result<void> cmd_submit(TimelineValue wait_value);  // 0 = no gate
+    Result<void> cmd_wait();
+    Result<void> cmd_flush(TimelineValue wait_value) {
+        if (auto r = cmd_submit(wait_value); !r) return r;
+        return cmd_wait();
+    }
+    void         read_timestamps(DecodeStepResult& res);
     // The per-step half of design §7.4's bookkeeping: how many compressed
     // positions each layer may read, and the window half of its top-k list.
     Result<void> prepare_ced(uint32_t position);
@@ -267,6 +305,23 @@ private:
     gpu::Device          device_;
     gpu::MemoryAllocator alloc_a_, alloc_b_;
     gpu::Timeline        timeline_;
+    // The GPU signals this one when a token-loop submit completes; the host
+    // signals `timeline_` when a layer's experts are resident.
+    gpu::Timeline        fence_;
+    TimelineValue        fence_value_ = 0;
+    gpu::CommandPool     tok_pool_;
+    gpu::CommandBuffer   tok_cmd_{};
+    bool                 tok_open_ = false;
+    bool                 tok_first_ = true;       // the next open is a token's first
+    gpu::QueryPool       tsq_;
+    uint32_t             tsq_used_ = 0;
+    uint32_t             submits_ = 0;
+    double               rec_ms_ = 0.0, sub_ms_ = 0.0, wait_ms_ = 0.0, bind_ms_ = 0.0;
+    double               mx_ms_ = 0.0, mq_ms_ = 0.0, mt_ms_ = 0.0;
+    struct Stamp { uint32_t begin = ~0u, end = ~0u; };
+    std::vector<Stamp>   ts_attn_, ts_moe_, ts_engram_;
+    Stamp                ts_tail_{};
+    std::vector<double>  engram_host_ms_;
     gpu::AttnRunner      attn_;
     gpu::DecodeRunner    dec_;
     gpu::GpuScratch      scratch_;

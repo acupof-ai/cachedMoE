@@ -22,6 +22,7 @@ Result<void> submit_and_wait(Device&, const CommandBuffer&) { return fail(Err::U
 Result<void> QueryPool::create(Device&, uint32_t) { return fail(Err::Unavailable, "no vulkan"); }
 void QueryPool::destroy() { count_ = 0; }
 Result<std::vector<uint64_t>> QueryPool::read() const { return fail(Err::Unavailable, "no vulkan"); }
+Result<std::vector<uint64_t>> QueryPool::read_range(uint32_t, uint32_t) const { return fail(Err::Unavailable, "no vulkan"); }
 Result<double> QueryPool::elapsed_seconds(uint32_t, uint32_t) const { return fail(Err::Unavailable, "no vulkan"); }
 
 #else
@@ -88,6 +89,20 @@ Result<std::vector<uint64_t>> QueryPool::read() const {
     if (!pool_) return fail(Err::FailedPrecondition, "query pool is not created");
     std::vector<uint64_t> out(count_, 0);
     const VkResult r = vkGetQueryPoolResults(device_->handle(), pool_, 0, count_,
+                                             out.size() * sizeof(uint64_t), out.data(),
+                                             sizeof(uint64_t),
+                                             VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    if (r != VK_SUCCESS)
+        return fail(Err::Internal, std::format("vkGetQueryPoolResults failed ({})", static_cast<int>(r)));
+    return out;
+}
+
+Result<std::vector<uint64_t>> QueryPool::read_range(uint32_t first, uint32_t n) const {
+    if (!pool_) return fail(Err::FailedPrecondition, "query pool is not created");
+    if (first + n > count_) return fail(Err::OutOfRange, "query range past the pool");
+    std::vector<uint64_t> out(n, 0);
+    if (n == 0) return out;
+    const VkResult r = vkGetQueryPoolResults(device_->handle(), pool_, first, n,
                                              out.size() * sizeof(uint64_t), out.data(),
                                              sizeof(uint64_t),
                                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
@@ -199,11 +214,14 @@ Result<void> submit(Device& device, const Submission& s) {
             w.stageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
             waits.push_back(w);
         }
-        signal.semaphore = s.timeline->handle();
+    } else if (!s.wait_values.empty() || (s.signal_value && !s.signal_timeline)) {
+        return fail(Err::InvalidArgument, "timeline values given without a timeline semaphore");
+    }
+    Timeline* sig = s.signal_timeline ? s.signal_timeline : s.timeline;
+    if (sig && sig->valid() && s.signal_on_complete) {
+        signal.semaphore = sig->handle();
         signal.value     = s.signal_value;
         signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    } else if (!s.wait_values.empty() || s.signal_value) {
-        return fail(Err::InvalidArgument, "timeline values given without a timeline semaphore");
     }
 
     VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};

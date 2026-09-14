@@ -158,6 +158,15 @@ private:
 
     mutable std::mutex stats_mutex_;
     PlannerStats       stats_{};
+    // The LRU clock. One tick per expert ACCESS, in the order the gate lists
+    // them, not one per token: tools/cache_sim.py's `LRU` is an OrderedDict
+    // that moves each key to the end as it is touched, so within a token layer
+    // 0's experts are older than layer 39's and within a layer the first-listed
+    // is older than the last. Stamping with the token index instead gave all
+    // 240 accesses of a token the same age and let the slot index decide which
+    // of them went first -- a different policy from the one simulated.
+    std::atomic<uint64_t> access_clock_{0};
+    uint64_t next_stamp() { return access_clock_.fetch_add(1, std::memory_order_relaxed) + 1; }
 };
 
 }  // namespace deepmoe::store

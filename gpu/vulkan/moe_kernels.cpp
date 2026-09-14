@@ -84,6 +84,7 @@ Result<void> MoeRunner::create(Device&, MemoryAllocator&, const std::string&,
 void MoeRunner::destroy() {}
 Result<void> MoeRunner::record(uint32_t, MoePhase) { return fail(Err::Unavailable, "no vulkan"); }
 Result<MoeTiming> MoeRunner::run(uint32_t, MoePhase) { return fail(Err::Unavailable, "no vulkan"); }
+Result<void> MoeRunner::record_into(CommandBuffer&, MoePhase) { return fail(Err::Unavailable, "no vulkan"); }
 
 #else
 
@@ -224,7 +225,10 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         {&y_,      uint64_t(spec.m) * dims.hidden * sizeof(float)},
     };
     for (auto& e : bufs) {
-        auto b = alloc.allocate(e.bytes, /*host_visible=*/true, /*device_address=*/false);
+        // `y` alone is device-addressable, so a caller can read the MoE output
+        // from its next dispatch without a host copy (record_into).
+        auto b = alloc.allocate(e.bytes, /*host_visible=*/true,
+                                /*device_address=*/e.b == &y_);
         if (!b) { destroy(); return std::unexpected(b.error()); }
         *e.b = *b;
         std::memset(e.b->host_ptr, 0, static_cast<size_t>(e.bytes));
@@ -371,6 +375,54 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
     if (timed) (void)cmd_.write_timestamp(queries_, 3, true);
     if (auto r = cmd_.end(); !r) return r;
     recorded_ = iterations;
+    return {};
+}
+
+Result<void> MoeRunner::record_into(CommandBuffer& cmd, MoePhase phase) {
+    if (!device_ || !gateup_.valid()) return fail(Err::FailedPrecondition, "runner is not created");
+    if (list_count_ == 0 || list_count_ > dims_.slots)
+        return fail(Err::InvalidArgument, "list_count must be 1..slots");
+    // One iteration of `record`, minus the begin/end and the timestamps. Kept
+    // as a separate function rather than a flag on `record` so the measured
+    // path in bench/kernel_bench is byte-for-byte what it was.
+    const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
+    const uint32_t groups_a = dims_.inter  / rows_per_wg;
+    const uint32_t groups_b = dims_.hidden / rows_per_wg;
+    const GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
+                        dims_.inter, dims_.hidden, dims_.swiglu_limit};
+    const DownPush   pb{dims_.layer, dims_.experts_per_layer, dims_.slots, list_count_,
+                        dims_.hidden, dims_.inter, accumulate_ ? 1u : 0u};
+    const HQuantPush ph{dims_.slots, list_count_, dims_.inter};
+    const XQuantPush px{dims_.hidden};
+    const uint32_t hq_groups =
+        (spec_.m * list_count_ * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
+    const uint32_t xq_groups =
+        (spec_.m * (dims_.hidden / layout::kFp4ScaleBlock) + 255) / 256;
+
+    if (phase != MoePhase::DownOnly) {
+        if (xquant_.valid()) {
+            if (auto r = cmd.bind(xquant_, set_xq_); !r) return r;
+            if (auto r = cmd.push(xquant_, &px, sizeof(px)); !r) return r;
+            if (auto r = cmd.dispatch(xq_groups); !r) return r;
+            if (auto r = cmd.barrier(); !r) return r;
+        }
+        if (auto r = cmd.bind(gateup_, set_a_); !r) return r;
+        if (auto r = cmd.push(gateup_, &pa, sizeof(pa)); !r) return r;
+        if (auto r = cmd.dispatch(groups_a, list_count_); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+        if (hquant_.valid()) {
+            if (auto r = cmd.bind(hquant_, set_hq_); !r) return r;
+            if (auto r = cmd.push(hquant_, &ph, sizeof(ph)); !r) return r;
+            if (auto r = cmd.dispatch(hq_groups); !r) return r;
+            if (auto r = cmd.barrier(); !r) return r;
+        }
+    }
+    if (phase != MoePhase::GateUpOnly) {
+        if (auto r = cmd.bind(down_, set_b_); !r) return r;
+        if (auto r = cmd.push(down_, &pb, sizeof(pb)); !r) return r;
+        if (auto r = cmd.dispatch(groups_b); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+    }
     return {};
 }
 

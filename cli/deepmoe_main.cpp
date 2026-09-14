@@ -158,22 +158,26 @@ Result<std::vector<uint32_t>> read_prompt_ids(const std::string& path) {
 
 void print_token_line(uint32_t step, uint32_t in, const runtime::DecodeStepResult& r,
                       const runtime::Engine& engine) {
-    double engram = 0, attn = 0, gate = 0, moe = 0, moe_gpu = 0, moe_host = 0;
     uint32_t hits = 0, misses = 0;
     uint64_t bytes = 0;
     for (const runtime::LayerTiming& t : engine.layer_timings()) {
-        engram += t.engram_ms; attn += t.attn_ms; gate += t.gate_ms; moe += t.moe_ms;
-        moe_gpu += t.moe_gpu_ms; moe_host += t.moe_host_ms;
         hits += t.hits; misses += t.misses; bytes += t.miss_bytes;
     }
-    // design §13.1: every token's time, split into the buckets the design's
-    // upper-bound model is written in.
-    std::printf("%3u  %6u -> %6u  %8.1f ms | attn %6.1f  moe %6.1f (gpu %5.1f host %4.1f)  "
-                "stall %7.1f  engram %4.1f  other %4.1f | hit %3u/%3u  nvme %6.1f MB  "
-                "margin %.4f\n",
-                step, in, r.token, r.wall_ms, attn, moe, moe_gpu, moe_host, gate, engram,
-                r.wall_ms - attn - moe - gate - engram,
+    const runtime::StepBreakdown& b = r.breakdown;
+    // design 13.1: every token's time, split into the buckets the design's
+    // upper-bound model is written in. The GPU halves are GPU timestamps.
+    std::printf("%3u  %6u -> %6u  %8.1f ms | attn %5.1f  moe gpu %5.1f host %4.1f  "
+                "stall %7.1f  engram %4.1f  tail %4.1f  other %5.1f  submits %3u | "
+                "hit %3u/%3u  nvme %6.1f MB  margin %.4f\n",
+                step, in, r.token, r.wall_ms, b.attn_ms, b.moe_gpu_ms, b.moe_host_ms,
+                b.gate_ms, b.engram_ms, b.tail_ms, b.other_ms, b.submits,
                 hits, hits + misses, bytes / 1e6, r.margin());
+    std::printf("                                  other = record %4.1f + submit %4.1f + "
+                "bind %4.1f + fence wait %5.1f (GPU time inside the fences: %5.1f); "
+                "moe host = x %4.1f + act_quant %4.1f + table %4.1f\n",
+                b.record_ms, b.submit_ms, b.bind_ms, b.wait_ms,
+                b.attn_ms + b.moe_gpu_ms + b.tail_ms,
+                b.moe_x_ms, b.moe_quant_ms, b.moe_table_ms);
 }
 
 // design 13.1 asks for the breakdown PER LAYER, which is where an anomaly is
@@ -243,6 +247,73 @@ void print_prefill_state(const runtime::Engine& engine, const runtime::DecodeSta
     }
 }
 
+// FNV-1a over a host COPY of a GPU-visible vector: hashing straight off the
+// mapping would be 5,120 write-combining reads (docs/p2_decode.md §3.3).
+uint64_t fnv_copy(const float* p, size_t n) {
+    std::vector<float> v(p, p + n);
+    uint64_t h = 1469598103934665603ull;
+    const auto* b = reinterpret_cast<const uint8_t*>(v.data());
+    for (size_t i = 0; i < n * sizeof(float); ++i) { h ^= b[i]; h *= 1099511628211ull; }
+    return h;
+}
+
+// docs/p2_decode.md §4.4: is a decode step bit-reproducible? The same warm step
+// is run `runs` times, and at every layer four things are hashed -- the FFN
+// sublayer input (after attention and hc_post), the gate scores, the MoE
+// output and the stream after the attention half -- plus the logits. The first
+// (layer, tensor) whose hash is not the same in every run is where the
+// non-determinism enters; everything downstream of it differs by consequence.
+int run_determinism(runtime::Engine& engine, const runtime::DecodeState& st, uint32_t runs) {
+    const TextConfig& c = engine.model().text;
+    const uint32_t dim = c.hidden_size;
+    struct LayerHash { uint64_t u = 0, scores = 0, moe = 0, stream = 0; };
+    std::vector<std::vector<LayerHash>> h(runs, std::vector<LayerHash>(c.num_hidden_layers));
+    std::vector<uint64_t> logits(runs);
+    // One unprobed step first, so every expert the step needs is resident and
+    // no run differs from another by what the cache happened to hold.
+    if (auto r = engine.decode_step(st.greedy_tokens().front(), st.decode_pos(), 0); !r) {
+        std::fprintf(stderr, "warm-up: %s\n", r.error().str().c_str());
+        return 1;
+    }
+    for (uint32_t k = 0; k < runs; ++k) {
+        engine.layer_probe = [&](uint32_t L, const runtime::DecodeLayer& dl) {
+            h[k][L].u      = fnv_copy(dl.ffn_norm_out(), dim);
+            h[k][L].scores = fnv_copy(dl.gate_scores(), c.n_routed_experts);
+            h[k][L].moe    = fnv_copy(dl.moe_out(), dim);
+            h[k][L].stream = fnv_copy(dl.block_out(), size_t(dim) * c.hc_mult);
+        };
+        auto r = engine.decode_step(st.greedy_tokens().front(), st.decode_pos(), 0);
+        engine.layer_probe = nullptr;
+        if (!r) { std::fprintf(stderr, "run %u: %s\n", k, r.error().str().c_str()); return 1; }
+        logits[k] = fnv_copy(engine.last_logits().data(), engine.last_logits().size());
+        std::printf("run %u: token %u margin %.9f logits %016llx\n", k, r->token,
+                    r->margin(), static_cast<unsigned long long>(logits[k]));
+    }
+    int first = -1;
+    const char* what = "";
+    for (uint32_t L = 0; L < c.num_hidden_layers && first < 0; ++L) {
+        struct F { const char* n; uint64_t LayerHash::*m; } fields[] = {
+            {"stream after attention hc_post", &LayerHash::stream},
+            {"ffn_norm output (MoE input)", &LayerHash::u},
+            {"gate scores", &LayerHash::scores},
+            {"MoE output", &LayerHash::moe},
+        };
+        for (const F& f : fields) {
+            bool same = true;
+            for (uint32_t k = 1; k < runs; ++k) same &= (h[k][L].*f.m == h[0][L].*f.m);
+            if (!same) { first = int(L); what = f.n; break; }
+        }
+    }
+    bool logits_same = true;
+    for (uint32_t k = 1; k < runs; ++k) logits_same &= logits[k] == logits[0];
+    if (first < 0)
+        std::printf("deterministic: %u runs, every layer's four tensors and the logits "
+                    "bit-identical (%s)\n", runs, logits_same ? "logits too" : "BUT the logits differ");
+    else
+        std::printf("NOT deterministic: first difference at layer %d, %s\n", first, what);
+    return 0;
+}
+
 int cmd_run(int argc, char** argv) {
     RuntimeConfig cfg;
     cfg.cache.budget_bytes = 0;     // 0 = size it from the machine (see init_gpu)
@@ -253,6 +324,8 @@ int cmd_run(int argc, char** argv) {
     bool per_layer = false;
     bool slow_prefill = false;
     bool loaded_ced = false;
+    uint32_t warm = 0;
+    uint32_t determinism = 0;
 
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
@@ -266,6 +339,8 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--per-layer")   per_layer = true;
         else if (a == "--slow-prefill") slow_prefill = true;
         else if (a == "--loaded-ced")  loaded_ced = true;
+        else if (a == "--warm")        warm = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
+        else if (a == "--determinism") determinism = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--cache-gb")    cfg.cache.budget_bytes = uint64_t(std::atoll(arg_value(argc, argv, i, a).data())) << 30;
         else if (a == "--chunk-kb")    cfg.io.chunk_bytes = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data())) << 10;
         else if (a == "--qd")          cfg.io.max_inflight_ops = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
@@ -326,17 +401,37 @@ int cmd_run(int argc, char** argv) {
         std::printf("submit    %.3f ms per submit+fence round trip; a decode step makes "
                     "about 128 of them (design 13.1's dispatch bucket)\n", *ov);
 
-    const uint32_t n = std::min<uint32_t>(steps, st->steps());
+    // Past the export's last step there is no reference to compare against,
+    // but with design 7.4's kernels producing the compressed KV there is also
+    // nothing left to load, so a free-running decode can go as far as the KV
+    // store was sized for. Teacher forcing needs the reference's tokens.
+    const bool unbounded = engine.produce_ced() && !teacher_force;
+    const uint32_t n = unbounded ? steps : std::min<uint32_t>(steps, st->steps());
     if (n < steps)
         std::printf("note: the loaded state covers %u steps, so %u were run\n",
                     st->steps(), n);
     std::printf("\nstep  in     -> out     wall      | the design 13.1 breakdown\n");
 
+    if (determinism) return run_determinism(engine, *st, determinism);
+
+    // --warm K: step 0 run K extra times first, at the same position with the
+    // same input. The first fetches every expert that step routes to; every
+    // repeat after it is a step whose experts are all resident, which is the
+    // compute floor docs/p2_decode.md reports. Rewriting position 64's ring
+    // slot and compressor slot with the same values leaves the state as it was.
+    for (uint32_t w = 0; w < warm; ++w) {
+        auto r = engine.decode_step(st->greedy_tokens().front(), st->decode_pos(), 0);
+        if (!r) { std::fprintf(stderr, "warm-up %u: %s\n", w, r.error().str().c_str()); return 1; }
+        std::printf("w");
+        print_token_line(w, st->greedy_tokens().front(), *r, engine);
+    }
+
     uint32_t next = st->greedy_tokens().front();
     std::vector<uint32_t> produced;
     for (uint32_t s = 0; s < n; ++s) {
         const uint32_t in = teacher_force ? st->greedy_tokens()[s] : next;
-        auto r = engine.decode_step(in, st->decode_pos() + s, static_cast<int32_t>(s));
+        auto r = engine.decode_step(in, st->decode_pos() + s,
+                                    s < st->steps() ? static_cast<int32_t>(s) : -1);
         if (!r) { std::fprintf(stderr, "step %u: %s\n", s, r.error().str().c_str()); return 1; }
         print_token_line(s, in, *r, engine);
         if (per_layer) print_layer_table(engine);
@@ -344,10 +439,11 @@ int cmd_run(int argc, char** argv) {
         next = r->token;
     }
 
+    const uint32_t nref = std::min<uint32_t>(n, st->steps());
     std::printf("\ntokens   ");
     for (uint32_t t : produced) std::printf("%u ", t);
     std::printf("\nreference");
-    for (uint32_t s = 0; s < n; ++s) std::printf(" %u", st->greedy_tokens()[s + 1]);
+    for (uint32_t s = 0; s < nref; ++s) std::printf(" %u", st->greedy_tokens()[s + 1]);
     // Teacher-forced, every step starts from the reference's own input, so
     // every step is an independent comparison and all of them count. Free
     // running, a step after the first mismatch is decoding a sequence the
@@ -355,12 +451,12 @@ int cmd_run(int argc, char** argv) {
     // to the reference's trajectory -- so only the leading run means anything.
     uint32_t match = 0;
     if (teacher_force) {
-        for (uint32_t s = 0; s < n; ++s)
+        for (uint32_t s = 0; s < nref; ++s)
             match += (produced[s] == st->greedy_tokens()[s + 1]) ? 1 : 0;
     } else {
-        while (match < n && produced[match] == st->greedy_tokens()[match + 1]) ++match;
+        while (match < nref && produced[match] == st->greedy_tokens()[match + 1]) ++match;
     }
-    std::printf("\n%u/%u tokens match the fp32 reference%s\n", match, n,
+    std::printf("\n%u/%u tokens match the fp32 reference%s\n", match, nref,
                 teacher_force ? " (teacher-forced)" : " before divergence");
     std::fputs(engine.profiler().summary().to_string().c_str(), stdout);
     return 0;

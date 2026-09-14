@@ -7,14 +7,27 @@
 // is deliberately one file wide: a change to their push constants or their
 // specialisation constants is a change here and nowhere else.
 //
-// Two runners, not one
-// --------------------
-// The routed experts are FP4 and live in ExpertStore slots addressed by
-// `(layer, expert)`; the shared expert is FP8 and lives in the pinned set,
-// which has no expert id. Rather than widen the pointer table by one column
-// and re-derive every stride, the shared expert gets its own single-slot
-// runner whose table this file fills directly, and the two outputs are summed
-// in fp32 -- which is what `MoE.forward` does anyway (`y += shared(x)`).
+// One runner, seven slots
+// -----------------------
+// Six routed FP4 experts and the FP8 shared expert go through the SAME two
+// dispatches, which is what design §7.9 describes and what
+// docs/kernel_p2_moe.md §4 measured (`Fp8Slots = 1`, the shared slot's id
+// carrying kSlotFp8). The routed experts live in ExpertStore slots and the
+// shared one in the pinned set, which has no expert id, so the runner's table
+// is one expert wider than the model's: index 384 of row 0 is rewritten with
+// the shared expert of whatever layer is being run. Dispatch B then sums all
+// seven into one fp32 `y`, which is `MoE.forward`'s `y += shared(x)` without
+// the host doing the add.
+//
+// P2 step 2 used two runners, which cost a second submit, a second set of
+// timestamp reads and a host-side fp32 add per layer (docs/p2_decode.md §5.2).
+//
+// The specialisation
+// ------------------
+// docs/kernel_p2_moe.md §12's decode champion: `L32 R1, sg32, dec0, h=fp16,
+// XMode=0, HQuant=3`. HQuant 3 is the h fp8 round trip of design §7.9 v0.6 as
+// its own tiny dispatch between A and B; the previous default here, HQuant 1,
+// reproduces it inside dispatch B at +45% on this shape.
 //
 // The activation round trip
 // ------------------------
@@ -23,11 +36,19 @@
 // kernels take x as fp16, so the round trip happens here, on the host, once
 // per layer. That is not an approximation: `act_quant` is a property of the
 // activation alone, so quantising once instead of once per expert produces the
-// identical bytes six times less often -- the same argument tools/dsref.py
-// makes for `input_is_quantised`.
+// identical bytes seven times less often.
+//
+// Two ways to run it
+// ------------------
+//   `run`           stage + submit + wait + copy y into `call.y`. The
+//                   MoeBridge interface; what a layer-at-a-time validator uses.
+//   `stage`+`record` the host half, then the dispatches recorded into a command
+//                   buffer the caller owns. `y` stays on the GPU at
+//                   `y_address()`, which is where the next layer's hc_post
+//                   reads it. What the token loop uses.
 //
 // Ownership/threading: borrows the store, the planner and the pinned set; owns
-// its two runners. Single-threaded, on the GPU submit thread.
+// its runner. Single-threaded, on the GPU submit thread.
 #pragma once
 
 #include <cstdint>
@@ -35,6 +56,7 @@
 #include <vector>
 
 #include "core/status.h"
+#include "gpu/vulkan/cmdbuf.h"
 #include "gpu/vulkan/moe_kernels.h"
 #include "model/v41_config.h"
 #include "runtime/decode_layer.h"
@@ -45,15 +67,15 @@
 namespace deepmoe::runtime {
 
 struct MoeBridgeConfig {
-    // Passed straight to MoeSpec. The defaults are kernel_p1.md §3.2's winner
-    // at M=1 plus the h quantisation design §7.9 v0.6 added.
+    // Passed straight to MoeSpec: docs/kernel_p2_moe.md §12's M = 1 champion.
     uint32_t lanes_per_row = 32;
     uint32_t subgroup_size = 32;
-    uint32_t decode_mode   = 0;   // 0 = the constant table, which P1 measured fastest
+    uint32_t decode_mode   = 0;   // 0 = the constant table
     uint32_t rows_per_lane = 1;
-    // 1 reproduces `act_quant(silu(gate) * up)` inside dispatch B, which is
-    // what the reference does before w2 (route_trace.md §11.2).
-    uint32_t h_quant       = 1;
+    uint32_t x_mode        = 0;   // global fp16 x; 6 approximates x and is never a default
+    // 3 = the fp8 round trip on h as a third dispatch between A and B, which
+    // is numerically identical to 2 and to the reference (kernel_p2_moe §9.5).
+    uint32_t h_quant       = 3;
 };
 
 class GpuMoeBridge final : public MoeBridge {
@@ -67,22 +89,35 @@ public:
                         const TextConfig& cfg, const MoeBridgeConfig& bc = {});
     void destroy();
 
-    const char* name() const override { return "gpu(moe_gateup+moe_down)"; }
+    const char* name() const override { return "gpu(moe_gateup+moe_hquant+moe_down, 6 fp4 + 1 fp8)"; }
     Result<void> run(const MoeCall& call) override;
 
+    // The host half of one layer: x out of GPU-visible memory and through
+    // act_quant into the runner's fp16 input, the seven table rows, the ids,
+    // the slot list and the routing weights. `call.y` is ignored.
+    Result<void> stage(const MoeCall& call);
+    // The dispatches, into a command buffer the caller has begun. Ends with a
+    // barrier, so the caller's next dispatch may read `y_address()`.
+    Result<void> record(gpu::CommandBuffer& cmd);
+
+    uint64_t     y_address() const { return runner_.y_address(); }
+    const float* y_host() { return runner_.y(); }
+    const gpu::MoeSpec& spec() const { return runner_.spec(); }
+
     // Whether the shared expert is being computed. False when the layer's
-    // shared-expert weights are not in the pinned set, in which case `run`
-    // returns only the routed half and says so rather than looking right.
+    // shared-expert weights are not in the pinned set, in which case `stage`
+    // fails rather than returning only the routed half and looking right.
     bool shared_ready() const { return shared_ok_; }
 
-    // What the last `run` spent, split so the §13.1 MoE bucket can be read as
-    // "kernel" against "everything around it". The host half is the activation
-    // round trip and the two accumulations, all of which read write-combining
-    // memory (design §3.3) and are therefore not free.
+    // What the last `stage` / `run` spent, split so the §13.1 MoE bucket can
+    // be read as "kernel" against "everything around it".
     struct Timing {
-        double routed_gpu_ms = 0.0, routed_wall_ms = 0.0;
-        double shared_gpu_ms = 0.0, shared_wall_ms = 0.0;
-        double host_ms       = 0.0;
+        double gpu_ms   = 0.0;      // `run` only; the token loop times the GPU itself
+        double wall_ms  = 0.0;      // `run` only: submit to fence
+        double host_ms  = 0.0;      // `stage` (and `run`'s y copy)
+        double x_read_ms = 0.0;     //   of which: x out of write-combining memory
+        double quant_ms  = 0.0;     //   of which: act_quant + fp16, 5120 values
+        double table_ms  = 0.0;     //   of which: residency check + 7 table rows
     };
     const Timing& timing() const { return timing_; }
 
@@ -93,13 +128,15 @@ private:
     store::Planner*           planner_ = nullptr;
     const store::PinnedStore* pinned_  = nullptr;
     const TextConfig*         cfg_     = nullptr;
-    gpu::MoeRunner            routed_, shared_;
+    gpu::MoeRunner            runner_;
+    uint32_t                  shared_index_ = 0;          // == n_routed_experts
+    uint64_t                  shared_addr_[kExpertPartCount]{};
     uint32_t                  shared_layer_ = 0xFFFFFFFFu;
     bool                      shared_ok_    = false;
+    // Ordinary host staging: computing over GPU-visible memory a float at a
+    // time is 60x slower than one memcpy each way (docs/p2_decode.md §3.3).
+    std::vector<float>        xf_;
     std::vector<uint16_t>     xq_;
-    // Ordinary host staging for x and the two y vectors: see the memcpy note in
-    // `run`. Computing over the GPU-visible originals is 60x slower.
-    std::vector<float>        xf_, yf_, sf_;
     Timing                    timing_{};
 };
 

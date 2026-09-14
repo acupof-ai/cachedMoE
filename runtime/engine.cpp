@@ -299,6 +299,23 @@ Result<void> Engine::init_gpu() {
 
     if (auto r = layer_.create(device_, attn_, scratch_, c); !r) return r;
     if (auto r = moe_.create(device_, alloc_a_, dir, store_, planner_, pinned_, c); !r) return r;
+    // The MoE output stays on the GPU: the next layer's hc_post reads the
+    // bridge's `y` by address instead of the host copying it into scratch.
+    layer_.set_moe_output(moe_.y_address(), moe_.y_host());
+
+    // The token loop's buffer, its completion fence and its timestamps.
+    if (auto r = fence_.create(device_, 0); !r) return r;
+    fence_value_ = 0;
+    if (auto r = tok_pool_.create(device_); !r) return r;
+    {
+        auto cb = tok_pool_.acquire();
+        if (!cb) return std::unexpected(cb.error());
+        tok_cmd_ = *cb;
+    }
+    // 40 layers x (attention + MoE) x 2 stamps, two engram layers, the tail.
+    if (auto r = tsq_.create(device_, 256); !r)
+        log_warn("engine: no GPU timestamps ({}); the breakdown will be host-only",
+                 r.error().str());
 
     build_ced_plan();
     timings_.assign(c.num_hidden_layers, LayerTiming{});
@@ -414,7 +431,7 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
 
     auto tables = EngramTables::load(dir);
     if (!tables) return std::unexpected(tables.error());
-    if (auto r = engram_.create(alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
+    if (auto r = engram_.create(device_, alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
                                 *std::move(tables)); !r)
         return r;
 
@@ -436,6 +453,11 @@ void Engine::shutdown() {
     moe_.destroy();
     layer_.destroy();
     kvs_.destroy();
+    tsq_.destroy();
+    tok_pool_.destroy();
+    tok_cmd_ = gpu::CommandBuffer{};
+    tok_open_ = false;
+    fence_.destroy();
     if (logits_.valid()) alloc_a_.free(logits_);
     if (sample_.valid()) alloc_a_.free(sample_);
     scratch_.destroy();
@@ -540,6 +562,92 @@ Result<void> Engine::embed_token(uint32_t token) {
     return {};
 }
 
+// --- the token loop's command buffer ----------------------------------------
+//
+// design §7.1 wants one pre-recorded buffer per token. What this implements is
+// the closest thing the gate allows without the pointer table moving onto the
+// GPU: the host must read a layer's ids between its gate and its MoE, so the
+// buffer is CUT THERE and nowhere else. Each submit carries
+//
+//     [ MoE of layer L-1 ] [ attention of layer L, dispatches 1-9 + §7.4 ]
+//
+// with the MoE gated on the residency timeline (a semaphore wait inside the
+// submit, design §7.1, not a host wait and a resubmit), and completion signals
+// a second timeline the host fences on. A token is 40 of those plus one for the
+// tail, plus one extra on each engram layer (below) -- 43 against the 128 of
+// P2 step 2, whose shape was one submit per dispatch group.
+
+Result<void> Engine::cmd_open() {
+    if (tok_open_) return {};
+    if (auto r = tok_cmd_.begin(); !r) return r;
+    tok_open_ = true;
+    if (tok_first_) {
+        if (tsq_.count()) (void)tok_cmd_.reset_queries(tsq_, 0, tsq_.count());
+        tsq_used_  = 0;
+        tok_first_ = false;
+    }
+    return {};
+}
+
+uint32_t Engine::cmd_stamp() {
+    if (!tok_open_ || tsq_.count() == 0 || tsq_used_ >= tsq_.count()) return ~0u;
+    const uint32_t i = tsq_used_++;
+    (void)tok_cmd_.write_timestamp(tsq_, i, /*bottom=*/true);
+    return i;
+}
+
+Result<void> Engine::cmd_submit(TimelineValue wait_value) {
+    if (!tok_open_) return {};
+    if (auto r = tok_cmd_.end(); !r) return r;
+    tok_open_ = false;
+    gpu::Submission s;
+    s.cmd = &tok_cmd_;
+    TimelineValue w[1] = {wait_value};
+    if (wait_value) {
+        s.timeline    = &timeline_;
+        s.wait_values = std::span<const TimelineValue>(w, 1);
+    }
+    s.signal_timeline    = &fence_;
+    s.signal_value       = ++fence_value_;
+    s.signal_on_complete = true;
+    const TimePoint t0 = Clock::now();
+    if (auto r = gpu::submit(device_, s); !r) return r;
+    sub_ms_ += ms_since(t0);
+    ++submits_;
+    return {};
+}
+
+Result<void> Engine::cmd_wait() {
+    const TimePoint t0 = Clock::now();
+    auto r = fence_.wait(fence_value_, std::chrono::seconds(120));
+    wait_ms_ += ms_since(t0);
+    return r;
+}
+
+void Engine::read_timestamps(DecodeStepResult& res) {
+    res.breakdown.gpu_timed = false;
+    if (tsq_.count() == 0 || tsq_used_ == 0) return;
+    auto raw = tsq_.read_range(0, tsq_used_);
+    if (!raw) return;
+    const uint32_t bits = device_.caps().timestamp_valid_bits;
+    const uint64_t mask = bits >= 64 ? ~0ull : ((1ull << bits) - 1);
+    const double   ns   = device_.caps().timestamp_period_ns;
+    auto span_ms = [&](const Stamp& s) {
+        if (s.begin == ~0u || s.end == ~0u) return 0.0;
+        const uint64_t a = (*raw)[s.begin] & mask, b = (*raw)[s.end] & mask;
+        const uint64_t t = b >= a ? b - a : (mask - a) + b + 1;
+        return double(t) * ns * 1e-6;
+    };
+    for (uint32_t L = 0; L < timings_.size(); ++L) {
+        timings_[L].attn_ms    = span_ms(ts_attn_[L]);
+        timings_[L].moe_gpu_ms = span_ms(ts_moe_[L]);
+        timings_[L].moe_ms     = timings_[L].moe_gpu_ms + timings_[L].moe_host_ms;
+        timings_[L].engram_ms  = engram_host_ms_[L] + span_ms(ts_engram_[L]);
+    }
+    res.breakdown.tail_ms   = span_ms(ts_tail_);
+    res.breakdown.gpu_timed = true;
+}
+
 Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
                                LayerTiming& t) {
     const TextConfig& c = model_cfg_.text;
@@ -580,77 +688,120 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         st.kv.idx_key = key->idx_key;
     }
 
+    // The residency gate the open buffer's first dispatch -- the previous
+    // layer's MoE -- is waiting on. Zero on layer 0, whose buffer has none.
+    const TimelineValue prev_gate = L ? gpu::timeline_value(token_, L - 1) : 0;
+
     // The engram writes into the residual stream BEFORE the block (design
     // §2.1). design §7.7 normally defers the previous sublayer's hc_post into
     // this layer's first mega_mhc, so on an engram layer that hc_post has to be
     // materialised first -- otherwise the engram would be added to a stream
     // that is one sublayer behind.
+    //
+    // It costs a submit, and it is the RIGHT place for one: the buffer holding
+    // the previous layer's MoE goes to the GPU, and the host spends the time
+    // it runs on the engram's 48 NVMe reads instead of waiting.
     if (engram_.has_layer(L)) {
-        const TimePoint t0 = Clock::now();
+        if (auto r = cmd_open(); !r) return r;
         if (apply_post) {
+            // `bind` for L-1 left MhcClose pointing at L-1's hc_ffn weights,
+            // which is what closing L-1's block needs.
             LayerStep prev = st;
             prev.layer = L - 1;
-            if (auto r = layer_.run_close(prev); !r) return r;   // b.x -> b.xout
-            if (auto r = engram_.run(L, history_, position, b.xout.addr, b.x.addr,
-                                     &profiler_); !r)
-                return r;
-        } else {
-            if (auto r = engram_.run(L, history_, position, b.x.addr, b.x.addr,
-                                     &profiler_); !r)
-                return r;
+            if (auto r = layer_.record_close(tok_cmd_, prev); !r) return r;
         }
+        if (auto r = cmd_submit(prev_gate); !r) return r;
+        const TimePoint f0 = Clock::now();
+        if (auto r = engram_.fetch(L, history_, position, &profiler_); !r) return r;
+        engram_host_ms_[L] = ms_since(f0);
+        if (auto r = cmd_wait(); !r) return r;
+
+        if (auto r = cmd_open(); !r) return r;
+        ts_engram_[L].begin = cmd_stamp();
+        const DeviceAddress in = apply_post ? b.xout.addr : b.x.addr;
+        if (auto r = engram_.record(tok_cmd_, L, in, b.x.addr); !r) return r;
+        ts_engram_[L].end = cmd_stamp();
         apply_post = false;
         st.apply_hc_post = false;
-        t.engram_ms = ms_since(t0);
     }
 
-    if (auto r = layer_.bind(weights_[L], st); !r) return r;
-
-    const TimePoint t_attn = Clock::now();
-    if (auto r = layer_.run_attention(st); !r) return r;
-    t.attn_ms = ms_since(t_attn);
-    profiler_.add_phase(Phase::HotGemv, Nanos(int64_t(t.attn_ms * 1e6)));
+    {
+        const TimePoint b0 = Clock::now();
+        if (auto r = layer_.bind(weights_[L], st); !r) return r;
+        bind_ms_ += ms_since(b0);
+    }
+    if (auto r = cmd_open(); !r) return r;
+    {
+        const TimePoint r0 = Clock::now();
+        ts_attn_[L].begin = cmd_stamp();
+        if (auto r = layer_.record_attention(tok_cmd_, st); !r) return r;
+        ts_attn_[L].end = cmd_stamp();
+        rec_ms_ += ms_since(r0);
+    }
+    const bool gated = !engram_.has_layer(L);   // an engram layer's MoE already went
+    if (auto r = cmd_flush(gated ? prev_gate : 0); !r) return r;
 
     // design §7.1 / §7.8: the gate's ids are already in host-coherent memory.
     // Classify them, fetch the misses at P0, wait, host-signal the timeline the
-    // MoE dispatch is gated on, then dispatch.
-    double   gate_ms = 0.0;
-    uint64_t miss_bytes = 0;
-    uint32_t hits = 0, misses = 0;
-    auto on_ready = [&](const uint32_t* ids, uint32_t n) -> Result<void> {
+    // MoE dispatch is gated on, then stage and record it.
+    const uint32_t topk = c.num_experts_per_tok;
+    const auto* ids = static_cast<const uint32_t*>(b.gate_ids.host);
+    const auto* wts = static_cast<const float*>(b.gate_weights.host);
+    {
         const TimePoint g0 = Clock::now();
-        std::vector<uint16_t> chosen(n);
-        for (uint32_t i = 0; i < n; ++i) chosen[i] = static_cast<uint16_t>(ids[i]);
+        uint16_t chosen[16];
+        for (uint32_t i = 0; i < topk; ++i) chosen[i] = static_cast<uint16_t>(ids[i]);
         store::RouteDecision route;
         route.layer   = L;
-        route.chosen  = chosen;
-        route.weights = std::span<const float>(
-            static_cast<const float*>(b.gate_weights.host), n);
+        route.chosen  = std::span<const uint16_t>(chosen, topk);
+        route.weights = std::span<const float>(wts, topk);
         auto plan = planner_.plan_layer(route, token_);
         if (!plan) return std::unexpected(plan.error());
-        hits       = static_cast<uint32_t>(plan->hits.size());
-        misses     = static_cast<uint32_t>(plan->misses.size());
-        miss_bytes = plan->miss_bytes;
+        t.hits       = static_cast<uint32_t>(plan->hits.size());
+        t.misses     = static_cast<uint32_t>(plan->misses.size());
+        t.miss_bytes = plan->miss_bytes;
         if (!plan->issued.empty()) io_.drain();
-        gate_ms = ms_since(g0);
-        return {};
-    };
-    const TimePoint t_moe0 = Clock::now();
-    if (auto r = layer_.run_moe(moe_, st, &timeline_, on_ready); !r) return r;
-    // The gate half is the NVMe wait of design §13.1; what is left is the two
-    // MoE dispatches plus the routed and shared runners' own submits.
-    t.gate_ms = gate_ms;
-    t.moe_ms  = ms_since(t_moe0) - gate_ms;
-    const GpuMoeBridge::Timing& mt = moe_.timing();
-    t.moe_gpu_ms  = mt.routed_gpu_ms + mt.shared_gpu_ms;
-    t.moe_host_ms = mt.host_ms;
-    t.hits = hits;
-    t.misses = misses;
-    t.miss_bytes = miss_bytes;
+        t.gate_ms = ms_since(g0);
+    }
+    {
+        const TimelineValue v = gpu::timeline_value(token_, L);
+        auto cur = timeline_.value();
+        if (cur && *cur < v)
+            if (auto r = timeline_.signal(v); !r) return r;
+    }
     profiler_.add_phase(Phase::NvmeStall, Nanos(int64_t(t.gate_ms * 1e6)));
-    profiler_.add_phase(Phase::ExpertHit, Nanos(int64_t(t.moe_ms * 1e6)));
+
+    MoeCall call;
+    call.layer   = L;
+    call.ids     = ids;
+    call.weights = wts;
+    call.topk    = topk;
+    call.x       = static_cast<const float*>(b.u.host);   // ffn_norm output
+    call.y       = nullptr;                                // stays on the GPU
+    call.hidden  = c.hidden_size;
+    if (auto r = moe_.stage(call); !r) return r;
+    t.moe_host_ms = moe_.timing().host_ms;
+    mx_ms_ += moe_.timing().x_read_ms;
+    mq_ms_ += moe_.timing().quant_ms;
+    mt_ms_ += moe_.timing().table_ms;
+
+    if (auto r = cmd_open(); !r) return r;
+    {
+        const TimePoint r0 = Clock::now();
+        ts_moe_[L].begin = cmd_stamp();
+        if (auto r = moe_.record(tok_cmd_); !r) return r;
+        ts_moe_[L].end = cmd_stamp();
+        rec_ms_ += ms_since(r0);
+    }
     profiler_.note_hot_bytes(layer_hot_bytes_[L]);
-    if (layer_probe) layer_probe(L, layer_);
+
+    // A probe reads this layer's MoE output on the host, so it cannot wait
+    // for the next layer's submit to carry it. It costs a submit a layer and
+    // is never on in a real run.
+    if (layer_probe) {
+        if (auto r = cmd_flush(gpu::timeline_value(token_, L)); !r) return r;
+        layer_probe(L, layer_);
+    }
     apply_post = true;
     return {};
 }
@@ -676,34 +827,44 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     hd[gpu::slot::kHeadX]      = b.u.addr;
     hd[gpu::slot::kHeadLogits] = logits_.dev_addr;
 
+    uint64_t* sm = dec_.slots(gpu::DecodeStage::Argmax);
+    sm[gpu::dslot::kHeadLogits] = logits_.dev_addr;
+    sm[gpu::dslot::kHeadSample] = sample_.dev_addr;
+
     gpu::MhcPush mp{c.hidden_size, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
                     c.hc_sinkhorn_iters,
                     gpu::kMhcFlagPost | gpu::kMhcFlagSkipSinkhorn,
                     static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
     gpu::HeadPush hp{c.vocab_size, c.hidden_size, 0};
 
+    // The last layer's MoE is already in the open buffer; the collapse, the
+    // head and the greedy argmax (design §7.11: four words come back, never the
+    // 129,280-wide logit vector) go in behind it.
     const TimePoint t0 = Clock::now();
-    if (auto r = attn_.dispatch_now(gpu::AttnStage::MhcClose, &mp, sizeof mp, n_wg0); !r)
+    if (auto r = cmd_open(); !r) return std::unexpected(r.error());
+    ts_tail_.begin = cmd_stamp();
+    auto rec = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
+                   uint32_t groups) -> Result<void> {
+        if (auto r = attn_.record(tok_cmd_, s, push, bytes, groups); !r) return r;
+        return tok_cmd_.barrier();
+    };
+    if (auto r = rec(gpu::AttnStage::MhcClose, &mp, sizeof mp, n_wg0); !r)
         return std::unexpected(r.error());
-    if (auto r = attn_.dispatch_now(gpu::AttnStage::MhcFinal, &mp, sizeof mp, n_wg0); !r)
+    if (auto r = rec(gpu::AttnStage::MhcFinal, &mp, sizeof mp, n_wg0); !r)
         return std::unexpected(r.error());
-    if (auto r = attn_.dispatch_now(gpu::AttnStage::Head, &hp, sizeof hp,
-                                    attn_.gemv_groups(gpu::AttnStage::Head, c.vocab_size)); !r)
+    if (auto r = rec(gpu::AttnStage::Head, &hp, sizeof hp,
+                     attn_.gemv_groups(gpu::AttnStage::Head, c.vocab_size)); !r)
         return std::unexpected(r.error());
-    profiler_.add_phase(Phase::HotGemv, Nanos(int64_t(ms_since(t0) * 1e6)));
+    if (auto r = dec_.record(tok_cmd_, gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
+        return std::unexpected(r.error());
+    ts_tail_.end = cmd_stamp();
+    if (auto r = cmd_flush(gpu::timeline_value(token_, c.num_hidden_layers - 1)); !r)
+        return std::unexpected(r.error());
+    (void)t0;
     profiler_.note_hot_bytes(uint64_t(c.vocab_size) * c.hidden_size * 2);
 
-    // Greedy sampling on the GPU: four words come back, never the 129,280-wide
-    // logit vector (design §7.11).
-    const TimePoint t1 = Clock::now();
-    uint64_t* sm = dec_.slots(gpu::DecodeStage::Argmax);
-    sm[gpu::dslot::kHeadLogits] = logits_.dev_addr;
-    sm[gpu::dslot::kHeadSample] = sample_.dev_addr;
-    if (auto r = dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
-        return std::unexpected(r.error());
     gpu::SampleOut out{};
     std::memcpy(&out, sample_.host_ptr, sizeof out);
-    profiler_.add_phase(Phase::Sample, Nanos(int64_t(ms_since(t1) * 1e6)));
     if (out.rows != c.vocab_size)
         return fail(Err::Internal,
                     std::format("the sampler scanned {} rows, not the {}-wide vocabulary",
@@ -729,6 +890,7 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     if (history_.size() <= position) history_.resize(position + 1, 0);
     history_[position] = in_token;
 
+    const TimePoint t_prep = Clock::now();
     {
         ScopedPhaseIf p(&profiler_, Phase::CpuSync);
         if (produce_ced_) {
@@ -741,16 +903,70 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     }
 
     if (auto r = embed_token(in_token); !r) return std::unexpected(r.error());
+    const double prep_ms = ms_since(t_prep);
 
+    // The token's first buffer resets the timestamp pool; everything after
+    // appends to it and it is read once, after the last fence.
     timings_.assign(c.num_hidden_layers, LayerTiming{});
+    ts_attn_.assign(c.num_hidden_layers, Stamp{});
+    ts_moe_.assign(c.num_hidden_layers, Stamp{});
+    ts_engram_.assign(c.num_hidden_layers, Stamp{});
+    engram_host_ms_.assign(c.num_hidden_layers, 0.0);
+    ts_tail_   = Stamp{};
+    submits_   = 0;
+    rec_ms_ = sub_ms_ = wait_ms_ = bind_ms_ = 0.0;
+    mx_ms_ = mq_ms_ = mt_ms_ = 0.0;
+    tok_first_ = true;
+    if (tok_open_) {                      // a previous step failed mid-buffer
+        (void)tok_cmd_.end();
+        tok_open_ = false;
+    }
+    // The residency timeline is per token and monotone; a token that starts
+    // below where the last one left it would have every wait satisfied before
+    // its experts were resident.
+    {
+        auto cur = timeline_.value();
+        const TimelineValue base = gpu::timeline_value(token_, 0) - 1;
+        if (cur && *cur > base)
+            return fail(Err::Internal,
+                        std::format("the residency timeline is at {} but token {} starts "
+                                    "at {}", *cur, token_, base));
+    }
+
     bool apply_post = false;   // the very first sublayer has nothing to fold in
     for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
-        if (auto r = run_layer(L, position, apply_post, timings_[L]); !r)
+        if (auto r = run_layer(L, position, apply_post, timings_[L]); !r) {
+            if (tok_open_) { (void)tok_cmd_.end(); tok_open_ = false; }
             return std::unexpected(r.error());
+        }
 
     auto res = collapse_and_sample(position);
     if (!res) return res;
     res->wall_ms = ms_since(t_start);
+    read_timestamps(*res);
+    StepBreakdown& bd = res->breakdown;
+    for (const LayerTiming& t : timings_) {
+        bd.attn_ms     += t.attn_ms;
+        bd.moe_gpu_ms  += t.moe_gpu_ms;
+        bd.moe_host_ms += t.moe_host_ms;
+        bd.gate_ms     += t.gate_ms;
+        bd.engram_ms   += t.engram_ms;
+    }
+    bd.submits   = submits_;
+    bd.record_ms = rec_ms_;
+    bd.submit_ms = sub_ms_;
+    bd.wait_ms   = wait_ms_;
+    bd.bind_ms   = bind_ms_ + prep_ms;
+    bd.moe_x_ms     = mx_ms_;
+    bd.moe_quant_ms = mq_ms_;
+    bd.moe_table_ms = mt_ms_;
+    bd.other_ms = res->wall_ms - bd.attn_ms - bd.moe_gpu_ms - bd.moe_host_ms - bd.gate_ms -
+                  bd.engram_ms - bd.tail_ms;
+    // design 13.1's phases, from the same numbers: the GPU halves are only
+    // known once the token's timestamps are read, which is now.
+    profiler_.add_phase(Phase::HotGemv, Nanos(int64_t((bd.attn_ms + bd.tail_ms) * 1e6)));
+    profiler_.add_phase(Phase::ExpertHit,
+                        Nanos(int64_t((bd.moe_gpu_ms + bd.moe_host_ms) * 1e6)));
     res->record  = profiler_.token_end();
     ++token_;
     return res;

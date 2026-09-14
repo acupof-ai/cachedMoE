@@ -149,12 +149,20 @@ Result<void> EngramTables::hash_rows(uint32_t layer, std::span<const uint32_t> h
 
 // --- runner -----------------------------------------------------------------
 
-Result<void> EngramRunner::create(gpu::MemoryAllocator& alloc, gpu::DecodeRunner& runner,
+Result<void> EngramRunner::create(gpu::Device& device, gpu::MemoryAllocator& alloc,
+                                  gpu::DecodeRunner& runner,
                                   const Manifest& manifest, const store::ShardSet& shards,
                                   storage::IoEngine& io, const store::PinnedStore& pinned,
                                   const TextConfig& cfg, EngramTables tables) {
     destroy();
     if (!tables.valid()) return fail(Err::InvalidArgument, "engram tables are empty");
+    device_ = &device;
+    if (auto r = pool_.create(device); !r) return r;
+    {
+        auto cb = pool_.acquire();
+        if (!cb) return std::unexpected(cb.error());
+        cmd_ = *cb;
+    }
     alloc_ = &alloc;
     runner_ = &runner;
     manifest_ = &manifest;
@@ -193,6 +201,10 @@ Result<void> EngramRunner::create(gpu::MemoryAllocator& alloc, gpu::DecodeRunner
 }
 
 void EngramRunner::destroy() {
+    pool_.destroy();
+    cmd_ = gpu::CommandBuffer{};
+    device_ = nullptr;
+    fetched_layer_ = 0xFFFFFFFFu;
     if (staging_.ptr) gpu::free_host_pages(staging_);
     staging_ = gpu::HostAllocInfo{};
     if (alloc_ && buf_.valid()) alloc_->free(buf_);
@@ -275,25 +287,35 @@ Result<void> EngramRunner::fetch_rows(uint32_t layer, const uint64_t* rows) {
     return {};
 }
 
-Result<void> EngramRunner::run(uint32_t layer, std::span<const uint32_t> history,
-                               uint64_t position, DeviceAddress x_in, DeviceAddress x_out,
-                               Profiler* profiler) {
+Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> history,
+                                 uint64_t position, Profiler* profiler) {
     if (!runner_) return fail(Err::FailedPrecondition, "engram runner is not created");
-    auto bound = bind_layer(layer);
-    if (!bound) return std::unexpected(bound.error());
-
     uint64_t rows[layout::kEngramRowsPerToken];
     if (auto r = tables_.hash_rows(layer, history, position, rows); !r) return r;
-
     const uint64_t before = bytes_read_;
     {
-        // The fetch is 48 four-KiB reads and the GPU has nothing else to do, so
-        // it is charged to the NVMe stall bucket of design §13.1 rather than to
-        // AttnMisc -- the dispatches below are the AttnMisc half.
+        // The fetch is 48 four-KiB reads. It is charged to the NVMe stall
+        // bucket of design 13.1 rather than to AttnMisc -- the dispatches
+        // are the AttnMisc half.
         ScopedPhaseIf phase(profiler, Phase::NvmeStall);
         if (auto r = fetch_rows(layer, rows); !r) return r;
     }
-    if (profiler) profiler->note_miss_bytes(bytes_read_ - before);
+    // The bytes themselves are counted by IoEngine::finish, like every other
+    // read; noting them here as well counted every engram byte twice.
+    (void)before;
+    fetched_layer_ = layer;
+    return {};
+}
+
+Result<void> EngramRunner::record(gpu::CommandBuffer& cmd, uint32_t layer, DeviceAddress x_in,
+                                  DeviceAddress x_out) {
+    if (!runner_) return fail(Err::FailedPrecondition, "engram runner is not created");
+    if (fetched_layer_ != layer)
+        return fail(Err::FailedPrecondition,
+                    std::format("engram layer {} recorded, but the staged rows belong to "
+                                "layer {}", layer, fetched_layer_));
+    auto bound = bind_layer(layer);
+    if (!bound) return std::unexpected(bound.error());
 
     const uint32_t dim = cfg_->hidden_size;
     const uint32_t hc  = cfg_->hc_mult;
@@ -316,11 +338,24 @@ Result<void> EngramRunner::run(uint32_t layer, std::span<const uint32_t> history
 
     gpu::EngramPush push{rowsn, k, k / 32, dim, hc,
                          static_cast<float>(cfg_->rms_norm_eps)};
-    ScopedPhaseIf phase(profiler, Phase::AttnMisc);
-    if (auto r = runner_->dispatch_now(gpu::DecodeStage::EngramGemv, &push, sizeof push,
-                                       runner_->gemv_groups(rowsn)); !r)
+    if (auto r = runner_->record(cmd, gpu::DecodeStage::EngramGemv, &push, sizeof push,
+                                 runner_->gemv_groups(rowsn)); !r)
         return r;
-    return runner_->dispatch_now(gpu::DecodeStage::EngramGate, &push, sizeof push, hc);
+    if (auto r = cmd.barrier(); !r) return r;
+    if (auto r = runner_->record(cmd, gpu::DecodeStage::EngramGate, &push, sizeof push, hc); !r)
+        return r;
+    return cmd.barrier();
+}
+
+Result<void> EngramRunner::run(uint32_t layer, std::span<const uint32_t> history,
+                               uint64_t position, DeviceAddress x_in, DeviceAddress x_out,
+                               Profiler* profiler) {
+    if (auto r = fetch(layer, history, position, profiler); !r) return r;
+    ScopedPhaseIf phase(profiler, Phase::AttnMisc);
+    if (auto r = cmd_.begin(); !r) return r;
+    if (auto r = record(cmd_, layer, x_in, x_out); !r) return r;
+    if (auto r = cmd_.end(); !r) return r;
+    return gpu::submit_and_wait(*device_, cmd_);
 }
 
 }  // namespace deepmoe::runtime

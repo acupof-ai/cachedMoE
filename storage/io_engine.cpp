@@ -294,15 +294,25 @@ void IoEngine::handle_completion(const ChunkCompletion& c) {
 
     inflight_ops_.fetch_sub(1, std::memory_order_relaxed);
     inflight_bytes_.fetch_sub(charged, std::memory_order_relaxed);
+    uint64_t closed_window_ns = 0;
     {
         std::lock_guard lk(stats_mutex_);
         ++stats_.chunks_completed;
         stats_.bytes_completed += c.bytes_moved;
         if (busy_ && inflight_ops_.load(std::memory_order_relaxed) == 0) {
-            stats_.busy_ns += static_cast<uint64_t>((Clock::now() - busy_since_).count());
+            closed_window_ns = static_cast<uint64_t>((Clock::now() - busy_since_).count());
+            stats_.busy_ns += closed_window_ns;
             busy_ = false;
         }
     }
+    // design 13.1's `nvme_util` is the fraction of the token during which the
+    // drive had at least one chunk in flight -- the UNION of the in-flight
+    // intervals, which is exactly the window just closed. It used to be fed
+    // each request's own latency from `finish`, which counts every overlapping
+    // interval once per request: at a queue depth of 8 that is up to 8x the
+    // union, which is how nvme_util read 6.2 and the profiler's eff GB/s read
+    // a sixth of the IoEngine's own (docs/p2_decode.md §5.2).
+    if (closed_window_ns && profiler_) profiler_->note_nvme_busy(Nanos(int64_t(closed_window_ns)));
 
     bool complete;
     {
@@ -330,10 +340,9 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
         stats_.latency_ns_sum += lat;
         if (lat > stats_.latency_ns_max) stats_.latency_ns_max = lat;
     }
-    if (profiler_) {
-        profiler_->note_miss_bytes(r.bytes_moved);
-        profiler_->note_nvme_busy(r.latency);
-    }
+    // Busy time is reported per in-flight window in handle_completion, not
+    // per request here; see the note there.
+    if (profiler_) profiler_->note_miss_bytes(r.bytes_moved);
     {
         std::lock_guard lk(mutex_);
         --outstanding_requests_;

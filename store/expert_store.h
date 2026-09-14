@@ -180,6 +180,14 @@ public:
     // Snapshot of every Resident, non-pinned slot; the Planner ranks these.
     std::vector<ExpertSlot> evictable() const;
 
+    // design §9.3's global LRU exactly as tools/cache_sim.py's `LRU` runs it:
+    // evicts the resident, unpinned, unguarded slot with the smallest
+    // `last_use_token` and returns its index. One linear scan under the lock
+    // and no copy -- `evictable()` + a sort is a 290 KB vector a call at 4,500
+    // slots, and the Planner evicts once per miss. NotFound when nothing is
+    // evictable.
+    Result<uint32_t> evict_lru();
+
     // --- geometry / GPU handoff -------------------------------------------
 
     uint32_t slot_count()     const { return pool_.slot_count(); }

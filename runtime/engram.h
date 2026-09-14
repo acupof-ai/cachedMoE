@@ -42,6 +42,7 @@
 #include "core/profiler.h"
 #include "core/status.h"
 #include "core/types.h"
+#include "gpu/vulkan/cmdbuf.h"
 #include "gpu/vulkan/decode_kernels.h"
 #include "gpu/vulkan/memory.h"
 #include "model/layout.h"
@@ -96,7 +97,8 @@ public:
     EngramRunner(const EngramRunner&) = delete;
     EngramRunner& operator=(const EngramRunner&) = delete;
 
-    Result<void> create(gpu::MemoryAllocator& alloc, gpu::DecodeRunner& runner,
+    Result<void> create(gpu::Device& device, gpu::MemoryAllocator& alloc,
+                        gpu::DecodeRunner& runner,
                         const Manifest& manifest, const store::ShardSet& shards,
                         storage::IoEngine& io, const store::PinnedStore& pinned,
                         const TextConfig& cfg, EngramTables tables);
@@ -110,6 +112,16 @@ public:
     // own element before writing it).
     Result<void> run(uint32_t layer, std::span<const uint32_t> history, uint64_t position,
                      DeviceAddress x_in, DeviceAddress x_out, Profiler* profiler = nullptr);
+
+    // `run` in its two halves, for a caller that owns the command buffer: the
+    // 48-read row fetch, which is host work and can overlap whatever the GPU
+    // is doing, and the two dispatches recorded into `cmd` (barrier after
+    // each). The rows staged by `fetch` are the ones the next `record` of the
+    // same layer consumes.
+    Result<void> fetch(uint32_t layer, std::span<const uint32_t> history, uint64_t position,
+                       Profiler* profiler = nullptr);
+    Result<void> record(gpu::CommandBuffer& cmd, uint32_t layer, DeviceAddress x_in,
+                        DeviceAddress x_out);
 
     // What the last `run` fetched, for the profiler and the report.
     uint64_t rows_fetched() const { return rows_fetched_; }
@@ -134,6 +146,12 @@ private:
     uint64_t              off_val_ = 0, off_sc_ = 0, off_kv_ = 0;
     gpu::HostAllocInfo    staging_{};    // 4 KiB-aligned landing zone for the I/O
     uint64_t              rows_fetched_ = 0, bytes_read_ = 0;
+    uint32_t              fetched_layer_ = 0xFFFFFFFFu;
+    // `run`'s own command buffer, acquired once: DecodeRunner::dispatch_now
+    // allocates one per call and never frees it.
+    gpu::CommandPool      pool_;
+    gpu::CommandBuffer    cmd_{};
+    gpu::Device*          device_ = nullptr;
 };
 
 }  // namespace deepmoe::runtime

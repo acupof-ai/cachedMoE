@@ -245,8 +245,8 @@ DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
                 std::vector<float>(dl.ffn_norm_out(), dl.ffn_norm_out() + dim),
                 g->f("ffn_norm_out"));
             const Agreement gm = agree(
-                std::vector<float>(static_cast<const float*>(dl.scratch().moe_y.host),
-                                   static_cast<const float*>(dl.scratch().moe_y.host) + dim),
+                std::vector<float>(dl.moe_out(),
+                                   dl.moe_out() + dim),
                 g->f("moe_out"));
             const std::vector<float>& gid = g->f("gate_top6_ids");
             uint32_t matched = 0;

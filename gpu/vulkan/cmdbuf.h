@@ -74,6 +74,10 @@ public:
 
     // Raw tick values, one per query slot.
     Result<std::vector<uint64_t>> read() const;
+    // ADDITIVE (Track I): slots [first, first + n) only. `read` waits on every
+    // slot of the pool, which hangs on one a command buffer never wrote; a
+    // caller that fills a prefix of a large pool per token reads the prefix.
+    Result<std::vector<uint64_t>> read_range(uint32_t first, uint32_t n) const;
     // Seconds between two slots, using timestampPeriod.
     Result<double> elapsed_seconds(uint32_t first, uint32_t last) const;
 
@@ -126,6 +130,16 @@ struct Submission {
     Timeline*            timeline = nullptr;
     std::span<const TimelineValue> wait_values;
     TimelineValue        signal_value = 0;
+    // ADDITIVE (Track I): whether completing the buffer signals `signal_value`.
+    // A submission that only WAITS -- the §7.1 residency gate, where the host
+    // is the one that signals -- must not also signal, because a timeline
+    // cannot be signalled to a value at or below its current one.
+    bool                 signal_on_complete = true;
+    // ADDITIVE (Track I): signal a DIFFERENT timeline on completion. The token
+    // loop waits on the residency timeline, which the host signals, and fences
+    // on a second one, which the GPU signals; one semaphore cannot be both
+    // without the two writers racing each other's values.
+    Timeline*            signal_timeline = nullptr;
 };
 
 Result<void> submit(Device& device, const Submission& s);

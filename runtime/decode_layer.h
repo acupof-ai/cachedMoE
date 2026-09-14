@@ -205,6 +205,20 @@ public:
     Result<void> record_close(gpu::CommandBuffer& cmd, const LayerStep& s);
     Result<void> run_close(const LayerStep& s);
 
+    // Where the MoE output lives when it is not this layer's own scratch.
+    // The token loop leaves it on the GPU in the MoE bridge's `y`, which the
+    // next layer's hc_post reads by address; a layer-at-a-time validator keeps
+    // the default, `scratch().moe_y`, which `run_moe` copies into. Takes
+    // effect at the next `bind`.
+    void set_moe_output(uint64_t addr, const float* host) {
+        moe_out_addr_ = addr;
+        moe_out_host_ = host;
+    }
+    uint64_t     moe_out_addr() const { return moe_out_addr_ ? moe_out_addr_ : buf_.moe_y.addr; }
+    const float* moe_out() const {
+        return moe_out_host_ ? moe_out_host_ : static_cast<const float*>(buf_.moe_y.host);
+    }
+
     // Host views of the two things the layer produces.
     const float* block_out() const;     // [hc][hidden] fp32 residual stream
     const float* gate_scores() const;
@@ -217,6 +231,13 @@ public:
 private:
     Result<void> submit(gpu::CommandBuffer& cmd);
     Result<void> bind_ced(const LayerWeights& w, const LayerStep& s, const RopeConfig& rc);
+    // `scratch().moe_y` with its address replaced by wherever the MoE output
+    // actually is -- the only field of it hc_post reads.
+    gpu::GpuScratch::View moe_view() const {
+        gpu::GpuScratch::View v = buf_.moe_y;
+        v.addr = moe_out_addr();
+        return v;
+    }
     Result<void> record_ced(gpu::CommandBuffer& cmd, const LayerStep& s);
 
     gpu::Device*      device_ = nullptr;
@@ -225,6 +246,12 @@ private:
     DecodeScratch     buf_{};
     LayerWeights      weights_{};
     gpu::CommandPool  pool_;
+    // One command buffer, acquired once and re-begun per use. Acquiring one
+    // per `run_attention` allocated a VkCommandBuffer every layer of every
+    // token and never gave it back until the pool died.
+    gpu::CommandBuffer cmd_{};
+    uint64_t          moe_out_addr_ = 0;
+    const float*      moe_out_host_ = nullptr;
     uint32_t          hcdim_ = 0;
 };
 
