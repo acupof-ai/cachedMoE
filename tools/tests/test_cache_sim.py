@@ -171,10 +171,15 @@ def test_q1_and_q3_on_known_trace():
 
 
 def test_prefetch_perfect_and_useless():
-    """A perfect oracle prediction should hide every miss it has time for; a
-    prediction that never overlaps should produce precision 0 and pure waste."""
+    """An oracle prediction should hide misses; a prediction that never overlaps
+    should be pure waste.
+
+    The cache is sized so probes actually survive the two layers between landing and
+    being read: at `--probe-position head` (the default) a landed prefetch is a
+    normal fill, so it lives as long as any other recently-filled slot.
+    """
     rng = np.random.default_rng(13)
-    n_tok, n_layers, M = 300, 4, 40
+    n_tok, n_layers, M = 300, 4, 200
     rows = n_tok * n_layers
     top6 = np.stack([rng.permutation(M // 2)[:6] for _ in range(rows)])
     layer = np.tile(np.arange(n_layers), n_tok).astype(np.int32)
@@ -185,15 +190,42 @@ def test_prefetch_perfect_and_useless():
     tr_bad = make_trace(top6, layer, pos=pos, n_experts=M, preds={2: bad})
     a = default_args(t_layer_ms=1000.0)        # plenty of time for a prefetch to land
 
-    g = cs.run_one(tr_good, "lru", 8, a, set(), "global", 2, 16)
-    b = cs.run_one(tr_bad, "lru", 8, a, set(), "global", 2, 16)
+    g = cs.run_one(tr_good, "lru", 150, a, set(), "global", 2, 16)
+    b = cs.run_one(tr_bad, "lru", 150, a, set(), "global", 2, 16)
+    assert g["prefetch_used"] > 0 and g["hidden_misses"] > 0, g
     assert g["prefetch_precision"] > 0.5, g
+    assert g["effective_hit_rate"] > g["hit_rate"], g
     assert b["prefetch_precision"] == 0.0, b
     assert b["prefetch_waste_bytes_per_token"] > 0, b
-    assert g["hidden_misses"] > 0, g
+    assert b["effective_hit_rate"] == b["hit_rate"], b
     q4 = cs.analyse_q4(tr_good, a)["by_depth"][2]
     assert abs(q4[16]["recall"] - 1.0) < 1e-9, q4
-    print("ok  prefetch: oracle predictions hide misses, useless ones are pure waste")
+    print(f"ok  prefetch: an oracle hides {g['hidden_misses']} misses at precision "
+          f"{g['prefetch_precision']:.2f}; useless predictions are pure waste")
+
+
+def test_probe_at_tail_is_self_defeating():
+    """Section 9.4 says a landed prefetch goes in at the LRU tail. In a full cache
+    that makes it the next victim, so it is usually gone before the demand read it
+    was fetched for -- which is why `--probe-position` exists and why both settings
+    are swept rather than one being assumed."""
+    rng = np.random.default_rng(31)
+    n_tok, n_layers, M = 300, 4, 200
+    rows = n_tok * n_layers
+    top6 = np.stack([rng.permutation(M // 2)[:6] for _ in range(rows)])
+    layer = np.tile(np.arange(n_layers), n_tok).astype(np.int32)
+    pos = np.repeat(np.arange(n_tok), n_layers)
+    good = np.pad(top6, ((0, 0), (0, 10)), mode="edge")
+    tr = make_trace(top6, layer, pos=pos, n_experts=M, preds={2: good})
+    head = cs.run_one(tr, "lru", 150, default_args(t_layer_ms=1000.0,
+                                                   probe_position="head"),
+                      set(), "global", 2, 16)
+    tail = cs.run_one(tr, "lru", 150, default_args(t_layer_ms=1000.0,
+                                                   probe_position="tail"),
+                      set(), "global", 2, 16)
+    assert tail["prefetch_used"] < head["prefetch_used"], (tail, head)
+    print(f"ok  probe at the LRU tail is worse than a normal fill "
+          f"({tail['prefetch_used']} used vs {head['prefetch_used']})")
 
 
 def test_static_pin_never_evicts_pinned():
@@ -265,6 +297,30 @@ def test_arc_invariants():
     assert {k for k in range(M) if p.contains(k)} == resident
     print(f"ok  ARC holds its invariants over 200k accesses (p = {p.p:.1f}, "
           f"|T1| = {len(p.t1)}, |T2| = {len(p.t2)})")
+
+
+def test_heat_policies_survive_prefetch_probes():
+    """A heat policy must not fall over when a prefetch probe is admitted.
+
+    `admit` adds the key to `resident` and then calls `_bump`, which can trigger a
+    heap rebuild over `resident` before the heat has been written -- the rebuild has
+    to tolerate that.
+    """
+    rng = np.random.default_rng(41)
+    n_tok, n_layers, M = 400, 4, 300
+    rows = n_tok * n_layers
+    top6 = np.stack([rng.permutation(M // 2)[:6] for _ in range(rows)])
+    layer = np.tile(np.arange(n_layers), n_tok).astype(np.int32)
+    pos = np.repeat(np.arange(n_tok), n_layers)
+    pred = np.pad(top6, ((0, 0), (0, 10)), mode="edge")
+    tr = make_trace(top6, layer, pos=pos, n_experts=M, preds={2: pred})
+    for name in ("lfu-decay", "score-aware"):
+        for pp in ("head", "tail"):
+            a = default_args(t_layer_ms=1000.0, probe_position=pp)
+            r = cs.run_one(tr, name, 120, a, set(), "global", 2, 16)
+            assert 0.0 <= r["hit_rate"] <= 1.0, r
+            assert r["effective_hit_rate"] >= r["hit_rate"] - 1e-9, r
+    print("ok  heat policies survive prefetch probes at both probe positions")
 
 
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

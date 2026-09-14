@@ -100,6 +100,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="lookahead width K (design section 9.4)")
     p.add_argument("--lookahead-input", default="pre0", choices=["mean", "pre0"],
                    help="which of the two section 9.4 approximations to prefetch from")
+    p.add_argument("--probe-position", default="head", choices=["head", "tail"],
+                   help="where a landed prefetch sits in the recency order. 'tail' is "
+                        "section 9.4's literal rule (\"insert at the LRU tail, promote "
+                        "on use\"); in a full cache that makes the probe the very next "
+                        "victim, so it is usually evicted before the demand read it "
+                        "was fetched for. 'head' admits it like any other fill. Sweep "
+                        "both -- which one wins is a finding, not an assumption")
     p.add_argument("--nvme-gbps", type=float, default=4.5,
                    help="measured effective NVMe bandwidth (section 9.2.1: 4.5-4.75)")
     p.add_argument("--lpddr-gbps", type=float, default=200.0)
@@ -255,7 +262,17 @@ class Policy:
 
     def contains(self, key: int) -> bool: raise NotImplementedError
     def touch(self, key: int) -> None: raise NotImplementedError
-    def admit(self, key: int) -> int | None: raise NotImplementedError
+
+    def admit(self, key: int, probe: bool = False) -> int | None:
+        """Insert `key`, returning whatever had to be evicted.
+
+        `probe=True` is design section 9.4's last line: a slot filled by a lookahead
+        prefetch enters at the *cold* end and is only promoted once something
+        actually reads it, so a wrong prediction is the next thing thrown out rather
+        than something the model is still using.
+        """
+        raise NotImplementedError
+
     def observe(self, keys, scores) -> None: pass
     def size(self) -> int: raise NotImplementedError
 
@@ -271,11 +288,14 @@ class LRU(Policy):
 
     def touch(self, key): self.od.move_to_end(key)
 
-    def admit(self, key):
+    def admit(self, key, probe=False):
         self.od[key] = None
+        victim = None
         if len(self.od) > self.capacity:
-            return self.od.popitem(last=False)[0]
-        return None
+            victim = self.od.popitem(last=False)[0]
+        if probe and key in self.od:
+            self.od.move_to_end(key, last=False)   # straight to the cold end
+        return victim
 
     def size(self): return len(self.od)
 
@@ -306,8 +326,21 @@ class HeatPolicy(Policy):
         self.resident: set[int] = set()
         self.heap: list = []
         self.clock = 0
+        # Stale entries accumulate, so the heap is rebuilt from the resident set
+        # whenever it grows past a few times the capacity. That bounds both memory
+        # and the pop-until-current loop; without it, `score-aware` pushes once per
+        # near hit -- sixteen per row, twelve million over a full trace -- and the
+        # heap alone outgrows the machine.
+        self._heap_cap = max(1024, 4 * capacity)
 
     def contains(self, key): return key in self.resident
+
+    def _rebuild(self):
+        # `.get` because `admit` adds to `resident` before `_bump` writes the heat,
+        # and `_bump` is what can trigger a rebuild.
+        self.heap = [(self.heat.get(k, 0.0), self.last.get(k, self.clock), k)
+                     for k in self.resident]
+        heapq.heapify(self.heap)
 
     def _bump(self, key: int, weight: float):
         self.clock += 1
@@ -316,17 +349,22 @@ class HeatPolicy(Policy):
             inv = 1.0 / self.gain
             for k in self.heat:
                 self.heat[k] *= inv
-            self.heap = [(h * inv, c, k) for h, c, k in self.heap]
-            heapq.heapify(self.heap)
             self.gain = 1.0
+            self._rebuild()          # the heap's values are in the old units
         self.heat[key] = self.heat.get(key, 0.0) + weight * self.gain
         self.last[key] = self.clock
         heapq.heappush(self.heap, (self.heat[key], self.clock, key))
+        if len(self.heap) > self._heap_cap:
+            self._rebuild()
 
-    def admit(self, key):
+    def admit(self, key, probe=False):
         self.resident.add(key)
         if key not in self.heat:
-            self._bump(key, 1.0)
+            # a probe starts with no heat at all, so it sorts below everything
+            self._bump(key, 0.0 if probe else 1.0)
+        elif probe:
+            self.heat[key] = 0.0
+            heapq.heappush(self.heap, (0.0, self.clock, key))
         if len(self.resident) <= self.capacity:
             return None
         while self.heap:
@@ -398,7 +436,7 @@ class ARC(Policy):
             return None
         return victim
 
-    def admit(self, key):
+    def admit(self, key, probe=False):
         """Cases II, III and IV of the published algorithm (Case I -- a hit in T1 or
         T2 -- is `touch`). The ghost lists are bounded by Case IV rather than by a
         blanket trim: trimming inside REPLACE can evict the very key being promoted,
@@ -431,6 +469,13 @@ class ARC(Policy):
                     self.b2.popitem(last=False)
                 victim = self._replace(False)
             self.t1[key] = None
+        if probe:
+            # a prefetch has not been read, so it belongs at T1's cold end, not as
+            # the most recent thing the model touched
+            if key in self.t1:
+                self.t1.move_to_end(key, last=False)
+            elif key in self.t2:
+                self.t2.move_to_end(key, last=False)
         return victim
 
     def size(self): return len(self.t1) + len(self.t2)
@@ -486,10 +531,10 @@ class StaticPinLRU(Policy):
         if key not in self.pinned:
             self.lru.touch(key)
 
-    def admit(self, key):
+    def admit(self, key, probe=False):
         if key in self.pinned:
             return None
-        return self.lru.admit(key)
+        return self.lru.admit(key, probe)
 
     def size(self): return len(self.pinned) + self.lru.size()
 
@@ -516,7 +561,7 @@ class PerLayerPool(Policy):
 
     def contains(self, key): return self._pool(key).contains(key)
     def touch(self, key): self._pool(key).touch(key)
-    def admit(self, key): return self._pool(key).admit(key)
+    def admit(self, key, probe=False): return self._pool(key).admit(key, probe)
 
     def observe(self, keys, scores):
         for k, s in zip(keys, scores):
@@ -563,20 +608,20 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
         * demand misses (P0) preempt: they are charged the same service time but the
           GPU stalls for it.
 
-    A miss at layer L counts as *hidden* if the expert was prefetched at L-d and had
-    time to land, and *exposed* otherwise. Exposed misses are what `stall_ms` is.
+    A prefetch that lands is **admitted into the cache as a probe** (section 9.4's
+    last line): it occupies a slot and evicts something, which is the entire cost of
+    a wrong prediction, and it sits at the cold end so it is the next thing thrown
+    out. A later demand read of a probe counts as *hidden* -- the GPU did not wait,
+    but the bytes still crossed the NVMe. A probe evicted before anyone reads it is
+    *wasted*.
 
     `hit_rate` is section 9.8's definition -- resident hits over requests -- and a
-    hidden miss is **not** one of them: the bytes still crossed the NVMe. What a
-    hidden miss buys is that the GPU did not wait, which `effective_hit_rate` and
-    `stall_ms_per_token` report instead.
+    hidden miss is **not** one of them. `effective_hit_rate` = (resident + hidden) /
+    requests is the "the GPU did not wait" rate.
 
     Prefetch only ever runs inside one token: the prediction on row L came from that
     token's own layer L-d, so a planner at layer 39 has nothing to say about the next
     token's layer 2 -- the next token does not exist yet.
-
-    Prefetched slots enter as probes at the LRU tail (section 9.4's last line): they
-    are admitted but not touched, so an unused prefetch is the first thing evicted.
     """
     n_layers, n_exp = trace.n_layers, trace.n_experts
     keys6 = trace.keys6
@@ -590,53 +635,63 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
     warm = int(rows * args.warmup_frac)
     hits = np.zeros(n_layers, dtype=np.int64)
     reqs = np.zeros(n_layers, dtype=np.int64)
-    hidden = exposed = 0
+    hidden = exposed = wasted = 0
     prefetch_issued = prefetch_used = 0
     stall_ms = 0.0
     bw_bytes_per_ms = args.nvme_gbps * 1e9 / 1e3
     t_io = args.t_io_ms
     qd = max(1, args.io_qd)
 
-    # in_flight[key] = simulated completion time (ms since the start of the replay)
-    in_flight: dict[int, float] = {}
-    issued: set[int] = set()
+    probe_tail = getattr(args, "probe_position", "head") == "tail"
+    in_flight: dict[int, float] = {}     # key -> simulated arrival time, ms
+    from_nvme: set[int] = set()          # resident only because a prefetch put it there
     now = 0.0
     is_score_aware = isinstance(policy, ScoreAware) or (
         isinstance(policy, PerLayerPool) and policy.name.startswith("score-aware"))
+
+    def evicted(victim, counted):
+        """A probe thrown out before anyone read it is wasted NVMe bandwidth."""
+        nonlocal wasted
+        if victim is not None and victim in from_nvme:
+            from_nvme.discard(victim)
+            if counted:
+                wasted += 1
 
     for i in range(rows):
         L = int(trace.layer[i])
         now += args.t_layer_ms
         counted = i >= warm
 
+        # --- land the prefetches whose service time has elapsed ----------
+        if in_flight:
+            for k, arrival in list(in_flight.items()):
+                if arrival <= now:
+                    del in_flight[k]
+                    if not policy.contains(k):
+                        evicted(policy.admit(k, probe=probe_tail), counted)
+                        from_nvme.add(k)
+
         # --- demand ------------------------------------------------------
-        row_keys = keys6[i]
         misses = []
-        for k in row_keys:
+        for k in keys6[i]:
             k = int(k)
             if counted:
                 reqs[L] += 1
             if policy.contains(k):
                 policy.touch(k)
-                if counted:
-                    hits[L] += 1
-                in_flight.pop(k, None)
-                if k in issued:
+                if k in from_nvme:
+                    from_nvme.discard(k)        # a prefetch already paid for these
                     prefetch_used += 1
-                    issued.discard(k)
-            else:
-                arrival = in_flight.pop(k, None)
-                if arrival is not None and arrival <= now:
-                    # landed in time: the planner hid this one
                     if counted:
                         hidden += 1
-                    if k in issued:
-                        prefetch_used += 1
-                        issued.discard(k)
-                    policy.admit(k)
-                    policy.touch(k)
-                else:
-                    misses.append(k)
+                elif counted:
+                    hits[L] += 1
+            else:
+                # a demand read supersedes an in-flight prefetch for the same expert:
+                # those bytes get paid for twice, so they count as waste
+                if in_flight.pop(k, None) is not None and counted:
+                    wasted += 1
+                misses.append(k)
         if misses:
             service = max(t_io, len(misses) / qd * t_io,
                           len(misses) * EXPERT_BYTES / bw_bytes_per_ms)
@@ -645,7 +700,7 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
                 stall_ms += service
             now += service
             for k in misses:
-                policy.admit(k)
+                evicted(policy.admit(k), counted)
                 policy.touch(k)
 
         if is_score_aware:
@@ -666,16 +721,13 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
                                       len(fresh) * EXPERT_BYTES / bw_bytes_per_ms)
                         for k in fresh:
                             in_flight[k] = now + service
-                            issued.add(k)
-                        if counted:
-                            prefetch_issued += len(fresh)
+                        prefetch_issued += len(fresh)
 
     total_req = int(reqs.sum()) or 1
     total_hit = int(hits.sum())
     tokens = max(1, (rows - warm) // n_layers)
-    wasted = max(0, prefetch_issued - prefetch_used)
-    # Every byte that crossed the NVMe: demand misses the planner did not hide,
-    # prefetches that arrived in time, and prefetches nobody used.
+    # Every byte that crossed the NVMe: demand misses, prefetches that were read, and
+    # prefetches nobody read.
     nvme_bytes = (exposed + hidden + wasted) * EXPERT_BYTES / tokens
     lpddr_bytes = total_hit * EXPERT_BYTES / tokens
     stall = stall_ms / tokens
@@ -690,12 +742,14 @@ def simulate(trace: Trace, policy: Policy, args, depth: int = 0, width: int = 0)
         "capacity": policy.capacity,
         "depth": depth,
         "width": width,
+        "probe_position": getattr(args, "probe_position", "head"),
         "hit_rate": round(total_hit / total_req, 4),
         "effective_hit_rate": round((total_hit + hidden) / total_req, 4),
         "hit_rate_per_layer": [round(float(h) / max(1, r), 4)
                                for h, r in zip(hits, reqs)],
         "nvme_bytes_per_token": int(nvme_bytes),
         "miss_bytes_per_token": int((exposed + hidden) * EXPERT_BYTES / tokens),
+        "wasted_prefetches": wasted,
         "ms_per_token_serial": round(t_serial, 1),
         "ms_per_token": round(t_overlap, 1),
         "tokens_per_s": round(1000.0 / t_overlap, 2),
