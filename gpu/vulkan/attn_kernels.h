@@ -105,6 +105,13 @@ enum class AttnStage : uint32_t {
                    // pv_tiles == 1 also the divide + inverse RoPE, i.e. done
     AttnFinishT,   // pv_tiles > 1 only: add the tiles, add the sink, divide,
                    // inverse RoPE
+    // --- design §2.1's candidate blocks, past 16,384 compressed positions ---
+    // indexer.slang stages 6-8. Appended for the same reason as the blocks
+    // above. The source (layer 20) runs the first two after its score stage;
+    // a consumer (index layers above it) runs the third before its top-k.
+    IdxBlockKeys,  // §2.1: one radix key per block, the newest block pinned
+    IdxBlockSelect,// §2.1: the candidate_topk_blocks best blocks -> keep flags
+    IdxApplyCand,  // §2.1: -inf outside the kept blocks
     Count,
 };
 
@@ -294,7 +301,9 @@ enum : uint32_t { kIdxW = 0, kIdxS = 1, kIdxQr = 2, kIdxQNormW = 3, kIdxRope = 4
                   kIdxQRaw = 5, kIdxQ = 6, kIdxWk = 7, kIdxKNormW = 8,
                   kIdxLatent = 9, kIdxKRaw = 10, kIdxKCache = 11, kIdxKFp4 = 12,
                   kIdxKScale = 13, kIdxWProjW = 14, kIdxX = 15, kIdxWeights = 16,
-                  kIdxScore = 17, kIdxOut = 18, kIdxQFp4 = 19, kIdxQScale = 20 };
+                  kIdxScore = 17, kIdxOut = 18, kIdxQFp4 = 19, kIdxQScale = 20,
+                  // §2.1: [n_blocks] uint32 block keys and keep flags
+                  kIdxBlkKey = 21, kIdxCand = 22 };
 }  // namespace slot
 
 // Positions the §7.4 indexer's score stage covers in one workgroup, and the

@@ -37,6 +37,9 @@ const char* attn_stage_name(AttnStage s) {
         case AttnStage::IdxWeights:  return "indexer.weights";
         case AttnStage::IdxScore:    return "indexer.score";
         case AttnStage::IdxTopK:     return "indexer.topk";
+        case AttnStage::IdxBlockKeys:   return "indexer.block_keys";
+        case AttnStage::IdxBlockSelect: return "indexer.block_select";
+        case AttnStage::IdxApplyCand:   return "indexer.apply_candidates";
         case AttnStage::WqAKSplit:   return "wq_a.ksplit";
         case AttnStage::WqAKCombine: return "wq_a.kcombine";
         case AttnStage::WkvKSplit:   return "wkv.ksplit";
@@ -178,6 +181,9 @@ constexpr StageDef kStages[] = {
     {AttnStage::AttnScoreT,  "sparse_attn_t", 0, 1, 1, 1},
     {AttnStage::AttnPvT,     "sparse_attn_t", 1, 1, 1, 1},
     {AttnStage::AttnFinishT, "sparse_attn_t", 2, 1, 1, 1},
+    {AttnStage::IdxBlockKeys,   "indexer",  6, 1, 1, 1},
+    {AttnStage::IdxBlockSelect, "indexer",  7, 1, 1, 1},
+    {AttnStage::IdxApplyCand,   "indexer",  8, 1, 1, 1},
 };
 static_assert(sizeof(kStages) / sizeof(kStages[0]) ==
               static_cast<size_t>(AttnStage::Count));

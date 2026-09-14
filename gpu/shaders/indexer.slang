@@ -22,6 +22,21 @@
 //   4  the scores: `sum_h relu(q[h] . k[t]) * w[h]`, one position a wave.
 //   5  the top-k, written into the compressed half of `topk_idxs`.
 //
+// and, past design §2.1's `candidate_topk_blocks * candidate_block_size` =
+// 16,384 compressed positions, the two-level top-k (`select_candidate_blocks`):
+//
+//   6  the candidate SOURCE (layer 20): one key per block of
+//      `candidate_block_size` positions, the block's best score, with the block
+//      holding the query's newest position pinned above everything.
+//   7  the candidate source: the `candidate_topk_blocks` best blocks, as a
+//      keep flag per block.
+//   8  a candidate CONSUMER (index layers 24..36): every score outside a kept
+//      block becomes -inf before its own stage 5, which is model.py's
+//      `index_score.masked_fill(~shared_attn.candidates, -inf)`.
+//
+// Below the threshold every block is kept and 6-8 are the identity, so the
+// host does not dispatch them.
+//
 // What the reference decides, and this reproduces
 // ----------------------------------------------
 //
@@ -42,10 +57,11 @@
 //   projection is low-rank.
 //
 // * **Ties in the top-k.** `index_score.topk(k, sorted=False).indices.sort()`
-//   leaves torch to break exact ties however its kernel happens to; stage 5
-//   takes the lowest position indices among equal scores. At every context
-//   this has been run at, `topk >= n_positions` and the selection is the whole
-//   set, so the tie rule has never yet been reachable -- see the test.
+//   leaves torch to break exact ties however its kernel happens to; stages 5
+//   and 7 take the lowest position (block) indices among equal scores. Past
+//   1,024 tokens of context bf16 ties at the 512th score are the NORMAL case
+//   (docs/p3_longctx.md §4.3), so any comparison against the reference has to
+//   be tie-aware (tests/test_decode_longctx.cpp).
 
 // The indexer's own wq_b is [4096 x 1280]: q_lora_rank, the same K as the main
 // wq_b, so the same small LDS budget (fp8_gemv.slang).
@@ -58,18 +74,22 @@ static const uint kQRaw = 5, kQ = 6, kWk = 7, kKNormW = 8, kLatent = 9;
 static const uint kKRaw = 10, kKCache = 11, kKFp4 = 12, kKScale = 13;
 static const uint kWProjW = 14, kX = 15, kWeights = 16, kScore = 17, kOut = 18;
 static const uint kQFp4 = 19, kQScale = 20;
+// §2.1's candidate blocks: [n_blocks] uint32 block keys (stage 6 -> 7) and
+// [n_blocks] uint32 keep flags (stage 7 -> 8, read by every consumer layer).
+static const uint kBlkKey = 21, kCand = 22;
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
 
 struct IdxPush {
     uint  rows;        // stage 0: n_heads * index_head_dim = 4096; stage 3: 32
-    uint  k;           // stage 0: 1280; stage 2: head_dim 512; stage 3: dim 5120
+    uint  k;           // stage 0: 1280; stage 2: head_dim 512; stage 3: dim 5120;
+                       // stages 6-8: candidate_block_size
     uint  scale_cols;  // stage 0: k / 32 = 40
     uint  n_heads;     // index_n_heads = 32
     uint  head_dim;    // index_head_dim = 128
     uint  rope_dim;    // rope_head_dim = 64
     uint  n_pos;       // compressed positions visible to this query
-    uint  topk;        // min(index_topk, n_pos)
+    uint  topk;        // min(index_topk, n_pos); stage 7: candidate_topk_blocks
     uint  offset;      // window_size: where the compressed half starts, in both
                        // the topk_idxs array and the values written into it
     uint  k_row;       // start_pos / ratio: the key-cache row stage 2 writes
@@ -291,6 +311,11 @@ uint score_key(float f) {
     return ((u & 0x80000000u) != 0u) ? ~u : (u | 0x80000000u);
 }
 uint score_key_at(uint t) { return score_key(load_f32(Ptr[kScore] + (uint64_t)t * 4)); }
+// Stage 5 selects over the score plane; stage 7 over stage 6's block keys,
+// which are already keys (the pinned block is 0xFFFFFFFF, above +inf's key).
+uint sel_key_at(bool blocks, uint t) {
+    return blocks ? load_u32(Ptr[kBlkKey] + (uint64_t)t * 4) : score_key_at(t);
+}
 
 // Exclusive prefix sum of `v` over the 256 threads; returns this thread's
 // exclusive sum and leaves the total in gSel[3].
@@ -309,26 +334,19 @@ uint wg_exscan(uint v, uint tid) {
     return inclusive - v;
 }
 
-void stage_topk(uint tid) {
-    const uint n = pc.n_pos;
-    const uint kk = min(pc.topk, n);
-
-    // Every position selected -- which is every context short enough that
-    // n <= index_topk, and therefore every context measured so far.
-    if (kk >= n) {
-        for (uint t = tid; t < n; t += kWg)
-            *(int*)(Ptr[kOut] + (uint64_t)(pc.offset + t) * 4) = int(t + pc.offset);
-        return;
-    }
-
-    // Four 8-bit passes narrow the key of the kk-th largest score.
+// Four 8-bit radix passes narrow the key of the kk-th largest of `n` keys.
+// Leaves that key in `prefix_out` and how many of the positions holding it
+// are wanted in `need_out`. Every thread runs the same barriers, so any
+// single-workgroup stage can call it.
+void radix_threshold(bool blocks, uint n, uint kk, uint tid, out uint prefix_out,
+                     out uint need_out) {
     uint prefix = 0u, mask = 0u, need = kk;
     for (uint pass = 0; pass < 4; ++pass) {
         const uint shift = 24u - 8u * pass;
         gHist[tid] = 0u;
         GroupMemoryBarrierWithGroupSync();
         for (uint t = tid; t < n; t += kWg) {
-            const uint key = score_key_at(t);
+            const uint key = sel_key_at(blocks, t);
             if ((key & mask) == prefix) InterlockedAdd(gHist[(key >> shift) & 0xFFu], 1u);
         }
         GroupMemoryBarrierWithGroupSync();
@@ -348,6 +366,24 @@ void stage_topk(uint tid) {
         need    = gSel[1];
         GroupMemoryBarrierWithGroupSync();
     }
+    prefix_out = prefix;
+    need_out   = need;
+}
+
+void stage_topk(uint tid) {
+    const uint n = pc.n_pos;
+    const uint kk = min(pc.topk, n);
+
+    // Every position selected -- every context short enough that
+    // n <= index_topk.
+    if (kk >= n) {
+        for (uint t = tid; t < n; t += kWg)
+            *(int*)(Ptr[kOut] + (uint64_t)(pc.offset + t) * 4) = int(t + pc.offset);
+        return;
+    }
+
+    uint prefix, need;
+    radix_threshold(false, n, kk, tid, prefix, need);
     // `prefix` is now the exact key of the kk-th largest score and `need` is how
     // many of the positions holding it are wanted.
 
@@ -382,6 +418,71 @@ void stage_topk(uint tid) {
     }
 }
 
+// --- stage 6: candidate block keys (design §2.1, level one) -----------------
+// `scores.unflatten(-1, (-1, block_size)).amax(dim=-1)` -- the last block is
+// padded with -inf, i.e. simply shorter here -- then the block holding the
+// query's newest position, `(n_pos - 1) // block_size`, which at decode is the
+// LAST block, pinned to +inf so an older full block can never outscore it.
+// Stored as radix keys: the max of the keys is the key of the max, and the
+// pinned block gets 0xFFFFFFFF, above the key of any float including +inf.
+// One thread a block, `ceil(n_blocks / 256)` workgroups, no barriers.
+void stage_block_keys(uint gid, uint tid) {
+    const uint n = pc.n_pos, bs = pc.k;
+    const uint nb = (n + bs - 1) / bs;
+    const uint b = gid * kWg + tid;
+    if (b >= nb) return;
+    uint key = 0xFFFFFFFFu;
+    if (b != nb - 1) {
+        key = 0u;
+        const uint t0 = b * bs;
+        const uint t1 = min(t0 + bs, n);
+        for (uint t = t0; t < t1; ++t) key = max(key, score_key_at(t));
+    }
+    *(uint*)(Ptr[kBlkKey] + (uint64_t)b * 4) = key;
+}
+
+// --- stage 7: the candidate_topk_blocks best blocks, as keep flags ----------
+// `scores.topk(min(topk_blocks, num_blocks))` scattered into a bool mask. The
+// `top.values > -inf` clause cannot drop anything at decode: all n_pos
+// positions are reachable, so every block key is a finite score's.
+void stage_block_select(uint tid) {
+    const uint n = pc.n_pos, bs = pc.k;
+    const uint nb = (n + bs - 1) / bs;
+    const uint kk = min(pc.topk, nb);
+    const uint chunk = (nb + kWg - 1) / kWg;
+    const uint lo = min(tid * chunk, nb), hi = min(lo + chunk, nb);
+    if (kk >= nb) {
+        for (uint b = lo; b < hi; ++b) *(uint*)(Ptr[kCand] + (uint64_t)b * 4) = 1u;
+        return;
+    }
+    uint prefix, need;
+    radix_threshold(true, nb, kk, tid, prefix, need);
+
+    uint ties = 0u;
+    for (uint b = lo; b < hi; ++b) if (sel_key_at(true, b) == prefix) ++ties;
+    const uint tieBase = wg_exscan(ties, tid);
+    uint tie = tieBase;
+    for (uint b = lo; b < hi; ++b) {
+        const uint key = sel_key_at(true, b);
+        bool keep = key > prefix;
+        if (key == prefix) { keep = tie < need; ++tie; }
+        *(uint*)(Ptr[kCand] + (uint64_t)b * 4) = keep ? 1u : 0u;
+    }
+}
+
+// --- stage 8: level two, mask a consumer's scores ---------------------------
+// Chunked over 256 threads like stage 5. -inf's key is below every finite
+// score's, and at least `(topk_blocks - 1) * block_size + 1` >= index_topk
+// positions stay unmasked, so stage 5 never selects a masked one.
+void stage_apply_candidates(uint tid) {
+    const uint n = pc.n_pos, bs = pc.k;
+    const uint chunk = (n + kWg - 1) / kWg;
+    const uint lo = min(tid * chunk, n), hi = min(lo + chunk, n);
+    for (uint t = lo; t < hi; ++t)
+        if (load_u32(Ptr[kCand] + (uint64_t)(t / bs) * 4) == 0u)
+            *(uint*)(Ptr[kScore] + (uint64_t)t * 4) = 0xFF800000u;
+}
+
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
@@ -390,5 +491,8 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     else if (Stage == 2) stage_key(tid);
     else if (Stage == 3) stage_weights(tid);
     else if (Stage == 4) stage_score(gid.x, tid);
-    else                 stage_topk(tid);
+    else if (Stage == 5) stage_topk(tid);
+    else if (Stage == 6) stage_block_keys(gid.x, tid);
+    else if (Stage == 7) stage_block_select(tid);
+    else                 stage_apply_candidates(tid);
 }
