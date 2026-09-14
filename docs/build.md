@@ -56,11 +56,13 @@ cmake --build build
 build/deepmoe.exe              CLI: info / bench nvme / run
 build/nvme_bench.exe           design §9.2.1 Q6/Q7 微基准
 build/bw_matrix.exe            design §8.0 / §3.3 带宽矩阵（CPU / GPU / 并发 × 两条路径）
-build/kernel_bench.exe         design §7.9.1 MoE kernel sweep + dispatch 开销 + 路径 A/B
-build/heap_capacity.exe        design §9.2.2 两个 heap 的实际可分配上限（commit 限额）
+build/kernel_bench.exe         design §7.9.1（--p1）/ §7.9.2（默认）MoE kernel sweep
+                               + dispatch 开销 + 路径 A/B
+build/attn_bench.exe           design §7.15.2 非 MoE decode 路径逐 kernel 带宽
+build/heap_capacity.exe        design §9.2.2 两条路径的实际可分配上限
 build/envcheck.exe             环境自检
 build/tests/deepmoe_tests.exe  单元测试
-build/shaders/*.spv            §7.14 的 12 个 kernel，每个都过 spirv-val
+build/shaders/*.spv            §7.14 的 16 个 kernel，每个都过 spirv-val
 ```
 
 Git Bash 下（首次 zig 构建 libc++ 会刷一屏 `-Wnullability-completeness`，过滤掉再看）：
@@ -105,14 +107,37 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 # 带宽矩阵：CPU 单独 / GPU 单独 / 并发 × 路径 A/B → design §8.0、§3.3
 .\build\bw_matrix.exe --cpu-size-gb 4 --size-gb 1 --repeats 3
 
-# MoE kernel sweep（60 变体）+ dispatch 开销 → design §7.9.1、§3.4
-.\build\kernel_bench.exe --csv bench\results\kernel_p1.csv `
+# P2 的 MoE kernel sweep（261 行：M 扫描 × XMode × HQuant × fp8 shared expert × 分组 dispatch）
+#   → design §7.9.2、docs/kernel_p2_moe.md
+.\build\kernel_bench.exe --csv bench\results\kernel_p2_moe.csv `
+    --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+
+# P1 的旋钮 sweep（解码方式 / lane 数 / wave 宽度，60 变体）+ dispatch 开销 → design §7.9.1、§3.4
+.\build\kernel_bench.exe --p1 --csv bench\results\kernel_p1.csv `
     --iters 48 --layer-cycle 8 --repeats 4 --sweeps 2
 .\build\kernel_bench.exe --path b --quick        # 路径 B 对照
 
-# 容量上限（commit 限额）→ design §9.2.2。调大 pagefile 之后要重跑
-.\build\heap_capacity.exe --slab-gib 2 --min-free-gib 6 --csv bench\results\heap_capacity.csv
+# 非 MoE decode 路径的逐 kernel 带宽 → design §7.15.2、docs/p2_attention.md
+#   --layers 8 不是可选的：每层一个 AttnRunner，否则 32 MB 的 MALL 会给出幻觉
+#   （第一版把 wq_a 报成 374 GB/s，在一个 217 GB/s 的内存系统上）
+.\build\attn_bench.exe --layers 8 --iters 64 --rows 2 --csv bench\results\attn_p2.csv
+
+# 容量上限 → design §5.2 / §9.2.2。**必须在空闲机上跑**（见上面的 pagefile 一节）
+.\build\heap_capacity.exe --slab-gib 2 --min-free-gib 6 --csv bench\results\heap_capacity_idle.csv
 ```
+
+`bench/results/` 里的 CSV 与它们对应的文档：
+
+| CSV | 文档 |
+|---|---|
+| `nvme_q6_q7.csv` | design §9.2.1 |
+| `bw_matrix.csv` | design §8.0 / §3.3 |
+| `kernel_p1.csv`、`kernel_p1_path{a,b}.csv` | design §7.9.1、[kernel_p1.md](kernel_p1.md) |
+| `kernel_p2_moe.csv` | design §7.9.2、[kernel_p2_moe.md](kernel_p2_moe.md) |
+| `attn_p2.csv` | design §7.15.2、[p2_attention.md](p2_attention.md) |
+| `heap_capacity.csv` | design §9.2.2 第一轮（4 GiB pagefile，历史） |
+| `heap_capacity_idle.csv` | design §5.2 / §9.2.2 第二轮（96 GiB pagefile，**这是当前的那一份**） |
+| `heap_capacity_pagefile128.csv` | 同上设置但**有并发污染**，作为量测卫生的反面教材保留 |
 
 `nvme_bench` 默认在 `%TEMP%` 建一个 2 GB 测试文件，跑完删除（`--keep` 保留，`--file`
 指定已有文件）。实测结果写回 design.md §9.2.1。
@@ -124,11 +149,19 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 - **不要同时编译**（一次 `cmake --build` 撞上 `bw_matrix`，CPU 峰值从 100.9 掉到 97.7，
   并发那一栏直接作废），也不要同时跑 `tools/route_trace.py`。
 - `kernel_bench` 的工作集要用 `--layer-cycle 8`（1053 MB）跨过 32 MB 的 MALL；
-  只用 1 层（132 MB）会把带宽**虚高约 25%**。
+  只用 1 层（132 MB）会把带宽**虚高约 25%**。`attn_bench` 的对应旋钮是 `--layers 8`
+  **加上每层一个 `AttnRunner`**（否则一个 command buffer 里每次迭代读的都是同一层，
+  小于 MALL 的东西会报出幻觉）。
+- **容量测量同样适用**：`heap_capacity` 在有并发基准时满载 raw-read 报 152 / 121 GB/s，
+  空闲时是 216 / 207（design §5.2）。
 - 判据是 raw-read 上限在 sweep 前后一致。完整的方法与两个踩过的坑见
   [kernel_p1.md](kernel_p1.md) §1。
+- **跨轮只比同轮内的相对值。** P2 那一轮的 run 间漂移是 **~7%**（P1 记的是 1.5%），
+  同一轮不同小节之间也有 8%（[kernel_p2_moe.md](kernel_p2_moe.md) §2）。
+  **CI 上的 kernel 带宽回归必须做同轮对照，不能比绝对值。**
 
-带 validation layer 跑一遍（两个 bench 与两个 GPU 测试当前都是干净的）：
+带 validation layer 跑一遍（`kernel_bench` / `attn_bench` 与四个 GPU 测试 suite 当前都是干净的；
+`spirv-val --target-env vulkan1.3` 由 `add_slang_shader()` 每次编译都跑）：
 
 ```powershell
 $env:VK_INSTANCE_LAYERS='VK_LAYER_KHRONOS_validation'
@@ -236,6 +269,13 @@ torch 只用 CPU 版。注意 **PyTorch 的 wheel index 里没有 `safetensors` 
 ```powershell
 uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l0 --out tests/data
 uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l1 --out tests/data
+
+# L2：七个层的逐级黄金张量（约 258 s，5.1 MB → tests/data/l2/）
+uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l2 --out tests/data
+
+# P2 需要的三个额外 golden：fp8 shared expert + 量化 h 的四个参考答案
+uv run python tools/oracle_shared.py --model D:/models/DeepSeek-V4.1-Flash `
+    --shared 0 --expert 0:0 --expert 39:383 --out tests/data
 ```
 
 - `--level l0` 导出 FP4 E2M1 / FP8 E4M3 / UE8M0 三张解码表到 `tests/data/l0_dequant.bin`（2,132 B），
@@ -244,6 +284,16 @@ uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l1 -
   六个 tensor 各读两遍（一遍走 manifest 的 run/skew，一遍走 `safetensors` 库）要求字节一致，
   再在 torch fp32 里算 expert FFN，把 `x`/`y`/校验和写进 `tests/data/l1_layer{L}_expert{E}.bin`。
   加 `--report out.json` 可以把数字存下来。
+- **`--level l2`（P2 新增）**导出 `tests/data/l2/`：**5.1 MB，七个层
+  （0 / 1 / 2 / 13 / 14 / 20 / 39），每层 ~40–53 个张量**，64 token prefill 之后位置 64 的
+  那一个 decode step。它跑的是**未经修改**的 `inference/model.py`（只借 `tools/dsref.py`
+  的六个 CPU kernel shim），每个张量要么是 forward hook 的输入/输出，要么是参考路过的
+  模块级函数的实参/返回值——**没有任何东西是重新推导的**。量化点是**断言**出来的：
+  导出器从量化前的张量重算 fp8/fp4 字节并要求它们反量化回参考的值。
+  **约 258 s，几乎全部花在 prefill 的 MoE 上**（一层 ~200 个不同的 expert，要读 ~5 GB/层的
+  attention 权重重建 Block）。解读见 design.md §12 与 [p2_attention.md](p2_attention.md) §1。
+- `oracle_shared.py` 写出 `tests/data/l1_shared_layer0.bin` 与
+  `y_ref` / `y_hq` / `y_full` / `y_hq16` 四个向量（design §7.9.2 (e)(f)）。
 
 ## 路由 trace 与 cache 模拟器（design §9.1.1）
 
@@ -277,58 +327,94 @@ uv run python tools\tests\test_cache_sim.py   # 12 个可独立验算的用例
 ctest --test-dir build --output-on-failure
 ```
 
-需要真 checkpoint 的那一条（`suite.integration`）默认**自动跳过**并说明原因。要跑它：
+需要真 checkpoint 的那几条默认**自动跳过**并说明原因。要跑它们：
 
 ```powershell
 $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'; ctest --test-dir build --output-on-failure
+
+# 只跑其中一个 suite
+ctest --test-dir build -R suite.gpu_moe   --output-on-failure   # §7.9 / §7.9.2
+ctest --test-dir build -R suite.gpu_attn  --output-on-failure   # §7.2–§7.11 逐 stage 对 L2
+ctest --test-dir build -R suite.gpu_layer --output-on-failure   # 整层链起来
 ```
 
-它用真正的 `IoEngine` + IOCP + `ExpertStore` 把 `(0,0)` 和 `(39,383)` 填进槽，
-比对六个 part 的校验和与 `cpu/gemv_fp4_ref` 复算的 FFN 输出（对照 `oracle.py` 的 torch fp32 结果）。
-按标签筛选：`ctest -L needs-model` 只跑它，`ctest -LE needs-model` 完全不跑。
+| suite | 它验的是什么 |
+|---|---|
+| `suite.integration` | 真正的 `IoEngine` + IOCP + `ExpertStore` 把 `(0,0)` 和 `(39,383)` 填进槽，比对六个 part 的校验和与 `cpu/gemv_fp4_ref` 复算的 FFN（对照 `oracle.py` 的 torch fp32） |
+| `suite.gpu_moe` | §7.9 两个 kernel 的十四个变体 + **fp8 shared expert + `h` 的 fp8 量化 + 分组 dispatch**（design §7.9.2）。需要先跑 `oracle_shared.py` |
+| `suite.gpu_attn` | §7.2–§7.11 的十二个 stage 逐个对 `tests/data/l2/`（design §7.15.1）。需要先跑 `oracle.py --level l2` |
+| `suite.gpu_layer` | 一整层 decoder 链起来，只有 block 输入与 prefill 的 KV 是 golden；**故意只给八个槽的 cache**，所以六个 expert 每层都真的从 NVMe 取回来（design §7.15.3） |
 
-## Windows 虚拟内存（pagefile）：必须先调大
+按标签筛选：`ctest -L needs-model` 只跑需要 checkpoint 的，`ctest -LE needs-model` 完全不跑。
 
-**这是这台机器上唯一一个必须手工做的系统设置，不做的话 expert cache 只有设计容量的 43%。**
+## Windows 虚拟内存（pagefile）：**已在开发机上做完**
+
+> **状态：DONE（2026-09-14/15）。** C: 已设成**固定 98,304 MB = 96 GiB** 的 pagefile，
+> commit 限额从 67.65 GiB 变成 **159.6 GiB**，expert cache 从 2,056 槽变成
+> **5,711 槽（100 GiB = 15,360 的 37%）**，超过设计目标的 4,787。
+> **新机器上这仍然是第一件要做的事**，所以步骤留在下面。
+
+### 为什么
 
 P-1 实测（2026-09-14，`bench/results/heap_capacity.csv`，解读见 design.md §5.2 / §9.2.2）：
-expert slab 的真实上限**不是** BIOS VGM、也不是两个 Vulkan heap 的大小，而是 Windows 的
+默认设置下 expert slab 的真实上限**不是** BIOS VGM、也不是两个 Vulkan heap 的大小，而是 Windows 的
 **commit 限额 = 物理内存 + pagefile**。路径 A（`DEVICE_LOCAL|HOST_VISIBLE`）的 slab
-几乎不占物理内存（`availPhys` 在 36 GiB 的分配里只动了 0.3 GB），但**照样按 1:1 吃 commit**。
-本机默认：
+几乎不占物理内存（`availPhys` 在 36 GiB 的分配里只动了 0.3 GB），但**照样按 1:1 吃 commit**：
 
 ```
 commit 限额 = 63.65 GiB RAM + 4 GiB 系统托管 pagefile = 67.65 GiB
 → 路径 A 拿到 36 GiB 就停（留 6 GiB 余量），路径 B 随后一个 slab 都拿不到
-→ expert cache 只有 2,056 个槽（设计要 4,787）
+→ expert cache 只有 2,056 个槽
 ```
 
 **调大 pagefile 不会带来换页 I/O**：VGM 支撑的页不在分页池里，**永远不会被写进 pagefile**，
-这纯粹是 commit 记账。设置路径：
+这纯粹是 commit 记账。
+
+### 怎么做
 
 ```
 系统属性 → 高级 → 性能 [设置] → 高级 → 虚拟内存 [更改]
 → 取消"自动管理所有驱动器的分页文件大小"
-→ 选 C: → 自定义大小 → 初始大小 = 最大值 = 98304 MB（96 GB；128 GB 更稳妥）
+→ 选 C: → 自定义大小 → 初始大小 = 最大值 = 98304 MB（96 GiB）
 → [设置] → [确定] → 重启
 ```
 
-C: 需要相应的空闲空间（96 GB 固定大小会立刻占掉 96 GB 磁盘）。重启后重测：
+C: 需要相应的空闲空间（固定大小会立刻占掉那么多磁盘）。
+**只需要 C: 一块**——实测 96 GiB 就足以让两条路径把物理上限跑满，**D: 上不需要 pagefile**。
+
+### 做完之后的实测（2026-09-14/15，`bench/results/heap_capacity_idle.csv`）
 
 ```powershell
-.\build\heap_capacity.exe --slab-gib 2 --min-free-gib 6 --csv bench\results\heap_capacity.csv
+.\build\heap_capacity.exe --slab-gib 2 --min-free-gib 6 --csv bench\results\heap_capacity_idle.csv
 ```
 
-期望看到 `path_a` + `path_b` 合计 ≥ 90 GiB（4,787 个 expert 槽）。CSV 的
-`avail_commit_bytes` 列是判断有没有生效的那一列；`--min-free-gib` 是 `availPhys` 的安全下限，
-不要调到 6 以下（Ctrl+C 有清理路径，但别指望它）。
+| | 路径 A | 路径 B | **先 A 后 B（实际布局）** |
+|---|---|---|---|
+| 拿到的 slab | 37 × 2 GiB = **74 GiB** | 20 × 2 GiB = 40 GiB | A **74** + B **26** = **100 GiB** |
+| 停下的原因 | `vkAllocateMemory` 返回 `-2`，**device-local heap 的 74.4 GiB 到顶** | `availPhys 6.68 GiB < slab 2 + floor 6` | 两个**物理**上限各自到顶 |
+| 停下时剩余 commit | 61.8 GiB | 96.2 GiB | **35.6 GiB** |
+| 满载后 GPU raw-read | 214.4 GB/s | 206.4 GB/s | **216.1 / 207.5 GB/s** |
+| 折成 expert 槽 | | | **5,711 个** |
+
+**判断有没有生效看哪一列**：`avail_commit_bytes`（应该一路都还剩几十 GiB）与
+`status` 那一列的停止原因——**如果还写着 `available commit < slab + floor`，说明 pagefile 没生效。**
+`--min-free-gib` 是 `availPhys` 的安全下限，不要调到 6 以下（Ctrl+C 有清理路径，但别指望它）。
+
+> **必须在空闲机上跑。** 同一套设置下先跑的一轮（`heap_capacity_pagefile128.csv`）满载 raw-read
+> 只有 **151.9 / 121.4 GB/s**，看起来像"装满之后带宽掉一半"；空闲重测是 216.1 / 207.5。
+> **那是并发基准的争用，不是容量的代价。** 下一节的"测量纪律"同样适用于容量测量——
+> **一个会让你改设计的负面结果，先确认机器是空的。**
 
 ## BIOS：不需要动
 
 **不要改 UMA Frame Buffer Size（VGM）。** 实测两个 heap 是同一条 LPDDR5X：
 GPU raw-read 在路径 A（216.4 GB/s）、路径 B（215.2）、纯 DEVICE_LOCAL（216.0）上没有差别，
-GPU 在当前设置下已经能寻址两种内存，而容量受 commit 限额而不是 VGM 约束（见上一节）。
+GPU 在当前设置下已经能寻址两种内存。
 design.md v0.3–v0.5 里"在两种 VGM 下各测一遍 / 需要一次重启"的条目已作废（design.md §3.3、§16）。
+
+**容量上也不用动它。** 扩完 pagefile 之后实测：路径 A 的**前 60 GiB 正好落在 VGM 的 64 GB 里、
+一个字节物理内存都不占**，第 61 GiB 起 1:1 吃可见内存。所以
+**总量 = VGM + (可见物理内存 − 安全余量)，是守恒的**——调 VGM 只改变 A / B 的划分，不改变总量。
 
 ## 大页（可选，未测）
 
