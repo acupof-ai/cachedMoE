@@ -8,15 +8,63 @@
 > [kernel_p2_moe.md](kernel_p2_moe.md) (the GEMV the prefill GEMM is compared
 > against).
 
-Status: **v0.1, 2026-09-14** — design written before the kernels, then kept
-true. §0 is the page to read; §11 is what is done and what is not.
+Status: **v0.2, 2026-09-15** — design written before the kernels, then kept
+true; §9–§11 measured. §0 is the page to read; §11 is what is done and what is
+not.
 
 ---
 
 ## 0. What this says in one page
 
-*(Filled in from the measurements in §§8–10 once they exist; the design
-sections below are written first.)*
+**What exists.** `gpu::Prefill` (gpu/vulkan/prefill_kernels.{h,cpp},
+gpu/shaders/prefill_*.slang) runs a whole prompt on the GPU as one chunked pass:
+embedding, engram for every position, both mHC halves, window KV, compressor and
+index keys over all complete groups, queries in blocks of 512 with the
+indexer's completion mask, design §2.1's candidate-block top-k above 16K, band
+attention, the gate for every token, and the MoE expert-major — experts in
+shard order, read through the IoEngine into a two-half transit so the next
+batch reads while this one computes, experts with ≥ 16 rows on
+cooperative-matrix GEMM and the rest on the tiled GEMV job table. It ends in
+the §8.1 handoff and writes it as an L3 directory the engine loads unchanged.
+Oracle mode (every decoder row) and production mode (replay 128) both run.
+
+**Is it right?** (§9)
+
+| | 64 tokens (L3) | 4,133 tokens | 17,010 tokens |
+|---|---|---|---|
+| per-stage vs `start_pos == 0` reference | 110 checks, worst cos 0.99991 | — | — |
+| first token vs reference | 3006 ✓ (margin 3.60 / ref 4.04) | **77 ✓** (8.31 / 8.86) | **77 ✓** (10.41 / 9.48) |
+| window KV, worst layer | 0.9325 (L18) | 0.9600 (L18) | 0.9492 (L37) |
+| compressed KV / index keys, worst | 0.9669 / 0.9657 | 0.9684 / 0.9765 | 0.9673 / 0.9778 |
+| last position's compressed picks / top-6 in common | — | 3,550/4,096 · 219/240 | 3,377/4,096 · 217/240 |
+| **L3 decode from our state** (8 steps) | **7/8 teacher-forced, 7/8 free** | engine cannot decode (§8.3) | engine cannot decode |
+
+At 64 tokens this equals or beats Track I's slow prefill (7/8, 6/8; its handoff
+0.925–0.930 / 0.967 / 0.975) against the export-state baseline of 8/8, 8/8; the
+miss is step 7 after a near-tie at step 6. At long context the handoff is
+*closer* to the reference than at 64 (error concentrates where context is thin).
+The 4K/17K decode — and the `kestrel-4471-amber` salt test — is **blocked on
+the engine**: it refuses > 4,096 positions, and with that limit raised in a
+scratch build it produces NaN logits from the **reference's own** 4K export too;
+truncated prompts put the onset between N = 600 (sane) and 1,100 (degenerate).
+§8.3 item 2 is the spec.
+
+**How fast?** (§10; cold cache, replay 128, Track K2's CPU oracle running)
+
+| N | TTFT | expert NVMe wait | engram reads | compute | design §7.13.3 |
+|---:|---:|---:|---:|---:|---:|
+| 64 | **43.2 s** | 33.7 s (94 GB) | 1.3 s | 8.2 s | ≈ 34 s |
+| 4,133 | **199.6 s** (≈ 150 s quiet) | 44.5 s (198 GB) | 55.1 s (5.3 s quiet) | 100 s | ≈ 62–65 s |
+| 17,010 | **628.6 s** (≈ 445 s quiet) | 28.2 s (203 GB) | 204 s (contended) | 396 s | ≈ 78–88 s |
+
+The model's miss is compute: **24 ms per prompt token, linear**, against a 0.7 ms
+prior that had no attention in it — band attention is a third of it, then the
+routed experts, the indexer (quadratic, plus host readback and top-k), `wo_a`
+on the tiled GEMV, and the mHC pre-norm. NVMe is *under* the model (0.325 of
+(layer, expert) pairs at 64 tokens, not 0.52; ~200 GB at ≥ 4K because the
+decoder routes only 128 tokens), and at 17K the GPU, not the drive, is the wait.
+The bench found a 58 s host bug on the way (the gate bias read through
+device-mapped memory 3,000 times a token; now 1.1 s).
 
 ---
 
@@ -425,9 +473,30 @@ comparison wants. `tests/test_gpu_prefill.cpp` does this and then calls
    per layer: std::vector<float> win_kv (rows·512), cmp_cache, index_k,
    cmp_state_kv, cmp_state_score; }`, i.e. `gpu/vulkan/prefill_kernels.h`'s
    `PrefillHandoff` (which already has that shape).
-2. `KvStoreConfig::max_context` sized from N, and `kMaxIndexPositions`
-   (`runtime/decode_layer.h`, 4,096) raised: a 4,096-token prompt at ratio 1 is
-   already at the limit on its first decode step.
+2. **Long-context decode, which is broken today independently of the prefill**
+   (§9.3). In order:
+   1. `kMaxIndexPositions` (`runtime/decode_layer.h`, 4,096) raised to the
+      largest context served (32,768 is 128 KB of score plane), and
+      `KvStoreConfig::max_context` sized from N. The 4,133-token export is
+      refused today: "needs 4205 compressed positions and the indexer's score
+      plane holds 4096".
+   2. With only the constant raised (an uncommitted one-line scratch build),
+      **decoding from the reference's own ctx4k export** gives token 0 at margin
+      0.000 on 7 of 8 steps (NaN / zero logits), so the fault is in the engine's
+      decode path, not in either state. Truncated prompts from our prefill
+      bracket the onset: at N = 600 the continuation has margins 7–19 (sane); at
+      N = 1,100 and 2,048 it collapses into the 64-token prompt's filler tokens
+      (223, 18, 201, 1) at margins 0.1–2. Between those, three things first go
+      live and are the suspects, most likely first: the ratio-2 layers' GPU
+      radix top-k (`indexer.slang` stage 5, never exercised before
+      `n_cmp > 512`, i.e. N > 1,024); `sparse_attn` reading compressed rows past
+      the 1,024-entry LDS table (p2_attention.md §13's fix); the index-key and
+      compressed-cache planes past 1,024 rows. A decode-side L2 at the probe
+      layers against `traces/longctx/ctx4k/l2` (p3_longctx.md §4.3) is the
+      bisection tool.
+   3. design §2.1's candidate-block mask in `Engine::prepare_ced` (refused as
+      `Unimplemented` above 16,384 positions); `Prefill::candidate_blocks` is
+      the host reference implementation.
 3. `store::ExpertStore::adopt(ExpertKey, slot, last_access)` (or a
    `reserve_for_read` returning a slot to read into) so §3.4's keep policy can
    fill the cache without a second read.
@@ -438,12 +507,224 @@ comparison wants. `tests/test_gpu_prefill.cpp` does this and then calls
 
 ## 9. Validation
 
-*(Filled from `tests/test_gpu_prefill.cpp`.)*
+Three tests in `tests/test_gpu_prefill.cpp`; the first two run under
+`ctest -R prefill`, the third is gated on `DEEPMOE_PF_LONGCTX`.
+
+### 9.1 Per stage (`gpu_prefill.stages`)
+
+Every stage fed the reference's own `start_pos == 0` input at layers
+0/1/2/13/14/20/39 (tools/oracle_prefill.py): **110 checks, 0 failed, worst
+cosine 0.99991** (L2 `cmp_cache`: the FP4/E4M3 grid, 38 of 16,384 values one
+step off); index scores, the top-k matrix, the window band and the engram hash
+rows exact; gate top-6 sets 64/64 at layers 0, 20, 39. This is with the
+cooperative-matrix MoE and dense paths on (experts ≥ 16 rows, dense ≥ 64 rows).
+
+### 9.2 64 tokens, forty layers, into the engine (`gpu_prefill.forty_layers`)
+
+The L2/L3 prompt through all forty layers in oracle mode (N < 128, so replay is
+the identity):
+
+| | ours (GPU prefill) | Track I slow prefill (p2_decode.md §9.5) |
+|---|---|---|
+| first token | 3006 = reference, margin 3.60 (ref 4.04), ρ 0.952 | 3006, ρ 0.934 |
+| window KV, worst layer | 0.9325 (L18) | 0.925–0.930 (L18) |
+| compressed KV, worst | 0.9669 (L14) | 0.967 (L14) |
+| index keys, worst | 0.9657 (L20) | 0.975 (L14) |
+| L3 teacher-forced / free-running | **7/8, 7/8** | 7/8, 6/8 (step-3 build); from the export's state 8/8, 8/8 |
+
+Per layer the window KV cosine falls with depth (L0 0.999999, L2 0.9987,
+L10 0.982, L18 0.933, L39 0.958), the same shape as the slow prefill's; the
+compressed KV at L2/L8/L14/L20 is 0.9969/0.9890/0.9669/0.9677. The missed step
+is step 7 (ours 1 vs reference 61, reference margin 1.95) after a near-tie at
+step 6 (our margin 0.40). Routing: 1,042 of 2,560 (token, layer) top-6 sets
+identical; the per-stage probes show the drift is compounding through depth
+from bit-exact stages, not a stage error (§9.1).
+
+### 9.3 Long context (`gpu_prefill.longctx`, Track M's exports)
+
+`DEEPMOE_PF_LONGCTX=traces/longctx/ctx4k` (then `ctx16k`), oracle mode, handoff
+against the export's prefill record; "topk" = the last prompt position's
+compressed picks in common with `Lnn.topk_idxs_last` at the index sources, as a
+set (not tie-aware: with hidden states at cos 0.96–0.99 the scores are not
+bit-equal, so p3_longctx.md §4.3's tie rule cannot apply); "top-6" = the last
+position's routing vs `tests/data/longctx/<name>/l3s_prefill.bin`.
+
+| | ctx4k, N = 4,133 | ctx16k, N = 17,010 |
+|---|---|---|
+| first token (the salt's `k`) | **77 = reference**, margin 8.31 (ref 8.86), ρ 0.901 | **77 = reference**, margin 10.41 (ref 9.48), ρ 0.830 |
+| window KV: L0 / L20 / worst | 0.999998 / 0.9801 / **0.9600 (L18)** | 0.999998 / 0.9871 / **0.9492 (L37)** |
+| compressed KV L2 / L8 / L14 / L20 | 0.9974 / 0.9926 / 0.9717 / 0.9684 | 0.9974 / 0.9926 / 0.9720 / 0.9673 |
+| index keys L2 / L8 / L14 / L20 | 0.9984 / 0.9940 / 0.9803 / 0.9765 | 0.9984 / 0.9941 / 0.9806 / 0.9778 |
+| compressor state (ratio-2 tail) | kv ≥ 0.9961, score ≥ 0.9999, −inf pattern identical | both empty (N even), identical |
+| window part of the last index row | 128/128 at every layer | 128/128 at every layer |
+| compressed picks, index sources | 3,550 / 4,096 (L2 496, L20 427, L24 397) | 3,377 / 4,096 (L2 471, L20 401, L24 371) |
+| last position's top-6 | 219 / 240 | 217 / 240 |
+| candidate-block mask (layers 24–36) | identity (≤ 2,048 blocks) | live for queries past 16,384 |
+| prefill wall time (validation run) | 250 s | 1,584 s (K2's CPU oracle running) |
+
+**At long context the state is closer to the reference than at 64 tokens**
+(window KV worst 0.960 / 0.949 against 0.933), which is what p2_decode.md §9.5
+predicted: the error concentrates where the context is thinnest, and the handoff
+only keeps the last 128 positions. The ratio-2 sources are within 0.0003 of each
+other between 4K and 17K, i.e. the error is the depth drift, not length.
+
+**Decode from these states could not be run** (§8.3 item 2): the engine refuses
+4,133 positions, and with the limit raised in a scratch build it produces
+garbage from the export's own state as well as from ours — so the salt test
+(`kestrel-4471-amber`) is blocked on the engine, not on the prefill. What the
+prefill can show alone it does: the first salt token is right at both lengths
+with the reference's margin.
+
+**Production mode (replay 128) at 4K** (`DEEPMOE_PF_REPLAY=128`), same record:
+first token 77 (margin 8.64, ρ 0.90); encoder layers identical to oracle mode;
+the decoder layers' window KV 0.935–0.981 (worst L39 0.935, against 0.968–0.988
+in oracle mode), because a replayed row's window only reaches back to N − 128
+in layers 21–39 (§1.1); compressed picks 3,545 / 4,096 (oracle 3,550; from a
+second run, after the last index row was put into the reference's numbering
+under replay); top-6 in common 219 / 240 in both.
+
+**Determinism** (`gpu_prefill.repeat`, `gpu_prefill.engram_repeat`): the 4K
+prompt prefilled twice in one process is byte-identical at every probed stage of
+every layer (first token margin 8.6355 both times, 10,549 experts both times),
+and the engram rows re-read three times are byte-identical. One replay run made
+from a main-tree build that also held other tracks' uncommitted changes differed
+from layer 14 on (10,570 experts, margin 8.55); the committed prefill built
+alone reproduces the first run exactly. So the replay approximation costs
+~0.03 of window cosine at the deepest layers and nothing measurable at the
+first token; its decode-token effect (§7.13.4 criterion 3) needs the engine.
+
+17K needed two prefill fixes on the way: a 1-D dispatch past 65,535 workgroups
+(`hc_post` at N = 17,010 is 85,050; `PrefillRunner::record` now splits it into
+rows of 16,384 and the 1-D kernels index through `gid_linear`), and the
+candidate-block first level (`Prefill::candidate_blocks`, §1).
 
 ## 10. Bench
 
-*(Filled from `bench/prefill_bench.cpp` and `bench/results/prefill_p3.csv`.)*
+`prefill_bench --section prefill --n N --ids <ids> --replay 128` on the real
+prompts (`tests/data/longctx/prompts.json`; N = 64 is the L2/L3 prompt), one run
+each, 2026-09-15 00:15–00:45, rows in `bench/results/prefill_p3.csv`. **Load:**
+no other GPU job; **Track K2's 16-thread CPU oracle was running throughout**
+(it reads NVMe too), which matters for the two I/O rows — see the engram note.
+
+### 10.1 TTFT and its breakdown (production mode, replay 128, cold cache)
+
+Seconds. "expert io" is the time the prefill *waited* for expert reads, not the
+read time: reads overlap compute (§3.3), so at 17K the drive is mostly done
+before the GPU asks.
+
+| | N = 64 | N = 4,133 | N = 17,010 |
+|---|---:|---:|---:|
+| **TTFT (wall)** | **43.2** | **199.6** | **628.6** |
+| attention (Q/KV/O projections, indexer, band attention) | 3.3 | 47.5 | 235.9 |
+| routed expert GPU (gather, GEMM, SwiGLU, scatter) | 2.0 | 33.2 | 85.9 |
+| expert NVMe wait | 33.7 | 44.5 | 28.2 |
+| engram row reads | 1.3 | 55.1 † | 204.2 † |
+| engram GPU | 0.3 | 2.8 | 11.4 |
+| mHC (both halves) | 1.5 | 6.1 | 25.9 |
+| shared expert | 0.1 | 4.9 | 15.8 |
+| gate + host top-6 | 0.3 | 2.9 | 11.7 |
+| embed, head, host other | 0.7 | 2.6 | 9.5 |
+| experts streamed / GB | 4,989 / 93.8 | 10,549 / 198.4 | 10,802 / 203.2 |
+| engram reads | 6,080 | 291,138 | 1,199,470 |
+
+† contended. The same 291,138 reads took **5.3 s** in the 4K validation run
+(23:10, no CPU oracle running) — 55 K IOPS, Q7's 83.7 K at QD 48 order — against
+55 s here. Quiet estimates: **4K ≈ 150 s, 17K ≈ 445 s** (engram ≈ 22 s at
+55 K IOPS).
+
+Oracle mode (every decoder row) at 4,133 in the validation run, before the gate
+fix below: 250 s, of which expert NVMe 43 s / 269 GB and attention 62 s.
+
+### 10.2 Against design §7.13.3
+
+| N | model: NVMe | model: compute | model TTFT | measured NVMe wait | measured compute (TTFT − NVMe − engram io) | measured TTFT |
+|---:|---:|---:|---:|---:|---:|---:|
+| 64 | 150 GB / 33 s | 0.05 s | ≈ 34 s | 94 GB / 33.7 s (2.8 GB/s, contended) | 8.2 s | 43.2 s |
+| 4,096 | 256 GB / 57 s | ~3 s | ≈ 62–65 s | 198 GB / 44.5 s | **100 s** | 200 s (≈ 150 quiet) |
+| 16,384 | 256 GB / 57 s | ~12 s | ≈ 78–88 s | 203 GB / 28.2 s | **396 s** | 629 s (≈ 445 quiet) |
+
+1. **NVMe is below the model.** `f(64) = 0.52` over-counts: the 64-token prompt
+   touches 4,989 of 15,360 (layer, expert) pairs, 0.325 — and the decoder half is
+   bounded by replay. At ≥ 4K the bytes are ~200 GB, not 256, because the
+   decoder layers route only 128 tokens.
+2. **Compute is the model's miss: 24 ms per prompt token** (100 s / 4,133,
+   396 s / 17,010), linear, against the prior's 0.7 ms. The prior was "§3.2's
+   4K ≈ 3 s", which has no attention in it. §7.13.4 criterion 4 (±15%) fails
+   until the model is re-fitted: `T_compute(N) ≈ 8 s + 0.024 s × N` on this
+   build.
+3. **At 17K the prefill is compute-bound, not NVMe-bound**: the expert wait
+   drops to 28 s because the GPU is slower than the drive.
+
+### 10.3 Where the compute goes (single-dispatch ops, `PrefillTimes::per_op`)
+
+| op | 4,133: ms / calls | 17,010: ms / calls |
+|---|---:|---:|
+| band attention, scores (`prefill_attn` s0) | 17,397 / 200 | 74,992 / 700 |
+| band attention, combine (s1) | 7,758 / 200 | 32,683 / 700 |
+| indexer score [B][N/r] (s2) | 2,702 / 32 | 34,765 / 107 |
+| index score readback (host, device-mapped memory) | 1,064 / 32 | 17,465 / 107 |
+| index top-k (host) | 912 / 32 | 6,489 / 107 |
+| `wo_a` grouped fp8 [8192×4096], tiled GEMV | 5,710 / 200 | 22,686 / 700 |
+| `wq_b` fp8 [32768×1280], cooperative matrix | 4,167 / 180 | 16,586 / 700 |
+| `wo_b` fp8 [5120×8192], cooperative matrix | 4,084 / 180 | 16,391 / 700 |
+| mHC pre-norm (`prefill_elem` s2) | 4,864 / 81 | 21,347 / 81 |
+| engram `wkv` fp8 [25600×6144] | 2,410 / 2 | 9,743 / 2 |
+| gate readback + host top-6 | 2,449 / 40 | 9,914 / 40 |
+
+Band attention is a third of compute at every N; the indexer's score grows
+quadratically and is 15% of attention at 17K, plus 24 s of host readback and
+top-k that a GPU top-k would remove. `wo_a` is the one large linear still on the
+tiled GEMV (grouped, so op_gemm's cooperative-matrix branch does not take it).
+
+**A bug the bench found**: the host top-6 read the gate bias through the pinned
+tensor's host view, which is device-mapped memory, ~3,000 times a token — 58 s
+of a 4K prefill (1.45 s a layer). Copying the 384 floats once per layer made it
+1.1 s. The same memory is why reading back the gate scores (26 MB a layer at
+17K) and the index scores costs 200 MB/s.
 
 ## 11. Done / not done
 
-*(Kept current.)*
+**Done**
+
+* The whole prefill on the GPU, oracle and replay modes, N up to 17,010
+  (§2, §3, §6): per-stage validation (§9.1), forty layers into the engine at 64
+  tokens (§9.2), handoff validation at 4,133 and 17,010 against Track M's
+  exports including the last position's index row and routing (§9.3),
+  production-vs-oracle handoff at 4K, run-to-run determinism.
+* Cooperative-matrix GEMM for experts ≥ 16 rows and dense linears ≥ 64 rows;
+  tiled GEMV below; thresholds overridable (`DEEPMOE_PF_COOP_MOE/DENSE`,
+  `prefill_bench --coop-min/--coop-dense`).
+* Design §2.1's candidate-block first level for > 16,384 compressed positions
+  (host, `Prefill::candidate_blocks`), live at 17K.
+* 1-D dispatches past 65,535 workgroups split into rows (`gid_linear`).
+* The gate-bias host bug (58 s → 1.1 s at 4K).
+* TTFT with a per-stage and per-op breakdown for N = 64 / 4,133 / 17,010 on the
+  real prompts (§10), compared with design §7.13.3.
+* The L3-directory handoff (§8.2) and the in-memory handoff spec for Track I
+  (§8.3), including the long-context decode diagnosis.
+
+**Not done**
+
+* **Decode at 4K / 17K from our state, and the salt test** — blocked on the
+  engine (§8.3 item 2): `kMaxIndexPositions`, then NaN logits past ~1K context
+  even from the reference's export, then the candidate mask in `prepare_ced`.
+  `gpu_prefill.longctx` runs it the moment that lands
+  (`DEEPMOE_PF_LONGCTX=traces/longctx/ctx4k DEEPMOE_PF_DECODE=free`, one mode
+  per process; `ref-free` is the engine-only baseline).
+* §7.13.4 criterion 3 (production-vs-oracle *token* divergence and logit KL):
+  needs the same engine fix; only the handoff and first token are compared.
+* §7.13.4 criterion 4: TTFT is 2.3–5× the §7.13.3 model; the model's compute
+  term needs re-fitting (≈ 8 s + 24 ms × N here) and the kernels need work:
+  band attention, a GPU top-k for the indexer (removes 24 s of readback and host
+  select at 17K), `wo_a` onto cooperative matrix, fewer mHC pre-norm submits.
+* A quiet-machine bench: every §10 number was taken with Track K2's CPU oracle
+  running; engram reads were 10× slower than quiet (55 s vs 5.3 s at 4K).
+  Engram read dedup of the scale plane and QD tuning are not done.
+* §3.4 keep/drop into `store::ExpertStore` (§8.3 item 3): the prefill reads
+  into its own transit and drops everything; §7.13.4 criterion 5 untested.
+* DSpark's `main_x` window (layers 37–39 inputs) is not in the handoff.
+* Replay R > 128 (`2·window`) and the design §9.7.1 short-prompt crossover are
+  not measured; the 64-token prefill (43 s) is not faster than the engine's
+  on-demand path would be.
+* A tie-aware top-k comparison (p3_longctx.md §4.3) — not applicable while hidden
+  states are at cos 0.95–0.99; the set overlap is reported instead.
