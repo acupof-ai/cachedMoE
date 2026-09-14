@@ -12,7 +12,8 @@ add_executable(deepmoe_tests
     test_gpu_core.cpp
     test_gpu_moe.cpp
     test_gpu_attn.cpp
-    test_gpu_layer.cpp)
+    test_gpu_layer.cpp
+    test_decode.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -53,6 +54,13 @@ add_test(NAME "suite.gpu_layer" COMMAND deepmoe_tests "gpu_layer.")
 set_tests_properties("suite.gpu_layer" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_layer")
+
+# The whole decode step -- forty layers, the head and the argmax -- against the
+# oracle's L3 tokens. Needs the ~17.7 GB pinned set and tests/data/l3.
+add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")
+set_tests_properties("suite.decode" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP decode")
 
 # The design §7.9 kernels on the real checkpoint. Same gate, and it additionally
 # skips itself when there is no usable Vulkan device.

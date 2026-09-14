@@ -126,28 +126,72 @@ int cmd_bench(int argc, char** argv) {
     return rc;
 }
 
+// A whitespace- or comma-separated list of token ids. There is no tokenizer in
+// the runtime yet (design §15 P0), so a prompt reaches `deepmoe run` as ids --
+// which is also what makes a run reproducible against tools/oracle.py.
+Result<std::vector<uint32_t>> read_prompt_ids(const std::string& path) {
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return fail(Err::NotFound, std::format("cannot open '{}'", path));
+    std::vector<uint32_t> ids;
+    std::string tok;
+    for (int c = std::fgetc(f);; c = std::fgetc(f)) {
+        const bool sep = c == EOF || c == ',' || c == '[' || c == ']' ||
+                         c == ' ' || c == '\n' || c == '\r' || c == '\t';
+        if (!sep) { tok.push_back(static_cast<char>(c)); continue; }
+        if (!tok.empty()) { ids.push_back(static_cast<uint32_t>(std::strtoul(tok.c_str(), nullptr, 10))); tok.clear(); }
+        if (c == EOF) break;
+    }
+    std::fclose(f);
+    if (ids.empty()) return fail(Err::InvalidArgument, std::format("'{}' has no token ids", path));
+    return ids;
+}
+
+void print_token_line(uint32_t step, uint32_t in, const runtime::DecodeStepResult& r,
+                      const runtime::Engine& engine) {
+    double engram = 0, attn = 0, gate = 0, moe = 0, moe_gpu = 0, moe_host = 0;
+    uint32_t hits = 0, misses = 0;
+    uint64_t bytes = 0;
+    for (const runtime::LayerTiming& t : engine.layer_timings()) {
+        engram += t.engram_ms; attn += t.attn_ms; gate += t.gate_ms; moe += t.moe_ms;
+        moe_gpu += t.moe_gpu_ms; moe_host += t.moe_host_ms;
+        hits += t.hits; misses += t.misses; bytes += t.miss_bytes;
+    }
+    // design §13.1: every token's time, split into the buckets the design's
+    // upper-bound model is written in.
+    std::printf("%3u  %6u -> %6u  %8.1f ms | attn %6.1f  moe %6.1f (gpu %5.1f host %4.1f)  "
+                "stall %7.1f  engram %4.1f  other %4.1f | hit %3u/%3u  nvme %6.1f MB  "
+                "margin %.4f\n",
+                step, in, r.token, r.wall_ms, attn, moe, moe_gpu, moe_host, gate, engram,
+                r.wall_ms - attn - moe - gate - engram,
+                hits, hits + misses, bytes / 1e6, r.margin());
+}
+
 int cmd_run(int argc, char** argv) {
     RuntimeConfig cfg;
-    bool want_gpu = true;
-    std::string prompt;
-    uint32_t max_tokens = 64;
+    cfg.cache.budget_bytes = 0;     // 0 = size it from the machine (see init_gpu)
+    std::string prompt_ids_file;
+    std::string state_dir = "tests/data/l3";
+    uint32_t steps = 8;
+    bool teacher_force = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--model")            cfg.model_dir = arg_value(argc, argv, i, a);
-        else if (a == "--prompt")      prompt = arg_value(argc, argv, i, a);
+        else if (a == "--prompt-ids")  prompt_ids_file = arg_value(argc, argv, i, a);
+        else if (a == "--state")       state_dir = arg_value(argc, argv, i, a);
         else if (a == "--profile")     cfg.profile_jsonl = arg_value(argc, argv, i, a);
         else if (a == "--kvcache")     cfg.kvcache_dir = arg_value(argc, argv, i, a);
-        else if (a == "--max-tokens")  max_tokens = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
+        else if (a == "--steps")       steps = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
+        else if (a == "--teacher-force") teacher_force = true;
         else if (a == "--cache-gb")    cfg.cache.budget_bytes = uint64_t(std::atoll(arg_value(argc, argv, i, a).data())) << 30;
         else if (a == "--chunk-kb")    cfg.io.chunk_bytes = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data())) << 10;
         else if (a == "--qd")          cfg.io.max_inflight_ops = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
-        else if (a == "--no-gpu")      want_gpu = false;
         else if (a == "--buffered")    cfg.io.unbuffered = false;
         else { std::fprintf(stderr, "unknown option %.*s\n", static_cast<int>(a.size()), a.data()); return usage(); }
     }
     if (cfg.model_dir.empty()) {
-        std::fputs("--model DIR is required (the output of tools/repack.py)\n", stderr);
+        std::fputs("--model DIR is required (the 48 safetensors shards plus "
+                   "deepmoe_manifest.json)\n", stderr);
         return 2;
     }
 
@@ -156,31 +200,66 @@ int cmd_run(int argc, char** argv) {
         std::fprintf(stderr, "init failed: %s\n", r.error().str().c_str());
         return 1;
     }
+    if (auto r = engine.init_gpu(); !r) {
+        std::fprintf(stderr, "gpu init: %s\n", r.error().str().c_str());
+        return 1;
+    }
+    // Prefill is design §11 / P5. Until it exists the state a decode step
+    // starts from is the oracle's, and the run says so on the status line.
+    if (auto r = engine.load_decode_state(state_dir); !r) {
+        std::fprintf(stderr, "decode state '%s': %s\n(run "
+                     "`tools/oracle.py --level l3 --out %s` first)\n",
+                     state_dir.c_str(), r.error().str().c_str(), state_dir.c_str());
+        return 1;
+    }
     std::fputs(engine.status().c_str(), stdout);
 
-    if (want_gpu) {
-        if (auto r = engine.init_gpu(); !r) {
-            std::fprintf(stderr, "gpu init: %s\n", r.error().str().c_str());
-            if (r.error().code != Err::Unimplemented) return 1;
+    const runtime::DecodeState* st = engine.decode_state();
+    std::vector<uint32_t> prompt;
+    if (!prompt_ids_file.empty()) {
+        auto ids = read_prompt_ids(prompt_ids_file);
+        if (!ids) { std::fprintf(stderr, "%s\n", ids.error().str().c_str()); return 1; }
+        prompt = *ids;
+        if (prompt != st->prompt_ids()) {
+            std::fprintf(stderr,
+                         "--prompt-ids has %zu tokens and the loaded state was built from "
+                         "%zu; they must be the same prompt, because the window KV in "
+                         "'%s' is what that prompt left behind.\n",
+                         prompt.size(), st->prompt_ids().size(), state_dir.c_str());
+            return 1;
         }
     }
 
-    runtime::GenerateOptions opts;
-    opts.max_tokens  = max_tokens;
-    opts.greedy      = cfg.temperature == 0.0f;
-    opts.speculative = cfg.speculation.enabled;
+    if (auto ov = engine.measure_submit_overhead(64); ov)
+        std::printf("submit    %.3f ms per submit+fence round trip; a decode step makes "
+                    "about 128 of them (design 13.1's dispatch bucket)\n", *ov);
 
-    // TODO(design §15 P0): the tokenizer. Until it exists `--prompt` cannot be
-    // turned into token ids, so an empty prompt is passed through and generate()
-    // reports what is missing.
-    (void)prompt;
-    std::vector<uint32_t> tokens;
-    auto out = engine.generate(tokens, opts);
-    if (!out) {
-        std::fprintf(stderr, "generate: %s\n", out.error().str().c_str());
-        return 1;
+    const uint32_t n = std::min<uint32_t>(steps, st->steps());
+    if (n < steps)
+        std::printf("note: the loaded state covers %u steps, so %u were run\n",
+                    st->steps(), n);
+    std::printf("\nstep  in     -> out     wall      | the design 13.1 breakdown\n");
+
+    uint32_t next = st->greedy_tokens().front();
+    std::vector<uint32_t> produced;
+    for (uint32_t s = 0; s < n; ++s) {
+        const uint32_t in = teacher_force ? st->greedy_tokens()[s] : next;
+        auto r = engine.decode_step(in, st->decode_pos() + s, static_cast<int32_t>(s));
+        if (!r) { std::fprintf(stderr, "step %u: %s\n", s, r.error().str().c_str()); return 1; }
+        print_token_line(s, in, *r, engine);
+        produced.push_back(r->token);
+        next = r->token;
     }
-    std::fputs(out->summary.to_string().c_str(), stdout);
+
+    std::printf("\ntokens   ");
+    for (uint32_t t : produced) std::printf("%u ", t);
+    std::printf("\nreference");
+    for (uint32_t s = 0; s < n; ++s) std::printf(" %u", st->greedy_tokens()[s + 1]);
+    uint32_t match = 0;
+    for (uint32_t s = 0; s < n && produced[s] == st->greedy_tokens()[s + 1]; ++s) ++match;
+    std::printf("\n%u/%u tokens match the fp32 reference%s\n", match, n,
+                teacher_force ? " (teacher-forced)" : " before divergence");
+    std::fputs(engine.profiler().summary().to_string().c_str(), stdout);
     return 0;
 }
 

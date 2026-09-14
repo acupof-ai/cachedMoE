@@ -75,6 +75,17 @@ public:
     // returns only the routed half and says so rather than looking right.
     bool shared_ready() const { return shared_ok_; }
 
+    // What the last `run` spent, split so the §13.1 MoE bucket can be read as
+    // "kernel" against "everything around it". The host half is the activation
+    // round trip and the two accumulations, all of which read write-combining
+    // memory (design §3.3) and are therefore not free.
+    struct Timing {
+        double routed_gpu_ms = 0.0, routed_wall_ms = 0.0;
+        double shared_gpu_ms = 0.0, shared_wall_ms = 0.0;
+        double host_ms       = 0.0;
+    };
+    const Timing& timing() const { return timing_; }
+
 private:
     Result<void> bind_shared(uint32_t layer);
 
@@ -86,6 +97,10 @@ private:
     uint32_t                  shared_layer_ = 0xFFFFFFFFu;
     bool                      shared_ok_    = false;
     std::vector<uint16_t>     xq_;
+    // Ordinary host staging for x and the two y vectors: see the memcpy note in
+    // `run`. Computing over the GPU-visible originals is 60x slower.
+    std::vector<float>        xf_, yf_, sf_;
+    Timing                    timing_{};
 };
 
 }  // namespace deepmoe::runtime

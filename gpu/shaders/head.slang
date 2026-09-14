@@ -17,9 +17,17 @@
 // 4,040 workgroups at the default spec, which still balances across 40 CUs
 // while staging the 20 KiB activation four times less often.
 
+// Stage 1 is the greedy sampler (design §7.11's temperature-0 half): one
+// workgroup reduces the 129,280 logits to the argmax and the runner-up, so the
+// only thing that crosses PCIe is four words -- never the logit vector. The
+// runner-up is there because design §12 L3 asks for the top1-top2 margin at any
+// disagreement with the oracle: a divergence at a margin of 1e-6 is a different
+// finding from one at 0.5. Ties go to the lower id, which is what
+// `torch.argmax` does and therefore what the oracle's tokens assume.
+
 #include "attn_common.slang"
 
-static const uint kW = 0, kX = 1, kLogits = 2;
+static const uint kW = 0, kX = 1, kLogits = 2, kSample = 3;
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
 
@@ -31,10 +39,11 @@ struct HeadPush {
 [[vk::push_constant]] HeadPush pc;
 
 groupshared float gXf[5120];
+groupshared float gBest[kWg];
+groupshared uint  gBestId[kWg];
+groupshared float gSecond[kWg];
 
-[shader("compute")]
-[numthreads(256, 1, 1)]
-void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
+void stage_head(uint3 gid, uint tid) {
     for (uint i = tid; i < pc.k; i += kWg) gXf[i] = load_f32(Ptr[kX] + (uint64_t)i * 4);
     GroupMemoryBarrierWithGroupSync();
 
@@ -50,8 +59,8 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     for (uint base = sublane * 8; base < pc.k; base += LanesPerRow * 8) {
         float x[8];
         [unroll] for (uint j = 0; j < 8; ++j) x[j] = gXf[base + j];
-        for (uint r = 0; r < RowsPerLane; ++r) {
-            if (rowBase + r >= pc.rows) continue;
+        [unroll] for (uint r = 0; r < kMaxRowsPerLane; ++r) {
+            if (r >= RowsPerLane || rowBase + r >= pc.rows) continue;
             const uint4 v = load16(Ptr[kW] + ((uint64_t)(rowBase + r) * pc.k + base) * 2);
             [unroll] for (uint j = 0; j < 4; ++j) {
                 acc[r] += bf16_decode(v[j] & 0xFFFFu) * x[j * 2];
@@ -59,9 +68,60 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             }
         }
     }
-    for (uint r = 0; r < RowsPerLane; ++r) {
+    // Unrolled against the compile-time bound, predicated on the
+    // specialisation constant: see gemv8_rows in fp8_gemv.slang.
+    [unroll] for (uint r = 0; r < kMaxRowsPerLane; ++r) {
+        if (r >= RowsPerLane) continue;
         const float dot = row_reduce(acc[r], tid, sublane);
         if (sublane == 0 && rowBase + r < pc.rows)
             *(float*)(Ptr[kLogits] + (uint64_t)(rowBase + r) * 4) = dot;
     }
+}
+
+// Merge two (best, id, second) candidates. `a` wins ties, so reducing with the
+// lower id on the left keeps argmax first-wins.
+void top2_merge(inout float ab, inout uint ai, inout float a2,
+                float bb, uint bi, float b2) {
+    if (ab >= bb) { a2 = max(a2, bb); }
+    else          { a2 = max(ab, b2); ab = bb; ai = bi; }
+}
+
+void stage_argmax(uint tid) {
+    float best = -3.0e38f, second = -3.0e38f;
+    uint  bid = 0;
+    const uint64_t L = Ptr[kLogits];
+    // Strided so consecutive lanes read consecutive words. Within a thread a
+    // later equal value never displaces an earlier one, and the tree below
+    // breaks ties towards the lower thread, so the winner is the first maximum
+    // in id order -- `torch.argmax`'s rule, which the oracle's tokens assume.
+    for (uint i = tid; i < pc.rows; i += kWg) {
+        const float v = load_f32(L + (uint64_t)i * 4);
+        if (v > best)        { second = best; best = v; bid = i; }
+        else if (v > second) { second = v; }
+    }
+    gBest[tid] = best; gBestId[tid] = bid; gSecond[tid] = second;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint s = kWg >> 1; s > 0; s >>= 1) {
+        if (tid < s) {
+            float ab = gBest[tid], a2 = gSecond[tid];
+            uint  ai = gBestId[tid];
+            top2_merge(ab, ai, a2, gBest[tid + s], gBestId[tid + s], gSecond[tid + s]);
+            gBest[tid] = ab; gBestId[tid] = ai; gSecond[tid] = a2;
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (tid == 0) {
+        uint* out = (uint*)Ptr[kSample];
+        out[0] = gBestId[0];
+        out[1] = asuint(gBest[0]);
+        out[2] = asuint(gSecond[0]);
+        out[3] = pc.rows;
+    }
+}
+
+[shader("compute")]
+[numthreads(256, 1, 1)]
+void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
+    if (Stage == 0) stage_head(gid, tid);
+    else            stage_argmax(tid);
 }

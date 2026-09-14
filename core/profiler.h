@@ -196,4 +196,25 @@ private:
     TimePoint t0_;
 };
 
+// The same timer for a profiler that may not exist. Most of the runtime is
+// usable without one (tests, the CPU oracle), and `ScopedPhase(*p, ...)` on a
+// null pointer is undefined behaviour even when the reference is never read.
+class ScopedPhaseIf {
+public:
+    ScopedPhaseIf(Profiler* p, Phase ph) : p_(p), ph_(ph), t0_(Clock::now()) {}
+    ~ScopedPhaseIf() { if (p_) p_->add_phase(ph_, Clock::now() - t0_); }
+    ScopedPhaseIf(const ScopedPhaseIf&) = delete;
+    ScopedPhaseIf& operator=(const ScopedPhaseIf&) = delete;
+    // Charges what has elapsed so far and stops the timer, so a scope can be
+    // split into two buckets without an inner block.
+    void close() {
+        if (p_) p_->add_phase(ph_, Clock::now() - t0_);
+        p_ = nullptr;
+    }
+private:
+    Profiler* p_;
+    Phase     ph_;
+    TimePoint t0_;
+};
+
 }  // namespace deepmoe

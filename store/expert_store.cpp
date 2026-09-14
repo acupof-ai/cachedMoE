@@ -65,6 +65,18 @@ Result<void> ExpertStore::init(std::unique_ptr<SlabBacking> backing,
     return {};
 }
 
+void ExpertStore::reset() {
+    std::lock_guard lk(mutex_);
+    slots_.clear();
+    free_list_.clear();
+    index_.clear();
+    table_.clear();
+    layers_ = experts_per_layer_ = 0;
+    completed_timeline_ = 0;
+    stats_ = ExpertStoreStats{};
+    pool_.reset();     // releases every slab through the backing, then drops it
+}
+
 void ExpertStore::publish_locked(uint32_t slot) {
     const ExpertSlot& s = slots_[slot];
     // A host-only backing has no device address; publish the host pointer so

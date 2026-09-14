@@ -160,10 +160,17 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     // Attention half: the stream arrives in `x`, hc_post folds in whatever the
     // previous sublayer left (design §7.7), and the mixes for the FFN half go
     // to mix_b. The post-hc_post stream lands in `xout`.
+    //
+    // The sublayer before this one is the PREVIOUS LAYER's FFN, so the output
+    // being folded in is `moe_y`, not `wob`. A layer-at-a-time validator never
+    // sees the difference -- it runs with `apply_hc_post` off, so the slot is
+    // not read -- and a forty-layer chain sees nothing else: feeding it `wob`
+    // adds each layer's attention output to the stream twice and drops its MoE
+    // output entirely, which decodes to the input token over and over.
     bind_mhc(*runner_, gpu::AttnStage::MhcPost, gpu::AttnStage::MhcMix,
              gpu::AttnStage::MhcFinal, b,
              w.hc_attn_fn, w.hc_attn_base, w.hc_attn_scale, w.attn_norm,
-             b.mix_a, b.mix_b, b.wob, b.x, b.xout);
+             b.mix_a, b.mix_b, b.moe_y, b.x, b.xout);
     // FFN half: reads the stream the attention half wrote, folds in wo_b's
     // output, and writes back to `x`. In-place would also be safe -- a thread
     // reads all hc copies of its own element before writing any -- but keeping

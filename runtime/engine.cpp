@@ -1,8 +1,13 @@
 #include "runtime/engine.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <format>
 
+#include "core/align.h"
 #include "core/log.h"
+#include "gpu/vulkan/moe_kernels.h"   // gpu::default_shader_dir
 #include "model/layout.h"
 #include "storage/backend.h"
 
@@ -19,6 +24,68 @@ std::string join_path(const std::string& dir, const std::string& name) {
     return dir + "/" + name;
 #endif
 }
+
+double ms_since(TimePoint t0) {
+    return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+}
+
+float bf16_to_f32(uint16_t h) {
+    const uint32_t b = static_cast<uint32_t>(h) << 16;
+    float f;
+    std::memcpy(&f, &b, 4);
+    return f;
+}
+
+// design §3.3: fill path A, then path B.
+//
+// Path A is the DEVICE_LOCAL|HOST_VISIBLE heap -- 74 GiB on this machine, and
+// what `bench/results/heap_capacity_idle.csv` measured as the larger of the
+// two. When it runs out the pool keeps going on path B (imported host memory,
+// ~26 GiB) rather than stopping, which is the difference between a 100 GiB
+// cache and a 74 GiB one. The ExpertStore never learns which it got: both
+// hand back a (host_ptr, device_address) pair, which is the whole point of
+// store::SlabBacking.
+class DualPathBacking final : public store::SlabBacking {
+public:
+    DualPathBacking(std::unique_ptr<store::SlabBacking> a,
+                    std::unique_ptr<store::SlabBacking> b)
+        : a_(std::move(a)), b_(std::move(b)) {}
+
+    Result<store::SlabMemory> allocate(uint64_t bytes) override {
+        if (a_ && !a_done_) {
+            auto m = a_->allocate(bytes);
+            if (m) { owner_.push_back({m->host_ptr, false}); ++a_slabs_; return m; }
+            log_info("slab pool: path A full after {} slabs ({}), continuing on path B",
+                     a_slabs_, m.error().str());
+            a_done_ = true;
+        }
+        if (!b_) return fail(Err::ResourceExhausted, "path A is full and there is no path B");
+        auto m = b_->allocate(bytes);
+        if (!m) return m;
+        owner_.push_back({m->host_ptr, true});
+        ++b_slabs_;
+        return m;
+    }
+
+    void release(const store::SlabMemory& mem) override {
+        for (auto it = owner_.begin(); it != owner_.end(); ++it) {
+            if (it->first != mem.host_ptr) continue;
+            (it->second ? b_ : a_)->release(mem);
+            owner_.erase(it);
+            return;
+        }
+    }
+    const char* name() const override { return "path A+B"; }
+
+    uint32_t a_slabs() const { return a_slabs_; }
+    uint32_t b_slabs() const { return b_slabs_; }
+
+private:
+    std::unique_ptr<store::SlabBacking> a_, b_;
+    std::vector<std::pair<void*, bool>> owner_;
+    uint32_t a_slabs_ = 0, b_slabs_ = 0;
+    bool     a_done_ = false;
+};
 
 }  // namespace
 
@@ -64,8 +131,8 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     if (!backend) return std::unexpected(backend.error());
     if (auto r = io_.start(std::move(*backend), cfg_.io, &profiler_); !r) return r;
 
-    // Path A/B decide where the slabs live; without a GPU the host backing is
-    // the honest choice and the only one the tests need (design §3.3).
+    // Without a GPU the host backing is the honest choice and the only one the
+    // storage tests need (design §3.3). init_gpu() re-backs the store.
     std::unique_ptr<store::SlabBacking> backing = std::make_unique<store::HostSlabBacking>();
     if (auto r = store_.init(std::move(backing), cfg_.cache,
                              layout::kTotalLogicalLayers, layout::kRoutedExperts); !r)
@@ -80,26 +147,189 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     return {};
 }
 
-// TODO(design §7, §15 P2): create the device, pick the memory path, allocate
-// the slab pool through gpu/vulkan/memory.h, build the pipelines from
-// gpu/shaders/*.spv, create the timeline and the KV cache. Every piece has an
-// interface already; what is missing is the kernel bodies.
+// --- GPU bring-up -----------------------------------------------------------
+
+Result<void> Engine::load_pinned() {
+    // design §9.3's pinned set: attention, shared experts, router, mHC, norms,
+    // engram wkv, embed, head, mtp. ~17.7 GB, read once, never evicted.
+    std::vector<std::string> names = store::pinned_global_tensors(manifest_);
+    for (uint32_t L = 0; L < model_cfg_.text.num_hidden_layers; ++L) {
+        auto per = store::pinned_layer_tensors(manifest_, L);
+        names.insert(names.end(), per.begin(), per.end());
+    }
+    const uint64_t want = store::pinned_bytes(manifest_, names);
+
+    // Both halves at once, before anything is allocated: design §5.2 / §9.2.2
+    // measured the Windows commit limit as the binding constraint, and a
+    // failure 14 GB into a 17.7 GB load is a worse diagnostic than a sentence.
+    if (auto r = store::check_commit_available(want + cache_budget_,
+                                               "pinned weights + expert cache"); !r)
+        return r;
+
+    store::PinnedConfig pc;
+    pc.region_bytes = 1ull << 30;   // under the 2 GiB maxMemoryAllocationSize of §1.1
+    auto pb = alloc_a_.make_slab_backing();
+    if (!pb) return std::unexpected(pb.error());
+    if (auto r = pinned_.init(std::move(*pb), pc); !r) return r;
+
+    const TimePoint t0 = Clock::now();
+    if (auto r = pinned_.load(manifest_, shards_, io_, names); !r) return r;
+    const double s = ms_since(t0) / 1000.0;
+    log_info("engine: pinned {} tensors, {} in {:.1f}s ({:.2f} GB/s), {} regions",
+             pinned_.tensor_count(), human_bytes(pinned_.bytes_loaded()), s,
+             s > 0 ? pinned_.bytes_loaded() / s / 1e9 : 0.0, pinned_.region_count());
+    return {};
+}
+
+Result<void> Engine::build_expert_cache() {
+    CacheConfig cache = cfg_.cache;
+    cache.budget_bytes = cache_budget_;
+    auto a = alloc_a_.make_slab_backing();
+    if (!a) return std::unexpected(a.error());
+    std::unique_ptr<store::SlabBacking> b;
+    if (auto rb = alloc_b_.make_slab_backing(); rb) b = std::move(*rb);
+    auto dual = std::make_unique<DualPathBacking>(std::move(*a), std::move(b));
+    DualPathBacking* raw = dual.get();
+
+    if (auto r = store_.init(std::move(dual), cache, layout::kTotalLogicalLayers,
+                             layout::kRoutedExperts); !r)
+        return r;
+    if (auto r = planner_.init(store_, io_, manifest_, shards_, cache, cfg_.prefetch,
+                               &profiler_); !r)
+        return r;
+    log_info("engine: expert cache {} slots, {} ({} slabs on path A, {} on path B)",
+             store_.slot_count(), human_bytes(store_.capacity_bytes()),
+             raw->a_slabs(), raw->b_slabs());
+    return {};
+}
+
+Result<void> Engine::resolve_weights() {
+    // Resolved once per layer, not per token: the whole point of the pinned set
+    // is that these addresses never move.
+    weights_.clear();
+    weights_.reserve(model_cfg_.text.num_hidden_layers);
+    for (uint32_t L = 0; L < model_cfg_.text.num_hidden_layers; ++L) {
+        auto w = LayerWeights::from_pinned(pinned_, L);
+        if (!w) return std::unexpected(w.error());
+        weights_.push_back(*w);
+    }
+    auto n = pinned_.require("norm.weight");
+    if (!n) return std::unexpected(n.error());
+    norm_w_ = (*n)->data;
+    auto h = pinned_.require("head.weight");
+    if (!h) return std::unexpected(h.error());
+    head_w_ = (*h)->data;
+    auto e = pinned_.require("embed.weight");
+    if (!e) return std::unexpected(e.error());
+    embed_ = *e;
+    return {};
+}
+
 Result<void> Engine::init_gpu() {
     if (!ready_) return fail(Err::FailedPrecondition, "call init() first");
+    if (gpu_ready_) return {};
+
     if (auto r = device_.create(); !r) return r;
     if (auto r = device_.caps().check_required(); !r) return r;
     if (auto r = timeline_.create(device_, 0); !r) return r;
-    // The remaining bring-up (memory path, slab re-backing, pipelines, KV)
-    // depends on kernels that do not exist yet.
-    return unimplemented("runtime::Engine::init_gpu (design §7, P2)");
+    if (auto r = alloc_a_.init(device_, MemoryPath::DeviceLocalHostVisible); !r) return r;
+    // Path B is optional: it only widens the expert cache. A machine that
+    // cannot import host memory still runs, with a path-A-sized cache.
+    if (auto r = alloc_b_.init(device_, MemoryPath::ExternalMemoryHost); !r)
+        log_warn("engine: path B unavailable ({}); the expert cache is path A only",
+                 r.error().str());
+
+    cache_budget_ = cfg_.cache.budget_bytes;
+    if (cache_budget_ == 0) {
+        // "As much as the machine will give", which on Windows means the commit
+        // charge (design §5.2), minus the pinned set and a working margin.
+        cache_budget_ = 56ull << 30;
+        log_info("engine: cache budget auto -> {}", human_bytes(cache_budget_));
+    }
+
+    if (auto r = load_pinned(); !r) return r;
+    if (auto r = build_expert_cache(); !r) return r;
+    if (auto r = resolve_weights(); !r) return r;
+
+    const std::string dir = gpu::default_shader_dir();
+    if (auto r = attn_.create(device_, alloc_a_, dir); !r) return r;
+    if (auto r = dec_.create(device_, alloc_a_, dir); !r) return r;
+    if (auto r = scratch_.create(alloc_a_, 32ull << 20); !r) return r;
+
+    const TextConfig& c = model_cfg_.text;
+    auto lg = alloc_a_.allocate(uint64_t(c.vocab_size) * sizeof(float), true, true);
+    if (!lg) return std::unexpected(lg.error());
+    logits_ = *lg;
+    auto sm = alloc_a_.allocate_host_coherent(sizeof(gpu::SampleOut));
+    if (!sm) return std::unexpected(sm.error());
+    sample_ = *sm;
+    std::memset(sample_.host_ptr, 0, sizeof(gpu::SampleOut));
+
+    if (auto r = layer_.create(device_, attn_, scratch_, c); !r) return r;
+    if (auto r = moe_.create(device_, alloc_a_, dir, store_, planner_, pinned_, c); !r) return r;
+
+    timings_.assign(c.num_hidden_layers, LayerTiming{});
+    gpu_ready_ = true;
+    log_info("engine: gpu ready on {}", device_.caps().device_name);
+    return {};
+}
+
+Result<void> Engine::load_decode_state(const std::string& dir) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    auto st = DecodeState::load(dir);
+    if (!st) return std::unexpected(st.error());
+    state_ = std::make_unique<DecodeState>(std::move(*st));
+
+    const TextConfig& c = model_cfg_.text;
+    KvStoreConfig kc;
+    kc.layers      = c.num_hidden_layers;
+    kc.window      = c.sliding_window;
+    kc.latent_dim  = c.head_dim;
+    // Sized from what the export actually holds, plus the room the remaining
+    // steps will need; the compressed half grows by one row a step at ratio 1.
+    kc.max_context = std::max<uint32_t>(256, state_->max_compressed() + 64);
+    if (auto r = kvs_.create(alloc_a_, kc); !r) return r;
+    if (auto r = state_->seed_prefill(kvs_); !r) return r;
+
+    auto tables = EngramTables::load(dir);
+    if (!tables) return std::unexpected(tables.error());
+    if (auto r = engram_.create(alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
+                                *std::move(tables)); !r)
+        return r;
+
+    history_ = state_->prompt_ids();
+    token_   = state_->prefill_len();
+    log_info("engine: decode state loaded -- {} prompt tokens, {} reference steps, "
+             "KV {} (window REAL, compressed+topk LOADED, design 7.4)",
+             history_.size(), state_->steps(), human_bytes(kvs_.bytes()));
+    return {};
 }
 
 void Engine::shutdown() {
+    // Everything that holds memory from an allocator has to let go before the
+    // allocator does, and the allocators before the device.
+    state_.reset();
+    engram_.destroy();
+    moe_.destroy();
+    layer_.destroy();
+    kvs_.destroy();
+    if (logits_.valid()) alloc_a_.free(logits_);
+    if (sample_.valid()) alloc_a_.free(sample_);
+    scratch_.destroy();
+    dec_.destroy();
+    attn_.destroy();
+    store_.reset();      // the slabs came from alloc_a_/alloc_b_; give them back first
+    pinned_.reset();
     io_.stop();
     shards_.close();
+    alloc_a_.shutdown();
+    alloc_b_.shutdown();
     timeline_.destroy();
     device_.destroy();
     kv_.reset();
+    weights_.clear();
+    timings_.clear();
+    history_.clear();
     profiler_.close();
     ready_ = false;
     gpu_ready_ = false;
@@ -111,15 +341,289 @@ Result<void> Engine::prefill(std::span<const uint32_t>) {
     return unimplemented("runtime::Engine::prefill (design §11, P5)");
 }
 
-// TODO(design §7.14, §7.8): the per-token command buffer, the per-layer routing
-// resolution and the timeline host-signal.
-Result<SampleResult> Engine::decode_step() {
-    return unimplemented("runtime::Engine::decode_step (design §7.14, P2/P3)");
+// --- one decode step --------------------------------------------------------
+
+Result<void> Engine::embed_token(uint32_t token) {
+    const TextConfig& c = model_cfg_.text;
+    if (token >= c.vocab_size)
+        return fail(Err::OutOfRange, std::format("token {} >= vocab {}", token, c.vocab_size));
+    // `h = embed(ids).unsqueeze(2).repeat(1, 1, hc_mult, 1)`: one row, four
+    // identical copies. The row is bf16 in a path-A mapping, so it is memcpy'd
+    // out in one go (a write-combining READ, design §3.3 -- 10 KiB of it, about
+    // 15 us) and widened on the host rather than read element by element.
+    std::vector<uint16_t> row(c.hidden_size);
+    std::memcpy(row.data(),
+                static_cast<const std::byte*>(embed_->data_host) +
+                    uint64_t(token) * c.hidden_size * 2,
+                size_t(c.hidden_size) * 2);
+    // Widen once into host memory, then memcpy each copy. Writing the four hc
+    // copies interleaved (`x[j * dim + d]` with j innermost) would touch four
+    // addresses 20 KiB apart per element, which flushes a write-combining
+    // buffer per store instead of filling it -- the write-side twin of the
+    // read problem runtime/moe_bridge.cpp documents.
+    std::vector<float> wide(c.hidden_size);
+    for (uint32_t d = 0; d < c.hidden_size; ++d) wide[d] = bf16_to_f32(row[d]);
+    auto* x = static_cast<float*>(layer_.scratch().x.host);
+    for (uint32_t j = 0; j < c.hc_mult; ++j)
+        std::memcpy(x + size_t(j) * c.hidden_size, wide.data(),
+                    size_t(c.hidden_size) * sizeof(float));
+    // `make_identity_pre_mix`: the first sublayer collapses the four copies
+    // onto copy 0. post/comb stay zero -- the first sublayer applies no hc_post.
+    auto* mix = static_cast<float*>(layer_.scratch().mix_a.host);
+    std::memset(mix, 0, 128);
+    mix[0] = 1.0f;
+    return {};
 }
 
-// TODO(design §10): the DSpark draft/verify cycle around decode_step.
-Result<GenerateResult> Engine::generate(std::span<const uint32_t>, const GenerateOptions&) {
-    return unimplemented("runtime::Engine::generate (design §10, P4)");
+Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
+                               LayerTiming& t) {
+    const TextConfig& c = model_cfg_.text;
+    DecodeScratch& b = layer_.scratch();
+
+    auto view = kvs_.layer(L);
+    if (!view) return std::unexpected(view.error());
+
+    LayerStep st;
+    st.layer          = L;
+    st.position       = position;
+    st.compress_ratio = c.compress_ratio(L);
+    st.apply_hc_post  = apply_post;
+    st.kv             = *view;
+
+    // The engram writes into the residual stream BEFORE the block (design
+    // §2.1). design §7.7 normally defers the previous sublayer's hc_post into
+    // this layer's first mega_mhc, so on an engram layer that hc_post has to be
+    // materialised first -- otherwise the engram would be added to a stream
+    // that is one sublayer behind.
+    if (engram_.has_layer(L)) {
+        const TimePoint t0 = Clock::now();
+        if (apply_post) {
+            LayerStep prev = st;
+            prev.layer = L - 1;
+            if (auto r = layer_.run_close(prev); !r) return r;   // b.x -> b.xout
+            if (auto r = engram_.run(L, history_, position, b.xout.addr, b.x.addr,
+                                     &profiler_); !r)
+                return r;
+        } else {
+            if (auto r = engram_.run(L, history_, position, b.x.addr, b.x.addr,
+                                     &profiler_); !r)
+                return r;
+        }
+        apply_post = false;
+        st.apply_hc_post = false;
+        t.engram_ms = ms_since(t0);
+    }
+
+    if (auto r = layer_.bind(weights_[L], st); !r) return r;
+
+    const TimePoint t_attn = Clock::now();
+    if (auto r = layer_.run_attention(st); !r) return r;
+    t.attn_ms = ms_since(t_attn);
+    profiler_.add_phase(Phase::HotGemv, Nanos(int64_t(t.attn_ms * 1e6)));
+
+    // design §7.1 / §7.8: the gate's ids are already in host-coherent memory.
+    // Classify them, fetch the misses at P0, wait, host-signal the timeline the
+    // MoE dispatch is gated on, then dispatch.
+    double   gate_ms = 0.0;
+    uint64_t miss_bytes = 0;
+    uint32_t hits = 0, misses = 0;
+    auto on_ready = [&](const uint32_t* ids, uint32_t n) -> Result<void> {
+        const TimePoint g0 = Clock::now();
+        std::vector<uint16_t> chosen(n);
+        for (uint32_t i = 0; i < n; ++i) chosen[i] = static_cast<uint16_t>(ids[i]);
+        store::RouteDecision route;
+        route.layer   = L;
+        route.chosen  = chosen;
+        route.weights = std::span<const float>(
+            static_cast<const float*>(b.gate_weights.host), n);
+        auto plan = planner_.plan_layer(route, token_);
+        if (!plan) return std::unexpected(plan.error());
+        hits       = static_cast<uint32_t>(plan->hits.size());
+        misses     = static_cast<uint32_t>(plan->misses.size());
+        miss_bytes = plan->miss_bytes;
+        if (!plan->issued.empty()) io_.drain();
+        gate_ms = ms_since(g0);
+        return {};
+    };
+    const TimePoint t_moe0 = Clock::now();
+    if (auto r = layer_.run_moe(moe_, st, &timeline_, on_ready); !r) return r;
+    // The gate half is the NVMe wait of design §13.1; what is left is the two
+    // MoE dispatches plus the routed and shared runners' own submits.
+    t.gate_ms = gate_ms;
+    t.moe_ms  = ms_since(t_moe0) - gate_ms;
+    const GpuMoeBridge::Timing& mt = moe_.timing();
+    t.moe_gpu_ms  = mt.routed_gpu_ms + mt.shared_gpu_ms;
+    t.moe_host_ms = mt.host_ms;
+    t.hits = hits;
+    t.misses = misses;
+    t.miss_bytes = miss_bytes;
+    profiler_.add_phase(Phase::NvmeStall, Nanos(int64_t(t.gate_ms * 1e6)));
+    profiler_.add_phase(Phase::ExpertHit, Nanos(int64_t(t.moe_ms * 1e6)));
+    if (layer_probe) layer_probe(L, layer_);
+    apply_post = true;
+    return {};
+}
+
+Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
+    const TextConfig& c = model_cfg_.text;
+    DecodeScratch& b = layer_.scratch();
+    const uint32_t n_wg0 = (c.hidden_size + 255) / 256;
+
+    // `h = layer.hc_pre(h, pre_mix); logits = head(norm(h))`. mega_mhc stage 0
+    // with the post bit does the last layer's hc_post AND the collapse, stage 2
+    // does the RMSNorm; Sinkhorn is skipped because stage 1 is not dispatched
+    // and there is no next sublayer to hand mixes to (gpu/shaders/head.slang).
+    // The norm weight is the model's own `norm.weight`, not the layer's, so
+    // MhcClose's slice is repointed and copied into MhcFinal's -- one slice per
+    // stage is why the copy exists at all.
+    uint64_t* close = attn_.slots(gpu::AttnStage::MhcClose);
+    close[gpu::slot::kNormW] = norm_w_;
+    std::memcpy(attn_.slots(gpu::AttnStage::MhcFinal), close, gpu::kAttnStageStride);
+
+    uint64_t* hd = attn_.slots(gpu::AttnStage::Head);
+    hd[gpu::slot::kHeadW]      = head_w_;
+    hd[gpu::slot::kHeadX]      = b.u.addr;
+    hd[gpu::slot::kHeadLogits] = logits_.dev_addr;
+
+    gpu::MhcPush mp{c.hidden_size, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
+                    c.hc_sinkhorn_iters,
+                    gpu::kMhcFlagPost | gpu::kMhcFlagSkipSinkhorn,
+                    static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
+    gpu::HeadPush hp{c.vocab_size, c.hidden_size, 0};
+
+    const TimePoint t0 = Clock::now();
+    if (auto r = attn_.dispatch_now(gpu::AttnStage::MhcClose, &mp, sizeof mp, n_wg0); !r)
+        return std::unexpected(r.error());
+    if (auto r = attn_.dispatch_now(gpu::AttnStage::MhcFinal, &mp, sizeof mp, n_wg0); !r)
+        return std::unexpected(r.error());
+    if (auto r = attn_.dispatch_now(gpu::AttnStage::Head, &hp, sizeof hp,
+                                    attn_.gemv_groups(gpu::AttnStage::Head, c.vocab_size)); !r)
+        return std::unexpected(r.error());
+    profiler_.add_phase(Phase::HotGemv, Nanos(int64_t(ms_since(t0) * 1e6)));
+    profiler_.note_hot_bytes(uint64_t(c.vocab_size) * c.hidden_size * 2);
+
+    // Greedy sampling on the GPU: four words come back, never the 129,280-wide
+    // logit vector (design §7.11).
+    const TimePoint t1 = Clock::now();
+    uint64_t* sm = dec_.slots(gpu::DecodeStage::Argmax);
+    sm[gpu::dslot::kHeadLogits] = logits_.dev_addr;
+    sm[gpu::dslot::kHeadSample] = sample_.dev_addr;
+    if (auto r = dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
+        return std::unexpected(r.error());
+    gpu::SampleOut out{};
+    std::memcpy(&out, sample_.host_ptr, sizeof out);
+    profiler_.add_phase(Phase::Sample, Nanos(int64_t(ms_since(t1) * 1e6)));
+    if (out.rows != c.vocab_size)
+        return fail(Err::Internal,
+                    std::format("the sampler scanned {} rows, not the {}-wide vocabulary",
+                                out.rows, c.vocab_size));
+
+    DecodeStepResult res;
+    res.token    = out.token;
+    res.position = position;
+    res.top1     = out.top1;
+    res.top2     = out.top2;
+    return res;
+}
+
+Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t position,
+                                             int32_t state_step) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (weights_.empty()) return fail(Err::FailedPrecondition, "no layer weights resolved");
+    const TextConfig& c = model_cfg_.text;
+
+    profiler_.token_begin(position);
+    const TimePoint t_start = Clock::now();
+
+    if (history_.size() <= position) history_.resize(position + 1, 0);
+    history_[position] = in_token;
+
+    if (state_step >= 0) {
+        if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
+        ScopedPhaseIf p(&profiler_, Phase::CpuSync);
+        if (auto r = state_->seed_step(kvs_, static_cast<uint32_t>(state_step)); !r)
+            return std::unexpected(r.error());
+    }
+
+    if (auto r = embed_token(in_token); !r) return std::unexpected(r.error());
+
+    timings_.assign(c.num_hidden_layers, LayerTiming{});
+    bool apply_post = false;   // the very first sublayer has nothing to fold in
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
+        if (auto r = run_layer(L, position, apply_post, timings_[L]); !r)
+            return std::unexpected(r.error());
+
+    auto res = collapse_and_sample(position);
+    if (!res) return res;
+    res->wall_ms = ms_since(t_start);
+    res->record  = profiler_.token_end();
+    ++token_;
+    return res;
+}
+
+Result<SampleResult> Engine::decode_step() {
+    if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
+    const uint32_t position = static_cast<uint32_t>(history_.size());
+    if (position == 0) return fail(Err::FailedPrecondition, "nothing to decode from");
+    auto r = decode_step(history_.back(), position - 1, -1);
+    if (!r) return std::unexpected(r.error());
+    SampleResult s;
+    s.token   = r->token;
+    s.logprob = r->top1;
+    s.margin  = r->margin();
+    return s;
+}
+
+Result<GenerateResult> Engine::generate(std::span<const uint32_t> prompt,
+                                        const GenerateOptions& opts) {
+    if (opts.speculative) return unimplemented("runtime::Engine::generate speculative (design §10, P4)");
+    if (!state_)
+        return fail(Err::FailedPrecondition,
+                    "generate needs the prefill state; call load_decode_state() "
+                    "(prefill itself is design 11 / P5)");
+    if (!prompt.empty() && prompt.size() != state_->prompt_ids().size())
+        return fail(Err::InvalidArgument,
+                    std::format("prompt has {} tokens but the loaded state was built "
+                                "from {}", prompt.size(), state_->prompt_ids().size()));
+
+    GenerateResult out;
+    const uint32_t base = state_->decode_pos();
+    // greedy_tokens[0] is the argmax of the PREFILL logits, i.e. the first
+    // token and the input to step 0. Prefill is not ours yet, so it is taken
+    // from the export.
+    uint32_t next = state_->greedy_tokens().front();
+    const uint32_t n = std::min<uint32_t>(opts.max_tokens, state_->steps());
+    for (uint32_t s = 0; s < n; ++s) {
+        const uint32_t in = (s < opts.forced.size()) ? opts.forced[s] : next;
+        auto r = decode_step(in, base + s, static_cast<int32_t>(s));
+        if (!r) return std::unexpected(r.error());
+        out.tokens.push_back(r->token);
+        next = r->token;
+    }
+    out.summary = profiler_.summary();
+    return out;
+}
+
+Result<double> Engine::measure_submit_overhead(uint32_t iterations) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (iterations == 0) return fail(Err::InvalidArgument, "iterations must be >= 1");
+    uint64_t* sm = dec_.slots(gpu::DecodeStage::Argmax);
+    sm[gpu::dslot::kHeadLogits] = logits_.dev_addr;
+    sm[gpu::dslot::kHeadSample] = sample_.dev_addr;
+    gpu::HeadPush hp{model_cfg_.text.vocab_size, model_cfg_.text.hidden_size, 0};
+    // One warm-up, so the first submit's pipeline bind does not land in the mean.
+    if (auto r = dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
+        return std::unexpected(r.error());
+    const TimePoint t0 = Clock::now();
+    for (uint32_t i = 0; i < iterations; ++i)
+        if (auto r = dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
+            return std::unexpected(r.error());
+    return ms_since(t0) / iterations;
+}
+
+std::span<const float> Engine::last_logits() const {
+    if (!logits_.valid()) return {};
+    return {static_cast<const float*>(logits_.host_ptr), model_cfg_.text.vocab_size};
 }
 
 std::string Engine::status() const {
@@ -129,10 +633,17 @@ std::string Engine::status() const {
                      shards_.size(), human_bytes(shards_.total_bytes()));
     s += std::format("io        {}\n", io_.running() ? io_.backend_caps().name : "stopped");
     s += "          " + io_.stats().to_string();
+    s += std::format("pinned    {} tensors, {} in {} regions\n", pinned_.tensor_count(),
+                     human_bytes(pinned_.bytes_loaded()), pinned_.region_count());
     s += std::format("store     {}\n", store_.stats().to_string());
     s += std::format("planner   {}\n", planner_.stats().to_string());
     s += std::format("gpu       {}\n", device_.valid() ? device_.caps().device_name
                                                        : std::string("(not created)"));
+    if (state_)
+        s += std::format("state     LOADED from {}: window KV after {} prompt tokens, and "
+                         "the compressed KV + indexer top-k of {} steps (design 7.4's "
+                         "kernels are not ours yet)\n",
+                         state_->dir(), state_->prefill_len(), state_->steps());
     return s;
 }
 

@@ -55,13 +55,16 @@ set(DEEPMOE_GPU_SOURCES
     gpu/vulkan/descriptor.cpp
     gpu/vulkan/rawread.cpp
     gpu/vulkan/moe_kernels.cpp
-    gpu/vulkan/attn_kernels.cpp)
+    gpu/vulkan/attn_kernels.cpp
+    gpu/vulkan/decode_kernels.cpp)
 
 set(DEEPMOE_RUNTIME_SOURCES
     runtime/engine.cpp
     runtime/kvstore.cpp
     runtime/decode_layer.cpp
-    runtime/moe_bridge.cpp)
+    runtime/moe_bridge.cpp
+    runtime/decode_state.cpp
+    runtime/engram.cpp)
 
 # Headers every shader in DEEPMOE_SHADERS may include; touching one rebuilds all.
 set(DEEPMOE_SHADER_DEPS
@@ -86,6 +89,7 @@ set(DEEPMOE_SHADERS
     gpu/shaders/moe_down.slang
     gpu/shaders/moe_hquant.slang
     gpu/shaders/moe_xquant.slang
+    gpu/shaders/engram.slang
     gpu/shaders/head.slang)
 
 function(deepmoe_report)

@@ -2,58 +2,138 @@
 //
 // Each engram layer owns a 384M-row hash table of 256 fp8 values (98.3 GB of
 // values + 3.07 GB of scales per layer, 203 GB total). Per token it reads 24
-// rows: 3 n-gram orders x 8 heads. The row index is a multiply-XOR hash of the
-// compressed token id with the previous three tokens, each of the 24 buckets
-// taking a different prime modulus.
-//
-// The 24 x 256 values concatenate into a 6144-wide vector that goes through
-// wkv [25600 x 6144] fp8 (157 MB) to produce 4 key copies and 1 value; the gate
-// is sigmoid of the signed square root of a normalised dot product.
+// rows: 3 n-gram orders x 8 heads. The 24 x 256 values concatenate into a
+// 6144-wide vector that goes through `wkv [25600 x 6144]` fp8 (157 MB) to
+// produce 4 key copies and 1 value; the gate is sigmoid of the signed square
+// root of a normalised dot product, and the value is added into the residual
+// stream weighted by it.
 //
 // Because the addresses depend only on token ids, prefetch can start the moment
 // a token exists -- including an unverified DSpark draft token (design §9.5).
+// This first implementation fetches them synchronously at P2 when the layer is
+// reached; the interface is the one a prefetcher slots behind.
 //
-// Ownership/threading: Engram borrows store/engram_prefetch.h and the GPU
-// pipelines. Row assembly happens on the engine thread; the fetch itself is
-// P2-priority I/O on the IoEngine.
+// Where the hash constants come from
+// ----------------------------------
+// `inference/engram.py` derives them from the TOKENIZER and config.json, not
+// from the checkpoint: the compressed-vocabulary map is a normalisation
+// (NFKC, strip accents, lowercase, whitespace-collapse) over all 129,280
+// decoded tokens, the per-(layer, lookback) multipliers come from
+// `numpy.random.default_rng(10007 * layer_id)`, and the 24 bucket moduli are
+// the next 24 unused primes above `engram_vocab_size - 1`. Reproducing a
+// PCG64 stream and a tokenizer normaliser in C++ to rederive constants would
+// be a second implementation to keep correct, so `tools/oracle.py --level l3`
+// exports them once (`EngramTables::load`) and this hashes with them. The
+// addresses are still computed here, on whatever trajectory the runtime is
+// actually on -- what is loaded is a constant table, not golden data.
+//
+// Ownership/threading: EngramRunner borrows the manifest, the shards, the
+// IoEngine, the pinned set and the DecodeRunner; it owns its staging buffers.
+// Called from the GPU submit thread.
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <memory>
 #include <span>
+#include <string>
+#include <vector>
 
+#include "core/profiler.h"
 #include "core/status.h"
 #include "core/types.h"
+#include "gpu/vulkan/decode_kernels.h"
+#include "gpu/vulkan/memory.h"
 #include "model/layout.h"
+#include "model/manifest.h"
+#include "model/v41_config.h"
+#include "storage/io_engine.h"
+#include "store/pinned.h"
+#include "store/shard_set.h"
 
 namespace deepmoe::runtime {
 
-class Engram {
-public:
-    virtual ~Engram() = default;
+// The constant tables `NgramHashState` derives; see the header note.
+struct EngramTables {
+    struct LayerTable {
+        uint32_t layer = 0;
+        uint64_t num_embeddings = 0;
+        std::array<int64_t, layout::kEngramMaxNgram> multipliers{};
+        std::array<int64_t, layout::kEngramRowsPerToken> primes{};
+        std::array<int64_t, layout::kEngramRowsPerToken> offsets{};
+    };
 
-    // The 24 row indices for one token at one engram layer.
-    // TODO(design §2.4): the exact hash constants must be lifted from
-    // inference/model.py and locked by an L0 oracle test before this is
-    // written -- see store/engram_prefetch.h.
-    virtual Result<void> hash_rows(uint32_t layer,
-                                   std::span<const uint32_t> recent_tokens,
-                                   std::span<uint64_t> out_rows) = 0;
+    uint32_t compressed_vocab_size = 0;
+    uint32_t max_ngram = layout::kEngramMaxNgram;
+    uint32_t n_heads   = layout::kEngramHeads;
+    uint32_t head_dim  = layout::kEngramHeadDim;
+    int64_t  pad_id    = 0;                // ALREADY compressed
+    std::vector<int32_t>    token_map;     // [vocab_size] -> compressed id
+    std::vector<LayerTable> layers;
 
-    // Records the two dispatches of design §7.10: the 6144 -> 25600 fp8 GEMV,
-    // then the gating and residual update.
-    // TODO(design §7.10): implement in P2/P3.
-    virtual Result<void> record(uint32_t layer, TokenIndex token) = 0;
+    bool valid() const { return !token_map.empty() && !layers.empty(); }
+    const LayerTable* for_layer(uint32_t layer) const;
+
+    // Reads `<dir>/index.json`'s "engram" object and the token map beside it.
+    // The directory is the oracle's L3 export.
+    static Result<EngramTables> load(const std::string& dir);
+
+    // The 24 row ids for the token at `position`. `history` is the whole token
+    // sequence so far, `history[i]` being the token at absolute position i, and
+    // must contain `position`. Look-back stops at the start of the sequence,
+    // exactly as `NgramHashState.forward` stops it (`positions < shift`).
+    Result<void> hash_rows(uint32_t layer, std::span<const uint32_t> history,
+                           uint64_t position, std::span<uint64_t> out) const;
 };
 
-// The compressed vocabulary the hash is computed over: NFKC, lowercased,
-// whitespace-normalised, 99,092 entries out of the 129,280 token vocabulary
-// (engram_compressed_vocab_size in config.json).
-// TODO(design §2.4): built from the tokenizer by a P0 tool.
-class CompressedVocab {
+// Everything one engram layer needs at decode time: the row fetch and the two
+// dispatches of design §7.10.
+class EngramRunner {
 public:
-    virtual ~CompressedVocab() = default;
-    virtual uint32_t compress(uint32_t token_id) const = 0;
-    virtual uint32_t size() const = 0;
+    EngramRunner() = default;
+    ~EngramRunner() { destroy(); }
+
+    EngramRunner(const EngramRunner&) = delete;
+    EngramRunner& operator=(const EngramRunner&) = delete;
+
+    Result<void> create(gpu::MemoryAllocator& alloc, gpu::DecodeRunner& runner,
+                        const Manifest& manifest, const store::ShardSet& shards,
+                        storage::IoEngine& io, const store::PinnedStore& pinned,
+                        const TextConfig& cfg, EngramTables tables);
+    void destroy();
+
+    bool has_layer(uint32_t layer) const { return tables_.for_layer(layer) != nullptr; }
+
+    // Fetches the 24 rows and runs the GEMV and the gate, reading the residual
+    // stream at `x_in` and writing it to `x_out` (both [hc][dim] fp32 device
+    // addresses; the same address for both is safe -- every thread reads its
+    // own element before writing it).
+    Result<void> run(uint32_t layer, std::span<const uint32_t> history, uint64_t position,
+                     DeviceAddress x_in, DeviceAddress x_out, Profiler* profiler = nullptr);
+
+    // What the last `run` fetched, for the profiler and the report.
+    uint64_t rows_fetched() const { return rows_fetched_; }
+    uint64_t bytes_read()   const { return bytes_read_; }
+    const EngramTables& tables() const { return tables_; }
+
+private:
+    struct LayerBind { DeviceAddress w = 0, s = 0, qw = 0, kw = 0; };
+    Result<LayerBind> bind_layer(uint32_t layer) const;
+    Result<void>      fetch_rows(uint32_t layer, const uint64_t* rows);
+
+    gpu::MemoryAllocator* alloc_   = nullptr;
+    gpu::DecodeRunner*    runner_  = nullptr;
+    const Manifest*       manifest_ = nullptr;
+    const store::ShardSet* shards_  = nullptr;
+    storage::IoEngine*     io_      = nullptr;
+    const store::PinnedStore* pinned_ = nullptr;
+    const TextConfig*     cfg_     = nullptr;
+    EngramTables          tables_{};
+
+    gpu::GpuBuffer        buf_{};        // rowval | rowsc | kv, all device-addressable
+    uint64_t              off_val_ = 0, off_sc_ = 0, off_kv_ = 0;
+    gpu::HostAllocInfo    staging_{};    // 4 KiB-aligned landing zone for the I/O
+    uint64_t              rows_fetched_ = 0, bytes_read_ = 0;
 };
 
 }  // namespace deepmoe::runtime

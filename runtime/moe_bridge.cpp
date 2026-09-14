@@ -51,6 +51,9 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     if (auto r = shared_.create(device, alloc, shader_dir, ss, sd); !r) return r;
 
     xq_.assign(cfg.hidden_size, 0);
+    xf_.assign(cfg.hidden_size, 0.0f);
+    yf_.assign(cfg.hidden_size, 0.0f);
+    sf_.assign(cfg.hidden_size, 0.0f);
     return {};
 }
 
@@ -94,12 +97,29 @@ Result<void> GpuMoeBridge::bind_shared(uint32_t layer) {
 Result<void> GpuMoeBridge::run(const MoeCall& call) {
     if (!store_ || !planner_) return fail(Err::FailedPrecondition, "MoE bridge is not created");
     const uint32_t dim = call.hidden;
+    timing_ = Timing{};
+    const TimePoint t_call = Clock::now();
+    auto ms = [](TimePoint a, TimePoint b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+
+    // Copy x out of GPU-visible memory BEFORE computing over it.
+    //
+    // design §3.3 is explicit that CPU reads of the path-A mapping are uncached
+    // and very slow, and it means it: `call.x` is 5,120 fp32 in a
+    // DEVICE_LOCAL|HOST_VISIBLE allocation, and reading it a float at a time
+    // costs about 230 ns per access. The three loops this function used to run
+    // straight off GPU memory -- x in, the routed y out, the shared y out --
+    // were 25,600 such accesses a layer, which measured 6.0 ms a layer, 240 ms
+    // a token, and 26% of the whole decode step. One `memcpy` per vector issues
+    // wide loads instead and takes the same three loops to 0.1 ms a layer.
+    std::memcpy(xf_.data(), call.x, size_t(dim) * sizeof(float));
 
     // `act_quant(x, 32, ue8m0)` once for the whole layer. See the header.
     for (uint32_t b = 0; b < dim / 32; ++b) {
         uint8_t bytes[32];
         float back[32];
-        cpu::act_quant_block(call.x + b * 32, 32, bytes, back);
+        cpu::act_quant_block(xf_.data() + b * 32, 32, bytes, back);
         for (uint32_t i = 0; i < 32; ++i)
             xq_[b * 32 + i] = cpu::float_to_fp16(back[i]);
     }
@@ -134,16 +154,27 @@ Result<void> GpuMoeBridge::run(const MoeCall& call) {
     }
     routed_.set_list_count(call.topk);
     std::memcpy(routed_.x_fp16(), xq_.data(), size_t(dim) * sizeof(uint16_t));
-    if (auto r = routed_.run(1); !r) return std::unexpected(r.error());
-    const float* ry = routed_.y();
-    for (uint32_t i = 0; i < dim; ++i) call.y[i] = ry[i];
+    const TimePoint t_r0 = Clock::now();
+    auto rt = routed_.run(1);
+    if (!rt) return std::unexpected(rt.error());
+    const TimePoint t_r1 = Clock::now();
+    timing_.routed_gpu_ms  = rt->seconds_total * 1e3;
+    timing_.routed_wall_ms = ms(t_r0, t_r1);
+    std::memcpy(yf_.data(), routed_.y(), size_t(dim) * sizeof(float));
 
     // The shared expert, added in fp32 exactly as `MoE.forward` does.
     if (auto r = bind_shared(call.layer); !r) return r;
     std::memcpy(shared_.x_fp16(), xq_.data(), size_t(dim) * sizeof(uint16_t));
-    if (auto r = shared_.run(1); !r) return std::unexpected(r.error());
-    const float* sy = shared_.y();
-    for (uint32_t i = 0; i < dim; ++i) call.y[i] += sy[i];
+    const TimePoint t_s0 = Clock::now();
+    auto stm = shared_.run(1);
+    if (!stm) return std::unexpected(stm.error());
+    const TimePoint t_s1 = Clock::now();
+    timing_.shared_gpu_ms  = stm->seconds_total * 1e3;
+    timing_.shared_wall_ms = ms(t_s0, t_s1);
+    std::memcpy(sf_.data(), shared_.y(), size_t(dim) * sizeof(float));
+    for (uint32_t i = 0; i < dim; ++i) yf_[i] += sf_[i];
+    std::memcpy(call.y, yf_.data(), size_t(dim) * sizeof(float));
+    timing_.host_ms = ms(t_call, Clock::now()) - timing_.routed_wall_ms - timing_.shared_wall_ms;
     return {};
 }
 

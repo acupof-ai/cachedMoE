@@ -104,6 +104,12 @@ public:
                       uint32_t layers = layout::kTotalLogicalLayers,
                       uint32_t experts_per_layer = layout::kRoutedExperts);
 
+    // Gives every slab back to the backing and forgets every slot. The store
+    // outlives nothing, but the MEMORY it holds is the GPU allocator's, and the
+    // allocator has to be torn down after it -- so a caller that owns both
+    // needs a way to say "let go now" that is not the destructor's ordering.
+    void reset();
+
     // --- hot path ---------------------------------------------------------
 
     // Resident lookup. On a hit the slot's LRU stamp is refreshed to `token`.
