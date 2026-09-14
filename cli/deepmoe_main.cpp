@@ -17,6 +17,9 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/status.h"
+#include <cmath>
+
+#include "cpu/dequant.h"
 #include "cpu/gemv_avx512.h"
 #include "gpu/vulkan/device.h"
 #include "model/layout.h"
@@ -187,6 +190,59 @@ void print_layer_table(const runtime::Engine& engine) {
     }
 }
 
+// What a slow prefill produced, against the state the oracle's prompt left.
+// Per POSITION as well as in aggregate: the aggregate cannot distinguish an
+// error that compounds with the token from one that is uniform, and only the
+// second would be a bug.
+void print_prefill_state(const runtime::Engine& engine, const runtime::DecodeState& st) {
+    const TextConfig& c = engine.model().text;
+    const uint32_t n = static_cast<uint32_t>(st.prompt_ids().size());
+    auto cos_of = [](const std::vector<float>& a, const float* b) {
+        double num = 0, sa = 0, sb = 0;
+        for (size_t i = 0; i < a.size(); ++i) {
+            num += double(a[i]) * double(b[i]);
+            sa  += double(a[i]) * double(a[i]);
+            sb  += double(b[i]) * double(b[i]);
+        }
+        return (sa > 0 && sb > 0) ? num / std::sqrt(sa * sb) : 1.0;
+    };
+    std::puts("  prefill state vs the oracle's, by layer (window KV cos at five prompt "
+              "positions, then compressed KV / index keys)");
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+        auto v = engine.kv().layer(L);
+        if (!v) continue;
+        const runtime::StateTensor* g = st.tensor(0, std::format("L{:02d}.win_kv", L));
+        if (!g) continue;
+        const uint32_t blocks = c.head_dim / 32;
+        std::printf("   L%-2u win", L);
+        double worst = 1.0;
+        for (uint32_t r : {0u, 1u, n / 4, n / 2, n - 1}) {
+            std::vector<float> ours(c.head_dim);
+            for (uint32_t d = 0; d < c.head_dim; ++d)
+                ours[d] = cpu::fp8_e4m3_to_float(v->win_val_host[size_t(r) * c.head_dim + d]) *
+                          cpu::e8m0_to_float(v->win_scale_host[size_t(r) * blocks + d / 32]);
+            const double cs = cos_of(ours, g->f.data() + size_t(r) * c.head_dim);
+            worst = std::min(worst, cs);
+            std::printf(" p%u %.6f", r, cs);
+        }
+        const uint32_t ratio = c.compress_ratio(L);
+        if (ratio && c.is_kv_source(L)) {
+            const uint32_t rows = n / ratio;
+            if (const runtime::StateTensor* gc = st.tensor(0, std::format("L{:02d}.cmp_cache", L))) {
+                std::vector<float> ours(size_t(rows) * c.head_dim);
+                for (size_t i = 0; i < ours.size(); ++i) ours[i] = cpu::bf16_to_float(v->cmp_kv_host[i]);
+                std::printf(" | cmp %.6f", cos_of(ours, gc->f.data()));
+            }
+            if (const runtime::StateTensor* gk = st.tensor(0, std::format("L{:02d}.index_k", L))) {
+                std::vector<float> ours(size_t(rows) * c.index_head_dim);
+                for (size_t i = 0; i < ours.size(); ++i) ours[i] = cpu::bf16_to_float(v->idx_key_host[i]);
+                std::printf(" | key %.6f", cos_of(ours, gk->f.data()));
+            }
+        }
+        std::printf("\n");
+    }
+}
+
 int cmd_run(int argc, char** argv) {
     RuntimeConfig cfg;
     cfg.cache.budget_bytes = 0;     // 0 = size it from the machine (see init_gpu)
@@ -195,6 +251,8 @@ int cmd_run(int argc, char** argv) {
     uint32_t steps = 8;
     bool teacher_force = false;
     bool per_layer = false;
+    bool slow_prefill = false;
+    bool loaded_ced = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
@@ -206,6 +264,8 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--steps")       steps = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--teacher-force") teacher_force = true;
         else if (a == "--per-layer")   per_layer = true;
+        else if (a == "--slow-prefill") slow_prefill = true;
+        else if (a == "--loaded-ced")  loaded_ced = true;
         else if (a == "--cache-gb")    cfg.cache.budget_bytes = uint64_t(std::atoll(arg_value(argc, argv, i, a).data())) << 30;
         else if (a == "--chunk-kb")    cfg.io.chunk_bytes = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data())) << 10;
         else if (a == "--qd")          cfg.io.max_inflight_ops = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
@@ -235,8 +295,7 @@ int cmd_run(int argc, char** argv) {
                      state_dir.c_str(), r.error().str().c_str(), state_dir.c_str());
         return 1;
     }
-    std::fputs(engine.status().c_str(), stdout);
-
+    if (loaded_ced) engine.set_produce_ced(false);
     const runtime::DecodeState* st = engine.decode_state();
     std::vector<uint32_t> prompt;
     if (!prompt_ids_file.empty()) {
@@ -252,6 +311,16 @@ int cmd_run(int argc, char** argv) {
             return 1;
         }
     }
+
+    if (slow_prefill) {
+        auto pre = engine.slow_prefill(st->prompt_ids());
+        if (!pre) { std::fprintf(stderr, "slow prefill: %s\n", pre.error().str().c_str()); return 1; }
+        std::printf("slow prefill of %zu tokens -> token %u (reference %u) %s\n",
+                    st->prompt_ids().size(), pre->token, st->greedy_tokens().front(),
+                    pre->token == st->greedy_tokens().front() ? "MATCH" : "DIFFER");
+        print_prefill_state(engine, *st);
+    }
+    std::fputs(engine.status().c_str(), stdout);
 
     if (auto ov = engine.measure_submit_overhead(64); ov)
         std::printf("submit    %.3f ms per submit+fence round trip; a decode step makes "

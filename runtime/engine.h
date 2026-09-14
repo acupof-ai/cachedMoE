@@ -184,6 +184,12 @@ public:
     const KvStore& kv() const { return kvs_; }
     const std::vector<uint32_t>& history() const { return history_; }
 
+    // What layer `l` actually read at the last step: its own window ring, and
+    // whichever layer's compressed plane and top-k list `shared_attn` pointed
+    // it at. A validator comparing against the oracle's per-layer export needs
+    // exactly this, because the oracle records what the layer SAW.
+    Result<KvLayerView> effective_kv(uint32_t l) const;
+
     // The single-argument form of the old interface: the next step of the
     // sequence this Engine is already decoding.
     Result<SampleResult> decode_step();

@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "core/config.h"
+#include "cpu/dequant.h"
 #include "model/layout.h"
 #include "runtime/engine.h"
 #include "tests/l1_golden.h"
@@ -124,6 +125,55 @@ void print_timeline(const runtime::Engine& e, const runtime::DecodeStepResult& r
                 r.wall_ms, attn, moe, gate, engram,
                 r.wall_ms - attn - moe - gate - engram,
                 hits, hits + misses, bytes / 1e6);
+}
+
+// How well our OWN compressed KV and top-k list agree with what the reference's
+// layer saw. Until design §7.4's kernels landed these were loaded out of the
+// export, so the only thing this could have measured was memcpy.
+struct CedAgreement {
+    double   worst_cmp_cos = 1.0;
+    uint32_t worst_cmp_layer = 0;
+    uint32_t topk_layers = 0, topk_exact = 0;
+    uint32_t cmp_layers = 0;
+
+    std::string str() const {
+        return std::format("cmp_kv worst cos {:.7f} (L{}) over {} layers, "
+                           "top-k {}/{} layers identical",
+                           worst_cmp_cos, worst_cmp_layer, cmp_layers,
+                           topk_exact, topk_layers);
+    }
+};
+
+// `rec` is the export's record index: 1 + step, matching DecodeState::logits.
+CedAgreement check_ced(const runtime::Engine& e, const runtime::DecodeState& st,
+                       uint32_t rec) {
+    CedAgreement a;
+    const uint32_t dim = e.model().text.head_dim;
+    for (uint32_t L = 0; L < e.model().text.num_hidden_layers; ++L) {
+        auto v = e.effective_kv(L);
+        if (!v) continue;
+        if (const runtime::StateTensor* g =
+                st.tensor(rec, std::format("L{:02d}.cmp_kv", L))) {
+            const uint32_t n = static_cast<uint32_t>(g->elements() / dim);
+            if (n == v->n_cmp && v->cmp_kv_host) {
+                std::vector<float> ours(size_t(n) * dim);
+                for (size_t i = 0; i < ours.size(); ++i)
+                    ours[i] = cpu::bf16_to_float(v->cmp_kv_host[i]);
+                const Agreement d = agree(ours, g->f);
+                ++a.cmp_layers;
+                if (d.cos < a.worst_cmp_cos) { a.worst_cmp_cos = d.cos; a.worst_cmp_layer = L; }
+            }
+        }
+        if (const runtime::StateTensor* g =
+                st.tensor(rec, std::format("L{:02d}.topk_idxs", L))) {
+            ++a.topk_layers;
+            const auto* ours = reinterpret_cast<const int32_t*>(v->top_idx_host);
+            bool same = g->i.size() == v->n_kv;
+            for (size_t i = 0; same && i < g->i.size(); ++i) same = ours[i] == g->i[i];
+            a.topk_exact += same ? 1 : 0;
+        }
+    }
+    return a;
 }
 
 // One engine, brought up once: the pinned set is 17.7 GB and three separate
@@ -249,6 +299,16 @@ DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
         if (!ok)
             std::printf("        DIVERGED at a reference margin of %.4f\n", a.ref_margin);
         print_timeline(e, *r);
+        if (e.produce_ced()) {
+            const CedAgreement ced = check_ced(e, *st, s + 1);
+            std::printf("        ours, not loaded: %s\n", ced.str().c_str());
+            // The compressed KV is ours through an fp8 GEMV, a pooling softmax
+            // and an FP4 quantiser, off a residual stream that is already ~1e-3
+            // from the reference's, so it gets the bf16 noise floor and not an
+            // equality. The top-k list is integers and has no excuse.
+            CHECK(ced.worst_cmp_cos > 0.99);
+            CHECK_EQ(ced.topk_exact, ced.topk_layers);
+        }
     }
     // design §12 L3 asks for 100%. What is measured is 7 of 8 -- see
     // docs/p2_decode.md §4 for the one that differs and why the gap is a
@@ -280,7 +340,152 @@ DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
     std::printf("      free-running: %u/%u tokens match before divergence "
                 "(design 12 L3 asks for %u)\n", matched, st->steps(), st->steps());
     CHECK(matched >= 1);
+    std::fputs(e.status().c_str(), stdout);
 
+    if (!e.produce_ced()) return;
+
+    // --- (d) the prompt's state produced by a slow prefill ------------------
+    //
+    // Everything above starts from the export's prefill record. This starts
+    // from nothing: 64 forward passes through the decode path, one token at a
+    // time, and then the same eight steps. It is not design §11's prefill --
+    // it is O(n) passes where §11 wants one -- but it is the same arithmetic,
+    // and what it buys is that no tensor in the run came from the oracle.
+    std::printf("    (d) slow prefill: %zu prompt tokens through the decode path\n",
+                st->prompt_ids().size());
+    auto pre = e.slow_prefill(st->prompt_ids());
+    REQUIRE_OK(pre);
+    std::printf("      %zu tokens, next token %u (reference %u) %s, margin %.4f\n",
+                st->prompt_ids().size(), pre->token, ref[0],
+                pre->token == ref[0] ? "MATCH" : "DIFFER", pre->margin());
+    CHECK_EQ(pre->token, ref[0]);
+    {
+        const LogitAgreement a = compare(st->logits(0), e.last_logits(), *pre);
+        std::printf("      prefill logits: %s\n", a.str().c_str());
+        CHECK(a.rho > 0.90);
+    }
+    // The state itself, against the export's prefill record: the window ring
+    // every layer holds, and on the four sources the compressed-KV cache and
+    // the index-key cache. Only the rows the prompt filled are compared --
+    // the reference's buffers are allocated for max_seq_len and zero past the
+    // prompt, which is not a fact about either implementation.
+    {
+        const TextConfig& c = e.model().text;
+        const uint32_t n = static_cast<uint32_t>(st->prompt_ids().size());
+        double worst_win = 1.0, worst_cmp = 1.0, worst_key = 1.0;
+        uint32_t win_l = 0, cmp_l = 0, key_l = 0, cmp_n = 0, key_n = 0;
+        for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+            auto v = e.kv().layer(L);
+            REQUIRE_OK(v);
+            if (const runtime::StateTensor* g =
+                    st->tensor(0, std::format("L{:02d}.win_kv", L))) {
+                const uint32_t blocks = c.head_dim / 32;
+                std::vector<float> ours(size_t(n) * c.head_dim);
+                for (uint32_t r = 0; r < n; ++r)
+                    for (uint32_t d = 0; d < c.head_dim; ++d)
+                        ours[size_t(r) * c.head_dim + d] =
+                            cpu::fp8_e4m3_to_float(
+                                v->win_val_host[size_t(r) * c.head_dim + d]) *
+                            cpu::e8m0_to_float(
+                                v->win_scale_host[size_t(r) * blocks + d / 32]);
+                const Agreement d = agree(ours, std::vector<float>(
+                    g->f.begin(), g->f.begin() + ours.size()));
+                if (d.cos < worst_win) { worst_win = d.cos; win_l = L; }
+                // Per-position, at one layer deep enough to have drifted.
+                // The aggregate cannot say WHERE the disagreement is, and the
+                // answer is not the one to expect: it is worst at position 0
+                // and best at position 63. The error grows with DEPTH, not
+                // with the token -- L0 is 0.99999 at every position and L6 is
+                // already 0.92 at p0 -- and it is largest where the context is
+                // thinnest, which is where a gate near-tie is likeliest to go
+                // the other way (the same discrete effect as the layer-2 row
+                // in section (a)). `deepmoe run --slow-prefill` prints all
+                // forty layers of it.
+                if (L == c.num_hidden_layers - 1) {
+                    std::printf("      L%u window KV by prompt position:", L);
+                    for (uint32_t r : {0u, 1u, n / 4, n / 2, n - 1}) {
+                        const Agreement p = agree(
+                            std::vector<float>(ours.begin() + size_t(r) * c.head_dim,
+                                               ours.begin() + size_t(r + 1) * c.head_dim),
+                            std::vector<float>(g->f.begin() + size_t(r) * c.head_dim,
+                                               g->f.begin() + size_t(r + 1) * c.head_dim));
+                        std::printf("  p%u %.6f", r, p.cos);
+                    }
+                    std::printf("\n");
+                }
+            }
+            const uint32_t ratio = c.compress_ratio(L);
+            if (!ratio || !c.is_kv_source(L)) continue;
+            const uint32_t rows = n / ratio;
+            if (const runtime::StateTensor* g =
+                    st->tensor(0, std::format("L{:02d}.cmp_cache", L))) {
+                std::vector<float> ours(size_t(rows) * c.head_dim);
+                for (size_t i = 0; i < ours.size(); ++i)
+                    ours[i] = cpu::bf16_to_float(v->cmp_kv_host[i]);
+                const Agreement d = agree(ours, std::vector<float>(
+                    g->f.begin(), g->f.begin() + ours.size()));
+                ++cmp_n;
+                if (d.cos < worst_cmp) { worst_cmp = d.cos; cmp_l = L; }
+            }
+            if (const runtime::StateTensor* g =
+                    st->tensor(0, std::format("L{:02d}.index_k", L))) {
+                std::vector<float> ours(size_t(rows) * c.index_head_dim);
+                for (size_t i = 0; i < ours.size(); ++i)
+                    ours[i] = cpu::bf16_to_float(v->idx_key_host[i]);
+                const Agreement d = agree(ours, std::vector<float>(
+                    g->f.begin(), g->f.begin() + ours.size()));
+                ++key_n;
+                if (d.cos < worst_key) { worst_key = d.cos; key_l = L; }
+            }
+        }
+        std::printf("      our prefill state vs the oracle's: window KV worst cos "
+                    "%.7f (L%u, 40 layers), compressed KV %.7f (L%u, %u sources), "
+                    "index keys %.7f (L%u, %u sources)\n",
+                    worst_win, win_l, worst_cmp, cmp_l, cmp_n, worst_key, key_l, key_n);
+        // NOT 0.99. Every number here is 64 sequential forward passes of our
+        // own arithmetic, each attending over the KV the previous ones wrote,
+        // so the error compounds with the position in a way a single decode
+        // step's 0.999 does not predict. The per-position line above is what
+        // says it is compounding rather than uniform. The bar is set at the
+        // measured level so a regression fails; the level itself is reported.
+        CHECK(worst_win > 0.90);
+        CHECK(worst_cmp > 0.95);
+        CHECK(worst_key > 0.95);
+    }
+
+    // --- (e) eight steps on top of our own prefill --------------------------
+    std::printf("    (e) %u steps teacher-forced, from our own prefill\n", st->steps());
+    uint32_t own_forced = 0;
+    for (uint32_t s = 0; s < st->steps(); ++s) {
+        auto r = e.decode_step(ref[s], base + s, -1);
+        REQUIRE_OK(r);
+        const LogitAgreement a = compare(st->logits(s + 1), e.last_logits(), *r);
+        own_forced += (a.our_top1 == a.ref_top1) ? 1 : 0;
+        std::printf("      step %u  in %6u  %s\n", s, ref[s], a.str().c_str());
+        const CedAgreement ced = check_ced(e, *st, s + 1);
+        std::printf("        ours, not loaded: %s\n", ced.str().c_str());
+    }
+    std::printf("      teacher-forced on our own prefill: %u/%u\n", own_forced, st->steps());
+
+    std::printf("    (f) %u steps free-running, from our own prefill\n", st->steps());
+    auto pre2 = e.slow_prefill(st->prompt_ids());
+    REQUIRE_OK(pre2);
+    uint32_t own_free = 0, tok = pre2->token;
+    bool own_div = false;
+    for (uint32_t s = 0; s < st->steps(); ++s) {
+        auto r = e.decode_step(tok, base + s, -1);
+        REQUIRE_OK(r);
+        const bool ok = !own_div && r->token == ref[s + 1];
+        if (ok) ++own_free; else own_div = true;
+        std::printf("      step %u  in %6u -> %6u (reference %6u) %s margin %.4f\n",
+                    s, tok, r->token, ref[s + 1],
+                    r->token == ref[s + 1] ? "match" : "DIFFER", r->margin());
+        tok = r->token;
+    }
+    std::printf("      free-running on our own prefill: %u/%u before divergence\n",
+                own_free, st->steps());
+    CHECK(own_forced * 8 >= st->steps() * 7);
+    CHECK(own_free >= 1);
     std::fputs(e.status().c_str(), stdout);
 }
 

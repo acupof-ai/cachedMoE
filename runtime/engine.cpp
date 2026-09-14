@@ -366,6 +366,21 @@ Result<void> Engine::prepare_ced(uint32_t position) {
     return {};
 }
 
+Result<KvLayerView> Engine::effective_kv(uint32_t l) const {
+    auto v = kvs_.layer(l);
+    if (!v) return v;
+    if (!produce_ced_ || l >= ced_.size() || ced_[l].ratio == 0) return v;
+    auto cmp = kvs_.layer(ced_[l].cmp_src);
+    if (!cmp) return cmp;
+    auto idx = kvs_.layer(ced_[l].idx_src);
+    if (!idx) return idx;
+    v->cmp_kv       = cmp->cmp_kv;
+    v->cmp_kv_host  = cmp->cmp_kv_host;
+    v->top_idx      = idx->top_idx;
+    v->top_idx_host = idx->top_idx_host;
+    return v;
+}
+
 Result<void> Engine::load_decode_state(const std::string& dir) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     auto st = DecodeState::load(dir);
@@ -470,8 +485,12 @@ Result<DecodeStepResult> Engine::slow_prefill(std::span<const uint32_t> prompt) 
     // an empty key cache and a compressor state of -inf.
     kvs_.clear();
     history_.assign(prompt.begin(), prompt.end());
-    token_ = 0;
     pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    // `token_` is deliberately NOT reset. It is the cache's LRU clock, not a
+    // position: winding it back makes everything already resident look newer
+    // than what the next layer fetches, and the policy then evicts the slot it
+    // just filled -- which surfaces as "expert (4, 1) is not resident at the
+    // MoE dispatch" one dispatch later.
 
     const TimePoint t0 = Clock::now();
     DecodeStepResult last{};
