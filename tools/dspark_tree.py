@@ -1084,6 +1084,99 @@ def batch_boundary_stats(trajs) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# 7c. TPS projection (design v0.9 section 10.1.2 with Track K2's acceptance)
+# --------------------------------------------------------------------------- #
+
+# Every constant is a measured number from another document; the name says where.
+P2_DECODE_WARM = {            # docs/p2_decode.md section 10.1, "step 3, final", ms
+    "attention_and_compressor": 36.0, "moe_gpu": 29.4, "moe_host": 1.0, "engram": 3.9,
+    "tail_head": 5.8, "stall_all_hit": 0.4, "other": 5.0}
+P3_ATTN_PLUS_HEAD = 33.5      # docs/p2_attention.md section 13: 40 layers + head, P3 defaults
+MOE_PAIR_MS = (0.625, 0.851, 0.780, 0.814, 0.874, 0.945)   # design 10.1.2 / kernel_p2_moe M = 1..6
+EXPERT_MB, SHARED_MB, LAYERS = 18.81, 23.6, 40
+NVME_GBPS = 4.5
+T_DRAFT_MS = {"head_M5": 19.0, "head_M1_looped": 42.0}     # docs/p3_dspark.md section 8
+ATTN_SCALE_B_M5 = 3.06        # docs/p3_dspark.md section 8: non-MoE x3.06 a layer at M = 5
+
+
+def t_cycle_ms(M: int, uf: list, h: float, scenario: str, t_draft: float, cpu_ms: float) -> dict:
+    """One verify of M tokens plus the draft that precedes it (none at M = 1)."""
+    attn = P3_ATTN_PLUS_HEAD
+    if scenario == "B":
+        attn *= 1.0 + (M - 1) * (ATTN_SCALE_B_M5 - 1.0) / 4.0
+    union = 6.0 * M * uf[M - 1]
+    bytes_ratio = (union * EXPERT_MB + SHARED_MB) / (6.0 * EXPERT_MB + SHARED_MB)
+    moe = P2_DECODE_WARM["moe_gpu"] * max(bytes_ratio, MOE_PAIR_MS[M - 1] / MOE_PAIR_MS[0])
+    fixed = (P2_DECODE_WARM["engram"] + P2_DECODE_WARM["moe_host"]) * M \
+        + P2_DECODE_WARM["other"] + P2_DECODE_WARM["stall_all_hit"]
+    stall = (1.0 - h) * union * EXPERT_MB * LAYERS / (NVME_GBPS * 1000.0) * 1000.0
+    draft = (t_draft + cpu_ms) if M > 1 else 0.0
+    total = attn + moe + fixed + stall + draft
+    return {"attn": attn, "moe": moe, "fixed": fixed, "stall": stall, "draft": draft, "total": total}
+
+
+def cmd_tps(args) -> int:
+    with open(args.stats, encoding="utf-8") as f:
+        st = json.load(f)
+    uf = st["union_frac_by_M"]
+    gs, ss = st["greedy"]["schemes"], st["sampling"]["schemes"]
+    curves = {}
+    if "chain_ref" in gs:
+        curves["greedy / old chain"] = [gs["chain_ref"][f"E_tokens_k{k}"] for k in range(1, 6)]
+    for name in (args.greedy_tree, ):
+        if name in gs:
+            curves[f"greedy / tree {name}"] = [gs[name][f"E_tokens_k{k}"] for k in range(1, 6)]
+    if "chain_ref/sample" in ss:
+        curves["sampling / old chain"] = [ss["chain_ref/sample"][f"E_tokens_k{k}"] for k in range(1, 6)]
+    if args.sampling_tree in ss:
+        curves[f"sampling / tree {args.sampling_tree}"] = [
+            ss[args.sampling_tree][f"E_tokens_k{k}"] for k in range(1, 6)]
+    out = {"union_frac_by_M": uf, "rows": []}
+    for h in (0.92, 0.95, 1.0):
+        for scen in ("A", "B"):
+            for dname, tdr in T_DRAFT_MS.items():
+                base = t_cycle_ms(1, uf, h, scen, tdr, 0.0)["total"]
+                tps0 = 1000.0 / base
+                for cname, et in curves.items():
+                    tps = [round(1000.0 * et[k - 1] / t_cycle_ms(k + 1, uf, h, scen, tdr, args.cpu_ms)["total"], 2)
+                           for k in range(1, 6)]
+                    best = max(tps)
+                    out["rows"].append({"h": h, "scenario": scen, "t_draft": dname, "curve": cname,
+                                        "tps_k0": round(tps0, 2), "tps_k1_5": tps,
+                                        "best_ratio": round(best / tps0, 3),
+                                        "go": best >= 1.15 * tps0})
+    # confidence-chosen k: TPS = E[tokens] / E[T_cycle(k)]
+    conf = []
+    for mode, table in (("greedy", st["greedy"]["confidence_k"]), ("sampling", st["sampling"]["confidence_k"])):
+        for name, per in table.items():
+            if name not in (args.greedy_tree, "chain_ref/sample", args.sampling_tree, "anchor/K16/eal/tail"):
+                continue
+            for th, v in per.items():
+                n = sum(v["k_hist"])
+                for h in (0.92, 1.0):
+                    for scen in ("A", "B"):
+                        et = sum(v["k_hist"][k] * t_cycle_ms(k + 1, uf, h, scen, T_DRAFT_MS["head_M5"],
+                                                             args.cpu_ms)["total"] for k in range(6)) / n
+                        base = t_cycle_ms(1, uf, h, scen, 0.0, 0.0)["total"]
+                        conf.append({"mode": mode, "scheme": name, "theta": th, "h": h, "scenario": scen,
+                                     "mean_k": v["mean_k"], "E_tokens": v["E_tokens"],
+                                     "tps": round(1000.0 * v["E_tokens"] / et, 2),
+                                     "tps_k0": round(1000.0 / base, 2)})
+    out["confidence_k"] = conf
+    out["breakdown_h092_A_M6"] = t_cycle_ms(6, uf, 0.92, "A", T_DRAFT_MS["head_M5"], args.cpu_ms)
+    out["breakdown_h092_M1"] = t_cycle_ms(1, uf, 0.92, "A", 0.0, 0.0)
+    for r in out["rows"]:
+        print(r)
+    for r in conf:
+        print(r)
+    print("M=1:", out["breakdown_h092_M1"], "\nM=6 A:", out["breakdown_h092_A_M6"])
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=1)
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # 8. CLI
 # --------------------------------------------------------------------------- #
 
@@ -1108,6 +1201,12 @@ def build_parser() -> argparse.ArgumentParser:
     common(lo)
     lo.add_argument("--n", type=int, default=200000)
     lo.add_argument("--cycle", type=int, default=0)
+    t = sub.add_parser("tps")
+    common(t)
+    t.add_argument("--stats", default=os.path.join(REPO, "tests", "data", "dspark", "tree_stats.json"))
+    t.add_argument("--greedy-tree", default="anchor/K16/eal/tail")
+    t.add_argument("--sampling-tree", default="anchor/K16/sample")
+    t.add_argument("--cpu-ms", type=float, default=0.2, help="CPU tree + accept per cycle")
     a = sub.add_parser("analyse")
     common(a)
     a.add_argument("--out-stats", default=os.path.join(REPO, "tests", "data", "dspark",
@@ -1123,6 +1222,8 @@ def main(argv=None) -> int:
         return cmd_bench(args)
     if args.cmd == "lossless":
         return cmd_lossless(args)
+    if args.cmd == "tps":
+        return cmd_tps(args)
     if args.cmd == "analyse":
         return cmd_analyse(args)
     return 2
