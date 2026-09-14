@@ -431,7 +431,8 @@ int main(int argc, char** argv) {
             std::fprintf(f, "variant,m,lanes_per_row,rows_per_lane,subgroup,decode_mode,h_precision,"
                             "slots,layer_cycle,iters,path,"
                             "bytes_a,bytes_b,gbps_a,gbps_b,gbps_total,"
-                            "ms_a,ms_b,ms_total,ms_wall,raw_read_gbps,launch_us\n");
+                            "ms_a,ms_b,ms_total,ms_wall,record_us,submit_us,"
+                            "raw_read_gbps,launch_us\n");
             const uint64_t ba = uint64_t(o.slots) * 2 *
                 (uint64_t(layout::kMoeIntermediate) * layout::kHiddenSize / 2 +
                  uint64_t(layout::kMoeIntermediate) * layout::kHiddenSize / 32);
@@ -439,7 +440,7 @@ int main(int argc, char** argv) {
             for (const Row& r : rows) {
                 if (r.variant.empty()) continue;
                 std::fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%llu,%llu,"
-                                "%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f\n",
+                                "%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f\n",
                              r.variant.c_str(), r.m, r.lanes, r.rpl, r.subgroup, r.decode, r.hprec,
                              o.slots, o.layer_cycle, o.iters, path_name,
                              static_cast<unsigned long long>(ba),

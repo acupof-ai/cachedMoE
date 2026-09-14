@@ -1,20 +1,20 @@
 consumer,memory,concurrency,threads,gbps,note
-cpu_read,host,alone,1,23.379,
-cpu_read,host,alone,2,43.401,
-cpu_read,host,alone,3,53.057,
-cpu_read,host,alone,4,50.555,
-gpu_read,path_a,alone,0,212.615,memory type 2 (heap 1)
-gpu_read,path_a,with_cpu,3,188.808,
-cpu_read,host,with_gpu_path_a,3,45.914,
-cpu_write,path_a,alone,1,21.199,memcpy
-cpu_write,path_a,alone,1,22.018,non-temporal stores
-gpu_read,path_b,alone,0,213.561,4 KiB pages
-gpu_read,path_b,with_cpu,3,190.339,
-cpu_read,host,with_gpu_path_b,3,15.458,
-cpu_write,path_b,alone,1,18.909,memcpy
-cpu_write,path_b,alone,1,33.411,non-temporal stores
+cpu_read,host,alone,1,23.484,
+cpu_read,host,alone,2,43.210,
+cpu_read,host,alone,3,49.786,
+cpu_read,host,alone,4,52.065,
+gpu_read,path_a,alone,0,216.583,memory type 2 (heap 1)
+gpu_read,path_a,with_cpu,4,188.517,
+cpu_read,host,with_gpu_path_a,4,28.162,
+cpu_write,path_a,alone,1,20.373,memcpy
+cpu_write,path_a,alone,1,21.553,non-temporal stores
+gpu_read,path_b,alone,0,209.849,4 KiB pages
+gpu_read,path_b,with_cpu,4,185.149,
+cpu_read,host,with_gpu_path_b,4,29.679,
+cpu_write,path_b,alone,1,18.459,memcpy
+cpu_write,path_b,alone,1,33.399,non-temporal stores
 gpu_read,path_b_lp,alone,0,0.000,large pages unavailable: SeLockMemoryPrivilege is not held by this account (secpol.msc -> Lock pages in memory, then re-login)
-gpu_read,device_local,alone,0,208.545,memory type 0
-gpu_read,device_local,with_cpu,3,191.382,
-cpu_read,host,with_gpu_device_local,3,29.050,
-dispatch_overhead,path_a,alone,0,0.560,microseconds, not GB/s
+gpu_read,device_local,alone,0,210.962,memory type 0
+gpu_read,device_local,with_cpu,4,188.721,
+cpu_read,host,with_gpu_device_local,4,28.144,
+dispatch_overhead,path_a,alone,0,0.561,microseconds, not GB/s

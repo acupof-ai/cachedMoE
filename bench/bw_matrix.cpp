@@ -136,9 +136,17 @@ public:
             pool_.emplace_back([this, per, t] {
                 const size_t n = (t == threads_ - 1) ? bytes_ - per * t : per;
                 uint64_t acc = 0;
+                // Account in 4 MiB steps, not once per full pass: a thread's
+                // slice takes tens of milliseconds to walk, which is longer
+                // than the GPU measurement window, so per-pass accounting
+                // quantises the concurrent CPU figure into noise.
+                constexpr size_t kStep = 4u << 20;
                 while (!stop_.load(std::memory_order_relaxed)) {
-                    acc += stream_read(data_ + per * t, n);
-                    moved_.fetch_add(n, std::memory_order_relaxed);
+                    for (size_t o = 0; o < n && !stop_.load(std::memory_order_relaxed); o += kStep) {
+                        const size_t len = std::min(kStep, n - o);
+                        acc += stream_read(data_ + per * t + o, len);
+                        moved_.fetch_add(len, std::memory_order_relaxed);
+                    }
                 }
                 sink_.fetch_add(acc, std::memory_order_relaxed);
             });
@@ -361,10 +369,12 @@ int main(int argc, char** argv) {
         if (!k.large_pages) {
             CpuLoad load(buf.data(), buf.size(), peak_threads);
             load.start();
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));  // let it ramp
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));  // let it ramp
             const uint64_t c0 = load.moved();
             const auto t0 = Clock::now();
-            auto res = raw.run(*b, want, 4);
+            // ~200 ms of GPU work: long enough for 32 CPU threads to average
+            // out. A 20 ms window makes the CPU figure a scheduling artefact.
+            auto res = raw.run(*b, want, 32);
             const double window = std::chrono::duration<double>(Clock::now() - t0).count();
             const uint64_t c1 = load.moved();
             load.stop();

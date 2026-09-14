@@ -1,6 +1,13 @@
-// FP4 (E2M1) dequant GEMV -- the template every routed-expert kernel of
-// design §7.9 is an instance of, and the toolchain smoke test that proves
-// slangc -> SPIR-V with int8 storage and subgroup ops.
+// FP4 (E2M1) dequant GEMV -- the toolchain smoke test that proves
+// slangc -> SPIR-V with int8 storage and subgroup ops, and the simplest
+// readable statement of what design §7.9's kernels do.
+//
+// The real MoE kernels are moe_gateup.slang and moe_down.slang: they read the
+// weights through the buffer_device_address pointer table instead of a bound
+// descriptor (design §5.3), carry the specialisation constants of §7.1, and are
+// what bench/kernel_bench measures. This file stays because `deepmoe info` and
+// docs/build.md use it to check the shader toolchain without a checkpoint, and
+// because it is 20 lines rather than 150.
 //
 // One wave cooperates on one output row (design §7.1 rule 3). A row of K=5120
 // FP4 elements is 2560 B; each lane owns whole 32-element blocks so the E8M0

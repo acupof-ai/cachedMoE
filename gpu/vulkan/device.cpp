@@ -32,8 +32,12 @@ std::string DeviceCaps::to_string() const {
                      yn(external_memory_host), yn(timeline_semaphore), yn(buffer_device_address));
     s += std::format("  integer_dot_product {}   subgroup_size_control {}   cooperative_matrix {}\n",
                      yn(integer_dot_product), yn(subgroup_size_control), yn(cooperative_matrix));
-    s += std::format("  shaderFloat16 {}   shaderInt8 {}   8bit_storage {}\n",
-                     yn(shader_float16), yn(shader_int8), yn(storage_buffer_8bit));
+    s += std::format("  shaderFloat16 {}   shaderInt8 {}   shaderInt16 {}   shaderInt64 {}\n",
+                     yn(shader_float16), yn(shader_int8), yn(shader_int16), yn(shader_int64));
+    s += std::format("  8bit_storage {}   16bit_storage {}   synchronization2 {}\n",
+                     yn(storage_buffer_8bit), yn(storage_buffer_16bit), yn(synchronization2));
+    s += std::format("  timestampPeriod {:.1f} ns   timestampValidBits {}\n",
+                     timestamp_period_ns, timestamp_valid_bits);
     return s;
 }
 
@@ -47,6 +51,10 @@ Result<void> DeviceCaps::check_required() const {
     if (!subgroup_size_control) missing += "  VK_EXT_subgroup_size_control (design §7.1 Wave32/64 A/B)\n";
     if (!shader_float16)        missing += "  shaderFloat16 (design §6 activation precision)\n";
     if (!storage_buffer_8bit)   missing += "  8-bit storage (design §6 FP4/FP8 weights)\n";
+    if (!storage_buffer_16bit)  missing += "  16-bit storage (design §6 fp16 activation buffers)\n";
+    if (!shader_int16)          missing += "  shaderInt16 (design §6 fp16 activation buffers)\n";
+    if (!shader_int64)          missing += "  shaderInt64 (design §5.3 buffer_device_address pointer table)\n";
+    if (!synchronization2)      missing += "  synchronization2 (design §7.1 barriers and GPU timestamps)\n";
     if (max_memory_allocation_size == 0) missing += "  maxMemoryAllocationSize is unknown\n";
     if (!missing.empty())
         return fail(Err::FailedPrecondition, "device is missing required capabilities:\n" + missing);
@@ -124,6 +132,19 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.max_compute_shared_memory = p.limits.maxComputeSharedMemorySize;
     c.max_compute_workgroup_invocations = p.limits.maxComputeWorkGroupInvocations;
     c.timestamp_period_ns = p.limits.timestampPeriod;
+    // Report the timestamp width of the family a compute queue would come from,
+    // so `deepmoe info` says the same thing the benchmarks see.
+    {
+        uint32_t nq = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(pd, &nq, nullptr);
+        std::vector<VkQueueFamilyProperties> qp(nq);
+        vkGetPhysicalDeviceQueueFamilyProperties(pd, &nq, qp.data());
+        for (uint32_t i = 0; i < nq; ++i)
+            if (qp[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+                c.timestamp_valid_bits = qp[i].timestampValidBits;
+                break;
+            }
+    }
     c.max_buffer_size = m4.maxBufferSize;
     c.subgroup_size     = v11.subgroupSize;
     c.min_subgroup_size = sgc.minSubgroupSize;

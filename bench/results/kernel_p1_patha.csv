@@ -1,0 +1,3 @@
+variant,m,lanes_per_row,rows_per_lane,subgroup,decode_mode,h_precision,slots,layer_cycle,iters,path,bytes_a,bytes_b,gbps_a,gbps_b,gbps_total,ms_a,ms_b,ms_total,ms_wall,raw_read_gbps,launch_us
+M1 L32 R1 sg32 dec0 hfp16,1,32,1,32,0,0,7,8,48,A device-local|host-visible,87736320,43868160,224.536,217.607,222.065,0.3907,0.2016,0.5926,0.5945,0.371,69.980
+M6 L16 R2 sg64 dec0 hfp16,6,16,2,64,0,0,7,8,48,A device-local|host-visible,87736320,43868160,156.335,112.467,138.686,0.5612,0.3901,0.9489,0.9518,0.494,114.840
