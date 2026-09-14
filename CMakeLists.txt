@@ -25,11 +25,16 @@ function(add_slang_shader target src)
         COMMAND "${SLANGC_EXECUTABLE}" "${src}" -target spirv -profile spirv_1_6 -entry main -O2
                 -I "${CMAKE_SOURCE_DIR}/gpu/shaders" -o "${out}"
         COMMAND "${SPIRV_VAL_EXECUTABLE}" --target-env vulkan1.3 "${out}"
-        DEPENDS "${src}" "${CMAKE_SOURCE_DIR}/gpu/shaders/moe_common.slang"
+        DEPENDS "${src}" ${_shader_dep_paths}
         COMMENT "slangc ${name}.slang"
         VERBATIM)
     add_custom_target("${target}" DEPENDS "${out}")
 endfunction()
+
+set(_shader_dep_paths "")
+foreach(_d IN LISTS DEEPMOE_SHADER_DEPS)
+    list(APPEND _shader_dep_paths "${CMAKE_SOURCE_DIR}/${_d}")
+endforeach()
 
 # Every kernel of design §7.14 is compiled and validated by the `shaders` target.
 set(_shader_targets "")

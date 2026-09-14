@@ -40,6 +40,7 @@ set(DEEPMOE_STORAGE_LINUX_SOURCES
 
 set(DEEPMOE_STORE_SOURCES
     store/slab.cpp
+    store/pinned.cpp
     store/expert_store.cpp
     store/planner.cpp
     store/predictor.cpp
@@ -53,10 +54,17 @@ set(DEEPMOE_GPU_SOURCES
     gpu/vulkan/pipeline.cpp
     gpu/vulkan/descriptor.cpp
     gpu/vulkan/rawread.cpp
-    gpu/vulkan/moe_kernels.cpp)
+    gpu/vulkan/moe_kernels.cpp
+    gpu/vulkan/attn_kernels.cpp)
 
 set(DEEPMOE_RUNTIME_SOURCES
     runtime/engine.cpp)
+
+# Headers every shader in DEEPMOE_SHADERS may include; touching one rebuilds all.
+set(DEEPMOE_SHADER_DEPS
+    gpu/shaders/moe_common.slang
+    gpu/shaders/attn_common.slang
+    gpu/shaders/fp8_gemv.slang)
 
 # design §7.14 dispatch list, plus the FP4 GEMV template and the raw-read
 # upper bound every kernel is scored against (design §7.1 rule 2).

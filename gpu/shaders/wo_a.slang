@@ -1,17 +1,52 @@
-// wo_a -- grouped output down-projection, fp8 block diagonal 8 x [1024 x 4096],
-// 33.6 MB (design §7.6).
+// wo_a -- the block-diagonal output down-projection (design §7.6, dispatch #6
+// of the §7.14 list). fp8 [8192 x 4096], 33.6 MB, read as 8 groups of
+// [1024 x 4096]: group g projects only the 4096 dims of heads 8g..8g+7.
 //
-// Dispatch #6 of design §7.14. The group index comes from the high bits of the
-// workgroup id, so all eight blocks are one dispatch; the input o is sliced
-// 4096 dims per group.
+// Two things separate it from the other fp8 GEMVs:
 //
-// Placeholder: bindings and entry point only.
-// TODO(design §7.6): body. P2 per design §15.
-[[vk::binding(0, 0)]] StructuredBuffer<uint8_t> W;   // fp8 [8192, 4096]
-[[vk::binding(1, 0)]] StructuredBuffer<uint8_t> S;   // e8m0 [256, 128]
-[[vk::binding(2, 0)]] StructuredBuffer<half>    O;   // o[8][4096]
-[[vk::binding(3, 0)]] RWStructuredBuffer<half>  Oa;  // [8][1024]
+// 1. **No activation quantisation.** `Attention.forward` reaches this weight
+//    through `torch.einsum`, not `linear()`, and the module is declared bf16
+//    (convert.py dequantises it; "an fp8 grouped GEMM would halve the
+//    memory"). So the checkpoint stores fp8 bytes but the arithmetic is
+//    bf16 x bf16, with no `act_quant` round trip on `o`. Compiled with
+//    ActQuant = 0, which also switches the LDS staging to bf16.
+//
+// 2. **The activation is a slice, not the whole vector.** A workgroup covers
+//    `256 / LanesPerRow` consecutive rows and a group is 1024 rows, so a
+//    workgroup never straddles two groups and can stage the one 4096-wide
+//    slice of `o` its group needs.
+
+#include "fp8_gemv.slang"
+
+static const uint kW = 0, kS = 1, kO = 2, kY = 3;
+
+[[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
+
+struct WoaPush {
+    uint rows;            // n_groups * o_lora_rank = 8192
+    uint k;               // n_heads * head_dim / n_groups = 4096
+    uint scale_cols;      // k / 32 = 128
+    uint rows_per_group;  // o_lora_rank = 1024
+};
+[[vk::push_constant]] WoaPush pc;
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void main(uint3 gid : SV_GroupID, uint lane : SV_GroupIndex) {}
+[numthreads(256, 1, 1)]
+void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
+    const uint rowsPerWg = kWg / LanesPerRow;
+    const uint base  = gid.x * rowsPerWg;
+    const uint group = base / pc.rows_per_group;
+
+    fp8_table_fill(tid);
+    stage_x_fp8(Ptr[kO] + (uint64_t)group * pc.k * 4, pc.k, tid);
+    GroupMemoryBarrierWithGroupSync();
+
+    const uint sublane = tid % LanesPerRow;
+    const uint row = base + tid / LanesPerRow;
+    const bool live = row < pc.rows;
+    const float part = live ? gemv8_partial(Ptr[kW], Ptr[kS], row, pc.k,
+                                            pc.scale_cols, sublane)
+                            : 0.0f;
+    const float y = row_reduce(part, tid, sublane);
+    if (live && sublane == 0) *(float*)(Ptr[kY] + (uint64_t)row * 4) = y;
+}

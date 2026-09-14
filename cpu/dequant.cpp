@@ -20,6 +20,69 @@ float e8m0_scale(float v, uint8_t e) noexcept {
     return std::ldexp(v, static_cast<int>(e) - 127);
 }
 
+float fp8_round_scale(float amax) noexcept {
+    // `fast_round_scale(amax, 1/448)`: 2^ceil(log2(v)) read off the exponent
+    // field, with the amax floor act_quant_kernel applies.
+    const float v = (amax < 1e-4f ? 1e-4f : amax) * (1.0f / 448.0f);
+    uint32_t b;
+    std::memcpy(&b, &v, 4);
+    const int e = static_cast<int>((b >> 23) & 0xFFu) - 127 + ((b & 0x7FFFFFu) ? 1 : 0);
+    return std::ldexp(1.0f, e);
+}
+
+uint8_t e8m0_encode(float pow2) noexcept {
+    uint32_t b;
+    std::memcpy(&b, &pow2, 4);
+    return static_cast<uint8_t>((b >> 23) & 0xFFu);
+}
+
+uint8_t fp8_encode_rn(float v) noexcept {
+    uint32_t bits;
+    std::memcpy(&bits, &v, 4);
+    const uint8_t sign = static_cast<uint8_t>((bits >> 24) & 0x80u);
+    const float a = std::fabs(v);
+    uint32_t mag;
+    if (a < 0.015625f) {                       // below 2^-6: the subnormal grid
+        const float t = a * 512.0f;            // multiples of 2^-9
+        const float f = std::floor(t);
+        const float d = t - f;
+        const float n = (d > 0.5f) ? f + 1.0f
+                      : (d < 0.5f ? f : (std::fmod(f, 2.0f) == 0.0f ? f : f + 1.0f));
+        mag = static_cast<uint32_t>(n);        // 8 carries into exponent 1, i.e. 2^-6
+    } else {
+        uint32_t b;
+        std::memcpy(&b, &a, 4);
+        int      e    = static_cast<int>((b >> 23) & 0xFFu);
+        uint32_t keep = (b & 0x7FFFFFu) >> 20;
+        const uint32_t rem = b & 0xFFFFFu;
+        if (rem > 0x80000u || (rem == 0x80000u && (keep & 1u))) {
+            if (++keep == 8u) { keep = 0; ++e; }
+        }
+        int ee = e - 127 + 7;
+        if (ee > 15 || (ee == 15 && keep == 7)) { ee = 15; keep = 6; }   // clamp at 448
+        if (ee < 0) { ee = 0; keep = 0; }
+        mag = (static_cast<uint32_t>(ee) << 3) | keep;
+    }
+    return static_cast<uint8_t>(sign | mag);
+}
+
+float act_quant_block(const float* v, size_t n, uint8_t* bytes, float* out_dequant) {
+    float amax = 0.0f;
+    for (size_t i = 0; i < n; ++i) {
+        const float a = std::fabs(v[i]);
+        if (a > amax) amax = a;
+    }
+    const float s = fp8_round_scale(amax);
+    const float inv = 1.0f / s;
+    for (size_t i = 0; i < n; ++i) {
+        float q = v[i] * inv;
+        q = q < -448.0f ? -448.0f : (q > 448.0f ? 448.0f : q);
+        bytes[i] = fp8_encode_rn(q);
+        if (out_dequant) out_dequant[i] = fp8_e4m3_to_float(bytes[i]) * s;
+    }
+    return s;
+}
+
 float bf16_to_float(uint16_t h) noexcept {
     uint32_t x = static_cast<uint32_t>(h) << 16;
     float f;

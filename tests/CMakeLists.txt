@@ -10,7 +10,8 @@ add_executable(deepmoe_tests
     test_model.cpp
     test_integration.cpp
     test_gpu_core.cpp
-    test_gpu_moe.cpp)
+    test_gpu_moe.cpp
+    test_gpu_attn.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -38,6 +39,13 @@ add_test(NAME "suite.gpu" COMMAND deepmoe_tests "gpu.")
 set_tests_properties("suite.gpu" PROPERTIES
     LABELS "needs-gpu"
     SKIP_REGULAR_EXPRESSION "SKIP gpu:")
+
+# The design §7.2-§7.8 attention kernels against the oracle's L2 tensors. Same
+# gate as gpu_moe, plus tests/data/l2 must exist.
+add_test(NAME "suite.gpu_attn" COMMAND deepmoe_tests "gpu_attn.")
+set_tests_properties("suite.gpu_attn" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_attn")
 
 # The design §7.9 kernels on the real checkpoint. Same gate, and it additionally
 # skips itself when there is no usable Vulkan device.

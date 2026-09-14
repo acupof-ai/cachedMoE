@@ -1,0 +1,196 @@
+// Host side of the non-MoE decode path: dispatches 1-9 and the head of design
+// §7.14.
+//
+// The shape of the thing
+// ----------------------
+// Nine shaders, fourteen pipelines (mega_mhc, wkv, sparse_attn and gate each
+// run more than one stage of the same .spv, selected by a specialisation
+// constant). Every one of them binds exactly ONE descriptor: a slice of a
+// shared `uint64_t` table holding the device addresses it needs. Weights and
+// activations both arrive that way, for the same reason the MoE kernels reach
+// their experts through a pointer table (design §5.3): the pinned set is 17.7
+// GB spread over many sub-2-GiB regions, and one descriptor per tensor per
+// layer would be thousands of them, rewritten every token.
+//
+// So the whole binding story is: write addresses into `slots(stage)`, push a
+// small struct of dimensions, dispatch. Nothing is rebound between layers.
+//
+// Ownership/threading: one AttnRunner is created, recorded and submitted from a
+// single thread. It owns its pipelines, its descriptor pool, the slot table and
+// its command pool; the weights belong to store::PinnedStore and the
+// activations to whoever allocated them.
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "core/status.h"
+#include "gpu/vulkan/cmdbuf.h"
+#include "gpu/vulkan/descriptor.h"
+#include "gpu/vulkan/device.h"
+#include "gpu/vulkan/memory.h"
+#include "gpu/vulkan/pipeline.h"
+
+namespace deepmoe::gpu {
+
+// The dispatch list of design §7.14, expanded to one entry per pipeline.
+enum class AttnStage : uint32_t {
+    MhcPost = 0,   // §7.7 + §7.2: hc_post, hc_pre and the two RMS partials
+    MhcMix,        // §7.2: the 24 hc_fn dot products
+    MhcFinal,      // §7.2: Sinkhorn, and the RMSNorm of the sublayer input
+    WqA,           // §7.3
+    WqB,           // §7.3: + q_norm + RoPE
+    WkvGemv,       // §7.4
+    WkvFinish,     // §7.4: + kv_norm + RoPE + the fp8 ring write
+    AttnScore,     // §7.5: every score
+    AttnCombine,   // §7.5: softmax, P.V, inverse RoPE
+    WoA,           // §7.6: grouped, and the one fp8 GEMV with no act_quant
+    WoB,           // §7.6
+    GateScore,     // §7.8
+    GateTopK,      // §7.8: noaux_tc selection into host-coherent memory
+    Head,          // §7.11
+    Count,
+};
+
+const char* attn_stage_name(AttnStage s);
+
+// design §7.1's knobs, as far as this path has them. `act_quant` is not here:
+// it is a property of the kernel (wo_a never quantises, everything else
+// always does), not a sweep dimension -- except in bench/attn_bench, which
+// creates its own pipelines to measure what the round trip costs.
+struct AttnSpec {
+    uint32_t lanes_per_row = 32;   // kernel_p1.md §3.2's winner at M=1
+    uint32_t subgroup_size = 32;   // Wave32
+};
+
+// --- push constants, mirroring the shaders exactly --------------------------
+
+struct MhcPush {
+    uint32_t dim, hc, mix_rows, n_wg0, sinkhorn_iters, flags;
+    float    norm_eps, hc_eps;
+};
+inline constexpr uint32_t kMhcFlagPost = 1u;          // apply hc_post
+inline constexpr uint32_t kMhcFlagSkipSinkhorn = 2u;  // final collapse before the head
+
+struct GemvPush { uint32_t rows, k, scale_cols, row_base; };
+struct WqbPush  { uint32_t rows, k, scale_cols, head_dim, rope_dim; float norm_eps; };
+struct WkvPush  { uint32_t rows, k, scale_cols, rope_dim, slot, n_wg0; float norm_eps; };
+struct WoaPush  { uint32_t rows, k, scale_cols, rows_per_group; };
+struct AttnPush { uint32_t n_kv, n_win, head_dim, rope_dim, score_stride; float softmax_scale; };
+struct GatePush { uint32_t n_experts, k, topk, record; float gate_temp, route_scale; };
+struct HeadPush { uint32_t rows, k, row_base; };
+
+// Slot indices inside a stage's address table. They are the `static const uint`
+// names at the top of each shader; keeping both lists in one place is the only
+// coupling between the two sides.
+namespace slot {
+// mega_mhc
+enum : uint32_t { kX = 0, kA = 1, kPostIn = 2, kCombIn = 3, kPreMix = 4, kHcFn = 5,
+                  kHcBase = 6, kHcScale = 7, kNormW = 8, kXout = 9, kUtmp = 10,
+                  kScratch = 11, kMixRaw = 12, kMixOut = 13, kU = 14 };
+// wq_a / wo_b: W, S, X, Y
+enum : uint32_t { kGemvW = 0, kGemvS = 1, kGemvX = 2, kGemvY = 3 };
+// wq_b: W, S, Qr, NormW, Rope, Q
+enum : uint32_t { kWqbW = 0, kWqbS = 1, kWqbQr = 2, kWqbNormW = 3, kWqbRope = 4, kWqbQ = 5 };
+// wkv
+enum : uint32_t { kWkvW = 0, kWkvS = 1, kWkvX = 2, kWkvNormW = 3, kWkvRope = 4,
+                  kWkvRaw = 5, kWkvScratch = 6, kWkvVal = 7, kWkvScale = 8, kWkvKv = 9 };
+// sparse_attn
+enum : uint32_t { kAttnQ = 0, kAttnWinVal = 1, kAttnWinScale = 2, kAttnCmpKv = 3,
+                  kAttnTopIdx = 4, kAttnSink = 5, kAttnRope = 6, kAttnScore = 7, kAttnO = 8 };
+// wo_a: W, S, O, Y
+enum : uint32_t { kWoaW = 0, kWoaS = 1, kWoaO = 2, kWoaY = 3 };
+// gate
+enum : uint32_t { kGateW = 0, kGateBias = 1, kGateX = 2, kGateScores = 3,
+                  kGateIds = 4, kGateWeights = 5, kGateLayerDone = 6 };
+// head
+enum : uint32_t { kHeadW = 0, kHeadX = 1, kHeadLogits = 2 };
+}  // namespace slot
+
+// A bump allocator over one host-visible, device-addressable buffer: every
+// activation of design §7.14 for one token fits in a couple of MB, so there is
+// no reason for them to be separate allocations.
+class GpuScratch {
+public:
+    struct View {
+        uint64_t addr  = 0;
+        void*    host  = nullptr;
+        uint64_t bytes = 0;
+        bool valid() const { return host != nullptr; }
+    };
+
+    Result<void> create(MemoryAllocator& alloc, uint64_t bytes);
+    void         destroy();
+
+    // 256-byte aligned by default, which covers every `uint4` load in the
+    // shaders and the descriptor offset alignment of the slot table.
+    Result<View> alloc(uint64_t bytes, uint64_t align = 256);
+    void         rewind() { used_ = 0; }
+    uint64_t     used() const { return used_; }
+    uint64_t     capacity() const { return buf_.bytes; }
+
+private:
+    MemoryAllocator* alloc_ = nullptr;
+    GpuBuffer        buf_{};
+    uint64_t         used_ = 0;
+};
+
+class AttnRunner {
+public:
+    AttnRunner() = default;
+    ~AttnRunner() { destroy(); }
+
+    AttnRunner(const AttnRunner&) = delete;
+    AttnRunner& operator=(const AttnRunner&) = delete;
+
+    Result<void> create(Device& device, MemoryAllocator& alloc,
+                        const std::string& shader_dir, const AttnSpec& spec = {});
+    void destroy();
+
+    const AttnSpec& spec() const { return spec_; }
+
+    // The address table for one stage: 32 slots, host-visible, written
+    // directly. Valid until destroy().
+    uint64_t* slots(AttnStage s);
+
+    // Records bind + push + dispatch. No barrier: the caller decides, because a
+    // decode layer is a strict chain and a benchmark is not.
+    Result<void> record(CommandBuffer& cmd, AttnStage s, const void* push,
+                        uint32_t push_bytes, uint32_t groups);
+
+    // Records one dispatch into a private command buffer, submits it and waits.
+    // Tests and one-shot use only; the decode loop never waits on the host.
+    Result<void> dispatch_now(AttnStage s, const void* push, uint32_t push_bytes,
+                              uint32_t groups);
+
+    // Workgroups for a `rows`-tall GEMV at this spec.
+    uint32_t gemv_groups(uint32_t rows) const {
+        const uint32_t per = 256 / spec_.lanes_per_row;
+        return (rows + per - 1) / per;
+    }
+
+private:
+    Result<void> make(AttnStage s, const std::string& spv, uint32_t stage_const,
+                      uint32_t act_quant);
+
+    Device*          device_ = nullptr;
+    MemoryAllocator* alloc_  = nullptr;
+    AttnSpec         spec_{};
+    Pipeline         pipes_[static_cast<uint32_t>(AttnStage::Count)];
+    DescriptorPool   descriptors_;
+    CommandPool      pool_;
+    GpuBuffer        table_{};
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    VkDescriptorSet  sets_[static_cast<uint32_t>(AttnStage::Count)]{};
+#endif
+};
+
+// Slots per stage in the shared table, and the resulting per-stage byte
+// stride. 32 slots is well above the 15 mega_mhc needs and keeps the stride a
+// round 256 B, which satisfies every plausible
+// minStorageBufferOffsetAlignment.
+inline constexpr uint32_t kAttnSlotsPerStage = 32;
+inline constexpr uint32_t kAttnStageStride   = kAttnSlotsPerStage * sizeof(uint64_t);
+
+}  // namespace deepmoe::gpu

@@ -89,6 +89,28 @@ inline uint8_t fp4_nibble(std::span<const uint8_t> packed, size_t i) noexcept {
     return (i & 1) ? static_cast<uint8_t>(b >> 4) : static_cast<uint8_t>(b & 0x0F);
 }
 
+// --- activation quantisation (design §6, route_trace.md §11.4) ---------------
+//
+// `inference/kernel.py`'s `act_quant(x, 32, scale_fmt="ue8m0")`, which
+// `linear()` applies to the input of EVERY fp8 and fp4 weight -- not just to
+// the MoE intermediate design §6 mentions. Two pieces:
+//
+//   fp8_round_scale  `fast_round_scale`: the smallest power of two >= amax/448,
+//                    computed on the fp32 bit pattern. `ceil(log2(x))` in
+//                    floating point gets the exact powers of two wrong, which
+//                    is the whole reason the reference does it this way.
+//   fp8_encode_rn    round-to-nearest-even onto the E4M3 grid, returning the
+//                    byte. `fp8_e4m3_to_float` is its exact inverse.
+float   fp8_round_scale(float amax) noexcept;   // amax is floored at 1e-4 inside
+uint8_t fp8_encode_rn(float v) noexcept;        // |v| must already be <= 448
+uint8_t e8m0_encode(float pow2) noexcept;       // a power-of-two -> its UE8M0 byte
+
+// One block of `n` activations (n a multiple of 32 is not required; the caller
+// passes exactly one block). Writes `n` E4M3 bytes and returns the scale.
+// `out_dequant`, when non-null, receives the round-tripped values -- which is
+// what a GEMM actually multiplies.
+float act_quant_block(const float* v, size_t n, uint8_t* bytes, float* out_dequant = nullptr);
+
 // --- row decoders ------------------------------------------------------------
 
 // Decodes `n` FP4 elements from `packed` (n/2 bytes) into `out`, applying the
