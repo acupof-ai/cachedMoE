@@ -204,6 +204,10 @@ public:
     size_t          pointer_table_bytes()   const { return table_.size() * sizeof(uint64_t); }
     static constexpr uint32_t pointer_table_stride() { return kExpertPartCount; }
     Result<uint64_t> table_entry(ExpertKey key, ExpertPart part = ExpertPart::W1Weight) const;
+    // All six parts of a RESIDENT expert under one lock; FailedPrecondition if
+    // it is not resident. The MoE bridge asks for six experts a layer, and
+    // six lookups plus thirty-six `table_entry` calls were 42 lock round trips.
+    Result<void> table_row(ExpertKey key, uint64_t out[kExpertPartCount]) const;
 
     ExpertStoreStats stats() const;
     void             reset_stats();

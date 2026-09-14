@@ -327,6 +327,8 @@ private:
     gpu::GpuScratch      scratch_;
     gpu::GpuBuffer       logits_{};   // [vocab] fp32
     gpu::GpuBuffer       sample_{};   // SampleOut, host-coherent
+    gpu::GpuBuffer       ffn_in_buf_{};   // the FFN input, in cached host pages (path B)
+    gpu::MemoryAllocator* ffn_in_alloc_ = nullptr;
 
     KvCache        kv_;
     KvStore        kvs_;

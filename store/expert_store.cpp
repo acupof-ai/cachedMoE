@@ -399,6 +399,20 @@ Result<uint64_t> ExpertStore::table_entry(ExpertKey key, ExpertPart part) const 
     return table_[table_index(key, part)];
 }
 
+Result<void> ExpertStore::table_row(ExpertKey key, uint64_t out[kExpertPartCount]) const {
+    std::lock_guard lk(mutex_);
+    if (!key_in_range(key))
+        return fail(Err::OutOfRange, std::format("expert ({}, {}) is outside the table",
+                                                 key.layer, key.expert));
+    auto it = index_.find(key);
+    if (it == index_.end() || slots_[it->second].state != SlotState::Resident)
+        return fail(Err::FailedPrecondition,
+                    std::format("expert ({}, {}) is not resident", key.layer, key.expert));
+    for (uint32_t p = 0; p < kExpertPartCount; ++p)
+        out[p] = table_[table_index(key, static_cast<ExpertPart>(p))];
+    return {};
+}
+
 ExpertStoreStats ExpertStore::stats() const {
     std::lock_guard lk(mutex_);
     ExpertStoreStats s = stats_;

@@ -218,6 +218,15 @@ public:
         moe_out_host_ = host;
     }
     uint64_t     moe_out_addr() const { return moe_out_addr_ ? moe_out_addr_ : buf_.moe_y.addr; }
+
+    // Where the FFN half writes its normed input -- what the gate scores and
+    // what the host copies into the MoE's fp16 `x` every layer. Default is the
+    // scratch `u`, which lives in path A: DEVICE_LOCAL|HOST_VISIBLE, i.e.
+    // write-combining, and a 20 KB read of it measured 155 us a layer, 6.2 ms
+    // a token. The token loop points it at ordinary host pages imported for
+    // the GPU (path B), where the same read is a cached memcpy.
+    void set_ffn_input(uint64_t addr, float* host) { ffn_in_addr_ = addr; ffn_in_host_ = host; }
+    uint64_t ffn_in_addr() const { return ffn_in_addr_ ? ffn_in_addr_ : buf_.u.addr; }
     const float* moe_out() const {
         return moe_out_host_ ? moe_out_host_ : static_cast<const float*>(buf_.moe_y.host);
     }
@@ -263,6 +272,8 @@ private:
     // token and never gave it back until the pool died.
     gpu::CommandBuffer cmd_{};
     uint64_t          moe_out_addr_ = 0;
+    uint64_t          ffn_in_addr_ = 0;
+    float*            ffn_in_host_ = nullptr;
     const float*      moe_out_host_ = nullptr;
     uint32_t          hcdim_ = 0;
 };

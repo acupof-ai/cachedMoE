@@ -51,6 +51,7 @@
 // its runner. Single-threaded, on the GPU submit thread.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -131,6 +132,7 @@ private:
     gpu::MoeRunner            runner_;
     uint32_t                  shared_index_ = 0;          // == n_routed_experts
     uint64_t                  shared_addr_[kExpertPartCount]{};
+    std::vector<std::array<uint64_t, kExpertPartCount>> shared_rows_;
     uint32_t                  shared_layer_ = 0xFFFFFFFFu;
     bool                      shared_ok_    = false;
     // Ordinary host staging: computing over GPU-visible memory a float at a

@@ -87,6 +87,40 @@ private:
     bool     a_done_ = false;
 };
 
+// VK_EXT_memory_budget's view of the HOST heap: what the OS says this process
+// may still put there, given everything every other process already has. Zero
+// when the extension is not there. Path B's imports are charged to this heap,
+// and on this driver an import past the budget does not fail cleanly -- it
+// returns VK_ERROR_INVALID_EXTERNAL_HANDLE and the device is lost on the next
+// submit -- so a cache that sizes itself has to ask first.
+uint64_t host_heap_headroom(const gpu::Device& d, uint64_t* budget_out, uint64_t* usage_out) {
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    uint32_t n = 0;
+    vkEnumerateDeviceExtensionProperties(d.physical(), nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> ext(n);
+    vkEnumerateDeviceExtensionProperties(d.physical(), nullptr, &n, ext.data());
+    bool have = false;
+    for (const VkExtensionProperties& e : ext)
+        have |= std::strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0;
+    if (!have) return 0;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    props.pNext = &budget;
+    vkGetPhysicalDeviceMemoryProperties2(d.physical(), &props);
+    for (uint32_t i = 0; i < props.memoryProperties.memoryHeapCount; ++i) {
+        if (props.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) continue;
+        if (budget_out) *budget_out = budget.heapBudget[i];
+        if (usage_out) *usage_out = budget.heapUsage[i];
+        return budget.heapBudget[i] > budget.heapUsage[i]
+                   ? budget.heapBudget[i] - budget.heapUsage[i] : 0;
+    }
+#else
+    (void)d; (void)budget_out; (void)usage_out;
+#endif
+    return 0;
+}
+
 }  // namespace
 
 Engine::~Engine() { shutdown(); }
@@ -296,7 +330,38 @@ Result<void> Engine::init_gpu() {
                 if (h.index == t->heap_index) heap_a = h.bytes;
         const uint64_t a_cache = heap_a > pinned + kPathAOther ? heap_a - pinned - kPathAOther : 0;
         const bool     have_b  = alloc_b_.path() == MemoryPath::ExternalMemoryHost;
-        const uint64_t b_cache = (have_b && avail_phys > kPhysFloor) ? avail_phys - kPhysFloor : 0;
+        uint64_t b_cache = (have_b && avail_phys > kPhysFloor) ? avail_phys - kPhysFloor : 0;
+        // Path B is also bounded by the HOST heap the driver reports (37.2 GiB
+        // here), which is what imported pages are charged to. Physical memory
+        // alone is not the limit: with 50 GB free, an import past ~33 GiB
+        // failed with VK_ERROR_INVALID_EXTERNAL_HANDLE and the device was lost
+        // on the next submit (docs/p2_decode.md §12.2). bench/heap_capacity's
+        // mixed run stopped path B at 26 GiB; 10 GiB of the heap is left for
+        // everything else host-heap-backed.
+        constexpr uint64_t kHostHeapMargin = 10ull << 30;
+        for (const gpu::HeapInfo& h : device_.caps().heaps)
+            if (!h.device_local && h.bytes > kHostHeapMargin)
+                b_cache = std::min(b_cache, h.bytes - kHostHeapMargin);
+        // And by what the OS will actually grant now -- the heap is shared with
+        // every other Vulkan process on the machine -- less a 4 GiB margin. On
+        // this driver the budget is 35.4 GiB and the usage reads 0 whatever is
+        // running, so it is logged and applied but is not what keeps an import
+        // from failing.
+        uint64_t hb = 0, hu = 0;
+        const uint64_t headroom = host_heap_headroom(device_, &hb, &hu);
+        if (hb) {
+            constexpr uint64_t kBudgetMargin = 4ull << 30;
+            b_cache = std::min(b_cache, headroom > kBudgetMargin ? headroom - kBudgetMargin : 0);
+            log_info("engine: host heap budget {}, {} reported in use", human_bytes(hb),
+                     human_bytes(hu));
+        }
+        // What does: a fixed ceiling on path B. Imports failed -- and took the
+        // device with them -- at 33 GiB on an idle machine with 50 GB free, and
+        // at 15.8 GiB while another track's GPU test held host-heap memory.
+        // 16 GiB is under both, and puts the auto-sized cache at ~80 GiB.
+        // `--cache-gb` asks for more explicitly, and owns the risk.
+        constexpr uint64_t kPathBAutoCeiling = 16ull << 30;
+        b_cache = std::min(b_cache, kPathBAutoCeiling);
         uint64_t want = a_cache + b_cache;
         if (avail_commit) {
             const uint64_t commit_cap =
@@ -334,6 +399,20 @@ Result<void> Engine::init_gpu() {
     // The MoE output stays on the GPU: the next layer's hc_post reads the
     // bridge's `y` by address instead of the host copying it into scratch.
     layer_.set_moe_output(moe_.y_address(), moe_.y_host());
+    // The FFN input the host reads every layer, in cached host pages rather than
+    // path A's write-combining mapping (DecodeLayer::set_ffn_input). Path A if
+    // there is no path B: slower, still correct.
+    {
+        const uint64_t bytes = align_up(uint64_t(c.hidden_size) * sizeof(float), 1ull << 16);
+        auto fb = alloc_b_.path() == MemoryPath::ExternalMemoryHost
+                      ? alloc_b_.allocate_imported(bytes, /*device_address=*/true)
+                      : alloc_a_.allocate(bytes, true, true);
+        if (!fb) fb = alloc_a_.allocate(bytes, true, true);
+        if (!fb) return std::unexpected(fb.error());
+        ffn_in_buf_ = *fb;
+        ffn_in_alloc_ = (fb->host_alloc != nullptr) ? &alloc_b_ : &alloc_a_;
+        layer_.set_ffn_input(ffn_in_buf_.dev_addr, static_cast<float*>(ffn_in_buf_.host_ptr));
+    }
 
     // The token loop's buffer, its completion fence and its timestamps.
     if (auto r = fence_.create(device_, 0); !r) return r;
@@ -490,6 +569,8 @@ void Engine::shutdown() {
     tok_cmd_ = gpu::CommandBuffer{};
     tok_open_ = false;
     fence_.destroy();
+    if (ffn_in_buf_.valid() && ffn_in_alloc_) ffn_in_alloc_->free(ffn_in_buf_);
+    ffn_in_alloc_ = nullptr;
     if (logits_.valid()) alloc_a_.free(logits_);
     if (sample_.valid()) alloc_a_.free(sample_);
     scratch_.destroy();
@@ -808,6 +889,23 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         t.miss_bytes = plan->miss_bytes;
         if (!plan->issued.empty()) io_.drain();
         t.gate_ms = ms_since(g0);
+        // Every routed expert must be resident now. When one is not, say how
+        // it got that way -- a hit that a later miss in the same layer evicted
+        // and a fill whose read failed look identical at the MoE dispatch.
+        for (uint32_t i = 0; i < topk; ++i) {
+            const ExpertKey key{static_cast<uint16_t>(L), static_cast<uint16_t>(ids[i])};
+            if (store_.resident(key)) continue;
+            const bool was_hit = std::find(plan->hits.begin(), plan->hits.end(), key) !=
+                                 plan->hits.end();
+            auto slot = store_.slot_for(key);
+            return fail(Err::Internal,
+                        std::format("layer {} expert {} is not resident after the gate: it was "
+                                    "a {} this layer, its slot is {}; store: {}", L, ids[i],
+                                    was_hit ? "HIT" : "miss",
+                                    slot ? std::string(slot_state_name(slot->state))
+                                         : std::string("gone"),
+                                    store_.stats().to_string()));
+        }
     }
     {
         const TimelineValue v = gpu::timeline_value(token_, L);
@@ -822,7 +920,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     call.ids     = ids;
     call.weights = wts;
     call.topk    = topk;
-    call.x       = static_cast<const float*>(b.u.host);   // ffn_norm output
+    call.x       = layer_.ffn_norm_out();                  // ffn_norm output
     call.y       = nullptr;                                // stays on the GPU
     call.hidden  = c.hidden_size;
     if (auto r = moe_.stage(call); !r) return r;
@@ -973,6 +1071,11 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     {
         auto cur = timeline_.value();
         const TimelineValue base = gpu::timeline_value(token_, 0) - 1;
+        if (cur && *cur == ~0ull)
+            return fail(Err::Internal,
+                        "the residency timeline reads UINT64_MAX, which is what a LOST "
+                        "device reports -- most likely the expert cache's last path-B "
+                        "import exhausted the host heap (see the slab pool's warning)");
         if (cur && *cur > base)
             return fail(Err::Internal,
                         std::format("the residency timeline is at {} but token {} starts "

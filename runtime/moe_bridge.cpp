@@ -161,6 +161,15 @@ void GpuMoeBridge::destroy() {
 }
 
 Result<void> GpuMoeBridge::bind_shared(uint32_t layer) {
+    // Resolved once per layer for the life of the bridge: the pinned set never
+    // moves, and three formatted-name lookups a layer were most of the
+    // "table" line of the host breakdown.
+    if (layer < shared_rows_.size() && shared_rows_[layer][0]) {
+        std::memcpy(runner_.pointer_table() + size_t(shared_index_) * kExpertPartCount,
+                    shared_rows_[layer].data(), sizeof(uint64_t) * kExpertPartCount);
+        shared_ok_ = true;
+        return {};
+    }
     if (shared_layer_ != layer) {
         shared_ok_ = false;
         const std::string pre = std::format("layers.{}.ffn.shared_experts", layer);
@@ -179,6 +188,8 @@ Result<void> GpuMoeBridge::bind_shared(uint32_t layer) {
         }
         shared_layer_ = layer;
         shared_ok_ = true;
+        if (layer >= shared_rows_.size()) shared_rows_.resize(layer + 1);
+        std::memcpy(shared_rows_[layer].data(), shared_addr_, sizeof shared_addr_);
     }
     // Written every call, not only on a layer change: row 0 is shared by every
     // layer and nothing else guarantees the previous writer left it alone.
@@ -219,15 +230,9 @@ Result<void> GpuMoeBridge::stage(const MoeCall& call) {
     for (uint32_t s = 0; s < call.topk; ++s) {
         const ExpertKey key{static_cast<uint16_t>(call.layer),
                             static_cast<uint16_t>(call.ids[s])};
-        if (!store_->resident(key))
-            return fail(Err::FailedPrecondition,
-                        std::format("expert ({}, {}) is not resident at the MoE dispatch",
-                                    key.layer, key.expert));
-        for (uint32_t part = 0; part < kExpertPartCount; ++part) {
-            auto a = store_->table_entry(key, static_cast<ExpertPart>(part));
-            if (!a) return std::unexpected(a.error());
-            row[part] = *a;
-        }
+        if (auto r = store_->table_row(key, row); !r)
+            return fail(r.error().code,
+                        std::format("at the MoE dispatch: {}", r.error().message));
         std::memcpy(table + size_t(call.ids[s]) * kExpertPartCount, row, sizeof row);
     }
     if (auto r = bind_shared(call.layer); !r) return r;

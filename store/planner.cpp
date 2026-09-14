@@ -185,7 +185,13 @@ Result<Planner::Fetch> Planner::fetch(ExpertKey key, IoPriority priority,
             // Runs on the IoEngine dispatcher thread: count the run in, publish
             // the slot when it was the last one, hand control straight back
             // (design §9.6, docs/architecture.md §2.2).
-            if (!r.ok()) state->ok.store(false, std::memory_order_relaxed);
+            if (!r.ok()) {
+                state->ok.store(false, std::memory_order_relaxed);
+                // Without this a failed read releases the slot silently and the
+                // first anyone hears of it is "not resident" at the MoE dispatch.
+                log_warn("planner: a run of expert ({}, {}) failed into slot {}: {}",
+                         r.key.layer, r.key.expert, slot, r.status.message);
+            }
             auto settled = store->finish_run(slot, r.ok(), stamp);
             if (settled && *settled && state->cb)
                 state->cb(state->ok.load(std::memory_order_relaxed));

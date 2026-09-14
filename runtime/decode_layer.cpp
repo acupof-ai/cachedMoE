@@ -155,7 +155,8 @@ void bind_mhc(gpu::AttnRunner& runner, gpu::AttnStage post, gpu::AttnStage mix,
               uint64_t hc_fn, uint64_t hc_base, uint64_t hc_scale, uint64_t norm_w,
               const gpu::GpuScratch::View& mix_in, const gpu::GpuScratch::View& mix_out,
               const gpu::GpuScratch::View& a_in,
-              const gpu::GpuScratch::View& x_in, const gpu::GpuScratch::View& x_out) {
+              const gpu::GpuScratch::View& x_in, const gpu::GpuScratch::View& x_out,
+              uint64_t u_addr) {
     uint64_t* s = runner.slots(post);
     s[gpu::slot::kX]       = x_in.addr;
     s[gpu::slot::kA]       = a_in.addr;
@@ -174,7 +175,7 @@ void bind_mhc(gpu::AttnRunner& runner, gpu::AttnStage post, gpu::AttnStage mix,
     s[gpu::slot::kScratch] = b.partials.addr;
     s[gpu::slot::kMixRaw]  = b.mix_raw.addr;
     s[gpu::slot::kMixOut]  = mix_out.addr;
-    s[gpu::slot::kU]       = b.u.addr;
+    s[gpu::slot::kU]       = u_addr;
     std::memcpy(runner.slots(mix), s, gpu::kAttnStageStride);
     std::memcpy(runner.slots(final_), s, gpu::kAttnStageStride);
 }
@@ -210,7 +211,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     bind_mhc(*runner_, gpu::AttnStage::MhcPost, gpu::AttnStage::MhcMix,
              gpu::AttnStage::MhcFinal, b,
              w.hc_attn_fn, w.hc_attn_base, w.hc_attn_scale, w.attn_norm,
-             b.mix_a, b.mix_b, moe_view(), b.x, b.xout);
+             b.mix_a, b.mix_b, moe_view(), b.x, b.xout, b.u.addr);
     // FFN half: reads the stream the attention half wrote, folds in wo_b's
     // output, and writes back to `x`. In-place would also be safe -- a thread
     // reads all hc copies of its own element before writing any -- but keeping
@@ -218,7 +219,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     bind_mhc(*runner_, gpu::AttnStage::MhcPostB, gpu::AttnStage::MhcMixB,
              gpu::AttnStage::MhcFinalB, b,
              w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
-             b.mix_b, b.mix_a, b.wob, b.xout, b.x);
+             b.mix_b, b.mix_a, b.wob, b.xout, b.x, ffn_in_addr());
     // Closing hc_post: the MoE output into the stream. In the token loop this
     // is the next layer's MhcPost instead (design §7.7); it is bound here so a
     // single layer can be run and compared on its own.
@@ -231,7 +232,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
         bind_mhc(*runner_, gpu::AttnStage::MhcClose, gpu::AttnStage::MhcClose,
                  gpu::AttnStage::MhcClose, b,
                  w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
-                 b.mix_a, b.mix_b, moe_view(), b.x, b.xout);
+                 b.mix_a, b.mix_b, moe_view(), b.x, b.xout, b.u.addr);
 
     uint64_t* qa = runner_->slots(gpu::AttnStage::WqA);
     qa[gpu::slot::kGemvW] = w.wq_a;
@@ -287,7 +288,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     uint64_t* g = runner_->slots(gpu::AttnStage::GateScore);
     g[gpu::slot::kGateW]         = w.gate_w;
     g[gpu::slot::kGateBias]      = w.gate_bias;
-    g[gpu::slot::kGateX]         = b.u.addr;
+    g[gpu::slot::kGateX]         = ffn_in_addr();
     g[gpu::slot::kGateScores]    = b.gate_scores.addr;
     g[gpu::slot::kGateIds]       = b.gate_ids.addr;
     g[gpu::slot::kGateWeights]   = b.gate_weights.addr;
@@ -609,7 +610,7 @@ Result<void> DecodeLayer::run_moe(MoeBridge& moe, const LayerStep& st, gpu::Time
     call.ids     = ids;
     call.weights = wts;
     call.topk    = topk;
-    call.x       = static_cast<const float*>(buf_.u.host);   // ffn_norm output
+    call.x       = ffn_norm_out();
     call.y       = static_cast<float*>(buf_.moe_y.host);
     call.hidden  = c.hidden_size;
     return moe.run(call);
@@ -641,7 +642,9 @@ const float*    DecodeLayer::block_out()    const { return static_cast<const flo
 const float*    DecodeLayer::gate_scores()  const { return static_cast<const float*>(buf_.gate_scores.host); }
 const uint32_t* DecodeLayer::gate_ids()     const { return static_cast<const uint32_t*>(buf_.gate_ids.host); }
 const float*    DecodeLayer::gate_weights() const { return static_cast<const float*>(buf_.gate_weights.host); }
-const float*    DecodeLayer::ffn_norm_out() const { return static_cast<const float*>(buf_.u.host); }
+const float*    DecodeLayer::ffn_norm_out() const {
+    return ffn_in_host_ ? ffn_in_host_ : static_cast<const float*>(buf_.u.host);
+}
 
 namespace {
 class NullMoeBridge final : public MoeBridge {
