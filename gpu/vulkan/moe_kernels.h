@@ -37,8 +37,31 @@ struct MoeSpec {
     uint32_t decode_mode   = 1;    // 0 = const table, 1 = arithmetic, 2 = select tree
     uint32_t h_precision   = 0;    // 0 = fp16 h, 1 = fp32 h
     uint32_t rows_per_lane = 1;    // {1, 2, 4}: weight rows per lane
+    // --- P2 knobs (docs/kernel_p2_moe.md) -------------------------------
+    // How the activation reaches the FMA: 0 global (the P1 kernel), 1 LDS
+    // K-tile, 2 LDS + packed fp16, 3 LDS + int8 dot4 (design §7.9).
+    uint32_t x_mode        = 0;
+    // The fp8 quantisation of h before w2 (design §7.9 v0.6): 0 off,
+    // 1 reproduced inside dispatch B, 2 fp8 h written by dispatch A.
+    uint32_t h_quant       = 0;
+    // Compile the FP8 E4M3 weight path so a slot flagged with kSlotFp8 can be
+    // the fp8 shared expert.
+    uint32_t fp8_slots     = 0;
+    // Dispatch B's staging mode, when it should differ from dispatch A's.
+    // design §7.9.1 open item 3: A and B have different shapes (5120 K-elements
+    // against 2304, w1+w3 against w2) and P1 already found their best
+    // RowsPerLane differ, so they get separate pipelines from one MoeSpec.
+    // ~0u means "whatever x_mode says".
+    static constexpr uint32_t kFollowA = ~0u;
+    uint32_t x_mode_b      = kFollowA;
+    uint32_t b_mode() const { return x_mode_b == kFollowA ? x_mode : x_mode_b; }
     std::string name() const;
 };
+
+// Set in MoeRunner::ids()[slot] to say "this slot's weights are FP8 E4M3 with a
+// [rows/32][K/32] scale plane" (the shared expert of design §7.9). The low bits
+// stay the expert index into the pointer table.
+inline constexpr uint32_t kSlotFp8 = 0x80000000u;
 
 struct MoeDims {
     uint32_t layer             = 0;
@@ -54,6 +77,10 @@ struct MoeDims {
     // the streaming behaviour decode actually has (design §2.3).
     uint32_t layer_cycle       = 1;
     float    swiglu_limit      = layout::kSwigluLimit;
+    // How many of `slots` hold an fp8 shared expert. Byte accounting only: an
+    // fp8 expert reads 2x the weight bytes of an FP4 one, so the effective
+    // GB/s of a mixed dispatch needs to know the mix.
+    uint32_t fp8_slot_count    = 0;
 };
 
 // Which of the two dispatches to time. Running them separately is how
@@ -103,6 +130,12 @@ public:
     void set_list_count(uint32_t n);
     uint32_t list_count() const { return list_count_; }
 
+    // design §7.9 partial dispatch: when set, dispatch B adds its slot sum into
+    // y instead of overwriting it, so a layer can be computed as several
+    // dispatches over disjoint subsets of the slot list.
+    void set_accumulate(bool on) { accumulate_ = on; }
+    bool accumulate() const { return accumulate_; }
+
     // --- execution ---------------------------------------------------------
 
     // Records `iterations` back-to-back A+B pairs into one command buffer, with
@@ -125,6 +158,7 @@ private:
     MoeDims          dims_{};
     uint32_t         list_count_ = 0;
     uint32_t         recorded_   = 0;
+    bool             accumulate_ = false;
 
     Pipeline       gateup_, down_;
     DescriptorPool descriptors_;

@@ -1,5 +1,6 @@
 #include "gpu/vulkan/moe_kernels.h"
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <cstdlib>
@@ -11,9 +12,15 @@
 namespace deepmoe::gpu {
 
 std::string MoeSpec::name() const {
-    return std::format("M{} L{} R{} sg{} dec{} h{}", m, lanes_per_row, rows_per_lane,
-                       subgroup_size ? std::to_string(subgroup_size) : std::string("auto"),
-                       decode_mode, h_precision ? "fp32" : "fp16");
+    static const char* kXMode[] = {"glob", "lds", "ldsf16", "ldsi8", "gf16", "gi8"};
+    std::string s = std::format("M{} L{} R{} sg{} dec{} h{} x{}", m, lanes_per_row, rows_per_lane,
+                                subgroup_size ? std::to_string(subgroup_size) : std::string("auto"),
+                                decode_mode, h_precision ? "fp32" : "fp16",
+                                kXMode[x_mode < 6 ? x_mode : 0]);
+    if (b_mode() != x_mode) s += std::format("/{}", kXMode[b_mode() < 6 ? b_mode() : 0]);
+    if (h_quant)   s += h_quant == 1 ? " hqB" : " hq8";
+    if (fp8_slots) s += " fp8";
+    return s;
 }
 
 std::string default_shader_dir() {
@@ -34,15 +41,20 @@ std::string default_shader_dir() {
 
 uint64_t MoeRunner::bytes_dispatch_a() const {
     // w1 and w3: packed FP4 rows plus their E8M0 scales, per computed expert.
-    const uint64_t per_mat = uint64_t(dims_.inter) * dims_.hidden / 2
-                           + uint64_t(dims_.inter) * dims_.hidden / layout::kFp4ScaleBlock;
-    return 2 * per_mat * list_count_;
+    // An fp8 slot reads a whole byte per element and a 32x32-tiled scale plane.
+    const uint64_t elems   = uint64_t(dims_.inter) * dims_.hidden;
+    const uint64_t fp4_mat = elems / 2 + elems / layout::kFp4ScaleBlock;
+    const uint64_t fp8_mat = elems + elems / (layout::kFp8ScaleBlockM * layout::kFp8ScaleBlockK);
+    const uint32_t fp8 = dims_.fp8_slot_count < list_count_ ? dims_.fp8_slot_count : list_count_;
+    return 2 * (fp4_mat * (list_count_ - fp8) + fp8_mat * fp8);
 }
 
 uint64_t MoeRunner::bytes_dispatch_b() const {
-    const uint64_t per_mat = uint64_t(dims_.hidden) * dims_.inter / 2
-                           + uint64_t(dims_.hidden) * dims_.inter / layout::kFp4ScaleBlock;
-    return per_mat * list_count_;
+    const uint64_t elems   = uint64_t(dims_.hidden) * dims_.inter;
+    const uint64_t fp4_mat = elems / 2 + elems / layout::kFp4ScaleBlock;
+    const uint64_t fp8_mat = elems + elems / (layout::kFp8ScaleBlockM * layout::kFp8ScaleBlockK);
+    const uint32_t fp8 = dims_.fp8_slot_count < list_count_ ? dims_.fp8_slot_count : list_count_;
+    return fp4_mat * (list_count_ - fp8) + fp8_mat * fp8;
 }
 
 uint64_t MoeRunner::bytes_per_iteration() const {
@@ -83,7 +95,7 @@ struct GateUpPush {
 };
 // design §7.9 dispatch B; mirrors DownPush.
 struct DownPush {
-    uint32_t layer, experts_per_layer, num_slots, list_count, n_rows, k;
+    uint32_t layer, experts_per_layer, num_slots, list_count, n_rows, k, flags;
 };
 
 }  // namespace
@@ -96,11 +108,37 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     if (spec.m == 0 || spec.m > 6) return fail(Err::InvalidArgument, "M must be 1..6 (design §1.2)");
     if (spec.lanes_per_row != 16 && spec.lanes_per_row != 32 && spec.lanes_per_row != 64)
         return fail(Err::InvalidArgument, "lanes_per_row must be 16, 32 or 64 (design §7.1 rule 3)");
-    if (spec.rows_per_lane != 1 && spec.rows_per_lane != 2 && spec.rows_per_lane != 4)
-        return fail(Err::InvalidArgument, "rows_per_lane must be 1, 2 or 4");
+    // Powers of two only: rows_per_lane is what divides the activation traffic,
+    // and design §7.9's measured M=6 bottleneck is exactly that traffic
+    // (docs/kernel_p2_moe.md §3). 16 is the largest that still divides 2304.
+    if (spec.rows_per_lane == 0 || spec.rows_per_lane > 16 ||
+        (spec.rows_per_lane & (spec.rows_per_lane - 1)) != 0)
+        return fail(Err::InvalidArgument, "rows_per_lane must be a power of two, 1..16");
     const uint32_t rows_per_group = (256 / spec.lanes_per_row) * spec.rows_per_lane;
     if (dims.inter % rows_per_group || dims.hidden % rows_per_group)
         return fail(Err::InvalidArgument, "row count must divide by the workgroup's rows");
+    if (spec.x_mode > 5 || spec.b_mode() > 5)
+        return fail(Err::InvalidArgument, "x_mode must be 0..5");
+    if (spec.h_quant > 2) return fail(Err::InvalidArgument, "h_quant must be 0..2");
+    if ((spec.x_mode == 3 || spec.b_mode() == 3) && spec.m * spec.lanes_per_row > 256)
+        return fail(Err::InvalidArgument,
+                    "the int8 x path stages one (column, block) per thread: M * lanes <= 256");
+    if (spec.x_mode >= 1 && spec.x_mode <= 3) {
+        // The LDS tile is M x LanesPerRow x 32 activations, plus the 1 KiB
+        // reduction scratch and the optional 1 KiB fp8 decode table.
+        const uint64_t tile = uint64_t(spec.m) * spec.lanes_per_row *
+                              (spec.x_mode == 3 ? 32u : 64u);
+        const uint64_t lds  = tile + 1024 + (spec.fp8_slots || spec.h_quant == 2 ? 1024 : 0)
+                            + (spec.h_quant == 2 ? uint64_t(spec.m) * rows_per_group * 4 : 0);
+        const uint64_t cap  = device.caps().max_compute_shared_memory ? device.caps().max_compute_shared_memory : 32768u;
+        if (lds > cap)
+            return fail(Err::InvalidArgument,
+                        std::format("the x tile needs {} B of LDS, the device allows {}", lds, cap));
+    }
+    if (spec.h_quant == 2 && rows_per_group % layout::kFp8ScaleBlockK)
+        return fail(Err::InvalidArgument,
+                    std::format("h_quant=2 writes whole fp8 blocks, so a workgroup must own a "
+                                "multiple of 32 rows; this one owns {}", rows_per_group));
     device_ = &device;
     alloc_  = &alloc;
     spec_   = spec;
@@ -112,10 +150,13 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     ps.lanes_per_row = spec.lanes_per_row;
     ps.rows_per_wg   = 256 / spec.lanes_per_row;
     ps.subgroup_size = spec.subgroup_size;
-    ps.extra = {spec.decode_mode, spec.h_precision, spec.rows_per_lane};
+    ps.extra = {spec.decode_mode, spec.h_precision, spec.rows_per_lane,
+                spec.x_mode, spec.h_quant, spec.fp8_slots};
+    PipelineSpec ps_b = ps;
+    ps_b.extra[3] = spec.b_mode();
 
     PipelineLayoutSpec la;
-    la.storage_buffers   = 7;
+    la.storage_buffers   = 8;   // + the raw-word alias of h (design §7.9 v0.6)
     la.push_constant_size = sizeof(GateUpPush);
     if (auto r = gateup_.create(device, shader_dir + "/moe_gateup.spv", la, ps); !r) {
         destroy(); return r;
@@ -123,7 +164,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     PipelineLayoutSpec lb;
     lb.storage_buffers   = 5;
     lb.push_constant_size = sizeof(DownPush);
-    if (auto r = down_.create(device, shader_dir + "/moe_down.spv", lb, ps); !r) {
+    if (auto r = down_.create(device, shader_dir + "/moe_down.spv", lb, ps_b); !r) {
         destroy(); return r;
     }
     if (auto r = descriptors_.create(device, 4, 32); !r) { destroy(); return r; }
@@ -145,14 +186,15 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         std::memset(e.b->host_ptr, 0, static_cast<size_t>(e.bytes));
     }
 
-    std::vector<BufferBinding> ba(7);
+    std::vector<BufferBinding> ba(8);
     ba[0] = {0, 0, 0, table_.buffer};
     ba[1] = {1, 0, 0, ids_.buffer};
     ba[2] = {2, 0, 0, list_.buffer};
     ba[3] = {3, 0, 0, routew_.buffer};
     ba[4] = {4, 0, 0, x_.buffer};
     ba[5] = {5, 0, 0, h_.buffer};
-    ba[6] = {6, 0, 0, h_.buffer};        // H16 and H32 alias one allocation
+    ba[6] = {6, 0, 0, h_.buffer};        // H16, H32 and HU alias one allocation
+    ba[7] = {7, 0, 0, h_.buffer};
     auto sa = descriptors_.allocate(gateup_, ba);
     if (!sa) { destroy(); return std::unexpected(sa.error()); }
     set_a_ = *sa;
@@ -201,7 +243,7 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
     GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
                   dims_.inter, dims_.hidden, dims_.swiglu_limit};
     DownPush   pb{dims_.layer, dims_.experts_per_layer, dims_.slots, list_count_,
-                  dims_.hidden, dims_.inter};
+                  dims_.hidden, dims_.inter, accumulate_ ? 1u : 0u};
 
     const bool run_a = phase != MoePhase::DownOnly;
     const bool run_b = phase != MoePhase::GateUpOnly;

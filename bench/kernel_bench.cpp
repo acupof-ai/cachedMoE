@@ -64,6 +64,8 @@ struct Options {
     uint32_t    sweeps      = 2;
     MemoryPath  path        = MemoryPath::DeviceLocalHostVisible;
     bool        quick       = false;
+    bool        p1          = false;   // the design §7.1 knob sweep of P1
+    bool        no_fp8      = false;   // skip the shared expert (saves the NVMe read)
 };
 
 const char* env(const char* name) {
@@ -84,17 +86,90 @@ int usage() {
         "  --iters N         timed A+B iterations per variant (default 32)\n"
         "  --layer-cycle N   distinct layers of experts to rotate over (default 4)\n"
         "  --path a|b        memory path of design section 3.3 (default a)\n"
-        "  --quick           only the default variant\n");
+        "  --quick           only the default variant\n"
+        "  --p1              the P1 knob sweep (decode mode, lanes, wave size)\n"
+        "                    instead of the P2 sweep (M x activation staging)\n"
+        "  --no-fp8          skip the fp8 shared expert section\n");
     return 2;
 }
 
 struct Row {
     std::string variant;
+    const char* section = "";
     uint32_t    m = 0, lanes = 0, subgroup = 0, decode = 0, hprec = 0, rpl = 0;
+    uint32_t    xmode = 0, hquant = 0, fp8 = 0, fp8_slots = 0, list_count = 0;
+    uint64_t    bytes_a = 0, bytes_b = 0;
     double      gbps_a = 0, gbps_b = 0, gbps_total = 0;
-    double      ms_a = 0, ms_b = 0, ms_total = 0, ms_wall = 0;
+    double      ms_a = 0, ms_b = 0, ms_total = 0, ms_wall = 0, ms_per_token = 0;
     double      record_us = 0, submit_us = 0;
 };
+
+// One entry of the sweep: a specialisation plus how the slot list is made up.
+// `fp8_slots` slots at the end of the list carry the fp8 shared expert, which
+// is the only thing that changes the byte count of a dispatch.
+struct Variant {
+    gpu::MoeSpec spec{};
+    uint32_t     fp8_slots = 0;
+    const char*  section = "M sweep";
+};
+
+// The fp8 shared expert of one layer, read straight off NVMe into a GPU-visible
+// buffer with a device address (design §7.9; it is pinned for the life of the
+// process, so it is not an ExpertStore slot). The six device addresses go into
+// the spare expert index of the runner's pointer table.
+struct SharedExpert {
+    gpu::GpuBuffer buf{};
+    uint64_t       addr[kExpertPartCount] = {};
+    uint64_t       value_bytes = 0, scale_bytes = 0;
+};
+
+Result<SharedExpert> load_shared_expert(gpu::MemoryAllocator& alloc, const Manifest& mf,
+                                        const store::ShardSet& shards, storage::IoEngine& io,
+                                        uint32_t layer) {
+    static const char* kMats[3] = {"w1", "w2", "w3"};
+    AlignedRead reads[kExpertPartCount];
+    for (uint32_t i = 0; i < 3; ++i) {
+        const std::string name = std::format("layers.{}.ffn.shared_experts.{}.weight",
+                                             layer, kMats[i]);
+        auto v = mf.tensor_read(name);
+        if (!v) return std::unexpected(v.error());
+        auto sc = mf.tensor_scale_read(name);
+        if (!sc) return std::unexpected(sc.error());
+        reads[2 * i]     = *v;
+        reads[2 * i + 1] = *sc;
+    }
+    uint64_t total = 0, off[kExpertPartCount] = {};
+    for (uint32_t i = 0; i < kExpertPartCount; ++i) {
+        off[i] = total;
+        total += align_up(reads[i].aligned_bytes, kPageSize);
+    }
+    auto b = alloc.allocate(total, /*host_visible=*/true, /*device_address=*/true);
+    if (!b) return std::unexpected(b.error());
+    SharedExpert out;
+    out.buf = *b;
+    if (reinterpret_cast<uintptr_t>(out.buf.host_ptr) % kPageSize)
+        return fail(Err::Internal, "the shared-expert buffer is not page aligned");
+    std::vector<std::future<storage::IoResult>> futures;
+    for (uint32_t i = 0; i < kExpertPartCount; ++i) {
+        auto file = shards.require(reads[i].file);
+        if (!file) return std::unexpected(file.error());
+        storage::IoRequest req;
+        req.priority = IoPriority::BlockingMiss;
+        req.file     = *file;
+        req.file_off = reads[i].aligned_off;
+        req.bytes    = reads[i].aligned_bytes;
+        req.dst      = static_cast<std::byte*>(out.buf.host_ptr) + off[i];
+        auto fut = io.submit_future(req);
+        if (!fut) return std::unexpected(fut.error());
+        futures.push_back(std::move(*fut));
+        out.addr[i] = out.buf.dev_addr + off[i] + reads[i].skew;
+    }
+    for (auto& f : futures)
+        if (!f.get().ok()) return fail(Err::Io, "shared expert read failed");
+    out.value_bytes = reads[0].bytes;
+    out.scale_bytes = reads[1].bytes;
+    return out;
+}
 
 }  // namespace
 
@@ -117,6 +192,8 @@ int main(int argc, char** argv) {
         else if (a == "--path")        o.path = next() == "b" ? MemoryPath::ExternalMemoryHost
                                                               : MemoryPath::DeviceLocalHostVisible;
         else if (a == "--quick")       o.quick = true;
+        else if (a == "--p1")          o.p1 = true;
+        else if (a == "--no-fp8")      o.no_fp8 = true;
         else return usage();
     }
     if (o.model_dir.empty()) {
@@ -208,12 +285,44 @@ int main(int argc, char** argv) {
                           needed, filled_bytes / 1e6, path_name, fill_s,
                           filled_bytes / 1e9 / fill_s).c_str());
 
+    // --- the fp8 shared expert (design §7.9) ---------------------------------
+    // One per layer of the cycle, so a cycled iteration reads a different copy
+    // exactly as it does for the routed experts.
+    std::vector<SharedExpert> shared;
+    if (!o.no_fp8) {
+        const auto t0 = Clock::now();
+        for (uint32_t L = 0; L < o.layer_cycle; ++L) {
+            auto sh = load_shared_expert(alloc, *mf, shards, io, L);
+            if (!sh) {
+                std::puts(std::format("shared expert layer {}: {} -- continuing without the "
+                                      "fp8 section", L, sh.error().str()).c_str());
+                shared.clear();
+                break;
+            }
+            shared.push_back(*sh);
+        }
+        if (!shared.empty()) {
+            const double s = std::chrono::duration<double>(Clock::now() - t0).count();
+            std::puts(std::format("filled {} fp8 shared experts ({:.1f} MB, {} + {} B per "
+                                  "matrix) in {:.3f} s = {:.2f} GB/s",
+                                  shared.size(),
+                                  shared.size() * 3.0 * (shared[0].value_bytes
+                                                         + shared[0].scale_bytes) / 1e6,
+                                  shared[0].value_bytes, shared[0].scale_bytes, s,
+                                  shared.size() * 3.0 * (shared[0].value_bytes
+                                                         + shared[0].scale_bytes) / 1e9 / s).c_str());
+        }
+    }
+
     // --- variants ------------------------------------------------------------
-    std::vector<gpu::MoeSpec> variants;
+    std::vector<Variant> variants;
+    auto add = [&](gpu::MoeSpec sp, const char* section = "M sweep", uint32_t fp8 = 0) {
+        variants.push_back(Variant{sp, fp8, section});
+    };
     if (o.quick) {
-        variants.push_back(gpu::MoeSpec{1, 32, 32, 0, 0, 1});
-        variants.push_back(gpu::MoeSpec{6, 16, 64, 0, 0, 2});
-    } else {
+        add(gpu::MoeSpec{1, 32, 32, 0, 0, 1});
+        add(gpu::MoeSpec{6, 16, 32, 0, 0, 2, 1});
+    } else if (o.p1) {
         // design §7.1's knobs at the two batch sizes that matter: M=1 is
         // decode, M=6 a full speculative verify batch. RowsPerLane > 1 costs
         // registers, so it is only swept where it can pay: at M=1 the lane has
@@ -222,26 +331,111 @@ int main(int argc, char** argv) {
             for (uint32_t dec : {0u, 1u, 2u})
                 for (uint32_t lanes : {16u, 32u, 64u})
                     for (uint32_t sg : {32u, 64u})
-                        variants.push_back(gpu::MoeSpec{m, lanes, sg, dec, 0, 1});
+                        add(gpu::MoeSpec{m, lanes, sg, dec, 0, 1}, "P1 knobs");
         for (uint32_t rpl : {2u, 4u})
             for (uint32_t lanes : {16u, 32u, 64u})
                 for (uint32_t sg : {32u, 64u})
-                    variants.push_back(gpu::MoeSpec{1, lanes, sg, 0, 0, rpl});
+                    add(gpu::MoeSpec{1, lanes, sg, 0, 0, rpl}, "P1 knobs");
         for (uint32_t lanes : {16u, 32u})
             for (uint32_t sg : {32u, 64u})
-                variants.push_back(gpu::MoeSpec{6, lanes, sg, 0, 0, 2});
+                add(gpu::MoeSpec{6, lanes, sg, 0, 0, 2}, "P1 knobs");
         // fp32 h doubles the h traffic; worth measuring only on the variants
         // that are otherwise competitive.
         for (uint32_t m : {1u, 6u})
             for (uint32_t lanes : {16u, 32u})
                 for (uint32_t rpl : {1u, 2u})
-                    variants.push_back(gpu::MoeSpec{m, lanes, 32, 0, 1, rpl});
+                    add(gpu::MoeSpec{m, lanes, 32, 0, 1, rpl}, "P1 knobs");
+    } else {
+        // P2 (docs/kernel_p2_moe.md): the knobs P1 pinned are fixed at their
+        // winners -- constant-table FP4 decode, wave32, fp16 h -- and the sweep
+        // runs over the two things that decide speculative decoding: the verify
+        // batch size M and how the activation reaches the FMA.
+        // RowsPerLane is the knob that divides the activation traffic: a
+        // workgroup re-reads the whole of x once per row group, so the x bytes
+        // that cross L2 are 2304 * slots * M * 10 KiB / RowsPerLane and nothing
+        // else in the kernel changes them (docs/kernel_p2_moe.md §3).
+        for (uint32_t m = 1; m <= 6; ++m)
+            for (uint32_t lanes : {16u, 32u, 64u})
+                for (uint32_t rpl : {1u, 2u, 4u, 8u, 16u})
+                    add(gpu::MoeSpec{m, lanes, 32, 0, 0, rpl, 0}, "M x RowsPerLane");
+        for (uint32_t m = 1; m <= 6; ++m) {
+            for (uint32_t x = 0; x <= 5; ++x) {
+                // (lanes, rows per lane): 32/1 is the P1 decode winner, 16/2 the
+                // P1 M=6 winner; the int8 path stages one (column, block) per
+                // thread, so M * lanes must fit a workgroup.
+                add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, x});
+                add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, x});
+            }
+            add(gpu::MoeSpec{m, 16, 32, 0, 0, 4, 1});
+            // design §7.9.1 open item 3: dispatch A and dispatch B want
+            // different specialisations. B's K is 2304, which is 72 blocks and
+            // therefore not a multiple of LanesPerRow, so its tiled form pays a
+            // ragged last chunk that A (160 blocks) does not.
+            for (uint32_t x : {1u, 2u, 3u, 4u, 5u}) {
+                gpu::MoeSpec sp{m, 16, 32, 0, 0, 2, x};
+                sp.x_mode_b = 0;
+                add(sp);
+            }
+            // The other direction: A plain, B staged or packed. Dispatch B's
+            // 2304 K-elements are 72 blocks, so its tiled form has a ragged
+            // last chunk that A (160 blocks) does not.
+            for (uint32_t xb : {3u, 4u, 5u}) {
+                gpu::MoeSpec sp{m, 16, 32, 0, 0, 2, 0};
+                sp.x_mode_b = xb;
+                add(sp);
+            }
+            // The pair the two halves each win with on their own.
+            for (uint32_t lanes : {16u, 32u})
+                for (uint32_t xb : {3u, 4u}) {
+                    gpu::MoeSpec sp{m, lanes, 32, 0, 0, 2, 4};
+                    sp.x_mode_b = xb;
+                    add(sp);
+                }
+        }
+        // The fp8 quantisation of h before w2 (design §7.9 v0.6). L16 R2 owns
+        // 32 rows of h per workgroup, which is what writing whole fp8 blocks
+        // from dispatch A requires.
+        for (uint32_t m : {1u, 6u})
+            for (uint32_t x : {0u, 4u})
+                for (uint32_t hq : {1u, 2u})
+                    add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, x, hq}, "h fp8");
+        // HQuant 1 has no row-count constraint, so it is the only way to get
+        // the fp8 h onto the M=1 decode winner (L32 R1, which owns 8 rows per
+        // workgroup and cannot write a whole 32-element fp8 block).
+        for (uint32_t m : {1u, 6u})
+            for (uint32_t x : {0u, 4u})
+                add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, x, 1}, "h fp8");
+        add(gpu::MoeSpec{1, 32, 32, 0, 0, 4, 0, 2}, "h fp8");   // 32 rows per wg via R=4
+        // The production pair: the gate/up half packed fp16, the down half
+        // int8-through-LDS, with the fp8 h of design §7.9 v0.6 in between.
+        for (uint32_t m : {1u, 6u}) {
+            gpu::MoeSpec sp{m, 16, 32, 0, 0, 2, 4, 2};
+            sp.x_mode_b = 3;
+            add(sp, "h fp8");
+        }
+    }
+    // The fp8 shared expert (design §7.9): slot 6 stops being an FP4 stand-in
+    // and becomes the real thing, which reads twice the weight bytes. Both the
+    // mixed 6+1 list and the shared expert alone are measured, so its own
+    // effective bandwidth can be separated from the routed experts'.
+    if (!shared.empty() && !o.quick) {
+        for (uint32_t m : {1u, 6u}) {
+            add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, 0, 0, 1}, "fp8 shared", 1);
+            add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, 4, 0, 1}, "fp8 shared", 1);
+            add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, 4, 2, 1}, "fp8 shared", 1);
+        }
     }
 
-    gpu::MoeDims dims;
-    dims.layer       = 0;
-    dims.slots       = o.slots;
-    dims.layer_cycle = o.layer_cycle;
+    // One spare expert index per layer holds the fp8 shared expert, so a slot
+    // can point at it through the same pointer table (design §5.3).
+    const uint32_t experts_per_layer = layout::kRoutedExperts + 1;
+    const uint32_t shared_index      = layout::kRoutedExperts;
+
+    gpu::MoeDims dims_base;
+    dims_base.layer             = 0;
+    dims_base.slots             = o.slots;
+    dims_base.layer_cycle       = o.layer_cycle;
+    dims_base.experts_per_layer = experts_per_layer;
 
     const std::string shader_dir = gpu::default_shader_dir();
     std::vector<Row> rows(variants.size());
@@ -321,14 +515,36 @@ int main(int argc, char** argv) {
                           "x {} iterations ==", o.sweeps, o.repeats, o.iters).c_str());
     for (uint32_t sweep = 0; sweep < o.sweeps; ++sweep) {
         for (size_t vi = 0; vi < variants.size(); ++vi) {
-            const gpu::MoeSpec& v = variants[vi];
+            const gpu::MoeSpec& v = variants[vi].spec;
+            const uint32_t fp8_slots = variants[vi].fp8_slots;
+            gpu::MoeDims dims = dims_base;
+            dims.fp8_slot_count = fp8_slots;
             gpu::MoeRunner runner;
             if (auto r = runner.create(dev, alloc, shader_dir, v, dims); !r) {
-                if (sweep == 0) std::puts(std::format("{:<24} {}", v.name(), r.error().str()).c_str());
+                if (sweep == 0) std::puts(std::format("{:<34} {}", v.name(), r.error().str()).c_str());
                 continue;
             }
-            std::memcpy(runner.pointer_table(), estore.pointer_table(), estore.pointer_table_bytes());
-            for (uint32_t s = 0; s < o.slots; ++s) { runner.ids()[s] = s; runner.slot_list()[s] = s; }
+            // The store's table is [layers][384][6]; the runner's is one expert
+            // wider, so it is copied a layer at a time and the spare index gets
+            // the shared expert of that layer.
+            uint64_t* table = runner.pointer_table();
+            std::memset(table, 0, runner.pointer_table_entries() * sizeof(uint64_t));
+            for (uint32_t L = 0; L < layout::kTotalLogicalLayers; ++L) {
+                std::memcpy(table + size_t(L) * experts_per_layer * kExpertPartCount,
+                            estore.pointer_table()
+                                + size_t(L) * layout::kRoutedExperts * kExpertPartCount,
+                            size_t(layout::kRoutedExperts) * kExpertPartCount * sizeof(uint64_t));
+                if (L < shared.size()) {
+                    uint64_t* row = table + (size_t(L) * experts_per_layer + shared_index)
+                                            * kExpertPartCount;
+                    for (uint32_t i = 0; i < kExpertPartCount; ++i) row[i] = shared[L].addr[i];
+                }
+            }
+            for (uint32_t s = 0; s < o.slots; ++s) {
+                const bool is_fp8 = s >= o.slots - fp8_slots;
+                runner.ids()[s] = is_fp8 ? (shared_index | gpu::kSlotFp8) : s;
+                runner.slot_list()[s] = s;
+            }
             runner.set_list_count(o.slots);
             for (uint32_t i = 0; i < v.m * o.slots; ++i) runner.route_weights()[i] = 1.0f / o.slots;
             // A deterministic, well-scaled x: the numbers only have to be
@@ -368,8 +584,13 @@ int main(int argc, char** argv) {
 
             Row row;
             row.variant = v.name();
+            row.section = variants[vi].section;
             row.m = v.m; row.lanes = v.lanes_per_row; row.subgroup = v.subgroup_size;
             row.decode = v.decode_mode; row.hprec = v.h_precision; row.rpl = v.rows_per_lane;
+            row.xmode = v.x_mode; row.hquant = v.h_quant; row.fp8 = v.fp8_slots;
+            row.fp8_slots = fp8_slots; row.list_count = o.slots;
+            row.bytes_a = runner.bytes_dispatch_a();
+            row.bytes_b = runner.bytes_dispatch_b();
             row.ms_a     = only_a->seconds_total * 1e3;
             row.ms_b     = only_b->seconds_total * 1e3;
             row.ms_total = both->seconds_total * 1e3;
@@ -383,6 +604,9 @@ int main(int argc, char** argv) {
             row.gbps_a     = double(runner.bytes_dispatch_a()) / 1e9 / only_a->seconds_total;
             row.gbps_b     = double(runner.bytes_dispatch_b()) / 1e9 / only_b->seconds_total;
             row.gbps_total = double(runner.bytes_per_iteration()) / 1e9 / both->seconds_total;
+            // The number speculative decoding is actually bought with: one A+B
+            // pair produces M tokens' worth of MoE work (design §10.1).
+            row.ms_per_token = row.ms_total / double(v.m);
             if (row.gbps_total > rows[vi].gbps_total) rows[vi] = row;
         }
         std::puts(std::format("  sweep {}/{} done", sweep + 1, o.sweeps).c_str());
@@ -390,13 +614,22 @@ int main(int argc, char** argv) {
 
     const double ceiling_after = measure_ceiling("after");
 
-    std::puts("\nvariant                    A GB/s   B GB/s   A+B GB/s   A ms    B ms   A+B ms  rec us");
-    std::puts("----------------------------------------------------------------------------------------");
+    std::puts("\nvariant                              A GB/s   B GB/s  A+B GB/s   %ceil    A ms"
+              "    B ms  A+B ms  ms/tok");
+    std::puts("---------------------------------------------------------------------------------"
+              "----------------------------");
+    const char* section = nullptr;
     for (const Row& r : rows) {
         if (r.variant.empty()) continue;
-        std::puts(std::format("{:<27} {:>8.1f} {:>8.1f} {:>10.1f} {:>7.3f} {:>7.3f} {:>8.3f} {:>7.2f}",
+        if (!section || std::strcmp(section, r.section) != 0) {
+            section = r.section;
+            std::puts(std::format("-- {} --", section).c_str());
+        }
+        std::puts(std::format("{:<36} {:>7.1f} {:>8.1f} {:>9.1f} {:>7.0f} {:>7.3f} {:>7.3f} "
+                              "{:>7.3f} {:>7.3f}",
                               r.variant, r.gbps_a, r.gbps_b, r.gbps_total,
-                              r.ms_a, r.ms_b, r.ms_total, r.record_us).c_str());
+                              ceiling > 0 ? 100.0 * r.gbps_total / ceiling : 0.0,
+                              r.ms_a, r.ms_b, r.ms_total, r.ms_per_token).c_str());
     }
 
     std::puts(std::format("\nraw-read ceiling {:.1f} GB/s before the sweep, {:.1f} GB/s after "
@@ -405,11 +638,30 @@ int main(int argc, char** argv) {
                           "(design section 3.4 assumed 5-20)",
                           ceiling_before, ceiling_after, launch_us).c_str());
     if (ceiling > 0) {
+        // Per M: the best variant and what it costs per token. This is the
+        // table design §10.3's T_hot(M) curve is built from.
+        std::puts("\nbest variant per verify batch size (fp4 routed experts only):");
+        for (uint32_t m = 1; m <= 6; ++m) {
+            const Row* best_m = nullptr;
+            for (const Row& r : rows)
+                if (r.m == m && r.fp8_slots == 0 && r.hquant == 0 && !r.variant.empty() &&
+                    (!best_m || r.gbps_total > best_m->gbps_total)) best_m = &r;
+            if (!best_m) continue;
+            std::puts(std::format("  M={}  {:<32} {:>7.1f} GB/s = {:>3.0f}% of ceiling   "
+                                  "{:.3f} ms/pair   {:.4f} ms/token",
+                                  m, best_m->variant, best_m->gbps_total,
+                                  100.0 * best_m->gbps_total / ceiling,
+                                  best_m->ms_total, best_m->ms_per_token).c_str());
+        }
         double best = 0; std::string best_name;
         double best6 = 0; std::string best6_name; double ms6 = 0;
         for (const Row& r : rows) {
-            if (r.m == 1 && r.gbps_total > best) { best = r.gbps_total; best_name = r.variant; }
-            if (r.m == 6 && r.gbps_total > best6) { best6 = r.gbps_total; best6_name = r.variant; ms6 = r.ms_total; }
+            if (r.m == 1 && r.fp8_slots == 0 && r.hquant == 0 && r.gbps_total > best) {
+                best = r.gbps_total; best_name = r.variant;
+            }
+            if (r.m == 6 && r.fp8_slots == 0 && r.hquant == 0 && r.gbps_total > best6) {
+                best6 = r.gbps_total; best6_name = r.variant; ms6 = r.ms_total;
+            }
         }
         std::puts(std::format("best M=1 variant {} at {:.1f} GB/s = {:.0f}% of raw read "
                              "(design section 15 P2 wants >= 80%)",
@@ -425,28 +677,85 @@ int main(int argc, char** argv) {
                                       r.ms_total, r.ms_total, 4.0 / r.ms_total).c_str());
     }
 
+    // --- partial dispatch (design §7.9 "compute the experts that arrived
+    // first") -------------------------------------------------------------
+    // The same seven experts, once as one A+B pair over a seven-entry slot list
+    // and once as two pairs over a 3- and a 4-entry list. The weight bytes are
+    // identical; what the split costs is two more dispatches, two more global
+    // barriers, and a second pass over x and h.
+    {
+        std::puts("\n== partial dispatch (design section 7.9) ==");
+        for (uint32_t m : {1u, 6u}) {
+            // The winner of the M sweep, so the split is priced against the
+            // configuration decode would actually run.
+            gpu::MoeSpec sp = (m == 1) ? gpu::MoeSpec{1, 32, 32, 0, 0, 1, 0}
+                                       : gpu::MoeSpec{6, 16, 32, 0, 0, 2, 4};
+            if (m != 1) sp.x_mode_b = 3;
+            gpu::MoeDims dims = dims_base;
+            gpu::MoeRunner runner;
+            if (auto r = runner.create(dev, alloc, shader_dir, sp, dims); !r) {
+                std::puts(r.error().str().c_str());
+                continue;
+            }
+            std::memset(runner.pointer_table(), 0,
+                        runner.pointer_table_entries() * sizeof(uint64_t));
+            for (uint32_t L = 0; L < layout::kTotalLogicalLayers; ++L)
+                std::memcpy(runner.pointer_table()
+                                + size_t(L) * experts_per_layer * kExpertPartCount,
+                            estore.pointer_table()
+                                + size_t(L) * layout::kRoutedExperts * kExpertPartCount,
+                            size_t(layout::kRoutedExperts) * kExpertPartCount * sizeof(uint64_t));
+            for (uint32_t sIdx = 0; sIdx < o.slots; ++sIdx) runner.ids()[sIdx] = sIdx;
+            for (uint32_t i = 0; i < m * o.slots; ++i) runner.route_weights()[i] = 1.0f / o.slots;
+            uint32_t seed = 12345;
+            for (uint32_t i = 0; i < m * layout::kHiddenSize; ++i) {
+                seed = seed * 1664525u + 1013904223u;
+                runner.x_fp16()[i] =
+                    cpu::float_to_fp16((float(seed >> 8) / float(1u << 24) - 0.5f) * 0.1f);
+            }
+            auto timed = [&](uint32_t lo, uint32_t hi, bool accumulate) -> double {
+                for (uint32_t i = lo; i < hi; ++i) runner.slot_list()[i - lo] = i;
+                runner.set_list_count(hi - lo);
+                runner.set_accumulate(accumulate);
+                (void)runner.run(4);
+                double best = 1e9;
+                for (uint32_t r = 0; r < o.repeats; ++r)
+                    if (auto t = runner.run(o.iters); t) best = std::min(best, t->seconds_total);
+                return best * 1e3;
+            };
+            const double whole = timed(0, o.slots, false);
+            const double first = timed(0, 3, false);
+            const double rest  = timed(3, o.slots, true);
+            std::puts(std::format("  M={}  one pair over {} slots {:.3f} ms; "
+                                  "3 + {} as two pairs {:.3f} + {:.3f} = {:.3f} ms "
+                                  "(+{:.3f} ms, {:+.1f}%)",
+                                  m, o.slots, whole, o.slots - 3, first, rest, first + rest,
+                                  first + rest - whole,
+                                  100.0 * (first + rest - whole) / whole).c_str());
+        }
+    }
+
     if (!o.csv.empty()) {
         std::FILE* f = std::fopen(o.csv.c_str(), "wb");
         if (f) {
-            std::fprintf(f, "variant,m,lanes_per_row,rows_per_lane,subgroup,decode_mode,h_precision,"
-                            "slots,layer_cycle,iters,path,"
-                            "bytes_a,bytes_b,gbps_a,gbps_b,gbps_total,"
-                            "ms_a,ms_b,ms_total,ms_wall,record_us,submit_us,"
+            std::fprintf(f, "section,variant,m,lanes_per_row,rows_per_lane,subgroup,decode_mode,"
+                            "h_precision,x_mode,h_quant,fp8_path,fp8_slots,slots,layer_cycle,"
+                            "iters,path,bytes_a,bytes_b,gbps_a,gbps_b,gbps_total,pct_ceiling,"
+                            "ms_a,ms_b,ms_total,ms_per_token,ms_wall,record_us,submit_us,"
                             "raw_read_gbps,launch_us\n");
-            const uint64_t ba = uint64_t(o.slots) * 2 *
-                (uint64_t(layout::kMoeIntermediate) * layout::kHiddenSize / 2 +
-                 uint64_t(layout::kMoeIntermediate) * layout::kHiddenSize / 32);
-            const uint64_t bb = per_iter - ba;
             for (const Row& r : rows) {
                 if (r.variant.empty()) continue;
-                std::fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%llu,%llu,"
-                                "%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f\n",
-                             r.variant.c_str(), r.m, r.lanes, r.rpl, r.subgroup, r.decode, r.hprec,
-                             o.slots, o.layer_cycle, o.iters, path_name,
-                             static_cast<unsigned long long>(ba),
-                             static_cast<unsigned long long>(bb),
+                std::fprintf(f, "%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,"
+                                "%llu,%llu,%.3f,%.3f,%.3f,%.2f,"
+                                "%.4f,%.4f,%.4f,%.5f,%.4f,%.3f,%.3f,%.3f,%.3f\n",
+                             r.section, r.variant.c_str(), r.m, r.lanes, r.rpl, r.subgroup,
+                             r.decode, r.hprec, r.xmode, r.hquant, r.fp8, r.fp8_slots,
+                             r.list_count, o.layer_cycle, o.iters, path_name,
+                             static_cast<unsigned long long>(r.bytes_a),
+                             static_cast<unsigned long long>(r.bytes_b),
                              r.gbps_a, r.gbps_b, r.gbps_total,
-                             r.ms_a, r.ms_b, r.ms_total, r.ms_wall,
+                             ceiling > 0 ? 100.0 * r.gbps_total / ceiling : 0.0,
+                             r.ms_a, r.ms_b, r.ms_total, r.ms_per_token, r.ms_wall,
                              r.record_us, r.submit_us, ceiling, launch_us);
             }
             std::fclose(f);
@@ -454,6 +763,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    for (SharedExpert& sh : shared) alloc.free(sh.buf);
     io.stop();
     return 0;
 }
