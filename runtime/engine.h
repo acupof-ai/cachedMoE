@@ -194,6 +194,13 @@ public:
     // prompt's state; nothing per step is seeded unless `set_produce_ced(false)`.
     Result<void> load_decode_state(const std::string& dir);
     const DecodeState* decode_state() const { return state_.get(); }
+    // Track Q: puts the loaded export's prefill state back into the KV store in
+    // place -- window rings, compressed and index-key caches, compressor carry
+    // -- so a second trajectory can start at decode_pos() again. Re-running
+    // positions on a used store is NOT that once the ring has wrapped (its
+    // other 127 slots hold the first run's tokens) or a ratio-2 group was
+    // left half full. The LRU clock `token_` is deliberately not rewound.
+    Result<void> reseed_decode_state();
 
     // Encoder over the whole prompt, then decoder bounded replay over the last
     // 128 tokens (design §11.1, §11.2).

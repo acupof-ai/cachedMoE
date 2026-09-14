@@ -484,17 +484,9 @@ Result<void> Engine::prepare_ced(uint32_t position) {
                         std::format("layer {} wants {} compressed positions; the "
                                     "indexer's score plane holds {}", L, n_cmp,
                                     kMaxIndexPositions));
-        // design §2.1's two-level top-k: layer 20 picks candidate_topk_blocks
-        // blocks of candidate_block_size and layers 24..36 score only inside
-        // them. Below that product every block is a candidate and the mask is
-        // the identity, which is the only case this runtime implements -- so
-        // it refuses rather than silently dropping the second level.
-        if (p.is_index_source && L > c.candidate_source_layer_id &&
-            n_cmp > c.candidate_topk_blocks * c.candidate_block_size)
-            return fail(Err::Unimplemented,
-                        std::format("{} compressed positions at layer {} needs design "
-                                    "2.1's candidate-block mask, which is not written",
-                                    n_cmp, L));
+        // design §2.1's two-level top-k (layer 20 keeps candidate_topk_blocks
+        // blocks, layers 24..36 score inside them) is DecodeLayer's: it
+        // dispatches indexer.slang stages 6-8 once n_cmp passes 16,384.
         // A layer whose plane is read by others -- an index source, or a
         // window-only layer that has no source -- owns its top-k list; the rest
         // are pointed at their source's and only need the counts.
@@ -547,7 +539,11 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
     // Sized from what the export actually holds, plus the room the remaining
     // steps will need; the compressed half grows by one row a step at ratio 1.
     kc.index_dim   = c.index_head_dim;
-    kc.max_context = std::max<uint32_t>(256, state_->max_compressed() + 64);
+    // The PREFILL record's buffers are max_seq_len // ratio rows (2,074 / 4,149
+    // at 4K, 8,513 / 17,026 at 17K) -- more than the widest per-step run
+    // `max_compressed()` sees -- and seed_compressed is handed all of them.
+    kc.max_context = std::max<uint32_t>(
+        256, std::max(state_->max_compressed(), state_->max_prefill_rows()) + 64);
     if (kc.max_context > kMaxIndexPositions)
         return fail(Err::ResourceExhausted,
                     std::format("the export needs {} compressed positions and the "
@@ -577,6 +573,15 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
              history_.size(), state_->steps(), human_bytes(kvs_.bytes()),
              produce_ced_ ? "prefill state seeded, every per-step tensor ours"
                           : "window REAL, compressed+topk LOADED per step");
+    return {};
+}
+
+Result<void> Engine::reseed_decode_state() {
+    if (!state_ || !prefill_loaded_) return fail(Err::FailedPrecondition, "no decode state is loaded");
+    kvs_.clear();
+    if (auto r = state_->seed_prefill(kvs_); !r) return r;
+    history_     = state_->prompt_ids();
+    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 
@@ -893,6 +898,8 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         }
     }
     if (auto r = cmd_wait(); !r) return r;
+    // The indexer wrote every compressed entry of the list sparse_attn just read.
+    if (auto r = layer_.verify_after_attention(st); !r) return r;
 
     // design §7.1 / §7.8: the gate's ids are already in host-coherent memory.
     // Classify them, fetch the misses at P0, wait, host-signal the timeline the
