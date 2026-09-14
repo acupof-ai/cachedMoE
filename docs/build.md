@@ -54,8 +54,10 @@ cmake --build build
 
 ```
 build/deepmoe.exe              CLI: info / bench nvme / run
-build/nvme_bench.exe           design §9.1 Q6/Q7 微基准
-build/bw_matrix.exe            design §9.2 带宽矩阵
+build/nvme_bench.exe           design §9.2.1 Q6/Q7 微基准
+build/bw_matrix.exe            design §8.0 / §3.3 带宽矩阵（CPU / GPU / 并发 × 两条路径）
+build/kernel_bench.exe         design §7.9.1 MoE kernel sweep + dispatch 开销 + 路径 A/B
+build/heap_capacity.exe        design §9.2.2 两个 heap 的实际可分配上限（commit 限额）
 build/envcheck.exe             环境自检
 build/tests/deepmoe_tests.exe  单元测试
 build/shaders/*.spv            §7.14 的 12 个 kernel，每个都过 spirv-val
@@ -95,13 +97,43 @@ zig c++ -target x86_64-linux-gnu -std=c++23 -I. -c storage/linux/io_uring.cpp -o
 ## 基准
 
 ```powershell
-.\build\nvme_bench.exe --help
+$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
+
+# NVMe 微基准（Q6/Q7）→ design §9.2.1
 .\build\nvme_bench.exe --reads 48 --csv bench\results\nvme_q6_q7.csv
-.\build\bw_matrix.exe --size-gb 4
+
+# 带宽矩阵：CPU 单独 / GPU 单独 / 并发 × 路径 A/B → design §8.0、§3.3
+.\build\bw_matrix.exe --cpu-size-gb 4 --size-gb 1 --repeats 3
+
+# MoE kernel sweep（60 变体）+ dispatch 开销 → design §7.9.1、§3.4
+.\build\kernel_bench.exe --csv bench\results\kernel_p1.csv `
+    --iters 48 --layer-cycle 8 --repeats 4 --sweeps 2
+.\build\kernel_bench.exe --path b --quick        # 路径 B 对照
+
+# 容量上限（commit 限额）→ design §9.2.2。调大 pagefile 之后要重跑
+.\build\heap_capacity.exe --slab-gib 2 --min-free-gib 6 --csv bench\results\heap_capacity.csv
 ```
 
 `nvme_bench` 默认在 `%TEMP%` 建一个 2 GB 测试文件，跑完删除（`--keep` 保留，`--file`
 指定已有文件）。实测结果写回 design.md §9.2.1。
+
+**测量纪律（否则数字没有意义）**：LPDDR 是 CPU 和 GPU 共用的，**任何吃内存带宽的进程都会
+污染 GPU 的数字**——实测同一个 kernel 变体在机器忙 / 闲两种状态下相差最多 **50%**
+（164.6 vs 94.5 GB/s）。所以：
+
+- **不要同时编译**（一次 `cmake --build` 撞上 `bw_matrix`，CPU 峰值从 100.9 掉到 97.7，
+  并发那一栏直接作废），也不要同时跑 `tools/route_trace.py`。
+- `kernel_bench` 的工作集要用 `--layer-cycle 8`（1053 MB）跨过 32 MB 的 MALL；
+  只用 1 层（132 MB）会把带宽**虚高约 25%**。
+- 判据是 raw-read 上限在 sweep 前后一致。完整的方法与两个踩过的坑见
+  [kernel_p1.md](kernel_p1.md) §1。
+
+带 validation layer 跑一遍（两个 bench 与两个 GPU 测试当前都是干净的）：
+
+```powershell
+$env:VK_INSTANCE_LAYERS='VK_LAYER_KHRONOS_validation'
+$env:VK_LOADER_LAYERS_ENABLE='VK_LAYER_KHRONOS_validation'
+```
 
 MSVC 目标 A/B：
 
@@ -213,6 +245,32 @@ uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l1 -
   再在 torch fp32 里算 expert FFN，把 `x`/`y`/校验和写进 `tests/data/l1_layer{L}_expert{E}.bin`。
   加 `--report out.json` 可以把数字存下来。
 
+## 路由 trace 与 cache 模拟器（design §9.1.1）
+
+P1 的 Track B。完整说明、方法与结论在 [route_trace.md](route_trace.md)；这里只放命令：
+
+```powershell
+uv pip install pyarrow tokenizers pypdf     # pypdf 可选（把技术报告 PDF 收进语料）
+
+# faithfulness 检查（64 token 完整前向，约 5 分钟）
+uv run python tools/route_trace.py --model D:\models\DeepSeek-V4.1-Flash --out traces\verify --verify
+
+# 全量 trace（27,399 token / 40 prompt，35–50 分钟，~300 GB NVMe 读，可断点续跑）
+uv run python tools/route_trace.py --model D:\models\DeepSeek-V4.1-Flash `
+    --tokens 20000 --out traces\mixed --checkpoint-every 4
+
+# 策略 × 容量 × 分配
+uv run python tools/cache_sim.py --trace traces\mixed `
+    --capacities 20,25,30,35,abs:4787 `
+    --policies lru,lfu-decay,arc,score-aware,static-pin+lru `
+    --allocation both --prefetch-depths 0 --out reports\cache_sweep.json
+
+uv run python tools\tests\test_cache_sim.py   # 12 个可独立验算的用例
+```
+
+**不要和 `bench/` 的带宽基准同机并跑**（见上一节的测量纪律）。
+`traces/` 与 `reports/` 在 `.gitignore` 里；`reports/*.json` 用 utf-8 打开。
+
 ## 测试
 
 ```powershell
@@ -229,6 +287,54 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'; ctest --test-dir build -
 比对六个 part 的校验和与 `cpu/gemv_fp4_ref` 复算的 FFN 输出（对照 `oracle.py` 的 torch fp32 结果）。
 按标签筛选：`ctest -L needs-model` 只跑它，`ctest -LE needs-model` 完全不跑。
 
-## BIOS 提示
+## Windows 虚拟内存（pagefile）：必须先调大
 
-`P-1` 需要在两种 VGM（GPU 专用显存）设置下测带宽：当前 64 GB，以及最小值。VGM 在 BIOS → Advanced → GFX Configuration → UMA Frame Buffer Size。改动后 Windows 可见内存与 `vulkaninfo` 的 heap 大小都会变化，把两组数字都记进 `bench/results/`。
+**这是这台机器上唯一一个必须手工做的系统设置，不做的话 expert cache 只有设计容量的 43%。**
+
+P-1 实测（2026-09-14，`bench/results/heap_capacity.csv`，解读见 design.md §5.2 / §9.2.2）：
+expert slab 的真实上限**不是** BIOS VGM、也不是两个 Vulkan heap 的大小，而是 Windows 的
+**commit 限额 = 物理内存 + pagefile**。路径 A（`DEVICE_LOCAL|HOST_VISIBLE`）的 slab
+几乎不占物理内存（`availPhys` 在 36 GiB 的分配里只动了 0.3 GB），但**照样按 1:1 吃 commit**。
+本机默认：
+
+```
+commit 限额 = 63.65 GiB RAM + 4 GiB 系统托管 pagefile = 67.65 GiB
+→ 路径 A 拿到 36 GiB 就停（留 6 GiB 余量），路径 B 随后一个 slab 都拿不到
+→ expert cache 只有 2,056 个槽（设计要 4,787）
+```
+
+**调大 pagefile 不会带来换页 I/O**：VGM 支撑的页不在分页池里，**永远不会被写进 pagefile**，
+这纯粹是 commit 记账。设置路径：
+
+```
+系统属性 → 高级 → 性能 [设置] → 高级 → 虚拟内存 [更改]
+→ 取消"自动管理所有驱动器的分页文件大小"
+→ 选 C: → 自定义大小 → 初始大小 = 最大值 = 98304 MB（96 GB；128 GB 更稳妥）
+→ [设置] → [确定] → 重启
+```
+
+C: 需要相应的空闲空间（96 GB 固定大小会立刻占掉 96 GB 磁盘）。重启后重测：
+
+```powershell
+.\build\heap_capacity.exe --slab-gib 2 --min-free-gib 6 --csv bench\results\heap_capacity.csv
+```
+
+期望看到 `path_a` + `path_b` 合计 ≥ 90 GiB（4,787 个 expert 槽）。CSV 的
+`avail_commit_bytes` 列是判断有没有生效的那一列；`--min-free-gib` 是 `availPhys` 的安全下限，
+不要调到 6 以下（Ctrl+C 有清理路径，但别指望它）。
+
+## BIOS：不需要动
+
+**不要改 UMA Frame Buffer Size（VGM）。** 实测两个 heap 是同一条 LPDDR5X：
+GPU raw-read 在路径 A（216.4 GB/s）、路径 B（215.2）、纯 DEVICE_LOCAL（216.0）上没有差别，
+GPU 在当前设置下已经能寻址两种内存，而容量受 commit 限额而不是 VGM 约束（见上一节）。
+design.md v0.3–v0.5 里"在两种 VGM 下各测一遍 / 需要一次重启"的条目已作废（design.md §3.3、§16）。
+
+## 大页（可选，未测）
+
+路径 B 的 MoE kernel 比路径 A 慢 12%（GART 4 KiB 页的表走查成本；raw-read 看不出来，
+见 design.md §3.3）。2 MiB 大页可能抹掉它，但 `VirtualAlloc(MEM_LARGE_PAGES)` 需要
+`SeLockMemoryPrivilege`：`secpol.msc` → 本地策略 → 用户权限分配 → **锁定内存页** → 加入当前账户
+→ **重新登录**。代码会先尝试提权，失败时回落到 4 KiB 页并把原因写进 CSV 的 `note`
+（`large pages unavailable: SeLockMemoryPrivilege is not held by this account`）。
+这是 design.md §15 P6 的一个 A/B 实验，不是必需项。
