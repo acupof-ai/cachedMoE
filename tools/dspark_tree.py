@@ -801,6 +801,8 @@ def cmd_lossless(args) -> int:
     frequencies with direct top-Kv sampling from the verify row."""
     E, H, W = load_tables(args.model)
     got = [g for g in mode_dirs(args.traces) if g[1] == "sampling"] or mode_dirs(args.traces)
+    if args.prompt:
+        got = [g for g in got if g[0] == args.prompt]
     prompt, mode, pdir, log = got[0]
     rec = log["cycles"][args.cycle]
     d = load_draft(pdir, rec["draft"])
@@ -1421,6 +1423,7 @@ def build_parser() -> argparse.ArgumentParser:
     common(lo)
     lo.add_argument("--n", type=int, default=200000)
     lo.add_argument("--cycle", type=int, default=0)
+    lo.add_argument("--prompt", default="en_prose")
     t = sub.add_parser("tps")
     common(t)
     t.add_argument("--stats", default=os.path.join(REPO, "tests", "data", "dspark", "tree_stats.json"))
