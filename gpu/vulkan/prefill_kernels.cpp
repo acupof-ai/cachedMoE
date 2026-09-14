@@ -611,6 +611,35 @@ Result<void> Prefill::op_index_score(uint64_t q, uint64_t keys, uint32_t g, uint
 
 #endif  // DEEPMOE_ENABLE_VULKAN
 
+std::vector<std::vector<uint8_t>> Prefill::candidate_blocks(uint32_t b, uint32_t pos0, uint32_t ratio,
+                                                            uint32_t g, const float* scores,
+                                                            uint32_t topk_blocks, uint32_t block) {
+    std::vector<std::vector<uint8_t>> keep(b);
+    if (block == 0 || topk_blocks == 0) return keep;
+    const uint32_t nblocks = (g + block - 1) / block;
+    std::vector<float> bs;
+    std::vector<uint32_t> order;
+    for (uint32_t j = 0; j < b; ++j) {
+        const uint32_t vis = std::min(g, (pos0 + j + 1) / std::max<uint32_t>(ratio, 1));
+        const uint32_t reach = (vis + block - 1) / block;
+        if (reach <= topk_blocks) continue;   // every reachable block kept: the identity
+        // a block's score is its best visible position; the newest block is pinned in
+        const float* sr = scores + size_t(j) * g;
+        bs.assign(nblocks, -std::numeric_limits<float>::infinity());
+        for (uint32_t i = 0; i < vis; ++i) bs[i / block] = std::max(bs[i / block], sr[i]);
+        bs[(vis - 1) / block] = std::numeric_limits<float>::infinity();
+        order.resize(nblocks);
+        std::iota(order.begin(), order.end(), 0u);
+        std::nth_element(order.begin(), order.begin() + (topk_blocks - 1), order.end(),
+                         [&](uint32_t a, uint32_t c) { return bs[a] != bs[c] ? bs[a] > bs[c] : a < c; });
+        std::vector<uint8_t>& row = keep[j];
+        row.assign(nblocks, 0);
+        for (uint32_t i = 0; i < topk_blocks; ++i)
+            if (bs[order[i]] > -std::numeric_limits<float>::infinity()) row[order[i]] = 1;
+    }
+    return keep;
+}
+
 void Prefill::topk_rows(uint32_t b, uint32_t pos0, uint32_t kv_pos0, uint32_t n_kv_rows,
                         uint32_t window, uint32_t ratio, uint32_t g, uint32_t index_topk,
                         const float* scores, int32_t* out, uint32_t n_idx) {
@@ -1052,6 +1081,7 @@ Result<PrefillHandoff> Prefill::run(std::span<const uint32_t> prompt) {
     }
     for (SourceState& s : sources_) { s.n = 0; s.valid = false; }
     topk_shared_.clear();
+    cand_.clear();
     for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
         if (auto r = run_layer(L, prompt, out); !r)
             return fail(r.error().code, std::format("layer {}: {}", L, r.error().message));
@@ -1263,6 +1293,29 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
             scores_host.resize(size_t(nb) * G);
             std::memcpy(scores_host.data(), b_.iscore.host_ptr, scores_host.size() * sizeof(float));
             host_op("host: index score readback", th);
+            // design §2.1's two-level top-k: layer 20 picks candidate blocks,
+            // the later index layers score only inside them. The identity for
+            // every query that can reach <= topk_blocks blocks (§1).
+            if (c.candidate_block_size && c.candidate_topk_blocks) {
+                th = Clk::now();
+                if (L == c.candidate_source_layer_id) {
+                    if (b0 == 0) cand_.assign(A, {});
+                    auto kb = candidate_blocks(nb, qpos, ratio, G, scores_host.data(),
+                                               c.candidate_topk_blocks, c.candidate_block_size);
+                    for (uint32_t j = 0; j < nb; ++j) cand_[b0 + j] = std::move(kb[j]);
+                } else if (L > c.candidate_source_layer_id && cand_.size() == A) {
+                    const uint32_t bsz = c.candidate_block_size;
+                    for (uint32_t j = 0; j < nb; ++j) {
+                        const std::vector<uint8_t>& keep = cand_[b0 + j];
+                        if (keep.empty()) continue;
+                        float* sr = scores_host.data() + size_t(j) * G;
+                        for (uint32_t i = 0; i < G; ++i)
+                            if (i / bsz >= keep.size() || !keep[i / bsz])
+                                sr[i] = -std::numeric_limits<float>::infinity();
+                    }
+                }
+                host_op("host: candidate blocks", th);
+            }
             th = Clk::now();
             topk_rows(nb, qpos, apos0, A, win, ratio, G, c.index_topk, scores_host.data(),
                       idx_host.data(), n_idx);
@@ -1283,6 +1336,8 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
             }
         }
         std::memcpy(b_.idx.host_ptr, idx_host.data(), idx_host.size() * sizeof(int32_t));
+        if (b0 + nb == A)
+            out.layers[L].topk_last.assign(idx_host.end() - n_idx, idx_host.end());
         if (b0 == 0) {
             probe_idx_ = idx_host;
             pv.topk_first = probe_idx_.data();
@@ -1357,6 +1412,7 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         }
     }
     host_op("host: gate top-6", th);
+    out.layers[L].gate_ids_last.assign(probe_ids_.end() - k6, probe_ids_.end());
     times_.gate += ms_since(t0);
     std::memset(b_.y.host_ptr, 0, size_t(A) * dim * sizeof(float));
     PF_TRY(run_moe(L, A, b_.fx.dev_addr, b_.fxq.dev_addr, b_.fxs.dev_addr, b_.y.dev_addr,

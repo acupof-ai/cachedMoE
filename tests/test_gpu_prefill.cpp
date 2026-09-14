@@ -596,6 +596,143 @@ double rank_rho(const std::vector<uint32_t>& ids, const float* ours) {
     return 1.0 - 6.0 * d2 / (double(n) * (double(n) * double(n) - 1.0));
 }
 
+// An i32 tensor of an L3-format record, read straight off the container (the
+// committed tests/data/longctx subset has no KV buffers, so DecodeState cannot
+// load it). Empty when absent.
+std::vector<int32_t> record_i32(const std::string& dir, size_t record, const std::string& name) {
+    std::vector<int32_t> out;
+    auto doc = json_parse_file(dir + "/index.json");
+    if (!doc) return out;
+    const JsonValue* steps = doc->find("steps");
+    if (!steps) return out;
+    auto arr = steps->as_array();
+    if (!arr || record >= (*arr)->size()) return out;
+    const JsonValue& rec = (**arr)[record];
+    const JsonValue* tens = rec.find("tensors");
+    if (!tens) return out;
+    auto ta = tens->as_array();
+    if (!ta) return out;
+    for (const JsonValue& e : **ta) {
+        if (e.string_or("name", "") != name) continue;
+        std::FILE* f = std::fopen((dir + "/" + rec.string_or("file", "")).c_str(), "rb");
+        if (!f) return out;
+        const int64_t off = rec.int_or("data_offset", 12) + e.int_or("offset", 0);
+        out.resize(static_cast<size_t>(e.int_or("bytes", 0) / 4));
+        std::fseek(f, static_cast<long>(off), SEEK_SET);
+        if (std::fread(out.data(), 4, out.size(), f) != out.size()) out.clear();
+        std::fclose(f);
+        break;
+    }
+    return out;
+}
+
+// Our handoff against a reference prefill record (DecodeState step 0), one
+// line per layer: the window ring, the compressed KV and index keys, the
+// compressor state, and -- where the reference exported them -- the last
+// position's index row and top-6. Returns the worst cosines.
+struct HandoffAgreement {
+    double win = 1.0, cmp = 1.0, key = 1.0, state = 1.0;
+    uint32_t win_l = 0, cmp_l = 0, key_l = 0;
+    uint32_t topk_same = 0, topk_total = 0, gate_same = 0, gate_layers = 0;
+};
+HandoffAgreement compare_handoff(const gpu::PrefillHandoff& out, const runtime::DecodeState& st,
+                                 const TextConfig& c, uint32_t N, const std::string& small_dir) {
+    HandoffAgreement h;
+    const uint32_t win_rows = std::min<uint32_t>(N, c.sliding_window);
+    std::printf("    handoff vs the reference prefill record, per layer (cosines; topk = the last "
+                "position's compressed picks in common; gate = its top-6 in common)\n");
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+        const gpu::PrefillHandoff::Layer& hl = out.layers[L];
+        std::string line = std::format("      L{:02d} r{}", L, c.compress_ratio(L));
+        // with N < 128 only slots 0..N-1 hold anything; at N >= 128 all of them
+        if (const runtime::StateTensor* w = st.tensor(0, std::format("L{:02d}.win_kv", L))) {
+            const Agreement a = agree(std::vector<float>(hl.win_kv.begin(), hl.win_kv.begin() + win_rows * kHd),
+                                      std::vector<float>(w->f.begin(), w->f.begin() + win_rows * kHd));
+            line += std::format("  win {:.6f}", a.cos);
+            if (a.cos < h.win) { h.win = a.cos; h.win_l = L; }
+        }
+        if (hl.n_cmp) {
+            if (const runtime::StateTensor* t = st.tensor(0, std::format("L{:02d}.cmp_cache", L))) {
+                const Agreement a = agree(hl.cmp_cache,
+                                          std::vector<float>(t->f.begin(), t->f.begin() + hl.cmp_cache.size()));
+                line += std::format("  cmp {:.6f} ({} rows)", a.cos, hl.n_cmp);
+                if (a.cos < h.cmp) { h.cmp = a.cos; h.cmp_l = L; }
+            }
+            if (const runtime::StateTensor* t = st.tensor(0, std::format("L{:02d}.index_k", L))) {
+                const Agreement a = agree(hl.index_k,
+                                          std::vector<float>(t->f.begin(), t->f.begin() + hl.index_k.size()));
+                line += std::format("  key {:.6f}", a.cos);
+                if (a.cos < h.key) { h.key = a.cos; h.key_l = L; }
+            }
+        }
+        if (!hl.cmp_state_kv.empty()) {
+            const runtime::StateTensor* sk = st.tensor(0, std::format("L{:02d}.cmp_state_kv", L));
+            const runtime::StateTensor* ss = st.tensor(0, std::format("L{:02d}.cmp_state_score", L));
+            if (sk && ss && sk->f.size() == hl.cmp_state_kv.size() && ss->f.size() == hl.cmp_state_score.size()) {
+                // the -inf pattern must be identical; the written slots compared by cosine
+                uint32_t pattern = 0;
+                std::vector<float> a, b, as, bs;
+                for (size_t i = 0; i < hl.cmp_state_score.size(); ++i) {
+                    const bool oi = std::isinf(hl.cmp_state_score[i]), ri = std::isinf(ss->f[i]);
+                    pattern += oi != ri;
+                    if (!oi && !ri) {
+                        a.push_back(hl.cmp_state_kv[i]); b.push_back(sk->f[i]);
+                        as.push_back(hl.cmp_state_score[i]); bs.push_back(ss->f[i]);
+                    }
+                }
+                if (a.empty()) {
+                    line += pattern ? "  state PATTERN DIFFERS" : "  state empty (both)";
+                } else {
+                    const double ck = agree(a, b).cos, cs = agree(as, bs).cos;
+                    line += std::format("  state kv {:.6f} score {:.6f}{}", ck, cs,
+                                        pattern ? " PATTERN DIFFERS" : "");
+                    h.state = std::min({h.state, ck, cs});
+                }
+                if (pattern) h.state = 0.0;
+            }
+        }
+        if (const runtime::StateTensor* t = st.tensor(0, std::format("L{:02d}.topk_idxs_last", L));
+            t && !t->i.empty() && hl.topk_last.size() == t->i.size()) {
+            const uint32_t nw = std::min<uint32_t>(N, c.sliding_window);
+            uint32_t wsame = 0;
+            for (uint32_t i = 0; i < nw && i < t->i.size(); ++i) wsame += hl.topk_last[i] == t->i[i];
+            std::set<int32_t> ours, ref;
+            for (size_t i = nw; i < t->i.size(); ++i) {
+                if (hl.topk_last[i] >= 0) ours.insert(hl.topk_last[i]);
+                if (t->i[i] >= 0) ref.insert(t->i[i]);
+            }
+            uint32_t common = 0;
+            for (int32_t v : ours) common += static_cast<uint32_t>(ref.count(v));
+            line += std::format("  window {}/{}", wsame, nw);
+            if (!ref.empty()) {
+                line += std::format("  topk {}/{}", common, ref.size());
+                if (c.is_index_source(L)) { h.topk_same += common; h.topk_total += uint32_t(ref.size()); }
+            }
+        }
+        if (!small_dir.empty() && hl.gate_ids_last.size() == 6) {
+            const std::vector<int32_t> ids = record_i32(small_dir, 0, std::format("L{:02d}.gate_ids_last", L));
+            if (ids.size() == 6) {
+                uint32_t same = 0;
+                for (uint32_t a : hl.gate_ids_last)
+                    for (int32_t b : ids) same += int32_t(a) == b;
+                line += std::format("  gate {}/6", same);
+                h.gate_same += same;
+                ++h.gate_layers;
+            }
+        }
+        std::printf("%s\n", line.c_str());
+    }
+    std::printf("    worst: window KV %.6f (L%u), compressed KV %.6f (L%u), index keys %.6f (L%u), "
+                "compressor state %.6f\n", h.win, h.win_l, h.cmp, h.cmp_l, h.key, h.key_l, h.state);
+    if (h.topk_total)
+        std::printf("    last position's compressed picks at the index sources: %u / %u in common\n",
+                    h.topk_same, h.topk_total);
+    if (h.gate_layers)
+        std::printf("    last position's top-6: %u / %u in common over %u layers\n", h.gate_same,
+                    h.gate_layers * 6, h.gate_layers);
+    return h;
+}
+
 }  // namespace
 
 DEEPMOE_TEST(gpu_prefill, forty_layers) {
@@ -743,31 +880,8 @@ DEEPMOE_TEST(gpu_prefill, forty_layers) {
 
     // --- the handoff state against L3's prefill record ------------------------------
     {
-        double worst_win = 1.0, worst_cmp = 1.0, worst_key = 1.0;
-        uint32_t wl = 0, cl = 0, kl = 0;
-        for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
-            const gpu::PrefillHandoff::Layer& hl = out->layers[L];
-            if (const runtime::StateTensor* w = st->tensor(0, std::format("L{:02d}.win_kv", L))) {
-                const Agreement a = agree(std::vector<float>(hl.win_kv.begin(), hl.win_kv.begin() + kN * kHd),
-                                          std::vector<float>(w->f.begin(), w->f.begin() + kN * kHd));
-                if (a.cos < worst_win) { worst_win = a.cos; wl = L; }
-            }
-            if (hl.n_cmp) {
-                if (const runtime::StateTensor* t = st->tensor(0, std::format("L{:02d}.cmp_cache", L))) {
-                    const Agreement a = agree(hl.cmp_cache,
-                                              std::vector<float>(t->f.begin(), t->f.begin() + hl.cmp_cache.size()));
-                    if (a.cos < worst_cmp) { worst_cmp = a.cos; cl = L; }
-                }
-                if (const runtime::StateTensor* t = st->tensor(0, std::format("L{:02d}.index_k", L))) {
-                    const Agreement a = agree(hl.index_k,
-                                              std::vector<float>(t->f.begin(), t->f.begin() + hl.index_k.size()));
-                    if (a.cos < worst_key) { worst_key = a.cos; kl = L; }
-                }
-            }
-        }
-        std::printf("    handoff vs L3 prefill record: window KV worst cos %.6f (L%u), compressed KV %.6f "
-                    "(L%u), index keys %.6f (L%u)\n", worst_win, wl, worst_cmp, cl, worst_key, kl);
-        CHECK(worst_win > 0.9);
+        const HandoffAgreement h = compare_handoff(*out, *st, c, kN, "");
+        CHECK(h.win > 0.9);
     }
 
     // --- hand it to the decode engine and decode eight steps --------------------------
@@ -808,4 +922,140 @@ DEEPMOE_TEST(gpu_prefill, forty_layers) {
     std::printf("    free-running: %u/%u before divergence\n", matched, ds->steps());
     CHECK(forced * 8 >= ds->steps() * 7);
     std::filesystem::remove_all(tmp);
+}
+
+// gpu_prefill.longctx
+// -------------------
+// DEEPMOE_PF_LONGCTX=traces/longctx/ctx4k (or ctx16k): a Track M export
+// (docs/p3_longctx.md §4.1). The GPU prefill of its prompt -- oracle mode unless
+// DEEPMOE_PF_REPLAY sets a replay length -- its first token and handoff state
+// against the export's prefill record, then eight decode steps from our state
+// through runtime::Engine. DEEPMOE_PF_DECODE: free (default: free-running from
+// our first token, the salt retrieval), forced (teacher-forced), none, or
+// ref-free / ref-forced (no prefill: the same steps from the export's own
+// state, the engine's baseline). One decode mode per process: a second pass
+// over the same positions would pool a ratio-2 group with the first pass's
+// state at odd N.
+DEEPMOE_TEST(gpu_prefill, longctx) {
+    const char* dir_env = std::getenv("DEEPMOE_PF_LONGCTX");
+    if (!dir_env) {
+        std::printf("      SKIP gpu_prefill.longctx: set DEEPMOE_PF_LONGCTX=traces/longctx/ctx4k\n");
+        return;
+    }
+    if (skip_without_model("gpu_prefill")) return;
+    const std::string dir = dir_env;
+    const std::string name = std::filesystem::path(dir).filename().string();
+    const std::string small = std::string(DEEPMOE_TEST_DATA_DIR) + "/longctx/" + name;
+    const std::string mode = std::getenv("DEEPMOE_PF_DECODE") ? std::getenv("DEEPMOE_PF_DECODE") : "free";
+    auto st = runtime::DecodeState::load(dir);
+    REQUIRE_OK(st);
+    const std::vector<uint32_t> prompt = prompt_ids(dir);
+    const uint32_t N = static_cast<uint32_t>(prompt.size());
+    REQUIRE(N > 0);
+    const std::vector<uint32_t>& greedy = st->greedy_tokens();
+    std::printf("    %s: %u prompt tokens, reference continuation", name.c_str(), N);
+    for (uint32_t t : greedy) std::printf(" %u", t);
+    std::printf("\n");
+
+    runtime::Engine engine;
+    {
+        RuntimeConfig cfg;
+        cfg.model_dir = model_dir();
+        cfg.cache.budget_bytes = 8ull << 30;
+        cfg.cache.slots_per_slab = 100;
+        if (auto r = engine.init(cfg); !r) {
+            std::printf("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            return;
+        }
+        if (auto r = engine.init_gpu(); !r) {
+            std::printf("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            return;
+        }
+    }
+    const TextConfig& c = engine.model().text;
+    const bool from_ref = mode.starts_with("ref");
+    const bool forced = mode.ends_with("forced");
+    uint32_t first = greedy.empty() ? 0 : greedy[0];
+    const std::filesystem::path tmp = std::filesystem::temp_directory_path() / ("deepmoe_prefill_" + name);
+
+    if (!from_ref) {
+        gpu::MemoryAllocator alloc;
+        REQUIRE_OK(alloc.init(engine.device(), MemoryPath::DeviceLocalHostVisible));
+        store::ShardSet shards;
+        REQUIRE_OK(shards.open_all(model_dir(), engine.manifest(), true));
+        auto tables = runtime::EngramTables::load(l3_dir());
+        REQUIRE_OK(tables);
+        gpu::PrefillRunner runner;
+        REQUIRE_OK(runner.create(engine.device(), alloc, gpu::default_shader_dir()));
+        gpu::PrefillConfig pc;
+        pc.max_tokens = N;
+        pc.replay = std::getenv("DEEPMOE_PF_REPLAY") ? static_cast<uint32_t>(std::atoi(std::getenv("DEEPMOE_PF_REPLAY"))) : 0;
+        if (pc.replay == 0) pc.replay = N;
+        apply_kernel_env(pc);
+        gpu::Prefill prefill;
+        REQUIRE_OK(prefill.create(engine.device(), alloc, runner, engine.manifest(), shards, engine.io(),
+                                  engine.pinned(), c, &*tables, pc));
+        std::printf("    GPU prefill of %u tokens, %s\n", N,
+                    pc.replay >= N ? "oracle mode (replay >= N)" : std::format("replay {}", pc.replay).c_str());
+        auto out = prefill.run(prompt);
+        REQUIRE_OK(out);
+        const gpu::PrefillTimes& tm = prefill.times();
+        std::printf("    %.1f s: embed %.0f  engram io %.0f / gpu %.0f  mhc %.0f  attention %.0f  gate %.0f  "
+                    "shared %.0f  expert io %.0f / gpu %.0f  head %.0f  other %.0f ms; %u experts, %.2f GB, "
+                    "%u dispatches, %u submits\n",
+                    tm.total / 1e3, tm.embed, tm.engram_io, tm.engram, tm.mhc, tm.attention, tm.gate,
+                    tm.shared_expert, tm.expert_io, tm.expert_gpu, tm.head, tm.host, tm.experts_read,
+                    tm.expert_bytes / 1e9, tm.dispatches, tm.submits);
+        const runtime::RefLogits& ref0 = st->logits(0);
+        double maxd = 0;
+        for (size_t i = 0; i < ref0.top_ids.size(); ++i)
+            maxd = std::max(maxd, std::fabs(double(out->logits[ref0.top_ids[i]]) - ref0.top_logits[i]));
+        std::printf("    first token %u (reference %u) %s, margin ours %.4f ref %.4f, rho %.4f, max|dlogit| %.3f\n",
+                    out->first_token, ref0.argmax, out->first_token == ref0.argmax ? "MATCH" : "DIFFER",
+                    out->top1 - out->top2, ref0.margin(), rank_rho(ref0.top_ids, out->logits.data()), maxd);
+        CHECK_EQ(out->first_token, ref0.argmax);
+        first = out->first_token;
+        const HandoffAgreement h = compare_handoff(*out, *st, c, N,
+                                                   std::filesystem::exists(small + "/index.json") ? small : "");
+        CHECK(h.win > 0.8);
+        if (mode == "none") return;
+        std::filesystem::create_directories(tmp);
+        REQUIRE_OK(gpu::Prefill::write_l3_dir(*out, c, dir, tmp.string()));
+    }
+    st = {};
+
+    const std::string state_dir = from_ref ? dir : tmp.string();
+    if (auto r = engine.load_decode_state(state_dir); !r) {
+        std::printf("    decode: the engine refused the state: %s\n", r.error().str().c_str());
+        if (!from_ref) std::filesystem::remove_all(tmp);
+        return;
+    }
+    const runtime::DecodeState* ds = engine.decode_state();
+    REQUIRE(ds != nullptr);
+    const std::vector<uint32_t>& ref = ds->greedy_tokens();
+    const uint32_t base = ds->decode_pos();
+    std::printf("    decode from %s state, %s, %u steps\n", from_ref ? "the EXPORT's" : "OUR",
+                forced ? "teacher-forced" : "free-running", ds->steps());
+    uint32_t token = forced ? ref[0] : first, matched = 0, before_div = 0;
+    bool diverged = false;
+    for (uint32_t s = 0; s < ds->steps(); ++s) {
+        const uint32_t in = forced ? ref[s] : token;
+        auto r = engine.decode_step(in, base + s, static_cast<int32_t>(s));
+        REQUIRE_OK(r);
+        const runtime::RefLogits& rl = ds->logits(s + 1);
+        const bool ok = r->token == rl.argmax;
+        matched += ok;
+        if (!ok) diverged = true;
+        if (!diverged) ++before_div;
+        std::printf("      step %u pos %u in %6u -> %6u (reference %6u) %s  margin ours %.4f ref %.4f rho %.3f\n",
+                    s, base + s, in, r->token, rl.argmax, ok ? "match" : "DIFFER", r->margin(), rl.margin(),
+                    rank_rho(rl.top_ids, engine.last_logits().data()));
+        token = r->token;
+    }
+    if (forced)
+        std::printf("    teacher-forced: %u/%u\n", matched, ds->steps());
+    else
+        std::printf("    free-running: %u/%u before divergence (%u/%u steps agree)\n", before_div, ds->steps(),
+                    matched, ds->steps());
+    if (!from_ref) std::filesystem::remove_all(tmp);
 }

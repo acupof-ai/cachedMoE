@@ -242,6 +242,11 @@ struct PrefillHandoff {
         std::vector<float> cmp_state_kv;    // [ratio][512], ratio > 1 sources only
         std::vector<float> cmp_state_score; // [ratio][512]
         uint32_t n_cmp = 0, ratio = 0;
+        // Validation: the last prompt position's index row as `sparse_attn` saw
+        // it (window part = positions, compressed part = row + N, -1 unused; the
+        // reference's `Lnn.topk_idxs_last` in oracle mode), and its top-6.
+        std::vector<int32_t>  topk_last;
+        std::vector<uint32_t> gate_ids_last;
     };
     std::vector<Layer> layers;
 };
@@ -349,6 +354,12 @@ public:
                               uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b);
     Result<void> op_index_score(uint64_t q, uint64_t keys, uint32_t g, uint64_t w, uint64_t score,
                                 uint32_t b, uint32_t ratio, uint32_t pos0);
+    // design §2.1's first level (`select_candidate_blocks`) for queries at
+    // pos0..pos0+b-1 over [b][g] scores: per query, a keep flag per block of
+    // `block` positions, or an empty row when every reachable block is kept.
+    static std::vector<std::vector<uint8_t>> candidate_blocks(uint32_t b, uint32_t pos0, uint32_t ratio,
+                                                              uint32_t g, const float* scores,
+                                                              uint32_t topk_blocks, uint32_t block);
     // The window band plus the compressed picks for queries at positions
     // pos0..pos0+b-1 (docs/p3_prefill.md §1), host side. `scores` is
     // [b][g] or null (every visible block kept).
@@ -418,6 +429,8 @@ private:
     uint32_t cmp_src_ = 0, key_src_ = 0, idx_src_ = 0;
     std::vector<int32_t> topk_shared_;      // the last index source's compressed picks, [rows][k]
     uint32_t topk_k_ = 0;
+    // layer 20's candidate blocks per attention row; empty = identity (§1)
+    std::vector<std::vector<uint8_t>> cand_;
     uint32_t rope_positions_ = 0;
     std::vector<int32_t>  probe_idx_;       // the first query block's index rows
     std::vector<uint32_t> probe_ids_;       // this layer's top-6, [rows][6]
