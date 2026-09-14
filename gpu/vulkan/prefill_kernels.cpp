@@ -1403,8 +1403,13 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
     host_op("host: gate readback", th);
     th = Clk::now();
     const store::PinnedTensor* bias_t = pinned_->find(P + "ffn.gate.bias");
-    std::span<const float> bias;
-    if (bias_t) bias = std::span<const float>(static_cast<const float*>(bias_t->data_host), E);
+    // copied once: the pinned host view is device-mapped memory, and the
+    // top-6 compares read the bias ~3,000 times a token (58 s of a 4K prefill)
+    std::vector<float> bias_host;
+    if (bias_t)
+        bias_host.assign(static_cast<const float*>(bias_t->data_host),
+                         static_cast<const float*>(bias_t->data_host) + E);
+    std::span<const float> bias(bias_host);
     probe_ids_.assign(size_t(A) * k6, 0);
     probe_wts_.assign(size_t(A) * k6, 0.0f);
     for (uint32_t t = 0; t < A; ++t) {
