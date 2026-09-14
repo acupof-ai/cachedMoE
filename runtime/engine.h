@@ -238,6 +238,11 @@ private:
 
     std::unique_ptr<DecodeState> state_;
     std::vector<LayerWeights>    weights_;
+    // What one token reads out of the pinned set at each layer -- the
+    // "resident" half of design §2.3's byte budget, summed from the manifest
+    // rather than assumed, so the profiler's hot_bytes and the §9.8 NVMe
+    // utilisation figures are the real ratio.
+    std::vector<uint64_t>        layer_hot_bytes_;
     std::vector<LayerTiming>     timings_;
     std::vector<uint32_t>        history_;
     DeviceAddress                norm_w_ = kNoDeviceAddress;

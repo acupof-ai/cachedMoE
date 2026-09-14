@@ -329,6 +329,18 @@ step  in     -> out     wall      | attn    moe  (gpu   host)  stall   engram ot
 8 tokens, 9.13 s, 0.88 tok/s, hit rate 0.360, 23.1 GB read from NVMe
 ```
 
+`--profile FILE.jsonl` writes the design §13.1 record, one line a token. Its
+`hot_bytes` comes out at **8.52 GB**, which is design §2.3's resident-per-token
+budget to three digits — summed from the manifest per layer rather than assumed,
+so it is a check on §2.3 rather than a restatement of it.
+
+One field in that record is wrong and is not ours: `nvme_util` reads above 1
+(6.2 on the first token) because `IoEngine`'s busy counter sums each chunk's own
+latency instead of the union of the windows in which at least one chunk was in
+flight, and the queue depth is 8. `nvme_gbps` is understated by the same factor.
+The IoEngine's own `effective_gbps` (3.0–3.9 GB/s in these runs) is the number
+to read until that is fixed.
+
 `--per-layer` prints the same breakdown forty rows deep, which is where design
 §13.1 actually wants it — a layer stalling for 200 ms, or what layer 1 and 14's
 engram costs, is invisible in the aggregate. A cold layer looks like
@@ -457,3 +469,7 @@ have issued the moment the token was decided (design §9.5).
   layers of one token share a timestamp and the tie-break between them is
   whatever the policy's sort does. It has not misbehaved; it is also not
   designed.
+* `IoEngine`'s busy accounting, which makes the profiler's `nvme_util` and
+  `nvme_gbps` wrong by roughly the queue depth (§5.2).
+* A second L3 prompt. design §12 L3 asks for five; this is one, and the one
+  disagreement it produces (§4.2 step 6) is a sample size of one.

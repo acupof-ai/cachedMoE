@@ -222,10 +222,16 @@ Result<void> Engine::resolve_weights() {
     // is that these addresses never move.
     weights_.clear();
     weights_.reserve(model_cfg_.text.num_hidden_layers);
+    layer_hot_bytes_.assign(model_cfg_.text.num_hidden_layers, 0);
     for (uint32_t L = 0; L < model_cfg_.text.num_hidden_layers; ++L) {
         auto w = LayerWeights::from_pinned(pinned_, L);
         if (!w) return std::unexpected(w.error());
         weights_.push_back(*w);
+        // Everything this layer pins, which is everything a token reads from
+        // it -- minus the compressor and indexer tensors on a source layer,
+        // which are pinned but not dispatched until design 7.4's kernels land.
+        layer_hot_bytes_[L] =
+            store::pinned_bytes(manifest_, store::pinned_layer_tensors(manifest_, L));
     }
     auto n = pinned_.require("norm.weight");
     if (!n) return std::unexpected(n.error());
@@ -485,6 +491,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     t.miss_bytes = miss_bytes;
     profiler_.add_phase(Phase::NvmeStall, Nanos(int64_t(t.gate_ms * 1e6)));
     profiler_.add_phase(Phase::ExpertHit, Nanos(int64_t(t.moe_ms * 1e6)));
+    profiler_.note_hot_bytes(layer_hot_bytes_[L]);
     if (layer_probe) layer_probe(L, layer_);
     apply_post = true;
     return {};
@@ -589,10 +596,16 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
 
 Result<SampleResult> Engine::decode_step() {
     if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
-    const uint32_t position = static_cast<uint32_t>(history_.size());
-    if (position == 0) return fail(Err::FailedPrecondition, "nothing to decode from");
-    auto r = decode_step(history_.back(), position - 1, -1);
+    if (history_.empty()) return fail(Err::FailedPrecondition, "nothing to decode from");
+    // A step's `position` is the position of its INPUT token, which is the last
+    // one in the history; the token it produces is appended, so repeated calls
+    // walk forward. `state_step` is -1 because there is no way to know which of
+    // the export's per-step records this position corresponds to -- a caller
+    // that needs the LOADED compressed KV uses the three-argument form.
+    const uint32_t position = static_cast<uint32_t>(history_.size()) - 1;
+    auto r = decode_step(history_.back(), position, -1);
     if (!r) return std::unexpected(r.error());
+    history_.push_back(r->token);
     SampleResult s;
     s.token   = r->token;
     s.logprob = r->top1;
