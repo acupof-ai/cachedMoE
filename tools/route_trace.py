@@ -593,7 +593,8 @@ def trace(args: argparse.Namespace) -> int:
     total_t0 = time.perf_counter()
     for L in todo:
         t0 = time.perf_counter()
-        block = dsref.make_block(ref, margs, L, t.layout, t.store)
+        block = dsref.make_block(ref, margs, L, t.layout, t.store,
+                                 args.engram_threads)
         t_load = time.perf_counter() - t0
 
         rec = t.run_layer(L, block, H, pre_mix, offsets, states, snapshots)
@@ -720,7 +721,10 @@ def verify(args: argparse.Namespace) -> int:
     slow = dsref.dequant_fp4_fp32_ref(parts["w1.weight"], parts["w1.scale"], 2304, 5120)
     exact = bool(torch.equal(fast.float(), slow.bfloat16().float()))
     report["fp4_fast_dequant_exact"] = exact
-    print(f"[3] FP4 exponent-add dequant == float reference, bit for bit: {exact}")
+    print(f"[3] FP4 -> bf16 fast dequant == float reference, bit for bit: {exact}\n"
+          f"    (2304 x 5120 of real expert weights. An E2M1 value has one mantissa\n"
+          f"     bit and a UE8M0 scale is an exact power of two, so bf16 holds the\n"
+          f"     product exactly -- this is equality, not a tolerance)")
 
     # 4. run the stack --------------------------------------------------
     x0 = torch.tensor(ids, dtype=torch.long).unsqueeze(0)
@@ -736,7 +740,8 @@ def verify(args: argparse.Namespace) -> int:
     sink_checks = []
     t0 = time.perf_counter()
     for L in range(margs.n_layers):
-        block = dsref.make_block(ref, margs, L, t.layout, t.store)
+        block = dsref.make_block(ref, margs, L, t.layout, t.store,
+                                 args.engram_threads)
         if block.b.engram is not None and hashes is not None:
             h = block.b.engram(h, hashes[:, :, t.layout.layer_ids.index(L), :], None)
         ffn_in, resid, fpre, fpost, fcomb = block.forward_attn(h, 0, pre_mix)

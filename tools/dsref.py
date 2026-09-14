@@ -863,7 +863,7 @@ def bind_layer_weights(block, store: WeightStore, prefix: str, verbose: bool = F
 
 
 def make_block(ref, args, layer_id: int, engram_layout, store: WeightStore,
-               engram_reader=None):
+               engram_threads: int = 32):
     """Build one Block with `StreamingMoE` in place of `MoE`, and bind its weights."""
     orig_moe = ref.MoE
     ref.MoE = lambda lid, a, _ref=ref: StreamingMoE(lid, a, _ref)
@@ -878,7 +878,8 @@ def make_block(ref, args, layer_id: int, engram_layout, store: WeightStore,
         # embedding for the manifest-backed reader before binding.
         idx = engram_layout.layer_ids.index(layer_id)
         block.engram.embed = EngramRowEmbedding(store, layer_id,
-                                                engram_layout.num_embeddings[idx])
+                                                engram_layout.num_embeddings[idx],
+                                                engram_threads)
     bind_layer_weights(block, store, prefix)
     return StreamingBlock(block)
 
@@ -892,11 +893,13 @@ class EngramRowEmbedding(torch.nn.Module):
     EngramPrefetcher would issue, so `tools/route_trace.py` writes them out.
     """
 
-    def __init__(self, store: WeightStore, layer_id: int, num_embeddings: int):
+    def __init__(self, store: WeightStore, layer_id: int, num_embeddings: int,
+                 threads: int = 32):
         super().__init__()
         self.store = store
         self.layer_id = layer_id
         self.num_embeddings = num_embeddings
+        self.threads = threads
         self.last_rows: np.ndarray | None = None
 
     def forward(self, indices: torch.Tensor) -> torch.Tensor:
@@ -904,7 +907,7 @@ class EngramRowEmbedding(torch.nn.Module):
         if ids.max(initial=0) >= self.num_embeddings or ids.min(initial=0) < 0:
             raise SystemExit(f"engram row id out of range for layer {self.layer_id}")
         self.last_rows = ids
-        return self.store.engram_rows(self.layer_id, ids)
+        return self.store.engram_rows(self.layer_id, ids, self.threads)
 
 
 # ---------------------------------------------------------------------------

@@ -77,15 +77,22 @@ uv run python tools/route_trace.py --model D:\models\DeepSeek-V4.1-Flash `
 
 ```powershell
 uv run python tools/route_trace.py --model D:\models\DeepSeek-V4.1-Flash `
-    --tokens 20000 --out traces\mixed
+    --tokens 20000 --out traces\mixed --checkpoint-every 4
 ```
 
-**单命令、可断点续跑。** 每层结束写一次 `traces\mixed\state.pt`（残差流 + 跨层
-attention 状态 + lookahead 快照），再跑同一条命令就从下一层接着算。改
-`--checkpoint-every N` 可以少写几次（state 大约 100 KB/token，20K token ≈ 2 GB）。
+**单命令、可断点续跑。** 每 `--checkpoint-every` 层写一次 `traces\mixed\state.pt`
+（残差流 + 跨层 attention 状态 + 8 个 lookahead 快照），再跑**同一条命令**就从下一层接着
+算——smoke 切片就是这么从第 33 层续上跑完的。
 
-> ⚠️ 这是个吃满 16 线程的 CPU 任务。**不要和 Track A 的带宽基准同机并跑**——
-> `bench/bw_matrix` 测的是内存/NVMe 带宽，被这个任务污染就白测了。
+state 约 **229 KB/token**（快照占大头），27K token ≈ **6.3 GB**，每次写 ~7 s。
+默认 `--checkpoint-every 1` 会往同一块盘写 250 GB，和 expert 读抢带宽；**建议 4**
+（崩了最多重算 4 层 ≈ 3.5 分钟）。`0` 完全关掉。
+
+想省时间/内存可以缩 `--lookahead-depths`（默认 `1,2,3,4,5,6,7,8`）：快照是
+`8 × 2 × n_tokens × 5120 × 2 B`，深度减半，state 和 lookahead 耗时都减半。
+
+> ⚠️ 这是个吃满 16 线程、300 GB NVMe 读的任务，跑 35–50 分钟。**不要和 Track A 的带宽
+> 基准同机并跑**——`bench/bw_matrix` 测的是内存/NVMe 带宽，被这个任务污染就白测了。
 
 ### 3.3 跑模拟器
 
