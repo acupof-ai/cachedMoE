@@ -151,42 +151,34 @@ def lse_seq(x: np.ndarray, extra: np.ndarray | None = None) -> np.ndarray:
     return np.where(fin, ms + dm_log(s), m)
 
 
-def tail_logmass(cand_logit: np.ndarray, lse_base: np.ndarray) -> np.ndarray:
-    """log sum_{v not in top-K} exp(B[v]) from the full-vocab logsumexp and the K
-    candidates: lse + log(1 - sum_c exp(l_c - lse)); -inf when nothing is left."""
-    lb = np.asarray(lse_base, dtype=np.float64)
-    s = np.zeros_like(lb)
-    cl = np.asarray(cand_logit, dtype=np.float64)
-    for c in range(cl.shape[-1]):
-        s = s + dm_exp(cl[..., c] - lb)
-    rest = 1.0 - s
-    return np.where(rest > 0.0, lb + dm_log(np.where(rest > 0.0, rest, 1.0)), -np.inf)
-
-
 # --------------------------------------------------------------------------- #
 # 2. the lattice
 # --------------------------------------------------------------------------- #
 
 class Lattice:
-    """Normalised draft log-probabilities over the top-K candidates of each position.
+    """Normalised draft log-probabilities over the K candidates of each position.
 
     Inputs (all float32 unless noted; P = 5 positions):
-      cand_ids   i32 [P, K]        top-K of the base logits, best first
-      cand_logit     [P, K]
+      cand_ids   i32 [P, K]        candidates, the anchor row's top-1 first
+      cand_logit     [P, K]        BASE logits B_i at the candidates (no Markov bias)
       e_in           [256]         markov embed of the draft input token
       e_cand         [P-1, K, 256] markov embed of the candidates at positions 0..P-2
       h_cand         [P, K, 256]   markov head rows of the candidates
-      lse_base       [P] or None   full-vocab logsumexp of B; None = normalise over K
-      tail_h         [P, 256] or None  bias proxy for the tail (None = tail bias 0)
+      lse_anchor     [P] or None   full-vocab logsumexp of the ANCHOR row
+                                   B_i + bias(anchor_i); None = normalise over K only
 
-    logq[i][p][c] = B_i[c] + E[prev_p].H[c] - lse_i(p), where prev_p is the input
-    token for i = 0 (p = 0 only) and candidate p of position i-1 otherwise, and
-    lse_i(p) runs over the K candidates plus the tail term
-    tail_i + E[prev_p].tail_h_i when lse_base is given.
+    score[i][p][c] = B_i[c] + E[prev_p].H[c], prev_p = the input token at i = 0
+    (p = 0 only), candidate p of position i-1 otherwise.
+    logq[i][p][c]  = score[i][p][c] - lse_i(p).
+
+    The anchor of position i is the prev the GPU biased that position's full row
+    with: the input token at i = 0, candidate 0 of position i-1 (the greedy chain)
+    after. With lse_anchor given, the tail mass outside the K candidates is known
+    exactly for the anchor, tail_i = log(exp(lse_anchor_i) - sum_c exp(score[i][anchor][c])),
+    and is used for every prev: lse_i(p) = logsumexp(score[i][p][:], tail_i).
     """
 
-    def __init__(self, cand_ids, cand_logit, e_in, e_cand, h_cand,
-                 lse_base=None, tail_h=None):
+    def __init__(self, cand_ids, cand_logit, e_in, e_cand, h_cand, lse_anchor=None):
         self.cand_ids = np.asarray(cand_ids, dtype=np.int32)
         self.P, self.K = self.cand_ids.shape
         cl = np.asarray(cand_logit, dtype=np.float32)
@@ -195,16 +187,21 @@ class Lattice:
         self.h_cand = np.asarray(h_cand, dtype=np.float32)
         self.logq = []                       # [P] arrays: [1, K] then [K, K]
         self.bias = []
-        tails = tail_logmass(cl, lse_base) if lse_base is not None else None
+        self.tail = []
         for i in range(self.P):
             prev = self.e_in[None, :] if i == 0 else self.e_cand[i - 1]       # [Pp, 256]
             b = dot16(prev[:, None, :], self.h_cand[i][None, :, :])           # [Pp, K] f32
             score = cl[i].astype(np.float64)[None, :] + b.astype(np.float64)
             extra = None
-            if tails is not None:
-                tb = (dot16(prev, np.broadcast_to(tail_h[i], prev.shape)).astype(np.float64)
-                      if tail_h is not None else np.zeros(prev.shape[0]))
-                extra = np.float64(tails[i]) + tb
+            if lse_anchor is not None:
+                la = np.float64(lse_anchor[i])
+                s = np.float64(0.0)
+                for c in range(self.K):
+                    s = s + dm_exp(score[0, c] - la)
+                rest = 1.0 - s
+                t = la + dm_log(rest) if rest > 0.0 else np.float64(-np.inf)
+                extra = np.full(score.shape[0], t)
+                self.tail.append(float(t))
             lse = lse_seq(score, extra)
             self.bias.append(b)
             self.logq.append(score - lse[:, None])
@@ -330,7 +327,7 @@ def confidence(x: np.ndarray, prev_e: np.ndarray, w: np.ndarray, bias: float = 0
 
 
 def sigmoid(c) -> np.ndarray:
-    return 1.0 / (1.0 + np.exp(-np.asarray(c, dtype=np.float64)))
+    return 1.0 / (1.0 + dm_exp(-np.asarray(c, dtype=np.float64)))
 
 
 def k_from_confidence(conf: np.ndarray, theta: float, k_max: int = P_BLOCK) -> int:
@@ -419,17 +416,81 @@ GOLDEN_MAGIC = b"DMTR"
 GOLDEN_VERSION = 1
 
 
-def lattice_inputs(B: np.ndarray, input_token: int, E: np.ndarray, H: np.ndarray, K: int):
-    """Gather what the GPU would hand the CPU for one draft: top-K ids/logits per
-    position, lse of each base row, and the E/H rows of the candidates."""
+CAND_RULES = ("anchor", "base", "union2", "union4")
+
+
+def _topk(row: np.ndarray, K: int) -> np.ndarray:
+    part = np.argpartition(-row, K)[:K]
+    order = np.lexsort((part, -row[part]))
+    return part[order].astype(np.int32)
+
+
+def lattice_inputs(B: np.ndarray, input_token: int, E: np.ndarray, H: np.ndarray, K: int,
+                   rule: str = "anchor"):
+    """What the GPU hands the CPU for one draft, for a candidate rule.
+
+    anchor : C_i = top-K of B_i + bias(anchor_i), anchor_0 = input token and
+             anchor_i = C_{i-1}[0]. This is the reference's own greedy chain
+             (5 Markov-head GEMVs, the same bytes the chain scheme reads).
+    base   : C_i = top-K of B_i alone (no Markov GEMV at all).
+    unionM : C_i = the rows biased by the top-M candidates of position i-1, merged
+             round-robin best-first until K distinct ids (one GEMM with M columns
+             per position: the same 66 MB read, M x the compute).
+    Returns (cand_ids [P, K], base logits at the candidates [P, K], lse of the anchor
+    row [P], e_in, e_cand [P-1, K, 256], h_cand [P, K, 256])."""
     B = np.asarray(B, dtype=np.float32)
-    idx = np.argsort(-B, axis=-1, kind="stable")[:, :K].astype(np.int32)
+    P = B.shape[0]
+    idx = np.zeros((P, K), dtype=np.int32)
+    lse = np.zeros(P, dtype=np.float32)
+    m = 1
+    if rule.startswith("union"):
+        m = int(rule[5:])
+    for i in range(P):
+        anchor = input_token if i == 0 else int(idx[i - 1][0])
+        if rule == "base":
+            idx[i] = _topk(B[i], K)
+            row = B[i] + H @ E[anchor]
+            lse[i] = _lse_f64(row[None])[0]
+            continue
+        prevs = [anchor] if i == 0 else [int(t) for t in idx[i - 1][:m]]
+        lists = []
+        for pi, p in enumerate(prevs):
+            row = B[i] + H @ E[p]
+            if pi == 0:
+                lse[i] = _lse_f64(row[None])[0]
+            lists.append(_topk(row, K))
+        if len(lists) == 1:
+            idx[i] = lists[0]
+        else:
+            seen, merged, ptr = set(), [], [0] * len(lists)
+            while len(merged) < K:
+                for li, lst in enumerate(lists):
+                    while ptr[li] < K and int(lst[ptr[li]]) in seen:
+                        ptr[li] += 1
+                    if ptr[li] < K and len(merged) < K:
+                        t = int(lst[ptr[li]])
+                        seen.add(t)
+                        merged.append(t)
+                        ptr[li] += 1
+            idx[i] = np.asarray(merged, dtype=np.int32)
     cl = np.take_along_axis(B, idx, axis=-1)
-    lse = _lse_f64(B).astype(np.float32)
-    e_in = E[input_token]
-    e_cand = E[idx[:-1]]
-    h_cand = H[idx]
-    return idx, cl, lse, e_in, e_cand, h_cand
+    return idx, cl, lse, E[input_token], E[idx[:-1]], H[idx]
+
+
+def exact_logq(B: np.ndarray, input_token: int, idx: np.ndarray, E: np.ndarray, H: np.ndarray):
+    """Full-vocab normalisation per (position, prev): [P] arrays of log q over the
+    candidates, float64. Offline reference for the lattice's tail approximation."""
+    P, K = idx.shape
+    out = []
+    for i in range(P):
+        prevs = [input_token] if i == 0 else [int(t) for t in idx[i - 1]]
+        rows = []
+        for p in prevs:
+            row = (B[i] + H @ E[p]).astype(np.float64)
+            lse = _lse_f64(row[None])[0]
+            rows.append(row[idx[i]] - lse)
+        out.append(np.stack(rows))
+    return out
 
 
 def _lse_f64(B: np.ndarray) -> np.ndarray:
@@ -439,13 +500,318 @@ def _lse_f64(B: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# 5. CLI
+# 5. traces (written by tools/oracle_dspark.py --tree)
 # --------------------------------------------------------------------------- #
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_TRACES = os.path.join(REPO, "traces", "dspark_tree")
+DEFAULT_MODEL = r"D:\models\DeepSeek-V4.1-Flash"
+KS = (4, 8, 16, 32)
+KV = 32
+
+
+def load_tables(model_dir: str):
+    """-> E [V, 256], H [V, 256], W [5376] float32 (bf16 on disk, promoted exactly)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import dsref                                                    # noqa: E402
+    store = dsref.WeightStore(model_dir, None)
+    try:
+        E = store.tensor("mtp.2.markov_head.embed.weight").float().numpy().copy()
+        H = store.tensor("mtp.2.markov_head.head.weight").float().numpy().copy()
+        W = store.tensor("mtp.2.confidence_head.proj.weight").float().numpy()[0].copy()
+    finally:
+        store.close()
+    return E, H, W
+
+
+def load_draft(pdir: str, i: int) -> dict:
+    with np.load(os.path.join(pdir, f"d{i:04d}.npz")) as z:
+        d = {"B": z["B"], "x": z["x"], "lse_base": z["lse_base"]}
+        d.update(json.loads(bytes(z["meta"]).decode()))
+    return d
+
+
+def load_verify(pdir: str, c: int, prefix: str = "v") -> dict:
+    with np.load(os.path.join(pdir, f"{prefix}{c:03d}.npz")) as z:
+        return {k: z[k] for k in z.files}
+
+
+def mode_dirs(tdir: str):
+    """-> [(prompt, mode, pdir, log)] for every trajectory with at least one cycle."""
+    out = []
+    if not os.path.isdir(tdir):
+        return out
+    for prompt in sorted(os.listdir(tdir)):
+        for mode in ("greedy", "sampling"):
+            pdir = os.path.join(tdir, prompt, mode)
+            lp = os.path.join(pdir, "log.json")
+            if os.path.exists(lp):
+                with open(lp, encoding="utf-8") as f:
+                    log = json.load(f)
+                if log["cycles"]:
+                    out.append((prompt, mode, pdir, log))
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# 6. golden data for tests/test_dspark_tree.cpp
+# --------------------------------------------------------------------------- #
+
+def _fnv1a(b: bytes) -> int:
+    h = 0xcbf29ce484222325
+    for byte in b:
+        h ^= byte
+        h = (h * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def _bf16_bytes(a: np.ndarray) -> bytes:
+    import torch
+    t = torch.from_numpy(np.ascontiguousarray(a, dtype=np.float32))
+    b = t.to(torch.bfloat16)
+    assert torch.equal(b.float(), t), "value is not bf16-exact"
+    return b.view(torch.int16).numpy().tobytes()
+
+
+def _pad_rows(first: np.ndarray, rest: list, K: int, dtype: str) -> np.ndarray:
+    """logq / bias as one [P, K, K] array; position 0's single prev row is padded
+    with zeros (the C++ Lattice stores it the same way)."""
+    z = np.zeros((K, K), dtype=first.dtype)
+    z[0] = first[0]
+    return np.stack([z] + list(rest)).astype(dtype)
+
+
+def golden_case(d: dict, ver: dict, E, H, W, u_path, u_acc, u_res) -> bytes:
+    """One case: the top-32 lattice inputs, the verify rows, the uniforms, and every
+    expected output for K in KS x {tail, no tail}."""
+    Kf = 32
+    idx, cl, lse, e_in, e_cand, h_cand = lattice_inputs(d["B"], d["input_token"], E, H, Kf)
+    out = bytearray()
+    out += struct.pack("<I", int(d["input_token"]))
+    out += idx.astype("<i4").tobytes() + cl.astype("<f4").tobytes() + lse.astype("<f4").tobytes()
+    out += _bf16_bytes(e_in) + _bf16_bytes(e_cand) + _bf16_bytes(h_cand) + _bf16_bytes(d["x"])
+    vids = ver["top_ids"][:, :KV].astype("<i4")
+    vlog = ver["top_logits"][:, :KV].astype("<f4")
+    out += vids.tobytes() + vlog.tobytes() + ver["argmax"].astype("<i4").tobytes()
+    out += np.asarray(u_path, "<f8").tobytes() + np.asarray(u_acc, "<f8").tobytes()
+    out += np.asarray(u_res, "<f8").tobytes()
+    diag = None
+    for K in KS:
+        for tail in (True, False):
+            lat = Lattice(idx[:, :K], cl[:, :K], e_in, e_cand[:, :K], h_cand[:, :K],
+                          lse if tail else None)
+            lq = _pad_rows(lat.logq[0], lat.logq[1:], K, "<f8")
+            bs = _pad_rows(lat.bias[0], lat.bias[1:], K, "<f4")
+            out += struct.pack("<QQ", _fnv1a(lq.tobytes()), _fnv1a(bs.tobytes()))
+            paths = [lat.path(o) for o in OBJECTIVES]
+            for pth in paths:
+                out += struct.pack("<5I", *pth)
+            out += struct.pack("<d", lat.eal_value(paths[1]))
+            for pth in paths:
+                cf = confidence(d["x"], lat.prev_embed(pth), W).astype("<f4")
+                out += cf.tobytes()
+                out += struct.pack("<I", k_from_confidence(cf, 0.5))
+            sp = lat.sample(np.asarray(u_path))
+            out += struct.pack("<5I", *sp)
+            a, em = accept_sampling(lat, sp, 5, vids, vlog, np.asarray(u_acc), np.asarray(u_res))
+            out += struct.pack("<II", a, len(em)) + np.asarray(em + [0] * (6 - len(em)), "<i4").tobytes()
+            a, em = accept_greedy(lat.tokens(paths[1]), [int(v) for v in ver["argmax"]], 5)
+            out += struct.pack("<II", a, len(em)) + np.asarray(em + [0] * (6 - len(em)), "<i4").tobytes()
+            if K == 16 and tail:
+                diag = lq
+    out += diag.tobytes()
+    return bytes(out)
+
+
+def cmd_golden(args) -> int:
+    E, H, W = load_tables(args.model)
+    cases, picked = [], []
+    rng = np.random.default_rng(7)
+    by_mode = {"greedy": [], "sampling": []}
+    for prompt, mode, pdir, log in mode_dirs(args.traces):
+        by_mode[mode].append((prompt, pdir, log))
+    order = []
+    for i in range(args.cases):
+        for mode in ("sampling", "greedy"):
+            if i < len(by_mode[mode]):
+                order.append((mode, *by_mode[mode][i]))
+    for mode, prompt, pdir, log in order[: args.cases]:
+        rec = log["cycles"][0]
+        d = load_draft(pdir, rec["draft"])
+        ver = load_verify(pdir, rec["cycle"])
+        if rec.get("u_path"):
+            u = (rec["u_path"], rec["u_acc"], rec["u_res"])
+        else:
+            u = (rng.random(5).tolist(), rng.random(5).tolist(), rng.random(6).tolist())
+        cases.append(golden_case(d, ver, E, H, W, *u))
+        picked.append({"prompt": prompt, "mode": mode, "cycle": rec["cycle"], "draft": rec["draft"]})
+    blob = bytearray(b"DMTR")
+    blob += struct.pack("<IIII", GOLDEN_VERSION, len(cases), 32, KV)
+    blob += _bf16_bytes(W)
+    for c in cases:
+        blob += c
+    path = os.path.join(args.out, "tree_golden.bin")
+    with open(path, "wb") as f:
+        f.write(blob)
+    with open(os.path.join(args.out, "tree_golden.json"), "w", encoding="utf-8") as f:
+        json.dump({"version": GOLDEN_VERSION, "cases": picked, "Ks": list(KS), "Kv": KV,
+                   "objectives": list(OBJECTIVES), "theta": 0.5,
+                   "layout": "see tests/test_dspark_tree.cpp::read_case"}, f, indent=1)
+    print(f"{len(cases)} cases -> {path} ({len(blob) / 1024:.0f} KiB): {picked}")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# 7. CPU cost and losslessness
+# --------------------------------------------------------------------------- #
+
+def cmd_bench(args) -> int:
+    E, H, W = load_tables(args.model)
+    rows, items = [], []
+    for prompt, mode, pdir, log in mode_dirs(args.traces):
+        for rec in log["cycles"][: args.per_mode]:
+            items.append((load_draft(pdir, rec["draft"]), load_verify(pdir, rec["cycle"])))
+    rng = np.random.default_rng(3)
+    for K in KS:
+        acc = dict.fromkeys(("gather", "lat_tail", "eal", "conf", "acc_g", "lat", "sample", "acc_s"), 0.0)
+        n = 0
+        for _ in range(args.repeat):
+            for d, ver in items:
+                t0 = time.perf_counter()
+                idx, cl, lse, e_in, e_cand, h_cand = lattice_inputs(d["B"], d["input_token"], E, H, 32)
+                idx, cl, e_cand, h_cand = idx[:, :K], cl[:, :K], e_cand[:, :K], h_cand[:, :K]
+                t1 = time.perf_counter()
+                lat = Lattice(idx, cl, e_in, e_cand, h_cand, lse)
+                t2 = time.perf_counter()
+                pth = lat.path("eal")
+                t3 = time.perf_counter()
+                confidence(d["x"], lat.prev_embed(pth), W)
+                t4 = time.perf_counter()
+                accept_greedy(lat.tokens(pth), [int(v) for v in ver["argmax"]], 5)
+                t5 = time.perf_counter()
+                lat2 = Lattice(idx, cl, e_in, e_cand, h_cand, None)
+                t6 = time.perf_counter()
+                sp = lat2.sample(rng.random(5))
+                t7 = time.perf_counter()
+                accept_sampling(lat2, sp, 5, ver["top_ids"][:, :KV], ver["top_logits"][:, :KV],
+                                rng.random(5), rng.random(6))
+                t8 = time.perf_counter()
+                for key, dt_ in zip(acc, (t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4,
+                                          t6 - t5, t7 - t6, t8 - t7)):
+                    acc[key] += dt_
+                n += 1
+        row = {"K": K, "n": n}
+        row.update({k + "_ms": round(v / n * 1e3, 3) for k, v in acc.items()})
+        rows.append(row)
+        print(row, flush=True)
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(rows, f, indent=1)
+    return 0
+
+
+def cmd_lossless(args) -> int:
+    """Draw N (path, accept) pairs at one cycle and compare the first emitted token's
+    frequencies with direct top-Kv sampling from the verify row."""
+    E, H, W = load_tables(args.model)
+    got = [g for g in mode_dirs(args.traces) if g[1] == "sampling"] or mode_dirs(args.traces)
+    prompt, mode, pdir, log = got[0]
+    rec = log["cycles"][args.cycle]
+    d = load_draft(pdir, rec["draft"])
+    ver = load_verify(pdir, rec["cycle"])
+    rng = np.random.default_rng(11)
+    res = {}
+    vids, vlog = ver["top_ids"][:, :KV], ver["top_logits"][:, :KV]
+    l64 = vlog[0].astype(np.float64)
+    pv = dm_exp(l64 - lse_seq(l64))
+    ids = [int(v) for v in vids[0]]
+    for K in (4, 16):
+        idx, cl, lse, e_in, e_cand, h_cand = lattice_inputs(d["B"], d["input_token"], E, H, K)
+        lat = Lattice(idx, cl, e_in, e_cand, h_cand, None)
+        counts: dict[int, int] = {}
+        acc0 = 0
+        for _ in range(args.n):
+            sp = lat.sample(rng.random(5))
+            a, em = accept_sampling(lat, sp, 1, vids, vlog, rng.random(5), rng.random(6))
+            counts[em[0]] = counts.get(em[0], 0) + 1
+            acc0 += a
+        freq = np.array([counts.get(t, 0) / args.n for t in ids])
+        outside = sum(c for t, c in counts.items() if t not in ids)
+        tv = 0.5 * float(np.abs(freq - pv).sum())
+        exp = pv * args.n
+        obs = freq * args.n
+        big = exp >= 5
+        chi2 = float((((obs[big] - exp[big]) ** 2) / exp[big]).sum())
+        dof = int(big.sum()) - 1
+        pooled_e, pooled_o = float(exp[~big].sum()), float(obs[~big].sum())
+        if pooled_e >= 5:
+            chi2 += (pooled_o - pooled_e) ** 2 / pooled_e
+            dof += 1
+        noise = float(np.sqrt(pv * (1 - pv) / (2 * np.pi * args.n)).sum())
+        q0 = dm_exp(lat.logq[0][0])
+        draft_tv = 0.5 * float(sum(abs(float(pv[i]) - (float(q0[list(idx[0]).index(t)])
+                                                         if t in list(idx[0]) else 0.0))
+                                   for i, t in enumerate(ids))
+                               + sum(float(q0[c]) for c, t in enumerate(idx[0]) if int(t) not in ids))
+        res[K] = {"n": args.n, "accept_rate_pos0": acc0 / args.n,
+                  "expected_accept_rate": 1.0 - draft_tv,
+                  "tv_vs_topKv": round(tv, 5), "tv_noise_floor": round(noise, 5),
+                  "chi2": round(chi2, 2), "dof": dof, "tokens_outside_topKv": outside}
+        print(K, res[K], flush=True)
+    tail = 1.0 - float(np.exp(np.logaddexp.reduce(vlog[0].astype(np.float64)) - ver["lse"][0]))
+    out = {"prompt": prompt, "mode": mode, "cycle": args.cycle,
+           "tail_mass_beyond_Kv_row0": tail, "results": res}
+    print(out)
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=1)
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# 8. CLI
+# --------------------------------------------------------------------------- #
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="dspark_tree.py")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def common(sp):
+        sp.add_argument("--traces", default=DEFAULT_TRACES)
+        sp.add_argument("--model", default=DEFAULT_MODEL)
+        sp.add_argument("--json", default=None)
+
+    g = sub.add_parser("golden")
+    common(g)
+    g.add_argument("--out", default=os.path.join(REPO, "tests", "data", "dspark"))
+    g.add_argument("--cases", type=int, default=2)
+    b = sub.add_parser("bench")
+    common(b)
+    b.add_argument("--per-mode", type=int, default=2)
+    b.add_argument("--repeat", type=int, default=3)
+    lo = sub.add_parser("lossless")
+    common(lo)
+    lo.add_argument("--n", type=int, default=200000)
+    lo.add_argument("--cycle", type=int, default=0)
+    a = sub.add_parser("analyse")
+    common(a)
+    a.add_argument("--out-stats", default=os.path.join(REPO, "tests", "data", "dspark",
+                                                       "tree_stats.json"))
+    return p
+
+
 def main(argv=None) -> int:
-    raise SystemExit("CLI not yet written")
+    args = build_parser().parse_args(argv)
+    if args.cmd == "golden":
+        return cmd_golden(args)
+    if args.cmd == "bench":
+        return cmd_bench(args)
+    if args.cmd == "lossless":
+        return cmd_lossless(args)
+    if args.cmd == "analyse":
+        return cmd_analyse(args)
+    return 2
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     raise SystemExit(main())
