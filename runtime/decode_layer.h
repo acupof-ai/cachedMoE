@@ -1,0 +1,184 @@
+// One decoder layer's decode-time execution: dispatches 1-9 of design §7.14
+// recorded into one command buffer, the §7.1 timeline gate, and the MoE.
+//
+// What this is for
+// ----------------
+// tests/test_gpu_attn.cpp proves each kernel against the oracle's own input.
+// That is deliberately not the same as proving the layer: a per-stage pass
+// only says nothing is individually wrong, not that the stages compose -- a
+// buffer wired to the wrong slot, a coefficient handed to the wrong sublayer
+// (design §2.4's pre/post handoff), or a missing barrier all survive it. This
+// runs the chain the way decode will, feeding each kernel the previous one's
+// output, and compares the block output against the oracle's.
+//
+// The command buffer
+// ------------------
+// design §7.1 wants one pre-recorded command buffer per token with a timeline
+// wait before each MoE dispatch. This records dispatches 1-9 of one layer into
+// the caller's command buffer with a global shader-write -> shader-read
+// barrier between each -- a decode layer is a strict chain, so nothing finer
+// is needed -- and then stops, because the gate's output has to reach the CPU
+// before the MoE can be dispatched. `submit_attention` signals a timeline
+// value the planner answers.
+//
+// The MoE boundary
+// ----------------
+// `MoeBridge` is the single point of contact with the MoE kernels, which
+// another track owns and is actively changing. Everything that knows about
+// MoeRunner, MoeSpec, the pointer table and the fp8 shared-expert flag lives
+// behind that one interface; a change to their push constants is a change to
+// one file.
+//
+// Ownership/threading: a DecodeLayer borrows the runner, the pinned weights
+// and the KV store, and records from the single GPU submit thread.
+#pragma once
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "core/status.h"
+#include "core/types.h"
+#include "gpu/vulkan/attn_kernels.h"
+#include "gpu/vulkan/cmdbuf.h"
+#include "gpu/vulkan/timeline.h"
+#include "model/v41_config.h"
+#include "runtime/kvstore.h"
+#include "store/pinned.h"
+
+namespace deepmoe::runtime {
+
+// The device addresses of one layer's pinned weights. Resolved once per layer,
+// not per token: the whole point of the pinned set is that these never move.
+struct LayerWeights {
+    uint64_t hc_attn_fn = 0, hc_attn_base = 0, hc_attn_scale = 0;
+    uint64_t hc_ffn_fn = 0, hc_ffn_base = 0, hc_ffn_scale = 0;
+    uint64_t attn_norm = 0, ffn_norm = 0;
+    uint64_t wq_a = 0, wq_a_scale = 0, q_norm = 0;
+    uint64_t wq_b = 0, wq_b_scale = 0;
+    uint64_t wkv = 0, wkv_scale = 0, kv_norm = 0;
+    uint64_t attn_sink = 0;
+    uint64_t wo_a = 0, wo_a_scale = 0, wo_b = 0, wo_b_scale = 0;
+    uint64_t gate_w = 0, gate_bias = 0;
+
+    static Result<LayerWeights> from_pinned(const store::PinnedStore& p, uint32_t layer);
+};
+
+// The activation buffers one token needs. All of them together are under 2 MB,
+// so they come out of one GpuScratch (design §7.14's dispatch list touches 133
+// MB of weights against this).
+struct DecodeScratch {
+    gpu::GpuScratch::View x, xout, utmp, partials, mix_raw, mix_a, mix_b, u;
+    gpu::GpuScratch::View qr, q, rope;
+    gpu::GpuScratch::View kv_raw, kv_partials, kv;
+    gpu::GpuScratch::View score, o, woa, wob;
+    gpu::GpuScratch::View gate_scores, gate_ids, gate_weights, layer_done;
+    gpu::GpuScratch::View moe_x, moe_y;
+
+    Result<void> create(gpu::GpuScratch& s, const TextConfig& cfg);
+};
+
+// What the MoE track is asked to do for one layer. Deliberately in terms of
+// the model, not of their kernels: expert ids, routing weights, an input and
+// an output.
+struct MoeCall {
+    uint32_t        layer = 0;
+    const uint32_t* ids = nullptr;       // [topk] routed expert ids
+    const float*    weights = nullptr;   // [topk] routing weights, already x route_scale
+    uint32_t        topk = 0;
+    const float*    x = nullptr;         // [hidden] ffn_norm output
+    float*          y = nullptr;         // [hidden] routed + shared, fp32 accumulated
+    uint32_t        hidden = 0;
+};
+
+class MoeBridge {
+public:
+    virtual ~MoeBridge() = default;
+    virtual const char* name() const = 0;
+    virtual Result<void> run(const MoeCall& call) = 0;
+};
+
+// A bridge that returns Unavailable. Lets the attention chain be validated
+// against the oracle's `ffn_norm_out` and gate ids on a machine or a branch
+// where the MoE kernels are not usable, and says so rather than silently
+// producing a wrong block output.
+std::unique_ptr<MoeBridge> make_null_moe_bridge();
+
+// Everything one decode step of one layer needs beyond the weights.
+struct LayerStep {
+    uint32_t layer    = 0;
+    uint32_t position = 0;       // absolute token position; the ring slot is position % window
+    uint32_t compress_ratio = 2; // picks the RoPE base and whether YaRN is on (§2.1)
+    bool     apply_hc_post = true;   // false only for the very first sublayer of a sequence
+    KvLayerView kv{};
+};
+
+class DecodeLayer {
+public:
+    DecodeLayer() = default;
+    ~DecodeLayer() { destroy(); }
+
+    DecodeLayer(const DecodeLayer&) = delete;
+    DecodeLayer& operator=(const DecodeLayer&) = delete;
+
+    // Releases the command pool. The scratch and the weights are borrowed, so
+    // there is nothing else to give back; teardown order matters only because
+    // the pool belongs to the Device.
+    void destroy() { pool_.destroy(); device_ = nullptr; runner_ = nullptr; }
+
+    Result<void> create(gpu::Device& device, gpu::AttnRunner& runner,
+                        gpu::GpuScratch& scratch, const TextConfig& cfg);
+
+    DecodeScratch& scratch() { return buf_; }
+    const DecodeScratch& scratch() const { return buf_; }
+
+    // Points the runner's address tables at this layer's weights and this
+    // step's KV, and writes the RoPE table for `position`. Call before
+    // recording; it touches host memory only.
+    Result<void> bind(const LayerWeights& w, const LayerStep& s);
+
+    // Records dispatches 1-9 of design §7.14 into `cmd`, barrier-separated.
+    Result<void> record_attention(gpu::CommandBuffer& cmd, const LayerStep& s);
+
+    // Records + submits + waits. The decode loop will not wait here -- §7.1 is
+    // explicit about that -- but a layer-at-a-time validator does.
+    Result<void> run_attention(const LayerStep& s);
+
+    // The §7.1 gate: the CPU reads the gate's ids out of host-coherent memory,
+    // `on_ready` makes the experts resident, the timeline is signalled, and the
+    // MoE runs. With every expert pinned (design §15, P2) `on_ready` is a
+    // formality and the wait is satisfied immediately -- but the shape is the
+    // one P3 needs.
+    Result<void> run_moe(MoeBridge& moe, const LayerStep& s, gpu::Timeline* timeline,
+                         const std::function<Result<void>(const uint32_t*, uint32_t)>& on_ready);
+
+    // hc_post of the MoE output into the stream, which design §7.7 fuses into
+    // the NEXT layer's first mega_mhc. Recorded here so a layer-at-a-time
+    // validator can close the block; the token loop lets the next layer do it.
+    Result<void> record_close(gpu::CommandBuffer& cmd, const LayerStep& s);
+    Result<void> run_close(const LayerStep& s);
+
+    // Host views of the two things the layer produces.
+    const float* block_out() const;     // [hc][hidden] fp32 residual stream
+    const float* gate_scores() const;
+    const uint32_t* gate_ids() const;
+    const float* gate_weights() const;
+    const float* ffn_norm_out() const;
+
+    const TextConfig& config() const { return *cfg_; }
+
+private:
+    Result<void> submit(gpu::CommandBuffer& cmd);
+
+    gpu::Device*      device_ = nullptr;
+    gpu::AttnRunner*  runner_ = nullptr;
+    const TextConfig* cfg_    = nullptr;
+    DecodeScratch     buf_{};
+    LayerWeights      weights_{};
+    gpu::CommandPool  pool_;
+    uint32_t          hcdim_ = 0;
+};
+
+}  // namespace deepmoe::runtime

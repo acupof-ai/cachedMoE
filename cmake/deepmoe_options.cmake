@@ -58,7 +58,10 @@ set(DEEPMOE_GPU_SOURCES
     gpu/vulkan/attn_kernels.cpp)
 
 set(DEEPMOE_RUNTIME_SOURCES
-    runtime/engine.cpp)
+    runtime/engine.cpp
+    runtime/kvstore.cpp
+    runtime/decode_layer.cpp
+    runtime/moe_bridge.cpp)
 
 # Headers every shader in DEEPMOE_SHADERS may include; touching one rebuilds all.
 set(DEEPMOE_SHADER_DEPS

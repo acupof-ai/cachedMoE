@@ -12,6 +12,10 @@ const char* attn_stage_name(AttnStage s) {
         case AttnStage::MhcPost:     return "mega_mhc.post";
         case AttnStage::MhcMix:      return "mega_mhc.mix";
         case AttnStage::MhcFinal:    return "mega_mhc.final";
+        case AttnStage::MhcPostB:    return "mega_mhc.post.ffn";
+        case AttnStage::MhcMixB:     return "mega_mhc.mix.ffn";
+        case AttnStage::MhcFinalB:   return "mega_mhc.final.ffn";
+        case AttnStage::MhcClose:    return "mega_mhc.close";
         case AttnStage::WqA:         return "wq_a";
         case AttnStage::WqB:         return "wq_b";
         case AttnStage::WkvGemv:     return "wkv.gemv";
@@ -108,6 +112,10 @@ constexpr StageDef kStages[] = {
     {AttnStage::MhcPost,     "mega_mhc",    0, 1, 1},
     {AttnStage::MhcMix,      "mega_mhc",    1, 1, 1},
     {AttnStage::MhcFinal,    "mega_mhc",    2, 1, 1},
+    {AttnStage::MhcPostB,    "mega_mhc",    0, 1, 1},
+    {AttnStage::MhcMixB,     "mega_mhc",    1, 1, 1},
+    {AttnStage::MhcFinalB,   "mega_mhc",    2, 1, 1},
+    {AttnStage::MhcClose,    "mega_mhc",    0, 1, 1},
     {AttnStage::WqA,         "wq_a",        0, 1, 2},   // 1280 rows
     {AttnStage::WqB,         "wq_b",        0, 1, 4},   // 32768
     {AttnStage::WkvGemv,     "wkv",         0, 1, 1},   // 512: workgroup-starved

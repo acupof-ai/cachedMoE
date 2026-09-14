@@ -11,7 +11,8 @@ add_executable(deepmoe_tests
     test_integration.cpp
     test_gpu_core.cpp
     test_gpu_moe.cpp
-    test_gpu_attn.cpp)
+    test_gpu_attn.cpp
+    test_gpu_layer.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -46,6 +47,12 @@ add_test(NAME "suite.gpu_attn" COMMAND deepmoe_tests "gpu_attn.")
 set_tests_properties("suite.gpu_attn" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_attn")
+
+# One whole decoder layer, chained, against the oracle's block output.
+add_test(NAME "suite.gpu_layer" COMMAND deepmoe_tests "gpu_layer.")
+set_tests_properties("suite.gpu_layer" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_layer")
 
 # The design §7.9 kernels on the real checkpoint. Same gate, and it additionally
 # skips itself when there is no usable Vulkan device.

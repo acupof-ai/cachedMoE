@@ -35,10 +35,23 @@
 namespace deepmoe::gpu {
 
 // The dispatch list of design §7.14, expanded to one entry per pipeline.
+//
+// mega_mhc appears three times over because a layer runs it three times with
+// DIFFERENT weights and buffers -- the attention half, the FFN half, and the
+// hc_post that closes the block -- and a stage owns one slice of the shared
+// address table. Two dispatches of the same stage in one command buffer would
+// both see whatever was written to that slice last. (The same argument scaled
+// up is why a single PRE-RECORDED command buffer per token, which design §7.1
+// wants, needs the table indexed by layer inside the shader; P2 step 1 records
+// one command buffer per layer instead. See docs/p2_attention.md.)
 enum class AttnStage : uint32_t {
     MhcPost = 0,   // §7.7 + §7.2: hc_post, hc_pre and the two RMS partials
     MhcMix,        // §7.2: the 24 hc_fn dot products
     MhcFinal,      // §7.2: Sinkhorn, and the RMSNorm of the sublayer input
+    MhcPostB,      // the same three, for the FFN half of the layer
+    MhcMixB,
+    MhcFinalB,
+    MhcClose,      // hc_post only: folds the MoE output back into the stream
     WqA,           // §7.3
     WqB,           // §7.3: + q_norm + RoPE
     WkvGemv,       // §7.4
