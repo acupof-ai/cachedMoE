@@ -13,8 +13,9 @@
 // stage 0 and stage 2 with the `kFlagSkipSinkhorn` bit and no stage 1, since
 // the final collapse needs neither the mixes nor hc_post.
 //
-// 129280 rows over 256 / LanesPerRow rows per workgroup is 16,160 workgroups,
-// which balances across 40 CUs without any tail handling.
+// 129280 rows over (256 / LanesPerRow) * RowsPerLane rows per workgroup is
+// 4,040 workgroups at the default spec, which still balances across 40 CUs
+// while staging the 20 KiB activation four times less often.
 
 #include "attn_common.slang"
 
@@ -38,20 +39,29 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;
-    const uint row = pc.row_base + gid.x * (kWg / LanesPerRow) + tid / LanesPerRow;
-    const bool live = row < pc.rows;
+    const uint rowBase = pc.row_base +
+                         gid.x * ((kWg / LanesPerRow) * RowsPerLane) +
+                         (tid / LanesPerRow) * RowsPerLane;
 
-    float acc = 0.0f;
-    if (live) {
-        const uint64_t w = Ptr[kW] + (uint64_t)row * pc.k * 2;
-        for (uint base = sublane * 8; base < pc.k; base += LanesPerRow * 8) {
-            const uint4 v = load16(w + (uint64_t)base * 2);
+    // RowsPerLane rows walked together: the activation is read from LDS once
+    // for all of them and their weight loads are independent streams.
+    float acc[kMaxRowsPerLane];
+    [unroll] for (uint r = 0; r < kMaxRowsPerLane; ++r) acc[r] = 0.0f;
+    for (uint base = sublane * 8; base < pc.k; base += LanesPerRow * 8) {
+        float x[8];
+        [unroll] for (uint j = 0; j < 8; ++j) x[j] = gXf[base + j];
+        for (uint r = 0; r < RowsPerLane; ++r) {
+            if (rowBase + r >= pc.rows) continue;
+            const uint4 v = load16(Ptr[kW] + ((uint64_t)(rowBase + r) * pc.k + base) * 2);
             [unroll] for (uint j = 0; j < 4; ++j) {
-                acc += bf16_decode(v[j] & 0xFFFFu) * gXf[base + j * 2];
-                acc += bf16_decode(v[j] >> 16)     * gXf[base + j * 2 + 1];
+                acc[r] += bf16_decode(v[j] & 0xFFFFu) * x[j * 2];
+                acc[r] += bf16_decode(v[j] >> 16)     * x[j * 2 + 1];
             }
         }
     }
-    const float dot = row_reduce(acc, tid, sublane);
-    if (live && sublane == 0) *(float*)(Ptr[kLogits] + (uint64_t)row * 4) = dot;
+    for (uint r = 0; r < RowsPerLane; ++r) {
+        const float dot = row_reduce(acc[r], tid, sublane);
+        if (sublane == 0 && rowBase + r < pc.rows)
+            *(float*)(Ptr[kLogits] + (uint64_t)(rowBase + r) * 4) = dot;
+    }
 }

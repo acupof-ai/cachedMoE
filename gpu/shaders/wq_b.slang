@@ -35,7 +35,8 @@ struct WqbPush {
 };
 [[vk::push_constant]] WqbPush pc;
 
-static const uint kMaxRowsPerWg = kWg / 16;     // LanesPerRow >= 16
+// (256 / LanesPerRow) * RowsPerLane, at the widest setting of each.
+static const uint kMaxRowsPerWg = (kWg / 16) * kMaxRowsPerLane;
 groupshared float gYrow[kMaxRowsPerWg];
 
 [shader("compute")]
@@ -45,18 +46,17 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     stage_x_fp8_rmsnorm(Ptr[kQr], Ptr[kNormW], pc.k, tid, pc.norm_eps);
     GroupMemoryBarrierWithGroupSync();
 
-    const uint rowsPerWg = kWg / LanesPerRow;
+    const uint rowsPerWg = gemv_rows_per_wg();
     const uint sublane = tid % LanesPerRow;
-    const uint local = tid / LanesPerRow;
     const uint base = gid.x * rowsPerWg;
-    const uint row = base + local;
-    const bool live = row < pc.rows;
+    const uint rowBase = base + (tid / LanesPerRow) * RowsPerLane;
 
-    const float part = live ? gemv8_partial(Ptr[kW], Ptr[kS], row, pc.k,
-                                            pc.scale_cols, sublane)
-                            : 0.0f;
-    const float y = row_reduce(part, tid, sublane);
-    if (sublane == 0) gYrow[local] = y;
+    float acc[kMaxRowsPerLane];
+    gemv8_rows(Ptr[kW], Ptr[kS], rowBase, pc.k, pc.scale_cols, sublane, acc);
+    for (uint r = 0; r < RowsPerLane; ++r) {
+        const float y = row_reduce(acc[r], tid, sublane);
+        if (sublane == 0) gYrow[rowBase - base + r] = y;
+    }
     GroupMemoryBarrierWithGroupSync();
 
     // One thread per row for the tail, so a rotation pair is owned by the

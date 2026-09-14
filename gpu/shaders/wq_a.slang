@@ -11,9 +11,9 @@
 // staged once per workgroup, already on the FP8 E4M3 grid with a per-32
 // power-of-two scale, because that is what `linear()` feeds an fp8 GEMM.
 //
-// 256 threads, LanesPerRow lanes to a row, so a workgroup retires
-// 256 / LanesPerRow rows: 160 workgroups for wq_a's 1280 rows at the
-// LanesPerRow = 32 of kernel_p1.md §3.2.
+// 256 threads, LanesPerRow lanes to a row and RowsPerLane rows to a lane, so
+// a workgroup retires (256 / LanesPerRow) * RowsPerLane rows and stages x once
+// for all of them.
 
 #include "fp8_gemv.slang"
 
@@ -37,11 +37,12 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;
-    const uint row = pc.row_base + gid.x * (kWg / LanesPerRow) + tid / LanesPerRow;
-    const bool live = row < pc.rows;
-    const float part = live ? gemv8_partial(Ptr[kW], Ptr[kS], row, pc.k,
-                                            pc.scale_cols, sublane)
-                            : 0.0f;
-    const float y = row_reduce(part, tid, sublane);
-    if (live && sublane == 0) *(float*)(Ptr[kY] + (uint64_t)row * 4) = y;
+    const uint rowBase = pc.row_base + gemv_row_base(gid.x, tid);
+    float acc[kMaxRowsPerLane];
+    gemv8_rows(Ptr[kW], Ptr[kS], rowBase, pc.k, pc.scale_cols, sublane, acc);
+    for (uint r = 0; r < RowsPerLane; ++r) {
+        const float y = row_reduce(acc[r], tid, sublane);
+        if (sublane == 0 && rowBase + r < pc.rows)
+            *(float*)(Ptr[kY] + (uint64_t)(rowBase + r) * 4) = y;
+    }
 }

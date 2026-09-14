@@ -114,6 +114,12 @@ add_executable(kernel_bench bench/kernel_bench.cpp)
 target_link_libraries(kernel_bench PRIVATE deepmoe_core)
 add_dependencies(kernel_bench shaders)
 
+# design 7.1 rule 2 / 7.2-7.8: effective GB/s of the attention-path kernels on
+# the real checkpoint (P2).
+add_executable(attn_bench bench/attn_bench.cpp)
+target_link_libraries(attn_bench PRIVATE deepmoe_core)
+add_dependencies(attn_bench shaders)
+
 # --- environment self-check (design docs/build.md) ---------------------------
 if(DEEPMOE_ENABLE_VULKAN)
     add_executable(envcheck tools/envcheck/vkinfo.cpp)

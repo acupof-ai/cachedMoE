@@ -45,8 +45,15 @@
 [vk::constant_id(3)] const uint SubgroupSize    = 32;  // VK_EXT_subgroup_size_control
 [vk::constant_id(4)] const uint Stage           = 0;   // multi-stage kernels
 [vk::constant_id(5)] const uint ActQuant        = 1;   // 1 = quantise x to fp8 E4M3 (see above)
+// Weight rows per lane, the dual of M: x is staged once per workgroup and used
+// RowsPerLane times more. The attention GEMVs are tall and thin (wq_b is
+// 32768 x 1280), so a workgroup that owns only 256/LanesPerRow rows spends a
+// third of its L2 traffic re-staging the same 1280-wide activation. Same knob
+// moe_common.slang carries for the FP4 path.
+[vk::constant_id(6)] const uint RowsPerLane     = 1;
 
-static const uint  kWg        = 256;
+static const uint  kWg          = 256;
+static const uint  kMaxRowsPerLane = 4;
 static const uint  kBlockK    = 32;      // elements per UE8M0 scale
 static const uint  kFp8Max    = 448;
 static const float kFp8MaxF   = 448.0f;

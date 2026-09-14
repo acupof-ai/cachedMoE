@@ -62,6 +62,12 @@ const char* attn_stage_name(AttnStage s);
 struct AttnSpec {
     uint32_t lanes_per_row = 32;   // kernel_p1.md §3.2's winner at M=1
     uint32_t subgroup_size = 32;   // Wave32
+    // Weight rows per lane. The attention GEMVs are tall and thin -- wq_b is
+    // 32768 x 1280 -- so at RowsPerLane = 1 a workgroup stages a 1280-wide
+    // activation to retire eight rows, and the staging is a third of its L2
+    // traffic. 4 makes that 32 rows. Must divide the row count of every kernel
+    // it is applied to, including wo_a's 1024-row groups.
+    uint32_t rows_per_lane = 4;
 };
 
 // --- push constants, mirroring the shaders exactly --------------------------
@@ -164,9 +170,17 @@ public:
     Result<void> dispatch_now(AttnStage s, const void* push, uint32_t push_bytes,
                               uint32_t groups);
 
-    // Workgroups for a `rows`-tall GEMV at this spec.
-    uint32_t gemv_groups(uint32_t rows) const {
-        const uint32_t per = 256 / spec_.lanes_per_row;
+    // Rows per lane actually compiled into one stage's pipeline. Not the spec
+    // value everywhere: row blocking trades workgroups for reuse, and a kernel
+    // with few rows runs out of workgroups first. wkv has 512 rows, which at
+    // rows_per_lane 4 is sixteen workgroups on forty CUs -- measured at 22 GB/s
+    // against 122 at rows_per_lane 2 -- and the gate's 384 rows are worse
+    // still, so both are capped at 1.
+    uint32_t rows_per_lane(AttnStage s) const;
+
+    // Workgroups for a `rows`-tall GEMV of that stage.
+    uint32_t gemv_groups(AttnStage s, uint32_t rows) const {
+        const uint32_t per = (256 / spec_.lanes_per_row) * rows_per_lane(s);
         return (rows + per - 1) / per;
     }
 

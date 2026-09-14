@@ -33,8 +33,7 @@ struct WoaPush {
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-    const uint rowsPerWg = kWg / LanesPerRow;
-    const uint base  = gid.x * rowsPerWg;
+    const uint base  = gid.x * gemv_rows_per_wg();
     const uint group = base / pc.rows_per_group;
 
     fp8_table_fill(tid);
@@ -42,11 +41,12 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;
-    const uint row = base + tid / LanesPerRow;
-    const bool live = row < pc.rows;
-    const float part = live ? gemv8_partial(Ptr[kW], Ptr[kS], row, pc.k,
-                                            pc.scale_cols, sublane)
-                            : 0.0f;
-    const float y = row_reduce(part, tid, sublane);
-    if (live && sublane == 0) *(float*)(Ptr[kY] + (uint64_t)row * 4) = y;
+    const uint rowBase = gemv_row_base(gid.x, tid);
+    float acc[kMaxRowsPerLane];
+    gemv8_rows(Ptr[kW], Ptr[kS], rowBase, pc.k, pc.scale_cols, sublane, acc);
+    for (uint r = 0; r < RowsPerLane; ++r) {
+        const float y = row_reduce(acc[r], tid, sublane);
+        if (sublane == 0 && rowBase + r < pc.rows)
+            *(float*)(Ptr[kY] + (uint64_t)(rowBase + r) * 4) = y;
+    }
 }

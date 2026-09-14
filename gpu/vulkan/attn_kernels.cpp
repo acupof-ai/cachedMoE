@@ -71,6 +71,7 @@ Result<void> AttnRunner::create(Device&, MemoryAllocator&, const std::string&, c
     return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
 }
 void AttnRunner::destroy() {}
+uint32_t AttnRunner::rows_per_lane(AttnStage) const { return 1; }
 uint64_t* AttnRunner::slots(AttnStage) { return nullptr; }
 Result<void> AttnRunner::record(CommandBuffer&, AttnStage, const void*, uint32_t, uint32_t) {
     return fail(Err::Unavailable, "no vulkan");
@@ -94,30 +95,39 @@ struct StageDef {
     const char* spv;
     uint32_t    stage_const;
     uint32_t    act_quant;
+    uint32_t    rows_cap;     // largest rows_per_lane this shader may use
 };
 
 // wo_a is the one entry with act_quant = 0: `Attention.forward` reaches its
 // weight through an einsum, not `linear()`, so its activation never makes the
 // fp8 round trip (attn_common.slang explains why that matters).
+// rows_cap is a workgroup-count question: 40 CUs want a few hundred
+// workgroups, so the cap follows the kernel's row count. wq_b has 32768 rows
+// and wkv has 512.
 constexpr StageDef kStages[] = {
-    {AttnStage::MhcPost,     "mega_mhc",    0, 1},
-    {AttnStage::MhcMix,      "mega_mhc",    1, 1},
-    {AttnStage::MhcFinal,    "mega_mhc",    2, 1},
-    {AttnStage::WqA,         "wq_a",        0, 1},
-    {AttnStage::WqB,         "wq_b",        0, 1},
-    {AttnStage::WkvGemv,     "wkv",         0, 1},
-    {AttnStage::WkvFinish,   "wkv",         1, 1},
-    {AttnStage::AttnScore,   "sparse_attn", 0, 1},
-    {AttnStage::AttnCombine, "sparse_attn", 1, 1},
-    {AttnStage::WoA,         "wo_a",        0, 0},
-    {AttnStage::WoB,         "wo_b",        0, 1},
-    {AttnStage::GateScore,   "gate",        0, 1},
-    {AttnStage::GateTopK,    "gate",        1, 1},
-    {AttnStage::Head,        "head",        0, 1},
+    {AttnStage::MhcPost,     "mega_mhc",    0, 1, 1},
+    {AttnStage::MhcMix,      "mega_mhc",    1, 1, 1},
+    {AttnStage::MhcFinal,    "mega_mhc",    2, 1, 1},
+    {AttnStage::WqA,         "wq_a",        0, 1, 2},   // 1280 rows
+    {AttnStage::WqB,         "wq_b",        0, 1, 4},   // 32768
+    {AttnStage::WkvGemv,     "wkv",         0, 1, 1},   // 512: workgroup-starved
+    {AttnStage::WkvFinish,   "wkv",         1, 1, 1},
+    {AttnStage::AttnScore,   "sparse_attn", 0, 1, 1},
+    {AttnStage::AttnCombine, "sparse_attn", 1, 1, 1},
+    {AttnStage::WoA,         "wo_a",        0, 0, 2},   // 8192, in 1024-row groups
+    {AttnStage::WoB,         "wo_b",        0, 1, 2},   // 5120
+    {AttnStage::GateScore,   "gate",        0, 1, 1},   // 384: no row blocking
+    {AttnStage::GateTopK,    "gate",        1, 1, 1},
+    {AttnStage::Head,        "head",        0, 1, 4},   // 129280
 };
 static_assert(sizeof(kStages) / sizeof(kStages[0]) ==
               static_cast<size_t>(AttnStage::Count));
 }  // namespace
+
+uint32_t AttnRunner::rows_per_lane(AttnStage s) const {
+    const uint32_t cap = kStages[static_cast<uint32_t>(s)].rows_cap;
+    return spec_.rows_per_lane < cap ? spec_.rows_per_lane : cap;
+}
 
 Result<void> AttnRunner::make(AttnStage s, const std::string& spv, uint32_t stage_const,
                               uint32_t act_quant) {
@@ -126,7 +136,7 @@ Result<void> AttnRunner::make(AttnStage s, const std::string& spv, uint32_t stag
     ps.lanes_per_row = spec_.lanes_per_row;
     ps.rows_per_wg   = 256 / spec_.lanes_per_row;
     ps.subgroup_size = spec_.subgroup_size;
-    ps.extra = {stage_const, act_quant};
+    ps.extra = {stage_const, act_quant, rows_per_lane(s)};
     PipelineLayoutSpec la;
     la.storage_buffers    = 1;    // the address table slice, and nothing else
     la.push_constant_size = kPushBytes;
@@ -139,6 +149,15 @@ Result<void> AttnRunner::create(Device& device, MemoryAllocator& alloc,
     if (!device.valid()) return fail(Err::FailedPrecondition, "device is not created");
     if (spec.lanes_per_row != 16 && spec.lanes_per_row != 32 && spec.lanes_per_row != 64)
         return fail(Err::InvalidArgument, "lanes_per_row must be 16, 32 or 64 (design §7.1 rule 3)");
+    if (spec.rows_per_lane != 1 && spec.rows_per_lane != 2 && spec.rows_per_lane != 4)
+        return fail(Err::InvalidArgument, "rows_per_lane must be 1, 2 or 4");
+    // wo_a's block-diagonal groups are o_lora_rank = 1024 rows; a workgroup
+    // that straddled two of them would stage the wrong slice of `o`.
+    const uint32_t per_wg = (256 / spec.lanes_per_row) * spec.rows_per_lane;
+    if (1024 % per_wg != 0)
+        return fail(Err::InvalidArgument,
+                    std::format("a workgroup retires {} rows, which must divide wo_a's "
+                                "1024-row groups", per_wg));
     device_ = &device;
     alloc_  = &alloc;
     spec_   = spec;

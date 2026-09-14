@@ -40,7 +40,8 @@ struct GatePush {
 };
 [[vk::push_constant]] GatePush pc;
 
-static const uint kMaxRecord = 16;
+static const uint kMaxRecord  = 16;
+static const uint kMaxExperts = 384;   // design 2.1; the mtp blocks use 128
 
 groupshared float gXf[5120];      // the fp32 activation, staged once
 
@@ -74,35 +75,51 @@ void stage_scores(uint gid, uint tid) {
     }
 }
 
+// Scores and biased scores, staged so the selection never touches global
+// memory. The first version walked all 384 experts from global once per
+// selected rank -- 16 x 384 dependent loads in one lane, which measured 1.46 ms
+// a layer, 58 ms a token. Staging first makes the same scan 6 us.
+groupshared float gScore[kMaxExperts];
+groupshared float gBiased[kMaxExperts];
+
 void stage_topk(uint tid) {
-    if (tid != 0) return;
     const uint64_t sc = Ptr[kScores], bi = Ptr[kBias];
     const uint64_t ids = Ptr[kIds], wts = Ptr[kWeights];
+    for (uint e = tid; e < pc.n_experts; e += kWg) {
+        gScore[e]  = load_f32(sc + (uint64_t)e * 4);
+        gBiased[e] = gScore[e] + load_f32(bi + (uint64_t)e * 4);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (tid != 0) return;
 
-    uint  chosen[kMaxRecord];
+    // The rank loop is bounded by the COMPILE-TIME kMaxRecord with a runtime
+    // guard inside, not by pc.record. With a push-constant bound `raw[r]` is a
+    // dynamically indexed local array, which the compiler puts in scratch
+    // memory -- VRAM -- and 16 ranks of that measured 55 us against 2 us here.
+    // Same lesson as mega_mhc's Sinkhorn matrix.
     float raw[kMaxRecord];
-    [unroll] for (uint z = 0; z < kMaxRecord; ++z) { chosen[z] = 0xFFFFFFFFu; raw[z] = 0.0f; }
+    [unroll] for (uint z = 0; z < kMaxRecord; ++z) raw[z] = 0.0f;
     const uint record = min(pc.record, kMaxRecord);
-    for (uint r = 0; r < record; ++r) {
+    float sum = 0.0f;
+    [unroll] for (uint r = 0; r < kMaxRecord; ++r) {
+        if (r >= record) continue;
         float best = -3.0e38f;
         uint  arg = 0;
         for (uint e = 0; e < pc.n_experts; ++e) {
-            bool taken = false;
-            for (uint p = 0; p < r; ++p) taken = taken || (chosen[p] == e);
-            if (taken) continue;
-            const float v = load_f32(sc + (uint64_t)e * 4) + load_f32(bi + (uint64_t)e * 4);
+            const float v = gBiased[e];
             if (v > best) { best = v; arg = e; }
         }
-        chosen[r] = arg;
-        raw[r] = load_f32(sc + (uint64_t)arg * 4);
+        raw[r] = gScore[arg];
+        if (r < pc.topk) sum += raw[r];
+        gBiased[arg] = -3.0e38f;      // mask it out of the next round
         *(uint*)(ids + (uint64_t)r * 4) = arg;
     }
 
-    float sum = 0.0f;
-    for (uint r = 0; r < pc.topk; ++r) sum += raw[r];
     const float inv = pc.route_scale / (sum + 1e-20f);   // 1e-20 matches training
-    for (uint r = 0; r < record; ++r)
+    [unroll] for (uint r = 0; r < kMaxRecord; ++r) {
+        if (r >= record) continue;
         *(float*)(wts + (uint64_t)r * 4) = (r < pc.topk) ? raw[r] * inv : raw[r];
+    }
 
     // Host-coherent progress counter: the planner spins on this instead of
     // waiting on a fence, so the command buffer never pauses (design §7.8).

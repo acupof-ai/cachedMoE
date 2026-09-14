@@ -278,7 +278,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
                             d.norm_eps, 1e-6f};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcPost, &mp, sizeof mp, mp.n_wg0));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcMix, &mp, sizeof mp, mp.mix_rows));
-            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcFinal, &mp, sizeof mp, 1));
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcFinal, &mp, sizeof mp, mp.n_wg0));
 
             const std::vector<float> mix = bMixO.read(8 + d.hc * d.hc);
             CHECK(ok("mhc attn_pre", agree(mix.data(), g.f("attn_pre").data(), d.hc), 0.999999, 1e-4));
@@ -299,7 +299,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             s[gpu::slot::kGemvY] = bQr.a();
             gpu::GemvPush gp{d.q_lora, d.dim, d.dim / 32, 0};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WqA, &gp, sizeof gp,
-                                              rig.runner.gemv_groups(d.q_lora)));
+                                              rig.runner.gemv_groups(gpu::AttnStage::WqA, d.q_lora)));
             CHECK(ok("wq_a", agree(bQr.read(d.q_lora), g.f("wq_a_out")), 0.99999, 5e-3));
         }
 
@@ -316,7 +316,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             s[gpu::slot::kWqbQ] = bQ.a();
             gpu::WqbPush wp{qrows, d.q_lora, d.q_lora / 32, d.head_dim, d.rope_dim, d.norm_eps};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WqB, &wp, sizeof wp,
-                                              rig.runner.gemv_groups(qrows)));
+                                              rig.runner.gemv_groups(gpu::AttnStage::WqB, qrows)));
             CHECK(ok("wq_b+rope", agree(bQ.read_bf16(qrows), g.f("q")), 0.9999, 2e-2));
         }
 
@@ -338,7 +338,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             s[gpu::slot::kWkvKv] = bKv.a();
             std::memcpy(rig.runner.slots(gpu::AttnStage::WkvFinish), s, 32 * 8);
 
-            const uint32_t g0 = rig.runner.gemv_groups(d.head_dim);
+            const uint32_t g0 = rig.runner.gemv_groups(gpu::AttnStage::WkvGemv, d.head_dim);
             gpu::WkvPush kp{d.head_dim, d.dim, d.dim / 32, d.rope_dim, slot, g0, d.norm_eps};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WkvGemv, &kp, sizeof kp, g0));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WkvFinish, &kp, sizeof kp, 1));
@@ -434,7 +434,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             s[gpu::slot::kWoaY] = bWoa.a();
             gpu::WoaPush wp{orows, ocols, ocols / 32, d.o_lora};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WoA, &wp, sizeof wp,
-                                              rig.runner.gemv_groups(orows)));
+                                              rig.runner.gemv_groups(gpu::AttnStage::WoA, orows)));
             CHECK(ok("wo_a", agree(bWoa.read(orows), g.f("wo_a_out")), 0.99999, 5e-3));
         }
 
@@ -448,7 +448,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             s[gpu::slot::kGemvY] = bWob.a();
             gpu::GemvPush gp{d.dim, orows, orows / 32, 0};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WoB, &gp, sizeof gp,
-                                              rig.runner.gemv_groups(d.dim)));
+                                              rig.runner.gemv_groups(gpu::AttnStage::WoB, d.dim)));
             CHECK(ok("wo_b", agree(bWob.read(d.dim), g.f("wo_b_out")), 0.99999, 5e-3));
         }
 
@@ -472,7 +472,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
                             gpu::kMhcFlagPost, d.norm_eps, 1e-6f};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcPost, &mp, sizeof mp, mp.n_wg0));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcMix, &mp, sizeof mp, mp.mix_rows));
-            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcFinal, &mp, sizeof mp, 1));
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcFinal, &mp, sizeof mp, mp.n_wg0));
 
             CHECK(ok("hc_post -> stream", agree(bXout.read(hcdim), g.f("attn_block_out")), 0.99999, 5e-3));
             const std::vector<float> mix = bMixO.read(8 + d.hc * d.hc);
@@ -496,7 +496,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
 
             gpu::GatePush gp{d.n_experts, d.dim, d.topk, 16, 1.0f, d.route_scale};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::GateScore, &gp, sizeof gp,
-                                              rig.runner.gemv_groups(d.n_experts)));
+                                              rig.runner.gemv_groups(gpu::AttnStage::GateScore, d.n_experts)));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::GateTopK, &gp, sizeof gp, 1));
 
             CHECK(ok("gate scores", agree(bGs.read(d.n_experts), g.f("gate_scores")), 0.9999999, 1e-3));
@@ -549,7 +549,7 @@ DEEPMOE_TEST(gpu_attn, head_bf16_gemv) {
     s[gpu::slot::kHeadLogits] = bL.a();
     gpu::HeadPush hp{kRows, kDim, 0};
     REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::Head, &hp, sizeof hp,
-                                      rig.runner.gemv_groups(kRows)));
+                                      rig.runner.gemv_groups(gpu::AttnStage::Head, kRows)));
 
     const auto* w = static_cast<const uint16_t*>(head->data_host);
     std::vector<float> ref(kRows);

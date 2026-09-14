@@ -33,7 +33,8 @@
 //          squares. Writes x' and the un-normalised u.
 // Stage 1  mix_rows workgroups, one per row of hc_fn: one 20480-wide dot
 //          product against x', scaled by the first RMS statistic.
-// Stage 2  one workgroup: Sinkhorn in registers, and the RMSNorm of u.
+// Stage 2  dim/256 workgroups again: the RMSNorm of u, with Sinkhorn riding
+//          along on workgroup 0.
 
 #include "attn_common.slang"
 
@@ -103,15 +104,18 @@ void stage_post(uint gid, uint tid) {
     }
 }
 
-// The two whole-vector statistics stage 0 left as per-workgroup partials.
-float scratch_sum(uint base) {
-    float s = 0.0f;
-    for (uint i = 0; i < pc.n_wg0; ++i) s += load_f32(Ptr[kScratch] + (uint64_t)(base + i) * 4);
-    return s;
+// One of the two whole-vector statistics stage 0 left as per-workgroup
+// partials, reduced across the workgroup rather than by every thread walking
+// the whole list: n_wg0 serialized dependent loads per thread was measurable
+// (100 us for the whole of stage 2, against 2 us for stage 0).
+float scratch_sum(uint base, uint tid) {
+    const float v = (tid < pc.n_wg0) ? load_f32(Ptr[kScratch] + (uint64_t)(base + tid) * 4)
+                                     : 0.0f;
+    return wg_reduce(v, tid);
 }
 
 void stage_mix(uint row, uint tid) {
-    const float rs = rsqrt(scratch_sum(0) / float(pc.dim * pc.hc) + pc.norm_eps);
+    const float rs = rsqrt(scratch_sum(0, tid) / float(pc.dim * pc.hc) + pc.norm_eps);
     const uint  n  = pc.dim * pc.hc;                       // 20480
     const uint64_t fn = Ptr[kHcFn] + (uint64_t)row * n * 4;
     const uint64_t xf = Ptr[kXout];
@@ -130,68 +134,74 @@ void stage_mix(uint row, uint tid) {
 // normalise; see the header.
 void sinkhorn(uint tid) {
     if (tid != 0) return;
-    const uint hc = pc.hc;
     const uint64_t mr = Ptr[kMixRaw], bs = Ptr[kHcBase], sc = Ptr[kHcScale], out = Ptr[kMixOut];
     const float s0 = load_f32(sc), s1 = load_f32(sc + 4), s2 = load_f32(sc + 8);
     const float eps = pc.hc_eps;
 
-    for (uint j = 0; j < hc; ++j) {
+    // Every loop below is bounded by the COMPILE-TIME kMaxHc, not by pc.hc.
+    // With a push-constant bound the compiler cannot unroll, `c` stops being
+    // promotable to registers, and a 4x4 array of floats goes to scratch
+    // memory -- which is VRAM. That one detail cost 216 us a dispatch, an
+    // eighth of the whole layer, for 16 floats of working set. hc_mult is 4 in
+    // config.json and 4 in every mHC shape, so the assert is cheap.
+    [unroll] for (uint j = 0; j < kMaxHc; ++j) {
         const float m = load_f32(mr + (uint64_t)j * 4) * s0 + load_f32(bs + (uint64_t)j * 4);
         *(float*)(out + (uint64_t)j * 4) = 1.0f / (1.0f + exp(-m)) + eps;
-        const uint k = hc + j;
+        const uint k = kMaxHc + j;
         const float p = load_f32(mr + (uint64_t)k * 4) * s1 + load_f32(bs + (uint64_t)k * 4);
         *(float*)(out + (uint64_t)k * 4) = 2.0f / (1.0f + exp(-p));
     }
 
     float c[kMaxHc][kMaxHc];
-    for (uint j = 0; j < hc; ++j) {
+    [unroll] for (uint j = 0; j < kMaxHc; ++j) {
         float mx = -3.0e38f;
-        for (uint k = 0; k < hc; ++k) {
-            const uint i = 2 * hc + j * hc + k;
+        [unroll] for (uint k = 0; k < kMaxHc; ++k) {
+            const uint i = 2 * kMaxHc + j * kMaxHc + k;
             c[j][k] = load_f32(mr + (uint64_t)i * 4) * s2 + load_f32(bs + (uint64_t)i * 4);
             mx = max(mx, c[j][k]);
         }
         float sum = 0.0f;
-        for (uint k = 0; k < hc; ++k) { c[j][k] = exp(c[j][k] - mx); sum += c[j][k]; }
-        for (uint k = 0; k < hc; ++k) c[j][k] = c[j][k] / sum + eps;   // softmax(-1) + eps
+        [unroll] for (uint k = 0; k < kMaxHc; ++k) { c[j][k] = exp(c[j][k] - mx); sum += c[j][k]; }
+        [unroll] for (uint k = 0; k < kMaxHc; ++k) c[j][k] = c[j][k] / sum + eps;  // softmax(-1)+eps
     }
-    for (uint k = 0; k < hc; ++k) {                                    // /= colsum + eps
-        float s = 0.0f;
-        for (uint j = 0; j < hc; ++j) s += c[j][k];
-        s += eps;
-        for (uint j = 0; j < hc; ++j) c[j][k] /= s;
+    [unroll] for (uint k = 0; k < kMaxHc; ++k) {                       // /= colsum + eps
+        float s = eps;
+        [unroll] for (uint j = 0; j < kMaxHc; ++j) s += c[j][k];
+        [unroll] for (uint j = 0; j < kMaxHc; ++j) c[j][k] /= s;
     }
     for (uint it = 1; it < pc.sinkhorn_iters; ++it) {
-        for (uint j = 0; j < hc; ++j) {                                // /= rowsum + eps
-            float s = 0.0f;
-            for (uint k = 0; k < hc; ++k) s += c[j][k];
-            s += eps;
-            for (uint k = 0; k < hc; ++k) c[j][k] /= s;
+        [unroll] for (uint j = 0; j < kMaxHc; ++j) {                   // /= rowsum + eps
+            float s = eps;
+            [unroll] for (uint k = 0; k < kMaxHc; ++k) s += c[j][k];
+            [unroll] for (uint k = 0; k < kMaxHc; ++k) c[j][k] /= s;
         }
-        for (uint k = 0; k < hc; ++k) {                                // /= colsum + eps
-            float s = 0.0f;
-            for (uint j = 0; j < hc; ++j) s += c[j][k];
-            s += eps;
-            for (uint j = 0; j < hc; ++j) c[j][k] /= s;
+        [unroll] for (uint k = 0; k < kMaxHc; ++k) {                   // /= colsum + eps
+            float s = eps;
+            [unroll] for (uint j = 0; j < kMaxHc; ++j) s += c[j][k];
+            [unroll] for (uint j = 0; j < kMaxHc; ++j) c[j][k] /= s;
         }
     }
-    for (uint j = 0; j < hc; ++j)
-        for (uint k = 0; k < hc; ++k)
-            *(float*)(out + (uint64_t)(2 * hc + j * hc + k) * 4) = c[j][k];
+    [unroll] for (uint j = 0; j < kMaxHc; ++j)
+        [unroll] for (uint k = 0; k < kMaxHc; ++k)
+            *(float*)(out + (uint64_t)(2 * kMaxHc + j * kMaxHc + k) * 4) = c[j][k];
 }
 
-void stage_final(uint tid) {
-    const float rs = rsqrt(scratch_sum(256) / float(pc.dim) + pc.norm_eps);
-    const uint64_t nw = Ptr[kNormW], ut = Ptr[kUtmp], u = Ptr[kU];
-    for (uint d = tid; d < pc.dim; d += kWg) {
-        const float w = bf16_decode(load_u16(nw + (uint64_t)d * 2));
+// Stage 2 runs over the same dim/256 grid as stage 0 -- one element per thread,
+// not 20 per thread in a single workgroup, which is what made it the slowest
+// dispatch in the layer. Sinkhorn rides along on workgroup 0's first lane: it
+// needs only MixRaw, which stage 1 has already published.
+void stage_final(uint gid, uint tid) {
+    const float rs = rsqrt(scratch_sum(256, tid) / float(pc.dim) + pc.norm_eps);
+    const uint d = gid * kWg + tid;
+    if (d < pc.dim) {
+        const float w = bf16_decode(load_u16(Ptr[kNormW] + (uint64_t)d * 2));
         // bf16_round because RMSNorm.forward ends in `.to(dtype)`; this value
         // is act_quant'd by wq_a and wkv, where the extra fp32 bits only move
         // the block scale away from the reference's.
-        *(float*)(u + (uint64_t)d * 4) =
-            bf16_round(w * load_f32(ut + (uint64_t)d * 4) * rs);
+        *(float*)(Ptr[kU] + (uint64_t)d * 4) =
+            bf16_round(w * load_f32(Ptr[kUtmp] + (uint64_t)d * 4) * rs);
     }
-    if ((pc.flags & 2u) == 0u) sinkhorn(tid);
+    if (gid == 0 && (pc.flags & 2u) == 0u) sinkhorn(tid);
 }
 
 [shader("compute")]
@@ -199,5 +209,5 @@ void stage_final(uint tid) {
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     if (Stage == 0)      stage_post(gid.x, tid);
     else if (Stage == 1) stage_mix(gid.x, tid);
-    else                 stage_final(tid);
+    else                 stage_final(gid.x, tid);
 }

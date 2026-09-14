@@ -44,14 +44,17 @@ void stage_gemv(uint gid, uint tid) {
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;
-    const uint row = gid * (kWg / LanesPerRow) + tid / LanesPerRow;
-    const bool live = row < pc.rows;
-    const float part = live ? gemv8_partial(Ptr[kW], Ptr[kS], row, pc.k,
-                                            pc.scale_cols, sublane)
-                            : 0.0f;
-    const float y = row_reduce(part, tid, sublane);
-    if (live && sublane == 0) *(float*)(Ptr[kKvRaw] + (uint64_t)row * 4) = y;
-    const float sq = (live && sublane == 0) ? y * y : 0.0f;
+    const uint rowBase = gemv_row_base(gid, tid);
+    float acc[kMaxRowsPerLane];
+    gemv8_rows(Ptr[kW], Ptr[kS], rowBase, pc.k, pc.scale_cols, sublane, acc);
+    float sq = 0.0f;
+    for (uint r = 0; r < RowsPerLane; ++r) {
+        const float y = row_reduce(acc[r], tid, sublane);
+        if (sublane == 0 && rowBase + r < pc.rows) {
+            *(float*)(Ptr[kKvRaw] + (uint64_t)(rowBase + r) * 4) = y;
+            sq += y * y;
+        }
+    }
     const float tot = wg_reduce(sq, tid);
     if (tid == 0) *(float*)(Ptr[kScratch] + (uint64_t)gid * 4) = tot;
 }
