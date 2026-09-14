@@ -25,6 +25,17 @@ uint64_t available_commit_bytes() {
 #endif
 }
 
+uint64_t available_physical_bytes() {
+#if defined(_WIN32)
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof(ms);
+    if (!GlobalMemoryStatusEx(&ms)) return 0;
+    return ms.ullAvailPhys;
+#else
+    return 0;
+#endif
+}
+
 Result<void> check_commit_available(uint64_t bytes, const char* what) {
 #if defined(_WIN32)
     MEMORYSTATUSEX ms{};

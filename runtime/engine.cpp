@@ -268,15 +268,47 @@ Result<void> Engine::init_gpu() {
         // over-estimate costs a log line rather than a failure; the ceiling is
         // there so a machine with a very large pagefile does not spend a minute
         // allocating memory a decode step will never touch.
-        constexpr uint64_t kMargin  = 8ull << 30;
-        constexpr uint64_t kCeiling = 74ull << 30;   // heap_capacity_idle.csv, path A
-        const uint64_t avail = store::available_commit_bytes();
-        const uint64_t pinned_est = 10ull << 30;
-        uint64_t want = 8ull << 30;
-        if (avail > pinned_est + kMargin) want = avail - pinned_est - kMargin;
-        cache_budget_ = want > kCeiling ? kCeiling : want;
-        log_info("engine: cache budget auto -> {} ({} of commit available)",
-                 human_bytes(cache_budget_), human_bytes(avail));
+        //
+        // Both paths, each by what bounds IT (docs/p2_decode.md §10):
+        //   path A  the DEVICE_LOCAL|HOST_VISIBLE heap (74 GiB here), which the
+        //           pinned set, the KV store and the activations share. It
+        //           charges commit but not physical memory.
+        //   path B  imported host pages, which charge BOTH. Bounded by what is
+        //           physically free now, less a floor for the OS and whatever
+        //           else the machine is running.
+        // and the sum by the commit that is actually available. P2 step 2
+        // capped the whole thing at path A's heap size, which with the pinned
+        // set also living there left ~64 GiB of experts and never touched B.
+        constexpr uint64_t kCommitMargin = 8ull << 30;
+        constexpr uint64_t kPhysFloor    = 12ull << 30;
+        constexpr uint64_t kPathAOther   = 1ull << 30;   // KV, scratch, logits, runners
+        const uint64_t avail_commit = store::available_commit_bytes();
+        const uint64_t avail_phys   = store::available_physical_bytes();
+        std::vector<std::string> pnames = store::pinned_global_tensors(manifest_);
+        for (uint32_t L = 0; L < model_cfg_.text.num_hidden_layers; ++L) {
+            auto per = store::pinned_layer_tensors(manifest_, L);
+            pnames.insert(pnames.end(), per.begin(), per.end());
+        }
+        const uint64_t pinned = store::pinned_bytes(manifest_, pnames);
+        uint64_t heap_a = 74ull << 30;
+        if (auto t = alloc_a_.chosen_memory_type(); t)
+            for (const gpu::HeapInfo& h : device_.caps().heaps)
+                if (h.index == t->heap_index) heap_a = h.bytes;
+        const uint64_t a_cache = heap_a > pinned + kPathAOther ? heap_a - pinned - kPathAOther : 0;
+        const bool     have_b  = alloc_b_.path() == MemoryPath::ExternalMemoryHost;
+        const uint64_t b_cache = (have_b && avail_phys > kPhysFloor) ? avail_phys - kPhysFloor : 0;
+        uint64_t want = a_cache + b_cache;
+        if (avail_commit) {
+            const uint64_t commit_cap =
+                avail_commit > pinned + kCommitMargin ? avail_commit - pinned - kCommitMargin : 0;
+            want = std::min(want, commit_cap);
+        }
+        cache_budget_ = std::max<uint64_t>(want, 8ull << 30);
+        const uint64_t avail = avail_commit;
+        log_info("engine: cache budget auto -> {} (path A {} after {} pinned, path B {} of "
+                 "{} physical free; {} of commit available)",
+                 human_bytes(cache_budget_), human_bytes(a_cache), human_bytes(pinned),
+                 human_bytes(b_cache), human_bytes(avail_phys), human_bytes(avail));
     }
 
     if (auto r = load_pinned(); !r) return r;
@@ -698,31 +730,34 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     // materialised first -- otherwise the engram would be added to a stream
     // that is one sublayer behind.
     //
-    // It costs a submit, and it is the RIGHT place for one: the buffer holding
-    // the previous layer's MoE goes to the GPU, and the host spends the time
-    // it runs on the engram's 48 NVMe reads instead of waiting.
-    if (engram_.has_layer(L)) {
+    // All of it joins the open buffer: the previous layer's MoE, its closing
+    // hc_post, the engram's two dispatches and this layer's attention. The
+    // rows were fetched at the start of the token (design §9.5), while layer
+    // 0 ran; only a caller that skipped that pays for the fetch here.
+    const bool engram = engram_.has_layer(L);
+    if (engram) {
+        if (!engram_.fetched(L, position)) {
+            const TimePoint f0 = Clock::now();
+            if (auto r = engram_.fetch(L, history_, position, &profiler_); !r) return r;
+            engram_host_ms_[L] += ms_since(f0);
+        }
         if (auto r = cmd_open(); !r) return r;
         if (apply_post) {
             // `bind` for L-1 left MhcClose pointing at L-1's hc_ffn weights,
-            // which is what closing L-1's block needs.
+            // which is what closing L-1's block needs -- and `bind_close`
+            // below stops this layer's `bind` from overwriting it before the
+            // buffer runs.
             LayerStep prev = st;
             prev.layer = L - 1;
             if (auto r = layer_.record_close(tok_cmd_, prev); !r) return r;
         }
-        if (auto r = cmd_submit(prev_gate); !r) return r;
-        const TimePoint f0 = Clock::now();
-        if (auto r = engram_.fetch(L, history_, position, &profiler_); !r) return r;
-        engram_host_ms_[L] = ms_since(f0);
-        if (auto r = cmd_wait(); !r) return r;
-
-        if (auto r = cmd_open(); !r) return r;
         ts_engram_[L].begin = cmd_stamp();
         const DeviceAddress in = apply_post ? b.xout.addr : b.x.addr;
         if (auto r = engram_.record(tok_cmd_, L, in, b.x.addr); !r) return r;
         ts_engram_[L].end = cmd_stamp();
         apply_post = false;
         st.apply_hc_post = false;
+        st.bind_close = false;
     }
 
     {
@@ -738,8 +773,19 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         ts_attn_[L].end = cmd_stamp();
         rec_ms_ += ms_since(r0);
     }
-    const bool gated = !engram_.has_layer(L);   // an engram layer's MoE already went
-    if (auto r = cmd_flush(gated ? prev_gate : 0); !r) return r;
+    if (auto r = cmd_submit(prev_gate); !r) return r;
+    // design §9.5: the engram's 96 row reads depend only on the token ids, so
+    // they go out the moment the first buffer of the token is on the GPU and
+    // overlap it, instead of blocking the engram layers when they are reached.
+    if (L == 0) {
+        for (uint32_t E = 1; E < c.num_hidden_layers; ++E) {
+            if (!engram_.has_layer(E)) continue;
+            const TimePoint f0 = Clock::now();
+            if (auto r = engram_.fetch(E, history_, position, &profiler_); !r) return r;
+            engram_host_ms_[E] += ms_since(f0);
+        }
+    }
+    if (auto r = cmd_wait(); !r) return r;
 
     // design §7.1 / §7.8: the gate's ids are already in host-coherent memory.
     // Classify them, fetch the misses at P0, wait, host-signal the timeline the

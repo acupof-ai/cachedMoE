@@ -83,6 +83,10 @@ Result<void> check_commit_available(uint64_t bytes, const char* what);
 // Zero when it cannot be determined (including off Windows), which a caller
 // should read as "no budget advice available" rather than as "nothing free".
 uint64_t available_commit_bytes();
+// Physical memory not in use right now. Path B's slabs are imported host pages
+// and consume it; path A's do not (they are charged against commit only), so
+// this bounds the path-B half of an auto-sized expert cache. Zero when unknown.
+uint64_t available_physical_bytes();
 
 class PinnedStore {
 public:

@@ -6,7 +6,9 @@
 //
 // Ownership/threading: one process, one Engine, main thread only. Nothing here
 // is a library; everything reusable lives in the modules.
+#include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -20,6 +22,7 @@
 #include <cmath>
 
 #include "cpu/dequant.h"
+#include "cpu/gate.h"
 #include "cpu/gemv_avx512.h"
 #include "gpu/vulkan/device.h"
 #include "model/layout.h"
@@ -314,6 +317,145 @@ int run_determinism(runtime::Engine& engine, const runtime::DecodeState& st, uin
     return 0;
 }
 
+// docs/p2_decode.md §8.3: when a step's token differs, is it the kernels or the
+// precision? For every layer of every teacher-forced step this compares our
+// gate against the reference's at THREE points, which is what separates the two:
+//
+//   in       our FFN input against the reference's (the stream drift)
+//   kernel   our GPU gate scores against cpu/gate.cpp run on OUR input, and
+//            cpu/gate.cpp on the REFERENCE's input against the reference's own
+//            scores. Both near zero says the gate arithmetic is right, so any
+//            selection difference comes from the input.
+//   choice   whether the six picks agree, and the reference's own margin
+//            between its sixth and seventh (score + bias), i.e. how close a
+//            call it was.
+int run_gate_report(runtime::Engine& engine, const runtime::DecodeState& st, uint32_t steps) {
+    const TextConfig& c = engine.model().text;
+    const uint32_t dim = c.hidden_size, ne = c.n_routed_experts, topk = c.num_experts_per_tok;
+    std::vector<std::vector<uint16_t>> W(c.num_hidden_layers);
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+        const store::PinnedTensor* t = engine.pinned().find(std::format("layers.{}.ffn.gate.weight", L));
+        if (!t) { std::fprintf(stderr, "no gate weight for layer %u\n", L); return 1; }
+        W[L].resize(size_t(ne) * dim);
+        std::memcpy(W[L].data(), t->data_host, W[L].size() * 2);
+    }
+    auto cosine = [](const float* a, const float* b, size_t n) {
+        double num = 0, sa = 0, sb = 0;
+        for (size_t i = 0; i < n; ++i) { num += double(a[i]) * b[i]; sa += double(a[i]) * a[i]; sb += double(b[i]) * b[i]; }
+        return (sa > 0 && sb > 0) ? num / std::sqrt(sa * sb) : 1.0;
+    };
+    auto maxabs = [](const float* a, const float* b, size_t n) {
+        double m = 0; for (size_t i = 0; i < n; ++i) m = std::max(m, std::fabs(double(a[i]) - b[i])); return m;
+    };
+    // (score + bias) sorted descending: [5] - [6] is the sixth-vs-seventh margin.
+    auto margin67 = [&](const float* sc, const float* bias) {
+        std::vector<float> v(ne);
+        for (uint32_t e = 0; e < ne; ++e) v[e] = sc[e] + bias[e];
+        std::partial_sort(v.begin(), v.begin() + topk + 1, v.end(), std::greater<float>());
+        return double(v[topk - 1]) - double(v[topk]);
+    };
+
+    const uint32_t n = std::min(steps, st.steps());
+    for (uint32_t s = 0; s < n; ++s) {
+        struct Row { uint32_t L; double in_cos, sc_d, gpu_cpu, cpu_ref, ref_m, our_m; uint32_t agree; std::string swap; };
+        std::vector<Row> rows;
+        double worst_gpu_cpu = 0, worst_cpu_ref = 0, worst_in = 1.0;
+        engine.layer_probe = [&](uint32_t L, const runtime::DecodeLayer& dl) {
+            const runtime::StateTensor* rin = st.tensor(s + 1, std::format("L{:02d}.ffn_in", L));
+            const runtime::StateTensor* rsc = st.tensor(s + 1, std::format("L{:02d}.gate_scores", L));
+            const runtime::StateTensor* rid = st.tensor(s + 1, std::format("L{:02d}.gate_ids", L));
+            const runtime::StateTensor* rb  = st.tensor(0, std::format("L{:02d}.gate_bias", L));
+            if (!rin || !rsc || !rid || !rb) return;
+            std::vector<float> our_in(dl.ffn_norm_out(), dl.ffn_norm_out() + dim);
+            std::vector<float> our_sc(dl.gate_scores(), dl.gate_scores() + ne);
+            std::vector<uint32_t> our_id(dl.gate_ids(), dl.gate_ids() + topk);
+            std::vector<float> cpu_ours(ne), cpu_ref(ne);
+            (void)cpu::gate_scores(W[L], our_in, ne, dim, cpu_ours);
+            (void)cpu::gate_scores(W[L], rin->f, ne, dim, cpu_ref);
+            Row r{};
+            r.L = L;
+            r.in_cos  = cosine(our_in.data(), rin->f.data(), dim);
+            r.sc_d    = maxabs(our_sc.data(), rsc->f.data(), ne);
+            r.gpu_cpu = maxabs(our_sc.data(), cpu_ours.data(), ne);
+            r.cpu_ref = maxabs(cpu_ref.data(), rsc->f.data(), ne);
+            r.ref_m   = margin67(rsc->f.data(), rb->f.data());
+            r.our_m   = margin67(our_sc.data(), rb->f.data());
+            for (uint32_t i = 0; i < topk; ++i)
+                for (uint32_t j = 0; j < topk; ++j)
+                    if (our_id[i] == static_cast<uint32_t>(rid->i[j])) { ++r.agree; break; }
+            if (r.agree < topk) {
+                for (uint32_t i = 0; i < topk; ++i) {
+                    bool in_ref = false;
+                    for (uint32_t j = 0; j < topk; ++j) in_ref |= our_id[i] == static_cast<uint32_t>(rid->i[j]);
+                    if (!in_ref) r.swap += std::format(" ours+{}", our_id[i]);
+                }
+                for (uint32_t j = 0; j < topk; ++j) {
+                    bool in_ours = false;
+                    for (uint32_t i = 0; i < topk; ++i) in_ours |= our_id[i] == static_cast<uint32_t>(rid->i[j]);
+                    if (!in_ours) r.swap += std::format(" ref+{}", rid->i[j]);
+                }
+            }
+            // Where the GPU/CPU difference sits: gate.slang computes softplus as
+            // log(1 + exp(z)), which in fp32 is exactly 0 below z ~ -16, where
+            // log1p(exp(-|z|)) + max(z, 0) -- cpu/gate.cpp and torch -- is not.
+            {
+                uint32_t zeroed = 0; double worst_z = 0, worst_other = 0;
+                for (uint32_t e = 0; e < ne; ++e) {
+                    const double d = std::fabs(double(our_sc[e]) - cpu_ours[e]);
+                    if (our_sc[e] == 0.0f && cpu_ours[e] > 0.0f) { ++zeroed; worst_z = std::max(worst_z, d); }
+                    else worst_other = std::max(worst_other, d);
+                }
+                if (L == 0 || L == 20 || L == 39)
+                    std::printf("    L%u gpu-vs-cpu gate: %u experts scored exactly 0 on the GPU (max |d| %.2e there), "
+                                "max |d| elsewhere %.2e\n", L, zeroed, worst_z, worst_other);
+            }
+            worst_gpu_cpu = std::max(worst_gpu_cpu, r.gpu_cpu);
+            worst_cpu_ref = std::max(worst_cpu_ref, r.cpu_ref);
+            worst_in = std::min(worst_in, r.in_cos);
+            rows.push_back(std::move(r));
+        };
+        auto res = engine.decode_step(st.greedy_tokens()[s], st.decode_pos() + s, static_cast<int32_t>(s));
+        engine.layer_probe = nullptr;
+        if (!res) { std::fprintf(stderr, "step %u: %s\n", s, res.error().str().c_str()); return 1; }
+        // The compressed row THIS step wrote, alone. An aggregate cosine over a
+        // source's whole plane is dominated by the rows the prompt left, so a
+        // wrong new row can hide in it.
+        for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+            if (!c.is_kv_source(L)) continue;
+            const uint32_t ratio = c.compress_ratio(L);
+            const uint32_t pos = st.decode_pos() + s;
+            if ((pos + 1) % ratio) continue;
+            const runtime::StateTensor* g = st.tensor(s + 1, std::format("L{:02d}.cmp_kv", L));
+            auto v = engine.kv().layer(L);
+            if (!g || !v) continue;
+            const uint32_t row = pos / ratio, hd = c.head_dim;
+            if ((row + 1) * hd > g->f.size()) continue;
+            std::vector<float> ours(hd), prev(hd);
+            for (uint32_t d = 0; d < hd; ++d) {
+                ours[d] = cpu::bf16_to_float(v->cmp_kv_host[size_t(row) * hd + d]);
+                prev[d] = cpu::bf16_to_float(v->cmp_kv_host[size_t(row - 1) * hd + d]);
+            }
+            std::printf("    cmp row %u of L%u (ratio %u, written this step): cos %.6f vs the "
+                        "reference; the row before it %.6f\n", row, L, ratio,
+                        cosine(ours.data(), g->f.data() + size_t(row) * hd, hd),
+                        cosine(prev.data(), g->f.data() + size_t(row - 1) * hd, hd));
+        }
+        uint32_t disagree = 0;
+        for (const Row& r : rows) disagree += r.agree < topk;
+        std::printf("step %u  in %u -> %u (ref %u %s, ref margin %.4f, ours %.4f) | %zu layers, %u route "
+                    "differently | worst in-cos %.6f, |gpu-cpu(ours)| %.2e, |cpu(ref)-ref| %.2e\n",
+                    s, st.greedy_tokens()[s], res->token, st.logits(s + 1).argmax,
+                    res->token == st.logits(s + 1).argmax ? "MATCH" : "DIFFER",
+                    st.logits(s + 1).margin(), res->margin(), rows.size(), disagree,
+                    worst_in, worst_gpu_cpu, worst_cpu_ref);
+        for (const Row& r : rows)
+            if (r.agree < topk)
+                std::printf("    L%-2u %u/%u:%s  in-cos %.6f  |dscore| %.2e  6th-7th margin ref %.2e ours %.2e\n",
+                            r.L, r.agree, topk, r.swap.c_str(), r.in_cos, r.sc_d, r.ref_m, r.our_m);
+    }
+    return 0;
+}
+
 int cmd_run(int argc, char** argv) {
     RuntimeConfig cfg;
     cfg.cache.budget_bytes = 0;     // 0 = size it from the machine (see init_gpu)
@@ -326,6 +468,7 @@ int cmd_run(int argc, char** argv) {
     bool loaded_ced = false;
     uint32_t warm = 0;
     uint32_t determinism = 0;
+    bool gate_report = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
@@ -341,6 +484,7 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--loaded-ced")  loaded_ced = true;
         else if (a == "--warm")        warm = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--determinism") determinism = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
+        else if (a == "--gate-report") gate_report = true;
         else if (a == "--cache-gb")    cfg.cache.budget_bytes = uint64_t(std::atoll(arg_value(argc, argv, i, a).data())) << 30;
         else if (a == "--chunk-kb")    cfg.io.chunk_bytes = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data())) << 10;
         else if (a == "--qd")          cfg.io.max_inflight_ops = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
@@ -413,6 +557,7 @@ int cmd_run(int argc, char** argv) {
     std::printf("\nstep  in     -> out     wall      | the design 13.1 breakdown\n");
 
     if (determinism) return run_determinism(engine, *st, determinism);
+    if (gate_report) return run_gate_report(engine, *st, steps);
 
     // --warm K: step 0 run K extra times first, at the same position with the
     // same input. The first fetches every expert that step routes to; every

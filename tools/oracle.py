@@ -1220,7 +1220,7 @@ class _L3Sparse:
 
 
 def _l3_run_layer(dsref_mod, store, margs, layout_e, L, block, h, pre_mix, hashes,
-                  start_pos: int):
+                  start_pos: int, capture: dict | None = None):
     """One Block over one chunk, with the routed experts streamed expert-major.
 
     The same arithmetic as `level2_layer.run_layer` with the capture taken out;
@@ -1243,6 +1243,14 @@ def _l3_run_layer(dsref_mod, store, margs, layout_e, L, block, h, pre_mix, hashe
                                      margs.swiglu_limit).float()
         del w1, w2, w3
     y += moe.shared_experts(flat).float()
+    if capture is not None:
+        # The gate's whole input and output at the last position, so a runtime
+        # disagreement at a near-tie can be pinned to a layer and split into
+        # "the scores drifted" and "the selection is wrong".
+        capture["ffn_in"] = flat[-1].clone()
+        capture["gate_scores"] = moe.gate_scores(flat)[-1].float().clone()
+        capture["gate_ids"] = indices[-1].int().clone()
+        capture["gate_weights"] = weights[-1].float().clone()
     return block.finish_ffn(y.unsqueeze(0), resid, fpost, fcomb), fpre, len(used), indices
 
 
@@ -1435,6 +1443,11 @@ def level3_end_to_end(args: argparse.Namespace) -> int:
         # derived from the compressor's PRE-RoPE latent and `cmp_kv` holds the
         # post-RoPE, post-FP4 one, so the only way to have it is to export it.
         prefill_tensors.update(_l3_prefill_state(block, L))
+        # The selection bias, once: it is a weight, but a validator reading the
+        # step records below needs it to rebuild score + bias without the
+        # checkpoint.
+        prefill_tensors[f"L{L:02d}.gate_bias"] = ("f32",
+                                                  block.b.ffn.gate.bias.float().clone())
         del block
         print(f"    prefill layer {L:2d}  {n_used:3d} experts  "
               f"{time.perf_counter() - t0:5.1f}s  |h| {h.float().norm().item():.4e}",
@@ -1463,10 +1476,15 @@ def level3_end_to_end(args: argparse.Namespace) -> int:
         for L in range(margs.n_layers):
             block = dsref.make_block(ref, margs, L, layout_e, store, args.l3_engram_threads)
             _l2_load_attn_state(block, kv_state[L])
+            gcap: dict = {}
             h, pre_mix, _n, _idx = _l3_run_layer(dsref, store, margs, layout_e, L, block,
-                                                 h, pre_mix, hashes, pos)
+                                                 h, pre_mix, hashes, pos, capture=gcap)
             kv_state[L] = _l2_save_attn_state(block)
             step_tensors.update(_l3_kv_tensors(cap, L, margs.window_size))
+            step_tensors[f"L{L:02d}.ffn_in"] = ("bf16", gcap["ffn_in"].contiguous())
+            step_tensors[f"L{L:02d}.gate_scores"] = ("f32", gcap["gate_scores"].contiguous())
+            step_tensors[f"L{L:02d}.gate_ids"] = ("i32", gcap["gate_ids"].contiguous())
+            step_tensors[f"L{L:02d}.gate_weights"] = ("f32", gcap["gate_weights"].contiguous())
             del block
         logits, normed = _l3_collapse_and_head(h, pre_mix, norm_w, head_w, margs.norm_eps)
         nxt = int(logits.argmax().item())

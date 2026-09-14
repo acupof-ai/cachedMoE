@@ -194,7 +194,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
                                          c.rope_theta, c.compress_rope_theta,
                                          c.rope_scaling.original_max_position,
                                          c.rope_scaling.factor);
-    const std::vector<float> tab = rope_table(rc, st.position);
+    const std::vector<float>& tab = rope_cached(rc, st.position);
     std::memcpy(b.rope.host, tab.data(), tab.size() * sizeof(float));
 
     // Attention half: the stream arrives in `x`, hc_post folds in whatever the
@@ -222,10 +222,16 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     // Closing hc_post: the MoE output into the stream. In the token loop this
     // is the next layer's MhcPost instead (design §7.7); it is bound here so a
     // single layer can be run and compared on its own.
-    bind_mhc(*runner_, gpu::AttnStage::MhcClose, gpu::AttnStage::MhcClose,
-             gpu::AttnStage::MhcClose, b,
-             w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
-             b.mix_a, b.mix_b, moe_view(), b.x, b.xout);
+    //
+    // Skipped when the caller has ALREADY recorded a close for the previous
+    // layer into the buffer this layer's attention joins: a stage owns one
+    // slice of the address table, read when the buffer runs, so rebinding it
+    // here would hand that close this layer's hc_ffn weights.
+    if (st.bind_close)
+        bind_mhc(*runner_, gpu::AttnStage::MhcClose, gpu::AttnStage::MhcClose,
+                 gpu::AttnStage::MhcClose, b,
+                 w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
+                 b.mix_a, b.mix_b, moe_view(), b.x, b.xout);
 
     uint64_t* qa = runner_->slots(gpu::AttnStage::WqA);
     qa[gpu::slot::kGemvW] = w.wq_a;
@@ -311,7 +317,7 @@ Result<void> DecodeLayer::bind_ced(const LayerWeights& w, const LayerStep& st,
     {
         const uint32_t ratio = st.compress_ratio ? st.compress_ratio : 1u;
         const uint32_t lat_pos = st.position + 1 - ratio;
-        const std::vector<float> tab = rope_table(rc, lat_pos);
+        const std::vector<float>& tab = rope_cached(rc, lat_pos);
         std::memcpy(b.rope_lat.host, tab.data(), tab.size() * sizeof(float));
     }
 
@@ -473,6 +479,27 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
                       runner_->gemv_groups(gpu::AttnStage::GateScore, c.n_routed_experts)); !r)
         return r;
     return step(gpu::AttnStage::GateTopK, &gp, sizeof gp, 1);
+}
+
+// A decode step needs at most three distinct tables -- window-only layers at
+// the position, compressed layers at the position, and a ratio-2 latent one
+// position back -- but forty-odd `bind` calls asked for one each, and each is
+// a vector allocation plus 32 pow/cos/sin. Four entries, replaced round-robin.
+const std::vector<float>& DecodeLayer::rope_cached(const RopeConfig& rc, uint32_t position) {
+    for (const RopeEntry& e : rope_cache_)
+        if (e.valid && e.position == position && e.base == rc.base &&
+            e.original_seq_len == rc.original_seq_len && e.factor == rc.factor &&
+            e.dim == rc.rope_head_dim)
+            return e.table;
+    RopeEntry& e = rope_cache_[rope_next_++ % rope_cache_.size()];
+    e.valid = true;
+    e.position = position;
+    e.base = rc.base;
+    e.original_seq_len = rc.original_seq_len;
+    e.factor = rc.factor;
+    e.dim = rc.rope_head_dim;
+    e.table = rope_table(rc, position);
+    return e.table;
 }
 
 Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& st) {

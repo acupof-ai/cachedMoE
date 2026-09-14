@@ -33,6 +33,7 @@
 // and the KV store, and records from the single GPU submit thread.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -131,6 +132,8 @@ struct LayerStep {
     uint32_t position = 0;       // absolute token position; the ring slot is position % window
     uint32_t compress_ratio = 2; // picks the RoPE base and whether YaRN is on (§2.1)
     bool     apply_hc_post = true;   // false only for the very first sublayer of a sequence
+    // Whether `bind` writes the MhcClose slice. See `bind`.
+    bool     bind_close = true;
     KvLayerView kv{};
 
     // --- design §7.4, decided by the Engine and not by this layer -----------
@@ -231,6 +234,15 @@ public:
 private:
     Result<void> submit(gpu::CommandBuffer& cmd);
     Result<void> bind_ced(const LayerWeights& w, const LayerStep& s, const RopeConfig& rc);
+    const std::vector<float>& rope_cached(const RopeConfig& rc, uint32_t position);
+    struct RopeEntry {
+        bool     valid = false;
+        uint32_t position = 0, original_seq_len = 0, dim = 0;
+        double   base = 0.0, factor = 0.0;
+        std::vector<float> table;
+    };
+    std::array<RopeEntry, 4> rope_cache_{};
+    uint32_t                 rope_next_ = 0;
     // `scratch().moe_y` with its address replaced by wherever the MoE output
     // actually is -- the only field of it hc_post reads.
     gpu::GpuScratch::View moe_view() const {

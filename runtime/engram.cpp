@@ -177,8 +177,14 @@ Result<void> EngramRunner::create(gpu::Device& device, gpu::MemoryAllocator& all
     const uint64_t kv_bytes  = uint64_t(cfg.hidden_size) * (cfg.hc_mult + 1) * sizeof(float);
     uint64_t off = 0;
     auto place = [&](uint64_t n) { const uint64_t at = align_up(off, 256); off = at + n; return at; };
-    off_val_ = place(val_bytes);
-    off_sc_  = place(sc_bytes);
+    planes_.clear();
+    for (const EngramTables::LayerTable& lt : tables_.layers) {
+        Planes pl;
+        pl.layer   = lt.layer;
+        pl.off_val = place(val_bytes);
+        pl.off_sc  = place(sc_bytes);
+        planes_.push_back(pl);
+    }
     off_kv_  = place(kv_bytes);
 
     auto b = alloc.allocate(off, /*host_visible=*/true, /*device_address=*/true);
@@ -204,7 +210,7 @@ void EngramRunner::destroy() {
     pool_.destroy();
     cmd_ = gpu::CommandBuffer{};
     device_ = nullptr;
-    fetched_layer_ = 0xFFFFFFFFu;
+    planes_.clear();
     if (staging_.ptr) gpu::free_host_pages(staging_);
     staging_ = gpu::HostAllocInfo{};
     if (alloc_ && buf_.valid()) alloc_->free(buf_);
@@ -226,7 +232,19 @@ Result<EngramRunner::LayerBind> EngramRunner::bind_layer(uint32_t layer) const {
     return LayerBind{(*w)->data, (*w)->scale, (*q)->data, (*k)->data};
 }
 
-Result<void> EngramRunner::fetch_rows(uint32_t layer, const uint64_t* rows) {
+EngramRunner::Planes* EngramRunner::planes_for(uint32_t layer) {
+    for (Planes& p : planes_)
+        if (p.layer == layer) return &p;
+    return nullptr;
+}
+
+bool EngramRunner::fetched(uint32_t layer, uint64_t position) const {
+    for (const Planes& p : planes_)
+        if (p.layer == layer) return p.fetched_position == position;
+    return false;
+}
+
+Result<void> EngramRunner::fetch_rows(uint32_t layer, const uint64_t* rows, const Planes& dst) {
     auto* base = static_cast<std::byte*>(staging_.ptr);
     std::vector<std::future<storage::IoResult>> pending;
     struct Landing { uint32_t slot; uint32_t skew; bool is_scale; uint32_t row; };
@@ -271,8 +289,13 @@ Result<void> EngramRunner::fetch_rows(uint32_t layer, const uint64_t* rows) {
                                     res.status.message));
     }
 
-    auto* vals = static_cast<std::byte*>(buf_.host_ptr) + off_val_;
-    auto* scs  = static_cast<std::byte*>(buf_.host_ptr) + off_sc_;
+    // Gathered into ordinary host memory first and written to the mapping in
+    // one memcpy per plane: 24 scattered writes of 256 and 8 bytes each would
+    // be the write-combining pattern docs/p2_decode.md §3.3 warns about.
+    std::vector<std::byte> vals_h(size_t(layout::kEngramRowsPerToken) * layout::kEngramValueRowBytes);
+    std::vector<std::byte> scs_h(size_t(layout::kEngramRowsPerToken) * layout::kEngramScaleRowBytes);
+    auto* vals = vals_h.data();
+    auto* scs  = scs_h.data();
     for (const Landing& l : landings) {
         const std::byte* src = base + uint64_t(l.slot) * kStagingPerRead + l.skew;
         if (l.is_scale)
@@ -282,6 +305,8 @@ Result<void> EngramRunner::fetch_rows(uint32_t layer, const uint64_t* rows) {
             std::memcpy(vals + uint64_t(l.row) * layout::kEngramValueRowBytes, src,
                         layout::kEngramValueRowBytes);
     }
+    std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + dst.off_val, vals_h.data(), vals_h.size());
+    std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + dst.off_sc, scs_h.data(), scs_h.size());
     rows_fetched_ += layout::kEngramRowsPerToken;
     bytes_read_   += submitted;
     return {};
@@ -298,22 +323,25 @@ Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> histo
         // bucket of design 13.1 rather than to AttnMisc -- the dispatches
         // are the AttnMisc half.
         ScopedPhaseIf phase(profiler, Phase::NvmeStall);
-        if (auto r = fetch_rows(layer, rows); !r) return r;
+        Planes* pl = planes_for(layer);
+        if (!pl) return fail(Err::InvalidArgument, std::format("layer {} has no engram", layer));
+        pl->fetched_position = ~0ull;
+        if (auto r = fetch_rows(layer, rows, *pl); !r) return r;
+        pl->fetched_position = position;
     }
     // The bytes themselves are counted by IoEngine::finish, like every other
     // read; noting them here as well counted every engram byte twice.
     (void)before;
-    fetched_layer_ = layer;
     return {};
 }
 
 Result<void> EngramRunner::record(gpu::CommandBuffer& cmd, uint32_t layer, DeviceAddress x_in,
                                   DeviceAddress x_out) {
     if (!runner_) return fail(Err::FailedPrecondition, "engram runner is not created");
-    if (fetched_layer_ != layer)
+    const Planes* pl = planes_for(layer);
+    if (!pl || pl->fetched_position == ~0ull)
         return fail(Err::FailedPrecondition,
-                    std::format("engram layer {} recorded, but the staged rows belong to "
-                                "layer {}", layer, fetched_layer_));
+                    std::format("engram layer {} recorded before its rows were fetched", layer));
     auto bound = bind_layer(layer);
     if (!bound) return std::unexpected(bound.error());
 
@@ -323,8 +351,8 @@ Result<void> EngramRunner::record(gpu::CommandBuffer& cmd, uint32_t layer, Devic
     const uint32_t rowsn = dim * (hc + 1);
 
     uint64_t* g = runner_->slots(gpu::DecodeStage::EngramGemv);
-    g[gpu::dslot::kRowVal] = buf_.dev_addr + off_val_;
-    g[gpu::dslot::kRowSc]  = buf_.dev_addr + off_sc_;
+    g[gpu::dslot::kRowVal] = buf_.dev_addr + pl->off_val;
+    g[gpu::dslot::kRowSc]  = buf_.dev_addr + pl->off_sc;
     g[gpu::dslot::kW]      = bound->w;
     g[gpu::dslot::kS]      = bound->s;
     g[gpu::dslot::kKv]     = buf_.dev_addr + off_kv_;

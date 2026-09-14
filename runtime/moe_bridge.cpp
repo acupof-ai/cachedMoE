@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <immintrin.h>
@@ -120,6 +121,10 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     spec.rows_per_lane = bc.rows_per_lane;
     spec.x_mode        = bc.x_mode;
     spec.h_quant       = bc.h_quant;
+    // An experiment knob, not a setting: docs/p2_decode.md §8.2 uses it to
+    // A/B the h quantisation's placement for bit-reproducibility.
+    if (const char* e = std::getenv("DEEPMOE_MOE_HQUANT"); e && *e)
+        spec.h_quant = static_cast<uint32_t>(std::atoi(e));
     spec.fp8_slots     = 1;          // slot 6 is the fp8 shared expert
 
     // One row of table: MoeDims::layer is fixed when a runner is created and

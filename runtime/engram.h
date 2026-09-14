@@ -120,6 +120,8 @@ public:
     // same layer consumes.
     Result<void> fetch(uint32_t layer, std::span<const uint32_t> history, uint64_t position,
                        Profiler* profiler = nullptr);
+    // Whether `layer`'s staged rows are the ones for `position`.
+    bool fetched(uint32_t layer, uint64_t position) const;
     Result<void> record(gpu::CommandBuffer& cmd, uint32_t layer, DeviceAddress x_in,
                         DeviceAddress x_out);
 
@@ -131,7 +133,6 @@ public:
 private:
     struct LayerBind { DeviceAddress w = 0, s = 0, qw = 0, kw = 0; };
     Result<LayerBind> bind_layer(uint32_t layer) const;
-    Result<void>      fetch_rows(uint32_t layer, const uint64_t* rows);
 
     gpu::MemoryAllocator* alloc_   = nullptr;
     gpu::DecodeRunner*    runner_  = nullptr;
@@ -143,10 +144,20 @@ private:
     EngramTables          tables_{};
 
     gpu::GpuBuffer        buf_{};        // rowval | rowsc | kv, all device-addressable
-    uint64_t              off_val_ = 0, off_sc_ = 0, off_kv_ = 0;
+    uint64_t              off_kv_ = 0;
+    // One pair of row planes PER engram layer, so both layers' rows can be
+    // fetched at the start of a token (design §9.5: the addresses are known
+    // the instant the token is) and consumed whenever the layer is reached.
+    struct Planes {
+        uint32_t layer = 0xFFFFFFFFu;
+        uint64_t off_val = 0, off_sc = 0;
+        uint64_t fetched_position = ~0ull;   // what the staged rows are for
+    };
+    std::vector<Planes>   planes_;
+    Planes*               planes_for(uint32_t layer);
+    Result<void>          fetch_rows(uint32_t layer, const uint64_t* rows, const Planes& dst);
     gpu::HostAllocInfo    staging_{};    // 4 KiB-aligned landing zone for the I/O
     uint64_t              rows_fetched_ = 0, bytes_read_ = 0;
-    uint32_t              fetched_layer_ = 0xFFFFFFFFu;
     // `run`'s own command buffer, acquired once: DecodeRunner::dispatch_now
     // allocates one per call and never frees it.
     gpu::CommandPool      pool_;
