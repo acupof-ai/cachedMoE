@@ -42,8 +42,33 @@ std::vector<uint32_t> uint_array(const JsonValue& doc, std::string_view key) {
 
 }  // namespace
 
+// Widens `count` elements of `dtype` at `p` into `t`.
+static Result<void> decode_tensor(StateTensor& t, const uint8_t* p) {
+    const uint64_t count = t.elements();
+    if (t.dtype == "f32") {
+        t.f.resize(static_cast<size_t>(count));
+        std::memcpy(t.f.data(), p, static_cast<size_t>(count) * 4);
+    } else if (t.dtype == "bf16") {
+        t.f.resize(static_cast<size_t>(count));
+        for (uint64_t i = 0; i < count; ++i) {
+            uint16_t h;
+            std::memcpy(&h, p + i * 2, 2);
+            t.f[static_cast<size_t>(i)] = bf16_to_f32(h);
+        }
+    } else if (t.dtype == "i32") {
+        t.i.resize(static_cast<size_t>(count));
+        std::memcpy(t.i.data(), p, static_cast<size_t>(count) * 4);
+        t.f.resize(static_cast<size_t>(count));
+        for (uint64_t i = 0; i < count; ++i)
+            t.f[static_cast<size_t>(i)] = static_cast<float>(t.i[static_cast<size_t>(i)]);
+    } else {
+        return fail(Err::Corrupt, std::format("unhandled L3 dtype '{}'", t.dtype));
+    }
+    return {};
+}
+
 Result<void> DecodeState::read_record(const std::string& path, const JsonValue& rec,
-                                      Record& out) {
+                                      Record& out, bool defer_cmp_kv) {
     auto blob = read_file(path);
     if (!blob) return std::unexpected(blob.error());
     const uint64_t base = static_cast<uint64_t>(rec.int_or("data_offset", 12));
@@ -62,28 +87,14 @@ Result<void> DecodeState::read_record(const std::string& path, const JsonValue& 
         const uint64_t n   = static_cast<uint64_t>(e.int_or("bytes", 0));
         if (off + n > blob->size())
             return fail(Err::Corrupt, std::format("'{}' runs past the file", path));
-        const uint8_t* p = blob->data() + off;
-        const uint64_t count = t.elements();
-        if (t.dtype == "f32") {
-            t.f.resize(static_cast<size_t>(count));
-            std::memcpy(t.f.data(), p, static_cast<size_t>(count) * 4);
-        } else if (t.dtype == "bf16") {
-            t.f.resize(static_cast<size_t>(count));
-            for (uint64_t i = 0; i < count; ++i) {
-                uint16_t h;
-                std::memcpy(&h, p + i * 2, 2);
-                t.f[static_cast<size_t>(i)] = bf16_to_f32(h);
-            }
-        } else if (t.dtype == "i32") {
-            t.i.resize(static_cast<size_t>(count));
-            std::memcpy(t.i.data(), p, static_cast<size_t>(count) * 4);
-            t.f.resize(static_cast<size_t>(count));
-            for (uint64_t i = 0; i < count; ++i)
-                t.f[static_cast<size_t>(i)] = static_cast<float>(t.i[static_cast<size_t>(i)]);
-        } else {
-            return fail(Err::Corrupt, std::format("unhandled L3 dtype '{}'", t.dtype));
+        const std::string name = e.string_or("name", "");
+        if (defer_cmp_kv && name.size() > 7 && name.compare(name.size() - 7, 7, ".cmp_kv") == 0) {
+            out.deferred.emplace(name, Deferred{path, off, n});
+            out.t.emplace(name, std::move(t));     // shape and dtype only
+            continue;
         }
-        out.t.emplace(e.string_or("name", ""), std::move(t));
+        if (auto r = decode_tensor(t, blob->data() + off); !r) return r;
+        out.t.emplace(name, std::move(t));
     }
     return {};
 }
@@ -116,7 +127,8 @@ Result<DecodeState> DecodeState::load(const std::string& dir) {
         Record rec;
         rec.name = r.string_or("step", "");
         const std::string path = dir + "/" + r.string_or("file", "");
-        if (auto ok = s.read_record(path, r, rec); !ok) return std::unexpected(ok.error());
+        if (auto ok = s.read_record(path, r, rec, !s.records_.empty()); !ok)
+            return std::unexpected(ok.error());
 
         RefLogits lg;
         if (const StateTensor* ids = [&] {
@@ -151,6 +163,11 @@ Result<DecodeState> DecodeState::load(const std::string& dir) {
             else if (name.size() > 10 && name.compare(name.size() - 10, 10, ".topk_idxs") == 0)
                 s.max_topk_ = std::max<uint32_t>(s.max_topk_,
                                                  static_cast<uint32_t>(t.elements()));
+            else if (s.records_.empty() && !t.shape.empty() &&
+                     ((name.size() > 10 && name.compare(name.size() - 10, 10, ".cmp_cache") == 0) ||
+                      (name.size() > 8 && name.compare(name.size() - 8, 8, ".index_k") == 0)))
+                s.max_prefill_rows_ = std::max<uint32_t>(s.max_prefill_rows_,
+                                                         static_cast<uint32_t>(t.shape[0]));
         }
         s.records_.push_back(std::move(rec));
         s.logits_.push_back(std::move(lg));
@@ -166,8 +183,23 @@ Result<DecodeState> DecodeState::load(const std::string& dir) {
 
 const StateTensor* DecodeState::tensor(uint32_t step, const std::string& name) const {
     if (step >= records_.size()) return nullptr;
-    auto it = records_[step].t.find(name);
-    return it == records_[step].t.end() ? nullptr : &it->second;
+    const Record& rec = records_[step];
+    auto it = rec.t.find(name);
+    if (it == rec.t.end()) return nullptr;
+    if (auto d = rec.deferred.find(name); d != rec.deferred.end()) {
+        std::FILE* f = std::fopen(d->second.path.c_str(), "rb");
+        std::vector<uint8_t> bytes(static_cast<size_t>(d->second.bytes));
+        bool ok = f != nullptr;
+        if (ok) ok = _fseeki64(f, static_cast<int64_t>(d->second.offset), SEEK_SET) == 0 &&
+                     std::fread(bytes.data(), 1, bytes.size(), f) == bytes.size();
+        if (f) std::fclose(f);
+        if (!ok || !decode_tensor(it->second, bytes.data())) {
+            log_warn("l3 state: cannot read '{}' from '{}'", name, d->second.path);
+            return nullptr;
+        }
+        rec.deferred.erase(d);
+    }
+    return &it->second;
 }
 
 Result<void> DecodeState::seed_prefill(KvStore& kv) const {

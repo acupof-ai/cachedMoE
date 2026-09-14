@@ -113,19 +113,35 @@ public:
     // KvStoreConfig has to be sized for.
     uint32_t max_compressed() const { return max_cmp_; }
     uint32_t max_topk()       const { return max_topk_; }
+    // Rows of the prefill record's compressed-KV and index-key BUFFERS, which
+    // the reference allocates at max_seq_len // ratio and `seed_prefill` hands
+    // the store whole: 4,149 at 4K and 17,026 at 17K, above `max_compressed()`.
+    // Size KvStoreConfig::max_context from the larger of the two.
+    uint32_t max_prefill_rows() const { return max_prefill_rows_; }
 
 private:
+    // A per-step `Lnn.cmp_kv` is the compressed plane a layer's sparse_attn saw
+    // that step -- [T][512] for every one of 38 layers, de-duplicated by offset
+    // in the file but not once widened to fp32: 1 GB a step at 17K, 8 GB for an
+    // export. Only the loaded-CED path (`seed_step`) and a test that compares
+    // against them ever read one, so they are decoded on first `tensor()` and
+    // kept; loading an export reads only their shapes.
+    struct Deferred {
+        std::string path;
+        uint64_t    offset = 0, bytes = 0;
+    };
     struct Record {
         std::string name;
-        std::map<std::string, StateTensor, std::less<>> t;
+        mutable std::map<std::string, StateTensor, std::less<>> t;
+        mutable std::map<std::string, Deferred, std::less<>>    deferred;
     };
     Result<void> read_record(const std::string& path, const JsonValue& rec,
-                             Record& out);
+                             Record& out, bool defer_cmp_kv);
 
     std::string dir_;
     uint32_t prefill_len_ = 0, decode_pos_ = 0, steps_ = 0;
     uint32_t layers_ = 0, window_ = 128, head_dim_ = 512;
-    uint32_t max_cmp_ = 0, max_topk_ = 0;
+    uint32_t max_cmp_ = 0, max_topk_ = 0, max_prefill_rows_ = 0;
     std::vector<uint32_t> prompt_ids_, greedy_;
     std::vector<Record>    records_;    // [0] prefill, [1 + s] step s
     std::vector<RefLogits> logits_;
