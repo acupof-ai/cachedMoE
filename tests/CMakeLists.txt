@@ -13,7 +13,8 @@ add_executable(deepmoe_tests
     test_gpu_moe.cpp
     test_gpu_attn.cpp
     test_gpu_layer.cpp
-    test_decode.cpp)
+    test_decode.cpp
+    test_gpu_dspark.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -79,3 +80,17 @@ foreach(_t deepmoe_tests align layout types json profiler status bytes
         set_tests_properties("suite.${_t}" PROPERTIES LABELS "unit")
     endif()
 endforeach()
+
+# The design §7.12 DSpark draft kernels against tools/oracle_dspark.py's golden
+# draft cycle. Needs the ~2 GB of mtp + head weights and tests/data/dspark.
+add_test(NAME "suite.gpu_dspark" COMMAND deepmoe_tests "gpu_dspark.")
+set_tests_properties("suite.gpu_dspark" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_dspark")
+
+# design §7.12 / §10.1: T_draft and bandwidth of one draft cycle. Registered
+# here rather than in the top-level CMakeLists.txt so the DSpark track touches
+# only its own lines; it builds with the tests.
+add_executable(dspark_bench "${CMAKE_SOURCE_DIR}/bench/dspark_bench.cpp")
+target_link_libraries(dspark_bench PRIVATE deepmoe_core)
+add_dependencies(dspark_bench shaders)
