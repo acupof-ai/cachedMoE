@@ -376,6 +376,7 @@ public:
     // bf16, into `engram_x()` ([n][6144] f32). Reads 48 x n rows off NVMe.
     Result<void> op_engram_rows(uint32_t L, std::span<const uint32_t> prompt);
     uint64_t engram_x() const { return b_.eng_x.dev_addr; }
+    const float* engram_x_host() const { return static_cast<const float*>(b_.eng_x.host_ptr); }
     // The MoE of layer L over `rows` rows of x (f32 [rows][dim], the FFN
     // input): the activation round trip, the shared expert and/or the routed
     // experts of `ids`/`wts` ([rows][6]) streamed expert-major, accumulated into

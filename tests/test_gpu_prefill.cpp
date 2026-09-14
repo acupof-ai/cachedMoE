@@ -1096,3 +1096,130 @@ DEEPMOE_TEST(gpu_prefill, longctx) {
                     matched, ds->steps());
     if (!from_ref) std::filesystem::remove_all(tmp);
 }
+
+// gpu_prefill.engram_repeat
+// -------------------------
+// Determinism of the engram row reads at long context: the rows of layers 1
+// and 14 for a Track M prompt (DEEPMOE_PF_LONGCTX), read three times, must be
+// byte-identical. Guards the host staging and the IoEngine under load.
+DEEPMOE_TEST(gpu_prefill, engram_repeat) {
+    const char* dir_env = std::getenv("DEEPMOE_PF_LONGCTX");
+    if (!dir_env) {
+        std::printf("      SKIP gpu_prefill.engram_repeat: set DEEPMOE_PF_LONGCTX=traces/longctx/ctx4k\n");
+        return;
+    }
+    if (skip_without_model("gpu_prefill")) return;
+    const std::vector<uint32_t> prompt = prompt_ids(dir_env);
+    const uint32_t N = static_cast<uint32_t>(prompt.size());
+    REQUIRE(N > 0);
+    gpu::PrefillConfig pc;
+    pc.max_tokens = N;
+    pc.transit_slots = 1;
+    Rig rig;
+    if (!rig.up({1, 14}, pc)) {
+        std::printf("      SKIP gpu_prefill: %s\n", rig.why.c_str());
+        return;
+    }
+    gpu::Prefill& P = rig.prefill;
+    const size_t bytes = size_t(N) * 6144 * sizeof(float);
+    for (uint32_t L : {1u, 14u}) {
+        std::vector<float> first;
+        uint32_t differing_runs = 0;
+        for (uint32_t rep = 0; rep < 3; ++rep) {
+            REQUIRE_OK(P.op_engram_rows(L, prompt));
+            auto view = P.engram_x_host();
+            std::vector<float> cur(view, view + bytes / sizeof(float));
+            if (rep == 0) { first = std::move(cur); continue; }
+            uint64_t diff_rows = 0;
+            for (uint32_t p = 0; p < N; ++p)
+                diff_rows += std::memcmp(first.data() + size_t(p) * 6144, cur.data() + size_t(p) * 6144,
+                                         6144 * sizeof(float)) != 0;
+            std::printf("    L%u read %u vs read 0: %llu / %u positions differ\n", L, rep,
+                        (unsigned long long)diff_rows, N);
+            differing_runs += diff_rows != 0;
+        }
+        CHECK_EQ(differing_runs, 0u);
+    }
+}
+
+// gpu_prefill.repeat
+// ------------------
+// Run-to-run determinism of a whole prefill: the same prompt twice in one
+// process (DEEPMOE_PF_LONGCTX's, first DEEPMOE_PF_TRUNCATE tokens if set,
+// DEEPMOE_PF_REPLAY rows), every layer's stage outputs hashed; prints the first
+// (layer, stage) whose bytes differ.
+DEEPMOE_TEST(gpu_prefill, repeat) {
+    const char* dir_env = std::getenv("DEEPMOE_PF_LONGCTX");
+    if (!dir_env || !std::getenv("DEEPMOE_PF_REPEAT")) {
+        std::printf("      SKIP gpu_prefill.repeat: set DEEPMOE_PF_LONGCTX and DEEPMOE_PF_REPEAT=1\n");
+        return;
+    }
+    if (skip_without_model("gpu_prefill")) return;
+    std::vector<uint32_t> prompt = prompt_ids(dir_env);
+    if (const char* t = std::getenv("DEEPMOE_PF_TRUNCATE"))
+        if (uint32_t n = static_cast<uint32_t>(std::atoi(t)); n && n < prompt.size()) prompt.resize(n);
+    const uint32_t N = static_cast<uint32_t>(prompt.size());
+    REQUIRE(N > 0);
+    gpu::PrefillConfig pc;
+    pc.max_tokens = N;
+    pc.replay = std::getenv("DEEPMOE_PF_REPLAY") ? static_cast<uint32_t>(std::atoi(std::getenv("DEEPMOE_PF_REPLAY"))) : N;
+    if (pc.replay == 0) pc.replay = N;
+    pc.probe_layers = true;
+    apply_kernel_env(pc);
+    std::vector<uint32_t> layers(40);
+    for (uint32_t L = 0; L < 40; ++L) layers[L] = L;
+    Rig rig;
+    if (!rig.up(layers, pc)) {
+        std::printf("      SKIP gpu_prefill: %s\n", rig.why.c_str());
+        return;
+    }
+    // four independent 64-bit lanes over whole words (the tensors are float /
+    // uint32 arrays, so `bytes` is a multiple of 4); fast enough for 1 GB a layer
+    auto fnv = [](const void* p, size_t bytes) {
+        uint64_t h[4] = {1469598103934665603ull, 7ull, 11ull, 13ull};
+        const auto* b = static_cast<const uint8_t*>(p);
+        size_t i = 0;
+        for (; i + 32 <= bytes; i += 32)
+            for (uint32_t l = 0; l < 4; ++l) {
+                uint64_t w;
+                std::memcpy(&w, b + i + l * 8, 8);
+                h[l] = (h[l] ^ w) * 1099511628211ull;
+            }
+        for (; i < bytes; ++i) h[0] = (h[0] ^ b[i]) * 1099511628211ull;
+        return h[0] ^ (h[1] << 1) ^ (h[2] << 2) ^ (h[3] << 3);
+    };
+    static const char* const kStages[] = {"block_in", "attn_norm_out", "kv", "cmp_cache", "attn_out",
+                                          "attn_block_out", "ffn_norm_out", "gate_ids", "moe_out", "block_out"};
+    std::vector<std::vector<uint64_t>> runs[2];
+    for (uint32_t run = 0; run < 2; ++run) {
+        runs[run].assign(40, std::vector<uint64_t>(10, 0));
+        rig.prefill.probe = [&](const gpu::PrefillProbe& pv) {
+            auto& h = runs[run][pv.layer];
+            h[0] = fnv(pv.block_in, size_t(pv.rows) * kHc * kDim * 4);
+            h[1] = fnv(pv.attn_norm_out, size_t(pv.front_rows) * kDim * 4);
+            h[2] = fnv(pv.kv, size_t(pv.attn_rows) * kHd * 4);
+            h[3] = pv.cmp_cache ? fnv(pv.cmp_cache, size_t(pv.n_cmp) * kHd * 4) : 0;
+            h[4] = fnv(pv.attn_out, size_t(pv.attn_rows) * kDim * 4);
+            h[5] = fnv(pv.attn_block_out, size_t(pv.attn_rows) * kHc * kDim * 4);
+            h[6] = fnv(pv.ffn_norm_out, size_t(pv.attn_rows) * kDim * 4);
+            h[7] = fnv(pv.gate_ids, size_t(pv.attn_rows) * 6 * 4);
+            h[8] = fnv(pv.moe_out, size_t(pv.attn_rows) * kDim * 4);
+            h[9] = fnv(pv.block_out, size_t(pv.attn_rows) * kHc * kDim * 4);
+        };
+        auto out = rig.prefill.run(prompt);
+        REQUIRE_OK(out);
+        std::printf("    run %u: %.1f s, first token %u, margin %.4f, %u experts\n", run,
+                    rig.prefill.times().total / 1e3, out->first_token, out->top1 - out->top2,
+                    rig.prefill.times().experts_read);
+    }
+    bool same = true;
+    for (uint32_t L = 0; L < 40 && same; ++L)
+        for (uint32_t s = 0; s < 10; ++s)
+            if (runs[0][L][s] != runs[1][L][s]) {
+                std::printf("    first difference: layer %u, %s\n", L, kStages[s]);
+                same = false;
+                break;
+            }
+    if (same) std::printf("    the two runs are byte-identical at every probed stage of every layer\n");
+    CHECK(same);
+}

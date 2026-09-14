@@ -1343,8 +1343,14 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
             }
         }
         std::memcpy(b_.idx.host_ptr, idx_host.data(), idx_host.size() * sizeof(int32_t));
-        if (b0 + nb == A)
-            out.layers[L].topk_last.assign(idx_host.end() - n_idx, idx_host.end());
+        if (b0 + nb == A) {
+            // in the reference's numbering: window = absolute positions,
+            // compressed = row + N (identical to ours in oracle mode)
+            std::vector<int32_t>& tl = out.layers[L].topk_last;
+            tl.assign(idx_host.end() - n_idx, idx_host.end());
+            for (uint32_t i = 0; i < n_idx; ++i)
+                if (tl[i] >= 0) tl[i] = i < nw ? tl[i] + int32_t(apos0) : tl[i] - int32_t(A) + int32_t(N);
+        }
         if (b0 == 0) {
             probe_idx_ = idx_host;
             pv.topk_first = probe_idx_.data();
