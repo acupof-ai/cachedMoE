@@ -108,9 +108,19 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 .\build\bw_matrix.exe --cpu-size-gb 4 --size-gb 1 --repeats 3
 
 # P2 的 MoE kernel sweep（261 行：M 扫描 × XMode × HQuant × fp8 shared expert × 分组 dispatch）
-#   → design §7.9.2、docs/kernel_p2_moe.md
+#   → design §7.9.2、docs/kernel_p2_moe.md v0.1
 .\build\kernel_bench.exe --csv bench\results\kernel_p2_moe.csv `
     --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+
+# P2 step 2 的那一轮（336 行：加上 HQuant=3、XMode=6、轮转测量的分组 dispatch）
+#   同一条命令，因为 step 2 的变体是加上去的 → design §7.9.3、docs/kernel_p2_moe.md v0.2
+.\build\kernel_bench.exe --csv bench\results\kernel_p2b_moe.csv `
+    --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+
+# 只重测一节。一整轮 25 分钟，足够让芯片热几度（见下面的量测纪律）
+.\build\kernel_bench.exe --only "h fp8"  --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+.\build\kernel_bench.exe --only "int8 x" --iters 48 --layer-cycle 8 --repeats 3 --sweeps 2
+.\build\kernel_bench.exe --only none     --iters 48 --layer-cycle 8 --repeats 3  # 只剩分组 dispatch 那一节
 
 # P1 的旋钮 sweep（解码方式 / lane 数 / wave 宽度，60 变体）+ dispatch 开销 → design §7.9.1、§3.4
 .\build\kernel_bench.exe --p1 --csv bench\results\kernel_p1.csv `
@@ -133,8 +143,9 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 | `nvme_q6_q7.csv` | design §9.2.1 |
 | `bw_matrix.csv` | design §8.0 / §3.3 |
 | `kernel_p1.csv`、`kernel_p1_path{a,b}.csv` | design §7.9.1、[kernel_p1.md](kernel_p1.md) |
-| `kernel_p2_moe.csv` | design §7.9.2、[kernel_p2_moe.md](kernel_p2_moe.md) |
-| `attn_p2.csv` | design §7.15.2、[p2_attention.md](p2_attention.md) |
+| `kernel_p2_moe.csv` | design §7.9.2、[kernel_p2_moe.md](kernel_p2_moe.md) v0.1（step 1） |
+| `kernel_p2b_moe.csv` | design §7.9.3、[kernel_p2_moe.md](kernel_p2_moe.md) v0.2（step 2）。**不要和上一行比绝对值** |
+| `attn_p2.csv` | design §7.15.2 / §7.15.5、[p2_attention.md](p2_attention.md) |
 | `heap_capacity.csv` | design §9.2.2 第一轮（4 GiB pagefile，历史） |
 | `heap_capacity_idle.csv` | design §5.2 / §9.2.2 第二轮（96 GiB pagefile，**这是当前的那一份**） |
 | `heap_capacity_pagefile128.csv` | 同上设置但**有并发污染**，作为量测卫生的反面教材保留 |
@@ -159,6 +170,17 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 - **跨轮只比同轮内的相对值。** P2 那一轮的 run 间漂移是 **~7%**（P1 记的是 1.5%），
   同一轮不同小节之间也有 8%（[kernel_p2_moe.md](kernel_p2_moe.md) §2）。
   **CI 上的 kernel 带宽回归必须做同轮对照，不能比绝对值。**
+- **要量 1–5% 的差，对照必须和被测量的东西轮转着测**（v0.8 新增，
+  [kernel_p2_moe.md](kernel_p2_moe.md) §11、design §7.9.3 (c)）。
+  "同一节内"还不够：**顺序测量里后跑的那个系统性地更热**。
+  design v0.7 有一整条结论（"拆分 dispatch 每层 +0.193 ms，比启动开销大 340 倍"）
+  就是这么来的——`whole` / `first` / `rest` 隔着几秒钟依次跑，而要量的差只有 1–3%。
+  `bench/kernel_bench.cpp` 的分组 dispatch 一节现在是**九个配置轮转、各取自己的最好值**，
+  `h fp8` 与 `int8 x` 两节也各自带上了同节的不量化对照。
+- **每一节都要有一个物理自检。** 上面那条结论之所以能站住三周，是因为没有人能从数字上看出它错了。
+  轮转之后有了：**`A + B` 必须对得上 `whole`**（0.391 + 0.201 = 0.591 对 0.592）。
+  顺序测量那一节量到过 `whole 0.652 ms = A 0.520 + B 0.290`——**A + B > whole，物理上不可能**，
+  那就是三个数取自三个热状态的签名。**设计基准时先想好这个自检是什么。**
 
 带 validation layer 跑一遍（`kernel_bench` / `attn_bench` 与四个 GPU 测试 suite 当前都是干净的；
 `spirv-val --target-env vulkan1.3` 由 `add_slang_shader()` 每次编译都跑）：
@@ -276,6 +298,12 @@ uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l2 -
 # P2 需要的三个额外 golden：fp8 shared expert + 量化 h 的四个参考答案
 uv run python tools/oracle_shared.py --model D:/models/DeepSeek-V4.1-Flash `
     --shared 0 --expert 0:0 --expert 39:383 --out tests/data
+
+# L3：端到端。prefill 状态 + 八个 greedy step（约 459 s，7.1 MB → tests/data/l3/）
+uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l3 --out tests/data
+
+# compressor / indexer 需要的 L2 超集（约 305 s，2.35 MB → tests/data/l2x/）
+uv run python tools/oracle_l2_extra.py --model D:\models\DeepSeek-V4.1-Flash --out tests/data
 ```
 
 - `--level l0` 导出 FP4 E2M1 / FP8 E4M3 / UE8M0 三张解码表到 `tests/data/l0_dequant.bin`（2,132 B），
@@ -294,6 +322,30 @@ uv run python tools/oracle_shared.py --model D:/models/DeepSeek-V4.1-Flash `
   attention 权重重建 Block）。解读见 design.md §12 与 [p2_attention.md](p2_attention.md) §1。
 - `oracle_shared.py` 写出 `tests/data/l1_shared_layer0.bin` 与
   `y_ref` / `y_hq` / `y_full` / `y_hq16` 四个向量（design §7.9.2 (e)(f)）。
+  它现在**顺带打印 int8 `x` 的量化对照**（fp16 / int8 每块 / int8 每行 / int8 + fp16 残差，
+  design §7.9.3 (b)），不需要 GPU。
+- **`--level l3`（P2 step 2 新增）**导出 `tests/data/l3/`：**7.1 MB，459 s**。
+  内容是 prefill 之后每层的 window KV 环、八个 greedy step 的**逐步压缩 KV 与 indexer top-k**、
+  每步的 logits，以及 engram 的 hash 常量表（`engram_token_map.bin`，517 KB）。
+  **logits 存的是 top 64 个 (id, logit) 加上全 129,280 维的 max / log-sum-exp / min**——
+  存全部要 4.7 MB 而且没有用：design §12 L3 问的每一个问题（argmax 对不对、margin 多大、
+  排序往下还成不成立）都由分布的顶部回答，而那三个整向量统计量抓得住"top-64 一致但尾巴不一致"的实现。
+  **两个索引条目可以共用同一个字节偏移**（一份压缩 KV 由它的源层发布、被它下面每个复用层逐字节读），
+  所以四十条里只有四条是不同的——去重把导出从 22 MB 压到 7.1 MB，读的一侧一分钱不花。
+  **engram 导出的是常量表，不是行 id**：hash 由 **tokenizer 与 `config.json`** 决定而不是 checkpoint，
+  在 C++ 里复现一个 PCG64 流和一个 `tokenizers` 归一化器等于第二份要永远维护对的实现；
+  `runtime/engram.h` 拿这些常量在 runtime 真正走的轨迹上算地址。
+- **一个值得知道的巧合**：模型在位置 64 的 greedy 续写正好是 prompt 自己的下一个 token（3006），
+  所以 **L2 的那个 decode step 与 L3 的 step 0 是同一次前向**——
+  `tests/data/l2` 的七个逐级层因此可以直接用在 decode 循环的 step 0 上，
+  不需要第二次导出（design §7.16.1 的逐层探针就是这么来的）。
+- `oracle_l2_extra.py` 是**另一个脚本**（`oracle.py` 属于另一条 track）：它 import `oracle.py`、
+  包住 `L2Capture.attach` 与 `_l2_collect`，写出 `index_k_all` / `index_score` /
+  `index_weights_scaled` 与 ratio-2 compressor 的 `kv_state` / `score_state` 和它们背后的
+  原始 `wkv` / `wgate` 投影。**注意两个已知的洞**：`index_score` 是**重算**的不是捕获的
+  （`Indexer.forward` 只返回 indices），公式读错会在两侧同时复现；
+  **ratio-2 的池化在位置 64 上没有参考输出**（`(64+1) % 2 != 0`，`Compressor.forward` 返回 None），
+  现在比的是一个合成完整组对 fp64 CPU 转写——**要真正验它需要一次两步的 decode 导出**（design §12）。
 
 ## 路由 trace 与 cache 模拟器（design §9.1.1）
 
@@ -333,9 +385,10 @@ ctest --test-dir build --output-on-failure
 $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'; ctest --test-dir build --output-on-failure
 
 # 只跑其中一个 suite
-ctest --test-dir build -R suite.gpu_moe   --output-on-failure   # §7.9 / §7.9.2
-ctest --test-dir build -R suite.gpu_attn  --output-on-failure   # §7.2–§7.11 逐 stage 对 L2
+ctest --test-dir build -R suite.gpu_moe   --output-on-failure   # §7.9 / §7.9.2 / §7.9.3
+ctest --test-dir build -R suite.gpu_attn  --output-on-failure   # §7.2–§7.11 逐 stage 对 L2 + §7.4
 ctest --test-dir build -R suite.gpu_layer --output-on-failure   # 整层链起来
+ctest --test-dir build -R suite.decode    --output-on-failure   # 四十层，八步，对 L3
 ```
 
 | suite | 它验的是什么 |
@@ -344,8 +397,52 @@ ctest --test-dir build -R suite.gpu_layer --output-on-failure   # 整层链起�
 | `suite.gpu_moe` | §7.9 两个 kernel 的十四个变体 + **fp8 shared expert + `h` 的 fp8 量化 + 分组 dispatch**（design §7.9.2）。需要先跑 `oracle_shared.py` |
 | `suite.gpu_attn` | §7.2–§7.11 的十二个 stage 逐个对 `tests/data/l2/`（design §7.15.1）。需要先跑 `oracle.py --level l2` |
 | `suite.gpu_layer` | 一整层 decoder 链起来，只有 block 输入与 prefill 的 KV 是 golden；**故意只给八个槽的 cache**，所以六个 expert 每层都真的从 NVMe 取回来（design §7.15.3） |
+| `suite.decode` | **四十层 + engram + head + 采样，八步，对 `tests/data/l3/`**（design §7.16.1）。需要先跑 `oracle.py --level l3` |
 
 按标签筛选：`ctest -L needs-model` 只跑需要 checkpoint 的，`ctest -LE needs-model` 完全不跑。
+
+## 跑一个 token：`deepmoe run`（design §7.16、[p2_decode.md](p2_decode.md)）
+
+```powershell
+deepmoe run --model DIR [--prompt-ids FILE] [--steps N]
+            [--state DIR] [--teacher-force] [--per-layer]
+            [--cache-gb N] [--profile FILE.jsonl] [--chunk-kb N] [--qd N]
+```
+
+```powershell
+$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
+
+# 八步，12 GiB 的 routed-expert cache，逐 token 打印 design §13.1 的分解
+.\build\deepmoe.exe run --model D:\models\DeepSeek-V4.1-Flash `
+    --prompt-ids prompt_ids.txt --steps 8 --cache-gb 12
+
+# 教师强制（每步喂参考自己的输入 token），每步的误差因此是独立可归因的
+.\build\deepmoe.exe run --model D:\models\DeepSeek-V4.1-Flash --steps 8 --teacher-force
+
+# 四十行一层的版本 + JSONL 的 profile
+.\build\deepmoe.exe run --model D:\models\DeepSeek-V4.1-Flash --steps 8 `
+    --per-layer --profile run.jsonl
+```
+
+- **`--prompt-ids` 是一个 token id 的文件**：runtime 里**还没有 tokenizer**（design §15.2 (v)）。
+  `tests/data/l3/index.json` 的 `prompt_ids` 就是一份现成的。
+- **`--state` 是 oracle 的 L3 导出**（默认 `tests/data/l3`），它提供的是**prefill 将来会提供的东西**：
+  prompt 之后每层的 window KV，以及每步的压缩 KV 与 indexer top-k（design §7.4）。
+  **`Engine::status()` 每次运行都打印 `state LOADED from …` 那一行**，
+  所以一份 transcript 不可能被误当成自足的。
+- **`--cache-gb 0`（默认）按机器算 cache 大小。** 注意八步是**正确性 harness 不是 cache 基准**：
+  `--cache-gb 48` 的命中率（0.349）不比 12 GiB 好，因为相邻 token 只共享约一半的 routed expert，
+  八个 token 长的运行到不了稳态（design §7.16.3）。命中率在 `tools/cache_sim.py` 里量。
+- **`--profile` 写 design §13.1 的记录，一个 token 一行。** 其中 **`hot_bytes` 是 8.52 GB**，
+  按层从 manifest 加出来，对 design §2.3 吻合到三位有效数字。
+  **但 `nvme_util` 和 `nvme_gbps` 现在是错的**（前者会大于 1）：`IoEngine` 的忙碌计数器
+  把每个 chunk 自己的延迟相加而不是取并集，队列深度是 8。**在它修好之前读 `effective_gbps`。**
+- **`--per-layer` 打四十行**，这才是 design §13.1 真正想要的粒度——
+  一层 stall 了 200 ms、或者层 1 和 14 的 engram 花了多少，在聚合里是看不见的。
+  一个冷层长这样：`engram 0.00  attn 1.10  stall 32.4  moe 2.51 (gpu 1.36 host 0.67)  0/6  112.9 MB`。
+- **量测纪律**：热步的数字（design §7.16.2 的 134 ms）要在空闲机上取，而且要在一次探针 pass
+  **之后**——否则量到的是 NVMe。上面那份八步 transcript 里 submit 的往返在同一个二进制的
+  不同次运行之间在 0.13–0.75 ms 之间动，**所以读分解的形状，不要读第三位数字**。
 
 ## Windows 虚拟内存（pagefile）：**已在开发机上做完**
 
