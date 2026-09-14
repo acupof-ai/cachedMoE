@@ -28,6 +28,8 @@
 
 static const uint kW = 0, kS = 1, kX = 2, kNormW = 3, kRope = 4;
 static const uint kKvRaw = 5, kScratch = 6, kKvVal = 7, kKvScale = 8, kKv = 9;
+// The fp32 partial plane gemv_ksplit.slang's stage 0 writes, read by stage 2.
+static const uint kPart = 10;
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
 
@@ -39,12 +41,14 @@ struct WkvPush {
     uint  slot;         // ring slot = start_pos % window_size
     uint  n_wg0;        // workgroups stage 0 used
     float norm_eps;     // 1e-20
+    uint  part_stride;  // stage 2 only: floats between K-slices in kPart
 };
 [[vk::push_constant]] WkvPush pc;
 
 void stage_gemv(uint gid, uint tid) {
     fp8_table_fill(tid);
-    stage_x_fp8(Ptr[kX], pc.k, tid);
+    stage_x_fp8(Ptr[kX], pc.k, tid,
+                Ptr[kS] + (uint64_t)((gid * gemv_rows_per_wg()) >> 5) * pc.scale_cols);
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;
@@ -66,11 +70,12 @@ void stage_gemv(uint gid, uint tid) {
     if (tid == 0) *(float*)(Ptr[kScratch] + (uint64_t)gid * 4) = tot;
 }
 
-void stage_finish(uint tid) {
-    float sum = 0.0f;
-    for (uint i = 0; i < pc.n_wg0; ++i) sum += load_f32(Ptr[kScratch] + (uint64_t)i * 4);
-    const float rs = rsqrt(sum / float(pc.rows) + pc.norm_eps);
-
+// Everything after the RMS statistic: the norm, the RoPE tail, the fp8 block
+// quantisation and the ring write. Split out of `stage_finish` so the K-split
+// combine (stage 2) can reach it with an `rs` it computed itself instead of one
+// stage 0 left in scratch. Only the first `rows / 32` threads do any work, so
+// it must be called after every collective this dispatch performs.
+void finish_body(uint tid, float rs) {
     const uint blocks = pc.rows / kBlockK;          // 16
     if (tid >= blocks) return;
     const uint d0 = tid * kBlockK;
@@ -113,9 +118,41 @@ void stage_finish(uint tid) {
         (uint8_t)((asuint(sc) >> 23) & 0xFFu);
 }
 
+void stage_finish(uint tid) {
+    float sum = 0.0f;
+    for (uint i = 0; i < pc.n_wg0; ++i) sum += load_f32(Ptr[kScratch] + (uint64_t)i * 4);
+    finish_body(tid, rsqrt(sum / float(pc.rows) + pc.norm_eps));
+}
+
+// --- stage 2: the K-split combine, with the whole finish folded in ----------
+// gemv_ksplit.slang's stage 0 leaves `KSplit` fp32 partials per row; this adds
+// them, takes the RMS statistic over the result in the same dispatch, and then
+// runs the norm/RoPE/quantise/ring-write tail. So the K-split costs wkv no
+// extra dispatch at all: stages 0+1 (gemv + finish) become split + this one.
+//
+// One workgroup. 512 rows over 256 threads is two rows each, and the sum of
+// squares is the workgroup reduction `stage_finish` used to read out of the
+// scratch buffer stage 0's workgroups wrote.
+void stage_kcombine(uint tid) {
+    float sq = 0.0f;
+    for (uint r = tid; r < pc.rows; r += kWg) {
+        float y = 0.0f;
+        for (uint s = 0; s < KSplit; ++s)
+            y += load_f32(Ptr[kPart] + ((uint64_t)s * pc.part_stride + r) * 4);
+        *(float*)(Ptr[kKvRaw] + (uint64_t)r * 4) = y;
+        sq += y * y;
+    }
+    const float tot = wg_reduce(sq, tid);
+    // kv_raw went to DEVICE memory and finish_body reads rows this thread did
+    // not write, so the barrier has to cover the buffer and not only LDS.
+    AllMemoryBarrierWithGroupSync();
+    finish_body(tid, rsqrt(tot / float(pc.rows) + pc.norm_eps));
+}
+
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-    if (Stage == 0) stage_gemv(gid.x, tid);
-    else            stage_finish(tid);
+    if (Stage == 0)      stage_gemv(gid.x, tid);
+    else if (Stage == 1) stage_finish(tid);
+    else                 stage_kcombine(tid);
 }

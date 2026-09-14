@@ -77,7 +77,29 @@
 static const uint kMaxK      = DEEPMOE_GEMV_MAX_K;
 static const uint kMaxBlocks = kMaxK / kBlockK;
 
-groupshared uint  gXQ[kMaxK / 2];     // the staged activation, two bf16 per word
+// **A 32-element block is 17 words in LDS, not 16.** Sixteen would be the
+// natural packing -- two bf16 to a word -- and it puts a 16-WAY BANK CONFLICT
+// on every single read of the staged activation, which was the largest single
+// cost in wo_b and wq_b both.
+//
+// The inner loop gives lane `sublane` the blocks `sublane, sublane + 32, ...`,
+// so at a 16-word stride the 32 lanes of a row group read word `i` of blocks
+// `l` at LDS index `l * 16 + i`. LDS has 32 banks of one dword, so the bank is
+// `(16 l + i) mod 32`, which takes exactly TWO values across the 32 lanes:
+// every even lane hits bank `i` and every odd lane bank `i + 16`. Sixteen lanes
+// to a bank is sixteen LDS cycles where one would do, and `read_x_block` issues
+// this sixteen times per block.
+//
+// 17 is odd, so `17 l mod 32` is a bijection over l = 0..31 and every lane
+// lands in its own bank. The cost is one word of LDS per 32 elements -- wo_b's
+// gXQ goes from 16 KiB to 17 KiB -- and the gain is measured in
+// docs/p2_attention.md §13.
+//
+// Anything that indexes gXQ must go through `gxq_word`.
+static const uint kXStride = kBlockK / 2 + 1;          // 17
+uint gxq_word(uint blk, uint w) { return blk * kXStride + w; }
+
+groupshared uint  gXQ[kMaxBlocks * kXStride];   // staged activation, two bf16 per word
 groupshared float gXS[kMaxBlocks];    // one power-of-two scale per 32 elements
 
 // Threads that cooperate on one 32-element act_quant block, and the elements
@@ -86,7 +108,16 @@ groupshared float gXS[kMaxBlocks];    // one power-of-two scale per 32 elements
 // enough for that: K = 1280 gives 40 blocks and 4 threads each (160 of 256
 // busy instead of 40), K = 4096 gives 2, K >= 8192 gives 1 with all 256 busy
 // on one block apiece.
-static const uint kStageRaw = kWg / kMaxBlocks;
+//
+// `DEEPMOE_GEMV_STAGE_TPB_MAX` caps it, for the sweep in docs/p2_attention.md
+// §13: sharing a block costs two workgroup barriers in `stage_amax`, and a
+// K-split multiplies the number of workgroups that pay them.
+#ifndef DEEPMOE_GEMV_STAGE_TPB_MAX
+#define DEEPMOE_GEMV_STAGE_TPB_MAX 8
+#endif
+static const uint kStageRaw0 = kWg / kMaxBlocks;
+static const uint kStageRaw  = (kStageRaw0 < DEEPMOE_GEMV_STAGE_TPB_MAX)
+                             ? kStageRaw0 : DEEPMOE_GEMV_STAGE_TPB_MAX;
 static const uint kStageTPB = (kStageRaw >= 8u) ? 8u
                             : ((kStageRaw >= 4u) ? 4u
                             : ((kStageRaw >= 2u) ? 2u : 1u));
@@ -104,16 +135,39 @@ float stage_amax(float a, uint tid, uint sub) {
     return m;
 }
 
+// `DEEPMOE_GEMV_FOLD_SCALE`: fold the weight's UE8M0 scale into the staged
+// block factor, so the inner loop multiplies by one LDS float per block instead
+// of loading a scale byte and calling `ldexp` per lane per block per row.
+//
+// It is exact, not an approximation: the weight scale is 2^(e - 127) and the
+// activation scale is a power of two too, so `p * ldexp(xs, e - 127)` and
+// `ldexp(p, e - 127) * xs` are the same multiplication by one power of two.
+// It is only possible because every row a workgroup retires lies in the same
+// 32-row band of the [rows/32][K/32] scale plane -- `(256 / LanesPerRow) *
+// RowsPerLane` divides 32 at 32 lanes a row -- so one scale row per workgroup is
+// all the inner loop ever reads, and `srow` is its address (offset by the
+// slice's first block for a K-split).
+#ifndef DEEPMOE_GEMV_FOLD_SCALE
+#define DEEPMOE_GEMV_FOLD_SCALE 0
+#endif
+float fold_scale(float s, uint64_t srow, uint blk) {
+#if DEEPMOE_GEMV_FOLD_SCALE
+    return ldexp(s, (int)load_u8(srow + blk) - 127);
+#else
+    return s;
+#endif
+}
+
 // This thread's slice of one block, into LDS as bf16.
 void stage_store(uint blk, uint sub, const float v[kStageE]) {
     [unroll] for (uint i = 0; i < kStageE / 2; ++i)
-        gXQ[blk * 16 + sub * (kStageE / 2) + i] =
+        gXQ[gxq_word(blk, sub * (kStageE / 2) + i)] =
             bf16_encode(v[i * 2]) | (bf16_encode(v[i * 2 + 1]) << 16);
 }
 
 // Stage `k` activations from `xaddr` (fp32) into gXQ/gXS. Whole workgroup,
 // uniform control flow, barrier afterwards.
-void stage_x_fp8(uint64_t xaddr, uint k, uint tid) {
+void stage_x_fp8(uint64_t xaddr, uint k, uint tid, uint64_t srow) {
     const uint blocks = k / kBlockK;
     // wo_a's path: nothing to quantise, so nothing to share a block for, and
     // splitting one anyway measured 144 GB/s against 167. kStageTPB exists to
@@ -126,8 +180,9 @@ void stage_x_fp8(uint64_t xaddr, uint k, uint tid) {
                 [unroll] for (uint j = 0; j < 4; ++j) w[i * 4 + j] = asfloat(q[j]);
             }
             [unroll] for (uint i = 0; i < 16; ++i)
-                gXQ[tid * 16 + i] = bf16_encode(w[i * 2]) | (bf16_encode(w[i * 2 + 1]) << 16);
-            gXS[tid] = 1.0f;
+                gXQ[gxq_word(tid, i)] =
+                    bf16_encode(w[i * 2]) | (bf16_encode(w[i * 2 + 1]) << 16);
+            gXS[tid] = fold_scale(1.0f, srow, tid);
         }
         return;
     }
@@ -160,7 +215,7 @@ void stage_x_fp8(uint64_t xaddr, uint k, uint tid) {
         [unroll] for (uint i = 0; i < kStageE; ++i)
             v[i] = fp8_round(clamp(v[i] * inv, -kFp8MaxF, kFp8MaxF));
         stage_store(blk, sub, v);
-        if (sub == 0) gXS[blk] = s;
+        if (sub == 0) gXS[blk] = fold_scale(s, srow, blk);
     }
 }
 
@@ -168,7 +223,8 @@ void stage_x_fp8(uint64_t xaddr, uint k, uint tid) {
 // `q_norm` disappears into wq_b: the norm needs a statistic over all of x, and
 // the staging pass already has all of x in registers. `normw` is a bf16 vector.
 // All 256 threads must call this.
-void stage_x_fp8_rmsnorm(uint64_t xaddr, uint64_t normw, uint k, uint tid, float eps) {
+void stage_x_fp8_rmsnorm(uint64_t xaddr, uint64_t normw, uint k, uint tid, float eps,
+                         uint64_t srow) {
     const uint blocks = k / kBlockK;
     const uint blk = tid / kStageTPB, sub = tid % kStageTPB;
     const bool active = blk < blocks;
@@ -212,7 +268,7 @@ void stage_x_fp8_rmsnorm(uint64_t xaddr, uint64_t normw, uint k, uint tid, float
     }
     if (active) {
         stage_store(blk, sub, v);
-        if (sub == 0) gXS[blk] = s;
+        if (sub == 0) gXS[blk] = fold_scale(s, srow, blk);
     }
 }
 
@@ -220,10 +276,50 @@ void stage_x_fp8_rmsnorm(uint64_t xaddr, uint64_t normw, uint k, uint tid, float
 // rather than 32 separate indexed reads.
 void read_x_block(uint blk, out float v[32]) {
     [unroll] for (uint i = 0; i < 16; ++i) {
-        const uint w = gXQ[blk * 16 + i];
+        const uint w = gXQ[gxq_word(blk, i)];
         v[i * 2]     = bf16_decode(w & 0xFFFFu);
         v[i * 2 + 1] = bf16_decode(w >> 16);
     }
+}
+
+// One 32-element block: the weight's two 16-byte loads against the staged x.
+//
+// `DEEPMOE_GEMV_ACC` is how many accumulators the 32 multiply-adds are dealt
+// across. At 1 -- the default, and what every number before §13 was measured
+// with -- it is one chain of 32 dependent FMAs, in this exact order. At 4 each
+// of the eight byte-words' four elements feeds its own accumulator, the chain
+// is eight deep, and the four meet in a balanced tree: the same sum,
+// re-associated. wo_b walks eight of these per lane per row, so the chain is
+// the one place its latency cannot be hidden by occupancy.
+#ifndef DEEPMOE_GEMV_ACC
+#define DEEPMOE_GEMV_ACC 1
+#endif
+float block_dot(uint4 w0, uint4 w1, float x[32]) {
+#if DEEPMOE_GEMV_ACC >= 4
+    float q0 = 0.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;
+    [unroll] for (uint j = 0; j < 4; ++j) {
+        const uint sh = 8 * j;
+        q0 += fp8_tbl((w0[0] >> sh) & 0xFFu) * x[j];
+        q1 += fp8_tbl((w0[1] >> sh) & 0xFFu) * x[4 + j];
+        q2 += fp8_tbl((w0[2] >> sh) & 0xFFu) * x[8 + j];
+        q3 += fp8_tbl((w0[3] >> sh) & 0xFFu) * x[12 + j];
+        q0 += fp8_tbl((w1[0] >> sh) & 0xFFu) * x[16 + j];
+        q1 += fp8_tbl((w1[1] >> sh) & 0xFFu) * x[20 + j];
+        q2 += fp8_tbl((w1[2] >> sh) & 0xFFu) * x[24 + j];
+        q3 += fp8_tbl((w1[3] >> sh) & 0xFFu) * x[28 + j];
+    }
+    return (q0 + q1) + (q2 + q3);
+#else
+    float p = 0.0f;
+    [unroll] for (uint i = 0; i < 4; ++i) {
+        const uint a = w0[i], b = w1[i];
+        [unroll] for (uint j = 0; j < 4; ++j) {
+            p += fp8_tbl((a >> (8 * j)) & 0xFFu) * x[i * 4 + j];
+            p += fp8_tbl((b >> (8 * j)) & 0xFFu) * x[16 + i * 4 + j];
+        }
+    }
+    return p;
+#endif
 }
 
 // The dot products of `RowsPerLane` consecutive weight rows starting at
@@ -251,16 +347,49 @@ void gemv8_rows(uint64_t wbase, uint64_t sbase, uint rowBase, uint k,
             const uint64_t rowoff = (uint64_t)row * (uint64_t)k;
             const uint4 w0 = load16(wbase + rowoff + (uint64_t)blk * 32);
             const uint4 w1 = load16(wbase + rowoff + (uint64_t)blk * 32 + 16);
+#if DEEPMOE_GEMV_FOLD_SCALE
+            acc[r] += block_dot(w0, w1, x) * xs;
+#else
             const int   e  = (int)load_u8(sbase + (uint64_t)(row >> 5) * scale_cols + blk) - 127;
-            float p = 0.0f;
-            [unroll] for (uint i = 0; i < 4; ++i) {
-                const uint a = w0[i], b = w1[i];
-                [unroll] for (uint j = 0; j < 4; ++j) {
-                    p += gTbl[(a >> (8 * j)) & 0xFFu] * x[i * 4 + j];
-                    p += gTbl[(b >> (8 * j)) & 0xFFu] * x[16 + i * 4 + j];
-                }
-            }
-            acc[r] += ldexp(p, e) * xs;
+            acc[r] += ldexp(block_dot(w0, w1, x), e) * xs;
+#endif
+        }
+    }
+}
+
+// The same dot products over a SLICE of the contraction axis, `kc` elements
+// starting at `k0` of a row whose full length is `kfull` (docs/p2_attention.md
+// §13's K-split). The staged activation in gXQ/gXS is the slice, so `blk`
+// indexes from zero there while the weight and scale planes are indexed from
+// `k0` -- the scale plane's column for a slice block is `k0/32 + blk`.
+//
+// Why this exists at all, given that a K-split reads exactly the same weight
+// bytes: the LDS budget a workgroup reserves is the SLICE width, not K. wo_b at
+// K = 8192 reserved 19 KiB and got three workgroups to a CU; at two slices it
+// reserves 10.5 KiB and gets six, and the number of rows a staged activation is
+// amortised over is unchanged because each slice still retires the same rows.
+void gemv8_rows_slice(uint64_t wbase, uint64_t sbase, uint rowBase, uint kfull,
+                      uint k0, uint kc, uint scale_cols, uint sublane,
+                      out float acc[kMaxRowsPerLane]) {
+    [unroll] for (uint r = 0; r < kMaxRowsPerLane; ++r) acc[r] = 0.0f;
+    const uint blocks = kc / kBlockK;
+    const uint blk0   = k0 / kBlockK;
+    for (uint blk = sublane; blk < blocks; blk += LanesPerRow) {
+        float x[32];
+        read_x_block(blk, x);
+        const float xs = gXS[blk];
+        for (uint r = 0; r < RowsPerLane; ++r) {
+            const uint     row    = rowBase + r;
+            const uint64_t rowoff = (uint64_t)row * (uint64_t)kfull + (uint64_t)k0;
+            const uint4 w0 = load16(wbase + rowoff + (uint64_t)blk * 32);
+            const uint4 w1 = load16(wbase + rowoff + (uint64_t)blk * 32 + 16);
+#if DEEPMOE_GEMV_FOLD_SCALE
+            acc[r] += block_dot(w0, w1, x) * xs;
+#else
+            const int   e  = (int)load_u8(sbase + (uint64_t)(row >> 5) * scale_cols
+                                          + blk0 + blk) - 127;
+            acc[r] += ldexp(block_dot(w0, w1, x), e) * xs;
+#endif
         }
     }
 }

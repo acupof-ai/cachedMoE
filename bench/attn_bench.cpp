@@ -57,6 +57,22 @@ struct Opts {
     uint32_t    subgroup = 32;
     uint32_t    rows   = 4;
     uint32_t    heads  = 1;   // sparse_attn heads per workgroup (§7.5); AttnSpec default
+    // P3 (docs/p2_attention.md §13): the K-split factors and the tiled
+    // attention's geometry. 0 for a ksplit means "leave the AttnSpec default".
+    uint32_t    ks_wqa = 0, ks_wkv = 0, ks_woa = 0, ks_wob = 0;
+    uint32_t    ks_rows = 0;  // rows_per_lane for the *KSplit stages; 0 = --rows
+    uint32_t    arith  = 0;   // 1 = arithmetic E4M3 decode instead of the LDS table
+    // AttnSpec's sweep hooks, as comma-separated stage names.
+    std::string rows4, wave_on, wave_off;
+    uint32_t    tiles  = 8;   // KV tiles for sparse_attn_t
+    uint32_t    theads = 8;   // heads per workgroup for sparse_attn_t.score
+    uint32_t    pvtiles = 0;  // KV tiles for sparse_attn_t.pv; 0 = --tiles
+    uint32_t    pvheads = 1;  // heads per workgroup for sparse_attn_t.pv
+    // Synthetic KV length for the §7.5 rows. 0 = the L3 decode geometry, i.e.
+    // the 128-slot window plus the 65 compressed positions a 64-token prefill
+    // at ratio 1 leaves. Anything else fills the compressed half with random
+    // bf16 and measures what a long context costs.
+    uint32_t    kv     = 0;
 };
 
 // design §2.3's per-layer byte budget, recomputed here from the shapes so the
@@ -76,12 +92,26 @@ struct Dims {
 uint64_t fp8_bytes(uint64_t rows, uint64_t k) { return rows * k + (rows / 32) * (k / 32); }
 uint64_t bf16_bytes(uint64_t rows, uint64_t k) { return rows * k * 2; }
 
+// `grp` says which total a row belongs to: the §7.14 per-layer path, the head,
+// the two §7.4 kernels that run on some layers only, or the P3 replacements,
+// which are timed alongside the kernels they replace so the A/B is one run.
+enum Grp : int { kLayer = 0, kHead, kCmp, kIdx, kP3 };
 struct Row {
     const char* name;
     double      ms;
     uint64_t    bytes;
+    int         grp = kLayer;
     double gbps() const { return ms > 0 ? bytes / (ms * 1e-3) / 1e9 : 0.0; }
 };
+
+// The classic rows the P3 stages stand in for, so the P3 layer total is
+// `classic - these + the P3 rows`.
+bool is_replaced(const char* n) {
+    static const char* kNames[] = {"wq_a", "wkv.gemv", "wkv.finish", "sparse_attn.score",
+                                   "sparse_attn.combine", "wo_a", "wo_b"};
+    for (const char* k : kNames) if (std::strcmp(n, k) == 0) return true;
+    return false;
+}
 
 std::string arg_after(int argc, char** argv, const char* flag, const char* dflt) {
     for (int i = 1; i + 1 < argc; ++i)
@@ -101,10 +131,26 @@ int main(int argc, char** argv) {
     o.lanes  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--lanes", "32").c_str()));
     o.rows   = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--rows", "4").c_str()));
     o.heads  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--heads", "1").c_str()));
+    o.ks_wqa = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--ksplit-wqa", "0").c_str()));
+    o.ks_wkv = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--ksplit-wkv", "0").c_str()));
+    o.ks_woa = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--ksplit-woa", "0").c_str()));
+    o.ks_wob = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--ksplit-wob", "0").c_str()));
+    o.ks_rows = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--ksplit-rows", "0").c_str()));
+    o.arith  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--fp8-arith", "0").c_str()));
+    o.rows4    = arg_after(argc, argv, "--rows4", "");
+    o.wave_on  = arg_after(argc, argv, "--wave-on", "");
+    o.wave_off = arg_after(argc, argv, "--wave-off", "");
+    o.tiles  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--tiles", "8").c_str()));
+    o.theads = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--tile-heads", "8").c_str()));
+    o.pvtiles = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--pv-tiles", "0").c_str()));
+    o.pvheads = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--pv-heads", "1").c_str()));
+    o.kv     = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--kv", "0").c_str()));
     o.subgroup = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--subgroup", "32").c_str()));
     if (o.model.empty()) {
         std::printf("usage: attn_bench --model <checkpoint dir> [--layers N] [--iters N]\n"
-                    "                  [--lanes 16|32|64] [--csv PATH] [--note TEXT]\n");
+                    "                  [--lanes 16|32|64] [--csv PATH] [--note TEXT]\n"
+                    "                  [--ksplit-{wqa,wkv,woa,wob} N] [--tiles N]\n"
+                    "                  [--tile-heads 1..8] [--kv N]\n");
         return 2;
     }
 
@@ -175,6 +221,34 @@ int main(int argc, char** argv) {
     spec.subgroup_size = o.subgroup;
     spec.rows_per_lane = o.rows;
     spec.heads_per_wg  = o.heads;
+    spec.tile_heads_per_wg = o.theads;
+    spec.pv_heads_per_wg = o.pvheads;
+    spec.rows_per_lane_ksplit = o.ks_rows;
+    spec.fp8_arith_decode = o.arith;
+    // Stage names -> AttnSpec's sweep bitmasks.
+    auto mask_of = [](const std::string& list) {
+        uint64_t m = 0;
+        size_t p = 0;
+        while (p < list.size()) {
+            size_t q = list.find(',', p);
+            if (q == std::string::npos) q = list.size();
+            const std::string n = list.substr(p, q - p);
+            for (uint32_t i = 0; i < static_cast<uint32_t>(gpu::AttnStage::Count); ++i)
+                if (n == gpu::attn_stage_name(static_cast<gpu::AttnStage>(i))) m |= 1ull << i;
+            p = q + 1;
+        }
+        return m;
+    };
+    spec.sweep_rows_cap4 = mask_of(o.rows4);
+    spec.sweep_wave_on   = mask_of(o.wave_on);
+    spec.sweep_wave_off  = mask_of(o.wave_off);
+    if (!o.rows4.empty() || !o.wave_on.empty() || !o.wave_off.empty())
+        std::printf("sweep: rows4=[%s] wave_on=[%s] wave_off=[%s]\n", o.rows4.c_str(),
+                    o.wave_on.c_str(), o.wave_off.c_str());
+    if (o.ks_wqa) spec.ksplit_wq_a = o.ks_wqa;
+    if (o.ks_wkv) spec.ksplit_wkv  = o.ks_wkv;
+    if (o.ks_woa) spec.ksplit_wo_a = o.ks_woa;
+    if (o.ks_wob) spec.ksplit_wo_b = o.ks_wob;
     // ONE RUNNER PER LAYER. A runner owns one address table, so with a single
     // runner every iteration inside a command buffer reads the same layer's
     // weights and anything under the 32 MB MALL reports a fantasy -- the first
@@ -192,7 +266,9 @@ int main(int argc, char** argv) {
     }
     gpu::AttnRunner& runner = *runners[0];
     gpu::GpuScratch scratch;
-    if (auto r = scratch.create(alloc, 128ull << 20); !r) {
+    // 320 MB rather than 128: --kv 32768 puts 32 MB of compressed KV, 8 MB of
+    // scores and 8 MB of P.V partials in here at once.
+    if (auto r = scratch.create(alloc, 320ull << 20); !r) {
         std::printf("scratch: %s\n", r.error().str().c_str());
         io.stop();
         return 1;
@@ -210,10 +286,23 @@ int main(int argc, char** argv) {
     auto KvRaw = take(d.head_dim * 4), KvScr = take(256);
     auto WinV = take(uint64_t(d.window) * d.head_dim);
     auto WinS = take(uint64_t(d.window) * (d.head_dim / 32));
-    auto Kv = take(d.head_dim * 4), Cmp = take(1024ull * d.head_dim * 2);
-    auto Top = take(1024 * 4), Score = take(uint64_t(d.n_heads) * 1024 * 4);
+    // §7.5's KV list: the L3 geometry unless --kv asked for a synthetic one.
+    const uint32_t n_cmp = o.kv ? (o.kv > d.window ? o.kv - d.window : 1u) : 65u;
+    const uint32_t n_kv  = d.window + n_cmp;
+    const uint32_t n_tiles = o.tiles ? o.tiles : 1u;
+    const uint32_t pv_tiles = o.pvtiles ? o.pvtiles : n_tiles;
+    const uint32_t max_tiles = n_tiles > pv_tiles ? n_tiles : pv_tiles;
+    auto Kv = take(d.head_dim * 4), Cmp = take(uint64_t(n_cmp) * d.head_dim * 2);
+    auto Top = take(uint64_t(n_kv) * 4), Score = take(uint64_t(d.n_heads) * n_kv * 4);
+    // sparse_attn_t's three extra planes (docs/p2_attention.md §13).
+    auto TileMax = take(uint64_t(d.n_heads) * n_tiles * 4);
+    auto PartO = take(uint64_t(max_tiles) * d.n_heads * d.head_dim * 4);
+    auto PartD = take(uint64_t(max_tiles) * d.n_heads * 4);
     auto O = take(uint64_t(d.qrows()) * 4), Woa = take(d.orows() * 4), Wob = take(d.dim * 4);
     auto Gs = take(d.n_experts * 4), Gid = take(64), Gw = take(64), Done = take(64);
+    // The fp32 partial planes of the K-split GEMVs, one row per (slice, row).
+    auto PWqa = take(uint64_t(16) * d.q_lora * 4), PWkv = take(uint64_t(16) * d.head_dim * 4);
+    auto PWoa = take(uint64_t(16) * d.orows() * 4), PWob = take(uint64_t(16) * d.dim * 4);
     auto Logits = take(uint64_t(d.vocab) * 4);
     // design §7.4: the compressor's two projections and its carried state, the
     // indexer's queries, its key cache and its scores.
@@ -249,11 +338,9 @@ int main(int argc, char** argv) {
         static_cast<float*>(O.host)[i] = 0.2f * std::sin(0.003f * float(i));
     const std::vector<float> rope = runtime::rope_table(runtime::rope_for_layer(1, d.rope_dim), 64);
     std::memcpy(Rope.host, rope.data(), rope.size() * 4);
-    // Every window slot live, and 65 compressed positions, as at decode
-    // position 64 of a 64-token prefill (the L2 export's geometry).
-    const uint32_t n_cmp = 65, n_kv = d.window + n_cmp;
+    // Every window slot live, and `n_cmp` compressed positions.
     for (uint32_t i = 0; i < n_kv; ++i) static_cast<uint32_t*>(Top.host)[i] = i;
-    for (uint32_t i = 0; i < uint64_t(n_cmp) * d.head_dim; ++i)
+    for (uint64_t i = 0; i < uint64_t(n_cmp) * d.head_dim; ++i)
         static_cast<uint16_t*>(Cmp.host)[i] = 0x3C00;      // bf16 1.0
 
     gpu::CommandPool pool;
@@ -267,13 +354,13 @@ int main(int argc, char** argv) {
     // "pre-recorded command buffer" does, minus the pre.
     auto run = [&](const char* label, gpu::AttnStage stage, uint64_t bytes,
                    auto set_slots, const void* push, uint32_t push_bytes,
-                   uint32_t groups) -> Row {
+                   uint32_t groups, int grp = kLayer) -> Row {
         for (uint32_t i = 0; i < o.layers; ++i) set_slots(*runners[i], i);
         // Warm the caches and the pipelines before timing.
         (void)runners[0]->dispatch_now(stage, push, push_bytes, groups);
 
         auto cb = pool.acquire();
-        if (!cb) return Row{label, 0, bytes};
+        if (!cb) return Row{label, 0, bytes, grp};
         gpu::CommandBuffer cmd = *cb;
         (void)cmd.begin();
         if (timed) {
@@ -289,13 +376,13 @@ int main(int argc, char** argv) {
 
         double best = 1e9;
         for (uint32_t rep = 0; rep < 3; ++rep) {
-            if (auto r = gpu::submit_and_wait(device, cmd); !r) return Row{label, 0, bytes};
+            if (auto r = gpu::submit_and_wait(device, cmd); !r) return Row{label, 0, bytes, grp};
             if (timed) {
                 if (auto s = queries.elapsed_seconds(0, 1); s)
                     best = std::min(best, *s * 1e3 / o.iters);
             }
         }
-        return Row{label, timed ? best : 0.0, bytes};
+        return Row{label, timed ? best : 0.0, bytes, grp};
     };
 
     auto addr = [&](uint32_t L, const char* suffix) {
@@ -399,6 +486,36 @@ int main(int argc, char** argv) {
     rows.push_back(run("sparse_attn.combine", gpu::AttnStage::AttnCombine, kv_unique,
                        at_slots, &ap, sizeof ap, at_groups));
 
+    // --- sparse_attn_t: the head-group x KV-tile grid (§13) ---------------
+    gpu::AttnTPush tp{n_kv, d.window, d.head_dim, d.rope_dim, n_kv,
+                      1.0f / std::sqrt(float(d.head_dim)), d.n_heads, n_tiles,
+                      (n_kv + n_tiles - 1) / n_tiles, d.n_heads * d.head_dim,
+                      pv_tiles, (n_kv + pv_tiles - 1) / pv_tiles};
+    auto att_slots = [&](gpu::AttnRunner& r, uint32_t L) {
+        uint64_t* s = r.slots(gpu::AttnStage::AttnScoreT);
+        s[gpu::slot::kAttnQ] = Q.addr; s[gpu::slot::kAttnWinVal] = WinV.addr;
+        s[gpu::slot::kAttnWinScale] = WinS.addr; s[gpu::slot::kAttnCmpKv] = Cmp.addr;
+        s[gpu::slot::kAttnTopIdx] = Top.addr;
+        s[gpu::slot::kAttnSink] = addr(L, "attn.attn_sink");
+        s[gpu::slot::kAttnRope] = Rope.addr; s[gpu::slot::kAttnScore] = Score.addr;
+        s[gpu::slot::kAttnO] = O.addr;
+        s[gpu::slot::kAttnTileMax] = TileMax.addr;
+        s[gpu::slot::kAttnPartO] = PartO.addr; s[gpu::slot::kAttnPartD] = PartD.addr;
+        std::memcpy(r.slots(gpu::AttnStage::AttnPvT), s, gpu::kAttnStageStride);
+        std::memcpy(r.slots(gpu::AttnStage::AttnFinishT), s, gpu::kAttnStageStride);
+    };
+    const uint32_t tg = runner.attn_tile_groups(d.n_heads, n_tiles);
+    rows.push_back(run("sparse_attn_t.score", gpu::AttnStage::AttnScoreT, kv_unique,
+                       att_slots, &tp, sizeof tp, tg, kP3));
+    rows.push_back(run("sparse_attn_t.pv", gpu::AttnStage::AttnPvT, kv_unique,
+                       att_slots, &tp, sizeof tp,
+                       runner.attn_pv_groups(d.n_heads, pv_tiles), kP3));
+    if (gpu::AttnRunner::attn_tiled_finish_needed(pv_tiles))
+    rows.push_back(run("sparse_attn_t.finish", gpu::AttnStage::AttnFinishT,
+                       uint64_t(pv_tiles) * d.n_heads * d.head_dim * 4,
+                       att_slots, &tp, sizeof tp,
+                       gpu::AttnRunner::attn_finish_groups(d.n_heads, d.head_dim), kP3));
+
     // --- wo_a / wo_b ----------------------------------------------------
     gpu::WoaPush wa{d.orows(), d.ocols(), d.ocols() / 32, d.o_lora};
     rows.push_back(run("wo_a", gpu::AttnStage::WoA, fp8_bytes(d.orows(), d.ocols()),
@@ -417,6 +534,67 @@ int main(int argc, char** argv) {
         s[gpu::slot::kGemvS] = sc_addr(L, "attn.wo_b.weight");
         s[gpu::slot::kGemvX] = Woa.addr; s[gpu::slot::kGemvY] = Wob.addr;
     }, &wb, sizeof wb, runner.gemv_groups(gpu::AttnStage::WoB, d.dim)));
+
+    // --- the K-split GEMVs (docs/p2_attention.md §13) --------------------
+    // Each is two rows: the split, whose weight traffic is the SAME bytes the
+    // unsplit kernel reads (so the GB/s columns are directly comparable), and
+    // the combine, which reads ksplit * rows floats and is pure latency.
+    auto ksplit_row = [&](const char* split_name, const char* comb_name,
+                          gpu::AttnStage sp, gpu::AttnStage cb, uint64_t bytes,
+                          uint32_t rows_n, uint32_t k, uint32_t rows_per_group,
+                          const char* wname, gpu::GpuScratch::View xv,
+                          gpu::GpuScratch::View yv, gpu::GpuScratch::View pv) {
+        const uint32_t ks = runner.ksplit(sp);
+        gpu::KSplitPush kp{rows_n, k, k / 32, rows_per_group, rows_n, 0};
+        auto sl = [&](gpu::AttnRunner& r, uint32_t L) {
+            uint64_t* s = r.slots(sp);
+            s[gpu::slot::kKspW] = addr(L, wname);
+            s[gpu::slot::kKspS] = sc_addr(L, wname);
+            s[gpu::slot::kKspX] = xv.addr; s[gpu::slot::kKspY] = yv.addr;
+            s[gpu::slot::kKspPart] = pv.addr;
+            std::memcpy(r.slots(cb), s, gpu::kAttnStageStride);
+        };
+        rows.push_back(run(split_name, sp, bytes, sl, &kp, sizeof kp,
+                           runner.ksplit_groups(sp, rows_n), kP3));
+        rows.push_back(run(comb_name, cb, uint64_t(ks) * rows_n * 4, sl, &kp, sizeof kp,
+                           gpu::AttnRunner::combine_groups(rows_n), kP3));
+    };
+    ksplit_row("wq_a.ksplit", "wq_a.kcombine", gpu::AttnStage::WqAKSplit,
+               gpu::AttnStage::WqAKCombine, fp8_bytes(d.q_lora, d.dim),
+               d.q_lora, d.dim, 0, "attn.wq_a.weight", U, Qr, PWqa);
+    ksplit_row("wo_a.ksplit", "wo_a.kcombine", gpu::AttnStage::WoAKSplit,
+               gpu::AttnStage::WoAKCombine, fp8_bytes(d.orows(), d.ocols()),
+               d.orows(), d.ocols(), d.o_lora, "attn.wo_a.weight", O, Woa, PWoa);
+    ksplit_row("wo_b.ksplit", "wo_b.kcombine", gpu::AttnStage::WoBKSplit,
+               gpu::AttnStage::WoBKCombine, fp8_bytes(d.dim, d.orows()),
+               d.dim, d.orows(), 0, "attn.wo_b.weight", Woa, Wob, PWob);
+
+    // wkv's combine folds the whole kv_norm / RoPE / ring-write tail in, so the
+    // split path is two dispatches against the classic path's two, not three.
+    {
+        const uint32_t ks = runner.ksplit(gpu::AttnStage::WkvKSplit);
+        gpu::KSplitPush sp{d.head_dim, d.dim, d.dim / 32, 0, d.head_dim, 0};
+        gpu::WkvPush fp{d.head_dim, d.dim, d.dim / 32, d.rope_dim, 64 % d.window, 1,
+                        1e-20f, d.head_dim};
+        auto sl = [&](gpu::AttnRunner& r, uint32_t L) {
+            uint64_t* s = r.slots(gpu::AttnStage::WkvKSplit);
+            s[gpu::slot::kKspW] = addr(L, "attn.wkv.weight");
+            s[gpu::slot::kKspS] = sc_addr(L, "attn.wkv.weight");
+            s[gpu::slot::kKspX] = U.addr; s[gpu::slot::kKspY] = KvRaw.addr;
+            s[gpu::slot::kKspPart] = PWkv.addr;
+            uint64_t* f = r.slots(gpu::AttnStage::WkvKFinish);
+            f[gpu::slot::kWkvNormW] = addr(L, "attn.kv_norm.weight");
+            f[gpu::slot::kWkvRope] = Rope.addr; f[gpu::slot::kWkvRaw] = KvRaw.addr;
+            f[gpu::slot::kWkvScratch] = KvScr.addr; f[gpu::slot::kWkvVal] = WinV.addr;
+            f[gpu::slot::kWkvScale] = WinS.addr; f[gpu::slot::kWkvKv] = Kv.addr;
+            f[gpu::slot::kWkvPart] = PWkv.addr;
+        };
+        rows.push_back(run("wkv.ksplit", gpu::AttnStage::WkvKSplit,
+                           fp8_bytes(d.head_dim, d.dim), sl, &sp, sizeof sp,
+                           runner.ksplit_groups(gpu::AttnStage::WkvKSplit, d.head_dim), kP3));
+        rows.push_back(run("wkv.kfinish", gpu::AttnStage::WkvKFinish,
+                           uint64_t(ks) * d.head_dim * 4, sl, &fp, sizeof fp, 1, kP3));
+    }
 
     // --- gate -----------------------------------------------------------
     gpu::GatePush gp{d.n_experts, d.dim, 6, 16, 1.0f, 1.5f};
@@ -443,7 +621,7 @@ int main(int argc, char** argv) {
             uint64_t* s = runner.slots(gpu::AttnStage::Head);
             s[gpu::slot::kHeadW] = head->data;
             s[gpu::slot::kHeadX] = U.addr; s[gpu::slot::kHeadLogits] = Logits.addr;
-        }, &hp, sizeof hp, runner.gemv_groups(gpu::AttnStage::Head, d.vocab)));
+        }, &hp, sizeof hp, runner.gemv_groups(gpu::AttnStage::Head, d.vocab), kHead));
     }
 
     // --- compressor / indexer (design §7.4) ------------------------------
@@ -535,36 +713,57 @@ int main(int argc, char** argv) {
     std::printf("\ndesign 7.14 decode path, lanes=%u subgroup=%u rows=%u heads/wg=%u, "
                 "%u layers cycled, %u iterations/submit\n", o.lanes, o.subgroup, o.rows,
                 o.heads, o.layers, o.iters);
+    std::printf("    sparse_attn_t.pv: %u tiles x %u heads/wg\n", pv_tiles, o.pvheads);
+    std::printf("P3: ksplit wq_a=%u wkv=%u wo_a=%u wo_b=%u, sparse_attn_t %u tiles x "
+                "%u heads/wg, n_kv=%u, ksplit rows/lane=%u\n", spec.ksplit_wq_a, spec.ksplit_wkv,
+                spec.ksplit_wo_a, spec.ksplit_wo_b, n_tiles, o.theads, n_kv,
+                runner.rows_per_lane(gpu::AttnStage::WoBKSplit));
+    std::printf("    E4M3 decode: %s\n", o.arith ? "arithmetic" : "256-entry LDS table");
     if (!o.note.empty()) std::printf("note: %s\n", o.note.c_str());
     std::printf("%-22s %10s %12s %10s\n", "kernel", "us", "bytes", "GB/s");
     // The 7.14 dispatches 1-9 run on every layer; the 7.4 compressor runs on
     // four layers of forty and the indexer on eight, so they are totalled
     // separately and the per-token line weights them by that.
     double layer_us = 0, layer_bytes = 0, head_us = 0, cmp_us = 0, idx_us = 0;
+    double replaced_us = 0, p3_us = 0;
     for (const Row& r : rows) {
         std::printf("%-22s %10.2f %12llu %10.1f\n", r.name, r.ms * 1e3,
                     static_cast<unsigned long long>(r.bytes), r.gbps());
-        if (std::strcmp(r.name, "head") == 0)                  head_us += r.ms * 1e3;
-        else if (std::strncmp(r.name, "compressor.", 11) == 0) cmp_us  += r.ms * 1e3;
-        else if (std::strncmp(r.name, "indexer.", 8) == 0)     idx_us  += r.ms * 1e3;
-        else { layer_us += r.ms * 1e3; layer_bytes += double(r.bytes); }
+        if (r.grp == kP3)                                      p3_us   += r.ms * 1e3;
+        else if (std::strcmp(r.name, "head") == 0)              head_us += r.ms * 1e3;
+        else if (std::strncmp(r.name, "compressor.", 11) == 0)  cmp_us  += r.ms * 1e3;
+        else if (std::strncmp(r.name, "indexer.", 8) == 0)      idx_us  += r.ms * 1e3;
+        else {
+            layer_us += r.ms * 1e3;
+            layer_bytes += double(r.bytes);
+            if (is_replaced(r.name)) replaced_us += r.ms * 1e3;
+        }
     }
+    const double p3_layer = layer_us - replaced_us + p3_us;
     std::printf("%-22s %10.2f %12.0f %10.1f\n", "  (one layer, 1-9)", layer_us, layer_bytes,
                 layer_us > 0 ? layer_bytes / (layer_us * 1e-6) / 1e9 : 0.0);
+    std::printf("%-22s %10.2f %12.0f %10.1f   (P3 stages in place of the seven they "
+                "replace)\n", "  (one layer, P3)", p3_layer, layer_bytes,
+                p3_layer > 0 ? layer_bytes / (p3_layer * 1e-6) / 1e9 : 0.0);
     std::printf("%-22s %10.2f   (4 of 40 layers)\n", "  (compressor, 7.4)", cmp_us);
     std::printf("%-22s %10.2f   (8 of 40 layers)\n", "  (indexer, 7.4)", idx_us);
-    std::printf("  40 layers + head: %.2f ms/token, + %.3f ms for the 4 compressor and "
-                "8 indexer layers\n", (layer_us * 40 + head_us) / 1e3,
+    std::printf("  40 layers + head: %.2f ms/token classic, %.2f ms/token P3, "
+                "+ %.3f ms for the 4 compressor and 8 indexer layers\n",
+                (layer_us * 40 + head_us) / 1e3, (p3_layer * 40 + head_us) / 1e3,
                 (cmp_us * 4 + idx_us * 8) / 1e3);
 
     if (!o.csv.empty()) {
         std::FILE* f = std::fopen(o.csv.c_str(), "w");
         if (f) {
-            std::fprintf(f, "kernel,lanes,subgroup,rows,heads_per_wg,layers,iters,us,bytes,gbps,note\n");
+            std::fprintf(f, "kernel,lanes,subgroup,rows,heads_per_wg,layers,iters,us,bytes,"
+                            "gbps,ksplit_wqa,ksplit_wkv,ksplit_woa,ksplit_wob,tiles,tile_heads,"
+                            "n_kv,note\n");
             for (const Row& r : rows)
-                std::fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%.4f,%llu,%.2f,\"%s\"\n", r.name, o.lanes,
-                             o.subgroup, o.rows, o.heads, o.layers, o.iters, r.ms * 1e3,
-                             static_cast<unsigned long long>(r.bytes), r.gbps(), o.note.c_str());
+                std::fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%.4f,%llu,%.2f,%u,%u,%u,%u,%u,%u,%u,\"%s\"\n",
+                             r.name, o.lanes, o.subgroup, o.rows, o.heads, o.layers, o.iters,
+                             r.ms * 1e3, static_cast<unsigned long long>(r.bytes), r.gbps(),
+                             spec.ksplit_wq_a, spec.ksplit_wkv, spec.ksplit_wo_a,
+                             spec.ksplit_wo_b, n_tiles, o.theads, n_kv, o.note.c_str());
             std::fclose(f);
             std::printf("-> %s\n", o.csv.c_str());
         }

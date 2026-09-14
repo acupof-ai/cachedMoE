@@ -42,7 +42,8 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint group = base / pc.rows_per_group;
 
     fp8_table_fill(tid);
-    stage_x_fp8(Ptr[kO] + (uint64_t)group * pc.k * 4, pc.k, tid);
+    stage_x_fp8(Ptr[kO] + (uint64_t)group * pc.k * 4, pc.k, tid,
+                Ptr[kS] + (uint64_t)(base >> 5) * pc.scale_cols);
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;

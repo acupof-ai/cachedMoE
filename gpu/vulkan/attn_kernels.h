@@ -78,6 +78,33 @@ enum class AttnStage : uint32_t {
     IdxWeights,    // §7.4: indexer.weights_proj, bf16 [32 x 5120]
     IdxScore,      // §7.4: sum_h relu(q[h].k[t]) * w[h]
     IdxTopK,       // §7.4: the index_topk best positions, in index order
+    // --- P3: the K-split GEMVs and the tiled attention -----------------------
+    // Appended, never inserted, for the same reason the §7.4 block above was:
+    // runtime/ names stages by enumerator. Every stage listed before this point
+    // behaves exactly as it did, so a caller that adopts none of these is
+    // unaffected. See docs/p2_attention.md §13.
+    //
+    // A K-split GEMV is TWO dispatches: `*KSplit` over
+    // `gemv_groups(stage, rows) * ksplit(stage)` workgroups writing fp32
+    // partials, then `*KCombine` over `combine_groups(rows)` adding them.
+    // wkv is the exception -- its combine folds in the whole kv_norm / RoPE /
+    // ring-write tail, so WkvKSplit + WkvKFinish REPLACE WkvGemv + WkvFinish
+    // rather than adding a dispatch.
+    WqAKSplit,     // §7.3, gemv_ksplit stage 0
+    WqAKCombine,   // §7.3, gemv_ksplit stage 1
+    WkvKSplit,     // §7.4, gemv_ksplit stage 0
+    WkvKFinish,    // §7.4, wkv stage 2: combine + kv_norm + RoPE + ring write
+    WoAKSplit,     // §7.6, grouped, ActQuant = 0
+    WoAKCombine,
+    WoBKSplit,     // §7.6, the 42 MB one
+    WoBKCombine,
+    // §7.5 on a head-group x KV-tile grid with a partial-softmax combine.
+    // THREE dispatches, replacing AttnScore + AttnCombine.
+    AttnScoreT,    // scores + one tile max per head
+    AttnPvT,       // p against the final max, and P.V over one tile; at
+                   // pv_tiles == 1 also the divide + inverse RoPE, i.e. done
+    AttnFinishT,   // pv_tiles > 1 only: add the tiles, add the sink, divide,
+                   // inverse RoPE
     Count,
 };
 
@@ -109,7 +136,41 @@ struct AttnSpec {
     // split with a partial-softmax combine, which keeps 64 workgroups AND reads
     // the KV eight times. See docs/p2_attention.md §7.
     uint32_t heads_per_wg = 1;
+    // The same thing for the TILED attention stages (AttnScoreT/PvT), where it
+    // is 8 rather than 1 because the tiling gives back the occupancy that made
+    // grouping a loss for the untiled kernel: 8 heads a workgroup and n_tiles
+    // KV tiles is 8 * n_tiles workgroups, not 8. 1..8.
+    uint32_t tile_heads_per_wg = 8;
+    // Heads per workgroup for AttnPvT alone. Its default is 1, not 8: P.V
+    // cannot share a KV read across heads the way the scores can (see
+    // sparse_attn_t.slang), so grouping only costs it workgroups.
+    uint32_t pv_heads_per_wg = 1;
+    // Rows per lane for the *KSplit stages only, because the K-split changes
+    // the trade: the slice is narrower, so the LDS a workgroup holds is
+    // smaller, so it can afford to retire more rows against one staged
+    // activation than the unsplit kernel could. 0 = follow `rows_per_lane`.
+    uint32_t rows_per_lane_ksplit = 0;
+    // Decode E4M3 arithmetically instead of through the 256-entry LDS table
+    // (attn_common.slang `fp8_tbl`). Applies to every fp8 kernel in the family.
+    uint32_t fp8_arith_decode = 0;
+    // Sweep hooks, bit i = AttnStage i. Zero in every real caller; they exist
+    // so bench/attn_bench can re-measure kStages' per-stage choices (which
+    // docs/p2_attention.md §13 shows moved once the LDS conflicts were gone)
+    // without a rebuild between points.
+    uint64_t sweep_rows_cap4   = 0;   // let these stages use rows_per_lane up to 4
+    uint64_t sweep_wave_on     = 0;   // force WaveReduce = 1
+    uint64_t sweep_wave_off    = 0;   // force WaveReduce = 0
+    // K-split factors, per family, for the *KSplit stages. Each must divide
+    // K/32 and leave K / ksplit <= kGemvKSplitMaxSlice.
+    uint32_t ksplit_wq_a = 2;
+    uint32_t ksplit_wkv  = 4;
+    uint32_t ksplit_wo_a = 1;
+    uint32_t ksplit_wo_b = 2;
 };
+
+// The widest K slice gemv_ksplit.slang stages, i.e. its `DEEPMOE_GEMV_MAX_K`.
+// A caller must keep `k / ksplit(stage)` at or under it.
+inline constexpr uint32_t kGemvKSplitMaxSlice = 4096;
 
 // --- push constants, mirroring the shaders exactly --------------------------
 
@@ -122,7 +183,19 @@ inline constexpr uint32_t kMhcFlagSkipSinkhorn = 2u;  // final collapse before t
 
 struct GemvPush { uint32_t rows, k, scale_cols, row_base; };
 struct WqbPush  { uint32_t rows, k, scale_cols, head_dim, rope_dim; float norm_eps; };
-struct WkvPush  { uint32_t rows, k, scale_cols, rope_dim, slot, n_wg0; float norm_eps; };
+// `part_stride` is trailing and defaulted: it is read only by WkvKFinish, so a
+// caller that aggregate-initialises the first seven fields is unchanged.
+struct WkvPush  {
+    uint32_t rows, k, scale_cols, rope_dim, slot, n_wg0;
+    float    norm_eps;
+    uint32_t part_stride = 0;
+};
+// gemv_ksplit.slang. `rows_per_group` is 0 for an ungrouped GEMV and wo_a's
+// o_lora_rank (1024) for the block-diagonal one; `part_stride` is the floats
+// between K slices in the partial plane and must be >= rows.
+struct KSplitPush {
+    uint32_t rows, k, scale_cols, rows_per_group, part_stride, row_base;
+};
 struct WoaPush  { uint32_t rows, k, scale_cols, rows_per_group; };
 // `n_heads` is ADDITIVE and optional: a caller that leaves it out (aggregate
 // initialisation zero-fills it) gets the pre-existing geometry, one workgroup
@@ -134,6 +207,21 @@ struct AttnPush {
     uint32_t n_kv, n_win, head_dim, rope_dim, score_stride;
     float    softmax_scale;
     uint32_t n_heads = 0;
+};
+// sparse_attn_t.slang. A superset of AttnPush with the tiling fields; it is a
+// separate struct because the tiled stages are separate pipelines and mixing
+// the two would let a caller push one at the other.
+//
+// Two grids. AttnScoreT runs `(n_heads / tile_heads_per_wg) * n_tiles`
+// workgroups over tiles of `tile_len`; AttnPvT runs
+// `(n_heads / pv_heads_per_wg) * pv_tiles` over tiles of `pv_tile_len`, and the
+// kPartO / kPartD planes are laid out by `pv_tiles`. kTileMax is always
+// [n_heads][n_tiles].
+struct AttnTPush {
+    uint32_t n_kv, n_win, head_dim, rope_dim, score_stride;
+    float    softmax_scale;
+    uint32_t n_heads, n_tiles, tile_len, part_stride;
+    uint32_t pv_tiles, pv_tile_len;
 };
 struct GatePush { uint32_t n_experts, k, topk, record; float gate_temp, route_scale; };
 struct HeadPush { uint32_t rows, k, row_base; };
@@ -165,12 +253,21 @@ enum : uint32_t { kX = 0, kA = 1, kPostIn = 2, kCombIn = 3, kPreMix = 4, kHcFn =
 enum : uint32_t { kGemvW = 0, kGemvS = 1, kGemvX = 2, kGemvY = 3 };
 // wq_b: W, S, Qr, NormW, Rope, Q
 enum : uint32_t { kWqbW = 0, kWqbS = 1, kWqbQr = 2, kWqbNormW = 3, kWqbRope = 4, kWqbQ = 5 };
-// wkv
+// wkv. kWkvPart is the fp32 partial plane WkvKSplit writes and WkvKFinish adds.
 enum : uint32_t { kWkvW = 0, kWkvS = 1, kWkvX = 2, kWkvNormW = 3, kWkvRope = 4,
-                  kWkvRaw = 5, kWkvScratch = 6, kWkvVal = 7, kWkvScale = 8, kWkvKv = 9 };
+                  kWkvRaw = 5, kWkvScratch = 6, kWkvVal = 7, kWkvScale = 8, kWkvKv = 9,
+                  kWkvPart = 10 };
+// gemv_ksplit: W, S, X, Y, P. The first four are the same four slots the
+// unsplit GEMV uses, so a caller can fill them the same way and add the
+// partial plane.
+enum : uint32_t { kKspW = 0, kKspS = 1, kKspX = 2, kKspY = 3, kKspPart = 4 };
 // sparse_attn
 enum : uint32_t { kAttnQ = 0, kAttnWinVal = 1, kAttnWinScale = 2, kAttnCmpKv = 3,
                   kAttnTopIdx = 4, kAttnSink = 5, kAttnRope = 6, kAttnScore = 7, kAttnO = 8 };
+// sparse_attn_t: the same nine, plus the three planes the tiling needs --
+// [n_heads][n_tiles] maxima, [n_tiles][n_heads][head_dim] fp32 output partials
+// and [n_tiles][n_heads] denominator partials.
+enum : uint32_t { kAttnTileMax = 9, kAttnPartO = 10, kAttnPartD = 11 };
 // wo_a: W, S, O, Y
 enum : uint32_t { kWoaW = 0, kWoaS = 1, kWoaO = 2, kWoaY = 3 };
 // gate
@@ -227,6 +324,20 @@ private:
 
 class AttnRunner {
 public:
+    // One row of the stage table: which .spv, which Stage specialisation, and
+    // the per-stage knobs measured rather than reasoned about. Public because
+    // the table itself lives in the .cpp's anonymous namespace.
+    struct StageDef {
+        AttnStage   stage;
+        const char* spv;
+        uint32_t    stage_const;
+        uint32_t    act_quant;
+        uint32_t    rows_cap;     // largest rows_per_lane this shader may use
+        // Whether row_reduce is one WaveActiveSum (1) or the LDS tree (0). Not
+        // a free win either way -- attn_common.slang's row_reduce has the sweep.
+        uint32_t    wave_reduce;
+    };
+
     AttnRunner() = default;
     ~AttnRunner() { destroy(); }
 
@@ -275,9 +386,39 @@ public:
         return (rows + per - 1) / per;
     }
 
+    // The K-split factor compiled into a *KSplit stage (1 for everything else).
+    uint32_t ksplit(AttnStage s) const;
+
+    // Workgroups for the split half of a K-split GEMV: one per (row group,
+    // slice), flattened as `rg * ksplit + slice`.
+    uint32_t ksplit_groups(AttnStage s, uint32_t rows) const {
+        return gemv_groups(s, rows) * ksplit(s);
+    }
+    // Workgroups for the combine half: one thread a row.
+    static uint32_t combine_groups(uint32_t rows) { return (rows + 255) / 256; }
+
+    // Workgroups for AttnScoreT: head groups x KV tiles, flattened as
+    // `head_group * n_tiles + tile`.
+    uint32_t attn_tile_groups(uint32_t n_heads, uint32_t n_tiles) const {
+        const uint32_t g = spec_.tile_heads_per_wg ? spec_.tile_heads_per_wg : 1u;
+        return ((n_heads + g - 1) / g) * n_tiles;
+    }
+    // Workgroups for AttnPvT, on its own grid.
+    uint32_t attn_pv_groups(uint32_t n_heads, uint32_t pv_tiles) const {
+        const uint32_t g = spec_.pv_heads_per_wg ? spec_.pv_heads_per_wg : 1u;
+        return ((n_heads + g - 1) / g) * pv_tiles;
+    }
+    // AttnFinishT exists to add the P.V tiles; with one tile AttnPvT writes the
+    // final output itself and AttnFinishT must NOT be dispatched.
+    static bool attn_tiled_finish_needed(uint32_t pv_tiles) { return pv_tiles > 1; }
+    // Workgroups for AttnFinishT: one thread per adjacent output pair.
+    static uint32_t attn_finish_groups(uint32_t n_heads, uint32_t head_dim) {
+        const uint32_t pairs = n_heads * head_dim / 2;
+        return (pairs + 255) / 256;
+    }
+
 private:
-    Result<void> make(AttnStage s, const std::string& spv, uint32_t stage_const,
-                      uint32_t act_quant);
+    Result<void> make(const StageDef& d, const std::string& spv);
 
     Device*          device_ = nullptr;
     MemoryAllocator* alloc_  = nullptr;

@@ -88,6 +88,8 @@ set(DEEPMOE_SHADERS
     gpu/shaders/indexer.slang
     gpu/shaders/wo_a.slang
     gpu/shaders/wo_b.slang
+    gpu/shaders/gemv_ksplit.slang
+    gpu/shaders/sparse_attn_t.slang
     gpu/shaders/gate.slang
     gpu/shaders/moe_gateup.slang
     gpu/shaders/moe_down.slang

@@ -41,7 +41,8 @@ struct GemvPush {
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     fp8_table_fill(tid);
-    stage_x_fp8(Ptr[kX], pc.k, tid);
+    stage_x_fp8(Ptr[kX], pc.k, tid,
+                Ptr[kS] + (uint64_t)((pc.row_base + gid.x * gemv_rows_per_wg()) >> 5) * pc.scale_cols);
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;

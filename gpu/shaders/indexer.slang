@@ -96,7 +96,8 @@ groupshared uint  gSel[4];
 // --- stage 0: indexer.wq_b, with q_norm and act_quant fused -----------------
 void stage_q_gemv(uint gid, uint tid) {
     fp8_table_fill(tid);
-    stage_x_fp8_rmsnorm(Ptr[kQr], Ptr[kQNormW], pc.k, tid, pc.norm_eps);
+    stage_x_fp8_rmsnorm(Ptr[kQr], Ptr[kQNormW], pc.k, tid, pc.norm_eps,
+                        Ptr[kS] + (uint64_t)((gid * gemv_rows_per_wg()) >> 5) * pc.scale_cols);
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;

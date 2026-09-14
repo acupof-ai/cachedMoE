@@ -59,6 +59,21 @@
 // Whether `row_reduce` collapses to one WaveActiveSum. Per stage, and measured
 // rather than reasoned about: see the function itself.
 [vk::constant_id(8)] const uint WaveReduce      = 1;
+// K-split: how many slices of the contraction axis one GEMV is cut into
+// (docs/p2_attention.md §13). Only gemv_ksplit.slang and wkv.slang's combine
+// stage read it; everywhere else it is 1 and costs nothing. A slice writes an
+// fp32 partial per row and a tiny combine stage adds the KSplit of them, which
+// is what gives wo_b -- 5120 rows of K = 8192, three workgroups to a CU on 19
+// KiB of LDS -- both a smaller staged activation and more resident workgroups.
+[vk::constant_id(9)] const uint KSplit          = 1;
+// Decode E4M3 with six ALU instructions instead of the 256-entry LDS table.
+// design §7.1 rule 5 says the table wins, but it measured that on the FP4 path
+// where the "table" is a 16-entry *constant array* the compiler keeps in
+// registers. An fp8 table is 256 floats in LDS and 32 lanes index it with 32
+// unrelated bytes, so it takes whatever bank conflicts the weights happen to
+// produce. Which side wins here is a measurement, not a deduction: see
+// `fp8_tbl` and docs/p2_attention.md §13.
+[vk::constant_id(10)] const uint Fp8Arith       = 0;
 
 static const uint  kWg          = 256;
 static const uint  kMaxRowsPerLane = 4;
@@ -94,6 +109,23 @@ float fp8_decode(uint b) {
     return ((b & 0x80u) != 0) ? -mag : mag;
 }
 
+// E4M3 -> fp32 by bit surgery, which is what `Fp8Arith` selects.
+//
+// `(b & 0x7F) << 20` puts the 4-bit exponent in bits 23..26 and the 3-bit
+// mantissa in 20..22, i.e. exactly where an fp32 wants them; adding 120 << 23
+// rebiases 7 to 127 in the same instruction. That is the whole normal case.
+//
+// Exponent 0 is the subnormal one, where the value is m * 2^-9 and the formula
+// above produces (1 + m/8) * 2^-7 instead. Subtracting 2^-7 removes the
+// implicit one and leaves (m/8) * 2^-7; doubling it gives m * 2^-9. Both are
+// exact, so the two decodes agree bit for bit and the NaN codes come out as
+// +-480 either way, the same thing the table holds.
+float fp8_bits_decode(uint b) {
+    const float v   = asfloat(((b & 0x7Fu) << 20) + 0x3C000000u);
+    const float mag = ((b & 0x78u) != 0u) ? v : ((v - 0.0078125f) * 2.0f);
+    return asfloat(asuint(mag) | ((b & 0x80u) << 24));
+}
+
 // The 256-entry decode table plus the reduction scratch. Declared here rather
 // than passed in: Slang would be free to copy an `inout float[256]` parameter,
 // and 2 KiB of LDS in a kernel that does not use the table is cheaper than
@@ -104,6 +136,10 @@ groupshared float gRed[256];
 // Must be called by a full 256-thread workgroup in uniform control flow,
 // followed by a barrier.
 void fp8_table_fill(uint tid) { gTbl[tid] = fp8_decode(tid); }
+
+// The one place a weight byte becomes a number, so the table/arithmetic choice
+// is one specialisation constant rather than a fork of the inner loop.
+float fp8_tbl(uint b) { return (Fp8Arith != 0u) ? fp8_bits_decode(b) : gTbl[b]; }
 
 // `fast_round_scale(amax, 1/448)` from inference/kernel.py: the smallest power
 // of two >= amax/448, read straight off the fp32 bit pattern. Doing it through

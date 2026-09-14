@@ -52,6 +52,26 @@ namespace {
 
 std::string l2_dir() { return std::string(DEEPMOE_TEST_DATA_DIR) + "/l2"; }
 
+// The P3 knobs, from the environment, so one binary can re-validate a sweep
+// point without a rebuild -- the same idea as VK_INSTANCE_LAYERS switching the
+// validation layers on. Unset means the AttnSpec defaults, which is what CI
+// runs. See docs/p2_attention.md §13.
+gpu::AttnSpec env_spec() {
+    gpu::AttnSpec sp;
+    auto num = [](const char* n, uint32_t& v) {
+        if (const char* e = std::getenv(n)) v = static_cast<uint32_t>(std::atoi(e));
+    };
+    num("DEEPMOE_FP8_ARITH", sp.fp8_arith_decode);
+    num("DEEPMOE_TILE_HEADS", sp.tile_heads_per_wg);
+    num("DEEPMOE_PV_HEADS", sp.pv_heads_per_wg);
+    num("DEEPMOE_KSPLIT_WQA", sp.ksplit_wq_a);
+    num("DEEPMOE_KSPLIT_WKV", sp.ksplit_wkv);
+    num("DEEPMOE_KSPLIT_WOA", sp.ksplit_wo_a);
+    num("DEEPMOE_KSPLIT_WOB", sp.ksplit_wo_b);
+    num("DEEPMOE_KSPLIT_ROWS", sp.rows_per_lane_ksplit);
+    return sp;
+}
+
 // Dimensions, all from the L2 index's copy of config.json so the test cannot
 // drift from the data.
 struct Dims {
@@ -112,7 +132,7 @@ struct Rig {
         store::PinnedConfig pc;
         pc.region_bytes = 512ull << 20;   // a layer is ~135 MB; 512 MB regions keep it to a few
         if (auto r = pinned.init(std::move(*backing), pc); !r) { why = r.error().str(); return false; }
-        if (auto r = runner.create(device, alloc, gpu::default_shader_dir()); !r) {
+        if (auto r = runner.create(device, alloc, gpu::default_shader_dir(), env_spec()); !r) {
             why = r.error().str(); return false;
         }
         if (auto r = scratch.create(alloc, 64ull << 20); !r) { why = r.error().str(); return false; }
@@ -182,6 +202,31 @@ Buf take(gpu::GpuScratch& s, uint64_t bytes) {
 // magnitude -- 0.4% for bf16, 6% for E4M3 -- and `max|d| / max|y|` reports that
 // as though it were an error in the whole vector. Relative L2 measures what the
 // next kernel actually sees. Both numbers are printed either way.
+// The largest gap between two vectors in ULP of the larger magnitude. Used
+// where two kernels compute the SAME sum in a different association -- a
+// K-split GEMV against the unsplit one, a tiled softmax against the untiled --
+// so the question is not "is this accurate" but "is this the same number to
+// within fp32 re-association".
+double ulp_gap(const std::vector<float>& a, const std::vector<float>& b) {
+    double worst = 0.0;
+    for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+        const float m = std::max(std::fabs(a[i]), std::fabs(b[i]));
+        if (m == 0.0f) continue;
+        const double u = double(std::nextafter(m, 3.4e38f)) - double(m);
+        worst = std::max(worst, std::fabs(double(a[i]) - double(b[i])) / u);
+    }
+    return worst;
+}
+
+// ULP alone overstates a re-associated dot product: an output element that is
+// a small difference of large terms has a big relative error and a tiny
+// absolute one, so the relative L2 over the whole vector is printed with it.
+void report_ulp(const char* what, const std::vector<float>& a, const std::vector<float>& b) {
+    const Agreement g = agree(a, b);
+    std::printf("      %-22s vs the kernel it replaces: max %.0f ULP, relL2 %.2e, "
+                "cos %.9f\n", what, ulp_gap(a, b), g.rel_l2, g.cos);
+}
+
 bool ok(const char* what, const Agreement& g, double cos_min, double rel_l2_max) {
     const bool pass = g.cos >= cos_min && g.rel_l2 <= rel_l2_max && std::isfinite(g.max_abs);
     std::printf("      %-22s %s%s\n", what, g.str().c_str(), pass ? "" : "   <-- FAIL");
@@ -244,8 +289,31 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
     Buf bO    = take(S, uint64_t(qrows) * 4);
     Buf bWoa  = take(S, orows * 4), bWob = take(S, d.dim * 4);
     Buf bGs   = take(S, d.n_experts * 4), bGid = take(S, 64), bGw = take(S, 64), bDone = take(S, 64);
+    // P3 (docs/p2_attention.md §13): the fp32 partial plane the K-split GEMVs
+    // write, and a second output buffer per stage so the split kernel can be
+    // compared against the unsplit one it replaces as well as against the
+    // oracle. 16 * 8192 floats covers every (ksplit, rows) pair in the model.
+    Buf bPart  = take(S, 16ull * 8192 * 4);
+    Buf bQr2   = take(S, d.q_lora * 4),  bKvRaw2 = take(S, d.head_dim * 4);
+    Buf bWoa2  = take(S, orows * 4),     bWob2   = take(S, d.dim * 4);
+    Buf bO2    = take(S, uint64_t(qrows) * 4), bKv2 = take(S, d.head_dim * 4);
+    Buf bWinV2 = take(S, uint64_t(d.window) * d.head_dim);
+    Buf bWinS2 = take(S, uint64_t(d.window) * (d.head_dim / 32));
+    // sparse_attn_t's three planes, at the tile count the test drives.
+    const uint32_t kTiles = 8;
+    Buf bTileMax = take(S, uint64_t(d.n_heads) * kTiles * 4);
+    Buf bPartO   = take(S, uint64_t(kTiles) * d.n_heads * d.head_dim * 4);
+    Buf bPartD   = take(S, uint64_t(kTiles) * d.n_heads * 4);
     REQUIRE(bDone.v.valid());
+    REQUIRE(bPartD.v.valid());
 
+    // DEEPMOE_SKIP_P3 leaves out every P3 stage (docs/p2_attention.md §13), so
+    // this case can be pointed at an older shader directory through
+    // DEEPMOE_SHADER_DIR and the classic stages compared line for line. An old
+    // directory has no gemv_ksplit or sparse_attn_t, and its wkv.spv has no
+    // stage 2, so the P3 dispatches would read slots the old shaders never
+    // expected.
+    const bool p3 = std::getenv("DEEPMOE_SKIP_P3") == nullptr;
     uint32_t layers_checked = 0;
     for (const L2Step& g : set->steps) {
         const uint32_t L = g.layer;
@@ -318,6 +386,29 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WqA, &gp, sizeof gp,
                                               rig.runner.gemv_groups(gpu::AttnStage::WqA, d.q_lora)));
             CHECK(ok("wq_a", agree(bQr.read(d.q_lora), g.f("wq_a_out")), 0.99999, 5e-3));
+
+            if (p3) {
+                // The same GEMV, K-split (§13). Two dispatches over fp32 partials
+                // and a combine, checked against the oracle AND against the
+                // unsplit kernel: the only thing that may differ between them is
+                // where the sum is re-associated.
+                uint64_t* k = rig.runner.slots(gpu::AttnStage::WqAKSplit);
+                k[gpu::slot::kKspW] = rig.addr(p + ".attn.wq_a.weight");
+                k[gpu::slot::kKspS] = rig.scale_addr(p + ".attn.wq_a.weight");
+                k[gpu::slot::kKspX] = bU.a();
+                k[gpu::slot::kKspY] = bQr2.a();
+                k[gpu::slot::kKspPart] = bPart.a();
+                std::memcpy(rig.runner.slots(gpu::AttnStage::WqAKCombine), k, 32 * 8);
+                gpu::KSplitPush kp{d.q_lora, d.dim, d.dim / 32, 0, d.q_lora, 0};
+                REQUIRE_OK(rig.runner.dispatch_now(
+                    gpu::AttnStage::WqAKSplit, &kp, sizeof kp,
+                    rig.runner.ksplit_groups(gpu::AttnStage::WqAKSplit, d.q_lora)));
+                REQUIRE_OK(rig.runner.dispatch_now(
+                    gpu::AttnStage::WqAKCombine, &kp, sizeof kp,
+                    gpu::AttnRunner::combine_groups(d.q_lora)));
+                CHECK(ok("  wq_a K-split", agree(bQr2.read(d.q_lora), g.f("wq_a_out")), 0.99999, 5e-3));
+                report_ulp("  wq_a K-split", bQr2.read(d.q_lora), bQr.read(d.q_lora));
+            }
         }
 
         // --- 3. wq_b + q_norm + RoPE (design §7.3) -----------------------
@@ -380,6 +471,46 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             // step away. The values it decodes to are checked above.
             std::printf("      %-22s %zu/%zu UE8M0 scale bytes differ\n",
                         "wkv cache scales", scale_diff, gs.size());
+
+            if (p3) {
+                // The K-split form (§13). Its combine folds the whole kv_norm /
+                // RoPE / ring-write tail in, so it is two dispatches against two,
+                // not three: WkvKSplit + WkvKFinish replace WkvGemv + WkvFinish.
+                // It writes its own ring so the bytes can be compared with the
+                // unsplit kernel's.
+                uint64_t* k = rig.runner.slots(gpu::AttnStage::WkvKSplit);
+                k[gpu::slot::kKspW] = rig.addr(p + ".attn.wkv.weight");
+                k[gpu::slot::kKspS] = rig.scale_addr(p + ".attn.wkv.weight");
+                k[gpu::slot::kKspX] = bU.a();
+                k[gpu::slot::kKspY] = bKvRaw2.a();
+                k[gpu::slot::kKspPart] = bPart.a();
+                uint64_t* f = rig.runner.slots(gpu::AttnStage::WkvKFinish);
+                f[gpu::slot::kWkvNormW] = rig.addr(p + ".attn.kv_norm.weight");
+                f[gpu::slot::kWkvRope] = bRope.a();
+                f[gpu::slot::kWkvRaw] = bKvRaw2.a();
+                f[gpu::slot::kWkvVal] = bWinV2.a();
+                f[gpu::slot::kWkvScale] = bWinS2.a();
+                f[gpu::slot::kWkvKv] = bKv2.a();
+                f[gpu::slot::kWkvPart] = bPart.a();
+                gpu::KSplitPush sp{d.head_dim, d.dim, d.dim / 32, 0, d.head_dim, 0};
+                gpu::WkvPush fp{d.head_dim, d.dim, d.dim / 32, d.rope_dim, slot, 1,
+                                d.norm_eps, d.head_dim};
+                REQUIRE_OK(rig.runner.dispatch_now(
+                    gpu::AttnStage::WkvKSplit, &sp, sizeof sp,
+                    rig.runner.ksplit_groups(gpu::AttnStage::WkvKSplit, d.head_dim)));
+                REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WkvKFinish, &fp, sizeof fp, 1));
+                CHECK(ok("  wkv K-split raw",
+                         agree(bKvRaw2.read(d.head_dim), g.f("wkv_out")), 0.99999, 5e-3));
+                CHECK(ok("  wkv K-split post-fp8",
+                         agree(bKv2.read(d.head_dim), g.f("kv")), 0.9995, 4e-2));
+                report_ulp("  wkv K-split raw", bKvRaw2.read(d.head_dim), bKvRaw.read(d.head_dim));
+                size_t split_byte_diff = 0;
+                for (uint32_t i = 0; i < d.head_dim; ++i)
+                    if (bWinV2.u8()[slot * d.head_dim + i] != bWinV.u8()[slot * d.head_dim + i])
+                        ++split_byte_diff;
+                std::printf("      %-22s %zu/%u E4M3 ring bytes differ from the unsplit kernel\n",
+                            "  wkv K-split bytes", split_byte_diff, d.head_dim);
+            }
         }
 
         // --- 5. sparse attention (design §7.5) ---------------------------
@@ -453,6 +584,49 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::AttnCombine, &gp, sizeof gp, ag));
             CHECK(ok("  same, heads/wg grouped",
                      agree(bO.read(qrows), g.f("attn_out_irope")), 0.99999, 1e-2));
+
+            if (p3) {
+                // And the head-group x KV-tile grid of §13, which is three
+                // dispatches: scores + a tile max, then p against the FINAL max
+                // and P.V over one tile, then the combine. The bf16 rounding of p
+                // must see the same row max the reference's does, so agreement
+                // with the untiled kernel here is the check that the two-pass
+                // structure really did reproduce it and not an online softmax.
+                bO2.zero();
+                uint64_t* t = rig.runner.slots(gpu::AttnStage::AttnScoreT);
+                std::memcpy(t, rig.runner.slots(gpu::AttnStage::AttnScore), 32 * 8);
+                t[gpu::slot::kAttnO] = bO2.a();
+                t[gpu::slot::kAttnTileMax] = bTileMax.a();
+                t[gpu::slot::kAttnPartO] = bPartO.a();
+                t[gpu::slot::kAttnPartD] = bPartD.a();
+                std::memcpy(rig.runner.slots(gpu::AttnStage::AttnPvT), t, 32 * 8);
+                std::memcpy(rig.runner.slots(gpu::AttnStage::AttnFinishT), t, 32 * 8);
+                const uint32_t nkv = static_cast<uint32_t>(idx.size());
+                // Two P.V grids: one tile, where AttnPvT finishes by itself,
+                // and kTiles / 2 tiles, where AttnFinishT adds them -- a shape
+                // different from the score grid's kTiles, so a stage reading
+                // the wrong one of the two tile counts shows up here.
+                for (uint32_t pvt : {uint32_t{1}, kTiles / 2}) {
+                    bO2.zero();
+                    gpu::AttnTPush tp{nkv, d.window, d.head_dim, d.rope_dim, 1024,
+                                      1.0f / std::sqrt(static_cast<float>(d.head_dim)),
+                                      d.n_heads, kTiles, (nkv + kTiles - 1) / kTiles,
+                                      d.n_heads * d.head_dim, pvt, (nkv + pvt - 1) / pvt};
+                    REQUIRE_OK(rig.runner.dispatch_now(
+                        gpu::AttnStage::AttnScoreT, &tp, sizeof tp,
+                        rig.runner.attn_tile_groups(d.n_heads, kTiles)));
+                    REQUIRE_OK(rig.runner.dispatch_now(
+                        gpu::AttnStage::AttnPvT, &tp, sizeof tp,
+                        rig.runner.attn_pv_groups(d.n_heads, pvt)));
+                    if (gpu::AttnRunner::attn_tiled_finish_needed(pvt))
+                        REQUIRE_OK(rig.runner.dispatch_now(
+                            gpu::AttnStage::AttnFinishT, &tp, sizeof tp,
+                            gpu::AttnRunner::attn_finish_groups(d.n_heads, d.head_dim)));
+                    const char* nm = (pvt == 1) ? "  KV-tile, P.V 1 tile" : "  KV-tile, P.V 4 tiles";
+                    CHECK(ok(nm, agree(bO2.read(qrows), g.f("attn_out_irope")), 0.99999, 1e-2));
+                    report_ulp(nm, bO2.read(qrows), bO.read(qrows));
+                }
+            }
         }
 
         // --- 6. wo_a, grouped and unquantised (design §7.6) --------------
@@ -467,6 +641,28 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WoA, &wp, sizeof wp,
                                               rig.runner.gemv_groups(gpu::AttnStage::WoA, orows)));
             CHECK(ok("wo_a", agree(bWoa.read(orows), g.f("wo_a_out")), 0.99999, 5e-3));
+
+            if (p3) {
+                // K-split (§13), carrying wo_a's block-diagonal structure in
+                // `rows_per_group`: a workgroup never straddles two 1024-row
+                // groups, so it stages the one slice of `o` its group needs.
+                uint64_t* k = rig.runner.slots(gpu::AttnStage::WoAKSplit);
+                k[gpu::slot::kKspW] = rig.addr(p + ".attn.wo_a.weight");
+                k[gpu::slot::kKspS] = rig.scale_addr(p + ".attn.wo_a.weight");
+                k[gpu::slot::kKspX] = bO.a();
+                k[gpu::slot::kKspY] = bWoa2.a();
+                k[gpu::slot::kKspPart] = bPart.a();
+                std::memcpy(rig.runner.slots(gpu::AttnStage::WoAKCombine), k, 32 * 8);
+                gpu::KSplitPush kp{orows, ocols, ocols / 32, d.o_lora, orows, 0};
+                REQUIRE_OK(rig.runner.dispatch_now(
+                    gpu::AttnStage::WoAKSplit, &kp, sizeof kp,
+                    rig.runner.ksplit_groups(gpu::AttnStage::WoAKSplit, orows)));
+                REQUIRE_OK(rig.runner.dispatch_now(
+                    gpu::AttnStage::WoAKCombine, &kp, sizeof kp,
+                    gpu::AttnRunner::combine_groups(orows)));
+                CHECK(ok("  wo_a K-split", agree(bWoa2.read(orows), g.f("wo_a_out")), 0.99999, 5e-3));
+                report_ulp("  wo_a K-split", bWoa2.read(orows), bWoa.read(orows));
+            }
         }
 
         // --- 7. wo_b (design §7.6) ---------------------------------------
@@ -481,6 +677,25 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::WoB, &gp, sizeof gp,
                                               rig.runner.gemv_groups(gpu::AttnStage::WoB, d.dim)));
             CHECK(ok("wo_b", agree(bWob.read(d.dim), g.f("wo_b_out")), 0.99999, 5e-3));
+
+            if (p3) {
+                uint64_t* k = rig.runner.slots(gpu::AttnStage::WoBKSplit);
+                k[gpu::slot::kKspW] = rig.addr(p + ".attn.wo_b.weight");
+                k[gpu::slot::kKspS] = rig.scale_addr(p + ".attn.wo_b.weight");
+                k[gpu::slot::kKspX] = bWoa.a();
+                k[gpu::slot::kKspY] = bWob2.a();
+                k[gpu::slot::kKspPart] = bPart.a();
+                std::memcpy(rig.runner.slots(gpu::AttnStage::WoBKCombine), k, 32 * 8);
+                gpu::KSplitPush kp{d.dim, orows, orows / 32, 0, d.dim, 0};
+                REQUIRE_OK(rig.runner.dispatch_now(
+                    gpu::AttnStage::WoBKSplit, &kp, sizeof kp,
+                    rig.runner.ksplit_groups(gpu::AttnStage::WoBKSplit, d.dim)));
+                REQUIRE_OK(rig.runner.dispatch_now(
+                    gpu::AttnStage::WoBKCombine, &kp, sizeof kp,
+                    gpu::AttnRunner::combine_groups(d.dim)));
+                CHECK(ok("  wo_b K-split", agree(bWob2.read(d.dim), g.f("wo_b_out")), 0.99999, 5e-3));
+                report_ulp("  wo_b K-split", bWob2.read(d.dim), bWob.read(d.dim));
+            }
         }
 
         // --- 8. hc_post fused into the ffn-half mega_mhc (design §7.7) ---
@@ -548,6 +763,269 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
     std::printf("    %u layers checked, pinned set %.1f MB in %u regions\n",
                 layers_checked, rig.pinned.bytes_loaded() / 1e6, rig.pinned.region_count());
     CHECK(layers_checked > 0);
+}
+
+// ---------------------------------------------------------------------------
+// design §7.5 at a context the L2 oracle does not have.
+//
+// Everything above is one decode token at position 64 of a 64-token prefill,
+// where `topk_idxs` is 193 entries long and the top-k has never been asked to
+// select (docs/p2_attention.md §9.4). That says nothing about what
+// `sparse_attn_t` does when the indexer really does hand it 512 compressed
+// picks out of a 32K context, and there is no reference tensor for it, so the
+// check here is against an fp64 CPU transcription of `sparse_attn_kernel`
+// instead -- the reference's own order of operations, in double, including the
+// bf16 rounding of p against the FINAL row max with the sink excluded.
+//
+// The untiled kernel is NOT run here: `sparse_attn.slang` stages the whole
+// index list in LDS and is capped at `kMaxKv`. The tiled one reads indices
+// straight from memory, which is the other half of why §13 replaced it.
+namespace {
+
+// A rig with no checkpoint: this case needs a device, the runner and scratch,
+// and nothing off disk.
+struct BareRig {
+    gpu::Device          device;
+    gpu::MemoryAllocator alloc;
+    gpu::AttnRunner      runner;
+    gpu::GpuScratch      scratch;
+    std::string          why;
+
+    ~BareRig() { scratch.destroy(); runner.destroy(); }
+
+    bool bring_up(uint64_t scratch_bytes) {
+        gpu::DeviceOptions dopts;
+        dopts.enable_validation = std::getenv("VK_INSTANCE_LAYERS") != nullptr;
+        if (auto r = device.create(dopts); !r) { why = r.error().str(); return false; }
+        if (auto r = device.caps().check_required(); !r) { why = r.error().str(); return false; }
+        if (auto r = alloc.init(device, MemoryPath::DeviceLocalHostVisible); !r) {
+            why = r.error().str(); return false;
+        }
+        if (auto r = runner.create(device, alloc, gpu::default_shader_dir(), env_spec()); !r) {
+            why = r.error().str(); return false;
+        }
+        if (auto r = scratch.create(alloc, scratch_bytes); !r) { why = r.error().str(); return false; }
+        return true;
+    }
+};
+
+// A deterministic uniform in [-1, 1); the values only have to be well
+// conditioned, and a fixed seed makes a failure reproducible.
+struct Lcg {
+    uint64_t s;
+    float next() {
+        s = s * 6364136223846793005ull + 1442695040888963407ull;
+        return float(int32_t(uint32_t(s >> 32))) * (1.0f / 2147483648.0f);
+    }
+};
+
+}  // namespace
+
+DEEPMOE_TEST(gpu_attn, sparse_attn_long_context) {
+    BareRig rig;
+    // 32768 KV entries is 32 MB of compressed rows, 8 MB of scores and 8 MB of
+    // P.V partials.
+    if (!rig.bring_up(192ull << 20)) {
+        std::printf("      SKIP gpu_attn long context: %s\n", rig.why.c_str());
+        return;
+    }
+    const uint32_t n_heads = 64, head_dim = 512, rope_dim = 64, n_win = 128;
+    const float    scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+
+    // The two contexts, and how many heads the fp64 reference checks at each:
+    // it is 64 * n_kv * 512 multiply-adds a head, so at 32K all 64 would be a
+    // billion of them for no more coverage than a spread of three.
+    struct Case { uint32_t n_kv, n_tiles, pv_tiles, heads_checked; };
+    const Case cases[] = {{4096, 8, 1, 64}, {4096, 16, 4, 64}, {32768, 32, 16, 4},
+                          {32768, 16, 1, 4}};
+
+    gpu::GpuScratch& S = rig.scratch;
+    const uint32_t max_kv = 32768;
+    Buf bQ     = take(S, uint64_t(n_heads) * head_dim * 2);
+    Buf bWinV  = take(S, uint64_t(n_win) * head_dim);
+    Buf bWinS  = take(S, uint64_t(n_win) * (head_dim / 32));
+    Buf bCmp   = take(S, uint64_t(max_kv) * head_dim * 2);
+    Buf bTop   = take(S, uint64_t(max_kv) * 4);
+    Buf bSink  = take(S, uint64_t(n_heads) * 4);
+    Buf bRope  = take(S, uint64_t(rope_dim) * 4);
+    Buf bScore = take(S, uint64_t(n_heads) * max_kv * 4);
+    Buf bO     = take(S, uint64_t(n_heads) * head_dim * 4);
+    Buf bTileMax = take(S, uint64_t(n_heads) * 64 * 4);
+    Buf bPartO = take(S, uint64_t(32) * n_heads * head_dim * 4);
+    Buf bPartD = take(S, uint64_t(32) * n_heads * 4);
+    REQUIRE(bPartD.v.valid());
+
+    Lcg rng{0x9E3779B97F4A7C15ull};
+    // q small enough that a 512-dim dot times head_dim**-0.5 lands in a range
+    // exp() is happy with.
+    std::vector<float> q(uint64_t(n_heads) * head_dim);
+    for (float& v : q) v = 0.15f * rng.next();
+    for (size_t i = 0; i < q.size(); ++i) bQ.u16()[i] = cpu::float_to_bf16(q[i]);
+    // q as the kernel will see it, i.e. after the bf16 round trip.
+    for (size_t i = 0; i < q.size(); ++i) q[i] = bf16_to_f32(bQ.u16()[i]);
+
+    // The window ring, through the same E4M3 + UE8M0 encode wkv.slang performs.
+    std::vector<float> wrow(head_dim), wback(head_dim);
+    std::vector<float> win(uint64_t(n_win) * head_dim);
+    for (uint32_t r = 0; r < n_win; ++r) {
+        for (uint32_t i = 0; i < head_dim; ++i) wrow[i] = 0.4f * rng.next();
+        for (uint32_t b = 0; b < head_dim / 32; ++b) {
+            uint8_t bytes[32];
+            const float sc = cpu::act_quant_block(&wrow[b * 32], 32, bytes,
+                                                  wback.data() + b * 32);
+            std::memcpy(bWinV.u8() + r * head_dim + b * 32, bytes, 32);
+            bWinS.u8()[r * (head_dim / 32) + b] = cpu::e8m0_encode(sc);
+        }
+        std::memcpy(&win[uint64_t(r) * head_dim], wback.data(), head_dim * 4);
+    }
+    // The compressed half is bf16 on our side (design §6 / §11.3).
+    for (uint64_t i = 0; i < uint64_t(max_kv) * head_dim; ++i)
+        bCmp.u16()[i] = cpu::float_to_bf16(0.4f * rng.next());
+    for (uint32_t h = 0; h < n_heads; ++h) bSink.f()[h] = 0.5f * rng.next();
+    const std::vector<float> rope = runtime::rope_table(runtime::rope_for_layer(2, rope_dim), 300);
+    std::memcpy(bRope.v.host, rope.data(), uint64_t(rope_dim) * 4);
+
+    // One KV row, exactly as the shader decodes it, into an fp64 scratch row.
+    // Materialising the row rather than indexing per element keeps the 268
+    // million multiply-adds of the 4096 case to a couple of seconds.
+    std::vector<double> kvrow(head_dim);
+    auto load_kv = [&](int idx) {
+        if (idx < static_cast<int>(n_win)) {
+            const float* r = &win[uint64_t(idx) * head_dim];
+            for (uint32_t dd = 0; dd < head_dim; ++dd) kvrow[dd] = double(r[dd]);
+        } else {
+            const uint16_t* r = bCmp.u16() + (uint64_t(idx) - n_win) * head_dim;
+            for (uint32_t dd = 0; dd < head_dim; ++dd) kvrow[dd] = double(bf16_to_f32(r[dd]));
+        }
+    };
+
+    for (const Case& c : cases) {
+        // Every position live except a handful of -1 holes, which are the case
+        // the reference's finite -1e30 row-max floor exists for.
+        for (uint32_t t = 0; t < c.n_kv; ++t)
+            bTop.u32()[t] = (t % 401u == 7u) ? 0xFFFFFFFFu : t;
+        bO.zero();
+        bScore.zero();
+
+        uint64_t* s = rig.runner.slots(gpu::AttnStage::AttnScoreT);
+        s[gpu::slot::kAttnQ] = bQ.a();
+        s[gpu::slot::kAttnWinVal] = bWinV.a();
+        s[gpu::slot::kAttnWinScale] = bWinS.a();
+        s[gpu::slot::kAttnCmpKv] = bCmp.a();
+        s[gpu::slot::kAttnTopIdx] = bTop.a();
+        s[gpu::slot::kAttnSink] = bSink.a();
+        s[gpu::slot::kAttnRope] = bRope.a();
+        s[gpu::slot::kAttnScore] = bScore.a();
+        s[gpu::slot::kAttnO] = bO.a();
+        s[gpu::slot::kAttnTileMax] = bTileMax.a();
+        s[gpu::slot::kAttnPartO] = bPartO.a();
+        s[gpu::slot::kAttnPartD] = bPartD.a();
+        std::memcpy(rig.runner.slots(gpu::AttnStage::AttnPvT), s, 32 * 8);
+        std::memcpy(rig.runner.slots(gpu::AttnStage::AttnFinishT), s, 32 * 8);
+
+        gpu::AttnTPush tp{c.n_kv, n_win, head_dim, rope_dim, c.n_kv, scale, n_heads,
+                          c.n_tiles, (c.n_kv + c.n_tiles - 1) / c.n_tiles,
+                          n_heads * head_dim, c.pv_tiles,
+                          (c.n_kv + c.pv_tiles - 1) / c.pv_tiles};
+        REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::AttnScoreT, &tp, sizeof tp,
+                                           rig.runner.attn_tile_groups(n_heads, c.n_tiles)));
+        REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::AttnPvT, &tp, sizeof tp,
+                                           rig.runner.attn_pv_groups(n_heads, c.pv_tiles)));
+        if (gpu::AttnRunner::attn_tiled_finish_needed(c.pv_tiles))
+            REQUIRE_OK(rig.runner.dispatch_now(
+                gpu::AttnStage::AttnFinishT, &tp, sizeof tp,
+                gpu::AttnRunner::attn_finish_groups(n_heads, head_dim)));
+
+        // --- the fp64 transcription -------------------------------------
+        std::vector<float> ref(uint64_t(c.heads_checked) * head_dim);
+        std::vector<double> pv(c.n_kv);
+        for (uint32_t hh = 0; hh < c.heads_checked; ++hh) {
+            // Spread the sampled heads over the range rather than taking a
+            // prefix, so a bug in one head group is not invisible.
+            const uint32_t h = (c.heads_checked == n_heads)
+                                   ? hh : (hh * (n_heads / c.heads_checked) + 1);
+            double mx = -1.0e30;
+            for (uint32_t t = 0; t < c.n_kv; ++t) {
+                const int idx = static_cast<int>(bTop.u32()[t]);
+                if (idx < 0) { pv[t] = -3.0e38; continue; }
+                load_kv(idx);
+                double acc = 0.0;
+                for (uint32_t dd = 0; dd < head_dim; ++dd)
+                    acc += double(q[uint64_t(h) * head_dim + dd]) * kvrow[dd];
+                pv[t] = acc * double(scale);
+                mx = std::max(mx, pv[t]);
+            }
+            // p = bf16(exp(s - mx)), which is where `acc_s_cast` rounds, and
+            // the sink enters the denominator only.
+            double den = std::exp(double(bSink.f()[h]) - mx);
+            for (uint32_t t = 0; t < c.n_kv; ++t) {
+                const int idx = static_cast<int>(bTop.u32()[t]);
+                pv[t] = (idx < 0) ? 0.0
+                                  : double(bf16_to_f32(cpu::float_to_bf16(
+                                        static_cast<float>(std::exp(pv[t] - mx)))));
+                den += pv[t];
+            }
+            std::vector<double> o(head_dim, 0.0);
+            for (uint32_t t = 0; t < c.n_kv; ++t) {
+                if (pv[t] == 0.0) continue;
+                load_kv(static_cast<int>(bTop.u32()[t]));
+                for (uint32_t dd = 0; dd < head_dim; ++dd) o[dd] += pv[t] * kvrow[dd];
+            }
+            const double inv = 1.0 / den;
+            for (uint32_t dd = 0; dd < head_dim; ++dd) o[dd] *= inv;
+            // The inverse rotation the kernel fuses into its write-out.
+            for (uint32_t dd = head_dim - rope_dim; dd < head_dim; dd += 2) {
+                const uint32_t j = (dd - (head_dim - rope_dim)) >> 1;
+                const double cs = rope[j * 2], sn = rope[j * 2 + 1];
+                const double re = o[dd], im = o[dd + 1];
+                o[dd]     = re * cs + im * sn;      // conjugate
+                o[dd + 1] = -re * sn + im * cs;
+            }
+            for (uint32_t dd = 0; dd < head_dim; ++dd)
+                ref[uint64_t(hh) * head_dim + dd] = static_cast<float>(o[dd]);
+        }
+
+        std::vector<float> got(uint64_t(c.heads_checked) * head_dim);
+        for (uint32_t hh = 0; hh < c.heads_checked; ++hh) {
+            const uint32_t h = (c.heads_checked == n_heads)
+                                   ? hh : (hh * (n_heads / c.heads_checked) + 1);
+            std::memcpy(&got[uint64_t(hh) * head_dim],
+                        bO.f() + uint64_t(h) * head_dim, head_dim * 4);
+        }
+        std::printf("    n_kv %u, scores %u tiles x %u heads/wg, P.V %u tiles x %u heads/wg, "
+                    "%u of %u heads against fp64\n", c.n_kv, c.n_tiles,
+                    rig.runner.spec().tile_heads_per_wg, c.pv_tiles,
+                    rig.runner.spec().pv_heads_per_wg, c.heads_checked, n_heads);
+        CHECK(ok("sparse_attn_t long", agree(got, ref), 0.999999, 1e-3));
+    }
+}
+
+// attn_common.slang's arithmetic E4M3 decode, against the 256-entry table it
+// replaces. The shader expression is transcribed here exactly; if these two
+// agree on all 256 codes then `Fp8Arith` is a pure speed knob and cannot
+// change a single output bit. (NaN codes 0x7F/0xFF are included: both forms
+// produce +-480, which is what the table holds.)
+DEEPMOE_TEST(gpu_attn, fp8_arith_decode_matches_table) {
+    size_t differ = 0;
+    for (uint32_t b = 0; b < 256; ++b) {
+        const uint32_t bits = ((b & 0x7Fu) << 20) + 0x3C000000u;
+        float v;
+        std::memcpy(&v, &bits, 4);
+        float mag = ((b & 0x78u) != 0u) ? v : ((v - 0.0078125f) * 2.0f);
+        uint32_t mb;
+        std::memcpy(&mb, &mag, 4);
+        mb |= (b & 0x80u) << 24;
+        std::memcpy(&mag, &mb, 4);
+        float want = cpu::kFp8E4M3Table[b];
+        if ((b & 0x7Fu) == 0x7Fu) want = (b & 0x80u) ? -480.0f : 480.0f;
+        uint32_t ab, wb;
+        std::memcpy(&ab, &mag, 4);
+        std::memcpy(&wb, &want, 4);
+        if (ab != wb && !(mag == 0.0f && want == 0.0f)) ++differ;
+    }
+    std::printf("      %-22s %zu/256 codes differ from the LDS table\n",
+                "fp8 arithmetic decode", differ);
+    CHECK_EQ(differ, size_t{0});
 }
 
 // The bf16 GEMV of design §7.11 against a CPU reference over the same pinned

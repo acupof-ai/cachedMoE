@@ -81,7 +81,22 @@ static const uint kMaxHeadsPerWg = 8;
 // per-thread P.V partials (256 threads * head_dim / 32 dims). At head_dim 512
 // and HeadsPerWg 8 those are the same 4096 floats.
 groupshared int   gIdx[kMaxKv];           // topk_idxs, read once instead of per t
-groupshared float gPool[kMaxHeadsPerWg * 512];
+// **The staged q is transposed, and the P.V partials are padded**, both for
+// the same reason fp8_gemv.slang pads gXQ: a lane owns `span` = 16 CONSECUTIVE
+// dims, so the natural layout puts lane l word i at `l * 16 + i`, whose bank is
+// `(16 l + i) mod 32` -- two banks across 32 lanes, a 16-way conflict on every
+// read. Storing q as [dim-within-span][lane] instead makes lane l read index
+// `i * 32 + l`, one bank each; and giving each thread's P.V partial a stride of
+// span + 1 = 17 does the same by being odd. Measured in
+// docs/p2_attention.md §13.
+static const uint kPvStride = kMaxSpan + 1;            // 17, odd on purpose
+// max(HeadsPerWg * head_dim, kWg * kPvStride)
+groupshared float gPool[kWg * (kMaxSpan + 1)];
+
+// Where element `d` of head `hh` lives, given `span` dims to a lane.
+uint q_slot(uint hh, uint head_dim, uint d, uint span) {
+    return hh * head_dim + (d % span) * 32 + (d / span);
+}
 
 // This workgroup's head range. `hn - h0` is 1 for a caller that does not push
 // n_heads, which is what keeps the old dispatch geometry correct.
@@ -113,12 +128,12 @@ void kv_span(uint idx, uint d0, uint span, out float v[kMaxSpan]) {
                 if (w * 4 >= span) continue;
                 const uint b = load_u32(base + (uint64_t)w * 4);
                 [unroll] for (uint j = 0; j < 4; ++j)
-                    v[w * 4 + j] = gTbl[(b >> (8 * j)) & 0xFFu] * sc;
+                    v[w * 4 + j] = fp8_tbl((b >> (8 * j)) & 0xFFu) * sc;
             }
         } else {
             const uint b = load_u16(base);
-            v[0] = gTbl[b & 0xFFu] * sc;
-            if (span > 1u) v[1] = gTbl[b >> 8] * sc;
+            v[0] = fp8_tbl(b & 0xFFu) * sc;
+            if (span > 1u) v[1] = fp8_tbl(b >> 8) * sc;
         }
         return;
     }
@@ -173,7 +188,8 @@ void stage_score(uint gid, uint tid) {
     const uint h0 = head_lo(gid), hn = head_hi(gid);
     const uint span = pc.head_dim / 32;             // 16
     for (uint i = tid; i < (hn - h0) * pc.head_dim; i += kWg)
-        gPool[i] = bf16_decode(load_u16(Ptr[kQ] + ((uint64_t)h0 * pc.head_dim + i) * 2));
+        gPool[q_slot(i / pc.head_dim, pc.head_dim, i % pc.head_dim, span)] =
+            bf16_decode(load_u16(Ptr[kQ] + ((uint64_t)h0 * pc.head_dim + i) * 2));
     load_idx(tid);
     GroupMemoryBarrierWithGroupSync();
 
@@ -190,7 +206,7 @@ void stage_score(uint gid, uint tid) {
             if (idx >= 0) {
                 [unroll] for (uint i = 0; i < kMaxSpan; ++i) {
                     if (i >= span) continue;
-                    p += gPool[(h - h0) * pc.head_dim + d0 + i] * v[i];
+                    p += gPool[(h - h0) * pc.head_dim + i * 32 + lane] * v[i];
                 }
             }
             // A KV row is one wave's worth of lanes, so this is one
@@ -274,14 +290,14 @@ void stage_combine(uint gid, uint tid) {
     if (ngrp > 1) {
         [unroll] for (uint i = 0; i < kMaxSpan; ++i) {
             if (i >= span) continue;
-            gPool[tid * span + i] = acc[i];
+            gPool[tid * kPvStride + i] = acc[i];
         }
         GroupMemoryBarrierWithGroupSync();
         if (grp == 0) {
             for (uint gg = 1; gg < ngrp; ++gg) {
                 [unroll] for (uint i = 0; i < kMaxSpan; ++i) {
                     if (i >= span) continue;
-                    acc[i] += gPool[(tid + gg * 32) * span + i];
+                    acc[i] += gPool[(tid + gg * 32) * kPvStride + i];
                 }
             }
         }

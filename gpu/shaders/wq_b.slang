@@ -47,7 +47,8 @@ groupshared float gYrow[kMaxRowsPerWg];
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     fp8_table_fill(tid);
-    stage_x_fp8_rmsnorm(Ptr[kQr], Ptr[kNormW], pc.k, tid, pc.norm_eps);
+    stage_x_fp8_rmsnorm(Ptr[kQr], Ptr[kNormW], pc.k, tid, pc.norm_eps,
+                        Ptr[kS] + (uint64_t)((gid.x * gemv_rows_per_wg()) >> 5) * pc.scale_cols);
     GroupMemoryBarrierWithGroupSync();
 
     const uint rowsPerWg = gemv_rows_per_wg();
