@@ -343,12 +343,19 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
     // Busy time is reported per in-flight window in handle_completion, not
     // per request here; see the note there.
     if (profiler_) profiler_->note_miss_bytes(r.bytes_moved);
+    // The callback BEFORE the request stops counting as outstanding. `drain()`
+    // promises that everything issued has finished, and for an expert fill
+    // "finished" means the callback has settled the slot: with the notify
+    // first, drain could return while the last run's callback was still on
+    // its way to ExpertStore::finish_run, and the MoE dispatch found a slot
+    // still Filling ("layer 30 expert 212 is not resident after the gate: it
+    // was a miss this layer, its slot is filling", docs/p2_decode.md §11.4).
+    if (p->cb) p->cb(r);          // runs on the dispatcher thread, must be short
     {
         std::lock_guard lk(mutex_);
         --outstanding_requests_;
     }
     idle_cv_.notify_all();
-    if (p->cb) p->cb(r);          // runs on the dispatcher thread, must be short
 }
 
 void IoEngine::dispatcher() {
