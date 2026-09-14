@@ -981,8 +981,11 @@ def cmd_analyse(args) -> int:
     def put(d, key, val):
         d.setdefault(key, []).append(val)
 
-    for prompt, mode, pdir, log in trajs:
+    EV: dict = {}         # scheme -> (trajectory, draft start_pos) -> ("g", a | "s", r, {theta: k})
+    starts = {}
+    for tid, (prompt, mode, pdir, log) in enumerate(trajs):
         n = log["prefill_len"]
+        starts[tid] = n - 1
         produced = log["produced"]
         rows = _traj_rows(pdir, log)
         for rec in log["cycles"]:
@@ -1020,6 +1023,9 @@ def cmd_analyse(args) -> int:
                 while a < 5 and dmeta["ref_chain"][a] == y[a]:
                     a += 1
                 put(G, "chain_ref", a)
+                EV.setdefault("chain_ref", {})[(tid, s)] = (
+                    "g", a, {th: k_from_confidence(np.asarray(dmeta["ref_conf"], np.float32), th)
+                             for th in THETAS})
             for rule in (CAND_RULES if mode == "greedy" else ("anchor",)):
                 for K in (KS if rule == "anchor" else (16,)):
                     idx, cl, lse_a, e_in, e_cand, h_cand = lattice_inputs(
@@ -1052,6 +1058,8 @@ def cmd_analyse(args) -> int:
                                 put(G, name, a)
                                 if vname == "tail":
                                     conf = confidence(d["x"], lat.prev_embed(pth), W)
+                                    EV.setdefault(name, {})[(tid, s)] = (
+                                        "g", a, {th: k_from_confidence(conf, th) for th in THETAS})
                                     for th in THETAS:
                                         kk = k_from_confidence(conf, th)
                                         Gconf.setdefault(name, {}).setdefault(th, []).append(
@@ -1083,6 +1091,8 @@ def cmd_analyse(args) -> int:
                         put(S, name, r)
                         prev_e = np.stack([E[t] for t in yprev])
                         conf = confidence(d["x"], prev_e, W)
+                        kth = {th: k_from_confidence(conf, th) for th in THETAS}
+                        EV.setdefault(name, {})[(tid, s)] = ("s", r, kth)
                         for th in THETAS:
                             Sconf.setdefault(name, {}).setdefault(th, []).append(
                                 (k_from_confidence(conf, th), r))
@@ -1090,8 +1100,9 @@ def cmd_analyse(args) -> int:
                         if K == 16:
                             lat_t = Lattice(idx, cl, e_in, e_cand, h_cand, lse_a)
                             toks = lat_t.tokens(lat_t.path("eal"))
-                            put(S, "anchor/K16/eal-deterministic",
-                                [1.0 if toks[i] == y[i] else 0.0 for i in range(5)])
+                            rd = [1.0 if toks[i] == y[i] else 0.0 for i in range(5)]
+                            put(S, "anchor/K16/eal-deterministic", rd)
+                            EV.setdefault("anchor/K16/eal-deterministic", {})[(tid, s)] = ("s", rd, kth)
             if mode == "sampling":
                 # the old chain at temperature 1: q = full-vocab softmax(B_i + bias(y_{i-1}))
                 r = []
@@ -1103,6 +1114,8 @@ def cmd_analyse(args) -> int:
                 put(S, "chain_ref/sample", r)
                 prev_e = np.stack([E[t] for t in yprev])
                 conf = confidence(d["x"], prev_e, W)
+                EV.setdefault("chain_ref/sample", {})[(tid, s)] = (
+                    "s", r, {th: k_from_confidence(conf, th) for th in THETAS})
                 for th in THETAS:
                     Sconf.setdefault("chain_ref/sample", {}).setdefault(th, []).append(
                         (k_from_confidence(conf, th), r))
@@ -1183,6 +1196,7 @@ def cmd_analyse(args) -> int:
     out["union_frac_by_M"] = [round(float(np.mean(v)), 4) if v else None for v in per_m]
     out["union_experts_by_M"] = [round(float(np.mean(v)) * 6 * (m + 1), 3) if v else None
                                  for m, v in enumerate(per_m)]
+    out["runtime_simulation"] = simulate_runtime(EV, starts)
     out["verify_cycles"] = len(drivers)
     out["chain_replay"] = {"mismatched_tokens": replay_mismatch[0], "tokens": replay_mismatch[1]}
     out["chain_token_rank_in_base_logits"] = [
@@ -1196,6 +1210,44 @@ def cmd_analyse(args) -> int:
     print(json.dumps({k: v for k, v in out.items() if k not in ("trajectories",)}, indent=1,
                      ensure_ascii=False)[:20000])
     return 0
+
+
+def simulate_runtime(EV: dict, starts: dict, reps: int = 400) -> dict:
+    """The per-event means above weight every trajectory position equally; a runtime
+    drafts only at the last accepted position of each cycle, so easy stretches get
+    fewer drafts. Replay the runtime's cycle process along each trajectory: draft at
+    s, verify k, accept a (greedy: known; sampling: Bernoulli(r_j) in order, the
+    output is the trajectory token either way), next draft at s + a + 1. Stops at the
+    first position without a full-lookahead draft event."""
+    rng = np.random.default_rng(99)
+    res = {}
+    for name, evs in sorted(EV.items()):
+        res[name] = {}
+        policies = [("k", k) for k in range(1, 6)] + [("theta", th) for th in THETAS]
+        for kind, val in policies:
+            cycles = tokens = 0
+            khist = [0] * 6
+            n_rep = 1 if next(iter(evs.values()))[0] == "g" else reps
+            for _ in range(n_rep):
+                for tid, s0 in starts.items():
+                    s = s0
+                    while (tid, s) in evs:
+                        typ, x, kth = evs[(tid, s)]
+                        k = val if kind == "k" else kth[val]
+                        if typ == "g":
+                            a = min(x, k)
+                        else:
+                            a = 0
+                            while a < k and rng.random() < x[a]:
+                                a += 1
+                        cycles += 1
+                        tokens += a + 1
+                        khist[k] += 1
+                        s += a + 1
+            key = f"k{val}" if kind == "k" else f"theta{val}"
+            res[name][key] = {"cycles": cycles // n_rep, "tokens_per_verify": round(tokens / max(cycles, 1), 4),
+                              "k_hist": [round(h / n_rep, 2) for h in khist]}
+    return res
 
 
 def batch_boundary_stats(trajs) -> dict:
@@ -1277,57 +1329,45 @@ def cmd_tps(args) -> int:
     with open(args.stats, encoding="utf-8") as f:
         st = json.load(f)
     uf = st["union_frac_by_M"]
-    gs, ss = st["greedy"]["schemes"], st["sampling"]["schemes"]
-    curves = {}
-    if "chain_ref" in gs:
-        curves["greedy / old chain"] = [gs["chain_ref"][f"E_tokens_k{k}"] for k in range(1, 6)]
-    for name in (args.greedy_tree, ):
-        if name in gs:
-            curves[f"greedy / tree {name}"] = [gs[name][f"E_tokens_k{k}"] for k in range(1, 6)]
-    if "chain_ref/sample" in ss:
-        curves["sampling / old chain"] = [ss["chain_ref/sample"][f"E_tokens_k{k}"] for k in range(1, 6)]
-    if args.sampling_tree in ss:
-        curves[f"sampling / tree {args.sampling_tree}"] = [
-            ss[args.sampling_tree][f"E_tokens_k{k}"] for k in range(1, 6)]
-    out = {"union_frac_by_M": uf, "rows": []}
+    sim = st["runtime_simulation"]
+    names = {"greedy / old chain": "chain_ref",
+             f"greedy / tree {args.greedy_tree}": args.greedy_tree,
+             "sampling / old chain": "chain_ref/sample",
+             f"sampling / tree {args.sampling_tree}": args.sampling_tree}
+    curves = {label: [sim[n][f"k{k}"]["tokens_per_verify"] for k in range(1, 6)]
+              for label, n in names.items() if n in sim}
+    out = {"union_frac_by_M": uf, "curves_tokens_per_verify": curves, "rows": [], "confidence_k": []}
     for h in (0.92, 0.95, 1.0):
         for scen in ("A", "B"):
             for dname, tdr in T_DRAFT_MS.items():
-                base = t_cycle_ms(1, uf, h, scen, tdr, 0.0)["total"]
-                tps0 = 1000.0 / base
+                tps0 = 1000.0 / t_cycle_ms(1, uf, h, scen, tdr, 0.0)["total"]
                 for cname, et in curves.items():
                     tps = [round(1000.0 * et[k - 1] / t_cycle_ms(k + 1, uf, h, scen, tdr, args.cpu_ms)["total"], 2)
                            for k in range(1, 6)]
-                    best = max(tps)
                     out["rows"].append({"h": h, "scenario": scen, "t_draft": dname, "curve": cname,
                                         "tps_k0": round(tps0, 2), "tps_k1_5": tps,
-                                        "best_ratio": round(best / tps0, 3),
-                                        "go": best >= 1.15 * tps0})
-    # confidence-chosen k: TPS = E[tokens] / E[T_cycle(k)]
-    conf = []
-    for mode, table in (("greedy", st["greedy"]["confidence_k"]), ("sampling", st["sampling"]["confidence_k"])):
-        for name, per in table.items():
-            if name not in (args.greedy_tree, "chain_ref/sample", args.sampling_tree, "anchor/K16/eal/tail"):
-                continue
-            for th, v in per.items():
-                n = sum(v["k_hist"])
-                for h in (0.92, 1.0):
-                    for scen in ("A", "B"):
-                        et = sum(v["k_hist"][k] * t_cycle_ms(k + 1, uf, h, scen, T_DRAFT_MS["head_M5"],
-                                                             args.cpu_ms)["total"] for k in range(6)) / n
-                        base = t_cycle_ms(1, uf, h, scen, 0.0, 0.0)["total"]
-                        conf.append({"mode": mode, "scheme": name, "theta": th, "h": h, "scenario": scen,
-                                     "mean_k": v["mean_k"], "E_tokens": v["E_tokens"],
-                                     "tps": round(1000.0 * v["E_tokens"] / et, 2),
-                                     "tps_k0": round(1000.0 / base, 2)})
-    out["confidence_k"] = conf
-    out["breakdown_h092_A_M6"] = t_cycle_ms(6, uf, 0.92, "A", T_DRAFT_MS["head_M5"], args.cpu_ms)
+                                        "best_ratio": round(max(tps) / tps0, 3),
+                                        "go": max(tps) >= 1.15 * tps0})
+                    for th in THETAS:
+                        v = sim[names[cname]][f"theta{th}"]
+                        n = sum(v["k_hist"])
+                        # the draft runs every cycle, also when the confidence picks k = 0
+                        et_ms = sum(v["k_hist"][k] * (t_cycle_ms(k + 1, uf, h, scen, tdr, args.cpu_ms)["total"]
+                                                      + (tdr + args.cpu_ms if k == 0 else 0.0))
+                                    for k in range(6)) / n
+                        out["confidence_k"].append({
+                            "h": h, "scenario": scen, "t_draft": dname, "curve": cname, "theta": th,
+                            "tokens_per_verify": v["tokens_per_verify"],
+                            "mean_k": round(sum(k * v["k_hist"][k] for k in range(6)) / n, 3),
+                            "tps": round(1000.0 * v["tokens_per_verify"] / et_ms, 2),
+                            "ratio": round(1000.0 * v["tokens_per_verify"] / et_ms / tps0, 3)})
     out["breakdown_h092_M1"] = t_cycle_ms(1, uf, 0.92, "A", 0.0, 0.0)
+    out["breakdown_h092_A_M6"] = t_cycle_ms(6, uf, 0.92, "A", T_DRAFT_MS["head_M5"], args.cpu_ms)
+    out["breakdown_h092_B_M6"] = t_cycle_ms(6, uf, 0.92, "B", T_DRAFT_MS["head_M5"], args.cpu_ms)
     for r in out["rows"]:
         print(r)
-    for r in conf:
+    for r in out["confidence_k"]:
         print(r)
-    print("M=1:", out["breakdown_h092_M1"], "\nM=6 A:", out["breakdown_h092_A_M6"])
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump(out, f, indent=1)
