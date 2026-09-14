@@ -1,6 +1,7 @@
 #include "runtime/engine.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -8,6 +9,7 @@
 #include "core/align.h"
 #include "core/log.h"
 #include "gpu/vulkan/moe_kernels.h"   // gpu::default_shader_dir
+#include "gpu/vulkan/prefill_kernels.h"
 #include "model/layout.h"
 #include "storage/backend.h"
 
@@ -393,6 +395,17 @@ Result<void> Engine::init_gpu() {
     if (!sm) return std::unexpected(sm.error());
     sample_ = *sm;
     std::memset(sample_.host_ptr, 0, sizeof(gpu::SampleOut));
+    {
+        const uint64_t out_bytes =
+            uint64_t(kTopKHeaderWords + kTopKThreads + 2ull * kTopKThreads * kTopKCapPerThread) * 4;
+        auto to = alloc_a_.allocate_host_coherent(align_up(out_bytes, 4096));
+        if (!to) return std::unexpected(to.error());
+        topk_out_ = *to;
+        std::memset(topk_out_.host_ptr, 0, static_cast<size_t>(topk_out_.bytes));
+        auto th = alloc_a_.allocate_host_coherent(uint64_t(kTopKThreads) * kTopKBins * 4);
+        if (!th) return std::unexpected(th.error());
+        topk_hist_ = *th;
+    }
 
     if (auto r = layer_.create(device_, attn_, scratch_, c); !r) return r;
     if (auto r = moe_.create(device_, alloc_a_, dir, store_, planner_, pinned_, c); !r) return r;
@@ -573,6 +586,8 @@ void Engine::shutdown() {
     ffn_in_alloc_ = nullptr;
     if (logits_.valid()) alloc_a_.free(logits_);
     if (sample_.valid()) alloc_a_.free(sample_);
+    if (topk_out_.valid()) alloc_a_.free(topk_out_);
+    if (topk_hist_.valid()) alloc_a_.free(topk_hist_);
     scratch_.destroy();
     dec_.destroy();
     attn_.destroy();
@@ -1001,6 +1016,20 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
         return std::unexpected(r.error());
     if (auto r = dec_.record(tok_cmd_, gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
         return std::unexpected(r.error());
+    // Track P: a sampled step also reduces the logits to their top set and the
+    // tail mass (gpu/shaders/sample_topk.slang), in the same buffer.
+    const bool sample = sample_step_ && !sampling_.greedy();
+    if (sample) {
+        uint64_t* tk = dec_.slots(gpu::DecodeStage::SampleTopK);
+        tk[gpu::dslot::kTopKLogits] = logits_.dev_addr;
+        tk[gpu::dslot::kTopKOut]    = topk_out_.dev_addr;
+        tk[gpu::dslot::kTopKHist]   = topk_hist_.dev_addr;
+        gpu::TopKPush kp{c.vocab_size, kTopKDefaultK, 1.0f / sampling_.temperature,
+                         kTopKBinsPerLogit};
+        if (auto r = tok_cmd_.barrier(); !r) return std::unexpected(r.error());
+        if (auto r = dec_.record(tok_cmd_, gpu::DecodeStage::SampleTopK, &kp, sizeof kp, 1); !r)
+            return std::unexpected(r.error());
+    }
     ts_tail_.end = cmd_stamp();
     if (auto r = cmd_flush(gpu::timeline_value(token_, c.num_hidden_layers - 1)); !r)
         return std::unexpected(r.error());
@@ -1016,9 +1045,231 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
 
     DecodeStepResult res;
     res.token    = out.token;
+    res.greedy_token = out.token;
     res.position = position;
     res.top1     = out.top1;
     res.top2     = out.top2;
+    if (sample)
+        if (auto r = sample_into(res, position); !r) return std::unexpected(r.error());
+    return res;
+}
+
+Result<void> Engine::sample_into(DecodeStepResult& res, uint32_t position) {
+    const TimePoint t0 = Clock::now();
+    const TextConfig& c = model_cfg_.text;
+    const float T = sampling_.temperature, P = sampling_.top_p;
+    const auto* w = static_cast<const uint32_t*>(topk_out_.host_ptr);
+    if (w[0] != c.vocab_size || w[4] != kTopKCapPerThread || w[6] != kTopKBins)
+        return fail(Err::Internal,
+                    std::format("sample_topk header: rows {} cap {} bins {}", w[0], w[4], w[6]));
+    TopKLogits tk;
+    tk.rows      = w[0];
+    tk.max_logit = std::bit_cast<float>(w[1]);
+    tk.tail      = double(std::bit_cast<float>(w[2]));
+    tk.bin       = w[3];
+    tk.overflow  = w[5] != 0;
+    if (!tk.overflow) {
+        for (uint32_t t = 0; t < kTopKThreads; ++t) {
+            const uint32_t n = std::min(w[kTopKHeaderWords + t], kTopKCapPerThread);
+            const uint32_t* seg = w + kTopKHeaderWords + kTopKThreads + 2 * t * kTopKCapPerThread;
+            for (uint32_t j = 0; j < n; ++j)
+                tk.cand.push_back({seg[2 * j], std::bit_cast<float>(seg[2 * j + 1])});
+        }
+    }
+    res.candidates = static_cast<uint32_t>(tk.cand.size());
+    Nucleus nuc = nucleus_from_topk(tk, T, P);
+    std::vector<float> host;   // only when the logits have to cross
+    auto copy_logits = [&] {
+        if (host.empty()) {
+            host.resize(c.vocab_size);
+            std::memcpy(host.data(), logits_.host_ptr, host.size() * sizeof(float));
+        }
+    };
+    if (check_topk_) {
+        copy_logits();
+        const TopKLogits emu = emulate_topk(host, kTopKDefaultK, T);
+        auto key = [](const TopKLogits& k) {
+            std::vector<uint64_t> v;
+            for (const auto& cd : k.cand) v.push_back((uint64_t(cd.id) << 32) | std::bit_cast<uint32_t>(cd.logit));
+            std::sort(v.begin(), v.end());
+            return v;
+        };
+        res.topk_checked  = true;
+        res.topk_mismatch = emu.max_logit != tk.max_logit || emu.bin != tk.bin ||
+                            emu.overflow != tk.overflow ||
+                            (!tk.overflow && key(emu) != key(tk)) ||
+                            std::fabs(emu.tail - tk.tail) > 1e-4 * std::max(1.0, emu.tail);
+        if (res.topk_mismatch) {
+            ++topk_mismatches_;
+            log_warn("sample_topk: kernel and emulation differ at position {}: M {} vs {}, bin {} vs "
+                     "{}, {} vs {} candidates, tail {} vs {}", position, tk.max_logit, emu.max_logit,
+                     tk.bin, emu.bin, tk.cand.size(), emu.cand.size(), tk.tail, emu.tail);
+        }
+    }
+    if (!nuc.exact) {
+        copy_logits();
+        nuc = nucleus_from_full(host, T, P);
+        res.topk_fallback = true;
+    }
+    if (nuc.ids.empty()) return fail(Err::Internal, "the nucleus is empty");
+    const uint32_t tok = sample_nucleus(nuc, uniform01(sampling_.seed, uint64_t(position) + 1));
+    res.token        = tok;
+    res.sampled      = true;
+    res.nucleus_size = static_cast<uint32_t>(nuc.ids.size());
+    res.retained     = nuc.retained;
+    res.kept         = nuc.kept;
+    for (size_t i = 0; i < nuc.ids.size(); ++i)
+        if (nuc.ids[i] == tok) { res.p_token = nuc.p[i]; break; }
+    res.sample_ms = ms_since(t0);
+    return {};
+}
+
+// --- Track P: conversations ---------------------------------------------------
+
+uint32_t Engine::max_context() const {
+    return std::min<uint32_t>(kvs_.config().max_context, kMaxIndexPositions);
+}
+
+Result<void> Engine::begin_session(const SessionConfig& sc) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    const TextConfig& c = model_cfg_.text;
+    KvStoreConfig kc;
+    kc.layers      = c.num_hidden_layers;
+    kc.window      = c.sliding_window;
+    kc.latent_dim  = c.head_dim;
+    kc.index_dim   = c.index_head_dim;
+    kc.max_context = std::min<uint32_t>(std::max<uint32_t>(sc.max_context, 256), kMaxIndexPositions);
+    if (auto r = kvs_.create(alloc_a_, kc); !r) return r;
+    auto tables = EngramTables::load(sc.engram_tables_dir);
+    if (!tables)
+        return fail(tables.error().code,
+                    std::format("engram tables from '{}': {}", sc.engram_tables_dir,
+                                tables.error().message));
+    if (auto r = engram_.create(device_, alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
+                                *std::move(tables)); !r)
+        return r;
+    state_.reset();
+    produce_ced_ = true;
+    reset_context();
+    log_info("engine: session -- KV store {} for {} positions, engram tables from {}",
+             human_bytes(kvs_.bytes()), max_context(), sc.engram_tables_dir);
+    return {};
+}
+
+void Engine::reset_context() {
+    kvs_.clear();
+    history_.clear();
+    prefill_loaded_ = false;
+    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    // `token_` stays: it is the expert cache's LRU clock (see slow_prefill).
+}
+
+Result<DecodeStepResult> Engine::feed(
+    std::span<const uint32_t> tokens,
+    const std::function<void(uint32_t, const DecodeStepResult&)>& on_step) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (!produce_ced_)
+        return fail(Err::FailedPrecondition, "feed needs design 7.4's kernels on (begin_session)");
+    if (tokens.empty()) return fail(Err::InvalidArgument, "nothing to feed");
+    const uint32_t base = context_length();
+    if (uint64_t(base) + tokens.size() > max_context())
+        return fail(Err::ResourceExhausted,
+                    std::format("{} + {} tokens exceed the session's {}-position context", base,
+                                tokens.size(), max_context()));
+    DecodeStepResult last{};
+    for (uint32_t i = 0; i < tokens.size(); ++i) {
+        sample_step_ = (i + 1 == tokens.size());
+        auto r = decode_step(tokens[i], base + i, -1);
+        sample_step_ = false;
+        if (!r) return r;
+        if (on_step) on_step(i, *r);
+        last = *r;
+    }
+    return last;
+}
+
+Result<void> Engine::seed_from_prefill(const gpu::PrefillHandoff& h) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    const TextConfig& c = model_cfg_.text;
+    if (h.layers.size() != c.num_hidden_layers)
+        return fail(Err::InvalidArgument,
+                    std::format("handoff has {} layers, the model {}", h.layers.size(),
+                                c.num_hidden_layers));
+    if (h.prompt.size() > max_context())
+        return fail(Err::ResourceExhausted,
+                    std::format("a {}-token prompt against a {}-position session", h.prompt.size(),
+                                max_context()));
+    kvs_.clear();
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+        const gpu::PrefillHandoff::Layer& l = h.layers[L];
+        const uint32_t rows = static_cast<uint32_t>(l.win_kv.size() / c.head_dim);
+        if (rows)
+            if (auto r = kvs_.seed_window(L, l.win_kv.data(), rows); !r) return r;
+        if (!l.cmp_cache.empty() && l.n_cmp) {
+            if (auto r = kvs_.seed_compressed(L, l.cmp_cache.data(), l.n_cmp); !r) return r;
+            if (auto r = kvs_.seed_index_k(L, l.index_k.data(), l.n_cmp); !r) return r;
+        }
+        if (!l.cmp_state_kv.empty() && l.ratio)
+            if (auto r = kvs_.seed_cmp_state(L, l.cmp_state_kv.data(), l.cmp_state_score.data(),
+                                             l.ratio); !r)
+                return r;
+    }
+    history_.assign(h.prompt.begin(), h.prompt.end());
+    // At start_pos == 0 every source publishes, so the last one did.
+    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    produce_ced_ = true;
+    prefill_loaded_ = false;
+    return {};
+}
+
+Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, uint32_t replay) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (prompt.empty()) return fail(Err::InvalidArgument, "the prompt is empty");
+    if (!engram_.tables().valid())
+        return fail(Err::FailedPrecondition, "gpu_prefill needs the engram tables (begin_session)");
+    const TextConfig& c = model_cfg_.text;
+    const TimePoint t0 = Clock::now();
+    gpu::PrefillRunner runner;
+    if (auto r = runner.create(device_, alloc_a_, gpu::default_shader_dir()); !r) return std::unexpected(r.error());
+    gpu::PrefillConfig pc;
+    pc.max_tokens = static_cast<uint32_t>(prompt.size());
+    pc.replay     = replay;
+    gpu::Prefill pf;
+    if (auto r = pf.create(device_, alloc_a_, runner, manifest_, shards_, io_, pinned_, c,
+                           &engram_.tables(), pc); !r)
+        return std::unexpected(r.error());
+    auto h = pf.run(prompt);
+    if (!h) return std::unexpected(h.error());
+    const gpu::PrefillTimes tm = pf.times();
+    pf.destroy();
+    runner.destroy();
+    if (auto r = seed_from_prefill(*h); !r) return std::unexpected(r.error());
+
+    DecodeStepResult res;
+    res.position     = static_cast<uint32_t>(prompt.size()) - 1;
+    res.token        = h->first_token;
+    res.greedy_token = h->first_token;
+    res.top1 = h->top1;
+    res.top2 = h->top2;
+    res.wall_ms = ms_since(t0);
+    if (!sampling_.greedy() && h->logits.size() == c.vocab_size) {
+        const TimePoint s0 = Clock::now();
+        const Nucleus nuc = nucleus_from_full(h->logits, sampling_.temperature, sampling_.top_p);
+        if (!nuc.ids.empty()) {
+            res.token = sample_nucleus(nuc, uniform01(sampling_.seed, uint64_t(res.position) + 1));
+            res.sampled = true;
+            res.topk_fallback = true;
+            res.nucleus_size = static_cast<uint32_t>(nuc.ids.size());
+            res.retained = 1.0;
+            res.kept = nuc.kept;
+            for (size_t i = 0; i < nuc.ids.size(); ++i)
+                if (nuc.ids[i] == res.token) { res.p_token = nuc.p[i]; break; }
+        }
+        res.sample_ms = ms_since(s0);
+    }
+    log_info("engine: GPU prefill of {} tokens in {:.1f} s (expert io {:.1f} s, {} experts / {}), "
+             "first token {}", prompt.size(), res.wall_ms / 1e3, tm.expert_io / 1e3, tm.experts_read,
+             human_bytes(tm.expert_bytes), res.token);
     return res;
 }
 

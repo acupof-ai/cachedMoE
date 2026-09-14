@@ -34,6 +34,8 @@
 
 using namespace deepmoe;
 
+int cmd_serve(int argc, char** argv);   // cli/serve.cpp
+
 namespace {
 
 int usage(int code = 2) {
@@ -63,6 +65,15 @@ int usage(int code = 2) {
         "      and indexer top-k of section 7.4. Default --state tests/data/l3.\n"
         "      --cache-gb 0 (the default) sizes the routed-expert cache from the\n"
         "      machine. See docs/p2_decode.md.\n"
+        "\n"
+        "  deepmoe serve --model DIR [--cache-gb N] [--max-context N]\n"
+        "                [--engram-tables DIR] [--gpu-prefill-min N] [--replay N]\n"
+        "                [--check-topk] [--profile FILE.jsonl]\n"
+        "      A long-running engine behind line-delimited JSON on stdin/stdout:\n"
+        "      generate (streamed tokens, temperature/top_p/seed, KV continuation\n"
+        "      when a prompt extends the previous context), reset, tokenize,\n"
+        "      detokenize, status. See cli/serve.cpp and docs/p3_chat.md;\n"
+        "      tools/chat.py is the terminal client.\n"
         "\n"
         "  deepmoe tokenize --model DIR --in CASES.json --out IDS.jsonl\n"
         "      Encode every {\"text\": ...} of CASES.json (a JSON array, or an\n"
@@ -691,6 +702,7 @@ int main(int argc, char** argv) {
     if (cmd == "bench") return cmd_bench(argc, argv);
     if (cmd == "run")   return cmd_run(argc, argv);
     if (cmd == "tokenize") return cmd_tokenize(argc, argv);
+    if (cmd == "serve")    return cmd_serve(argc, argv);
     if (cmd == "-h" || cmd == "--help" || cmd == "help") return usage(0);
     std::fprintf(stderr, "unknown command %.*s\n", static_cast<int>(cmd.size()), cmd.data());
     return usage();

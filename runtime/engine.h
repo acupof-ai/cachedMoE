@@ -68,12 +68,15 @@
 #include "runtime/kvstore.h"
 #include "runtime/moe_bridge.h"
 #include "runtime/sampler.h"
+#include "runtime/sampling.h"
 #include "storage/file.h"
 #include "storage/io_engine.h"
 #include "store/expert_store.h"
 #include "store/pinned.h"
 #include "store/planner.h"
 #include "store/shard_set.h"
+
+namespace deepmoe::gpu { struct PrefillHandoff; }
 
 namespace deepmoe::runtime {
 
@@ -135,6 +138,30 @@ struct DecodeStepResult {
     double   wall_ms = 0.0;
     StepBreakdown breakdown{};
     TokenRecord record{};
+
+    // Track P (runtime/sampling.h, docs/p3_chat.md §2). `token` is what the
+    // step emits: the argmax unless the step sampled, the draw if it did.
+    uint32_t greedy_token  = 0;       // head.slang's argmax, always
+    bool     sampled       = false;
+    bool     topk_fallback = false;   // the GPU top set could not prove the nucleus: full copy
+    bool     topk_checked  = false;   // --check-topk compared the kernel with emulate_topk
+    bool     topk_mismatch = false;
+    uint32_t candidates    = 0;       // tokens the GPU top set returned
+    uint32_t nucleus_size  = 0;
+    double   p_token  = 0.0;          // full-softmax probability of the emitted token
+    double   retained = 0.0;          // softmax mass of the candidate set
+    double   kept     = 0.0;          // softmax mass of the nucleus
+    double   sample_ms = 0.0;         // host: read the top set, build the nucleus, draw
+};
+
+// Track P: what a conversation needs that the L3 export used to supply.
+struct SessionConfig {
+    // The engram hash constants (EngramTables::load): a pure function of the
+    // tokenizer and config.json, exported once by tools/oracle.py into the L3
+    // directory. Nothing else is read from it.
+    std::string engram_tables_dir = "tests/data/l3";
+    // Positions the KV store is sized for; capped by kMaxIndexPositions.
+    uint32_t    max_context = 4096;
 };
 
 class Engine {
@@ -227,6 +254,51 @@ public:
     // starting from the loaded state, greedily or teacher-forced.
     Result<GenerateResult> generate(std::span<const uint32_t> prompt,
                                     const GenerateOptions& opts);
+
+    // --- Track P: conversations (docs/p3_chat.md) ------------------------------
+    //
+    // A session is the engine without an L3 export: an empty KV store sized for
+    // `max_context`, the engram tables, and design 7.4's kernels producing
+    // everything. `history()` is then exactly the tokens whose KV is written,
+    // and `feed` appends to it -- which is what makes a second turn reuse the
+    // first turn's state instead of re-reading the prompt.
+    Result<void> begin_session(const SessionConfig& sc);
+    // Back to position 0: KV store cleared, history empty. The expert cache,
+    // the pinned set and the planner's clock are untouched (that warmth is the
+    // point of a long-running process).
+    void reset_context();
+    uint32_t context_length() const { return static_cast<uint32_t>(history_.size()); }
+    // The longest sequence this session can hold.
+    uint32_t max_context() const;
+
+    // `tokens` at positions context_length()...: one teacher-forced decode step
+    // each (`slow_prefill`'s equivalence, without its 128-token limit -- a
+    // decode step at p > 128 sees the ring's last 128 positions, which is the
+    // band a chunked prefill's query p sees). Only the LAST step samples, per
+    // `set_sampling`; the result is that step's, i.e. the next token.
+    // `on_step(i, result)` runs after every step.
+    Result<DecodeStepResult> feed(
+        std::span<const uint32_t> tokens,
+        const std::function<void(uint32_t, const DecodeStepResult&)>& on_step = {});
+
+    // Replaces the whole KV state with a GPU prefill's (Track L,
+    // gpu/vulkan/prefill_kernels.h, docs/p3_prefill.md §8.3 item 1): the window
+    // rings, the kv sources' compressed cache, index keys and compressor state,
+    // and the history.
+    Result<void> seed_from_prefill(const gpu::PrefillHandoff& h);
+    // Runs Track L's prefill over `prompt` from position 0 on this engine's
+    // device, pinned set and I/O, seeds the state, and returns the first token
+    // (sampled per `set_sampling` from the handoff's host logits). The prefill's
+    // buffers are allocated for the call and freed after it, so path A needs
+    // room beside the expert cache (serve --cache-gb).
+    Result<DecodeStepResult> gpu_prefill(std::span<const uint32_t> prompt, uint32_t replay = 128);
+
+    void set_sampling(const SamplingParams& p) { sampling_ = p; }
+    const SamplingParams& sampling() const { return sampling_; }
+    // Every sampled step also copies the logits and runs `emulate_topk` against
+    // the kernel's answer (a validation mode; costs ~5 ms a token).
+    void set_check_topk(bool on) { check_topk_ = on; }
+    uint32_t topk_mismatches() const { return topk_mismatches_; }
 
     // --- accessors --------------------------------------------------------
 
@@ -332,6 +404,15 @@ private:
     gpu::GpuScratch      scratch_;
     gpu::GpuBuffer       logits_{};   // [vocab] fp32
     gpu::GpuBuffer       sample_{};   // SampleOut, host-coherent
+    gpu::GpuBuffer       topk_out_{};   // sample_topk.slang's header + candidate segments
+    gpu::GpuBuffer       topk_hist_{};  // its per-thread histograms
+    SamplingParams       sampling_{};
+    bool                 sample_step_ = false;   // set by feed() for its last step
+    bool                 check_topk_ = false;
+    uint32_t             topk_mismatches_ = 0;
+    // Draws the emitted token for a sampled step from the kernel's top set (or
+    // the full logits) into `res`.
+    Result<void>         sample_into(DecodeStepResult& res, uint32_t position);
     gpu::GpuBuffer       ffn_in_buf_{};   // the FFN input, in cached host pages (path B)
     gpu::MemoryAllocator* ffn_in_alloc_ = nullptr;
 

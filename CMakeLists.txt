@@ -91,7 +91,7 @@ if(NOT WIN32)
 endif()
 
 # --- CLI ---------------------------------------------------------------------
-add_executable(deepmoe cli/deepmoe_main.cpp)
+add_executable(deepmoe cli/deepmoe_main.cpp cli/serve.cpp)
 target_link_libraries(deepmoe PRIVATE deepmoe_core)
 add_dependencies(deepmoe shaders)
 

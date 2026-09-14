@@ -68,7 +68,8 @@ set(DEEPMOE_RUNTIME_SOURCES
     runtime/moe_bridge.cpp
     runtime/decode_state.cpp
     runtime/engram.cpp
-    runtime/sampling.cpp)
+    runtime/sampling.cpp
+    runtime/session.cpp)
 
 # Track P: the tokenizer (docs/p3_chat.md).
 set(DEEPMOE_TEXT_SOURCES
