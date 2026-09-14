@@ -97,8 +97,8 @@ struct DecodeScratch {
 
 // Compressed positions one `indexer.score` dispatch can be asked for. The
 // score plane is the only per-step buffer whose size grows with the context,
-// and at 4096 it is 16 KB; the KV store's `max_context` is checked against it.
-inline constexpr uint32_t kMaxIndexPositions = 4096;
+// and at 16,384 (the candidate-block mask starts past it) it is 64 KB; the KV store's `max_context` is checked against it.
+inline constexpr uint32_t kMaxIndexPositions = 16384;
 
 // What the MoE track is asked to do for one layer. Deliberately in terms of
 // the model, not of their kernels: expert ids, routing weights, an input and

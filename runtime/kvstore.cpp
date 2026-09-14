@@ -192,10 +192,13 @@ Result<void> KvStore::set_counts(uint32_t layer, uint32_t n_cmp, uint32_t n_kv) 
     return {};
 }
 
-Result<void> KvStore::set_decode_topk(uint32_t layer, uint32_t position, uint32_t n_cmp) {
+Result<void> KvStore::set_decode_topk(uint32_t layer, uint32_t position, uint32_t n_cmp,
+                                      uint32_t n_sel) {
     auto v = this->layer(layer);
     if (!v) return std::unexpected(v.error());
-    if (auto r = set_counts(layer, n_cmp, cfg_.window + n_cmp); !r) return r;
+    if (n_sel > n_cmp)
+        return fail(Err::InvalidArgument, std::format("{} picks of {} compressed positions", n_sel, n_cmp));
+    if (auto r = set_counts(layer, n_cmp, cfg_.window + n_sel); !r) return r;
     // model.py's `get_window_topk_idxs(win, 1, 1, start_pos)`: the ring listed
     // oldest first from `start_pos % win + 1`, with any slot the sequence has
     // not reached yet marked -1. Order inside the list does not matter to

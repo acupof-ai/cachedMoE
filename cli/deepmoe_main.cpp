@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <functional>
+#include <iterator>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -489,6 +490,7 @@ int cmd_run(int argc, char** argv) {
     uint32_t warm = 0;
     uint32_t determinism = 0;
     bool gate_report = false;
+    bool topk_report = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
@@ -505,6 +507,7 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--warm")        warm = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--determinism") determinism = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--gate-report") gate_report = true;
+        else if (a == "--topk-report") topk_report = true;
         else if (a == "--cache-gb")    cfg.cache.budget_bytes = uint64_t(std::atoll(arg_value(argc, argv, i, a).data())) << 30;
         else if (a == "--chunk-kb")    cfg.io.chunk_bytes = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data())) << 10;
         else if (a == "--qd")          cfg.io.max_inflight_ops = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
@@ -595,11 +598,69 @@ int cmd_run(int argc, char** argv) {
     std::vector<uint32_t> produced;
     for (uint32_t s = 0; s < n; ++s) {
         const uint32_t in = teacher_force ? st->greedy_tokens()[s] : next;
+        // --topk-report also checks indexer.slang's selection EXACTLY on the last
+        // index source, whose score plane is still in the shared scratch when its
+        // layer's probe runs: the kernel's list against a host top-k of the same
+        // scores (ties to the lower position, the kernel's rule).
+        std::string exact_note;
+        if (topk_report) {
+            const TextConfig& c = engine.model().text;
+            uint32_t last_src = 0;
+            for (uint32_t L = 0; L < c.num_hidden_layers; ++L) if (c.is_index_source(L)) last_src = L;
+            engine.layer_probe = [&, last_src](uint32_t L, const runtime::DecodeLayer& dl) {
+                if (L != last_src) return;
+                auto v = engine.effective_kv(L);
+                if (!v) return;
+                const uint32_t n = v->n_cmp, w = c.sliding_window, nsel = v->n_kv - w;
+                std::vector<float> sc(n);
+                std::memcpy(sc.data(), dl.scratch().idx_score.host, n * sizeof(float));
+                std::vector<uint32_t> order(n);
+                for (uint32_t i = 0; i < n; ++i) order[i] = i;
+                std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return sc[a] > sc[b]; });
+                order.resize(std::min<uint32_t>(n, c.index_topk));
+                std::sort(order.begin(), order.end());
+                const auto* ours = reinterpret_cast<const int32_t*>(v->top_idx_host);
+                uint32_t diff = order.size() == nsel ? 0 : 1000000;
+                for (uint32_t i = 0; i < std::min<uint32_t>(nsel, uint32_t(order.size())); ++i)
+                    diff += ours[w + i] != int32_t(order[i] + w);
+                exact_note = std::format("L{} kernel vs host top-k of its own {} scores: {} of {} entries differ",
+                                         L, n, diff, nsel);
+            };
+        }
         auto r = engine.decode_step(in, st->decode_pos() + s,
                                     s < st->steps() ? static_cast<int32_t>(s) : -1);
+        engine.layer_probe = nullptr;
         if (!r) { std::fprintf(stderr, "step %u: %s\n", s, r.error().str().c_str()); return 1; }
         print_token_line(s, in, *r, engine);
+        if (!exact_note.empty()) std::printf("      %s\n", exact_note.c_str());
         if (per_layer) print_layer_table(engine);
+        if (topk_report && s < st->steps()) {
+            // The indexer's list against the reference's, per index source: the
+            // compressed half as a set (scores are not bit-equal, so ties and
+            // near-ties may differ), plus the invariants a broken selection
+            // would violate -- count, strictly increasing, in range.
+            const TextConfig& c = engine.model().text;
+            std::printf("      top-k vs reference:");
+            for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+                if (!c.is_index_source(L)) continue;
+                const runtime::StateTensor* g = st->tensor(s + 1, std::format("L{:02d}.topk_idxs", L));
+                auto v = engine.effective_kv(L);
+                if (!g || !v) continue;
+                const auto* ours = reinterpret_cast<const int32_t*>(v->top_idx_host);
+                const uint32_t w = c.sliding_window, nsel = v->n_kv - w;
+                bool ok = g->i.size() == v->n_kv;
+                for (uint32_t i = 0; i < nsel; ++i) {
+                    const int32_t x = ours[w + i];
+                    ok &= x >= int32_t(w) && x < int32_t(w + v->n_cmp) && (i == 0 || x > ours[w + i - 1]);
+                }
+                std::vector<int32_t> a(ours + w, ours + v->n_kv), b(g->i.begin() + w, g->i.end());
+                std::sort(b.begin(), b.end());
+                std::vector<int32_t> both;
+                std::set_intersection(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(both));
+                std::printf(" L%u %zu/%u%s", L, both.size(), nsel, ok ? "" : "(BAD)");
+            }
+            std::printf("\n");
+        }
         produced.push_back(r->token);
         next = r->token;
     }

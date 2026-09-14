@@ -498,9 +498,20 @@ Result<void> Engine::prepare_ced(uint32_t position) {
         // A layer whose plane is read by others -- an index source, or a
         // window-only layer that has no source -- owns its top-k list; the rest
         // are pointed at their source's and only need the counts.
+        //
+        // The list is the window plus `min(index_topk, n_cmp)` compressed picks
+        // (model.py Indexer.forward: `topk = min(self.index_topk, end_pos //
+        // ratio)`), NOT the window plus every compressed position. Up to 512
+        // compressed positions the two are the same number, which is why this
+        // was invisible below ~1K tokens of context: past it, sparse_attn walked
+        // n_cmp - 512 entries the indexer never wrote (zeros: window slot 0,
+        // attended hundreds of times) and, past n_kv = 1024, overran its
+        // per-head score stride -- the collapse and the NaN logits
+        // docs/p3_prefill.md 8.3 item 2 reports (docs/p3_chat.md 5).
+        const uint32_t n_sel = std::min<uint32_t>(n_cmp, c.index_topk);
         if (p.ratio == 0 || p.is_index_source) {
-            if (auto r = kvs_.set_decode_topk(L, position, n_cmp); !r) return r;
-        } else if (auto r = kvs_.set_counts(L, n_cmp, c.sliding_window + n_cmp); !r) {
+            if (auto r = kvs_.set_decode_topk(L, position, n_cmp, n_sel); !r) return r;
+        } else if (auto r = kvs_.set_counts(L, n_cmp, c.sliding_window + n_sel); !r) {
             return r;
         }
     }

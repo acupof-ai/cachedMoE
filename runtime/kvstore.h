@@ -159,8 +159,10 @@ public:
     // oldest first, with a slot the sequence has not reached yet marked -1.
     // Writes the window half of the top-k list and sets n_cmp / n_kv, leaving
     // the compressed half for `indexer.slang` stage 5 to fill at offset
-    // `window`.
-    Result<void> set_decode_topk(uint32_t layer, uint32_t position, uint32_t n_cmp);
+    // `window`. `n_sel` is how many compressed picks the list carries --
+    // min(index_topk, n_cmp) -- so n_kv = window + n_sel.
+    Result<void> set_decode_topk(uint32_t layer, uint32_t position, uint32_t n_cmp,
+                                 uint32_t n_sel);
     // n_cmp alone, for a layer whose compressed plane belongs to a source.
     Result<void> set_counts(uint32_t layer, uint32_t n_cmp, uint32_t n_kv);
 
