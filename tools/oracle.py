@@ -1287,6 +1287,40 @@ def _l3_kv_tensors(cap: "_L3Sparse", L: int, n_win: int) -> dict:
     return out
 
 
+def _l3_prefill_state(block, L: int) -> dict:
+    """The per-layer attention state a decode step inherits from the prompt.
+
+    `win_kv` is exported next to this and is the only one every layer has. The
+    rest exist on a `kv_source_layer` only:
+
+      cmp_cache        the compressed-KV cache, post-RoPE and on the FP4 grid,
+                       as `Attention.compress_kv_cache` holds it. Layers under
+                       a source read this same buffer (`shared_attn`), so only
+                       the four sources publish one.
+      index_k          the indexer's key cache. Derived from the compressor's
+                       PRE-RoPE latent, so it is NOT a function of cmp_cache
+                       and has to be exported rather than recomputed.
+      cmp_state_kv     the tail of an incomplete group at ratio > 1, carried
+      cmp_state_score  across decode steps. `score_state` starts at -inf, which
+                       is what makes a slot that has never been written score
+                       zero in the pooling softmax; the exporter keeps it.
+    """
+    a = block.b.attn
+    out: dict = {}
+    cache = getattr(a, "compress_kv_cache", None)
+    if cache is not None:
+        out[f"L{L:02d}.cmp_cache"] = ("bf16", cache[0].clone().contiguous())
+    idx = getattr(a, "indexer", None)
+    if idx is not None and getattr(idx, "k_cache", None) is not None:
+        out[f"L{L:02d}.index_k"] = ("bf16", idx.k_cache[0].clone().contiguous())
+    cmp = getattr(a, "compressor", None)
+    if cmp is not None and getattr(cmp, "kv_state", None) is not None:
+        out[f"L{L:02d}.cmp_state_kv"] = ("f32", cmp.kv_state[0].float().clone().contiguous())
+        out[f"L{L:02d}.cmp_state_score"] = ("f32",
+                                            cmp.score_state[0].float().clone().contiguous())
+    return out
+
+
 def _l3_engram_tables(ngram, layout_e, margs, out_dir: str) -> dict:
     """The constant tables `NgramHashState` derives, so the runtime can hash on
     its own trajectory instead of replaying the reference's row ids.
@@ -1391,6 +1425,16 @@ def level3_end_to_end(args: argparse.Namespace) -> int:
         # runtime/kvstore.h seeds and gpu/shaders/wkv.slang continues.
         prefill_tensors[f"L{L:02d}.win_kv"] = ("bf16",
                                                block.b.attn.window_kv_cache[0].clone())
+        # Everything ELSE the prompt left behind, so a runtime with its own
+        # §7.4 kernels can start from the prefill state and produce every
+        # per-step tensor itself. Without these the compressed-KV cache and the
+        # indexer's key cache would have to be loaded per step, which is exactly
+        # what docs/p2_decode.md §2 calls LOADED.
+        #
+        # An index-key cache cannot be recovered from `cmp_kv`: the key is
+        # derived from the compressor's PRE-RoPE latent and `cmp_kv` holds the
+        # post-RoPE, post-FP4 one, so the only way to have it is to export it.
+        prefill_tensors.update(_l3_prefill_state(block, L))
         del block
         print(f"    prefill layer {L:2d}  {n_used:3d} experts  "
               f"{time.perf_counter() - t0:5.1f}s  |h| {h.float().norm().item():.4e}",
@@ -1453,12 +1497,16 @@ def level3_end_to_end(args: argparse.Namespace) -> int:
         "engram": _l3_engram_tables(ngram, layout_e, margs, args.out),
         "notes": (
             "Greedy decode straight out of inference/model.py behind tools/dsref.py's "
-            "CPU kernel shims. 'prefill' holds every layer's window KV ring after the "
-            "prompt and the logits at the last prompt position, whose argmax is "
-            "greedy_tokens[0] and the input to step00. Each 'stepNN' holds the "
-            "compressed KV and the indexer top-k list each layer saw at that step -- "
-            "the two inputs design section 7.4's kernels do not yet produce -- plus "
-            "the logits of that step, whose argmax is greedy_tokens[NN+1]."),
+            "CPU kernel shims. 'prefill' holds the whole attention state the prompt "
+            "leaves behind -- every layer's window KV ring, and on each "
+            "kv_source_layer the compressed-KV cache, the indexer key cache and the "
+            "compressor's carried group state -- plus the logits at the last prompt "
+            "position, whose argmax is greedy_tokens[0] and the input to step00. Each "
+            "'stepNN' holds the compressed KV and the indexer top-k list each layer "
+            "saw at that step, plus the logits of that step, whose argmax is "
+            "greedy_tokens[NN+1]. A runtime with its own section 7.4 kernels seeds "
+            "the prefill record once and checks the per-step tensors against what it "
+            "produced instead of loading them."),
         "config": {"dim": margs.dim, "hc_mult": margs.hc_mult, "n_heads": margs.n_heads,
                    "head_dim": margs.head_dim, "window_size": margs.window_size,
                    "vocab_size": margs.vocab_size, "n_layers": margs.n_layers,

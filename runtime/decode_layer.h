@@ -46,6 +46,7 @@
 #include "gpu/vulkan/timeline.h"
 #include "model/v41_config.h"
 #include "runtime/kvstore.h"
+#include "runtime/rope.h"
 #include "store/pinned.h"
 
 namespace deepmoe::runtime {
@@ -62,6 +63,11 @@ struct LayerWeights {
     uint64_t attn_sink = 0;
     uint64_t wo_a = 0, wo_a_scale = 0, wo_b = 0, wo_b_scale = 0;
     uint64_t gate_w = 0, gate_bias = 0;
+    // design §7.4, present only on a source layer -- 0 everywhere else, which
+    // is what `LayerStep::run_compressor` / `run_indexer` already say.
+    // `wgate` exists only at compress_ratio > 1.
+    uint64_t cmp_wkv = 0, cmp_wgate = 0, cmp_norm = 0;
+    uint64_t idx_wq_b = 0, idx_wq_b_scale = 0, idx_wk = 0, idx_k_norm = 0, idx_wproj = 0;
 
     static Result<LayerWeights> from_pinned(const store::PinnedStore& p, uint32_t layer);
 };
@@ -76,9 +82,22 @@ struct DecodeScratch {
     gpu::GpuScratch::View score, o, woa, wob;
     gpu::GpuScratch::View gate_scores, gate_ids, gate_weights, layer_done;
     gpu::GpuScratch::View moe_x, moe_y;
+    // design §7.4's compressor and indexer. Per-step working buffers only: the
+    // state that outlives a step -- the compressed-KV plane, the index-key
+    // cache and the compressor's carried group -- lives in runtime/kvstore.h.
+    gpu::GpuScratch::View rope_lat;                    // the latent's own position
+    gpu::GpuScratch::View cmp_y, cmp_g, latent, latent_q, cmp_fp4, cmp_scale;
+    gpu::GpuScratch::View idx_q_raw, idx_q, idx_q_fp4, idx_q_scale;
+    gpu::GpuScratch::View idx_k_raw, idx_k_fp4, idx_k_scale;
+    gpu::GpuScratch::View idx_w, idx_score;
 
     Result<void> create(gpu::GpuScratch& s, const TextConfig& cfg);
 };
+
+// Compressed positions one `indexer.score` dispatch can be asked for. The
+// score plane is the only per-step buffer whose size grows with the context,
+// and at 4096 it is 16 KB; the KV store's `max_context` is checked against it.
+inline constexpr uint32_t kMaxIndexPositions = 4096;
 
 // What the MoE track is asked to do for one layer. Deliberately in terms of
 // the model, not of their kernels: expert ids, routing weights, an input and
@@ -113,6 +132,29 @@ struct LayerStep {
     uint32_t compress_ratio = 2; // picks the RoPE base and whether YaRN is on (§2.1)
     bool     apply_hc_post = true;   // false only for the very first sublayer of a sequence
     KvLayerView kv{};
+
+    // --- design §7.4, decided by the Engine and not by this layer -----------
+    //
+    // `kv` above already carries the addresses of the caches this layer READS:
+    // model.py's `shared_attn` makes a reuse layer read the cache its source
+    // published, so `kv.cmp_kv`, `kv.top_idx` and `kv.idx_key` may belong to
+    // another layer entirely. What a source layer WRITES is here.
+
+    // Compressed positions visible to this layer's query: `(position + 1) /
+    // compress_ratio`, which is both `compress_len` and the reference's
+    // `end_pos // ratio` slice of the index-key cache.
+    uint32_t n_cmp = 0;
+    bool     run_compressor = false;   // this layer is a kv_source_layer
+    bool     run_indexer    = false;   // this layer is an index_source_layer
+    // `(position + 1) % compress_ratio == 0`: the group just filled, so the
+    // compressor pools and publishes and the indexer derives a key from it. At
+    // ratio 1 it is every step; at ratio 2 every other one.
+    bool     cmp_complete = false;
+    // This layer's OWN index-key cache, which only a kv_source_layer has. The
+    // one being scored against is `kv.idx_key`, and the two differ whenever a
+    // ratio-2 source's group is incomplete: it publishes nothing and scores
+    // against whatever cache was published last (docs/p2_attention.md §9.3).
+    DeviceAddress idx_key_write = kNoDeviceAddress;
 };
 
 class DecodeLayer {
@@ -140,6 +182,9 @@ public:
     Result<void> bind(const LayerWeights& w, const LayerStep& s);
 
     // Records dispatches 1-9 of design §7.14 into `cmd`, barrier-separated.
+    // On a source layer that includes design §7.4's compressor and indexer,
+    // recorded between the window-KV write and sparse_attn, which is where
+    // `Attention.forward` runs them.
     Result<void> record_attention(gpu::CommandBuffer& cmd, const LayerStep& s);
 
     // Records + submits + waits. The decode loop will not wait here -- §7.1 is
@@ -171,6 +216,8 @@ public:
 
 private:
     Result<void> submit(gpu::CommandBuffer& cmd);
+    Result<void> bind_ced(const LayerWeights& w, const LayerStep& s, const RopeConfig& rc);
+    Result<void> record_ced(gpu::CommandBuffer& cmd, const LayerStep& s);
 
     gpu::Device*      device_ = nullptr;
     gpu::AttnRunner*  runner_ = nullptr;

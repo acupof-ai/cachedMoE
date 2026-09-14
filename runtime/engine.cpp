@@ -300,9 +300,69 @@ Result<void> Engine::init_gpu() {
     if (auto r = layer_.create(device_, attn_, scratch_, c); !r) return r;
     if (auto r = moe_.create(device_, alloc_a_, dir, store_, planner_, pinned_, c); !r) return r;
 
+    build_ced_plan();
     timings_.assign(c.num_hidden_layers, LayerTiming{});
     gpu_ready_ = true;
     log_info("engine: gpu ready on {}", device_.caps().device_name);
+    return {};
+}
+
+// model.py's `shared_attn`, written down. A source publishes its cache and
+// every layer under it until the next source reads that same buffer; the
+// reader's own `compress_ratio` still decides how much of it it may see.
+void Engine::build_ced_plan() {
+    const TextConfig& c = model_cfg_.text;
+    ced_.assign(c.num_hidden_layers, CedPlan{});
+    uint32_t cmp_src = 0, idx_src = 0;
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+        CedPlan& p = ced_[L];
+        p.ratio           = c.compress_ratio(L);
+        p.is_kv_source    = c.is_kv_source(L);
+        p.is_index_source = c.is_index_source(L);
+        if (p.is_kv_source) cmp_src = L;
+        if (p.is_index_source) idx_src = L;
+        p.cmp_src = cmp_src;
+        p.idx_src = idx_src;
+    }
+    // A full prefill pass ends with the last kv_source layer having published
+    // -- layer 20 at ratio 1, which completes at every position -- so that is
+    // what the first decode step's ratio-2 indexers score against.
+    pub_index_k_ = cmp_src;
+}
+
+// How many compressed positions each layer may read this step, and the window
+// half of its top-k list. Both are pure functions of the position and the
+// layer's ratio; the compressed half is the indexer's to write.
+Result<void> Engine::prepare_ced(uint32_t position) {
+    const TextConfig& c = model_cfg_.text;
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+        const CedPlan& p = ced_[L];
+        const uint32_t n_cmp = p.ratio ? (position + 1) / p.ratio : 0u;
+        if (n_cmp > kMaxIndexPositions)
+            return fail(Err::ResourceExhausted,
+                        std::format("layer {} wants {} compressed positions; the "
+                                    "indexer's score plane holds {}", L, n_cmp,
+                                    kMaxIndexPositions));
+        // design §2.1's two-level top-k: layer 20 picks candidate_topk_blocks
+        // blocks of candidate_block_size and layers 24..36 score only inside
+        // them. Below that product every block is a candidate and the mask is
+        // the identity, which is the only case this runtime implements -- so
+        // it refuses rather than silently dropping the second level.
+        if (p.is_index_source && L > c.candidate_source_layer_id &&
+            n_cmp > c.candidate_topk_blocks * c.candidate_block_size)
+            return fail(Err::Unimplemented,
+                        std::format("{} compressed positions at layer {} needs design "
+                                    "2.1's candidate-block mask, which is not written",
+                                    n_cmp, L));
+        // A layer whose plane is read by others -- an index source, or a
+        // window-only layer that has no source -- owns its top-k list; the rest
+        // are pointed at their source's and only need the counts.
+        if (p.ratio == 0 || p.is_index_source) {
+            if (auto r = kvs_.set_decode_topk(L, position, n_cmp); !r) return r;
+        } else if (auto r = kvs_.set_counts(L, n_cmp, c.sliding_window + n_cmp); !r) {
+            return r;
+        }
+    }
     return {};
 }
 
@@ -319,9 +379,23 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
     kc.latent_dim  = c.head_dim;
     // Sized from what the export actually holds, plus the room the remaining
     // steps will need; the compressed half grows by one row a step at ratio 1.
+    kc.index_dim   = c.index_head_dim;
     kc.max_context = std::max<uint32_t>(256, state_->max_compressed() + 64);
+    if (kc.max_context > kMaxIndexPositions)
+        return fail(Err::ResourceExhausted,
+                    std::format("the export needs {} compressed positions and the "
+                                "indexer's score plane holds {}", kc.max_context,
+                                kMaxIndexPositions));
     if (auto r = kvs_.create(alloc_a_, kc); !r) return r;
     if (auto r = state_->seed_prefill(kvs_); !r) return r;
+    // Producing the compressed KV and the top-k list is the default, and the
+    // only thing that can stop it is an export that predates the prefill-state
+    // record -- which cannot supply the index-key cache the indexer scores
+    // against, and from which it cannot be recovered (§7.4's key comes off the
+    // PRE-RoPE latent).
+    produce_ced_    = state_->has_prefill_ced();
+    prefill_loaded_ = true;
+    pub_index_k_    = ced_.empty() ? 0 : ced_.back().cmp_src;
 
     auto tables = EngramTables::load(dir);
     if (!tables) return std::unexpected(tables.error());
@@ -332,8 +406,10 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
     history_ = state_->prompt_ids();
     token_   = state_->prefill_len();
     log_info("engine: decode state loaded -- {} prompt tokens, {} reference steps, "
-             "KV {} (window REAL, compressed+topk LOADED, design 7.4)",
-             history_.size(), state_->steps(), human_bytes(kvs_.bytes()));
+             "KV {} ({})",
+             history_.size(), state_->steps(), human_bytes(kvs_.bytes()),
+             produce_ced_ ? "prefill state seeded, every per-step tensor ours"
+                          : "window REAL, compressed+topk LOADED per step");
     return {};
 }
 
@@ -371,6 +447,44 @@ void Engine::shutdown() {
 // over the last 128 tokens, expert-major streaming above the length threshold.
 Result<void> Engine::prefill(std::span<const uint32_t>) {
     return unimplemented("runtime::Engine::prefill (design §11, P5)");
+}
+
+Result<DecodeStepResult> Engine::slow_prefill(std::span<const uint32_t> prompt) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (prompt.empty()) return fail(Err::InvalidArgument, "the prompt is empty");
+    if (!produce_ced_)
+        return fail(Err::FailedPrecondition,
+                    "slow_prefill produces the compressed KV and the top-k list, so "
+                    "design 7.4's kernels have to be the ones running; "
+                    "set_produce_ced(true)");
+    const TextConfig& c = model_cfg_.text;
+    if (prompt.size() > c.sliding_window)
+        return fail(Err::Unimplemented,
+                    std::format("{} prompt tokens against a {}-slot window: past the "
+                                "window the ring wraps and a decode-shaped query no "
+                                "longer sees the causal prefix, which is what design "
+                                "11's chunked prefill is for",
+                                prompt.size(), c.sliding_window));
+
+    // Position 0 starts from nothing: an empty ring, an empty compressed plane,
+    // an empty key cache and a compressor state of -inf.
+    kvs_.clear();
+    history_.assign(prompt.begin(), prompt.end());
+    token_ = 0;
+    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+
+    const TimePoint t0 = Clock::now();
+    DecodeStepResult last{};
+    for (uint32_t p = 0; p < prompt.size(); ++p) {
+        auto r = decode_step(prompt[p], p, -1);
+        if (!r) return r;
+        last = *r;
+    }
+    prefill_loaded_ = false;
+    log_info("engine: slow prefill of {} tokens in {:.2f} s ({:.1f} ms/token), "
+             "next token {}", prompt.size(), ms_since(t0) / 1000.0,
+             ms_since(t0) / double(prompt.size()), last.token);
+    return last;
 }
 
 // --- one decode step --------------------------------------------------------
@@ -421,6 +535,31 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     st.compress_ratio = c.compress_ratio(L);
     st.apply_hc_post  = apply_post;
     st.kv             = *view;
+
+    if (produce_ced_ && !ced_.empty() && st.compress_ratio) {
+        const CedPlan& p = ced_[L];
+        st.n_cmp          = view->n_cmp;
+        st.run_compressor = p.is_kv_source;
+        st.run_indexer    = p.is_index_source;
+        st.cmp_complete   = ((position + 1) % st.compress_ratio) == 0;
+        st.idx_key_write  = view->idx_key;
+        // Publish before reading, exactly as `Indexer.forward` does: a source
+        // that completes here is what this layer's own scoring will use.
+        if (st.run_compressor && st.cmp_complete) pub_index_k_ = L;
+        // The three caches this layer READS may each belong to a different
+        // layer: the compressed KV to the last kv_source at or above it, the
+        // top-k list to the last index_source, and the index keys to whichever
+        // source published last -- which is not the same thing.
+        auto cmp = kvs_.layer(p.cmp_src);
+        if (!cmp) return std::unexpected(cmp.error());
+        auto idx = kvs_.layer(p.idx_src);
+        if (!idx) return std::unexpected(idx.error());
+        auto key = kvs_.layer(pub_index_k_);
+        if (!key) return std::unexpected(key.error());
+        st.kv.cmp_kv  = cmp->cmp_kv;
+        st.kv.top_idx = idx->top_idx;
+        st.kv.idx_key = key->idx_key;
+    }
 
     // The engram writes into the residual stream BEFORE the block (design
     // §2.1). design §7.7 normally defers the previous sublayer's hc_post into
@@ -571,11 +710,15 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     if (history_.size() <= position) history_.resize(position + 1, 0);
     history_[position] = in_token;
 
-    if (state_step >= 0) {
-        if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
+    {
         ScopedPhaseIf p(&profiler_, Phase::CpuSync);
-        if (auto r = state_->seed_step(kvs_, static_cast<uint32_t>(state_step)); !r)
-            return std::unexpected(r.error());
+        if (produce_ced_) {
+            if (auto r = prepare_ced(position); !r) return std::unexpected(r.error());
+        } else if (state_step >= 0) {
+            if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
+            if (auto r = state_->seed_step(kvs_, static_cast<uint32_t>(state_step)); !r)
+                return std::unexpected(r.error());
+        }
     }
 
     if (auto r = embed_token(in_token); !r) return std::unexpected(r.error());
@@ -678,11 +821,27 @@ std::string Engine::status() const {
     s += std::format("planner   {}\n", planner_.stats().to_string());
     s += std::format("gpu       {}\n", device_.valid() ? device_.caps().device_name
                                                        : std::string("(not created)"));
-    if (state_)
-        s += std::format("state     LOADED from {}: window KV after {} prompt tokens, and "
-                         "the compressed KV + indexer top-k of {} steps (design 7.4's "
-                         "kernels are not ours yet)\n",
-                         state_->dir(), state_->prefill_len(), state_->steps());
+    // What a transcript needs to be able to say for itself: which of the
+    // inputs to a decode step this run computed and which it was handed.
+    if (!gpu_ready_) {
+        s += "LOADED    (no GPU: nothing has run)\n";
+    } else if (!produce_ced_) {
+        s += std::format("LOADED    the window KV after {} prompt tokens, and the "
+                         "compressed KV + indexer top-k of every step, from {} "
+                         "(design 7.4's kernels exist; this run is not using them)\n",
+                         state_ ? state_->prefill_len() : 0,
+                         state_ ? state_->dir() : std::string("(nowhere)"));
+    } else if (prefill_loaded_) {
+        s += std::format("LOADED    the state the prompt left behind, from {}: the "
+                         "window KV, the compressed KV cache, the indexer key cache "
+                         "and the compressor's carried group, after {} prompt tokens. "
+                         "Every per-step tensor is ours (design 7.4)\n",
+                         state_ ? state_->dir() : std::string("(nowhere)"),
+                         state_ ? state_->prefill_len() : 0);
+    } else {
+        s += "LOADED    none -- the prompt state came from slow_prefill and every "
+             "decode-step tensor from design 7.4's kernels\n";
+    }
     return s;
 }
 

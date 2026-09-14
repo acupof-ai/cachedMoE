@@ -220,7 +220,7 @@
    }
   ]
  },
- "notes": "Greedy decode straight out of inference/model.py behind tools/dsref.py's CPU kernel shims. 'prefill' holds every layer's window KV ring after the prompt and the logits at the last prompt position, whose argmax is greedy_tokens[0] and the input to step00. Each 'stepNN' holds the compressed KV and the indexer top-k list each layer saw at that step -- the two inputs design section 7.4's kernels do not yet produce -- plus the logits of that step, whose argmax is greedy_tokens[NN+1].",
+ "notes": "Greedy decode straight out of inference/model.py behind tools/dsref.py's CPU kernel shims. 'prefill' holds the whole attention state the prompt leaves behind -- every layer's window KV ring, and on each kv_source_layer the compressed-KV cache, the indexer key cache and the compressor's carried group state -- plus the logits at the last prompt position, whose argmax is greedy_tokens[0] and the input to step00. Each 'stepNN' holds the compressed KV and the indexer top-k list each layer saw at that step, plus the logits of that step, whose argmax is greedy_tokens[NN+1]. A runtime with its own section 7.4 kernels seeds the prefill record once and checks the per-step tensors against what it produced instead of loading them.",
  "config": {
   "dim": 5120,
   "hc_mult": 4,
@@ -293,13 +293,13 @@
   ],
   "max_seq_len": 128
  },
- "seconds": 459.1,
+ "seconds": 431.8,
  "steps": [
   {
    "step": "prefill",
    "file": "l3_prefill.bin",
    "data_offset": 12,
-   "bytes": 5294624,
+   "bytes": 5712416,
    "tensors": [
     {
      "name": "L00.win_kv",
@@ -332,13 +332,53 @@
      "bytes": 131072
     },
     {
+     "name": "L02.cmp_cache",
+     "dtype": "bf16",
+     "shape": [
+      64,
+      512
+     ],
+     "offset": 393216,
+     "bytes": 65536
+    },
+    {
+     "name": "L02.index_k",
+     "dtype": "bf16",
+     "shape": [
+      64,
+      128
+     ],
+     "offset": 458752,
+     "bytes": 16384
+    },
+    {
+     "name": "L02.cmp_state_kv",
+     "dtype": "f32",
+     "shape": [
+      2,
+      512
+     ],
+     "offset": 475136,
+     "bytes": 4096
+    },
+    {
+     "name": "L02.cmp_state_score",
+     "dtype": "f32",
+     "shape": [
+      2,
+      512
+     ],
+     "offset": 479232,
+     "bytes": 4096
+    },
+    {
      "name": "L03.win_kv",
      "dtype": "bf16",
      "shape": [
       128,
       512
      ],
-     "offset": 393216,
+     "offset": 483328,
      "bytes": 131072
     },
     {
@@ -348,7 +388,7 @@
       128,
       512
      ],
-     "offset": 524288,
+     "offset": 614400,
      "bytes": 131072
     },
     {
@@ -358,7 +398,7 @@
       128,
       512
      ],
-     "offset": 655360,
+     "offset": 745472,
      "bytes": 131072
     },
     {
@@ -368,7 +408,7 @@
       128,
       512
      ],
-     "offset": 786432,
+     "offset": 876544,
      "bytes": 131072
     },
     {
@@ -378,7 +418,7 @@
       128,
       512
      ],
-     "offset": 917504,
+     "offset": 1007616,
      "bytes": 131072
     },
     {
@@ -388,8 +428,48 @@
       128,
       512
      ],
-     "offset": 1048576,
+     "offset": 1138688,
      "bytes": 131072
+    },
+    {
+     "name": "L08.cmp_cache",
+     "dtype": "bf16",
+     "shape": [
+      64,
+      512
+     ],
+     "offset": 1269760,
+     "bytes": 65536
+    },
+    {
+     "name": "L08.index_k",
+     "dtype": "bf16",
+     "shape": [
+      64,
+      128
+     ],
+     "offset": 1335296,
+     "bytes": 16384
+    },
+    {
+     "name": "L08.cmp_state_kv",
+     "dtype": "f32",
+     "shape": [
+      2,
+      512
+     ],
+     "offset": 475136,
+     "bytes": 4096
+    },
+    {
+     "name": "L08.cmp_state_score",
+     "dtype": "f32",
+     "shape": [
+      2,
+      512
+     ],
+     "offset": 479232,
+     "bytes": 4096
     },
     {
      "name": "L09.win_kv",
@@ -398,7 +478,7 @@
       128,
       512
      ],
-     "offset": 1179648,
+     "offset": 1351680,
      "bytes": 131072
     },
     {
@@ -408,7 +488,7 @@
       128,
       512
      ],
-     "offset": 1310720,
+     "offset": 1482752,
      "bytes": 131072
     },
     {
@@ -418,7 +498,7 @@
       128,
       512
      ],
-     "offset": 1441792,
+     "offset": 1613824,
      "bytes": 131072
     },
     {
@@ -428,7 +508,7 @@
       128,
       512
      ],
-     "offset": 1572864,
+     "offset": 1744896,
      "bytes": 131072
     },
     {
@@ -438,7 +518,7 @@
       128,
       512
      ],
-     "offset": 1703936,
+     "offset": 1875968,
      "bytes": 131072
     },
     {
@@ -448,8 +528,48 @@
       128,
       512
      ],
-     "offset": 1835008,
+     "offset": 2007040,
      "bytes": 131072
+    },
+    {
+     "name": "L14.cmp_cache",
+     "dtype": "bf16",
+     "shape": [
+      64,
+      512
+     ],
+     "offset": 2138112,
+     "bytes": 65536
+    },
+    {
+     "name": "L14.index_k",
+     "dtype": "bf16",
+     "shape": [
+      64,
+      128
+     ],
+     "offset": 2203648,
+     "bytes": 16384
+    },
+    {
+     "name": "L14.cmp_state_kv",
+     "dtype": "f32",
+     "shape": [
+      2,
+      512
+     ],
+     "offset": 475136,
+     "bytes": 4096
+    },
+    {
+     "name": "L14.cmp_state_score",
+     "dtype": "f32",
+     "shape": [
+      2,
+      512
+     ],
+     "offset": 479232,
+     "bytes": 4096
     },
     {
      "name": "L15.win_kv",
@@ -458,7 +578,7 @@
       128,
       512
      ],
-     "offset": 1966080,
+     "offset": 2220032,
      "bytes": 131072
     },
     {
@@ -468,7 +588,7 @@
       128,
       512
      ],
-     "offset": 2097152,
+     "offset": 2351104,
      "bytes": 131072
     },
     {
@@ -478,7 +598,7 @@
       128,
       512
      ],
-     "offset": 2228224,
+     "offset": 2482176,
      "bytes": 131072
     },
     {
@@ -488,7 +608,7 @@
       128,
       512
      ],
-     "offset": 2359296,
+     "offset": 2613248,
      "bytes": 131072
     },
     {
@@ -498,7 +618,7 @@
       128,
       512
      ],
-     "offset": 2490368,
+     "offset": 2744320,
      "bytes": 131072
     },
     {
@@ -508,8 +628,28 @@
       128,
       512
      ],
-     "offset": 2621440,
+     "offset": 2875392,
      "bytes": 131072
+    },
+    {
+     "name": "L20.cmp_cache",
+     "dtype": "bf16",
+     "shape": [
+      128,
+      512
+     ],
+     "offset": 3006464,
+     "bytes": 131072
+    },
+    {
+     "name": "L20.index_k",
+     "dtype": "bf16",
+     "shape": [
+      128,
+      128
+     ],
+     "offset": 3137536,
+     "bytes": 32768
     },
     {
      "name": "L21.win_kv",
@@ -518,7 +658,7 @@
       128,
       512
      ],
-     "offset": 2752512,
+     "offset": 3170304,
      "bytes": 131072
     },
     {
@@ -528,7 +668,7 @@
       128,
       512
      ],
-     "offset": 2883584,
+     "offset": 3301376,
      "bytes": 131072
     },
     {
@@ -538,7 +678,7 @@
       128,
       512
      ],
-     "offset": 3014656,
+     "offset": 3432448,
      "bytes": 131072
     },
     {
@@ -548,7 +688,7 @@
       128,
       512
      ],
-     "offset": 3145728,
+     "offset": 3563520,
      "bytes": 131072
     },
     {
@@ -558,7 +698,7 @@
       128,
       512
      ],
-     "offset": 3276800,
+     "offset": 3694592,
      "bytes": 131072
     },
     {
@@ -568,7 +708,7 @@
       128,
       512
      ],
-     "offset": 3407872,
+     "offset": 3825664,
      "bytes": 131072
     },
     {
@@ -578,7 +718,7 @@
       128,
       512
      ],
-     "offset": 3538944,
+     "offset": 3956736,
      "bytes": 131072
     },
     {
@@ -588,7 +728,7 @@
       128,
       512
      ],
-     "offset": 3670016,
+     "offset": 4087808,
      "bytes": 131072
     },
     {
@@ -598,7 +738,7 @@
       128,
       512
      ],
-     "offset": 3801088,
+     "offset": 4218880,
      "bytes": 131072
     },
     {
@@ -608,7 +748,7 @@
       128,
       512
      ],
-     "offset": 3932160,
+     "offset": 4349952,
      "bytes": 131072
     },
     {
@@ -618,7 +758,7 @@
       128,
       512
      ],
-     "offset": 4063232,
+     "offset": 4481024,
      "bytes": 131072
     },
     {
@@ -628,7 +768,7 @@
       128,
       512
      ],
-     "offset": 4194304,
+     "offset": 4612096,
      "bytes": 131072
     },
     {
@@ -638,7 +778,7 @@
       128,
       512
      ],
-     "offset": 4325376,
+     "offset": 4743168,
      "bytes": 131072
     },
     {
@@ -648,7 +788,7 @@
       128,
       512
      ],
-     "offset": 4456448,
+     "offset": 4874240,
      "bytes": 131072
     },
     {
@@ -658,7 +798,7 @@
       128,
       512
      ],
-     "offset": 4587520,
+     "offset": 5005312,
      "bytes": 131072
     },
     {
@@ -668,7 +808,7 @@
       128,
       512
      ],
-     "offset": 4718592,
+     "offset": 5136384,
      "bytes": 131072
     },
     {
@@ -678,7 +818,7 @@
       128,
       512
      ],
-     "offset": 4849664,
+     "offset": 5267456,
      "bytes": 131072
     },
     {
@@ -688,7 +828,7 @@
       128,
       512
      ],
-     "offset": 4980736,
+     "offset": 5398528,
      "bytes": 131072
     },
     {
@@ -698,7 +838,7 @@
       128,
       512
      ],
-     "offset": 5111808,
+     "offset": 5529600,
      "bytes": 131072
     },
     {
@@ -707,7 +847,7 @@
      "shape": [
       64
      ],
-     "offset": 5242880,
+     "offset": 5660672,
      "bytes": 256
     },
     {
@@ -716,7 +856,7 @@
      "shape": [
       64
      ],
-     "offset": 5243136,
+     "offset": 5660928,
      "bytes": 256
     },
     {
@@ -725,7 +865,7 @@
      "shape": [
       3
      ],
-     "offset": 5243392,
+     "offset": 5661184,
      "bytes": 12
     },
     {
@@ -735,7 +875,7 @@
       4,
       5120
      ],
-     "offset": 5243404,
+     "offset": 5661196,
      "bytes": 40960
     },
     {
@@ -744,7 +884,7 @@
      "shape": [
       4
      ],
-     "offset": 5284364,
+     "offset": 5702156,
      "bytes": 16
     },
     {
@@ -753,7 +893,7 @@
      "shape": [
       5120
      ],
-     "offset": 5284380,
+     "offset": 5702172,
      "bytes": 10240
     },
     {
@@ -762,7 +902,7 @@
      "shape": [
       1
      ],
-     "offset": 5294620,
+     "offset": 5712412,
      "bytes": 4
     }
    ]

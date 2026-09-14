@@ -96,8 +96,15 @@ public:
     const RefLogits& logits(uint32_t step) const { return logits_[step]; }
     const StateTensor* tensor(uint32_t step, const std::string& name) const;
 
-    // Seeds every layer's window ring with what the prompt left there.
+    // Seeds every layer's window ring with what the prompt left there, plus --
+    // on the four kv_source_layers, and only if the export carries them -- the
+    // compressed-KV cache, the indexer's key cache and the compressor's
+    // carried group state. Those three are what a runtime with its own §7.4
+    // kernels needs to stop loading anything per step.
     Result<void> seed_prefill(KvStore& kv) const;
+    // Whether this export carries them. An older one does not, and a caller
+    // that has the §7.4 kernels has to fall back to seeding per step and say so.
+    bool has_prefill_ced() const;
     // Seeds the compressed KV and the top-k list every layer read at decode
     // step `s` (0-based).
     Result<void> seed_step(KvStore& kv, uint32_t s) const;

@@ -48,6 +48,24 @@ Result<LayerWeights> LayerWeights::from_pinned(const store::PinnedStore& p, uint
     };
     for (const Entry& e : entries)
         if (auto r = get(e.suffix, e.data, e.scale); !r) return std::unexpected(r.error());
+
+    // design §7.4's tensors exist on four layers of forty (the compressor) and
+    // eight (the indexer), so absence is the normal case and not an error. The
+    // Engine decides whether to dispatch from the config's source lists, and
+    // `bind` checks the two against each other.
+    auto opt = [&](const char* suffix, uint64_t* data, uint64_t* scale) {
+        auto t = p.find(pre + "." + suffix);
+        if (!t) return;
+        *data = t->data;
+        if (scale && t->scale != kNoDeviceAddress) *scale = t->scale;
+    };
+    opt("attn.compressor.wkv.weight", &w.cmp_wkv, nullptr);
+    opt("attn.compressor.wgate.weight", &w.cmp_wgate, nullptr);
+    opt("attn.compressor.norm.weight", &w.cmp_norm, nullptr);
+    opt("attn.indexer.wq_b.weight", &w.idx_wq_b, &w.idx_wq_b_scale);
+    opt("attn.indexer.wk.weight", &w.idx_wk, nullptr);
+    opt("attn.indexer.k_norm.weight", &w.idx_k_norm, nullptr);
+    opt("attn.indexer.weights_proj.weight", &w.idx_wproj, nullptr);
     return w;
 }
 
@@ -56,6 +74,7 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
     const uint32_t hc  = cfg.hc_mult;
     const uint32_t qrows = cfg.num_attention_heads * cfg.head_dim;
     const uint32_t orows = cfg.o_groups * cfg.o_lora_rank;
+    const uint32_t irows = cfg.index_n_heads * cfg.index_head_dim;
     // The score plane is [heads][stride]; 1024 covers the 128 + 512 of design
     // §7.5 with room for a longer window.
     const uint32_t score_stride = 1024;
@@ -86,6 +105,23 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
         {&layer_done,   64},
         {&moe_x,        uint64_t(dim) * 4},
         {&moe_y,        uint64_t(dim) * 4},
+        // §7.4. `irows` is index_n_heads * index_head_dim = 4096.
+        {&rope_lat,     256},
+        {&cmp_y,        uint64_t(cfg.head_dim) * 4},
+        {&cmp_g,        uint64_t(cfg.head_dim) * 4},
+        {&latent,       uint64_t(cfg.head_dim) * 4},
+        {&latent_q,     uint64_t(cfg.head_dim) * 4},
+        {&cmp_fp4,      uint64_t(cfg.head_dim) / 2},
+        {&cmp_scale,    uint64_t(cfg.head_dim) / 16},
+        {&idx_q_raw,    uint64_t(irows) * 4},
+        {&idx_q,        uint64_t(irows) * 2},
+        {&idx_q_fp4,    uint64_t(irows) / 2},
+        {&idx_q_scale,  uint64_t(irows) / 32},
+        {&idx_k_raw,    uint64_t(cfg.index_head_dim) * 4},
+        {&idx_k_fp4,    uint64_t(cfg.index_head_dim) / 2},
+        {&idx_k_scale,  256},
+        {&idx_w,        uint64_t(cfg.index_n_heads) * 4},
+        {&idx_score,    uint64_t(kMaxIndexPositions) * 4},
     };
     for (const Want& w : wants) {
         auto v = s.alloc(w.bytes);
@@ -248,7 +284,105 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     g[gpu::slot::kGateLayerDone] = b.layer_done.addr;
     std::memcpy(runner_->slots(gpu::AttnStage::GateTopK), g, gpu::kAttnStageStride);
 
+    if (auto r = bind_ced(w, st, rc); !r) return r;
     weights_ = w;
+    return {};
+}
+
+// design §7.4's compressor and indexer. Nothing here runs on a layer that is
+// not a source; what it costs a reuse layer is the address writes, which are
+// host memory and are skipped anyway.
+Result<void> DecodeLayer::bind_ced(const LayerWeights& w, const LayerStep& st,
+                                   const RopeConfig& rc) {
+    if (!st.run_compressor && !st.run_indexer) return {};
+    const TextConfig& c = *cfg_;
+    DecodeScratch& b = buf_;
+
+    // The SECOND RoPE table. A latent stands for the FIRST token of its group,
+    // so it -- and the index key derived from it -- is rotated at
+    // `start_pos + 1 - ratio`, while the indexer's queries are rotated at
+    // `start_pos` like everything else (docs/p2_attention.md §9.3 item 3). At
+    // ratio 1 the two tables coincide; at ratio 2 they are one position apart,
+    // which is invisible in a cosine and wrong in the bytes.
+    {
+        const uint32_t ratio = st.compress_ratio ? st.compress_ratio : 1u;
+        const uint32_t lat_pos = st.position + 1 - ratio;
+        const std::vector<float> tab = rope_table(rc, lat_pos);
+        std::memcpy(b.rope_lat.host, tab.data(), tab.size() * sizeof(float));
+    }
+
+    if (st.run_compressor) {
+        if (!w.cmp_wkv || !w.cmp_norm)
+            return fail(Err::FailedPrecondition,
+                        std::format("layer {} is a kv_source_layer but its compressor "
+                                    "weights are not pinned", st.layer));
+        if (st.compress_ratio > 1 && !w.cmp_wgate)
+            return fail(Err::FailedPrecondition,
+                        std::format("layer {} pools at ratio {} but has no compressor "
+                                    "gate", st.layer, st.compress_ratio));
+        auto cmp = [&](gpu::AttnStage s, uint64_t weight, const gpu::GpuScratch::View& y) {
+            uint64_t* p = runner_->slots(s);
+            p[gpu::slot::kCmpW]          = weight;
+            p[gpu::slot::kCmpX]          = b.u.addr;          // attn_norm output
+            p[gpu::slot::kCmpY]          = y.addr;
+            p[gpu::slot::kCmpG]          = b.cmp_g.addr;
+            p[gpu::slot::kCmpKvState]    = st.kv.cmp_state_kv;
+            p[gpu::slot::kCmpScoreState] = st.kv.cmp_state_score;
+            p[gpu::slot::kCmpNormW]      = w.cmp_norm;
+            p[gpu::slot::kCmpLatent]     = b.latent.addr;
+            p[gpu::slot::kCmpRope]       = b.rope_lat.addr;
+            p[gpu::slot::kCmpVal]        = st.kv.cmp_kv;
+            p[gpu::slot::kCmpFp4]        = b.cmp_fp4.addr;
+            p[gpu::slot::kCmpScaleB]     = b.cmp_scale.addr;
+            p[gpu::slot::kCmpLatentQ]    = b.latent_q.addr;
+        };
+        cmp(gpu::AttnStage::CmpKvGemv, w.cmp_wkv, b.cmp_y);
+        cmp(gpu::AttnStage::CmpGateGemv, w.cmp_wgate, b.cmp_g);
+        cmp(gpu::AttnStage::CmpNorm, w.cmp_wkv, b.cmp_y);
+        cmp(gpu::AttnStage::CmpStore, w.cmp_wkv, b.cmp_y);
+    }
+
+    if (st.run_indexer) {
+        if (!w.idx_wq_b || !w.idx_wproj)
+            return fail(Err::FailedPrecondition,
+                        std::format("layer {} is an index_source_layer but its indexer "
+                                    "weights are not pinned", st.layer));
+        // `rope` and `kcache` are the two slots that are NOT the same for every
+        // stage. The key is rotated at the latent's position and written into
+        // the cache this layer owns; the score reads whatever cache was
+        // published last, which need not be this layer's.
+        auto idx = [&](gpu::AttnStage s, uint64_t rope, uint64_t kcache) {
+            uint64_t* p = runner_->slots(s);
+            p[gpu::slot::kIdxW]       = w.idx_wq_b;
+            p[gpu::slot::kIdxS]       = w.idx_wq_b_scale;
+            p[gpu::slot::kIdxQr]      = b.qr.addr;
+            p[gpu::slot::kIdxQNormW]  = w.q_norm;
+            p[gpu::slot::kIdxRope]    = rope;
+            p[gpu::slot::kIdxQRaw]    = b.idx_q_raw.addr;
+            p[gpu::slot::kIdxQ]       = b.idx_q.addr;
+            p[gpu::slot::kIdxWk]      = w.idx_wk;
+            p[gpu::slot::kIdxKNormW]  = w.idx_k_norm;
+            p[gpu::slot::kIdxLatent]  = b.latent.addr;
+            p[gpu::slot::kIdxKRaw]    = b.idx_k_raw.addr;
+            p[gpu::slot::kIdxKCache]  = kcache;
+            p[gpu::slot::kIdxKFp4]    = b.idx_k_fp4.addr;
+            p[gpu::slot::kIdxKScale]  = b.idx_k_scale.addr;
+            p[gpu::slot::kIdxWProjW]  = w.idx_wproj;
+            p[gpu::slot::kIdxX]       = b.u.addr;
+            p[gpu::slot::kIdxWeights] = b.idx_w.addr;
+            p[gpu::slot::kIdxScore]   = b.idx_score.addr;
+            p[gpu::slot::kIdxOut]     = st.kv.top_idx;
+            p[gpu::slot::kIdxQFp4]    = b.idx_q_fp4.addr;
+            p[gpu::slot::kIdxQScale]  = b.idx_q_scale.addr;
+        };
+        idx(gpu::AttnStage::IdxQGemv,   b.rope.addr,     st.kv.idx_key);
+        idx(gpu::AttnStage::IdxQFinish, b.rope.addr,     st.kv.idx_key);
+        idx(gpu::AttnStage::IdxKey,     b.rope_lat.addr, st.idx_key_write);
+        idx(gpu::AttnStage::IdxWeights, b.rope.addr,     st.kv.idx_key);
+        idx(gpu::AttnStage::IdxScore,   b.rope.addr,     st.kv.idx_key);
+        idx(gpu::AttnStage::IdxTopK,    b.rope.addr,     st.kv.idx_key);
+    }
+    (void)c;
     return {};
 }
 
@@ -296,6 +430,13 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     if (auto r = step(gpu::AttnStage::WkvGemv, &kp, sizeof kp, kvg); !r) return r;
     if (auto r = step(gpu::AttnStage::WkvFinish, &kp, sizeof kp, 1); !r) return r;
 
+    // 4b. design §7.4: the compressor and the indexer, on the four and eight
+    //     layers that have them. `Attention.forward` runs them between the
+    //     window-KV write and sparse_attn, and the order matters: the indexer
+    //     needs the compressor's PRE-RoPE latent, which is why the cache write
+    //     that rotates it comes last.
+    if (auto r = record_ced(cmd, st); !r) return r;
+
     // 5. Sparse attention over the window plus the compressed picks.
     gpu::AttnPush ap{st.kv.n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim, 1024,
                      1.0f / std::sqrt(static_cast<float>(c.head_dim))};
@@ -328,6 +469,76 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
                       runner_->gemv_groups(gpu::AttnStage::GateScore, c.n_routed_experts)); !r)
         return r;
     return step(gpu::AttnStage::GateTopK, &gp, sizeof gp, 1);
+}
+
+Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& st) {
+    if (!st.run_compressor && !st.run_indexer) return {};
+    const TextConfig& c = *cfg_;
+    const uint32_t ratio = st.compress_ratio ? st.compress_ratio : 1u;
+
+    auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
+                    uint32_t groups) -> Result<void> {
+        if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
+        return cmd.barrier();
+    };
+
+    const gpu::CmpPush cp{c.head_dim, c.hidden_size, ratio, st.position % ratio,
+                          st.cmp_complete ? 1u : 0u, c.qk_rope_head_dim,
+                          st.position / ratio, static_cast<float>(c.rms_norm_eps)};
+
+    if (st.run_compressor) {
+        const uint32_t gw = runner_->gemv_groups(gpu::AttnStage::CmpKvGemv, c.head_dim);
+        if (auto r = step(gpu::AttnStage::CmpKvGemv, &cp, sizeof cp, gw); !r) return r;
+        // No gate at ratio 1: `self.norm(self.wkv(x))` is a plain bf16 Linear
+        // and there is nothing to pool (model.py, Compressor.forward).
+        if (ratio > 1)
+            if (auto r = step(gpu::AttnStage::CmpGateGemv, &cp, sizeof cp, gw); !r) return r;
+        // Runs on EVERY step, complete or not: the state write is what carries
+        // an incomplete group forward, and only the pooling is conditional.
+        if (auto r = step(gpu::AttnStage::CmpNorm, &cp, sizeof cp, 1); !r) return r;
+    }
+
+    if (st.run_indexer) {
+        const uint32_t irows = c.index_n_heads * c.index_head_dim;
+        const float wscale = 1.0f / std::sqrt(static_cast<float>(c.index_head_dim)) /
+                             std::sqrt(static_cast<float>(c.index_n_heads));
+        gpu::IdxPush ip{irows, c.q_lora_rank, c.q_lora_rank / 32, c.index_n_heads,
+                        c.index_head_dim, c.qk_rope_head_dim, 0, 0, c.sliding_window,
+                        st.position / ratio, static_cast<float>(c.rms_norm_eps), wscale};
+
+        // The key, and only when this layer's own group just completed: a
+        // ratio-2 source at an incomplete position publishes nothing and the
+        // Engine has already pointed `kv.idx_key` at whatever was published
+        // last (docs/p2_attention.md §9.3 item 5).
+        if (st.run_compressor && st.cmp_complete) {
+            gpu::IdxPush ik = ip;
+            ik.k = c.head_dim;
+            if (auto r = step(gpu::AttnStage::IdxKey, &ik, sizeof ik, 1); !r) return r;
+        }
+        if (auto r = step(gpu::AttnStage::IdxQGemv, &ip, sizeof ip,
+                          runner_->gemv_groups(gpu::AttnStage::IdxQGemv, irows)); !r)
+            return r;
+        if (auto r = step(gpu::AttnStage::IdxQFinish, &ip, sizeof ip, 1); !r) return r;
+        gpu::IdxPush iw = ip;
+        iw.rows = c.index_n_heads;
+        iw.k    = c.hidden_size;
+        if (auto r = step(gpu::AttnStage::IdxWeights, &iw, sizeof iw, 1); !r) return r;
+
+        gpu::IdxPush is = ip;
+        is.n_pos = st.n_cmp;
+        is.topk  = std::min(c.index_topk, st.n_cmp);
+        const uint32_t sg = (st.n_cmp + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile;
+        if (sg) {
+            if (auto r = step(gpu::AttnStage::IdxScore, &is, sizeof is, sg); !r) return r;
+            if (auto r = step(gpu::AttnStage::IdxTopK, &is, sizeof is, 1); !r) return r;
+        }
+    }
+
+    // The cache write last, because it rotates and quantises the latent the
+    // indexer had to see unrotated.
+    if (st.run_compressor && st.cmp_complete)
+        if (auto r = step(gpu::AttnStage::CmpStore, &cp, sizeof cp, 1); !r) return r;
+    return {};
 }
 
 Result<void> DecodeLayer::submit(gpu::CommandBuffer& cmd) {

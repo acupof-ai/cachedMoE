@@ -178,8 +178,35 @@ Result<void> DecodeState::seed_prefill(KvStore& kv) const {
                         std::format("L3 prefill record has no window KV for layer {}", L));
         const uint32_t rows = static_cast<uint32_t>(w->elements() / head_dim_);
         if (auto r = kv.seed_window(L, w->f.data(), rows); !r) return r;
+
+        // The rest of the state the prompt leaves behind, on the four
+        // kv_source_layers. An export that predates them has none of these and
+        // the caller falls back to seeding the compressed KV per step; see
+        // `has_prefill_ced`.
+        if (const StateTensor* c = tensor(0, std::format("L{:02d}.cmp_cache", L))) {
+            const uint32_t n = static_cast<uint32_t>(c->elements() / head_dim_);
+            if (auto r = kv.seed_compressed(L, c->f.data(), n); !r) return r;
+        }
+        if (const StateTensor* k = tensor(0, std::format("L{:02d}.index_k", L))) {
+            const uint32_t dim = kv.config().index_dim;
+            const uint32_t n = static_cast<uint32_t>(k->elements() / dim);
+            if (auto r = kv.seed_index_k(L, k->f.data(), n); !r) return r;
+        }
+        const StateTensor* sk = tensor(0, std::format("L{:02d}.cmp_state_kv", L));
+        const StateTensor* ss = tensor(0, std::format("L{:02d}.cmp_state_score", L));
+        if (sk && ss) {
+            const uint32_t ratio = static_cast<uint32_t>(sk->elements() / head_dim_);
+            if (auto r = kv.seed_cmp_state(L, sk->f.data(), ss->f.data(), ratio); !r)
+                return r;
+        }
     }
     return {};
+}
+
+bool DecodeState::has_prefill_ced() const {
+    for (uint32_t L = 0; L < layers_; ++L)
+        if (tensor(0, std::format("L{:02d}.index_k", L)) != nullptr) return true;
+    return false;
 }
 
 Result<void> DecodeState::seed_step(KvStore& kv, uint32_t s) const {

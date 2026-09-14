@@ -144,12 +144,45 @@ public:
     // TODO(design §11, §9.7): implement in P5.
     Result<void> prefill(std::span<const uint32_t> prompt);
 
+    // Prefill the slow way: the prompt through the DECODE path, one token at a
+    // time, teacher-forced. Not design §11 -- it is 64 forward passes where §11
+    // wants one chunked pass, so it is O(n) times too expensive and is not how
+    // a prompt will ever be consumed. What it is, is a way to have the prompt's
+    // state be OURS without the chunked kernels existing.
+    //
+    // It is exactly equivalent to the reference's chunked prefill at this
+    // geometry, and the equivalence is worth stating because it is not
+    // obvious:
+    //   * the window ring at n <= window puts token p in slot p, and the decode
+    //     top-k list marks every slot above p as -1, which is the causal window
+    //     `get_window_topk_idxs` builds for query p at start_pos 0;
+    //   * a ratio-2 group completes at odd p, pooling slots {0, 1} = tokens
+    //     {p-1, p}, writing cache row p / 2 and rotating at p + 1 - ratio --
+    //     the same group, row and position the chunked form gives group p / 2;
+    //   * query p sees compress_len = (p + 1) / ratio cache rows, which is what
+    //     the chunked form's per-query mask leaves it.
+    // Returns the token the last prompt position predicts, i.e. the input to
+    // decode step 0. `history()` and the KV store are left ready for it.
+    Result<DecodeStepResult> slow_prefill(std::span<const uint32_t> prompt);
+
     // One decode step: forty layers, the head, the argmax. `state_step` selects
     // which of the L3 export's per-step compressed KV / top-k lists to seed
-    // before running; -1 leaves whatever is in the KV store alone, which is
-    // what a run that has its own compressor will pass.
+    // before running; -1 leaves whatever is in the KV store alone. It is
+    // IGNORED when `produce_ced()` is on, because then there is nothing to
+    // seed: design §7.4's kernels write both.
     Result<DecodeStepResult> decode_step(uint32_t in_token, uint32_t position,
                                          int32_t state_step);
+
+    // Whether design §7.4's compressor and indexer run (the default whenever
+    // the state they carry forward is available), or the compressed KV and the
+    // top-k list are seeded per step from the export. The second is what
+    // docs/p2_decode.md called LOADED and exists only so the two can be
+    // compared; `status()` says which is in force.
+    void set_produce_ced(bool on) { produce_ced_ = on; }
+    bool produce_ced() const { return produce_ced_; }
+
+    const KvStore& kv() const { return kvs_; }
+    const std::vector<uint32_t>& history() const { return history_; }
 
     // The single-argument form of the old interface: the next step of the
     // sequence this Engine is already decoding.
@@ -209,6 +242,10 @@ private:
     Result<void> run_layer(uint32_t layer, uint32_t position, bool& apply_post,
                            LayerTiming& t);
     Result<DecodeStepResult> collapse_and_sample(uint32_t position);
+    // The per-step half of design §7.4's bookkeeping: how many compressed
+    // positions each layer may read, and the window half of its top-k list.
+    Result<void> prepare_ced(uint32_t position);
+    void         build_ced_plan();
 
     RuntimeConfig cfg_{};
     V41Config     model_cfg_{};
@@ -249,6 +286,25 @@ private:
     DeviceAddress                head_w_ = kNoDeviceAddress;
     const store::PinnedTensor*   embed_  = nullptr;
     uint64_t                     cache_budget_ = 0;
+
+    // design §7.4's routing of caches between layers, which is model.py's
+    // `shared_attn` written down. Fixed at bring-up except `pub_index_k_`.
+    struct CedPlan {
+        uint32_t cmp_src = 0;        // whose compressed-KV plane this layer reads
+        uint32_t idx_src = 0;        // whose top-k list this layer reads
+        uint32_t ratio   = 0;
+        bool     is_kv_source    = false;
+        bool     is_index_source = false;
+    };
+    std::vector<CedPlan> ced_;
+    // Which layer's index-key cache was published last. NOT a static mapping:
+    // a ratio-2 source whose group is incomplete publishes nothing, so at an
+    // even position layers 2, 8 and 14 score against layer 20's keys and at an
+    // odd one against their own (docs/p2_attention.md §9.3 item 5).
+    uint32_t   pub_index_k_ = 0;
+    bool       produce_ced_ = false;
+    // Whether the window ring came from the export or from `slow_prefill`.
+    bool       prefill_loaded_ = false;
 
     TokenIndex token_ = 0;
     bool       ready_ = false;
