@@ -6,20 +6,22 @@
 
 **核心目标：** 在一台 Ryzen AI Max+ 395 / Radeon 8060S / 128 GB / 单 NVMe 的机器上，把 DeepSeek-V4.1-Flash 的本地 decode 打到这台机器的物理上限，并且能用数据解释"上限在哪、为什么没到"。
 
-文档状态：**v0.9-draft（2026-09-15）——结构调整稿，数字待填。** 三处结构性改动已与 owner 定下：**(1) DSpark 从附加项变成一个有门槛的、按实测做的决策**（§10.1 重写为带宽论证 + 显式 TPS 模型 + go / no-go 门槛；Track K 的实测（`86b6a0f`，p3_dspark.md §7–§9）表明**在 h = 0.92 与今天的 kernel 下它最多 +5%、按实测的 M 缩放是净亏**，所以 §15.2 把它排在"真正的 prefill + 长上下文 L3"之后、并以门槛为前置）；**(2) prefill 升格为一等章节**（§7.13 与 §9.7 原地展开，含时间模型与验收判据）；**(3) §1.3 / §13.3 的成功标准换成可验证的绝对判据**（外部 runtime 跑不了 V4.1-Flash，"显著快于通用 runtime"没有对手）。另外**长上下文进入计划**（§3.1 / §11.5 / §12 / §13.4 / §15：迄今全部验证只在 64–72 token 上）。**待填的数字一律写成 `TBD(Track L)`（prefill kernel 实测）、`TBD(Track M)`（长上下文 oracle 与统计）**；Track K 的数字已经到了，直接写进 §10（它们本身带着"单条退化轨迹、非空闲机"的限定，照录）。下一次集成只填数不改结构。Track I 在 v0.8 之后的四个提交（`5528f86` / `0b2c31c` / `0f41099` / `8328176`）在提交信息里报告的数字**只在需要消解矛盾处引用、并标明来源**，正式写回同样留给集成。以下是 v0.8 的原状态行：v0.1 为初始 docx；v0.2 按开发机实测修订内存模型；v0.3 锁定目标模型为 V4.1-Flash，据其真实权重布局重写内存/存储/kernel/prefetch/投机解码设计；v0.4 落地代码骨架，写回 Q6/Q7 实测（§9.2.1），更正 §11.3 的 indexer KV 体积，固定 §14.1 目录；v0.5 取消 repack，改为直读原始 safetensors 分片（§5.1 重写）；v0.6 写回 P1 全部实测（内存系统是单一 ~217 GB/s 共享上限、dispatch 开销低一个数量级、cache 容量受 commit 限额约束、27,399 token 路由 trace、lookahead 降级为不做）；**v0.7 写回 P2 step 1 全部实测：容量问题已解决——扩 pagefile 后 slab 池 100 GiB = 5,711 个 expert 槽、h ≈ 0.92（§5.2/§9.2.2/§3.1）；非 MoE decode 路径九个 kernel 逐级对齐参考实现并跑通整层（§7.15），参考实现强制了八处改动（§2.4/§6/§7.2–§7.7/§7.14）；MoE kernel 的 M 扫描、packed fp16 / int8 dot4、fp8 shared expert 与 `h` 的 fp8 量化（§7.9.2），并**推翻**了两条 v0.6 的结论：§7.1 rule 6 的「x 分块进 LDS」与 §7.9 的「拆分 dispatch 免费」**；**v0.8 写回 P2 step 2 三条 track 的实测：**deepMoE 第一次自己产出了 token**——四十层、engram、head、采样全在 GPU 上，对 L3 oracle 一步 top-1 一致、教师强制 7/8、自由运行 6/8，热步 **134 ms = 7.5 tok/s**（§7.16、§13.4、§15）；§7.4 的 compressor 与 indexer **已产出、不再是加载进来的**，非 MoE 一层从 1.053 降到 **0.893 ms**（§7.15.5）；MoE 的 `HQuant=3` 把 decode 的量化税从 6.3 降到约 1.0 ms/token，int8 `x` 过不了 §12 判据因而默认关闭（§7.9.3）；并且**推翻了 v0.7 自己的一条结论**：§3.4 / §7.9 的「拆分 dispatch 每层 +0.193 ms」是测量漂移，真实代价 ≤ 0.026 ms/层且逐位相同，「先到的先算」恢复为默认（§7.9.3、§3.4）。修订记录见 [附录 C](#附录-c-修订记录)。
+文档状态：**v0.9（2026-09-15）——v0.9-draft 的定稿，数字已填。** 结构沿用 v0.9-draft 与 owner 定下的四处（DSpark 是有门槛的决策、prefill 是一等章节、§1.3 的绝对判据、长上下文进计划），本版写回 Track I（step 3）/ J / K2 / L / M / P / Q 七条 track 的实测：**(1) 它会说话了**——`deepmoe serve` + `tools/chat.py`，C++ tokenizer 对 HF 在 24,897 个用例上 100% 一致，官方 prompt 格式，GPU 上的 top-p 采样；短对话 **3.4–4.5 tok/s（命中率 0.84–0.90）**，每 token ≈ 90–100 ms 计算 + 124–193 ms NVMe stall（§15.1.1）。**(2) 正确性短 + 长都到了**：64 token 从导出状态 8/8 / 8/8；4,133 / 17,010 token 教师强制 8/8、自由运行 8/8（取回 `kestrel-4471-amber"`），**从我们自己的 GPU prefill 出发同样 8/8**（§12.1）；长上下文 NaN 的根因是 sparse_attn 的列表长 `window + n_cmp`，参考是 `window + min(512, n_cmp)`（§7.4）。**(3) 热步 134 → 81.5 ms / 41 次 submit**，对 75.8 ms 地板 +7.5%（§7.16.5）；Track J 把 attention kernel 做到一层 696 µs（40 层 + head 33.5 ms），runtime 尚未采纳（§7.15.6）。**(4) prefill 是真的**：GPU 上整块 prefill，64 / 4,133 / 17,010 token 正确，TTFT **43 s / ≈ 150 s / ≈ 445 s**（后两个是安静机估计）；**v0.9-draft 的时间模型错在 compute**——实测每 prompt token 24 ms、先验 0.7 ms，长 N 由 compute 主导而不是 NVMe（§7.13.3）。**(5) DSpark 按 owner 的单遍 / 单路径方案重测**：草稿与 verify 的 GPU 代价不变，只把 top-K 采样与比较放到 CPU（K = 16 一周期 ≈ 85 µs）；每草稿事件接受 3.9（贪心）/ 3.5（采样），runtime 回放 3.3 tokens / verify，树 ≈ 链，温度 1 有精确无损的比较器；预测 ×1.18–1.32，**有条件 GO，前提是 M > 1 的 kernel**（§10）。v0.9-draft 引的 Track K 的 1.93 tokens / verify 与"NO-GO"**作废**。**(6) KV 算清楚了**（§11.3）：按模型格式 64K 上下文 61 MB（其中必须持久化的 59 MB），1M 上下文 0.94 GB；今天 `KvStore` 给 40 层都分平面且存 bf16，17K 分配 882 MB、64K 3.37 GB；**原则：SWA KV 从不持久化**，回滚 / prefix cache / 会话挂起只存压缩 KV + index key + compressor 状态 + ids，window 由 bounded replay 重建（§11.2，实现中，Track R2）。当前的并行计划是 R1 / R2 / S / T 四条 track（§15.2）。修订记录见 [附录 C](#附录-c修订记录)，本轮发现的报告间冲突列在附录 C 的 v0.9 行。以下是更早的状态行：**v0.9-draft**：结构调整稿（DSpark 挂门槛、prefill 升格、§1.3 绝对判据、长上下文进计划），数字待填；v0.1 为初始 docx；v0.2 按开发机实测修订内存模型；v0.3 锁定目标模型为 V4.1-Flash，据其真实权重布局重写内存/存储/kernel/prefetch/投机解码设计；v0.4 落地代码骨架，写回 Q6/Q7 实测（§9.2.1），更正 §11.3 的 indexer KV 体积，固定 §14.1 目录；v0.5 取消 repack，改为直读原始 safetensors 分片（§5.1 重写）；v0.6 写回 P1 全部实测（内存系统是单一 ~217 GB/s 共享上限、dispatch 开销低一个数量级、cache 容量受 commit 限额约束、27,399 token 路由 trace、lookahead 降级为不做）；**v0.7 写回 P2 step 1 全部实测：容量问题已解决——扩 pagefile 后 slab 池 100 GiB = 5,711 个 expert 槽、h ≈ 0.92（§5.2/§9.2.2/§3.1）；非 MoE decode 路径九个 kernel 逐级对齐参考实现并跑通整层（§7.15），参考实现强制了八处改动（§2.4/§6/§7.2–§7.7/§7.14）；MoE kernel 的 M 扫描、packed fp16 / int8 dot4、fp8 shared expert 与 `h` 的 fp8 量化（§7.9.2），并**推翻**了两条 v0.6 的结论：§7.1 rule 6 的「x 分块进 LDS」与 §7.9 的「拆分 dispatch 免费」**；**v0.8 写回 P2 step 2 三条 track 的实测：**deepMoE 第一次自己产出了 token**——四十层、engram、head、采样全在 GPU 上，对 L3 oracle 一步 top-1 一致、教师强制 7/8、自由运行 6/8，热步 **134 ms = 7.5 tok/s**（§7.16、§13.4、§15）；§7.4 的 compressor 与 indexer **已产出、不再是加载进来的**，非 MoE 一层从 1.053 降到 **0.893 ms**（§7.15.5）；MoE 的 `HQuant=3` 把 decode 的量化税从 6.3 降到约 1.0 ms/token，int8 `x` 过不了 §12 判据因而默认关闭（§7.9.3）；并且**推翻了 v0.7 自己的一条结论**：§3.4 / §7.9 的「拆分 dispatch 每层 +0.193 ms」是测量漂移，真实代价 ≤ 0.026 ms/层且逐位相同，「先到的先算」恢复为默认（§7.9.3、§3.4）。修订记录见 [附录 C](#附录-c-修订记录)。
 
-> **本文的实测数字** 一律标注测量日期与来源文件。五份原始报告是
-> [docs/kernel_p1.md](kernel_p1.md)（P1 Track A：带宽矩阵、kernel 变体、内存路径、dispatch 开销）、
-> [docs/route_trace.md](route_trace.md)（P1 Track B：trace 方法、faithfulness、与参考实现的出入）、
-> [docs/kernel_p2_moe.md](kernel_p2_moe.md)（P2 Track D/H：M 扫描、fp8 shared expert、`h` 量化、
-> 分组 dispatch；v0.1 是 step 1，**v0.2 是 step 2**）、
-> [docs/p2_attention.md](p2_attention.md)（P2 Track E/F：L2 oracle、九个非 MoE kernel、整层链路；
-> **§9–§12 是 step 2 的 compressor / indexer 与第二轮带宽**）
-> 与 [docs/p2_decode.md](p2_decode.md)（P2 Track G：L3 oracle、整个 decode step、第一个 token）；
-> **v0.9-draft 另引** [docs/p3_dspark.md](p3_dspark.md)（Track K，**进行中、未提交**：DSpark 算法规格、
-> 验证循环、M > 1 的 kernel 支持清单；§7–§10 的实测段仍是空的，所以本文只引它的 §1–§6）；
-> 原始数据在 `bench/results/*.csv`、`tests/data/l3/` 与 `reports/*.json`。
-> **报告之间有冲突时以后写的那一份为准**，本文在每一处都注明是哪一份。
+> **本文的实测数字** 一律标注测量日期与来源文件。原始报告：
+> **P1** [docs/kernel_p1.md](kernel_p1.md)（Track A：带宽矩阵、kernel 变体、内存路径、dispatch 开销）、
+> [docs/route_trace.md](route_trace.md)（Track B：trace 方法、faithfulness、与参考实现的出入）；
+> **P2** [docs/kernel_p2_moe.md](kernel_p2_moe.md)（Track D/H：M 扫描、fp8 shared expert、`h` 量化、分组 dispatch）、
+> [docs/p2_attention.md](p2_attention.md)（Track E/F：L2 oracle、九个非 MoE kernel、compressor / indexer；**§13 是 P3 Track J**：LDS bank 冲突、K-split、tiled sparse attention）、
+> [docs/p2_decode.md](p2_decode.md)（Track G：第一个 token；**§9–§13 是 step 3 / Track I**：nothing loaded、81.5 ms、cache 爬坡）；
+> **P3** [docs/p3_dspark.md](p3_dspark.md)（Track K → **K2**：单遍单路径的树采样、接受率、CPU 代价、无损性、批边界、TPS）、
+> [docs/p3_prefill.md](p3_prefill.md)（Track L：GPU prefill、交接、TTFT）、
+> [docs/p3_longctx.md](p3_longctx.md)（Track M：4K / 17K 参考数据）、
+> [docs/p3_longctx_decode.md](p3_longctx_decode.md)（Track Q：长上下文 decode、candidate block）、
+> [docs/p3_chat.md](p3_chat.md)（Track P：serve、tokenizer、采样、第一批对话）。
+> 原始数据在 `bench/results/*.csv`、`bench/results/chat/`、`tests/data/{l3,longctx,dspark,tokenizer}/`、
+> `traces/longctx/`（1.3 GB，不入库）与 `reports/*.json`。
+> **报告之间有冲突时以后写的那一份为准**，本文在每一处都注明是哪一份；v0.9 集成时发现的冲突列在附录 C 的 v0.9 行。
 
 ---
 
@@ -84,7 +86,7 @@ Vulkan 关键能力（`vulkaninfo` + `tools/envcheck`）：
 - 只支持 Windows 11 + Strix Halo。
 - 只支持 DeepSeek-V4.1-Flash（文本路径；vision encoder 权重下载但第一阶段不实现）。
 - 单用户、batch=1 decode，投机解码的 verify batch ≤ 6。
-- 不做 OpenAI Server / Web UI；提供 CLI 与 benchmark harness。
+- 不做 OpenAI Server / Web UI；提供 CLI 与 benchmark harness。**v0.9：另有 `deepmoe serve`（stdin / stdout 上的行分隔 JSON，单会话）与终端对话 `tools/chat.py`**（§15.1.1）。
 - 正确性优先：所有 kernel 与端到端输出都要过 oracle（§12）。
 
 ### 1.3 成功标准
@@ -97,14 +99,14 @@ Vulkan 关键能力（`vulkaninfo` + `tools/envcheck`）：
 
 **MVP 成功** 需同时满足四条：
 
-| # | 判据 | 怎么量 | 今天（v0.8 / Track I 提交信息） |
+| # | 判据 | 怎么量 | **v0.9 状态（2026-09-15）** |
 |---|---|---|---|
-| **(a) 正确性** | L3 **每个 prompt 教师强制 8/8**，**短上下文（64 token，≥ 5 个 prompt）与长上下文（4K、16K）都要**；自由运行的分歧**只允许出现在参考的近似平局上**：分歧那一步参考自己的 top-1 − top-2 logit margin **< τ = 1.0**，并且 `--gate-report` 能把它归到一次 gate 近似平局（参考第 6 / 第 7 个 expert 的分数差落在我们 gate 输入漂移的量级内）。投机解码开关不改变 greedy 输出——**在参考 margin > ε 处**（§10.2：参考实现本身依赖批边界，这条不能要求得比参考更严） | `tests/test_decode.cpp` + `tools/oracle.py --level l3`；长上下文 `TBD(Track M)` | 64 token、1 个 prompt：加载 oracle prefill 状态时 **8/8 / 8/8**；自己跑慢 prefill 时 **7/8 / 6/8**，缺的一个在参考 margin 0.95 处、随 MoE 求和顺序翻转（`0f41099`）——**按 (a) 的写法，教师强制那一次算不通过**。长上下文：**未测** |
-| **(b) 模型 vs 实测** | 实测 decode TPS 落在 §3.1 / §13.4 模型（代入**实测**命中率）的 **±15%** 以内；**每个 token 的时间线**分解成 attention / MoE / stall / engram / other 五项，并且 **kernel bench 之和解释非 stall 时间的 ≥ 90%** | `deepmoe run --profile` 的 §13.1 记录对 §13.4 的算式；bench 来自 §7.9.3 / §7.15.5 / §7.4 / §7.10 | v0.8 热步：bench 地板 74 ms / 实测 134 ms = **55%**；Track I 提交信息的热步 86.7 ms → **≈ 85%**（待写回） |
-| **(c) 带宽效率** | 常驻路径的**有效 GB/s ≥ 217 GB/s 上限的 80%**（≥ 174 GB/s） | `(hot_bytes + expert_hit_bytes) / (T_token − T_stall)`；`hot_bytes` = 8.52 GB（§7.16.3），命中的 routed expert 4.51 GB，合计 13.03 GB。**等价于热步 ≤ 75 ms**，正好是 §13.4 的 kernel 地板 | v0.8 134 ms → 97 GB/s = **45%**；86.7 ms → 150 GB/s = **69%** |
-| **(d) 内部 A/B 基线** | 三组对照**全部有数并写进报告**：deepMoE **M=1 无投机 vs DSpark**；**冷 cache vs 热 cache**；**只用路径 A vs A+B**（§3.3）。这三组**取代** v0.8 的外部 runtime 对照 | §13.3 | 只有冷 / 热的零散数字（§7.16.2 / §7.16.3）；DSpark 未接入；A-only vs A+B 未在整个 decode step 上量过 |
+| **(a) 正确性** | L3 **每个 prompt 教师强制 8/8**，**短上下文（64 token，≥ 5 个 prompt）与长上下文（4K、16K）都要**；自由运行的分歧**只允许出现在参考的近似平局上**：分歧那一步参考自己的 top-1 − top-2 logit margin **< τ = 1.0**，并且 `--gate-report` 能把它归到一次 gate 近似平局（参考第 6 / 第 7 个 expert 的分数差落在我们 gate 输入漂移的量级内）。投机解码开关不改变 greedy 输出——**在参考 margin > ε 处**（§10.2：参考实现本身依赖批边界，这条不能要求得比参考更严） | `tests/test_decode.cpp` + `tools/oracle.py --level l3`；长上下文 `tests/test_decode_longctx.cpp`、`tools/oracle_longctx.py`；从 GPU prefill 出发 `tests/test_gpu_prefill.cpp` | **✅ 三个长度都到了**（§12.1）：64 token 从导出状态 **8/8 / 8/8**；4,133 与 17,010 token 从导出状态 **8/8 / 8/8**、**从我们自己的 GPU prefill 自由运行 8/8**（都取回 `kestrel-4471-amber"`）。**两处保留**：(1) 64 token 从我们自己的 prefill 是 7/8（慢 prefill 7/8 / 6/8、GPU prefill 7/8 / 7/8），缺的一步参考 margin 0.95，`--gate-report` 归到 gate 近似平局（§7.16.5）——自由运行按 (a) 放行，教师强制那一次按字面不算过；(2) 64 token 仍只有 **1 个** L3 prompt（K2 的 5 个 prompt 是 DSpark oracle，不是引擎 L3）。投机开关一条：短上下文的批边界已隔离为数值性（§10.1.3），长上下文待测 |
+| **(b) 模型 vs 实测** | 实测 decode TPS 落在 §3.1 / §13.4 模型（代入**实测**命中率）的 **±15%** 以内；**每个 token 的时间线**分解成 attention / MoE / stall / engram / other 五项，并且 **kernel bench 之和解释非 stall 时间的 ≥ 90%** | `deepmoe run --profile` 的 §13.1 记录对 §13.4 的算式；bench 来自 §7.9.3 / §7.15.5 / §7.4 / §7.10 | **热步口径达成**：地板 75.8 ms（真 fp8 shared）对实测 81.5 ms，bench 解释 **93%**（§7.16.5）；**对话口径 76%**（非 stall ≈ 100 ms，多出采样尾巴与刚写入页的首次触碰，§13.4）。TPS 代入实测 h 与实测盘速 4.0 GB/s：h 0.836 → 模型 3.5 对实测 3.41、h 0.897 → 4.6 对 4.46，**在 ±5% 内**；按 4.5 GB/s 平台是 −10%。**未做**：≥ 512 token 的稳态、`--profile` 记录逐项对 §13.4 |
+| **(c) 带宽效率** | 常驻路径的**有效 GB/s ≥ 217 GB/s 上限的 80%**（≥ 174 GB/s） | `(hot_bytes + expert_hit_bytes) / (T_token − T_stall)`；`hot_bytes` = 8.52 GB（§7.16.3），命中的 routed expert 4.51 GB，合计 13.03 GB。**等价于热步 ≤ 75 ms**，正好是 §13.4 的 kernel 地板 | **未达**：81.5 ms → 160 GB/s = **74%**；采纳 Track J 的 attention kernel（−4 ms，§7.15.6）后 ≈ 77%。剩下 ≈ 6 ms 在 40 次 gate 往返（submit 1.6 + fence 2.0 ms）与 MoE 超出地板的部分（§7.16.5） |
+| **(d) 内部 A/B 基线** | 三组对照**全部有数并写进报告**：deepMoE **M=1 无投机 vs DSpark**；**冷 cache vs 热 cache**；**只用路径 A vs A+B**（§3.3）。这三组**取代** v0.8 的外部 runtime 对照 | §13.3 | **三组都没按 §13.3 做完**：冷 → 热有 128 步爬坡曲线（1.1 → 5.1 tok/s，h 0.35 → 0.92）与 81.5 ms 热步，但不是 §13.3 要的同文本两遍；DSpark 只有模型（M > 1 kernel 不存在，§10）；A-only vs A+B 未测 |
 
-**里程碑 (ii)「热步 ≤ 90 ms」只是 (c) 的中间站**：90 ms 折合 145 GB/s = 67%，不到 80%。
+**里程碑 (ii)「热步 ≤ 90 ms」只是 (c) 的中间站**：90 ms 折合 145 GB/s = 67%，不到 80%。**v0.9：(ii) 已过（81.5 ms = 160 GB/s = 74%），(c) 还差 6.5 ms。**
 
 绝对参照指标（v0.8 原样保留；(c) 是第一行**把命中的 routed expert 字节也算进分子**的版本——热步里它们同样走内存带宽）：
 
@@ -220,27 +222,31 @@ t_token = 42 ms                      # 常驻 8.5 GB @ 实测 216 GB/s 为 39.4 
         + KV(C) / 217 GB/s           # v0.9-draft：上下文 C 处每 token 读的 KV（§11.3 / 下表）
 ```
 
-**v0.9-draft：KV 带宽项（长上下文）。** 按 §11.3 的打包形式（window fp8 528 B/条、压缩 KV fp4 288 B/条、
-indexer K 68 B/条），一个 decode token 读的 KV 是
+**v0.9：KV 带宽项（长上下文），Track M / Q 实测确认。** 按模型自己的存储格式（window fp8 528 B/行、压缩 KV fp4 288 B/行、
+index key fp4 68 B/行，§11.3），一个 decode token 读的 KV 是
 
 ```
-KV(C) = 40 × min(C, 128) × 528 B                       # 每层 window
-      + Σ_{层 2..39} min(512, C / ratio_L) × 288 B      # 每层读 top-512 条压缩 KV（ratio 2 / 1）
-      + Σ_{8 个 index 源} (C / ratio) × 68 B = 442 B × C # indexer 对全部压缩位置打分——唯一线性增长的项
+KV(C) = 40 × min(C, 128) × 528 B                        # 每层 window
+      + Σ_{层 2..39} min(512, C / ratio_L) × 288 B       # 每层读 top-512 条压缩 KV（ratio 2 / 1）
+      + Σ_{8 个 index 层} (C / ratio) × 68 B = 442 B × C  # 8 个 index 层每步对全部压缩位置打分——唯一线性增长的项
 ```
 
-| 上下文 C | window | 压缩 KV（top-512） | indexer K | **KV(C)** | ÷ 217 GB/s | 占 13.0 GB 权重 |
-|---:|---:|---:|---:|---:|---:|---:|
-| 64（今天的全部验证） | 1.35 MB | 0.54 MB | 0.03 MB | **1.9 MB** | 0.01 ms | 0.01% |
-| 4,096 | 2.70 MB | 5.60 MB | 1.81 MB | **10.1 MB** | 0.05 ms | 0.08% |
-| 16,384 | 2.70 MB | 5.60 MB | 7.24 MB | **15.5 MB** | 0.07 ms | 0.12% |
-| 65,536（第一阶段目标） | 2.70 MB | 5.60 MB | 28.97 MB | **37.3 MB** | 0.17 ms | 0.29% |
+| 上下文 C | window | 压缩 KV（top-512） | index key | **KV(C)** | ÷ 217 GB/s | 占 13.0 GB 权重 | 实测（M / Q） |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 64 | 1.35 MB | 0.54 MB | 0.03 MB | **1.9 MB** | 0.01 ms | 0.01% | — |
+| 4,096 | 2.70 MB | 5.60 MB | 1.81 MB | **10.1 MB** | 0.05 ms | 0.08% | **4,133 token：10.1 MB** |
+| 16,384 | 2.70 MB | 5.60 MB | 7.24 MB | **15.5 MB** | 0.07 ms | 0.12% | **17,010 token：15.8 MB** |
+| 65,536（第一阶段目标） | 2.70 MB | 5.60 MB | 28.97 MB | **37.3 MB** | 0.17 ms | 0.29% | 外推 ≈ 37 MB |
 
-**结论：到 64K，KV 的带宽项在噪声里**，模型里保留它只是为了让长上下文的测量有一栏可对。
-长上下文真正的风险**不是带宽**，而是 (1) indexer 的打分 / top-k 在 n > 512 时第一次真的在"选"
-（今天 512 ≥ n，退化），(2) window 环第一次回绕，(3) ratio-2 池化第一次被大量执行——
-三件都是**正确性**问题，由 §12 的长上下文 L3 管（`TBD(Track M)`）；
-indexer 打分的**时延**（它是计算型不是带宽型，§7.4）同样 `TBD(Track M)`。
+（index key 那一栏是**每步读**的量；它比存储大，因为层 20 的 key 被层 20 / 24 / 28 / 32 / 36 各读一遍——存储见 §11.3。）
+
+**结论（实测确认）：到 64K，KV 的带宽项在噪声里。** 长上下文真正花钱的是 **index 打分的计算**，不是字节：
+8 个 index 层 × C 个 key × 32 头 × 128 维，17K 是 **453 MFLOP**、64K 外推 **1.74 GFLOP**——
+**是 §7.4 原写的 134 MFLOP 的 13 倍**（§7.4 只数了一个 ratio-2 源，而 5 个 ratio-1 层各对全部 64K 个 key 打分，p3_longctx.md §5.1）。
+真机上它是 **attention 每 1K token 上下文 +0.3 ms**：64 / 4,133 / 17,010 token 时 attention 36.9 / 42.2 / 46.4 ms，
+64K 外推 ≈ 60 ms，其中 indexer ≈ 22 ms（p3_longctx_decode.md §6）。**一个精确等价的省法没做**：层 24–36 只在 candidate block 内打分
+（块外位置是 −inf、永远选不中），64K 上 5 × 64K 个位置变成 64K + 4 × 16,384（§7.4）。
+v0.9-draft 列的三件正确性风险（top-k 第一次真选、window 回绕、ratio-2 池化大量执行）**都已被执行并通过**（§11.5、§12.1）。
 
 **v0.6：h 不再是假设。** 下表的 h 来自 27,399 token / 40 prompt（中/英/代码）的真实路由 trace 上
 全局 LRU 的**解析解**（重用距离 CDF，Fenwick 树精确计数，一遍扫描给出所有容量），
@@ -295,9 +301,9 @@ indexer 打分的**时延**（它是计算型不是带宽型，§7.4）同样 `T
    **对 NVMe miss 不一定成立**。h 是在逐 token 的 trace 上量的，**相邻 token 之间的重用本来就算作命中**；
    5,711 槽远大于一个 verify 窗口碰到的 ≤ 240 × 6 个 expert，所以一批 M 个 token 的 miss 数
    更接近逐个 decode 这 M 个 token 的 miss 数（≈ M 倍单 token），而不是 u[M] × M 倍。
-   Track K 的模型（p3_dspark.md §9）用的是 u[M] × M 的口径（`union_frac` 实测
-   0.830 / 0.730 / 0.660 / 0.629 / 0.594，M = 2..6），**已经算出 k = 5 时 stall 从 80 涨到 286 ms**；
-   按 M 倍的口径会更大（§10.1.3 的缺口 2），Planner 在 verify 前把并集 miss 一次下单则会更小，**两个方向都未测**。
+   **v0.9**：Track K2 的模型（p3_dspark.md §15）用的是 u[M] × M 的口径（正常文本上 `union_frac`
+   0.830 / 0.748 / 0.695 / 0.659 / 0.625，M = 2..6），**M = 6 的 stall 301 ms、占 verify 周期的 62%**；
+   按 M 倍的口径会更大（§15 未决问题 15），Planner 在 verify 前把并集 miss 一次下单则会更小，**两个方向都未测**。
    **结论：投机解码摊薄的是常驻读，不是 stall；在 h = 0.92 下 stall 是它的主要成本（§10.1）。**
 4. 第二块 NVMe 直接把 NVMe 项减半，是性价比最高的硬件升级，设计上预留 stripe。
 5. **lookahead 预取在这条 trace 上全程净负，已降级为不做**（§9.4）。
@@ -310,7 +316,15 @@ prompt ≥ 64 token 时，每层几乎所有 384 个 expert 都会被激活。en
 > L2 导出的 64 token prefill **每层约 200 / 384 个不同 expert**（§12 L2 那一条）；用
 > `f(N) = 1 − exp(−N / 87)` 拟合，128 token 是 77%（不是 86%），512 token 起 ≈ 100%。
 > (2)「≈ 50 s」用的是 v0.3 假设的 ~5.4 GB/s；按 §9.2.1 实测的 **4.5 GB/s 平台是 ≈ 57 s**（255 GB）。
-> **结论不变：prefill 由 NVMe 主导**，而且 N ≥ 512 之后 NVMe 项与 N 无关。
+> ~~**结论不变：prefill 由 NVMe 主导**，而且 N ≥ 512 之后 NVMe 项与 N 无关。~~（v0.9 推翻，见下）
+
+> **v0.9 按 Track L 实测再更正，并推翻结论**（p3_prefill.md §3.1 / §10）：
+> (1) 64 token 的 L3 prompt 实测碰 **4,989 / 15,360 = 0.325** 个 (层, expert)，不是 `f(64)` 的 0.52；
+> 27K trace 上 N 个连续 token 碰到的比例是 25%（64）/ 35%（128）/ 61%（512）/ 93%（4,096）/ 98%（16,384）。
+> (2) 生产模式（replay 128）下 decoder 层只路由最后 128 个 token，所以 **≥ 4K 实测读 ≈ 200 GB，不是 256 GB**（4,133 token 198 GB、17,010 token 203 GB）。
+> (3) **compute 不是"4K ≈ 3 s"，是每 prompt token 24 ms**——4K ≈ 100 s、17K ≈ 396 s（那个先验里没有 attention）。
+> **结论改为：短 prompt 由 NVMe 主导，N ≳ 1.5K 起由 compute 主导**（冷 cache 的 NVMe 项 ≈ 35–45 s 与 `8 s + 24 ms × N` 的交点，外推）；
+> 17K 上 expert 等待只剩 28 s，GPU 比盘慢。时间模型在 §7.13.3。
 
 ### 3.3 UMA 的实际形态与两条路径（v0.6 按实测重写）
 
@@ -681,7 +695,7 @@ struct IoRequest {
 | 激活 | — | fp16 / fp32 传递，fp32 归约 | 一般情况下我们比参考实现精度更高，oracle 用容差而非逐位。**两类例外见下面的"激活量化清单"（v0.7）**，它们不是精度选择而是复刻要求 |
 | `act_quant` 的 scale | — | UE8M0，**向上取到 2 的幂** | `fast_round_scale` 用 fp32 位模式算 `2^ceil(log2(amax/448))`；amax 有 1e-4 下限。浮点写法的 `ceil(log2(x))` 在 x 恰好是 2 的幂时会算错（§2.4） |
 | SWA KV cache | fp8 E4M3 块量化（同参考） | | 保持与参考一致，便于逐层对齐 |
-| 压缩 KV | oracle 模式 fp8（同 `model.py`）；生产模式 FP4 E2M1 + E4M3/16（同官方部署） | | 两种都实现，后者需通过 §12 容差 |
+| 压缩 KV | oracle 模式 fp8（同 `model.py`）；生产模式 FP4 E2M1 + E4M3/16（同官方部署） | | 两种都实现，后者需通过 §12 容差。**v0.9**：`model.py` 本身就是 `fp4_act_quant(latent, 16, E4M3)`；今天的 cache 存这些值的 **bf16**，打包字节只写到旁路 buffer 供测试（§11.3），打包成 cache 格式是 R2 的活 |
 
 **激活量化清单（v0.7 新增，p2_attention.md §2.1 / §3；§2.4 有完整论证）**
 
@@ -863,6 +877,33 @@ int8 dot4 备选路径：E2M1 的取值 {0, .5, 1, 1.5, 2, 3, 4, 6} × 2 全是�
   （decode 位置 64 上 ratio-2 源的组没完成，于是打分打在上一次发布的 cache 上，
   即层 20 的），**由主机而不是 shader 决定哪个 cache 地址进槽**。
 
+**v0.9 长上下文实测（Track M / P / Q，2026-09-14/15；[p3_longctx.md](p3_longctx.md)、[p3_longctx_decode.md](p3_longctx_decode.md)）：
+top-k 不再退化，三件事都跑了、都对了。**
+
+- **top-k 真选**：4,133 / 17,010 token 上每层从 2,067–17,018 个位置里选 512。**kernel 在参考自己的输入上 tie-aware 等于参考**：
+  4K 24/24、17K 24/24 个 (层, 步)（层 2 / 14 / 20 × 8 步），分数与主机按 bf16 逐元素重算**逐位相同**。
+  **边界上的精确并列是常态**：17K 上 22/24 对在第 512 个分数处有并列，集合完全相同的只有 9/24——
+  **判据只能是 tie-aware**（高于参考第 512 分的全选，其余取自分数等于它的位置）；§12 的 `topk_idxs` 判据据此改写。
+  引擎自己的列表对**自己的**分数平面 tie-aware 精确 64/64（8 层 × 8 步，两个长度）。
+- **design §2.1 的 candidate block 在 decode 里实现了**：`indexer.slang` stage 6（每块一个 radix key，最新块钉成最大）/
+  7（选 2,048 块，与 stage 5 共用 radix select）/ 8（块外分数置 −inf），层 20 写、层 24–36 读，`record_ced` 记下标志属于哪一步、错步就拒绝。
+  17K 上 8/8 步 tie-aware 等于 `select_candidate_blocks`（第 2,048 块处每步 4–9 块并列，kernel 保留最低块号，唯一的差别是一次合法的并列选择）；
+  层 24–36 的参考选择落在 host mask 外的 **0 / 16,384**。16,384 个压缩位置以下它是恒等。
+- **ratio-2 层隔步用层 20 的 key**（`shared_attn.index_k` 从不重置）：组没完成的位置，层 2 / 8 / 14 对**层 20 的** key cache 打分
+  （4K 是 step 1 / 3 / 5 / 7，17K 是 step 0 / 2 / 4 / 6）。17K 上这份 top-k 与"用自己的 key"只重叠 **8%**，
+  层 8 的压缩 attention 质量 0.71 → 0.37、对盐值定义的质量掉到 ≈ 0。**参考就是这样，引擎照抄**（p3_longctx.md §5.3；
+  "保真还是意图"是 §15 的未决问题 22）。于是 ratio-2 层相邻步 top-k 只重叠 6–10%（17K），ratio-1 层 53–61%——**不值得做压缩 KV 的缓存或预取**。
+- **§7.4 的算力估计错了 13 倍**（见 §3.1）。真机开销：8 个 index 层的 indexer + compressor + mask 在 4K **2.4 ms**、17K **6.2 ms**
+  （对 loaded-CED 对照差分，p3_longctx_decode.md §6）。
+- **长上下文 NaN 的根因不在 kernel**（Track P，`16cf319`，p3_chat.md §5）：`Engine::prepare_ced` 把 sparse_attn 的列表长设成 `window + n_cmp`，
+  参考 indexer 返回 `min(index_topk, end_pos // ratio)` 个，所以列表是 `window + min(512, n_cmp)`。n_cmp > 512 起读到 indexer 没写过的 0
+  （全指向 window 槽 0，同一行被 attend 几百次 → "塌成填充 token"），列表 > 1,024 起越过每头 1,024 的分数步幅（→ NaN）。
+  Track L 列的三个嫌疑（radix top-k、1,024 项 LDS 表、> 1,024 行的 key / 压缩平面）**全部无辜**：压缩 KV 在 17,011 行上 cos 1.00000。
+  **加固**（Track Q）：`record_attention` 拒绝长度不是 `window + min(index_topk, n_cmp)` 或超出 1,024 步幅的列表；
+  压缩半截先写 −1，每层 attention 的等待之后 `verify_after_attention` 核一遍"全写了、严格递增、在范围内"（每 token 8 层 × 512 次主机读）。
+- **上限**：`kMaxIndexPositions` = 65,535 × 8 = **524,280**，是一次 `indexer.score` dispatch 能覆盖的位置数（再往上要 2-D dispatch），
+  分数平面 2 MB、candidate 平面 0.5 MB 按它一次开好。**实际的上下文上限今天是 `KvStore` 的单块分配（≈ 41.7K，§11.3）**。
+
 ### 7.5 稀疏 Attention（decode，单 query）
 
 - 输入：`q[64][512]` fp16，KV 条目 = window 128（fp8）+ 压缩 top-512（fp8 或 fp4）= 640 条 × 512，`attn_sink[64]`，索引数组。
@@ -888,6 +929,13 @@ int8 dot4 备选路径：E2M1 的取值 {0, .5, 1, 1.5, 2, 3, 4, 6} × 2 全是�
   从这条路径的 13% 降到 7%），一个字节的流量都没动：原来一个线程负责一个 (head, position)
   串行走 512 维，64 头 × 640 位置 = **6300 万条 load 指令去读 320 KiB**；
   现在一整行 KV 由一个 wave 的 32 个 lane 覆盖（每 lane 16 维），点积是一次 `WaveActiveSum`。
+
+- **v0.9（P3 Track J，p2_attention.md §13.5）：head-group × KV-tile 做出来了。** `sparse_attn_t.slang` 三个 stage：
+  打分 8 头 × 1 个 KV tile 一个 workgroup（KV 被 8 个头组读一遍，不是 64 个头各读一遍），每 (头, tile) 写一个最大值；
+  P·V 在自己的网格上读 tile 最大值（归约不要 dispatch）、对**最终**行最大值做 bf16 舍入与累加；`pv_tiles > 1` 才要第三个 stage。
+  **32 × 1 tile 默认 ≈ 43 µs/层**（经典 kernel 修完 LDS 冲突后 ≈ 53 µs），**没到 ≤ 40**——P·V 还要一次读服务多个头（每 lane 16 × G 个累加器）。
+  4,096 / 32,768 项对 fp64 转写 **cos 1.000000000**。P·V 放 8 头一个 workgroup 是 120 µs（输）。
+  **decode 不采纳它**：真实列表 ≤ 128 + 512 = 640 项，经典 kernel 够用（p3_longctx_decode.md §7）；prefill 的 band attention 用自己的 kernel（§7.13）。
 
 ### 7.6 输出投影（分组 `wo_a` → `wo_b`）
 
@@ -1284,6 +1332,16 @@ dispatch A 的 storage buffer 从 8 个变成 9 个（binding 8 是 x allocation
   `v > best` 对 NaN 永远是假，所以**一步全 NaN 的 logits 会被报成 token 0 / margin 0.0000**
   而不是报错——§7.16.4 的第二个 bug 就是这么显形的，**这不是采样器的 bug，但它是一个静默的失败模式**。
 
+- **v0.9：温度 > 0 的采样做了，不是 Philox / Gumbel-max**（Track P，p3_chat.md §2）。`sample_topk.slang` 在 argmax 之后多一个 dispatch，
+  一个 workgroup 256 线程：全局最大值 M、按 `(M − l)·16` 分 256 个桶的直方图、取累计够 k = 1,024 的桶——**一个真 top 集合**——
+  并写出其余 token 的 `Σ exp((l − M)/T)` 尾部。主机在候选上用 double 求和，**在候选质量 ≥ top_p 时给出的就是全词表精确的 top-p 核**；
+  候选不够、`top_p = 1` 或某线程溢出（> 32 个候选）时整行拷回（`topk_fallback`）。逆 CDF + 计数器 splitmix64（`uniform01(seed, position)`），
+  KV 续接的一轮与重新跑采出同一个样。**对话 650 个采样步 0 次回退、kernel 对主机模拟 226/226 逐位、主机 0.1 ms/token**，kernel 给尾巴加 ~2–3 ms；
+  CPU 测试：L3 logits 上 200,000 次抽样 χ² 54.1 / 49 自由度，43 个声称精确的用例与全词表核逐项相同。默认温度 1.0 / top_p 0.95（模型 README）。
+  argmax 仍然跑，`greedy_token` 与 margin 两种模式都报。**DSpark 温度 1 的接受判定在 CPU 上做，不走这个 kernel**（§10.1.2）。
+- **v0.9：`gate.slang` 的 softplus 写成 `log(1 + exp(z))`**，fp32 下 z < −16 为 0、z ≈ −10 起丢位（`cpu/gate.cpp` 与 torch 用 `log1p(exp(−|z|)) + max(z, 0)`）。
+  只碰分数 < 1e-3 的 expert，远离 top-6 边界，但它是一个错的数（p2_decode.md §11.3），未修（§15 未决问题 20）。
+
 ### 7.12 DSpark 草稿 kernel
 
 - `main_proj [5120 × 15360]` fp8（79 MB）+ norm → `main_x`（草稿 attention 的 KV 来源）。
@@ -1299,103 +1357,107 @@ dispatch A 的 storage buffer 从 8 个变成 9 个（binding 8 是 x allocation
   **参考实现的两个坑**：草稿块内部**没有因果掩码**（5 个位置双向），mtp 的 window 环存的是 `main_x` 推出的 KV、
   **属于 KV cache、拒绝时要一起回滚**（p3_dspark.md §2）。
 
-### 7.13 Prefill（v0.9-draft 升格为一等章节；v0.8 标题是"Prefill kernel（M ≥ 16）"）
+- **v0.9（Track K2）**：草稿 kernel 不变。单遍单路径的树采样只在 Markov 5 位上把 argmax 换成 top-K，并读回候选上的 base logit 与锚行 logsumexp——
+  一个一次扫描的小 kernel，**未写**（§10.1.2）；`head` 循环 M = 1 实测 28.2 ms，M = 5 摊满权重读是 5.6 ms。
 
-> **为什么升格**：v0.8 把 prefill 当成 decode 之后的 P5，三行 bullet。但 (1) 没有自己的 prefill，
-> decode 的状态就是加载的（§7.16），(2) 长上下文的 L3（§12.1）**必须**先有一个能在 4K / 16K 上跑的 prefill，
-> (3) TTFT 是 §13.2 的必测指标而它由 NVMe 主导（§3.2）。**编号保持不变**：本节原地展开为 §7.13.1–§7.13.5，
-> NVMe 流式与 cache 交接在 §9.7 原地展开。
+### 7.13 Prefill（v0.9-draft 升格为一等章节；v0.9 写回 Track L / P 的实测）
 
-#### 7.13.1 已经有的：慢 prefill（M = 1，教师强制，走 decode 路径）
+> **一句话**（Track L，[p3_prefill.md](p3_prefill.md) v0.2；Track P，[p3_chat.md](p3_chat.md) §6）：`gpu::Prefill` 在 GPU 上一遍跑完整个 prompt，
+> 64 / 4,133 / 17,010 token 交接状态正确、首 token 等于参考，之后的 decode 在长上下文上 8/8（Track Q）；
+> TTFT 冷 cache **43 s / ≈ 150 s / ≈ 445 s**（后两个是安静机估计，实测 199.6 / 628.6 s 时有 Track K2 的 CPU oracle 并发）；
+> **v0.9-draft 的时间模型错在 compute：每 prompt token 24 ms，先验 0.7 ms**。它已经接进 `Engine` 与 `serve`，默认关。
+> 编号沿用 v0.9-draft：§7.13.1 慢 prefill、§7.13.2 五个部件、§7.13.3 时间模型、§7.13.4 验收、§7.13.5 kernel 选择；NVMe 流式在 §9.7。
 
-**来源：Track I 提交 `5528f86` / `0b2c31c` / `0f41099` 的提交信息；p2_decode.md 尚未写回，数字以集成为准。**
+#### 7.13.1 慢 prefill（M = 1，走 decode 路径）——现在是 serve 的短 prompt 路径
 
 | 项 | 状态 |
 |---|---|
-| `Engine::slow_prefill`、`deepmoe run --slow-prefill`、`tests/test_decode.cpp` 的 (d) 段 | **已有**。prompt 一次一个 token 走完整个 decode step（四十层、compressor / indexer、engram、MoE），**写出的就是 decode 要的全部状态**：window KV 环、压缩 KV 平面、index key cache、compressor 的 `kv_state` / `score_state`（`5528f86` 给 `KvStore` 加的） |
-| 语义 | decoder 层对**全部** prompt token 前向——**就是 §11.2 的 oracle 模式**，没有 bounded replay。所以它同时是将来衡量生产模式差异率的参照 |
-| 对 oracle 的 prefill 导出 | 汇总 **cos 0.93**；**层 0 处处 0.99999**，误差**随深度增长**、在**位置 0 最差**（上下文最薄、gate 近似平局最容易翻）（`0b2c31c`） |
-| 在它之上 decode 八步 | `0b2c31c`：**8/8 教师强制、8/8 自由运行**（对照加载 oracle 状态时的 7/8、6/8）；`0f41099` 那个 build：**加载状态 8/8 / 8/8，自己的慢 prefill 7/8 / 6/8**——step 6 的近似平局（参考 margin 0.95）**随 MoE 的求和顺序翻转**。**"自洽的轨迹胜过更准但外来的轨迹"这一条因此只是一次观察，不是结论** |
-| 顺带的 bug | `token_` 是 cache 的 **LRU 时钟而不是位置**；`slow_prefill` 重置它会让已驻留的一切看起来比下一层刚取的更新，策略于是淘汰刚填进去的槽、MoE dispatch 找不到它的 expert。**时钟保持单调** |
-| 代价 | 每个 prompt token 一个 decode step，时间模型见 §7.13.3 的"慢 prefill"一列：**4K 约 11 分钟、16K 约 46 分钟**。**它是正确性工具，不是 prefill** |
+| 入口 | `Engine::slow_prefill`、`deepmoe run --slow-prefill`；**serve 的 `Engine::feed` 是去掉 128 token 保护的同一件事**：query p > 128 看到 ring 的最后 128 位，正是 chunked prefill 的 band（p3_chat.md §1） |
+| 语义 | prompt 逐 token 走整个 decode step，写出 decode 要的全部状态；decoder 对全部 token 前向，即 oracle 模式 |
+| 对导出的交接 | window KV 最差 0.925–0.930（L18）、压缩 KV 0.967、index key 0.975；**层 0 处处 0.99999，误差随深度增长、在位置 0 最差**（上下文最薄处 gate 近似平局最易翻）——均匀的误差才像 bug，这个形状不是（p2_decode.md §9.5） |
+| L3 | step-3 build 7/8 / 6/8；step-2 MoE 路径 8/8 / 8/8——**同一个 token（step 6，参考 margin 0.95）随 MoE 求和顺序在格子间移动**（§7.16.5 (b)） |
+| 速度 | serve 里 **1.5–3 tok/s**（11–46 token 的 TTFT 4.9–23.4 s，prefill 命中率 0.54–0.80，p3_chat.md §7.1）；4K 按此外推 ≈ 25–45 分钟 |
+| 顺带的 bug | `token_` 是 cache 的 LRU 时钟，`slow_prefill` 把它拨回 0 → 淘汰刚填进的槽（已修） |
 
-#### 7.13.2 真正的 prefill 必须是什么
+#### 7.13.2 GPU prefill：五个部件的实现
 
-五个部件，每一个都对应参考实现里**已经存在**的 prefill 分支（`start_pos == 0`），我们只是还没写：
-
-| # | 部件 | 规格 | 依据 |
+| # | 部件 | v0.9-draft 规格 | **v0.9 实现（Track L）** |
 |---|---|---|---|
-| 1 | **CED 编码 / 解码切分 + bounded replay** | 层 0–19（encoder）对全部 N 个 token 前向；层 20 的 compressor 把 encoder 输出投成 decoder 的全局压缩 KV 与索引，层 21–39 复用；decoder 层**只对最后 min(N, 128) 个 token 前向**（生产模式），window 截到 replay 段。**oracle 模式** decoder 对全部 N 个前向，等于 §7.13.1 的慢 prefill 语义。两种都实现，差异率进报告 | §11.1、§11.2 |
-| 2 | **多 query 的分块 attention** | window 部分是 band attention（每个 query 看自己之前 128 个）；compressor 按 `start_pos == 0` 分支**整块池化**；indexer 对每个 query 用 `compress_lens = (P + 1) // ratio` 掩码——**压缩块只有在完整之后才可见**：位置 P 的 query 看得见组 g 当且仅当 `(g + 1) · ratio − 1 ≤ P`。按 block 128 分块实现。**n > 512 时 top-k 第一次真的在选**（今天全部退化，§7.4） | p2_attention.md §12 的未完成项；公式与 p3_dspark.md §4.5 的逐 query 推广是同一个 |
-| 3 | **所有 token 过 gate** | gate 对 N 个 token 打分（GEMM，M = N 或按块），每层产出一张 token → 6 expert 的路由表。**这张表驱动第 4 项**，并且是 §9.7.3 交接 cache 的输入 | §7.8 |
-| 4 | **expert-major 的 MoE，按分片顺序流式** | 按分片内的物理顺序逐个 expert：取到（命中或 NVMe）→ gather 路由给它的 token（平均 `M_e = 6N / 384 = N / 64` 行）→ `M_e ≥ 16` 用 cooperative matrix GEMM、`M_e ≤ 6` 复用 §7.9 的 GEMV 模板 → 带路由权重 scatter-add。**§2.4 / §6 的激活量化清单照样适用**（每次 fp8 / fp4 GEMM 前 `act_quant`、量化器前舍入 bf16、`h` 的 fp8 量化） | §5.1（一层不跨分片）、§9.7 |
-| 5 | **keep / drop：把 expert 交给 decode cache** | 流式读进来的 expert 按"对 prompt 顺序跑一遍 LRU 会留下什么"决定去留，**不需要额外 I/O**，交接之后 decode 从一个与 `cache_sim` 可对照的状态开始 | §9.7.3 |
+| 1 | CED 切分 + bounded replay | 层 0–19 对全部 N；decoder 对最后 min(N, 128) | ✅ **`model.py` 没有 bounded replay**（它的 prefill 每层跑全部 token），replay 是我们的生产近似。**层 20 拆开**：前半（mHC、`attn_norm`、compressor、index key）跑 N 行，然后流切成最后 R 行（视图，零拷贝），层 20 的 Q / attention / FFN 与层 21–39 只跑 R 行。近似恰好是一件事：replay 位置 p 的 decoder window 只回溯到 N − R。**N ≤ 128 时两种模式相同**，所以 64 token 的验证对 oracle 是精确的。oracle / replay 两种都跑 |
+| 2 | 多 query 分块 attention | band + 整块池化 + 完成掩码 | ✅ query 按 B = 512 分块（每块 attention 草稿内存 0.18 GB，与 N 无关）；window 是 band `max(0, p−127)..p`；compressor 一个 dispatch 池化全部 `N // r` 个完整组，尾巴进 `kv_state`；indexer `[B][N//r]` + 完成掩码（组 j 对 query p 可见当且仅当 `j < (p+1) // r`）+ 逐 query top-k（**主机上**）；17K 上 candidate block 第一级是主机实现（`Prefill::candidate_blocks`）。**prefill 有自己的 attention kernel**（`prefill_attn.slang`），decode 的 kernel 全是 M = 1 编译的 |
+| 3 | 所有 token 过 gate | GEMM + 路由表 | ✅ gate GEMM；主机 memcpy `[N][384]` 分数做 top-6。**bench 抓到一个 58 s 的主机 bug**：top-6 经 pinned tensor 的主机视图（设备映射内存）读 gate bias，每 token ~3,000 次 = 4K prefill 的 58 s；每层拷一次之后 1.1 s（§7.1 rule 10 又一次） |
+| 4 | expert-major 流式 MoE | 分片顺序；`M_e ≥ 16` 用 coopmat | ✅ 本层 expert 按（分片, run 偏移）排序、P0 下单；**两半 transit**（各 32 槽，共 1.2 GB）：第 i+1 批的读在第 i 批计算之前发出，盘在 GPU 算的时候填下一批；≥ 16 行走 cooperative matrix GEMM，其余走 tiled GEMV 作业表；每 32 个 expert 一次 submit。**作业表让一个 command buffer 装多个 expert**（三个 expert pipeline 从 GPU 侧作业数组按 push constant 取地址，同 §5.3 的指针表，高一层） |
+| 5 | keep / drop 交给 decode cache | `(last(e), 顺序)` 的 LRU | ❌ **未做**：prefill 读进自己的 transit、全部丢掉，decode 从空 cache 开始。需要 `ExpertStore::adopt(key, slot, last_access)`（p3_prefill.md §8.3 第 3 条）→ **Track R1**。Track L 在 trace 上量的保留规则：**保留最后 W 个 prompt token 用过的 expert、按最后位置排 LRU**，N = 512、W = 128 覆盖接下来 64 个 decode 步访问的 **0.892**（W = 256 是 0.946），对冷启动的 ≈ 0.36 |
 
-外加三件容易漏的：
+外加：engram 对全部 token（实测**每 token ≈ 70 次 4 KiB 读**：4,133 token 291,138 次、17,010 token 1,199,470 次）；
+**DSpark 的 `main_x` 窗口不在交接里**；一维 dispatch 超过 65,535 个 workgroup 时按 16,384 行切（17K 的 `hc_post` 是 85,050）；
+prefill 专用内存 ≈ 1.25 / 1.55 / 2.5 / 5.7 GB（N = 64 / 512 / 4,096 / 16,384，其中 1.2 GB 是 expert transit）；
+残差流 `[N][4][5120]` 在 ≈ 26K token 以上超过 2 GiB 单块分配，要切。
 
-- **engram 对全部 token**：hash 状态沿 prompt 累积，每 token 48 行（两个平面、最多 96 次 4 KiB 随机读）。
-  **16K 上这是 77–155 万次随机读，不是零**——进了 §7.13.3 的时间模型。
-- **DSpark 的状态也是 prefill 写的**：三个 mtp 块各自的 `window_kv_cache[128][512]` 由 `main_x`
-  的全部位置填满（p3_dspark.md §2 第 3 条），所以 prefill 要对层 37 / 38 / 39 的 block 输入做 `main_proj`。
-  **bounded replay 的 128 个 token 正好覆盖这个窗口**。
-- **线性层**：cooperative matrix（`VK_KHR_cooperative_matrix`，fp16 累加 fp32）GEMM，权重 FP4 / FP8 → fp16
-  在加载到 LDS 时解码（v0.8 原文，仍成立）。
+**接进引擎**（Track P）：`Engine::seed_from_prefill(PrefillHandoff)` 在内存里交接 window 环（slot p mod 128）、kv source 的压缩 KV 与 index key、compressor 状态与 history
+（不再走 L3 目录往返）；`Engine::gpu_prefill(prompt, replay)` 在引擎自己的 device、路径 A 分配器、分片、IoEngine 与 pinned 集合上建 `Prefill`，跑完释放它的 buffer；
+采样时首 token 从交接的主机 logits 抽。`serve --gpu-prefill-min N` 把 ≥ N token 的新 prompt 送去，失败（通常是 78.8 GiB 自动 cache 旁边路径 A 没空间）就记警告、
+reset、回退 decode 路径。**默认关**：64 token 上 GPU prefill 读 94 GB expert（43 s）且什么都不预热；建议阈值 ~500 token、显式 `--cache-gb ≲ 60`。
 
-#### 7.13.3 时间模型：N ∈ {64, 512, 4096, 16384}，NVMe 主导
+#### 7.13.3 时间模型：实测替换先验，长 N 由 compute 主导
+
+v0.9-draft 的式子与表（NVMe 主导、compute 先验 = §3.2 的"4K ≈ 3 s"）**作废**。实测（`prefill_bench --section prefill --replay 128`，
+生产模式、冷 cache、真实 prompt，2026-09-15 00:15–00:45，`bench/results/prefill_p3.csv`；无其他 GPU 任务，**Track K2 的 16 线程 CPU oracle 全程在跑、也在读 NVMe**）：
+
+| 秒 | N = 64 | N = 4,133 | N = 17,010 |
+|---|---:|---:|---:|
+| **TTFT（墙钟）** | **43.2** | **199.6**（**≈ 150 安静**） | **628.6**（**≈ 445 安静**） |
+| attention（Q / KV / O 投影、indexer、band attention） | 3.3 | 47.5 | 235.9 |
+| routed expert GPU（gather、GEMM、SwiGLU、scatter） | 2.0 | 33.2 | 85.9 |
+| expert NVMe **等待** | 33.7（94 GB） | 44.5（198 GB） | 28.2（203 GB） |
+| engram 行读取 | 1.3 | 55.1 †（安静 5.3） | 204.2 †（安静 ≈ 22） |
+| engram GPU / mHC / shared expert / gate + top-6 / 其余 | 0.3 / 1.5 / 0.1 / 0.3 / 0.7 | 2.8 / 6.1 / 4.9 / 2.9 / 2.6 | 11.4 / 25.9 / 15.8 / 11.7 / 9.5 |
+| 流式读的 expert | 4,989 | 10,549 | 10,802 |
+| v0.9-draft 模型（作废） | ≈ 34 | ≈ 62–65 | ≈ 78–88 |
+
+† 并发 oracle 下慢 10 倍：同样 291,138 次读在 4K 验证跑（无 oracle）是 5.3 s（55K IOPS，与 Q7 的 83.7K @ QD 48 同量级）。
+"NVMe 等待"是 prefill **等**读的时间，不是读的时间——读与算重叠，17K 上盘大多先读完了。
+
+**重拟合的式子**（这个 build、冷 cache、生产模式）：
 
 ```
-TTFT(N) = T_nvme(N) + T_engram(N) + T_compute(N) + T_handoff
-
-T_nvme(N)   = [20 × f(N) + 20 × f(min(N, 128))] × 7.22 GB × (1 − h_pf) / 4.5 GB/s   # 生产模式
-              oracle 模式把第二项的 min(N, 128) 换成 N
-f(N)        = 1 − exp(−N / 87)      # 每层被激活的 expert 比例；由 L2 的 64 token ≈ 200/384 拟合（§3.2 注）
-h_pf        = 0（冷 cache）或 0.37（5,711 槽预热，§5.2）
-T_engram(N) = N × (48 … 96) 次 4 KiB 读 / 83,700 IOPS   # §9.2.1 Q7（QD 48）；上界，未去重
-T_compute(N)= TBD(Track L)；先验：§3.2 的"4K prompt ≈ 3 s"线性外推
-T_handoff   ≈ 0                     # KV 状态 < 0.1 GB；keep/drop 不产生 I/O（§9.7.3）
+TTFT(N)   ≈ T_nvme + T_engram + T_compute
+T_nvme    ≈ 34 s（N = 64，碰 0.325 的 (层, expert)）… 45 s（N ≥ 4K，≈ 200 GB @ 4.5 GB/s）；长 N 时等待更少（17K 28 s）
+T_engram  ≈ 70 次 4 KiB 读 / token ÷ ~55K IOPS ≈ 1.3 ms × N（安静）
+T_compute ≈ 8 s + 24 ms × N           # 4,133 → 100 s、17,010 → 396 s，实测线性
 ```
 
-| N | f(N) | NVMe 冷（生产） | NVMe 预热 37% | NVMe 冷（oracle 模式） | engram | compute（先验） | **TTFT 冷（生产）** | 慢 prefill（今天，外推） |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 64 | 0.52 | 150 GB / **33 s** | 21 s | 33 s | 0.04–0.07 s | ~0.05 s | **≈ 34 s** | ≈ 39 s |
-| 512 | 0.997 | 255 GB / **57 s** | 36 s | 64 s | 0.3–0.6 s | ~0.4 s | **≈ 58 s** | ≈ 1.8 min |
-| 4,096 | ≈ 1 | 256 GB / **57 s** | 36 s | 64 s | 2.3–4.7 s | ~3 s | **≈ 62–65 s** | ≈ 11 min |
-| 16,384 | ≈ 1 | 256 GB / **57 s** | 36 s | 64 s | 9.4–18.8 s | ~12 s | **≈ 78–88 s** | ≈ 46 min |
-
-"慢 prefill"一列 = `max(N × 167 ms, N × 87 ms + oracle 模式的 NVMe)`：167 ms 是 Track I 热步 86.7 ms
-加 h ≈ 0.92 的 80 ms stall，第二项是"至少要把 prompt 碰到的每个不同 expert 取一次"。**未实测**。
+**compute 为什么是先验的 34 倍**（先验里没有 attention；按操作，ms / 调用次数，4,133 → 17,010）：
+band attention 打分 17,397 / 200 → 74,992 / 700 与合并 7,758 → 32,683（**占 compute 的三分之一**）；
+indexer 打分 `[B][N/r]` 2,702 → 34,765（**随 N² 增长**，17K 上是 attention 的 15%），分数经设备映射内存回读 1,064 → 17,465、主机 top-k 912 → 6,489；
+`wo_a`（分组 fp8，仍在 tiled GEMV 上）5,710 → 22,686；`wq_b` / `wo_b`（coopmat）各 ≈ 4,100 → 16,500；mHC pre-norm 4,864 → 21,347；
+engram `wkv` 2,410 → 9,743；gate 回读 + 主机 top-6 2,449 → 9,914。**这张表就是 Track S（≥ 5×）的清单**（§15.2）：
+band attention、GPU 上的 indexer top-k（去掉 24 s 回读与主机选择）、`wo_a` 上 coopmat、更少的 mHC pre-norm submit。
 
 **读这张表的三条**：
+1. **N = 64 时 GPU prefill（43 s）不比 decode 路径快**（serve 里 11–46 token 5–23 s，同时预热 cache）——短 prompt 的等待由 cache 决定，不由 kernel 决定。
+2. **N ≳ 1.5K 起 compute 超过 NVMe**；17K 上 GPU 比盘慢。第二块 NVMe 只对短 prompt 是大杠杆。
+3. **外推（未测）**：64K 按线性式 ≈ 1,580 s ≈ 26 分钟 compute，indexer 的 N² 项让它更多，残差流要切块。
 
-1. **N ≥ 512 之后 NVMe 项是常数**（每层所有 expert 都要读一遍），TTFT 的增长全部来自 engram 与计算。
-   **16K 上 engram 的随机读可能比计算还贵**——Q7 只量了 QD 48，更高 QD 与 scale 平面去重是 `TBD(Track L)`。
-2. **N = 64 时真正的 prefill 并不比慢 prefill 快多少**（34 s 对 39 s）：两者都要取同样 ~8,000 个不同 expert。
-   **差距在 N ≥ 512 才打开**（1 分钟对 11–46 分钟）。所以短 prompt 走 decode 同一套按需路径（§9.7）仍然成立。
-3. **prefix KV 持久化（§11.4）命中时 NVMe 项只剩 decoder 的 128 token replay**（≈ 20 × 0.77 × 7.22 GB ≈ 111 GB 冷，≈ 25 s），
-   这一行没有进表，等 §11.4 实现再加。
+**其他实测 TTFT，口径不同不要混用**：serve + GPU prefill 4K **97.9 s**（`--gpu-prefill-min 256 --cache-gb 16`，expert I/O 35.8 s / 10,544 个，Track P）；
+4K oracle 模式验证跑 250 s（gate bias 修复前，Track L）/ 175 s（Track Q）；17K 验证跑 1,584 s（K2 oracle 并发，Track L）/ 596 s（Track Q）。附录 C v0.9 行的冲突 6。
 
-#### 7.13.4 验收判据
+#### 7.13.4 验收判据：v0.9 状态
 
-| # | 判据 |
-|---|---|
-| 1 | **状态交接等于 oracle 的 prefill 导出**：`Engine` 按 L3 prefill 记录的**同一张清单、同一种布局**导出 window KV 环（40 层）、压缩 KV 的 fp4 平面与 scale、index key cache、compressor 的携带状态、engram hash 状态，以及 mtp 三块的 window 环与 `main_x`；`tests/test_decode.cpp` 逐项比。**数值门**：对慢 prefill（同一套算术，oracle 模式）每层每位置 cos ≥ 0.9999、gate ids 除记录在案的近似平局外全同；对 oracle 导出，层 0 按 L2 的门（§12），更深的层**不劣于慢 prefill 的逐层逐位置曲线**（§7.13.1），并且每个 cos < 0.999 的位置都能被 `--gate-report` 归到一次 gate 近似平局 |
-| 2 | **GPU prefill 之后 L3 decode 通过 §1.3 (a)**：每 prompt 教师强制 8/8，自由运行只在参考 margin < 1.0 的近似平局处分歧；**短上下文与 4K / 16K 都要**（§12.1，`TBD(Track M)`） |
-| 3 | **生产模式对 oracle 模式的差异率有数**（§11.2）：decode 出的 token 分歧率与 logits KL |
-| 4 | **TTFT 落在 §7.13.3 模型的 ±15% 以内**，并按 NVMe / engram / compute / handoff 四项分解（§1.3 (b) 对 prefill 的版本） |
-| 5 | **交接后的 cache 状态**等于对 prompt 的路由表跑 `cache_sim` 的 LRU 得到的状态（§9.7.3） |
+| # | 判据 | v0.9 |
+|---|---|---|
+| 1 | **状态交接等于 oracle 的 prefill 导出** | ✅ **逐 stage**（`gpu_prefill.stages`，`tools/oracle_prefill.py` 导出 `start_pos == 0` 分支，层 0/1/2/13/14/20/39）：**110 项检查、最差 cos 0.99991**（L2 `cmp_cache` 的 FP4/E4M3 网格，16,384 个值里 38 个差一格）；index 分数、top-k 矩阵、window band、engram hash 行逐位相同；gate top-6 在层 0/20/39 64/64。**整层交接**：64 token window KV 最差 0.9325（L18）、压缩 KV 0.9669（L14）、index key 0.9657（L20）——与慢 prefill 同形；**4,133 / 17,010 token 反而更接近参考**：window 0.9600（L18）/ 0.9492（L37）、压缩 0.968 / 0.967、index key 0.977 / 0.978（误差集中在上下文最薄处，而交接只留最后 128 位）；最后位置的压缩选择 3,550 / 3,377 of 4,096、top-6 219 / 217 of 240（集合比较，hidden 在 cos 0.95–0.99 时分数不逐位，tie 规则不适用）。**确定性**：同进程两遍 4K 逐 stage 字节相同 |
+| 2 | **GPU prefill 之后 L3 过 §1.3 (a)** | ✅ 64 token **7/8 / 7/8**（miss 在 step 7，参考 margin 1.95，前一步是近似平局；慢 prefill 是 7/8 / 6/8）；**4K / 17K 自由运行 8/8**（Track Q，oracle 模式，margin 1.23–11.94 / 1.72–12.40 对参考 1.30–11.66 / 1.66–11.65） |
+| 3 | 生产 / oracle 差异率 | 部分：4K 上 replay 128 首 token 相同（margin 8.64，ρ 0.90）、encoder 层与 oracle 模式相同、decoder 层 window 0.935–0.981（oracle 模式 0.968–0.988）、top-6 219/240 两种相同；**decode token 分歧率与 logits KL 未测** |
+| 4 | TTFT 对模型 ±15% | ❌ 对 v0.9-draft 的模型差 2.3–5×；上面重拟合的式子要在 R1 / S 之后按同口径复测 |
+| 5 | 交接后 cache 对 `cache_sim` | ❌ 未做（部件 5）→ R1 |
 
-#### 7.13.5 kernel 实测：`TBD(Track L)`
+#### 7.13.5 kernel 选择：coopmat 还是 tiled GEMV，按实测
 
-| kernel | M / 规模 | 速率 | 来源 |
-|---|---|---|---|
-| gate 打分 | M = N（或按块） | `TBD(Track L)` | |
-| Q / KV / O 投影（cooperative matrix GEMM，fp8） | M = N（encoder）/ 128（decoder replay） | `TBD(Track L)` | |
-| window band attention | N × 128 | `TBD(Track L)` | |
-| compressor 整块池化 | N / ratio 组 | `TBD(Track L)` | |
-| indexer 逐 query 打分 + 掩码 | Σ_P (P+1)/ratio | `TBD(Track L)` | |
-| radix top-k，n > 512 | 每 query | `TBD(Track L)` | 今天只单独测过 4096 选 512（§7.4） |
-| expert GEMM（gather / scatter-add） | 平均 M_e = N / 64 | `TBD(Track L)` | |
-| engram GEMM + 行读取 | M = N；QD 扫描 | `TBD(Track L)` | Q7 只有 QD 48 |
+design 原写"prefill 全部走 cooperative matrix GEMM"是**假设**，p3_prefill.md §5 把它当成要量的问题：(a) `CoopMat<half, …, 16, 16>`（权重必须是内存里的 fp16，
+FP4 expert 先解码进 4× 的 transit）对 (b) decode 的 GEMV 推广成 M ≥ 16 的 token tile（每块权重读一次、对 M 列 FMA，不要解码 buffer）。
+**默认**：expert ≥ 16 行、dense ≥ 64 行走 coopmat，其下走 tiled GEMV（`DEEPMOE_PF_COOP_MOE` / `DEEPMOE_PF_COOP_DENSE`、`prefill_bench --coop-min / --coop-dense` 可改）。
+`wo_a`（分组、bf16 算术的例外）仍在 tiled GEMV 上，是 17K 上最大的单个线性层（22.7 s）。逐 kernel 数据在 `bench/results/prefill_p3.csv`。
 
 ### 7.14 每层 dispatch 清单（Reuse 模式层，decode）——**v0.7 按实现更正为 14–15 个，不是 11 个**
 
@@ -1622,6 +1684,40 @@ P2 里每个 expert 本来都会驻留、这个 wait 是走形式——**但测�
 也就是 kernel_p1.md §3.3 要的那个 K-split**，它需要多一个 dispatch、因而需要 runtime 改动，
 所以这一轮没做（§15）。
 
+#### 7.15.6 P3 Track J：一层 696 µs（2026-09-14，`bench/results/attn_p3.csv`；详见 [p2_attention.md](p2_attention.md) §13）
+
+`bench/attn_bench --layers 8 --iters 64 --rows 2`，同一个二进制，"P2" 是 `0964e5e` 的 shader 目录。**空闲判据收紧**：`head` ≥ 230 GB/s **且**
+`mega_mhc.post` ≤ 2.6 µs（另一个进程的 GPU 突发短到单看 `head` 会漏掉），不过门的跑丢掉重跑，噪声 ±3%：
+
+| kernel | P2 µs / GB/s | **P3 µs / GB/s** | % 上限 | P3 stage |
+|---|---:|---:|---:|---|
+| `wq_a` | 38.2 / 172 | **35.6 / 184** | 85% | K-split ×2 |
+| `wq_b` | 207.5 / 202 | **194.7 / 216** | **99%** | 只修 LDS |
+| `wkv` gemv + finish | 17.2 + 9.2 | **7.9 + 9.1** | — | K-split ×2，不加 dispatch |
+| `sparse_attn` | 42.2 + 27.4 | **17.4 + 26.9** | — | tiled 32 × 1（§7.5） |
+| `wo_a` | 202.1 / 166 | **162.4 / 207** | **95%** | K-split ×4 |
+| `wo_b` | 317.8 / 132 | **204.9 / 205** | **94%** | K-split ×8 |
+| **一层，dispatch 1–9** | **898.8 / 148** | **696.3 / 191** | **88%** | |
+| `head` | 5679 / 233 | 5650 / 234 | 108% | |
+| **40 层 + head** | **41.6 ms** | **33.5 ms** | | |
+
+**两件事，先动的不是 §7.15.5 预言的那件**：
+
+1. **LDS bank 冲突**。`fp8_gemv.slang` 把 staged 激活的一个 32 元素块存成 16 个 LDS word，32 个 lane 读下标 `16 l + i`，
+   `(16 l + i) mod 32` 在 32 个 lane 上只取两个值——**16 个 lane 挤一个 bank**。块改成 17 个 word（奇数步幅 → 双射），
+   **逐位相同**（L2 套件每个 cos / max|Δ| / 相对 L2 一行不差），一层 899 → 800 µs；`sparse_attn` 的 q 与 P·V 部分和是同一个形状，一起修。
+   §7.15.5 第 1 条"更小的 LDS 预算让 `wq_a` / `wo_a` 变慢，是因为 L2 流量"——要带着这个冲突重读。
+2. **K-split**（`gemv_ksplit.slang`：按 K 切片、每 (切片, 行) 一个 fp32 部分和、第二个 dispatch 相加；`wkv` 的合并融进 `wkv.slang` stage 2，不加 dispatch）：800 → 710 µs。
+   **第一次测是输的**——在 `--rows 2` 下测；**一 lane 一行**时反转：切片让一个 workgroup 持有的 LDS 与每 lane 走的块链一起缩短，行分块则相反。
+   默认 `wq_a 2 / wkv 2 / wo_a 4 / wo_b 8`。重结合只到 fp32 舍入：相对 L2 ≤ 1.3e-7，对 oracle 的 cos 九位相同，`wkv` 环字节 0/512 不同。
+
+**量过、关掉的**：E4M3 算术解码（六条 ALU、256 个码逐位正确，慢 5–51%——**256 项 LDS 表随机取仍胜过六条指令**，§7.1 rule 5 多一个 fp8 数据点）；
+每块四个累加器（无差别，§7.15.4 的嫌疑犯之一排除）；UE8M0 scale 并入 staged 因子（无差别，与 K-split 同开更差）。
+
+**runtime 状态**：LDS 修复没有接口变化、已经生效；**K-split 与 tiled attention 的接口（p2_attention.md §13.7：11 个新 `AttnStage`、`KSplitPush` / `AttnTPush`、
+调用方持有的部分和平面）runtime 没有采纳**（`runtime/` 里没有 `KSplit`），值 −100 µs/层 ≈ **4 ms/token**。
+**而真机数字没有显出 LDS 修复**：Track I 在修复前量到 attention 36.0 ms（§7.16.5），Track Q 在修复后量 64 token 36.9 ms——附录 C v0.9 行的冲突 4，§15 未决问题 21。
+
 ### 7.16 整个 decode step 的实测（P2 step 2，Track G，2026-09-15；详见 [p2_decode.md](p2_decode.md)）
 
 **这是 deepMoE 第一次自己产出 token。** `Engine::decode_step` 跑的是：embedding 查表、
@@ -1634,11 +1730,8 @@ P2 里每个 expert 本来都会驻留、这个 wait 是走形式——**但测�
 以及**每步的压缩 KV 与 indexer top-k**——§7.4 的 kernel 已经存在（§7.4 v0.8），
 但写这一条时还没有接进 Engine，接上就删掉 `runtime/decode_state.h` 的逐步那一半。
 
-> **v0.9-draft（未写回，来源是提交信息）**：两样都已由 Track I 拿掉——`5528f86` 把 compressor / indexer
-> 接进 `DecodeLayer`、`Engine::build_ced_plan` 写下 `shared_attn` 的复用规则；`0b2c31c` 的慢 prefill（§7.13.1）
-> 产出 prompt 的状态；`0f41099` 之后"nothing is loaded"。同一个提交报告**热步 134 → 86.7 ms**（空闲机，
-> 每 token 128 → 43 次 submit，7 槽 MoE 一个 runner，`HQuant = 3`），`8328176` 再降到 41 次 submit。
-> 本节下面的 134 ms 分解是 v0.8 的，**分解表的更新留给集成**。
+> **v0.9**：两样都已拿掉（Track I，p2_decode.md §9），热步 134 → **81.5 ms**，分解与长上下文的逐步时间在 **§7.16.5**。
+> 本节 §7.16.1–§7.16.4 是 v0.8（step 2）的原文，数字按当时。
 
 #### 7.16.1 正确性（§12 L3）
 
@@ -1738,6 +1831,98 @@ stall 期间盘跑 2.8–3.5 GB/s（IoEngine 自己的 `effective_gbps` 是 **3.
 
 **三条一起说的是同一件事**：§12 的 L1/L2 判据管得住"一个 kernel 算得对不对"，
 管不住"把它们接起来时接对了没有"。**L3 不是 L2 的加强版，它是另一个维度。**
+
+#### 7.16.5 P2 step 3（Track I，2026-09-15；p2_decode.md §9–§13）与长上下文（Track Q）：nothing loaded，热步 81.5 ms
+
+**(a) 什么是真的**：每步的压缩 KV（`compressor.slang`，四个 kv source）、top-k（window 半截由主机按 `get_window_topk_idxs` 写，压缩半截 `indexer.slang`）、
+index key cache、compressor 携带状态全部是我们的；prompt 状态来自导出的 prefill 记录、`slow_prefill` 或 GPU prefill（§7.13）。
+`Engine::status()` 打印 `LOADED none`。`model.py` 的 `shared_attn` 三个字段**不按同一条规则**，写进 `Engine::build_ced_plan`：
+
+| 字段 | 谁写 | 何时 | 层 L 读 |
+|---|---|---|---|
+| `compress_kv` | kv source（2 / 8 / 14 / 20） | **每遍**，组完不完成都写 | 最后一个 ≤ L 的 kv source——静态 |
+| `topk_idxs` | index source（2 / 8 / 14 / 20 / 24 / 28 / 32 / 36） | 每遍 | 最后一个 ≤ L 的 index source——静态 |
+| `index_k` | kv source | **只在组完成时** | 最后发布者——**动态**（ratio-2 源在偶数位置对层 20 上一遍的 key 打分） |
+
+source 层内的顺序照 `Attention.forward`：wkv / wgate → 状态写 + 池化 + norm → index key（组完成时，取 **RoPE 之前**的 latent）→ indexer q / weights / 打分 / top-k →
+最后才旋转并 FP4 量化写 cache（indexer 要未旋转的）。一层两张 RoPE 表：query 在 `pos`，latent 与它的 key 在 `pos + 1 − ratio`。
+
+**(b) L3**：每步每层压缩 KV 最差 cos 0.9999267（step 0，L20）→ 0.9983927（step 7），**top-k 40/40 层逐项相同**
+（64 token 上 indexer 全选，但 window 半截、偏移、−1 与源路由都在这个相等里）。L3 导出扩到 11.4 MB，**旧导出的 749 个张量逐字节不变**。
+
+| 状态来源 | step-2 MoE 路径（两个 runner、`HQuant = 1`） | **step-3 MoE 路径（一个 7 槽 runner、`HQuant = 3`）** |
+|---|---|---|
+| 导出的 prefill 记录，每步张量我们算 | 7/8 / 6/8 | **8/8 / 8/8** |
+| 我们的慢 prefill，什么都不加载 | 8/8 / 8/8 | 7/8 / 6/8 |
+
+四个格子里不一致的都是**同一个 token**（step 6，参考 margin 0.95）。`deepmoe run --gate-report` 把它拆开：
+**gate 算术是对的**（`cpu/gate.cpp` 在参考输入上复现参考的 384 个分数到 1.4e-6，GPU gate 在我们的输入上对 CPU 到 ~1e-6）；
+**输入漂移大于并列**（路由不同的层 FFN 输入 cos 0.976–0.9992，分数动 1e-2–0.3，而参考第 6 / 第 7 名 (score + bias) 之差是 1.7e-4–8e-3）；
+**而且每一步都发生**（step 0 有 13/40 层换一个 expert、step 1 25 层、step 6 11 层），token 保不保得住看参考自己的 logit margin。
+**结论：fp16 / bf16 对 fp32 的激活误差越过近似平局，不是 kernel、不是接线**。每步写出的压缩行同样落在这个包络里（ratio 2：0.987–0.998；ratio 1：0.920–0.998）。
+
+**(c) 热步：134 → 81.5 ms / 41 次 submit**（`deepmoe run --teacher-force --steps 1 --warm 6 --cache-gb 24`，空闲机，GPU 时间戳每 token 读一次）：
+
+| 桶 | step 2 | **step 3** | 注 |
+|---|---:|---:|---|
+| attention，dispatch 1–9 + §7.4 | 51.9 | **36.0** | 0.90 ms/层；下降主要来自 Track F 的 kernel |
+| MoE GPU（A + h-quant + B，7 槽） | ~40 | **29.4** | 0.73 ms/层；kernel bench 的 7 槽一对是 0.60–0.73 |
+| MoE 主机 | ~28 | **1.0** | x 0.0 + act_quant 0.4 + 七行地址 0.6 |
+| engram（取数 + 2 个 dispatch） | 4.9 | **3.9** | |
+| 尾巴：collapse + head + argmax | 8.4 | **5.8** | head 5.65 |
+| NVMe stall | 0.2 | **0.4** | 全命中步上 240 次 Planner 查表 |
+| other | — | **5.0** | record 0.4 + submit 1.6 + bind 1.0 + fence ≈ 2.0 |
+| **合计** | **134.0** | **81.5 = 12.3 tok/s** | 重复 81.5 / 81.9 / 81.8 / 83.2 / 81.7 / 83.2；机器上别的东西醒来时 89.6 / 91.3（submit 翻倍，GPU 时间不动） |
+| **submit / token** | **~128** | **41** | |
+
+六件事：(1) **command buffer 只在 gate 处切开**：一层的 MoE 与下一层的 attention 同一次 submit，主机只在 gate 与它的 MoE 之间需要看 ids；
+§7.1 的门是 submit 里对驻留 timeline 的 semaphore wait（主机 signal），完成信号走**第二条** timeline（一条 semaphore 不能两边写）；全命中层主机提交前已 signal，等待免费。
+(2) **一个 MoE runner、七个槽**：6 个 FP4 routed + FP8 shared（`Fp8Slots`，表下标 384）、`HQuant = 3`；dispatch B 把七个加起来，`y` 留在 GPU 由下一层 hc_post 按地址读。
+(3) 主机 act_quant 向量化（`fp8_round` 转写 + F16C），启动时对 `cpu::act_quant_block` 在 5,120 个含 subnormal / tie / 溢出边界的值上自检、差一位就拒绝启动。
+(4) token 路径上三处每次调用分配、到关机才释放的 `VkCommandBuffer`（每 token 40 个）。
+(5) **engram 行在 token 开始时取**（§9.5），与层 0 的 attention 重叠；RoPE 表缓存（每步只要三张）。
+(6) **FFN 输入改放路径 B 的缓存页**：它在路径 A（写合并）上时 20 KB 的读是 **155 µs/层 = 6.2 ms/token**——§7.1 rule 10 往上一层又撞了一次。
+
+**对 §13.4 的地板**：非 MoE 42.2 对 41.8（到地板）、MoE GPU 25.0–27.3 对 29.4（第七槽是真 23.6 MB fp8，不是 12.5 MB 的 FP4 替身）、MoE 主机 1.0、engram 4.9 对 3.9、
+stall + other 5.4——**75.8 对 81.5，+7.5%**。剩下的是结构性的：主机必须看到每层的 gate（40 次往返 ≈ 1.6 ms submit + 2 ms fence），
+MoE 的 `x` 每层过一次主机（kernel 吃 fp16 `x`，没有 kernel 产出它的 fp8 往返）。GPU 侧 act_quant 与 GPU 侧指针表是把这两行归零的办法，都是 kernel track 的活。
+
+**(d) 位确定性**：`deepmoe run --determinism N` 在每层哈希 attention 后的流、FFN 输入、gate 分数与 MoE 输出，外加全部 129,280 个 logits。
+step 3：进程内 4 次、跨进程 3 次全同；`DEEPMOE_MOE_HQUANT=1` 同样全同。**§7.16.4 之后记录的"层 20 / 39 逐次不稳"不复现**：step 2 自己的提交单独重编也逐位稳定，
+而且那一版报的 margin（7.0927）对不上当时提交的任何一套 kernel（6.7477 / 6.9389）。**解释是共享的 `build/shaders` 目录**——三条 track 在 step 2 跑测试时往里重编 `.spv`，
+同一个二进制两次运行能加载不同的 kernel。**所以每条 track 用自己的 build 目录**（build.md 的 worktree 一节），一个有意义的对照要说清楚加载的是哪个 shader 目录。
+
+**(e) cache、爬坡与命中率**：Planner 现在就是 `tools/cache_sim.py` 的全局 LRU——访问时钟每次查表、每次 admit 各走一格，按 gate 顺序；miss 淘汰最老的一个再 admit、再看下一个
+（原来一个 token 的 240 次访问同龄、谁先走看槽号）。cache 按两条路径自动定大小：路径 A = heap − pinned 集合 − 1 GiB；路径 B ≤ min(host heap − 10, budget − 4, 物理空闲 − 12, 16) GiB。
+**B 按物理内存定到 38 GiB 时，导入在 ~33 GiB 处返回 `VK_ERROR_INVALID_EXTERNAL_HANDLE`，下一次 submit 设备丢失**（驻留 timeline 读成 UINT64_MAX），
+而 `VK_EXT_memory_budget` 看不见别的进程占的 host heap——所以有 16 GiB 上限。开发机的实际值：**78.8 GiB = 4,500 槽**（36 slab 在 A、9 在 B），
+**不是** §5.2 空闲机 `heap_capacity` 的 5,711 槽；Q2 曲线在 4,500 槽内插 h ≈ 0.888。128 步自由运行（L3 prompt，空闲机，前 8 个 token 是参考的、之后复读 prompt，略抬命中率）：
+
+| 步 | 0–7 | 16–23 | 32–39 | 48–55 | 64–71 | 96–103 | 120–127 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ms/token | 880 | 480 | 342 | 242 | 289 | 210 | 196 |
+| tok/s | 1.14 | 2.08 | 2.93 | 4.14 | 3.46 | 4.77 | **5.10** |
+| 命中率 | 0.349 | 0.693 | 0.779 | 0.874 | 0.845 | 0.901 | 0.915 |
+| NVMe stall ms | 771 | 375 | 237 | 136 | 198 | 119 | 103 |
+| NVMe GB/s | 3.87 | 3.83 | 4.32 | 4.25 | 3.68 | 4.03 | 4.00 |
+
+整段 2.94 tok/s @ 0.795，最后 32 步 4.88 tok/s @ 0.907。**h ≥ 0.94 的 token 用 105–159 ms（6.3–9.5 tok/s）**——token 时间按模型跟着命中率走，
+每个 miss 的 stall ≈ 5 ms（20 MB 的 expert @ ~4 GB/s），7 tok/s 要每 token ≈ 12 个 miss（h ≈ 0.95）。**有 miss 的步 MoE GPU 时间是 37–42 ms 对热步 29.4**：
+刚被盘写进的页第一次被 GPU 碰，stall 桶看不到这份代价。
+
+**(f) 长上下文（Track Q，p3_longctx_decode.md §6；`deepmoe run --state <dir> --warm 3 --steps 8 --cache-gb 24`，空闲 GPU，全部 expert 驻留）**：
+
+| 上下文 | 墙钟 | attention | MoE GPU | 尾 + engram + other | 8 个 index 层：produced / loaded 对照 / 差 |
+|---:|---:|---:|---:|---:|---|
+| 64 | 82.9 ms | 36.9 | 29.2 | 16.2 | — |
+| 4,133 | 91.1 ms | **42.2** | 29.5 | 18.2 | 10.3 / 7.9 / **2.4 ms** |
+| 17,010 | 94.2 ms | **46.4** | 29.1 | 17.6 | 14.1 / 7.9 / **6.2 ms** |
+
+每步读的 KV（模型格式）10.1 / 15.8 MB，与 Track M 一致；今天的 bf16 store 读的是 29.5 / 50.9 MB。
+
+**(g) 这一轮修掉的 bug**：profiler 的 NVMe busy 改成在途窗口的并集（`nvme_util` 最大 0.91，原来读到 6.2）；`IoEngine::finish` 在跑回调之前告诉 `drain()` 完成
+（fill 的槽还在 `Filling`，128 步里第 117 步撞到一次，先被误怪到路径 B 上）；engram 字节重复计为 miss；失败的 expert 读静默释放槽；
+slow_prefill 拨回 LRU 时钟；自动 cache 忽略路径 B 与 pinned 集合、之后又按物理内存把 B 定到丢设备。
 
 ---
 
@@ -2086,10 +2271,10 @@ hit_rate 纹丝不动（污染不了 cache，也帮不上忙）。合成用例�
   是草稿 token 真实路由出来的结果，precision = 1。
 - Q3 的 Jaccard 已实测（§9.1.1）：`union_frac[5] = 0.634`，k=5 的 batch 只多读 3.2 倍而不是 5 倍，
   **NVMe 流量省 37%**。纳入 §10.3 的调度曲线。
-  **v0.9-draft**：Track K 在真实 verify batch 上重测 `union_frac` = 0.830 / 0.730 / 0.660 / 0.629 / **0.594**（M = 2..6），
-  与 Q3 差 ≤ 0.016，**被拒草稿的 expert 与真实 token 的重叠程度差不多**。但「省 37%」是**每个 verify 周期对 5 个单步**的比，
-  **不是每个产出 token 的比**：一次 verify 在 k = 5 时只确认 1.93 个 token（p3_dspark.md §7.2），
-  所以每产出 token 的 miss 字节是**变多**的（§10.1.2）。另见 §3.1 第 3 点关于 miss 口径（u[M] × M 还是 M）的更正。
+  **v0.9**：Track K2 在 60 个正常文本的 M = 6 verify batch 上重测 `union_frac` = **0.830 / 0.748 / 0.695 / 0.659 / 0.625**（M = 2..6，p3_dspark.md §12.6），
+  比 Track K 那条退化轨迹（0.594 @ M = 6）与 Q3 都略高——正常文本相邻 token 的路由更分散。**上下文长度不改变局部性**：4K / 17K prefill 上相邻 Jaccard 0.204 / 0.201，
+  前后 2,048 位切开 0.210 / 0.199，`union_frac[5]` 0.670 / 0.674（p3_longctx.md §5.5）。「省 37%」是**每个 verify 周期对 M 个单步**的比，不是每产出 token 的比：
+  M = 6 的 stall 301 ms 占 verify 周期的 62%（§10.1.4）。miss 口径（u[M] × M 还是更接近 M）仍未测（§3.1 第 3 点）。
 
 ### 9.6 IoEngine
 
@@ -2122,7 +2307,7 @@ hit_rate 纹丝不动（污染不了 cache，也帮不上忙）。合成用例�
 | 64 ≤ N | **expert-major 顺序流**（§7.13.2 第 4 项） | N ≥ 512 时每层 ≈ 100% 的 expert 都要读，流式读整层没有浪费 |
 | 任意 N，prefix KV 命中（§11.4） | 跳过 encoder，只跑 decoder 的 128 token replay | §7.13.3 第 3 条 |
 
-阈值 64 是按 §3.2 注的 `f(N)` 拍的，**真正的切换点等 `TBD(Track L)` 的两条实测时间曲线相交处**。
+**v0.9：表里的阈值 64 作废。** GPU prefill 在 N = 64 上 43 s 且不预热 cache；decode 路径在 serve 里 11–46 token 用 5–23 s，同时把 cache 热起来（p3_chat.md §6）。serve 的实际做法是 `--gpu-prefill-min N`（默认关，建议 ~500，并显式 `--cache-gb ≲ 60` 给路径 A 留空间）。**交叉点没有测**；R1 的 prefill → cache 交接（§7.13.2 部件 5）会把它往下挪——交接之后 GPU prefill 读进来的 expert 不再白读。
 
 #### 9.7.2 一层之内的顺序
 
@@ -2146,8 +2331,9 @@ hit_rate 纹丝不动（污染不了 cache，也帮不上忙）。合成用例�
 
 #### 9.7.4 NVMe 这一项
 
-见 §7.13.3 的算式与表：**冷 cache、生产模式、N ≥ 512 时 ≈ 256 GB / 57 s，与 N 无关**；预热 37% ≈ 36 s；
-oracle 模式 ≈ 64 s。第二块 NVMe（§9.6）直接减半，这一项是它收益最大的地方。
+**v0.9 实测**（§7.13.3）：冷 cache、生产模式，64 token 读 94 GB、等 33.7 s（碰 0.325 的 (层, expert)，不是 `f(64)` 的 0.52）；
+≥ 4K 读 ≈ 200 GB（decoder 只路由 128 个 token），等待 44.5 s（4,133）/ 28.2 s（17,010，GPU 比盘慢）；oracle 模式 4K 读 269 GB。
+v0.9-draft 的"N ≥ 512 时 ≈ 256 GB / 57 s、与 N 无关"作废。**第二块 NVMe 只对短 prompt 是 prefill 的大杠杆**——长 N 由 compute 主导。
 
 ### 9.8 验收指标（NVMe 部分）
 
@@ -2157,7 +2343,7 @@ oracle 模式 ≈ 64 s。第二块 NVMe（§9.6）直接减半，这一项是它
 | effective hit rate | （驻留命中 + hidden）/ 请求，即"GPU 没等"的比例 |
 | miss bytes / token | 每 token 从 NVMe 读的 expert 字节 |
 | ~~prefetch precision / recall~~ | §9.4 降级后无消费者；投机解码的 verify batch 预取 precision 恒为 1（§9.5） |
-| stall_ms / token | GPU 等 expert 的时间。**P3 的对照值**：`cache_sim` 在 4,787 槽上给出 103 ms/token；**今天的 5,711 槽（h ≈ 0.920）按 §3.1 的模型是 ≈80 ms**（§13.4） |
+| stall_ms / token | GPU 等 expert 的时间。**P3 的对照值**：`cache_sim` 在 4,787 槽上给出 103 ms/token；5,711 槽（h ≈ 0.920）按 §3.1 的模型是 ≈80 ms（§13.4）。**v0.9 实测**：开发机自动 cache 是 4,500 槽（h ≈ 0.888 内插，stall ≈ 112–126 ms），对话里 124–193 ms（h 0.84–0.90，还在爬坡，§7.16.5 (e)） |
 | nvme_util | nvme_busy / T_token |
 | 有效 NVMe GB/s | miss bytes / nvme_busy |
 | **cache 槽数** | 启动时实测（**v0.7：上限是 device-local heap 与可用物理内存，不再是 commit 限额**；而且 pinned 的 17.7 GB 也要从同一个池子里出，§5.2.3）——**报告里必须带上它，否则 hit rate 无法对照 §3.1 的表** |
@@ -2166,179 +2352,185 @@ oracle 模式 ≈ 64 s。第二块 NVMe（§9.6）直接减半，这一项是它
 
 ## 10. DSpark 投机解码：有门槛的决策
 
-### 10.1 为什么值得认真考虑，以及为什么今天不做（v0.9-draft 重写）
+### 10.1 立场、方案与实测（v0.9 按 Track K2 重写）
 
-> **v0.9-draft 的立场**：DSpark 不是无条件的主线，而是**一个按实测做的决策**。
-> 带宽上它是唯一能把常驻读摊到多个 token 上的手段（§10.1.1），
-> 但 Track K 的实测（`86b6a0f`，[p3_dspark.md](p3_dspark.md) §7–§9）说**在 h = 0.92 与今天的 kernel 下它最多 +5%，
-> 按实测的 M 缩放在每个 k 上都是净亏**（§10.1.3）。它要赚钱需要三件事同时成立（§10.1.4），
-> 所以它被一个 go / no-go 门槛挡着（§10.1.5），§15.2 排在"真正的 prefill + 长上下文 L3"之后。
-> v0.6–v0.8 的"÷5 / ÷4.0 / ÷1.6"摊薄表与"投机解码是第一杠杆"的结论**撤回**，理由在 §10.1.3。
+> **v0.9 的立场**：DSpark 仍是**按实测做的决策**，门槛不变（预测 TPS ≥ 1.15 × 无投机）。变的是方案与数：
+> **(1) owner 定的方案——单遍、单路径**：草稿一次 forward、verify 一次 forward，**GPU 代价与单链方案完全相同**；
+> 只有 CPU 上的采样（在草稿矩阵上取 top-K 候选、走一条路径）与比较（在 verify 矩阵上判接受）变丰富，代价是微秒级（§10.1.2）。
+> **(2) Track K2 在 5 个正常 prompt × {贪心, 采样} 上重测**：每草稿事件接受 3.9（贪心）/ 3.5（采样），runtime 回放 3.3 tokens / verify，**树 ≈ 链**（§10.1.3）。
+> **(3) 预测 ×1.18–1.32，有条件 GO**，条件是 M > 1 的 attention 族 / head / engram kernel（§10.1.5，Track T）。
+> **v0.9-draft 引的 Track K 的数作废**——1.93 tokens / verify、"h = 0.92 下最好 +5%、按实测 M 缩放每个 k 都亏"、confidence"没有被否定"：
+> 那是单条贪心链 + 精确前缀接受，在一条出两个 EOS 之后退化的 L3 轨迹上 14 个周期量的；而且温度 1 下单链方案根本不是无损的投机采样（p3_dspark.md §3 开头）。
+> v0.9-draft 的 §10.1.2–§10.1.4（旧模型、以接受率为参数的表、两处缺口）由下面取代；缺口 1（MoE 未计并集）已计入 K2 的模型。
 
-#### 10.1.1 带宽论证：常驻读是一个 kernel 工作去不掉的地板
+#### 10.1.1 带宽论证（数字更新）
 
 | 项 | 数 | 来源 |
 |---|---:|---|
-| v0.8 热步 | 134 ms | §7.16.2 |
-| Track I 之后的热步 | 86.7 ms（空闲机，**提交信息，未写回**） | `0f41099` |
-| 常驻读 `hot_bytes` | **8.52 GB**，与 §2.3 吻合到三位 | §7.16.3 |
-| ÷ 217 GB/s 的内存上限 | **≈ 39 ms**（§3.1 保守取 42 ms） | §8.0 |
-| 加上命中的 routed expert 4.51 GB | 13.03 GB → **≈ 60 ms** | §2.3 |
+| 热步（step 3） | **81.5 ms** | §7.16.5 |
+| 常驻读 `hot_bytes` 8.52 GB ÷ 217 GB/s | **≈ 39 ms = 热步的 48%** | §7.16.3 |
+| 加上命中的 routed expert 4.51 GB | 13.03 GB → ≈ 60 ms = 热步的 74% | §2.3 |
 
-**热步里的这 39–42 ms（加上命中 expert 共 ≈ 60 ms）是带宽地板**：一个 token 要读的字节就这么多，
-**没有任何 kernel 工作能把它降到 217 GB/s 以下**。常驻部分在 134 ms 里占 29–31%，在 86.7 ms 里占 45–48%，
-热步离"全部字节 ÷ 上限"只剩 1.44 倍。**再往下只有一个办法：一次读、摊给多个被接受的 token**——这就是投机解码。
+热步离"全部字节 ÷ 上限"只剩 1.35 倍，**再往下只有一个办法：一次读、摊给多个被接受的 token**。两股反向的力都实测过：
+**expert 并集随 M 增长**（K2：`union_frac` 0.830 / 0.748 / 0.695 / 0.659 / 0.625，M = 6 碰 3.75 倍的 expert，§9.5），
+**非 MoE 的 GEMV 在 M 上几乎不摊薄**（M = 5 时 `wq_b` ×4.8、`wq_a` ×3.0、attention ×2.4、`wo_a` ×2.6、`wo_b` ×2.2，VALU 受限，p3_dspark.md §8，机器不空闲）。
 
-**反方向的两股力，都已实测**：
+#### 10.1.2 方案：单遍、单路径的树采样（owner 定；规格 p3_dspark.md §3）
 
-1. **expert 并集随 M 增长**。verify batch 碰的不同 routed expert 是单 token 的 `M · union_frac[M]` 倍，
-   Track K 在真实 verify batch 上量到 `union_frac` = **0.830 / 0.730 / 0.660 / 0.629 / 0.594**（M = 2..6，p3_dspark.md §7.3），
-   与 Q3 的 0.824 / 0.734 / 0.676 / 0.634 差 ≤ 0.016——**M = 6 碰 3.56 倍的 expert**（逐层 2.9–4.8 倍）。
-   这同时抬高 **miss 流量**（stall）与 **MoE 在内存里读的字节**。
-2. **非 MoE 的 GEMV 在 M 上几乎不摊薄**。M = 5 时 `wq_a` ×3.0、**`wq_b` ×4.8**、attention ×2.4、`wo_a` ×2.6、`wo_b` ×2.2
-   （对各自 M = 1，p3_dspark.md §8，机器不空闲）——与 §7.9.2 (b) 对 MoE 的诊断相同：**VALU 受限，不是带宽受限**。
-   这推翻了 §10.3 v0.8 的"`T_hot(M)` 非 MoE 部分预期接近平坦"。
+**一句话：草稿一次 forward、verify 一次 forward，两者读的 GPU 字节与单链方案完全相同；CPU 在草稿矩阵上做 top-K 采样、在 verify 矩阵上做比较。**
 
-#### 10.1.2 模型
-
-```
-TPS(k) = E[tokens](k) / ( T_draft + T_verify(M = k+1) + stall(k) )        k = 0 时无 T_draft
-E[tokens](k)     = 1 + E[min(a, k)]                   # 一次 verify 产出的 token 数 = 平均接受 + 1
-T_verify(M)      = T_nonMoE(M) + 40 · T_MoE(M)
-stall(k)         = (1 − h) · M · union_frac[M] · 112.8 MB · 40 / 4.5 GB/s
-```
-
-| 项 | 取值 | 来源 | 状态 |
+| 步 | 在哪 | 做什么 | 代价（C++，K = 16） |
 |---|---|---|---|
-| `E[tokens](k)` | k = 1..5：**1.571 / 1.786 / 1.857 / 1.929 / 1.929** | p3_dspark.md §7.2：14 个周期、k 恒为 5 的观测按 k 截断 | **不具代表性**：轨迹连出两个 EOS 后退化；退化前唯一一个正常代码周期接受 **4/5** |
-| `T_draft` | DSpark kernel 链 **11.3 ms**；加复用 kernel 与 **M = 5 head ≈ 19 ms**；今天 head 是 M = 1、循环五次 **≈ 42 ms**；每周期读 **2.73 GB** | p3_dspark.md §7.4 / §8 | kernel 链实测（非空闲机），其余是借来的数 |
-| `T_nonMoE(M)` | M = 1：§13.4 的 kernel 地板；M > 1 两个场景：**A 平坦**（v0.8 的假设）/ **B 按实测倍率线性增长**（×3.06/层 @ M = 5） | §13.4、p3_dspark.md §8 | **M > 1 的 attention / head / engram kernel 都不存在**（§10.1.5 前置） |
-| `T_MoE(M)` | §7.9.3 (a) 的 `HQuant = 3` ms/pair：0.625 / 0.851 / 0.780 / 0.814 / 0.874 / 0.945 | kernel bench | **7 槽口径，未计并集**（见 §10.1.3 缺口 1） |
-| `union_frac[M]` | 0.830 / 0.730 / 0.660 / 0.629 / 0.594 | p3_dspark.md §7.3 | 实测 |
-| h | 0.920（5,711 槽） | §3.1 | 内插 |
+| 1 草稿 | GPU | DSpark 链 + `head`（M = 5）；5 位 Markov GEMV + 加偏置按参考顺序（锚 = 参考的贪心链），**每位 argmax 换成 top-K**，读回候选 id、候选上的 base logit、锚行 logsumexp | 与单链同字节；读回 5 × K 个 (id, logit) + 5 个 lse = 660 B；新增一个 top-K / gather / lse 的一次扫描小 kernel（**未写**） |
+| 2 格 | CPU | `score[i][p][c] = B_i[C_i[c]] + E[C_{i−1}[p]] · H[C_i[c]]`（`markov_head` 的 `embed` / `head` 两张 66 MB bf16 表在主机上 gather），锚行 tail 近似归一化 | 53 µs |
+| 3 路径与 k | CPU | 贪心取格内 `chain`（= 单链）；温度 1 在格上祖先采样；confidence `σ(proj(cat(x_i, E[path_{i−1}])))`，**k = 累计 σ ≥ θ 的最长前缀** | 路径 2–30 µs、confidence ×5 2.3 µs |
+| 4 verify | GPU | `[last, path[:k]]`，M = k + 1，与单链同 token 数、同字节 | 贪心读回 M 个 argmax；温度 1 读回每行 K 个候选 logit + 全行 lse + 1 个屏蔽掉候选的 Gumbel-max 样本（末行再加 1 个整行样本）：K = 16、M = 6 时 < 0.5 KB，也是一个一次扫描的小 kernel（**未写**） |
+| 5 比较 | CPU | 贪心：最长的 `path[j] == argmax[j]`；温度 1：精确接受（下） | 0.08 µs / 1.3 µs |
+| **一周期合计** | | | **≈ 85 µs（贪心）/ 54 µs（采样）**，对 ~150 ms 的周期可忽略 |
 
-#### 10.1.3 模型的数
+**温度 1 的精确无损比较器**（`accept_sampling_exact`，默认）：`p(c) = exp(l_c − lse)`（c ∈ 候选 C_j），q = 格的条件分布（C_j 外为 0）；
+接受 x ⟺ `u_acc · q(x) < p(x)`；拒绝时 `w_c = max(0, p(c) − q(c))`、`Z = Σw + (1 − Σ_c p(c))`、`t = u_res · Z`，t < Σw 在 C_j 里按 w 取，否则取屏蔽样本
+（它正是 p 在 C_j 之外的条件分布）；全接受取末行整行样本。残差 `max(0, p − q)` 在 C_j 之外就是 p 本身，所以这是**标准投机采样的逐字实现，对 `generate.py` 的温度 1 分布严格无损**。
+频率检验（一个真实周期抽 60,000 次）：TV 在噪声底以内、χ² 与自由度同量级、接受率与理论 `Σ min(p, q)` 吻合到 0.2%。
+top-Kv 截断版（`accept_sampling`）对它自己的目标也无损，但那个目标与温度 1 分布的 TV 就是 top-32 之外的尾部质量：**均值 3.3%、p90 12.6%、最坏 42%**——不作默认。
 
-**Track K 的三个场景，代入实测接受率**（p3_dspark.md §9；tok/s）：
+**CPU 实现**：`cpu/dspark_tree.{h,cpp}` 对参考实现 `tools/dspark_tree.py` **逐位一致**（`suite.dspark_tree`，黄金数据 `tests/data/dspark/tree_golden.bin`：
+K ∈ {4, 8, 16, 32} × {tail, 无 tail} 的全部 logq / bias 数组哈希、三种路径目标、confidence 与 k、祖先采样路径、两种采样接受与贪心接受全部 `==`；
+点积按 16 lane 累加再按 lane 序求和，exp / log 用不碰 libm 的双精度级数，C++ 文件关闭浮点收缩）。Python 慢约 100 倍，只作参考。
 
-| 场景 | k=0（无投机） | k=1 | k=2 | k=3 | k=4 | k=5 |
-|---|---:|---:|---:|---:|---:|---:|
-| A：非 MoE 平坦，`T_draft` 19 | **6.41** | **6.74** | 6.36 | 5.77 | 5.25 | 4.75 |
-| A'：同上，`T_draft` 42（head 循环） | 6.41 | 6.16 | 5.90 | 5.40 | 4.96 | 4.51 |
-| B：非 MoE 按实测倍率，`T_draft` 19 | 6.41 | 6.09 | 5.40 | 4.68 | 4.13 | 3.63 |
-| stall（ms，A / A' / B 相同） | 80 | 133 | 176 | 212 | 252 | **286** |
+**让方案成立的两条事实**（p3_dspark.md §3.1 / §12.1）：(1) 草稿块内没有因果掩码、输入恒为 `[上一个已接受 token, noise × 4]`，所以 5 个位置的残差流与 base logits `B[5, V]`
+与采样结果无关——**草稿是一个矩阵**；CPU 在 `B + H·E[prev]` 上逐位 argmax 重放参考链 **705 / 705 相同**。
+(2) **但 B 自己几乎不含序列信息**：链 token 在未加偏置的 B 行里中位排名 1 / 3 / 8 / 13 / 11、p90 138–268，只有 74% / 67% / 62% / 55% / 54% 落在 B 的 top-16——
+**候选必须取自加了 Markov 偏置的锚行**；只看 B 的 `base` 规则把贪心 k = 5 的 `E[tokens]` 从 3.93 砸到 2.65（K2 第一次试跑两个周期接受 0）。
 
-**把接受率当参数**（owner 要的形式）。模型里 `T_cycle(k)` 与接受率无关（stall 按整个并集算），
-所以由上表反推 `T_cycle = 1000 · E[tokens] / TPS`（A：233 / 281 / 322 / 367 / 406 ms；B：258 / 331 / 397 / 467 / 531 ms），
-再代入平均接受 0.5 / 1.0 / 1.5 / 2.0（即 `E[tokens]` = 1.5 / 2.0 / 2.5 / 3.0；`E[a] > k` 的格子不存在）。
-**反推自检**：A 在 k = 3 的打平点算出 2.06、9 tok/s 需要 2.90、全接受 12.4——与 p3_dspark.md §9 的 2.07 / 2.9 / 12.4 一致。
+#### 10.1.3 接受率（K2，p3_dspark.md §11–§14；`tests/data/dspark/tree_stats.json`）
 
-| k | M | 场景 A：平均接受 0.5 / 1.0 / 1.5 / 2.0 | 场景 B：平均接受 0.5 / 1.0 / 1.5 / 2.0 | **h = 1（无 stall）的场景 A** |
-|---:|---:|---|---|---|
-| 0 | 1 | 6.41 | 6.41 | **13.2** |
-| 1 | 2 | 6.44 / **8.58** / — / — | 5.81 / 7.75 / — / — | 15.0 / 20.0 / — / — |
-| 2 | 3 | 5.34 / 7.12 / 8.90 / **10.7** | 4.54 / 6.05 / 7.56 / 9.07 | 14.3 / 19.0 / 23.8 / 28.5 |
-| 3 | 4 | 4.66 / 6.21 / 7.77 / 9.32 | 3.78 / 5.04 / 6.30 / 7.56 | 13.6 / 18.2 / 22.7 / 27.3 |
-| 4 | 5 | 4.08 / 5.44 / 6.80 / 8.16 | 3.21 / 4.28 / 5.35 / 6.42 | 13.0 / 17.4 / 21.7 / 26.1 |
-| 5 | 6 | 3.69 / 4.92 / 6.16 / 7.39 | 2.82 / 3.76 / 4.70 / 5.65 | 12.5 / 16.6 / 20.8 / 25.0 |
+五个正常 prompt（`en_prose` 模型 README、`zh_prose` 本文开头段、`python` / `cpp` 仓库代码、`markdown` p2_decode.md 的列表；BOS + 56 token）× {贪心, 温度 1}，
+**60 个真实 M = 6 verify 周期**、181 个产出 token、141 个有完整 5 token 前瞻的草稿事件；CPU oracle 2026-09-14 23:19 – 09-15 01:00，没有 EOS、没有复读退化。
 
-（h = 1 一列 = 场景 A 的 `T_cycle` 减去 stall，是"常驻读摊薄"单独能买到的上限；**以实测接受率** 1.571…1.929 代入是 15.7 / 17.0 / 16.9 / 16.8 / 16.0 tok/s，对无投机的 13.2。）
+| `E[tokens](k)` | k=1 | k=2 | k=3 | k=4 | k=5 |
+|---|---:|---:|---:|---:|---:|
+| 贪心，每草稿事件（n = 71），单链 | 1.83 | 2.52 | 3.08 | 3.55 | **3.93** |
+| 贪心，每事件，树 K=16 `eal` | 1.83 | 2.51 | 3.03 | 3.46 | 3.82 |
+| 温度 1（精确接受），每事件（n = 70），单链 | 1.78 | 2.39 | 2.87 | 3.24 | **3.52** |
+| 温度 1，每事件，树 K=16 祖先采样 | 1.78 | 2.38 | 2.84 | 3.21 | 3.48 |
+| **贪心，runtime 回放（tokens / verify）**，单链 | 1.83 | 2.59 | 2.89 | 3.33 | **3.33** |
+| **温度 1，runtime 回放**，单链 | 1.78 | 2.38 | 2.74 | 3.05 | 3.22 |
+| confidence θ = 0.5，runtime 回放：贪心 2.74（平均 k 2.15）/ 温度 1 2.58（平均 k 1.91）；θ = 0.3：3.04 / 2.88；θ = 0.7：2.17 / 2.09 | | | | | |
+
+"每事件"每个草稿位置一个样本、偏向容易的段落；**"runtime 回放"只在每周期最后一个接受位置起草，就是 runtime 的 tokens / verify，TPS 用它**。
+驱动方案自己的真实 verify：贪心 2.03 → 3.03、温度 1 2.00 → 3.00 tokens / verify；代码 prompt 高、中文低，差一个数量级——**30 个周期一个模式，只够定量级**。
 
 **读法**：
+1. **树 ≈ 链**：贪心 −0…−4%（贪心接受要求每位都等于主模型 argmax，"前缀全对"条件下的逐位 argmax 就是最好的点估计，`viterbi` / `eal` 为联合概率在早位置让步反而丢）；
+   温度 1 ±1%（截断到锚候选的代价在后几位：位 4 的 r 0.30 对单链 0.51，K 从 4 到 32 只追回一半）。
+   **树在温度 1 的价值不是接受率，是比较能在 CPU 上以 < 1 KB 读回完成**——单链的精确接受要整词表的 q 行（2.6 MB）留在 GPU 上做残差。
+2. **归一化**：只在 K 内归一化让 10–30% 的事件换了路径；锚行 tail 近似压到 1–13%，`eal` ≤ 3/71，对接受率影响 ≤ 0.1 token。全词表精确版要 1 + 4K 次 66 MB GEMV，不值。
+3. **confidence 校准**（贪心，n = 246）：σ 0.32 / 0.51 / 0.70 / 0.85 / 0.97 → 实际接受 0.60 / 0.57 / 0.81 / 0.89 / 1.00——大致单调、低端偏保守。
+   confidence head **没有激活函数**（裸 fp32 线性层），logistic 映射仍是假设；θ 按 TPS 选，不按概率意义选。
+4. **批边界（G3）**：**短上下文已隔离**——Track K 猜的"ratio-2 源只在组完成时发布 `index_k`"在位置 57–90 不起作用（ratio-2 层可见行 ≤ 45 < 512，top-k 全选，key 用谁都一样）：
+   逐 token 语义的 indexer 与普通 verify 的 top-32 logits **逐位相同**、argmax 60/60、接受长度 10/10；真的逐 token decode（M = 1 × 6）对普通 verify 余弦 0.9982–0.9995、argmax 6/6，
+   剩下的差是 **CPU torch 的批形状数值差**（`F.linear` 同一行在 batch 1 与 batch 6 里给出不同的值，40 层量化边界放大），GPU kernel 按行独立累加就没有。
+   10 个 batch 0 次翻转；按 margin 估暴露面（决定接受的行里 margin < 0.5 占 16.5%、< 1.0 占 34%，扰动最大 0.58）约每 10 行有 1 行**可能**被翻。
+   **长上下文一定起作用**（17K 上两种 key 的 top-k 只重叠 8%，§7.4），要在 4K / 17K 状态上重测。Track K 的 0.945 余弦是 prefill（M = 71）对 decode，形状差更大、同一机制。
 
-1. **h = 0.92 时 stall 是投机的主要成本。** 每产出一个 token 的 stall 从 80 ms 涨到 k = 5 的 286 / 1.93 = 148 ms。
-   同样的接受率在 h = 1 下是 +19–29%，在 h = 0.92 下是 −26…+5%。
-2. **非 MoE 在 M 上不平坦就把 k = 1 的 +5% 也吃掉**（A → B）。
-3. **打平所需的接受率**（场景 A）：k = 1 平均接受 ≥ 0.5、k = 3 `E[tokens]` ≥ **2.07**、k = 5 ≥ 2.6；**9 tok/s 在 k = 3 要 2.9**。
-
-**本轮发现的两处模型缺口（都会让上表偏乐观或偏悲观，都未测）**：
-
-1. **`T_MoE(M)` 没有计并集**（偏乐观）。§7.9.3 的 M 扫描是 M 个 token 过**同一组 7 个槽**；真实 verify 一层要读
-   `6 · M · union_frac[M]` 个 routed expert（M = 6 是 21.4 个）加 shared。**光是这些权重 ÷ 217 GB/s 的带宽地板**就是
-   每个 verify 27 / 41 / 52 / 61 / 72 / 81 ms（M = 1..6），对模型用的 25 / 34 / 31 / 33 / 35 / 38 ms，
-   **k = 1 至少 +7 ms、k = 3 至少 +29 ms、k = 5 至少 +43 ms**（k = 0 同口径 +2 ms）——k = 3 的打平点从 2.07 升到 **≈ 2.2**。
-   而且今天的 `MoeRunner` 是 7 槽、`route_weights` 是稠密的 `[M][slots]`（每个槽算全部 M 列），并集要么多组 dispatch、要么一个 >7 槽的 runner。
-2. **stall 的 miss 口径**（方向不定）。上表 miss ∝ `M · union_frac[M]`；§3.1 第 3 点说明 5,711 槽下它更可能接近 ∝ M
-   （k = 1 的 stall 133 → 160 ms、k = 5 286 → 481 ms）。反方向：verify batch 的 expert 集合精确已知（§9.5），
-   **Planner 可以在 verify 开始前把并集 miss 一次下单**，§13.4 的"完全串行"在这里保守得更多（p3_dspark.md §10 问题 5）。
-   **要 `cache_sim` 按 verify batch 回放、再加上 Planner 重叠，才定得下来。**
-
-#### 10.1.4 什么情况下它赚钱
-
-三条杠杆，**必须同时**考虑（上表的任何一列单独都不够）：
-
-| 杠杆 | 门槛 | 今天 |
-|---|---|---|
-| **接受率** | 场景 A、k = 3：`E[tokens]` ≥ **≈ 2.1**（计缺口 1 约 2.2）才打平，**≥ 2.9 才到 9 tok/s** | 1.857（单条退化轨迹）；正常周期 4/5 的迹象，样本 1 |
-| **M > 1 的 attention 族 kernel 接近平坦** | 场景 A 假设 ×1、场景 B 是实测的 ×2.2–4.8；k = 1 上两者就是 +5% 与 −5% 的差。**"加一个 m 循环"只买到 ×2.2–4.8**（p3_dspark.md §8），M > 1 的 fp8 GEMV 需要自己的设计；具体要多平，由 G2 的实测曲线代入 §10.1.2 决定，不预设数字 | 不存在：`AttnSpec` 没有 `m` 字段，`head` / `engram` 也是 M = 1（p3_dspark.md §6） |
-| **更高的命中率** | stall 是主导项：h → 1 时同样的实测接受率就是 +19–29% | 0.920（内插）；再要容量只能换硬件（§5.2），**第二块 NVMe 让 stall 减半**（§9.6） |
-
-#### 10.1.5 Go / no-go 门槛
-
-**前置测量（全部要有，才做决定）：**
-
-| # | 测量 | 谁 |
-|---|---|---|
-| G1 | **接受率在 ≥ 5 个正常 prompt × ≥ 64 token 上重测，空闲机**（先修 dsref 在层 1 / 14 的 98 GB 未触碰占位，p3_dspark.md §7.6） | Track K 后续 |
-| G2 | **M > 1 的 fp8 投影 kernel 设计出来并实测**（`wq_a` / `wq_b` / `wkv` / `wo_a` / `wo_b` 的逐 M 代价），外加 M = 5 的 `head`；MoE 的并集形态（>7 槽或多组）的逐 M 实测 | attention track |
-| G3 | **批边界依赖的机制隔离**（§10.2 的不变量，p3_dspark.md §7.1 / §10 问题 1），并决定 runtime 对齐"逐 token decode"还是"verify batch" | oracle |
-
-**决定规则**：把 G1 / G2 的实测、当时实测的 h、§10.1.3 的两处缺口一起代入 §10.1.2，
-**若某个 k 上的预测 TPS ≥ 1.15 × 无投机**（高过 §1.3 (b) 允许的 ±15% 模型误差）→ **GO**，按 §10.2 集成；
-**否则 NO-GO**：DSpark 停在 Track K 已交付的 kernel 与规格上（它们有测试、不会烂），
-工作量转去 stall（P3 的 Planner 重叠、§9.6 双盘）与常驻路径。
-
-**今天的状态：NO-GO，等 G1–G3。** 场景 A 最好 +5%（k = 1），场景 B 每个 k 都亏。
-
-### 10.2 周期流程
+#### 10.1.4 模型与预测（K2 §15；`tools/dspark_tree.py tps`）
 
 ```
-1. 主模型 forward(M=k+1: 上一接受 token + k 个草稿)
-   ← 记录第 37/38/39 层**进入 block 之前**的残差流在 hc 维上的均值（§2.4 v0.6 更正）
-2. 逐位验证 → 接受前缀 a ∈ [0, k]，得到 a+1 个新 token（含修正 token）
-3. 草稿: forward_embed(main_hidden, last_token) → 3 个 DSparkBlock(M=5) → head → Markov 逐位采样 → confidence
-4. 调度器按 confidence 选下一周期的 k ∈ [0, 5]
+TPS(k)   = tokens_per_verify(k) / ( T_draft + T_CPU + T_verify(M = k+1) + stall(M) )      k = 0：无草稿
+T_verify = T_attn+head(M) + T_MoE(M) + (engram 3.9 + MoE host 1.0) · M + other 5.0 + 0.4
+T_MoE(M) = 29.4 ms · max( (6·M·uf[M]·18.81 + 23.6) / (6·18.81 + 23.6),  t_pair(M) / t_pair(1) )
+stall(M) = (1 − h) · 6·M·uf[M] · 18.81 MB · 40 / 4.5 GB/s
 ```
 
-- **取的是 `h.mean(dim=2)`**（engram 之后、`hc_pre` / `attn_norm` **之前**），不是 attention 那个
-  `[dim]` 输入的均值。参考 `generate.py` 没有调用 `forward_spec`，所以这一条只能靠读
-  `model.py` 的 `if i in target_layer_ids: main_hiddens.append(h.mean(dim=2))` 确认
-  （route_trace.md §11.5）。**实现前先对着这行代码核一遍。**
-- 验证规则：greedy 模式下逐位比较 argmax；采样模式下用标准的 target/draft 概率拒绝采样（草稿 logits 由 DSpark head + Markov 偏置给出，需保存 5 位的完整分布或 top-k 近似 — 先实现 greedy，采样模式作为 P4 后半段）。
-- **不变量**：`temperature=0` 时开关投机解码输出必须逐 token 相同，这是内建的正确性检查。
-  **v0.9-draft：这条对参考实现本身不严格成立**（p3_dspark.md §7.1）。同一批 token 以 M > 1 的 verify 跑、
-  与以整条 prefill 跑，logits 余弦低至 **0.945**；14 个周期里 **1 个**选了不同的 token（margin 0.026）。
-  最可能的机制（**假设，未隔离**）：ratio-2 的源层只在本次 forward 内有压缩组完成时才发布 `index_k`，
-  于是 M = 6 与 M = 1 给层 2–19 的 top-512 不同。**内建检查因此改成"参考 margin > ε 时逐 token 相同，否则记录"**，
-  runtime 对齐谁是 §10.1.5 的 G3。§1.3 (a) 的"投机开关不改变 greedy 输出"按同一个 margin 门读。
-- **verify batch 的五处 `seqlen == 1` 硬编码**（window 环写入、逐 query 可见性、compressor 分组、压缩 latent 的 RoPE、
-  indexer 的逐 query `compress_lens`）要按 p3_dspark.md §4 推广；`forward_spec` 一次吃 `a + 1` 个已接受位置的 `main_hidden`（§4.6）。
-  回滚按 p3_dspark.md §3.4 逐项撤销，**不能**像 oracle 那样重跑已接受前缀（那等于每周期跑两遍主模型）。
-- 主模型的 window KV / 压缩 KV 状态在拒绝后要回滚：window cache 按位置覆盖即可；Compressor 的部分组状态需保存快照（ratio ≤ 2，状态很小）。
+| 输入 | 值 | 来源 |
+|---|---|---|
+| tokens / verify | §10.1.3 的 runtime 回放 | K2 |
+| `uf[M]` | 1 / 0.830 / 0.748 / 0.695 / 0.659 / 0.625 | K2 §12.6 |
+| attention + head，M = 1 | 33.5 ms | Track J 的 P3 默认（**runtime 未采纳，真机 36–37 ms**，§7.15.6） |
+| MoE GPU / engram / MoE host / other + 命中步 stall | 29.4 / 3.9 / 1.0 / 5.0 + 0.4 ms | §7.16.5 |
+| MoE 按并集字节缩放 | M = 6 读 3.27 倍字节 → 96 ms（29.4 ms 在 M = 1 已经是带宽受限的 186 GB/s） | v0.9-draft 的缺口 1 |
+| `t_pair(M)` | 0.625 / 0.851 / 0.780 / 0.814 / 0.874 / 0.945 ms | §7.9.3 (a) |
+| 场景 A / B | A：attention 族 + head 在 M 上平坦；**B：按实测 ×3.06 @ M = 5 线性增长** | p3_dspark.md §8 |
+| `T_draft` / `T_CPU` | 19 ms（M = 5 head）或 42 ms（head 循环 M = 1）/ 0.2 ms | §7.12、§10.1.2 |
+| h | 0.92（5,711 槽，§3.1 内插）；另算 0.95、1.0 | §3.1、§7.16.5 |
 
-### 10.3 Confidence-scheduled 验证长度
+无投机一步 = 33.5 + 29.4 + 10.3 + stall 80.3 = **153.5 ms = 6.52 tok/s**（h = 0.92）；M = 6 的 verify（场景 A）= 33.5 + 96.2 + 34.8 + stall 300.9 + 草稿 19.2 = 484.6 ms，
+场景 B 的 attention 是 119.8 ms、合计 570.9 ms。
 
-调度器最大化 `E[accepted tokens] / T_cycle(k)`：
+| h = 0.92，`T_draft` 19 ms（tok/s，括号里是对 6.52 的倍数） | 贪心 单链 | 贪心 树 K=16 | 温度 1 单链 | 温度 1 树 K=16 |
+|---|---:|---:|---:|---:|
+| A：固定 k = 1 / 2 / 3 / 4 / 5 | 7.40 / **8.27** / 7.74 / 7.71 / 6.88 | 7.40 / 8.00 / 7.64 / 7.71 / 6.88 | 7.20 / **7.63** / 7.33 / 7.05 / 6.65 | 7.19 / 7.64 / 7.22 / 6.99 / 6.65 |
+| **A：confidence θ = 0.5** | **8.63（×1.32）** | 8.57（×1.32） | **8.55（×1.31）** | 8.48（×1.30） |
+| B：固定 k = 1 / 2 / 3 / 4 / 5 | 6.92 / **7.45** / 6.80 / 6.65 / 5.84 | 6.92 / 7.20 / 6.71 / 6.65 / 5.84 | 6.73 / **6.87** / 6.44 / 6.08 / 5.64 | 6.72 / 6.88 / 6.34 / 6.03 / 5.64 |
+| B：最好的固定 k | ×1.14（k = 2） | ×1.10 | ×1.05 | ×1.06 |
+| **B：confidence θ = 0.5 / 0.7** | **7.73（×1.19）** / 7.79（×1.20） | 7.66 / 7.65（×1.17） | **7.71（×1.18）** / 7.48（×1.15） | 7.65（×1.17）/ 7.49（×1.15） |
+| B、head 循环（`T_draft` 42）、θ = 0.5 | 7.26（×1.11） | 7.20（×1.11） | 7.21（×1.11） | 7.16（×1.10） |
 
-- `E[accepted](k) = Σ_{i≤k} Π_{j≤i} c_j`，`c_j` 来自 confidence head（每位条件接受概率）。
-- `T_cycle(k)` 来自 **Profiler 在线测得的曲线**：`T_hot(M)`（常驻权重 GEMV/GEMM 随 M 的时间，M=1..6，近似平坦）+ `T_nvme(k)`（并集 expert 的期望 miss 字节 / 有效带宽，使用 Q3 的重叠统计与当前 hit rate）+ `T_draft`（≈ 11 ms）。
-- **`T_nvme(k)` 的离线初值已有**（Q3，§9.1.1）：`union_frac[k] = 0.824 / 0.734 / 0.676 / 0.634`（k=2..5，40 层均值），
-  即 `miss_bytes(k) ≈ (1−h) × k × union_frac[k] × 112.8 MB × 40 层`。逐层差别很大
-  （层 0 的 `union_frac[5]` 是 0.818，层 25 是 0.518），所以在线 EWMA 仍然要按层维护。
-- **`T_hot(M)` 的 MoE 部分已实测**：v0.8 开着 `HQuant=3`（产线上真正要跑的东西）是
-  M=1 **0.625 ms/层**、M=6 **0.945 ms/层 = 0.158 ms/token**（§7.9.3 (a)）；
-  不开量化是 0.600 / 0.897。中间值按同一张表内插。
-  **注意口径**：那张表的 7 个槽全是 FP4，换成真 fp8 shared expert 之后每层约再加
-  0.09（M=1）–0.34（M=6）ms（§7.9.2 (e)）；v0.7 记的 0.683 / 1.310 是"真 shared、不量化"的那一对。
-  **三个口径不要混用**，用哪个都要说是哪个。
-- **`T_hot(M)` 的非 MoE 部分也已实测**：M=1 时 40 层 + head = **41.4 ms**（v0.8，§7.15.5）。
-  M > 1 的曲线还没测——它主要是权重复用，预期接近平坦，**但这是 P4 要实测的第一件事**。
-  **v0.9-draft：「预期接近平坦」被否定**——Track K 用 `dspark_gemv.slang` 的 M 循环量到 M = 5 时 ×2.2–4.8（§10.1.1 第 2 点）。
-  `T_draft` 实测 11.3 ms（kernel 链）/ ≈ 19 ms（M = 5 head）/ ≈ 42 ms（今天的 M = 1 head 循环），不是 11 ms（§7.12）。
-  `union_frac` 在 verify batch 上实测（§9.5）。**调度器的曲线从 §10.1.2 的模型出发，在线 EWMA 修正**；
-  影子调度器在 Track K 的 14 个周期上选 k = 0 ×2、1 ×8、2 ×3、4 ×1（低置信时少猜，方向对）。
-  confidence head **没有激活函数**（裸 fp32 线性层），映射成接受概率用的 logistic 是**假设**（p3_dspark.md §2 第 4 点、§7.5）。
-- 曲线在运行中持续更新（EWMA），因此调度随 cache 状态和文本类型自适应。这正是技术报告中"profiled engine throughput curves"在单机上的对应物。
+其他 h（场景 B、`T_draft` 19）：h = 0.95 时固定 k 最好 ×1.05–1.14、confidence θ = 0.5 为 ×1.17–1.18（贪心单链 9.59 对 8.11 tok/s）；
+**h = 1.0 时 B 16.0 对 13.66（×1.17）、A 最好 ×1.45–1.50**（固定 k = 4 或 confidence）。
+
+**读法**：(1) **树对 TPS 没有贡献**（贪心 −0…−4%、温度 1 ±1%）；(2) **接受率不再是瓶颈**：runtime 回放 2.6–3.3 tokens / verify 比 Track K 的 1.93 高 40–70%，
+v0.9-draft 的"k = 3 需要 `E[tokens]` ≥ 2.1–2.2 才打平"已经过线；(3) **confidence 调度是最大的杠杆**：场景 B 下固定 k 最好 ×1.05–1.14，confidence θ = 0.5–0.7 是 ×1.15–1.20——
+它把平均 k 压到 ≈ 2（M ≈ 3），避开 stall 与 MoE 并集随 M 的增长，同时在高置信的段落（代码）照样 k = 5；(4) **stall 仍是主导项**：M = 6 的 stall 占 verify 周期的 62%，
+h 0.92 → 1.0 让场景 A 从 ×1.32 到 ×1.50。
+
+**这张表偏乐观的两处（v0.9 集成时发现，K2 的数照录）**：无投机基线用了 runtime 未采纳的 33.5 ms attention；h = 0.92 是空闲机 5,711 槽，
+而引擎的自动 cache 是 **4,500 槽**（Q2 曲线内插 h ≈ 0.888，对话实测 0.84–0.90，§7.16.5 (e)）——h 越低 stall 越重、投机越吃亏。
+**偏悲观的一处**：verify batch 的 expert 集合精确已知（§9.5），Planner 在 verify 开始前把并集 miss 一次下单，模型里没有这份重叠。
+
+#### 10.1.5 Go / no-go
+
+**决定规则不变**：某个调度的预测 TPS ≥ 1.15 × 无投机 → GO。
+
+- **树采样作为加速手段：NO-GO**（两个温度下都不比单链快）。保留 `cpu/dspark_tree` 作**温度 1 的 CPU 侧无损比较器**（`accept_sampling_exact`）与 confidence 计算，路径目标用格内 `chain`（= 单链）。
+- **DSpark 投机本身（单链草稿 + confidence 选 k + 精确接受）：有条件 GO。** 在实测的 M 缩放（场景 B）、M = 5 的草稿 head、h = 0.92 下，confidence θ = 0.5 预测
+  **×1.18–1.19**（贪心 7.73、温度 1 7.71 tok/s 对 6.52），刚过门槛；固定 k 过不了（最好 ×1.14）；场景 A 是 ×1.31–1.32。**条件缺一不可**：
+
+| # | 条件 | 今天 | 谁 |
+|---|---|---|---|
+| **G2** | M > 1 的 attention 族（`mega_mhc` / `wq_a` / `wq_b` / `wkv` / `sparse_attn` / compressor / indexer / `wo_a` / `wo_b` / `gate`）、`head`（verify 的 M 行 + 草稿的 M = 5）、`engram` **真做出来**，每层 M = 6 的代价**不劣于 ×3.06 @ M = 5 的线性外推**；草稿 head 必须是 M = 5（循环 M = 1 时只剩 ×1.11，NO-GO） | 全部不存在：`AttnSpec` 没有 `m` 字段、`AttnRunner::make` / `DecodeRunner::make` 固定 `ps.m = 1` | **Track T** |
+| G2' | MoE 的并集形态（> 7 槽或多组 dispatch）实际代价不劣于"按字节缩放"（M = 6 ≈ 96 ms） | 7 槽 runner，`route_weights` 稠密 `[M][slots]` | Track T |
+| G1 | 接受率样本扩大：≥ 64 个 decode token × 5 个 prompt × 两模式、空闲机、**在 GPU runtime 上实测**（×1.18 离门槛只有 3%，把 `zh_prose` / `markdown` 那样的低接受文本比例提高就会掉下去） | 30 周期 / 模式，CPU oracle，56 token prompt | T 之后 |
+| G3 | 长上下文批边界：4K / 17K 状态上逐 query key 源 vs 普通 verify 的 top-k 与接受 | 短上下文已关闭（§10.1.3 第 4 点） | T 之后 |
+
+**今天的状态：不集成**；门槛从 v0.9-draft 的"每个 k 都亏"变成"做出 M > 1 kernel 后按 confidence 调度可以赚 15–20%"。
+
+### 10.2 周期流程（v0.9：单遍、单路径）
+
+```
+0. 已接受到位置 p：环里写到 p；main_hidden[p] 已记（层 37/38/39 进入 block 之前的 h.mean(hc)）
+1. 草稿   forward_embed(main_hidden[p], token[p+1]) → 3 × DSparkBlock(M=5) → head(M=5)
+          → 5 位 Markov 加偏置（锚链）→ 每位 top-K 候选 + base logit + 锚行 lse                     [GPU，一次]
+2. CPU    格 → 路径（贪心 chain / 温度 1 祖先采样）→ confidence → k
+3. verify forward([token[p+1], path[:k]], M = k+1)
+          → 每行 argmax（贪心）或 候选 logit + lse + 屏蔽样本（温度 1）                                [GPU，一次]
+4. CPU    比较 → 接受 a，产出 a+1 个 token
+5. 提交   a+1 个已接受位置的 window KV 行写进环；a+1 个 main_x 写进 mtp 环；压缩行 / index key 的计数截到 p+a+1
+```
+
+- **取的是 `h.mean(dim=2)`**（engram 之后、`hc_pre` / `attn_norm` **之前**），不是 attention 那个 `[dim]` 输入的均值（route_trace.md §11.5、p3_dspark.md §1.1 两次确认）。
+- **不变量**：`temperature = 0` 时开关投机逐 token 相同，**只在参考 margin > ε 处成立**（批边界的数值扰动最大 0.58 logit，§10.1.3 第 4 点）；§1.3 (a) 按同一个 margin 门读。
+- **草稿位置**：`main_x` 在 p，草稿位在 p+1..p+5；`output_ids[0]` 是 p+1 上的 token，5 个草稿 token 覆盖 **p+2..p+6**；草稿块内**没有因果掩码**，kernel 不许"顺手"加。
+- **verify batch 的五处 `seqlen == 1` 硬编码**按 p3_dspark.md §4 推广：window 环写入、逐 query 可见性、compressor 分组、压缩 latent 的 RoPE、indexer 的逐 query `compress_lens`；
+  长上下文时 indexer 还要决定是否实现逐 query 的 key 源（§10.1.3 第 4 点）。
+- **回滚按 §11.2 的原则：不重跑主模型、不快照 window 环。**
+  (a) **window 环先 attend 后写**：verify 的 M 行 KV 留在 scratch，attention 在"环 + scratch 行 + 逐 query 掩码"上做，**只把被接受的 a+1 行写进环**。
+  p3_dspark.md §4.9 指出"先把 M 行全写进环再掩码"在回绕之后会让批里较早的 query 丢掉最多 M − 1 个最老窗口位置，§3.5 的"verify 前快照 ≤ k 个槽"是另一种修法——
+  **v0.9 选先 attend 后写**，环里从来不出现被拒位置，也就没有东西要撤；
+  (b) 压缩行与 index key 只在组完成后可见、完成时重写同一行——**截计数即可**；
+  (c) ratio-2 的 `kv_state` 槽在所属组池化之前一定被逐 token 重写——**不用回滚**；
+  (d) `shared_attn.index_k` 的最后发布者每遍都是层 20（ratio 1），不是跨周期状态；
+  (e) mtp 环只写已接受位置（草稿位自己的 5 行 KV 每周期重算、不入环）。
+  **实现：Track R2（KV 记账与回滚）与 T（M > 1 kernel）。**
+
+### 10.3 调度：confidence 选 k
+
+K2 的规则取代 v0.8 的"最大化 `E[accepted](k) / T_cycle(k)`、`c_j` 当条件接受概率连乘"：
+**k = 累计 σ(conf) ≥ θ 的最长前缀**（前缀规则：位 j 是否被验证只取决于位 < j，温度 1 的耦合评估因此精确），θ ∈ [0.5, 0.7]——
+在同一批数据上选的，有过拟合，换数据要重选。Profiler 在线维护 `T_verify(M)`、按层的 `uf[M]` 与 h 的 EWMA，按 §10.1.4 的式子重选 θ，
+**这就是技术报告"profiled engine throughput curves"在单机上的对应物**。v0.8 的两个先验已被实测否定：`T_hot(M)` 的非 MoE 部分"近似平坦"（实测 ×2.2–4.8）、
+`T_draft` "≈ 11 ms"（kernel 链 11.3 ms，加复用 kernel 与 M = 5 head ≈ 19 ms，head 循环 ≈ 42 ms）。
 
 ---
 
@@ -2349,54 +2541,143 @@ stall(k)         = (1 − h) · M · union_frac[M] · 112.8 MB · 40 / 4.5 GB/s
 - 层 0–19（encoder）对全部 prompt token 计算。层 20 是 kv source（ratio 1）：其 Compressor 直接把 **第 20 层的输入**（即 encoder 输出）投成 decoder 的全局 KV；层 21–39 复用这份 KV 与索引（Reuse / Reindex 模式由 `index_source_layer_ids` 决定）。
 - decoder 各层仍有自己的 window KV，由各层自己的隐状态产生 → 需要 decoder 前向。
 
-### 11.2 Decoder SWA Bounded Replay
+### 11.2 Decoder SWA Bounded Replay，以及 **SWA KV 从不持久化**（v0.9 原则）
 
-- 生产模式：decoder 层只对 prompt 的最后 128 个 token 前向，window 截断到 replay 段；得到的 decoder window KV 仅用于 decode。这是近似（官方报告"对质量影响可忽略"）。
+- 生产模式：decoder 层只对 prompt 的最后 R = 128 个 token 前向，window 截断到 replay 段；得到的 decoder window KV 仅用于 decode。
+  **v0.9（Track L）**：**`model.py` 没有 bounded replay**——它的 prefill 每层跑全部 token，replay 是 deepMoE 的生产近似；层 20 的前半（compressor、index key）仍跑全部 N。
+  近似恰好是一件事：replay 位置 p 的 decoder window 只回溯到 N − R。**N ≤ 128 时与 oracle 模式相同**。4K 实测：首 token 相同（margin 8.64）、
+  encoder 层逐 stage 相同、decoder 层 window KV 0.935–0.981（oracle 模式 0.968–0.988）、最后位置 top-6 219/240 两种相同；token 分歧率未测。
 - Oracle 模式：decoder 对全部 token 前向（与 `model.py` 精确一致）。
-- 两种模式都实现；benchmark 用生产模式并报告与 oracle 模式的输出差异率。
+- 两种模式都实现了（`gpu::Prefill`，§7.13）；benchmark 用生产模式并报告与 oracle 模式的差异。
 
-### 11.3 KV cache 结构（64K 上下文）
+**v0.9 原则（owner："KV 空间算清楚，SWA 可以不存"）：sliding-window KV 从不持久化。**
+任何要跨过"当前这一步 decode"保存或恢复的状态——会话内回退到更早的位置、prefix cache、会话挂起——**只存四样东西**：
 
-| 结构 | 每层 / 每源层 | 64K 总量 |
+| 存 | 大小 | 为什么够 |
+|---|---:|---|
+| token ids | 4 B / token | replay 的输入；engram 的 hash 状态是最后 3 个 id 的函数 |
+| 压缩 KV（4 个 kv source，FP4 + E4M3/16） | 720 B / token | 位置 < N − R 的全局上下文，replay 段的 query 直接读 |
+| index key（4 个 owner，FP4 + UE8M0/32） | 170 B / token | 同上，indexer 打分要；**不能从压缩 KV 恢复**（它取自 RoPE 之前的 latent） |
+| compressor 携带状态（3 个 ratio-2 源） | 24.6 KB 常数 | 挂起点上未完成的那一组。replay 只能近似重算它（replay 段开头的窗口不完整），存下来的是精确值——下一个 token 完成这一组时池化用原值 |
+
+**window 由 bounded replay 重建**：从挂起 / 回退点 N 往回 R 个 token 过全部 40 层（R = 128 起），写回每层的 128 行环与三个 mtp 环
+（`main_x` 来自层 37–39 的输入，也在 replay 里）；replay 段内不重写已经持久化的压缩行、index key 与 compressor 状态（它们是精确值，replay 算出来的是近似值）。
+**为什么不存 window**：它在 64K 上只有 2.7 MB（KV 的 4%），不存它省的不是字节，是**一类状态**——环按槽覆盖（slot = p mod 128），
+没有"截到位置 P"的语义，要支持回退就得存它的每个版本；而压缩行、index key 与计数天然可截。
+**代价与近似**：compute ≈ R × 24 ms ≈ 3 s @ R = 128（§7.13.3），热 cache 下 expert 基本命中；replay 段开头的窗口是空的，误差沿 replay 衰减——
+Track L 只 replay decoder 层时 4K 首 token 不变、decoder window cos 0.935–0.981；**全 40 层 replay 的误差、R ∈ {128, 256} 的取舍都没测**（§15 未决问题 24）。
+
+**DSpark 周期内的回滚不走 replay**：先 attend 后写环 + 截计数（§10.2），环里从来不会写进被拒位置。
+
+**实现状态：进行中（Track R2）**——KV 记账（§11.3 的"今天"一栏）、回滚、serve 的会话 UX。今天 serve 遇到在 k 个 token 前分叉的 prompt 是从 0 重新 prefill
+（p3_chat.md §1），`KvCache::snapshot / rollback` 与 §11.4 的持久化还是 `Unimplemented`。
+
+### 11.3 KV 账：按 config.json 与 model.py 逐层（v0.9 重写）
+
+**来源**：`D:\models\DeepSeek-V4.1-Flash\config.json`——`sliding_window 128`、`head_dim 512`、`index_head_dim 128`、`index_topk 512`、
+`compress_ratios` 层 0–1 为 0 / 2–19 为 2 / 20–39 为 1 / 三个 mtp 块为 0、`kv_source_layer_ids [2, 8, 14, 20]`、`index_source_layer_ids [2, 8, 14, 20, 24, 28, 32, 36]`、
+`candidate_source_layer_id 20`；`inference/model.py`——`Attention.__init__` 的 `window_kv_cache [128, 512]`（每层）与 `compress_kv_cache [max_seq_len // ratio, 512]`（**只有 kv source**），
+`Indexer.__init__` 的 `k_cache [max_seq_len // ratio, 128]`（**只有 `owns_k = layer in kv_source_layers`**），`Compressor.__init__` 的 `kv_state` / `score_state [ratio, 512]` fp32（**只有 ratio > 1**）。
+参考把它们存成 bf16 / fp32 张量，但**值都在量化网格上**，下面按打包格式算信息量。
+
+**格式**：
+
+| 缓冲 | 值的格式（model.py） | 打包 | 每行 |
+|---|---|---|---:|
+| window KV | `act_quant(kv, 32, ue8m0)`：E4M3 + UE8M0 / 32 | 512 B + 16 B | **528 B** |
+| 压缩 KV | `fp4_act_quant(latent, 16, E4M3 scale)` | 256 B nibble + 32 B | **288 B** |
+| index key | `fp4_act_quant(k, 32, UE8M0)` | 64 B + 4 B | **68 B** |
+| compressor 状态 | `kv_state` + `score_state`，fp32 `[2][512]` 各一 | — | **8,192 B / 源**（常数） |
+
+**逐层**（C = 上下文长度；"读"是一个 decode step 读哪些）：
+
+| 层 | ratio | 角色 | 自己持有 | 每 token 增长 | decode step 读 |
+|---|---:|---|---|---:|---|
+| 0, 1 | 0 | window-only | window 67,584 B | 0 | 自己的环 |
+| **2, 8, 14** | 2 | kv source + index source | window；压缩 KV ⌊C/2⌋ 行；index key ⌊C/2⌋ 行；compressor 状态 8,192 B | 144 + 34 = **178 B** | 环；自己平面上的 top-512；index 打分在组完成的步用自己的 key、其余步用**层 20 的** key |
+| 3–7、9–13、15–19（15 层） | 2 | 复用 | window | 0 | 环；最近 kv source 的压缩平面；最近 index source 的 top-k 列表 |
+| **20** | 1 | kv source + index source + candidate source | window；压缩 KV C 行；index key C 行 | 288 + 68 = **356 B** | 环；自己的平面；对全部 C 个 key 打分、选 2,048 个候选块 |
+| 24, 28, 32, 36 | 1 | index source（**不**持有 key） | window | 0 | 环；层 20 的平面；对**层 20 的全部 C 个 key** 打分、候选块外置 −inf |
+| 21–23、25–27、29–31、33–35、37–39（15 层） | 1 | 复用 | window | 0 | 环；层 20 的平面；最近 index source 的 top-k |
+| mtp 0–2 | 0 | DSpark 草稿 | window（`main_x` 推出的 KV） | 0 | 自己的环 |
+| — | — | token ids | — | 4 B | engram hash（最后 3 个） |
+
+**合计**：常数项 = window 40 × 67,584 = **2,703,360 B** + mtp 环 3 × 67,584 = 202,752 B + compressor 状态 3 × 8,192 = 24,576 B；
+**每 token 894 B** = 压缩 KV 720 + index key 170 + id 4。**40 层里只有 4 层持有随 C 增长的东西。**
+top-k 列表（≤ 640 项）、candidate 标志、indexer 分数行都是每步的 scratch，不是状态。
+
+| C | window（40 层） | 压缩 KV | index key | 状态 + ids | **合计（主模型）** | 其中必须持久化（§11.2） | + mtp 环 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4,133 | 2.70 MB | 2.98 MB | 0.70 MB | 0.04 MB | **6.42 MB** | 3.72 MB | +0.20 MB |
+| 17,010 | 2.70 MB | 12.25 MB | 2.89 MB | 0.09 MB | **17.94 MB** | 15.23 MB | +0.20 MB |
+| 65,536 | 2.70 MB | 47.19 MB | 11.14 MB | 0.29 MB | **61.32 MB** | 58.61 MB | +0.20 MB |
+| 262,144 | 2.70 MB | 188.74 MB | 44.56 MB | 1.07 MB | **237.08 MB** | 234.38 MB | +0.20 MB |
+| 1,048,576 | 2.70 MB | 754.97 MB | 178.26 MB | 4.22 MB | **940.15 MB** | 937.45 MB | +0.20 MB |
+
+（MB = 10⁶ B。17,010 的 index key 2.89 MB 就是 Track M 数的"distinct 2.89 MB"。）
+
+**两处更正**：
+1. **v0.4 写的"indexer K（8 源层）~29 MB @ 64K"是一个 decode step 读的量，不是存储**。8 个 index 层里只有 4 个 kv source 持有 `k_cache`，
+   24 / 28 / 32 / 36 读的是层 20 的那一份；存储是 **11.14 MB**。p3_longctx.md §5.1 把 28.97 MB 称作"§11.3 的存储"，是同一个混淆。
+   每步读的量在 §3.1（64K 上 index key 读 29 MB = 存储的 2.6 倍，因为层 20 的 key 被 5 个层各读一遍）。
+2. **v0.8 写的"打包的那一行现在是真的、64K 取 48 MB、18 MB 拿回来了"不成立**：`compressor.slang` 把 FP4 nibble 与 E4M3 scale 写到**两块旁路 buffer、只供测试逐字节比**，
+   `sparse_attn` 读的是 **bf16 平面**——`gpu/shaders/compressor.slang` 与 `runtime/kvstore.h` 的头注释都这么写。
+
+**今天分配的**（`runtime/kvstore.h`：**一块** host 可写、device 可寻址的 buffer；**40 层每层都有**压缩平面、index key 平面、top-k 列表与 compressor 状态，
+全部按 ratio-1 最坏情况开 `max_context` 行，压缩 KV 与 key 存 bf16）：
+
+```
+KvStore(C) = 40·128·528             window（打包，与模型相同）          2.70 MB
+           + 40·C·512·2             压缩 KV，bf16                       40,960·C
+           + 40·C·128·2             index key，bf16                     10,240·C
+           + 40·(128 + C)·4         top-k 列表 int32（真实列表 ≤ 640 项）  160·C
+           + 40·8·512·4·2           compressor 状态（max_ratio 8）      1.27 MB
+           = 51,360·C + 3.99 MB
+```
+
+| C | **模型格式合计** | **KvStore 今天** | 倍数 | 按 source 分平面、仍 bf16、按 ratio-1 开（Track Q 的"≈ 0.35 GB @ 64K"口径，含 window） |
+|---:|---:|---:|---:|---:|
+| 4,133 | 6.42 MB | **216 MB**（加载路径多开 64 行：**220 MB**，Track Q） | 34× | ≈ 24 MB |
+| 17,010 | 17.94 MB | **878 MB**（+64 行：**882 MB**，Track Q） | 49× | ≈ 90 MB |
+| 65,536 | 61.3 MB | **3.37 GB** | 55× | ≈ 338 MB |
+| 262,144 | 237 MB | 13.5 GB | 57× | ≈ 1.35 GB |
+| 1,048,576 | 940 MB | 超过 `kMaxIndexPositions`（524,280），拒绝 | — | ≈ 5.37 GB |
+
+**差在哪**（按 17K 的 878 MB 拆）：压缩 KV 697 MB 对模型 12.25 MB（**57×** = 40 个平面对 2.5 C 行当量的 16× × bf16 1,024 B 对 288 B 的 3.6×）、
+index key 174 MB 对 2.89 MB（60×）、top-k 2.7 MB、状态 1.3 MB、window 2.7 MB。`runtime/kvstore.h` 头注释写的"40 个平面而不是 4 个，在这个 decode 几何上多花 45 MB"
+是 1K 上下文时的数，17K 上多花的是 ~790 MB。
+
+**另一个今天就会咬人的限制**：`KvStore` 是**一块**分配、走路径 A，受 2 GiB `maxMemoryAllocationSize` 约束（§1.1），所以
+**`max_context` ≲ 41.7K**（(2 GiB − 4 MB) ÷ 51,360，推算，未实测）；`serve --max-context` 默认 4,096。按模型格式、按 source 存，1M 上下文也只要 940 MB。
+
+**R2 的活**（实现中）：per-source 平面（loaded-CED 路径现在给每层都 seed 自己的平面，要让 Engine 在那条路上也重定向复用层）；
+打包格式（`sparse_attn` 读 nibble 平面，代价未测）；top-k 列表按 640 项开；分段分配越过 2 GiB；§11.2 的持久化四样。
+
+### 11.4 Prefix KV 持久化（v0.9 按 §11.2 重定）
+
+v0.3 的方案存 encoder 输出（层 20 的输入，5120 × 4 份 fp16 = 40 KB / token，64K ≈ 2.7 GB）+ 压缩 KV + index key，命中时跳过 encoder、只跑 decoder 的 128 token replay。
+**v0.9：不存 encoder 输出，也不存 window。** encoder 对 decoder 的全部贡献就是层 20 的压缩 KV 与 index key（§11.1），encoder 层自己的全局上下文是层 2 / 8 / 14 的压缩 KV 与 index key——
+都在 §11.2 的四样里；命中时全 40 层 replay 最后 R 个 token。**64K 前缀 ≈ 59 MB，不是 2.7 GB；1M ≈ 0.94 GB。** 按 prompt 前缀 hash 分文件放 `kvcache/`；
+压缩行、key 与 ids 都按位置可截，所以前缀的前缀也能命中。**未实现（R2 之后）。**
+
+### 11.5 长上下文：从"全部验证在 64–72 token"到 4K / 17K 通过（v0.9）
+
+v0.9-draft 列的三个在 64 token 上没发生过的机制，现在都被执行并验证了（Track M / P / Q）：
+
+| 机制 | v0.9-draft（64–72 token） | **v0.9（4,133 / 17,010 token）** |
 |---|---|---|
-| window KV（40 + 3 层） | 128 × (512 B + 16 B scale) | 2.8 MB |
-| 压缩 KV（源层 2, 8, 14 ratio 2；20 ratio 1） | C/ratio × 512 B（fp8）或 256 B + 32 B（fp4） | 84 MB fp8 / 48 MB fp4 |
-| indexer K（8 源层） | C/ratio × (128 × 0.5 B + 128/32 B) = C/ratio × 68 B | **~29 MB**（v0.4 更正：原记 ~2 MB，那是*单个* ratio=2 源层的量；8 个源层中 5 个 ratio=1，合计 28.97 MB） |
-| 候选块池（层 20 → 24..36） | 2048 块索引 | KB 级 |
-| Engram hash cache | C × 8 B | 0.5 MB |
+| indexer top-k | 退化（512 ≥ n） | 真选 512 of 2,067–17,018；kernel 在参考输入上 tie-aware 24/24、24/24；引擎每步每层对自己的分数 tie-aware 精确 64/64；与参考 top-k 平均重叠 90.0–95.3%（4K）/ 78.6–93.0%（17K），差在 hidden 漂移（流 cos 0.95–0.998），不在 kernel（§7.4） |
+| window 环 | 从不回绕 | 在非零 cutoff 回绕（4133 mod 128 = 37、17010 mod 128 = 114）；每层读到的 window KV cos ≥ 0.999 |
+| ratio-2 池化 | pos 64 没有参考输出 | 4K 的 step 0 池化 row 2066、17K 的 step 1 池化 row 8505，**参考输出已导出**（`tests/data/longctx/ctx4k/l3s_step00.bin`、`ctx16k/l3s_step01.bin` 的 `cmp_state_*_before/after`、`cmp_wkv_out`、`cmp_pooled`、`latent_pre_rope`、`cmp_row_new`）；引擎读到的压缩平面全体行 cos ≥ 0.99997、我们每步写的行 0.98–0.9993；**在参考输入上的逐位相等测试还没写**（§12.1） |
+| candidate block（v0.9 补） | 恒等 | 17K 上 live，`indexer.slang` stage 6–8，8/8 步 tie-aware（§7.4） |
+| RoPE / YaRN | 位置 64 几乎不转低频对 | 4,134 / 17,011 位上的 `q_pre_rope` / `q`、`attn_out` / `attn_out_irope` 已导出；token 8/8 |
 
-合计 ≈ 116 MB（fp8 压缩 KV）/ 80 MB（fp4）。KV 不是内存问题；全部放 GPU heap。上表由 `runtime/kvcache.h` 的 `KvGeometry` 按 config.json 实算，`tests/test_model.cpp` 回归。
+**长上下文 NaN 与"塌成填充 token"的根因是 runtime 的一个长度错误**（`window + n_cmp` 对 `window + min(512, n_cmp)`，Track P `16cf319`），不是 kernel（§7.4）。
 
-**v0.8：打包的那一行现在是真的。** §7.15.3 记的"压缩的那一半现在存 bf16，不是 §11.3 的
-FP4 E2M1 + E4M3/16，等 compressor kernel 能写出打包形式时再定"——compressor 写出来了
-（§7.4），**它就是按打包形式写的：FP4 block-16 的 nibble 平面 + E4M3 的 scale 平面，两块分开的 buffer**，
-`tests/test_gpu_attn.cpp` 对参考**逐字节**比（0/256 个 nibble 字节、0/32 个 scale 字节不同）。
-所以 64K 上下文取 **48 MB 那一栏**，18 MB 的差额已经拿回来了；
-代价是 `sparse_attn` 内层循环里一次 nibble 解包，已经包含在 §7.15.5 的 69 µs/层里。
-**indexer 的 q/k 是另一种格式**（FP4 block-32 + 2 的幂 scale，§2.4）；
-一层里两种 FP4 格式，**混掉在 cosine 上看不见、在字节上看得见**，所以测试比的是字节。
-
-### 11.4 Prefix KV 持久化
-
-多轮对话中重复 prefill 一次要读 ~270 GB。因此把 encoder 输出（第 20 层输入，5120 × 4 份 fp16 = 40 KB/token）与压缩 KV、indexer K 按 prompt 前缀 hash 持久化到 `kvcache/`；命中时 encoder 跳过，只跑 decoder bounded replay（128 token）。这与官方"Encoder SWA Bounded Replay + 全局 KV 持久化"一致。64K 上下文的持久化体积 ≈ 2.7 GB，可接受。
-
-### 11.5 长上下文：迄今的验证全部在 64–72 token 上（v0.9-draft 新增）
-
-L2（§7.15）、L2x（§7.4）、L3（§7.16）、Track I 的慢 prefill（§7.13.1）、Track K 的 DSpark oracle（§10），
-**全部是同一个 64 token prompt 加至多 8（DSpark 是 27）个 decode token**。在这个长度上，长上下文特有的三件事**一件都没发生**：
-
-| 机制 | 64–72 token 上 | 长上下文上 | 后果 |
-|---|---|---|---|
-| **indexer top-k** | `index_topk = 512` 而候选只有 32（ratio 2）/ 65（ratio 1），`min(512, n) = n`，**参考全部保留，top-k 退化**（§7.4） | n > 512（ratio 1 在 C > 512、ratio 2 在 C > 1024）时第一次**真的在选** | radix select 只单独测过 4096 选 512（§7.4）；**在真数据上选对 512 个从来没有被检验过** |
-| **window 环** | 128 槽，72 个位置，**从不回绕** | C > 128 时每步覆盖最旧的一格 | 回绕下标、`get_window_topk_idxs` 的 `oldest` 分支、RoPE 的位置——**都没被执行过** |
-| **ratio-2 池化** | prefill 由 oracle / 慢 prefill 做 32 组，decode 8 步里只完成 4 组；**pos 64 上没有参考输出**（§7.4 未证伪项 2） | 每两个 token 一组，贯穿全程 | 池化的逐元素 softmax、携带状态、"一个 latent 代表组的第一个 token"的 RoPE，只在一个合成组上对过 fp64 转写 |
-
-外加两件只在长上下文上显形的：**RoPE / YaRN 的误差随位置增长**（§2.4 的相邻配对错误"position 0 上看不出来"就是这一类），
-以及**批边界依赖**（§10.2）在更多压缩组完成 / 未完成的交替下出现得更频繁。
-
-**所以长上下文的 L3 是必须的里程碑，不是"以后顺便测"**（§12.1、§15.2）。
-带宽上它几乎不花钱（§3.1 的 KV 项：16K 上 15.5 MB / token = 0.07 ms）；花钱的是 **prefill**（§7.13.3：16K 冷 ≈ 78–88 s）
-与 **oracle**（CPU fp32 参考在 4K / 16K 上的时间与内存：`TBD(Track M)`）。
+**参考自己的两条行为要记住**：ratio-2 层在组没完成的位置用层 20 的 key（17K 上 top-k 只 8% 重合，引擎照抄，§7.4）；
+top-k 边界上 bf16 精确并列是常态（48 个探针 (层, 步) 里 43 个有并列、35 个只放得下一部分，torch 保留的子集在其中 29 个里既不是最低也不是最高下标）。
+**attention 往哪去**（17K 的 decode，层 2–39 平均）：68% 被选的压缩行在 8K token 以外、承载 41% 的质量，window 承载 54%；sink 平均 0.28%（window-only 的层 0 / 1 为 6.6% / 25%）；
+512 行里前 16 行占压缩质量的 57%、前 64 行 74%（`index_topk` 是模型的一部分，必须保持 512）。**路由不随上下文长度变**（§9.5）。
 
 ---
 
@@ -2409,7 +2690,7 @@ L2（§7.15）、L2x（§7.4）、L3（§7.16）、Track I 的慢 prefill（§7.
 | L0 解码 | FP4/FP8/E8M0 → fp32 解码函数与参考逐位相同。`oracle.py --level l0` 把三张表导出到 `tests/data/l0_dequant.bin`（2,132 B），`tests/test_dequant.cpp` 逐位比对 | 逐位 |
 | L1 kernel | 每个 GPU kernel 对随机输入与 fp32 CPU 实现比较；**外加 expert FFN 的真权重版**（下）。**v0.6 实测**：`tests/test_gpu_moe.cpp` 把真实 expert `(0,0)` 与 `(39,383)` 经 IoEngine 读进 GPU slab，十四个 kernel 变体全部 cos = 0.99999996、max\|Δy\| = 1.37e-4（占 \|y\|max），且彼此完全一致；误差下界就是 `x` 的 fp16 舍入（相对 L2 2.04e-4），kernel 自身累加误差可忽略（§7.9.1）。**v0.7 补充**：fp8 shared expert cos = 0.999999947；`h` 的 fp8 量化对参考吻合到 5.0e-8；分组 dispatch 差 1–2 ULP（判据 1e-6，不是逐位）；packed fp16 4.52e-4；**int8 dot4 5.38e-3，略超判据**（§7.9.2）。**v0.8**：`HQuant=3` 与 `HQuant=2` 对 `y_hq16` **同为 5.030e-08**，四种 workgroup 形状给出同一个数（§7.9.3 (a)）；**kernel 外预量化的 int8 `x` 在两个真权重 expert 上是 2.90e-3 与 8.85e-3**（§7.9.3 (b)） | 相对误差 ≤ 1e-3（fp16 传递）；~~int8 路径 ≤ 5e-3~~ **v0.8 定案：判据不为 int8 `x` 放宽。** 误差是 `x` 的、不是 kernel 的，而且**逐 expert 变化 3 倍**（2.9e-3 对 8.9e-3）——一个判据不能靠挑 expert 来满足。`XMode=6` 因此**默认关闭**，只留一个"投机验证批可选"的开关，且**要开也得先由 L2 判定 8.9e-3 能不能接受**（§7.9.3 (b)、§15 未解决项）。dispatch B 的 `xldsi8` 不受影响（它量化的是 `h`，不是这条路） |
 | L2 逐层 | 用真实权重跑单层：`tools/oracle.py`（纯 torch fp32，从 safetensors 直接解码权重，逐函数对照 `model.py` 移植）vs deepMoE 每层输出。**v0.7：`--level l2` 已实现并跑通**——它跑的是**未经修改**的 `inference/model.py`（经 `tools/dsref.py` 的六个 CPU kernel shim），把七个层（0 / 1 / 2 / 13 / 14 / 20 / 39）每层 ~40–53 个张量导出到 `tests/data/l2/`（5.1 MB），逐级与整层的实测见 §7.15.1 | 每层输出余弦相似度 ≥ 0.999（**实测层 0 / 39 的 block 输出 0.999935 / 0.999980**），最大相对误差记录并画曲线。**判据用 cos 与相对 L2，不用 max 相对误差**——参考自己是 bf16/fp8，一个元素越过舍入边界会动它自己量级的半个 ulp（§7.15.1） |
-| L3 端到端 | 多 prompt × 64 token greedy：deepMoE 与 `oracle.py` 全模型 CPU fp32 前向（每 token 数分钟，跑 ≥ 5 个 prompt）逐 token 一致；投机开/关一致；logits KL 记录。**v0.8：`--level l3` 已实现并跑通**——`tests/data/l3/`（7.1 MB，459 s，一个 prompt）：prefill 之后每层的 window KV、八个 greedy step 的逐步压缩 KV 与 top-k、每步 **top-64 (id, logit)** 加上全 129,280 维的 max / log-sum-exp / min，以及 engram 的 hash 常量表。实测见 §7.16.1 | token 一致率 = 100%（允许在极低 margin 处出现分歧并记录 margin）。**实测：一步 top-1 一致、ρ = 0.97；八步教师强制 7/8、自由运行 6/8**，缺的那一个在**参考自己 margin 0.95** 处、原因是层 2 的 gate 在近似平局上选了不同的第六个 expert（§7.16.1）。**判据未达成，差额已定位到机制而不是未知**；`--level l3` 只跑了 **1 个 prompt，不是 5 个**，所以这一个分歧是样本量为 1 |
+| L3 端到端 | 多 prompt × 64 token greedy：deepMoE 与 `oracle.py` 全模型 CPU fp32 前向（每 token 数分钟，跑 ≥ 5 个 prompt）逐 token 一致；投机开/关一致；logits KL 记录。**v0.8：`--level l3` 已实现并跑通**——`tests/data/l3/`（7.1 MB，459 s，一个 prompt）：prefill 之后每层的 window KV、八个 greedy step 的逐步压缩 KV 与 top-k、每步 **top-64 (id, logit)** 加上全 129,280 维的 max / log-sum-exp / min，以及 engram 的 hash 常量表。实测见 §7.16.1 | token 一致率 = 100%（允许在极低 margin 处出现分歧并记录 margin）。**实测：一步 top-1 一致、ρ = 0.97；八步教师强制 7/8、自由运行 6/8**，缺的那一个在**参考自己 margin 0.95** 处、原因是层 2 的 gate 在近似平局上选了不同的第六个 expert（§7.16.1）。**判据未达成，差额已定位到机制而不是未知**；`--level l3` 只跑了 **1 个 prompt，不是 5 个**，所以这一个分歧是样本量为 1。**v0.9**：64 token 从导出状态 **8/8 / 8/8**（step-3 build），从我们自己的 prefill 7/8（同一个 step 6 近似平局，`--gate-report` 定位到精度，§7.16.5）；**4,133 / 17,010 token 8/8 / 8/8，从 GPU prefill 出发 8/8**（§12.1）；**`topk_idxs` 的判据改为 tie-aware**（§7.4）；64 token 仍 1 个 prompt |
 
 **L0 的三张表分别来自哪里**（信任锚点必须写清楚）：
 
@@ -2465,22 +2746,26 @@ L3 管"把它们接起来时接对了没有"。
    （`(64+1) % 2 != 0`），要真正验它需要一次**两步的 decode 导出**。
    **这两件事是同一个扩展**，排在 §15。
 
+**v0.9 状态**：洞 1 不变（64 token 仍 1 个 prompt，另有两个长 prompt）；洞 2 的前半由 `deepmoe run --gate-report` 解开（step 6 是 fp16 / bf16 激活误差越过 gate 近似平局，§7.16.5 (b)），后半的 ratio-2 池化参考输出由 Track M 导出（§11.5），**对参考输入的逐位测试还没写**。
+
 - `oracle.py` 的正确性靠代码评审对照 `model.py` + 小规模合成模型的双实现一致性测试保证；这是无法绕开的信任锚点，要写清楚。
 - 额外 sanity：与 DeepSeek 官方 API 同 prompt 的 greedy 输出比较，只作参考不作判据。
 
-### 12.1 长上下文 L3：4K 与 16K（v0.9-draft 新增，必需的里程碑）
+### 12.1 长上下文 L3：4K 与 17K（v0.9-draft 立项，v0.9 通过）
 
-§11.5 说明了为什么 64 token 上的 L3 对长上下文什么也没证明。**§1.3 (a) 因此要求 L3 在 4K 与 16K 上同样通过。**
+§11.5 说明了为什么 64 token 上的 L3 对长上下文什么也没证明。**§1.3 (a) 要求 L3 在长上下文上同样通过——v0.9 通过了。**
 
-| 项 | 规格 | 状态 |
+| 项 | 规格（v0.9-draft） | **v0.9 实测**（Track M / Q / L；p3_longctx.md、p3_longctx_decode.md、p3_prefill.md §9.3） |
 |---|---|---|
-| prompt | 4,096 与 16,384 token 各 ≥ 1 个真实文本（代码 + 中文 + 英文各有），外加一个**构造的**：让 ratio-2 与 ratio-1 源层都有 > 512 个压缩位置、窗口回绕 ≥ 8 圈 | `TBD(Track M)` |
-| 导出 | 与 `tests/data/l3/` 同一张清单：prefill 之后的整个 attention 状态（window 环、压缩 KV 平面、index key cache、compressor 携带状态）、≥ 8 个 greedy step 的逐步 `cmp_kv` / `topk_idxs` / gate 输入与 ids、每步 top-64 logits；**外加每步 indexer 的完整分数行**（top-k 不再退化，要能判断我们选的 512 与参考差在哪、差在并列还是差在分数） | `TBD(Track M)` |
-| 两步 decode 的 L2 式导出 | 同时解开 §12 L3 的两个洞（step 6 定位、ratio-2 池化的参考输出） | `TBD(Track M)` |
-| oracle 的代价 | CPU fp32 参考在 4K / 16K 上的 prefill 时间、峰值内存（dsref 在层 1 / 14 的 98 GB 未触碰占位要先换成 meta 占位，p3_dspark.md §7.6） | `TBD(Track M)` |
-| 统计 | 每层 top-k 与参考的交集大小（512 里对上几个）、窗口回绕前后逐层 cos、池化组逐元素误差、RoPE 误差随位置的曲线 | `TBD(Track M)` |
-| 判据 | §1.3 (a)：每 prompt 教师强制 8/8；自由运行只在参考 margin < 1.0 的近似平局处分歧；**top-k 的交集不设独立门**（并列时顺序不唯一），但交集 < 512 的每一层要能归到并列或 bf16 地板 | — |
-| 前置 | 一个能在 4K / 16K 上跑的 prefill：慢 prefill（§7.13.1）在 4K 上约 11 分钟、16K 约 46 分钟，**做 oracle 对照够用**；真正的 prefill（§7.13）通过后再用它重跑 | 慢 prefill 已有 |
+| prompt | 4K / 16K 各 ≥ 1 个真实文本 + 一个构造的 | **4,133 与 17,010 token**，EN / ZH / 代码混合（checkpoint 的 README 与 `inference/`、CPython 的 `argparse` / `json.encoder` / `dataclasses` / `textwrap`、仓库文档 `e41e54c` 版，无网络）；前 30 token 定义 `LEDGER_SALT = "kestrel-4471-amber"`、以 `assert LEDGER_SALT == "` 结尾——**参考两个都 9/9 取回**（margin 8.4–11.7，末个 `"\n` 1.30 / 1.66）。17,010 故意 > 16,384，让 candidate block 真裁；两个 N 都不是 128 的倍数、奇偶相反；**V4.1-Flash 没有 ratio-4 层**，ratio 2 是唯一的池化 |
+| 导出 | L3 清单 + 每步 indexer 分数 | `traces/longctx/<name>/`（1.3 GB，不入库）：L3 容器，`DecodeState::load` 原样读；新增 `Lnn.topk_idxs_last`、`cmp_row_new`；六个探针层（0 / 2 / 13 / 14 / 20 / 39）**每步**的 L2 全套（含 index q / weights / keys）；`routing.npz` 是全部 prefill top-6。`tests/data/longctx/`（9.0 MB，入库）：去掉 KV 缓冲的 L3 容器 + step 0 / 1 的 L2 |
+| 两步 decode 的 L2 式导出 | 解开 step 6 定位与 ratio-2 池化 | ratio-2 池化的参考链已导出（§11.5）；64 token 的 step 6 由 `--gate-report` 定位（§7.16.5） |
+| oracle 代价 | CPU 时间与内存 | 4K prefill 959 s（~24 s/层）、17K 1,579 s（~39 s/层，层 20–24 是 42–51 s）；decode 26–34 s/步；进程峰值 ~6 / ~9 GiB。17K 的 index 分数 einsum 是 17 GB bf16 × 2 份 → 按 1,024 行分块（4K 两种算法 8/8 层逐位相同）；层 1 / 14 的 98 GB 未触碰占位换成零参数桩，开跑前等 ≥ 20 GiB commit 余量 |
+| 统计 | top-k 交集、回绕前后 cos、池化误差、RoPE 曲线 | §7.4、§11.5：并列、稳定性、质量分布、路由；每步 KV 字节 10.1 / 15.8 MB |
+| **判据与结果** | §1.3 (a) | **(a) kernel 在参考输入上**：indexer 分数逐位等于主机重算、top-k tie-aware 24/24 / 24/24、candidate block 8/8。**(b) 引擎从导出状态**：教师强制 **8/8**、自由运行 **8/8**（两个长度，`est rel - 447 1 - amber "\n`），每步每层 index 列表对自己的分数 tie-aware 精确 64/64。**(c) 从 Track L 的 GPU prefill（oracle 模式）自由运行 8/8 / 8/8**（首 token 77，margin 8.31 / 9.92 对参考 8.86 / 9.48）。**(d) 64 token 回归不变** |
+| 逐步 margin（ours / 参考，教师强制） | | 4K：10.90/10.78、12.18/11.66、9.60/9.51、9.10/8.83、10.83/10.77、8.45/8.41、10.14/9.65、**0.98/1.30**；17K：11.38/11.38、11.43/11.65、10.73/10.59、10.13/10.10、10.91/11.06、8.59/9.12、11.34/11.33、**1.69/1.66**。step 7（`"\n` 对 `"`）是唯一的低 margin 步，与参考同形 |
+| 探针 stage 最差 cos（8 步） | | `attn_norm_out` 0.9704（4K）/ 0.9550（17K，step 1 L20）；`q` / `kv` 0.9865 / 0.9750 与 0.9541 / 0.9275；`attn_out` 0.9561 / 0.9501；`moe_out` 0.9037 / 0.9061；**读到的 window ≥ 0.999、压缩平面 ≥ 0.99997**。**loaded-CED 对照**（每步加载参考的压缩 KV 与 top-k）在 17K step 1 是 0.9557 对 produced 0.9550——最深的那次下探**不是** indexer / compressor / mask 的，是 MoE 路由近似平局随深度累积（gate top-6 在探针层 3–6 / 6，两种模式一样），与 64 token 同一件事 |
+| 还没做 | | 64 token 的第 2–5 个 L3 prompt；ratio-2 池化在参考输入上的逐位测试；bounded replay 模式的长上下文 token 分歧率（两个长 prompt 都是 oracle 模式）；层 24–36 只在 candidate 内打分；per-source KV 平面与 64K（§11.3） |
 
 ---
 
@@ -2560,8 +2845,8 @@ T_kernel ≈ 41.4 ms         # 40 层 dispatch 1–9（40 × 0.893）+ head，�
          ≈ 72–75 ms          # 到 64K 都不变
 ```
 
-> **v0.9-draft**：KV 项在带宽上可以忽略，所以长上下文 decode 的**预期**与 64 token 相同；
-> 长上下文下真正没进这个算式的是 **indexer 打分与 top-k 的时延**（计算型，随 C 线性增长，§7.4）——`TBD(Track M)`。
+> **v0.9**：KV 项实测确认可忽略（每步读 10.1 / 15.8 MB @ 4,133 / 17,010 token）；长上下文多出来的是 indexer 的**计算**：
+> 热步的 attention 36.9 → 42.2 → 46.4 ms（64 / 4,133 / 17,010 token），≈ +0.3 ms / 1K token，64K 外推 ≈ +22 ms（§3.1、§7.16.5 (f)）。
 
 **三条必须和数字一起读的口径：**
 
@@ -2574,18 +2859,20 @@ T_kernel ≈ 41.4 ms         # 40 层 dispatch 1–9（40 × 0.893）+ head，�
 3. **engram 是 §13.4 v0.7 漏掉的一项。** 它不大（两层 4.9 ms），但不是零，
    而且其中一半是 48 次随机 4 KiB 读，本该在 token 定下来的那一刻就发出去（§9.5）。
 
-**真机对照（§7.16.2，同一台机器、所有 expert 已驻留）：**
+**真机对照（v0.9：§7.16.5 的 step 3 热步；v0.8 的 134 ms 一列留作历史）：**
 
-| 项 | 地板 | 热步实测 | 比 |
-|---|---:|---:|---|
-| 非 MoE（attention + head + collapse） | 44.2 ms | 60.3 ms | 1.4× |
-| MoE | 25.0 ms | 68.6 ms | **2.7×** |
-| engram | 4.9 ms | 4.9 ms | 1.0× |
-| **计算合计** | **≈ 74 ms** | **134.0 ms** | **1.8×** |
+| 项 | 地板 | v0.8 热步 | **v0.9 热步** | 比（v0.9 / 地板） |
+|---|---:|---:|---:|---|
+| 非 MoE（attention + §7.4 + 尾巴） | 42.2 ms | 60.3 ms | **41.8 ms** | 1.0× |
+| MoE GPU | 25.0（7 FP4 槽）/ 27.3（真 fp8 shared） | 68.6（含主机） | **29.4 ms** | 1.08–1.18× |
+| MoE 主机 | — | （在上一格里） | **1.0 ms** | |
+| engram | 4.9 ms | 4.9 ms | **3.9 ms** | 0.8× |
+| stall + other（submit / record / fence / bind） | — | 0.2 ms | **5.4 ms** | |
+| **合计** | **≈ 75.8 ms** | **134.0 ms** | **81.5 ms** | **1.08×** |
 
-**差额三分之二在 MoE，而且几乎全部不在 kernel 里**：P1 的特化还挂着
-（`h_quant = 1` 在 `L32 R1` 上 +45.5%）、每次 submit 只跑一次迭代、以及 21 ms 的主机桥。
-**"把 134 拉回 ~75"是 Track I 的目标，也是 §15 的第二个里程碑（热步 ≤ 90 ms）。**
+**v0.8 说的"差额三分之二在 MoE、几乎全在 kernel 之外"修完了**（§7.16.5 (c)：P2 的 MoE 特化、一个 7 槽 runner、只在 gate 处切 command buffer、主机桥的往返）。
+剩下的 ≈ 6 ms 是结构性的（40 次 gate 往返、MoE 的 `x` 每层过一次主机），要 GPU 侧 act_quant 与 GPU 侧指针表；
+runtime 采纳 Track J 的 kernel 后非 MoE 再 −4 ms（§7.15.6），届时 ≈ 77.5 ms，离 §1.3 (c) 的 75 ms 还差 2.5 ms。
 
 **加上 NVMe**，代入 h ≈ **0.920**（5,711 槽，§3.1 的 Q2 曲线内插）：
 `0.080 × 240 个 expert × 18.80 MB = 361 MB`，**÷ 4.5 GB/s = 80 ms**。
@@ -2593,12 +2880,15 @@ T_kernel ≈ 41.4 ms         # 40 层 dispatch 1–9（40 × 0.893）+ head，�
 | 口径 | 计算 | stall | 每 token | TPS |
 |---|---:|---:|---:|---:|
 | **kernel 地板（Track I 之后）** | 74 ms | 80 ms | **154 ms** | **6.5** |
-| **今天的实现（§7.16.2 的热步）** | 134 ms | 80 ms | **214 ms** | **4.7** |
+| v0.8 的实现（§7.16.2 的 134 ms 热步） | 134 ms | 80 ms | 214 ms | 4.7 |
+| **v0.9 热步 + 5,711 槽模型的 stall** | 81.5 ms | 80 ms | **161.5 ms** | **6.2** |
+| v0.9 热步 + 开发机实际 4,500 槽（h ≈ 0.888 内插） | 81.5 ms | 112–126 ms | 194–208 ms | 4.8–5.2 |
+| **v0.9 对话实测**（4,500 槽，h 0.84–0.90，仍在爬坡） | ≈ 90–100 ms | 124–193 ms | 220–290 ms | **3.4–4.5** |
 | v0.7 写的 | 75.8 ms | 80 ms | 156 ms | 6.4 |
 
 **注意 stall 那一栏也还没兑现**：真机冷跑时盘只到 **3.0–3.9 GB/s** 而不是 4.5（§7.16.3），
 按 3.2 GB/s 算这一项是 ~113 ms，八步那一轮实测每 token ≈ 247 ms → 4.0 tok/s。
-**§9.4 的 Planner 线程（重叠下一层的取数）没有在跑**，这是 P3。
+**§9.4 的 Planner 线程（重叠下一层的取数）没有在跑**，这是 P3。**v0.9**：profiler 的 NVMe 记账修好之后，盘在 stall 期间是 3.7–4.3 GB/s（§7.16.5 (e)）；**开发机的自动 cache 是 4,500 槽不是 5,711**（路径 B 为了不丢设备限在 16 GiB），所以上表多了两行；层间重叠仍没做，是 R1。
 
 **这个算式的四条假设，必须和数字一起读**：
 
@@ -2618,28 +2908,28 @@ T_kernel ≈ 41.4 ms         # 40 层 dispatch 1–9（40 × 0.893）+ head，�
 
 | 场景 | 预期 | 依据 |
 |---|---|---|
-| **decode，无投机，今天的实现（h≈0.920）** | **4.3–4.9 tok/s** | §13.4 的表给 214 ms / 4.7 tok/s（热步 134 + stall 80）。**八步冷跑实测 0.88 tok/s**，因为那一轮的 h 只有 0.36（§7.16.3）——它是正确性 harness，不是稳态测量 |
-| **decode，无投机，Track I 之后（热步 ≤ 90 ms）** | **5.8–6.5 tok/s** | 地板 74 + stall 80 = 154 ms / 6.5 tok/s，留 10% 给真机开销 |
-| decode，无投机，h 掉到 0.85（跨语域） | 3.6–4.1 tok/s（今天）/ 4.4–4.8（地板） | 同式，stall 从 80 ms 涨到 150 ms |
+| **decode，无投机，今天的实现（v0.9）** | **3.4–4.5 tok/s 实测** | 对话（4,500 槽，h 0.84–0.90）：每 token ≈ 90–100 ms 计算 + 124–193 ms stall（§15.1.1）；128 步爬坡最后 32 步 4.88 tok/s @ 0.907，h ≥ 0.94 的 token 6.3–9.5 tok/s（§7.16.5 (e)）。v0.8 的「4.3–4.9」是 134 ms 热步 + 80 ms 的模型 |
+| decode，无投机，稳态 | 5,711 槽（h ≈ 0.92）**6.2 tok/s**；4,500 槽（h ≈ 0.888）4.8–5.2 tok/s | 81.5 ms 热步 + stall；R1 的交接与层间重叠是往上走的办法 |
+| decode，无投机，h 掉到 0.85（跨语域） | 4.0–4.3 tok/s（模型） | 81.5 ms + stall 150 ms（4.5 GB/s）/ 169 ms（4.0）；对话实测 h 0.836 时 3.41 tok/s（非 stall 部分 ≈ 100 ms） |
 | ~~decode，DSpark 平均接受 2.5，5,711 槽~~ | ~~9–13 tok/s~~ | **v0.9-draft 撤回**：那一行假设非 MoE 在 M 上平坦、stall 按并集 ÷1.4、接受率 2.5，三条都被 Track K 的实测否定或未证实（§10.1.3） |
-| **decode，DSpark，h≈0.920，Track K 实测接受率** | **最好 6.74 tok/s（k = 1，场景 A）/ 每个 k 都亏（场景 B）**，对无投机 6.41 | p3_dspark.md §9；接受率来自单条退化轨迹。**§10.1.5 的门槛：今天 NO-GO** |
-| decode，DSpark，h≈0.920，平均接受 2.0（k = 2..5） | 场景 A 7.4–10.7 / 场景 B 5.7–9.1 tok/s | §10.1.3 的参数表；未计 §10.1.3 的缺口 1（MoE 并集，偏乐观） |
-| decode，DSpark，h = 1（无 stall），实测接受率 | 15.7–17.0 tok/s，对无投机 13.2 | §10.1.3；"常驻读摊薄"单独能买到的上限 |
-| **decode，无投机，4K / 16K 上下文** | 与 64 token 同（KV 带宽项 ≤ 0.07 ms） | §3.1 的 KV 表；indexer 时延 `TBD(Track M)` |
+| **decode，DSpark，h ≈ 0.92，K2 实测接受率、confidence θ = 0.5** | 场景 B **7.7 tok/s（×1.18–1.19）** / 场景 A 8.6 tok/s（×1.31–1.32），对无投机 6.52 | §10.1.4；**有条件 GO，前提是 M > 1 kernel（Track T）**；基线用了 runtime 未采纳的 33.5 ms attention、h 按 5,711 槽，偏乐观。v0.9-draft 的「最好 6.74 / 每个 k 都亏」（Track K 退化轨迹）作废 |
+| decode，DSpark，h = 0.95 | confidence θ = 0.5：×1.17–1.18（贪心 9.59 对 8.11 tok/s，场景 B） | §10.1.4 |
+| decode，DSpark，h = 1（无 stall） | 场景 B 16.0 对 13.66 tok/s（×1.17）；场景 A 最好 ×1.45–1.50 | §10.1.4；"常驻读摊薄"单独能买到的上限 |
+| **decode，无投机，4K / 17K 上下文** | 热步 **91.1 / 94.2 ms**（64 token 82.9 ms，同一轮） | attention +5.3 / +9.5 ms，全是 indexer（8 个 index 层 2.4 / 6.2 ms，§7.16.5 (f)）；KV 带宽 ≤ 0.07 ms |
 | MoE kernel 有效带宽（M=1，7 个 FP4 槽） | ≥ 210 GB/s | 实测 222.6（§7.9.2）/ 220.7（§7.9.3 同口径），真机管线不应比它差 5% 以上 |
 | MoE 每层时间（M=1，7 槽 + `HQuant=3`） | ≤ 0.65 ms | 实测 **0.625**（§7.9.3 (a)）。`HQuant=2` 的 +27% 已经解决；**`runtime/moe_bridge.h` 的默认还是 `h_quant = 1`（+45.5%），改成 3 是一行**（§7.16.2） |
 | 投机验证批的 MoE（M=6，7 槽 + `HQuant=3`） | ≤ 0.17 ms/token | 实测 0.158（§7.9.3 (a)）。**判据是 ms/token，不是"≥ 80% 上限"**（§7.9.2 (b)） |
-| 非 MoE 路径，一层 | ≤ 0.95 ms | 实测 **0.893 ms**（§7.15.5），在 §3.4 模型的 0.97–1.29 ms 之下。**真 token 上是 1.30 ms**——那不是回归，是 bench 的八层坐在 MALL 里而四十层不在（§7.16.2） |
-| **一个热 decode step（全部 expert 驻留）** | **≤ 90 ms（Track I 的目标）** | 今天 **134.0 ms**（§7.16.2）；差额三分之二在 MoE，且几乎全在 kernel 之外 |
-| **L3 token 一致率** | **§1.3 (a)**：每 prompt 教师强制 8/8，自由运行只在参考 margin < 1.0 处分歧；64 token ≥ 5 个 prompt + 4K + 16K | v0.8 **7/8、6/8**；Track I 提交信息：加载状态 8/8 / 8/8、自己的慢 prefill 7/8 / 6/8（§7.13.1）；长上下文 `TBD(Track M)` |
-| 每 token dispatch 开销 | < 0.5 ms | 实测 0.40 ms（~600 × 0.66 µs，§7.14）。**但真机上每 dispatch 组一次 submit 是 17 ms/token**（128 次 × 0.13–0.15 ms，§7.16.2）——那是 submit 不是 dispatch，两件事 |
-| stall_ms / token（5,711 槽） | 75–90 ms | 上面的两个口径给 80 / 82 ms。**真机冷跑时盘只到 3.0–3.9 GB/s**，按 3.2 算是 ~113 ms（§7.16.3） |
+| 非 MoE 路径，一层 | ≤ 0.95 ms → ≤ 0.70 ms | 实测 **0.893 ms**（§7.15.5），**Track J 0.696 ms**（§7.15.6，runtime 未采纳）。真 token 上 attention 0.90 ms/层（step 3，含 §7.4），v0.8 的 1.30 ms 是八层 bench 坐在 MALL 里 |
+| **一个热 decode step（全部 expert 驻留）** | ≤ 90 ms（里程碑 (ii)）→ **≤ 75 ms（§1.3 (c)）** | **81.5 ms / 41 submit**（§7.16.5）；(ii) 已过，(c) 还差 6.5 ms |
+| **L3 token 一致率** | **§1.3 (a)**：每 prompt 教师强制 8/8，自由运行只在参考 margin < 1.0 处分歧；64 token ≥ 5 个 prompt + 4K + 16K | 64 token 从导出状态 **8/8 / 8/8**，从我们自己的 prefill 7/8（近似平局）；**4,133 / 17,010 token 8/8 / 8/8，从 GPU prefill 自由运行 8/8**（§12.1）；64 token 仍 1 个 prompt |
+| 每 token dispatch 开销 | < 0.5 ms | 实测 0.40 ms（~600 × 0.66 µs，§7.14）。submit 是另一件事：v0.8 每 dispatch 组一次 submit ≈ 17 ms/token；**v0.9 只在 gate 处切，41 次 submit：record 0.4 + submit 1.6 + bind 1.0 + fence ≈ 2.0 ms**（§7.16.5） |
+| stall_ms / token | 5,711 槽 75–90 ms；4,500 槽 112–126 ms | 上面的两个口径给 80 / 82 ms（5,711 槽）。v0.9 实测盘 3.7–4.3 GB/s；**对话 124–193 ms**（h 0.84–0.90）；128 步爬坡最后 8 步 103 ms @ 0.915 |
 | `hot_bytes` / token | 8.5 GB | 实测 **8.52 GB**（`--profile` 按层从 manifest 加出来，§7.16.3），对 §2.3 吻合到三位有效数字 |
 | ~~TTFT 4K prompt，冷 cache，单盘~~ | ~~40–55 s~~ | v0.9-draft 由下面四行取代 |
-| **TTFT，冷 cache，单盘，生产模式**（v0.9-draft） | N = 64 / 512 / 4K / 16K：**≈ 34 s / 58 s / 62–65 s / 78–88 s** | §7.13.3；NVMe 项实测输入，compute 是 §3.2 的先验，**kernel 速率 `TBD(Track L)`** |
-| TTFT，5,711 槽预热 37% | N ≥ 512：NVMe 项 ≈ 36 s | §7.13.3 |
-| 慢 prefill（今天就有的） | 64 / 512 / 4K / 16K：≈ 39 s / 1.8 min / 11 min / 46 min | §7.13.3，外推，未实测 |
-| TTFT，prefix 命中 | decoder 128 token replay：冷 ≈ 25 s（NVMe），v0.8 写的 1–2 s 只在这些 expert 已驻留时成立 | §7.13.3 第 3 条；§11.4 未实现 |
+| **TTFT，冷 cache，单盘，生产模式**（v0.9 实测） | N = 64 / 4,133 / 17,010：**43 s / ≈ 150 s / ≈ 445 s**（安静估计；实测 43.2 / 199.6 / 628.6 s 时有并发 CPU oracle） | §7.13.3；compute ≈ 8 s + 24 ms × N，NVMe ≈ 34–45 s。v0.9-draft 模型的 34 / 62–65 / 78–88 s 作废 |
+| TTFT，cache 已热 | 未测：prefill 读进来的 expert 不交给 decode cache，也不先查它（R1） | §7.13.2 部件 5 |
+| decode 路径的 prefill（serve 的短 prompt） | **1.5–3 tok/s 实测**（11–46 token 的 TTFT 4.9–23.4 s）；4K 外推 25–45 min | §7.13.1；GPU prefill 在 ~500 token 以上才划算 |
+| TTFT，prefix 命中 / 会话回退 | 全 40 层 replay R = 128：compute ≈ 3 s + miss；未实现 | §11.2 / §11.4（R2） |
 | 第二块 NVMe | 上述 NVMe 项 ×0.5 | 未验证 |
 
 这些数字若实测偏离 30% 以上，必须在文档中解释原因。
@@ -2647,7 +2937,7 @@ T_kernel ≈ 41.4 ms         # 40 层 dispatch 1–9（40 × 0.893）+ head，�
 
 **v0.9-draft：与新 §1.3 的关系**。(b) 就是"实测 decode TPS 对上面这个算式（代入实测 h）±15%，
 且 bench 之和解释非 stall 时间的 ≥ 90%"；(c) 就是"热步 ≤ 75 ms"（13.03 GB ÷ 174 GB/s）。
-按 Track I 提交信息的 86.7 ms，(b) 的 bench 覆盖率 ≈ 85%、(c) 是 69%——**两条都还差一截，差的就是地板与热步之间那 12 ms**。
+**v0.9：热步 81.5 ms，(b) 的 bench 覆盖率 93%（对话口径 76%）、(c) 是 74%**（§1.3）；v0.9-draft 按 86.7 ms 算的 85% / 69% 作废。
 下面是 v0.8 对旧标准 2 的原文，保留作历史：
 
 **与 §1.3 成功标准 2 的关系**：那条要求"达到模型给出的上限的 ≥ 70%"。
@@ -2685,7 +2975,7 @@ deepmoe/
 ├─ cmake/
 │  ├─ zig-toolchain.cmake  zig-{cc,cxx,ar,ranlib,rc}.cmd.in
 │  └─ deepmoe_options.cmake  选项与各模块源文件清单
-├─ docs/                   design.md  build.md  architecture.md
+├─ docs/                   design.md  build.md  architecture.md  + 十一份 track 报告（kernel_p1 … p3_chat）
 ├─ core/                   types.h status.h align.h bytes.h log.h config.h
 │                          json.{h,cpp}      自写的最小 JSON 读取器（无第三方依赖）
 │                          profiler.{h,cpp}  每 token 时间线 → JSONL（§13.1）
@@ -2699,6 +2989,10 @@ deepmoe/
 │                          kvstore.{h,cpp}   window 环 + 压缩 KV 的持有者（v0.7）
 │                          decode_layer.{h,cpp}  一整层 decoder 的编排（§7.15.3，v0.7）
 │                          moe_bridge.{h,cpp}    gate ids → Planner → timeline（§7.1，v0.7）
+│                          decode_state.{h,cpp}  L3 / longctx 导出的读入器（§7.16，v0.8）
+│                          engram.{h,cpp}        hash + 行取数 + 两个 dispatch（§7.10，v0.8）
+│                          session.{h,cpp}       serve 的会话：feed / KV 续接 / 生成循环（§15.1.1，v0.9）
+│                          sampling.{h,cpp}      温度 / top-p 的主机半边（§7.11，v0.9）
 ├─ store/                  slab.{h,cpp}         slab 池 + SlabBacking 接口
 │                          expert_store.{h,cpp} 槽状态机 + GPU 指针表（§5.3/§5.4）
 │                          planner.{h,cpp}      LRU 基线已实现，其余策略待 P1
@@ -2719,22 +3013,32 @@ deepmoe/
 │  │                       attn_kernels.{h,cpp}  §7.2–§7.8/§7.11 的十八个 pipeline
 │  │                                             + 共享地址表 + GpuScratch（§7.15，v0.7）
 │  │                       rawread.{h,cpp}       上限对照 shader
+│  │                       decode_kernels.{h,cpp} engram / head argmax / sample_topk（§7.10–§7.11）
+│  │                       dspark_kernels.{h,cpp} DSpark 草稿链（§7.12，v0.9）
+│  │                       prefill_kernels.{h,cpp} gpu::Prefill / PrefillRunner（§7.13，v0.9）
 │  └─ shaders/             §7.14 dispatch 清单，每个都过 slangc + spirv-val：
 │                          attn_common  fp8_gemv                     （v0.7 新增，FP8 路径的公共部分）
 │                          mega_mhc  wq_a  wq_b  wkv  sparse_attn  wo_a  wo_b
 │                          gate  head
 │                          moe_common  moe_gateup  moe_down  moe_gemv_fp4  rawread
+│                          moe_hquant  moe_xquant  compressor  indexer  engram  sample_topk（v0.8–v0.9）
+│                          gemv_ksplit  sparse_attn_t                     （Track J，v0.9）
+│                          dspark_{common,gemv,attn,head}  prefill_{common,elem,gemm,coopmat,attn}（v0.9）
 │                          （attn 侧与 moe 侧的公共头**故意分开**：一个是 FP8 attention，
 │                            一个是 FP4 expert，两条 track 各自演进）
 ├─ cpu/                    dequant.{h,cpp}      FP4/FP8/E8M0 解码（L0 oracle，已实现）
 │                          gemv_avx512.{h,cpp}  标量参考已实现，AVX-512 为桩
 │                          gate.{h,cpp}         router 数学（已实现）
+│                          dspark_tree.{h,cpp}  树采样：格 / 路径 / confidence / 精确接受（§10.1.2，v0.9）
+├─ text/                   tokenizer.{h,cpp} unicode_tables.inc   byte-level BPE，对 HF 100%（§15.1.1，v0.9）
 ├─ bench/                  nvme_bench.cpp     Q6/Q7 微基准（§9.2.1）
 │                          bw_matrix.cpp      带宽矩阵：CPU / GPU / 并发（§8.0、§3.3）
 │                          kernel_bench.cpp   §7.9 kernel sweep + dispatch 开销 + 路径 A/B
 │                                             （§7.9.1 的 P1 旋钮用 `--p1`；默认是 §7.9.2 的 P2 sweep）
 │                          attn_bench.cpp     §7.15.2 非 MoE 路径逐 kernel 带宽（v0.7）
 │                          heap_capacity.cpp  两个 heap 的实际可分配上限（§9.2.2）
+│                          prefill_bench.cpp  prefill 的 GEMM 选择与 TTFT 分解（§7.13，v0.9）
+│                          dspark_bench.cpp   草稿链的 T_draft（§7.12，v0.9）
 │                          results/           实测 CSV
 ├─ reports/                cache_sweep.json  cache_prefetch_{head,tail}.json（§9.1.1，gitignore）
 ├─ tools/                  envcheck/vkinfo.cpp
@@ -2742,6 +3046,8 @@ deepmoe/
 │                          oracle_shared.py     fp8 shared expert 与 `h` 量化的四个参考答案（§7.9.2，v0.7）
 │                          dsref.py corpus.py   参考实现的 kernel shim 与语料（route_trace.md §4/§6）
 │                          tests/test_cache_sim.py  12 个可独立验算的模拟器用例
+│                          oracle_l2_extra.py oracle_longctx.py oracle_prefill.py oracle_dspark.py dspark_tree.py（v0.8–v0.9）
+│                          chat.py encoding_check.py tokenizer_golden.py gen_unicode_tables.py（v0.9）
 ├─ tests/                  test_framework.h  自写的 header-only 测试框架
 │                          fake_backend.h    确定性的 Backend 假实现
 │                          l1_golden.h  l2_golden.h   黄金数据的读取（v0.7）
@@ -2750,13 +3056,16 @@ deepmoe/
 │                          test_gpu_core / test_gpu_moe（§7.9）
 │                          test_gpu_attn.cpp      §7.2–§7.11 逐 stage 对 L2 oracle（v0.7）
 │                          test_gpu_layer.cpp     一整层链起来（§7.15.1/§7.15.3，v0.7）
+│                          test_decode / test_decode_longctx / test_gpu_prefill / test_gpu_dspark
+│                          test_dspark_tree / test_tokenizer            （v0.8–v0.9）
 │                          data/v41_config.json   ModelScope 上的真实 config.json
 │                          data/manifest_v2_slice.json  真 manifest 的切片（48 个 file 条目 + 9 个 expert）
 │                          data/l0_dequant.bin    oracle L0 黄金表（2,132 B）
 │                          data/l1_layer*.bin     oracle L1 黄金向量（各 41,528 B）
 │                          data/l1_shared_layer0.bin  fp8 shared expert 的黄金向量（v0.7）
 │                          data/l2/               oracle L2：七个层 × ~40–53 个张量，5.1 MB（v0.7）
-└─ cli/                    deepmoe_main.cpp  `info` / `bench nvme` / `run`
+│                          data/{l2x,l3,prefill,longctx,dspark,tokenizer}/（v0.8–v0.9）
+└─ cli/                    deepmoe_main.cpp  `info` / `bench nvme` / `run` / `tokenize`；serve.cpp `serve`（v0.9）
 ```
 
 **C++ 标准：代码写作 C++20，但必须用 `-std=c++23` 编译。** `std::expected`
@@ -2771,12 +3080,12 @@ deepmoe/
 | **P0 权重与 oracle**（2–3 周） | `manifest.py`（直读地址簿，替代 repack）、`model/manifest`、`oracle.py` L0/L1、C++ fp32 CPU 前向（无 GPU） | 能用 CPU 产出正确 token（慢） | L0–L3 全过；trace 工具可跑。**已完成：manifest v2、oracle L0/L1、`tests/test_integration.cpp` 对真实 checkpoint 的端到端读路径校验** |
 | **P1 测量**（1 周，与 P0 后半并行）**已完成** | `route_trace` 跑 27,399 token / 40 prompt；`cache_sim` 出策略/容量/(d,K) 曲线 | [route_trace.md](route_trace.md)、`reports/*.json` | ✅ Q1–Q5 全部回答，写回 §9.1.1；cache 策略定为全局 LRU（§9.3）；lookahead 降级为不做（§9.4） |
 | **P2 GPU 常驻路径**（3–4 周）**已完成（在加载进来的 prefill 状态之上）** | §7 全部 decode kernel，M=1，所有 expert 假设驻留 | [kernel_p2_moe.md](kernel_p2_moe.md)（Track D/H）、[p2_attention.md](p2_attention.md)（Track E/F）、[p2_decode.md](p2_decode.md)（Track G）、`bench/results/{kernel_p2_moe,kernel_p2b_moe,attn_p2}.csv`、`tests/data/{l2,l2x,l3}/` | ✅ **step 1**：九个非 MoE kernel 逐级过 L2（整层 block 输出 cos 0.999935 / 0.999980，§7.15.1），MoE 的 M 扫描 / fp8 shared expert / `h` 量化全部有数（§7.9.2）。✅ **step 2**：§7.4 的 compressor 与 indexer **已产出**（十六个比较点里十一个逐位相同，§7.4）；**四十层 + engram + head + 采样串起来，deepMoE 自己产出了 token**——L3 一步 top-1 一致 / ρ 0.97，八步教师强制 **7/8**、自由运行 **6/8**（§7.16.1）；热步 **134 ms = 7.5 tok/s**（§7.16.2）；`HQuant=3` 把 decode 的量化税降到约 +3%，M=1 MoE **0.625 ms/层**、M=6 **0.158 ms/token**（§7.9.3）。**M=6 的准出条件改写**：~~有效带宽 ≥ 上限的 80%~~ 在 VALU 受限的 kernel 上不是有意义的指标（§7.9.2 (b)），改为 **`ms/token` ≤ 0.17**（实测 0.158）。**这一阶段的边界要说清楚：prefill 的状态（window KV）与每步的压缩 KV / top-k 仍是从 L3 导出加载的**，`Engine::status()` 每次运行都打印 LOADED；**"没有加载状态的 decode"是 P3 的第一件事** |
-| **P3 流式 decode**（3 周） | ExpertStore、Planner（全局 LRU）、IoEngine、Profiler。**不含 lookahead** | 端到端 decode，hit/miss/stall 报告 | h、stall 与 `cache_sim` 预测一致（±5 点）；NVMe 利用率 > 80% 在 miss 期；**报告里必须带上实测槽数** |
-| **P4 DSpark**（2 周）**v0.9-draft：有门槛，排在 P5 之后** | 草稿、greedy 验证、confidence 调度、KV 回滚。**Track K 已交付草稿 kernel、oracle、验证循环规格与实测**（[p3_dspark.md](p3_dspark.md)） | 投机 decode | ~~greedy 输出与非投机一致；TPS 增益可测~~ **先过 §10.1.5 的 go / no-go（G1 接受率 ≥ 5 个正常 prompt、G2 M > 1 的 fp8 投影 kernel、G3 批边界机制）**；GO 之后：参考 margin > ε 处与非投机逐 token 一致（§10.2）；实测 TPS 对 §10.1.2 的模型 ±15%；§13.3 对照 1 有数 |
-| **P5 Prefill/CED**（2–3 周）**v0.9-draft：前移到 P4 之前，并带上长上下文 L3** | cooperative matrix GEMM、expert-major 流式、bounded replay、prefix 持久化；**§7.13.2 的五个部件**；**§12.1 的 4K / 16K L3** | 完整对话 CLI | ~~TTFT 数字；oracle 模式与生产模式差异率~~ **§7.13.4 的五条**（状态交接对 oracle 导出、GPU prefill 之后 L3 过 §1.3 (a)、生产 / oracle 差异率、TTFT 对 §7.13.3 ±15%、交接后 cache 对 `cache_sim`）；**长上下文 L3 过 §1.3 (a)** |
+| **P3 流式 decode**（3 周）**v0.9：大部分完成** | ExpertStore、Planner（全局 LRU）、IoEngine、Profiler。**不含 lookahead** | 端到端 decode，hit/miss/stall 报告；**v0.9 另有 `deepmoe serve` + `tools/chat.py`、C++ tokenizer、top-p 采样**（Track P） | ✅ Planner 与 `cache_sim` 逐步相同的全局 LRU、profiler 的 NVMe 记账修正、cache 两路径自动定大小（实测 4,500 槽）、128 步爬坡与对话的 h / stall（§7.16.5）。**未过**：稳态 h / stall 对 `cache_sim` ±5 点（对话仍在爬坡）、层间重叠（R1）；`nvme_util` 有数（0.54–0.91）但没按 miss 期切 |
+| **P4 DSpark**（2 周）**v0.9：有条件 GO，等 M > 1 kernel** | 草稿、验证、confidence 调度、KV 回滚 | 投机 decode | **Track K / K2 已交付**：草稿 kernel（逐阶段 cos ≥ 0.9999985）、单遍单路径树采样规格与 `cpu/dspark_tree`（逐位）、5 prompt × 2 模式接受率、温度 1 精确比较器、批边界机制（§10）。**门槛**：§10.1.5 的 G2（Track T）→ G1 / G3 → 预测 ≥ 1.15 ×；GO 之后参考 margin > ε 处与非投机逐 token 一致、实测 TPS 对 §10.1.4 ±15%、§13.3 对照 1 有数 |
+| **P5 Prefill/CED**（2–3 周）**v0.9：GPU prefill 与长上下文 L3 已过** | cooperative matrix GEMM、expert-major 流式、bounded replay、prefix 持久化；§7.13.2 的五个部件；§12.1 的长上下文 L3 | 完整对话 CLI（✅ Track P） | ✅ §7.13.4 第 1、2 条（64 / 4,133 / 17,010 的交接；4K / 17K 从 GPU prefill 8/8）；**长上下文 L3 过 §1.3 (a)**。**未过**：第 3 条（token 分歧率）、第 4 条（TTFT：compute 24 ms/token → Track S）、第 5 条（交给 decode cache → R1）；prefix 持久化按 §11.4 重定（R2 之后） |
 | **P6 实验** | int8 dot4 路径、Wave64、双盘 stripe、路径 B 的 2 MiB 大页（需 `SeLockMemoryPrivilege`）、路径 B 的 >2 GiB slab | A/B 报告 | 只保留有数据支持的改动。~~CPU 分担 expert~~ 已被 §8.0 否决，移入 §16 |
 
-**P-1、P1 与 P2（step 1 + step 2）的结论已写回本文档（v0.8）。**
+**P-1、P1 与 P2（step 1 + step 2）的结论已写回本文档（v0.8）；P2 step 3 与 P3 的 Track J / K2 / L / M / P / Q 写回 v0.9。**
 
 ### 15.1 里程碑：第一个 token（2026-09-15）
 
@@ -2795,43 +3104,105 @@ deepmoe/
 5. **L3 只有一个 prompt**，§12 要五个。
 6. **（v0.9-draft 补）全部验证都在 64–72 token 上**：indexer top-k 退化（512 ≥ n）、window 环从不回绕、ratio-2 池化几乎没被执行（§11.5）。
 
-> **v0.9-draft 状态（来源是提交信息，未写回）**：第 1 条已由 Track I 解决（`5528f86` / `0b2c31c` / `0f41099`，§7.13.1、§7.16 顶部注）；
-> 第 3 条的热步到 **86.7 ms**（`0f41099`）；第 4 条的 engram 预取已做（`8328176`），Planner 的层间重叠仍没有；第 2、5、6 条不变。
+> **v0.9 状态**：第 1 条已解决（nothing loaded，§7.16.5）；第 2 条已解决（C++ tokenizer + `serve`，§15.1.1）；第 3 条：81.5 ms 对 75.8 ms 地板 +7.5%；
+> 第 4 条：engram 预取与精确全局 LRU 已做，Planner 的层间重叠没做（R1）；第 5 条：64 token 仍 1 个 prompt，另加两个长 prompt；第 6 条：4K / 17K 已通过（§12.1）。
 
-### 15.2 接下来的里程碑，按顺序（v0.9-draft 重排）
+### 15.1.1 里程碑：它会说话（2026-09-15，Track P；[p3_chat.md](p3_chat.md)）
 
-| # | 里程碑 | 判据 | 前置 | 状态 |
-|---|---|---|---|---|
-| **(i)** | **没有 LOADED 状态的 decode** | `Engine::status()` 不再打印 LOADED 那一行；compressor / indexer 接进 `Engine`，prefill 哪怕很慢也由我们自己跑 | §7.4 的 kernel 已有（Track F），缺的是接线 + §7.13 之外的一条慢路径 | **Track I 提交信息报告已达成**（`5528f86` / `0b2c31c` / `0f41099`），待写回 |
-| **(ii)** | **热步 ≤ 90 ms**（Track I） | 全部 expert 驻留时一个 step ≤ 90 ms（v0.8 134）。**这是 §1.3 (c)（≤ 75 ms）的中间站** | 三件事，全在 kernel 之外：`MoeBridgeConfig` 换成 §7.9.3 的 P2 特化（`h_quant = 3`）、一个 command buffer 录完 MoE 的三个 dispatch、消掉剩下的主机桥往返 | **Track I 提交信息报告 86.7 ms**（`0f41099`，空闲机），待写回 |
-| **(iii)** | **真正的 prefill + 长上下文 L3**（P5） | §7.13.4 的五条；§12.1 的 4K / 16K L3 过 §1.3 (a) | §7.13.2 的五个部件（kernel 速率 `TBD(Track L)`）；长上下文 oracle `TBD(Track M)`。**长上下文 L3 不必等真正的 prefill**：用慢 prefill（§7.13.1）先跑，真正的 prefill 通过后再重跑 | 慢 prefill 已有；其余未开始 |
-| **(iv)** | **DSpark：先过门，再集成**（P4） | **§10.1.5 的 go / no-go**：G1 接受率（≥ 5 个正常 prompt、空闲机）、G2 M > 1 的 fp8 投影 kernel（含 M = 5 head）、G3 批边界机制；决定规则是模型预测 ≥ 1.15 × 无投机。GO 之后：§10.2 的 margin 门不变量 + 模型 ±15% | Track K 的 kernel / oracle / 规格已交付（p3_dspark.md）；G2 是 attention track 的活；**被 (iii) 挡住的理由**：没有长上下文的 L3，verify batch 的五处 `seqlen == 1` 推广（§10.2）只在 64 token 上被对过 | **今天 NO-GO**（场景 A 最好 +5%、场景 B 全亏，§10.1.3） |
-| **(v)** | **流式 decode 的 Planner 重叠**（P3） | h、stall 与 `cache_sim` ±5 点；§13.3 对照 2、3 有数 | §9.4 的 Planner 线程；**§10.1.4 说 stall 是 DSpark 的主要成本，所以这一项同时是 (iv) 的杠杆** | 部分：精确全局 LRU、engram 预取已做（`0f41099` / `8328176`） |
-| **(vi)** | **tokenizer** | `deepmoe run --prompt "…"` | 与 §1.2 的 CLI 边界一起做 | 未开始 |
+`tools/chat.py` 起一个 `deepmoe serve`：**一个进程常驻** pinned 集合（9.17 GiB）、78.8 GiB expert cache 与 KV 状态；stdin / stdout 上行分隔 JSON
+（`generate` / `reset` / `tokenize` / `detokenize` / `status` / `quit`），每个 `token` 事件带 `id` / `text` / `step_ms` / `p` / `margin` / `nucleus` / `hit`，
+`done` 带 §13.1 的逐 token 分解、TTFT、prefill 与 decode 各自的 tok/s / 命中率 / NVMe MB。prompt 由 checkpoint 自己的 `encoding/encoding.py` 渲染
+（只读 import，它自带的 `test_encoding.py` 50/50 通过），C++ tokenizer 转 id；新 prompt 的 id 若延伸已有上下文就只喂新的部分（第 2 轮复用 153、prefill 11）。
+**C++ tokenizer**（`text/tokenizer.{h,cpp}`）：byte-level BPE，三个预分词正则手工编译，字符类取自 HF 自己的正则引擎；**对 HF `tokenizers` 24,897 个用例 / 7.69 M id 的 id、decode、
+skip-special decode、流式 decode 全部 100% 一致**（语料、两个长 prompt、全部 Unicode 标量、20,000 个 fuzz），909 个入库为 `suite.tokenizer`；加载 0.2 s、5–12 MB/s。
 
-**(i) 与 (ii) 已并行完成（待写回）。(iii) 紧跟其后；(iv) 严格排在 (iii) 与 G1–G3 之后；(v) 可以与 (iii) 并行。**
-v0.8 的顺序是 (i) → (ii) → DSpark → prefill；**v0.9-draft 把 prefill 与长上下文前移、DSpark 挂到门槛上**，理由是 §10.1.3 的实测。
+**第一批对话**（中 / 英、翻译、代码、思考模式；贪心与温度 1 / top_p 0.95；空闲机、auto cache 4,500 槽、上下文 4,096）：回答切题、翻译保真、代码可跑、思考模式正常闭合、每轮 EOS 停。
 
-### 15.3 各模块的完成度估计（v0.9-draft；v0.8 的数在括号里）
+| | 实测 |
+|---|---|
+| decode | **3.41–4.46 tok/s**，命中率 0.836–0.898 |
+| TTFT（11–46 token，走 decode 路径） | 4.9–23.4 s（prefill 1.5–3 tok/s） |
+| 每 token（第 7 轮，256 token，热） | attn 39.3 + MoE GPU 41.4 + MoE 主机 1.1 + **stall 151.9** + engram 4.2 + 尾 7.3 + other 8.2 ms，41 submit |
+| 采样 | 650 个采样步 0 次回退；平均核 1.2–2.7 个 token |
+| 4K prompt + GPU prefill（`--gpu-prefill-min 256 --cache-gb 16`） | prefill 97.9 s，续写 `kestrel-4471-amber"` 精确，decode 0.57–1.3 s/token（900 槽 cache，h 0.40） |
 
-粗估，只为排期用；"实测"一栏指的是"有没有一个数字支撑这个百分比"。
+**还不是什么**：stall 占每 token 的 60%（R1）；不能回退——在 k 个 token 前分叉的 prompt 从 0 重 prefill，官方默认 `drop_thinking=True` 让每轮都全量重来，所以 `chat.py` 默认保留思考（R2）；
+短 prompt 的 TTFT 是 decode 路径的 1.5–3 tok/s，GPU prefill 默认关；单会话、不能中途打断；engram hash 常量仍从 `tests/data/l3` 读（它们是 tokenizer 的函数，C++ 里推导没做）。
+
+### 15.2 进度与当前的并行计划（v0.9）
+
+**里程碑状态**（v0.9-draft 的 (i)–(vi) 加一条）：
+
+| # | 里程碑 | 判据 | **v0.9 状态** |
+|---|---|---|---|
+| (i) | 没有 LOADED 状态的 decode | `Engine::status()` 打印 `LOADED none` | ✅ Track I（§7.16.5） |
+| (ii) | 热步 ≤ 90 ms | 全部 expert 驻留 | ✅ **81.5 ms / 41 submit** |
+| (iii) | 真正的 prefill + 长上下文 L3 | §7.13.4 五条；§12.1 | **大部分 ✅**：GPU prefill 在 64 / 4,133 / 17,010 正确；4K / 17K L3 8/8（从导出与从 GPU prefill）。**缺**：第 3 条（token 分歧率）、第 4 条（TTFT）、第 5 条（交给 decode cache） |
+| (iv) | DSpark 过门 | §10.1.5 | **有条件 GO**（×1.18–1.32），G2 的 kernel 不存在 |
+| (v) | Planner 层间重叠 | h、stall 对 `cache_sim` ±5 点 | 精确全局 LRU、engram 预取已做；层间重叠与"晚到只拆 dispatch A"未做 |
+| (vi) | tokenizer / 对话 | `serve` + `chat.py` | ✅ Track P |
+| (vii) | KV 算清楚 + 回退（v0.9 新增） | §11.2 / §11.3 | 账已算（本版）；实现中（R2） |
+
+**v0.9-draft 之后各 track 交付了什么**：
+
+| track | 交付 | 报告 |
+|---|---|---|
+| I（step 3） | nothing loaded；81.5 ms / 41 submit；Planner = 精确全局 LRU；cache 两路径自动定大小；位确定性；step 6 定位到精度 | p2_decode.md §9–§13 |
+| J | LDS bank 冲突修复（已生效）；K-split；tiled sparse attention；一层 696 µs（接口未被 runtime 采纳） | p2_attention.md §13 |
+| K2 | 单遍单路径树采样规格 + 逐位的 CPU 实现；5 prompt × 2 模式的接受率；温度 1 精确比较器；批边界机制；TPS ×1.18–1.32 | p3_dspark.md §3、§11–§15 |
+| L | GPU prefill（oracle / replay）；coopmat + tiled GEMV；17K 的 candidate block 第一级；TTFT 分解 | p3_prefill.md |
+| M | 4K / 17K 参考导出与盐值检索；index 算力是设计值的 13 倍；并列是常态；ratio-2 层隔步用层 20 的 key | p3_longctx.md |
+| P | `serve`；C++ tokenizer；top-p kernel；官方编码；长上下文 NaN 的根因修复；GPU prefill 接进引擎；第一批对话 | p3_chat.md |
+| Q | decode 里的 candidate block；上限与加固；4K / 17K 8/8（含从 GPU prefill）；每步时间与 KV 字节 | p3_longctx_decode.md |
+
+**当前的并行计划：四个 worktree**（`deepmoe-r1` / `-r2` / `-s` / `-t`，都从 `5d4c324` 出发；工作流见 build.md）：
+
+| track | 目标 | 判据 | 为什么现在做 |
+|---|---|---|---|
+| **R1** | **命中率**：prefill → decode cache 交接（`ExpertStore::adopt`，按"最后 W = 128 个 prompt token 用过的 expert、按最后位置排 LRU"保留，§7.13.2 部件 5）+ Planner 的层间重叠，并让晚到的 expert 只拆 dispatch A（§7.9，**淘汰守卫必须同时接上**，§15 未决问题 19） | 交接后 cache 对 `cache_sim` 逐项相同；对话 decode 的 h 从 0.84–0.90 往 ≥ 0.92 走、stall ≤ 100 ms / token；GPU prefill 之后第一个 decode 步的命中率 ≈ 0.9 | 对话里 stall 占每 token 的 60%（124–193 ms），是 3.4–4.5 → 6 tok/s 以上唯一的大杠杆；stall 也是 DSpark 的主导成本（§10.1.4） |
+| **R2** | **KV 账、回退、serve UX**：per-source 平面、打包格式、越过 2 GiB 单块；§11.2 的持久化四样 + bounded replay 回退；serve 的回退 / 分支 / 中断 | KvStore 在 17K ≤ 90 MB、64K 能开；在 k 个 token 前分叉的 prompt 不再从 0 重 prefill；全 40 层 replay 的误差（R ∈ {128, 256}）有数 | 今天 17K 分配 882 MB、单块分配把上下文卡在 ≈ 41.7K；`drop_thinking=True` 每轮全量重 prefill |
+| **S** | **prefill compute ≥ 5×**：band attention、GPU 上的 indexer top-k（去掉 24 s 回读与主机选择）、`wo_a` 上 coopmat、少一些 mHC pre-norm 的 submit | 同 prompt、安静机：4K compute 100 → ≤ 20 s、17K 396 → ≤ 80 s | 长 N 的 TTFT 由 compute 主导（24 ms / token，17K ≈ 445 s） |
+| **T** | **M > 1 decode kernel**（DSpark 的 G2）：`AttnSpec` 加 `m`，fp8 GEMV / sparse_attn / compressor / indexer / gate / head / engram 的 M 维；MoE 并集形态 | 每层 M = 6 代价 ≤ ×3.06 @ M = 5 的线性外推；草稿 head M = 5；之后 G1（GPU runtime 上的接受率）与 G3（长上下文批边界） | §10.1.5：有条件 GO 的唯一硬前置 |
+
+**并行的约束**：R1 与 R2 都要动 `runtime/engine.*`（R1：交接与 Planner；R2：KvStore 与 session），合并时先定 R2 的 KvStore 接口；
+T 动 `gpu/vulkan/attn_kernels` 与 `AttnSpec`，与 Track J 未采纳的 §13.7 接口是同一批文件——**建议 T 顺带采纳 J 的 K-split / tiled 接口**（−4 ms / token），比分两次改便宜；
+S 只动 prefill 的 kernel 与 `gpu::Prefill`。四条 track 的 GPU 数字互相污染（build.md 的量测纪律），**要引用的数在安静机上重测并说明加载的 shader 目录**。
+
+**接下来的里程碑，按顺序**：
+
+| # | 里程碑 | 判据 | 前置 |
+|---|---|---|---|
+| 1 | 对话 ≥ 6 tok/s（稳态） | 同文本第二遍或 ≥ 512 token；§1.3 (b) 用 `--profile` 记录逐项对 §13.4 | R1 |
+| 2 | 长对话不重 prefill | 回退 / 分支 / 挂起走 §11.2；64K 上下文能开 | R2 |
+| 3 | 4K prompt 的冷 TTFT ≤ 60 s | 安静机 | S（+ R1 的交接让读进来的 expert 不白读） |
+| 4 | §1.3 (c) 热步 ≤ 75 ms | 81.5 → 75：采纳 J 的 kernel（−4 ms）+ GPU 侧 act_quant / 指针表（−2…−3 ms） | T 顺带 + kernel |
+| 5 | DSpark 的决定 | G1–G3 实测代入 §10.1.4 | T |
+| 6 | §1.3 (a) 补齐 | 64 token 的第 2–5 个 L3 prompt；ratio-2 池化逐位；生产 / oracle 的 token 分歧率 | oracle |
+| 7 | §1.3 (d) 三组 A/B | 冷 / 热同文本、A vs A+B、M = 1 vs DSpark | 1、5 |
+
+### 15.3 各模块的完成度估计（v0.9；v0.9-draft 的数在括号里）
+
+粗估，只为排期用。
 
 | 模块 | 完成度 | 缺什么 |
 |---|---|---|
-| `core` / `model` / `storage` | **97%**（95%） | ~~`IoEngine` 的忙碌记账~~ `0f41099` 改成在途窗口的并集（待写回）；DirectStorage 后端 |
-| `store`（slab / ExpertStore / Planner） | **85%**（80%） | 精确全局 LRU 已做（`0f41099`：每次 expert 访问走一格时钟，与 `cache_sim` 逐步相同）；淘汰守卫（command buffer 已经跨层边界，§7.15.3 那句"不可能回收在途槽"不再成立——**要复查**）；Planner 的层间重叠（§9.4）；prefill 交接的 keep / drop（§9.7.3） |
-| `gpu/shaders`（decode 路径，M = 1） | **90%** | `wo_b` 的 K-split、`sparse_attn` 的 head-group × KV-tile；两者合计值 ~2 ms/token |
-| `gpu/shaders`（M > 1：verify batch） | **15%**（—） | 只有 MoE（M ≤ 6、7 槽）；attention 族、`head`、`engram` 全是 M = 1（p3_dspark.md §6）；并集要 > 7 槽（§10.1.3 缺口 1）。**§10.1.5 的 G2** |
-| `gpu/shaders`（DSpark 草稿） | **80%**（0%） | Track K：`dspark_{common,gemv,attn,head}.slang`，逐阶段 cos ≥ 0.9999985、5/5 草稿 token（`86b6a0f`）；缺 M = 5 的主模型 `head` 与接进 runtime |
-| `gpu/shaders`（prefill） | **0%** | §7.13.2 全部；`TBD(Track L)` |
-| `runtime`（decode 循环） | **90%**（75%） | LOADED 两半已去（待写回）；热步 86.7 → ≤ 75 ms（§1.3 (c)）；预录制的每 token command buffer |
-| `runtime`（prefill） | **25%**（10%） | 慢 prefill 已有（§7.13.1）；真正的 prefill §7.13.2 的五个部件；prefix 持久化 §11.4 |
-| `runtime`（DSpark：验证循环 / KV 回滚） | **5%** | 规格已有（p3_dspark.md §3–§5）；`KvCache` 的逐项回滚、多位置 `main_x` 写 mtp 环、调度器；**被 §10.1.5 的门挡着** |
-| oracle（L0–L3） | **80%**（85%，分母变大了） | L3 的第二到第五个 prompt；**长上下文 L3（§12.1）`TBD(Track M)`**；两步 decode 导出；DSpark oracle 已有（`tools/oracle_dspark.py`），G1 的正常 prompt 重测 |
-| **长上下文（≥ 4K）** | **0%** | §11.5 的三个机制都没被执行过；§12.1 |
-| CLI | **45%**（40%） | tokenizer；对话循环（`--slow-prefill` / `--determinism` / `--gate-report` 已有，`0f41099` / `8328176`） |
-| **端到端 decode（64 token）** | **80%**（60%） | §1.3 (a)(b)(c) 三条都还差一截（§13.4 末） |
-| **端到端 MVP（§1.3 四条）** | **35%** | (a) 长上下文与 5 prompt；(b)(c) 热步 → 75 ms；(d) 三组对照；prefill |
+| `core` / `model` / `storage` | **98%**（97%） | DirectStorage 后端 |
+| `store`（slab / ExpertStore / Planner） | **88%**（85%） | `adopt`（R1）；淘汰守卫（只拆 dispatch A 落地时必须接）；层间重叠 |
+| `gpu/shaders`（decode，M = 1） | **95%**（90%） | runtime 采纳 Track J 的接口；`sparse_attn` ≤ 40 µs；`gate.slang` 的 softplus |
+| `gpu/shaders`（M > 1：verify batch） | **15%**（15%） | attention 族、`head`、`engram` 全部（Track T）；MoE 并集形态 |
+| `gpu/shaders`（DSpark 草稿） | **80%**（80%） | M = 5 的 `head`；草稿 top-K / gather / lse 与 verify 读回两个一次扫描的小 kernel |
+| `gpu/shaders`（prefill） | **70%**（0%） | compute ≥ 5×（S）；GPU 上的 indexer top-k |
+| `gpu/shaders` + `runtime/sampling`（采样） | **90%**（—） | DSpark 温度 1 的 verify 读回 kernel |
+| `runtime`（decode 循环） | **95%**（90%） | GPU 侧 act_quant / 指针表；每 token 预录制 |
+| `runtime`（prefill） | **70%**（25%） | 交给 decode cache（R1）；DSpark `main_x` 窗口进交接；replay R > 128 的量测 |
+| `runtime`（KV：session / 回退 / 持久化） | **20%**（—） | §11.2 / §11.3 全部（R2） |
+| `runtime`（DSpark：验证循环 / 回滚） | **10%**（5%） | 回滚规格定了（§10.2）；接进 runtime 等 T |
+| `text`（tokenizer） | **95%**（0%） | engram hash 常量在 C++ 里推导 |
+| oracle（L0–L3 + 长上下文 + prefill + DSpark） | **90%**（80%） | 64 token 第 2–5 个 prompt；池化逐位测试；replay 模式的长上下文 oracle 对照 |
+| **长上下文（≥ 4K）** | **80%**（0%） | per-source KV、64K 验证、candidate 内打分 |
+| CLI / `serve` | **75%**（45%） | 回退 / 中断 / 多会话 |
+| **端到端 decode** | **85%**（80%） | §1.3 (b) 稳态、(c) 75 ms |
+| **端到端 MVP（§1.3 四条）** | **60%**（35%） | (a) 64 token 补齐、(b) 稳态、(c) 75 ms、(d) 三组 A/B |
 
 **v0.6 的四项优先级，现在的状态：**
 
@@ -2853,17 +3224,9 @@ v0.8 的顺序是 (i) → (ii) → DSpark → prefill；**v0.9-draft 把 prefill
 | 5 | `wo_b` / `wq_b` 的 K-split | **一半**：`wq_b` 已经到 **94% 上限**（§7.15.5），靠的是 LDS 预算与 `act_quant` staging，不是 K-split。**`wo_b` 仍是 62%，而且已经排除了激活量化与 DRAM**（`ActQuant = 0` 量到 150.2 对 151.7）——**只剩 K-split**，它要多一个 dispatch、因而要 runtime 改动 |
 | 6 | 端到端流式 decode，Planner 用全局 LRU | 未开始（P3）。§7.16.3 已经给出它的基线：0.36 命中率下 83% 在等盘，盘只到 3.0–3.9 GB/s |
 
-**v0.9-draft 的优先级**（里程碑见 §15.2）：
-
-| # | 事项 | 为什么排这里 |
-|---|---|---|
-| **1** | **把 Track I 的四个提交写回**（§7.16 分解表、§13.4 真机对照、p2_decode.md），并复查淘汰守卫 | 本稿只在消解矛盾处引了提交信息；86.7 ms 的分解不在任何文档里 |
-| **2** | **真正的 prefill（§7.13）**，kernel 速率 `TBD(Track L)` | 里程碑 (iii)；N ≥ 512 时 TTFT 从 11–46 分钟到约 1 分钟（§7.13.3） |
-| **3** | **长上下文 L3（§12.1）**，oracle 与统计 `TBD(Track M)`；先用慢 prefill 跑 | 里程碑 (iii)；§1.3 (a) 的一半；也是 DSpark 的 verify 推广能被信任的前提 |
-| **4** | **热步 86.7 → ≤ 75 ms**（§1.3 (c)） | 剩 12 ms；§13.4 末 |
-| **5** | **Planner 的层间重叠 + 双路径 A/B 对照**（P3，§13.3 对照 2 / 3） | stall 是 decode 与 DSpark 共同的主导项（§10.1.4） |
-| **6** | **DSpark 的 G1–G3**（§10.1.5），然后按规则决定 | G1 是 CPU oracle 的几个小时；G2 是 M > 1 fp8 GEMV 的新设计；**决定之前不做 runtime 集成** |
-| **7** | `wo_b` 的 K-split + `sparse_attn` 的 head-group × KV-tile；两步的 decode 导出；tokenizer | 同 v0.8 |
+**v0.9 的优先级就是 §15.2 的四条 track 与里程碑表。** v0.9-draft 的七项优先级：1 写回 Track I ✅（本版）；2 真正的 prefill ✅（性能转给 S）；
+3 长上下文 L3 ✅；4 热步 → 75 ms 仍开（81.5 ms）；5 Planner 层间重叠 → R1；6 DSpark 的 G1–G3 → 有条件 GO，G2 → T；
+7 `wo_b` K-split ✅（Track J，未采纳）、`sparse_attn` head-group × KV-tile ✅（43 µs）、两步导出部分 ✅、tokenizer ✅。
 
 **P2 step 2 之后的优先级（v0.8，历史）**（里程碑见 §15.2）：
 
@@ -2901,10 +3264,40 @@ v0.8 的顺序是 (i) → (ii) → DSpark → prefill；**v0.9-draft 把 prefill
 | 13 | **参考实现依赖批边界**（verify vs prefill 余弦低至 0.945，14 周期 1 次选不同 token）：runtime 对齐谁 | G3：oracle 里隔离机制（M = 1 连续两步 vs M = 2 一步，比层 2 的 `topk_idxs`） |
 | 14 | **§10.1.2 的 `T_MoE(M)` 没计并集**：带宽地板在 k = 5 就多 ≥ 43 ms；而且 `MoeRunner` 是 7 槽、`route_weights` 稠密 | MoE track：并集形态（> 7 槽 / 多组）的逐 M 实测 |
 | 15 | **verify batch 的 miss 口径**：∝ `M · union_frac[M]`（Track K 模型）还是更接近 ∝ M（§3.1 第 3 点）；以及 Planner 预先下单能拿回多少 | `cache_sim` 按 verify batch 回放 + P3 的重叠实测 |
-| 16 | **prefill 里 engram 的随机读**：16K 上 77–155 万次 4 KiB 读，按 Q7 的 QD 48 是 9–19 s，可能比计算还贵 | `TBD(Track L)`：QD 扫描与 scale 平面去重 |
-| 17 | **长上下文的 oracle 代价**（CPU fp32 在 4K / 16K 上的时间与内存）与 dsref 的 98 GB 占位 | `TBD(Track M)` |
+| 16 | **prefill 里 engram 的随机读**：16K 上 77–155 万次 4 KiB 读，按 Q7 的 QD 48 是 9–19 s，可能比计算还贵 | **v0.9（Track L）**：安静机 4K 291,138 次读 5.3 s（55K IOPS），并发 CPU oracle 时 10 倍；QD 扫描与 scale 平面去重未做 |
+| 17 | **长上下文的 oracle 代价**（CPU fp32 在 4K / 16K 上的时间与内存）与 dsref 的 98 GB 占位 | ✅ **v0.9（Track M）**：4K prefill 959 s / 17K 1,579 s、decode 26–34 s/步、峰值 ~6 / ~9 GiB；98 GB 占位换成零参数桩 |
 | 18 | **§3.2 的 prefill 激活比例**：`f(N) = 1 − exp(−N/87)` 只由一个点（64 token ≈ 200/384）拟合 | Track L / M 的 prefill 路由表直接给出 |
 | 19 | **淘汰守卫**：`0f41099` 之后一个 submit 跨层边界，§7.15.3 / p2_decode.md §8 说过那时"在途槽不可能被回收"不再成立 | runtime：复查 `ExpertStore::set_guard` 是否已被调用 |
+
+**v0.9：未决问题的状态，与新增**
+
+| # | v0.9 状态 |
+|---|---|
+| 1 | 未变：64 token 仍 1 个 L3 prompt（另有两个长 prompt 通过） |
+| 2 | step 6 由 `--gate-report` 定位为 fp16 / bf16 激活误差越过 gate 近似平局；ratio-2 池化的参考输出已由 Track M 导出，**逐位测试未写** |
+| 3 | 层 2 / step 6 的近似平局是同一个现象（§7.16.5 (b)）；bf16 残差流的实验未做 |
+| 8 | K2 用 ×3.06 @ M = 5 建场景 B；实测曲线 = G2 = Track T |
+| 9 | ✅ 已修（在途窗口并集，`nvme_util` ≤ 0.91） |
+| 12 | ✅ K2：5 个正常 prompt × 2 模式、60 周期；仍需在 GPU runtime 上扩样（G1） |
+| 13 | 短上下文 ✅（数值性、非语义）；长上下文待测（G3） |
+| 14 | K2 按并集字节缩放计入（M = 6 ≈ 96 ms）；实测 = G2' |
+| 15 | 未变 |
+| 16 | 部分 ✅（见表内） |
+| 17 | ✅ |
+| 18 | ✅ 由 Track L 在 27K trace 上的 N 窗口表取代（§3.2） |
+| 19 | 未变：今天仍安全（淘汰只在 `plan_layer` 里、那时没有在途 buffer），**只拆 dispatch A 一落地就不安全**——R1 必须同时接 |
+
+| # | 新问题（v0.9） | 需要谁来定 |
+|---|---|---|
+| 20 | `gate.slang` 的 softplus 是 `log(1 + exp(z))`（z < −16 为 0），只碰分数 < 1e-3 的 expert | kernel：一行，改成 `log1p(exp(−\|z\|)) + max(z, 0)` |
+| 21 | **Track J 的 LDS 修复在真机 attention 上没显出来**：修复前 36.0 ms（Track I）、修复后 36.9 ms（Track Q，64 token），J 说它值 −3.8 ms 且"已经生效" | 同机同 prompt、说明 shader 目录，轮转测一次 |
+| 22 | ratio-2 层隔步用层 20 的 stale key：**保真**（L3 要求照抄）还是**意图**（每源用自己的 key，作为"另一个模型"单独测） | owner |
+| 23 | 层 24–36 只在 candidate block 内打分（精确等价），64K 上省下大部分 indexer 计算（≈ 22 ms / token） | kernel |
+| 24 | 全 40 层 bounded replay 的误差，R ∈ {128, 256}；它决定回退与 prefix 命中的质量 | R2 |
+| 25 | TPS 模型里的 h：空闲机 bench 的 5,711 槽对引擎自动定大小的 4,500 槽（路径 B 限 16 GiB 以免丢设备） | R1 实测稳态 h |
+| 26 | `KvStore::clear()` 在路径 A 的映射上逐元素写 163,840 个 −inf（§7.1 rule 10），外加整块 memset；每次 `reset_context` 都跑 | R2 |
+| 27 | 4K TTFT 的五个口径（serve 97.9 s / bench 199.6 s 与"安静 ≈ 150 s" / 验证跑 175 s / oracle 模式 250 s）没有一个是同口径的安静机数 | S：安静机、同模式重测 |
+| 28 | `gpu/vulkan/prefill_kernels.cpp` include 了 `runtime/engram.h` 与 `runtime/rope.h`——gpu 层反向依赖 runtime（architecture.md §1） | S：把两者需要的部分下沉 |
 
 **P0 已完成的部分（2026-09-14，v0.5）**
 
@@ -2971,7 +3364,7 @@ token 选择稳定但 margin 动几个百分点）。分歧出现在层 14 与 2
 - 不重新量化任何权重；不改 router 语义、不改 expert 精度。
 - 不接受无法复现的"快很多"；所有优化保留 A/B 与原始数据。
 - 不在 P-1、P1 的测量结论出来之前写 Planner 策略代码。（v0.6：结论已出，见 §9.3。）
-- 第一阶段不实现 vision encoder、1M 上下文、采样模式的投机解码（greedy 先行）。
+- 第一阶段不实现 vision encoder、1M 上下文、采样模式的投机解码（greedy 先行）。**v0.9**：温度 1 的精确比较器已在 CPU 上实现并逐位验证（§10.1.2），集成顺序仍是 greedy 先行；1M 上下文按模型格式的 KV 只要 0.94 GB（§11.3），不做的理由是验证与 prefill 的时间，不是内存。
 - **不做"CPU 分担 expert GEMV"**（v0.6 新增，原 §15 P6 的一项）。实测内存控制器是单一
   ~217 GB/s 共享上限，CPU 与 GPU 并发时合计仍是 214–216 GB/s（§8.0）。把权重挪给 CPU 算
   不增加总吞吐，只会让 GPU 少拿 14% 并交给一个每字节更慢的执行体。除非换成双内存控制器
@@ -3046,5 +3439,6 @@ FP4 打包：`I8 [rows, K/2]`，每字节 2 个 E2M1（低 nibble = 偶数元素
 | **v0.6** | **P1 两条 track 的实测全部写回。**（a）**内存系统**：CPU 与 GPU 共用一个 ~217 GB/s 的读带宽上限（GPU 单独 216、CPU 单独 101、并发 GPU 185 + CPU 29 = 214），raw-read 在路径 A / 路径 B / 纯 DEVICE_LOCAL 上完全相同 → §3.3 重写、§8 新增 §8.0 并**否决"CPU 分担 expert GEMV"**（移入 §16）。（b）**BIOS VGM 与本项目无关**：同一条 LPDDR5X，GPU 已能寻址两个 heap；§3.3 / §9.2.1 / §15 里所有"最小 VGM 下重测 / 需要重启"的条目删除，改为"slab 池在当前设置下横跨两种内存"（§5.2/§5.3）。（c）**容量的真实约束是 Windows commit 限额**：路径 A 的 slab 不吃物理内存（`availPhys` 基本不动）却 1:1 吃 commit，限额 = RAM + pagefile = 67.65 GiB，于是路径 A 停在 36 GiB、路径 B 随后一个槽都拿不到，合计 **36 GiB = 2,056 个 expert**（13.4%）→ 新增 §9.2.2、§5.2 重写，修复办法（调大 pagefile，VGM 支撑的页永不写入 pagefile）写进 build.md。`external_memory_host` 导入实测支持 >2 GiB（3/6/12/24 GiB），路径 B 的 slab 不必切成 2 GiB（§5.3）。（d）**kernel**：M=1 最优变体 218.5 GB/s = raw-read 的 **102%**、`T_layer(MoE) = 0.602 ms`；FP4 常量表解码是唯一"必须选对"的旋钮（算术解码只有 77%）；`h` 用 fp16（fp32 慢 9%）；M=6 只有 63%、瓶颈是激活读取，x 分块进 LDS 是头号待办；正确性 cos 0.99999996、max\|Δy\| 1.37e-4（误差下界就是 x 的 fp16 舍入）→ §7.1 rule 2–6 修订、新增 §7.9.1；**dispatch + barrier 实测 0.56–0.66 µs 而不是猜的 5–20 µs**，每 token 0.31 ms = 0.5% → §3.4 重写，"按到达顺序分组算 expert"从备选变成默认；raw-read shader 不再是有意义的上限。（e）**参考实现的四处出入**（route_trace.md §11）：Sinkhorn **以列归一化结尾、不是双随机**（行和偏差 8.5e-2）→ §2.4 更正并警告 §7.2 的 kernel；MoE 中间激活进 `w2` 前**必须按行 block-32 量化成 fp8 E8M0** → §7.9 补上；压缩 KV（FP4/block-16/E4M3 scale）与 indexer（FP4/block-32/E8M0）格式不同 → §2.4；DSpark 取的是**进入 block 之前**的残差流均值 → §2.4/§10.2。（f）**路由 trace（27,399 token / 40 prompt）**：§3.1 的假设表换成实测的容量-命中率曲线（768→0.552 … 7,680→0.954），冷 miss 0.25%，重用距离 p50 600 / p90 4,815；LRU = LFU-decay = ARC（四位小数不可分），score-aware 只赢 0.2 点，global 胜 per-layer 0.7 点，static-pin 差 0.4–2.7 点 → §9.3 定为**全局 LRU**、删掉静态 pin 档；Q1 偏斜真实（top-10% 覆盖 34–63%）但 LRU 自己吃掉了；`gate_bias` 改变 37% 的 top-6 选择；Q3 相邻 token Jaccard 0.10–0.36、`union_frac[5] = 0.634` → 投机解码对常驻完全摊薄、对 expert 流量只降到 1/1.6（§10.1、§3.1）；**Q4 lookahead 预取在每个 (d, K) 上都是净负**（最好 3.54 tok/s vs 基线 6.03，"探针插 LRU 尾部"更是自毁）→ **§9.4 降级为不做**，移入 §16。（g）§13.4 的预期数字全部换成有实测基础的值；§15 给出 P2/P3 的优先级：pagefile → 投机解码（M=6 kernel）→ 端到端 LRU → 不做预取 | `bench/results/{bw_matrix,kernel_p1,kernel_p1_patha,kernel_p1_pathb,heap_capacity}.csv`、`reports/cache_sweep.json`、`reports/cache_prefetch_{head,tail}.json`、`traces/verify/verify.json`；报告 [kernel_p1.md](kernel_p1.md)、[route_trace.md](route_trace.md) |
 | **v0.7** | **P2 step 1 两条 track 的实测全部写回。**（a）**容量问题已解决**：C: 的 pagefile 设成固定 96 GiB，commit 限额 67.65 → **159.6 GiB**，slab 池从 36 GiB / 2,056 槽变成 **100 GiB / 5,711 槽（37%）**——路径 A 拿到真正的 **74 GiB**（撞 device-local heap 的 74.4 GiB，不再是 commit），路径 B 在它之上叠 **26 GiB**（撞可用物理内存下限；单独跑是 40 GiB）；满载后 GPU raw-read **216（A）/ 207（B）GB/s，没有任何惩罚**。顺带钉死机制：路径 A 的**前 60 GiB 正好落在 BIOS VGM 的 64 GB 里、一个字节物理内存都不占**，再往上 1:1 吃可见内存，所以总量 = VGM + (可见内存 − 余量)，**守恒**（§3.3 第 3 点仍成立，但 VGM 现在决定 A/B 的划分）。**不需要 D: 上的 pagefile。** h 随之到 ≈0.920 → §3.1 的"今天"行、§5.2 重写、§9.2.2、§13.4、build.md。**一条量测卫生**：同设置下先跑的一轮满载 raw-read 只有 152 / 124 GB/s，看起来像"装满就掉一半"——那是并发基准的争用，不是容量的代价（`heap_capacity_pagefile128.csv` vs `heap_capacity_idle.csv`）。（b）**Track D（MoE kernel，[kernel_p2_moe.md](kernel_p2_moe.md)）**：M 扫描 M=1 222.6 → M=6 135.3 GB/s，`ms/token` 0.591 → 0.162；**§7.1 rule 6 的"x 分块进 LDS"实测在每一个 M 上都更慢**（M=6 时 dispatch B 掉 27%，代价是每 K-chunk 两个 barrier 把访存流水排空）→ 规则重写为"LDS 只用在能省指令的地方，绝不带 per-K-chunk barrier"；**M ≥ 3 是 VALU 发射受限**（dispatch A = `0.33 + 0.055·M` ms，对得上指令数），所以尺子换成 `ms/token`，§15 P2 的 M=6 准出条件据此改写；packed fp16 赢 dispatch A（+14%）、int8 dot4 赢 dispatch B（+26%），**int8 给 A 用会超出 §12 的 5e-3 判据（5.4e-3），所以 B-only**；要摸到 ≥85% 只剩"每 token 把 x 预量化成 int8"一条路（~1% 误差，**记为待决问题**，需要 L2 定）；fp8 shared expert 在 M=1 上打满 100% 上限；**每层 MoE 的真实时间 0.683（M=1）/ 1.310（M=6）ms 替换 §7.9.1 的 0.602 / 0.974**（第七个槽从 12.5 MB 的 FP4 顶替换成 23.6 MB 的真 fp8）→ §7.9.1/§9.4 Q5/§10.1/§10.3/§13.4；**§7.9 的"拆分 dispatch 免费"错了 340 倍**（每层 +0.193 ms = 7.7 ms/token，因为 dispatch B 的 640 个 workgroup 要重跑一遍归约）→ 改为"只在真的要等 I/O 时才分组"，§3.4 同步更正；`HQuant=2` 在 M=1 上要 +27%（0.591 → 0.749，根因是被迫从 L32 R1 换到 L16 R2），**是 kernel 侧剩下收益最大的一项**；分组 dispatch 是 1–2 ULP 而不是逐位相同（判据 1e-6）。（c）**Track E（非 MoE decode 路径，[p2_attention.md](p2_attention.md)）**：L2 oracle 落地（七层 × ~40–53 个张量，hook 挂在**未修改**的 `inference/model.py` 上，fp8/fp4 字节是**断言**出来的；因为 `shared_attn` 是进程级单例所以必须跑两遍）；逐 kernel 的精度/带宽表；一层（stage 1–9）**1.071 ms / 124 GB/s**，40 层 + head **48.5 ms/token**；端到端层 0/39 的 block 输出 cos **0.999935 / 0.999980**、gate 6/6；什么是真的、什么是加载进来的（压缩 KV 与 indexer top-k 是加载的，compressor/indexer kernel 还没写）。**参考实现强制的八处更正**：(1) `linear()` 在**每一次** fp8/fp4 GEMM 前把激活量化成 fp8 E4M3 block-32（`wq_a`/`wq_b`/`wkv`/`wo_b`/`indexer.wq_b`），§6 补全清单；(2) **`wo_a` 是例外**（bf16 einsum）；(3) **RoPE 配对的是相邻元素 (448+2j, 448+2j+1)**，不是 (d, d+32) → §7.3 更正；(4) `hc_post` 收缩的是 comb 的**第一个**下标 → §7.7；(5) RoPE base / YaRN **按层**取，ratio 0 → YaRN 关 + `rope_theta`；(6) **RMSNorm 的输出必须先舍入到 bf16 再进 `act_quant`**（在量化器正前方"比参考更精确"是负收益）；(7) **mega_mhc 是 3 个 dispatch、sparse_attn 是 2 个**（`p` 的 bf16 舍入要对最终行最大值、sink 不参与竞争 max）→ §7.2/§7.5/§7.14 的 dispatch 数从 11 改为 **14–15**，§3.4 的算术同步；(8) command buffer 现在是**每层一个**，每 token 预录制需要地址表在 shader 里按层索引（P3，值 ~0.5%）。另有三个值得升格为 §7.1 规则的性能陷阱：被 push constant 作上界的循环里的局部数组会落 VRAM（216 µs → 2.8 µs）、激活进 LDS 要存 bf16 而不是 E4M3 字节、**任何 argmax 都不许写成单 lane 串行扫描**（56 µs → 12.6 µs）。（d）§13.4 的端到端预期改用实测 kernel 时间：48.5 + 27.3 + stall 80 ms ≈ **156 ms/token ≈ 6.4 tok/s**，四条假设写在算式旁边。（e）§15：P2 step 1 关闭，下一步是 compressor/indexer → 40 层 + Engram + head/sampler + L3（"第一个 token"）→ DSpark；八个未解决问题成表 | `bench/results/{kernel_p2_moe,attn_p2,heap_capacity_idle,heap_capacity_pagefile128}.csv`、`tests/data/l2/`；报告 [kernel_p2_moe.md](kernel_p2_moe.md)、[p2_attention.md](p2_attention.md) |
 | **v0.8** | **P2 step 2 三条 track 的实测全部写回。**（a）**里程碑：第一个 token**（Track G，[p2_decode.md](p2_decode.md)）。四十层 + engram + head + greedy 采样全在 GPU 上；对 L3 oracle **一步 top-1 一致、ρ = 0.97、max\|Δlogit\| = 0.64**，八步**教师强制 7/8**、**自由运行 6/8**，缺的那一个在**参考自己 margin 0.95** 处、根因是层 2 的 gate 在近似平局上选了不同的**第六个** expert（那一层进来 cos 0.9997、MoE 输出 0.9884，比别的层差一个数量级——**是离散分支不是漂移**）→ 新增 §7.16、§12 的 L3 行、§15.1。**热步 134 ms = 7.5 tok/s**（attn 51.9 / MoE 68.6 / engram 4.9 / 尾 8.4），是 §13.4 kernel 预算的 **1.8 倍**，差额逐项已知且**都不在 kernel 里**：P1 的 MoE 特化还挂着（`h_quant = 1` 在 `L32 R1` 上 +45.5%）、每次 submit 只跑一次迭代、21 ms 的主机桥——**Track I 在修**。**冷启动**八步 0.88–1.15 tok/s、**83% 在等 NVMe**、命中率 0→0.80、盘的 `effective_gbps` 3.0–3.9（§7.16.3）；`--profile` 的 **`hot_bytes` = 8.52 GB，对 §2.3 吻合到三位**（按层从 manifest 加出来的，所以是对 §2.3 的检验）。**三个只有四十层才找得到的 bug 升格为规则**：融合的 `hc_post` 读错了子层（逐层测试结构上看不见它，因为那里 `apply_hc_post` 是关的）、`engram.slang` 在填表 barrier 之前读 FP8 解码表（一个 Wave32 内同步，所以前 32 项永远是对的；症状是**每次运行结果不同**与偶发全 NaN）、**在写合并内存上逐个 float 地算**（230 ns 一次 → 6.0 ms/层 = 一个热 step 的 26%）→ **新增 §7.1 rule 10 与 §8.1 第 7 条：`runtime/` 里任何在 GPU 可见指针上跑的标量循环都是 bug，只许整块 `memcpy` / 非临时 store**；§12 新增"L3 抓到了什么而 L1/L2 结构上抓不到"。（b）**Track H（MoE kernel，[kernel_p2_moe.md](kernel_p2_moe.md) v0.2，`kernel_p2b_moe.csv`）**：**`HQuant = 3`** 把 `h` 的量化拆成第三个极小的 dispatch，M=1 回到 `L32 R1`，代价从 +23…29% 降到**四轮中位数约 +3%**（6.3 → 约 **1.0 ms/token**），数值上与 `HQuant = 2` **逐位相同**（对 `y_hq16` 5.030e-08，四种形状同一个数）——**`HQuant = 2` 从此没有理由再用**；顺带把 dispatch B 的块 scale 从每元素一次乘法提到**每块一次**（2 的幂，逐位精确）。**`XMode = 6`（x 在 kernel 外预量化成 int8）实现了但两条判据都不达标**：dispatch A 稳定快 15–30%，**A+B 在 M=6 上仍只有 63–67% 上限**（瓶颈换到了 dispatch B，而 **B 的激活是 `h` 不是 `x`**），端到端 M ≥ 2 只有 0–7% 且不稳定、M=1 负收益；精度 **2.9e-3 / 8.9e-3（逐 expert 差 3 倍）**，**每行一个 scale 更糟**（1.6 倍粗的步长）→ **默认关闭**，§7.9.2 (d) 的"这是唯一能让 M=6 摸到 80/85% 的设计"**撤回**，§12 的 int8 判据定为**不为它放宽**（误差是 `x` 的、不是 kernel 的，而且一个判据不能靠挑 expert 来满足）。**并且撤回 v0.7 自己的一条结论**：§3.4 / §7.9 的「拆分 dispatch 每层 +0.193 ms = 7.7 ms/token（错了 340 倍）」**是测量漂移**——那三个数是**依次**测的，隔着同一轮内 7–8% 的热漂移而要量的差只有 1–3%，同一节还量到过 `whole 0.652 < A 0.520 + B 0.290` 这种物理上不可能的读数；轮转测量给出的真实代价是**只拆 dispatch A 时 ≤ 0.026 ms/层**（40 层 0.2–1.0 ms/token）**而且与一次算完逐位相同** → **「先到的先算」恢复为默认，且只拆 A、B 最后跑一次**，Planner 不再需要"预计等待 > 0.2 ms"的门槛；**量测纪律加一条：要量 1–5% 的差，对照必须轮转着测，并且用一个物理自检钉住**（§7.9.3 (c)、build.md）。（c）**Track F（[p2_attention.md](p2_attention.md) §9–§12）**：**§7.4 的 compressor（3 个 stage）与 indexer（6 个 stage）已产出、不再是加载进来的**，十六个比较点里**十一个逐位相同**，三个不逐位的都以 fp8 GEMV 收尾、坐在 1.6e-3 的 bf16 噪声地板上；**`index_score` 逐位相同是补上参考的三次 bf16 舍入之后才有的**（又一次"比参考更精确"要付代价）；fp4 字节平面**逐字节**相同，一次钉死 E2M1 舍入、nibble 顺序与两种 scale 格式 → **§11.3 的打包压缩 KV 现在是真的**（FP4 block-16 + E4M3 scale，两块分开的 buffer），64K 取 48 MB 那一栏。**三个没被证伪的地方**：`index_score` 是重算的不是捕获的；**ratio-2 的池化在 pos 64 上没有参考输出**（需要两步导出，记为 §12 未决项）；**top-k 在这个上下文上退化**（512 ≥ n），所以 radix select 是单独测的（4096 选 512 带并列，512/512）。**带宽第二轮**：`wq_b` 163 → **204 GB/s（94% 上限）**、`wq_a` → 171、`wkv` → 154、`sparse_attn` 两个 stage 141 → **69 µs**，**一层 dispatch 1–9 从 1.053 降到 0.893 ms，40 层 + head 从 47.7 降到 41.4 ms**；compressor + indexer 另加 **0.81 ms/token（+2%）**。**两个否证**：`wo_b` 的 62% **不是激活量化造成的**（`ActQuant = 0` 量到 150.2 对 151.7）**也不是 DRAM**——只剩 K-split；**`sparse_attn` 的"KV 只读一次"（`heads_per_wg`）是输的**（8 头/wg = 8 个 workgroup 对 40 个 CU，288 µs 对 69），要的是 §7.5 的 **head-group × KV-tile + 部分 softmax 合并**。**`WaveActiveSum` 不是普适的胜利**（逐 stage +30% 到 −14%）。（d）**§13.4 重算**：kernel 地板 = 41.4（非 MoE）+ 25.0（MoE，`HQuant=3`）+ 4.9（engram，v0.7 漏掉的一项）+ 0.8（compressor/indexer）+ ≈2.8（尾巴减去已计入的 head）≈ **72–75 ms**；对真机热步 **134 ms** 是 1.8 倍，**"134 → ~75"写成 Track I 的目标**；口径注写清楚了 head 不能算两次、以及 0.625 是 7 个 FP4 槽的数（换真 shared expert 地板挪到 76–79）。（e）**§15 重写**：P2 标为完成（**在加载进来的 prefill 状态之上**，边界写死）；新增 §15.1 里程碑与"还不是什么"的五条、§15.2 的五个下一里程碑（(i) 没有 LOADED 状态 → (ii) 热步 ≤ 90 ms → (iii) DSpark（Track K 交付 kernel + 已验证的算法）→ (iv) 真正的 prefill → (v) tokenizer）、§15.3 的逐模块完成度；未解决问题从八条变成十一条 | `bench/results/{kernel_p2b_moe,attn_p2}.csv`、`tests/data/{l2x,l3}/`；报告 [p2_decode.md](p2_decode.md)、[kernel_p2_moe.md](kernel_p2_moe.md) v0.2、[p2_attention.md](p2_attention.md) §9–§12 |
-| **v0.9-draft**（2026-09-15） | **结构调整稿，数字待填。** 与 owner 定下的结构性改动：（a）**DSpark 变成有门槛的实测决策**：§10.1 重写为带宽论证（热步里 8.52 GB 常驻读 ≈ 39–42 ms、连同命中 expert ≈ 60 ms 是 kernel 工作去不掉的地板，只有摊给被接受的 token 能去掉）+ 显式模型 `TPS(k) = E[tokens](k) / (T_draft + T_verify(k+1) + stall(k))`，每项注明来源 + 以接受率为参数的表 + go / no-go 门槛（G1 接受率 ≥ 5 个正常 prompt / G2 M > 1 的 fp8 投影 kernel / G3 批边界机制；决定规则是预测 ≥ 1.15 × 无投机）。**Track K 的实测（`86b6a0f`）直接写进去**：接受 1.93 tokens / verify（单条退化轨迹）、`union_frac` 0.830…0.594、`T_draft` 11.3 / ≈ 19 / ≈ 42 ms、每周期 2.73 GB、只有 MoE 支持 M > 1、fp8 投影 M = 5 时 ×2.2–4.8 → **h = 0.92 下最好 +5%、按实测 M 缩放每个 k 都亏，今天 NO-GO**；v0.6–v0.8 的"÷5 / ÷4.0 / ÷1.6"与"投机解码是第一杠杆"撤回，§13.4 的"9–13 tok/s"撤回；§10.2 的 greedy 不变量对参考本身不严格成立，改成 margin 门。本轮另发现两处模型缺口：`T_MoE(M)` 未计并集（k = 5 至少 +43 ms），verify batch 的 miss 口径（∝ `M·union_frac` 还是 ∝ M）未定。（b）**prefill 升格**：§7.13 原地展开为 §7.13.1–§7.13.5（已有的慢 prefill、真正 prefill 的五个部件、N ∈ {64, 512, 4096, 16384} 的 TTFT 模型、五条验收、kernel 速率 `TBD(Track L)`），§9.7 展开为 §9.7.1–§9.7.4（模式选择、层内顺序、keep / drop 交接给 decode cache、NVMe 项）；§3.2 的"≥ 64 token 几乎全部激活"与"≈ 50 s"更正为 `f(N)` 拟合与 ≈ 57 s；§13.2 的 TTFT 扩成四桶。（c）**§1.3 / §13.3 的成功标准换成四条绝对判据**：正确性（L3 教师强制 8/8，短 + 长上下文，自由运行只在参考 margin < 1.0 处分歧）、模型对实测（±15%，bench 解释非 stall 的 ≥ 90%）、带宽效率（常驻路径 ≥ 80% × 217 GB/s，等价热步 ≤ 75 ms）、内部 A/B（无投机 vs DSpark、冷 vs 热、A vs A+B）；外部 runtime 对照删除（V4.1-Flash 无 GGUF，FP4/FP8 / Engram / DSpark / CED 都不被支持）。（d）**长上下文进入计划**：§3.1 与 §13.4 加 KV 带宽项（到 64K ≤ 0.17 ms，可忽略）；新增 §11.5（全部验证在 64–72 token：top-k 退化、窗口不回绕、ratio-2 池化几乎没跑）与 §12.1（4K / 16K L3，oracle 与统计 `TBD(Track M)`）。（e）§15.2 重排为 (i) 无 LOADED → (ii) 热步 ≤ 90 ms → (iii) 真正的 prefill + 长上下文 L3 → (iv) DSpark 过门 → (v) Planner 重叠 → (vi) tokenizer；§15.3 完成度与优先级重估，未解决问题 12–19。**Track I 的 `5528f86` / `0b2c31c` / `0f41099` / `8328176` 只在消解矛盾处引用提交信息（LOADED 已去、热步 86.7 ms、慢 prefill 7/8 / 6/8），正式写回留给集成** | owner 评审；`86b6a0f` 与 [p3_dspark.md](p3_dspark.md)；Track I 的四个提交信息；本文既有实测 |
+| **v0.9-draft**（2026-09-15） | **结构调整稿，数字待填。** 与 owner 定下的结构性改动：（a）**DSpark 变成有门槛的实测决策**：§10.1 重写为带宽论证（热步里 8.52 GB 常驻读 ≈ 39–42 ms、连同命中 expert ≈ 60 ms 是 kernel 工作去不掉的地板，只有摊给被接受的 token 能去掉）+ 显式模型 `TPS(k) = E[tokens](k) / (T_draft + T_verify(k+1) + stall(k))`，每项注明来源 + 以接受率为参数的表 + go / no-go 门槛（G1 接受率 ≥ 5 个正常 prompt / G2 M > 1 的 fp8 投影 kernel / G3 批边界机制；决定规则是预测 ≥ 1.15 × 无投机）。**Track K 的实测（`86b6a0f`）直接写进去**：接受 1.93 tokens / verify（单条退化轨迹）、`union_frac` 0.830…0.594、`T_draft` 11.3 / ≈ 19 / ≈ 42 ms、每周期 2.73 GB、只有 MoE 支持 M > 1、fp8 投影 M = 5 时 ×2.2–4.8 → **h = 0.92 下最好 +5%、按实测 M 缩放每个 k 都亏，今天 NO-GO**；v0.6–v0.8 的"÷5 / ÷4.0 / ÷1.6"与"投机解码是第一杠杆"撤回，§13.4 的"9–13 tok/s"撤回；§10.2 的 greedy 不变量对参考本身不严格成立，改成 margin 门。本轮另发现两处模型缺口：`T_MoE(M)` 未计并集（k = 5 至少 +43 ms），verify batch 的 miss 口径（∝ `M·union_frac` 还是 ∝ M）未定。（b）**prefill 升格**：§7.13 原地展开为 §7.13.1–§7.13.5（已有的慢 prefill、真正 prefill 的五个部件、N ∈ {64, 512, 4096, 16384} 的 TTFT 模型、五条验收、kernel 速率 （待 Track L，v0.9 已填）），§9.7 展开为 §9.7.1–§9.7.4（模式选择、层内顺序、keep / drop 交接给 decode cache、NVMe 项）；§3.2 的"≥ 64 token 几乎全部激活"与"≈ 50 s"更正为 `f(N)` 拟合与 ≈ 57 s；§13.2 的 TTFT 扩成四桶。（c）**§1.3 / §13.3 的成功标准换成四条绝对判据**：正确性（L3 教师强制 8/8，短 + 长上下文，自由运行只在参考 margin < 1.0 处分歧）、模型对实测（±15%，bench 解释非 stall 的 ≥ 90%）、带宽效率（常驻路径 ≥ 80% × 217 GB/s，等价热步 ≤ 75 ms）、内部 A/B（无投机 vs DSpark、冷 vs 热、A vs A+B）；外部 runtime 对照删除（V4.1-Flash 无 GGUF，FP4/FP8 / Engram / DSpark / CED 都不被支持）。（d）**长上下文进入计划**：§3.1 与 §13.4 加 KV 带宽项（到 64K ≤ 0.17 ms，可忽略）；新增 §11.5（全部验证在 64–72 token：top-k 退化、窗口不回绕、ratio-2 池化几乎没跑）与 §12.1（4K / 16K L3，oracle 与统计 （待 Track M，v0.9 已填））。（e）§15.2 重排为 (i) 无 LOADED → (ii) 热步 ≤ 90 ms → (iii) 真正的 prefill + 长上下文 L3 → (iv) DSpark 过门 → (v) Planner 重叠 → (vi) tokenizer；§15.3 完成度与优先级重估，未解决问题 12–19。**Track I 的 `5528f86` / `0b2c31c` / `0f41099` / `8328176` 只在消解矛盾处引用提交信息（LOADED 已去、热步 86.7 ms、慢 prefill 7/8 / 6/8），正式写回留给集成** | owner 评审；`86b6a0f` 与 [p3_dspark.md](p3_dspark.md)；Track I 的四个提交信息；本文既有实测 |
+| **v0.9**（2026-09-15） | **v0.9-draft 的定稿：结构不变，数字全部写回。**（a）**它会说话了**（Track P）：`deepmoe serve`（stdio 上的行分隔 JSON、流式 token、KV 续接）、`tools/chat.py`（官方 `encoding.py` 渲染，50/50 测试）、C++ tokenizer（对 HF 24,897 个用例 / 7.69 M id 100% 一致）、GPU top-k + 主机精确 top-p（650 步 0 回退、226/226 逐位）；第一批对话 3.4–4.5 tok/s @ h 0.84–0.90、每 token ≈ 90–100 ms 计算 + 124–193 ms stall → 新增 §15.1.1、§7.11 采样条。（b）**正确性短 + 长**：64 token 从导出状态 8/8 / 8/8（Track I 的 step-3 build）；**长上下文 NaN 的根因是 runtime 把 sparse_attn 列表设成 `window + n_cmp` 而参考是 `window + min(512, n_cmp)`**（Track P）；Track Q 在 decode 里实现 design §2.1 的 candidate block（`indexer.slang` stage 6–8）、把上限改成 dispatch 限（524,280）、加固列表长度与写入核验，4,133 / 17,010 token 教师强制 8/8、自由运行 8/8、**从 Track L 的 GPU prefill 出发 8/8** → §7.4、§11.5、§12.1 重写，§1.3 (a) 标为达成（两处保留：64 token 自己 prefill 的 7/8 近似平局、64 token 仍 1 个 prompt）。（c）**Track M 的参考数据**：两个带盐值的长 prompt、index 算力是 §7.4 的 13 倍（1.74 GFLOP @ 64K）、ratio-2 层隔步用层 20 的 key（17K 上 top-k 仅 8% 重合）、top-k 边界并列是常态 → **`topk_idxs` 判据改为 tie-aware**。（d）**热步 134 → 81.5 ms / 41 submit**（Track I：只在 gate 处切 command buffer、第二条 timeline、7 槽 MoE、主机 act_quant 向量化、FFN 输入进路径 B、engram 预取）、位确定性、step 6 定位到精度、Planner = 精确全局 LRU、cache 实际 4,500 槽、128 步爬坡 → 新增 §7.16.5，§13.4 真机对照重写；**Track J** 一层 696 µs（LDS bank 冲突 + K-split + tiled attention，runtime 未采纳）→ 新增 §7.15.6、§7.5 条。（e）**prefill**（Track L）：GPU 上整块 prefill（oracle / replay、coopmat + tiled GEMV、两半 transit、作业表），64 / 4,133 / 17,010 交接正确，TTFT 43 s / ≈ 150 s / ≈ 445 s；**v0.9-draft 的时间模型错在 compute（24 ms / token 对先验 0.7 ms），长 N 由 compute 主导** → §3.2 结论推翻、§7.13 与 §9.7.1 / §9.7.4 重写。（f）**DSpark**（Track K2）：按 owner 的单遍 / 单路径方案（GPU 代价不变，只有 CPU 上的 top-K 采样与比较变多，K = 16 一周期 ≈ 85 µs）重测，每事件接受 3.93 / 3.52、runtime 回放 3.33 / 3.22 tokens / verify、树 ≈ 链、候选必须来自 Markov 偏置行、温度 1 精确无损比较器、批边界短上下文为数值性；预测 ×1.18–1.32 → **有条件 GO，前提是 M > 1 kernel**；**Track K 的 1.93 与 NO-GO 作废** → §10 整节重写，§13.4 的 DSpark 行更新。（g）**KV 账**（owner："KV 空间算清楚，SWA 可以不存"）：§11.3 按 config.json / model.py 逐层重写（64K 模型格式 61.3 MB、1M 0.94 GB；今天 KvStore 17K 882 MB、64K 3.37 GB、单块分配把上下文卡在 ≈ 41.7K）；**§11.2 立原则：SWA KV 从不持久化**，回退 / prefix cache / 挂起只存 ids + 压缩 KV + index key + compressor 状态，window 由 bounded replay 重建；DSpark 回滚改为先 attend 后写环 + 截计数（§10.2）；§11.4 不再存 encoder 输出（64K 2.7 GB → 59 MB）；实现中（R2）。（h）§15：进度表、各 track 交付、四个 worktree 的并行计划（R1 命中率 + 交接 + 层间重叠 / R2 KV + 回退 + serve / S prefill ≥ 5× / T M > 1 kernel）、七个里程碑、完成度、未决问题 20–28。**本轮发现的报告间冲突**（每条都在正文对应处注明）：**1** §11.3 v0.4 的"indexer K 29 MB"是每步读的量，存储是 11.1 MB（只有 4 个 kv source 持有 `k_cache`），p3_longctx.md §5.1 沿用了这个误标；**2** v0.8 §11.3 / §7.15.3 说"打包的压缩 KV 是 cache 格式、64K 取 48 MB"，代码里 sparse_attn 读 bf16 平面，打包字节只写到旁路 buffer 供测试（`compressor.slang`、`kvstore.h` 的头注释）；**3** `kvstore.h` 的"40 个平面只多 45 MB"是 1K 上下文的数，17K 多 ~790 MB；**4** Track J 说 LDS 修复"runtime 已生效、值 −3.8 ms"，而 64 token 的真机 attention 修复前 36.0 ms（Track I）、修复后 36.9 ms（Track Q）；**5** K2 §15 的无投机基线用 J 未被采纳的 33.5 ms attention 与 5,711 槽的 h = 0.92，引擎实际是 36–37 ms 与 4,500 槽；**6** 4K TTFT 有 97.9（serve）/ ≈ 150（安静估计）/ 175（Q 验证）/ 199.6（L bench）/ 250 s（L oracle 模式）五个口径，17K 有 445 / 596 / 628.6 / 1,584 s；**7** 17K 从 GPU prefill 的首 token margin：p3_prefill.md §9.3 记 10.41、p3_longctx_decode.md §4.3 记 9.92（参考 9.48）；**8** Q3 统计：本文 §9.1.1 的相邻 Jaccard 0.239、`union_frac[2..5]` 0.824 / 0.734 / 0.676 / 0.634，p3_longctx.md §5.5 引作 0.234 / 0.827 / 0.735 / 0.676 / 0.631；**9** p3_dspark.md 开头的一句话结论只写了场景 B 的 ×1.18–1.19，§15.2 的场景 A 是 ×1.31–1.32；**10** p3_dspark.md §3.5（verify 前快照 ≤ k 个环槽）与 §4.9（先 attend 后写）给了两种回滚修法，本文按 §11.2 的原则选后者；**11** Track Q 的"per-source 平面在 64K ≈ 0.35 GB 就够"仍是 bf16、按 ratio-1 开，模型格式是 61 MB；**12** `gpu/vulkan/prefill_kernels.cpp` include `runtime/engram.h` / `runtime/rope.h`，违反 architecture.md 的依赖方向；**13** p2_attention.md §13 与 p3_longctx.md 的状态日期是 2026-09-14，而它们的提交在 v0.9-draft（09-15）之后——并行跑、晚提交，数字不受影响，但 v0.9-draft 当时留占位并非因为数据不存在 | p2_decode.md §9–§13、p2_attention.md §13、p3_dspark.md §3 / §11–§15、p3_prefill.md、p3_longctx.md、p3_longctx_decode.md、p3_chat.md；`bench/results/{attn_p3,prefill_p3,dspark_p3}.csv`、`bench/results/chat/`、`tests/data/{longctx,dspark,tokenizer}/`；`D:\models\DeepSeek-V4.1-Flash\config.json` 与 `inference/model.py`（§11.3）；`runtime/kvstore.{h,cpp}`（今天的分配） |
 | v0.3 | 目标模型锁定 DeepSeek-V4.1-Flash 并解剖；结论改为 **NVMe 主导**；pinned/cached/cold 三层与 slab 池；精度锁定原生 FP4/FP8；按 V4.1 结构逐 kernel 设计（mHC、MQA-latent 稀疏 attention、分组 O 投影、FP4 融合 MoE、Engram、DSpark、head）；每 token 单 command buffer + timeline semaphore；NVMe 测量问题 Q1–Q7 与 trace/模拟工具；lookahead gating 预取；expert-major 流式 prefill；DSpark 验证循环与 confidence 调度；CED / bounded replay / prefix 持久化；四层自建 oracle；阶段重排（P-1、P0、P1 测量前置）；CPU 协同降为 P6；写下预期数字 | ModelScope 权重 header 统计、`inference/model.py`、V4.1 技术报告、工具链实测 |

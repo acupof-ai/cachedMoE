@@ -53,17 +53,23 @@ cmake --build build
 产物：
 
 ```
-build/deepmoe.exe              CLI: info / bench nvme / run
+build/deepmoe.exe              CLI: info / bench nvme / run / tokenize / serve
 build/nvme_bench.exe           design §9.2.1 Q6/Q7 微基准
 build/bw_matrix.exe            design §8.0 / §3.3 带宽矩阵（CPU / GPU / 并发 × 两条路径）
 build/kernel_bench.exe         design §7.9.1（--p1）/ §7.9.2（默认）MoE kernel sweep
                                + dispatch 开销 + 路径 A/B
-build/attn_bench.exe           design §7.15.2 非 MoE decode 路径逐 kernel 带宽
+build/attn_bench.exe           design §7.15.2 / §7.15.6 非 MoE decode 路径逐 kernel 带宽（含 Track J 的 P3 stage）
 build/heap_capacity.exe        design §9.2.2 两条路径的实际可分配上限
+build/prefill_bench.exe        design §7.13 prefill 的 GEMM 选择与 TTFT 分解（Track L）
+build/tests/dspark_bench.exe   design §7.12 DSpark 草稿链的 T_draft（Track K）
 build/envcheck.exe             环境自检
 build/tests/deepmoe_tests.exe  单元测试
-build/shaders/*.spv            §7.14 的 16 个 kernel，每个都过 spirv-val
+build/shaders/*.spv            gpu/shaders/*.slang 全部（decode / MoE / DSpark / prefill / 采样），每个都过 spirv-val
 ```
+
+**`build/shaders` 是运行时加载的**：同一个二进制换一个 shader 目录就是另一套 kernel。
+多条 track 共用一个 build 目录时，一条 track 重编 `.spv` 会改掉另一条正在跑的测试（p2_decode.md §11.2 就是这么被误导的），
+所以**每条 track 用自己的 worktree 与 build 目录**（见下面"多 track 并行"一节），报数时说清楚加载的是哪个 shader 目录。
 
 Git Bash 下（首次 zig 构建 libc++ 会刷一屏 `-Wnullability-completeness`，过滤掉再看）：
 
@@ -134,6 +140,19 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 
 # 容量上限 → design §5.2 / §9.2.2。**必须在空闲机上跑**（见上面的 pagefile 一节）
 .\build\heap_capacity.exe --slab-gib 2 --min-free-gib 6 --csv bench\results\heap_capacity_idle.csv
+
+# P3 Track J：attention 的 K-split 与 tiled sparse attention → design §7.15.6、docs/p2_attention.md §13
+#   空闲判据：head ≥ 230 GB/s 且 mega_mhc.post ≤ 2.6 µs，不过门就重跑（另一个进程的 GPU 突发能躲过只看 head 的门）
+.\build\attn_bench.exe --layers 8 --iters 64 --rows 2 --csv bench\results\attn_p3.csv
+#   旋钮：--ksplit-* --tiles --pv-tiles --pv-heads --kv N（长列表）--fp8-arith --rows4 --wave-on/off
+
+# P3 Track L：prefill 的 TTFT 分解 → design §7.13.3、docs/p3_prefill.md §10
+#   --ids 是空白分隔的 token id 文件（tests/data/longctx/prompts.json 里的两个长 prompt）；--replay 0 = oracle 模式
+.\build\prefill_bench.exe --section prefill --n 4133 --ids ctx4k_ids.txt --replay 128 --csv bench\results\prefill_p3.csv
+#   GEMM 选择：--coop-min / --coop-dense
+
+# P3 Track K：DSpark 草稿链 → design §7.12、docs/p3_dspark.md §8
+.\build\tests\dspark_bench.exe --model D:/models/DeepSeek-V4.1-Flash --iters 16 --csv bench\results\dspark_p3.csv
 ```
 
 `bench/results/` 里的 CSV 与它们对应的文档：
@@ -149,6 +168,10 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 | `heap_capacity.csv` | design §9.2.2 第一轮（4 GiB pagefile，历史） |
 | `heap_capacity_idle.csv` | design §5.2 / §9.2.2 第二轮（96 GiB pagefile，**这是当前的那一份**） |
 | `heap_capacity_pagefile128.csv` | 同上设置但**有并发污染**，作为量测卫生的反面教材保留 |
+| `attn_p3.csv` | design §7.15.6、[p2_attention.md](p2_attention.md) §13（Track J） |
+| `prefill_p3.csv` | design §7.13.3、[p3_prefill.md](p3_prefill.md) §10（Track L；**有并发 CPU oracle**，见那一节的脚注） |
+| `dspark_p3.csv` | design §7.12、[p3_dspark.md](p3_dspark.md) §8（Track K；机器不空闲） |
+| `chat/` | design §15.1.1、[p3_chat.md](p3_chat.md) §7：对话脚本、transcript、逐轮统计 JSON |
 
 `nvme_bench` 默认在 `%TEMP%` 建一个 2 GB 测试文件，跑完删除（`--keep` 保留，`--file`
 指定已有文件）。实测结果写回 design.md §9.2.1。
@@ -181,6 +204,10 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
   轮转之后有了：**`A + B` 必须对得上 `whole`**（0.391 + 0.201 = 0.591 对 0.592）。
   顺序测量那一节量到过 `whole 0.652 ms = A 0.520 + B 0.290`——**A + B > whole，物理上不可能**，
   那就是三个数取自三个热状态的签名。**设计基准时先想好这个自检是什么。**
+- **多条 track 同机并行时（P3 起的常态），CPU 负载与 GPU 负载要分开看**（p2_attention.md §13）：一个 12 线程的 CPU oracle
+  不改变 GPU kernel 的数（`head` 仍 233 GB/s），但**另一个进程的 GPU 作业会**，而且它的突发短到单看 `head` 会漏掉。
+  CPU oracle 读 NVMe 时会拖慢 I/O 类的数：Track L 的 engram 行读取在 oracle 并发时慢 10 倍（4K 上 55 s 对 5.3 s）。
+  **报数时写清楚当时还有谁在跑**，要写进 design 的数在安静机上重测。
 
 带 validation layer 跑一遍（`kernel_bench` / `attn_bench` 与四个 GPU 测试 suite 当前都是干净的；
 `spirv-val --target-env vulkan1.3` 由 `add_slang_shader()` 每次编译都跑）：
@@ -304,7 +331,34 @@ uv run python tools/oracle.py --model D:\models\DeepSeek-V4.1-Flash --level l3 -
 
 # compressor / indexer 需要的 L2 超集（约 305 s，2.35 MB → tests/data/l2x/）
 uv run python tools/oracle_l2_extra.py --model D:\models\DeepSeek-V4.1-Flash --out tests/data
+
+# prefill 分支（start_pos == 0）的逐 stage 黄金张量 → tests/data/prefill/（Track L，design §7.13.4）
+.venv\Scripts\python.exe tools\oracle_prefill.py --model D:\models\DeepSeek-V4.1-Flash --out tests/data/prefill
+
+# 长上下文参考：两个带盐值的 prompt（4,133 / 17,010 token）→ tests/data/longctx/（9 MB）+ traces/longctx/（1.3 GB）
+#   4K 约 20 分钟、17K 约 30 分钟；会等别的 Python oracle、物理内存与 ≥ 20 GiB commit 余量；可断点续跑
+.venv\Scripts\python.exe tools\oracle_longctx.py prompts
+.venv\Scripts\python.exe tools\oracle_longctx.py run --name ctx4k  --index-chunk 1024 --index-verify
+.venv\Scripts\python.exe tools\oracle_longctx.py run --name ctx16k --index-chunk 1024
+.venv\Scripts\python.exe tools\oracle_longctx.py stats
+
+# DSpark：树采样轨迹（5 prompt × {贪心, 采样}，CPU 约 1 h 40 min）与离线评估 → tests/data/dspark/（Track K2，design §10）
+.venv\Scripts\python.exe tools\oracle_dspark.py --model D:\models\DeepSeek-V4.1-Flash --tree --threads 16
+.venv\Scripts\python.exe tools\dspark_tree.py analyse      # -> tests/data/dspark/tree_stats.json
+.venv\Scripts\python.exe tools\dspark_tree.py tps          # design §10.1.4 的表；--json 出完整表
+.venv\Scripts\python.exe tools\dspark_tree.py lossless
+.venv\Scripts\python.exe tools\dspark_tree.py golden       # -> tests/data/dspark/tree_golden.bin
+
+# tokenizer 对 HF tokenizers 的全量对照（需要 build/deepmoe.exe；--quick 跳过码点扫描与语料）
+.venv\Scripts\python.exe tools\tokenizer_golden.py [--write-golden] [--quick]
+# checkpoint 自带的 encoding/test_encoding.py（无 pytest 的 50 行 shim；不往模型目录写任何东西）
+.venv\Scripts\python.exe tools\encoding_check.py
 ```
+
+- **长上下文 oracle 的 commit 陷阱**：参考的 `ParallelEngramEmbedding` 构造时在层 1 / 14 各做一次未触碰的
+  `torch.empty(384M, 256, fp8)`（≈ 98 GB commit），共享机器上会失败。`oracle_longctx.py` 在建 `Block` 之前把它换成零参数桩
+  （`_NoEngramTable`，`oracle_dspark.py --tree` 也用它），`dsref.make_block` 随后换上真正的行读取器。
+- **`traces/longctx/` 不入库**；`tests/data/longctx/` 只有去掉 KV 缓冲的小副本，**不能 seed KvStore**——长上下文 decode 测试要大的那份。
 
 - `--level l0` 导出 FP4 E2M1 / FP8 E4M3 / UE8M0 三张解码表到 `tests/data/l0_dequant.bin`（2,132 B），
   `tests/test_dequant.cpp` 逐位比对。
@@ -389,6 +443,29 @@ ctest --test-dir build -R suite.gpu_moe   --output-on-failure   # §7.9 / §7.9.
 ctest --test-dir build -R suite.gpu_attn  --output-on-failure   # §7.2–§7.11 逐 stage 对 L2 + §7.4
 ctest --test-dir build -R suite.gpu_layer --output-on-failure   # 整层链起来
 ctest --test-dir build -R suite.decode    --output-on-failure   # 四十层，八步，对 L3
+ctest --test-dir build -R suite.decode_longctx --output-on-failure   # 4K / 17K（需要 traces/longctx）
+ctest --test-dir build -R prefill         --output-on-failure   # GPU prefill 逐 stage + 64 token 进引擎
+ctest --test-dir build -L unit            --output-on-failure   # 纯 CPU、不要模型：含 sampling / dspark_tree
+ctest --test-dir build -R suite.tokenizer --output-on-failure   # 纯 CPU，但要 DEEPMOE_MODEL_DIR 下的 tokenizer.json
+```
+
+**长上下文与 prefill 测试的环境变量**：
+
+| 变量 | 谁读 | 作用 |
+|---|---|---|
+| `DEEPMOE_LONGCTX_DIR` | `suite.decode_longctx` | Track M 导出的目录，默认 `<repo>/traces/longctx`。**在 worktree 或仓库外的 build 里跑时必须给**（`traces/` 不入库，worktree 里没有它），例如 `C:\Users\Asus\code\deepmoe\traces\longctx`；没有就 SKIP 并说明 |
+| `DEEPMOE_PF_LONGCTX` | `gpu_prefill.longctx` / `.engram_repeat` / `.repeat` | 一个导出目录，如 `traces/longctx/ctx4k`（或 `ctx16k`）；不给就 SKIP。它打开"对 4K / 17K 导出做 GPU prefill、比交接、再 decode" |
+| `DEEPMOE_PF_DECODE` | `gpu_prefill.longctx` | `free`（默认，从我们的 prefill 状态自由运行，即盐值检索）/ `forced`（教师强制）/ `none` / `ref-free` / `ref-forced`（不 prefill，从导出自己的状态跑同样的步，是引擎的基线）；**一个进程一种模式**（同位置跑第二遍会在奇数 N 上把 ratio-2 的组与第一遍的状态池化） |
+| `DEEPMOE_PF_REPLAY` | 同上 | replay 长度；不给是 oracle 模式（`128` = 生产模式） |
+| `DEEPMOE_PF_TRUNCATE` | 同上 | 只 prefill 前 n 个 token（在 64 与导出长度之间找问题用） |
+| `DEEPMOE_PF_REPEAT` | `gpu_prefill.repeat` | `1` 时同进程 prefill 两遍、逐 stage 哈希比对 |
+| `DEEPMOE_PF_COOP_MOE` / `DEEPMOE_PF_COOP_DENSE` | prefill | cooperative matrix 的行数门槛（默认 expert 16 行、dense 64 行） |
+
+```powershell
+# 例：从 GPU prefill 出发的 17K 自由运行（design §12.1 (c)）
+$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
+$env:DEEPMOE_PF_LONGCTX='C:\Users\Asus\code\deepmoe\traces\longctx\ctx16k'; $env:DEEPMOE_PF_DECODE='free'
+.\build\tests\deepmoe_tests.exe gpu_prefill.longctx
 ```
 
 | suite | 它验的是什么 |
@@ -397,7 +474,13 @@ ctest --test-dir build -R suite.decode    --output-on-failure   # 四十层，�
 | `suite.gpu_moe` | §7.9 两个 kernel 的十四个变体 + **fp8 shared expert + `h` 的 fp8 量化 + 分组 dispatch**（design §7.9.2）。需要先跑 `oracle_shared.py` |
 | `suite.gpu_attn` | §7.2–§7.11 的十二个 stage 逐个对 `tests/data/l2/`（design §7.15.1）。需要先跑 `oracle.py --level l2` |
 | `suite.gpu_layer` | 一整层 decoder 链起来，只有 block 输入与 prefill 的 KV 是 golden；**故意只给八个槽的 cache**，所以六个 expert 每层都真的从 NVMe 取回来（design §7.15.3） |
-| `suite.decode` | **四十层 + engram + head + 采样，八步，对 `tests/data/l3/`**（design §7.16.1）。需要先跑 `oracle.py --level l3` |
+| `suite.decode` | **四十层 + engram + head + 采样，八步，对 `tests/data/l3/`**（design §7.16.1 / §7.16.5）。需要先跑 `oracle.py --level l3`。含慢 prefill，二十多分钟 |
+| `suite.decode_longctx` | 4K / 17K：indexer kernel 在参考输入上 tie-aware（含 candidate block）、引擎从导出状态逐层逐步、8 步教师强制 + 8 步自由运行、loaded-CED 对照、每步 KV 字节（design §12.1）。需要 `DEEPMOE_LONGCTX_DIR` |
+| `suite.gpu_prefill` | prefill 逐 stage 对 `tests/data/prefill/`（110 项）、64 token 四十层进引擎；`DEEPMOE_PF_LONGCTX` 时 4K / 17K 的交接与之后的 decode（design §7.13.4） |
+| `suite.gpu_dspark` | DSpark 草稿 kernel 逐阶段对 `tests/data/dspark/`（design §7.12） |
+| `suite.dspark_tree` | 纯 CPU：`cpu/dspark_tree` 对 `tests/data/dspark/tree_golden.bin` 逐位，外加 CPU 代价（design §10.1.2） |
+| `suite.tokenizer` | 纯 CPU（要 checkpoint 的 `tokenizer.json`）：909 个黄金用例的 id / decode / 流式 decode |
+| `suite.sampling` | 纯 CPU：L3 logits 上 200,000 次 top-p 抽样的 χ²、top 集合核对全词表核（design §7.11） |
 
 按标签筛选：`ctest -L needs-model` 只跑需要 checkpoint 的，`ctest -LE needs-model` 完全不跑。
 
@@ -407,7 +490,16 @@ ctest --test-dir build -R suite.decode    --output-on-failure   # 四十层，�
 deepmoe run --model DIR [--prompt-ids FILE] [--steps N]
             [--state DIR] [--teacher-force] [--per-layer]
             [--cache-gb N] [--profile FILE.jsonl] [--chunk-kb N] [--qd N]
+            [--slow-prefill] [--loaded-ced] [--warm K] [--determinism N]
+            [--gate-report] [--topk-report]
 ```
+
+`run` 是**正确性与计时的 harness**（对 L3 / 长上下文导出比对）；对话走下一节的 `serve`。v0.9 的诊断开关：
+`--slow-prefill`（自己算 prompt 状态并逐层逐位置对导出）、`--loaded-ced`（对照：每步加载参考的压缩 KV 与 top-k）、
+`--warm K`（同一位置先跑 K 遍再计时，热步地板）、`--determinism N`（每层四个张量 + 全部 logits 的哈希）、
+`--gate-report`（逐层把 gate 的差拆成"输入漂移 / kernel / 近似平局"）、`--topk-report`（每步每个 index source 的列表合法性与对参考的重叠）。
+长上下文：`--state traces/longctx/ctx4k`（或 `ctx16k`），design §7.16.5 (f) 的逐步时间就是
+`deepmoe run --state <dir> --warm 3 --steps 8 --cache-gb 24`。
 
 ```powershell
 $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
@@ -424,25 +516,88 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
     --per-layer --profile run.jsonl
 ```
 
-- **`--prompt-ids` 是一个 token id 的文件**：runtime 里**还没有 tokenizer**（design §15.2 (v)）。
-  `tests/data/l3/index.json` 的 `prompt_ids` 就是一份现成的。
-- **`--state` 是 oracle 的 L3 导出**（默认 `tests/data/l3`），它提供的是**prefill 将来会提供的东西**：
-  prompt 之后每层的 window KV，以及每步的压缩 KV 与 indexer top-k（design §7.4）。
-  **`Engine::status()` 每次运行都打印 `state LOADED from …` 那一行**，
-  所以一份 transcript 不可能被误当成自足的。
+- **`--prompt-ids` 是一个 token id 的文件**（`tests/data/l3/index.json` 的 `prompt_ids` 就是一份现成的）。
+  文本转 id 用 `deepmoe tokenize --model DIR --in cases.json --out ids.jsonl`（C++ tokenizer，对 HF 100%），或直接用 `serve`。
+- **`--state` 是 oracle 的导出**（默认 `tests/data/l3`；长上下文是 `traces/longctx/<name>`）。v0.9 起它只提供 **prompt 的状态**
+  （window KV、四个 kv source 的压缩 KV cache / index key / compressor 状态），每步的压缩 KV 与 top-k 由 design §7.4 的 kernel 算，
+  导出里的那份只拿来比对（`--loaded-ced` 才加载它们）。`--slow-prefill` 时连 prompt 状态也是自己的，
+  **`Engine::status()` 打印 `LOADED none`**——每次运行都打印这一行，所以一份 transcript 不可能被误当成自足的。
 - **`--cache-gb 0`（默认）按机器算 cache 大小。** 注意八步是**正确性 harness 不是 cache 基准**：
   `--cache-gb 48` 的命中率（0.349）不比 12 GiB 好，因为相邻 token 只共享约一半的 routed expert，
   八个 token 长的运行到不了稳态（design §7.16.3）。命中率在 `tools/cache_sim.py` 里量。
 - **`--profile` 写 design §13.1 的记录，一个 token 一行。** 其中 **`hot_bytes` 是 8.52 GB**，
   按层从 manifest 加出来，对 design §2.3 吻合到三位有效数字。
-  **但 `nvme_util` 和 `nvme_gbps` 现在是错的**（前者会大于 1）：`IoEngine` 的忙碌计数器
-  把每个 chunk 自己的延迟相加而不是取并集，队列深度是 8。**在它修好之前读 `effective_gbps`。**
+  ~~`nvme_util` 和 `nvme_gbps` 是错的~~——**v0.9 已修**（p2_decode.md §11.1）：profiler 原来收的是每个请求自己的延迟，
+  QD 8 下重复计了最多 8 倍；现在按在途窗口的并集记，`nvme_util` ≤ 1，`nvme_gbps` 与 IoEngine 自己的 `effective_gbps` 一致。
 - **`--per-layer` 打四十行**，这才是 design §13.1 真正想要的粒度——
   一层 stall 了 200 ms、或者层 1 和 14 的 engram 花了多少，在聚合里是看不见的。
   一个冷层长这样：`engram 0.00  attn 1.10  stall 32.4  moe 2.51 (gpu 1.36 host 0.67)  0/6  112.9 MB`。
-- **量测纪律**：热步的数字（design §7.16.2 的 134 ms）要在空闲机上取，而且要在一次探针 pass
-  **之后**——否则量到的是 NVMe。上面那份八步 transcript 里 submit 的往返在同一个二进制的
-  不同次运行之间在 0.13–0.75 ms 之间动，**所以读分解的形状，不要读第三位数字**。
+- **量测纪律**：热步的数字（design §7.16.5 的 81.5 ms）要在空闲机上取，而且要在 expert 都驻留之后
+  （`--warm K`）——否则量到的是 NVMe。submit 的往返在同一个二进制的不同次运行之间能在 0.13–0.75 ms 之间动，
+  **所以读分解的形状，不要读第三位数字**；机器上别的东西醒来时热步会从 81.5 跳到 89–91 ms（submit 翻倍、GPU 时间不动）。
+
+## 对话：`deepmoe serve` 与 `tools/chat.py`（design §15.1.1、[p3_chat.md](p3_chat.md)）
+
+```powershell
+# 交互对话（默认温度 1.0 / top_p 0.95，模型 README 的默认值）
+.venv\Scripts\python.exe tools\chat.py
+.venv\Scripts\python.exe tools\chat.py --think --max-context 8192
+# 脚本化：一组轮次 → transcript + 逐轮统计
+.venv\Scripts\python.exe tools\chat.py --script bench\results\chat\smoke_turns.json --transcript out.md --stats out.json
+```
+
+`chat.py` 的选项：`--exe`（默认 `build\deepmoe.exe`）、`--think`、`--temp`、`--top-p`、`--max-tokens`、`--seed`、`--system`、
+`--cache-gb`（0 = 自动）、`--max-context`（默认 4,096）、`--gpu-prefill-min`（0 = 关）、`--check-topk`、`--log`（serve 的 stderr，默认 `build\serve.log`）。
+会话内命令：`/reset /think /drop /temp X /top_p X /greedy /max N /seed N /system TEXT /stats /quit`。
+模型目录取 `DEEPMOE_MODEL_DIR`（默认 `D:\models\DeepSeek-V4.1-Flash`）。
+
+它起的是：
+
+```powershell
+deepmoe serve --model DIR [--cache-gb N] [--max-context 4096] [--engram-tables tests/data/l3]
+              [--gpu-prefill-min N] [--replay 128] [--check-topk] [--profile F.jsonl]
+```
+
+- **协议**：stdin / stdout 上一行一个 JSON。请求 `{"op":"generate","prompt_ids":[..] | "text":"..","max_tokens":N,"temperature":T,"top_p":P,"seed":S,"stop_ids":[1],"reuse":true}`
+  → 若干 `prefill` 进度事件、每个 token 一个 `token` 事件（`id`、`text`、`t_ms`、`step_ms`、`p`、`margin`、`nucleus`、`hit`）、一个 `done`
+  （design §13.1 的逐 token 分解、TTFT、prefill 与 decode 各自的 tok/s / 命中率 / NVMe MB、回退与 top-k 核对计数、结束原因 `stop` / `length` / `context`）。
+  另有 `reset`（KV 回到位置 0，pinned 集合与 expert cache 保持热）、`tokenize` / `detokenize`、`status`、`quit`。
+  引擎日志写 fd 1，所以 `serve` 把真正的 stdout 留给协议、把 fd 1 指到 stderr：**stdout 上只有 JSON**。
+- **KV 续接**：KV 里恰好是 `engine.history()`；新 prompt 若以它为前缀就只喂多出来的 id，否则 reset 后全喂。
+  **不支持回退**（design §11.2，R2）：在 k 个 token 前分叉的 prompt 从 0 重 prefill。官方默认 `drop_thinking=True` 会让每一轮都分叉，
+  所以 `chat.py` 默认保留思考（`/drop` 切回官方行为）。
+- **prompt 格式**：`chat.py` 以只读方式 import 模型目录里的 `encoding/encoding.py`（关掉字节码写入）渲染文本，`serve` 的 C++ tokenizer 转 id；
+  生成的 id 原样沿用、从不重新分词（采样出的 BPE 序列不一定是它自己文本的规范分词）。`tools\encoding_check.py` 跑官方的 50 个测试。
+- **GPU prefill**：`--gpu-prefill-min N` 把 ≥ N token 的**新** prompt 送去 `gpu::Prefill`，续接的轮次与短 prompt 走 decode 路径（它同时预热 cache）。
+  默认关：64 token 上 GPU prefill 读 94 GB expert、43 s、不预热任何东西。要开就用 ~500 的阈值，并**显式 `--cache-gb ≲ 60`**——
+  自动定大小的 78.8 GiB cache 旁边路径 A 没有 prefill 的空间，失败时 `serve` 记警告、reset、回退 decode 路径。
+- **`--max-context`**：`KvStore` 按它开 40 层的 bf16 平面、而且是一块分配（design §11.3）：4,096 是 214 MB，17K 是 878 MB，
+  超过 ≈ 41.7K 会撞路径 A 的 2 GiB 单块上限（推算）。
+- **`--check-topk`**：每个采样步把 GPU top-k 的结果与主机模拟逐位比对（慢，只用于验证）。
+- **engram 表**仍从 `tests/data/l3` 读（hash 常量是 tokenizer 的函数，C++ 里推导没做），所以要么在仓库根目录跑，要么给 `--engram-tables`。
+
+## 多 track 并行：一个 track 一个 worktree
+
+P3 起四条 track 同时在一台机器上跑（design §15.2：`deepmoe-r1` / `-r2` / `-s` / `-t`）。约定：
+
+```powershell
+# 从 main 的某个提交为一条 track 开 worktree（分支名 track-<名字>）
+git worktree add ..\deepmoe-r1 -b track-r1 5d4c324
+cd ..\deepmoe-r1
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/zig-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+git worktree list
+```
+
+- **每个 worktree 自己的 build 目录**，包括 `build/shaders`：kernel 是运行时从那里加载的，共用 build 目录等于共用 kernel（p2_decode.md §11.2）。
+- **`traces/` 与 `reports/` 不入库，worktree 里没有**：长上下文测试给 `DEEPMOE_LONGCTX_DIR` / `DEEPMOE_PF_LONGCTX` 指回主仓库的
+  `C:\Users\Asus\code\deepmoe\traces\longctx`；`tests/data/` 是入库的，每个 worktree 都有。`.venv` 也只在主仓库，用它的绝对路径。
+- **zig 的全局缓存是共享的**：`zig c++` 第一次为一个目标编译 libc++ 等运行时时写 `%LOCALAPPDATA%\zig`，所有 worktree 共用这一份。
+  **几个 worktree 同时做第一次构建会在这个缓存上竞争**——撞上时构建会在缓存里的文件上失败。办法：新开 worktree 时先让**一个** worktree
+  跑完第一次 `cmake --build`（缓存热了之后并行没有问题），或者给每个 worktree 的 shell 设自己的 `ZIG_GLOBAL_CACHE_DIR`
+  （代价是每个都重编一次 libc++）。构建失败在缓存路径上时，先串行重跑一次再怀疑代码。
+- **GPU 与 NVMe 是共享的**：一条 track 的 GPU 测试会污染另一条的带宽数（上面"测量纪律"最后一条）；要写进 design 的数，在其他 track 空闲时重测。
+- 合并回 `main` 时按 design §15.2 的"并行的约束"排序（R2 的 KvStore 接口先于 R1 的交接）。
 
 ## Windows 虚拟内存（pagefile）：**已在开发机上做完**
 

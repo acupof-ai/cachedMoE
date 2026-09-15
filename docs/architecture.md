@@ -13,6 +13,9 @@
 command buffer 从"每层一个"改成"在 gate 处切开"（§2.1）；完成信号走第二条 timeline（§2.3）；
 §7.4 的 compressor / indexer 的状态进了 `kvstore`，`shared_attn` 的路由进了 `Engine`（§1.1）；
 Planner 的 LRU 时钟改为按访问计（§2.4）。**
+**v0.5（2026-09-15）跟进 P3（design v0.9）：新增顶层模块 `text/`（C++ tokenizer）；`runtime/{session,sampling}`（`deepmoe serve`
+的会话与温度 / top-p 的主机半边）；`gpu/vulkan/prefill_kernels`（`gpu::Prefill`，GPU 上整块 prefill）与 `dspark_kernels`（DSpark 草稿链）；
+`cpu/dspark_tree`（树采样的 CPU 半边）；`cli/serve.cpp`；以及一条**现存的依赖违例**：`prefill_kernels.cpp` include 了 `runtime/`（§1.4）。**
 实现进度见 design.md §15。
 
 ---
@@ -23,6 +26,7 @@ Planner 的 LRU 时钟改为按访问计（§2.4）。**
 
 ```
 core ← model ← store ← storage ← gpu / cpu ← runtime ← cli
+core ← text ← runtime（session）/ cli（serve、tokenize）
 ```
 
 准确的边（`A → B` 表示 A include B）：
@@ -66,6 +70,10 @@ core ← model ← store ← storage ← gpu / cpu ← runtime ← cli
                     └────────────────────────────┘
 ```
 
+**v0.5 没画进图的部分**：`gpu/vulkan/{dspark_kernels, prefill_kernels}` 在 gpu 框里（`decode_kernels` 多了 `sample_topk`）；
+`cpu/dspark_tree`（只依赖 `core/`）在 cpu 框里；`runtime/{session, sampling}` 在 runtime 框里，`session` 另外依赖 `text/`；
+`text/`（只依赖 `core/`）被 `runtime/session` 与 `cli/`（`serve.cpp`、`tokenize`）用。
+
 ### 1.1 每个模块的职责与它**不**做的事
 
 | 模块 | 做 | 明确不做 |
@@ -82,8 +90,16 @@ core ← model ← store ← storage ← gpu / cpu ← runtime ← cli
 | `runtime/decode_state` | L3 导出的读入器：prefill 记录（window KV + 四个 kv source 的压缩 KV cache / index key / compressor 状态）与每步的参考 logits、压缩 KV、top-k、gate 捕获。**有了 §7.4 的 kernel 之后只在 prompt 的状态上被使用**，每步的张量只拿来比对 | 不在 decode 路径上"代替"任何 kernel（`Engine::set_produce_ced(false)` 保留成对照开关） |
 | `runtime/engram` | design §7.10：哈希（用导出的常量表，行号在 runtime 里算）、48 次 4 KiB 读、两个 dispatch；**每个 engram 层一对行平面**，所以两层的行可以在 token 一开始就取（design §9.5），`fetch` 与 `record` 分开 | 不推导哈希常量（那是 tokenizer 的函数，导出一次） |
 | `runtime/moe_bridge`（v0.4 重写） | **一个 runner、七个槽**：6 个 FP4 routed + 1 个 FP8 shared（`Fp8Slots`，shared 占表里的第 385 项）；`HQuant=3`；主机侧只剩 x 的一次 memcpy、向量化 act_quant（启动时与 `cpu::act_quant_block` 自检逐位相同）和七行地址；`record` 进调用方的 buffer，`y` 留在 GPU 上由下一层的 hc_post 按地址读 | 不碰 `MoeRunner` 的 push constant 布局以外的东西；不做 host 侧的 fp32 加法 |
-| `gpu/vulkan/decode_kernels` | engram 的两个 stage 与 head 的 greedy argmax（design §7.10、§7.11）；与 `attn_kernels` 同一个"共享地址表"办法 | 不含采样的 Philox 半截（§7.11） |
-| `cli/` `bench/` | 入口与测量 | 不含可复用逻辑 |
+| `gpu/vulkan/decode_kernels` | engram 的两个 stage、head 的 greedy argmax，**v0.5：`sample_topk`**（argmax 之后的一个 dispatch：真 top 集合 + 尾部质量，design §7.11）；与 `attn_kernels` 同一个"共享地址表"办法 | 不建 top-p 核、不抽样（那是 `runtime/sampling`）；没有 Philox / Gumbel-max |
+| `runtime/kvstore`（v0.5 补） | 同上。**账**（design §11.3）：40 层每层一份按 ratio-1 开的 bf16 压缩平面与 index key 平面，一块分配——17K 上 882 MB（模型格式 18 MB），单块 2 GiB 让 `max_context` ≲ 41.7K | per-source 与打包格式是 R2 的活；**不持久化 window**（design §11.2 的原则） |
+| `runtime/decode_layer`（v0.5 补） | `record_attention` 拒绝长度不是 `window + min(index_topk, n_cmp)` 的列表；压缩半截先写 −1，`verify_after_attention` 在每层 attention 的等待之后核验；层 20 写 candidate block 标志、24–36 读，错步拒绝（design §7.4） | 不替 Engine 决定谁读谁的平面 |
+| `text/`（v0.5） | `Tokenizer`：byte-level BPE（HF `Word::merge_all` 的优先队列）、两遍 added-token trie、三个预分词正则手工编译（字符类表由 `tools/gen_unicode_tables.py` 从 HF 自己的正则引擎导出）、decode / skip-special / `StreamDecoder`（半个 UTF-8 字符留到下一次）。**加载时核对 tokenizer.json 的正则、normalizer 与 ByteLevel 标志，不一致就拒绝** | 不渲染对话格式（那是 checkpoint 的 `encoding.py`，由 `tools/chat.py` 调）；不推导 engram 的 hash 常量 |
+| `runtime/session`（v0.5） | 一个进程生命周期的会话：`generate`（prompt 延伸已有 history 就只喂新 id，否则 reset 全喂；`feed` 逐 token 走 decode 路径，≥ `--gpu-prefill-min` 的新 prompt 走 `Engine::gpu_prefill`，失败回退）、流式 token 事件、§13.1 分解、停止条件 | 不回退（KV 只有"截到 0"）；单会话、单线程；不碰 JSON 协议（那是 `cli/serve.cpp`） |
+| `runtime/sampling`（v0.5） | 温度 / top-p 的主机半边：在 `sample_topk` 的候选上用 double 建全词表精确核，不够时 `nucleus_from_full` 整行拷回；计数器 RNG `uniform01(seed, position)`，续接的轮次与重跑采出同一个样 | 不在 GPU 上抽样；不做 DSpark 的接受判定（那是 `cpu/dspark_tree`） |
+| `gpu/vulkan/prefill_kernels`（v0.5） | `gpu::Prefill` / `PrefillRunner`：整块 prefill 的全部 stage（mHC、wkv、compressor 整块池化、index key、分块 query + 完成掩码、band attention、gate、expert-major MoE 的作业表与两半 transit、coopmat / tiled GEMV），产出 `PrefillHandoff`；oracle / replay 两种模式 | 不写 `KvStore`（交接由 `Engine::seed_from_prefill` 做）；不把读进来的 expert 交给 `ExpertStore`（R1 要 `adopt`） |
+| `gpu/vulkan/dspark_kernels`（v0.5） | DSpark 草稿链：`main_proj`、三个 mtp 块的 M = 5 attention / 投影、Markov 偏置与 argmax、confidence（design §7.12） | `head` 不在里面（复用主模型的，今天 M = 1）；不跑验证循环 |
+| `cpu/dspark_tree`（v0.5） | 树采样的 CPU 半边：格、tail 归一化、`viterbi` / `eal` / `chain` 路径、祖先采样、confidence 与 k、贪心 / top-Kv / **温度 1 精确接受**；对 `tools/dspark_tree.py` 逐位（固定 lane 序求和、不碰 libm 的 exp / log、关浮点收缩） | 不碰 GPU、不调度 k 以外的东西 |
+| `cli/` `bench/` | 入口与测量；**v0.5：`cli/serve.cpp`** 是 stdin / stdout 的行分隔 JSON 协议（`generate` / `reset` / `tokenize` / `detokenize` / `status` / `quit`），把真正的 stdout 留给协议、fd 1 指到 stderr | 不含可复用逻辑 |
 
 ### 1.2 平台代码的边界
 
@@ -95,6 +111,13 @@ core ← model ← store ← storage ← gpu / cpu ← runtime ← cli
   Linux 不是目标平台；它存在是为了让可移植的一半能在 CI 上编译并跑单元测试（design §14）。
 
 CMake 按 `if(WIN32)` 选择源文件列表（`cmake/deepmoe_options.cmake`）。其余所有模块两边都编译。
+
+### 1.4 一条现存的依赖违例（v0.5 记录，未修）
+
+`gpu/vulkan/prefill_kernels.cpp` include 了 **`runtime/engram.h`**（engram 的 hash 与行地址）与 **`runtime/rope.h`**（按层的 RoPE 表），
+另外 include `store/pinned.h`、`cpu/gate.h`。前两条是 gpu → runtime 的**反向**边：prefill 需要的是 engram hash 与 RoPE 参数这两块纯函数，
+它们该下沉到 `model/` 或 `cpu/`（或者由 `Engine::gpu_prefill` 作为参数交进去）。在修之前，`runtime/engram` 与 `runtime/rope` 不许反过来依赖 `gpu/vulkan/prefill_kernels`。
+归 Track S（design §15 未决问题 28）。
 
 ### 1.3 三个跨层的"接口反转"
 
@@ -137,7 +160,12 @@ I/O 策略需要一个独立线程才能在 GPU 计算时推进；IOCP 需要自
 | **engine / submit** | 1 | `runtime::Engine` / `runtime::DecodeLayer` | 录制并提交 command buffer（**v0.4：在 gate 处切开，一个 token 41 次提交**，§2.1）；从 host-coherent 内存读 gate 的 ids；host-signal 驻留 timeline；在完成栅栏上等；token 一开始发出 engram 的 96 次读；采样 | 不能阻塞在 I/O 上——**例外**：P0 缺失今天仍是 `io_.drain()` 同步等，§7.9.3 的"只拆 dispatch A"还没接 |
 | **io dispatcher** | 1 | `storage::IoEngine` | 优先级排队、请求切分、下发 chunk、收完成、调用完成回调 | 回调里不能做重活（见下） |
 | **iocp completion** | 2（`IoConfig::completion_threads`） | `IocpBackend` | `GetQueuedCompletionStatus` 循环，把完成推给 dispatcher 的队列 | 不直接碰 ExpertStore |
-| **planner** | 1（尚未启动） | `store::Planner` | token 间隙的 lookahead 预取与空闲回填（design §9.4、§9.6 P3） | — |
+| **planner** | 1（尚未启动） | `store::Planner` | token 间隙的 lookahead 预取与空闲回填（design §9.4、§9.6 P3）。**v0.5：层间重叠是 R1 的活** | — |
+
+**v0.5：`serve` 与 prefill 不加线程。** `cli/serve.cpp` 在 engine / submit 线程上读一行请求、跑完整个 `generate`、边跑边写事件，
+所以**一个请求不能中途打断**（design §15.1.1）。`gpu::Prefill` 也跑在 submit 线程上：它的"边读边算"靠 IoEngine 的 dispatcher 线程——
+第 i+1 批 expert 的读在第 i 批计算的 submit 之前发出、落进另一半 transit——而不是另开一个线程（design §7.13.2 部件 4）。
+DSpark 的 CPU 比较（`cpu/dspark_tree`，≈ 85 µs / 周期）将来也在 submit 线程上做。
 
 ### 2.1 每 token 的时序（design §7.8）
 
@@ -257,13 +285,15 @@ Planner 决定淘汰 slot
 | 目标 | 内容 |
 |---|---|
 | `deepmoe_core`（静态库） | core + model + cpu + storage + store + gpu + runtime |
-| `deepmoe` | CLI：`info` / `bench nvme` / `run` |
+| `deepmoe` | CLI：`info` / `bench nvme` / `run` / **`tokenize` / `serve`**（v0.5；`tools/chat.py` 是 `serve` 的终端前端） |
+| `prefill_bench` | design §7.13 的 GEMM 选择与 TTFT 分解（v0.5） |
+| `dspark_bench` | design §7.12 的草稿链 `T_draft`（v0.5，定义在 `tests/CMakeLists.txt`） |
 | `nvme_bench` | design §9.2.1 Q6/Q7 的微基准（P-1 产物） |
 | `bw_matrix` | design §8.0 / §3.3 的带宽矩阵（CPU / GPU / 并发 × 两条路径，全部已实测） |
 | `kernel_bench` | design §7.9.1（`--p1`）/ §7.9.2（默认）的 MoE kernel sweep + dispatch 开销 + 路径 A/B |
 | `attn_bench` | design §7.15.2 非 MoE decode 路径的逐 kernel 带宽。**每层一个 `AttnRunner`**（§1.3 第 3 条） |
 | `heap_capacity` | design §5.2 / §9.2.2 两条路径的实际可分配上限 |
 | `envcheck` | 环境自检，见 docs/build.md |
-| `deepmoe_tests` | 单元测试；`ctest` 另按 suite 注册一遍。`suite.{integration,gpu_moe,gpu_attn,gpu_layer,decode}` 需要 `DEEPMOE_MODEL_DIR`（标签 `needs-model`），不给就自动跳过。**`suite.decode` 是 L3：四十层对参考，含 slow prefill，二十多分钟** |
+| `deepmoe_tests` | 单元测试；`ctest` 另按 suite 注册一遍。`suite.{integration,gpu_moe,gpu_attn,gpu_layer,decode}` 需要 `DEEPMOE_MODEL_DIR`（标签 `needs-model`），不给就自动跳过。**`suite.decode` 是 L3：四十层对参考，含 slow prefill，二十多分钟**。v0.5 新增：`suite.decode_longctx`（要 `DEEPMOE_LONGCTX_DIR`）、`suite.gpu_prefill`（长上下文部分要 `DEEPMOE_PF_LONGCTX`）、`suite.gpu_dspark`；纯 CPU 的 `suite.sampling` / `suite.dspark_tree`（标签 `unit`）与 `suite.tokenizer`（只要 `tokenizer.json`，标签 `needs-model`） |
 | `deepmoe run` 的诊断开关（v0.4） | `--slow-prefill`（自己算 prompt 状态并逐层逐位置对参考）、`--loaded-ced`（对照：每步加载压缩 KV）、`--warm K`（热步地板）、`--determinism N`（逐层四个张量 + logits 的哈希）、`--gate-report`（逐层逐步把 gate 拆成"输入漂移 / kernel / 近似平局"三块） |
 | `shaders` | `gpu/shaders/*.slang` → SPIR-V，每个都过 `spirv-val`（由 `add_slang_shader()` 每次编译都跑） |
