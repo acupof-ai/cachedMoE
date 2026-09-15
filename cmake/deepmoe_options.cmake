@@ -110,6 +110,14 @@ set(DEEPMOE_SHADERS
     gpu/shaders/dspark_gemv.slang
     gpu/shaders/dspark_attn.slang
     gpu/shaders/dspark_head.slang
+    gpu/shaders/mgt1_gemv.slang
+    gpu/shaders/mgt1_mhc.slang
+    gpu/shaders/mgt1_attn.slang
+    gpu/shaders/mgt1_gate.slang
+    gpu/shaders/mgt1_cmp.slang
+    gpu/shaders/mgt1_idx.slang
+    gpu/shaders/mgt1_head.slang
+    gpu/shaders/mgt1_engram.slang
     gpu/shaders/prefill_gemm.slang
     gpu/shaders/prefill_coopmat.slang
     gpu/shaders/prefill_elem.slang
