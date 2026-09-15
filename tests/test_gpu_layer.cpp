@@ -725,8 +725,7 @@ DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
                         for (float& v : scaled) v = cpu::bf16_to_float(cpu::float_to_bf16(v * ws));
                         const Agreement a = agree(static_cast<const float*>(bb.idx_w.host),
                                                   scaled.data(), scaled.size());
-                        std::printf("        ref %-18s %s
-", "index weights", a.str().c_str());
+                        std::printf("        ref %-18s %s\n", "index weights", a.str().c_str());
                     }
                     if (const L2Tensor* ti = g->find("topk_idxs")) {
                         const uint32_t n = uint32_t(ti->shape.back());

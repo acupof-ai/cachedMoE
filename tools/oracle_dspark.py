@@ -2031,7 +2031,7 @@ def run_mgt1(args: argparse.Namespace) -> int:
         ngram(torch.tensor(prompt, dtype=torch.long).unsqueeze(0), 0, None)
         base_kv, base_index_k = _mgt1_state_from_l3(margs, pre)
         odir = os.path.join(args.mgt1_out, ctx)
-        l2w = oracle.L2Writer(odir)
+        l2w = oracle.L2Writer(os.path.join(odir, "l2"))
         l3w = oracle.L3Writer(odir)
         runs = []
         for M in ms:
@@ -2133,7 +2133,6 @@ def run_mgt1(args: argparse.Namespace) -> int:
                                   "n_heads": margs.n_heads, "vocab_size": margs.vocab_size,
                                   "max_seq_len": max_seq_len}}
         l2w.finish(dict(common_meta))
-        os.replace(os.path.join(odir, "index.json"), os.path.join(odir, "l2_index.json"))
         l3w.finish(dict(common_meta))
     return 0
 
