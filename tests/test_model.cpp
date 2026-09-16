@@ -554,13 +554,14 @@ DEEPMOE_TEST(kvcache, geometry_matches_the_design_budget) {
     // design §11.3: window 2.8 MB, compressed 84 MB fp8, indexer ~2 MB.
     CHECK_CLOSE(g.window_bytes() / 1e6, 2.9, 0.1);
     CHECK_CLOSE(g.compressed_bytes(c->text) / 1e6, 84.0, 0.05);
-    // design 11.3 (corrected in v0.4): 8 index sources, five of them at
-    // ratio 1, so 28.97 MB -- not the ~2 MB that table used to claim.
-    CHECK_CLOSE(g.indexer_bytes(c->text) / 1e6, 28.97, 0.01);
+    // Track R2 (docs/p4_kv_ux.md 搂1): the key caches are the four kv sources'
+    // (model.py Indexer.owns_k), 2.5 rows a token x 68 B -- not design 11.3
+    // v0.4's eight index sources (28.97 MB).
+    CHECK_CLOSE(g.indexer_bytes(c->text) / 1e6, 11.14, 0.01);
     g.compressed_fp4 = true;
     CHECK_CLOSE(g.compressed_bytes(c->text) / 1e6, 48.2, 0.05);
     // "KV is not a memory problem": well under a GB at 64K.
     CHECK(g.total_bytes(c->text) < (1ull << 30));
-    CHECK_CLOSE(g.total_bytes(c->text) / 1e6, 80.4, 0.02);   // fp4 compressed
+    CHECK_CLOSE(g.total_bytes(c->text) / 1e6, 61.76, 0.02);   // fp4 compressed
     CHECK(!g.to_string(c->text).empty());
 }

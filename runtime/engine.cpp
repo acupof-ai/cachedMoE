@@ -10,6 +10,7 @@
 #include "core/log.h"
 #include "gpu/vulkan/moe_kernels.h"   // gpu::default_shader_dir
 #include "gpu/vulkan/prefill_kernels.h"
+#include "runtime/engram_tables.h"
 #include "model/layout.h"
 #include "storage/backend.h"
 
@@ -532,18 +533,14 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
     state_ = std::make_unique<DecodeState>(std::move(*st));
 
     const TextConfig& c = model_cfg_.text;
-    KvStoreConfig kc;
-    kc.layers      = c.num_hidden_layers;
-    kc.window      = c.sliding_window;
-    kc.latent_dim  = c.head_dim;
     // Sized from what the export actually holds, plus the room the remaining
     // steps will need; the compressed half grows by one row a step at ratio 1.
-    kc.index_dim   = c.index_head_dim;
     // The PREFILL record's buffers are max_seq_len // ratio rows (2,074 / 4,149
     // at 4K, 8,513 / 17,026 at 17K) -- more than the widest per-step run
     // `max_compressed()` sees -- and seed_compressed is handed all of them.
-    kc.max_context = std::max<uint32_t>(
-        256, std::max(state_->max_compressed(), state_->max_prefill_rows()) + 64);
+    // Planes on the kv sources only (Track R2, docs/p4_kv_ux.md).
+    KvStoreConfig kc = KvStoreConfig::for_model(
+        c, std::max<uint32_t>(256, std::max(state_->max_compressed(), state_->max_prefill_rows()) + 64));
     if (kc.max_context > kMaxIndexPositions)
         return fail(Err::ResourceExhausted,
                     std::format("the export needs {} compressed positions and the "
@@ -577,9 +574,10 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
 }
 
 Result<void> Engine::reseed_decode_state() {
-    if (!state_ || !prefill_loaded_) return fail(Err::FailedPrecondition, "no decode state is loaded");
+    if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
     kvs_.clear();
     if (auto r = state_->seed_prefill(kvs_); !r) return r;
+    prefill_loaded_ = true;
     history_     = state_->prompt_ids();
     pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
@@ -1151,17 +1149,18 @@ uint32_t Engine::max_context() const {
 Result<void> Engine::begin_session(const SessionConfig& sc) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     const TextConfig& c = model_cfg_.text;
-    KvStoreConfig kc;
-    kc.layers      = c.num_hidden_layers;
-    kc.window      = c.sliding_window;
-    kc.latent_dim  = c.head_dim;
-    kc.index_dim   = c.index_head_dim;
-    kc.max_context = std::min<uint32_t>(std::max<uint32_t>(sc.max_context, 256), kMaxIndexPositions);
+    // Track R2: planes on the kv sources only, allocated for 4,096 positions
+    // and grown by the store as the context does.
+    const uint32_t limit = std::min<uint32_t>(std::max<uint32_t>(sc.max_context, 256), kMaxIndexPositions);
+    KvStoreConfig kc = KvStoreConfig::for_model(c, limit, std::min<uint32_t>(limit, 4096));
     if (auto r = kvs_.create(alloc_a_, kc); !r) return r;
-    auto tables = EngramTables::load(sc.engram_tables_dir);
+    auto tables = sc.engram_tables_dir.empty() ? derive_engram_tables(cfg_.model_dir, c)
+                                               : EngramTables::load(sc.engram_tables_dir);
     if (!tables)
         return fail(tables.error().code,
-                    std::format("engram tables from '{}': {}", sc.engram_tables_dir,
+                    std::format("engram tables from '{}': {}",
+                                sc.engram_tables_dir.empty() ? cfg_.model_dir + "/tokenizer.json"
+                                                             : sc.engram_tables_dir,
                                 tables.error().message));
     if (auto r = engram_.create(device_, alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
                                 *std::move(tables)); !r)
@@ -1170,7 +1169,18 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     produce_ced_ = true;
     reset_context();
     log_info("engine: session -- KV store {} for {} positions, engram tables from {}",
-             human_bytes(kvs_.bytes()), max_context(), sc.engram_tables_dir);
+             human_bytes(kvs_.bytes()), max_context(),
+             sc.engram_tables_dir.empty() ? std::string("derived from tokenizer.json") : sc.engram_tables_dir);
+    return {};
+}
+
+Result<void> Engine::set_context_tokens(std::span<const uint32_t> tokens) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (tokens.size() > max_context())
+        return fail(Err::ResourceExhausted,
+                    std::format("{} tokens against a {}-position context", tokens.size(), max_context()));
+    history_.assign(tokens.begin(), tokens.end());
+    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 

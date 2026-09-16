@@ -18,7 +18,10 @@ add_executable(deepmoe_tests
     test_gpu_dspark.cpp
     test_gpu_prefill.cpp
     test_dspark_tree.cpp
-    test_tokenizer.cpp)
+    test_tokenizer.cpp
+    test_engram_tables.cpp
+    test_kvstore.cpp
+    test_kv_replay.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -28,7 +31,7 @@ add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
 
 foreach(_suite align layout types json profiler status bytes
                 dequant gate slab expert_store planner
-                io v41_config manifest block_info kvcache)
+                io v41_config manifest block_info kvcache kvstore)
     add_test(NAME "suite.${_suite}" COMMAND deepmoe_tests "${_suite}.")
 endforeach()
 
@@ -84,7 +87,7 @@ set_tests_properties("suite.gpu_moe" PROPERTIES
 # Everything else must keep passing on a machine with no weights at all.
 foreach(_t deepmoe_tests align layout types json profiler status bytes
            dequant gate slab expert_store planner io v41_config manifest
-           block_info kvcache)
+           block_info kvcache kvstore)
     if(_t STREQUAL "deepmoe_tests")
         set_tests_properties("${_t}" PROPERTIES LABELS "unit;needs-model")
     else()
@@ -128,3 +131,18 @@ set_tests_properties("suite.tokenizer" PROPERTIES
     SKIP_REGULAR_EXPRESSION "SKIP tokenizer")
 add_test(NAME "suite.sampling" COMMAND deepmoe_tests "sampling.")
 set_tests_properties("suite.sampling" PROPERTIES LABELS "unit")
+
+# Track R2: the engram hash constants derived from tokenizer.json + config.json at
+# startup, against the L3 export's (the RNG / normaliser case needs nothing).
+add_test(NAME "suite.engram_tables" COMMAND deepmoe_tests "engram_tables.")
+set_tests_properties("suite.engram_tables" PROPERTIES
+    LABELS "needs-model"
+    SKIP_REGULAR_EXPRESSION "SKIP engram_tables")
+
+# Track R2: the window ring rebuilt by replay -- rollback, park / restore, the
+# Session's rollback / cancel / named sessions -- on the L3 export and Track M's
+# 4K export (DEEPMOE_LONGCTX_DIR).
+add_test(NAME "suite.kv_replay" COMMAND deepmoe_tests "kv_replay.")
+set_tests_properties("suite.kv_replay" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP kv_replay")

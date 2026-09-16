@@ -156,10 +156,11 @@ struct DecodeStepResult {
 
 // Track P: what a conversation needs that the L3 export used to supply.
 struct SessionConfig {
-    // The engram hash constants (EngramTables::load): a pure function of the
-    // tokenizer and config.json, exported once by tools/oracle.py into the L3
-    // directory. Nothing else is read from it.
-    std::string engram_tables_dir = "tests/data/l3";
+    // The engram hash constants: a pure function of the tokenizer and
+    // config.json. Empty (the default) derives them from the model directory at
+    // startup (runtime/engram_tables.h, Track R2); a directory loads the tables
+    // tools/oracle.py exported into it (EngramTables::load).
+    std::string engram_tables_dir;
     // Positions the KV store is sized for; capped by kMaxIndexPositions.
     uint32_t    max_context = 4096;
 };
@@ -245,6 +246,9 @@ public:
     bool produce_ced() const { return produce_ced_; }
 
     const KvStore& kv() const { return kvs_; }
+    // Track R2 (runtime/session.h): rollback, parking and window replay write
+    // the store between steps.
+    KvStore& kv_store() { return kvs_; }
     const std::vector<uint32_t>& history() const { return history_; }
 
     // What layer `l` actually read at the last step: its own window ring, and
@@ -274,6 +278,11 @@ public:
     // the pinned set and the planner's clock are untouched (that warmth is the
     // point of a long-running process).
     void reset_context();
+    // Track R2: declares that the KV store holds `tokens` -- a prefix of the
+    // history after a rollback, or a parked context's ids after its non-SWA
+    // state is unpacked. Runs nothing and writes nothing in the store; the
+    // caller has made the store agree (runtime/session.h).
+    Result<void> set_context_tokens(std::span<const uint32_t> tokens);
     uint32_t context_length() const { return static_cast<uint32_t>(history_.size()); }
     // The longest sequence this session can hold.
     uint32_t max_context() const;
