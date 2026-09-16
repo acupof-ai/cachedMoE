@@ -77,3 +77,20 @@ cmake --build build
 - 顺带修掉 compressor 的 E4M3 scale/字节不一致：`kv_replay` 场景 (4) 的 `raw_rows()`
   从 9 变为 **0**。SSD persist 沿同一 packed 格式，受益于该修复。
 - 仍未做：无缓存 vs SSD prefix hit 的端到端 TTFT 对照（R=128/256）。
+
+## 8. 跨进程 SSD TTFT 实测（2026-09-16）
+
+`serve` 现在在干净退出时自动 `park_active()` 落盘，并在新进程启动时自动
+`restore_active_from_disk()`。同一 4,133-token prompt：
+
+| | cold（无缓存） | warm（SSD 命中，新进程） |
+|---|---:|---:|
+| prompt tokens | 4133 | 4133 |
+| reused tokens | 0 | **4132** |
+| prefill tokens | 4133 | **1** |
+| prefill mode | gpu | decode |
+| **TTFT** | **101.6 s** | **2.47 s** |
+
+warm 进程的 `load_s`（pinned set 加载）是 61 s，不计入 TTFT；TTFT 只算请求到首 token。
+另有 `.pkv` 文件生成、`restore_active_from_disk` 命中日志、reused=4132 为证。
+`R=128` 的 window replay 已体现在这 137 ms prefill/首步里（candidate 数据来自 packed rows）。

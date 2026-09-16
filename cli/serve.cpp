@@ -213,6 +213,14 @@ int cmd_serve(int argc, char** argv) {
     if (auto r = engine.begin_session(sc); !r) { emit_error("session: " + r.error().str()); return 1; }
     engine.set_check_topk(check_topk);
     runtime::SessionPool pool(engine, *tok, so, po);
+    if (!po.disk.dir.empty()) {
+        auto loaded = pool.restore_active_from_disk();
+        if (loaded) std::fprintf(stderr, "serve: restored %u tokens from kv disk\n",
+                                 engine.context_length());
+        else if (loaded.error().code != Err::NotFound)
+            std::fprintf(stderr, "serve: kv-disk restore failed: %s\n",
+                         loaded.error().str().c_str());
+    }
     const double load_s = std::chrono::duration<double>(Clock::now() - t0).count();
     emit(std::format("{{\"event\":\"ready\",\"load_s\":{},\"max_context\":{},\"vocab\":{},"
                      "\"cache_gb\":{},\"cache_slots\":{},\"gpu_prefill_min\":{},\"check_topk\":{},"
@@ -338,6 +346,10 @@ int cmd_serve(int argc, char** argv) {
             continue;
         }
         emit("{\"event\":\"done\",\"session\":" + json_quote(session) + "," + st->json_fields() + "}");
+    }
+    if (!po.disk.dir.empty()) {
+        if (auto pr = pool.park_active(); !pr)
+            std::fprintf(stderr, "serve: kv-disk save failed: %s\n", pr.error().str().c_str());
     }
     // The reader may still be blocked on stdin; it owns nothing the engine needs.
     reader.detach();

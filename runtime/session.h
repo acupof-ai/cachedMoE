@@ -233,6 +233,11 @@ public:
 
     // Makes `name` live (creating it empty if it does not exist).
     Result<ReplayStats> activate(const std::string& name);
+    // Track R2 SSD cache: park/save the live session (clean shutdown), and try
+    // to load the active name from disk into an empty engine (fresh process).
+    // `restore_active_from_disk` returns NotFound when there is no file.
+    Result<void> park_active();
+    Result<ReplayStats> restore_active_from_disk();
     Session& live() { return session_; }
     const std::string& active() const { return active_; }
     // Drops a session's state; dropping the live one resets the context.

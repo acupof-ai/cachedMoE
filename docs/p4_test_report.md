@@ -66,3 +66,17 @@ Build passes. One compile error was found and fixed during this round:
   SSD-prefix-hit TTFT comparison (R=128/256) has not been run.
 - **DSpark G1/G3**: after T's C(M) curve.
 - `kv_replay.longctx` (4K/17K) was not run in this round.
+
+## 5. End-to-end SSD KV TTFT (2026-09-16)
+
+Same 4,133-token prompt, new process for the warm run (`serve --kv-dir`):
+
+| | cold | warm SSD hit |
+|---|---:|---:|
+| reused tokens | 0 | **4132** |
+| prefill tokens | 4133 | **1** |
+| **TTFT** | **101.6 s** | **2.47 s** |
+
+The clean-exit path parks and saves `<session>.pkv`; the fresh process calls
+`SessionPool::restore_active_from_disk()` before serving. `load_s` (pinned set)
+is 61 s for the warm process and is outside TTFT.

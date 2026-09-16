@@ -43,8 +43,11 @@
 - 本轮修复：`compressor.slang` / `mgt1_cmp.slang` 的 E4M3 scale 与字节不一致
   （raw rows 9 → 0，M>1 batch vs steps 重新逐位一致）；回退 Track T 的 M=1
   K-split 采纳（`kv_replay` (1) 恢复 8/8）；确认 restore timeout 是四线并发导致。
+- R2 SSD TTFT 已实测：同一 4,133-token prompt，冷 **101.6 s** → 新进程 SSD 命中
+  **2.47 s**（reused 4132 / prefill 1），详见 `docs/p4_kv_ux.md` §8 与
+  `docs/p4_test_report.md` §5。
 - 仍需安静机补的性能项：S 的 N=4133、R1 的 A/B + `--auto-tune`、T 的 C(M)
-  曲线、R2 的 SSD TTFT、DSpark G1/G3、`kv_replay.longctx`。
+  曲线、DSpark G1/G3、`kv_replay.longctx`。
 
 ## 4. 合入前必须完成的复验
 

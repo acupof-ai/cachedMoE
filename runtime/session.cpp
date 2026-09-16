@@ -391,6 +391,33 @@ Result<ReplayStats> SessionPool::activate(const std::string& name) {
     return st;
 }
 
+Result<void> SessionPool::park_active() {
+    Engine& e = *engine_;
+    if (e.context_length() == 0) return {};
+    auto p = park_context(e);
+    if (!p) return std::unexpected(p.error());
+    parked_[active_] = std::move(*p);
+    lru_.remove(active_);
+    lru_.push_front(active_);
+    if (!pool_.disk.dir.empty()) {
+        if (auto sr = save_parked_context(parked_[active_], pool_.disk, active_); !sr)
+            return sr;
+    }
+    return {};
+}
+
+Result<ReplayStats> SessionPool::restore_active_from_disk() {
+    if (pool_.disk.dir.empty()) return fail(Err::InvalidArgument, "kv disk dir is empty");
+    if (engine_->context_length() > 0) return ReplayStats{};
+    auto loaded = load_parked_context(pool_.disk, active_);
+    if (!loaded) return std::unexpected(loaded.error());
+    auto r = restore_context(*engine_, *loaded, session_.options().replay);
+    if (!r) return std::unexpected(r.error());
+    log_info("session pool: restored '{}' from kv disk ({} tokens, replayed {} positions)",
+             active_, loaded->tokens.size(), r->plan.steps());
+    return *r;
+}
+
 bool SessionPool::drop(const std::string& name) {
     if (name == active_) {
         engine_->reset_context();
