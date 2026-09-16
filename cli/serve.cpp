@@ -56,6 +56,7 @@
 #include "core/json.h"
 #include "core/json_write.h"
 #include "core/log.h"
+#include "model/layout.h"
 #include "runtime/engine.h"
 #include "runtime/session.h"
 #include "text/tokenizer.h"
@@ -165,6 +166,7 @@ int cmd_serve(int argc, char** argv) {
         const std::string_view a = argv[i];
         if (a == "--model")                cfg.model_dir = value_of(argc, argv, i);
         else if (a == "--cache-gb")        cfg.cache.budget_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 30;
+        else if (a == "--cache-slots")     cfg.cache.budget_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) * layout::kExpertSlotBytes;
         else if (a == "--max-context")     sc.max_context = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--engram-tables")   sc.engram_tables_dir = value_of(argc, argv, i);
         else if (a == "--gpu-prefill-min") so.gpu_prefill_min = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));

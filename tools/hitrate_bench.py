@@ -40,7 +40,9 @@ class BenchServer(chat.Server):
         cmd = [args.exe, "serve", "--model", chat.MODEL, "--max-context", str(args.max_context),
                "--engram-tables", os.path.join(REPO, "tests", "data", "l3"),
                "--profile", os.path.join(out_dir, "profile.jsonl")]
-        if args.cache_gb:
+        if getattr(args, "cache_slots", 0):
+            cmd += ["--cache-slots", str(args.cache_slots)]
+        elif args.cache_gb:
             cmd += ["--cache-gb", str(args.cache_gb)]
         cmd += args.serve_arg
         env = dict(os.environ)
@@ -73,12 +75,14 @@ class BenchServer(chat.Server):
         return ev
 
 
-def write_heat_from_route(route_path: str, out_path: str) -> int:
+def write_heat_from_route(route_path: str, out_path: str, recent: int = 0) -> int:
     """Turn a run's route.bin into a DEEPMOE_HEAT_FILE for the next round."""
     sys.path.insert(0, os.path.join(REPO, "tools"))
     import hitrate_sim  # noqa: E402
     import numpy as np  # noqa: E402
     _step, _pos, ids, _hits = hitrate_sim.load_route(route_path)
+    if recent > 0:
+        ids = ids[-recent:]
     counts = np.bincount(ids.astype(np.int64).ravel(), minlength=40 * 384)
     order = np.argsort(-counts, kind="stable")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -146,7 +150,7 @@ def auto_tune(args, script: dict, cargs, enc) -> int:
         st = round_stats(os.path.join(out_r, "events.jsonl"))
         heat_out = os.path.join(args.out, f"heat_round_{r}.inc")
         try:
-            write_heat_from_route(os.path.join(out_r, "route.bin"), heat_out)
+            write_heat_from_route(os.path.join(out_r, "route.bin"), heat_out, args.heat_recent)
             heat_next = heat_out
         except Exception as exc:  # a round that crashed still leaves stats
             print(f"round {r}: heat write failed: {exc}", flush=True)
@@ -172,6 +176,10 @@ def main() -> int:
     ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
     ap.add_argument("--shader-dir", default="")
     ap.add_argument("--cache-gb", type=int, default=0)
+    ap.add_argument("--cache-slots", type=int, default=0,
+                    help="expert cache slots passed to serve (5711 ~ 100 GiB)")
+    ap.add_argument("--heat-recent", type=int, default=0,
+                    help="auto-tune/--write-heat: use only the last N routing records (0 = all)")
     ap.add_argument("--max-context", type=int, default=4096)
     ap.add_argument("--serve-arg", action="append", default=[])
     ap.add_argument("--env", action="append", default=[])
@@ -244,7 +252,7 @@ def main() -> int:
     with open(os.path.join(args.out, "turns.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
     if args.write_heat:
-        print(f"wrote {write_heat_from_route(os.path.join(args.out, 'route.bin'), args.write_heat)} heat rows")
+        print(f"wrote {write_heat_from_route(os.path.join(args.out, 'route.bin'), args.write_heat, args.heat_recent)} heat rows")
     return 0
 
 

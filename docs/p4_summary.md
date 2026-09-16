@@ -81,3 +81,15 @@ ctest --test-dir build --output-on-failure
 我们自己的 shell 里 `cmake` 配置以 `0xC0000005` 崩溃，`zig cc` 同样被挡；只有 git 和文件读写可用。
 因此无法在本 PR 内编译或跑测试。代码/文档/合并已完成；构建与测量需要在普通终端
 （或 CI / Claude Code 限额恢复后）执行。
+
+## 6. 容量与专家命中模式（2026-09-16）
+
+- `serve --cache-slots N` 已实现。本机安全上限实测：**5500 槽（96.34 GiB）**；
+  5600 槽在 path B 第 20 个 slab 失败（98.10 GiB）。
+- 同一 8-turn 脚本：4500 槽模拟 hit 0.9234、旧 run ~4.5–5.2 tok/s；
+  **5500 槽实测 hit 0.9431、6.05 tok/s、stall 46–71 ms**。
+- 命中模式（`docs/p4_expert_patterns.md`）：decode 的 86.6% expert 在 prompt
+  prefill 里已出现；换话题时 hit 从 0.94–0.96 掉到 0.88–0.91；全局 static heat
+  很平（top1024 只覆盖 40.8%），时间复用是 128 步尺度（63.7%），不是相邻 token。
+- KV：17,010 位置当前引擎实测 **54.96 MiB**；0.89 GB 是 R2 之前旧 40 层
+  KvStore 的数字（见 `docs/p4_kv_ux.md` §9）。

@@ -94,3 +94,20 @@ cmake --build build
 warm 进程的 `load_s`（pinned set 加载）是 61 s，不计入 TTFT；TTFT 只算请求到首 token。
 另有 `.pkv` 文件生成、`restore_active_from_disk` 命中日志、reused=4132 为证。
 `R=128` 的 window replay 已体现在这 137 ms prefill/首步里（candidate 数据来自 packed rows）。
+
+## 9. KV 占用实测（2026-09-16）
+
+`deepmoe run --state traces/longctx/ctx16k --steps 0`（17,010 个 prompt token）：
+引擎打印 **KV 54.96 MiB（≈57.6 MB）**，这是 R2 per-source 平面 + 只在 source
+层分配后的真实值。
+
+对照设计里的历史数字：
+- **0.89 GB（882 MB）** 是 **R2 之前**的 KvStore：40 层都开 bf16 compressed +
+  index 平面，约为 51,360 B/position × 17K + 4 MB。不是当前预期值。
+- 当前 live store（bf16，17010 行）= window 2.70 MB + compressed 43.5 MB +
+  index keys 10.9 MB + state/topk ≈57 MB，和实测 54.96 MiB 吻合。
+- `KvPacked`/SSD `.pkv` 更小：17010 位置约 15.2 MB（模型原生格式账在 64K 是
+  61.76 MB，见 `kvcache.geometry_matches_the_design_budget`）。
+- 如果现在看到 0.89 GB：要么跑的是 R2 之前的构建，要么 `--max-context` 很大导致
+  `create`/doubling 预分配了远大于 live 行的容量。session `serve` 在
+  `--max-context 4096` 时 ready 是 16.0 MB、8192 容量时 29.2 MB，可作对照。

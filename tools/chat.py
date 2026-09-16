@@ -50,7 +50,9 @@ class Server:
     def __init__(self, args):
         exe = args.exe
         cmd = [exe, "serve", "--model", MODEL, "--max-context", str(args.max_context)]
-        if args.cache_gb:
+        if getattr(args, "cache_slots", 0):
+            cmd += ["--cache-slots", str(args.cache_slots)]
+        elif args.cache_gb:
             cmd += ["--cache-gb", str(args.cache_gb)]
         if args.gpu_prefill_min:
             cmd += ["--gpu-prefill-min", str(args.gpu_prefill_min)]
@@ -321,6 +323,7 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--system", default="")
     ap.add_argument("--cache-gb", type=int, default=0)
+    ap.add_argument("--cache-slots", type=int, default=0, help="expert cache slots (5711 ~ 100 GiB)")
     ap.add_argument("--max-context", type=int, default=4096)
     ap.add_argument("--gpu-prefill-min", type=int, default=0)
     ap.add_argument("--check-topk", action="store_true")

@@ -117,3 +117,22 @@ this record could be written; the worktree however received **no commits and no 
 3 turn / 190 token 的短工作负载上没有命中率提升——每轮都是冷 cache，P3 backfill
 的初始顺序对这段热点不够关键。需要 idle-s 更长的 backfill、更长的对话或跨轮保留
 expert cache 才能看出差异；`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` A/B 仍待做。
+
+## 2026-09-16 容量实测：`--cache-slots`
+
+新增 `serve --cache-slots N`（`N * 18,808,832 B`）。同一 8-turn 长对话脚本，
+`DEEPMOE_MOE_OVERLAP=1`：
+
+| | 4500 槽（旧 auto，模拟/旧实测） | **5500 槽（实测）** |
+|---|---:|---:|
+| cache | 78.8 GiB | **96.34 GiB** |
+| decode hit | 0.9234 | **0.9431** |
+| decode tok/s | ~4.5–5.2（旧 run） | **6.05** |
+| per-turn hit | 0.885–0.946 | 0.912–0.961 |
+| stall 采样 | 104 ms 均值（旧 run） | 46–71 ms |
+
+安全上限扫描：4500/5000/5200/5400/5500 槽都能 ready；**5600 槽在 path B 第 20 个
+slab 失败（98.10 GiB）**。所以这台机器当前实际可加容量是 **5500 槽 ≈ 96.3 GiB**。
+5500 的命中率 0.9431 与 cache_sim 对 5711 的 0.9451 基本重合，说明收益来自容量本身。
+热度：`hitrate_bench.py --heat-recent N` 可按最近 N 条 route 记录生成 P3 backfill
+顺序，替代全局 static heat。
