@@ -219,3 +219,24 @@ Clearly **not** a measurement, and to be replaced by §4's table:
 
 - `gpu_prefill.stages` 已通过：110 checks、0 failed、worst cos 0.999912（L2 cmp_cache）。
 - 尚未跑：安静机 N=4133 legacy vs coop 的端到端表（`bench/results/prefill_p4.csv`）。
+
+## 2026-09-16 N=4133 实测（安静机，单跑）
+
+命令要点：`prefill_bench --section prefill --n 4133 --ids <ctx4k ids> --replay 128`；
+legacy = `DEEPMOE_PF_ATTN=legacy --coop-min -1 --coop-dense -1`；
+coop = `DEEPMOE_PF_ATTN=coop --coop-min 16 --coop-dense 64`。
+
+| | legacy | coop |
+|---|---:|---:|
+| total | **103.67 s = 40 tok/s** | **99.89 s = 41 tok/s** |
+| attention（摘要项） | 32.68 s | 32.78 s |
+| coop attention（ops 项） | — | 19.43 s（legacy prefill_attn s0+s1+s2 ≈ 14.60 s） |
+| expert I/O | 30.44 s（198.6 GB @ 6.52 GB/s） | 32.63 s（198.6 GB @ 6.09 GB/s） |
+| expert GPU | 21.76 s | 17.06 s |
+| mHC | 4.95 s | 4.57 s |
+| host/other | 1.20 s | 0.87 s |
+
+结论：**coop 代码正确（stages 110 checks 全过），但默认几何下 N=4133 只快 3.6%，
+5× 目标未达成**；coop attention 在这个默认 head-tile 配置下反而比 legacy 慢。
+下一步：扫 `DEEPMOE_PF_ATTN_HT` / coop 几何、GPU indexer top-k（去掉 host readback）、
+mHC submit 合并、expert I/O 与计算重叠；当前数据要先按这些瓶颈修正目标。

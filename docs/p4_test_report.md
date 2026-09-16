@@ -80,3 +80,16 @@ Same 4,133-token prompt, new process for the warm run (`serve --kv-dir`):
 The clean-exit path parks and saves `<session>.pkv`; the fresh process calls
 `SessionPool::restore_active_from_disk()` before serving. `load_s` (pinned set)
 is 61 s for the warm process and is outside TTFT.
+
+## 6. S prefill performance (N=4133, 2026-09-16)
+
+| | legacy | coop |
+|---|---:|---:|
+| total | 103.67 s (40 tok/s) | 99.89 s (41 tok/s) |
+| expert I/O | 30.44 s | 32.63 s |
+| expert GPU | 21.76 s | 17.06 s |
+
+Only **+3.6%**; the design target (≥5×) is not met and the coop attention
+geometry is slower than legacy at the default head tiles. Correctness
+(`gpu_prefill.stages`, 110 checks) passes. The 5× target needs tuning plus
+GPU indexer top-k / host-readback removal / expert-I/O overlap.

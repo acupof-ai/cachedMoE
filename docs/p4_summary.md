@@ -46,8 +46,10 @@
 - R2 SSD TTFT 已实测：同一 4,133-token prompt，冷 **101.6 s** → 新进程 SSD 命中
   **2.47 s**（reused 4132 / prefill 1），详见 `docs/p4_kv_ux.md` §8 与
   `docs/p4_test_report.md` §5。
-- 仍需安静机补的性能项：S 的 N=4133、R1 的 A/B + `--auto-tune`、T 的 C(M)
-  曲线、DSpark G1/G3、`kv_replay.longctx`。
+- S 的 N=4133 已实测：legacy 103.67 s / coop 99.89 s，只快 **3.6%**，5× 目标未达成；
+  瓶颈与下一步见 `docs/p4_prefill_speed.md`。
+- 仍待补：R1 的 A/B + `--auto-tune` 端到端曲线、T 的 C(M) 曲线、DSpark G1/G3、
+  `kv_replay.longctx`。
 
 ## 4. 合入前必须完成的复验
 
