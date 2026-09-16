@@ -1,4 +1,4 @@
-#include "runtime/engine.h"
+﻿#include "runtime/engine.h"
 
 #include <algorithm>
 #include <bit>
@@ -1269,7 +1269,7 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     bool backfill = sc.backfill;
     if (const char* e = std::getenv("DEEPMOE_BACKFILL"); e && *e) backfill = *e != '0';
     if (backfill && store_.free_slots() > 0) {
-        std::vector<store::ExpertKey> order;
+        std::vector<ExpertKey> order;
         if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
             order = store::static_heat_order(hf);
         if (order.empty()) order = store::static_heat_order();
@@ -1708,3 +1708,4 @@ std::string Engine::status() const {
 }
 
 }  // namespace deepmoe::runtime
+

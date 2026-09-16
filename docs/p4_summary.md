@@ -33,13 +33,18 @@
   compressed rows / index keys 逐位相同，top-k 列表完全一致。
 - S 的 coop vs legacy 正确性：stage cos ≈0.99999，gate top-6 64/64 相同。
 
-## 3. 已知问题 / 不要当成已完成
+## 3. 构建/测试状态（2026-09-16 更新）
 
-1. `kv_replay.l3_64` 第 3 段 restore 失败：`timeline wait for 5579 timed out`（详见 `docs/p4_kv_ux.md`）。
-2. 本 PR 没有编译产物，也没有测试结论；见 §4 复验清单。
-3. R1 后段的 stall/chat3 A/B 在 4 条线并发时 device lost / 超时，数据无效；需安静机串行重跑。
-4. KV 落 SSD prefix cache 与 R1 `--auto-tune` 已于 2026-09-16 追加（见 p4_kv_ux.md / p4_hitrate.md），但本环境无法编译验证。
-5. S 的 N=4133 端到端提速、T 的 M=1..6 缩放、prefill_p4.csv 都还没产出。
+- 本 PR 已在 Strix Halo（CMake 4.3 + Ninja + zig/Vulkan SDK 1.4.357）上完成编译。
+- 已通过：CPU 单元 **21/21**、`kvdisk.roundtrip`、`suite.tokenizer`、
+  `suite.engram_tables`、`gpu_layer.mgt1_layer_batch_vs_steps`、
+  `gpu_prefill.stages`（110 checks）、`kv_replay.l3_64`。
+- 完整命令与结果见 **`docs/p4_test_report.md`**。
+- 本轮修复：`compressor.slang` / `mgt1_cmp.slang` 的 E4M3 scale 与字节不一致
+  （raw rows 9 → 0，M>1 batch vs steps 重新逐位一致）；回退 Track T 的 M=1
+  K-split 采纳（`kv_replay` (1) 恢复 8/8）；确认 restore timeout 是四线并发导致。
+- 仍需安静机补的性能项：S 的 N=4133、R1 的 A/B + `--auto-tune`、T 的 C(M)
+  曲线、R2 的 SSD TTFT、DSpark G1/G3、`kv_replay.longctx`。
 
 ## 4. 合入前必须完成的复验
 

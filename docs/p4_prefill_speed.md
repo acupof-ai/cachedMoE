@@ -214,3 +214,8 @@ Clearly **not** a measurement, and to be replaced by §4's table:
    `runtime/engram.h` + `runtime/rope.h` by sinking what is needed);
 5. rewrite `build\p4_done.json` with `status:"done"`, the commit hashes, the
    test command, and the numbers.
+
+## 2026-09-16 测试状态
+
+- `gpu_prefill.stages` 已通过：110 checks、0 failed、worst cos 0.999912（L2 cmp_cache）。
+- 尚未跑：安静机 N=4133 legacy vs coop 的端到端表（`bench/results/prefill_p4.csv`）。

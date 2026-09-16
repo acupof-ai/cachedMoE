@@ -93,3 +93,11 @@ this record could be written; the worktree however received **no commits and no 
 - `--repeat N` 仍是在同一个 serve 进程里连续跑 N 遍（expert cache 变热，用于 warm 曲线）；
   `--auto-tune` 是跨进程重新调 P3 backfill 顺序。
 - **未验证**：本环境不能编译/起 serve；Python 侧已过 `py_compile`，C++ 侧需在能构建的机器上复验。
+
+## 2026-09-16 测试状态
+
+- 引擎侧 `DEEPMOE_HEAT_FILE` 已随整树编译通过。
+- Python 侧 `write_heat_from_route` 与 `round_stats` 已用合成 route/events 单测通过；
+  `--auto-tune`/`--write-heat` 出现在 `--help`。
+- 尚未跑：安静机上的 serve A/B（MOE_OVERLAP / PREFILL_HANDOFF / BACKFILL）、
+  `--auto-tune N` 的跨进程曲线、`prefill_p4.csv`/hit 曲线。

@@ -128,11 +128,6 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
         {&idx_score,    uint64_t(kMaxIndexPositions) * 4},
         {&idx_blk_key,  cand_blocks * 4},
         {&idx_cand,     cand_blocks * 4},
-        // docs/p2_attention.md §13.7: the K-split GEMVs' shared fp32 partial
-        // plane (the four run one after another, at most 16 slices of 8192
-        // rows) and the tiled attention's [heads][tiles] maxima.
-        {&ksp_part,     uint64_t(16) * 8192 * 4},
-        {&tile_max,     uint64_t(cfg.num_attention_heads) * 64 * 4},
     };
     for (const Want& w : wants) {
         auto v = s.alloc(w.bytes);
@@ -245,20 +240,11 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
                  w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
                  b.mix_a, b.mix_b, moe_view(), b.x, b.xout, b.u.addr);
 
-    // docs/p2_attention.md §13.7: the K-split GEMVs and the tiled attention
-    // (Track J), adopted as the M = 1 decode path (Track T).
-    auto ksp = [&](gpu::AttnStage split, gpu::AttnStage combine, uint64_t weight,
-                   uint64_t scale, uint64_t x, uint64_t y) {
-        uint64_t* p = runner_->slots(split);
-        p[gpu::slot::kKspW]    = weight;
-        p[gpu::slot::kKspS]    = scale;
-        p[gpu::slot::kKspX]    = x;
-        p[gpu::slot::kKspY]    = y;
-        p[gpu::slot::kKspPart] = b.ksp_part.addr;
-        if (combine != split) std::memcpy(runner_->slots(combine), p, gpu::kAttnStageStride);
-    };
-    ksp(gpu::AttnStage::WqAKSplit, gpu::AttnStage::WqAKCombine, w.wq_a, w.wq_a_scale,
-        b.u.addr, b.qr.addr);
+    uint64_t* qa = runner_->slots(gpu::AttnStage::WqA);
+    qa[gpu::slot::kGemvW] = w.wq_a;
+    qa[gpu::slot::kGemvS] = w.wq_a_scale;
+    qa[gpu::slot::kGemvX] = b.u.addr;
+    qa[gpu::slot::kGemvY] = b.qr.addr;
 
     uint64_t* qb = runner_->slots(gpu::AttnStage::WqB);
     qb[gpu::slot::kWqbW]     = w.wq_b;
@@ -279,12 +265,9 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     kv[gpu::slot::kWkvVal]     = st.kv.win_val;
     kv[gpu::slot::kWkvScale]   = st.kv.win_scale;
     kv[gpu::slot::kWkvKv]      = b.kv.addr;
-    kv[gpu::slot::kWkvPart]    = b.ksp_part.addr;
-    std::memcpy(runner_->slots(gpu::AttnStage::WkvKFinish), kv, gpu::kAttnStageStride);
-    ksp(gpu::AttnStage::WkvKSplit, gpu::AttnStage::WkvKSplit, w.wkv, w.wkv_scale, b.u.addr,
-        b.kv_raw.addr);
+    std::memcpy(runner_->slots(gpu::AttnStage::WkvFinish), kv, gpu::kAttnStageStride);
 
-    uint64_t* at = runner_->slots(gpu::AttnStage::AttnScoreT);
+    uint64_t* at = runner_->slots(gpu::AttnStage::AttnScore);
     at[gpu::slot::kAttnQ]        = b.q.addr;
     at[gpu::slot::kAttnWinVal]   = st.kv.win_val;
     at[gpu::slot::kAttnWinScale] = st.kv.win_scale;
@@ -294,16 +277,19 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     at[gpu::slot::kAttnRope]     = b.rope.addr;
     at[gpu::slot::kAttnScore]    = b.score.addr;
     at[gpu::slot::kAttnO]        = b.o.addr;
-    at[gpu::slot::kAttnTileMax]  = b.tile_max.addr;
-    // Read only at pv_tiles > 1, which the decode geometry does not use.
-    at[gpu::slot::kAttnPartO]    = b.ksp_part.addr;
-    at[gpu::slot::kAttnPartD]    = b.ksp_part.addr;
-    std::memcpy(runner_->slots(gpu::AttnStage::AttnPvT), at, gpu::kAttnStageStride);
+    std::memcpy(runner_->slots(gpu::AttnStage::AttnCombine), at, gpu::kAttnStageStride);
 
-    ksp(gpu::AttnStage::WoAKSplit, gpu::AttnStage::WoAKCombine, w.wo_a, w.wo_a_scale, b.o.addr,
-        b.woa.addr);
-    ksp(gpu::AttnStage::WoBKSplit, gpu::AttnStage::WoBKCombine, w.wo_b, w.wo_b_scale, b.woa.addr,
-        b.wob.addr);
+    uint64_t* wa = runner_->slots(gpu::AttnStage::WoA);
+    wa[gpu::slot::kWoaW] = w.wo_a;
+    wa[gpu::slot::kWoaS] = w.wo_a_scale;
+    wa[gpu::slot::kWoaO] = b.o.addr;
+    wa[gpu::slot::kWoaY] = b.woa.addr;
+
+    uint64_t* wb = runner_->slots(gpu::AttnStage::WoB);
+    wb[gpu::slot::kGemvW] = w.wo_b;
+    wb[gpu::slot::kGemvS] = w.wo_b_scale;
+    wb[gpu::slot::kGemvX] = b.woa.addr;
+    wb[gpu::slot::kGemvY] = b.wob.addr;
 
     uint64_t* g = runner_->slots(gpu::AttnStage::GateScore);
     g[gpu::slot::kGateW]         = w.gate_w;
@@ -459,9 +445,7 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                     uint32_t groups) -> Result<void> {
         if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
-        if (auto r = cmd.barrier(); !r) return r;
-        if (stamp) stamp(gpu::attn_stage_name(s));
-        return {};
+        return cmd.barrier();
     };
 
     // 1. mega-mHC, attention half. hc_post is applied here for every layer but
@@ -475,30 +459,22 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     if (auto r = step(gpu::AttnStage::MhcMix, &mp, sizeof mp, mp.mix_rows); !r) return r;
     if (auto r = step(gpu::AttnStage::MhcFinal, &mp, sizeof mp, n_wg0); !r) return r;
 
-    // 2-3. Q path. wq_a is K-split (docs/p2_attention.md §13.3); wq_b stays
-    //      whole, with q_norm and RoPE fused.
-    gpu::KSplitPush qa{c.q_lora_rank, dim, dim / 32, 0, c.q_lora_rank, 0};
-    if (auto r = step(gpu::AttnStage::WqAKSplit, &qa, sizeof qa,
-                      runner_->ksplit_groups(gpu::AttnStage::WqAKSplit, c.q_lora_rank)); !r)
-        return r;
-    if (auto r = step(gpu::AttnStage::WqAKCombine, &qa, sizeof qa,
-                      gpu::AttnRunner::combine_groups(c.q_lora_rank)); !r)
-        return r;
+    // 2-3. Q path.
+    gpu::GemvPush qa{c.q_lora_rank, dim, dim / 32, 0};
+    if (auto r = step(gpu::AttnStage::WqA, &qa, sizeof qa,
+                      runner_->gemv_groups(gpu::AttnStage::WqA, c.q_lora_rank)); !r) return r;
     gpu::WqbPush qb{qrows, c.q_lora_rank, c.q_lora_rank / 32, c.head_dim,
                     c.qk_rope_head_dim, static_cast<float>(c.rms_norm_eps)};
     if (auto r = step(gpu::AttnStage::WqB, &qb, sizeof qb,
                       runner_->gemv_groups(gpu::AttnStage::WqB, qrows)); !r) return r;
 
-    // 4. KV path and the ring write: the K-split, whose combine folds in
-    //    kv_norm, RoPE and the fp8 ring write (wkv.slang stage 2).
-    gpu::KSplitPush ks{c.head_dim, dim, dim / 32, 0, c.head_dim, 0};
-    if (auto r = step(gpu::AttnStage::WkvKSplit, &ks, sizeof ks,
-                      runner_->ksplit_groups(gpu::AttnStage::WkvKSplit, c.head_dim)); !r)
-        return r;
+    // 4. KV path and the ring write.
+    const uint32_t kvg = runner_->gemv_groups(gpu::AttnStage::WkvGemv, c.head_dim);
     gpu::WkvPush kp{c.head_dim, dim, dim / 32, c.qk_rope_head_dim,
-                    st.position % c.sliding_window, 1,
-                    static_cast<float>(c.rms_norm_eps), c.head_dim};
-    if (auto r = step(gpu::AttnStage::WkvKFinish, &kp, sizeof kp, 1); !r) return r;
+                    st.position % c.sliding_window, kvg,
+                    static_cast<float>(c.rms_norm_eps)};
+    if (auto r = step(gpu::AttnStage::WkvGemv, &kp, sizeof kp, kvg); !r) return r;
+    if (auto r = step(gpu::AttnStage::WkvFinish, &kp, sizeof kp, 1); !r) return r;
 
     // 4b. design §7.4: the compressor and the indexer, on the four and eight
     //     layers that have them. `Attention.forward` runs them between the
@@ -507,35 +483,22 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     //     that rotates it comes last.
     if (auto r = record_ced(cmd, st); !r) return r;
 
-    // 5. Sparse attention over the window plus the compressed picks, on the
-    //    head-group x KV-tile grid: 32 score tiles and one P.V tile, so AttnPvT
-    //    finishes the output itself (docs/p2_attention.md §13.5).
-    {
-        const uint32_t n_kv = st.kv.n_kv;
-        constexpr uint32_t kTiles = 32;
-        gpu::AttnTPush tp{n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim,
-                          kAttnScoreStride, 1.0f / std::sqrt(static_cast<float>(c.head_dim)),
-                          c.num_attention_heads, kTiles, (n_kv + kTiles - 1) / kTiles,
-                          qrows, 1, n_kv};
-        if (auto r = step(gpu::AttnStage::AttnScoreT, &tp, sizeof tp,
-                          runner_->attn_tile_groups(c.num_attention_heads, kTiles)); !r)
-            return r;
-        if (auto r = step(gpu::AttnStage::AttnPvT, &tp, sizeof tp,
-                          runner_->attn_pv_groups(c.num_attention_heads, 1)); !r)
-            return r;
-    }
+    // 5. Sparse attention over the window plus the compressed picks.
+    gpu::AttnPush ap{st.kv.n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim,
+                     kAttnScoreStride,
+                     1.0f / std::sqrt(static_cast<float>(c.head_dim))};
+    if (auto r = step(gpu::AttnStage::AttnScore, &ap, sizeof ap, c.num_attention_heads); !r)
+        return r;
+    if (auto r = step(gpu::AttnStage::AttnCombine, &ap, sizeof ap, c.num_attention_heads); !r)
+        return r;
 
-    // 6-7. Output projection, both K-split.
-    gpu::KSplitPush wa{orows, ocols, ocols / 32, c.o_lora_rank, orows, 0};
-    if (auto r = step(gpu::AttnStage::WoAKSplit, &wa, sizeof wa,
-                      runner_->ksplit_groups(gpu::AttnStage::WoAKSplit, orows)); !r) return r;
-    if (auto r = step(gpu::AttnStage::WoAKCombine, &wa, sizeof wa,
-                      gpu::AttnRunner::combine_groups(orows)); !r) return r;
-    gpu::KSplitPush wb{dim, orows, orows / 32, 0, dim, 0};
-    if (auto r = step(gpu::AttnStage::WoBKSplit, &wb, sizeof wb,
-                      runner_->ksplit_groups(gpu::AttnStage::WoBKSplit, dim)); !r) return r;
-    if (auto r = step(gpu::AttnStage::WoBKCombine, &wb, sizeof wb,
-                      gpu::AttnRunner::combine_groups(dim)); !r) return r;
+    // 6-7. Output projection.
+    gpu::WoaPush wa{orows, ocols, ocols / 32, c.o_lora_rank};
+    if (auto r = step(gpu::AttnStage::WoA, &wa, sizeof wa,
+                      runner_->gemv_groups(gpu::AttnStage::WoA, orows)); !r) return r;
+    gpu::GemvPush wb{dim, orows, orows / 32, 0};
+    if (auto r = step(gpu::AttnStage::WoB, &wb, sizeof wb,
+                      runner_->gemv_groups(gpu::AttnStage::WoB, dim)); !r) return r;
 
     // 8. mega-mHC, FFN half: hc_post folds the attention output into the
     //    stream and the mixes for the FFN come out of the same dispatch.
@@ -584,9 +547,7 @@ Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& s
     auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                     uint32_t groups) -> Result<void> {
         if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
-        if (auto r = cmd.barrier(); !r) return r;
-        if (stamp) stamp(gpu::attn_stage_name(s));
-        return {};
+        return cmd.barrier();
     };
 
     const gpu::CmpPush cp{c.head_dim, c.hidden_size, ratio, st.position % ratio,
@@ -1113,9 +1074,7 @@ Result<void> DecodeLayer::record_attention_batch(gpu::CommandBuffer& cmd, const 
     auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
                     uint32_t gy) -> Result<void> {
         if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
-        if (auto r = cmd.barrier(); !r) return r;
-        if (stamp) stamp(gpu::mgt_stage_name(s));
-        return {};
+        return cmd.barrier();
     };
 
     gpu::MhcPush mp{dim, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0, c.hc_sinkhorn_iters,
@@ -1209,9 +1168,7 @@ Result<void> DecodeLayer::record_ced_batch(gpu::CommandBuffer& cmd, const BatchS
     auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
                     uint32_t gy) -> Result<void> {
         if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
-        if (auto r = cmd.barrier(); !r) return r;
-        if (stamp) stamp(gpu::mgt_stage_name(s));
-        return {};
+        return cmd.barrier();
     };
 
     gpu::MgtCmpPush cp{};
@@ -1375,9 +1332,7 @@ Result<void> DecodeLayer::record_tail_batch(gpu::CommandBuffer& cmd, const Batch
     auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
                     uint32_t gy) -> Result<void> {
         if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
-        if (auto r = cmd.barrier(); !r) return r;
-        if (stamp) stamp(gpu::mgt_stage_name(s));
-        return {};
+        return cmd.barrier();
     };
     if (auto r = step(S::MhcClose, &mp, sizeof mp, n_wg0, M); !r) return r;
     if (auto r = step(S::MhcFinal, &mp, sizeof mp, n_wg0, M); !r) return r;

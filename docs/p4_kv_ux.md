@@ -68,3 +68,12 @@ cmake --build build
 - 测试：`tests/test_kv_replay.cpp` 新增纯 CPU `DEEPMOE_TEST(kvdisk, roundtrip)`，
   CMake 注册 `suite.kvdisk`（无模型依赖）。
 - **未验证**：无法在本环境编译；TTFT 对照（无缓存 vs SSD hit、R=128/256）需在能构建的机器上跑。
+
+## 7. 2026-09-16 构建/测试更新
+
+- `runtime/session.{h,cpp}` 的 SSD API 与 `kvdisk.roundtrip` 已编译并通过（CPU，无模型）。
+- `kv_replay.l3_64` 在安静机上**全绿**：restore [0,64) 约 52 s、随后 teacher-forced 8/8、
+  free-running 8/8；此前 `timeline wait for 5579 timed out` 是四条 track 并发抢 GPU 导致。
+- 顺带修掉 compressor 的 E4M3 scale/字节不一致：`kv_replay` 场景 (4) 的 `raw_rows()`
+  从 9 变为 **0**。SSD persist 沿同一 packed 格式，受益于该修复。
+- 仍未做：无缓存 vs SSD prefix hit 的端到端 TTFT 对照（R=128/256）。

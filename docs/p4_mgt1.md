@@ -103,3 +103,14 @@ powershell -NoProfile -File C:\Users\Asus\code\deepmoe\build\p4_gpu_lock.ps1 rel
 3. **DSpark G1**：接受率需在 ≥5 个正常 prompt × ≥64 token、空闲机上重测（先修 dsref 层 1/14 的 98 GB 未触碰占位）。
 4. **G3 长上下文的批边界**：M>1 verify 与逐 token decode 的 logits 分歧机制未隔离（§10.2 不变量），runtime 对齐哪一侧未定。
 5. **本 track 自身**：dirty 5 文件未提交、`mgt1_p4.csv` 未生成、`decode.forty_layers` 无回归结论（本次环境阻塞导致）。
+
+## 2026-09-16 测试状态与范围调整
+
+- `gpu_layer.mgt1_layer_batch_vs_steps` 已通过：M=2/4/6 batch vs steps，gate ids、
+  ring/overflow、compressed rows/index keys/top-k 均一致。
+- `compressor.slang` 与 `mgt1_cmp.slang` 都改为 `fp8_decode(fp8_encode_rn(scale))`，
+  两者才重新逐位一致（此前 M=1 用非 E4M3 网格、M>1 用另一网格）。
+- Track T 收尾 WIP 里顺带把 **M=1** 也换成 Track J 的 K-split/tiled attention；
+  该采纳使 `kv_replay.l3_64` 的 (1) 从 8/8 变成 7/8，已回退（`decode_layer.{h,cpp}`
+  回到 b4f0e83），M>1 交付不受影响。
+- 尚未测：M=1/2/4/6 每层性能曲线 `bench/results/mgt1_p4.csv`、DSpark G1/G3。
