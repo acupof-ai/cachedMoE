@@ -177,6 +177,32 @@ public:
     // for the high-scoring near misses of design §9.3.
     void note_heat(ExpertKey key, float score, float alpha = 0.125f);
 
+    // --- R1 round 2: per-turn reheat (docs/p4_hitrate.md §7) -----------------
+    //
+    // `heat` is an EWMA of the router score over the tokens this process has
+    // seen, alpha 0.125, so it already forgets an expert that stopped being
+    // routed about eight tokens ago -- but nothing bounds it to the CURRENT
+    // turn: a conversation that changes topic keeps the previous topic's
+    // experts at the top of the order for as long as it runs. `decay_heat`
+    // multiplies every slot's heat by `factor` at a turn boundary; `heat_order`
+    // returns the RESIDENT, unpinned experts hottest first, which is what a
+    // backfill pass wants as its order.
+    //
+    // The decay is RENORMALISED: the hottest slot is scaled back to 1.0, the
+    // EWMA's own ceiling, whatever `factor` was. Without that a long
+    // conversation drives every value towards zero (1.0 -> 0.5 -> 0.25 ...) and
+    // no absolute threshold on heat means anything -- which is exactly how the
+    // first version of the reheat pass came to classify every expert as cold and
+    // evict 68 of 2,200 a turn. The decay still ages the order: an expert that
+    // stops being routed falls by `factor` a turn relative to the hot end, so a
+    // fresh expert overtakes it after about 1/log2(1/factor) turns.
+    void decay_heat(float factor);
+    // Hottest first; ties by layer then expert id, so the order is a pure
+    // function of the heat values.
+    std::vector<ExpertKey> heat_order() const;
+    uint32_t heat_slots() const;
+    float heat_max() const;
+
     std::optional<ExpertSlot> slot_info(uint32_t slot) const;
     std::optional<ExpertSlot> slot_for(ExpertKey key) const;
     // Snapshot of every Resident, non-pinned slot; the Planner ranks these.

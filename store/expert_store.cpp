@@ -339,6 +339,60 @@ void ExpertStore::note_heat(ExpertKey key, float score, float alpha) {
     h = (1.0f - alpha) * h + alpha * score;
 }
 
+void ExpertStore::decay_heat(float factor) {
+    if (factor >= 1.0f) return;
+    if (factor < 0.0f) factor = 0.0f;
+    std::lock_guard lk(mutex_);
+    // The hot end is rescaled to 1.0 -- the EWMA's own ceiling -- whatever the
+    // decay was, so `heat` is always "how wanted is this expert, relative to the
+    // hottest thing in the cache" and a floor like 0.05 means the same thing at
+    // every turn. Without that a long conversation drives every value towards
+    // zero (1.0 -> 0.5 -> 0.25 ...) and every absolute threshold on heat becomes
+    // meaningless -- which is how the first version of the reheat pass came to
+    // call 68 of 2,200 experts cold on every turn. The decay still does its job:
+    // an expert that stops being routed falls by `factor` a turn relative to the
+    // hot end, so a fresh expert overtakes it after about 1/log2(1/factor) turns.
+    float top = 0.0f;
+    for (const ExpertSlot& s : slots_)
+        if (s.heat > top) top = s.heat;
+    if (top <= 0.0f) return;
+    const float scale = 1.0f / top;
+    for (ExpertSlot& s : slots_) s.heat *= scale;
+}
+
+float ExpertStore::heat_max() const {
+    std::lock_guard lk(mutex_);
+    float top = 0.0f;
+    for (const ExpertSlot& s : slots_)
+        if (s.heat > top) top = s.heat;
+    return top;
+}
+
+std::vector<ExpertKey> ExpertStore::heat_order() const {
+    std::lock_guard lk(mutex_);
+    std::vector<ExpertSlot> live;
+    live.reserve(slots_.size());
+    for (const ExpertSlot& s : slots_)
+        if (s.state == SlotState::Resident && s.tier != Tier::Pinned) live.push_back(s);
+    std::sort(live.begin(), live.end(), [](const ExpertSlot& a, const ExpertSlot& b) {
+        if (a.heat != b.heat) return a.heat > b.heat;
+        if (a.key.layer != b.key.layer) return a.key.layer < b.key.layer;
+        return a.key.expert < b.key.expert;
+    });
+    std::vector<ExpertKey> out;
+    out.reserve(live.size());
+    for (const ExpertSlot& s : live) out.push_back(s.key);
+    return out;
+}
+
+uint32_t ExpertStore::heat_slots() const {
+    std::lock_guard lk(mutex_);
+    uint32_t n = 0;
+    for (const ExpertSlot& s : slots_)
+        if (s.state == SlotState::Resident && s.tier != Tier::Pinned) ++n;
+    return n;
+}
+
 std::optional<ExpertSlot> ExpertStore::slot_info(uint32_t slot) const {
     std::lock_guard lk(mutex_);
     if (slot >= slots_.size()) return std::nullopt;

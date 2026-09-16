@@ -162,6 +162,7 @@ int cmd_serve(int argc, char** argv) {
     runtime::SessionOptions so;
     runtime::SessionPoolOptions po;
     bool check_topk = false;
+    bool engine_reheat = false;
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--model")                cfg.model_dir = value_of(argc, argv, i);
@@ -172,6 +173,8 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--gpu-prefill-min") so.gpu_prefill_min = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--replay")          so.replay = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--no-rollback")     so.rollback = false;
+        else if (a == "--reheat")          { so.reheat = true; engine_reheat = true; }
+        else if (a == "--reheat-decay")    { so.reheat_decay = static_cast<float>(std::atof(value_of(argc, argv, i).c_str())); engine_reheat = true; }
         else if (a == "--max-parked")      po.max_parked = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--park-budget-mb")  po.max_parked_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 20;
         else if (a == "--kv-dir")          po.disk.dir = value_of(argc, argv, i);
@@ -214,6 +217,7 @@ int cmd_serve(int argc, char** argv) {
     if (auto r = engine.init_gpu(); !r) { emit_error("gpu init: " + r.error().str()); return 1; }
     if (auto r = engine.begin_session(sc); !r) { emit_error("session: " + r.error().str()); return 1; }
     engine.set_check_topk(check_topk);
+    engine.set_reheat(engine_reheat);
     runtime::SessionPool pool(engine, *tok, so, po);
     if (!po.disk.dir.empty()) {
         auto loaded = pool.restore_active_from_disk();
@@ -226,13 +230,14 @@ int cmd_serve(int argc, char** argv) {
     const double load_s = std::chrono::duration<double>(Clock::now() - t0).count();
     emit(std::format("{{\"event\":\"ready\",\"load_s\":{},\"max_context\":{},\"vocab\":{},"
                      "\"cache_gb\":{},\"cache_slots\":{},\"gpu_prefill_min\":{},\"check_topk\":{},"
-                     "\"engram_tables\":{},\"kv_mb\":{},\"rollback\":{},\"max_parked\":{}}}",
+                     "\"engram_tables\":{},\"kv_mb\":{},\"rollback\":{},\"max_parked\":{},"
+                     "\"reheat\":{},\"reheat_decay\":{}}}",
                      json_number(load_s), engine.max_context(), tok->vocab_size(),
                      json_number(engine.store().capacity_bytes() / double(1ull << 30)),
                      engine.store().slot_count(), so.gpu_prefill_min, check_topk ? "true" : "false",
                      json_quote(sc.engram_tables_dir.empty() ? std::string("derived") : sc.engram_tables_dir),
                      json_number(engine.kv().bytes() / 1e6), so.rollback ? "true" : "false",
-                     po.max_parked));
+                     po.max_parked, so.reheat ? "true" : "false", json_number(so.reheat_decay)));
 
     Inbox inbox;
     std::thread reader([&] { inbox.run(); });
@@ -301,6 +306,20 @@ int cmd_serve(int argc, char** argv) {
                              json_number(engine.kv().bytes() / 1e6), engine.kv().capacity(),
                              json_quote(engine.store().stats().to_string()),
                              json_quote(engine.planner().stats().to_string())));
+            continue;
+        }
+        // Track R1 round 2 (docs/p4_hitrate.md §7): the same pass the turn
+        // boundary runs, on demand. `decay` defaults to the session's.
+        if (op == "reheat") {
+            float decay = so.reheat_decay;
+            if (const JsonValue* d = doc->find("decay"); d && d->as_double())
+                decay = static_cast<float>(*d->as_double());
+            auto h = engine.reheat(decay);
+            if (!h) { emit_error("reheat: " + h.error().str()); continue; }
+            emit(std::format("{{\"event\":\"reheat\",\"turn\":{},\"slots\":{},\"warm\":{},"
+                             "\"evicted\":{},\"keys\":{},\"free_slots\":{},\"decay\":{},\"ms\":{}}}",
+                             h->turn, h->slots, h->warm, h->evicted, h->passed, h->free_slots,
+                             json_number(h->decay), json_number(h->ms)));
             continue;
         }
         if (op != "generate") { emit_error("unknown op '" + op + "'"); continue; }

@@ -166,6 +166,9 @@ struct GenerateStats {
     uint64_t nucleus_sum = 0;
     double   sample_ms_sum = 0.0;
     uint32_t context_after = 0;
+    // Track R1 round 2 (§7): what the turn's reheat pass was handed. Zero when
+    // reheating is off.
+    uint32_t reheat_turn = 0, reheat_keys = 0, reheat_free_slots = 0;
 
     double decode_tok_s() const { return decode_ms > 0 ? decode_steps * 1e3 / decode_ms : 0.0; }
     double prefill_tok_s() const {
@@ -192,6 +195,13 @@ struct SessionOptions {
     // Track R2: roll back to a diverging prompt's common prefix instead of
     // re-prefilling from 0, when that is cheaper.
     bool     rollback = true;
+    // Track R1 round 2 (docs/p4_hitrate.md §7): reheat the expert cache at every
+    // turn boundary -- decay all slot heat by `reheat_decay`, re-rank the
+    // resident experts, and run the P3 backfill again on that order. The read is
+    // issued after the reply is finished and runs behind the next turn's demand
+    // traffic, so it costs the turn nothing.
+    bool     reheat = false;
+    float    reheat_decay = 0.5f;
 };
 
 class Session {

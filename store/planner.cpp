@@ -449,7 +449,7 @@ Result<uint32_t> Planner::backfill(TokenIndex) {
     return unimplemented("Planner::backfill(token): use start_backfill(order) (design §9.6 P3)");
 }
 
-Result<void> Planner::start_backfill(std::vector<ExpertKey> order, uint32_t inflight) {
+Result<void> Planner::start_backfill(std::vector<ExpertKey> order, uint32_t inflight, bool keep) {
     if (!store_ || !io_) return fail(Err::FailedPrecondition, "planner is not initialised");
     stop_backfill();
     if (order.size() >= kDemandStampBase)
@@ -457,6 +457,7 @@ Result<void> Planner::start_backfill(std::vector<ExpertKey> order, uint32_t infl
     auto b = std::make_shared<Backfill>();
     b->order = std::move(order);
     b->max_inflight = std::max<uint32_t>(1, inflight);
+    b->keep = keep;
     b->active.store(true);
     backfill_ = b;
     backfill_pump(b);
@@ -486,7 +487,12 @@ void Planner::backfill_pump(const std::shared_ptr<Backfill>& b) {
             const size_t rank = b->next++;
             key = b->order[rank];
             if (store_->slot_of(key)) continue;          // held already
-            stamp = kDemandStampBase - 1 - rank;          // hotter = newer, all below demand
+            // The default P3 stamp is below every demand stamp, so the LRU
+            // recycles a startup guess first. `keep` (the per-turn reheat) is
+            // this conversation's own routing, in heat order, so it is stamped
+            // like demand instead: hotter (earlier in the order) is newer.
+            stamp = b->keep ? (kDemandStampBase + rank)
+                            : (kDemandStampBase - 1 - rank);
             ++b->inflight;
         }
         auto f = fetch(key, IoPriority::Backfill, 0, 0,

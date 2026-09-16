@@ -321,6 +321,49 @@ public:
     void set_check_topk(bool on) { check_topk_ = on; }
     uint32_t topk_mismatches() const { return topk_mismatches_; }
 
+    // --- R1 round 2: per-turn reheat -----------------------------------------
+    //
+    // docs/p4_hitrate.md §7. The expert cache is filled once, at begin_session,
+    // from the static heat order -- a global average over a 27k-token trace --
+    // and from then on only demand fills it. That is enough for a single topic
+    // and wrong for a conversation: docs/p4_expert_patterns.md measures 86.6% of
+    // a decode step's experts already appearing in the prompt's prefill, and a
+    // topic switch dropping the hit rate from 0.94-0.96 to 0.88-0.91, because
+    // the cache is full of the previous topic's experts and nothing puts the
+    // new topic's in until each one misses.
+    //
+    // `reheat(decay)` is the turn boundary. It decays every slot's heat by
+    // `decay` and re-runs the P3 backfill with the now-coldest-first order. The
+    // backfill never evicts -- it only fills FREE slots, which the LRU has
+    // meanwhile made out of the previous topic's leftovers -- so the pass is a
+    // no-op when the cache has no free slot, and it cannot cost a hit. The read
+    // is P3, i.e. it runs behind demand traffic on the IoEngine, so a turn's
+    // first token does not wait for it.
+    //
+    // The heat itself needs no new bookkeeping: `ExpertSlot::heat` is already an
+    // EWMA of the router score over the chosen top-6 and the near misses
+    // (design §9.3), updated at every layer of every token, so decaying it makes
+    // the current turn's routing the newest information in the order.
+    //
+    // `HeatOrder` reports what the pass was asked to do; `free_slots` is how
+    // many slots it could fill, i.e. the ceiling on its effect.
+    struct HeatOrder {
+        uint32_t   slots = 0;            // resident, unpinned experts considered
+        uint32_t   warm = 0;             // of those, at or above the reheat floor
+        uint32_t   evicted = 0;          // the coldest tail, freed for the pass
+        uint32_t   passed = 0;           // keys handed to the backfill
+        uint32_t   free_slots = 0;       // free slots when the pass started
+        uint32_t   turn = 0;             // reheat passes so far
+        float      decay = 1.0f;
+        double     ms = 0.0;             // building the order (one store scan + sort)
+        std::string to_string() const;
+    };
+    // Safe to call whether or not reheat is enabled; `set_reheat` only decides
+    // whether the serve loop calls it after every turn.
+    Result<HeatOrder> reheat(float decay = 0.5f);
+    void set_reheat(bool on) { reheat_on_ = on; }
+    bool reheat_enabled() const { return reheat_on_; }
+
     // --- accessors --------------------------------------------------------
 
     const RuntimeConfig&    config()   const { return cfg_; }
@@ -489,6 +532,10 @@ private:
     std::FILE*            route_dump_ = nullptr;
     std::vector<uint16_t> route_ids_;     // [layers][topk] of the current step
     void write_route_record(uint32_t position);
+
+    // Whether the serve loop reheats the cache after every turn (§7).
+    bool                  reheat_on_ = false;
+    uint32_t              reheat_turn_ = 0;
 
     // Track R1 (docs/p4_hitrate.md §4). `overlap_`: dispatch A over the
     // resident experts goes out before a layer's NVMe wait. The eviction guard:

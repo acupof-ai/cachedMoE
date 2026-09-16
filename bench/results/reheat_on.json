@@ -1,0 +1,95 @@
+{
+ "reheat": true,
+ "decay": 0.5,
+ "cache_slots": 2200,
+ "turns": [
+  {
+   "prompt_tokens": 28,
+   "reused_tokens": 0,
+   "generated": 48,
+   "prefill_mode": "decode",
+   "ttft_ms": 14957.2537,
+   "tok_s": 2.70075844,
+   "decode_hit_rate": 0.757624113,
+   "prefill_hit_rate": 0.602827381,
+   "decode_nvme_mb": 51423.3467,
+   "prefill_nvme_mb": 50200.7726,
+   "decode_steps": 47,
+   "context": 75,
+   "total_ms": 32359.7707,
+   "reheat": {
+    "turn": 1,
+    "keys": 68,
+    "free_slots": 0
+   },
+   "turn": 1,
+   "wall_s": 32.36,
+   "reheat_op": {
+    "event": "reheat",
+    "turn": 2,
+    "slots": 2132,
+    "warm": 1287,
+    "evicted": 68,
+    "keys": 136,
+    "free_slots": 68,
+    "decay": 0.5,
+    "ms": 0.7331
+   }
+  },
+  {
+   "prompt_tokens": 30,
+   "reused_tokens": 0,
+   "generated": 1,
+   "prefill_mode": "decode",
+   "ttft_ms": 14345.0234,
+   "tok_s": 0,
+   "decode_hit_rate": 0,
+   "prefill_hit_rate": 0.656805556,
+   "decode_nvme_mb": 0,
+   "prefill_nvme_mb": 46476.6239,
+   "decode_steps": 0,
+   "context": 30,
+   "total_ms": 14345.0498,
+   "reheat": {
+    "turn": 3,
+    "keys": 68,
+    "free_slots": 0
+   },
+   "turn": 2,
+   "wall_s": 14.35,
+   "reheat_op": {
+    "event": "reheat",
+    "turn": 4,
+    "slots": 2132,
+    "warm": 1236,
+    "evicted": 68,
+    "keys": 136,
+    "free_slots": 68,
+    "decay": 0.5,
+    "ms": 0.5626
+   }
+  },
+  {
+   "prompt_tokens": 23,
+   "reused_tokens": 2,
+   "generated": 48,
+   "prefill_mode": "decode",
+   "ttft_ms": 10343.3232,
+   "tok_s": 2.42614607,
+   "decode_hit_rate": 0.721010638,
+   "prefill_hit_rate": 0.641468254,
+   "decode_nvme_mb": 59191.3943,
+   "prefill_nvme_mb": 33987.5594,
+   "decode_steps": 47,
+   "context": 70,
+   "total_ms": 29715.6091,
+   "reheat": {
+    "turn": 5,
+    "keys": 68,
+    "free_slots": 0
+   },
+   "turn": 3,
+   "wall_s": 29.72
+  }
+ ]
+}

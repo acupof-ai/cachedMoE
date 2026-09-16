@@ -1,4 +1,4 @@
-﻿# P4 单 PR 总览：R1 / R2 / S / T
+# P4 单 PR 总览：R1 / R2 / S / T
 
 本 PR 把 P4 四条 track 的全部工作合成一个集成分支 `p4/one-pr`，合并顺序 R2 → R1 → S → T。
 **重要：本 PR 尚未编译、未跑测试、未重跑 benchmark。** 合并工作是在一个嵌套沙箱里完成的，
@@ -93,3 +93,31 @@ ctest --test-dir build --output-on-failure
   很平（top1024 只覆盖 40.8%），时间复用是 128 步尺度（63.7%），不是相邻 token。
 - KV：17,010 位置当前引擎实测 **54.96 MiB**；0.89 GB 是 R2 之前旧 40 层
   KvStore 的数字（见 `docs/p4_kv_ux.md` §9）。
+
+## 7. 2026-09-17：每轮 reheat、一个 heat bug、DSpark runtime 方案
+
+三条，细节分别在各自的文档里：
+
+1. **每轮 reheat（`docs/p4_hitrate.md` §7）** — turn 边界衰减热度并重跑 P3 backfill。
+   接口：`Engine::reheat` / `serve --reheat [--reheat-decay F]` / `{"op":"reheat"}` /
+   `SessionOptions.reheat`。实测（2200 槽、同话题三轮、on vs off）：**decode hit
+   0.7210 = 0.7210，没有提升**——因为 2200 槽在 turn 1 之后就饱和（2132 resident），
+   同话题的专家本来就在 cache 里，reheat 只能把冷尾换成同样用不到的专家。
+   结论：reheat 在饱和 cache 上是 no-op；要验它得上"8-turn 脚本 + 4500/5500 槽"那套
+   （§6 的 0.9234 → 0.9431 就是容量给的），这轮时间预算不够跑两个配置。
+2. **一个真 bug：decode 路径的 expert heat 恒等于 0** — `Engine::run_layer` 从来没有把
+   gate 的 top-16（`GatePush::record = 16`，id 和 raw score 都已在 host-coherent buffer 里）
+   传给 `RouteDecision.near_ids / near_scores`，而 `Planner::plan_layer` 的 heat EWMA
+   （design §9.3）正是定义在它们上面的。已修；修完 500 槽里 90–121 个 expert 在"这一轮
+   还热"的一侧。影响：任何 score-aware 策略此前都在对全 0 排序；
+   `DEEPMOE_HEAT_FILE`（离线 route dump 那条路）不受影响。
+3. **DSpark runtime 方案与缺口（`docs/p4_dspark_runtime.md`）** — 方案钉死为
+   **K = 16 格 → 一次草稿 forward → 一次 verify forward（M = k+1 ≤ 6）→ 最长路径
+   （`eal` / `viterbi`）→ 采样接受（温度 1 `accept_sampling_exact`）/ 贪心前缀匹配（温度 0）**。
+   逐 dispatch 对过之后，runtime 侧缺的是**三个 kernel 能力**而不是循环本身：
+   (a) M=6 的 MoE —— `MoeRunner` 是 7 槽 / 一组专家，6 个 token 各有各的 top-6；
+   (b) 草稿链的 bf16 输入 GEMV；(c) `accept_sampling_exact` 要的四个读回。
+   树方案**不改变** GPU 的账（规格 §3.3 / §6.1：与单链同一批 token、同一份字节），
+   所以它不能绕过 (a)/(b)，只是让同一份 M=6 前向更值钱。
+   §4 列了三件不依赖 MoE 改动、现在就能测的事（C(M) 曲线 / expert 并集 / 批边界 G3），
+   它们是 20 t/s 判定的前置输入。

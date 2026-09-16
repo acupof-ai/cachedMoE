@@ -490,6 +490,97 @@ DEEPMOE_TEST(expert_store, touch_oldest_stamp_and_the_guard_in_evict_lru) {
     CHECK(!s.wait_settled(ExpertKey{1, 2}, std::chrono::milliseconds(1)));
 }
 
+// docs/p4_hitrate.md §7: per-turn reheat. What the backfill pass is handed is
+// the resident experts ordered by their decayed heat, so the test is that
+// decay + order really do put the turn that just ran on top, and that the order
+// is empty-safe and deterministic.
+DEEPMOE_TEST(expert_store, heat_decay_and_order_drive_the_reheat_pass) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(4, 2), 2, 4));
+    for (uint16_t e = 0; e < 4; ++e) REQUIRE_OK(fill(s, ExpertKey{0, e}, 1 + e));
+    for (uint16_t e = 0; e < 4; ++e) REQUIRE_OK(fill(s, ExpertKey{1, e}, 1 + e));
+    // Turn A routed (0,0) and (0,1) eight times; then a turn boundary halves
+    // everything, and turn B routes (1,2) and (1,3) eight times. Turn A's
+    // experts still carry the larger heat (they were routed before the halving,
+    // so their value saturated and was then only halved), but the point of the
+    // exercise is the ORDER and the SCALE, not which of the two wins:
+    //   * exactly the four routed experts are above zero, the other four at 0;
+    //   * the order is a pure function of heat (layer, then id, break ties);
+    //   * a further boundary rescales the hot end to 1.0 and preserves ratios.
+    for (int i = 0; i < 8; ++i) {
+        s.note_heat(ExpertKey{0, 0}, 1.0f);
+        s.note_heat(ExpertKey{0, 1}, 1.0f);
+    }
+    s.decay_heat(0.5f);
+    for (int i = 0; i < 8; ++i) {
+        s.note_heat(ExpertKey{1, 2}, 1.0f);
+        s.note_heat(ExpertKey{1, 3}, 1.0f);
+    }
+    // The heat the two turns leave behind, from the EWMA definition plus the
+    // renormalisation: turn A's experts saturated and the boundary rescaled the
+    // hot end straight back to 1.0, and turn B's eight notes reach 1 - 0.875^8.
+    const float sat = 1.0f - std::pow(0.875f, 8);     // 8 notes at alpha 0.125
+    auto want = [&](uint16_t layer, uint16_t expert) -> float {
+        if (layer == 0 && (expert == 0 || expert == 1)) return 1.0f;
+        if (layer == 1 && (expert == 2 || expert == 3)) return sat;
+        return 0.0f;
+    };
+    auto ord = s.heat_order();
+    REQUIRE_EQ(ord.size(), 8u);
+    for (const ExpertKey& k : ord) CHECK_CLOSE(s.slot_for(k)->heat, want(k.layer, k.expert), 1e-4);
+    // The warm four come first, in heat order; the four never-routed ones last.
+    uint32_t warm_n = 0;
+    for (uint32_t i = 0; i < ord.size(); ++i)
+        if (want(ord[i].layer, ord[i].expert) > 0.0f) ++warm_n;
+    CHECK_EQ(warm_n, 4u);
+    for (uint32_t i = 1; i < ord.size(); ++i)
+        CHECK(s.slot_for(ord[i - 1])->heat >= s.slot_for(ord[i])->heat);
+    CHECK_EQ(s.slot_for(ord[7])->heat, 0.0f);
+
+    // A turn boundary rescales the hot end to 1.0 -- the EWMA's own ceiling --
+    // so that a floor like "5% of the hottest expert" means the same thing at
+    // every turn. The RATIOS are what the ranking is, and they survive.
+    const float head = s.slot_for(ord[0])->heat;
+    const float warm = s.slot_for(ord[2])->heat;
+    CHECK(warm > 0.0f);
+    CHECK(warm < head);
+    s.decay_heat(0.1f);
+    auto ord_b = s.heat_order();
+    REQUIRE_EQ(ord_b.size(), 8u);
+    CHECK_CLOSE(s.slot_for(ord_b[0])->heat, 1.0f, 1e-5);
+    CHECK(ord_b[0] == ord[0]);            // rescaling does not reorder anything
+    CHECK(ord_b[2] == ord[2]);
+    CHECK_CLOSE(s.slot_for(ord_b[2])->heat, warm / head, 1e-4);
+    CHECK_EQ(s.slot_for(ord_b[7])->heat, 0.0f);
+    s.decay_heat(1.0f);                       // the identity: no rescale, no ageing
+    CHECK_CLOSE(s.slot_for(ord_b[0])->heat, 1.0f, 1e-5);
+    CHECK_CLOSE(s.slot_for(ord_b[2])->heat, warm / head, 1e-4);
+
+    // A second boundary with no routing since leaves the ranking alone, and the
+    // hot end is back at 1.0 -- the scale is the same at every turn.
+    s.decay_heat(0.5f);
+    auto ord2 = s.heat_order();
+    REQUIRE_EQ(ord2.size(), 8u);
+    CHECK(ord2[0] == ord[0]);
+    CHECK_CLOSE(s.slot_for(ord2[0])->heat, 1.0f, 1e-5);
+    CHECK_CLOSE(s.slot_for(ord2[2])->heat, warm / head, 1e-4);
+    s.decay_heat(1.0f);
+    CHECK_CLOSE(s.slot_for(ord2[0])->heat, 1.0f, 1e-5);
+    auto ord3 = s.heat_order();
+    CHECK(ord3[0] == ord[0]);
+
+    // Every key in the order is resident -- that is what makes it safe to hand
+    // to a backfill that never evicts -- and a pinned expert is not in it, since
+    // a reheat pass may not move the pinned set either.
+    for (const ExpertKey& k : ord) CHECK(s.resident(k));
+    REQUIRE_OK(s.evict_key(ExpertKey{1, 0}));
+    REQUIRE_OK(fill(s, ExpertKey{1, 0}, 1, Tier::Pinned));
+    auto ord4 = s.heat_order();
+    REQUIRE_EQ(ord4.size(), 7u);
+    for (const ExpertKey& k : ord4) CHECK(!(k.layer == 1 && k.expert == 0));
+    CHECK_EQ(s.heat_slots(), 7u);
+}
+
 // design 9.7.3 / docs/p3_prefill.md 3.4: after a prefill streams its experts
 // layer by layer, in batches whose reads are issued before the previous batch
 // computes, the cache holds exactly what a global LRU over the prompt's routing

@@ -1,4 +1,4 @@
-﻿#include "runtime/engine.h"
+#include "runtime/engine.h"
 
 #include <algorithm>
 #include <bit>
@@ -694,6 +694,79 @@ Result<DecodeStepResult> Engine::slow_prefill(std::span<const uint32_t> prompt) 
 
 // --- one decode step --------------------------------------------------------
 
+// --- R1 round 2: per-turn reheat (docs/p4_hitrate.md §7) ---------------------
+
+std::string Engine::HeatOrder::to_string() const {
+    return std::format("reheat turn {}: decay {:.3f}, {} resident experts ranked in {:.1f} ms "
+                       "({} above the floor), {} coldest freed ({} were free), {} keys to the backfill",
+                       turn, decay, slots, ms, warm, evicted, free_slots, passed);
+}
+
+Result<Engine::HeatOrder> Engine::reheat(float decay) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (decay < 0.0f || decay > 1.0f)
+        return fail(Err::InvalidArgument, std::format("reheat decay {} outside [0, 1]", decay));
+
+    const TimePoint t0 = Clock::now();
+    HeatOrder out;
+    out.decay = decay;
+    out.turn = ++reheat_turn_;
+    out.free_slots = store_.free_slots();
+    // The heat the store kept is the same EWMA the planner has been updating for
+    // the chosen experts and the near misses, so it does not need a second
+    // accumulator. Decaying it makes the last turn's routing the newest
+    // information in the order.
+    store_.decay_heat(decay);
+    const std::vector<ExpertKey> heat = store_.heat_order();
+    out.slots = static_cast<uint32_t>(heat.size());
+    // How far down the order is still "this conversation". Everything below is
+    // an expert the router has not wanted for several turns, and it is what the
+    // pass is allowed to reclaim -- but only that: at 5,500 slots a full resident
+    // set is ~1 GB of reads a slot, and a pass that evicted an eighth of it every
+    // turn would spend 12 GB of NVMe on a topic that did not change. `decay_heat`
+    // renormalises, so `head` is ~1.0 and these thresholds mean the same thing
+    // from one turn to the next: 0.05 is a single weak note_heat, 10% of the
+    // hottest expert in the cache.
+    const float head = out.slots ? store_.slot_for(heat.front())->heat : 0.0f;
+    const float floor_heat = std::max(0.05f, 0.1f * head);
+    uint32_t warm = 0;                       // the prefix of the order at/above the floor
+    while (warm < out.slots && store_.slot_for(heat[warm])->heat >= floor_heat) ++warm;
+    // Fill the free slots first; when there are none, reclaim the tail. The tail
+    // is where the previous topic lives, and evicting it is what makes room --
+    // with no decay and no new routing this is exactly what the LRU would have
+    // picked anyway, which is why it is a move of the reheat and not a second
+    // eviction policy.
+    uint32_t want = out.free_slots ? out.free_slots : std::max<uint32_t>(4, out.slots / 32);
+    want = std::min(want, out.slots - warm);
+    for (uint32_t i = 0; i < want; ++i) {
+        const ExpertKey& k = heat[out.slots - 1 - i];
+        if (store_.evict_key(k)) ++out.evicted;
+    }
+    // The order the backfill gets is the *demand shape*: every resident slot
+    // hottest first, then the keys that are not resident at all, also hottest
+    // first. A pass that saw only residents could not fetch a hot expert that is
+    // not in the cache, which is most of what a topic switch needs.
+    std::vector<ExpertKey> order;
+    order.reserve(heat.size() + 256);
+    for (const ExpertKey& k : heat)
+        if (store_.resident(k)) order.push_back(k);
+    // `StaticHeat` is the startup order (store/static_heat.inc, or a heat file
+    // from the last run); its head is the best available estimate of what a
+    // never-seen-token expert would score.
+    for (const ExpertKey& k : store::static_heat_order())
+        if (!store_.resident(k)) order.push_back(k);
+    const uint32_t budget = out.free_slots + out.evicted;
+    if (order.size() > budget) order.resize(budget);
+    out.passed = static_cast<uint32_t>(order.size());
+    out.warm = warm;
+    out.ms = ms_since(t0);
+    if (!order.empty())
+        if (auto r = planner_.start_backfill(std::move(order), /*inflight=*/2, /*keep=*/true); !r)
+            return std::unexpected(r.error());
+    log_info("engine: {}", out.to_string());
+    return out;
+}
+
 Result<void> Engine::embed_token(uint32_t token) {
     const TextConfig& c = model_cfg_.text;
     if (token >= c.vocab_size)
@@ -955,10 +1028,27 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         for (uint32_t i = 0; i < topk; ++i) chosen[i] = static_cast<uint16_t>(ids[i]);
         if (route_dump_)
             std::memcpy(route_ids_.data() + size_t(L) * topk, chosen, topk * sizeof(uint16_t));
+        // design §9.3: the gate kernel already wrote the top-16 ids AND their raw
+        // scores into the same two host-coherent buffers (gpu/shaders/gate.slang
+        // stage 1, GatePush::record = 16), and the Planner's heat EWMA is defined
+        // over them -- "so a bursty expert survives one bad round". They were
+        // never passed, so every slot's heat stayed at exactly 0 in the decode
+        // path: the reheat pass (docs/p4_hitrate.md §7) had nothing to rank, and
+        // any future score-aware policy would have been ranking zeros. Entries
+        // [topk, 16) carry the RAW score (only the first six are normalised by
+        // route_scale, gate.slang), which is what the EWMA wants.
+        uint16_t near_ids[16];
+        float    near_scores[16];
+        for (uint32_t i = 0; i < 16; ++i) {
+            near_ids[i]    = static_cast<uint16_t>(ids[i]);
+            near_scores[i] = wts[i];
+        }
         store::RouteDecision route;
-        route.layer   = L;
-        route.chosen  = std::span<const uint16_t>(chosen, topk);
-        route.weights = std::span<const float>(wts, topk);
+        route.layer       = L;
+        route.chosen      = std::span<const uint16_t>(chosen, topk);
+        route.weights     = std::span<const float>(wts, topk);
+        route.near_ids    = std::span<const uint16_t>(near_ids, 16);
+        route.near_scores = std::span<const float>(near_scores, 16);
         auto plan = planner_.plan_layer(route, token_);
         if (!plan) return std::unexpected(plan.error());
         t.hits       = static_cast<uint32_t>(plan->hits.size());

@@ -211,12 +211,20 @@ public:
 
     // design §9.6 P3 (Track R1): fills FREE slots -- never evicts -- with the
     // keys of `order`, hottest first, keeping at most `inflight` experts in
-    // flight; each completion issues the next. A backfilled slot is stamped
-    // below every demand stamp (`kDemandStampBase`), hotter newer, so the LRU
-    // throws backfilled experts out first, coldest first, and a demand touch
-    // promotes one like any hit. Returns immediately; the IoEngine runs P3 only
-    // behind P0 (and throttles it while decode is issuing P0s).
-    Result<void> start_backfill(std::vector<ExpertKey> order, uint32_t inflight = 2);
+    // flight; each completion issues the next. Returns immediately; the IoEngine
+    // runs P3 only behind P0 (and throttles it while decode is issuing P0s).
+    //
+    // `keep` (R1 round 2, docs/p4_hitrate.md §7) is what the per-turn reheat
+    // pass sets, and it changes the stamp the filled slots get. The default is
+    // the P3 behaviour: every backfilled slot is stamped below every demand
+    // stamp (`kDemandStampBase`), so the LRU throws it back out first and a
+    // startup guess never displaces a measured access. A reheat pass is the
+    // opposite intent -- the order IS this conversation's measured access,
+    // ordered by the heat that the turn boundary just aged -- so its slots are
+    // stamped like demand traffic (the current LRU clock, hotter newer) and an
+    // expert chosen twice in a row is not re-read on the next turn.
+    Result<void> start_backfill(std::vector<ExpertKey> order, uint32_t inflight = 2,
+                                bool keep = false);
     // Stops issuing. Fills already in flight still settle.
     void stop_backfill();
     bool backfill_active() const { return backfill_ && backfill_->active.load(); }
@@ -257,6 +265,7 @@ private:
         std::mutex             m;
         size_t                 next = 0;
         uint32_t               inflight = 0, max_inflight = 2;
+        bool                   keep = false;   // stamp like demand (the reheat pass)
         std::atomic<bool>      active{false};
     };
     std::shared_ptr<Backfill> backfill_;

@@ -172,10 +172,11 @@ std::string GenerateStats::json_fields() const {
                      json_number(b.wait_ms / n), json_number(b.submits / n),
                      json_number(sampled_steps ? sample_ms_sum / sampled_steps : 0.0));
     s += std::format("\"sampled_steps\":{},\"topk_fallbacks\":{},\"topk_checked\":{},"
-                     "\"topk_mismatches\":{},\"mean_nucleus\":{},\"context\":{}",
+                     "\"topk_mismatches\":{},\"mean_nucleus\":{},\"context\":{},"
+                     "\"reheat\":{{\"turn\":{},\"keys\":{},\"free_slots\":{}}}",
                      sampled_steps, topk_fallbacks, topk_checked, topk_mismatches,
                      json_number(sampled_steps ? double(nucleus_sum) / sampled_steps : 0.0),
-                     context_after);
+                     context_after, reheat_turn, reheat_keys, reheat_free_slots);
     return s;
 }
 
@@ -331,6 +332,20 @@ Result<GenerateStats> Session::generate(
     st.decode_ms = st.decode_steps ? ms_since(td) : 0.0;
     st.total_ms = ms_since(t0);
     st.context_after = e.context_length();
+    // docs/p4_hitrate.md §7: the turn is over, so this is the boundary the heat
+    // is aged at. Nothing reads the order back here -- the pass issues P3 reads
+    // and returns -- so a reheat can never change this turn's numbers, only the
+    // next one's. A turn that generated nothing is not a boundary.
+    if (opt_.reheat && st.generated > 0) {
+        auto h = e.reheat(opt_.reheat_decay);
+        if (h) {
+            st.reheat_turn = h->turn;
+            st.reheat_free_slots = h->free_slots;
+            st.reheat_keys = h->passed;
+        } else {
+            log_warn("session: reheat: {}", h.error().str());
+        }
+    }
     return st;
 }
 
