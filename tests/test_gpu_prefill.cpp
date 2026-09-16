@@ -210,8 +210,14 @@ void apply_kernel_env(gpu::PrefillConfig& pc) {
         pc.coopmat_min_rows = static_cast<uint32_t>(std::atoi(e));
     if (const char* e = std::getenv("DEEPMOE_PF_COOP_DENSE"))
         pc.coopmat_dense_min_rows = static_cast<uint32_t>(std::atoi(e));
-    std::printf("    kernels: MoE coopmat at n >= %d, dense coopmat at n >= %d (-1 = never)\n",
-                static_cast<int32_t>(pc.coopmat_min_rows), static_cast<int32_t>(pc.coopmat_dense_min_rows));
+    // DEEPMOE_PF_ATTN=legacy: the per-(head, query) band attention instead of
+    // the cooperative-matrix one; DEEPMOE_PF_ATTN_HT: its head tiles per workgroup.
+    if (const char* e = std::getenv("DEEPMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
+    if (const char* e = std::getenv("DEEPMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
+    const std::string attn = pc.attn_coop ? std::format("coopmat, {} head tiles", pc.attn_head_tiles) : "legacy";
+    std::printf("    kernels: MoE coopmat at n >= %d, dense coopmat at n >= %d (-1 = never), attention %s\n",
+                static_cast<int32_t>(pc.coopmat_min_rows), static_cast<int32_t>(pc.coopmat_dense_min_rows),
+                attn.c_str());
 }
 
 std::vector<uint32_t> prompt_ids(const std::string& dir) {
