@@ -85,6 +85,8 @@ void MoeRunner::destroy() {}
 Result<void> MoeRunner::record(uint32_t, MoePhase) { return fail(Err::Unavailable, "no vulkan"); }
 Result<MoeTiming> MoeRunner::run(uint32_t, MoePhase) { return fail(Err::Unavailable, "no vulkan"); }
 Result<void> MoeRunner::record_into(CommandBuffer&, MoePhase) { return fail(Err::Unavailable, "no vulkan"); }
+uint32_t* MoeRunner::slot_list_alt() { return nullptr; }
+Result<void> MoeRunner::record_gateup_alt(CommandBuffer&, uint32_t) { return fail(Err::Unavailable, "no vulkan"); }
 
 #else
 
@@ -223,6 +225,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         {&x_,      x_bytes},
         {&h_,      h_bytes},
         {&y_,      uint64_t(spec.m) * dims.hidden * sizeof(float)},
+        {&list_alt_, uint64_t(dims.slots) * sizeof(uint32_t)},
     };
     for (auto& e : bufs) {
         // `y` alone is device-addressable, so a caller can read the MoE output
@@ -247,6 +250,13 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     auto sa = descriptors_.allocate(gateup_, ba);
     if (!sa) { destroy(); return std::unexpected(sa.error()); }
     set_a_ = *sa;
+    {
+        std::vector<BufferBinding> alt = ba;
+        alt[2] = {2, 0, 0, list_alt_.buffer};
+        auto s2 = descriptors_.allocate(gateup_, alt);
+        if (!s2) { destroy(); return std::unexpected(s2.error()); }
+        set_a_alt_ = *s2;
+    }
 
     std::vector<BufferBinding> bb(5);
     bb[0] = {0, 0, 0, table_.buffer};
@@ -265,6 +275,10 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         auto sh = descriptors_.allocate(hquant_, bh);
         if (!sh) { destroy(); return std::unexpected(sh.error()); }
         set_hq_ = *sh;
+        bh[0] = {0, 0, 0, list_alt_.buffer};
+        auto sh2 = descriptors_.allocate(hquant_, bh);
+        if (!sh2) { destroy(); return std::unexpected(sh2.error()); }
+        set_hq_alt_ = *sh2;
     }
     if (xquant_.valid()) {
         std::vector<BufferBinding> bx(1);
@@ -292,11 +306,11 @@ void MoeRunner::destroy() {
     hquant_.destroy();
     xquant_.destroy();
     if (alloc_) {
-        for (GpuBuffer* b : {&table_, &ids_, &list_, &routew_, &x_, &h_, &y_})
+        for (GpuBuffer* b : {&table_, &ids_, &list_, &routew_, &x_, &h_, &y_, &list_alt_})
             if (b->valid()) alloc_->free(*b);
     }
-    table_ = ids_ = list_ = routew_ = x_ = h_ = y_ = GpuBuffer{};
-    set_a_ = set_b_ = set_hq_ = set_xq_ = VK_NULL_HANDLE;
+    table_ = ids_ = list_ = routew_ = x_ = h_ = y_ = list_alt_ = GpuBuffer{};
+    set_a_ = set_b_ = set_hq_ = set_xq_ = set_a_alt_ = set_hq_alt_ = VK_NULL_HANDLE;
     device_ = nullptr;
     alloc_  = nullptr;
     recorded_ = 0;
@@ -421,6 +435,40 @@ Result<void> MoeRunner::record_into(CommandBuffer& cmd, MoePhase phase) {
         if (auto r = cmd.bind(down_, set_b_); !r) return r;
         if (auto r = cmd.push(down_, &pb, sizeof(pb)); !r) return r;
         if (auto r = cmd.dispatch(groups_b); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+    }
+    return {};
+}
+
+uint32_t* MoeRunner::slot_list_alt() { return static_cast<uint32_t*>(list_alt_.host_ptr); }
+
+Result<void> MoeRunner::record_gateup_alt(CommandBuffer& cmd, uint32_t count) {
+    if (!device_ || !gateup_.valid()) return fail(Err::FailedPrecondition, "runner is not created");
+    if (count == 0 || count > dims_.slots) return fail(Err::InvalidArgument, "count must be 1..slots");
+    const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
+    const uint32_t groups_a = dims_.inter / rows_per_wg;
+    const GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
+                        dims_.inter, dims_.hidden, dims_.swiglu_limit};
+    const HQuantPush ph{dims_.slots, count, dims_.inter};
+    const XQuantPush px{dims_.hidden};
+    const uint32_t hq_groups =
+        (spec_.m * count * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
+    const uint32_t xq_groups =
+        (spec_.m * (dims_.hidden / layout::kFp4ScaleBlock) + 255) / 256;
+    if (xquant_.valid()) {
+        if (auto r = cmd.bind(xquant_, set_xq_); !r) return r;
+        if (auto r = cmd.push(xquant_, &px, sizeof(px)); !r) return r;
+        if (auto r = cmd.dispatch(xq_groups); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+    }
+    if (auto r = cmd.bind(gateup_, set_a_alt_); !r) return r;
+    if (auto r = cmd.push(gateup_, &pa, sizeof(pa)); !r) return r;
+    if (auto r = cmd.dispatch(groups_a, count); !r) return r;
+    if (auto r = cmd.barrier(); !r) return r;
+    if (hquant_.valid()) {
+        if (auto r = cmd.bind(hquant_, set_hq_alt_); !r) return r;
+        if (auto r = cmd.push(hquant_, &ph, sizeof(ph)); !r) return r;
+        if (auto r = cmd.dispatch(hq_groups); !r) return r;
         if (auto r = cmd.barrier(); !r) return r;
     }
     return {};

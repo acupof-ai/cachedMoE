@@ -14,9 +14,52 @@ namespace deepmoe::store {
 std::string PlannerStats::to_string() const {
     return std::format(
         "planner: {} layers, {} requests ({} hits, {} misses, {:.3f}), "
-        "{} evictions (+{} refused), prefetch {} issued / {} used / {} wasted, {} stalls",
+        "{} evictions (+{} refused), prefetch {} issued / {} used / {} wasted, {} stalls, "
+        "{} joined; backfill {} issued / {} done / {} failed; prefill handoff {} resident / "
+        "{} kept / {} dropped",
         layers_planned, requests, hits, misses, hit_rate(),
-        evictions, evict_failures, prefetch_issued, prefetch_used, prefetch_wasted, stall_waits);
+        evictions, evict_failures, prefetch_issued, prefetch_used, prefetch_wasted, stall_waits,
+        joined_fills, backfill_issued, backfill_done, backfill_failed, streamed_resident,
+        streamed_filled, streamed_dropped);
+}
+
+Result<StreamAdmit> admit_streamed(ExpertStore& store, ExpertKey key, TokenIndex stamp,
+                                   const ExpertEntry* entry, TimelineValue guard) {
+    StreamAdmit out;
+    // Held already: a resident key only gets newer; one the backfill is still
+    // filling is waited for (a few ms) rather than read twice.
+    if (auto slot = store.slot_of(key)) {
+        if (!store.touch(key, stamp)) {
+            if (store.wait_settled(key, std::chrono::seconds(60))) (void)store.touch(key, stamp);
+        }
+        if (store.resident(key)) {
+            if (auto r = store.set_guard(*slot, guard); !r) return std::unexpected(r.error());
+            auto info = store.slot_info(*slot);
+            out.kind = StreamKind::Resident;
+            out.slot = *slot;
+            out.addr = SlotAddress{info->host_ptr, info->dev_addr};
+            return out;
+        }
+    }
+    if (store.free_slots() == 0) {
+        const auto oldest = store.oldest_evictable_stamp();
+        if (!oldest || stamp <= *oldest) return out;          // Drop
+        if (auto v = store.evict_lru(); !v) return out;
+    }
+    auto res = entry ? store.begin_fill(key, *entry, Tier::Cached) : store.begin_fill(key, Tier::Cached);
+    if (!res) {
+        if (res.error().code == Err::ResourceExhausted) return out;
+        return std::unexpected(res.error());
+    }
+    out.kind = StreamKind::Fill;
+    out.slot = res->slot;
+    out.addr = res->addr;
+    return out;
+}
+
+Result<void> finish_streamed(ExpertStore& store, const StreamAdmit& a, bool ok, TokenIndex stamp) {
+    if (a.kind != StreamKind::Fill) return {};
+    return store.finish_fill(a.slot, ok, stamp);
 }
 
 namespace {
@@ -56,6 +99,20 @@ private:
 };
 
 }  // namespace
+
+namespace {
+struct HeatRow { uint16_t layer, expert; uint32_t count; };
+constexpr HeatRow kStaticHeat[] = {
+#include "store/static_heat.inc"
+};
+}  // namespace
+
+std::vector<ExpertKey> static_heat_order() {
+    std::vector<ExpertKey> out;
+    out.reserve(std::size(kStaticHeat));
+    for (const HeatRow& r : kStaticHeat) out.push_back(ExpertKey{r.layer, r.expert});
+    return out;
+}
 
 std::unique_ptr<EvictionPolicy> make_lru_policy() { return std::make_unique<LruPolicy>(); }
 std::unique_ptr<EvictionPolicy> make_score_aware_policy() { return std::make_unique<ScoreAwarePolicy>(); }
@@ -132,7 +189,7 @@ struct FetchState {
 
 Result<Planner::Fetch> Planner::fetch(ExpertKey key, IoPriority priority,
                                       TokenIndex token, uint32_t deadline_layer,
-                                      std::function<void(bool)> on_done) {
+                                      std::function<void(bool)> on_done, TokenIndex stamp_in) {
     if (!store_ || !io_ || !manifest_ || !shards_)
         return fail(Err::FailedPrecondition, "planner is not initialised");
 
@@ -157,7 +214,7 @@ Result<Planner::Fetch> Planner::fetch(ExpertKey key, IoPriority priority,
     ExpertStore* store  = store_;
     // The slot's LRU age is the moment it was ASKED for, not the moment its
     // last run lands: that is when the simulator's `admit` touches it.
-    const TokenIndex stamp = next_stamp();
+    const TokenIndex stamp = stamp_in ? stamp_in : next_stamp();
     auto state = std::make_shared<FetchState>();
     state->cb = std::move(on_done);
 
@@ -242,6 +299,7 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
     // would be thrown out under it. The fills themselves still run
     // concurrently; only the bookkeeping is ordered.
     const bool lru = std::string_view(policy_->name()) == "lru";
+    plan.group = std::make_shared<FetchGroup>();
     for (uint16_t id : route.chosen) {
         const ExpertKey key{static_cast<uint16_t>(route.layer), id};
         if (store_->lookup(key, next_stamp())) {
@@ -251,6 +309,13 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
         }
         plan.misses.push_back(key);
         if (profiler_) profiler_->note_expert_lookup(false);
+        // Already being filled by another class (the P3 backfill): join it.
+        if (store_->slot_of(key)) {
+            plan.joined.emplace_back(key, next_stamp());
+            std::lock_guard lk(stats_mutex_);
+            ++stats_.joined_fills;
+            continue;
+        }
         if (store_->free_slots() == 0) {
             if (lru) {
                 if (auto v = store_->evict_lru(); v) {
@@ -261,8 +326,22 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
                 reclaim(1);
             }
         }
-        auto f = fetch(key, IoPriority::BlockingMiss, token, route.layer);
+        {
+            std::lock_guard lk(plan.group->m);
+            ++plan.group->pending;
+        }
+        auto f = fetch(key, IoPriority::BlockingMiss, token, route.layer,
+                       [g = plan.group](bool ok) {
+                           std::lock_guard lk(g->m);
+                           --g->pending;
+                           g->failed |= !ok;
+                           g->cv.notify_all();
+                       });
         if (!f) {
+            {
+                std::lock_guard lk(plan.group->m);
+                --plan.group->pending;
+            }
             log_warn("planner: P0 fetch of ({}, {}) failed: {}", key.layer, key.expert,
                      f.error().str());
             continue;
@@ -301,9 +380,118 @@ Result<uint32_t> Planner::prefetch_lookahead(uint32_t, TokenIndex) {
     return unimplemented("Planner::prefetch_lookahead (design §9.4, gated on Q4/Q5)");
 }
 
-// TODO(design §9.6): idle-time P3 backfill by static heat, gated on Q1.
+Result<void> Planner::wait_layer(LayerPlan& plan, std::chrono::milliseconds timeout) {
+    if (plan.group) {
+        std::unique_lock lk(plan.group->m);
+        if (!plan.group->cv.wait_for(lk, timeout, [&] { return plan.group->pending == 0; }))
+            return fail(Err::Io,
+                        std::format("layer {}: {} expert fills still outstanding after {} ms",
+                                    plan.layer, plan.group->pending, timeout.count()));
+        if (plan.group->failed)
+            return fail(Err::Io, std::format("layer {}: an expert read failed", plan.layer));
+    }
+    for (const auto& [key, stamp] : plan.joined) {
+        if (!store_->wait_settled(key, timeout))
+            return fail(Err::Io, std::format("layer {}: the fill of expert {} it joined did "
+                                             "not land", plan.layer, key.expert));
+        (void)store_->touch(key, stamp);
+    }
+    return {};
+}
+
+Result<StreamAdmit> Planner::admit_streamed(ExpertKey key, TokenIndex stamp, TimelineValue guard) {
+    if (!store_ || !manifest_) return fail(Err::FailedPrecondition, "planner is not initialised");
+    auto entry = manifest_->require_expert(key);
+    if (!entry) return std::unexpected(entry.error());
+    auto a = store::admit_streamed(*store_, key, stamp, *entry, guard);
+    if (a) {
+        std::lock_guard lk(stats_mutex_);
+        if (a->kind == StreamKind::Resident) ++stats_.streamed_resident;
+        else if (a->kind == StreamKind::Fill) ++stats_.streamed_filled;
+        else ++stats_.streamed_dropped;
+    }
+    return a;
+}
+
+Result<void> Planner::finish_streamed(const StreamAdmit& a, bool ok, TokenIndex stamp) {
+    if (!store_) return fail(Err::FailedPrecondition, "planner is not initialised");
+    return store::finish_streamed(*store_, a, ok, stamp);
+}
+
 Result<uint32_t> Planner::backfill(TokenIndex) {
-    return unimplemented("Planner::backfill (design §9.6 P3, gated on Q1)");
+    return unimplemented("Planner::backfill(token): use start_backfill(order) (design §9.6 P3)");
+}
+
+Result<void> Planner::start_backfill(std::vector<ExpertKey> order, uint32_t inflight) {
+    if (!store_ || !io_) return fail(Err::FailedPrecondition, "planner is not initialised");
+    stop_backfill();
+    if (order.size() >= kDemandStampBase)
+        return fail(Err::InvalidArgument, "backfill order is longer than its stamp space");
+    auto b = std::make_shared<Backfill>();
+    b->order = std::move(order);
+    b->max_inflight = std::max<uint32_t>(1, inflight);
+    b->active.store(true);
+    backfill_ = b;
+    backfill_pump(b);
+    return {};
+}
+
+void Planner::stop_backfill() {
+    if (backfill_) backfill_->active.store(false);
+}
+
+// Issues backfill fetches until `max_inflight` are out, the order is spent or
+// the cache has no free slot. Runs on the caller's thread at start and on the
+// IoEngine dispatcher thread from each completion: short, and it never blocks
+// (fetch only queues).
+void Planner::backfill_pump(const std::shared_ptr<Backfill>& b) {
+    for (;;) {
+        ExpertKey key{};
+        TokenIndex stamp = 0;
+        {
+            std::lock_guard lk(b->m);
+            if (!b->active.load() || b->inflight >= b->max_inflight) return;
+            // Never evict for a guess: only free slots.
+            if (store_->free_slots() == 0 || b->next >= b->order.size()) {
+                if (b->inflight == 0) b->active.store(false);
+                return;
+            }
+            const size_t rank = b->next++;
+            key = b->order[rank];
+            if (store_->slot_of(key)) continue;          // held already
+            stamp = kDemandStampBase - 1 - rank;          // hotter = newer, all below demand
+            ++b->inflight;
+        }
+        auto f = fetch(key, IoPriority::Backfill, 0, 0,
+                       [this, b](bool ok) {
+                           {
+                               std::lock_guard lk(b->m);
+                               --b->inflight;
+                           }
+                           {
+                               std::lock_guard lk(stats_mutex_);
+                               ++(ok ? stats_.backfill_done : stats_.backfill_failed);
+                           }
+                           backfill_pump(b);
+                       },
+                       stamp);
+        if (f) {
+            std::lock_guard lk(stats_mutex_);
+            ++stats_.backfill_issued;
+            continue;
+        }
+        {
+            std::lock_guard lb(b->m);
+            --b->inflight;
+        }
+        if (f.error().code == Err::AlreadyExists) continue;   // demand got there first
+        {
+            std::lock_guard lk(stats_mutex_);
+            ++stats_.backfill_failed;
+        }
+        b->active.store(false);   // the cache filled up under us, or a real error
+        return;
+    }
 }
 
 PlannerStats Planner::stats() const {

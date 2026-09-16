@@ -299,6 +299,25 @@ namespace deepmoe::runtime { struct EngramTables; }
 
 namespace deepmoe::gpu {
 
+// ADDITIVE (Track R1, docs/p4_hitrate.md §3; docs/p3_prefill.md §3.4 / §8.3
+// item 3): where the routed experts this prefill streams come from and go to.
+// Null = the prefill's own transit, every expert read and dropped (as before).
+struct PfExpertSink {
+    enum class Kind : uint8_t { Drop = 0, Fill, Resident };
+    struct Dest {
+        Kind     kind = Kind::Drop;
+        void*    host = nullptr;     // the slot base, Fill: the runs go at run.slot_offset
+        uint64_t dev  = 0;           // the slot base (Fill and Resident)
+        uint64_t cookie = 0;         // the sink's own
+    };
+    // Before an expert's read is issued. `last_pos` is the absolute prompt
+    // position of the LAST row routed to it and `last_slot` its rank in that
+    // row's top-6. Resident = no read; Fill = read into the slot; Drop = transit.
+    std::function<Dest(uint32_t layer, uint32_t expert, uint32_t last_pos, uint32_t last_slot)> reserve;
+    // After the batch that computed from `d` has run (`ok`), or its read failed.
+    std::function<void(uint32_t layer, uint32_t expert, const Dest& d, bool ok)> release;
+};
+
 class Prefill {
 public:
     Prefill() = default;
@@ -317,6 +336,7 @@ public:
     Result<PrefillHandoff> run(std::span<const uint32_t> prompt);
 
     std::function<void(const PrefillProbe&)> probe;
+    PfExpertSink* expert_sink = nullptr;   // Track R1; borrowed
     const PrefillTimes& times() const { return times_; }
     const PrefillConfig& config() const { return pcfg_; }
 
@@ -408,6 +428,7 @@ private:
     CommandBuffer             cmd_{};
     bool                      cmd_valid_ = false;
     uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
+    uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
     // A host-side step's wall time into times_.per_op.
     void host_op(const char* name, std::chrono::steady_clock::time_point t0) {
         auto& slot = times_.per_op[name];

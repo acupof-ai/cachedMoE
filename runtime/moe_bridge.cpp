@@ -199,6 +199,43 @@ Result<void> GpuMoeBridge::bind_shared(uint32_t layer) {
 }
 
 Result<void> GpuMoeBridge::stage(const MoeCall& call) {
+    if (auto r = stage_input(call); !r) return r;
+    uint32_t all[16];
+    for (uint32_t s = 0; s < call.topk; ++s) all[s] = s;
+    return stage_rows(call, std::span<const uint32_t>(all, call.topk));
+}
+
+Result<void> GpuMoeBridge::stage_rows(const MoeCall& call, std::span<const uint32_t> slots) {
+    const TimePoint t0 = Clock::now();
+    uint64_t row[kExpertPartCount];
+    uint64_t* table = runner_.pointer_table();
+    for (uint32_t s : slots) {
+        if (s >= call.topk) return fail(Err::InvalidArgument, "stage_rows: not a routed slot");
+        const ExpertKey key{static_cast<uint16_t>(call.layer),
+                            static_cast<uint16_t>(call.ids[s])};
+        if (auto r = store_->table_row(key, row); !r)
+            return fail(r.error().code,
+                        std::format("at the MoE dispatch: {}", r.error().message));
+        std::memcpy(table + size_t(call.ids[s]) * kExpertPartCount, row, sizeof row);
+    }
+    const double ms = ms_between(t0, Clock::now());
+    timing_.table_ms += ms;
+    timing_.host_ms  += ms;
+    return {};
+}
+
+Result<void> GpuMoeBridge::record_gateup(gpu::CommandBuffer& cmd, std::span<const uint32_t> slots) {
+    if (slots.empty() || slots.size() > runner_.dims().slots)
+        return fail(Err::InvalidArgument, "record_gateup: 1..slots slots");
+    std::memcpy(runner_.slot_list_alt(), slots.data(), slots.size() * sizeof(uint32_t));
+    return runner_.record_gateup_alt(cmd, static_cast<uint32_t>(slots.size()));
+}
+
+Result<void> GpuMoeBridge::record_down(gpu::CommandBuffer& cmd) {
+    return runner_.record_into(cmd, gpu::MoePhase::DownOnly);
+}
+
+Result<void> GpuMoeBridge::stage_input(const MoeCall& call) {
     if (!store_ || !planner_) return fail(Err::FailedPrecondition, "MoE bridge is not created");
     const uint32_t dim = call.hidden;
     const uint32_t slots = runner_.dims().slots;
@@ -223,18 +260,8 @@ Result<void> GpuMoeBridge::stage(const MoeCall& call) {
     std::memcpy(runner_.x_fp16(), xq_.data(), size_t(dim) * sizeof(uint16_t));
     const TimePoint t2 = Clock::now();
 
-    // The routed half. design §7.1's residency gate has already run by the
-    // time we get here, so this only has to confirm it.
-    uint64_t row[kExpertPartCount];
-    uint64_t* table = runner_.pointer_table();
-    for (uint32_t s = 0; s < call.topk; ++s) {
-        const ExpertKey key{static_cast<uint16_t>(call.layer),
-                            static_cast<uint16_t>(call.ids[s])};
-        if (auto r = store_->table_row(key, row); !r)
-            return fail(r.error().code,
-                        std::format("at the MoE dispatch: {}", r.error().message));
-        std::memcpy(table + size_t(call.ids[s]) * kExpertPartCount, row, sizeof row);
-    }
+    // The routed half's table rows are `stage_rows`'s: design §7.1's residency
+    // gate decides when each one may be written.
     if (auto r = bind_shared(call.layer); !r) return r;
 
     uint32_t ids[16];

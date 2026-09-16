@@ -186,6 +186,17 @@ public:
     // three.
     Result<void> record_into(CommandBuffer& cmd, MoePhase phase = MoePhase::Both);
 
+    // ADDITIVE (Track R1, docs/p4_hitrate.md §4): design §7.9's "compute the
+    // experts that arrived first" across SUBMITS. The slot list is read when a
+    // buffer executes, so dispatch A over a subset and dispatch B over the whole
+    // list cannot share one list buffer inside one command buffer. This second
+    // list is bound only to dispatch A and the h quantisation: `record_gateup_alt`
+    // records x-quant (x_mode 6), A and h-quant over `slot_list_alt()[0, count)`,
+    // leaving `slot_list()` and `list_count()` to dispatch B. Deferred split-A
+    // schedule of kernel_p2_moe.md §11.3, so y is bit-identical to one shot.
+    uint32_t*    slot_list_alt();
+    Result<void> record_gateup_alt(CommandBuffer& cmd, uint32_t count);
+
     // Device address of `y`, so the caller's next dispatch can read the MoE
     // output through buffer-device-address instead of the host copying it.
     uint64_t y_address() const { return y_.dev_addr; }
@@ -217,7 +228,10 @@ private:
     QueryPool      queries_;
 
     GpuBuffer table_{}, ids_{}, list_{}, routew_{}, x_{}, h_{}, y_{};
+    GpuBuffer list_alt_{};
 #if defined(DEEPMOE_ENABLE_VULKAN)
+    VkDescriptorSet set_a_alt_ = VK_NULL_HANDLE;
+    VkDescriptorSet set_hq_alt_ = VK_NULL_HANDLE;
     VkDescriptorSet set_a_ = VK_NULL_HANDLE;
     VkDescriptorSet set_b_ = VK_NULL_HANDLE;
     VkDescriptorSet set_hq_ = VK_NULL_HANDLE;

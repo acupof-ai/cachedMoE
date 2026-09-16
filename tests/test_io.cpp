@@ -361,3 +361,46 @@ DEEPMOE_TEST(io, opening_a_missing_file_fails_cleanly) {
     AlignedBuffer b(4096);
     CHECK_ERR(closed.read_at(0, MutBytes(b.data(), 4096)), Err::FailedPrecondition);
 }
+
+// Track R1 (docs/p4_hitrate.md 5): P3 is not only behind a queued P0, it is
+// throttled to IoEngine::kBackgroundOpsWhileBusy chunks while P0 work is recent,
+// and gets the whole queue depth back once the drive has been quiet for
+// kBackgroundQuiet.
+DEEPMOE_TEST(io, background_is_throttled_while_p0_is_recent) {
+    const size_t kFileBytes = 4u << 20;
+    auto content = pattern_bytes(kFileBytes);
+    auto scratch = make_scratch("bgthrottle", kFileBytes, false);
+    REQUIRE_OK(scratch);
+    IoConfig cfg;
+    cfg.chunk_bytes        = 64 * 1024;
+    cfg.max_inflight_ops   = 4;
+    cfg.max_inflight_bytes = 1u << 20;
+    IoEngine engine;
+    auto backend = std::make_unique<test::FakeBackend>(content, 64);
+    test::FakeBackend* fake = backend.get();
+    fake->hold_completions(true);
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+
+    AlignedBuffer b0(64 * 1024), b3(256 * 1024);
+    IoRequest p0;
+    p0.priority = IoPriority::BlockingMiss;
+    p0.file     = &scratch->file;
+    p0.bytes    = 64 * 1024;
+    p0.dst      = b0.data();
+    IoRequest p3 = p0;
+    p3.priority = IoPriority::Backfill;
+    p3.file_off = 1u << 20;
+    p3.bytes    = 256 * 1024;       // four chunks
+    p3.dst      = b3.data();
+    REQUIRE_OK(engine.submit(p0, [](const IoResult&) {}));
+    REQUIRE_OK(engine.submit(p3, [](const IoResult&) {}));
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    CHECK_EQ(engine.inflight_chunks(IoPriority::BlockingMiss), 1u);
+    CHECK_EQ(engine.inflight_chunks(IoPriority::Backfill), IoEngine::kBackgroundOpsWhileBusy);
+    std::this_thread::sleep_for(IoEngine::kBackgroundQuiet + std::chrono::milliseconds(60));
+    CHECK_EQ(engine.inflight_chunks(IoPriority::Backfill), 3u);   // the queue depth less the P0
+    fake->release_all();
+    engine.drain();
+    CHECK_EQ(std::memcmp(b3.data(), content.data() + (1u << 20), 256 * 1024), 0);
+    engine.stop();
+}

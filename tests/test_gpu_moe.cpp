@@ -18,6 +18,7 @@
 //   * that the expert indirection list of design §7.9 selects the right expert.
 //
 // Gated on DEEPMOE_MODEL_DIR and on a working Vulkan device; a skip is a pass.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <future>
@@ -970,4 +971,78 @@ DEEPMOE_TEST(gpu_moe, a_partial_dispatch_reduces_to_the_same_y) {
                     c.spec.name().c_str(), same, once.size());
         CHECK_EQ(same, once.size());
     }
+}
+
+// Track R1 (docs/p4_hitrate.md 4): the decode loop's "compute the experts that
+// arrived first". Dispatch A over the resident slots goes out in ONE submit
+// (through the alternate slot list), the late slots' A and the one dispatch B in
+// the NEXT -- with the main list rewritten in between, as the engine does. y must
+// be bit-identical to the one-shot run, for every early/late partition shape.
+DEEPMOE_TEST(gpu_moe, gateup_split_across_submits_is_bit_identical) {
+    if (skip_without_model("gpu_moe.gateup_split_across_submits_is_bit_identical")) return;
+    auto golden = load_golden(data_path("l1_layer0_expert0.bin"));
+    REQUIRE_OK(golden);
+    const Golden& g = *golden;
+    constexpr uint32_t kSlots = 7;
+    Rig rig;
+    if (!rig.bring_up(kSlots)) {
+        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        return;
+    }
+    for (uint32_t e = 0; e < kSlots; ++e)
+        REQUIRE(rig.fill(ExpertKey{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(e)}));
+
+    const gpu::MoeSpec spec{1, 32, 32, 0, 0, 1, 0, 3};   // the decode specialisation
+    gpu::MoeDims dims;
+    dims.layer = g.layer;
+    dims.slots = kSlots;
+    gpu::MoeRunner runner;
+    REQUIRE_OK(runner.create(rig.device, rig.alloc, gpu::default_shader_dir(), spec, dims));
+    auto setup = [&]() {
+        std::memcpy(runner.pointer_table(), rig.store.pointer_table(), rig.store.pointer_table_bytes());
+        for (uint32_t s = 0; s < kSlots; ++s) runner.ids()[s] = s;
+        for (uint32_t i = 0; i < kSlots; ++i) runner.route_weights()[i] = 0.5f + 0.1f * float(i);
+        for (uint32_t i = 0; i < layout::kHiddenSize; ++i)
+            runner.x_fp16()[i] = cpu::float_to_fp16(g.x[i]);
+        for (uint32_t s = 0; s < kSlots; ++s) runner.slot_list()[s] = s;
+        runner.set_list_count(kSlots);
+        runner.set_accumulate(false);
+    };
+    setup();
+    REQUIRE_OK(runner.run(1));
+    std::vector<float> once(layout::kHiddenSize);
+    std::memcpy(once.data(), runner.y(), once.size() * sizeof(float));
+
+    gpu::CommandPool pool;
+    REQUIRE_OK(pool.create(rig.device));
+    auto cb = pool.acquire();
+    REQUIRE_OK(cb);
+    gpu::CommandBuffer cmd = *cb;
+    // early / late partitions: late experts anywhere, the shared slot (6) early.
+    const std::vector<std::vector<uint32_t>> lates = {{0}, {5}, {1, 3}, {0, 1, 2, 3, 4, 5}, {2, 4, 5}};
+    for (const auto& late : lates) {
+        std::vector<uint32_t> early;
+        for (uint32_t s = 0; s < kSlots; ++s)
+            if (std::find(late.begin(), late.end(), s) == late.end()) early.push_back(s);
+        setup();
+        std::memset(runner.y(), 0, once.size() * sizeof(float));
+        std::memcpy(runner.slot_list_alt(), early.data(), early.size() * sizeof(uint32_t));
+        REQUIRE_OK(cmd.begin());
+        REQUIRE_OK(runner.record_gateup_alt(cmd, static_cast<uint32_t>(early.size())));
+        REQUIRE_OK(cmd.end());
+        REQUIRE_OK(gpu::submit_and_wait(rig.device, cmd));
+        std::memcpy(runner.slot_list_alt(), late.data(), late.size() * sizeof(uint32_t));
+        REQUIRE_OK(cmd.begin());
+        REQUIRE_OK(runner.record_gateup_alt(cmd, static_cast<uint32_t>(late.size())));
+        REQUIRE_OK(runner.record_into(cmd, gpu::MoePhase::DownOnly));
+        REQUIRE_OK(cmd.end());
+        REQUIRE_OK(gpu::submit_and_wait(rig.device, cmd));
+        size_t same = 0;
+        for (size_t i = 0; i < once.size(); ++i) same += (once[i] == runner.y()[i]) ? 1 : 0;
+        std::printf("       %zu early + %zu late across two submits: %zu/%zu words bit-identical\n",
+                    early.size(), late.size(), same, once.size());
+        CHECK_EQ(same, once.size());
+    }
+    cmd = gpu::CommandBuffer{};
+    pool.destroy();
 }

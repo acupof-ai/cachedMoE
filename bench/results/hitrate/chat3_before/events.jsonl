@@ -1,0 +1,3 @@
+{"event": "ready", "load_s": 22.264239, "max_context": 4096, "vocab": 129280, "cache_gb": 78.8269043, "cache_slots": 4500, "gpu_prefill_min": 0, "check_topk": false, "host_s": 22.3176}
+{"event": "tokens", "ids": [0, 128803, 30594, 1175, 2788, 642, 99743, 11572, 70979, 36005, 320, 128804, 128822], "host_s": 22.3227}
+{"event": "error", "message": "internal: the residency timeline reads UINT64_MAX, which is what a LOST device reports -- most likely the expert cache's last path-B import exhausted the host heap (see the slab pool's warning)", "host_s": 22.3227}

@@ -447,3 +447,143 @@ DEEPMOE_TEST(planner, unimplemented_paths_report_themselves) {
     REQUIRE_OK(empty);
     CHECK(empty->empty());
 }
+
+// --- Track R1 (docs/p4_hitrate.md) --------------------------------------------
+
+namespace {
+
+Result<void> fill_stamped(ExpertStore& s, ExpertKey k, TokenIndex stamp) {
+    auto r = s.begin_fill(k);
+    if (!r) return std::unexpected(r.error());
+    return s.finish_fill(r->slot, true, stamp);
+}
+
+}  // namespace
+
+DEEPMOE_TEST(expert_store, touch_oldest_stamp_and_the_guard_in_evict_lru) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(4, 1)));
+    for (uint16_t e = 0; e < 4; ++e) REQUIRE_OK(fill_stamped(s, ExpertKey{1, e}, 10 + e));
+    CHECK_EQ(*s.oldest_evictable_stamp(), 10u);
+    // touch only ever makes a key newer, and does not count a lookup.
+    CHECK(s.touch(ExpertKey{1, 0}, 50));
+    CHECK(s.touch(ExpertKey{1, 0}, 20));
+    CHECK_EQ(s.slot_for(ExpertKey{1, 0})->last_use_token, 50u);
+    CHECK(!s.touch(ExpertKey{1, 9}, 60));
+    CHECK_EQ(s.stats().lookups, 0u);
+    CHECK_EQ(*s.oldest_evictable_stamp(), 11u);
+    // The eviction guard: a slot a submitted buffer still reads is skipped, and
+    // the next-oldest goes instead; once the timeline passes, it is fair game.
+    const uint32_t slot1 = *s.slot_of(ExpertKey{1, 1});
+    REQUIRE_OK(s.set_guard(slot1, 7));
+    s.set_completed_timeline(6);
+    CHECK_EQ(*s.oldest_evictable_stamp(), 12u);
+    REQUIRE_OK(s.evict_lru());
+    CHECK(!s.resident(ExpertKey{1, 2}));
+    CHECK(s.resident(ExpertKey{1, 1}));
+    s.set_completed_timeline(7);
+    CHECK_EQ(*s.oldest_evictable_stamp(), 11u);
+    REQUIRE_OK(s.evict_lru());
+    CHECK(!s.resident(ExpertKey{1, 1}));
+    // wait_settled on a key nobody is filling returns at once.
+    CHECK(s.wait_settled(ExpertKey{1, 3}, std::chrono::milliseconds(1)));
+    CHECK(!s.wait_settled(ExpertKey{1, 2}, std::chrono::milliseconds(1)));
+}
+
+// design 9.7.3 / docs/p3_prefill.md 3.4: after a prefill streams its experts
+// layer by layer, in batches whose reads are issued before the previous batch
+// computes, the cache holds exactly what a global LRU over the prompt's routing
+// table -- walked token by token, layer by layer, in gate order -- would hold,
+// including what was resident before.
+DEEPMOE_TEST(planner, streamed_admission_is_the_lru_of_the_routing_table) {
+    constexpr uint32_t kLayers = 4, kTopk = 3, kExperts = 12;
+    for (uint32_t trial = 0; trial < 6; ++trial) {
+        const uint32_t cap = 3 + trial;              // 3..8 slots
+        const uint32_t T   = 6 + 3 * trial;          // prompt rows
+        ExpertStore s;
+        REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(1, cap)));
+        uint64_t seed = 0x9E3779B97F4A7C15ull * (trial + 1);
+        auto rnd = [&] { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; return seed; };
+
+        // What was resident before: stamps below every prompt stamp.
+        std::vector<uint32_t> ref;   // global keys, oldest first
+        const uint32_t pre = std::min<uint32_t>(cap, 2 + trial);
+        for (uint32_t i = 0; i < pre; ++i) {
+            const uint32_t k = static_cast<uint32_t>(rnd() % (kLayers * kExperts));
+            if (std::find(ref.begin(), ref.end(), k) != ref.end()) continue;
+            REQUIRE_OK(fill_stamped(s, ExpertKey{static_cast<uint16_t>(k / kExperts),
+                                                 static_cast<uint16_t>(k % kExperts)}, 100 + i));
+            ref.push_back(k);
+        }
+        // The routing table [T][layers][topk], distinct ids per row.
+        const uint32_t pool = (trial % 2) ? 5 : kExperts;
+        std::vector<uint32_t> ids(size_t(T) * kLayers * kTopk);
+        for (uint32_t t = 0; t < T; ++t)
+            for (uint32_t L = 0; L < kLayers; ++L)
+                for (uint32_t j = 0; j < kTopk; ++j) {
+                    uint32_t e = 0;
+                    bool dup = true;
+                    while (dup) {
+                        e = static_cast<uint32_t>(rnd() % pool);
+                        dup = false;
+                        for (uint32_t q = 0; q < j; ++q)
+                            dup |= ids[(size_t(t) * kLayers + L) * kTopk + q] == e;
+                    }
+                    ids[(size_t(t) * kLayers + L) * kTopk + j] = e;
+                }
+        // Reference: the simulator's LRU, token-major.
+        for (uint32_t t = 0; t < T; ++t)
+            for (uint32_t L = 0; L < kLayers; ++L)
+                for (uint32_t j = 0; j < kTopk; ++j) {
+                    const uint32_t k = L * kExperts + ids[(size_t(t) * kLayers + L) * kTopk + j];
+                    auto it = std::find(ref.begin(), ref.end(), k);
+                    if (it != ref.end()) ref.erase(it);
+                    ref.push_back(k);
+                    if (ref.size() > cap) ref.erase(ref.begin());
+                }
+        // Streamed: layer-major, experts in id order ("shard order"), batches of
+        // two whose admissions happen before the previous batch has settled.
+        const TokenIndex base = 1000;
+        TimelineValue guard_clock = 0;
+        uint32_t dropped = 0;
+        struct Held { StreamAdmit a; TokenIndex stamp; TimelineValue guard; };
+        for (uint32_t L = 0; L < kLayers; ++L) {
+            std::vector<int64_t> last(kExperts, -1);
+            for (uint32_t t = 0; t < T; ++t)
+                for (uint32_t j = 0; j < kTopk; ++j)
+                    last[ids[(size_t(t) * kLayers + L) * kTopk + j]] =
+                        int64_t((uint64_t(t) * kLayers + L) * kTopk + j);
+            std::vector<uint32_t> used;
+            for (uint32_t e = 0; e < kExperts; ++e) if (last[e] >= 0) used.push_back(e);
+            std::vector<Held> prev, cur;
+            for (size_t i = 0; i < used.size(); i += 2) {
+                cur.clear();
+                for (size_t q = i; q < std::min(used.size(), i + 2); ++q) {
+                    const uint32_t e = used[q];
+                    const TokenIndex stamp = base + TokenIndex(last[e]);
+                    const TimelineValue g = ++guard_clock;
+                    auto a = admit_streamed(s, ExpertKey{static_cast<uint16_t>(L), static_cast<uint16_t>(e)},
+                                            stamp, nullptr, g);
+                    REQUIRE_OK(a);
+                    if (a->kind == StreamKind::Drop) ++dropped;
+                    cur.push_back({*a, stamp, g});
+                }
+                // The previous batch "computes" only now, then settles.
+                for (const Held& h : prev) REQUIRE_OK(finish_streamed(s, h.a, true, h.stamp));
+                s.set_completed_timeline(cur.front().guard - 1);
+                prev = cur;
+            }
+            for (const Held& h : prev) REQUIRE_OK(finish_streamed(s, h.a, true, h.stamp));
+            s.set_completed_timeline(guard_clock);
+        }
+        std::vector<uint32_t> got;
+        for (uint32_t k = 0; k < kLayers * kExperts; ++k)
+            if (s.resident(ExpertKey{static_cast<uint16_t>(k / kExperts), static_cast<uint16_t>(k % kExperts)}))
+                got.push_back(k);
+        std::vector<uint32_t> want = ref;
+        std::sort(want.begin(), want.end());
+        CHECK(got == want);
+        CHECK_EQ(s.stats().filling, 0u);
+        if (trial == 0) CHECK(dropped > 0);
+    }
+}

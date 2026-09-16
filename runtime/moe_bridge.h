@@ -54,6 +54,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "core/status.h"
@@ -100,6 +101,23 @@ public:
     // The dispatches, into a command buffer the caller has begun. Ends with a
     // barrier, so the caller's next dispatch may read `y_address()`.
     Result<void> record(gpu::CommandBuffer& cmd);
+
+    // --- Track R1: "compute the experts that arrived first" (design §7.9,
+    // docs/kernel_p2_moe.md §11.3, docs/p4_hitrate.md §4) ------------------
+    //
+    //   stage_input(call)          x, act_quant, ids, weights, the shared
+    //                              expert's row; the full slot list for B.
+    //   stage_rows(call, slots)    the table rows of routed slots now resident.
+    //   record_gateup(cmd, slots)  dispatch A (+ h quantisation) over `slots`
+    //                              only -- the shared expert is slot `topk`.
+    //   record_down(cmd)           dispatch B over all seven.
+    //
+    // A over early slots in one submit, A over the late ones and B in the
+    // next: bit-identical to `stage` + `record` (the deferred schedule).
+    Result<void> stage_input(const MoeCall& call);
+    Result<void> stage_rows(const MoeCall& call, std::span<const uint32_t> slots);
+    Result<void> record_gateup(gpu::CommandBuffer& cmd, std::span<const uint32_t> slots);
+    Result<void> record_down(gpu::CommandBuffer& cmd);
 
     uint64_t     y_address() const { return runner_.y_address(); }
     const float* y_host() { return runner_.y(); }

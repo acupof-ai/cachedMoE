@@ -31,6 +31,8 @@
 // (finish_run from a completion callback) and the GPU submit thread (lookup).
 #pragma once
 
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -188,6 +190,23 @@ public:
     // evictable.
     Result<uint32_t> evict_lru();
 
+    // --- Track R1 (docs/p4_hitrate.md) --------------------------------------
+
+    // Refreshes a RESIDENT key's LRU stamp to `stamp` if that is newer, without
+    // counting a lookup. False when the key is not resident. The prefill
+    // handoff uses it for an expert the cache already holds.
+    bool touch(ExpertKey key, TokenIndex stamp);
+    // The stamp `evict_lru` would evict next, or nullopt when nothing is
+    // evictable (every resident slot pinned or guarded).
+    std::optional<TokenIndex> oldest_evictable_stamp() const;
+    // Blocks until `key` is not Filling (resident, or absent after a failed
+    // fill) or `timeout` passes; returns whether it is resident. A key another
+    // priority class is already filling -- the P3 backfill -- is waited on
+    // here instead of being read a second time.
+    bool wait_settled(ExpertKey key, std::chrono::milliseconds timeout);
+    // The slot index of a held key (any state).
+    std::optional<uint32_t> slot_of(ExpertKey key) const;
+
     // --- geometry / GPU handoff -------------------------------------------
 
     uint32_t slot_count()     const { return pool_.slot_count(); }
@@ -227,6 +246,7 @@ private:
     void settle_locked(uint32_t slot, bool ok, TokenIndex token);
 
     mutable std::mutex mutex_;
+    std::condition_variable settled_;   // notified whenever a fill settles
     SlabPool    pool_;
     CacheConfig cache_{};
     uint32_t    layers_ = 0;

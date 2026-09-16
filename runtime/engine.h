@@ -44,6 +44,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <span>
@@ -163,6 +164,10 @@ struct SessionConfig {
     std::string engram_tables_dir;
     // Positions the KV store is sized for; capped by kMaxIndexPositions.
     uint32_t    max_context = 4096;
+    // design §9.6 P3 (Track R1, docs/p4_hitrate.md §5): fill the cache's free
+    // slots in the background, hottest static experts first, while the drive
+    // is not serving P0 misses. Also DEEPMOE_BACKFILL=1/0.
+    bool        backfill = false;
 };
 
 class Engine {
@@ -412,7 +417,7 @@ private:
     double               rec_ms_ = 0.0, sub_ms_ = 0.0, wait_ms_ = 0.0, bind_ms_ = 0.0;
     double               mx_ms_ = 0.0, mq_ms_ = 0.0, mt_ms_ = 0.0;
     struct Stamp { uint32_t begin = ~0u, end = ~0u; };
-    std::vector<Stamp>   ts_attn_, ts_moe_, ts_engram_;
+    std::vector<Stamp>   ts_attn_, ts_moe_, ts_engram_, ts_moe_early_;
     Stamp                ts_tail_{};
     std::vector<double>  engram_host_ms_;
     gpu::AttnRunner      attn_;
@@ -474,6 +479,32 @@ private:
     TokenIndex token_ = 0;
     bool       ready_ = false;
     bool       gpu_ready_ = false;
+
+    // docs/p4_hitrate.md §1: `DEEPMOE_ROUTE_DUMP=FILE` appends one fixed-size
+    // record per decode step (prefill-by-decode steps included) -- the step's
+    // LRU clock, its position, the forty layers' top-6 in gate order and each
+    // layer's measured hit count -- so tools/hitrate_sim.py can replay exactly
+    // the accesses this process made through cache_sim's LRU and compare it
+    // step for step. Off (null) unless the variable is set.
+    std::FILE*            route_dump_ = nullptr;
+    std::vector<uint16_t> route_ids_;     // [layers][topk] of the current step
+    void write_route_record(uint32_t position);
+
+    // Track R1 (docs/p4_hitrate.md §4). `overlap_`: dispatch A over the
+    // resident experts goes out before a layer's NVMe wait. The eviction guard:
+    // `guard_clock_` numbers the buffers that read expert slots; a slot read by
+    // one is guarded with its number and the store's completed timeline is
+    // advanced when that buffer's fence returns, so no fill -- a later layer's,
+    // the P3 backfill's, the prefill handoff's -- can recycle a slot a
+    // submitted buffer still reads.
+    bool          overlap_ = true;
+    bool          handoff_ = true;       // gpu_prefill's experts go to the decode cache (§3)
+    TimelineValue guard_clock_ = 0;
+    TimelineValue layer_guard_ = 0;
+    bool          layer_guard_pending_ = false;
+    TimelineValue open_guard_ = 0;       // guard of the buffer being recorded
+    TimelineValue inflight_guard_ = 0;   // guard of the last buffer submitted
+    void guard_layer(uint32_t layer, std::span<const uint32_t> slots, const uint32_t* ids);
 };
 
 }  // namespace deepmoe::runtime

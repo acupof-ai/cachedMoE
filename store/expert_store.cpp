@@ -243,6 +243,7 @@ void ExpertStore::settle_locked(uint32_t slot, bool ok, TokenIndex token) {
         release_locked(slot);
         ++stats_.fills_failed;
     }
+    settled_.notify_all();
 }
 
 Result<bool> ExpertStore::finish_run(uint32_t slot, bool ok, TokenIndex token) {
@@ -384,6 +385,45 @@ Result<uint32_t> ExpertStore::evict_lru() {
     --stats_.resident;
     ++stats_.evictions;
     return best;
+}
+
+bool ExpertStore::touch(ExpertKey key, TokenIndex stamp) {
+    std::lock_guard lk(mutex_);
+    auto it = index_.find(key);
+    if (it == index_.end() || slots_[it->second].state != SlotState::Resident) return false;
+    ExpertSlot& s = slots_[it->second];
+    if (stamp > s.last_use_token) s.last_use_token = stamp;
+    return true;
+}
+
+std::optional<TokenIndex> ExpertStore::oldest_evictable_stamp() const {
+    std::lock_guard lk(mutex_);
+    std::optional<TokenIndex> best;
+    for (const ExpertSlot& s : slots_) {
+        if (s.state != SlotState::Resident || s.tier == Tier::Pinned ||
+            s.guard_timeline > completed_timeline_)
+            continue;
+        if (!best || s.last_use_token < *best) best = s.last_use_token;
+    }
+    return best;
+}
+
+bool ExpertStore::wait_settled(ExpertKey key, std::chrono::milliseconds timeout) {
+    std::unique_lock lk(mutex_);
+    auto filling = [&] {
+        auto it = index_.find(key);
+        return it != index_.end() && slots_[it->second].state == SlotState::Filling;
+    };
+    settled_.wait_for(lk, timeout, [&] { return !filling(); });
+    auto it = index_.find(key);
+    return it != index_.end() && slots_[it->second].state == SlotState::Resident;
+}
+
+std::optional<uint32_t> ExpertStore::slot_of(ExpertKey key) const {
+    std::lock_guard lk(mutex_);
+    auto it = index_.find(key);
+    if (it == index_.end()) return std::nullopt;
+    return it->second;
 }
 
 uint32_t ExpertStore::free_slots() const {

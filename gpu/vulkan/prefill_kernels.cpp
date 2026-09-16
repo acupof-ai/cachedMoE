@@ -967,6 +967,16 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         return ra.file != rb.file ? ra.file < rb.file : ra.aligned_off < rb.aligned_off;
     });
     const uint32_t K = pcfg_.transit_slots;
+    // Track R1: the last row (and its top-6 rank) routed to each expert -- its
+    // LRU age in the decode cache it may be handed to.
+    std::vector<uint32_t> last_t(E, 0), last_s(E, 0);
+    std::vector<PfExpertSink::Dest> dest(expert_sink ? E : 0);
+    if (expert_sink)
+        for (uint32_t t = 0; t < rows; ++t)
+            for (uint32_t s = 0; s < k6; ++s) {
+                last_t[ids[size_t(t) * k6 + s]] = t;
+                last_s[ids[size_t(t) * k6 + s]] = s;
+            }
     struct Batch {
         uint32_t first = 0, count = 0, half = 0;
         std::vector<std::future<storage::IoResult>> futs;
@@ -975,6 +985,11 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         for (uint32_t i = 0; i < bt.count; ++i) {
             const uint32_t e = used[bt.first + i];
             const uint64_t slot = uint64_t(bt.half) * K + i;
+            if (expert_sink && expert_sink->reserve) {
+                dest[e] = expert_sink->reserve(L, e, moe_pos0_ + last_t[e], last_s[e]);
+                if (dest[e].kind == PfExpertSink::Kind::Resident) continue;   // no read
+            }
+            const bool into_cache = expert_sink && dest[e].kind == PfExpertSink::Kind::Fill;
             for (const Run& r : ents[e]->runs) {
                 auto f = shards_->require(r.file);
                 if (!f) return std::unexpected(f.error());
@@ -984,7 +999,9 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
                 req.file = *f;
                 req.file_off = r.aligned_off;
                 req.bytes = r.aligned_bytes;
-                req.dst = static_cast<std::byte*>(b_.transit.host_ptr) +
+                req.dst = into_cache
+                    ? static_cast<std::byte*>(dest[e].host) + r.slot_offset
+                    : static_cast<std::byte*>(b_.transit.host_ptr) +
                           slot * layout::kExpertSlotBytes + r.slot_offset;
                 auto fut = io_->submit_future(req);
                 if (!fut) return std::unexpected(fut.error());
@@ -993,12 +1010,23 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             }
         }
         times_.experts_read += bt.count;
+        if (expert_sink)
+            for (uint32_t i = 0; i < bt.count; ++i)
+                if (dest[used[bt.first + i]].kind == PfExpertSink::Kind::Resident) --times_.experts_read;
         return {};
     };
     auto run_batch = [&](Batch& bt) -> Result<void> {
         const auto tw = Clk::now();
-        for (auto& f : bt.futs)
-            if (!f.get().ok()) return fail(Err::Io, "expert read failed");
+        bool read_ok = true;
+        for (auto& f : bt.futs) read_ok &= f.get().ok();
+        if (!read_ok) {
+            if (expert_sink && expert_sink->release)
+                for (uint32_t i = 0; i < bt.count; ++i) {
+                    const uint32_t e = used[bt.first + i];
+                    if (dest[e].kind != PfExpertSink::Kind::Drop) expert_sink->release(L, e, dest[e], false);
+                }
+            return fail(Err::Io, "expert read failed");
+        }
         times_.expert_io += ms_since(tw);
         const auto tg = Clk::now();
         // Small experts first (tiled job table, one quantisation over their h
@@ -1011,8 +1039,9 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         for (uint32_t o = 0; o < bt.count; ++o) {
             const uint32_t i = order[o];
             const uint32_t e = used[bt.first + i];
-            const uint64_t base = b_.transit.dev_addr +
-                                  (uint64_t(bt.half) * K + i) * layout::kExpertSlotBytes;
+            const uint64_t base = (expert_sink && dest[e].kind != PfExpertSink::Kind::Drop)
+                ? dest[e].dev
+                : b_.transit.dev_addr + (uint64_t(bt.half) * K + i) * layout::kExpertSlotBytes;
             PfJob j;
             j.w1 = base + ents[e]->offset_of(ExpertPart::W1Weight);
             j.s1 = base + ents[e]->offset_of(ExpertPart::W1Scale);
@@ -1030,6 +1059,11 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         if (n_small < bt.count)
             if (auto r = compute_coop(1 + n_small, 1 + bt.count); !r) return r;
         times_.expert_gpu += ms_since(tg);
+        if (expert_sink && expert_sink->release)
+            for (uint32_t i = 0; i < bt.count; ++i) {
+                const uint32_t e = used[bt.first + i];
+                if (dest[e].kind != PfExpertSink::Kind::Drop) expert_sink->release(L, e, dest[e], true);
+            }
         return {};
     };
     std::vector<Batch> batches;
@@ -1433,6 +1467,7 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
     out.layers[L].gate_ids_last.assign(probe_ids_.end() - k6, probe_ids_.end());
     times_.gate += ms_since(t0);
     std::memset(b_.y.host_ptr, 0, size_t(A) * dim * sizeof(float));
+    moe_pos0_ = apos0;
     PF_TRY(run_moe(L, A, b_.fx.dev_addr, b_.fxq.dev_addr, b_.fxs.dev_addr, b_.y.dev_addr,
                    probe_ids_, probe_wts_));
 
