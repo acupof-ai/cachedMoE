@@ -128,6 +128,11 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
         {&idx_score,    uint64_t(kMaxIndexPositions) * 4},
         {&idx_blk_key,  cand_blocks * 4},
         {&idx_cand,     cand_blocks * 4},
+        // docs/p2_attention.md §13.7: the K-split GEMVs' shared fp32 partial
+        // plane (the four run one after another, at most 16 slices of 8192
+        // rows) and the tiled attention's [heads][tiles] maxima.
+        {&ksp_part,     uint64_t(16) * 8192 * 4},
+        {&tile_max,     uint64_t(cfg.num_attention_heads) * 64 * 4},
     };
     for (const Want& w : wants) {
         auto v = s.alloc(w.bytes);
@@ -240,11 +245,20 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
                  w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
                  b.mix_a, b.mix_b, moe_view(), b.x, b.xout, b.u.addr);
 
-    uint64_t* qa = runner_->slots(gpu::AttnStage::WqA);
-    qa[gpu::slot::kGemvW] = w.wq_a;
-    qa[gpu::slot::kGemvS] = w.wq_a_scale;
-    qa[gpu::slot::kGemvX] = b.u.addr;
-    qa[gpu::slot::kGemvY] = b.qr.addr;
+    // docs/p2_attention.md §13.7: the K-split GEMVs and the tiled attention
+    // (Track J), adopted as the M = 1 decode path (Track T).
+    auto ksp = [&](gpu::AttnStage split, gpu::AttnStage combine, uint64_t weight,
+                   uint64_t scale, uint64_t x, uint64_t y) {
+        uint64_t* p = runner_->slots(split);
+        p[gpu::slot::kKspW]    = weight;
+        p[gpu::slot::kKspS]    = scale;
+        p[gpu::slot::kKspX]    = x;
+        p[gpu::slot::kKspY]    = y;
+        p[gpu::slot::kKspPart] = b.ksp_part.addr;
+        if (combine != split) std::memcpy(runner_->slots(combine), p, gpu::kAttnStageStride);
+    };
+    ksp(gpu::AttnStage::WqAKSplit, gpu::AttnStage::WqAKCombine, w.wq_a, w.wq_a_scale,
+        b.u.addr, b.qr.addr);
 
     uint64_t* qb = runner_->slots(gpu::AttnStage::WqB);
     qb[gpu::slot::kWqbW]     = w.wq_b;
@@ -265,9 +279,12 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     kv[gpu::slot::kWkvVal]     = st.kv.win_val;
     kv[gpu::slot::kWkvScale]   = st.kv.win_scale;
     kv[gpu::slot::kWkvKv]      = b.kv.addr;
-    std::memcpy(runner_->slots(gpu::AttnStage::WkvFinish), kv, gpu::kAttnStageStride);
+    kv[gpu::slot::kWkvPart]    = b.ksp_part.addr;
+    std::memcpy(runner_->slots(gpu::AttnStage::WkvKFinish), kv, gpu::kAttnStageStride);
+    ksp(gpu::AttnStage::WkvKSplit, gpu::AttnStage::WkvKSplit, w.wkv, w.wkv_scale, b.u.addr,
+        b.kv_raw.addr);
 
-    uint64_t* at = runner_->slots(gpu::AttnStage::AttnScore);
+    uint64_t* at = runner_->slots(gpu::AttnStage::AttnScoreT);
     at[gpu::slot::kAttnQ]        = b.q.addr;
     at[gpu::slot::kAttnWinVal]   = st.kv.win_val;
     at[gpu::slot::kAttnWinScale] = st.kv.win_scale;
@@ -277,19 +294,16 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     at[gpu::slot::kAttnRope]     = b.rope.addr;
     at[gpu::slot::kAttnScore]    = b.score.addr;
     at[gpu::slot::kAttnO]        = b.o.addr;
-    std::memcpy(runner_->slots(gpu::AttnStage::AttnCombine), at, gpu::kAttnStageStride);
+    at[gpu::slot::kAttnTileMax]  = b.tile_max.addr;
+    // Read only at pv_tiles > 1, which the decode geometry does not use.
+    at[gpu::slot::kAttnPartO]    = b.ksp_part.addr;
+    at[gpu::slot::kAttnPartD]    = b.ksp_part.addr;
+    std::memcpy(runner_->slots(gpu::AttnStage::AttnPvT), at, gpu::kAttnStageStride);
 
-    uint64_t* wa = runner_->slots(gpu::AttnStage::WoA);
-    wa[gpu::slot::kWoaW] = w.wo_a;
-    wa[gpu::slot::kWoaS] = w.wo_a_scale;
-    wa[gpu::slot::kWoaO] = b.o.addr;
-    wa[gpu::slot::kWoaY] = b.woa.addr;
-
-    uint64_t* wb = runner_->slots(gpu::AttnStage::WoB);
-    wb[gpu::slot::kGemvW] = w.wo_b;
-    wb[gpu::slot::kGemvS] = w.wo_b_scale;
-    wb[gpu::slot::kGemvX] = b.woa.addr;
-    wb[gpu::slot::kGemvY] = b.wob.addr;
+    ksp(gpu::AttnStage::WoAKSplit, gpu::AttnStage::WoAKCombine, w.wo_a, w.wo_a_scale, b.o.addr,
+        b.woa.addr);
+    ksp(gpu::AttnStage::WoBKSplit, gpu::AttnStage::WoBKCombine, w.wo_b, w.wo_b_scale, b.woa.addr,
+        b.wob.addr);
 
     uint64_t* g = runner_->slots(gpu::AttnStage::GateScore);
     g[gpu::slot::kGateW]         = w.gate_w;
@@ -445,7 +459,9 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                     uint32_t groups) -> Result<void> {
         if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
-        return cmd.barrier();
+        if (auto r = cmd.barrier(); !r) return r;
+        if (stamp) stamp(gpu::attn_stage_name(s));
+        return {};
     };
 
     // 1. mega-mHC, attention half. hc_post is applied here for every layer but
@@ -459,22 +475,30 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     if (auto r = step(gpu::AttnStage::MhcMix, &mp, sizeof mp, mp.mix_rows); !r) return r;
     if (auto r = step(gpu::AttnStage::MhcFinal, &mp, sizeof mp, n_wg0); !r) return r;
 
-    // 2-3. Q path.
-    gpu::GemvPush qa{c.q_lora_rank, dim, dim / 32, 0};
-    if (auto r = step(gpu::AttnStage::WqA, &qa, sizeof qa,
-                      runner_->gemv_groups(gpu::AttnStage::WqA, c.q_lora_rank)); !r) return r;
+    // 2-3. Q path. wq_a is K-split (docs/p2_attention.md §13.3); wq_b stays
+    //      whole, with q_norm and RoPE fused.
+    gpu::KSplitPush qa{c.q_lora_rank, dim, dim / 32, 0, c.q_lora_rank, 0};
+    if (auto r = step(gpu::AttnStage::WqAKSplit, &qa, sizeof qa,
+                      runner_->ksplit_groups(gpu::AttnStage::WqAKSplit, c.q_lora_rank)); !r)
+        return r;
+    if (auto r = step(gpu::AttnStage::WqAKCombine, &qa, sizeof qa,
+                      gpu::AttnRunner::combine_groups(c.q_lora_rank)); !r)
+        return r;
     gpu::WqbPush qb{qrows, c.q_lora_rank, c.q_lora_rank / 32, c.head_dim,
                     c.qk_rope_head_dim, static_cast<float>(c.rms_norm_eps)};
     if (auto r = step(gpu::AttnStage::WqB, &qb, sizeof qb,
                       runner_->gemv_groups(gpu::AttnStage::WqB, qrows)); !r) return r;
 
-    // 4. KV path and the ring write.
-    const uint32_t kvg = runner_->gemv_groups(gpu::AttnStage::WkvGemv, c.head_dim);
+    // 4. KV path and the ring write: the K-split, whose combine folds in
+    //    kv_norm, RoPE and the fp8 ring write (wkv.slang stage 2).
+    gpu::KSplitPush ks{c.head_dim, dim, dim / 32, 0, c.head_dim, 0};
+    if (auto r = step(gpu::AttnStage::WkvKSplit, &ks, sizeof ks,
+                      runner_->ksplit_groups(gpu::AttnStage::WkvKSplit, c.head_dim)); !r)
+        return r;
     gpu::WkvPush kp{c.head_dim, dim, dim / 32, c.qk_rope_head_dim,
-                    st.position % c.sliding_window, kvg,
-                    static_cast<float>(c.rms_norm_eps)};
-    if (auto r = step(gpu::AttnStage::WkvGemv, &kp, sizeof kp, kvg); !r) return r;
-    if (auto r = step(gpu::AttnStage::WkvFinish, &kp, sizeof kp, 1); !r) return r;
+                    st.position % c.sliding_window, 1,
+                    static_cast<float>(c.rms_norm_eps), c.head_dim};
+    if (auto r = step(gpu::AttnStage::WkvKFinish, &kp, sizeof kp, 1); !r) return r;
 
     // 4b. design §7.4: the compressor and the indexer, on the four and eight
     //     layers that have them. `Attention.forward` runs them between the
@@ -483,22 +507,35 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     //     that rotates it comes last.
     if (auto r = record_ced(cmd, st); !r) return r;
 
-    // 5. Sparse attention over the window plus the compressed picks.
-    gpu::AttnPush ap{st.kv.n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim,
-                     kAttnScoreStride,
-                     1.0f / std::sqrt(static_cast<float>(c.head_dim))};
-    if (auto r = step(gpu::AttnStage::AttnScore, &ap, sizeof ap, c.num_attention_heads); !r)
-        return r;
-    if (auto r = step(gpu::AttnStage::AttnCombine, &ap, sizeof ap, c.num_attention_heads); !r)
-        return r;
+    // 5. Sparse attention over the window plus the compressed picks, on the
+    //    head-group x KV-tile grid: 32 score tiles and one P.V tile, so AttnPvT
+    //    finishes the output itself (docs/p2_attention.md §13.5).
+    {
+        const uint32_t n_kv = st.kv.n_kv;
+        constexpr uint32_t kTiles = 32;
+        gpu::AttnTPush tp{n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim,
+                          kAttnScoreStride, 1.0f / std::sqrt(static_cast<float>(c.head_dim)),
+                          c.num_attention_heads, kTiles, (n_kv + kTiles - 1) / kTiles,
+                          qrows, 1, n_kv};
+        if (auto r = step(gpu::AttnStage::AttnScoreT, &tp, sizeof tp,
+                          runner_->attn_tile_groups(c.num_attention_heads, kTiles)); !r)
+            return r;
+        if (auto r = step(gpu::AttnStage::AttnPvT, &tp, sizeof tp,
+                          runner_->attn_pv_groups(c.num_attention_heads, 1)); !r)
+            return r;
+    }
 
-    // 6-7. Output projection.
-    gpu::WoaPush wa{orows, ocols, ocols / 32, c.o_lora_rank};
-    if (auto r = step(gpu::AttnStage::WoA, &wa, sizeof wa,
-                      runner_->gemv_groups(gpu::AttnStage::WoA, orows)); !r) return r;
-    gpu::GemvPush wb{dim, orows, orows / 32, 0};
-    if (auto r = step(gpu::AttnStage::WoB, &wb, sizeof wb,
-                      runner_->gemv_groups(gpu::AttnStage::WoB, dim)); !r) return r;
+    // 6-7. Output projection, both K-split.
+    gpu::KSplitPush wa{orows, ocols, ocols / 32, c.o_lora_rank, orows, 0};
+    if (auto r = step(gpu::AttnStage::WoAKSplit, &wa, sizeof wa,
+                      runner_->ksplit_groups(gpu::AttnStage::WoAKSplit, orows)); !r) return r;
+    if (auto r = step(gpu::AttnStage::WoAKCombine, &wa, sizeof wa,
+                      gpu::AttnRunner::combine_groups(orows)); !r) return r;
+    gpu::KSplitPush wb{dim, orows, orows / 32, 0, dim, 0};
+    if (auto r = step(gpu::AttnStage::WoBKSplit, &wb, sizeof wb,
+                      runner_->ksplit_groups(gpu::AttnStage::WoBKSplit, dim)); !r) return r;
+    if (auto r = step(gpu::AttnStage::WoBKCombine, &wb, sizeof wb,
+                      gpu::AttnRunner::combine_groups(dim)); !r) return r;
 
     // 8. mega-mHC, FFN half: hc_post folds the attention output into the
     //    stream and the mixes for the FFN come out of the same dispatch.
@@ -547,7 +584,9 @@ Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& s
     auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                     uint32_t groups) -> Result<void> {
         if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
-        return cmd.barrier();
+        if (auto r = cmd.barrier(); !r) return r;
+        if (stamp) stamp(gpu::attn_stage_name(s));
+        return {};
     };
 
     const gpu::CmpPush cp{c.head_dim, c.hidden_size, ratio, st.position % ratio,
@@ -757,6 +796,612 @@ const uint32_t* DecodeLayer::gate_ids()     const { return static_cast<const uin
 const float*    DecodeLayer::gate_weights() const { return static_cast<const float*>(buf_.gate_weights.host); }
 const float*    DecodeLayer::ffn_norm_out() const {
     return ffn_in_host_ ? ffn_in_host_ : static_cast<const float*>(buf_.u.host);
+}
+
+// ===========================================================================
+// Track T: the verify batch (docs/p4_mgt1.md)
+// ===========================================================================
+
+uint32_t BatchStep::n_win_ext() const { return 128u + m - 1u; }
+
+Result<void> BatchScratch::create(gpu::GpuScratch& s, const TextConfig& cfg, uint32_t mcap,
+                                  uint32_t max_compressed) {
+    if (mcap < 1 || mcap > gpu::kMgtMaxM)
+        return fail(Err::InvalidArgument, std::format("batch size {} outside 1..{}", mcap,
+                                                      gpu::kMgtMaxM));
+    m_cap = mcap;
+    const uint64_t M = mcap;
+    const uint64_t dim = cfg.hidden_size, hc = cfg.hc_mult;
+    const uint64_t qrows = uint64_t(cfg.num_attention_heads) * cfg.head_dim;
+    const uint64_t orows = uint64_t(cfg.o_groups) * cfg.o_lora_rank;
+    const uint64_t irows = uint64_t(cfg.index_n_heads) * cfg.index_head_dim;
+    list_stride  = cfg.sliding_window + gpu::kMgtMaxM - 1 + cfg.index_topk;
+    score_stride = std::max<uint32_t>(max_compressed, 1);
+    const uint32_t bs = std::max<uint32_t>(1, cfg.candidate_block_size);
+    blk_stride   = (score_stride + bs - 1) / bs;
+    n_lists = 1;
+    for (int64_t L = 0; L < int64_t(cfg.num_hidden_layers); ++L)
+        if (cfg.is_index_source(static_cast<uint32_t>(L))) ++n_lists;
+    // The shared split partial plane: the widest (KSplit x rows) of the six
+    // GEMVs at the largest factors MgtRunner accepts for them.
+    const uint64_t part_floats = std::max<uint64_t>({2 * qrows, 8 * dim, 4 * orows, 8 * 1280ull,
+                                                     8 * 512ull, 2 * irows}) * M;
+    struct Want { gpu::GpuScratch::View* v; uint64_t bytes; };
+    const Want wants[] = {
+        {&x, M * hc * dim * 4}, {&xout, M * hc * dim * 4}, {&utmp, M * dim * 4}, {&u, M * dim * 4},
+        {&partials, M * 512 * 4}, {&mix_raw, M * 32 * 4}, {&mix_a, M * 32 * 4}, {&mix_b, M * 32 * 4},
+        {&qr_raw, M * cfg.q_lora_rank * 4}, {&qr, M * cfg.q_lora_rank * 4}, {&q, M * qrows * 2},
+        {&rope, M * 256}, {&rope_lat, M * 256}, {&kv_out, M * cfg.head_dim * 4},
+        {&ovf_val, M * cfg.head_dim}, {&ovf_scale, M * (cfg.head_dim / 32)},
+        {&score, M * cfg.num_attention_heads * uint64_t(kAttnScoreStride) * 4},
+        {&tile_max, M * cfg.num_attention_heads * 64ull * 4},
+        {&o, M * qrows * 4}, {&woa, M * orows * 4}, {&wob, M * dim * 4}, {&part, part_floats * 4},
+        {&gate_scores, M * cfg.n_routed_experts * 4}, {&gate_ids, M * 16 * 4},
+        {&gate_weights, M * 16 * 4}, {&layer_done, 64}, {&moe_y, M * dim * 4},
+        {&cmp_y, M * cfg.head_dim * 4}, {&cmp_g, M * cfg.head_dim * 4},
+        {&latent, M * cfg.head_dim * 4}, {&latent_q, M * cfg.head_dim * 4},
+        {&cmp_fp4, M * cfg.head_dim / 2}, {&cmp_scale, M * cfg.head_dim / 16},
+        {&idx_q_raw, M * irows * 4}, {&idx_q, M * irows * 2}, {&idx_q_fp4, M * irows / 2},
+        {&idx_q_scale, M * irows / 32}, {&idx_k_raw, M * cfg.index_head_dim * 4},
+        {&idx_k_fp4, M * cfg.index_head_dim / 2}, {&idx_k_scale, M * 16},
+        {&idx_w, M * cfg.index_n_heads * 4}, {&idx_score, M * uint64_t(score_stride) * 4},
+        {&idx_blk_key, M * uint64_t(blk_stride) * 4}, {&idx_cand, M * uint64_t(blk_stride) * 4},
+        {&lists, uint64_t(n_lists) * M * list_stride * 4},
+    };
+    for (const Want& w : wants) {
+        auto v = s.alloc(w.bytes);
+        if (!v) return std::unexpected(v.error());
+        *w.v = *v;
+    }
+    return {};
+}
+
+void write_batch_window_lists(BatchScratch& b, uint32_t window, uint32_t p0, uint32_t m) {
+    const uint32_t q = p0 + m - 1;            // the newest position written
+    for (uint32_t li = 0; li < b.n_lists; ++li) {
+        int32_t* base = b.list_host(li);
+        for (uint32_t mm = 0; mm < m; ++mm) {
+            int32_t* row = base + uint64_t(mm) * b.list_stride;
+            const uint32_t P = p0 + mm;
+            const uint32_t oldest = P % window + 1;
+            for (uint32_t i = 0; i < window; ++i) {
+                const uint32_t slot = (oldest + i) % window;
+                // the position slot `slot` holds once all m tokens are written
+                const int64_t held = int64_t(q) - int64_t((q + window - slot) % window);
+                row[i] = (held >= 0 && held <= int64_t(P)) ? int32_t(slot) : -1;
+            }
+            for (uint32_t j = 1; j < m; ++j)
+                row[window + j - 1] = (j > mm && p0 + j >= window) ? int32_t(window + j - 1) : -1;
+            std::fill(row + window + m - 1, row + b.list_stride, -1);
+        }
+    }
+}
+
+Result<void> DecodeLayer::create_batch(gpu::MgtRunner& mgt, gpu::GpuScratch& scratch,
+                                       uint32_t m_cap, uint32_t max_compressed) {
+    if (!cfg_) return fail(Err::FailedPrecondition, "create the decode layer first");
+    mgt_ = &mgt;
+    return bb_.create(scratch, *cfg_, m_cap, max_compressed);
+}
+
+namespace {
+
+void bind_mhc_batch(gpu::MgtRunner& r, gpu::MgtStage post, gpu::MgtStage mix, gpu::MgtStage fin,
+                    const BatchScratch& b, uint64_t hc_fn, uint64_t hc_base, uint64_t hc_scale,
+                    uint64_t norm_w, uint64_t mix_in, uint64_t mix_out, uint64_t a_in,
+                    uint64_t x_in, uint64_t x_out, uint64_t u) {
+    uint64_t* s = r.slots(post);
+    s[gpu::slot::kX]       = x_in;
+    s[gpu::slot::kA]       = a_in;
+    s[gpu::slot::kPreMix]  = mix_in;
+    s[gpu::slot::kPostIn]  = mix_in + 4 * sizeof(float);
+    s[gpu::slot::kCombIn]  = mix_in + 8 * sizeof(float);
+    s[gpu::slot::kHcFn]    = hc_fn;
+    s[gpu::slot::kHcBase]  = hc_base;
+    s[gpu::slot::kHcScale] = hc_scale;
+    s[gpu::slot::kNormW]   = norm_w;
+    s[gpu::slot::kXout]    = x_out;
+    s[gpu::slot::kUtmp]    = b.utmp.addr;
+    s[gpu::slot::kScratch] = b.partials.addr;
+    s[gpu::slot::kMixRaw]  = b.mix_raw.addr;
+    s[gpu::slot::kMixOut]  = mix_out;
+    s[gpu::slot::kU]       = u;
+    if (mix != post) std::memcpy(r.slots(mix), s, gpu::kAttnStageStride);
+    if (fin != post) std::memcpy(r.slots(fin), s, gpu::kAttnStageStride);
+}
+
+void bind_gemv(gpu::MgtRunner& r, gpu::MgtStage split, gpu::MgtStage tail, uint64_t w,
+               uint64_t sc, uint64_t x, uint64_t y, const BatchScratch& b) {
+    uint64_t* s = r.slots(split);
+    s[gpu::mslot::kGW] = w;
+    s[gpu::mslot::kGS] = sc;
+    s[gpu::mslot::kGX] = x;
+    s[gpu::mslot::kGY] = y;
+    s[gpu::mslot::kGP] = b.part.addr;
+    std::memcpy(r.slots(tail), s, gpu::kAttnStageStride);
+}
+
+}  // namespace
+
+Result<void> DecodeLayer::bind_batch(const LayerWeights& w, const BatchStep& st) {
+    if (!mgt_) return fail(Err::FailedPrecondition, "create_batch was not called");
+    const TextConfig& c = *cfg_;
+    BatchScratch& b = bb_;
+    if (st.m < 1 || st.m > b.m_cap)
+        return fail(Err::InvalidArgument, std::format("batch of {} on a scratch for {}", st.m, b.m_cap));
+    const uint32_t hd = c.qk_rope_head_dim / 2;
+
+    const RopeConfig rc = rope_for_layer(st.compress_ratio, c.qk_rope_head_dim, c.rope_theta,
+                                         c.compress_rope_theta,
+                                         c.rope_scaling.original_max_position,
+                                         c.rope_scaling.factor);
+    for (uint32_t m = 0; m < st.m; ++m) {
+        const std::vector<float>& tab = rope_cached(rc, st.p0 + m);
+        std::memcpy(static_cast<std::byte*>(b.rope.host) + uint64_t(m) * hd * 8, tab.data(),
+                    tab.size() * sizeof(float));
+    }
+    if ((st.run_compressor || st.run_indexer) && st.compress_ratio) {
+        const uint32_t r = st.compress_ratio;
+        const uint32_t first = (r - 1 - st.p0 % r) % r;
+        uint32_t c_i = 0;
+        for (uint32_t mc = first; mc < st.m; mc += r, ++c_i) {
+            const std::vector<float>& tab = rope_cached(rc, st.p0 + mc + 1 - r);
+            std::memcpy(static_cast<std::byte*>(b.rope_lat.host) + uint64_t(c_i) * hd * 8,
+                        tab.data(), tab.size() * sizeof(float));
+        }
+    }
+
+    using S = gpu::MgtStage;
+    gpu::MgtRunner& R = *mgt_;
+    bind_mhc_batch(R, S::MhcPost, S::MhcMix, S::MhcFinal, b, w.hc_attn_fn, w.hc_attn_base,
+                   w.hc_attn_scale, w.attn_norm, b.mix_a.addr, b.mix_b.addr, b.moe_y.addr,
+                   b.x.addr, b.xout.addr, b.u.addr);
+    bind_mhc_batch(R, S::MhcPostB, S::MhcMixB, S::MhcFinalB, b, w.hc_ffn_fn, w.hc_ffn_base,
+                   w.hc_ffn_scale, w.ffn_norm, b.mix_b.addr, b.mix_a.addr, b.wob.addr,
+                   b.xout.addr, b.x.addr, b.u.addr);
+    if (st.bind_close)
+        bind_mhc_batch(R, S::MhcClose, S::MhcClose, S::MhcClose, b, w.hc_ffn_fn, w.hc_ffn_base,
+                       w.hc_ffn_scale, w.ffn_norm, b.mix_a.addr, b.mix_b.addr, b.moe_y.addr,
+                       b.x.addr, b.xout.addr, b.utmp.addr);
+
+    bind_gemv(R, S::WqASplit, S::WqACombine, w.wq_a, w.wq_a_scale, b.u.addr, b.qr_raw.addr, b);
+    {
+        uint64_t* n = R.slots(S::QNorm);
+        n[gpu::mslot::kGX] = b.qr_raw.addr;
+        n[gpu::mslot::kGY] = b.qr.addr;
+        n[gpu::mslot::kGNormW] = w.q_norm;
+    }
+    bind_gemv(R, S::WqBSplit, S::WqBFinish, w.wq_b, w.wq_b_scale, b.qr.addr, b.q.addr, b);
+    R.slots(S::WqBFinish)[gpu::mslot::kGRope] = b.rope.addr;
+    bind_gemv(R, S::WkvSplit, S::WkvFinish, w.wkv, w.wkv_scale, b.u.addr, 0, b);
+    {
+        uint64_t* k = R.slots(S::WkvFinish);
+        k[gpu::mslot::kGNormW]     = w.kv_norm;
+        k[gpu::mslot::kGRope]      = b.rope.addr;
+        k[gpu::mslot::kGRingVal]   = st.kv.win_val;
+        k[gpu::mslot::kGRingScale] = st.kv.win_scale;
+        k[gpu::mslot::kGOvfVal]    = b.ovf_val.addr;
+        k[gpu::mslot::kGOvfScale]  = b.ovf_scale.addr;
+        k[gpu::mslot::kGKvOut]     = b.kv_out.addr;
+    }
+    {
+        uint64_t* a = R.slots(S::AttnScore);
+        a[gpu::mslot::kAQ]        = b.q.addr;
+        a[gpu::mslot::kAWinVal]   = st.kv.win_val;
+        a[gpu::mslot::kAWinScale] = st.kv.win_scale;
+        a[gpu::mslot::kACmpKv]    = st.kv.cmp_kv;
+        a[gpu::mslot::kATopIdx]   = b.list_addr(st.list);
+        a[gpu::mslot::kASink]     = w.attn_sink;
+        a[gpu::mslot::kARope]     = b.rope.addr;
+        a[gpu::mslot::kAScore]    = b.score.addr;
+        a[gpu::mslot::kAO]        = b.o.addr;
+        a[gpu::mslot::kATileMax]  = b.tile_max.addr;
+        a[gpu::mslot::kAOvfVal]   = b.ovf_val.addr;
+        a[gpu::mslot::kAOvfScale] = b.ovf_scale.addr;
+        std::memcpy(R.slots(S::AttnPv), a, gpu::kAttnStageStride);
+    }
+    bind_gemv(R, S::WoASplit, S::WoACombine, w.wo_a, w.wo_a_scale, b.o.addr, b.woa.addr, b);
+    bind_gemv(R, S::WoBSplit, S::WoBCombine, w.wo_b, w.wo_b_scale, b.woa.addr, b.wob.addr, b);
+    {
+        uint64_t* g = R.slots(S::GateScore);
+        g[gpu::slot::kGateW]         = w.gate_w;
+        g[gpu::slot::kGateBias]      = w.gate_bias;
+        g[gpu::slot::kGateX]         = b.u.addr;
+        g[gpu::slot::kGateScores]    = b.gate_scores.addr;
+        g[gpu::slot::kGateIds]       = b.gate_ids.addr;
+        g[gpu::slot::kGateWeights]   = b.gate_weights.addr;
+        g[gpu::slot::kGateLayerDone] = b.layer_done.addr;
+        std::memcpy(R.slots(S::GateTopK), g, gpu::kAttnStageStride);
+    }
+
+    if (st.run_compressor) {
+        if (!w.cmp_wkv || !w.cmp_norm || (st.compress_ratio > 1 && !w.cmp_wgate))
+            return fail(Err::FailedPrecondition,
+                        std::format("layer {}: compressor weights are not pinned", st.layer));
+        auto cmp = [&](S s, uint64_t weight, uint64_t y) {
+            uint64_t* p = R.slots(s);
+            p[gpu::slot::kCmpW]          = weight;
+            p[gpu::slot::kCmpX]          = b.u.addr;
+            p[gpu::slot::kCmpY]          = y;
+            p[gpu::slot::kCmpG]          = b.cmp_g.addr;
+            p[gpu::slot::kCmpKvState]    = st.kv.cmp_state_kv;
+            p[gpu::slot::kCmpScoreState] = st.kv.cmp_state_score;
+            p[gpu::slot::kCmpNormW]      = w.cmp_norm;
+            p[gpu::slot::kCmpLatent]     = b.latent.addr;
+            p[gpu::slot::kCmpRope]       = b.rope_lat.addr;
+            p[gpu::slot::kCmpVal]        = st.kv.cmp_kv;
+            p[gpu::slot::kCmpFp4]        = b.cmp_fp4.addr;
+            p[gpu::slot::kCmpScaleB]     = b.cmp_scale.addr;
+            p[gpu::slot::kCmpLatentQ]    = b.latent_q.addr;
+        };
+        cmp(S::CmpKvGemv, w.cmp_wkv, b.cmp_y.addr);
+        cmp(S::CmpGateGemv, w.cmp_wgate, b.cmp_g.addr);
+        cmp(S::CmpPool, w.cmp_wkv, b.cmp_y.addr);
+        cmp(S::CmpState, w.cmp_wkv, b.cmp_y.addr);
+        cmp(S::CmpStore, w.cmp_wkv, b.cmp_y.addr);
+    }
+    if (st.run_indexer) {
+        if (!w.idx_wq_b || !w.idx_wproj)
+            return fail(Err::FailedPrecondition,
+                        std::format("layer {}: indexer weights are not pinned", st.layer));
+        bind_gemv(R, S::IdxQSplit, S::IdxQCombine, w.idx_wq_b, w.idx_wq_b_scale, b.qr.addr,
+                  b.idx_q_raw.addr, b);
+        auto idx = [&](S s, uint64_t rope) {
+            uint64_t* p = R.slots(s);
+            p[gpu::mslot::kIQRaw]      = b.idx_q_raw.addr;
+            p[gpu::mslot::kIQ]         = b.idx_q.addr;
+            p[gpu::mslot::kIQFp4]      = b.idx_q_fp4.addr;
+            p[gpu::mslot::kIQScale]    = b.idx_q_scale.addr;
+            p[gpu::mslot::kIRope]      = rope;
+            p[gpu::mslot::kIWk]        = w.idx_wk;
+            p[gpu::mslot::kIKNormW]    = w.idx_k_norm;
+            p[gpu::mslot::kILatent]    = b.latent.addr;
+            p[gpu::mslot::kIKRaw]      = b.idx_k_raw.addr;
+            p[gpu::mslot::kIKCache]    = st.idx_key_own;
+            p[gpu::mslot::kIKFp4]      = b.idx_k_fp4.addr;
+            p[gpu::mslot::kIKScale]    = b.idx_k_scale.addr;
+            p[gpu::mslot::kIWProjW]    = w.idx_wproj;
+            p[gpu::mslot::kIX]         = b.u.addr;
+            p[gpu::mslot::kIWeights]   = b.idx_w.addr;
+            p[gpu::mslot::kIScore]     = b.idx_score.addr;
+            p[gpu::mslot::kIOut]       = b.list_addr(st.list);
+            p[gpu::mslot::kIKCachePub] = st.idx_key_pub;
+            p[gpu::mslot::kIBlkKey]    = b.idx_blk_key.addr;
+            p[gpu::mslot::kICand]      = b.idx_cand.addr;
+        };
+        idx(S::IdxQFinish, b.rope.addr);
+        idx(S::IdxKey, b.rope_lat.addr);
+        idx(S::IdxWeights, b.rope.addr);
+        idx(S::IdxScore, b.rope.addr);
+        idx(S::IdxTopK, b.rope.addr);
+        idx(S::IdxBlockKeys, b.rope.addr);
+        idx(S::IdxBlockSelect, b.rope.addr);
+        idx(S::IdxApplyCand, b.rope.addr);
+    }
+    weights_ = w;
+    return {};
+}
+
+Result<void> DecodeLayer::record_attention_batch(gpu::CommandBuffer& cmd, const BatchStep& st) {
+    if (!mgt_) return fail(Err::FailedPrecondition, "create_batch was not called");
+    const TextConfig& c = *cfg_;
+    const BatchScratch& b = bb_;
+    const uint32_t M = st.m;
+    const uint32_t dim = c.hidden_size;
+    const uint32_t qrows = c.num_attention_heads * c.head_dim;
+    const uint32_t orows = c.o_groups * c.o_lora_rank;
+    const uint32_t n_wg0 = (dim + 255) / 256;
+    const uint32_t win_ext = c.sliding_window + M - 1;
+    using S = gpu::MgtStage;
+    gpu::MgtRunner& R = *mgt_;
+
+    // The list every query walks: the window plus min(index_topk, n_cmp) of the
+    // LAST query's compressed positions (earlier queries have -1 past their own).
+    const uint32_t n_sel = st.compress_ratio ? std::min(c.index_topk, st.n_cmp(M - 1)) : 0u;
+    const uint32_t n_kv = win_ext + n_sel;
+    if (n_kv > b.list_stride || n_kv > kAttnScoreStride)
+        return fail(Err::Internal, std::format("layer {} p0 {} M {}: a list of {} entries; the "
+                                               "batch lists hold {} and the score row {}",
+                                               st.layer, st.p0, M, n_kv, b.list_stride,
+                                               kAttnScoreStride));
+    if (st.compress_ratio && st.n_cmp(M - 1) > b.score_stride)
+        return fail(Err::ResourceExhausted,
+                    std::format("layer {}: {} compressed positions, the batch score plane holds {}",
+                                st.layer, st.n_cmp(M - 1), b.score_stride));
+    if (auto r = R.ensure(M); !r) return r;
+
+    auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
+                    uint32_t gy) -> Result<void> {
+        if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+        if (stamp) stamp(gpu::mgt_stage_name(s));
+        return {};
+    };
+
+    gpu::MhcPush mp{dim, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0, c.hc_sinkhorn_iters,
+                    st.apply_hc_post ? gpu::kMhcFlagPost : 0u,
+                    static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
+    if (auto r = step(S::MhcPost, &mp, sizeof mp, n_wg0, M); !r) return r;
+    if (auto r = step(S::MhcMix, &mp, sizeof mp, mp.mix_rows, M); !r) return r;
+    if (auto r = step(S::MhcFinal, &mp, sizeof mp, n_wg0, M); !r) return r;
+
+    // Q path.
+    gpu::MgtGemvPush qa{};
+    qa.rows = c.q_lora_rank; qa.k = dim; qa.scale_cols = dim / 32;
+    qa.part_stride = c.q_lora_rank; qa.x_stride = dim; qa.y_stride = c.q_lora_rank;
+    if (auto r = step(S::WqASplit, &qa, sizeof qa, R.split_groups(S::WqASplit, qa.rows), 1); !r)
+        return r;
+    if (auto r = step(S::WqACombine, &qa, sizeof qa, R.combine_groups(qa.rows), M); !r) return r;
+    gpu::MgtGemvPush qn{};
+    qn.head_dim = c.q_lora_rank; qn.x_stride = c.q_lora_rank; qn.y_stride = c.q_lora_rank;
+    qn.eps = static_cast<float>(c.rms_norm_eps);
+    if (auto r = step(S::QNorm, &qn, sizeof qn, 1, M); !r) return r;
+    gpu::MgtGemvPush qb{};
+    qb.rows = qrows; qb.k = c.q_lora_rank; qb.scale_cols = c.q_lora_rank / 32;
+    qb.part_stride = qrows; qb.x_stride = c.q_lora_rank; qb.y_stride = qrows;
+    qb.head_dim = c.head_dim; qb.rope_dim = c.qk_rope_head_dim;
+    if (auto r = step(S::WqBSplit, &qb, sizeof qb, R.split_groups(S::WqBSplit, qrows), 1); !r)
+        return r;
+    if (auto r = step(S::WqBFinish, &qb, sizeof qb, R.combine_groups(qrows), M); !r) return r;
+
+    // KV path: the overflow copy and the ring write for every token.
+    gpu::MgtGemvPush kp{};
+    kp.rows = c.head_dim; kp.k = dim; kp.scale_cols = dim / 32; kp.part_stride = c.head_dim;
+    kp.x_stride = dim; kp.head_dim = c.head_dim; kp.rope_dim = c.qk_rope_head_dim;
+    kp.p0 = st.p0; kp.window = c.sliding_window; kp.eps = static_cast<float>(c.rms_norm_eps);
+    if (auto r = step(S::WkvSplit, &kp, sizeof kp, R.split_groups(S::WkvSplit, kp.rows), 1); !r)
+        return r;
+    if (auto r = step(S::WkvFinish, &kp, sizeof kp, 1, M); !r) return r;
+
+    if (auto r = record_ced_batch(cmd, st); !r) return r;
+
+    // Sparse attention, per query.
+    gpu::MgtAttnPush ap{};
+    ap.n_kv = n_kv; ap.n_win = c.sliding_window; ap.n_ovf = M - 1; ap.head_dim = c.head_dim;
+    ap.rope_dim = c.qk_rope_head_dim; ap.score_stride = kAttnScoreStride;
+    ap.softmax_scale = 1.0f / std::sqrt(static_cast<float>(c.head_dim));
+    ap.n_heads = c.num_attention_heads; ap.n_tiles = 32;
+    ap.tile_len = (n_kv + ap.n_tiles - 1) / ap.n_tiles;
+    ap.list_stride = b.list_stride;
+    const uint32_t hg = (c.num_attention_heads + R.spec().tile_heads_per_wg - 1) /
+                        R.spec().tile_heads_per_wg;
+    if (auto r = step(S::AttnScore, &ap, sizeof ap, hg * ap.n_tiles, M); !r) return r;
+    if (auto r = step(S::AttnPv, &ap, sizeof ap, c.num_attention_heads, M); !r) return r;
+
+    // Output projection.
+    gpu::MgtGemvPush wa{};
+    wa.rows = orows; wa.k = qrows / c.o_groups; wa.scale_cols = wa.k / 32;
+    wa.rows_per_group = c.o_lora_rank; wa.part_stride = orows; wa.x_stride = qrows;
+    wa.y_stride = orows;
+    if (auto r = step(S::WoASplit, &wa, sizeof wa, R.split_groups(S::WoASplit, orows), 1); !r)
+        return r;
+    if (auto r = step(S::WoACombine, &wa, sizeof wa, R.combine_groups(orows), M); !r) return r;
+    gpu::MgtGemvPush wb{};
+    wb.rows = dim; wb.k = orows; wb.scale_cols = orows / 32; wb.part_stride = dim;
+    wb.x_stride = orows; wb.y_stride = dim;
+    if (auto r = step(S::WoBSplit, &wb, sizeof wb, R.split_groups(S::WoBSplit, dim), 1); !r)
+        return r;
+    if (auto r = step(S::WoBCombine, &wb, sizeof wb, R.combine_groups(dim), M); !r) return r;
+
+    gpu::MhcPush fp = mp;
+    fp.flags = gpu::kMhcFlagPost;
+    if (auto r = step(S::MhcPostB, &fp, sizeof fp, n_wg0, M); !r) return r;
+    if (auto r = step(S::MhcMixB, &fp, sizeof fp, mp.mix_rows, M); !r) return r;
+    if (auto r = step(S::MhcFinalB, &fp, sizeof fp, n_wg0, M); !r) return r;
+
+    gpu::GatePush gp{c.n_routed_experts, dim, c.num_experts_per_tok, 16, 1.0f,
+                     static_cast<float>(c.routed_scaling_factor)};
+    if (auto r = step(S::GateScore, &gp, sizeof gp, R.row_groups(c.n_routed_experts), M); !r)
+        return r;
+    return step(S::GateTopK, &gp, sizeof gp, 1, M);
+}
+
+Result<void> DecodeLayer::record_ced_batch(gpu::CommandBuffer& cmd, const BatchStep& st) {
+    if (!st.run_compressor && !st.run_indexer) return {};
+    const TextConfig& c = *cfg_;
+    const BatchScratch& b = bb_;
+    const uint32_t M = st.m;
+    const uint32_t ratio = st.compress_ratio ? st.compress_ratio : 1u;
+    const uint32_t first = (ratio - 1 - st.p0 % ratio) % ratio;
+    const uint32_t n_complete = first < M ? (M - 1 - first) / ratio + 1 : 0u;
+    using S = gpu::MgtStage;
+    gpu::MgtRunner& R = *mgt_;
+    auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
+                    uint32_t gy) -> Result<void> {
+        if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+        if (stamp) stamp(gpu::mgt_stage_name(s));
+        return {};
+    };
+
+    gpu::MgtCmpPush cp{};
+    cp.rows = c.head_dim; cp.k = c.hidden_size; cp.ratio = ratio; cp.p0 = st.p0;
+    cp.rope_dim = c.qk_rope_head_dim; cp.norm_eps = static_cast<float>(c.rms_norm_eps);
+    if (st.run_compressor) {
+        const uint32_t gw = R.row_groups(c.head_dim);
+        if (auto r = step(S::CmpKvGemv, &cp, sizeof cp, gw, M); !r) return r;
+        if (ratio > 1)
+            if (auto r = step(S::CmpGateGemv, &cp, sizeof cp, gw, M); !r) return r;
+        if (n_complete)
+            if (auto r = step(S::CmpPool, &cp, sizeof cp, 1, n_complete); !r) return r;
+        if (ratio > 1)
+            if (auto r = step(S::CmpState, &cp, sizeof cp, 1, 1); !r) return r;
+    }
+
+    if (st.run_indexer) {
+        const uint32_t irows = c.index_n_heads * c.index_head_dim;
+        gpu::MgtIdxPush ip{};
+        ip.n_heads = c.index_n_heads; ip.head_dim = c.index_head_dim;
+        ip.rope_dim = c.qk_rope_head_dim; ip.p0 = st.p0; ip.ratio = ratio;
+        ip.topk = c.index_topk; ip.offset = c.sliding_window + M - 1;
+        ip.score_stride = b.score_stride; ip.list_stride = b.list_stride;
+        ip.key_sel = st.key_sel; ip.blk_stride = b.blk_stride;
+        ip.norm_eps = static_cast<float>(c.rms_norm_eps);
+        ip.wscale = 1.0f / std::sqrt(static_cast<float>(c.index_head_dim)) /
+                    std::sqrt(static_cast<float>(c.index_n_heads));
+
+        if (st.run_compressor && n_complete) {
+            gpu::MgtIdxPush ik = ip;
+            ik.k = c.head_dim;
+            if (auto r = step(S::IdxKey, &ik, sizeof ik, 1, n_complete); !r) return r;
+        }
+        gpu::MgtGemvPush gq{};
+        gq.rows = irows; gq.k = c.q_lora_rank; gq.scale_cols = c.q_lora_rank / 32;
+        gq.part_stride = irows; gq.x_stride = c.q_lora_rank; gq.y_stride = irows;
+        if (auto r = step(S::IdxQSplit, &gq, sizeof gq, R.split_groups(S::IdxQSplit, irows), 1); !r)
+            return r;
+        if (auto r = step(S::IdxQCombine, &gq, sizeof gq, R.combine_groups(irows), M); !r) return r;
+        if (auto r = step(S::IdxQFinish, &ip, sizeof ip, 1, M); !r) return r;
+        gpu::MgtIdxPush iw = ip;
+        iw.k = c.hidden_size;
+        if (auto r = step(S::IdxWeights, &iw, sizeof iw, 1, M); !r) return r;
+
+        const uint32_t n_max = st.n_cmp(M - 1);
+        if (n_max > kMaxIndexPositions)
+            return fail(Err::ResourceExhausted,
+                        std::format("layer {} scores {} compressed positions; one indexer "
+                                    "dispatch covers {}", st.layer, n_max, kMaxIndexPositions));
+        const uint32_t sg = (n_max + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile;
+        if (sg) {
+            if (auto r = step(S::IdxScore, &ip, sizeof ip, sg, M); !r) return r;
+            gpu::MgtIdxPush cb = ip;
+            cb.k = c.candidate_block_size;
+            cb.topk = c.candidate_topk_blocks;
+            const bool cand = c.candidate_topk_blocks && c.candidate_block_size &&
+                              uint64_t(n_max) > uint64_t(c.candidate_topk_blocks) *
+                                                    c.candidate_block_size;
+            if (cand && st.layer == c.candidate_source_layer_id) {
+                const uint32_t nb = (n_max + cb.k - 1) / cb.k;
+                if (nb > b.blk_stride)
+                    return fail(Err::ResourceExhausted, "the batch block planes are too small");
+                if (auto r = step(S::IdxBlockKeys, &cb, sizeof cb, (nb + 255) / 256, M); !r)
+                    return r;
+                if (auto r = step(S::IdxBlockSelect, &cb, sizeof cb, 1, M); !r) return r;
+                cand_position_ = st.p0;
+                cand_n_cmp_    = n_max;
+            } else if (cand && st.layer > c.candidate_source_layer_id) {
+                if (cand_position_ != st.p0 || cand_n_cmp_ != n_max)
+                    return fail(Err::FailedPrecondition,
+                                std::format("layer {} needs the batch's candidate blocks for p0 {} "
+                                            "over {} positions; they were built for p0 {} over {}",
+                                            st.layer, st.p0, n_max, cand_position_, cand_n_cmp_));
+                if (auto r = step(S::IdxApplyCand, &cb, sizeof cb, 1, M); !r) return r;
+            }
+            // Poison every query's compressed half, so the verify can tell the
+            // kernel's entries from stale ones.
+            for (uint32_t mm = 0; mm < M; ++mm) {
+                int32_t* row = bb_.list_host(st.list) + uint64_t(mm) * b.list_stride;
+                std::fill(row + ip.offset, row + b.list_stride, -1);
+            }
+            if (auto r = step(S::IdxTopK, &ip, sizeof ip, 1, M); !r) return r;
+        }
+    }
+    if (st.run_compressor && n_complete)
+        if (auto r = step(S::CmpStore, &cp, sizeof cp, 1, n_complete); !r) return r;
+    return {};
+}
+
+Result<void> DecodeLayer::run_attention_batch(const BatchStep& st) {
+    if (auto r = cmd_.begin(); !r) return r;
+    if (auto r = record_attention_batch(cmd_, st); !r) return r;
+    if (auto r = submit(cmd_); !r) return r;
+    return verify_after_attention_batch(st);
+}
+
+Result<void> DecodeLayer::verify_after_attention_batch(const BatchStep& st) const {
+    if (!st.run_indexer || !st.compress_ratio) return {};
+    const TextConfig& c = *cfg_;
+    const uint32_t off = c.sliding_window + st.m - 1;
+    for (uint32_t mm = 0; mm < st.m; ++mm) {
+        const uint32_t n = st.n_cmp(mm);
+        const uint32_t k = std::min(c.index_topk, n);
+        const int32_t* row = bb_.list_host(st.list) + uint64_t(mm) * bb_.list_stride;
+        int32_t prev = int32_t(off) - 1;
+        for (uint32_t i = 0; i < k; ++i) {
+            const int32_t v = row[off + i];
+            if (v <= prev || v >= int32_t(off + n))
+                return fail(Err::Internal,
+                            std::format("layer {} p0 {} query {}: top-k entry {} of {} is {} "
+                                        "(previous {}); want strictly increasing in [{}, {}){}",
+                                        st.layer, st.p0, mm, i, k, v, prev, off, off + n,
+                                        v == -1 ? " -- never written" : ""));
+            prev = v;
+        }
+        for (uint32_t i = k; off + i < bb_.list_stride; ++i)
+            if (row[off + i] != -1)
+                return fail(Err::Internal,
+                            std::format("layer {} query {}: entry {} past the {} picks is {}",
+                                        st.layer, mm, i, k, row[off + i]));
+    }
+    return {};
+}
+
+Result<void> DecodeLayer::record_close_batch(gpu::CommandBuffer& cmd, const BatchStep& st) {
+    const TextConfig& c = *cfg_;
+    const uint32_t n_wg0 = (c.hidden_size + 255) / 256;
+    gpu::MhcPush mp{c.hidden_size, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
+                    c.hc_sinkhorn_iters, gpu::kMhcFlagPost | gpu::kMhcFlagSkipSinkhorn,
+                    static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
+    if (auto r = mgt_->ensure(st.m); !r) return r;
+    if (auto r = mgt_->record(cmd, st.m, gpu::MgtStage::MhcClose, &mp, sizeof mp, n_wg0, st.m); !r)
+        return r;
+    return cmd.barrier();
+}
+
+Result<void> DecodeLayer::run_close_batch(const BatchStep& st) {
+    if (auto r = cmd_.begin(); !r) return r;
+    if (auto r = record_close_batch(cmd_, st); !r) return r;
+    return submit(cmd_);
+}
+
+Result<void> DecodeLayer::record_tail_batch(gpu::CommandBuffer& cmd, const BatchStep& st,
+                                            const BatchTail& t) {
+    const TextConfig& c = *cfg_;
+    const BatchScratch& b = bb_;
+    const uint32_t M = st.m;
+    const uint32_t n_wg0 = (c.hidden_size + 255) / 256;
+    using S = gpu::MgtStage;
+    gpu::MgtRunner& R = *mgt_;
+    if (auto r = R.ensure(M); !r) return r;
+    // hc_post of the last layer AND hc_pre (MhcClose writes xout and utmp), then
+    // the model's own norm over utmp into u.
+    uint64_t* close = R.slots(S::MhcClose);
+    close[gpu::slot::kNormW] = t.norm_w;
+    close[gpu::slot::kU] = b.u.addr;
+    std::memcpy(R.slots(S::MhcFinal), close, gpu::kAttnStageStride);
+    gpu::MhcPush mp{c.hidden_size, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
+                    c.hc_sinkhorn_iters, gpu::kMhcFlagPost | gpu::kMhcFlagSkipSinkhorn,
+                    static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
+    auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
+                    uint32_t gy) -> Result<void> {
+        if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+        if (stamp) stamp(gpu::mgt_stage_name(s));
+        return {};
+    };
+    if (auto r = step(S::MhcClose, &mp, sizeof mp, n_wg0, M); !r) return r;
+    if (auto r = step(S::MhcFinal, &mp, sizeof mp, n_wg0, M); !r) return r;
+
+    uint64_t* h = R.slots(S::Head);
+    h[gpu::mslot::kHW] = t.head_w;
+    h[gpu::mslot::kHX] = b.u.addr;
+    h[gpu::mslot::kHLogits] = t.logits;
+    h[gpu::mslot::kHSample] = t.sample;
+    h[gpu::mslot::kHTopOut] = t.topk_out;
+    h[gpu::mslot::kHHist] = t.topk_hist;
+    std::memcpy(R.slots(S::HeadArgmax), h, gpu::kAttnStageStride);
+    std::memcpy(R.slots(S::HeadTopK), h, gpu::kAttnStageStride);
+    gpu::MgtHeadPush hp{};
+    hp.rows = c.vocab_size; hp.k = c.hidden_size; hp.slices = R.spec().head_slices;
+    hp.x_stride = c.hidden_size; hp.topk_k = t.topk_k; hp.inv_t = t.inv_t;
+    for (uint32_t sl = 0; sl < hp.slices; ++sl) {
+        hp.slice = sl;
+        if (auto r = step(S::Head, &hp, sizeof hp, R.row_groups(c.vocab_size), 1); !r) return r;
+    }
+    if (auto r = step(S::HeadArgmax, &hp, sizeof hp, 1, M); !r) return r;
+    if (t.topk_out && t.topk_hist)
+        if (auto r = step(S::HeadTopK, &hp, sizeof hp, 1, M); !r) return r;
+    return {};
 }
 
 namespace {

@@ -68,9 +68,9 @@ void stage_scores(uint gid, uint tid) {
     }
     const float dot = row_reduce(acc, tid, sublane);
     if (live && sublane == 0) {
-        // sqrtsoftplus: softplus(z) = log1p(exp(z)), stable for large z.
+        // sqrtsoftplus, with softplus in its stable form (attn_common.slang).
         const float z = dot / pc.gate_temp;
-        const float sp = (z > 20.0f) ? z : log(1.0f + exp(z));
+        const float sp = softplus_stable(z);
         *(float*)(Ptr[kScores] + (uint64_t)row * 4) = sqrt(sp);
     }
 }

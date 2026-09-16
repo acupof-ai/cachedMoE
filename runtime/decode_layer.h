@@ -44,6 +44,7 @@
 #include "core/types.h"
 #include "gpu/vulkan/attn_kernels.h"
 #include "gpu/vulkan/cmdbuf.h"
+#include "gpu/vulkan/decode_kernels.h"
 #include "gpu/vulkan/timeline.h"
 #include "model/v41_config.h"
 #include "runtime/kvstore.h"
@@ -94,6 +95,9 @@ struct DecodeScratch {
     // design §2.1's candidate blocks: the source's per-block radix keys and the
     // keep flags every consumer layer of the same step reads.
     gpu::GpuScratch::View idx_blk_key, idx_cand;
+    // The P3 kernels (docs/p2_attention.md §13.7): the K-split partial plane
+    // and the tiled attention's per-(head, tile) maxima.
+    gpu::GpuScratch::View ksp_part, tile_max;
 
     Result<void> create(gpu::GpuScratch& s, const TextConfig& cfg);
 };
@@ -181,6 +185,64 @@ struct LayerStep {
     // against whatever cache was published last (docs/p2_attention.md §9.3).
     DeviceAddress idx_key_write = kNoDeviceAddress;
 };
+
+// --- Track T: a verify batch of M = k + 1 <= 6 tokens (docs/p4_mgt1.md) -----
+//
+// The per-token activations of design §7.14 with a batch dimension, for the
+// gpu/shaders/mgt1_*.slang kernels. Created once, for the largest M and the
+// longest compressed run a batch will score.
+struct BatchScratch {
+    uint32_t m_cap = 0, list_stride = 0, score_stride = 0, blk_stride = 0;
+    gpu::GpuScratch::View x, xout, utmp, u, partials, mix_raw, mix_a, mix_b;
+    gpu::GpuScratch::View qr_raw, qr, q, rope, rope_lat, kv_out, ovf_val, ovf_scale;
+    gpu::GpuScratch::View score, tile_max, o, woa, wob, part;
+    gpu::GpuScratch::View gate_scores, gate_ids, gate_weights, layer_done, moe_y;
+    gpu::GpuScratch::View cmp_y, cmp_g, latent, latent_q, cmp_fp4, cmp_scale;
+    gpu::GpuScratch::View idx_q_raw, idx_q, idx_q_fp4, idx_q_scale;
+    gpu::GpuScratch::View idx_k_raw, idx_k_fp4, idx_k_scale, idx_w, idx_score;
+    gpu::GpuScratch::View idx_blk_key, idx_cand;
+    // [n_lists][M][list_stride] int32: list 0 serves the window-only layers,
+    // list 1 + i the i-th index source and every layer that reads it.
+    gpu::GpuScratch::View lists;
+    uint32_t n_lists = 0;
+
+    Result<void> create(gpu::GpuScratch& s, const TextConfig& cfg, uint32_t m_cap,
+                        uint32_t max_compressed);
+    int32_t* list_host(uint32_t i) const {
+        return static_cast<int32_t*>(lists.host) + uint64_t(i) * m_cap * list_stride;
+    }
+    uint64_t list_addr(uint32_t i) const { return lists.addr + uint64_t(i) * m_cap * list_stride * 4; }
+};
+
+// One layer of one verify batch. `kv` carries this layer's ring and carried
+// compressor state and its source's compressed plane, as LayerStep's does.
+struct BatchStep {
+    uint32_t layer = 0;
+    uint32_t p0 = 0;              // position of token 0
+    uint32_t m = 1;               // tokens in the batch
+    uint32_t compress_ratio = 2;
+    bool     apply_hc_post = true;
+    bool     bind_close = true;
+    KvLayerView kv{};
+    uint32_t list = 0;            // which BatchScratch list this layer reads
+    bool     run_compressor = false;
+    bool     run_indexer = false;
+    // The index-key caches: this layer's own (a kv source) and the one a query
+    // whose group did not complete here scores against (docs/p3_dspark.md §4.8).
+    DeviceAddress idx_key_own = kNoDeviceAddress;
+    DeviceAddress idx_key_pub = kNoDeviceAddress;
+    uint32_t key_sel = 0;         // bit m: query m scores `idx_key_own`
+
+    uint32_t n_cmp(uint32_t mm) const {
+        return compress_ratio ? (p0 + mm + 1) / compress_ratio : 0u;
+    }
+    uint32_t n_win_ext() const;   // window + m - 1
+};
+
+// The window half of every batch list, and -1 over the compressed half: query
+// m sees ring slot s iff the position it holds after the batch's writes is in
+// [0, p0 + m], and overflow row j - 1 iff j > m and that row held a position.
+void write_batch_window_lists(BatchScratch& b, uint32_t window, uint32_t p0, uint32_t m);
 
 class DecodeLayer {
 public:
@@ -274,7 +336,52 @@ public:
 
     const TextConfig& config() const { return *cfg_; }
 
+    // Benchmarks only: called after every dispatch's barrier is recorded, with
+    // the stage's name, so a caller can put a GPU timestamp there. Unset in
+    // every real caller.
+    std::function<void(const char*)> stamp;
+
+    // --- Track T: the verify batch ---------------------------------------
+    // Borrows the M > 1 runner and allocates the batch activations. Separate
+    // from `create` so the M = 1 path is untouched by it.
+    Result<void> create_batch(gpu::MgtRunner& mgt, gpu::GpuScratch& scratch, uint32_t m_cap,
+                              uint32_t max_compressed);
+    BatchScratch& batch() { return bb_; }
+    const BatchScratch& batch() const { return bb_; }
+    Result<void> bind_batch(const LayerWeights& w, const BatchStep& s);
+    // Dispatches 1-9 of design §7.14 for all M tokens, and §7.4's compressor
+    // and indexer on a source layer. The caller has written the lists' window
+    // halves (`write_batch_window_lists`) once for the batch.
+    Result<void> record_attention_batch(gpu::CommandBuffer& cmd, const BatchStep& s);
+    Result<void> run_attention_batch(const BatchStep& s);
+    // Every query's compressed half: min(index_topk, n_cmp(m)) strictly
+    // increasing in-range entries, and -1 after them.
+    Result<void> verify_after_attention_batch(const BatchStep& s) const;
+    Result<void> record_close_batch(gpu::CommandBuffer& cmd, const BatchStep& s);
+    Result<void> run_close_batch(const BatchStep& s);
+    // `h = hc_pre(h, pre_mix); logits = head(norm(h))` for all M rows, then the
+    // per-row argmax (and, when `topk_out` is set, the per-row top set). The
+    // stream is `batch().x`, i.e. after `run_close_batch` of the last layer
+    // has been folded in by this call's MhcClose.
+    struct BatchTail {
+        uint64_t norm_w = 0, head_w = 0;
+        uint64_t logits = 0;          // [M][vocab] fp32
+        uint64_t sample = 0;          // [M][4] words
+        uint64_t topk_out = 0, topk_hist = 0;
+        uint32_t topk_k = 1024;
+        float    inv_t = 1.0f;
+    };
+    Result<void> record_tail_batch(gpu::CommandBuffer& cmd, const BatchStep& s, const BatchTail& t);
+    // Where token m's MoE output lives (`batch().moe_y` + m * hidden).
+    const float* batch_ffn_norm_out(uint32_t m) const {
+        return static_cast<const float*>(bb_.u.host) + uint64_t(m) * cfg_->hidden_size;
+    }
+
 private:
+    gpu::MgtRunner*   mgt_ = nullptr;
+    BatchScratch      bb_{};
+    std::vector<float> batch_rope_;
+    Result<void> record_ced_batch(gpu::CommandBuffer& cmd, const BatchStep& s);
     Result<void> submit(gpu::CommandBuffer& cmd);
     Result<void> bind_ced(const LayerWeights& w, const LayerStep& s, const RopeConfig& rc);
     const std::vector<float>& rope_cached(const RopeConfig& rc, uint32_t position);
