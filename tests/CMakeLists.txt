@@ -146,3 +146,4 @@ add_test(NAME "suite.kv_replay" COMMAND deepmoe_tests "kv_replay.")
 set_tests_properties("suite.kv_replay" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP kv_replay")
+add_test(NAME "suite.kvdisk" COMMAND deepmoe_tests "kvdisk.")

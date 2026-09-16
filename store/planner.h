@@ -142,6 +142,9 @@ std::unique_ptr<EvictionPolicy> make_policy(CachePolicy which);
 // static routing frequency, hottest first, from store/static_heat.inc
 // (tools/hitrate_sim.py heat over the 27,399-token route trace).
 std::vector<ExpertKey> static_heat_order();
+// Same order, read from a tools/hitrate_sim.py heat file (`layer, expert, count,`
+// per line, hottest first). Empty when the file is missing or has no rows.
+std::vector<ExpertKey> static_heat_order(const std::string& path);
 
 class Planner {
 public:

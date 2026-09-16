@@ -172,6 +172,8 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--no-rollback")     so.rollback = false;
         else if (a == "--max-parked")      po.max_parked = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--park-budget-mb")  po.max_parked_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 20;
+        else if (a == "--kv-dir")          po.disk.dir = value_of(argc, argv, i);
+        else if (a == "--kv-max-gb")       po.disk.max_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 30;
         else if (a == "--profile")         cfg.profile_jsonl = value_of(argc, argv, i);
         else if (a == "--check-topk")      check_topk = true;
         else {
@@ -183,6 +185,9 @@ int cmd_serve(int argc, char** argv) {
         std::fputs("serve needs --model DIR (or DEEPMOE_MODEL_DIR)\n", stderr);
         return 2;
     }
+    // The disk cache stores the model identity in every file; a different
+    // checkpoint is a miss, not a corrupt hit.
+    if (!po.disk.dir.empty()) po.disk.model_tag = cfg.model_dir;
 
     // The protocol owns the real stdout; everything else printed to fd 1 goes
     // to stderr.

@@ -1269,7 +1269,11 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     bool backfill = sc.backfill;
     if (const char* e = std::getenv("DEEPMOE_BACKFILL"); e && *e) backfill = *e != '0';
     if (backfill && store_.free_slots() > 0) {
-        if (auto r = planner_.start_backfill(store::static_heat_order()); !r)
+        std::vector<store::ExpertKey> order;
+        if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
+            order = store::static_heat_order(hf);
+        if (order.empty()) order = store::static_heat_order();
+        if (auto r = planner_.start_backfill(std::move(order)); !r)
             log_warn("engine: backfill: {}", r.error().str());
         else
             log_info("engine: P3 backfill started into {} free slots", store_.free_slots());

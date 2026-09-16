@@ -4,6 +4,8 @@
 #include <atomic>
 #include <format>
 #include <memory>
+#include <cstdio>
+#include <fstream>
 #include <string_view>
 
 #include "core/log.h"
@@ -111,6 +113,31 @@ std::vector<ExpertKey> static_heat_order() {
     std::vector<ExpertKey> out;
     out.reserve(std::size(kStaticHeat));
     for (const HeatRow& r : kStaticHeat) out.push_back(ExpertKey{r.layer, r.expert});
+    return out;
+}
+
+std::vector<ExpertKey> static_heat_order(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) {
+        log_warn("planner: heat file '{}' not readable; built-in order", path);
+        return {};
+    }
+    std::vector<HeatRow> rows;
+    std::string line;
+    while (std::getline(f, line)) {
+        unsigned int layer = 0, expert = 0, count = 0;
+        if (std::sscanf(line.c_str(), " { %u , %u , %u }", &layer, &expert, &count) == 3 ||
+            std::sscanf(line.c_str(), "%u, %u, %u", &layer, &expert, &count) == 3) {
+            if (layer < 4096 && expert < 4096)
+                rows.push_back(HeatRow{static_cast<uint16_t>(layer), static_cast<uint16_t>(expert), count});
+        }
+    }
+    std::stable_sort(rows.begin(), rows.end(),
+                     [](const HeatRow& a, const HeatRow& b) { return a.count > b.count; });
+    std::vector<ExpertKey> out;
+    out.reserve(rows.size());
+    for (const HeatRow& r : rows) out.push_back(ExpertKey{r.layer, r.expert});
+    if (out.empty()) log_warn("planner: heat file '{}' has no rows; built-in order", path);
     return out;
 }
 

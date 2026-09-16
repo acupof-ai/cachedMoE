@@ -70,6 +70,7 @@ int usage(int code = 2) {
         "  deepmoe serve --model DIR [--cache-gb N] [--max-context N]\n"
         "                [--engram-tables DIR] [--gpu-prefill-min N] [--replay N]\n"
         "                [--no-rollback] [--max-parked N] [--park-budget-mb N]\n"
+        "                [--kv-dir DIR] [--kv-max-gb N]\n"
         "                [--check-topk] [--profile FILE.jsonl]\n"
         "      A long-running engine behind line-delimited JSON on stdin/stdout:\n"
         "      generate (streamed tokens, temperature/top_p/seed, KV continuation\n"

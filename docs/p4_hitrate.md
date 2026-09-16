@@ -80,3 +80,16 @@ this record could be written; the worktree however received **no commits and no 
 
 - Tasks 1–5 of `p4_tasks/r1n.txt` are untouched (no commit, no build, no runs, no tests).
 - No hit-vs-round curve, no stall/tok-s numbers, no A/B verdicts, no cache-size recommendation.
+
+## 2026-09-16 追加：多轮 auto-tune
+
+- `tools/hitrate_bench.py --auto-tune N`：每轮起一个全新 `serve`，跑完脚本后从
+  `route.bin` 生成 `heat_round_r.inc`（`layer, expert, count,`，最热在前），下一轮通过
+  `DEEPMOE_HEAT_FILE` 传给引擎；结果写 `auto_tune.json`（每轮 hit / tok/s / prefill tokens）。
+- `--write-heat PATH`：单轮运行后直接导出热度文件。
+- 引擎侧：`store/planner.cpp` 新增 `static_heat_order(path)` 文件解析；
+  `runtime/engine.cpp` 在 P3 backfill 启动时读取 `DEEPMOE_HEAT_FILE`，为空时回退内置
+  `static_heat.inc`。
+- `--repeat N` 仍是在同一个 serve 进程里连续跑 N 遍（expert cache 变热，用于 warm 曲线）；
+  `--auto-tune` 是跨进程重新调 P3 backfill 顺序。
+- **未验证**：本环境不能编译/起 serve；Python 侧已过 `py_compile`，C++ 侧需在能构建的机器上复验。

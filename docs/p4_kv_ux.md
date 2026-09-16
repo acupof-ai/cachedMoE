@@ -1,7 +1,7 @@
 ﻿# Track R2：KV 账、回退、持久化与 serve UX（P4）
 
 状态：**部分完成**。per-source KV 平面、engram 常量、session 回退/挂起、serve 中断已实现；
-**SSD prefix KV 持久化（design §11.4）尚未实现**。本文件同时记录已验证事实、已知失败和复验命令。
+SSD prefix KV 持久化（design §11.4）已实现（本环境无法编译验证，测试见 `suite.kvdisk`）。本文件同时记录已验证事实、已知失败和复验命令。
 
 ## 1. 已实现（R2 分支提交）
 
@@ -54,3 +54,17 @@ cmake --build build
 ```
 
 第 3 段当前失败；修复前 PR 不得标记 R2 完成。
+
+## 6. 2026-09-16 追加：SSD prefix cache 实现
+
+- API：`runtime/session.h` 的 `KvDiskOptions` / `save_parked_context` /
+  `load_parked_context` / `drop_parked_context`；`SessionPool` 在 park、LRU 淘汰时落盘，
+  在新进程 `activate(name)` 时回读。文件 `<dir>/<session>.pkv`（原子写 `.tmp` -> rename，
+  目录级 LRU 上限）。
+- 文件内容：token ids + `KvPacked`（compressed rows / index keys / FP4 打包 / carry）；
+  **window 不写**，恢复仍走 `restore_context()` 的 bounded replay。header 带版本和
+  `model_tag` 的 FNV-1a 指纹，指纹不符按 miss 处理。
+- CLI：`deepmoe serve --kv-dir DIR [--kv-max-gb N]`；`tools/chat.py --kv-dir DIR`。
+- 测试：`tests/test_kv_replay.cpp` 新增纯 CPU `DEEPMOE_TEST(kvdisk, roundtrip)`，
+  CMake 注册 `suite.kvdisk`（无模型依赖）。
+- **未验证**：无法在本环境编译；TTFT 对照（无缓存 vs SSD hit、R=128/256）需在能构建的机器上跑。

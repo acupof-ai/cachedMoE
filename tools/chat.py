@@ -56,6 +56,10 @@ class Server:
             cmd += ["--gpu-prefill-min", str(args.gpu_prefill_min)]
         if args.check_topk:
             cmd += ["--check-topk"]
+        if getattr(args, "kv_dir", ""):
+            cmd += ["--kv-dir", args.kv_dir]
+            if getattr(args, "kv_max_gb", 0):
+                cmd += ["--kv-max-gb", str(args.kv_max_gb)]
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=self.log, bufsize=0)
@@ -320,6 +324,8 @@ def main():
     ap.add_argument("--max-context", type=int, default=4096)
     ap.add_argument("--gpu-prefill-min", type=int, default=0)
     ap.add_argument("--check-topk", action="store_true")
+    ap.add_argument("--kv-dir", default="", help="directory for the SSD parked-session/prefix KV cache")
+    ap.add_argument("--kv-max-gb", type=int, default=0, help="disk cache budget in GiB (0 = server default)")
     ap.add_argument("--log", default=os.path.join(REPO, "build", "serve.log"))
     ap.add_argument("--script")
     ap.add_argument("--transcript")

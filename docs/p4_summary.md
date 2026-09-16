@@ -38,7 +38,7 @@
 1. `kv_replay.l3_64` 第 3 段 restore 失败：`timeline wait for 5579 timed out`（详见 `docs/p4_kv_ux.md`）。
 2. 本 PR 没有编译产物，也没有测试结论；见 §4 复验清单。
 3. R1 后段的 stall/chat3 A/B 在 4 条线并发时 device lost / 超时，数据无效；需安静机串行重跑。
-4. 用户要求的两个新能力尚未在代码里：**KV 落 SSD prefix cache**、**R1 多轮 auto-tune 循环**。
+4. KV 落 SSD prefix cache 与 R1 `--auto-tune` 已于 2026-09-16 追加（见 p4_kv_ux.md / p4_hitrate.md），但本环境无法编译验证。
 5. S 的 N=4133 端到端提速、T 的 M=1..6 缩放、prefill_p4.csv 都还没产出。
 
 ## 4. 合入前必须完成的复验

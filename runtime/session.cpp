@@ -352,9 +352,26 @@ Result<ReplayStats> SessionPool::activate(const std::string& name) {
         parked_[active_] = std::move(*p);
         lru_.remove(active_);
         lru_.push_front(active_);
+        if (!pool_.disk.dir.empty()) {
+            if (auto sr = save_parked_context(parked_[active_], pool_.disk, active_); !sr)
+                log_info("session pool: disk save '{}' failed: {}", active_, sr.error().str());
+        }
     }
     ReplayStats st;
     auto it = parked_.find(name);
+    if (it == parked_.end() && !pool_.disk.dir.empty()) {
+        auto loaded = load_parked_context(pool_.disk, name);
+        if (loaded) {
+            log_info("session pool: loaded '{}' from disk ({} tokens, {:.2f} MB packed)",
+                     name, loaded->tokens.size(), loaded->bytes() / 1e6);
+            parked_[name] = std::move(*loaded);
+            lru_.remove(name);
+            lru_.push_front(name);
+            it = parked_.find(name);
+        } else if (loaded.error().code != Err::NotFound) {
+            log_info("session pool: disk load '{}' failed: {}", name, loaded.error().str());
+        }
+    }
     if (it == parked_.end()) {
         e.reset_context();
     } else {
@@ -377,10 +394,13 @@ Result<ReplayStats> SessionPool::activate(const std::string& name) {
 bool SessionPool::drop(const std::string& name) {
     if (name == active_) {
         engine_->reset_context();
+        drop_parked_context(pool_.disk, name);
         return true;
     }
     lru_.remove(name);
-    return parked_.erase(name) > 0;
+    const bool erased = parked_.erase(name) > 0;
+    if (erased) drop_parked_context(pool_.disk, name);
+    return erased;
 }
 
 std::vector<SessionPool::Info> SessionPool::list() const {
@@ -402,11 +422,203 @@ void SessionPool::enforce_budget() {
     };
     while (!lru_.empty() && (parked_.size() > pool_.max_parked || total() > pool_.max_parked_bytes)) {
         const std::string victim = lru_.back();
+        if (!pool_.disk.dir.empty()) {
+            if (auto sr = save_parked_context(parked_[victim], pool_.disk, victim); !sr)
+                log_info("session pool: disk save '{}' failed: {}", victim, sr.error().str());
+        }
         lru_.pop_back();
         parked_.erase(victim);
         ++evicted_;
         log_info("session pool: dropped least recently used session '{}'", victim);
     }
+}
+
+}  // namespace deepmoe::runtime
+
+// --- disk session/prefix cache (design §11.4, Track R2) ----------------------
+// Appended as a second block in the same namespace so the existing translation
+// unit stays untouched. See session.h for the contract.
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
+#include <utility>
+
+namespace deepmoe::runtime {
+namespace {
+
+uint64_t fnv1a_tag(std::string_view s) {
+    uint64_t h = 1469598103934665603ull;
+    for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
+    return h;
+}
+
+std::string session_file_name(const std::string& name) {
+    std::string out;
+    out.reserve(name.size() + 4);
+    for (unsigned char c : name) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+        out.push_back(ok ? static_cast<char>(c) : '_');
+    }
+    if (out.empty()) out = "default";
+    if (out.size() > 96) out.resize(96);
+    return out + ".pkv";
+}
+
+void wr_u32(std::ofstream& f, uint32_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof v); }
+void wr_u64(std::ofstream& f, uint64_t v) { f.write(reinterpret_cast<const char*>(&v), sizeof v); }
+bool rd_u32(std::ifstream& f, uint32_t& v) { return static_cast<bool>(f.read(reinterpret_cast<char*>(&v), sizeof v)); }
+bool rd_u64(std::ifstream& f, uint64_t& v) { return static_cast<bool>(f.read(reinterpret_cast<char*>(&v), sizeof v)); }
+
+template <class T>
+void wr_vec(std::ofstream& f, const std::vector<T>& v) {
+    wr_u64(f, static_cast<uint64_t>(v.size()) * sizeof(T));
+    if (!v.empty())
+        f.write(reinterpret_cast<const char*>(v.data()), static_cast<std::streamsize>(v.size() * sizeof(T)));
+}
+
+template <class T>
+bool rd_vec(std::ifstream& f, std::vector<T>& v, uint64_t cap) {
+    uint64_t bytes = 0;
+    if (!rd_u64(f, bytes) || bytes > cap || bytes % sizeof(T) != 0) return false;
+    v.resize(static_cast<size_t>(bytes / sizeof(T)));
+    return v.empty() || static_cast<bool>(f.read(reinterpret_cast<char*>(v.data()), static_cast<std::streamsize>(bytes)));
+}
+
+constexpr char     kKvMagic[8]   = {'D','M','O','E','K','V','0','1'};
+constexpr char     kKvEnd[8]     = {'K','V','E','N','D','0','0','1'};
+constexpr uint32_t kKvVersion    = 1;
+constexpr uint64_t kKvVectorCap  = 1ull << 34;
+
+void enforce_disk_budget(const KvDiskOptions& opt) {
+    namespace fs = std::filesystem;
+    if (opt.max_bytes == 0) return;
+    std::error_code ec;
+    std::vector<std::pair<fs::file_time_type, fs::path>> files;
+    uint64_t total = 0;
+    for (fs::directory_iterator it(opt.dir, ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path& p = it->path();
+        if (p.extension() != ".pkv") continue;
+        std::error_code e2;
+        const auto sz = fs::file_size(p, e2);
+        if (e2) continue;
+        total += sz;
+        files.emplace_back(fs::last_write_time(p, e2), p);
+    }
+    if (total <= opt.max_bytes) return;
+    std::sort(files.begin(), files.end());
+    for (const auto& [t, p] : files) {
+        if (total <= opt.max_bytes) break;
+        std::error_code e2;
+        const auto sz = fs::file_size(p, e2);
+        if (fs::remove(p, e2)) total -= (e2 ? 0 : sz);
+    }
+}
+
+}  // namespace
+Result<void> save_parked_context(const ParkedContext& p, const KvDiskOptions& opt,
+                                 const std::string& name) {
+    namespace fs = std::filesystem;
+    if (opt.dir.empty()) return fail(Err::InvalidArgument, "kv disk dir is empty");
+    std::error_code ec;
+    fs::create_directories(opt.dir, ec);
+    if (ec) return fail(Err::Io, "kvdisk mkdir " + opt.dir, static_cast<uint32_t>(ec.value()));
+    const fs::path final_path = fs::path(opt.dir) / session_file_name(name);
+    const fs::path tmp_path   = final_path.string() + ".tmp";
+    std::ofstream f(tmp_path, std::ios::binary | std::ios::trunc);
+    if (!f) return fail(Err::Io, "kvdisk open " + tmp_path.string());
+    f.write(kKvMagic, sizeof kKvMagic);
+    wr_u32(f, kKvVersion);
+    wr_u64(f, fnv1a_tag(opt.model_tag));
+    wr_u32(f, static_cast<uint32_t>(p.tokens.size()));
+    if (!p.tokens.empty())
+        f.write(reinterpret_cast<const char*>(p.tokens.data()),
+                static_cast<std::streamsize>(p.tokens.size() * sizeof(uint32_t)));
+    wr_u32(f, p.kv.positions);
+    wr_u32(f, static_cast<uint32_t>(p.kv.planes.size()));
+    for (const KvPackedPlane& pl : p.kv.planes) {
+        wr_u32(f, pl.layer);
+        wr_u32(f, pl.ratio);
+        wr_u32(f, pl.rows);
+        wr_vec(f, pl.cmp_fp4);
+        wr_vec(f, pl.cmp_scale);
+        wr_vec(f, pl.key_fp4);
+        wr_vec(f, pl.key_scale);
+        wr_vec(f, pl.raw_rows);
+        wr_vec(f, pl.raw_cmp);
+        wr_vec(f, pl.raw_key);
+        wr_vec(f, pl.carry_kv);
+        wr_vec(f, pl.carry_score);
+    }
+    f.write(kKvEnd, sizeof kKvEnd);
+    f.flush();
+    if (!f.good()) {
+        f.close();
+        std::error_code rm;
+        fs::remove(tmp_path, rm);
+        return fail(Err::Io, "kvdisk write " + tmp_path.string());
+    }
+    f.close();
+    fs::remove(final_path, ec);   // Windows rename does not replace an existing file
+    fs::rename(tmp_path, final_path, ec);
+    if (ec) {
+        std::error_code rm;
+        fs::remove(tmp_path, rm);
+        return fail(Err::Io, "kvdisk rename " + final_path.string(),
+                    static_cast<uint32_t>(ec.value()));
+    }
+    enforce_disk_budget(opt);
+    return {};
+}
+Result<ParkedContext> load_parked_context(const KvDiskOptions& opt, const std::string& name) {
+    namespace fs = std::filesystem;
+    if (opt.dir.empty()) return fail(Err::InvalidArgument, "kv disk dir is empty");
+    const fs::path path = fs::path(opt.dir) / session_file_name(name);
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return fail(Err::NotFound, "kvdisk miss " + path.string());
+    char magic[8];
+    if (!f.read(magic, sizeof magic) || std::memcmp(magic, kKvMagic, sizeof magic) != 0)
+        return fail(Err::Corrupt, "kvdisk bad magic " + path.string());
+    uint32_t ver = 0;
+    if (!rd_u32(f, ver) || ver != kKvVersion)
+        return fail(Err::Corrupt, "kvdisk bad version " + path.string());
+    uint64_t fp = 0;
+    if (!rd_u64(f, fp)) return fail(Err::Corrupt, "kvdisk bad tag " + path.string());
+    if (!opt.model_tag.empty() && fp != fnv1a_tag(opt.model_tag))
+        return fail(Err::NotFound, "kvdisk model mismatch " + path.string());
+    uint32_t nt = 0;
+    if (!rd_u32(f, nt) || nt > (1u << 24))
+        return fail(Err::Corrupt, "kvdisk bad token count " + path.string());
+    ParkedContext p;
+    p.tokens.resize(nt);
+    if (nt && !f.read(reinterpret_cast<char*>(p.tokens.data()),
+                      static_cast<std::streamsize>(nt * sizeof(uint32_t))))
+        return fail(Err::Corrupt, "kvdisk short tokens " + path.string());
+    uint32_t planes = 0;
+    if (!rd_u32(f, p.kv.positions) || !rd_u32(f, planes) || planes > 64)
+        return fail(Err::Corrupt, "kvdisk bad plane count " + path.string());
+    p.kv.planes.resize(planes);
+    for (KvPackedPlane& pl : p.kv.planes) {
+        if (!rd_u32(f, pl.layer) || !rd_u32(f, pl.ratio) || !rd_u32(f, pl.rows))
+            return fail(Err::Corrupt, "kvdisk short plane header " + path.string());
+        if (!rd_vec(f, pl.cmp_fp4, kKvVectorCap) || !rd_vec(f, pl.cmp_scale, kKvVectorCap) ||
+            !rd_vec(f, pl.key_fp4, kKvVectorCap) || !rd_vec(f, pl.key_scale, kKvVectorCap) ||
+            !rd_vec(f, pl.raw_rows, kKvVectorCap) || !rd_vec(f, pl.raw_cmp, kKvVectorCap) ||
+            !rd_vec(f, pl.raw_key, kKvVectorCap) || !rd_vec(f, pl.carry_kv, kKvVectorCap) ||
+            !rd_vec(f, pl.carry_score, kKvVectorCap))
+            return fail(Err::Corrupt, "kvdisk short plane " + path.string());
+    }
+    char end[8];
+    if (!f.read(end, sizeof end) || std::memcmp(end, kKvEnd, sizeof end) != 0)
+        return fail(Err::Corrupt, "kvdisk short trailer " + path.string());
+    return p;
+}
+
+bool drop_parked_context(const KvDiskOptions& opt, const std::string& name) {
+    if (opt.dir.empty()) return false;
+    std::error_code ec;
+    return std::filesystem::remove(std::filesystem::path(opt.dir) / session_file_name(name), ec);
 }
 
 }  // namespace deepmoe::runtime

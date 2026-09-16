@@ -101,6 +101,28 @@ Result<ParkedContext> park_context(Engine& e);
 // unpacked, window rebuilt by replaying the last <= replay_max tokens.
 Result<ReplayStats> restore_context(Engine& e, const ParkedContext& p, uint32_t replay_max = 128);
 
+// --- disk session/prefix cache (design §11.4) --------------------------------
+// Saves a parked context's non-SWA state (token ids + KvPacked) under
+// `<dir>/<session>.pkv`. The window ring is NEVER written: a hit loads the rows
+// and then restore_context() rebuilds the window with a bounded replay. The
+// header carries a hash of `model_tag`; a mismatch or a corrupt file is a miss,
+// not a hard failure. Format version 1.
+struct KvDiskOptions {
+    std::string dir;                     // empty = disabled
+    std::string model_tag;               // model identity, e.g. the model directory
+    uint64_t    max_bytes = 4ull << 30;  // evict least-recently-written *.pkv past this
+};
+
+// Writes `p` atomically (`<name>.pkv.tmp` -> rename) and evicts old files past
+// `opt.max_bytes`. Missing/empty dir is InvalidArgument; IO failures are Io.
+Result<void> save_parked_context(const ParkedContext& p, const KvDiskOptions& opt,
+                                 const std::string& name);
+// Missing file, model-tag mismatch or bad version returns NotFound/Corrupt.
+Result<ParkedContext> load_parked_context(const KvDiskOptions& opt, const std::string& name);
+// Removes the file if present; true when a file was removed.
+bool drop_parked_context(const KvDiskOptions& opt, const std::string& name);
+
+
 // --- generation ------------------------------------------------------------------------
 
 struct GenerateRequest {
@@ -193,8 +215,9 @@ private:
 // --- named sessions -------------------------------------------------------------------
 
 struct SessionPoolOptions {
-    uint32_t max_parked       = 8;
-    uint64_t max_parked_bytes = 4ull << 30;
+    uint32_t      max_parked       = 8;
+    uint64_t      max_parked_bytes = 4ull << 30;
+    KvDiskOptions disk{};            // non-empty dir: save/load parked contexts
 };
 
 // Several conversations over one Engine. One is live in the KV store; the others

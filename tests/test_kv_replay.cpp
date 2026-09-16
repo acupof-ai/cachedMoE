@@ -510,3 +510,54 @@ DEEPMOE_TEST(kv_replay, longctx) {
         CHECK(fr2 >= S - 1);
     }
 }
+
+
+// Pure CPU: the SSD parked-context format round-trips, rejects a model-tag
+// mismatch, and drop removes the file. No checkpoint, no GPU. (suite.kvdisk)
+#include <filesystem>
+DEEPMOE_TEST(kvdisk, roundtrip) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "deepmoe_kvdisk_roundtrip";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    runtime::KvDiskOptions opt;
+    opt.dir = dir.string();
+    opt.model_tag = "unit-test-model";
+    runtime::ParkedContext p;
+    p.tokens = {1, 2, 3, 4, 5};
+    p.kv.positions = 4;
+    runtime::KvPackedPlane pl;
+    pl.layer = 2; pl.ratio = 2; pl.rows = 2;
+    pl.cmp_fp4 = {1, 2, 3, 4};
+    pl.cmp_scale = {7, 8};
+    pl.key_fp4 = {9, 10};
+    pl.key_scale = {11, 12};
+    pl.raw_rows = {0, 1};
+    pl.raw_cmp = {100, 200};
+    pl.raw_key = {300, 400};
+    pl.carry_kv = {1.5f, 2.5f};
+    pl.carry_score = {-1.0f, 0.25f};
+    p.kv.planes.push_back(pl);
+    REQUIRE_OK(runtime::save_parked_context(p, opt, "unit/session one"));
+    auto loaded = runtime::load_parked_context(opt, "unit/session one");
+    REQUIRE_OK(loaded);
+    REQUIRE_EQ(loaded->tokens.size(), p.tokens.size());
+    for (size_t i = 0; i < p.tokens.size(); ++i) CHECK_EQ(loaded->tokens[i], p.tokens[i]);
+    CHECK_EQ(loaded->kv.positions, p.kv.positions);
+    REQUIRE_EQ(loaded->kv.planes.size(), p.kv.planes.size());
+    const runtime::KvPackedPlane& q = loaded->kv.planes[0];
+    CHECK_EQ(q.layer, pl.layer);
+    CHECK_EQ(q.ratio, pl.ratio);
+    CHECK_EQ(q.rows, pl.rows);
+    CHECK(q.cmp_fp4 == pl.cmp_fp4 && q.key_fp4 == pl.key_fp4 && q.raw_rows == pl.raw_rows);
+    CHECK(q.raw_cmp == pl.raw_cmp && q.raw_key == pl.raw_key);
+    CHECK(q.carry_kv == pl.carry_kv && q.carry_score == pl.carry_score);
+    runtime::KvDiskOptions other = opt;
+    other.model_tag = "another-model";
+    auto miss = runtime::load_parked_context(other, "unit/session one");
+    REQUIRE(!miss);
+    CHECK_EQ(static_cast<int>(miss.error().code), static_cast<int>(Err::NotFound));
+    CHECK(runtime::drop_parked_context(opt, "unit/session one"));
+    CHECK(!runtime::load_parked_context(opt, "unit/session one"));
+    fs::remove_all(dir, ec);
+}
