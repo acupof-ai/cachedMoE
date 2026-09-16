@@ -93,3 +93,11 @@ Only **+3.6%**; the design target (≥5×) is not met and the coop attention
 geometry is slower than legacy at the default head tiles. Correctness
 (`gpu_prefill.stages`, 110 checks) passes. The 5× target needs tuning plus
 GPU indexer top-k / host-readback removal / expert-I/O overlap.
+
+## 7. R1 `--auto-tune` (2026-09-16)
+
+2 fresh-server rounds on `chat3_turns.json` (187 decode steps/round). Round 1 did
+load round 0's `heat_round_0.inc` via `DEEPMOE_HEAT_FILE` (loop verified), but the
+short cold workload gave no gain: hit 0.8278 → 0.8275, tok/s 3.33 → 3.32.
+A/B (`MOE_OVERLAP`/`PREFILL_HANDOFF`/`BACKFILL`) and longer warm-cache curves
+remain to be measured.

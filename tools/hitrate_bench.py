@@ -215,11 +215,13 @@ def main() -> int:
             json.dump({"server": server.ready, "turns": stats, "cmd": server.cmd, "env": args.env}, f, indent=1)
         return 0
     cargs = argparse.Namespace(think=False, temp=1.0, top_p=0.95, max_tokens=256, seed=None, system="")
-    if args.auto_tune > 0:
-        return auto_tune(args, script, cargs, enc)
-    c = chat.Chat(server, enc, cargs)
     with open(args.script, encoding="utf-8") as f:
         script = json.load(f)
+    if args.auto_tune > 0:
+        server.close()
+        server.events.close()
+        return auto_tune(args, script, cargs, enc)
+    c = chat.Chat(server, enc, cargs)
     if args.repeat > 1:
         turns = []
         for r in range(args.repeat):

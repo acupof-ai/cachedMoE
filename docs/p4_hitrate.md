@@ -101,3 +101,19 @@ this record could be written; the worktree however received **no commits and no 
   `--auto-tune`/`--write-heat` 出现在 `--help`。
 - 尚未跑：安静机上的 serve A/B（MOE_OVERLAP / PREFILL_HANDOFF / BACKFILL）、
   `--auto-tune N` 的跨进程曲线、`prefill_p4.csv`/hit 曲线。
+
+## 2026-09-16 `--auto-tune` 端到端实测
+
+命令：`hitrate_bench.py --auto-tune 2 --script bench/results/hitrate/chat3_turns.json
+--cache-gb 60 --env DEEPMOE_MOE_OVERLAP=1`（每轮 fresh serve，round 1 通过
+`DEEPMOE_HEAT_FILE` 读 round 0 的 `heat_round_0.inc`）。
+
+| round | heat_in | decode steps | hit | tok/s |
+|---|---|---:|---:|---:|
+| 0 | 无 | 187 | 0.8278 | 3.33 |
+| 1 | heat_round_0.inc | 187 | 0.8275 | 3.32 |
+
+结论：**回路已打通**（热表生成、下一轮加载、`auto_tune.json` 产出），但在
+3 turn / 190 token 的短工作负载上没有命中率提升——每轮都是冷 cache，P3 backfill
+的初始顺序对这段热点不够关键。需要 idle-s 更长的 backfill、更长的对话或跨轮保留
+expert cache 才能看出差异；`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` A/B 仍待做。

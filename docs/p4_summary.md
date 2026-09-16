@@ -48,8 +48,9 @@
   `docs/p4_test_report.md` §5。
 - S 的 N=4133 已实测：legacy 103.67 s / coop 99.89 s，只快 **3.6%**，5× 目标未达成；
   瓶颈与下一步见 `docs/p4_prefill_speed.md`。
-- 仍待补：R1 的 A/B + `--auto-tune` 端到端曲线、T 的 C(M) 曲线、DSpark G1/G3、
-  `kv_replay.longctx`。
+- R1 `--auto-tune` 回路已端到端验证（round 1 读 round 0 的 heat 文件），但短工作负载下
+  hit 0.8278 → 0.8275（无提升）；A/B 与更长 warm 曲线仍待补。
+- 仍待补：T 的 C(M) 曲线、DSpark G1/G3、`kv_replay.longctx`。
 
 ## 4. 合入前必须完成的复验
 
