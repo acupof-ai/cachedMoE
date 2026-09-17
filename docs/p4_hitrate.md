@@ -292,3 +292,27 @@ $env:DEEPMOE_MODEL_DIR="D:\models\DeepSeek-V4.1-Flash"
 1,110,016 B 的 scales run + 17,698,816 B 的 weights run，槽 18,808,832 B，
 读的是对齐后的字节）。
 
+## 9. 专家加载路径上没有量化（2026-09-17 审计）
+
+有一个看起来很有希望的优化方向是"加载专家时别做量化 / 别做变换，推迟到后面"。
+**审计结论：这条路径上本来就没有量化**，所以没有可省的东西。逐段核对
+（`store/planner.cpp::fetch` → `storage/windows/iocp.cpp` → `store/expert_store.cpp::finish_run`）：
+
+1. `Planner::fetch` 把每个 manifest run 变成一条 `IoRequest`：源是**对齐后的文件偏移**，
+   目标**直接是槽的 host 指针**（`req.dst = run.dst`，在 `begin_fill` 里由
+   `slot.host_ptr + slot_offset` 算出）；
+2. `iocp.cpp` 对这条请求只做一次 `ReadFile`（overlapped，`FILE_FLAG_NO_BUFFERING`），
+   **字节从块设备直接落进槽里**；
+3. 完成回调只调 `ExpertStore::finish_run` → `settle_locked`：状态机、`publish_locked`、
+   几个计数器，**没有一次逐元素循环**。
+
+也就是说 expert 的 fp4 权重 + block-32 scale **在 checkpoint 里就长这样**，运行时读到的就是
+最终字节；每个槽 18,808,832 B 的搬运里，CPU 只负责 `ReadFile` 的提交与状态翻转。
+"加载时量化"要么指的是 checkpoint 侧的离线重打包（那要重写 475 GiB，和本项目
+"原样读、不重打包" 的原则相悖），要么是本项目从来没做过的事。
+
+**真正的疑点**是每个 miss 的 20–31 ms（`p4_summary` §2：107 GB / 5,030 fills）：按
+8.3–9.2 GB/s 算，盘读只要 ~2 ms，所以另外 ~20 ms 在别处 —— I/O 的并发深度，还是把字节
+写进 path A（`DEVICE_LOCAL | HOST_VISIBLE`，共享显存）那一段的带宽。要定位它，该做的是
+在 `ReadFile` 进出的两侧各打一个 host 时间戳（不动数据路径），**而不是**动量化的主意。
+
