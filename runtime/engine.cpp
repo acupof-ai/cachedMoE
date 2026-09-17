@@ -738,23 +738,38 @@ Result<Engine::HeatOrder> Engine::reheat(float decay) {
     // eviction policy.
     uint32_t want = out.free_slots ? out.free_slots : std::max<uint32_t>(4, out.slots / 32);
     want = std::min(want, out.slots - warm);
+
+    // What the backfill can actually do something with: keys that are NOT in the
+    // cache. `Planner::backfill_pump` skips every resident key it is handed
+    // (`if (store_->slot_of(key)) continue;`), so an order built resident-first
+    // and then truncated to the budget -- which is what the first version did --
+    // is a list of keys the pump walks straight past. That is why the 2,200-slot
+    // A/B in docs/p4_hitrate.md §7 measured turn 3 decode hit 0.7210 against
+    // 0.7210: on a saturated cache the pass evicted `slots/32` experts and then
+    // fetched nothing, so it was a pure cost (the +32 MB/token of the §8 sweep).
+    //
+    // `StaticHeat` is the startup order (store/static_heat.inc, or a heat file
+    // from the last run); its head is the best available estimate of what a
+    // never-seen-token expert would score, and it is the only signal this
+    // process has about an expert that is not resident -- `heat` lives on the
+    // slot, so an evicted expert's heat is gone with it.
+    std::vector<ExpertKey> order;
+    order.reserve(want + out.free_slots);
+    const std::vector<ExpertKey>& heat_table =
+        heat_order_.empty() ? (heat_order_ = store::static_heat_order()) : heat_order_;
+    for (const ExpertKey& k : heat_table) {
+        if (order.size() >= size_t(want) + out.free_slots) break;
+        if (!store_.resident(k)) order.push_back(k);
+    }
+    // Never evict without a candidate to put in the hole. With no non-resident
+    // candidate left the pass is a no-op rather than a round of eviction the
+    // next turn's misses have to pay back.
+    const uint32_t have = static_cast<uint32_t>(order.size());
+    want = out.free_slots >= have ? 0 : std::min(want, have - out.free_slots);
     for (uint32_t i = 0; i < want; ++i) {
         const ExpertKey& k = heat[out.slots - 1 - i];
         if (store_.evict_key(k)) ++out.evicted;
     }
-    // The order the backfill gets is the *demand shape*: every resident slot
-    // hottest first, then the keys that are not resident at all, also hottest
-    // first. A pass that saw only residents could not fetch a hot expert that is
-    // not in the cache, which is most of what a topic switch needs.
-    std::vector<ExpertKey> order;
-    order.reserve(heat.size() + 256);
-    for (const ExpertKey& k : heat)
-        if (store_.resident(k)) order.push_back(k);
-    // `StaticHeat` is the startup order (store/static_heat.inc, or a heat file
-    // from the last run); its head is the best available estimate of what a
-    // never-seen-token expert would score.
-    for (const ExpertKey& k : store::static_heat_order())
-        if (!store_.resident(k)) order.push_back(k);
     const uint32_t budget = out.free_slots + out.evicted;
     if (order.size() > budget) order.resize(budget);
     out.passed = static_cast<uint32_t>(order.size());
@@ -1358,11 +1373,17 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     reset_context();
     bool backfill = sc.backfill;
     if (const char* e = std::getenv("DEEPMOE_BACKFILL"); e && *e) backfill = *e != '0';
-    if (backfill && store_.free_slots() > 0) {
-        std::vector<ExpertKey> order;
+    // One heat order for the whole process: the startup P3 backfill and every
+    // later reheat pass rank non-resident experts by the same table, so
+    // `DEEPMOE_HEAT_FILE` (tools/hitrate_bench.py --write-heat / --heat-recent)
+    // steers both instead of only the first fill.
+    if (heat_order_.empty()) {
         if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
-            order = store::static_heat_order(hf);
-        if (order.empty()) order = store::static_heat_order();
+            heat_order_ = store::static_heat_order(hf);
+        if (heat_order_.empty()) heat_order_ = store::static_heat_order();
+    }
+    if (backfill && store_.free_slots() > 0) {
+        std::vector<ExpertKey> order = heat_order_;
         if (auto r = planner_.start_backfill(std::move(order)); !r)
             log_warn("engine: backfill: {}", r.error().str());
         else

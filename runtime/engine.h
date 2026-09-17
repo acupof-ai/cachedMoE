@@ -536,6 +536,10 @@ private:
     // Whether the serve loop reheats the cache after every turn (§7).
     bool                  reheat_on_ = false;
     uint32_t              reheat_turn_ = 0;
+    // The non-resident ranking the whole process uses: DEEPMOE_HEAT_FILE if one
+    // was given, else store/static_heat.inc. Read once, by both the startup P3
+    // backfill and every reheat pass (docs/p4_hitrate.md).
+    mutable std::vector<ExpertKey> heat_order_;
 
     // Track R1 (docs/p4_hitrate.md §4). `overlap_`: dispatch A over the
     // resident experts goes out before a layer's NVMe wait. The eviction guard:
