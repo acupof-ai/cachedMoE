@@ -63,6 +63,16 @@ set_tests_properties("suite.gpu_layer" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_layer")
 
+# Track T's C(M) curve (docs/p4_mgt1.md §4): the per-layer cost of one verify
+# batch's non-MoE attention chain at M = 1/2/4/6. It is a workbench, not a
+# correctness gate -- 30 timed iterations x 4 batch sizes x 2 layers x 2 contexts
+# -- so it is registered as its own name. `DEEPMOE_MGT1_CSV=path` writes the
+# table; `DEEPMOE_MGT1_ITERS` sets the iterations.
+add_test(NAME "bench.mgt1_m_curve" COMMAND deepmoe_tests "mgt1.m_curve")
+set_tests_properties("bench.mgt1_m_curve" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_layer")
+
 # The whole decode step -- forty layers, the head and the argmax -- against the
 # oracle's L3 tokens. Needs the ~17.7 GB pinned set and tests/data/l3.
 add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")

@@ -163,6 +163,8 @@ int cmd_serve(int argc, char** argv) {
     runtime::SessionPoolOptions po;
     bool check_topk = false;
     bool engine_reheat = false;
+    bool kv_disk_off = false;
+    bool kv_dir_given = false;
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--model")                cfg.model_dir = value_of(argc, argv, i);
@@ -177,8 +179,9 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--reheat-decay")    { so.reheat_decay = static_cast<float>(std::atof(value_of(argc, argv, i).c_str())); engine_reheat = true; }
         else if (a == "--max-parked")      po.max_parked = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--park-budget-mb")  po.max_parked_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 20;
-        else if (a == "--kv-dir")          po.disk.dir = value_of(argc, argv, i);
+        else if (a == "--kv-dir")          { po.disk.dir = value_of(argc, argv, i); kv_dir_given = true; }
         else if (a == "--kv-max-gb")       po.disk.max_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 30;
+        else if (a == "--no-kv-disk")      kv_disk_off = true;
         else if (a == "--profile")         cfg.profile_jsonl = value_of(argc, argv, i);
         else if (a == "--check-topk")      check_topk = true;
         else {
@@ -189,6 +192,35 @@ int cmd_serve(int argc, char** argv) {
     if (cfg.model_dir.empty()) {
         std::fputs("serve needs --model DIR (or DEEPMOE_MODEL_DIR)\n", stderr);
         return 2;
+    }
+    // Track R2's disk prefix cache, ON by default (docs/p4_kv_ux.md §8): a fresh
+    // process that comes back to the same conversation rebuilt its whole prompt
+    // every time -- 4,133 tokens at ~24 ms each, 101.6 s -- and the parked
+    // context is already being written at shutdown, so the only thing missing
+    // was the default. `DEEPMOE_KV_DIR` overrides the directory (empty string
+    // disables it), `--kv-dir` sets it explicitly and `--no-kv-disk` turns it
+    // off, which is what a benchmark that wants a cold prefill should use.
+    if (!kv_dir_given && !kv_disk_off) {
+        if (const char* e = std::getenv("DEEPMOE_KV_DIR"); e && *e) po.disk.dir = e;
+        else if (e && !*e) po.disk.dir.clear();
+        else {
+            // Per model directory, so two checkpoints do not fight over one file
+            // and a stale one is a miss rather than a corrupt hit (the header
+            // carries the model tag as well).
+            std::string base;
+#if defined(_WIN32)
+            if (const char* la = std::getenv("LOCALAPPDATA"); la && *la) base = la;
+            else if (const char* tp = std::getenv("TEMP"); tp && *tp) base = tp;
+#else
+            if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && *xdg) base = xdg;
+            else if (const char* home = std::getenv("HOME"); home && *home) base = std::string(home) + "/.cache";
+#endif
+            if (!base.empty()) {
+                std::string tag = cfg.model_dir;
+                for (char& ch : tag) if (ch == '\\' || ch == '/' || ch == ':') ch = '_';
+                po.disk.dir = base + "/deepmoe/kv/" + tag;
+            }
+        }
     }
     // The disk cache stores the model identity in every file; a different
     // checkpoint is a miss, not a corrupt hit.
@@ -231,13 +263,14 @@ int cmd_serve(int argc, char** argv) {
     emit(std::format("{{\"event\":\"ready\",\"load_s\":{},\"max_context\":{},\"vocab\":{},"
                      "\"cache_gb\":{},\"cache_slots\":{},\"gpu_prefill_min\":{},\"check_topk\":{},"
                      "\"engram_tables\":{},\"kv_mb\":{},\"rollback\":{},\"max_parked\":{},"
-                     "\"reheat\":{},\"reheat_decay\":{}}}",
+                     "\"reheat\":{},\"reheat_decay\":{},\"kv_disk\":{},\"kv_disk_dir\":{}}}",
                      json_number(load_s), engine.max_context(), tok->vocab_size(),
                      json_number(engine.store().capacity_bytes() / double(1ull << 30)),
                      engine.store().slot_count(), so.gpu_prefill_min, check_topk ? "true" : "false",
                      json_quote(sc.engram_tables_dir.empty() ? std::string("derived") : sc.engram_tables_dir),
                      json_number(engine.kv().bytes() / 1e6), so.rollback ? "true" : "false",
-                     po.max_parked, so.reheat ? "true" : "false", json_number(so.reheat_decay)));
+                     po.max_parked, so.reheat ? "true" : "false", json_number(so.reheat_decay),
+                     po.disk.dir.empty() ? "false" : "true", json_quote(po.disk.dir)));
 
     Inbox inbox;
     std::thread reader([&] { inbox.run(); });

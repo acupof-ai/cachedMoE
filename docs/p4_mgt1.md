@@ -51,22 +51,47 @@ dirty（据 tn.txt，本次未 `git status` 复核）：`gpu/shaders/attn_common
 
 **本次新增证据**：无（未跑任何测试）。
 
-## 4. M 缩放表（本次未测，全部待填）
+## 4. M 缩放表（2026-09-17 实测，`bench/results/mgt1_p4.csv`）
 
-| M | 每层 ms | 相对 M=1 | vs M=5 线性外推 | 备注 |
-|---:|---:|---:|---|---|
-| 1 | TBD(未测) | 1.00 | — | |
-| 2 | TBD(未测) | TBD | — | |
-| 4 | TBD(未测) | TBD | — | |
-| 6 | TBD(未测) | TBD | 判据 ≤ 3.06 | G2 判定格 |
+`tests/test_gpu_layer.cpp::gpu_layer.mgt1_m_curve`：每个 (上下文, 层, M) 跑 30 次计时迭代，
+一次 = `bind_batch` + `run_attention_batch`，即一条完整的**非 MoE** attention 链（mhc ×3、
+wq_a/b、q_norm、wkv、sparse_attn、wo_a/b、gate score/topk，含提交与栅栏）。
+层 2 是纯窗口层，层 20 是压缩/索引源层。复现：
 
-数据落盘位置：`bench/results/mgt1_p4.csv`（**本次未生成**）。
+```powershell
+$env:DEEPMOE_MODEL_DIR="D:\models\DeepSeek-V4.1-Flash"
+$env:DEEPMOE_MGT1_CTX="l3,ctx4k"; $env:DEEPMOE_LONGCTX_DIR="C:\Users\Asus\code\deepmoe\traces\longctx"
+$env:DEEPMOE_MGT1_ITERS="30"; $env:DEEPMOE_MGT1_CSV="bench\results\mgt1_p4.csv"
+.\build\tests\deepmoe_tests.exe "gpu_layer.mgt1_m_curve"
+```
+
+| 上下文 | 层 | M=1 | M=2 | M=4 | M=6 | **C(6)/C(1)** |
+|---|---|---:|---:|---:|---:|---:|
+| l3（64 token） | 2 | 1.283 | 1.664 | 2.512 | 3.384 | **2.64×** |
+| l3 | 20 | 1.332 | 1.630 | 2.421 | 3.206 | **2.41×** |
+| 4K | 2 | 1.523 | 2.039 | 3.180 | 4.234 | **2.78×** |
+| 4K | 20 | 1.566 | 2.177 | 3.481 | 4.669 | **2.98×** |
+
+（ms/层；每 token 的摊薄在 CSV 的 `ms_per_token`：4K 层 20 是 1.566 → 0.778。）
+
+**判定：G2 的前半段成立**（判据 M=6 ≤ ×3.06）：最坏一格（4K、压缩源层 20）**2.98×**，
+短上下文 2.4–2.6×——投机 verify 的 6 个 token 在非 MoE 半边只花 2.4–3.0 个 token 的钱，
+M=2 就已经把每 token 代价压到 0.6–0.8×。
+
+**但这条曲线只覆盖 MoE 之外的一半。** l3 的 M=1 是 1.28–1.33 ms/层 → 40 层 ≈ **51 ms**，
+而实测完整热步是 **81.5 ms**，差额 ~30 ms 是 MoE + head。M=6 那次前向要跑 6 个 token 的
+MoE，而 MoE 是**按需从 NVMe 取 expert** 的（docs/p4_hitrate.md §8：decode 被 8.3–9.2 GB/s
+的读带宽钉住），6 个 token 的 expert 并集 ≈26 个/层（docs/p3_dspark.md §12.6）——
+**verify 的 MoE 代价不随 M 摊薄，它随并集线性长。**
+所以下一块要量的不是 C(M) 而是 **MoE(M)**：`GpuMoeBridge::run_batch` 已经能把 M 个
+不同 expert 集的 token 当一批跑（逐列 dispatch，见 docs/p4_dspark_runtime.md §2.2），
+要补的是并集驻留后每层 MoE 的 M=1/2/4/6 时间。
 
 ## 5. G2 判据（design §10.1.5 / §10.1.2）
 
 - G2 要求：M>1 的 fp8 投影 kernel（`wq_a` / `wq_b` / `wkv` / `wo_a` / `wo_b`）**逐 M 代价实测**，外加 **M=5 的 `head`**；MoE 的**并集形态**（>7 槽或多组 dispatch）也要逐 M 实测。
 - 判定：M=6 的每层代价若落在 **≤ ×3.06（M=5 实测倍率）线性外推**以内 → G2 的"非 MoE 在 M 上接近平坦"的前提成立；否则按场景 B 代入 §10.1.2，DSpark 保持 NO-GO。
-- 本次状态：**未测**（需要 M 扫描 bench，见第 6 节）。
+- **本次状态：前半段 ✅（§4：最坏 2.98×）；MoE 的 M 曲线仍待测。**
 
 ## 6. 阻塞与恢复
 

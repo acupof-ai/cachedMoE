@@ -430,6 +430,127 @@ uint32_t last_kv_source(const TextConfig& c) {
 
 }  // namespace
 
+// Track T's C(M) curve. Its own suite name so `ctest -R suite.gpu_layer` (which
+// substring-matches "gpu_layer.") does not pull 480 timed iteration groups into
+// a correctness run.
+DEEPMOE_TEST(mgt1, m_curve) {
+    if (skip_without_model("gpu_layer")) return;
+    const std::string root = mgt1_root();
+    Mgt1Rig rig;
+    bool up = false;
+    const uint32_t iters = [] {
+        if (const char* e = std::getenv("DEEPMOE_MGT1_ITERS"); e && *e)
+            return uint32_t(std::strtoul(e, nullptr, 10));
+        return 30u;
+    }();
+    std::string csv;
+    if (const char* out = std::getenv("DEEPMOE_MGT1_CSV"); out && *out) {
+        csv = "context,layer,ratio,m,iters,ms_per_layer,ms_per_token\n";
+        std::printf("    M-curve: %u timed iterations a case, CSV -> %s\n", iters, out);
+    }
+
+    for (const std::string ctx : {std::string("l3"), std::string("ctx4k")}) {
+        if (!mgt1_ctx_wanted(ctx)) continue;
+        const std::string sdir = mgt1_state_dir(ctx);
+        if (!mgt1_exists(sdir + "/index.json")) {
+            std::printf("      SKIP gpu_layer mgt1_m_curve %s: no state at %s\n", ctx.c_str(),
+                        sdir.c_str());
+            continue;
+        }
+        if (!up) {
+            if (!rig.bring_up()) {
+                std::printf("      SKIP gpu_layer mgt1_m_curve: %s\n", rig.why.c_str());
+                return;
+            }
+            up = true;
+        }
+        auto st = runtime::DecodeState::load(sdir);
+        REQUIRE_OK(st);
+        REQUIRE(rig.make_state(*st));
+        const TextConfig& c = rig.config.text;
+        const uint32_t W = c.sliding_window;
+        const uint32_t p0 = st->prefill_len();
+        const uint32_t last_src = last_kv_source(c);
+
+        for (uint32_t L : {2u, 20u}) {
+            auto names = store::pinned_layer_tensors(rig.manifest, L);
+            REQUIRE_OK(rig.pinned.load(rig.manifest, rig.shards, rig.io, names));
+            auto w = runtime::LayerWeights::from_pinned(rig.pinned, L);
+            REQUIRE_OK(w);
+            const uint32_t ratio = c.compress_ratio(L);
+            const CedSrc src = ced_src(c, L);
+
+            for (uint32_t M : {1u, 2u, 4u, 6u}) {
+                // A fresh prefill state a case, so the ring and the compressed
+                // plane are the ones the export wrote, not the last case's.
+                rig.kv.clear();
+                REQUIRE_OK(st->seed_prefill(rig.kv));
+                auto view = rig.kv.layer(L);
+                REQUIRE_OK(view);
+
+                runtime::BatchStep bs;
+                bs.layer = L;
+                bs.p0 = p0;
+                bs.m = M;
+                bs.compress_ratio = ratio;
+                bs.apply_hc_post = false;
+                bs.kv = *view;
+                bs.list = src.list;
+                if (ratio) {
+                    bs.run_compressor = c.is_kv_source(L);
+                    bs.run_indexer = c.is_index_source(L);
+                    bs.kv.cmp_kv = rig.kv.layer(src.cmp)->cmp_kv;
+                    bs.idx_key_own = view->idx_key;
+                    bs.idx_key_pub = rig.kv.layer(last_src)->idx_key;
+                    for (uint32_t m = 0; m < M; ++m)
+                        if (bs.run_compressor && ((p0 + m + 1) % ratio) == 0) bs.key_sel |= 1u << m;
+                    for (uint32_t m = 0; m < M; ++m) {
+                        const uint32_t pos = p0 + m;
+                        const uint32_t n_cmp = (pos + 1) / ratio;
+                        const uint32_t n_sel = std::min<uint32_t>(n_cmp, c.index_topk);
+                        if (c.is_index_source(L)) REQUIRE_OK(rig.kv.set_decode_topk(L, pos, n_cmp, n_sel));
+                        else                      REQUIRE_OK(rig.kv.set_counts(L, n_cmp, W + n_sel));
+                    }
+                }
+                runtime::write_batch_window_lists(rig.layer.batch(), W, p0, M);
+                runtime::BatchScratch& bb = rig.layer.batch();
+                const uint32_t hcdim = c.hc_mult * c.hidden_size;
+                for (uint32_t m = 0; m < M; ++m) {
+                    for (uint32_t i = 0; i < hcdim; ++i)
+                        static_cast<float*>(bb.x.host)[size_t(m) * hcdim + i] =
+                            0.001f * float((i * 7 + m * 13) % 97) - 0.05f;
+                    std::memset(static_cast<std::byte*>(bb.mix_a.host) + size_t(m) * 128, 0, 128);
+                }
+
+                auto once = [&]() -> Result<void> {
+                    if (auto r = rig.layer.bind_batch(*w, bs); !r) return r;
+                    return rig.layer.run_attention_batch(bs);
+                };
+                for (uint32_t i = 0; i < 3; ++i) REQUIRE_OK(once());
+                const auto t0 = Clock::now();
+                for (uint32_t i = 0; i < iters; ++i) REQUIRE_OK(once());
+                const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count()
+                                  / double(iters);
+                const double rel = ms / double(M);
+                std::printf("      %-5s L%02u M=%u  %7.3f ms/layer  %7.3f ms/token\n",
+                            ctx.c_str(), L, M, ms, rel);
+                if (!csv.empty())
+                    csv += std::format("{},{},{},{},{},{:.4f},{:.4f}\n", ctx, L, ratio, M, iters,
+                                       ms, rel);
+            }
+        }
+    }
+    if (!csv.empty()) {
+        if (std::FILE* f = std::fopen(std::getenv("DEEPMOE_MGT1_CSV"), "wb")) {
+            std::fwrite(csv.data(), 1, csv.size(), f);
+            std::fclose(f);
+            std::printf("    wrote %s\n", std::getenv("DEEPMOE_MGT1_CSV"));
+        } else {
+            _ctx.fail(__FILE__, __LINE__, "cannot write the M-curve CSV");
+        }
+    }
+}
+
 DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
     if (skip_without_model("gpu_layer")) return;
     const std::string root = mgt1_root();
