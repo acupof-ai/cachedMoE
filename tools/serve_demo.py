@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Scripted `deepmoe serve` session exercising Track R2's serve UX (docs/p4_kv_ux.md §10):
+"""Scripted `deepmoe serve` session exercising Track R2's serve UX (docs/p4_kv_ux.md §7.1):
 KV continuation, rollback to a diverging prompt's common prefix, cancel mid-generation,
-THREE named sessions with LRU parking (--max-parked 2, so coming back to the first one
-has to restore it by replay), and the engram tables derived at startup.
+THREE named sessions with LRU parking (--max-parked 1, so the third one evicts the least
+recently used parked session to the SSD cache and coming back reads it from there), and the engram tables derived at startup.
 
 Every step is timed and the run ends with a table the doc quotes: wall time, what the
 turn reused, what it re-prefilled, and what the window replay cost.
 
     .venv/Scripts/python.exe tools/serve_demo.py [--exe build/deepmoe.exe] [--cache-gb 16]
-        [--max-parked 2] [--log build/serve_demo.log] [--out events.jsonl]
+        [--max-parked 1] [--log build/serve_demo.log] [--out events.jsonl]
 """
 import argparse
 import json
@@ -87,7 +87,7 @@ def brief(tag, done, toks, text="", wall=0.0, switch=None):
 
 
 def table():
-    """The table docs/p4_kv_ux.md §10 quotes."""
+    """The table docs/p4_kv_ux.md §7.1 quotes."""
     head = ("step", "wall s", "prompt", "reused", "dropped", "replay", "replay ms",
             "prefill", "gen", "tok/s", "finish")
     print("\n| " + " | ".join(head) + " |", flush=True)
@@ -111,8 +111,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
     ap.add_argument("--cache-gb", type=int, default=16)
-    ap.add_argument("--max-parked", type=int, default=2,
-                    help="parked sessions kept in memory; 2 makes the third one evict the first")
+    ap.add_argument("--max-parked", type=int, default=1,
+                    help="parked sessions kept in memory; with three sessions, 1 means the third "
+                         "one evicts the least recently used -- which is spilled to --kv-dir and "
+                         "read back when it is asked for again")
     ap.add_argument("--kv-dir", default=os.path.join(REPO, "build", "serve_demo_kv"),
                     help="SSD prefix-cache directory, emptied before the run")
     ap.add_argument("--no-kv-disk", action="store_true",
@@ -175,7 +177,7 @@ def main():
     bob = ids("<｜begin▁of▁sentence｜>def fibonacci(n):")
     t5, d5 = turn("5 bob new session", bob, "bob")
 
-    # Session three: with --max-parked 2 this evicts the least recently used
+    # Session three: with --max-parked 1 this evicts the least recently used
     # parked session, which is what `evicted` in the sessions event counts.
     carol = ids("<｜begin▁of▁sentence｜>The capital of France is")
     t6, d6 = turn("6 carol new session", carol, "carol")
