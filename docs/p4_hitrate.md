@@ -316,3 +316,36 @@ $env:DEEPMOE_MODEL_DIR="D:\models\DeepSeek-V4.1-Flash"
 写进 path A（`DEVICE_LOCAL | HOST_VISIBLE`，共享显存）那一段的带宽。要定位它，该做的是
 在 `ReadFile` 进出的两侧各打一个 host 时间戳（不动数据路径），**而不是**动量化的主意。
 
+## 10. 一次 miss 的 20–31 ms 就是盘本身（2026-09-17 实测）
+
+上面那个"另外 ~20 ms 在别处"的猜测，用 `bench/nvme_bench` 直接量掉了 ——
+**没有别的开销，就是盘对 expert 尺寸随机读的带宽**：
+
+```
+.\build\nvme_bench.exe --size-gb 4 --chunk-kb 1024,17695 --qd 1,4 --pattern rand --reads 48
+
+pattern  chunk_kb   qd    GB/s    IOPS   mean_ms   max_ms
+rand         1024    1   2.838    2706     0.360    1.479
+rand         1024    4   5.036    4802     0.811    1.299
+rand        17695    1   4.469     246     4.052    5.391
+rand        17695    4   5.187     286    13.562   15.885
+```
+
+（17695 KiB = 一个 routed expert 的 18,800,640 B。CSV：`bench/results/nvme_expert_read.csv`。）
+
+- **一个 18.8 MB expert 的随机读，QD=4 最好 5.19 GB/s、13.6 ms/请求；QD=1 是 4.47 GB/s、
+  4.05 ms。** 一层 6 个 expert 全 miss 就是 **21.7 ms** —— 和 `p4_summary` §2 里那个
+  "每 token 124–193 ms NVMe stall" 完全对得上（6 expert × 40 层 × 命中率折算）。
+- 所以之前那个 ~20 ms 的差额**不是** CPU、不是共享显存写入、也不是排队，**是盘**。
+  把这条路径上的任何 CPU 工作去掉都不会更快（而且 §9 已经证明那里本来就没有 CPU 工作）。
+- **顺带否掉三个看起来可行的优化**：
+  1. **"离线量化好存 SSD"** —— checkpoint 已经是量化格式，而且瓶颈是带宽不是变换；
+     重打包成"一个 expert 一段连续" 也换不到什么（17.7 MB 的请求已经跑在 5.2 GB/s，
+     说明没有按请求的固定开销可省）。
+  2. **"减少对齐浪费"** —— 18.8 MB 里对齐税约 3 KB，0.02%。
+  3. **"提高 QD"** —— QD 1 → 4 只从 4.47 到 5.19 GB/s（+16%），而 decode 已经拿到
+     8.3–9.2 GB/s（跨多个并发 fill）。
+- **结论写进一句话**：decode 的每个 token 由 `MB/token ÷ 5.2 GB/s` 决定。
+  想让 tok/s 上去，只有**少读字节**这一条路 —— 更高命中率（容量 / 顺序 / reheat），
+  或者同一批字节换多个 token（投机）。所有"算得更快"的改动都不在这条路径上。
+
