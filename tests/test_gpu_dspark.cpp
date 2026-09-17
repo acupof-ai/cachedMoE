@@ -52,6 +52,7 @@
 #include "model/layout.h"
 #include "model/manifest.h"
 #include "runtime/rope.h"
+#include "runtime/speculate.h"
 #include "storage/backend.h"
 #include "storage/io_engine.h"
 #include "store/pinned.h"
@@ -528,5 +529,229 @@ DEEPMOE_TEST(gpu_dspark, golden_per_stage) {
         CHECK(ok("confidence", agree(c, want), 0.9999, 1e-3));
         for (uint32_t i = 0; i < kM; ++i)
             std::printf("      confidence[%u] %.6f (want %.6f)\n", i, c[i], want[i]);
+    }
+}
+
+// ============================================================================
+// dspark_verify: the four numbers exact acceptance needs, per verify row
+// (docs/p4_dspark_runtime.md §2.4, docs/p3_dspark.md §3.3 rule 2).
+//
+// This one needs no checkpoint: the kernel reads a logit row out of a buffer and
+// a candidate list out of another, so the row is synthesised here. What is
+// checked, per row, against `runtime::emulate_verify_row` (the host mirror, with
+// the same 256-lane partition and the same fixed-shape reduction tree):
+//
+//   * the candidates' logits -- pure gathers, so bit for bit;
+//   * the full-vocabulary logsumexp -- the GPU's exp/log are its own, so a
+//     relative tolerance, and the value is also checked against a float64
+//     recomputation so a systematically wrong lse cannot hide inside agreement
+//     between two copies of the same mistake;
+//   * the two draws. Gumbel-max means the masked draw must never be a candidate
+//     and the full draw may be; the token ids are compared with the mirror and a
+//     mismatch is reported with the key margin, because two keys within a few
+//     ULP of each other is a near-tie and not a kernel fault;
+//   * the masked draw's DISTRIBUTION: over many seeds, the empirical frequency
+//     against softmax restricted to the non-candidates. That is the property
+//     `accept_sampling_exact` actually relies on, and it does not depend on the
+//     mirror being right.
+// ============================================================================
+DEEPMOE_TEST(gpu_dspark, verify_rows_give_exact_acceptance_its_four_numbers) {
+    struct VRig {
+        gpu::Device          device;
+        gpu::MemoryAllocator alloc;
+        gpu::DsparkRunner    runner;
+        gpu::GpuScratch      scratch;
+        std::string          why;
+        ~VRig() { scratch.destroy(); runner.destroy(); }
+        bool bring_up(uint32_t m) {
+            gpu::DeviceOptions dopts;
+            dopts.enable_validation = std::getenv("VK_INSTANCE_LAYERS") != nullptr;
+            if (auto r = device.create(dopts); !r) { why = r.error().str(); return false; }
+            if (auto r = device.caps().check_required(); !r) { why = r.error().str(); return false; }
+            if (auto r = alloc.init(device, MemoryPath::DeviceLocalHostVisible); !r) {
+                why = r.error().str(); return false;
+            }
+            gpu::DsparkSpec spec;
+            spec.m = m;
+            if (auto r = runner.create(device, alloc, gpu::default_shader_dir(), spec); !r) {
+                why = r.error().str(); return false;
+            }
+            if (auto r = scratch.create(alloc, 64ull << 20); !r) { why = r.error().str(); return false; }
+            return true;
+        }
+    };
+
+    constexpr uint32_t kM = 6;
+    constexpr uint32_t kVocab = 129280;
+    constexpr uint32_t kK = 16;
+    VRig rig;
+    if (!rig.bring_up(kM)) {
+        std::printf("       SKIP gpu_dspark.verify_rows: %s\n", rig.why.c_str());
+        return;
+    }
+
+    // Six rows that look like verify rows: a few dominant tokens and a long
+    // tail, different per row, with the candidate list drawn from the row's own
+    // top so the mask actually removes mass.
+    std::vector<float> logits(size_t(kM) * kVocab);
+    std::vector<int32_t> cand(size_t(kM) * gpu::kDsVerifyMaxCand, -1);
+    for (uint32_t j = 0; j < kM; ++j) {
+        float* row = logits.data() + size_t(j) * kVocab;
+        for (uint32_t i = 0; i < kVocab; ++i) {
+            const float t = float((i * 2654435761u + j * 40503u) % 100003u) / 100003.0f;
+            row[i] = -6.0f + 4.0f * t - 0.000002f * float(i);
+        }
+        // A handful of peaks, so the row is not uniform and the top set is
+        // well separated from the tail.
+        for (uint32_t c = 0; c < 40; ++c)
+            row[(c * 977u + j * 131u) % kVocab] += 6.0f + 0.15f * float(c);
+        // The candidates: the row's top kK, best first, which is what the draft
+        // lattice hands the verify batch.
+        std::vector<uint32_t> idx(kVocab);
+        for (uint32_t i = 0; i < kVocab; ++i) idx[i] = i;
+        std::partial_sort(idx.begin(), idx.begin() + kK, idx.end(),
+                          [&](uint32_t a, uint32_t b) {
+                              return row[a] != row[b] ? row[a] > row[b] : a < b;
+                          });
+        for (uint32_t c = 0; c < kK; ++c) cand[size_t(j) * gpu::kDsVerifyMaxCand + c] =
+            static_cast<int32_t>(idx[c]);
+    }
+
+    Buf bl = take(rig.scratch, uint64_t(kM) * kVocab * 4);
+    Buf bc = take(rig.scratch, uint64_t(kM) * gpu::kDsVerifyMaxCand * 4);
+    Buf bo = take(rig.scratch, uint64_t(kM) * gpu::kDsVerifyRecordWords * 4);
+    REQUIRE(bl.v.host && bc.v.host && bo.v.host);
+    std::memcpy(bl.v.host, logits.data(), logits.size() * 4);
+    std::memcpy(bc.v.host, cand.data(), cand.size() * 4);
+    std::memset(bo.v.host, 0, size_t(kM) * gpu::kDsVerifyRecordWords * 4);
+
+    uint64_t* sl = rig.runner.slots(gpu::DsparkStage::VerifyRows);
+    REQUIRE(sl != nullptr);
+    sl[gpu::dvslot::kVLogits] = bl.a();
+    sl[gpu::dvslot::kVCand]   = bc.a();
+    sl[gpu::dvslot::kVOut]    = bo.a();
+
+    const uint32_t seed = 0xA5A5C3C3u;
+    gpu::DsparkVerifyPush push{kM, kVocab, kK, gpu::kDsVerifyMaxCand, kVocab, seed, 0, 1.0f};
+    REQUIRE_OK(rig.runner.dispatch_now(gpu::DsparkStage::VerifyRows, &push, sizeof push,
+                                       gpu::DsparkRunner::verify_groups(kM)));
+
+    std::vector<gpu::DsparkVerifyRow> got(kM);
+    std::memcpy(got.data(), bo.v.host, size_t(kM) * sizeof(gpu::DsparkVerifyRow));
+
+    uint32_t token_mismatch = 0;
+    for (uint32_t j = 0; j < kM; ++j) {
+        const std::span<const float> row(logits.data() + size_t(j) * kVocab, kVocab);
+        const std::span<const int32_t> cj(cand.data() + size_t(j) * gpu::kDsVerifyMaxCand, kK);
+        gpu::DsparkVerifyRow want{};
+        runtime::emulate_verify_row(row, cj, seed, j, 1.0f, want);
+
+        CHECK(got[j].rows == kVocab);
+        CHECK(got[j].n_cand == kK);
+
+        // (a) the candidates' logits: gathers, so exactly equal.
+        uint32_t cand_bad = 0;
+        for (uint32_t c = 0; c < kK; ++c)
+            if (got[j].cand_logit[c] != want.cand_logit[c]) ++cand_bad;
+        CHECK(cand_bad == 0);
+
+        // (b) the logsumexp, against the mirror AND against a float64 sum that
+        //     shares nothing with either.
+        double s64 = 0.0;
+        double m64 = -1e300;
+        for (uint32_t i = 0; i < kVocab; ++i) m64 = std::max(m64, double(row[i]));
+        for (uint32_t i = 0; i < kVocab; ++i) s64 += std::exp(double(row[i]) - m64);
+        const double lse64 = m64 + std::log(s64);
+        const double d_mirror = std::fabs(double(got[j].lse) - double(want.lse));
+        const double d_true   = std::fabs(double(got[j].lse) - lse64);
+        CHECK(d_mirror <= 1e-4);
+        CHECK(d_true <= 1e-3);
+
+        // (c) the draws. The masked one must never be a candidate.
+        bool masked_is_cand = false;
+        for (uint32_t c = 0; c < kK; ++c)
+            if (int32_t(got[j].masked_token) == cj[c]) masked_is_cand = true;
+        CHECK(!masked_is_cand);
+        if (got[j].masked_token != want.masked_token) ++token_mismatch;
+        if (got[j].full_token != want.full_token) ++token_mismatch;
+
+        std::printf("       row %u: lse gpu %.6f mirror %.6f f64 %.6f | masked %u/%u "
+                    "full %u/%u | cand logits %s\n",
+                    j, double(got[j].lse), double(want.lse), lse64,
+                    got[j].masked_token, want.masked_token,
+                    got[j].full_token, want.full_token,
+                    cand_bad ? "DIFFER" : "identical");
+        if (got[j].masked_token != want.masked_token || got[j].full_token != want.full_token)
+            std::printf("         (near-tie: gpu keys %.7f/%.7f, mirror %.7f/%.7f)\n",
+                        double(got[j].masked_key), double(got[j].full_key),
+                        double(want.masked_key), double(want.full_key));
+    }
+    // A handful of near-ties over 776k Gumbel keys is the fp32 exp/log gap; a
+    // systematic difference is not.
+    CHECK(token_mismatch <= 2);
+
+    // (d) the masked draw's distribution. A short row (so softmax over the
+    //     complement is cheap and exact in float64) drawn many times with
+    //     different seeds, against the analytic frequencies.
+    {
+        constexpr uint32_t kShort = 512;
+        constexpr uint32_t kDraws = 4000;
+        constexpr uint32_t kCandS = 8;
+        std::vector<float> srow(kShort);
+        for (uint32_t i = 0; i < kShort; ++i)
+            srow[i] = 2.0f * std::sin(0.037f * float(i)) + 0.004f * float(i % 61);
+        std::vector<int32_t> scand(gpu::kDsVerifyMaxCand, -1);
+        for (uint32_t c = 0; c < kCandS; ++c) scand[c] = int32_t(c * 37 + 5);
+
+        std::memcpy(bl.v.host, srow.data(), srow.size() * 4);
+        std::memcpy(bc.v.host, scand.data(), scand.size() * 4);
+        std::vector<uint32_t> hist(kShort, 0);
+        for (uint32_t d = 0; d < kDraws; ++d) {
+            gpu::DsparkVerifyPush p{1, kShort, kCandS, gpu::kDsVerifyMaxCand, kShort,
+                                    0x1000u + d * 2654435761u, 0, 1.0f};
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::DsparkStage::VerifyRows, &p, sizeof p, 1));
+            gpu::DsparkVerifyRow r{};
+            std::memcpy(&r, bo.v.host, sizeof r);
+            REQUIRE(r.masked_token < kShort);
+            ++hist[r.masked_token];
+        }
+        double z = 0.0;
+        std::vector<double> want_p(kShort, 0.0);
+        for (uint32_t i = 0; i < kShort; ++i) {
+            bool c = false;
+            for (uint32_t s = 0; s < kCandS; ++s) if (int32_t(i) == scand[s]) c = true;
+            if (c) continue;
+            want_p[i] = std::exp(double(srow[i]));
+            z += want_p[i];
+        }
+        double tv = 0.0, chi2 = 0.0, floor_tv = 0.0;
+        uint32_t chi_cells = 0;
+        for (uint32_t i = 0; i < kShort; ++i) {
+            const double p = want_p[i] / z;
+            tv += std::fabs(double(hist[i]) / double(kDraws) - p);
+            // The noise floor an EXACT sampler still shows at this many draws:
+            // E|hat p - p| = sqrt(2 p (1-p) / (pi n)) per cell, halved and summed.
+            // docs/p3_dspark.md §13.3 reports its offline check the same way (TV
+            // 0.0033 against a 0.0039 floor), because a bare TV over a 500-way
+            // support says nothing on its own.
+            floor_tv += std::sqrt(2.0 * p * (1.0 - p) / (3.14159265358979 * double(kDraws)));
+            const double e = p * double(kDraws);
+            if (e >= 5.0) { chi2 += (double(hist[i]) - e) * (double(hist[i]) - e) / e; ++chi_cells; }
+        }
+        tv *= 0.5;
+        floor_tv *= 0.5;
+        uint32_t drawn_cand = 0;
+        for (uint32_t s = 0; s < kCandS; ++s) drawn_cand += hist[scand[s]];
+        std::printf("       masked draw over %u draws: total variation %.4f against a %.4f "
+                    "noise floor, chi2 %.1f over %u cells; candidates drawn %u times, "
+                    "must be 0\n",
+                    kDraws, tv, floor_tv, chi2, chi_cells, drawn_cand);
+        for (uint32_t s = 0; s < kCandS; ++s) CHECK(hist[scand[s]] == 0);
+        // Within a quarter of the floor is what an exact sampler looks like; a
+        // biased one is a multiple of it.
+        CHECK(tv <= 1.25 * floor_tv);
+        // chi2 over `chi_cells` degrees of freedom: the far tail is roughly
+        // cells + 4 sqrt(cells).
+        CHECK(chi2 <= double(chi_cells) + 4.0 * std::sqrt(double(chi_cells)));
     }
 }
