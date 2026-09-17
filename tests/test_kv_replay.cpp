@@ -370,6 +370,67 @@ DEEPMOE_TEST(kv_replay, l3_64) {
     CHECK_EQ(gc->prefilled_tokens, 1u);
     const auto infos = pool.list();
     CHECK_EQ(infos.size(), size_t(2));
+
+    // --- (6) thinking mode, drop_thinking=True: the rollback chat.py takes on
+    //         EVERY turn -------------------------------------------------------
+    //
+    // The official thinking-mode template drops an earlier turn's reasoning from
+    // the prompt (tools/chat.py), so turn N+1's prompt is NOT an extension of
+    // what the KV store holds: it agrees up to where the reply began and then
+    // differs. That is a prefix match plus a truncation, and when the divergence
+    // point is odd it lands inside a ratio-2 group whose carry the store does not
+    // keep per group -- which is exactly what the even floor of runtime/session.h
+    // is for. The check is end to end: the turn taken by rollback has to produce
+    // what the same prompt produces from an empty store, token for token, and
+    // leave the same compressed rows, index keys and carry behind.
+    {
+        pool.drop("other");
+        e.reset_context();
+        runtime::GenerateRequest turn1 = req;
+        turn1.max_tokens = 6;
+        auto s1 = pool.live().generate(turn1, {});
+        REQUIRE_OK(s1);
+
+        runtime::GenerateRequest turn2;
+        turn2.max_tokens = 6;
+        turn2.sampling.temperature = 0.0f;
+        const uint32_t cut = 45;              // odd: a half-filled ratio-2 group
+        turn2.prompt_ids.assign(req.prompt_ids.begin(), req.prompt_ids.begin() + cut);
+        turn2.prompt_ids.push_back(1337);
+        turn2.prompt_ids.push_back(42);
+        std::vector<uint32_t> by_rollback;
+        auto s2 = pool.live().generate(
+            turn2, [&](const runtime::TokenEvent& ev) { by_rollback.push_back(ev.id); });
+        REQUIRE_OK(s2);
+        std::printf("    (6) drop_thinking turn: history %u, prompt diverges at %u -> reused %u, "
+                    "dropped %u, replayed %u in %.0f ms, prefilled %u\n",
+                    s1->context_after, cut, s2->reused_tokens, s2->rollback_dropped,
+                    s2->replay_steps, s2->replay_ms, s2->prefilled_tokens);
+        CHECK_EQ(s2->reused_tokens, cut - 1);          // 45 rounded down to even
+        CHECK(s2->rollback_dropped > 0);
+        CHECK_EQ(s2->prefilled_tokens, uint32_t(turn2.prompt_ids.size()) - (cut - 1));
+        auto packed_rb = e.kv_store().pack(e.context_length());
+        REQUIRE_OK(packed_rb);
+        const uint32_t ctx_rb = e.context_length();
+
+        runtime::GenerateRequest fresh = turn2;
+        fresh.reuse = false;                           // the same turn from nothing
+        std::vector<uint32_t> by_prefill;
+        auto s3 = pool.live().generate(
+            fresh, [&](const runtime::TokenEvent& ev) { by_prefill.push_back(ev.id); });
+        REQUIRE_OK(s3);
+        CHECK_EQ(s3->reused_tokens, 0u);
+        CHECK_EQ(s3->context_after, ctx_rb);
+        auto packed_fresh = e.kv_store().pack(e.context_length());
+        REQUIRE_OK(packed_fresh);
+        const bool same_tokens = by_rollback == by_prefill;
+        const bool same_rows = same_packed(*packed_rb, *packed_fresh, /*carry=*/true);
+        std::printf("        vs the same turn from an empty store: tokens %s, compressed rows + "
+                    "keys + carry %s\n", same_tokens ? "identical" : "DIFFER",
+                    same_rows ? "bit-identical" : "DIFFER");
+        CHECK(same_tokens);
+        CHECK(same_rows);
+    }
 }
 
 DEEPMOE_TEST(kv_replay, longctx) {
@@ -539,6 +600,30 @@ DEEPMOE_TEST(kvdisk, roundtrip) {
     pl.carry_score = {-1.0f, 0.25f};
     p.kv.planes.push_back(pl);
     REQUIRE_OK(runtime::save_parked_context(p, opt, "unit/session one"));
+
+    // The on-disk format, byte for byte (docs/p4_kv_ux.md 6). Asserting the
+    // exact size is how "the window ring is NEVER written" is checked: there is
+    // no room in the file for anything but what is counted here, and a window
+    // would add 40 x 128 x 528 B = 2.70 MB whatever the context.
+    //   magic "DMOEKV01"        8
+    //   version u32             4
+    //   FNV-1a of model_tag     8
+    //   n_tokens u32 + ids      4 + 4 n
+    //   positions u32           4
+    //   n_planes u32            4
+    //   per plane: layer, ratio, rows (3 x u32) then nine
+    //     (u64 byte count + payload) vectors: cmp_fp4, cmp_scale, key_fp4,
+    //     key_scale, raw_rows, raw_cmp, raw_key, carry_kv, carry_score
+    //   trailer "KVEND001"      8
+    uint64_t want = 8 + 4 + 8 + 4 + p.tokens.size() * 4 + 4 + 4 + 8;
+    want += 3 * 4 + 9 * 8;
+    want += pl.cmp_fp4.size() + pl.cmp_scale.size() + pl.key_fp4.size() + pl.key_scale.size();
+    want += pl.raw_rows.size() * 4 + (pl.raw_cmp.size() + pl.raw_key.size()) * 2;
+    want += (pl.carry_kv.size() + pl.carry_score.size()) * 4;
+    const auto on_disk = fs::file_size(fs::path(opt.dir) / "unit_session_one.pkv", ec);
+    CHECK(!ec);
+    CHECK_EQ(static_cast<uint64_t>(on_disk), want);
+
     auto loaded = runtime::load_parked_context(opt, "unit/session one");
     REQUIRE_OK(loaded);
     REQUIRE_EQ(loaded->tokens.size(), p.tokens.size());
