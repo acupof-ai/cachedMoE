@@ -80,6 +80,14 @@ set_tests_properties("bench.mgt1_moe_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP mgt1.moe_m_curve")
 
+# Track F1: the same batch as ONE dispatch over the columns' expert union
+# (docs/p4_dspark_runtime.md §2.2 plan C, no new kernel). Per column against the
+# per-column path, and the per-layer cost of both.
+add_test(NAME "bench.mgt1_moe_union_m_curve" COMMAND deepmoe_tests "mgt1.moe_union_m_curve")
+set_tests_properties("bench.mgt1_moe_union_m_curve" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP")
+
 # The whole decode step -- forty layers, the head and the argmax -- against the
 # oracle's L3 tokens. Needs the ~17.7 GB pinned set and tests/data/l3.
 add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")

@@ -697,64 +697,68 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_computes_one_answer_per_column) {
 // loop's NVMe side grows with M instead of amortising.
 //
 // Registered under its own suite name so a correctness run does not pay for it.
+// The bring-up a batch MoE test needs: device, manifest, shards, io, the pinned
+// set, the expert cache and the planner. Shared by the M-curve benchmarks and by
+// the union-batch cases below.
+struct FullRig {
+    gpu::Device         device;
+    gpu::MemoryAllocator alloc;
+    Manifest            manifest;
+    V41Config           config;
+    ShardSet            shards;
+    storage::IoEngine   io;
+    store::PinnedStore  pinned;
+    ExpertStore         store;
+    Planner             planner;
+    bool io_started = false;
+    std::string why;
+
+    ~FullRig() { if (io_started) io.stop(); }
+
+    bool bring_up(uint32_t slots) {
+        const std::string dir = model_dir() ? model_dir() : "";
+        if (auto r = device.create({}); !r) { why = r.error().str(); return false; }
+        if (auto r = device.caps().check_required(); !r) { why = r.error().str(); return false; }
+        if (auto r = alloc.init(device, MemoryPath::DeviceLocalHostVisible); !r) {
+            why = r.error().str(); return false;
+        }
+        auto cfg = V41Config::load(ShardSet::join(dir, "config.json"));
+        if (!cfg) { why = cfg.error().str(); return false; }
+        config = std::move(*cfg);
+        auto mf = Manifest::load(ShardSet::join(dir, layout::kManifestFile));
+        if (!mf) { why = mf.error().str(); return false; }
+        manifest = std::move(*mf);
+        if (auto r = shards.open_all(dir, manifest, /*unbuffered=*/true); !r) {
+            why = r.error().str(); return false;
+        }
+        IoConfig iocfg;
+        auto backend = storage::make_default_backend(iocfg);
+        if (!backend) { why = backend.error().str(); return false; }
+        if (auto r = io.start(std::move(*backend), iocfg); !r) {
+            why = r.error().str(); return false;
+        }
+        io_started = true;
+        auto pb = alloc.make_slab_backing();
+        if (!pb) { why = pb.error().str(); return false; }
+        store::PinnedConfig pc;
+        pc.region_bytes = 1ull << 30;
+        if (auto r = pinned.init(std::move(*pb), pc); !r) { why = r.error().str(); return false; }
+        CacheConfig cache;
+        cache.slots_per_slab = slots;
+        cache.budget_bytes   = uint64_t(slots) * layout::kExpertSlotBytes;
+        auto eb = alloc.make_slab_backing();
+        if (!eb) { why = eb.error().str(); return false; }
+        if (auto r = store.init(std::move(*eb), cache); !r) { why = r.error().str(); return false; }
+        if (auto r = planner.init(store, io, manifest, shards, cache, PrefetchConfig{}); !r) {
+            why = r.error().str(); return false;
+        }
+        return true;
+    }
+};
+
 DEEPMOE_TEST(mgt1, moe_m_curve) {
     if (skip_without_model("mgt1.moe_m_curve")) return;
 
-    struct Rig {
-        gpu::Device         device;
-        gpu::MemoryAllocator alloc;
-        Manifest            manifest;
-        V41Config           config;
-        ShardSet            shards;
-        storage::IoEngine   io;
-        store::PinnedStore  pinned;
-        ExpertStore         store;
-        Planner             planner;
-        bool io_started = false;
-        std::string why;
-
-        ~Rig() { if (io_started) io.stop(); }
-
-        bool bring_up(uint32_t slots) {
-            const std::string dir = model_dir() ? model_dir() : "";
-            if (auto r = device.create({}); !r) { why = r.error().str(); return false; }
-            if (auto r = device.caps().check_required(); !r) { why = r.error().str(); return false; }
-            if (auto r = alloc.init(device, MemoryPath::DeviceLocalHostVisible); !r) {
-                why = r.error().str(); return false;
-            }
-            auto cfg = V41Config::load(ShardSet::join(dir, "config.json"));
-            if (!cfg) { why = cfg.error().str(); return false; }
-            config = std::move(*cfg);
-            auto mf = Manifest::load(ShardSet::join(dir, layout::kManifestFile));
-            if (!mf) { why = mf.error().str(); return false; }
-            manifest = std::move(*mf);
-            if (auto r = shards.open_all(dir, manifest, /*unbuffered=*/true); !r) {
-                why = r.error().str(); return false;
-            }
-            IoConfig iocfg;
-            auto backend = storage::make_default_backend(iocfg);
-            if (!backend) { why = backend.error().str(); return false; }
-            if (auto r = io.start(std::move(*backend), iocfg); !r) {
-                why = r.error().str(); return false;
-            }
-            io_started = true;
-            auto pb = alloc.make_slab_backing();
-            if (!pb) { why = pb.error().str(); return false; }
-            store::PinnedConfig pc;
-            pc.region_bytes = 1ull << 30;
-            if (auto r = pinned.init(std::move(*pb), pc); !r) { why = r.error().str(); return false; }
-            CacheConfig cache;
-            cache.slots_per_slab = slots;
-            cache.budget_bytes   = uint64_t(slots) * layout::kExpertSlotBytes;
-            auto eb = alloc.make_slab_backing();
-            if (!eb) { why = eb.error().str(); return false; }
-            if (auto r = store.init(std::move(*eb), cache); !r) { why = r.error().str(); return false; }
-            if (auto r = planner.init(store, io, manifest, shards, cache, PrefetchConfig{}); !r) {
-                why = r.error().str(); return false;
-            }
-            return true;
-        }
-    };
 
     const uint32_t iters = [] {
         if (const char* e = std::getenv("DEEPMOE_MOE_M_ITERS"); e && *e)
@@ -764,7 +768,7 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
     constexpr uint32_t kTopk = 6;
     constexpr uint32_t kMaxM = 6;
     constexpr uint32_t kUnion = kTopk;      // per column: its own six experts
-    Rig rig;
+    FullRig rig;
     if (!rig.bring_up(/*slots=*/kMaxM * kUnion + 4)) {
         std::printf("       SKIP mgt1.moe_m_curve: %s\n", rig.why.c_str());
         return;
@@ -821,6 +825,255 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
     std::printf("      (the six columns' expert union is %u of the %u per layer; the real\n"
                 "       loop's residency gate reads that union from NVMe, which this does not)\n",
                 kMaxM * kUnion, rig.config.text.n_routed_experts);
+}
+
+
+// ============================================================================
+// Track F1: the verify batch as ONE dispatch over the columns' expert UNION.
+//
+// docs/p4_dspark_runtime.md §2.2's plan A -- one dispatch a column -- is correct
+// and 8.34x the M = 1 MoE at M = 6 (docs/p4_mgt1.md §4), which makes a verify
+// batch about 5x more expensive than running the same six tokens one at a time.
+// Plan C without a new kernel: widen the slot axis to the union of the columns'
+// top-6, fill `route_weights[m][slot]` with zero wherever token m does not route
+// to that slot, and every expert's weights are read ONCE for the whole batch.
+//
+// Two things are checked and one is measured:
+//   * per column, the union answer against the same column of the per-column
+//     path, which the case below has already pinned to the M = 1 answer bit for
+//     bit. Not bit-exact: dispatch B sums the slots in slot order and the union
+//     re-associates that sum, so the criterion is 1e-6 of |y|max;
+//   * the zero-weight slots really contribute nothing;
+//   * ms/layer against `run_batch` at the same M, for disjoint expert sets (the
+//     worst case for the union: |union| = 6M) and overlapping ones (the real
+//     shape, docs/p3_dspark.md §12.6's ~26 of 36).
+// ============================================================================
+DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
+    if (skip_without_model("gpu_moe.the_verify_batch_runs_its_expert_union_once")) return;
+
+    constexpr uint32_t kTopk = 6;
+    constexpr uint32_t kM    = 6;
+    FullRig rig;
+    if (!rig.bring_up(/*slots=*/kM * kTopk + 4)) {
+        std::printf("       SKIP gpu_moe.the_verify_batch_runs_its_expert_union_once: %s\n",
+                    rig.why.c_str());
+        return;
+    }
+    const uint32_t layer = 0;
+    const uint32_t dim = rig.config.text.hidden_size;
+    {
+        std::vector<std::string> names = store::pinned_global_tensors(rig.manifest);
+        auto per = store::pinned_layer_tensors(rig.manifest, layer);
+        names.insert(names.end(), per.begin(), per.end());
+        auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
+        if (!r) { std::printf("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
+    }
+    runtime::GpuMoeBridge bridge;
+    REQUIRE_OK(bridge.create(rig.device, rig.alloc, gpu::default_shader_dir(), rig.store,
+                             rig.planner, rig.pinned, rig.config.text));
+
+    std::vector<float> x(size_t(kM) * dim);
+    for (uint32_t m = 0; m < kM; ++m)
+        for (uint32_t i = 0; i < dim; ++i)
+            x[size_t(m) * dim + i] = std::sin(0.01f * float((i + 37 * (m + 1)) % 977));
+
+    std::vector<uint32_t> ids_disjoint(size_t(kM) * kTopk), ids_overlap(size_t(kM) * kTopk),
+                          ids_reordered(size_t(kM) * kTopk);
+    std::vector<float>    w(size_t(kM) * kTopk);
+    for (uint32_t m = 0; m < kM; ++m)
+        for (uint32_t s = 0; s < kTopk; ++s) {
+            ids_disjoint[m * kTopk + s] = 10 + m * kTopk + s;
+            // Three experts every column shares, three of its own.
+            ids_overlap[m * kTopk + s] = (s < 3) ? (10 + s) : (10 + kTopk + m * 3 + (s - 3));
+            // The adversarial case for the union: every column routes to the
+            // SAME six experts, odd columns in the opposite order. The union
+            // fixes one slot order for all of them, so an odd column's seven
+            // contributions are summed in a different order than the M = 1 path
+            // sums them -- which is the only way the two can differ at all.
+            ids_reordered[m * kTopk + s] = (m % 2) ? (10 + kTopk - 1 - s) : (10 + s);
+            w[m * kTopk + s] = 0.05f + 0.02f * float(s) + 0.01f * float(m);
+        }
+    // Every distinct expert of both routings, fetched once: a second fetch of a
+    // resident expert is an `already-exists` refusal, not a hit.
+    {
+        std::vector<uint32_t> all;
+        for (const auto* v : {&ids_disjoint, &ids_overlap, &ids_reordered})
+            for (uint32_t e : *v)
+                if (std::find(all.begin(), all.end(), e) == all.end()) all.push_back(e);
+        for (uint32_t e : all) {
+            const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(e)};
+            auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
+            if (!f) {
+                std::printf("       SKIP: expert %u would not fetch: %s\n", e,
+                            f.error().str().c_str());
+                return;
+            }
+        }
+        rig.io.drain();
+    }
+
+    struct Routing { const char* what; const std::vector<uint32_t>* ids; };
+    const Routing routings[] = {{"disjoint sets", &ids_disjoint},
+                                {"overlapping sets", &ids_overlap},
+                                {"reordered sets", &ids_reordered}};
+
+    for (const Routing& r : routings) {
+        runtime::GpuMoeBridge::BatchCall call;
+        call.layer = layer; call.m = kM; call.ids = r.ids->data(); call.weights = w.data();
+        call.topk = kTopk; call.x = x.data(); call.hidden = dim;
+
+        const auto u = bridge.union_experts(call);
+        std::vector<float> y_union(size_t(kM) * dim), y_cols(size_t(kM) * dim);
+        call.y = y_union.data();
+        REQUIRE_OK(bridge.run_batch_union(call));
+        const auto info = bridge.union_info();
+        CHECK(info.routed == u.size());
+        call.y = y_cols.data();
+        REQUIRE_OK(bridge.run_batch(call));
+
+        double worst = 0.0, ymax = 0.0;
+        uint32_t worst_m = 0;
+        for (float v : y_cols) ymax = std::fmax(ymax, std::fabs(double(v)));
+        for (uint32_t m = 0; m < kM; ++m) {
+            double d = 0.0;
+            for (uint32_t i = 0; i < dim; ++i)
+                d = std::fmax(d, std::fabs(double(y_union[size_t(m) * dim + i])
+                                           - double(y_cols[size_t(m) * dim + i])));
+            if (d > worst) { worst = d; worst_m = m; }
+        }
+        std::printf("       %-18s union %2u of %2u experts | worst column %u at %.3e of |y|max\n",
+                    r.what, info.routed, kM * kTopk, worst_m, ymax > 0 ? worst / ymax : 0.0);
+        CHECK(ymax > 0.0);
+        CHECK(worst / ymax <= 1e-6);
+
+        // Columns must not be near-copies, or the comparison above proves little.
+        double spread = 0.0;
+        for (uint32_t m = 1; m < kM; ++m)
+            for (uint32_t i = 0; i < dim; ++i)
+                spread = std::fmax(spread, std::fabs(double(y_cols[size_t(m) * dim + i])
+                                                     - double(y_cols[i])));
+        CHECK(spread / ymax > 0.05);
+    }
+
+    // The zero-weight slots contribute exactly nothing: give column 0 a weight
+    // row of zeros while every other column keeps its routing, and column 0 must
+    // come out the shared expert's answer alone -- which is what a column whose
+    // slot is not in its own top-6 has to look like for the union to be sound.
+    {
+        std::vector<float> w0 = w;
+        for (uint32_t s = 0; s < kTopk; ++s) w0[s] = 0.0f;
+        runtime::GpuMoeBridge::BatchCall call;
+        call.layer = layer; call.m = kM; call.ids = ids_disjoint.data(); call.weights = w0.data();
+        call.topk = kTopk; call.x = x.data(); call.hidden = dim;
+        std::vector<float> y_zero(size_t(kM) * dim);
+        call.y = y_zero.data();
+        REQUIRE_OK(bridge.run_batch_union(call));
+        runtime::GpuMoeBridge::BatchCall one = call;
+        one.m = 1;
+        std::vector<float> y_one(dim);
+        one.y = y_one.data();
+        REQUIRE_OK(bridge.run_batch(one));
+        double d = 0.0, ymax = 0.0;
+        for (uint32_t i = 0; i < dim; ++i) {
+            ymax = std::fmax(ymax, std::fabs(double(y_one[i])));
+            d = std::fmax(d, std::fabs(double(y_zero[i]) - double(y_one[i])));
+        }
+        std::printf("       zero-weight column: union vs the shared expert alone %.3e of |y|max "
+                    "(|y|max %.3f)\n", ymax > 0 ? d / ymax : 0.0, ymax);
+        CHECK(ymax > 0.0);
+        CHECK(d / ymax <= 1e-6);
+    }
+}
+
+// MoE(M) again, but for the union path: what the SAME verify batch costs as one
+// dispatch over its expert union instead of M dispatches over M expert sets.
+// The number that matters for docs/p4_dspark_runtime.md's arithmetic is
+// ms/token: at M = 1 the union path is the M = 1 path, and every column after
+// that should cost the incremental experts, not a whole token.
+DEEPMOE_TEST(mgt1, moe_union_m_curve) {
+    if (skip_without_model("mgt1.moe_union_m_curve")) return;
+
+    const uint32_t iters = [] {
+        if (const char* e = std::getenv("DEEPMOE_MOE_M_ITERS"); e && *e)
+            return uint32_t(std::strtoul(e, nullptr, 10));
+        return 10u;
+    }();
+    constexpr uint32_t kTopk = 6;
+    constexpr uint32_t kMaxM = 6;
+    FullRig rig;
+    if (!rig.bring_up(/*slots=*/kMaxM * kTopk + 4)) {
+        std::printf("       SKIP mgt1.moe_union_m_curve: %s\n", rig.why.c_str());
+        return;
+    }
+    const uint32_t layer = 0;
+    const uint32_t dim = rig.config.text.hidden_size;
+    {
+        std::vector<std::string> names = store::pinned_global_tensors(rig.manifest);
+        auto per = store::pinned_layer_tensors(rig.manifest, layer);
+        names.insert(names.end(), per.begin(), per.end());
+        auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
+        if (!r) { std::printf("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
+    }
+    runtime::GpuMoeBridge bridge;
+    REQUIRE_OK(bridge.create(rig.device, rig.alloc, gpu::default_shader_dir(), rig.store,
+                             rig.planner, rig.pinned, rig.config.text));
+
+    std::vector<float> x(size_t(kMaxM) * dim), y(size_t(kMaxM) * dim);
+    std::vector<float> w(size_t(kMaxM) * kTopk);
+    std::vector<uint32_t> ids_d(size_t(kMaxM) * kTopk), ids_o(size_t(kMaxM) * kTopk);
+    for (uint32_t m = 0; m < kMaxM; ++m) {
+        for (uint32_t s = 0; s < kTopk; ++s) {
+            ids_d[m * kTopk + s] = 10 + m * kTopk + s;
+            ids_o[m * kTopk + s] = (s < 3) ? (10 + s) : (10 + kTopk + m * 3 + (s - 3));
+            w[m * kTopk + s] = 0.05f + 0.02f * float(s);
+        }
+        for (uint32_t i = 0; i < dim; ++i)
+            x[size_t(m) * dim + i] = std::sin(0.01f * float((i + 37 * (m + 1)) % 977));
+    }
+    {
+        std::vector<uint32_t> all;
+        for (const auto* v : {&ids_d, &ids_o})
+            for (uint32_t e : *v)
+                if (std::find(all.begin(), all.end(), e) == all.end()) all.push_back(e);
+        for (uint32_t e : all) {
+            const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(e)};
+            auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
+            if (!f) { std::printf("       SKIP: fetch: %s\n", f.error().str().c_str()); return; }
+        }
+        rig.io.drain();
+    }
+
+    std::printf("    MoE(M) union vs per column, layer %u, %u iterations a case\n", layer, iters);
+    struct Set { const char* what; const std::vector<uint32_t>* ids; };
+    const Set sets[] = {{"disjoint", &ids_d}, {"overlapping", &ids_o}};
+    for (const Set& st : sets) {
+        double base = 0.0;
+        for (uint32_t M : {1u, 2u, 4u, 6u}) {
+            runtime::GpuMoeBridge::BatchCall call;
+            call.layer = layer; call.m = M; call.ids = st.ids->data(); call.weights = w.data();
+            call.topk = kTopk; call.x = x.data(); call.y = y.data(); call.hidden = dim;
+            bool ran = true;
+            auto time_it = [&](bool uni) -> double {
+                for (uint32_t i = 0; i < 3 && ran; ++i)
+                    ran = bool(uni ? bridge.run_batch_union(call) : bridge.run_batch(call));
+                const auto t0 = Clock::now();
+                for (uint32_t i = 0; i < iters && ran; ++i)
+                    ran = bool(uni ? bridge.run_batch_union(call) : bridge.run_batch(call));
+                return std::chrono::duration<double, std::milli>(Clock::now() - t0).count()
+                       / double(iters);
+            };
+            const double per_col = time_it(false);
+            const double uni = time_it(true);
+            CHECK(ran);
+            if (!ran) return;
+            const uint32_t n_union = bridge.union_info().routed;
+            if (M == 1) base = uni;
+            std::printf("      %-12s M=%u  union %2u experts  per-column %7.3f ms  "
+                        "union %7.3f ms (%6.3f ms/token, %.2fx M=1)  speedup %.2fx\n",
+                        st.what, M, n_union, per_col, uni, uni / double(M),
+                        base > 0 ? uni / base : 0.0, uni > 0 ? per_col / uni : 0.0);
+        }
+    }
 }
 
 // ============================================================================
