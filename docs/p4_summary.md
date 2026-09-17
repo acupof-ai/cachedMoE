@@ -121,3 +121,27 @@ ctest --test-dir build --output-on-failure
    所以它不能绕过 (a)/(b)，只是让同一份 M=6 前向更值钱。
    §4 列了三件不依赖 MoE 改动、现在就能测的事（C(M) 曲线 / expert 并集 / 批边界 G3），
    它们是 20 t/s 判定的前置输入。
+
+## 8. 优化项的现状与账（2026-09-17 实测，`bench/config_sweep.py`）
+
+同一套 4 轮同话题对话、同一份二进制、同一台空闲机，只改 cache 容量与 reheat 开关；
+`bench/results/config_sweep.json`。按"拿到了多少"排：
+
+| 优化项 | 状态 | 实测 |
+|---|---|---|
+| **expert cache 容量**（`--cache-slots`） | 已用，仍在加 | 1000 → 2200 → 4500 槽：**1.83 → 2.59 → 3.65 tok/s**，hit 0.5912 → 0.7431 → 0.8370，**hit 每翻倍容量 +0.093**；外推 5500 ≈ 0.90，与 8-turn 实测 0.9431 同量级 |
+| **SSD KV 前缀复用**（R2） | 已用，需 `--kv-dir` | 4,133-token prompt **101.6 s → 2.47 s（41×）** |
+| prefill→decode expert 交接（R1） | 已用（`handoff_` 默认开） | 未单独 A/B |
+| MoE overlap（R1） | 已用（默认开，`DEEPMOE_MOE_OVERLAP=0` 关） | 未单独 A/B（P4-T 清单第 2 项） |
+| **每轮 reheat**（R1 round 2） | 已实现、可用 | **4 轮短对话上收益 0**：2200 槽 hit 0.7431 = 0.7431；4500 槽 0.8370 → 0.8386，但 tok/s −0.018、**MB/tok +32**（它自己填的 68 × 18.8 MB）。别在短对话上开 |
+| 顺序学习（`--auto-tune` / `DEEPMOE_HEAT_FILE`） | 已实现 | 无提升（0.8278 → 0.8275）；本轮修好引擎内 heat 之后才具备前提 |
+| 热步 fence_wait / mHC 提交（Track J 的 K-split/tiled 接口） | **未做** | 热步 81.5 ms，地板 75.8 ms → 余量只有 **~7%** |
+| prefill chunked / coopmat（Track L / S） | S 已合入，默认 legacy | N=4133 legacy 103.67 s vs coop 99.89 s，**只快 3.6%**（5× 目标未达成）；`--gpu-prefill-min` 默认 0 = 不启用 |
+| **投机解码（DSpark）** | **未做** | `Engine::generate` 的 `speculative` 仍是 `unimplemented`；缺三个 kernel 能力（见 `docs/p4_dspark_runtime.md` §2） |
+
+**最重要的一条性能事实**：decode 被 NVMe 带宽钉住。四种容量的有效读带宽都是
+**8.3–9.2 GB/s**，于是 `tok/s ≈ NVMe_eff / (MB/tok)`：命中率 0.59 → 0.84 让
+MB/tok 从 4,998 降到 2,269，tok/s 就跟着翻倍。**这段的性能完全由"每个 token 要读多少字节"决定**
+——容量、顺序（heat）、投机解码（同一批字节换多个 token）是同一件事的三种做法。
+另外 prefill 是 **≈24 ms/prompt token**（4,133 token ≈ 100 s），在对话里比 decode 还贵，
+而它已经有 41× 的复用手段（SSD KV）没接进 `serve` 的默认路径。

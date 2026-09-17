@@ -258,3 +258,37 @@ $env:DEEPMOE_MODEL_DIR="D:\models\DeepSeek-V4.1-Flash"
 
 单测：`ctest --test-dir build -R suite.expert_store`。
 
+## 2026-09-17 命中率 → 吞吐的实测斜率（`bench/config_sweep.py`）
+
+同一套 4 轮同话题对话、同一份二进制、同一台空闲机，只改 cache 容量与 reheat 开关。
+`bench/results/config_sweep.json`；`MB/tok` = 每个 decode token 的 P0 miss 字节，
+`NVMe GB/s` = 这些字节 ÷ decode 墙钟（turn 的 `total_ms − ttft_ms` 之和）。
+
+| 配置 | 槽 | cache | decode tok/s | decode hit | MB/tok | **有效 NVMe** |
+|---|---:|---:|---:|---:|---:|---:|
+| cache-1000 | 1000 | 17.5 GiB | 1.830 | 0.5912 | 4,998 | 9.14 GB/s |
+| cache-2200 | 2200 | 38.5 GiB | 2.593 | 0.7431 | 3,528 | 9.15 GB/s |
+| cache-2200 **+ reheat** | 2200 | 38.5 GiB | 2.594 | **0.7431** | 3,522 | 9.13 GB/s |
+| cache-4500 | 4500 | 78.8 GiB | 3.647 | 0.8370 | 2,269 | 8.28 GB/s |
+| cache-4500 **+ reheat** | 4500 | 78.8 GiB | 3.629 | 0.8386 | 2,301 | 8.35 GB/s |
+
+三条结论：
+
+1. **decode 是被 NVMe 带宽钉住的，不是被算力。** 四种容量的有效读带宽都是
+   **8.3–9.2 GB/s**——命中率一涨，每 token 的 miss 字节就降，tok/s 就按同样的比例涨。
+   所以这一段的性能模型是 `tok/s ≈ NVMe_eff / (MB/tok)`，先看 `MB/tok`。
+2. **容量的斜率是可外推的**：1000 → 2200 → 4500 槽，hit 每次翻倍容量 **+0.093/+0.094**
+   （0.5912 → 0.7431 → 0.8370）。按这个斜率外推到 5500 槽得 **≈0.90**，
+   实测（8-turn 脚本）是 **0.9431**——同量级，说明"容量给 hit"这条线是稳的，
+   而且 8-turn 长对话比 4 轮短脚本更吃容量（话题内复用更多）。
+3. **reheat 在这一轮的账是 0，而且有微小的负成本**：hit 差 +0.0016（噪声），
+   tok/s 差 −0.018（4500 槽），MB/tok **+32**——那正是它自己填的那 68 个 expert
+   （68 × 18.8 MB = 1.28 GB/轮）。**结论：在 4 轮短对话上不要开 `--reheat`**；
+   它要证明自己，只能靠"8-turn + 5500 槽 + 话题切换"那套脚本。
+
+`MB/tok` 的量级也值得注意：1,000 槽时 4,998 MB/token，而"完全没有 cache"的理论值是
+40 层 × 6 expert × 18.8 MB = **4,514 MB/token**——也就是说 1000 槽时几乎等于没有 cache，
+且**实测字节比"每个 miss 读一个 expert"高 10–15%**（对齐/两段 run：每个 expert 是
+1,110,016 B 的 scales run + 17,698,816 B 的 weights run，槽 18,808,832 B，
+读的是对齐后的字节）。
+
