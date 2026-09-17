@@ -40,6 +40,14 @@
 // `max_context`. Addresses change on growth, which is safe because every
 // caller takes `layer(l)` afresh per step.
 //
+// Slabs. The store is not one allocation: its regions are laid out in a flat
+// space cut into slabs of at most `KvStoreConfig::slab_bytes` (2 GiB, the
+// `maxMemoryAllocationSize` of design 1.1), each region wholly inside one
+// slab so a plane's address plus a row offset is still one address. That is
+// what lifts design 11.3's "KvStore is ONE allocation, so max_context <~ 41.7K":
+// with per-source planes 64K needs 213 MB in one slab anyway, and the cut only
+// starts to matter past ~600K positions.
+//
 // Ownership/threading: KvStore owns its allocation through the MemoryAllocator
 // it was created with. Written by the GPU, seeded and grown by the host
 // between steps, on the engine thread.
@@ -71,6 +79,14 @@ struct KvStoreConfig {
     uint32_t index_topk  = 512;
     // Positions `create` allocates; 0 = max_context. The store grows past it.
     uint32_t initial_context = 0;
+    // The largest single allocation the store will ask for. The store is cut
+    // into as many slabs of at most this as its regions need (design §5.3: one
+    // allocation may not exceed `maxMemoryAllocationSize`, 2 GiB on this APU --
+    // §11.3's "KvStore is ONE allocation, so max_context <~ 41.7K"). Every
+    // region lies wholly inside one slab, so an address plus a row offset is
+    // still one address. `create` halves it and retries when the driver refuses
+    // the size, so a device with a smaller cap needs no configuration.
+    uint64_t slab_bytes = 1ull << 31;
     // model.py's `shared_attn`: whose compressed / index-key / state planes
     // layer l uses (kNoPlane for a window-only layer) and the ratio its rows
     // are counted at. Both empty = every layer owns planes at ratio 1, which is
@@ -105,6 +121,13 @@ struct KvStoreConfig {
     uint64_t total_bytes(uint32_t positions) const {
         return window_bytes() + compressed_bytes(positions) + index_key_bytes(positions) +
                cmp_state_bytes() + topk_bytes();
+    }
+    // The bf16 working set a live store of `positions` holds, and how many
+    // slabs `slab_bytes` cuts it into (the real figure, padding included, is
+    // KvStore::bytes() / KvStore::slabs()).
+    uint32_t min_slabs(uint32_t positions) const {
+        if (!slab_bytes) return 1;
+        return static_cast<uint32_t>((total_bytes(positions) + slab_bytes - 1) / slab_bytes);
     }
     // FP4 E2M1 block-16 + E4M3 compressed rows, FP4 block-32 + E8M0 index keys,
     // the carried state of the ratio > 1 sources: the non-SWA state a parked
@@ -192,7 +215,12 @@ public:
     void         clear();
 
     const KvStoreConfig& config() const { return cfg_; }
-    uint64_t bytes() const { return buf_.bytes; }
+    // Summed over the slabs, padding included.
+    uint64_t bytes() const;
+    uint32_t slabs() const { return static_cast<uint32_t>(bufs_.size()); }
+    // Bytes of the slab holding each region, largest first -- what a driver
+    // with a 2 GiB cap has to satisfy.
+    uint64_t largest_slab() const;
     // Positions currently allocated (<= config().max_context).
     uint32_t capacity() const { return cap_; }
     // Grows to hold `positions`, copying the live rows. A no-op when it
@@ -305,17 +333,27 @@ public:
     Result<void> restore_ring(const RingSnapshot& s);
 
 private:
+    // Offsets are in one flat space that the slabs tile in order; every region
+    // lies wholly inside one slab, so `at` / `dev` map an offset (and any row
+    // inside that region) by finding its slab and subtracting its base.
     struct Layout {
         uint32_t cap = 0;
         uint64_t off_win_val = 0, off_win_scale = 0, off_top = 0, off_state = 0, total = 0;
         std::vector<uint64_t> off_cmp, off_idx;   // per owner
+        std::vector<uint64_t> slab_at, slab_size; // flat base and size of each slab
+        uint32_t slab_of(uint64_t off) const;
     };
     Layout layout_for(uint32_t cap) const;
     uint32_t owner_index(uint32_t l) const;   // index into owners_, or kNoPlane
-    std::byte* host() const { return static_cast<std::byte*>(buf_.host_ptr); }
+    // Host pointer / device address of a flat offset.
+    std::byte*    at(uint64_t off) const;
+    DeviceAddress dev(uint64_t off) const;
+    bool          valid() const { return !bufs_.empty(); }
+    Result<std::vector<gpu::GpuBuffer>> allocate_slabs(const Layout& l) const;
+    static void free_slabs(gpu::MemoryAllocator* a, std::vector<gpu::GpuBuffer>& v);
 
     gpu::MemoryAllocator* alloc_ = nullptr;
-    gpu::GpuBuffer        buf_{};
+    std::vector<gpu::GpuBuffer> bufs_{};
     KvStoreConfig         cfg_{};
     Layout                lay_{};
     uint32_t              cap_ = 0;
@@ -323,6 +361,9 @@ private:
     std::vector<uint32_t> owner_of_;     // [layers] -> index into owners_ or kNoPlane
     std::vector<uint32_t> rows_hw_;      // per owner: rows that may hold data
     std::vector<uint32_t> n_cmp_, n_kv_;
+    // The -inf score_state fill, built once in ordinary host memory so clear()
+    // can memcpy it (7.1 rule 10).
+    std::vector<float>    ninf_;
     uint32_t              win_lo_ = 0;
     static constexpr int64_t kSlotEmpty = -1, kSlotUnknown = -2;
     std::vector<int64_t>  slot_pos_;     // [window]
