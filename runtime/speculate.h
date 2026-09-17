@@ -106,6 +106,106 @@ struct SpecStats {
     std::string to_string() const;
 };
 
+// --- what a cycle needs from the model --------------------------------------
+//
+// The cycle is separable from the forwards, and deliberately so: the two
+// forwards are `Engine`'s (the verify one is `Engine::forward_batch`, which
+// does not exist yet -- see docs/p4_dspark_runtime.md §6), while the position
+// arithmetic, the acceptance and the rollback bookkeeping are here and are
+// testable without a GPU or a checkpoint. `tests/test_speculate.cpp` drives a
+// `SpecModel` that replays a recorded token stream, which is what pins the
+// design §10.2 invariant AT THE LOOP LEVEL: whatever the drafts were, greedy
+// mode emits the stream the M = 1 path would have emitted.
+struct VerifyRow {
+    uint32_t argmax = 0;        // the row's top-1: the model's token for p + j + 1
+    float    top1 = 0.0f;
+    float    top2 = 0.0f;
+    // Temperature 1 only: what gpu::DsparkStage::VerifyRows wrote for this row.
+    gpu::DsparkVerifyRow exact{};
+};
+
+class SpecModel {
+public:
+    virtual ~SpecModel() = default;
+
+    // One draft forward at `p0` (the position of the last accepted token, whose
+    // id is `last_token`): the K = lattice_k candidate lattice over the next
+    // five positions, and the confidence head's five raw scores.
+    virtual Result<void> draft_forward(uint32_t p0, uint32_t last_token, uint32_t lattice_k,
+                                       cpu::dspark::Lattice& lat,
+                                       std::span<float, cpu::dspark::kPositions> conf) = 0;
+
+    // One verify forward at M = tokens.size() = k + 1 over positions
+    // p0 .. p0 + k. `tokens[0]` is the last accepted token at `p0` (its KV is
+    // rewritten with the same value, which is idempotent) and `tokens[1..k]` are
+    // the drafted tokens at p0+1 .. p0+k. `cand` is `[M][cand_stride]` candidate
+    // ids for the rows that have them -- row j's lattice candidates -- and is
+    // empty in greedy mode, where no row needs more than its argmax.
+    virtual Result<void> verify_forward(uint32_t p0, std::span<const uint32_t> tokens,
+                                        std::span<const int32_t> cand, uint32_t cand_stride,
+                                        bool want_exact, std::span<VerifyRow> rows) = 0;
+
+    // The window ring, before the verify forward overwrites `m` slots a layer
+    // (docs/p3_dspark.md §3.5: the compressed rows and the carried group state
+    // do NOT need undoing; the ring does, because a rejected position's slot
+    // held a position that is still inside a later query's window).
+    virtual Result<void> snapshot_ring(uint32_t p0, uint32_t m) = 0;
+    // Undo positions p0 + accepted + 1 .. p0 + m - 1.
+    virtual Result<void> restore_ring(uint32_t p0, uint32_t accepted, uint32_t m) = 0;
+
+    // Commit `tokens` at positions p0 + 1 .. p0 + tokens.size(): the history,
+    // the mtp ring (one slot per accepted position, docs/p3_dspark.md §4.6) and
+    // the KV counts.
+    virtual Result<void> commit(uint32_t p0, std::span<const uint32_t> tokens) = 0;
+
+    // Of the last verify_forward's wall time, how much was spent waiting on
+    // expert I/O, and how large the batch's expert union was. Optional.
+    virtual double   last_stall_ms() const { return 0.0; }
+    virtual uint32_t last_union_experts() const { return 0; }
+    virtual uint64_t last_miss_bytes() const { return 0; }
+};
+
+// The cycle of design §7.12 / §10, over a SpecModel.
+//
+// Position arithmetic (docs/p3_dspark.md §3.5), which is the part that is easy
+// to get subtly wrong: a cycle that starts at `p0` with `last_token` verifies
+// `[last_token, path[0..k-1]]` at positions p0 .. p0+k, accepts a prefix of
+// length `a`, and emits `a + 1` tokens at p0+1 .. p0+a+1 -- the accepted drafts
+// plus the correction, which is row a's own answer. Positions p0+a+1 .. p0+k
+// were written by rejected drafts and their ring slots are restored. The next
+// cycle is (p0 + a + 1, the correction token).
+class Speculator {
+public:
+    Speculator(SpecModel& model, const SpecConfig& cfg) : model_(&model), cfg_(cfg) {}
+
+    // One cycle. Appends the emitted tokens to `out` and returns the cycle's
+    // accounting. `last_token` is the token at `p0`.
+    Result<SpecCycle> cycle(uint32_t p0, uint32_t last_token, std::vector<uint32_t>& out);
+
+    const SpecStats& stats() const { return stats_; }
+    const SpecConfig& config() const { return cfg_; }
+    // The k the last cycle chose, and whether the confidence head chose it.
+    uint32_t last_k() const { return last_k_; }
+    bool     last_k_from_confidence() const { return cfg_.k == 0; }
+
+private:
+    SpecModel*  model_ = nullptr;
+    SpecConfig  cfg_{};
+    SpecStats   stats_{};
+    uint32_t    last_k_ = 0;
+    uint64_t    rng_ = 0;               // the sampling mode's uniform stream
+    // Reused across cycles so a cycle allocates nothing.
+    cpu::dspark::Lattice lat_{};
+    std::vector<int32_t> cand_;
+    std::vector<uint32_t> batch_;
+    std::vector<VerifyRow> rows_;
+    std::vector<float> cand_logit_;
+    std::vector<float> lse_;
+    std::vector<int32_t> masked_, full_;
+
+    double next_u();
+};
+
 // --- the host mirror of gpu/shaders/dspark_verify.slang ----------------------
 //
 // Float for float, including the 256-lane strided partition and the fixed-shape

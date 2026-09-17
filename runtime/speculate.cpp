@@ -1,7 +1,11 @@
 #include "runtime/speculate.h"
 
+#include "core/profiler.h"
+
 #include <algorithm>
 #include <cmath>
+#include <array>
+#include <cstring>
 #include <format>
 
 namespace deepmoe::runtime {
@@ -53,6 +57,162 @@ std::string SpecStats::to_string() const {
         draft_ms / n, verify_ms / n, stall_ms / n, cpu_ms / n, rollback_ms / n,
         cycle_ms(), cycle_ms() > 0 ? tokens_per_cycle() * 1000.0 / cycle_ms() : 0.0,
         double(union_experts) / n, double(miss_bytes) / n / (1024.0 * 1024.0));
+}
+
+// --- the cycle ---------------------------------------------------------------
+
+namespace {
+double ms_between(TimePoint a, TimePoint b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+}
+}  // namespace
+
+double Speculator::next_u() {
+    // splitmix64, so the uniform stream is reproducible from SpecConfig::seed
+    // alone and a speculative run can be replayed.
+    rng_ += 0x9E3779B97F4A7C15ull;
+    uint64_t z = rng_;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    // (0, 1): 53 bits, offset so neither endpoint is attainable.
+    return (double(z >> 11) + 0.5) * (1.0 / 9007199254740992.0);
+}
+
+Result<SpecCycle> Speculator::cycle(uint32_t p0, uint32_t last_token,
+                                    std::vector<uint32_t>& out) {
+    using cpu::dspark::kPositions;
+    if (!model_) return fail(Err::FailedPrecondition, "Speculator has no model");
+    if (cfg_.mode == SpecMode::Off)
+        return fail(Err::FailedPrecondition, "Speculator::cycle with --spec off");
+    if (cfg_.lattice_k == 0 || cfg_.lattice_k > gpu::kDsVerifyMaxCand)
+        return fail(Err::InvalidArgument,
+                    std::format("lattice K must be 1..{}, not {}", gpu::kDsVerifyMaxCand,
+                                cfg_.lattice_k));
+    if (rng_ == 0) rng_ = cfg_.seed;
+
+    SpecCycle c;
+    const TimePoint t0 = Clock::now();
+
+    // 1. the draft: one forward, M = 5.
+    std::array<float, kPositions> conf{};
+    if (auto r = model_->draft_forward(p0, last_token, cfg_.lattice_k, lat_,
+                                       std::span<float, kPositions>(conf));
+        !r)
+        return std::unexpected(r.error());
+    const TimePoint t1 = Clock::now();
+    c.draft_ms = ms_between(t0, t1);
+
+    // 2. k. The confidence rule is a PREFIX rule -- whether position j is
+    //    verified depends only on positions < j -- which is what makes the
+    //    temperature-1 coupling exact (docs/p3_dspark.md §3.2).
+    uint32_t k = cfg_.k ? std::min<uint32_t>(cfg_.k, kPositions)
+                        : cpu::dspark::k_from_confidence(std::span<const float, kPositions>(conf),
+                                                         cfg_.theta);
+    // Never verify nothing: M = k + 1 >= 2 means a cycle always commits at
+    // least the token the model would have produced anyway, so speculation off
+    // and speculation on with k = 1 emit the same stream at the same cost plus
+    // one row.
+    if (k == 0) k = 1;
+    last_k_ = k;
+    c.k = k;
+
+    // 3. the path. Greedy takes the objective's path; temperature 1 takes an
+    //    ancestral sample, which is the q the acceptance rule is coupled to.
+    cpu::dspark::Path path{};
+    std::array<double, kPositions> u_path{};
+    if (cfg_.mode == SpecMode::Sample) {
+        for (uint32_t i = 0; i < kPositions; ++i) u_path[i] = next_u();
+        path = lat_.sample(std::span<const double, kPositions>(u_path));
+    } else {
+        path = lat_.path(cfg_.objective);
+    }
+    const auto path_tokens = lat_.tokens(path);
+
+    // 4. the verify batch: [last, path[:k]] at p0 .. p0 + k.
+    const uint32_t M = k + 1;
+    batch_.assign(1, last_token);
+    for (uint32_t j = 0; j < k; ++j) batch_.push_back(uint32_t(path_tokens[j]));
+
+    const bool exact = cfg_.mode == SpecMode::Sample;
+    const uint32_t K = cfg_.lattice_k;
+    const uint32_t stride = gpu::kDsVerifyMaxCand;
+    cand_.clear();
+    if (exact) {
+        // Row j scores the candidates of DRAFT position j, which is what
+        // `accept_sampling_exact` indexes: row 0 of the batch is the last
+        // accepted token and its answer is position 0's, row 1 is position 1's.
+        cand_.assign(size_t(M) * stride, -1);
+        for (uint32_t j = 0; j < M && j < kPositions; ++j)
+            for (uint32_t c2 = 0; c2 < K; ++c2)
+                cand_[size_t(j) * stride + c2] = lat_.token(j, c2);
+    }
+    rows_.assign(M, VerifyRow{});
+
+    if (auto r = model_->snapshot_ring(p0, M); !r) return std::unexpected(r.error());
+    const TimePoint t2 = Clock::now();
+    c.cpu_ms += ms_between(t1, t2);
+
+    if (auto r = model_->verify_forward(p0, batch_, cand_, stride, exact, rows_); !r)
+        return std::unexpected(r.error());
+    const TimePoint t3 = Clock::now();
+    c.verify_ms = ms_between(t2, t3);
+    c.stall_ms = model_->last_stall_ms();
+    c.union_experts = model_->last_union_experts();
+    c.miss_bytes = model_->last_miss_bytes();
+
+    // 5. acceptance.
+    cpu::dspark::Accept acc{};
+    if (cfg_.mode == SpecMode::Greedy) {
+        std::array<int32_t, kPositions + 1> argmax{};
+        for (uint32_t j = 0; j < M; ++j) argmax[j] = int32_t(rows_[j].argmax);
+        acc = cpu::dspark::accept_greedy(
+            std::span<const int32_t>(path_tokens.data(), k),
+            std::span<const int32_t>(argmax.data(), M), k);
+    } else {
+        cand_logit_.assign(size_t(kPositions) * stride, 0.0f);
+        lse_.assign(size_t(k) + 1, 0.0f);
+        masked_.assign(k ? k : 1, 0);
+        full_.assign(size_t(k) + 1, 0);
+        for (uint32_t j = 0; j < M; ++j) {
+            lse_[j] = rows_[j].exact.lse;
+            full_[j] = int32_t(rows_[j].exact.full_token);
+            if (j < k) masked_[j] = int32_t(rows_[j].exact.masked_token);
+            if (j < kPositions)
+                std::memcpy(cand_logit_.data() + size_t(j) * stride,
+                            rows_[j].exact.cand_logit, size_t(K) * sizeof(float));
+        }
+        std::array<double, kPositions> u_acc{};
+        std::array<double, kPositions + 1> u_res{};
+        for (uint32_t i = 0; i < kPositions; ++i) u_acc[i] = next_u();
+        for (uint32_t i = 0; i <= kPositions; ++i) u_res[i] = next_u();
+        acc = cpu::dspark::accept_sampling_exact(
+            lat_, path, k, cand_logit_, stride, lse_, masked_, full_,
+            std::span<const double, kPositions>(u_acc),
+            std::span<const double, kPositions + 1>(u_res));
+    }
+    const TimePoint t4 = Clock::now();
+    c.cpu_ms += ms_between(t3, t4);
+    c.accepted = acc.accepted;
+    c.emitted  = acc.n_emitted;
+
+    // 6. the rollback, then the commit. Only the rejected positions' ring slots:
+    //    p0 + a + 1 .. p0 + k. Position p0 + a + 1 is among them because the
+    //    correction token is not the drafted one -- the next cycle's row 0
+    //    rewrites that slot with the right value.
+    if (acc.accepted < k) {
+        if (auto r = model_->restore_ring(p0, acc.accepted, M); !r)
+            return std::unexpected(r.error());
+    }
+    std::vector<uint32_t> emitted;
+    emitted.reserve(acc.n_emitted);
+    for (uint32_t j = 0; j < acc.n_emitted; ++j) emitted.push_back(uint32_t(acc.tokens[j]));
+    if (auto r = model_->commit(p0, emitted); !r) return std::unexpected(r.error());
+    out.insert(out.end(), emitted.begin(), emitted.end());
+    c.rollback_ms = ms_between(t4, Clock::now());
+
+    stats_.add(c);
+    return c;
 }
 
 // --- the host mirror of dspark_verify.slang ---------------------------------

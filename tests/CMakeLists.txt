@@ -18,6 +18,7 @@ add_executable(deepmoe_tests
     test_gpu_dspark.cpp
     test_gpu_prefill.cpp
     test_dspark_tree.cpp
+    test_speculate.cpp
     test_tokenizer.cpp
     test_engram_tables.cpp
     test_kvstore.cpp
@@ -119,6 +120,12 @@ foreach(_t deepmoe_tests align layout types json profiler status bytes
         set_tests_properties("suite.${_t}" PROPERTIES LABELS "unit")
     endif()
 endforeach()
+
+# Track F1: the speculative cycle's arithmetic -- position alignment, acceptance,
+# which ring slots a rejection undoes, and design §10.2's invariant at the loop
+# level. No GPU, no checkpoint.
+add_test(NAME "suite.speculate" COMMAND deepmoe_tests "speculate.")
+set_tests_properties("suite.speculate" PROPERTIES LABELS "unit")
 
 # The design §7.12 DSpark draft kernels against tools/oracle_dspark.py's golden
 # draft cycle. Needs the ~2 GB of mtp + head weights and tests/data/dspark.
