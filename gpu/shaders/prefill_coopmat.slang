@@ -254,12 +254,17 @@ void stage_stage_x(uint3 gid, uint tid) {
     }
 }
 
+// pc.x_stride (0 = pc.k) is the SOURCE row stride and pc.x_col0 the source
+// column offset, so one group of a grouped linear (wo_a: 8 groups of 4,096
+// columns over one 32,768-wide row) stages its own slice of a wider plane.
 void stage_stage_f32(uint3 gid, uint tid) {
     const uint blocks = pc.k / kBlockK;
     const uint idx = gid_linear(gid) * 32 + tid;
     const uint m = idx / blocks, blk = idx % blocks;
     if (m >= pc.n) return;
-    const uint64_t xa = Ptr[kQ] + ((uint64_t)(pc.idx_off + m) * pc.k + (uint64_t)blk * 32) * 4;
+    const uint xs = (pc.x_stride == 0u) ? pc.k : pc.x_stride;
+    const uint64_t xa = Ptr[kQ] +
+        ((uint64_t)(pc.idx_off + m) * xs + (uint64_t)pc.x_col0 + (uint64_t)blk * 32) * 4;
     const uint64_t ya = Ptr[kX] + ((uint64_t)m * pc.k + (uint64_t)blk * 32) * 2;
     [unroll] for (uint i = 0; i < 32; ++i)
         *(uint16_t*)(ya + (uint64_t)i * 2) = (uint16_t)f32tof16(load_f32(xa + (uint64_t)i * 4));

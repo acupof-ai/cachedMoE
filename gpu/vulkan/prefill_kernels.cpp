@@ -492,9 +492,9 @@ Result<void> Prefill::op_act_quant(uint64_t x, uint32_t n, uint32_t d, uint64_t 
 Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
                               uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
                               float out_scale, uint32_t rows_per_group, uint64_t row_scale) {
-    if (n >= pcfg_.coopmat_dense_min_rows && rows_per_group == 0 && row_scale == 0 &&
+    if (n >= pcfg_.coopmat_dense_min_rows && row_scale == 0 &&
         out_scale == 1.0f && (flags & ~kPfFlagRound) == 0) {
-        auto used = op_gemm_coop(w, xfmt, x, xs, n, x_stride, y, flags);
+        auto used = op_gemm_coop(w, xfmt, x, xs, n, x_stride, y, flags, rows_per_group);
         if (!used) return std::unexpected(used.error());
         if (*used) return {};
     }
@@ -515,11 +515,20 @@ Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint
 }
 
 Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
-                                   uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags) {
+                                   uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
+                                   uint32_t rows_per_group) {
     const uint32_t R = w.rows, K = w.k, n32 = (n + 31) / 32 * 32;
-    if (R == 0 || R % 16 || K % 32 || x_stride != K || w.fmt == kPfFp32) return false;
-    if (uint64_t(R) * K * 2 > b_.w16.bytes || uint64_t(n32) * K * 2 > b_.x16.bytes ||
-        uint64_t(n32) * R * 4 > b_.dout.bytes)
+    if (R == 0 || R % 16 || K % 32 || w.fmt == kPfFp32) return false;
+    const uint32_t rpg = rows_per_group ? rows_per_group : R;
+    const uint32_t groups = R / rpg;
+    if (rpg % 16 || groups * rpg != R) return false;
+    // ungrouped: x is the [n][K] plane itself. grouped: x is [n][groups * K]
+    // and group g multiplies its own K columns (prefill_gemm.slang line 160).
+    if (x_stride != uint64_t(groups) * K) return false;
+    if (groups > 1 && xfmt != kPfActF32) return false;
+    if (uint64_t(R) * K * 2 > b_.w16.bytes ||
+        (uint64_t(n32) + kPfRowSlack) * K * 2 > b_.x16.bytes ||
+        (uint64_t(n32) + kPfRowSlack) * R * 4 > b_.dout.bytes)
         return false;
     const auto t0 = Clk::now();
     auto kd = runner_->kernel({"prefill_gemm", 3, w.fmt, 0, 8});
@@ -558,12 +567,15 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     }
     // pc.n = n real rows: the padded columns of x16 hold stale values whose
     // products only reach the padded rows of dout, which nobody copies
-    PfCoopPush px; px.n = n; px.k = K; px.idx_off = 0; px.flags = 0;
-    if (auto r = rec(*kx, &px, sizeof(px), groups_for32(uint64_t(n) * (K / 32))); !r)
-        return std::unexpected(r.error());
-    PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64;
-    if (auto r = rec(*km, &pg, sizeof(pg), pf_tok_groups(n32, tt), R / 16); !r)
-        return std::unexpected(r.error());
+    for (uint32_t g = 0; g < groups; ++g) {
+        PfCoopPush px; px.n = n; px.k = K; px.idx_off = 0; px.flags = 0;
+        px.x_stride = uint32_t(uint64_t(groups) * K); px.x_col0 = g * K;
+        if (auto r = rec(*kx, &px, sizeof(px), groups_for32(uint64_t(n) * (K / 32))); !r)
+            return std::unexpected(r.error());
+        PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64; pg.row0 = g * rpg;
+        if (auto r = rec(*km, &pg, sizeof(pg), pf_tok_groups(n32, tt), rpg / 16); !r)
+            return std::unexpected(r.error());
+    }
     PfElemPush pc; pc.n = n; pc.d = R; pc.flags = flags & kPfFlagRound;
     if (auto r = rec(*kc, &pc, sizeof(pc), groups_for(uint64_t(n) * (R / 16))); !r)
         return std::unexpected(r.error());

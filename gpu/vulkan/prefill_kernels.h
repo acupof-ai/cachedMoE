@@ -392,8 +392,13 @@ public:
     // op_gemm's option (a) branch: decode W to fp16 (skipped when the transit
     // already holds it), stage x as fp16, cooperative-matrix GEMM into a padded
     // plane, copy (and round) into y. One submit. False = not applicable.
+    // `rows_per_group` != 0 is the grouped form (wo_a: 8 groups of [1024][4096]
+    // over one [32768] row): the weight is decoded once and each group is one
+    // staging pass over its own column slice plus one GEMM into its own output
+    // rows. Only the fp32-activation staging supports it.
     Result<bool> op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
-                              uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags);
+                              uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
+                              uint32_t rows_per_group = 0);
     Result<void> op_rmsnorm(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint64_t w);
     Result<void> op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff, uint32_t coeff_stride,
                                  uint64_t norm_w, uint64_t out, uint64_t rs);

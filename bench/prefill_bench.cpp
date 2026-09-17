@@ -93,6 +93,8 @@ struct Options {
     // PrefillConfig::attn_pv_dim_tiles, swept in ONE process so the A/B sees
     // the same machine (docs/p4_prefill_speed.md §3.1).
     std::vector<uint32_t> attn_dv = {};
+    // PrefillConfig::coop_tok_tiles, swept the same way.
+    std::vector<uint32_t> coop_tt = {};
 };
 
 const char* env(const char* name) {
@@ -628,10 +630,13 @@ int run_prefill(const Options& o) {
 
         std::vector<uint32_t> dvs = o.attn_dv;
         if (dvs.empty()) dvs.push_back(0);   // 0 = leave PrefillConfig's default
+        std::vector<uint32_t> tts = o.coop_tt;
+        if (tts.empty()) tts.push_back(0);
         for (uint32_t replay : o.replays)
         for (uint32_t cmin : o.coop_min)
         for (uint32_t cden : o.coop_dense)
-        for (uint32_t dv : dvs) {
+        for (uint32_t dv : dvs)
+        for (uint32_t ctt : tts) {
             gpu::PrefillConfig pc;
             pc.max_tokens = n;
             pc.replay = replay ? replay : n;
@@ -643,6 +648,7 @@ int run_prefill(const Options& o) {
             if (const char* e = env("DEEPMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
             if (const char* e = env("DEEPMOE_PF_ATTN_DV")) pc.attn_pv_dim_tiles = static_cast<uint32_t>(std::atoi(e));
             if (dv) pc.attn_pv_dim_tiles = dv;
+            if (ctt) pc.coop_tok_tiles = ctt;
             if (const char* e = env("DEEPMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
             gpu::Prefill pf;
             if (auto r = pf.create(rig.device, rig.alloc, rig.runner, rig.manifest, rig.shards, rig.io,
@@ -655,7 +661,8 @@ int run_prefill(const Options& o) {
             const std::string dense = cden == UINT32_MAX ? "dense tiled" : std::format("dense coopmat n>={}", cden);
             const std::string mode = (pc.replay >= n ? std::string("oracle mode") : std::format("replay {}", pc.replay)) +
                                      " " + moe + " " + dense +
-                                     std::format(" pv_dv {} ht {}", pc.attn_pv_dim_tiles, pc.attn_head_tiles);
+                                     std::format(" pv_dv {} ht {} tt {}", pc.attn_pv_dim_tiles,
+                                                 pc.attn_head_tiles, pc.coop_tok_tiles);
             std::printf("\nN=%u (%s), %s, load = %s\n", n, source.c_str(), mode.c_str(), o.load.c_str());
             auto out = pf.run(prompt);
             if (!out) { std::fprintf(stderr, "prefill: %s\n", out.error().str().c_str()); return 1; }
@@ -767,6 +774,7 @@ int main(int argc, char** argv) {
         else if (a == "--handoff-dir") o.handoff_dir = next();
         else if (a == "--only")    o.only = next();
         else if (a == "--attn-dv") o.attn_dv = list(next());
+        else if (a == "--coop-tt") o.coop_tt = list(next());
         else { std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data()); return 2; }
     }
     if (o.model_dir.empty()) { std::fputs("set --model-dir or DEEPMOE_MODEL_DIR\n", stderr); return 2; }
