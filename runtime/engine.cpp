@@ -855,9 +855,48 @@ Result<void> Engine::cmd_submit(TimelineValue wait_value) {
     return {};
 }
 
+// Track R2 (docs/p4_kv_ux.md 2): the deadline on this wait used to be a flat
+// 120 s, which is a POLICY ("the GPU is ours alone"), not a correctness check.
+// A submission that is merely queued behind another process's work is
+// indistinguishable from a wedged device at the semaphore, and 120 s of queueing
+// is ordinary when several builds share this APU -- which is how a 64-step
+// window replay died as `timeline wait for 5579 timed out` after running for
+// 102 s. The budget is now DEEPMOE_GPU_WAIT_S (default 900 s), the wait is
+// taken in slices so a slow machine says so instead of looking hung, and the
+// failure names what it waited for and for how long.
+double Engine::gpu_wait_budget_s() {
+    static const double v = [] {
+        const char* e = std::getenv("DEEPMOE_GPU_WAIT_S");
+        const double x = e ? std::atof(e) : 0.0;
+        return x > 0.0 ? x : 900.0;
+    }();
+    return v;
+}
+
 Result<void> Engine::cmd_wait() {
     const TimePoint t0 = Clock::now();
-    auto r = fence_.wait(fence_value_, std::chrono::seconds(120));
+    const double budget_s = gpu_wait_budget_s();
+    Result<void> r{};
+    bool warned = false;
+    for (;;) {
+        r = fence_.wait(fence_value_, std::chrono::seconds(15));
+        if (r || r.error().code != Err::Cancelled) break;   // done, or a real error
+        const double waited = std::chrono::duration<double>(Clock::now() - t0).count();
+        if (!warned && waited >= 15.0) {
+            warned = true;
+            log_warn("engine: still waiting for GPU fence {} after {:.0f} s (token {}, {} submits "
+                     "this step) -- the queue is shared; giving it {:.0f} s "
+                     "(DEEPMOE_GPU_WAIT_S)", fence_value_, waited, token_, submits_, budget_s);
+        }
+        if (waited >= budget_s) {
+            r = fail(Err::Cancelled,
+                     std::format("the GPU did not signal fence {} within {:.0f} s (token {}, "
+                                 "{} submits this step). A queued submission and a wedged device "
+                                 "look the same here: raise DEEPMOE_GPU_WAIT_S if the machine is "
+                                 "shared", fence_value_, waited, token_, submits_));
+            break;
+        }
+    }
     wait_ms_ += ms_since(t0);
     if (r && inflight_guard_) {
         store_.set_completed_timeline(inflight_guard_);
@@ -1368,8 +1407,10 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
         else
             log_info("engine: P3 backfill started into {} free slots", store_.free_slots());
     }
-    log_info("engine: session -- KV store {} for {} positions, engram tables from {}",
-             human_bytes(kvs_.bytes()), max_context(),
+    log_info("engine: session -- KV store {} in {} slab(s) (largest {}) for {} positions at "
+             "capacity {}, engram tables from {}",
+             human_bytes(kvs_.bytes()), kvs_.slabs(), human_bytes(kvs_.largest_slab()),
+             max_context(), kvs_.capacity(),
              sc.engram_tables_dir.empty() ? std::string("derived from tokenizer.json") : sc.engram_tables_dir);
     return {};
 }
