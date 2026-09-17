@@ -214,10 +214,24 @@ void apply_kernel_env(gpu::PrefillConfig& pc) {
     // the cooperative-matrix one; DEEPMOE_PF_ATTN_HT: its head tiles per workgroup.
     if (const char* e = std::getenv("DEEPMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
     if (const char* e = std::getenv("DEEPMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
+    // docs/p4_prefill_speed.md §3: DEEPMOE_PF_ATTN_DV the P.V dim tiles (1 =
+    // the Track S geometry), DEEPMOE_PF_COOP_TT the coopmat token tiles (2 =
+    // Track S's), DEEPMOE_PF_GATE=host the host gate top-6. Each one alone
+    // restores that part of the pre-F3 arithmetic, which is what attributes a
+    // handoff change to a kernel.
+    if (const char* e = std::getenv("DEEPMOE_PF_ATTN_DV"))
+        pc.attn_pv_dim_tiles = static_cast<uint32_t>(std::atoi(e));
+    if (const char* e = std::getenv("DEEPMOE_PF_COOP_TT"))
+        pc.coop_tok_tiles = static_cast<uint32_t>(std::atoi(e));
+    if (const char* e = std::getenv("DEEPMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
+    if (const char* e = std::getenv("DEEPMOE_PF_WOA_COOP"))
+        pc.coop_grouped_dense = std::string(e) != "0";
     const std::string attn = pc.attn_coop ? std::format("coopmat, {} head tiles", pc.attn_head_tiles) : "legacy";
-    std::printf("    kernels: MoE coopmat at n >= %d, dense coopmat at n >= %d (-1 = never), attention %s\n",
+    std::printf("    kernels: MoE coopmat at n >= %d, dense coopmat at n >= %d (-1 = never), attention %s,"
+                " pv_dv %u, coop tt %u, gate %s, grouped dense %s\n",
                 static_cast<int32_t>(pc.coopmat_min_rows), static_cast<int32_t>(pc.coopmat_dense_min_rows),
-                attn.c_str());
+                attn.c_str(), pc.attn_pv_dim_tiles, pc.coop_tok_tiles,
+                pc.gate_topk_gpu ? "gpu" : "host", pc.coop_grouped_dense ? "coopmat" : "tiled");
 }
 
 std::vector<uint32_t> prompt_ids(const std::string& dir) {

@@ -493,6 +493,7 @@ Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint
                               uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
                               float out_scale, uint32_t rows_per_group, uint64_t row_scale) {
     if (n >= pcfg_.coopmat_dense_min_rows && row_scale == 0 &&
+        (rows_per_group == 0 || pcfg_.coop_grouped_dense) &&
         out_scale == 1.0f && (flags & ~kPfFlagRound) == 0) {
         auto used = op_gemm_coop(w, xfmt, x, xs, n, x_stride, y, flags, rows_per_group);
         if (!used) return std::unexpected(used.error());

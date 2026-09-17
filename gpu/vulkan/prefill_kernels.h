@@ -262,6 +262,9 @@ struct PrefillConfig {
     // traffic of a GEMM is ceil(n / (16 * this)) passes over the matrix: at
     // n = 512 and the old value of 2 that was 16 passes over wq_b's 84 MB.
     uint32_t coop_tok_tiles = 8;
+    // wo_a (and any grouped linear) on cooperative matrix instead of the
+    // tiled GEMV. false = the pre-F3 path, which is the reference.
+    bool     coop_grouped_dense = true;
 };
 
 // What a decode engine inherits (docs/p3_prefill.md §8.1).
