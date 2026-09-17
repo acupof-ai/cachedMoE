@@ -96,10 +96,17 @@ namespace {
 struct GateUpPush {
     uint32_t layer, experts_per_layer, num_slots, n_rows, k;
     float    swiglu_limit;
+    // Track T / DSpark: live activation columns. `M` is the specialisation
+    // constant (what the shader's arrays are sized for), this is what the
+    // dispatch computes -- 1 for a decode token, the batch size for a verify
+    // batch. It is the tail word so the first six keep their offsets, and every
+    // shader loop is `for (m = 0; m < pc.m; ++m)`.
+    uint32_t m = 1;
 };
 // design §7.9 dispatch B; mirrors DownPush.
 struct DownPush {
     uint32_t layer, experts_per_layer, num_slots, list_count, n_rows, k, flags;
+    uint32_t m = 1;
 };
 // The two tiny pre/post passes; mirror HQuantPush and XQuantPush.
 struct HQuantPush {
@@ -322,9 +329,9 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
     const uint32_t groups_b = dims_.hidden / rows_per_wg;
 
     GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
-                  dims_.inter, dims_.hidden, dims_.swiglu_limit};
+                  dims_.inter, dims_.hidden, dims_.swiglu_limit, live_columns_};
     DownPush   pb{dims_.layer, dims_.experts_per_layer, dims_.slots, list_count_,
-                  dims_.hidden, dims_.inter, accumulate_ ? 1u : 0u};
+                  dims_.hidden, dims_.inter, accumulate_ ? 1u : 0u, live_columns_};
     // One thread per 32-element block of the thing being quantised.
     HQuantPush ph{dims_.slots, list_count_, dims_.inter};
     XQuantPush px{dims_.hidden};
@@ -402,10 +409,10 @@ Result<void> MoeRunner::record_into(CommandBuffer& cmd, MoePhase phase) {
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter  / rows_per_wg;
     const uint32_t groups_b = dims_.hidden / rows_per_wg;
-    const GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
-                        dims_.inter, dims_.hidden, dims_.swiglu_limit};
+    GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
+                        dims_.inter, dims_.hidden, dims_.swiglu_limit, live_columns_};
     const DownPush   pb{dims_.layer, dims_.experts_per_layer, dims_.slots, list_count_,
-                        dims_.hidden, dims_.inter, accumulate_ ? 1u : 0u};
+                        dims_.hidden, dims_.inter, accumulate_ ? 1u : 0u, live_columns_};
     const HQuantPush ph{dims_.slots, list_count_, dims_.inter};
     const XQuantPush px{dims_.hidden};
     const uint32_t hq_groups =
@@ -447,8 +454,8 @@ Result<void> MoeRunner::record_gateup_alt(CommandBuffer& cmd, uint32_t count) {
     if (count == 0 || count > dims_.slots) return fail(Err::InvalidArgument, "count must be 1..slots");
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter / rows_per_wg;
-    const GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
-                        dims_.inter, dims_.hidden, dims_.swiglu_limit};
+    GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
+                        dims_.inter, dims_.hidden, dims_.swiglu_limit, live_columns_};
     const HQuantPush ph{dims_.slots, count, dims_.inter};
     const XQuantPush px{dims_.hidden};
     const uint32_t hq_groups =

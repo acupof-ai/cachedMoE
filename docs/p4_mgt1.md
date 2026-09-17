@@ -87,6 +87,68 @@ MoE，而 MoE 是**按需从 NVMe 取 expert** 的（docs/p4_hitrate.md §8：de
 不同 expert 集的 token 当一批跑（逐列 dispatch，见 docs/p4_dspark_runtime.md §2.2），
 要补的是并集驻留后每层 MoE 的 M=1/2/4/6 时间。
 
+### MoE(M)：不摊薄，是线性的（2026-09-17 实测）
+
+`tests/test_gpu_moe.cpp::mgt1.moe_m_curve`（`ctest -R bench.mgt1_moe_m_curve`，
+`DEEPMOE_MOE_M_ITERS` 设迭代数）：层 0 的一层 MoE，**每列 6 个互不相交的 expert**
+（M=6 时并集 36/384），全部先驻留，所以量到的是 kernel 代价、不含取 expert 的 I/O。
+
+**加列掩码（`pc.m`）之前**——每个 dispatch 都按编译期 M=6 算全部 6 列：
+
+| M | ms/层 | ms/token | C(M)/C(1) |
+|---:|---:|---:|---:|
+| 1 | 1.786 | 1.786 | 1.00× |
+| 2 | 3.615 | 1.808 | 2.02× |
+| 4 | 7.484 | 1.871 | 4.19× |
+| 6 | 11.674 | 1.946 | **6.54×** |
+
+**加列掩码之后**（`GateUpPush::m` / `DownPush::m`，shader 的每个 `for (m = 0; m < M; …)`
+改成 `m < pc.m`，`MoeRunner::set_live_columns`）：
+
+| M | ms/层 | ms/token | C(M)/C(1) |
+|---:|---:|---:|---:|
+| 1 | **1.044** | 1.044 | 1.00× |
+| 2 | 2.206 | 1.103 | 2.11× |
+| 4 | 5.114 | 1.279 | 4.90× |
+| 6 | 8.711 | 1.452 | **8.34×** |
+
+（`gpu_moe` 10 个用例全过，含 M=6 的 10 个变体对 oracle、以及分两次 submit 的
+split-A 逐位一致；所以掩码没有改变任何数值。）
+
+两个结论：
+
+1. **M=1 的 MoE 快了 1.7×（1.786 → 1.044 ms/层）**，纯粹因为不再算 6 列里用不到的 5 列。
+   这是 decode 热步的直接收益，不需要投机解码 —— 40 层省下约 30 ms/token。
+2. **MoE 仍然不随 M 摊薄**（8.34×），因为每列的 6 个 expert 是**不同**的：
+   `ids()` 是一组专家，所以一批不同路由的 token 只能逐列 dispatch，每列都要完整读一遍
+   那 6 个 expert 的权重。每条 token 的 MoE 代价基本恒定（1.04 → 1.45 ms/token），
+   多出来的部分是每列多一次 dispatch 的固定开销。**要让它摊薄，只能让一次 dispatch
+   同时吃多列的不同 expert 集**（`docs/p4_dspark_runtime.md` §2.2 的方案 C），
+   而那条路需要"每 token 一个物理槽行"的两级索引（共享 expert 那一行是关键），
+   目前的 `Ids[slot]` 单级索引表达不了。
+
+**结论与 C(M) 相反：MoE 在 M 上不摊薄，是"每 token 一份"的 6.5×。**
+原因是几何：`MoeRunner::ids()` 是 `[slots]`——一组专家——所以一批不同路由的 token
+只能逐列 dispatch（方案 A），每列的权重读取（6 routed × 18.8 MB + shared）都是完整的
+一份。所以：
+
+- **verify 一批的每层代价** = C(M) 链（3.4–4.7 ms）+ MoE(M)（11.7 ms）≈ **15–16 ms/层**
+  → 40 层 ≈ **620 ms**；同样的 6 个 token 逐个 M=1 走是 40 × (1.3 + 1.8) = 124 ms。
+  **在"每列不同 expert"的假设下，逐列 dispatch 的 verify 比顺序 M=1 慢 5 倍**，
+  这是必须在 runtime 之前解决的算术。
+- 它同时是一个**权重带宽**问题：M=6 时每层 MoE 要读 36 个 routed expert × 18.8 MB
+  ≈ 677 MB（加上 shared 与两段 run 的对齐），40 层 ≈ 27 GB/批。
+  对比 docs/p4_hitrate.md §8 实测的 8.3–9.2 GB/s，光权重就是 ~3 s/批。
+- 所以 §12.6 的并集数（≈26/层）不是"稍微多一点"，它是**决定性的**：
+  MoE 的代价 ≈ 并集大小 × 单 expert 读取，与 M 无关。三条出路，按代价：
+  1. **按 expert 分组**：把 6 列按 expert 归并成 ≤7 槽的组（`set_accumulate` 的多组
+     dispatch），并集 36 仍需 6 组；但 M=2/3 时并集 12 → 2 组，收益立现；
+  2. **kernel 侧真 batch MoE**：让 `ids` 变成 `[m][slots]`，一次 dispatch 吃所有列
+     （设计 §10.1.3 缺口 1 的"多组 dispatch"就是这条）；
+  3. **缩小 k**：k=5（M=6）在这个算术下不划算，k=1–2 时 verify 的 MoE 只有 2–3 列，
+     而 C(M) 那一半仍然便宜（M=2 的每 token 代价 0.6–0.8×）。**在 (1)/(2) 落地前，
+     DSpark 的 TPS 投影应该按小 k 算，而不是按 k=5。**
+
 ## 5. G2 判据（design §10.1.5 / §10.1.2）
 
 - G2 要求：M>1 的 fp8 投影 kernel（`wq_a` / `wq_b` / `wkv` / `wo_a` / `wo_b`）**逐 M 代价实测**，外加 **M=5 的 `head`**；MoE 的**并集形态**（>7 槽或多组 dispatch）也要逐 M 实测。

@@ -56,6 +56,11 @@ struct GateUpPush {
     uint n_rows;         // 2304
     uint k;              // 5120
     float swiglu_limit;  // 10.0 (design §2.4)
+    // Track T / DSpark: live activation columns. M is the specialisation
+    // constant (the array bound), `m` is how many columns this dispatch actually
+    // computes -- 1 for a decode token, the batch size for a verify batch. It is
+    // the tail of the struct so the first six words keep their offsets.
+    uint m;
 };
 [[vk::push_constant]] GateUpPush pc;
 
@@ -180,6 +185,11 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint rowInWg = tid / LanesPerRow;
     const uint rowBase = (gid.x * kRowsPerWg + rowInWg) * RowsPerLane;
 
+    // One expert set for the whole dispatch. A verify batch whose columns route
+    // to DIFFERENT experts needs the two-index form written up in
+    // docs/p4_dspark_runtime.md §2.2 -- TokenIds[m][slot] resolving to an expert
+    // id, then that id to a table row, the shared expert's row being the case
+    // that forces the second index -- and it is not implemented.
     const uint slot   = SlotList[gid.y];
     const uint rawId  = Ids[slot];
     const bool isFp8  = (Fp8Slots != 0) && ((rawId & kSlotFp8Bit) != 0);
@@ -262,21 +272,21 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         [unroll] for (uint g = 0; g < 2; ++g) {
                             const uint d1 = fp4_nibbles_to_i8x4(pw1, g);
                             const uint d3 = fp4_nibbles_to_i8x4(pw3, g);
-                            for (uint m = 0; m < M; ++m) {
+                            for (uint m = 0; m < pc.m; ++m) {
                                 const uint xw = sX[m * LanesPerRow * 8 + sublane * 8 + w * 2 + g];
                                 a1[m] = dot4add_i8packed(d1, xw, a1[m]);
                                 a3[m] = dot4add_i8packed(d3, xw, a3[m]);
                             }
                         }
                     }
-                    for (uint m = 0; m < M; ++m) {
+                    for (uint m = 0; m < pc.m; ++m) {
                         const float s = sXS[m * LanesPerRow + sublane];
                         p1[r][m] = float(a1[m]) * s;
                         p3[r][m] = float(a3[m]) * s;
                     }
                 }
                 for (uint r = 0; r < RowsPerLane; ++r)
-                    for (uint m = 0; m < M; ++m) {
+                    for (uint m = 0; m < pc.m; ++m) {
                         accGate[r][m] += ldexp(p1[r][m], e1[r] - 1);
                         accUp[r][m]   += ldexp(p3[r][m], e3[r] - 1);
                     }
@@ -295,7 +305,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                                                   float16_t(fp4_decode((pw3 >> (8 * j + 4)) & 0xFu)));
                         }
                     }
-                    for (uint m = 0; m < M; ++m) {
+                    for (uint m = 0; m < pc.m; ++m) {
                         float16_t2 xv[4];
                         read_x8_h2(m, sublane, w, xv);
                         for (uint r = 0; r < RowsPerLane; ++r) {
@@ -320,7 +330,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             d3[r][j] = fp4_decode((pw3 >> (4 * j)) & 0xFu);
                         }
                     }
-                    for (uint m = 0; m < M; ++m) {
+                    for (uint m = 0; m < pc.m; ++m) {
                         float xv[8];
                         read_x8(m, sublane, blk, w, xv);
                         [unroll] for (uint j = 0; j < 8; ++j)
@@ -332,7 +342,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 }
             }
             for (uint r = 0; r < RowsPerLane; ++r)
-                for (uint m = 0; m < M; ++m) {
+                for (uint m = 0; m < pc.m; ++m) {
                     accGate[r][m] += ldexp(p1[r][m], e1[r]);
                     accUp[r][m]   += ldexp(p3[r][m], e3[r]);
                 }
@@ -392,7 +402,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             g3[r][j] = fp4_pair_h2(pw3, j);
                         }
                     }
-                    for (uint m = 0; m < M; ++m) {
+                    for (uint m = 0; m < pc.m; ++m) {
                         const uint4 xr = X[m * (pc.k / 8) + blk * 4 + w];
                         float16_t2 xv[4];
                         [unroll] for (uint j = 0; j < 4; ++j) xv[j] = bit_cast<float16_t2>(xr[j]);
@@ -404,7 +414,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                     }
                 }
                 for (uint r = 0; r < RowsPerLane; ++r)
-                    for (uint m = 0; m < M; ++m) {
+                    for (uint m = 0; m < pc.m; ++m) {
                         p1[r][m] = float(t1[r][m].x) + float(t1[r][m].y);
                         p3[r][m] = float(t3[r][m].x) + float(t3[r][m].y);
                     }
@@ -425,7 +435,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 const uint xElems = M * pc.k;
                 const uint xBase4 = xq_value_words(xElems) / 4;   // in uint4
                 const uint xScale = xq_scale_words(xElems);
-                for (uint m = 0; m < M; ++m) {
+                for (uint m = 0; m < pc.m; ++m) {
                     const float sx = asfloat(XU[xScale + m * blocks + blk]);
                     // 32 int8 are two uint4, i.e. two global_load_dwordx4 --
                     // the same instruction count as one fp16 element group of
@@ -457,7 +467,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             q1[r][w * 2 + g] = fp4_nibbles_to_i8x4(w1q[r][w], g);
                             q3[r][w * 2 + g] = fp4_nibbles_to_i8x4(w3q[r][w], g);
                         }
-                for (uint m = 0; m < M; ++m) {
+                for (uint m = 0; m < pc.m; ++m) {
                     float xv[32];
                     [unroll] for (uint w = 0; w < 4; ++w) {
                         const uint4 xr = X[m * (pc.k / 8) + blk * 4 + w];
@@ -511,7 +521,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         }
                     }
                 }
-                for (uint m = 0; m < M; ++m) {
+                for (uint m = 0; m < pc.m; ++m) {
                     const uint4 xr = X[m * (pc.k / 8) + blk * 4 + w];
                     [unroll] for (uint j = 0; j < 8; ++j) {
                         const float xv = unpack_half(xr, j);
@@ -526,7 +536,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             // one lower than the fp4 path's.
             const int esh = ((XMode == 5 || XMode == 6) && !isFp8) ? 1 : 0;
             for (uint r = 0; r < RowsPerLane; ++r)
-                for (uint m = 0; m < M; ++m) {
+                for (uint m = 0; m < pc.m; ++m) {
                     accGate[r][m] += ldexp(p1[r][m], e1[r] - esh);
                     accUp[r][m]   += ldexp(p3[r][m], e3[r] - esh);
                 }
@@ -535,7 +545,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
 
     // --- SwiGLU, the route weight, and the write-out -------------------------
     for (uint r = 0; r < RowsPerLane; ++r) {
-        for (uint m = 0; m < M; ++m) {
+        for (uint m = 0; m < pc.m; ++m) {
             const float g = row_reduce(accGate[r][m], tid, sublane);
             const float u = row_reduce(accUp[r][m], tid, sublane);
             if (HQuant == 2) {

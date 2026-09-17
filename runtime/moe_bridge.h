@@ -68,6 +68,10 @@
 
 namespace deepmoe::runtime {
 
+// The staging activation conversion, exposed so a validator can reproduce the
+// bytes the kernel will read (moe_bridge.cpp's act_quant_to_fp16).
+void debug_act_quant_to_fp16(const float* x, uint16_t* out, float* scratch, uint32_t n);
+
 struct MoeBridgeConfig {
     // Passed straight to MoeSpec: docs/kernel_p2_moe.md §12's M = 1 champion.
     uint32_t lanes_per_row = 32;
@@ -123,6 +127,79 @@ public:
     const float* y_host() { return runner_.y(); }
     const gpu::MoeSpec& spec() const { return runner_.spec(); }
 
+    // --- Track T / DSpark: the verify batch (docs/p4_dspark_runtime.md §2.2) ---
+    //
+    // A speculative verify batch is M = k+1 <= 6 tokens whose top-k expert sets
+    // are DIFFERENT (docs/p3_dspark.md §12.6 measures a union of ~26 over the six
+    // columns), and MoeRunner can express exactly one expert set per dispatch --
+    // `ids()` is `[slots]`, the `[m][slots]` axis of `route_weights` is not an
+    // expert axis (docs/p4_mgt1.md §7 open item 1). So the batch is M dispatches
+    // over the same activations buffer, one column each.
+    //
+    // `stage_batch` does the host half ONCE for all columns: x out of
+    // GPU-visible memory, act_quant, the shared expert's table row, and each
+    // column's routing weights into its own row of `route_weights()`.
+    // `run_batch` then makes one column's expert set visible per dispatch, and
+    // pairs that dispatch with ITS OWN column: dispatch m reads x[m] and
+    // `route_weights()[m]`, and `call.y` is filled from y[m]. That is the whole
+    // contract -- the kernel has no live-count mask, so every dispatch rewrites
+    // all M columns of h and y and only the column whose x and routing weights
+    // the host actually fed is meaningful (docs/p4_dspark_runtime.md: the
+    // appendix added 2026-09-17).
+    //
+    // What is copied per column is the same activation the M = 1 path copies, in
+    // the same block layout, so a column's result is bit-for-bit the M = 1 result
+    // for that token (tests/test_gpu_moe.cpp checks exactly that).
+    struct BatchCall {
+        uint32_t layer = 0;
+        uint32_t m = 0;                      // 1..kMoeBatchMax
+        const uint32_t* ids = nullptr;       // [m][topk] routed expert ids, row m = token m
+        const float*    weights = nullptr;   // [m][topk] routing weights, already x route_scale
+        uint32_t        topk = 0;
+        const float*    x = nullptr;         // [m][hidden] ffn_norm outputs, host or GPU-visible
+        float*          y = nullptr;         // [m][hidden], written on the host
+        uint32_t        hidden = 0;
+    };
+    // The largest batch this interface accepts: gpu::kMgtMaxM, i.e. one verify
+    // batch of the DSpark cycle (k = 5 drafts + the last accepted token).
+    static constexpr uint32_t kMoeBatchMax = 6;
+
+    // Human-readable per-column cost of the last `run_batch`, so a caller can
+    // see how much of the batch is the per-dispatch overhead the MoE batching
+    // gap costs. `gpu_ms` is the sum over columns.
+    struct BatchTiming {
+        double   stage_ms = 0.0;    // the one-off host half (x read + act_quant + shared row)
+        double   table_ms = 0.0;    // the per-column expert table rows
+        double   gpu_ms = 0.0;      // sum of the columns' dispatch time
+        double   wall_ms = 0.0;     // everything, as the caller experiences it
+        uint32_t columns = 0;
+        std::string to_string() const;
+    };
+
+    // Which column a dispatch's x comes from is NOT a knob.
+    //
+    // A dispatch reads x[column], `route_weights()[column]` and slots its h and
+    // y in that same column, so column m of the batch has to be staged in column
+    // m of every one of those buffers -- which is what `stage_batch` and
+    // `run_batch` do. An `XLayout` enum used to live here whose `OneColumn` mode
+    // pushed each column into slot 0 instead; it was dead weight and worse than
+    // that: `run_batch` clobbered all six x columns with the current column's
+    // activation whatever the enum said, so the enum was inert *and* every
+    // column was evaluated against `route_weights()[0]`, which is what made
+    // columns 1..M-1 disagree with the M = 1 run by 15-22% of |y|max
+    // (that appendix). Deleted rather than repaired: the
+    // per-column shape costs one act_quant for the whole batch instead of one
+    // per column and is bit-exact.
+    Result<void> stage_batch(const BatchCall& call);
+    // One column a dispatch; column m's dispatch is read back from y[m].
+    Result<void> run_batch(const BatchCall& call);
+    const BatchTiming& batch_timing() const { return batch_timing_; }
+
+    // The x the runner ended up holding, for a validator that wants to compare
+    // what was staged with what the kernel reads. `[m][hidden]`, fp16. Columns
+    // >= the last call's `m` still hold the call before's activations.
+    const uint16_t* debug_x() { return runner_.x_fp16(); }
+
     // Whether the shared expert is being computed. False when the layer's
     // shared-expert weights are not in the pinned set, in which case `stage`
     // fails rather than returning only the routed half and looking right.
@@ -158,6 +235,10 @@ private:
     std::vector<float>        xf_;
     std::vector<uint16_t>     xq_;
     Timing                    timing_{};
+    // The verify batch's staging buffers, sized to kMoeBatchMax columns.
+    std::vector<float>        xf_batch_;
+    std::vector<uint16_t>     xq_batch_;
+    BatchTiming               batch_timing_{};
 };
 
 }  // namespace deepmoe::runtime
