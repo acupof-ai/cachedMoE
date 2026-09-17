@@ -188,7 +188,14 @@ struct MgtGemvPush {
     uint32_t rows = 0, k = 0, scale_cols = 0, rows_per_group = 0, part_stride = 0;
     uint32_t x_stride = 0, y_stride = 0, head_dim = 0, rope_dim = 0, p0 = 0, window = 0;
     float    eps = 0.0f;
+    // kGemmFlagInBf16: the activation pointer holds bf16 rather than fp32. The
+    // DSpark draft chain's inputs (`main_hidden` after the three target layers'
+    // hc mean, `main_x` out of main_norm) are bf16 in the reference
+    // (docs/p4_dspark_runtime.md §2.3); everything else about the dispatch --
+    // amax, the ActQuant round trip, the LDS layout -- is unchanged.
+    uint32_t flags = 0;
 };
+inline constexpr uint32_t kGemmFlagInBf16 = 1u;
 // mgt1_attn.slang
 struct MgtAttnPush {
     uint32_t n_kv = 0, n_win = 0, n_ovf = 0, head_dim = 0, rope_dim = 0, score_stride = 0;

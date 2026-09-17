@@ -53,6 +53,10 @@ static const uint kXStride    = kBlockK / 2 + 1;                          // 17
 static const uint kW = 0, kS = 1, kX = 2, kY = 3, kP = 4;
 static const uint kNormW = 5, kRope = 6, kRingVal = 7, kRingScale = 8;
 static const uint kOvfVal = 9, kOvfScale = 10, kKvOut = 11;
+// pc.flags bits. `X` is bf16 rather than fp32: the DSpark draft chain's
+// activations (`main_hidden`, `main_x`) are bf16 in the reference, and reading
+// them as fp32 would be reading garbage. Only the staged load changes.
+static const uint kGemmFlagInBf16 = 1u;
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
 
@@ -69,6 +73,7 @@ struct Mgt1GemvPush {
     uint  p0;              // 4: position of token 0
     uint  window;          // 4: 128
     float eps;             // 3, 4: rms_norm_eps
+    uint  flags;           // kGemmFlag* below
 };
 [[vk::push_constant]] Mgt1GemvPush pc;
 
@@ -99,6 +104,13 @@ float stage_amax(float a, uint tid, uint sub, uint tpb) {
 
 // Stage `kc` elements of every token column, starting at element `k0` of the
 // column (plus `xoff`, wo_a's group). Whole workgroup, uniform control flow.
+//
+// `kGemmFlagInBf16` (push constant `flags`) says the activation is bf16 rather
+// than fp32: DSpark's draft chain (docs/p4_dspark_runtime.md §2.3) feeds
+// `main_proj` the bf16 `main_hidden` the reference keeps, and `wkv(main_x)`
+// where `main_x` is `main_norm`'s bf16 output. Reading it here is the only
+// difference -- the amax, the ActQuant round trip and the LDS layout are the
+// same, and the reference quantises exactly this bf16 value.
 void stage_cols(uint64_t xaddr, uint xoff, uint k0, uint kc, uint tid) {
     const uint tpb = stage_tpb();
     const uint E = kBlockK / tpb;                 // elements this thread owns
@@ -110,14 +122,31 @@ void stage_cols(uint64_t xaddr, uint xoff, uint k0, uint kc, uint tid) {
     float amax = 0.0f;
     [unroll] for (uint z = 0; z < 32; ++z) v[z] = 0.0f;
     if (active) {
-        const uint64_t base = xaddr + ((uint64_t)m * pc.x_stride + xoff + k0
-                                       + (uint64_t)blk * kBlockK + sub * E) * 4;
-        [unroll] for (uint i = 0; i < 8; ++i) {
-            if (i * 4 >= E) continue;
-            const uint4 w = load16(base + (uint64_t)i * 16);
-            [unroll] for (uint j = 0; j < 4; ++j) {
-                v[i * 4 + j] = asfloat(w[j]);
-                amax = max(amax, abs(v[i * 4 + j]));
+        const uint elem = xoff + k0 + blk * kBlockK + sub * E;
+        if ((pc.flags & kGemmFlagInBf16) != 0u) {
+            const uint64_t base = xaddr + ((uint64_t)m * pc.x_stride + elem) * 2;
+            [unroll] for (uint i = 0; i < 8; ++i) {
+                if (i * 4 >= E) continue;
+                // Four bf16 a load pair: two halves a word, low half first
+                // (gpu/shaders/dspark_gemv.slang reads its activations the same
+                // way).
+                const uint64_t a = base + (uint64_t)i * 8;
+                const uint w0 = load_u32(a), w1 = load_u32(a + 4);
+                v[i * 4 + 0] = bf16_decode(w0 & 0xFFFFu);
+                v[i * 4 + 1] = bf16_decode(w0 >> 16);
+                v[i * 4 + 2] = bf16_decode(w1 & 0xFFFFu);
+                v[i * 4 + 3] = bf16_decode(w1 >> 16);
+                [unroll] for (uint j = 0; j < 4; ++j) amax = max(amax, abs(v[i * 4 + j]));
+            }
+        } else {
+            const uint64_t base = xaddr + ((uint64_t)m * pc.x_stride + elem) * 4;
+            [unroll] for (uint i = 0; i < 8; ++i) {
+                if (i * 4 >= E) continue;
+                const uint4 w = load16(base + (uint64_t)i * 16);
+                [unroll] for (uint j = 0; j < 4; ++j) {
+                    v[i * 4 + j] = asfloat(w[j]);
+                    amax = max(amax, abs(v[i * 4 + j]));
+                }
             }
         }
     }

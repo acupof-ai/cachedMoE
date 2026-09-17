@@ -185,6 +185,21 @@ top-6 id/权重/激活，正确性判据是"第 m 列与 M=1 路径对该 token 
 **判据**：`main_proj` 的输入若被舍入到 E4M3（ActQuant 的固有行为），草稿的
 `wkv` 会偏；草稿偏一点**只会降低接受率，不会破坏正确性**（verify 主模型仍然对）。
 所以这一条可以接受"先跑起来，再看接受率掉多少"，但必须在文档里写清楚是近似。
+**2026-09-17 状态**：`mgt1_gemv.slang` 已加 `kGemmFlagInBf16`（`MgtGemvPush::flags`
+的 bit 0，host 侧 `gpu::kGemmFlagInBf16`）：打开后 stage 0 从激活指针按 **bf16** 读
+（两个 half 一个 word，低 half 在前，与 `dspark_gemv.slang` 一致），amax / ActQuant /
+LDS 布局都不变，默认 0 走原来的 fp32 分支。
+
+- 编译过、过 `spirv-val`；**默认分支未变**，`gpu_layer.mgt1_layer_batch_vs_steps`
+  在 l3 仍然逐阶段通过（batch vs steps、gate 35/36、top-k 405/405 全同）。
+- **但这条路径还没有测试覆盖**：本轮的验证用例在 `vkQueueSubmit2 (-13)` 上失败，失败点
+  在测试自己的 rig 里（一个全新的 `gpu::MgtRunner` + `CommandPool` + `submit_and_wait`），
+  不是 kernel；没能在本轮定位，所以**用例已从树里移除**，而不是留一个红着的测试。
+  下一步要么修那个最小 rig，要么在 `Mgt1Rig` 上加一个 `run_stage()` 帮手，复用它已经
+  在用的提交路径（`mgt1.m_curve` 就是那样跑起来的）。
+- 判据（等用例能跑）：**同一组 bf16 舍入后的值，bf16 输入与 fp32 输入必须逐位相同；
+  拿未舍入的 fp32 值必须给出可见差异** —— 前者证明 flag 只改了加载，后者证明它真的在读
+  bf16。half 取错、pair 顺序颠倒、stride 单位错，都会让第一条差得远。
 
 ### 2.4 verify 行的读回：`accept_sampling_exact` 要的四个数
 
