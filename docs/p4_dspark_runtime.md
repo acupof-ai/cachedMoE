@@ -4,6 +4,10 @@
 本文是 **DSpark 从"离线 oracle"走到"runtime 里能跑"** 的交接：循环本身长什么样、
 今天哪些部件已经存在、还缺什么、按什么顺序补，以及每个缺口的判据。
 
+**状态（2026-09-18，Track F1 更新）：§2.2 与 §2.4 的两个 kernel 缺口已关闭，循环的 CPU 半边
+（`runtime/speculate.h`）已实现并有判据；仍然跑不起来的唯一原因是 `Engine::forward_batch`
+不存在——见 §6。下面 §0–§5 是 2026-09-17 的缺口分析，保留原样，§6 是执行结果与修正。**
+
 **状态（2026-09-17）：循环本身未实现。** 本文是缺口分析 + 实施计划，不是完成报告。
 之所以先写这一篇而不是直接写循环：把草稿链和 verify batch 逐 dispatch 拆开对过之后，
 **runtime 侧缺的不是"循环"这段胶水，而是三个 kernel 能力**；在它们存在之前写出来的
@@ -273,6 +277,223 @@ head 的 M=5 从 42 ms 到 19 ms 是 Track T 的下一项），接受长度 2.6�
   reheat（`docs/p4_hitrate.md` §7）与这里是同一条线上的两件事，谁先落地都要重测 hit。
 - **P4-R2（KV）**：§1.1 #5 的回滚入口应该和 `runtime/session.h` 的
   `rollback_context` / `park_context` 放在一起，而不是新开一套。
+
+---
+
+---
+
+## 6. Track F1（2026-09-18）：并集 MoE、verify 读回、循环本身，以及它们改了什么账
+
+本节是 §2/§3 的执行结果。**三件事落地了，一件没有**，下面按"能跑什么 / 数字 / 还缺什么"写。
+
+### 6.1 §2.2 的缺口关闭了：一次 dispatch 吃整批的 expert 并集（方案 C，没有新 kernel）
+
+§2.2 的三条出路里，方案 C（"kernel 侧 `ids[m][slots]` 的两级索引"）当时被判为"最大工作量"。
+**这个判断是错的，而且错在一个具体的地方**：`MoeRunner` 的槽轴本来就不是 7。
+
+* `MoeDims::slots` 决定 `ids` / `slot_list` / `route_weights` / `h` 的大小；
+* 两个 shader 都把它当 **push constant**（`GateUpPush::num_slots` / `DownPush::num_slots`）读；
+* `route_weights` 已经是稠密的 `[m][slots]`——**这正是并集需要的那张矩阵**。
+
+所以并集不需要两级索引，只需要把槽轴放宽：
+
+```
+ids[u]               = 整批第 u 个互不相同的 expert
+route_weights[m][u]  = token m 对它的路由权重，没路由到就是 0
+最后一个槽            = fp8 shared expert，每列权重 1
+```
+
+一次 A + hquant + B 就算完所有列，**每个 expert 的权重整批只读一遍**，而不是"每个路由到它的
+列读一遍"。新接口（`runtime/moe_bridge.h`）：
+
+| | |
+|---|---|
+| `union_experts(call)` | 去重后的 expert 列表——**Planner/ExpertStore 必须先按它 P0 取齐**，与 M=1 的 `stage_rows` 是同一个契约 |
+| `stage_batch_union(call)` | 主机侧一次：每列 x + act_quant、并集槽表、`[m][slots]` 权重矩阵、shared 行、每个 routed expert 的指针表行 |
+| `run_batch_union(call)` | stage + 一对 dispatch + 等待 + 逐列读回 |
+| `record_batch_union(cmd)` | 只记录 dispatch，让 verify 的 MoE 跟着层的 submit 走（M=1 的 `record` 那样） |
+| `union_info()` | 列数、并集大小、stage/table/gpu/wall 分项 |
+
+**正确性**（`gpu_moe.the_verify_batch_runs_its_expert_union_once`，层 0，M=6，
+对照的是逐列路径——它已经被 `..._takes_one_expert_set_per_column` 钉死为逐位等于 M=1）：
+
+| 路由 | 并集 | 最差列 |
+|---|---:|---:|
+| 互不相交 | 36 / 36 | **0.000e+00** |
+| 有重叠 | 21 / 36 | **0.000e+00** |
+| 故意反序（每列同样 6 个 expert，奇数列倒着排） | 6 / 36 | 1.775e-08 of \|y\|max |
+| 权重全 0 的一列 vs 只跑 shared expert | — | **0.000e+00** |
+
+读法：**只要并集的槽序与该列自己的顺序一致就逐位相同**——gate 的输出顺序是一致的，所以
+真实路由落在这一格；不一致时差的只是 fp32 槽和的结合律（`reordered` 那行是故意造出来的）。
+权重 0 的槽贡献**恰好 +0.0**：dispatch A 把 h 乘上权重，而 `moe_hquant` 把块 amax 下限钉在
+1e-4，所以全零的 h 量化成零而不是 NaN。
+
+**代价**（`ctest -R bench.mgt1_moe_union_m_curve`，层 0，全部驻留，40 次迭代；
+⚠️ 本轮机器上同时有另外四个 worktree 在编译/跑测，绝对毫秒数比 §4 的表高 1.5–1.8×，
+**只有同一次运行里背靠背测出来的比值是可信的**）：
+
+| 列的 expert 集 | M | 并集 | 逐列 ms/层 | 并集 ms/层 | 并集 ms/token | 并集/逐列 |
+|---|---:|---:|---:|---:|---:|---:|
+| 互不相交（最坏） | 6 | 36/36 | 15.04 | 15.36 | 2.560 | 0.98× |
+| 有重叠（真实形状） | 2 | 9/12 | 3.80 | 2.80 | 1.400 | **1.36×** |
+| 有重叠 | 4 | 15/24 | 8.36 | 6.07 | 1.517 | **1.38×** |
+| 有重叠 | 6 | 21/36 | 19.63 | 9.69 | 1.615 | **2.03×** |
+
+并集**正好只花并集那么多钱**：列之间没有共享时它与逐列打平（没有可省的），
+有重叠时省下的就是重叠的那部分。这是 MoE(M) **第一次在 M 上次线性**。
+
+### 6.2 §2.4 的缺口关闭了：`dspark_verify.slang`
+
+温度 1 的精确接受要的四个数，现在是一个 stage：`gpu::DsparkStage::VerifyRows`
+（每行一个 workgroup，M 个 workgroup，整批一次 mapped 读回，每行 68 个 word——
+把整行拷回来是每行 3.1 MB）。抽样用 Gumbel-max，
+`argmax_i(l_i/T + g_i)`，`g_i = -log(-log(u_i))`：它**精确等于** `softmax(l/T)`，
+限制在一个子集上就精确等于 softmax 限制在那个子集上——所以"屏蔽掉 C_j 的样本"
+就是同一次扫描跳过候选，不需要重新归一化。均匀数是 `(seed, row, id)` 的
+counter-based hash 而不是流，因为每个线程按自己的顺序走自己那部分行。
+
+判据（`gpu_dspark.verify_rows_give_exact_acceptance_its_four_numbers`，**不需要 checkpoint**）：
+
+* 6 行 × 129,280：候选 logit 与主机镜像 `runtime::emulate_verify_row` **逐位相同**，
+  lse 与镜像逐位相同、与 float64 重算差 < 1e-6，**两个采样 token 全部相同**
+  （77.6 万个 Gumbel key 里一个近似平局都没有）；
+* 屏蔽样本 4,000 次抽样**一次都没抽到候选**；
+* 它的分布：total variation **0.1139**，而精确采样器在这个抽样数下的噪声底是 **0.1184**，
+  χ² 210.8 / 222 格——与精确采样器不可区分。这一条不依赖镜像是对的。
+
+### 6.3 循环本身：`runtime/speculate.h`
+
+循环与两次 forward 是可分的，这里就在那里切开：`SpecModel` 是循环向模型要的四件事
+（`draft_forward` / `verify_forward` / `snapshot_ring` + `restore_ring` / `commit`），
+`Speculator::cycle` 是位置对齐、k 规则、选路径、接受、回滚记账。
+
+位置对齐（§3.5，也是最容易错的一段）：周期 `(p0, last_token)` 验证
+`[last_token, path[:k]]` 于 p0 .. p0+k，接受长度 a，**发出 a+1 个 token** 于
+p0+1 .. p0+a+1（接受的草稿 + 修正 token，修正就是第 a 行自己的答案）；
+p0+a+1 .. p0+k 是被拒位置，环槽要恢复——**p0+a+1 也在里面**，因为修正 token 不是草稿的那个，
+下一周期的第 0 行会重写那一格。confidence 规则给出 k = 0 时下钉到 1，
+所以一个周期至少提交模型本来就会产出的那一个 token。
+
+`ctest -R suite.speculate`（无 GPU、无 checkpoint）：
+
+* `greedy_reproduces_the_unspeculated_stream`：草稿质量（全错 → 全对）× k ∈ {1,2,3,5}，
+  20 组配置、每组 64+ token，**每一组发出的 token 流都与无投机逐 token 的流完全相同**，
+  接受长度从 0.00 扫到 4.91 / verify、每周期 1.00 → 5.91 个 token。
+  这是 design §10.2 的不变式**在循环这一层**的判据（前提是"verify 行的 argmax = 该位置 M=1 的
+  argmax"，那是 §14 单独量的批边界效应）；
+* `a_rejection_restores_exactly_the_rejected_slots`：每周期一次快照、只有拒绝时才恢复、
+  且只恢复被拒位置的槽；
+* `confidence_chooses_k_by_the_prefix_rule`：θ = 0.3/0.5/0.7/0.95 → k = 4/3/2/1；
+* `a_misconfigured_cycle_refuses`：`--spec off`、K > 64 都是报错而不是静默空转。
+
+### 6.4 还缺的一件：`Engine::forward_batch`（循环跑不起来的唯一原因）
+
+**M>1 的批量前向今天只存在于 DecodeLayer 这一层**，由 `tests/test_gpu_layer.cpp` 从导出的
+trace 驱动；Engine 里没有 `gpu::MgtRunner`、没有 batch scratch，40 层从来没有在 Engine 里
+串起来跑过。所以 §6.3 的循环有 `SpecModel` 的测试实现，没有真实现，
+**§3 第 5 步（贪心投机循环）和 §3 第 3 步都没有完成**。
+
+写 `Engine::forward_batch(p0, tokens[M])` 具体要补的（已逐行核对过）：
+
+1. **Engine 侧的成员**：`gpu::MgtRunner mgt_`、第二个 `gpu::GpuScratch bscratch_`（测试用 64 MB）、
+   `layer_.create_batch(mgt_, bscratch_, gpu::kMgtMaxM, max_context)`，
+   以及 batch 的 logits `[M][129280]` fp32（M=6 是 3.10 MB）、sample `[M][4]`、
+   topk_out `[M][kMgtTopKRecordWords]`（66.6 KB/行）、topk_hist `[M][256][256]`（256 KB/行）。
+2. **`BatchStep` 的两个新字段**（M=1 的 `LayerStep` 没有对应物）：
+   * `list` —— `BatchScratch::lists` 的下标：窗口层是 0，否则是 `1 + ced_[L].idx_src 在
+     index source 里的名次`（就是 `test_gpu_layer.cpp` 的 `ced_src()`）。要在 bring-up 时
+     跟 `build_ced_plan()` 一起建一张 `layer -> list` 表；
+   * `key_sel` —— 位 mm 表示"查询 mm 自己那一组在这一批里完成了"，即
+     `run_compressor && ((p0+mm+1) % ratio) == 0`。它取代了 M=1 的 `cmp_complete`。
+   `idx_key_own = view->idx_key`；`idx_key_pub = kvs_.layer(pub_index_k_)->idx_key`，
+   而 `pub_index_k_` 要按批的**最后一个**位置更新，并在回滚时恢复。
+   `kv` 里唯一要覆盖的平面是 `kv.cmp_kv = kvs_.layer(ced_[L].cmp_src)->cmp_kv`；
+   `kv.top_idx` 批路径不读（列表来自 `BatchScratch`）。
+3. **每批一次（不是每层）**：`prepare_ced(p0 + M - 1)`，然后
+   `write_batch_window_lists(layer_.batch(), c.sliding_window, p0, M)`。
+4. **M 个 token 的 embedding**：`Engine::embed_token` 写的是 M=1 的 `DecodeScratch`；
+   批路径要把同样的东西写进 `bb.x`（`[M][hc_mult][hidden]`，行距 `hc_mult*hidden` 个 float）
+   和 `bb.mix_a`（**每行 128 字节**，清零后第 0 个 float = 1.0）。
+5. **MoE**：`gate_ids`/`gate_weights` 是 `[M][16]` 跨距 16，而 `BatchCall::ids/weights` 是
+   `[m][topk]` 紧排，要重排；`x = bb.u.host`（`[M][hidden]` 连续）。
+   然后 `union_experts` → Planner 取齐 → `stage_batch_union` → `record_batch_union`。
+   批路径**没有** `set_moe_output`，所以要么让 bridge 往 `bb.moe_y.host` 写，
+   要么每次 `bind_batch` 之后把 `MhcPost/MhcMix/MhcFinal/MhcClose` 的 `slot::kA`
+   改指到 `union_y_address()`（注意 `MhcPostB/MhcMixB/MhcFinalB` 的 `kA` 是 `b.wob.addr`，不能动）。
+6. **engram 层（1 和 14）在 M>1 上根本没有 runtime 实现**。kernel 侧有
+   `MgtStage::EngramGemv/EngramGate` 和 `mgt1_engram.slang`（它要 `[M][24][256]` 的行平面），
+   但 C++ 里**从来没有人 bind 或 record 过这两个 stage**；`EngramRunner` 的
+   `fetch`/`record`/`Planes` 全是单 token 的，每层只有一份行平面。
+   今天唯一可行的做法是**每行各跑一遍 M=1 的 `fetch` + `record`**，x_in/x_out 指到批流的第 m 行；
+   真正的批 engram 是 Track T 的活，没做。
+7. **`record_tail_batch` 从来没有被调用过**（全仓库只有 docs 提到它）。它自己会跑
+   `MhcClose` + `MhcFinal`，所以第 39 层**不要**再调 `record_close_batch`；
+   `norm_w`/`head_w` 就是 `Engine` 的那两个。逐行 argmax 从 `sample[m*4]` 读
+   （与 `gpu::SampleOut` 同布局）；逐行 top-k 的解析与 `Engine::sample_into` 同形，
+   但常数是 mgt1 的（`kHdr=8`、256 线程、`kCap=32`、`kBins=256`），不是 `sample_topk.slang` 的。
+8. **回滚**：`KvStore::snapshot_ring(slots, layers)` / `restore_ring`，
+   `slots = {(p0+m) % window}`、`layers = 0..39`，M=6 时 40×6×(512+16) B ≈ **127 KB**。
+   批的 wkv 尾巴自己写 M 个环槽（`mgt1_gemv.slang:308-325`，被逐出的行只落到
+   **临时的** `ovf_val/ovf_scale`，下一层就被覆盖，不是备份）。
+   压缩行和组内进位**不用回滚**（§3.5）。主机侧还要自己恢复的：`history_`、`pub_index_k_`、
+   `DecodeLayer::cand_position_/cand_n_cmp_`。
+9. **CLI**：`--spec {off,greedy,sample} --spec-k` 没有接。`runtime::parse_spec_mode` /
+   `SpecConfig` 已经在，`GenerateOptions::speculative` 也已经在，
+   但 `cli/` 属于另一条 track 的文件，本轮没有动它，留给合并的人一行 wiring。
+
+### 6.5 把账重算一遍：并集之后，k 应该取多少（go / no-go）
+
+§2.2 当时的结论是"逐列 dispatch 的 verify 比顺序 M=1 慢约 5×"。那个数是**加列掩码之前**的
+（MoE M=6 = 11.674 ms/层）。掩码之后是 8.711（`docs/p4_mgt1.md` §4），并集再把它按并集大小缩。
+用 §4 的两张表 + 本节的比值，**按 kernel 时间**重算一层：
+
+| | 每层 ms |
+|---|---:|
+| 6 个 token 顺序走 M=1 | 6 × (1.283 + 1.044) = **13.96** |
+| verify M=6，逐列 MoE | 3.384 + 8.711 = **12.10** |
+| verify M=6，并集 MoE（并集 26/36） | 3.384 + 8.711 × 26/36 = **9.67** |
+
+也就是说**kernel 时间上 verify 已经便宜了**（并集后 0.69×）。但这不是 decode 的瓶颈：
+`docs/p4_mgt1.md` §4 的端到端 A/B 量得很清楚——一个 token 是 **274 ms**，其中
+**2,269 MB ÷ ~8.3 GB/s ≈ 273 ms 是 NVMe 读**，kernel 只占 ~2%。所以决定 tok/s 的是
+**每个发出的 token 读多少字节**，而字节 ∝ **并集大小**（每个 expert 整批读一遍）。
+
+设 u(M) 是 M 列的 top-6 并集大小。§12.6 只有一个实测点（M=6 → ≈26），线性外插
+u(M) ≈ 6 + 4(M−1)；每周期发出的 token 数用 §12.2 的贪心 `E[tokens](k)`：
+
+| k | M=k+1 | u(M)（外插） | E[tokens](k) | expert 读/发出 token | 相对无投机（6） |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 2 | 10 | ~1.9 | 5.3 | **0.88×** |
+| 2 | 3 | 14 | ~2.6 | 5.4 | 0.90× |
+| 3 | 4 | 18 | ~3.2 | 5.6 | 0.94× |
+| 5 | 6 | 26 | 3.93 | 6.6 | **1.10×** |
+
+**结论**：
+
+1. **并集把 k 小的那一端从"亏"变成"小赚"**（k=1–2 省 ~10% 的 expert 字节），
+   但 **k=5 仍然是亏的**——并集随 M 几乎线性长（每多一列多 ~4 个 expert），
+   而接受长度长得比它慢。§2.2 的"按小 k 算"这条结论**并集之后依然成立**。
+2. 把 0.88× 的字节和 19–42 ms 的 `T_draft` 一起代进去，k=1 贪心大约是
+   1.9 个 token / (1.76 × 274 + ~30) ≈ **268 ms/token**，对 274 ms **约 2%**。
+   模型给的 ×1.18–1.32 **在这台机器上没有出现**，原因不是接受率（接受率就是 §12.2 的那些数），
+   而是**代价模型不对**：×1.18–1.32 假设 verify 的代价随 M 摊薄，
+   而在一个 NVMe 受限的 MoE 上，代价随**并集**长，不随 M 摊薄。
+3. **go / no-go：NO-GO，不要把投机设成默认**。判据不是接受率，是上面那张字节表，
+   而它要先被真实路由证伪或证实——见下。
+
+### 6.6 下一步，按价值排序
+
+1. **量真实的 u(M)**（半天，不需要循环）：在真实 decode 上取每个位置的 gate 输出，
+   对连续 M 个位置求并集，得到 u(2..6) 的分布而不是一个外插。
+   §6.5 那张表整个挂在它上面，而它今天只有一个点（§12.6 的 26）。
+   如果真实的 u(M) 明显低于 6+4(M−1)（例如连续 token 的路由比"随机 6 选"更相关），
+   go / no-go 会翻。
+2. **`Engine::forward_batch`**（§6.4 的 1–8），2–3 天。没有它循环跑不起来，
+   §6.5 的账也只能按 kernel 表算而不能实测。engram 的 M>1 先走"每行一遍 M=1"。
+3. **草稿链进 runtime**（§3 第 6 步），3–5 天，而且要 7.2 GB 的 mtp expert 常驻。
+4. 采样模式的端到端频率检验（§3 第 7 步）——CPU 半边（`accept_sampling_exact`）和
+   GPU 半边（§6.2）都齐了，缺的只是把它们接到 2 上。
 
 ---
 
