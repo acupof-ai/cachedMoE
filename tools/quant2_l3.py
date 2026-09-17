@@ -120,7 +120,10 @@ def install_expert_hook(dsref, variant: str, steps, counter: dict):
 def load_prompt(which: str, traces: str, tests_data: str, n: int) -> list[int]:
     if which == "l3_64":
         with io.open(os.path.join(tests_data, "l2", "index.json"), encoding="utf-8") as f:
-            return [int(i) for i in json.load(f)["prompt_ids"]]
+            idx = json.load(f)
+        # `prefill_len` is what the reference actually ran; the id list can carry
+        # one more (the token the L3 export's step 0 consumes).
+        return [int(i) for i in idx["prompt_ids"]][:int(idx["prefill_len"])]
     if which == "corpus2k":
         src = os.path.join(traces, "longctx", "ctx4k", "index.json")
         if not os.path.exists(src):
@@ -247,7 +250,7 @@ def compare(base_path: str, var_path: str, ids: list[int]) -> dict:
                 n_nll += 1
     return {"positions": n,
             "argmax_agreement": round(agree / n, 4),
-            "base_argmax_in_variant_top5": round(top5 / n, 4),
+            "variant_argmax_in_fp4_top5": round(top5 / n, 4),
             "mean_kl_nats": round(kl_sum / n, 5),
             "ppl_fp4": round(float(np.exp(nll_a / max(n_nll, 1))), 4),
             "ppl_variant": round(float(np.exp(nll_b / max(n_nll, 1))), 4),

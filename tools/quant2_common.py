@@ -411,6 +411,10 @@ def pack_codes(codes: np.ndarray) -> np.ndarray:  # noqa: D401
     element along K" convention (design section 12); a kernel that already knows
     how to walk a K-contiguous FP4 row walks this one the same way.
     """
+    assert codes.max(initial=0) < 4, (
+        "pack_codes is the 2-bit format; the 3-bit and 4-bit rows in the scheme "
+        "table are error controls, not proposed formats, and are measured "
+        "through their reconstruction only")
     r = codes.shape[0]
     flat = codes.reshape(r, -1)
     assert flat.shape[1] % 4 == 0
