@@ -42,9 +42,9 @@
 //
 // Slabs. The store is not one allocation: its regions are laid out in a flat
 // space cut into slabs of at most `KvStoreConfig::slab_bytes` (2 GiB, the
-// `maxMemoryAllocationSize` of design 1.1), each region wholly inside one
+// `maxMemoryAllocationSize` of design §1.1), each region wholly inside one
 // slab so a plane's address plus a row offset is still one address. That is
-// what lifts design 11.3's "KvStore is ONE allocation, so max_context <~ 41.7K":
+// what lifts design §11.3's "KvStore is ONE allocation, so max_context <~ 41.7K":
 // with per-source planes 64K needs 213 MB in one slab anyway, and the cut only
 // starts to matter past ~600K positions.
 //
@@ -362,7 +362,7 @@ private:
     std::vector<uint32_t> rows_hw_;      // per owner: rows that may hold data
     std::vector<uint32_t> n_cmp_, n_kv_;
     // The -inf score_state fill, built once in ordinary host memory so clear()
-    // can memcpy it (7.1 rule 10).
+    // can memcpy it (§7.1 rule 10).
     std::vector<float>    ninf_;
     uint32_t              win_lo_ = 0;
     static constexpr int64_t kSlotEmpty = -1, kSlotUnknown = -2;

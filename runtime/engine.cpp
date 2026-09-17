@@ -855,7 +855,7 @@ Result<void> Engine::cmd_submit(TimelineValue wait_value) {
     return {};
 }
 
-// Track R2 (docs/p4_kv_ux.md 2): the deadline on this wait used to be a flat
+// Track R2 (docs/p4_kv_ux.md §2): the deadline on this wait used to be a flat
 // 120 s, which is a POLICY ("the GPU is ours alone"), not a correctness check.
 // A submission that is merely queued behind another process's work is
 // indistinguishable from a wedged device at the semaphore, and 120 s of queueing

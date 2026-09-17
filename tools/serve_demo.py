@@ -30,6 +30,13 @@ class Server:
             cmd += ["--cache-gb", str(args.cache_gb)]
         if args.no_kv_disk:
             cmd += ["--no-kv-disk"]
+        elif args.kv_dir:
+            # A private, empty directory, so the run does not inherit a previous
+            # one's parked sessions and the LRU spill is this run's.
+            if os.path.isdir(args.kv_dir):
+                for f in os.listdir(args.kv_dir):
+                    os.remove(os.path.join(args.kv_dir, f))
+            cmd += ["--kv-dir", args.kv_dir]
         self.log = open(args.log, "ab")
         self.out = open(args.out, "w", encoding="utf-8") if args.out else None
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -106,6 +113,8 @@ def main():
     ap.add_argument("--cache-gb", type=int, default=16)
     ap.add_argument("--max-parked", type=int, default=2,
                     help="parked sessions kept in memory; 2 makes the third one evict the first")
+    ap.add_argument("--kv-dir", default=os.path.join(REPO, "build", "serve_demo_kv"),
+                    help="SSD prefix-cache directory, emptied before the run")
     ap.add_argument("--no-kv-disk", action="store_true",
                     help="do not fall back to the SSD prefix cache, so parking is measured alone")
     ap.add_argument("--log", default=os.path.join(REPO, "build", "serve_demo.log"))

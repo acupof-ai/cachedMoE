@@ -601,7 +601,7 @@ DEEPMOE_TEST(kvdisk, roundtrip) {
     p.kv.planes.push_back(pl);
     REQUIRE_OK(runtime::save_parked_context(p, opt, "unit/session one"));
 
-    // The on-disk format, byte for byte (docs/p4_kv_ux.md 6). Asserting the
+    // The on-disk format, byte for byte (docs/p4_kv_ux.md §5). Asserting the
     // exact size is how "the window ring is NEVER written" is checked: there is
     // no room in the file for anything but what is counted here, and a window
     // would add 40 x 128 x 528 B = 2.70 MB whatever the context.

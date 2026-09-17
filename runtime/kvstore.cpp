@@ -207,8 +207,8 @@ uint32_t KvStore::Layout::slab_of(uint64_t off) const {
 // The regions in a flat space cut into slabs of at most `cfg_.slab_bytes`: a
 // region that would cross the cap starts the next slab instead, so every
 // region -- and so every row address derived from one -- lies in a single
-// allocation (design 5.3; the 2 GiB maxMemoryAllocationSize of 1.1 is what
-// 11.3 called "max_context <~ 41.7K").
+// allocation (design §5.3; the 2 GiB maxMemoryAllocationSize of §1.1 is what
+// §11.3 called "max_context <~ 41.7K").
 KvStore::Layout KvStore::layout_for(uint32_t cap) const {
     Layout l;
     l.cap = cap;
@@ -357,7 +357,7 @@ void KvStore::clear() {
     // unwritten slot an equal partner (model.py, `torch.full(..., -torch.inf)`).
     //
     // -inf is not a byte pattern, so the fill is built ONCE in ordinary host
-    // memory and memcpy'd in: design 7.1 rule 10 forbids a scalar loop over
+    // memory and memcpy'd in: design §7.1 rule 10 forbids a scalar loop over
     // GPU-visible memory, and written that way this one is 16,384 uncached
     // stores (~230 ns each = 3.8 ms) on every clear() -- every context reset,
     // every restore, every rollback that resets.
@@ -420,7 +420,7 @@ Result<void> KvStore::reserve(uint32_t positions) {
     const KvStoreConfig& c = cfg_;
     // Region by region: the two layouts may cut their slabs differently, so
     // "the fixed head is one memcpy" no longer holds. Each of these is still
-    // one bulk copy (7.1 rule 10) between two mappings of GPU-visible memory.
+    // one bulk copy (§7.1 rule 10) between two mappings of GPU-visible memory.
     auto dst = [&](uint64_t off) {
         const uint32_t si = nl.slab_of(off);
         return static_cast<std::byte*>((*nb)[si].host_ptr) + (off - nl.slab_at[si]);
