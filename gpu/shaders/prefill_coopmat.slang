@@ -162,30 +162,79 @@ void stage_attn_score(uint3 gid, uint tid) {
 // --- stage 4: attention P.V ---------------------------------------------------
 // kW = P16 [B][H][E], kX = G16 [B][E][D], kY = O f32 [B][H][D] (written, not
 // accumulated). pc.k = H.
+// CmRowTilesPerWg is the number of 16-wide OUTPUT DIM tiles one accumulator
+// group covers (0 = 1). It is what fixes the kernel's memory order: the
+// contraction here is over `t` (entries), the output index is `d` (dims), and G
+// is stored [E][D] -- so a `d`-outer / `t`-inner loop walks G with a 16*D*2 =
+// 16 KiB stride, touching 32 B of every 1 KiB row, and does it D/16 = 32 times
+// over. Holding `dv` dim tiles at once makes each visited G row 32*dv bytes of
+// CONTIGUOUS memory and cuts the number of passes over G to D/(16*dv). At
+// D = 512, dv = 8 that is 4 passes of 256 B rows instead of 32 passes of 32 B.
+// ht (head tiles) and dv multiply the live accumulators, so the host keeps
+// ht * dv <= 8.
 void stage_attn_pv(uint3 gid, uint tid) {
     const uint E = CmRows, D = CmCols, H = pc.k;
     const uint ht = (CmTokTiles == 0u) ? 1u : CmTokTiles;
+    const uint dv = (CmRowTilesPerWg == 0u) ? 1u : CmRowTilesPerWg;
     const uint b = pc.x_off + gid.x;
     const uint h0 = gid.y * 16 * ht;
     half*  P = (half*)Ptr[kW];
     half*  G = (half*)Ptr[kX];
     float* O = (float*)Ptr[kY];
-    for (uint d = 0; d < D; d += 16) {
+    if (dv == 1u) {
+        // the head-tile form: one dim tile, up to four head tiles
+        for (uint d = 0; d < D; d += 16) {
+            TileC c0 = TileC(0.0f);
+            TileC c1 = TileC(0.0f);
+            TileC c2 = TileC(0.0f);
+            TileC c3 = TileC(0.0f);
+            for (uint t = 0; t < E; t += 16) {
+                TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, (b * E + t) * D + d, D);
+                { TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, (b * H + h0 + 0) * E + t, E); c0 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c0); }
+                if (ht > 1) { TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, (b * H + h0 + 16) * E + t, E); c1 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c1); }
+                if (ht > 2) { TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, (b * H + h0 + 32) * E + t, E); c2 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c2); }
+                if (ht > 3) { TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, (b * H + h0 + 48) * E + t, E); c3 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c3); }
+            }
+            c0.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (b * H + h0 + 0) * D + d, D);
+            if (ht > 1) c1.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (b * H + h0 + 16) * D + d, D);
+            if (ht > 2) c2.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (b * H + h0 + 32) * D + d, D);
+            if (ht > 3) c3.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (b * H + h0 + 48) * D + d, D);
+        }
+        return;
+    }
+    // the dim-tile form: one head tile (the host forces ht = 1), dv dim tiles,
+    // so the A tile is loaded once for dv multiplies and G is read in runs.
+    const uint prow = (b * H + h0) * E;
+    for (uint d = 0; d < D; d += 16 * dv) {
         TileC c0 = TileC(0.0f);
         TileC c1 = TileC(0.0f);
         TileC c2 = TileC(0.0f);
         TileC c3 = TileC(0.0f);
+        TileC c4 = TileC(0.0f);
+        TileC c5 = TileC(0.0f);
+        TileC c6 = TileC(0.0f);
+        TileC c7 = TileC(0.0f);
         for (uint t = 0; t < E; t += 16) {
-            TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, (b * E + t) * D + d, D);
-            { TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, (b * H + h0 + 0) * E + t, E); c0 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c0); }
-            if (ht > 1) { TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, (b * H + h0 + 16) * E + t, E); c1 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c1); }
-            if (ht > 2) { TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, (b * H + h0 + 32) * E + t, E); c2 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c2); }
-            if (ht > 3) { TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, (b * H + h0 + 48) * E + t, E); c3 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c3); }
+            const uint go = (b * E + t) * D + d;
+            TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, prow + t, E);
+            { TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, go + 16 * 0, D); c0 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c0); }
+            { TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, go + 16 * 1, D); c1 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c1); }
+            if (dv > 2) { TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, go + 16 * 2, D); c2 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c2); }
+            if (dv > 3) { TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, go + 16 * 3, D); c3 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c3); }
+            if (dv > 4) { TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, go + 16 * 4, D); c4 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c4); }
+            if (dv > 5) { TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, go + 16 * 5, D); c5 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c5); }
+            if (dv > 6) { TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, go + 16 * 6, D); c6 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c6); }
+            if (dv > 7) { TileB g = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, go + 16 * 7, D); c7 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, g, c7); }
         }
-        c0.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (b * H + h0 + 0) * D + d, D);
-        if (ht > 1) c1.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (b * H + h0 + 16) * D + d, D);
-        if (ht > 2) c2.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (b * H + h0 + 32) * D + d, D);
-        if (ht > 3) c3.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (b * H + h0 + 48) * D + d, D);
+        const uint oo = (b * H + h0) * D + d;
+        c0.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, oo + 16 * 0, D);
+        c1.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, oo + 16 * 1, D);
+        if (dv > 2) c2.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, oo + 16 * 2, D);
+        if (dv > 3) c3.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, oo + 16 * 3, D);
+        if (dv > 4) c4.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, oo + 16 * 4, D);
+        if (dv > 5) c5.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, oo + 16 * 5, D);
+        if (dv > 6) c6.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, oo + 16 * 6, D);
+        if (dv > 7) c7.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, oo + 16 * 7, D);
     }
 }
 

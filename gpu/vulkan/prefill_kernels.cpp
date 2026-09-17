@@ -244,6 +244,12 @@ uint32_t groups_for(uint64_t threads) { return static_cast<uint32_t>((threads + 
 // prefill_coopmat.slang runs 32 threads a workgroup (one wave).
 uint32_t groups_for32(uint64_t threads) { return static_cast<uint32_t>((threads + 31) / 32); }
 
+// prefill_coopmat stage 0's CmTokTiles, clamped to what the shader unrolls,
+// and the workgroup count for `n` tokens at that geometry. kPfRowSlack rows of
+// every staged plane cover the padding the last workgroup reads and writes.
+uint32_t pf_tok_tiles(uint32_t want) { return want < 1 ? 1u : want > 8 ? 8u : want; }
+uint32_t pf_tok_groups(uint32_t n, uint32_t tt) { return (n + 16 * tt - 1) / (16 * tt); }
+
 // A device address `rows` rows into a buffer of `stride`-byte rows.
 uint64_t at(const GpuBuffer& b, uint64_t rows, uint64_t stride) { return b.dev_addr + rows * stride; }
 float* fptr(const GpuBuffer& b, uint64_t elems = 0) { return static_cast<float*>(b.host_ptr) + elems; }
@@ -313,15 +319,24 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         {&b_.woas, B * (cfg.o_groups * cfg.o_lora_rank / 32) * 4},
         {&b_.attn, N * dim * 4},
         {&b_.fx, N * dim * 4}, {&b_.fxq, N * dim * 2}, {&b_.fxs, N * (dim / 32) * 4},
-        {&b_.gate, N * cfg.n_routed_experts * 4}, {&b_.y, N * dim * 4},
-        {&b_.hplane, (N * (k6 + 1) + 32) * inter * 4}, {&b_.hq, (N * (k6 + 1) + 32) * inter * 2},
-        {&b_.hs, (N * (k6 + 1) + 32) * (inter / 32) * 4},
+        {&b_.gate, N * cfg.n_routed_experts * 4},
+        {&b_.gids, N * k6 * 4}, {&b_.gwts, N * k6 * 4},
+        {&b_.y, N * dim * 4},
+        {&b_.hplane, (N * (k6 + 1) + kPfRowSlack) * inter * 4},
+        {&b_.hq, (N * (k6 + 1) + kPfRowSlack) * inter * 2},
+        {&b_.hs, (N * (k6 + 1) + kPfRowSlack) * (inter / 32) * 4},
         {&b_.csr_idx, (N * (k6 + 1) + 64) * 4}, {&b_.csr_rw, (N * (k6 + 1) + 64) * 4},
-        {&b_.x16, std::max((N + 32) * dim, (B + 32) * cfg.o_groups * cfg.o_lora_rank) * 2},
-        {&b_.h16, (N + 32) * inter * 2},
-        {&b_.gu, 2 * (N + 32) * inter * 4},
-        {&b_.dout, std::max({(N + 32) * dim, (B + 32) * cfg.num_attention_heads * hd,
-                             (N + 32) * cfg.q_lora_rank}) * 4},
+        // kPfRowSlack, not 32: a cooperative-matrix workgroup covers
+        // 16 * CmTokTiles tokens, so the last one of a dispatch reads and
+        // writes up to that many rows past n (their products only reach rows
+        // nobody copies, but the memory has to exist).
+        {&b_.x16, std::max((N + kPfRowSlack) * dim,
+                           (B + kPfRowSlack) * cfg.o_groups * cfg.o_lora_rank) * 2},
+        {&b_.h16, (N + kPfRowSlack) * inter * 2},
+        {&b_.gu, 2 * (N + kPfRowSlack) * inter * 4},
+        {&b_.dout, std::max({(N + kPfRowSlack) * dim,
+                             (B + kPfRowSlack) * cfg.num_attention_heads * hd,
+                             (N + kPfRowSlack) * cfg.q_lora_rank}) * 4},
         {&b_.w16, std::max({dim * inter, uint64_t(cfg.num_attention_heads) * hd * cfg.q_lora_rank,
                             dim * cfg.o_groups * cfg.o_lora_rank}) * 2},
         {&b_.jobs, (uint64_t(cfg.n_routed_experts) + 2) * 64},
@@ -509,7 +524,8 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     const auto t0 = Clk::now();
     auto kd = runner_->kernel({"prefill_gemm", 3, w.fmt, 0, 8});
     auto kx = runner_->kernel({"prefill_coopmat", xfmt ? 1u : 2u, 0, 0, 8, 3, 0});
-    auto km = runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, R, K});
+    const uint32_t tt = pf_tok_tiles(pcfg_.coop_tok_tiles);
+    auto km = runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, R, K, tt});
     auto kc = runner_->kernel({"prefill_elem", 10});
     for (auto* k : {&kd, &kx, &km, &kc})
         if (!*k) return std::unexpected(k->error());
@@ -546,7 +562,8 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     if (auto r = rec(*kx, &px, sizeof(px), groups_for32(uint64_t(n) * (K / 32))); !r)
         return std::unexpected(r.error());
     PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64;
-    if (auto r = rec(*km, &pg, sizeof(pg), n32 / 32, R / 16); !r) return std::unexpected(r.error());
+    if (auto r = rec(*km, &pg, sizeof(pg), pf_tok_groups(n32, tt), R / 16); !r)
+        return std::unexpected(r.error());
     PfElemPush pc; pc.n = n; pc.d = R; pc.flags = flags & kPfFlagRound;
     if (auto r = rec(*kc, &pc, sizeof(pc), groups_for(uint64_t(n) * (R / 16))); !r)
         return std::unexpected(r.error());
@@ -580,7 +597,21 @@ Result<void> Prefill::op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff,
     s[0] = h; s[1] = out; s[2] = norm_w; s[3] = coeff; s[4] = rs;
     PfElemPush p; p.n = n; p.d = cfg_->hidden_size; p.a0 = coeff_stride; p.a1 = kHc;
     p.eps = static_cast<float>(cfg_->rms_norm_eps);
-    return flush_one(*k, &p, sizeof(p), groups_for(n));
+    // one wave (32 lanes) per row, not one thread: prefill_elem.slang stage 2
+    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * 32));
+}
+
+Result<void> Prefill::op_gate_topk(uint64_t scores, uint64_t bias, uint32_t n, uint64_t ids,
+                                   uint64_t wts) {
+    auto k = runner_->kernel({"prefill_elem", 11});
+    if (!k) return std::unexpected(k.error());
+    uint64_t* s = runner_->slots(*k);
+    s[0] = scores; s[1] = ids; s[2] = bias; s[3] = wts;
+    PfElemPush p;
+    p.n = n; p.d = cfg_->n_routed_experts; p.a0 = cfg_->num_experts_per_tok;
+    p.f1 = static_cast<float>(cfg_->routed_scaling_factor);
+    tag_ = "gate top-6 (gpu)";
+    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * 32));
 }
 
 Result<void> Prefill::op_sinkhorn(uint64_t raw, uint64_t out, uint32_t n, uint64_t base,
@@ -656,7 +687,14 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     auto kg = runner_->kernel({"prefill_attn", 3});
     auto ks = runner_->kernel({"prefill_coopmat", 3, 0, 0, 8, E, D, ht});
     auto km = runner_->kernel({"prefill_attn", 4});
-    auto kp = runner_->kernel({"prefill_coopmat", 4, 0, 0, 8, E, D, ht});
+    // P.V holds `dv` 16-dim output tiles instead of `ht` head tiles: the
+    // contraction is over the entries, so dim tiles are what make the gathered
+    // KV reads contiguous (prefill_coopmat.slang stage 4).
+    uint32_t dv = pcfg_.attn_pv_dim_tiles;
+    dv = dv <= 1 ? 1u : dv >= 8 ? 8u : dv >= 4 ? 4u : 2u;
+    while (dv > 1 && D % (16 * dv)) dv >>= 1;
+    const uint32_t pv_ht = dv > 1 ? 1u : ht;
+    auto kp = runner_->kernel({"prefill_coopmat", 4, 0, 0, 8, E, D, pv_ht, dv});
     auto kf = runner_->kernel({"prefill_attn", 5});
     for (auto* k : {&kq, &kg, &ks, &km, &kp, &kf})
         if (!*k) return std::unexpected(k->error());
@@ -691,7 +729,7 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     mark("attn score tiles");
     if (auto r = rec(*km, &p, sizeof(p), groups_for(uint64_t(b) * H)); !r) return r;
     mark("attn softmax");
-    if (auto r = rec(*kp, &pc, sizeof(pc), b, gy); !r) return r;
+    if (auto r = rec(*kp, &pc, sizeof(pc), b, H / (16 * pv_ht)); !r) return r;
     mark("attn P.V tiles");
     if (auto r = rec(*kf, &p, sizeof(p), groups_for(uint64_t(b) * H * (D / 16))); !r) return r;
     mark("attn finish");
@@ -979,8 +1017,9 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
     auto kdec = runner_->kernel({"prefill_gemm", 3, 0, 0, 8});
     auto kx1  = runner_->kernel({"prefill_coopmat", 1, 0, 0, 8, 1, 0});
     auto kx2  = runner_->kernel({"prefill_coopmat", 1, 0, 0, 8, 2, 0});
-    auto kgu  = runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, inter, dim});
-    auto kdn  = runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, dim, inter});
+    const uint32_t tt = pf_tok_tiles(pcfg_.coop_tok_tiles);
+    auto kgu  = runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, inter, dim, tt});
+    auto kdn  = runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, dim, inter, tt});
     auto ksw  = runner_->kernel({"prefill_elem", 8});
     auto ksc  = runner_->kernel({"prefill_elem", 9});
     const uint32_t coop_min = pcfg_.coopmat_min_rows;
@@ -1026,11 +1065,11 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             PfCoopPush px; px.n = n32; px.k = dim; px.idx_off = jb.rows_off; px.flags = kPfFlagGather;
             if (auto r = rec(*kx1, &px, sizeof(px), groups_for32(uint64_t(n32) * (dim / 32))); !r) return r;
             PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64;
-            if (auto r = rec(*kgu, &pg, sizeof(pg), n32 / 32, inter / 16); !r) return r;
+            if (auto r = rec(*kgu, &pg, sizeof(pg), pf_tok_groups(n32, tt), inter / 16); !r) return r;
             pd.idx_off = 1;
             if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
             pg.idx_off = n32;
-            if (auto r = rec(*kgu, &pg, sizeof(pg), n32 / 32, inter / 16); !r) return r;
+            if (auto r = rec(*kgu, &pg, sizeof(pg), pf_tok_groups(n32, tt), inter / 16); !r) return r;
             PfElemPush ps; ps.n = n; ps.d = inter; ps.a0 = n32; ps.a1 = jb.h_off; ps.a2 = jb.rows_off;
             ps.f1 = static_cast<float>(c.swiglu_limit); ps.flags = round;
             if (auto r = rec(*ksw, &ps, sizeof(ps), groups_for(uint64_t(n) * (inter / 16))); !r) return r;
@@ -1041,7 +1080,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             pd.idx_off = 2; pd.rows = dim; pd.k = inter; pd.scale_cols = inter / 32;
             if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(dim, inter)); !r) return r;
             PfCoopPush pn; pn.n = n32; pn.idx_off = 0; pn.flags = 64;
-            if (auto r = rec(*kdn, &pn, sizeof(pn), n32 / 32, dim / 16); !r) return r;
+            if (auto r = rec(*kdn, &pn, sizeof(pn), pf_tok_groups(n32, tt), dim / 16); !r) return r;
             PfElemPush pc2; pc2.n = n; pc2.d = dim; pc2.a2 = jb.rows_off; pc2.flags = round;
             if (auto r = rec(*ksc, &pc2, sizeof(pc2), groups_for(uint64_t(n) * (dim / 16))); !r) return r;
         }
@@ -1555,6 +1594,18 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         PF_TRY(op_gemm(*gw, kPfActF32, b_.fx.dev_addr, 0, A, dim, b_.gate.dev_addr, 0));
     }
     const uint32_t E = c.n_routed_experts, k6 = c.num_experts_per_tok;
+    const uint64_t bias_dev = pw("ffn.gate.bias");
+    probe_ids_.assign(size_t(A) * k6, 0);
+    probe_wts_.assign(size_t(A) * k6, 0.0f);
+    if (pcfg_.gate_topk_gpu && bias_dev) {
+        // sqrtsoftplus + noaux_tc top-6 on the GPU: only A x 6 ids and weights
+        // cross the device-mapped bus, not A x 384 scores.
+        PF_TRY(op_gate_topk(b_.gate.dev_addr, bias_dev, A, b_.gids.dev_addr, b_.gwts.dev_addr));
+        auto tg = Clk::now();
+        std::memcpy(probe_ids_.data(), b_.gids.host_ptr, probe_ids_.size() * sizeof(uint32_t));
+        std::memcpy(probe_wts_.data(), b_.gwts.host_ptr, probe_wts_.size() * sizeof(float));
+        host_op("host: gate top-6 readback", tg);
+    } else {
     auto th = Clk::now();
     std::vector<float> sc(size_t(A) * E);
     std::memcpy(sc.data(), b_.gate.host_ptr, sc.size() * sizeof(float));
@@ -1568,8 +1619,6 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         bias_host.assign(static_cast<const float*>(bias_t->data_host),
                          static_cast<const float*>(bias_t->data_host) + E);
     std::span<const float> bias(bias_host);
-    probe_ids_.assign(size_t(A) * k6, 0);
-    probe_wts_.assign(size_t(A) * k6, 0.0f);
     for (uint32_t t = 0; t < A; ++t) {
         float* row = sc.data() + size_t(t) * E;
         for (uint32_t e = 0; e < E; ++e) row[e] = cpu::sqrt_softplus(row[e]);
@@ -1582,6 +1631,7 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         }
     }
     host_op("host: gate top-6", th);
+    }
     out.layers[L].gate_ids_last.assign(probe_ids_.end() - k6, probe_ids_.end());
     times_.gate += ms_since(t0);
     std::memset(b_.y.host_ptr, 0, size_t(A) * dim * sizeof(float));

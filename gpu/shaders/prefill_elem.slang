@@ -23,6 +23,9 @@
 //   9  scatter_add         y[idx] += expert rows
 //  10  copy_round          [n][d] -> [n][d], bf16-rounded under kFlagRound (a
 //                          cooperative-matrix GEMM's padded output into y)
+//  11  gate_topk           raw gate scores [n][E] -> sqrtsoftplus, noaux_tc
+//                          top-k of (score + bias) and the normalised weights,
+//                          [n][topk] ids + weights (cpu/gate.cpp on the GPU)
 //
 // Every stage is one thread per row or per (row, block): no stage here needs a
 // reduction across rows, so there are no barriers and no LDS beyond registers.
@@ -109,8 +112,16 @@ void s_rmsnorm(uint3 gid, uint tid) {
 // kA3 = coefficients [n][a0] with `pre` at offset 0, kA4 = rsqrt(mean(stream^2)
 // + eps) [n] for the hc_fn GEMM's row scale. a1 = hc.
 static const uint kMaxHc = 4;
+// ONE WAVE PER ROW, not one thread (docs/p4_prefill_speed.md §3.2). A thread per
+// row gave n threads -- 4,133 of them at N = 4,133, ~4 waves a CU -- each walking
+// hc * d = 20,480 floats with a `d`-strided read per hc plane. A wave per row is
+// 32x the threads, and the 32 lanes read 32 CONSECUTIVE elements of a plane, so
+// the loads coalesce. Grid: ceil(n * 32 / 256) workgroups; lane = tid % 32, and
+// the two sums are one WaveActiveSum each (SubgroupSize is 32, so a wave never
+// straddles two rows).
 void s_mhc_pre_norm(uint3 gid, uint tid) {
-    const uint row = thread_index(gid, tid);
+    const uint idx = thread_index(gid, tid);
+    const uint row = idx >> 5, lane = idx & 31u;
     if (row >= pc.n) return;
     const uint hc = pc.a1, d = pc.d;
     const uint64_t h = Ptr[kIn] + (uint64_t)row * hc * d * 4;
@@ -119,7 +130,7 @@ void s_mhc_pre_norm(uint3 gid, uint tid) {
         pre[j] = (j < hc) ? load_f32(Ptr[kA3] + ((uint64_t)row * pc.a0 + j) * 4) : 0.0f;
     float sq_all = 0.0f, sq_u = 0.0f;
     const uint64_t y = Ptr[kOut] + (uint64_t)row * d * 4;
-    for (uint e = 0; e < d; ++e) {
+    for (uint e = lane; e < d; e += 32) {
         float u = 0.0f;
         [unroll] for (uint j = 0; j < kMaxHc; ++j) {
             if (j >= hc) continue;
@@ -131,9 +142,11 @@ void s_mhc_pre_norm(uint3 gid, uint tid) {
         sq_u += u * u;
         store_f32(y + (uint64_t)e * 4, u);
     }
-    store_f32(Ptr[kA4] + (uint64_t)row * 4, rsqrt(sq_all / float(hc * d) + pc.eps));
+    sq_all = WaveActiveSum(sq_all);
+    sq_u = WaveActiveSum(sq_u);
+    if (lane == 0) store_f32(Ptr[kA4] + (uint64_t)row * 4, rsqrt(sq_all / float(hc * d) + pc.eps));
     const float rs = rsqrt(sq_u / float(d) + pc.eps);
-    for (uint e = 0; e < d; ++e) {
+    for (uint e = lane; e < d; e += 32) {
         const float w = bf16_decode(load_u16(Ptr[kA2] + (uint64_t)e * 2));
         store_f32(y + (uint64_t)e * 4, bf16_round((load_f32(y + (uint64_t)e * 4) * rs) * w));
     }
@@ -425,10 +438,76 @@ void s_copy_round(uint3 gid, uint tid) {
         store_f32(dst + (uint64_t)q * 4, maybe_round(load_f32(src + (uint64_t)q * 4), pc.flags));
 }
 
+// --- 11: gate_topk ---------------------------------------------------------------
+// kIn = raw gate scores [n][d] fp32 (the gate GEMM's output, pre-activation),
+// kA2 = bias [d] fp32, kOut = ids [n][a0] uint32, kA3 = weights [n][a0] fp32.
+// a0 = topk, f1 = routed_scaling_factor.
+//
+// ONE WAVE PER ROW. This is cpu/gate.cpp's `gate_topk` moved off the host: the
+// host version needed all n * 384 scores read back over a device-mapped
+// mapping (200 MB/s, 1.23 s of a 4K prefill) and then partial_sort'ed per row
+// (0.77 s). Here the lane keeps its own experts in registers and the selection
+// is `topk` rounds of WaveActiveMax, so only n * topk ids and weights cross the
+// bus. Ties break to the LOWER expert id, exactly as cpu/gate.cpp, so the
+// picks are bit-identical wherever the scores are.
+static const uint kMaxGatePerLane = 16;      // 32 lanes x 16 = 512 experts
+void s_gate_topk(uint3 gid, uint tid) {
+    const uint idx = thread_index(gid, tid);
+    const uint row = idx >> 5, lane = idx & 31u;
+    if (row >= pc.n) return;
+    const uint E = pc.d, topk = pc.a0;
+    const uint64_t sc = Ptr[kIn] + (uint64_t)row * E * 4;
+    float score[kMaxGatePerLane];
+    float biased[kMaxGatePerLane];
+    [unroll] for (uint i = 0; i < kMaxGatePerLane; ++i) {
+        const uint e = lane + i * 32;
+        if (e < E) {
+            // sqrtsoftplus, softplus in cpu/gate.cpp's stable form
+            const float v = load_f32(sc + (uint64_t)e * 4);
+            const float x = exp(-abs(v));
+            // log1p(x) for the small x this always is: the series beats
+            // log(1 + x), which loses every bit of x below fp32 eps
+            const float l1p = (x < 0.25f) ? (x - 0.5f * x * x + (1.0f / 3.0f) * x * x * x
+                                             - 0.25f * x * x * x * x)
+                                          : log(1.0f + x);
+            score[i] = sqrt(l1p + max(v, 0.0f));
+            biased[i] = score[i] + load_f32(Ptr[kA2] + (uint64_t)e * 4);
+        } else {
+            score[i] = 0.0f;
+            biased[i] = -3.0e38f;
+        }
+    }
+    const uint64_t ids = Ptr[kOut] + (uint64_t)row * topk * 4;
+    const uint64_t wts = Ptr[kA3] + (uint64_t)row * topk * 4;
+    float sum = 0.0f;
+    for (uint r = 0; r < topk; ++r) {
+        float best = -3.0e38f;
+        uint  arg = 0xFFFFFFFFu, slot = 0;
+        [unroll] for (uint i = 0; i < kMaxGatePerLane; ++i)
+            if (biased[i] > best) { best = biased[i]; arg = lane + i * 32; slot = i; }
+        const float m = WaveActiveMax(best);
+        // lowest expert id among the lanes holding the maximum: cpu/gate.cpp's
+        // tie-break, and it also makes the pick independent of the lane layout
+        const uint pick = WaveActiveMin((best == m) ? arg : 0xFFFFFFFFu);
+        const float picked = WaveActiveMax((arg == pick) ? score[slot] : -3.0e38f);
+        if (arg == pick) biased[slot] = -3.0e38f;
+        sum += picked;
+        if (lane == 0) {
+            *(uint*)(ids + (uint64_t)r * 4) = pick;
+            store_f32(wts + (uint64_t)r * 4, picked);   // raw; scaled below
+        }
+    }
+    if (lane != 0) return;
+    const float inv = pc.f1 / (sum + 1e-20f);           // 1e-20 matches training
+    for (uint r = 0; r < topk; ++r)
+        store_f32(wts + (uint64_t)r * 4, load_f32(wts + (uint64_t)r * 4) * inv);
+}
+
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-    if (Stage == 10)     s_copy_round(gid, tid);
+    if (Stage == 11)     s_gate_topk(gid, tid);
+    else if (Stage == 10) s_copy_round(gid, tid);
     else if (Stage == 8) s_swiglu(gid, tid);
     else if (Stage == 9) s_scatter_add(gid, tid);
     else if (Stage == 0) s_act_quant(gid, tid);
