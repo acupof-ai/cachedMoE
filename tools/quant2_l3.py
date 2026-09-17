@@ -187,22 +187,45 @@ def run_pass(args, ref, dsref, oracle, store, margs, layout_e, ngram,
     os.makedirs(args.logits_dir, exist_ok=True)
     lg = np.lib.format.open_memmap(out, mode="w+", dtype=np.float16,
                                    shape=(N, margs.vocab_size))
-    argmax = np.empty(N, dtype=np.int32)
-    step = 128
-    for i in range(0, N, step):
-        j = min(N, i + step)
-        logits, _ = oracle._l3_collapse_and_head(h[:, i:j], pre_mix[:, i:j], norm_w,
-                                                 head_w, margs.norm_eps)
-        logits = logits.reshape(j - i, -1).float()
-        argmax[i:j] = logits.argmax(dim=-1).numpy().astype(np.int32)
-        lg[i:j] = logits.numpy().astype(np.float16)
+    q = collapse_and_norm(h, pre_mix, norm_w, margs.norm_eps)
+    chk = oracle._l3_collapse_and_head(h[:, -1:], pre_mix[:, -1:], norm_w,
+                                       head_w, margs.norm_eps)[1]
+    dn = float((q[-1].to(chk.dtype) - chk).abs().max())
+    assert dn == 0.0, f"the batched collapse disagrees with oracle's at the last position: {dn}"
+    del h, pre_mix
+    # head chunk outer, positions inner: head_w is bf16 on disk and fp32 in the
+    # reference, and promoting 129,280 x 5,120 costs 2.6 GB, so each chunk is
+    # promoted exactly once and every position is projected through it.
+    step = 16384
+    for c0 in range(0, head_w.size(0), step):
+        hw = head_w[c0:c0 + step].float()
+        for i in range(0, N, 256):
+            j = min(N, i + 256)
+            lg[i:j, c0:c0 + hw.size(0)] = torch.nn.functional.linear(
+                q[i:j].float(), hw).numpy().astype(np.float16)
+        del hw
     lg.flush()
-    del lg, h, pre_mix
+    del lg, q
     secs = time.perf_counter() - t_pass
     log(f"{tag}: {N} positions, {secs:.0f}s -> {out}")
-    return {"tag": tag, "n": N, "seconds": round(secs, 1), "logits": out,
-            "argmax": argmax.tolist() if N <= 128 else None,
-            "argmax_path": None}
+    return {"tag": tag, "n": N, "seconds": round(secs, 1), "logits": out}
+
+
+def collapse_and_norm(h, pre_mix, norm_w, norm_eps: float):
+    """`Transformer.forward`'s tail up to the head, for **every** position.
+
+    `tools/oracle.py:_l3_collapse_and_head` is the same arithmetic but ends with
+    the reference's `x = x[:, -1]`, because a generator only ever needs the last
+    position's logits. Teacher forcing needs all N of them, and hc_pre, the
+    RMSNorm and the head are all position-wise, so dropping that one slice is the
+    only difference -- asserted against the oracle's value at the last position
+    on every pass.
+    """
+    import torch
+    x = torch.sum(pre_mix.unsqueeze(-1) * h.float(), dim=2).to(h.dtype)
+    xf = x.float()
+    var = xf.square().mean(-1, keepdim=True)
+    return (norm_w.float() * (xf * torch.rsqrt(var + norm_eps))).to(h.dtype)[0]
 
 
 # --------------------------------------------------------------------------- #
