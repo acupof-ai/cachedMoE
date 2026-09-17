@@ -192,14 +192,11 @@ LDS 布局都不变，默认 0 走原来的 fp32 分支。
 
 - 编译过、过 `spirv-val`；**默认分支未变**，`gpu_layer.mgt1_layer_batch_vs_steps`
   在 l3 仍然逐阶段通过（batch vs steps、gate 35/36、top-k 405/405 全同）。
-- **但这条路径还没有测试覆盖**：本轮的验证用例在 `vkQueueSubmit2 (-13)` 上失败，失败点
-  在测试自己的 rig 里（一个全新的 `gpu::MgtRunner` + `CommandPool` + `submit_and_wait`），
-  不是 kernel；没能在本轮定位，所以**用例已从树里移除**，而不是留一个红着的测试。
-  下一步要么修那个最小 rig，要么在 `Mgt1Rig` 上加一个 `run_stage()` 帮手，复用它已经
-  在用的提交路径（`mgt1.m_curve` 就是那样跑起来的）。
-- 判据（等用例能跑）：**同一组 bf16 舍入后的值，bf16 输入与 fp32 输入必须逐位相同；
-  拿未舍入的 fp32 值必须给出可见差异** —— 前者证明 flag 只改了加载，后者证明它真的在读
-  bf16。half 取错、pair 顺序颠倒、stride 单位错，都会让第一条差得远。
+- **已测**（`mgt1.gemv_bf16_activations_match_the_fp32_path`）：同一组 bf16 舍入后的值，
+  bf16 输入与 fp32 输入 **max|d| = 0.000e+00（逐位相同）**；拿未舍入的 fp32 值则差
+  **7.659e-02（|y|max 的 2.06%）** —— 前者证明 flag 只改了加载，后者证明它真的在读 bf16。
+  第一步失败的原因是测试自己的 rig 少了 `cmd.end()`（`MgtRunner::record` 只 bind，
+  `dispatch_now` 用的是 begin/record/end/submit 这一对），错误码是 `vkQueueSubmit2 (-13)`。
 
 ### 2.4 verify 行的读回：`accept_sampling_exact` 要的四个数
 

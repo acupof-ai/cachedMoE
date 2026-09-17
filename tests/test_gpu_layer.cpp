@@ -551,6 +551,150 @@ DEEPMOE_TEST(mgt1, m_curve) {
     }
 }
 
+// Track T / DSpark: `mgt1_gemv`'s bf16 activation input (docs/p4_dspark_runtime.md
+// §2.3). The draft chain's activations -- `main_hidden` after the three target
+// layers' hc mean, `main_x` out of main_norm -- are bf16 in the reference, and
+// the runner read them as fp32, i.e. garbage.
+//
+// The flag has to mean exactly "the same GEMM, on the bf16 numbers": an fp32
+// dispatch of the bf16-ROUNDED values against a bf16 dispatch of the originals,
+// which must agree bit for bit. A wrong half, a swapped pair or a stride in the
+// wrong unit moves the answer far more than bf16 rounding, which the second
+// check pins by requiring the unrounded values to give a visibly different
+// answer.
+DEEPMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
+    if (skip_without_model("mgt1.gemv_bf16_activations_match_the_fp32_path")) return;
+
+    gpu::Device device;
+    if (auto r = device.create({}); !r) {
+        std::printf("      SKIP mgt1: %s\n", r.error().str().c_str());
+        return;
+    }
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(device, MemoryPath::DeviceLocalHostVisible));
+    gpu::MgtRunner mgt;
+    REQUIRE_OK(mgt.create(device, alloc, gpu::default_shader_dir()));
+    gpu::GpuScratch scratch;
+    REQUIRE_OK(scratch.create(alloc, 8ull << 20));
+    gpu::CommandPool pool;
+    REQUIRE_OK(pool.create(device));
+
+    const std::string dir = model_dir() ? model_dir() : "";
+    Manifest manifest;
+    V41Config cfg;
+    store::ShardSet shards;
+    storage::IoEngine io;
+    store::PinnedStore pinned;
+    {
+        auto c = V41Config::load(store::ShardSet::join(dir, "config.json"));
+        if (!c) { std::printf("      SKIP mgt1: %s\n", c.error().str().c_str()); return; }
+        cfg = std::move(*c);
+        auto mf = Manifest::load(store::ShardSet::join(dir, layout::kManifestFile));
+        if (!mf) { std::printf("      SKIP mgt1: %s\n", mf.error().str().c_str()); return; }
+        manifest = std::move(*mf);
+        if (auto r = shards.open_all(dir, manifest, true); !r) {
+            std::printf("      SKIP mgt1: %s\n", r.error().str().c_str());
+            return;
+        }
+        IoConfig iocfg;
+        auto backend = storage::make_default_backend(iocfg);
+        if (!backend) return;
+        if (auto r = io.start(std::move(*backend), iocfg); !r) return;
+        auto pb = alloc.make_slab_backing();
+        if (!pb) return;
+        store::PinnedConfig pc;
+        pc.region_bytes = 1ull << 30;
+        if (auto r = pinned.init(std::move(*pb), pc); !r) return;
+    }
+    const uint32_t L = 0;
+    auto names = store::pinned_layer_tensors(manifest, L);
+    if (auto r = pinned.load(manifest, shards, io, names); !r) {
+        std::printf("      SKIP mgt1: pinned: %s\n", r.error().str().c_str());
+        io.stop();
+        return;
+    }
+    auto lw = runtime::LayerWeights::from_pinned(pinned, L);
+    REQUIRE_OK(lw);
+
+    const uint32_t dim = cfg.text.hidden_size;
+    std::vector<float> src(dim);
+    for (uint32_t i = 0; i < dim; ++i)
+        src[i] = std::sin(0.01f * float(i % 977)) * (1.0f + 0.01f * float(i % 13));
+    std::vector<float> bf(dim);
+    for (uint32_t i = 0; i < dim; ++i) bf[i] = bf16_to_f32(cpu::float_to_bf16(src[i]));
+
+    const uint32_t rows = 1280;                       // wq_a's output
+    auto xa = scratch.alloc(uint64_t(dim) * 4 + 4096);
+    REQUIRE_OK(xa);
+    auto ob = scratch.alloc(uint64_t(rows) * 4);
+    REQUIRE_OK(ob);
+    auto part = scratch.alloc(uint64_t(8) * rows * 4);   // 8 K-slices
+    REQUIRE_OK(part);
+
+    uint64_t* s = mgt.slots(gpu::MgtStage::WqASplit);
+    s[gpu::mslot::kGW] = lw->wq_a;
+    s[gpu::mslot::kGS] = lw->wq_a_scale;
+    s[gpu::mslot::kGX] = xa->addr;
+    s[gpu::mslot::kGY] = ob->addr;
+    s[gpu::mslot::kGP] = part->addr;
+    std::memcpy(mgt.slots(gpu::MgtStage::WqACombine), s, gpu::kAttnStageStride);
+    REQUIRE_OK(mgt.ensure(1));
+
+    auto run = [&](const float* vals, bool bf16_in, std::vector<float>& out) -> Result<void> {
+        // A fresh buffer a dispatch: `record` binds the pipeline and its
+        // descriptor set, `end` closes the buffer (the pair
+        // MgtRunner::dispatch_now uses), then submit and wait. Leaving `end` out
+        // is what made the first version of this case fail with
+        // vkQueueSubmit2 (-13).
+        auto b = pool.acquire();
+        if (!b) return std::unexpected(b.error());
+        gpu::CommandBuffer cmd = *b;
+        if (bf16_in) {
+            auto* p = static_cast<uint16_t*>(xa->host);
+            for (uint32_t i = 0; i < dim; ++i) p[i] = cpu::float_to_bf16(vals[i]);
+        } else {
+            std::memcpy(xa->host, vals, size_t(dim) * sizeof(float));
+        }
+        gpu::MgtGemvPush p{};
+        p.rows = rows; p.k = dim; p.scale_cols = dim / 32; p.part_stride = rows;
+        p.x_stride = dim; p.y_stride = rows;
+        p.flags = bf16_in ? gpu::kGemmFlagInBf16 : 0u;
+        if (auto r = cmd.begin(); !r) return r;
+        if (auto r = mgt.record(cmd, 1, gpu::MgtStage::WqASplit, &p, sizeof p,
+                                mgt.split_groups(gpu::MgtStage::WqASplit, rows), 1); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+        if (auto r = mgt.record(cmd, 1, gpu::MgtStage::WqACombine, &p, sizeof p,
+                                mgt.combine_groups(rows), 1); !r) return r;
+        if (auto r = cmd.end(); !r) return r;
+        if (auto r = gpu::submit_and_wait(device, cmd); !r) return r;
+        out.assign(static_cast<const float*>(ob->host),
+                   static_cast<const float*>(ob->host) + rows);
+        return {};
+    };
+
+    std::vector<float> a, b, d;
+    REQUIRE_OK(run(bf.data(), /*bf16_in=*/true, a));
+    REQUIRE_OK(run(bf.data(), /*bf16_in=*/false, b));
+    REQUIRE_OK(run(src.data(), /*bf16_in=*/false, d));
+    double same = 0.0, unrounded = 0.0, ymax = 0.0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        same = std::fmax(same, std::fabs(double(a[i]) - double(b[i])));
+        unrounded = std::fmax(unrounded, std::fabs(double(b[i]) - double(d[i])));
+        ymax = std::fmax(ymax, std::fabs(double(b[i])));
+    }
+    std::printf("      bf16 input vs fp32 input of the same rounded values: max|d| %.3e\n", same);
+    std::printf("      ... and the unrounded values differ by %.3e (%.2e of |y|max)\n",
+                unrounded, unrounded / std::max(ymax, 1e-30));
+    CHECK_EQ(same, 0.0);                    // the flag changes nothing but the load
+    CHECK(unrounded > 0.0);                 // and it really is reading bf16
+
+    pool.destroy();
+    scratch.destroy();
+    mgt.destroy();
+    alloc.shutdown();
+    io.stop();
+}
+
 DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
     if (skip_without_model("gpu_layer")) return;
     const std::string root = mgt1_root();
