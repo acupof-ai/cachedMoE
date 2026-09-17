@@ -165,6 +165,23 @@ def auto_tune(args, script: dict, cargs, enc) -> int:
     return 0
 
 
+def capture_status(server, out_dir):
+    """End-of-run `{"op":"status"}`: the store / planner / io counters, including
+    the per-priority P0/P1/P2/P3 request and byte counts (docs/p4_hitrate.md)."""
+    ev = {}
+    try:
+        server.send({"op": "status"})
+        while True:
+            ev = server.read_event()
+            if ev.get("event") in ("status", "error"):
+                break
+    except Exception as exc:
+        return {"event": "error", "message": str(exc)}
+    with open(os.path.join(out_dir, "status.json"), "w", encoding="utf-8") as f:
+        json.dump(ev, f, ensure_ascii=False, indent=1)
+    return ev
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--script", default="")
@@ -203,6 +220,7 @@ def main() -> int:
         with open(args.requests, encoding="utf-8") as f:
             reqs = json.load(f)["requests"]
         stats = []
+        rstatus = {}
         try:
             for r in reqs:
                 server.send(dict({"op": "generate", "stop_ids": [1]}, **r))
@@ -216,11 +234,13 @@ def main() -> int:
                         break
                     if ev.get("event") == "error":
                         raise SystemExit(ev["message"])
+            rstatus = capture_status(server, args.out)
         finally:
             server.close()
             server.events.close()
         with open(os.path.join(args.out, "turns.json"), "w", encoding="utf-8", newline="\n") as f:
-            json.dump({"server": server.ready, "turns": stats, "cmd": server.cmd, "env": args.env}, f, indent=1)
+            json.dump({"server": server.ready, "turns": stats, "cmd": server.cmd,
+                       "env": args.env, "status": rstatus}, f, indent=1)
         return 0
     cargs = argparse.Namespace(think=False, temp=1.0, top_p=0.95, max_tokens=256, seed=None, system="")
     with open(args.script, encoding="utf-8") as f:
@@ -239,9 +259,11 @@ def main() -> int:
                     t2["reset"] = True
                 turns.append(t2)
         script = dict(script, turns=turns)
+    status = {}
     try:
         chat.run_script(c, server, script, os.path.join(args.out, "transcript.md"),
                         os.path.join(args.out, "turns.json"))
+        status = capture_status(server, args.out)
     finally:
         server.close()
         server.events.close()
@@ -249,6 +271,7 @@ def main() -> int:
         doc = json.load(f)
     doc["cmd"] = server.cmd
     doc["env"] = args.env
+    doc["status"] = status
     with open(os.path.join(args.out, "turns.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
     if args.write_heat:
