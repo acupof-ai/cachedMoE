@@ -46,6 +46,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "core/status.h"
@@ -272,6 +273,36 @@ public:
     // holds them.
     Result<void> restore_rows(const KvRowBackup& b, uint32_t position);
     Result<void> restore_carry(const KvRowBackup& b);
+
+    // --- speculation: the window ring's rollback (docs/p3_dspark.md §3.5) ---
+    //
+    // A verify batch writes its positions' ring KV before it knows how many are
+    // accepted. The compressed rows and the carried group state do not need
+    // undoing -- a group's row is rewritten in place when the group completes
+    // again and a half-filled group is not visible -- but the RING does: once
+    // the ring has wrapped, position p' hands its slot to p' - window, which is
+    // still inside an earlier query's window, so a rejected position leaves a
+    // wrong row where a live query reads.
+    //
+    // A snapshot is `<= k` slots of `[window]` E4M3 rows plus their UE8M0
+    // scales, per layer: 40 layers x 5 slots x (512 + 16) B = 105 KB at k = 5,
+    // which is why this is a memcpy and not a scheme. `slots` are the ring slot
+    // indices to save (position % window); saving a slot that is not written
+    // costs a copy and nothing else.
+    struct RingSnapshot {
+        std::vector<uint32_t> layer;     // one plane a layer, in `slots` order
+        std::vector<uint32_t> slot;
+        std::vector<uint8_t>  val;       // [layer][slot][latent_dim]
+        std::vector<uint8_t>  scale;     // [layer][slot][latent_dim / 32]
+        uint32_t latent_dim = 0;
+        uint64_t bytes() const { return val.size() + scale.size(); }
+        size_t index(uint32_t li, uint32_t si) const {
+            return (size_t(li) * slot.size() + si);
+        }
+    };
+    Result<RingSnapshot> snapshot_ring(std::span<const uint32_t> slots,
+                                       std::span<const uint32_t> layers) const;
+    Result<void> restore_ring(const RingSnapshot& s);
 
 private:
     struct Layout {

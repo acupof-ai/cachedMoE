@@ -282,3 +282,123 @@ DEEPMOE_TEST(gpu, kvstore_planes_growth_floor_and_packing) {
     kv.destroy();
     alloc.shutdown();
 }
+
+// docs/p3_dspark.md §3.5: a verify batch writes its positions' ring KV before it
+// knows how many are accepted, and after the ring wraps a rejected position has
+// handed its slot to `p' - window`, which an earlier live query still reads. The
+// fix is a snapshot of the <= k slots it will write, and a restore when the
+// prefix is short -- which is only exact if the bytes come back unchanged AND a
+// slot nobody wrote is left alone.
+DEEPMOE_TEST(gpu, kvstore_ring_snapshot_restores_the_rejected_slots) {
+    gpu::Device dev;
+    if (skip_without_gpu(dev)) return;
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(dev, MemoryPath::DeviceLocalHostVisible));
+    auto c = V41Config::load(cfg_path());
+    REQUIRE_OK(c);
+    const TextConfig& t = c->text;
+
+    runtime::KvStore kv;
+    REQUIRE_OK(kv.create(alloc, KvStoreConfig::for_model(t, 4096, 256)));
+    const uint32_t W = kv.config().window;
+    const uint32_t dim = kv.config().latent_dim;
+    const uint32_t srow = kv.config().window_scales();
+    const std::vector<uint32_t> layers = {0, 20, 39};
+
+    // A ring that has wrapped: every slot of these three layers holds something
+    // different, so a byte-for-byte comparison below means something. One call
+    // for the whole ring -- `seed_window` reads `rows * latent_dim` values.
+    std::vector<float> ring(size_t(W) * dim);
+    for (uint32_t l : layers) {
+        for (uint32_t s = 0; s < W; ++s)
+            for (uint32_t i = 0; i < dim; ++i) ring[size_t(s) * dim + i] = float(i + s * 7 + l * 13) * 1e-3f;
+        REQUIRE_OK(kv.seed_window(l, ring.data(), W));
+    }
+
+    // Byte copies of the three rings, before anything writes.
+    auto grab = [&](uint32_t l) {
+        auto v = kv.layer(l);
+        if (!v) return std::vector<uint8_t>{};
+        std::vector<uint8_t> val(v->win_val_host, v->win_val_host + uint64_t(W) * dim);
+        std::vector<uint8_t> sc(v->win_scale_host, v->win_scale_host + uint64_t(W) * srow);
+        val.insert(val.end(), sc.begin(), sc.end());
+        return val;
+    };
+    std::vector<std::vector<uint8_t>> before;
+    for (uint32_t l : layers) {
+        before.push_back(grab(l));
+        REQUIRE(!before.back().empty());
+    }
+
+    const std::vector<uint32_t> slots = {5, 6, 7, 8, 9};
+    auto snap = kv.snapshot_ring(slots, layers);
+    REQUIRE_OK(snap);
+    CHECK_EQ(snap->layer.size(), 3u);
+    CHECK_EQ(snap->slot.size(), 5u);
+    // 40 layers x 5 slots x (512 + 16) B is the whole point of §3.5: this is a
+    // memcpy, not a scheme.
+    std::printf("       snapshot of %zu layers x %zu slots = %llu B (%llu B a layer)\n",
+                layers.size(), slots.size(), (unsigned long long)snap->bytes(),
+                (unsigned long long)(snap->bytes() / layers.size()));
+
+    auto wr = [&](uint32_t l, uint32_t slot, uint8_t fill) {
+        auto v = kv.layer(l);
+        std::memset(v->win_val_host + uint64_t(slot) * dim, fill, dim);
+        std::memset(v->win_scale_host + uint64_t(slot) * srow, fill & 0x7F, srow);
+    };
+    // The verify batch writes its positions: the five snapshotted slots plus one
+    // more, which the caller must NOT expect the snapshot to cover.
+    for (uint32_t i = 0; i < slots.size(); ++i)
+        for (uint32_t l : layers) wr(l, slots[i], 0xA0 + uint8_t(i));
+    for (uint32_t l : layers) wr(l, 10, 0xEE);
+
+    // Two accepted, four rejected: the next cycle re-writes the two it kept.
+    REQUIRE_OK(kv.restore_ring(*snap));
+    for (uint32_t i = 0; i < 2; ++i)
+        for (uint32_t l : layers) wr(l, slots[i], 0x50 + uint8_t(i));
+
+    for (size_t li = 0; li < layers.size(); ++li) {
+        const uint32_t l = layers[li];
+        auto v = kv.layer(l);
+        const std::vector<uint8_t>& ref = before[li];
+        // Outside the restored three slots the ring must be the bytes it had,
+        // except slot 10, which nothing snapshotted and the batch wrote.
+        uint32_t changed_untouched = 0, slot10_old = 0;
+        for (uint32_t s = 0; s < W; ++s) {
+            const bool restored = s >= 7 && s <= 9;          // rejected, back to old
+            const bool rewritten = s == 5 || s == 6;         // accepted, new value
+            const bool never = s == 10;                      // not snapshotted
+            if (restored || rewritten || never) continue;
+            for (uint32_t i = 0; i < dim; ++i)
+                if (v->win_val_host[uint64_t(s) * dim + i] != ref[uint64_t(s) * dim + i])
+                    ++changed_untouched;
+            for (uint32_t i = 0; i < srow; ++i)
+                if (v->win_scale_host[uint64_t(s) * srow + i] !=
+                    ref[uint64_t(W) * dim + uint64_t(s) * srow + i])
+                    ++changed_untouched;
+        }
+        for (uint32_t i = 0; i < dim; ++i)
+            if (v->win_val_host[uint64_t(10) * dim + i] == ref[uint64_t(10) * dim + i])
+                ++slot10_old;
+        std::printf("       layer %u: %u bytes changed outside the written slots, "
+                    "slot 10 still old in %u/%u bytes\n", l, changed_untouched, slot10_old, dim);
+        CHECK_EQ(changed_untouched, 0u);
+        CHECK_EQ(slot10_old, 0u);      // not snapshotted, so not restored: by design
+        // The rejected slots are byte-for-byte what they were, scales included.
+        for (uint32_t s : {7u, 8u, 9u})
+            for (uint32_t i = 0; i < dim; ++i)
+                CHECK(v->win_val_host[uint64_t(s) * dim + i] == ref[uint64_t(s) * dim + i]);
+        // The accepted ones kept the new value the cycle wrote.
+        CHECK(v->win_val_host[uint64_t(5) * dim] == 0x50);
+        CHECK(v->win_val_host[uint64_t(6) * dim] == 0x51);
+    }
+    // An empty request is a refusal, not a silent no-op.
+    CHECK(!kv.snapshot_ring(std::span<const uint32_t>{}, layers).has_value());
+    CHECK(!kv.snapshot_ring(slots, std::span<const uint32_t>{}).has_value());
+    {
+        const uint32_t bad[] = {100000};
+        CHECK(!kv.snapshot_ring(bad, layers).has_value());
+    }
+    kv.destroy();
+    alloc.shutdown();
+}

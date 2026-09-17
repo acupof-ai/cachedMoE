@@ -695,4 +695,61 @@ Result<void> KvStore::restore_carry(const KvRowBackup& b) {
     return {};
 }
 
+Result<KvStore::RingSnapshot> KvStore::snapshot_ring(std::span<const uint32_t> slots,
+                                                     std::span<const uint32_t> layers) const {
+    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    const KvStoreConfig& c = cfg_;
+    if (slots.empty()) return fail(Err::InvalidArgument, "snapshot_ring: no slots");
+    if (layers.empty()) return fail(Err::InvalidArgument, "snapshot_ring: no layers");
+    RingSnapshot s;
+    s.latent_dim = c.latent_dim;
+    s.slot.assign(slots.begin(), slots.end());
+    s.layer.assign(layers.begin(), layers.end());
+    for (uint32_t l : layers)
+        if (l >= c.layers) return fail(Err::OutOfRange, std::format("layer {} of {}", l, c.layers));
+    for (uint32_t sl : slots)
+        if (sl >= c.window)
+            return fail(Err::OutOfRange, std::format("ring slot {} of {}", sl, c.window));
+    const size_t n = s.layer.size() * s.slot.size();
+    s.val.resize(n * c.latent_dim);
+    s.scale.resize(n * c.window_scales());
+    const uint64_t row = c.latent_dim, srow = c.window_scales();
+    for (size_t li = 0; li < s.layer.size(); ++li) {
+        const uint32_t l = s.layer[li];
+        for (size_t si = 0; si < s.slot.size(); ++si) {
+            const uint32_t sl = s.slot[si];
+            const size_t o = li * s.slot.size() + si;
+            std::memcpy(s.val.data() + o * row,
+                        host() + lay_.off_win_val + (uint64_t(l) * c.window + sl) * row, row);
+            std::memcpy(s.scale.data() + o * srow,
+                        host() + lay_.off_win_scale + (uint64_t(l) * c.window + sl) * srow, srow);
+        }
+    }
+    return s;
+}
+
+Result<void> KvStore::restore_ring(const RingSnapshot& s) {
+    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    const KvStoreConfig& c = cfg_;
+    if (s.latent_dim != c.latent_dim)
+        return fail(Err::InvalidArgument, "ring snapshot of another store");
+    for (uint32_t l : s.layer)
+        if (l >= c.layers) return fail(Err::InvalidArgument, "ring snapshot of another store");
+    for (uint32_t sl : s.slot)
+        if (sl >= c.window) return fail(Err::InvalidArgument, "ring snapshot of another store");
+    const uint64_t row = c.latent_dim, srow = c.window_scales();
+    for (size_t li = 0; li < s.layer.size(); ++li) {
+        const uint32_t l = s.layer[li];
+        for (size_t si = 0; si < s.slot.size(); ++si) {
+            const uint32_t sl = s.slot[si];
+            const size_t o = li * s.slot.size() + si;
+            std::memcpy(host() + lay_.off_win_val + (uint64_t(l) * c.window + sl) * row,
+                        s.val.data() + o * row, row);
+            std::memcpy(host() + lay_.off_win_scale + (uint64_t(l) * c.window + sl) * srow,
+                        s.scale.data() + o * srow, srow);
+        }
+    }
+    return {};
+}
+
 }  // namespace deepmoe::runtime
