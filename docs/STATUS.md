@@ -327,14 +327,42 @@ ctest --test-dir build --output-on-failure
 
 ### 5.4 套件本身的审计（变异注入）
 
-一个全绿的套件本身什么也不证明。`tests/mutate.py` 往测试声称覆盖的代码里注入真实的回归，
-再跑一次，**要求套件失败**。今天注入 11 条（dequant LUT、manifest skew、IoEngine 优先级与
-`min_bytes`、Planner LRU 与它的 tie-break、tokenizer merge 优先级、采样 top-p 的切点、
-KV replay 的 ring 记账、engram hash 常量），结果见 §7 与 `plan_p5.md`。
+一个全绿的套件本身什么也不证明。`tests/mutate.py` 往测试**声称覆盖**的代码里注入真实的回归，
+重新编译，跑那一个套件，**要求它失败**。今天 14 条，**14/14 被抓到**：
 
-**已知的两处标签缺陷**（发现于本轮，未改，因为改它会动别的 track 正在编辑的文件）：
-`deepmoe_tests`（整个二进制这一条 ctest 项）挂着 `needs-model`，所以 `ctest -LE needs-model` 会把它整条跳掉；
-`suite.kvdisk` 在 `tests/CMakeLists.txt` 末尾**完全没有 `set_tests_properties`**——没有标签也没有 skip 正则。
+| 注入 | 套件 | 结果 |
+|---|---|---|
+| 交换 FP4 E2M1 表里两个幅值 | `dequant` | caught |
+| FP8 E4M3 指数偏置差一 | `dequant` | caught |
+| 丢掉 run 的 skew（张量在对齐 run 内的偏移） | `manifest` | caught |
+| `min_bytes` 允许读过文件尾 | `io` | caught |
+| 后台 op 节流放宽一个 | `io` | caught |
+| 淘汰最近用过的而不是最久没用的 | `planner` | caught |
+| 反转 LRU 的确定性 tie-break | `planner` | caught |
+| BPE merge 平局取最右而不是最左 | `tokenizer` | caught |
+| 核采样多吃 2% 的质量 | `sampling` | caught |
+| 在 top 集合证明不了的时候声称 nucleus 精确 | `sampling` | caught |
+| 窗口环的 slot→position 映射偏一代 | `kvstore` | caught |
+| 把序列从未到过的槽当成已占用 | `kvstore` | caught |
+| engram 乘子改成偶数（参考强制奇数） | `engram_tables` | caught |
+| 改 engram 的每层种子 | `engram_tables` | caught |
+
+**这次审计抓到的真问题**（第一轮是 10/14，四条活了下来）：
+
+1. **`suite.kvstore` 对窗口环的 slot→position 算术零覆盖。** 唯一在跑它的是
+   `suite.kv_replay`——而那条同时要 checkpoint **和** GPU。
+   也就是说，一个"replay 用错误的位置重建窗口"的 bug 可以通过每一道 CPU 闸。
+   **已修**：算术抽成纯函数 `KvStore::ring_slot_position`，`resolve_ring` 调用它，
+   并加了一个 CPU 用例把它钉在"按顺序写入 n 个位置之后每个槽拿到什么"这个定义上。
+2. 另外两条活下来的是**变异本身太弱**，不是测试弱（一个浮点和上的 `>=` vs `>`、
+   一个 1e-9 的 CDF 亏空，两者都是测度零），已换成真的会改变行为的版本。
+   **记在这里是因为它是这套方法的失败模式**：一个"survived"要先怀疑变异，再怀疑测试。
+
+**已知的标签缺陷**：`deepmoe_tests`（整个二进制这一条 ctest 项）挂着 `needs-model`，
+所以 `ctest -LE needs-model` 会把它整条跳掉。
+（`suite.kvdisk` 原本完全没有 `set_tests_properties`——没有标签也没有 skip 正则；本轮补上 `unit`。）
+这也是 `run_all.py` 问 ctest 要 `unit` 标签、而不是自己维护一张列表的原因：
+列表会把这种缺陷藏起来。
 
 ---
 

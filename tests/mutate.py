@@ -244,12 +244,8 @@ def main() -> int:
             needle = old.encode()
             repl   = new.encode()
             if raw.count(needle) != 1:
-                needle = old.replace("
-", "
-").encode()
-                repl   = new.replace("
-", "
-").encode()
+                needle = old.replace(chr(10), chr(13) + chr(10)).encode()
+                repl   = new.replace(chr(10), chr(13) + chr(10)).encode()
             if raw.count(needle) != 1:
                 applied = False
                 break
