@@ -481,6 +481,35 @@ public:
     // One line per subsystem, for `deepmoe info` and the benchmark header.
     std::string status() const;
 
+    // --- Track G: the gate host round trip, broken down (docs/plan_p5.md (g))
+    //
+    // The per-dispatch trace (Track W) says the GPU idles 0.40 ms/layer in
+    // front of every MoE dispatch, because the command buffer is cut at the
+    // router gate. That number is a GPU-side GAP; it says nothing about WHICH
+    // host step inside the round trip owns it. These counters are the host
+    // clock across the same interval, one accumulator per segment, split
+    // between layers whose experts were all resident ("hit") and layers that
+    // had to fetch ("miss") -- a miss layer's `plan_wait` is NVMe, not gate.
+    //
+    // Off unless DEEPMOE_GATE_PROBE=1. The probe is six Clock::now() calls a
+    // layer, which is why it may be left compiled in.
+    struct GateSeg {
+        double   fence_us = 0.0;   // (i)   host blocked in cmd_wait
+        double   ids_us   = 0.0;   // (ii)  verify_after_attention + reading top-k
+        double   plan_us  = 0.0;   // (iii) Planner::plan_layer (lookup + miss issue)
+        double   pwait_us = 0.0;   // (iii) Planner::wait_layer (NVMe on a miss layer)
+        double   stage_us = 0.0;   // (iv)  GpuMoeBridge staging
+        double   rec_us   = 0.0;   // (iv)  recording the MoE dispatches
+        double   next_us  = 0.0;   // (v)   the NEXT layer's prologue, up to the submit
+        double   sub_us   = 0.0;   //       of which: the vkQueueSubmit2 call itself
+        uint64_t n        = 0;     // layer-steps accumulated
+    };
+    bool gate_probe_on() const { return gate_probe_; }
+    const GateSeg& gate_probe_hit()  const { return gp_hit_; }
+    const GateSeg& gate_probe_miss() const { return gp_miss_; }
+    void  gate_probe_reset() { gp_hit_ = GateSeg{}; gp_miss_ = GateSeg{}; }
+    std::string gate_probe_report() const;
+
     // Called after every layer's MoE, with the layer index and the DecodeLayer
     // holding that layer's `ffn_norm` output, gate ids and MoE output. Null on
     // a real run; the validators set it so a forty-layer disagreement can be
@@ -569,6 +598,17 @@ private:
     }
     uint32_t             submits_ = 0;
     double               rec_ms_ = 0.0, sub_ms_ = 0.0, wait_ms_ = 0.0, bind_ms_ = 0.0;
+    // Track G's probe. `gp_open_` is the row the NEXT layer's prologue belongs
+    // to: segment (v) is measured one layer later than the rest of the round
+    // trip, because the buffer that carries layer L's MoE is not submitted
+    // until layer L+1 has bound and recorded its attention chain.
+    bool                 gate_probe_ = false;
+    // Track G: DEEPMOE_FENCE_SPIN_US, and how often the spin caught the signal.
+    static double        fence_spin_us();
+    uint64_t             spin_hits_ = 0, spin_misses_ = 0;
+    GateSeg              gp_hit_{}, gp_miss_{};
+    GateSeg*             gp_open_ = nullptr;
+    TimePoint            gp_top_{};
     double               mx_ms_ = 0.0, mq_ms_ = 0.0, mt_ms_ = 0.0;
     struct Stamp { uint32_t begin = ~0u, end = ~0u; };
     std::vector<Stamp>   ts_attn_, ts_moe_, ts_engram_, ts_moe_early_;

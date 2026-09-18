@@ -237,6 +237,65 @@ def print_summary(t: Trace, token: int, recs=None) -> int:
     return 0
 
 
+def print_gate(t: Trace, token: int, recs=None) -> int:
+    """The gap in front of each layer's first MoE dispatch (Track G).
+
+    The command buffer is cut at the router gate and nowhere else, so the GPU
+    idles once a layer: from the end of the last pre-gate dispatch to the start
+    of the first MoE dispatch. That interval is the host round trip -- fence
+    wake, read top-k, planner, stage, record, submit -- and this prints it per
+    layer so it can be read against the host-clock breakdown that
+    DEEPMOE_GATE_PROBE=1 prints.
+    """
+    rows = [r for r in (t.records if recs is None else recs) if r.token == token]
+    if not rows:
+        print(f"no records for token {token}")
+        return 1
+    rows.sort(key=lambda r: r.seq)
+    timed = [r for r in rows if r.timed]
+    if not timed:
+        print("no timed dispatches")
+        return 1
+
+    # First MoE dispatch of each layer, and the dispatch that precedes it.
+    gate_gaps = {}          # layer -> ns
+    other_gap = 0
+    prev = None
+    seen = set()
+    for r in rows:
+        if not r.timed:
+            continue
+        if prev is not None:
+            gap = max(r.begin_ns - prev.end_ns, 0)
+            if r.cls == 2 and r.layer not in seen:
+                seen.add(r.layer)
+                gate_gaps[r.layer] = gap
+            else:
+                other_gap += gap
+        prev = r
+    if not gate_gaps:
+        print("this token has no MoE dispatch")
+        return 1
+
+    vals = sorted(gate_gaps.values())
+    total = sum(vals)
+    span = max(r.end_ns for r in timed) - min(r.begin_ns for r in timed)
+    print(f"token {token}: gate round trip, GPU side "
+          f"({len(gate_gaps)} layers, span {us(span) / 1000.0:.2f} ms)")
+    print(f"  {'layer':>6} {'gap':>10}")
+    for L in sorted(gate_gaps):
+        print(f"  {L:>6} {us(gate_gaps[L]):>8.1f}us")
+    print()
+    print(f"  total {us(total) / 1000.0:.3f} ms/token over {len(vals)} layers "
+          f"= {us(total) / len(vals):.1f} us a layer "
+          f"({100.0 * total / span:.1f}% of the GPU span)")
+    print(f"  min {us(vals[0]):.1f}  p50 {us(vals[len(vals) // 2]):.1f}  "
+          f"max {us(vals[-1]):.1f} us")
+    print(f"  every other gap (barriers, {len(timed) - 1 - len(vals)} boundaries): "
+          f"{us(other_gap) / 1000.0:.3f} ms")
+    return 0
+
+
 def self_test() -> int:
     """Round-trips a synthetic file through this reader, so a format drift is
     caught without a GPU and without the C++ side."""
@@ -273,6 +332,9 @@ def main() -> int:
                     help="which forward pass of that token (--warm decodes one position "
                          "several times); default: the last one, which is the warmest")
     ap.add_argument("--summary", action="store_true", help="roll the token up by phase class")
+    ap.add_argument("--gate", action="store_true",
+                    help="the gap in front of every layer's MoE dispatch: the gate host "
+                         "round trip, per layer (Track G)")
     ap.add_argument("--self-test", action="store_true",
                     help="parse a synthetic trace; no file and no GPU needed")
     a = ap.parse_args()
@@ -306,7 +368,10 @@ def main() -> int:
     if a.layer is not None:
         rc |= print_layer(t, token, a.layer, recs)
         print()
-    if a.summary or a.layer is None:
+    if a.gate:
+        rc |= print_gate(t, token, recs)
+        print()
+    if a.summary or (a.layer is None and not a.gate):
         rc |= print_summary(t, token, recs)
     return rc
 

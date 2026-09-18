@@ -621,6 +621,10 @@ int cmd_run(int argc, char** argv) {
         print_token_line(w, st->greedy_tokens().front(), *r, engine);
     }
 
+    // The warm-up steps fetch; the probe is meant to describe the hot step, so
+    // it starts counting after them.
+    engine.gate_probe_reset();
+
     double   nll_sum = 0.0;
     uint32_t nll_n = 0;
     uint32_t next = st->greedy_tokens().front();
@@ -735,6 +739,7 @@ int cmd_run(int argc, char** argv) {
         std::printf("teacher-forced NLL %.6f over %u steps -> PPL %.4f\n",
                     nll_sum / nll_n, nll_n, std::exp(nll_sum / nll_n));
     std::fputs(engine.resident_route_report().c_str(), stdout);
+    if (engine.gate_probe_on()) std::fputs(engine.gate_probe_report().c_str(), stdout);
     std::fputs(engine.profiler().summary().to_string().c_str(), stdout);
     return 0;
 }

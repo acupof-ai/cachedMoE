@@ -1,0 +1,3 @@
+section,variant,m,lanes_per_row,rows_per_lane,subgroup,decode_mode,h_precision,x_mode,h_quant,fp8_path,fp8_slots,slots,layer_cycle,iters,path,bytes_a,bytes_b,gbps_a,gbps_b,gbps_total,pct_ceiling,ms_a,ms_b,ms_total,ms_per_token,ms_wall,record_us,submit_us,raw_read_gbps,launch_us
+M sweep,M1 L32 R1 sg32 dec0 hfp16 xglob,1,32,1,32,0,0,0,0,0,0,7,4,32,A device-local|host-visible,87736320,43868160,214.233,155.813,208.498,96.74,0.4095,0.2815,0.6312,0.63120,0.6342,0.703,74.720,215.525,0.563
+M sweep,M6 L16 R2 sg32 dec0 hfp16 xlds,6,16,2,32,0,0,1,0,0,0,7,4,32,A device-local|host-visible,87736320,43868160,158.139,123.223,154.555,71.71,0.5548,0.3560,0.8515,0.14192,0.8551,0.831,88.540,215.525,0.563

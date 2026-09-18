@@ -37,6 +37,10 @@ double ms_since(TimePoint t0) {
     return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
 }
 
+double ms_between(TimePoint a, TimePoint b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+}
+
 float bf16_to_f32(uint16_t h) {
     const uint32_t b = static_cast<uint32_t>(h) << 16;
     float f;
@@ -577,6 +581,7 @@ Result<void> Engine::init_gpu() {
     route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
     // docs/p4_hitrate.md §4: on unless DEEPMOE_MOE_OVERLAP=0 (the A/B switch).
     if (const char* e = std::getenv("DEEPMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
+    if (const char* e = std::getenv("DEEPMOE_GATE_PROBE"); e && *e && *e != '0') gate_probe_ = true;
     // Track Y (docs/p4_resident_routing.md): off | all | stall1 | verify.
     // Anything else is off.
     if (const char* e = std::getenv("DEEPMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
@@ -1071,8 +1076,53 @@ double Engine::gpu_wait_budget_s() {
     return v;
 }
 
+// Track G (docs/plan_p5.md (g)): the fence wake-up.
+//
+// `vkWaitSemaphores` parks this thread on a kernel object. When the GPU
+// signals, the thread has to be made runnable and scheduled again, and the
+// whole of that latency is paid INSIDE the gap the per-dispatch trace sees in
+// front of every MoE dispatch -- the GPU is idle from the moment the gate
+// dispatch retires until the host has woken, read the top-k, and submitted the
+// MoE. Polling `vkGetSemaphoreCounterValue` instead trades a busy core for
+// that latency.
+//
+// The trade is not free: the host arrives at this fence about 2 ms before the
+// GPU finishes the layer's attention chain, so a spin long enough to catch the
+// signal burns a core for ~85% of the step. DEEPMOE_FENCE_SPIN_US is therefore
+// a budget in microseconds, default 0 = off (park immediately, the old
+// behaviour); the spin always falls back to the blocking wait when the budget
+// runs out, so no run can hang on it that would not have hung before.
+double Engine::fence_spin_us() {
+    static const double v = [] {
+        const char* e = std::getenv("DEEPMOE_FENCE_SPIN_US");
+        const double x = e ? std::atof(e) : 0.0;
+        return x > 0.0 ? x : 0.0;
+    }();
+    return v;
+}
+
 Result<void> Engine::cmd_wait() {
     const TimePoint t0 = Clock::now();
+    if (const double spin_us = fence_spin_us(); spin_us > 0.0) {
+        const double budget_ms = spin_us / 1000.0;
+        for (;;) {
+            auto v = fence_.value();
+            if (!v) break;                       // fall through to the blocking wait
+            if (*v >= fence_value_) {
+                wait_ms_ += ms_since(t0);
+                spin_hits_ += 1;
+                if (inflight_guard_) {
+                    store_.set_completed_timeline(inflight_guard_);
+                    inflight_guard_ = 0;
+                }
+                return {};
+            }
+            if (ms_since(t0) >= budget_ms) { spin_misses_ += 1; break; }
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+            __builtin_ia32_pause();
+#endif
+        }
+    }
     const double budget_s = gpu_wait_budget_s();
     Result<void> r{};
     bool warned = false;
@@ -1245,6 +1295,8 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     const TextConfig& c = model_cfg_.text;
     DecodeScratch& b = layer_.scratch();
 
+    if (gate_probe_) gp_top_ = Clock::now();
+
     auto view = kvs_.layer(L);
     if (!view) return std::unexpected(view.error());
 
@@ -1338,7 +1390,14 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         ts_attn_[L].end = cmd_stamp();
         rec_ms_ += ms_since(r0);
     }
+    const TimePoint gp_sub0 = Clock::now();
     if (auto r = cmd_submit(prev_gate); !r) return r;
+    const double gp_sub_us = gate_probe_ ? ms_since(gp_sub0) * 1000.0 : 0.0;
+    if (gate_probe_ && gp_open_) {
+        gp_open_->next_us += ms_between(gp_top_, Clock::now()) * 1000.0;
+        gp_open_->sub_us  += gp_sub_us;
+        gp_open_ = nullptr;
+    }
     // design §9.5: the engram's 96 row reads depend only on the token ids, so
     // they go out the moment the first buffer of the token is on the GPU and
     // overlap it, instead of blocking the engram layers when they are reached.
@@ -1350,7 +1409,9 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
             engram_host_ms_[E] += ms_since(f0);
         }
     }
+    const TimePoint gp_w0 = Clock::now();
     if (auto r = cmd_wait(); !r) return r;
+    const TimePoint gp_w1 = Clock::now();
     // The indexer wrote every compressed entry of the list sparse_attn just read.
     if (auto r = layer_.verify_after_attention(st); !r) return r;
 
@@ -1442,6 +1503,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         route.weights     = std::span<const float>(kept_w, n_kept);
         route.near_ids    = std::span<const uint16_t>(near_ids, 16);
         route.near_scores = std::span<const float>(near_scores, 16);
+        const TimePoint gp_p0 = Clock::now();
         auto plan = planner_.plan_layer(route, token_);
         if (!plan) return std::unexpected(plan.error());
         t.hits       = static_cast<uint32_t>(plan->hits.size());
@@ -1481,10 +1543,24 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
                 split = true;
             }
         }
+        double gp_pwait_us = 0.0;
         {
             const TimePoint w0 = Clock::now();
             if (auto r = planner_.wait_layer(*plan); !r) return std::unexpected(r.error());
             t.gate_ms += ms_since(w0);
+            gp_pwait_us = ms_since(w0) * 1000.0;
+            if (gate_probe_) {
+                // (iii) is everything from the moment the ids are in hand to the
+                // moment residency is proven: the planner's own lookup, the miss
+                // issue, and -- on a miss layer -- Track R1's early dispatch.
+                GateSeg& g = t.misses ? gp_miss_ : gp_hit_;
+                g.fence_us += ms_between(gp_w0, gp_w1) * 1000.0;
+                g.ids_us   += ms_between(gp_w1, gp_p0) * 1000.0;
+                g.plan_us  += ms_between(gp_p0, w0) * 1000.0;
+                g.pwait_us += gp_pwait_us;
+                ++g.n;
+                gp_open_ = &g;      // segments (iv) and (v) land in the same row
+            }
         }
         // Every routed expert must be resident now. When one is not, say how
         // it got that way -- a hit that a later miss in the same layer evicted
@@ -1512,6 +1588,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     }
     profiler_.add_phase(Phase::NvmeStall, Nanos(int64_t(t.gate_ms * 1e6)));
 
+    const TimePoint gp_s0 = Clock::now();
     if (split) {
         // The early dispatch reads the alternate slot list while it runs; it is
         // done by now in all but a pathological case, and this wait proves it
@@ -1531,6 +1608,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     }
     // stage_input resets the bridge's timing and stage_rows adds to it, so this
     // is the whole layer's host half whichever way it ran.
+    if (gate_probe_ && gp_open_) gp_open_->stage_us += ms_since(gp_s0) * 1000.0;
     t.moe_host_ms = moe_.timing().host_ms;
     mx_ms_ += moe_.timing().x_read_ms;
     mq_ms_ += moe_.timing().quant_ms;
@@ -1559,6 +1637,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         }
         ts_moe_[L].end = cmd_stamp();
         rec_ms_ += ms_since(r0);
+        if (gate_probe_ && gp_open_) gp_open_->rec_us += ms_since(r0) * 1000.0;
     }
     // This buffer is the last reader of the layer's slots.
     open_guard_ = layer_guard_;
@@ -1873,6 +1952,7 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     timings_.assign(c.num_hidden_layers, LayerTiming{});
     submits_ = 0;
     rec_ms_ = sub_ms_ = wait_ms_ = bind_ms_ = 0.0;
+    gp_open_ = nullptr;
     batch_union_ = 0;
     batch_miss_bytes_ = 0;
     tok_first_ = true;
@@ -2459,6 +2539,7 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     ts_tail_   = Stamp{};
     submits_   = 0;
     rec_ms_ = sub_ms_ = wait_ms_ = bind_ms_ = 0.0;
+    gp_open_ = nullptr;
     mx_ms_ = mq_ms_ = mt_ms_ = 0.0;
     tok_first_ = true;
     if (tok_open_) {                      // a previous step failed mid-buffer
@@ -2730,6 +2811,41 @@ std::string Engine::resident_route_report() const {
 std::span<const float> Engine::last_logits() const {
     if (!logits_.valid()) return {};
     return {static_cast<const float*>(logits_.host_ptr), model_cfg_.text.vocab_size};
+}
+
+// Track G: the gate host round trip, one line per residency class. The GPU-side
+// number this is read against is the per-dispatch trace's "gap in front of the
+// MoE dispatch" (docs/plan_p5.md (g)); everything here is the HOST clock, so
+// the difference between the two is exactly the two latencies the host cannot
+// see -- the fence wake-up and vkQueueSubmit -> GPU start.
+std::string Engine::gate_probe_report() const {
+    auto row = [](const char* tag, const GateSeg& g) {
+        if (!g.n) return std::format("  {:<5} (no layer-steps)\n", tag);
+        const double n = double(g.n);
+        const double host = (g.fence_us + g.ids_us + g.plan_us + g.pwait_us +
+                             g.stage_us + g.rec_us + g.next_us) / n;
+        return std::format(
+            "  {:<5} n={:<6} fence(i) {:8.1f}  ids(ii) {:5.1f}  plan(iii) {:6.1f}  "
+            "pwait(iii) {:8.1f}  stage(iv) {:5.1f}  record(iv) {:5.1f}  "
+            "next(v) {:6.1f} (submit {:5.1f})  | after the fence {:7.1f} us\n",
+            tag, g.n, g.fence_us / n, g.ids_us / n, g.plan_us / n, g.pwait_us / n,
+            g.stage_us / n, g.rec_us / n, g.next_us / n, g.sub_us / n,
+            host - g.fence_us / n);
+    };
+    std::string out = "gate round trip, host clock, us per layer-step "
+                      "(DEEPMOE_GATE_PROBE):\n";
+    out += row("hit", gp_hit_);
+    out += row("miss", gp_miss_);
+    if (spin_hits_ + spin_misses_)
+        out += std::format("  DEEPMOE_FENCE_SPIN_US={:.0f}: the spin caught the signal "
+                           "{} of {} times\n", fence_spin_us(), spin_hits_,
+                           spin_hits_ + spin_misses_);
+    out += "  (i) blocked in cmd_wait; (ii) verify + top-k, already host-coherent; "
+           "(iii) planner lookup and miss issue, then the wait on it; "
+           "(iv) MoE staging and recording; (v) the next layer's prologue up to the "
+           "vkQueueSubmit that carries this layer's MoE. 'after the fence' is (ii)"
+           "..(v): the host half of the GPU-side gap the trace calls the gate gap.\n";
+    return out;
 }
 
 std::string Engine::status() const {

@@ -1,0 +1,20 @@
+cell,workload,arm,metric,value,unit,note
+hot_A1,run --steps 1 --warm 12 --slow-prefill,fence park (default),hot_step,99.6,ms,all-hit step 0
+hot_B1,run --steps 1 --warm 12 --slow-prefill,DEEPMOE_FENCE_SPIN_US=4000,hot_step,97.2,ms,
+hot_A2,run --steps 1 --warm 12 --slow-prefill,fence park (default),hot_step,100.9,ms,
+hot_B2,run --steps 1 --warm 12 --slow-prefill,DEEPMOE_FENCE_SPIN_US=4000,hot_step,98.5,ms,
+hot_A3,run --steps 1 --warm 12 --slow-prefill,fence park (default),hot_step,100.4,ms,
+hot_B3,run --steps 1 --warm 12 --slow-prefill,DEEPMOE_FENCE_SPIN_US=4000,hot_step,98.4,ms,
+chat_A1,y_turns.json 4 turns 5100 slots,fence park (default),decode_tok_s,5.0276,tok/s,hit 0.9111
+chat_B1,y_turns.json 4 turns 5100 slots,DEEPMOE_FENCE_SPIN_US=4000,decode_tok_s,4.9670,tok/s,hit 0.9111
+chat_A2,y_turns.json 4 turns 5100 slots,fence park (default),decode_tok_s,4.9881,tok/s,hit 0.9111
+chat_B2,y_turns.json 4 turns 5100 slots,DEEPMOE_FENCE_SPIN_US=4000,decode_tok_s,4.9682,tok/s,hit 0.9111
+chat_A3,y_turns.json 4 turns 5100 slots,fence park (default),decode_tok_s,5.0131,tok/s,hit 0.9111
+chat_B3,y_turns.json 4 turns 5100 slots,DEEPMOE_FENCE_SPIN_US=4000,decode_tok_s,4.9431,tok/s,hit 0.9111
+gap_A,trace_hot_base.bin token 64 pass 10,fence park (default),gate_gap_per_layer,386.1,us,span 101.38 ms busy 85.17
+gap_B,trace_hot_spin.bin token 64 pass 10,DEEPMOE_FENCE_SPIN_US=4000,gate_gap_per_layer,325.2,us,span 98.04 ms
+cache24,run --cache-gb 24 (Track I's command),13 slabs all path A,hot_step,96.4,ms,moe_gpu 33.8
+cache48,run --cache-gb 48,27 slabs all path A,hot_step,96.6,ms,moe_gpu 33.8
+cacheauto,run --cache-gb 0 (today's default),34 path A + 17 path B,hot_step,102.1,ms,moe_gpu 38.4
+moe_kernel_preT,kernel_bench --quick --layer-cycle 8 --iters 48,fb53514^ (d4258d9),M1_ms_per_pair,0.6035,ms,218.08 GB/s raw 216.279
+moe_kernel_head,kernel_bench --quick --layer-cycle 8 --iters 48,HEAD,M1_ms_per_pair,0.6426,ms,204.80 GB/s raw 216.747
