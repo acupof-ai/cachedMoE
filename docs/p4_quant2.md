@@ -1,9 +1,16 @@
 # P4 / Track F5 — 2-bit routed experts: feasibility (`docs/p4_quant2.md`)
 
-**Verdict: NO-GO at 2 bits.** Section 5 has the end-to-end number and it is not
-close: teacher-forced perplexity on the 64-token L3 prompt goes from **29.26 to
-14,290,394**, with the argmax matching FP4 at **zero** of 64 positions. Section 8
-has the recommendation and what to do instead.
+**Verdict: NO-GO at 2 bits, and NO-GO at 3 bits.** Section 5 has the end-to-end
+numbers and neither is close. Teacher-forced perplexity on the 64-token L3
+prompt, against the checkpoint's 29.26:
+
+| | bits/wt | perplexity | vs FP4 | argmax agreement |
+| --- | ---: | ---: | ---: | ---: |
+| FP4 (checkpoint) | 4.25 | 29.26 | — | — |
+| 3-bit `uni3_b32` | 3.25 | **13,251,329** | x452,957 | 1.6% (1 of 64) |
+| 2-bit `int2_b32` | 2.25 | **14,290,394** | x488,475 | 0.0% (0 of 64) |
+
+Section 8 has the recommendation and what to do instead.
 
 **The acceptance criterion here is perplexity** -- whether the model still
 produces normal output -- not agreement with FP4. Argmax agreement and KL are
@@ -256,8 +263,18 @@ to be the reference when nothing is quantised.
 | scheme | bits/wt | **perplexity** | vs FP4 | argmax agree | mean KL | run time |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | **FP4** (checkpoint) | 4.25 | **29.26** | — | — | — | 388 s |
-| `uni3_b32` (3-bit) | 3.25 | PENDING | PENDING | PENDING | PENDING | PENDING |
+| `uni3_b32` (3-bit) | 3.25 | **13,251,329** | **x452,957** | **1.6%** | 14.09 nats | 2,539 s |
 | `int2_b32` (2-bit) | 2.25 | **14,290,394** | **x488,475** | **0.0%** | 14.26 nats | 1,777 s |
+
+**3 bits fails too, and by the same margin.** This is the result that settles
+the track. `uni3_b32` loses "only" a third of each expert's output at L1 (0.3146
+on real activations) and still comes out at perplexity **13.25 million**, with
+the argmax matching FP4 at **1 of 64** positions. Forty layers compose: a 31%
+error per expert, applied six experts deep, forty times, does not stay a 31%
+error. Design section 12's reason for having an L3 rung at all -- that a
+per-kernel test cannot see what happens when forty layers of them are composed --
+is exactly what this row demonstrates, and it means **L1 error of even 0.3 is
+already fatal**, which is a far tighter constraint than anyone assumed going in.
 
 **2 bits is not a degradation, it is a destruction.** Perplexity goes from 29 to
 fourteen million. The argmax matches FP4 at **zero** of the 64 positions — not a
@@ -267,9 +284,15 @@ at logit 15.82 where the checkpoint wants 3006 at 28.72. A mean KL of 14.3 nats
 against a distribution over 129,280 tokens means the two distributions have
 essentially nothing to do with each other.
 
-No further measurement on 2 bits was justified, and on the owner's instruction
-its 2,048-token pass and its free-running sample were cancelled rather than run
-to completion. Section 3 and section 4.1 already say why no variant of it would
+Both perplexities are far worse than the 129,280 a uniform distribution would
+give, which is the signature of a model that is confidently wrong rather than
+merely uncertain -- the collapsed network still produces large logits, just for
+the wrong tokens.
+
+No further measurement on either scheme was justified. On the owner's
+instruction the 2,048-token passes and the free-running samples were cancelled
+rather than run to completion, and the 3-bit run was stopped as soon as its
+64-token perplexity failed the gate (within ~2x of FP4's 29.26). Section 3 and section 4.1 already say why no variant of it would
 land anywhere else: the checkpoint's codes carry 3.84 bits of entropy, and the
 error a 4-value codebook makes is spread perfectly evenly over every row, block,
 matrix, layer and expert.
@@ -443,7 +466,8 @@ they did, the time is not a clean single-job measurement and is marked.
 | L3 FP4 control | 64 + 2,048 tokens | 1,486 s | 388 s + 1,079 s |
 | L3 `int2_b32` | 64 tokens | 1,777 s | 4.6x the FP4 pass, overlapped |
 | L3 `int2_b32` 2,048 tokens | cancelled | — | 265 s/layer measured, ~2 h projected |
-| L3 `uni3_b32` | 64 tokens | see section 5.1 | overlapped |
+| L3 `uni3_b32` | 64 tokens | 2,539 s | 3-bit control, partly overlapped |
+| L3 `uni3_b32` 2,048 tokens | cancelled | — | gate failed at 64 tokens |
 | free-running sample | cancelled | — | ~40 min/prompt/scheme measured |
 
 **The cheap experiments are the ones that decided this.** The code histogram and
@@ -452,6 +476,22 @@ argument: 3.84 bits of entropy and a perfectly uniform error. The L1 grid (54
 minutes) confirmed it across eighteen schemes; the L3 passes (30+ minutes each)
 confirmed it end to end. Nothing after the first 94 seconds changed the sign of
 the answer.
+
+**What would have made this faster.** The 64-token L3 pass is the experiment
+that actually decides a format, and at ~30-40 min it is the wrong size for a
+first look. Two things would fix that for the next one: run the gate on the
+*smallest* prompt that composes all forty layers (a 16-token prompt touches far
+fewer unique experts per layer and would have returned the same verdict in under
+ten minutes), and screen on L1 against the 0.31 tolerance this track established
+before scheduling any L3 at all.
+
+**One control not run.** The FP4 path through this driver reproduces the L3
+golden bit-exactly, and the in-forward quantiser is asserted against an
+independent numpy implementation, so the two failing rows are trusted. The check
+that would close the last gap is `uni4_b32` (uniform 4-bit, L1 error 0.2575)
+through the same hook: it should land between FP4 and `uni3_b32`, confirming the
+pipeline degrades monotonically rather than failing all-or-nothing. It is one
+~30 min run and is the first thing to do if anyone doubts these numbers.
 
 That ordering is worth keeping for the next format question. Entropy of the code
 stream and concentration of the induced error are both one-expert measurements,
