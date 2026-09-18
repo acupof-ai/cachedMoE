@@ -313,10 +313,15 @@ MoE live-column mask 在 microbench 上是 1.7×（30 ms/token），端到端**�
 它是每 token 的 5.7 ms，对着 130–190 ms 的 stall。
 但**一旦 hit 上到 0.95+，stall 降到 ~40 ms，热步就重新变成主项**——那时候 §7 的第 3、4 项才有意义。
 
-**没量过的那一块**：每次 expert miss 花 **20–31 ms**（107 GB / 5,030 次填充），
-而 8.3–9.2 GB/s 下 18.8 MB 的真实盘时间是 **~2 ms**。
-**这 10× 的差没有解释**（§3 的 26 排除了"载入时量化"这个嫌疑）。
-这是今天最大的一个未知数，也是 §7 第 1 项。
+~~**没量过的那一块**：每次 expert miss 花 20–31 ms，而 8.3–9.2 GB/s 下 18.8 MB 的真实盘时间是 ~2 ms，
+这 10× 的差没有解释。~~ **已解释，就是盘本身**（`bench/nvme_bench`，`p4_hitrate.md` §10）：
+18.8 MB 的**随机**读 QD=4 是 **5.19 GB/s / 13.6 ms 每请求**、QD=1 是 4.47 GB/s / 4.05 ms，
+一层 6 个 expert 全 miss 就是 **21.7 ms**——和 20–31 ms 对得上。
+那个"~2 ms"是拿 decode 跨多个并发 fill 的聚合带宽去除单个请求算的，口径错了。
+**没有 CPU 开销、没有共享显存写入的代价、没有排队，就是盘。**
+顺带否掉三件看起来可行的事：离线重打包（checkpoint 已经是量化格式，而且 17.7 MB 的请求已经跑在 5.2 GB/s，
+说明没有按请求的固定开销可省）、减少对齐浪费（18.8 MB 里 3 KB，0.02%）、提高 QD（1→4 只有 +16%）。
+**结论**：decode 的每 token 时间 = `MB/token ÷ 5.2 GB/s`。**只有少读字节这一条路。**
 
 ---
 
@@ -445,7 +450,8 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    而且这已经是本机安全上限附近（5,400 八轮中途死、5,500 第一个 token 丢设备，§3 的 30 / `p4_hitrate.md` §4）。
    容量曲线还在爬（sim 6,500 槽 +2.2 点），但**本机没有字节了**。20 tok/s 需要把 MB/token 再砍 3×：
    2-bit 已经否掉（§3 的 37），只剩投机解码，而它今天做不到（§3 的 34）。
-2. **每次 expert miss 20–31 ms，真实盘时间 ~2 ms，10× 的差没有解释。**（§4）
+2. ~~**每次 expert miss 20–31 ms，真实盘时间 ~2 ms，10× 的差没有解释。**~~ **已关闭**：
+   那就是盘对 expert 尺寸随机读的表现（QD=4 时 5.19 GB/s / 13.6 ms 每请求，一层 6 个 = 21.7 ms），§4。
 3. **热步只剩 ~7% 余量**（81.5 vs 地板 75.8 ms）。剩下的是结构性的：每 token 40 次 host 往返读 gate
    （~1.6 ms submit + ~2 ms fence），以及 MoE 的 `x` 每层往 host 走一趟。
 4. **prefill 是 19.5 ms/prompt token 的 compute**（F3 实测，4,133 token = 80.6 s），
@@ -456,6 +462,8 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 5. **`Engine::generate` 的 `speculative` 是 `unimplemented`**，缺三个 kernel 能力（M=6 的 MoE、草稿链的 bf16 输入 GEMV、`accept_sampling_exact` 的四个读回）。
 6. **Track J 的接口（K-split / tiled attention，696 µs/层）没有被 runtime 采纳**，
    而且**它的 LDS 修复在真机上看不到**：attention 在 Track I 是 36.0 ms、Track Q 后是 36.9 ms，J 声称 −3.8 ms 且"已生效"。**这个矛盾未解决。**
+   （有一份**从未编译、从未验证**的采纳尝试，是 P4 合并时在 `deepmoe-t` 工作树里捡到的未提交改动，
+   保存在 tag `wip/track-t-ksplit-decode` 上，免得删工作树时丢掉。**不要当成已验证的东西用。**）
 7. ~~**`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` 从未 A/B 过。**~~ **已做（F4，`p4_hitrate.md` §6）**：
    `MOE_OVERLAP` +1–4%（hit 到小数点后四位不变——它搬运工作，不改 cache 内容）**默认 on**；
    `PREFILL_HANDOFF` 在 512 / 1,024 / 2,048 token prompt 上 **+72% / +49% / +17%**，
@@ -486,9 +494,10 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 顺序的依据是 §4：**先降 MB/token 和 stall，再降 kernel 时间**。
 每一项的机制、预测（已按"二分之一法则"砍半）、成本与探针在 [plan_p5.md](plan_p5.md)。
 
-1. **给 `ReadFile` 两侧插桩，解释每次 miss 的 20–31 ms。**
-   这是唯一一个 10× 量级的未知数，而且它按定义在 token 的 60% 那一侧。
-   便宜：两个时间戳 + 一条 JSONL 字段。**在做任何 kernel 工作之前做这个。**
+1. ~~**给 `ReadFile` 两侧插桩，解释每次 miss 的 20–31 ms。**~~ **已完成，答案是"就是盘"**（§4）。
+   接替这一位的是 §3 的 36 里那两条——**score-aware 淘汰**（唯一没跑过、Belady 上限 +42% 的淘汰策略）
+   和**第二块 NVMe**（+32–40%）。两条都是直接降 `MB/token ÷ 带宽` 这个式子的，
+   而 §4 已经证明整段 decode 只由它决定。
 2. **把 SSD KV 前缀复用接进 `serve` 的默认路径。**
    已实测 41×（101.6 s → 2.47 s），已实现，只是没默认开。这是当前性价比最高的一项。
 3. **量 verify-only 的 resident-only 路由在 DSpark 上的收益。**
