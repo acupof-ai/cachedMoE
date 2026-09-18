@@ -109,16 +109,39 @@ class Trace:
                 out.append(r.token)
         return out
 
+    def passes(self, token: int):
+        """The records of `token`, split into one list per forward pass.
+
+        `Tracer::token_begin` keys on the decode POSITION, and the warm-up of
+        `deepmoe run --warm N` decodes the same position N times. So one token
+        id can carry N+1 passes, and reading them as one token gives nonsense
+        (every pass's `seq` starts at 0 again, so sorting by seq interleaves
+        them: the gaps come out as the whole inter-pass wait). Split on the
+        seq reset, in file order, which is record order.
+        """
+        out, cur = [], []
+        for r in self.records:
+            if r.token != token:
+                continue
+            if r.seq == 0 and cur:
+                out.append(cur)
+                cur = []
+            cur.append(r)
+        if cur:
+            out.append(cur)
+        return out
+
 
 def us(ns: int) -> float:
     return ns / 1000.0
 
 
-def print_layer(t: Trace, token: int, layer: int) -> int:
-    rows = [r for r in t.records if r.token == token and r.layer == layer]
+def print_layer(t: Trace, token: int, layer: int, recs=None) -> int:
+    src = t.records if recs is None else recs
+    rows = [r for r in src if r.token == token and r.layer == layer]
     if not rows:
         print(f"token {token} has no layer {layer}; "
-              f"layers present: {sorted({r.layer for r in t.records if r.token == token})}")
+              f"layers present: {sorted({r.layer for r in src if r.token == token})}")
         return 1
     rows.sort(key=lambda r: r.seq)
     timed = [r for r in rows if r.timed]
@@ -154,8 +177,9 @@ def print_layer(t: Trace, token: int, layer: int) -> int:
     return 0
 
 
-def print_summary(t: Trace, token: int) -> int:
-    rows = [r for r in t.records if r.token == token]
+def print_summary(t: Trace, token: int, recs=None) -> int:
+    rows = list(t.records if recs is None else recs)
+    rows = [r for r in rows if r.token == token]
     if not rows:
         print(f"no records for token {token}; tokens present: {t.tokens()[:16]}")
         return 1
@@ -245,6 +269,9 @@ def main() -> int:
     ap.add_argument("trace", nargs="?", type=Path)
     ap.add_argument("--layer", type=int, default=None, help="print this layer dispatch by dispatch")
     ap.add_argument("--token", type=int, default=None, help="default: the first token in the file")
+    ap.add_argument("--pass", dest="which_pass", type=int, default=None,
+                    help="which forward pass of that token (--warm decodes one position "
+                         "several times); default: the last one, which is the warmest")
     ap.add_argument("--summary", action="store_true", help="roll the token up by phase class")
     ap.add_argument("--self-test", action="store_true",
                     help="parse a synthetic trace; no file and no GPU needed")
@@ -262,12 +289,25 @@ def main() -> int:
     token = a.token if a.token is not None else toks[0]
     print(f"{a.trace}: {len(t.records)} dispatches, {len(toks)} token(s) "
           f"{toks[0]}..{toks[-1]}, timestampPeriod {t.period_ns:g} ns")
+    passes = t.passes(token)
+    if len(passes) > 1:
+        idx = a.which_pass if a.which_pass is not None else len(passes) - 1
+        if not (0 <= idx < len(passes)):
+            print(f"token {token} has {len(passes)} passes, 0..{len(passes) - 1}")
+            return 1
+        print(f"  token {token} carries {len(passes)} forward passes "
+              f"(--warm re-decodes one position); showing pass {idx}"
+              f"{' (the warmest)' if a.which_pass is None else ''}. "
+              f"--pass N selects another.")
+        recs = passes[idx]
+    else:
+        recs = None
     rc = 0
     if a.layer is not None:
-        rc |= print_layer(t, token, a.layer)
+        rc |= print_layer(t, token, a.layer, recs)
         print()
     if a.summary or a.layer is None:
-        rc |= print_summary(t, token)
+        rc |= print_summary(t, token, recs)
     return rc
 
 

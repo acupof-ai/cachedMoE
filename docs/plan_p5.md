@@ -154,6 +154,61 @@ gate 那个必须回 host 的点用一个 device 可见的 fence 代替。
 
 ---
 
+**结果（2026-09-18，Track PD）——关闭。预测 −4%，实测上限 −0.8%，而且机制本身不合法。**
+
+两侧独立地倒下，任何一侧都够：
+
+**一、合法性。`build/residency_probe --max-groups 2048 --spin 200000 --rounds 1000`**
+（`bench/results/p4pd/residency_probe.csv`，STATUS §3 的 48）：
+
+| 段 | 实测 | 判据 |
+|---|---|---|
+| residency census | 32 / 64 / 128 / 256 组全活；512 起 peak 停在 **406–413** | 常驻上限 **~406** 个 256-线程 workgroup |
+| ping-pong | **1,000 次往返里第 3 次就 TIMEOUT**（两个 workgroup） | §5.1 的第 2 条**不过**。fleet 的 1.36 µs 在这里量不出来，因为两个 group 根本不保证同时前进 |
+| forward progress | 2 / 8 / 32 / 128 `progressed`；512 / 2048 `TIMEOUT`（超上限，预期内） | 上限之内前进，但握手已经判了死刑 |
+
+**共存不蕴含前进 ⇒ 自旋等待 NO-GO ⇒ device 侧任务队列 + 事件计数器的形状不成立。**
+§5.1 说这时 (a) 退化成「一张 dispatch 图」——那就是下面这一半。
+
+**二、收益。热步的 per-dispatch trace**（`--steps 8 --warm 8 --slow-prefill --trace`，
+7 个稳态 token，741 dispatch / 41 submit 每 token）：
+
+```
+span 102.07 ms  =  GPU busy 85.23 ms  +  gap 16.84 ms (16.5%)
+```
+
+16.84 ms 看起来远在 8 ms 的门槛之上，**但它的分布不是平的**：
+
+| gap 在哪 | ms/token | 机制 |
+|---|---|---|
+| 每层 MoE dispatch **之前** | **16.04**（40 × 0.40 ms） | 命令缓冲在 gate 处被切开的那次 **host 往返**（fence → 读 ids → 选 expert → bind → record → submit） |
+| 其余 **700 个** dispatch 的层内 barrier | **0.80** | 0.4–2.2 µs 一个，与 §3 的 27 的 0.56–0.66 µs 一致 |
+
+逐层（`--layer`，一个稳态 token）：
+
+| 层 | dispatch | busy | 层内 gap | MoE 前的 gap |
+|---|---|---|---|---|
+| 21（普通） | **17** | 1,895 µs | **18 µs** | 335 µs |
+| 20（kv+index 源层） | **26** | 2,112 µs | **24 µs** | 271 µs |
+
+**所以「把一层的非 MoE 链录进一个 command buffer」不是一个待做的改动——它是今天的实现**
+（STATUS §2.1，~128 → **41** submit，只在 gate 处切开；submit 数 41 与 §3(c) 数出来的
+17 / 26 dispatch 一起，把「一个普通层 20 / 源层 33」这个计数也更正了）。
+再融合任何东西的天花板是 **0.80 ms/token = 0.8%**，**四分之一个 ±3% 抖动带**。
+
+| 机制 | 预测（已砍半） | 实测 | 差 |
+|---|---|---|---|
+| (a) persistent dispatch，热步 | **−4%**（81.5 → 77–78 ms） | **上限 −0.8%**，且自旋形不合法 | 预测偏高 5×，并且方向错：预测把钱押在 **submit 往返**上，实际 41 次 submit 的往返**已经全部被 GPU 工作盖住了**——省下来的只有 gate 那一次，而那一次的 device 侧替代品被探针关掉了 |
+
+**要重开它，先得有一条不用自旋的 device 侧 gate**（indirect dispatch + device 侧写
+`VkDispatchIndirectCommand`，不需要 workgroup 互等）。那是一条新路，不是这一条。
+代价：一次 trace + 两个探针，约一小时。
+
+**顺带**：`sharing_probe` 的行是平的（STATUS §3 的 50），共享读免费；
+`--trace` 的开销实测为 **0**（带 102.07 ms vs 不带 102.3–106.2 ms），trace 机制在真机上验收通过。
+
+---
+
 ### (b) absorbed-K attention — **已经关闭，不要做**
 
 结论先写：**V4.1-Flash 不是 MLA，没有 `W_UK` / `W_UV` 可以吸收。这条路不存在。**
@@ -230,6 +285,12 @@ design §3.4 曾经猜 5–20 µs 并因此恐慌了一轮——**融合 dispatc
 **先量再做**：跑 §4 的 trace，看 `--layer 20` 里这些 dispatch 各自的 busy。
 如果 `MhcPost`/`MhcMix`/`MhcFinal` 三件加起来不到一层的 5%，c1–c3 直接划掉。
 
+**结果（Track PD）：c1–c3 划掉。** 层内 barrier 实测是**普通层 17 个 dispatch 一共 18 µs、
+源层 26 个一共 24 µs** —— 40 层 = **0.8 ms/token**，比这里预测的 0.06 ms 大一个量级，
+但仍然只有抖动带的四分之一。`MhcPost`/`MhcMix`/`MhcFinal` 六件在一个普通层里是
+7.6+14.0+6.2+3.8+13.6+13.6 = **58.8 µs / 1,895 µs = 3.1%**，低于这里写的 5% 线。
+**c4 没有被这次 trace 否掉**：它作用在 host 往返上（MoE host 实测 1.6–1.9 ms/token），不在 dispatch 上。
+
 ---
 
 ### (d) Q 提前发出 / 每个 phase 的 K-split
@@ -252,6 +313,13 @@ design §3.4 曾经猜 5–20 µs 并因此恐慌了一轮——**融合 dispatc
 
 **判据**：这两条**都不要在 trace 上 GPU 之前动**。没有 per-dispatch 的 busy/gap，
 "哪里有空闲可以重叠"完全是猜的——而 fleet 的记录说，三次猜错、一次猜对。
+
+**结果（Track PD）：Q 提前也划掉，理由和 c1–c3 是同一个数。**
+trace 说 `WkvGemv`+`WkvFinish`+ced 期间 GPU **没有空闲可以重叠**——
+源层 20 的 26 个 dispatch 之间一共只有 **24 µs** 的 gap，ced 那 9 个各 0.4–1.4 µs。
+`WqA`/`WqB` 挪到它们前面**没有东西可以填**（fleet v0.18 之所以赚 1.5%，是因为等待者那边有空闲）。
+这一层唯一的空闲是 MoE 前那 271–335 µs，而 Q 在那之前就已经算完了。
+**每 phase 各自的 K-split 仍然未测**（要先把 Track J 的接口接进 runtime）。
 
 ---
 
@@ -300,8 +368,8 @@ score-aware / 每层配额 / 静态 pin（24）、饱和 cache 上的 reheat（2
 | (f) | 命中率 0.84 → 0.92 | 字节 | **+30%** | 中 | F4；先解释 miss 的 20–31 ms |
 | (c4) | `WoB` epilogue 写出量化好的 FFN 输入 | host 往返 | 热步 −0.5 ms（−0.6%） | 低 | trace |
 | (a) | persistent-dispatch decode | submit + barrier | 热步 −4%，对话 token −2% | **高** | `residency_probe` |
-| (d) | Q 提前 | 重叠 | 热步 −1% | 低 | trace |
-| (c1–c3) | dispatch 融合 | barrier | 热步 −0.06 ms（−0.07%） | 低 | trace（很可能划掉） |
+| ~~(d)~~ | ~~Q 提前~~ **关闭** | — | **0，没有空闲可以重叠**（层内 gap 24 µs） | 已付 | 同上 |
+| ~~(c1–c3)~~ | ~~dispatch 融合~~ **划掉** | — | **上限 0.8 ms/token = 0.8%** | 已付 | 同上 |
 | (b) | absorbed-K attention | — | **0，机制不存在** | 已付（一次只读检查） | **关闭** |
 
 **顺序的含义**：前两项作用在字节上，后面全部作用在 81.5 ms 里的那 7% 余量上，
@@ -372,6 +440,25 @@ token N, layer 21: 20 dispatches, span ~2000 us
 但**如果 `--trace` 打开之后引擎报 `no GPU timestamps`**，说明 2,784 槽的 `VkQueryPool`
 创建失败了；那就退回 `--trace` 只采前几层，或者把 `suggested_pool` 调小。
 **这是唯一一个只能在真机上发现的问题。**
+
+### 4.4b 真机上跑过之后（2026-09-18，Track PD）
+
+**trace 机制验收通过**：8 步 × 40 层、64,282 条记录，**没有一条 `lost a stamp`**，
+`suggested_pool(40) = 2,784` 槽够用，`host time not on the GPU` = 0.000 ms，
+开销实测 **0**（带 `--trace` 102.07 ms/热步 vs 不带 102.3–106.2 ms）。
+
+两处要改的是**文档**，不是 trace：
+
+1. **每层的 dispatch 数**。§3(c) 数的是「普通层 20 / 源层 33」，真机是
+   **普通层 17 / 源层 26**（MoE 的 gate/up + h-quant + down 是**一个**融合 dispatch
+   `moe_gateup+hquant+down`，不是三个；`MhcClose` 没有单独出现）。
+   741 dispatch/token、41 submit。
+2. **一个 trace token id 可能装着好几遍前向**。`Tracer::token_begin` 用的键是**位置**，
+   而 `--warm N` 把同一个位置解码 N+1 遍，所以 `--warm 8` 的 9 遍全部落在同一个 token id 上，
+   每一遍的 `seq` 又都从 0 开始。**按 seq 排序会把它们交错**，gap 于是变成「两遍之间的等待」
+   （一个 token 读出 6,733 个 dispatch、`host time not on the GPU` = **−753,222 ms**）。
+   `tools/trace_timeline.py` 已修：按 seq 重置切分，默认显示**最后一遍**（最热的那遍），
+   `--pass N` 选别的，并在多遍时打印一行说明。
 
 ### 4.4 然后把结果写回来
 
