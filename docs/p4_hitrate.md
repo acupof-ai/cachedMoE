@@ -316,3 +316,441 @@ $env:DEEPMOE_MODEL_DIR="D:\models\DeepSeek-V4.1-Flash"
 写进 path A（`DEVICE_LOCAL | HOST_VISIBLE`，共享显存）那一段的带宽。要定位它，该做的是
 在 `ReadFile` 进出的两侧各打一个 host 时间戳（不动数据路径），**而不是**动量化的主意。
 
+
+## 2026-09-18 Track F4 — the A/Bs, and the defaults they set
+
+Everything below was measured in `C:\Users\Asus\code\deepmoe-fin-r1` on the
+`p4/fin-r1` branch, one `deepmoe serve` at a time under the p4 GPU lock
+(`build\p4_gpu_lock.ps1`), same binary, same shader directory, same 8-turn
+script `bench/results/hitrate/long_turns.json`. Raw runs are in
+`bench/results/hitrate/<cell>/` (`turns.json`, `profile.jsonl`, `route.bin`,
+`events.jsonl`, `status.json`, `serve.log`).
+
+### 0. What the engine's own routing says before any new run
+
+`tools/hitrate_sim.py curve` replays a run's `route.bin` through
+`tools/cache_sim.py`'s LRU. On both existing 8-turn dumps the engine and the
+simulator agree on **every** step (2,489/2,489 and 2,552/2,552), so the
+simulator can be trusted to price a capacity the machine cannot hold.
+
+Decode-only hit of the 8-turn route at each capacity (one slot = 18,808,832 B):
+
+| slots | GiB | sim decode hit | Δ vs 4,500 |
+|---:|---:|---:|---:|
+| 2,200 | 38.5 | 0.8127 | −0.1119 |
+| 3,000 | 52.6 | 0.8701 | −0.0545 |
+| 3,500 | 61.3 | 0.8941 | −0.0305 |
+| 4,000 | 70.1 | 0.9109 | −0.0137 |
+| 4,500 | 78.8 | 0.9246 | — |
+| 5,000 | 87.6 | 0.9356 | +0.0109 |
+| 5,200 | 91.1 | 0.9390 | +0.0144 |
+| 5,500 | 96.3 | 0.9431 | +0.0185 |
+| 5,711 | 100.0 | 0.9456 | +0.0210 |
+| 6,000 | 105.1 | 0.9486 | +0.0239 |
+| 6,500 | 113.9 | 0.9532 | +0.0285 |
+
+The curve is still climbing at the machine's ceiling, and §8 showed decode is
+NVMe-bandwidth-bound (`tok/s ≈ NVMe_eff / (MB/tok)`), so **every point of hit is
+throughput**. That is the whole argument for sizing the cache from this curve.
+
+Per-turn, how much of a turn's decode routing its own prompt prefill already
+touched (the lever `docs/p4_expert_patterns.md` §1 calls the biggest one), on
+the 5,500-slot run:
+
+| turn | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | all |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| prefill tokens | 29 | 18 | 35 | 22 | 64 | 39 | 42 | 47 | |
+| decode selections seen in that turn's prefill | 0.679 | 0.425 | 0.670 | 0.647 | 0.662 | 0.681 | 0.723 | 0.623 | **0.657** |
+
+(The 86.6% of `p4_expert_patterns.md` is cumulative over every prefill so far;
+per turn, against its own prompt only, it is 0.66. Turn 2 is an 18-token
+follow-up, which is why it is the outlier.)
+
+### 1. The per-turn reheat pass was a no-op *by construction*, not by luck
+
+§7 measured turn-3 decode hit 0.7210 with `--reheat` and 0.7210 without, and
+concluded "a saturated cache has nothing for it to do". Reading the pump says
+something stronger. `Planner::backfill_pump` has
+
+```cpp
+if (store_->slot_of(key)) continue;          // held already
+```
+
+and the old `Engine::reheat` built its order as *residents hottest-first, then
+non-residents*, then truncated it to `budget = free_slots + evicted`. On a
+saturated cache `free_slots == 0` and `evicted ≤ slots/32`, so the truncation
+kept **only residents** — every key the pump was handed was one it skips. The
+pass therefore:
+
+* evicted `slots/32` experts (68 at 2,200 slots, 172 at 5,500), and
+* issued **zero** fetches,
+
+which is exactly a cost: the +32 MB/token and −0.018 tok/s that §8's sweep
+charged to `--reheat` is those evicted slots being re-read on demand.
+
+Fixed in this branch: the pass selects its candidates from the heat table
+(`DEEPMOE_HEAT_FILE` when given, else `store/static_heat.inc` — now read once
+and shared with the startup P3 backfill, so `--write-heat` / `--heat-recent`
+steer both) filtered to **non-resident** keys, and it evicts at most as many
+slots as it has candidates for, so it can never again evict without fetching.
+`tests/test_integration.cpp::a_backfill_order_of_resident_keys_fetches_nothing`
+pins the planner half of the invariant.
+
+Two things the same reading turned up that are *not* bugs but are worth writing
+down, because the interface reads as if they were:
+
+* **`decay` does nothing to the ranking.** `ExpertStore::decay_heat(f)` returns
+  early for `f >= 1` and otherwise rescales the hot end to 1.0 — it never
+  multiplies by `f`. Since a uniform scale is order-preserving, "decay then
+  renormalise" and "renormalise" are the same ranking, so `--reheat-decay` is a
+  no-op on the order and only the `f >= 1` early return is observable. The real
+  ageing is in `note_heat`'s EWMA.
+* **`warm` grows monotonically.** With no true decay, a slot's heat only ever
+  rises, so the `floor_heat = max(0.05, 0.1 * head)` prefix widens turn by turn
+  and `want = min(slots/32, slots − warm)` shrinks towards zero. The pass fades
+  out over a long conversation even when it has work.
+
+---
+
+### 2. Every run below was taken on a quiet machine — and which earlier ones were not
+
+The campaign the previous agent left behind had produced exactly one complete
+cell (`m_4500_off`) before the freeze; every other directory under
+`bench/results/hitrate/` held an empty `route.bin` and a serve log ending in a
+lost device. Worse, a **detached** `f4_campaign.sh` was still running: killing
+its `deepmoe serve` only made it start the next cell. The whole tree
+(`f4_campaign.sh` → `bash` → `hitrate_bench.py` → `deepmoe serve`) had to go
+before anything could be measured, and the campaign was re-run in the
+foreground, one cell at a time, by `f4_seq.sh`: it refuses to start a cell while
+`Get-Process deepmoe,deepmoe_tests,prefill_bench` is non-empty and kills the
+engine after each. Every cell logs the free physical memory it started with.
+
+| provenance | cells |
+| --- | --- |
+| quiet, this session, verified per cell (50–54 GiB free, no other engine) | every `m_*`, `ov_*`, `bf_*`, `ho_*`, `g_*` cell in the tables below |
+| quiet under the old campaign's own gate (≥38 GiB free, no other engine) | `m_4500_off` — kept and reused; its sim agreement and hit are consistent with this session's cells |
+| **loaded** — do not read as results | everything in `docs/p4_dspark_runtime.md` §8's `config_sweep.json`, and the pre-freeze `m_5500_*` / `ov_*` / `bf_off` directories, which were deleted |
+
+One caveat that applies to every table: **`tok/s` is only comparable within a
+contiguous block of cells**, because a CPU-only job on the other track (F5) was
+running throughout and its load varied. `hit` and `MB/token` are properties of
+the routing and the cache and are not affected; they are what the defaults are
+set from. Where a `tok/s` comparison carries weight below, the two cells ran
+back to back.
+
+### 3. There is no planner-vs-LRU gap: the engine *is* pure LRU
+
+The premise that the engine's hit was ~7 points below a pure-LRU replay of the
+same routing does not survive being measured on the same stream. `hitrate_sim.py
+curve` replays a run's own `route.bin` through `cache_sim.py`'s LRU at the
+engine's own capacity and compares the engine's per-step, per-layer hit counts
+against the simulator's:
+
+| run | script | slots | engine hit | sim LRU hit | steps agreeing |
+| --- | --- | ---: | ---: | ---: | --- |
+| `m_4500_off` | 8-turn `long_turns` | 4,500 | 0.9062 | 0.9062 | **2,489 / 2,489** |
+| `m_5000_off` | 8-turn `long_turns` | 5,000 | 0.9136 | 0.9136 | **2,489 / 2,489** |
+| `g_sweep_4500` | the 4-turn `config_sweep` TOPIC | 4,500 | 0.8505 | 0.8505 | **214 / 214** |
+
+The third row is the direct test: `config_sweep.json`'s 0.8370 is the number the
+gap was computed from, so its own dialogue was replayed through
+`hitrate_bench.py` (which dumps routing; `bench/config_sweep.py` does not) and
+then through the simulator. Engine and simulator agree on every step. The
+0.8370-vs-0.905 comparison is between a **4-turn, 92-decode-step, cold-cache**
+run and an **8-turn, 2,193-step** one; it is not a policy gap, it is two
+different workloads.
+
+The source says the same thing, which is why the suspects can be closed
+individually rather than measured one at a time:
+
+* **(a) eviction is not `(heat, last_use)`.** `ExpertStore::evict_lru`
+  (`store/expert_store.cpp:420`) ranks on `last_use_token` alone, and
+  `store/planner.cpp:90` still carries the `TODO(design §9.3): rank by (heat,
+  last_use)`. `heat` is read only by `heat_order()`, which only the reheat pass
+  calls. The near-miss fix made `heat` non-zero; it did not put it in the
+  eviction order.
+* **(b) the P3 backfill is stamped *below* demand**, not as demand:
+  `kDemandStampBase - 1 - rank` (`planner.cpp:495`). Only the reheat pass passes
+  `keep=true`, and its `kDemandStampBase + rank` still lands below every real
+  demand access, because demand stamps start at `kDemandStampBase` and only
+  increase (`planner.h:235`, `access_clock_`). A reheated slot is therefore the
+  *first* demand-range slot evicted, not the last.
+* **(c) the prefill handoff's stamps are the token-major access order the prompt
+  would have produced anyway** (`engine.cpp`, `sink.reserve`), and
+  `store::admit_streamed` drops a reservation whose stamp is older than the
+  oldest evictable slot, so it cannot displace anything fresher.
+* **(d) no prefetch is active**: `prefetch 0 issued / 0 used / 0 wasted` in every
+  `status.json` of every cell.
+
+And the ablation the premise asked for, run anyway (`g_abl_none`: 8-turn,
+4,500 slots, `DEEPMOE_BACKFILL=0 DEEPMOE_PREFILL_HANDOFF=0 DEEPMOE_MOE_OVERLAP=0`,
+no reheat) confirms it from the other side — turning everything off does not
+raise the hit, because there was nothing to turn off:
+
+| 4,500 slots, 8-turn | decode hit | stall ms/token | MB/token | steps agreeing with sim |
+| --- | ---: | ---: | ---: | --- |
+| defaults | 0.9250 | 92.2 | 338.3 | 2,489 / 2,489 |
+| everything off (`g_abl_none`) | 0.9252 | 115.8 | 337.8 | 2,489 / 2,489 |
+
+(The two runs' `tok/s` are 5.144 and 3.347, but they are 50 minutes apart with
+different F5 load and the isolated `MOE_OVERLAP` A/B below prices the same
+switch at +1–4%, so that difference is the machine, not the flags. The hit and
+the bytes, which are load-independent, are identical.)
+
+### 4. Capacity: the ceiling moved down, and `auto` is now the right default
+
+`--cache-slots 5500` was the recommendation of the §"容量实测" section above.
+It no longer holds on this machine. At 5,500 slots the pool needs 19 path-B
+slabs and the device is lost on the first token, on a **quiet** machine with
+53.8 GiB free:
+
+```
+[INF] slab pool: path A full after 36 slabs (...), continuing on path B
+[INF] engine: expert cache 5500 slots, 96.34 GiB (36 slabs on path A, 19 on path B)
+{"event":"error","message":"internal: the residency timeline reads UINT64_MAX, which is
+ what a LOST device reports -- most likely the expert cache's last path-B import
+ exhausted the host heap"}
+```
+
+The ceiling scan, one serve at a time (100 slots per slab; path A takes the
+first 36 slabs, everything above 3,600 slots goes to path B):
+
+| slots | GiB | path A / B slabs | 3-turn probe | 8-turn script |
+| ---: | ---: | --- | --- | --- |
+| 4,500 | 78.8 | 36 / 9 | — | **ok** |
+| 5,000 | 87.6 | 36 / 14 | ok | **ok** |
+| 5,200 | 91.1 | 36 / 16 | ok | — |
+| 5,400 | 94.6 | 36 / 18 | ok | **failed** (`io: layer 21: an expert read failed`, 12 min in) |
+| 5,500 | 96.3 | 36 / 19 | — | **failed** (device lost, first token) |
+
+A short probe is not enough: 5,400 passes three turns and dies in the middle of
+eight. So the safe hand-set maximum is 5,000, and **the default is not a
+hand-set number at all — it is `auto`**, which on this machine lands at 5,100
+slots / 89.3 GiB and is the best cell measured:
+
+| cell | slots | GiB | decode hit | stall ms/tok | MB/token | tok/s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `m_4500_off` | 4,500 | 78.8 | 0.9250 | 92.2 | 338.3 | 5.144 |
+| `m_5000_off` | 5,000 | 87.6 | 0.9364 | 77.5 | 287.3 | 5.264 |
+| **`m_auto`** | **5,100** | **89.3** | **0.9383** | **76.0** | **278.6** | **5.603** |
+
+`auto` wins because it sizes from the machine at boot instead of from a constant
+measured on a different day: `path A 62.26 GiB after 9.17 GiB pinned, path B
+27.22 GiB of 53.91 GiB physical free`. The three bounds that produce that are
+`avail_phys - kPhysFloor` (path B shrinks whenever another track holds host
+memory), `kPathBAutoCeiling` (30 GiB — 5,100 slots sits ~400 under the 5,500
+that loses the device and ~300 under the 5,400 that fails a long run), and
+`heap_a - pinned - kPathAOther`. **Do not pass `--cache-slots` in production**;
+it bypasses all three, which is how 5,500 was reachable at all.
+
+The measured curve, and what the simulator prices the capacities it cannot hold
+at (`hitrate_sim.py curve m_5000_off`, 2,193 decode steps in 18 windows of 128 —
+the engine agrees with the simulator on all 2,489 steps, so the columns to the
+right are trustworthy):
+
+| steps | measured hit | stall ms | tok/s | MB/token | sim 4,500 | sim 5,000 | sim 5,400 | sim 6,500 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0–127 | 0.882 | 138.5 | 3.854 | 535.1 | 0.878 | 0.882 | 0.882 | 0.883 |
+| 128–255 | 0.937 | 80.6 | 5.235 | 286.5 | 0.931 | 0.937 | 0.941 | 0.950 |
+| 256–383 | 0.926 | 90.2 | 4.968 | 335.1 | 0.915 | 0.926 | 0.934 | 0.955 |
+| 384–511 | 0.867 | 155.0 | 3.862 | 602.4 | 0.852 | 0.867 | 0.874 | 0.898 |
+| 512–639 | 0.945 | 72.2 | 5.789 | 249.8 | 0.935 | 0.945 | 0.950 | 0.958 |
+| 640–767 | 0.926 | 91.1 | 5.139 | 332.9 | 0.909 | 0.926 | 0.935 | 0.955 |
+| 768–895 | 0.944 | 72.1 | 5.503 | 253.7 | 0.933 | 0.944 | 0.954 | 0.976 |
+| 896–1023 | 0.849 | 173.3 | 3.356 | 680.6 | 0.835 | 0.849 | 0.859 | 0.885 |
+| 1024–1151 | 0.908 | 113.1 | 4.254 | 415.5 | 0.890 | 0.908 | 0.921 | 0.936 |
+| 1152–1279 | 0.917 | 101.8 | 4.565 | 373.6 | 0.901 | 0.917 | 0.929 | 0.952 |
+| 1280–1407 | 0.855 | 168.4 | 3.378 | 655.6 | 0.840 | 0.855 | 0.864 | 0.888 |
+| 1408–1535 | 0.934 | 82.7 | 5.282 | 297.2 | 0.929 | 0.934 | 0.938 | 0.948 |
+| 1536–1663 | 0.963 | 50.2 | 6.474 | 167.3 | 0.957 | 0.963 | 0.966 | 0.971 |
+| 1664–1791 | 0.967 | 45.1 | 6.612 | 149.4 | 0.958 | 0.967 | 0.974 | 0.980 |
+| 1792–1919 | 0.873 | 148.4 | 3.726 | 571.7 | 0.856 | 0.873 | 0.880 | 0.896 |
+| 1920–2047 | 0.890 | 130.5 | 4.061 | 497.1 | 0.881 | 0.890 | 0.896 | 0.920 |
+| 2048–2175 | 0.944 | 72.0 | 5.555 | 255.4 | 0.936 | 0.944 | 0.948 | 0.955 |
+| 2176–2192 | 0.951 | 63.7 | 5.891 | 221.7 | 0.942 | 0.951 | 0.954 | 0.962 |
+| **all** | **0.9136** | **104.7** | **4.605** | | 0.9024 | 0.9136 | 0.9205 | 0.9357 |
+
+The curve is still climbing at the hardware's limit — 6,500 slots would be worth
+another 2.2 points — which is the argument for spending every byte the machine
+will *safely* give, and the reason the ceiling is enforced by three measured
+bounds rather than one constant.
+
+### 5. The GPU prefill could not allocate at all, and the fix is a path-A reserve
+
+Running the prefill→decode handoff A/B turned up something bigger than the A/B.
+Every 8-turn cell in this document reports `prefill_mode: "decode"`, and the
+reason is not that the GPU prefill lost a race:
+
+```
+[WRN] session: GPU prefill failed (resource-exhausted: prefill buffers (1203765248 B):
+ vkAllocateMemory(1203765248 B, type 2) failed (-2)); falling back to the decode path
+[WRN] session: GPU prefill failed (resource-exhausted: prefill buffers (21160960 B):
+ vkAllocateMemory(21164032 B, type 2) failed (-2)); falling back to the decode path
+```
+
+The second line is a **21 MB** allocation. Path A was not short, it was empty:
+the slab pool fills path A until `vkAllocateMemory` refuses, so any cache of
+3,600 slots or more takes every path-A slab, and the GPU prefill — allocated
+later, and only from path A — never gets a byte. `kPathAOther` reserves for
+exactly this, but only inside the *auto* budget; `--cache-slots` and `--cache-gb`
+bypass that arithmetic, so the reserve has to be taken from the heap rather than
+from a number.
+
+`Engine::build_expert_cache` now holds a 4 GiB path-A reserve across the pool
+build and frees it immediately after (`kPathAReserve`, taken in
+`maxMemoryAllocationSize` pieces — a single 4 GiB allocation is refused outright
+with `4294967296 B exceeds maxMemoryAllocationSize 2147483648 B`, the same 2 GiB
+cap that made slabs exist). It costs two slabs — the 4,500-slot cache becomes 34
+path-A + 11 path-B instead of 36 + 9, with the same 4,500 slots — and it is the
+difference between a GPU prefill and a decode-path one:
+
+| 4,133-token prompt, 4,500 slots | prefill | prefill tok/s | wall for the cell |
+| --- | ---: | ---: | ---: |
+| before (decode-path fallback) | 1,061.7 s | 3.89 | 19 min |
+| after (GPU prefill runs) | 100.0 s | 41.3 | 3 min |
+
+**10.6× on TTFT for a 4K prompt**, from two slabs of cache. 2 GiB was tried
+first and was enough at a 4,096-position context but not at 8,192, so the
+constant is 4 GiB; the auto budget's `kPathAOther` was raised from 1 GiB to
+3 GiB in the same spirit (a 4K-context decode-only run was what 1 GiB was
+measured against).
+
+### 6. The A/Bs
+
+All four switches already default the way the data says, except the P3 backfill,
+which the counters show has been defaulting **off** all along
+(`backfill 0 issued` in every cell with no `DEEPMOE_BACKFILL` set).
+
+**`DEEPMOE_MOE_OVERLAP`** (`stall_turns --repeat 2`, 4,500 slots, cold pass then
+warm pass in one process; the two cells ran back to back at 09:00 and 09:10 with
+52.7/52.6 GiB free, so the `tok/s` are comparable).
+
+| pass | variant | steps | decode hit | stall ms/tok | fence_wait ms | tok/s |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1, cold | off | 933 | 0.9116 | 107.2 | 108.3 | 4.431 |
+| 1, cold | **on** | 933 | 0.9114 | 106.6 | 105.5 | **4.475** (+1.0%) |
+| 2, warm | off | 933 | 0.9115 | 107.6 | 114.3 | 4.307 |
+| 2, warm | **on** | 933 | 0.9115 | 107.5 | 104.0 | **4.482** (+4.1%) |
+
+Hit is identical to four decimals in both passes, which is the point: the overlap
+moves work, it does not change what the cache holds. **Default stays on.**
+
+**P3 backfill** (`backfill_turns`, `--idle-s 90`, 4,500 slots) — the ramp.
+
+| | decode hit | stall ms/tok | tok/s | turn-1 hit | turn-1 tok/s | P3 bytes read |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| off (the current default) | 0.9309 | 85.9 | 5.038 | 0.9378 | 5.294 | 9.4 GiB |
+| on | 0.9320 | 84.0 | 5.112 | 0.9407 | 5.459 | 30.9 GiB |
+
+The whole effect is in turn 1 (+0.003 hit, +3.1% tok/s); turns 2 and 3 are
+identical to four decimals, because by then demand has evicted the static-heat
+guess. **Default stays off**: +0.0011 overall hit is not worth 21.5 GiB of extra
+NVMe reads during the idle window, and 90 s of idle before the first token is the
+*best* case for it.
+
+(The 9.4 GiB in the "off" row is not backfill. `p3_backfill 1214 req 9395.3 MiB`
+is a constant in every cell, equal to the 9.17 GiB pinned-weight load — the
+pinned loader submits at the P3 priority. The P0/P2/P3 counters are otherwise
+exactly as designed: in `m_auto`, `p0_blocking 103,658 req / 907.9 GiB` matches
+the store's `runs 103658/103658`, and `p2_engram 251,232 req / 988 MiB` matches
+the engram prefetch. Worth relabelling, but nothing is mis-prioritised.)
+
+**Per-turn reheat — drop it.**
+
+| cell | slots | reheat | decode hit | stall ms/tok | MB/token | tok/s |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| `m_4500_off` | 4,500 | off | 0.9250 | 92.2 | 338.3 | 5.144 |
+| `m_4500_on` | 4,500 | **on** | 0.9250 | 91.7 | 338.4 | 5.126 |
+| `m_5000_off` | 5,000 | off | 0.9364 | 77.5 | 287.3 | 5.264 |
+| `m_5000_heat` | 5,000 | **on**, `DEEPMOE_HEAT_FILE=heat_8turn_recent.inc` | 0.9365 | 77.9 | 286.8 | 5.534 |
+
+This is the test §7 above asked for and could not afford: the user's 8-turn
+script, at both production capacities, with the §1 fix in place (candidates are
+now non-resident keys from the heat table, and the pass never evicts without one),
+and with a candidate table built from the *recent* routing of this very
+conversation rather than the static one. The per-turn hits track the `off` run to
+four decimals on all eight turns, including the two topic changes (turn 5: 0.8855
+both; turn 7: 0.8857 vs 0.8858). `keys = 140` and `free_slots = 0` on every turn,
+so the pass ran and did its work — the work is simply not worth anything on a
+cache this size.
+
+**So: topic-change resilience with the heat fix — dropped.** The fix is real (the
+pass can no longer evict without fetching, which is what made the old version cost
++32 MB/token), and the unit test
+`tests/test_integration.cpp::a_backfill_order_of_resident_keys_fetches_nothing`
+keeps it honest. But `--reheat` stays **off by default** and should be considered
+for removal: on a 5,100-slot cache the topic-change dip is not a cache-content
+problem the reheat can reach.
+
+**Prefill→decode handoff — keep it on, with one unexplained cell.**
+4,500 slots, `--gpu-prefill-min 256`, one request per cell, 65 decode steps.
+
+| prompt | max-ctx | variant | prefill s | decode hit | stall ms/tok | tok/s |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 512 | 4,096 | off | 42.1 | 0.7346 | 291.3 | 2.439 |
+| 512 | 4,096 | **on** | 35.1 | **0.8883** | 131.2 | **4.207** (+72%) |
+| 1,024 | 4,096 | off | 53.0 | 0.8267 | 196.0 | 3.253 |
+| 1,024 | 4,096 | **on** | 46.5 | **0.9171** | 100.5 | **4.851** (+49%) |
+| 2,048 | 4,096 | off | 72.3 | 0.8487 | 171.5 | 3.534 |
+| 2,048 | 4,096 | **on** | 65.8 | **0.8874** | 133.7 | **4.132** (+17%) |
+| 2,048 | 8,192 | off | 72.7 | **0.9715** | 37.1 | **6.903** |
+| 2,048 | 8,192 | on | 65.9 | 0.8874 | 133.5 | 4.135 |
+| 4,133 | 8,192 | off | 100.0 | **0.9609** | 51.0 | **6.306** |
+| 4,133 | 8,192 | on | 97.8 | 0.8480 | 175.2 | 3.496 |
+
+Read the first six rows and the handoff is an unambiguous win that shrinks with
+prompt length, and it also takes 9–14% off the prefill itself, because a cached
+expert is computed from where it is instead of being read again. **Default stays
+on.**
+
+The last four rows are the open item, and they are *not* a prompt-length effect:
+the two 2,048-token pairs differ only in `--max-context`, the prompt, the cache
+and the reused tokens (0) are identical, and the prefill wall clock is the same
+to within 0.6%. What changes is the **handoff-off** arm, from 0.8487 to 0.9715;
+the handoff-**on** arm is identical across the two (0.8874 / 0.8874, 4.132 /
+4.135 tok/s), which is itself the tell — with the handoff on, the decode's cache
+contents are determined by the prompt and nothing else. Something about a
+4,096-position context leaves the off-arm's cache in a much worse state than an
+8,192-position one does, and until that is named, the 4,133-token row cannot be
+read as "the handoff loses on long prompts". Reproduce with:
+
+```
+tools/hitrate_bench.py --out <dir> --requests bench/results/hitrate/handoff_2048.json \
+  --cache-slots 4500 --max-context {4096,8192} --serve-arg=--gpu-prefill-min \
+  --serve-arg=256 --env DEEPMOE_PREFILL_HANDOFF={0,1}
+```
+
+### 7. Defaults, and why
+
+| setting | default | why |
+| --- | --- | --- |
+| cache size | **`auto`** (no `--cache-slots`), 5,100 slots / 89.3 GiB here | best measured cell (hit 0.9383, 76.0 ms stall, 278.6 MB/token); sizes from the machine at boot, so it tracks what another track is holding. `--cache-slots 5400` fails a long run and `5500` loses the device on a quiet machine. |
+| `kPathBAutoCeiling` | **30 GiB** (was 16) | 16 GiB capped auto at ~4,500 slots, 1.3 points of hit below what the machine holds. 30 GiB puts auto at 5,100 — ~300 slots under the first observed long-run failure. |
+| `kPathAOther` | **3 GiB** (was 1) | 1 GiB was measured against a 4K-context decode-only run; a long context plus a GPU prefill needs three. |
+| `kPathAReserve` | **4 GiB, new** | without it the GPU prefill cannot allocate *anything* at any cache ≥ 3,600 slots; with it, a 4K prompt's prefill goes 1,061.7 s → 100.0 s. Costs two slabs. |
+| `DEEPMOE_MOE_OVERLAP` | **on** (unchanged) | +1.0% cold / +4.1% warm tok/s, decode hit bit-identical (0.9114/0.9115 both arms). |
+| `DEEPMOE_PREFILL_HANDOFF` | **on** (unchanged) | +72% / +49% / +17% tok/s at 512 / 1,024 / 2,048 tokens, and 9–14% off the prefill. One unexplained cell at a larger `--max-context`, §6. |
+| `DEEPMOE_BACKFILL` | **off** (unchanged) | +0.0011 hit for +21.5 GiB of idle reads; the whole effect is turn 1. |
+| `--reheat` | **off** (unchanged), candidate for removal | no-op to four decimals at 4,500 and 5,000 slots on the 8-turn script, with the fixed candidate selection and with a recent-routing heat table. |
+
+### 8. Open items
+
+1. The `--max-context` sensitivity of the handoff-off arm (§6). Two cells, ~7
+   minutes, and it decides whether the handoff needs a prompt-length gate.
+2. `p3_backfill` in the IoEngine counters includes the 9.17 GiB pinned-weight
+   load. Relabel, or give the pinned loader its own priority bucket.
+3. `--reheat` and `--reheat-decay`: no measured benefit at any capacity tested.
+   Removing them would also remove `decay_heat`'s renormalisation subtlety.
+4. The capacity curve is still climbing at 6,500 slots (sim 0.9357 vs 0.9136 at
+   5,100). Every point of hit is throughput; the limit is the host heap on the
+   path-B import, not the design.
+
+### 9. Tests
+
+`ctest --test-dir build -j 1`, run alone on a quiet machine after every change
+above: **36/36 passed, 0 failed** (2,862 s). `suite.gpu_layer` and
+`suite.gpu_prefill` are reported as skipped by ctest because each contains
+optional sub-cases gated on `DEEPMOE_PF_LONGCTX`; running the binary directly,
+`gpu_prefill.forty_layers` reports `free-running: 8/8 before divergence` — **L3
+is 8/8 with the path-A reserve in place**, which is what the reserve had to not
+break, since it changes where the cache's slabs come from.

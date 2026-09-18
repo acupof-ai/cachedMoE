@@ -1,0 +1,11 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 576,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "store": "expert store: 4500 slots (4500 resident, 0 filling, 0 free, 0 pinned)  lookups 46080 hits 38787 (0.842)  fills 13926/13926 ok  runs 27852/27852  evictions 9426 (+0 guard-blocked)",
+ "planner": "planner: 7680 layers, 46080 requests (38787 hits, 7293 misses, 0.842), 2793 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 4410 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 1133 resident / 6633 kept / 138 dropped",
+ "io": "io: 82590 req (82590 done, 0 failed, 0 cancelled), 140965 chunks, 274604101368 / 274604134400 bytes, busy 64.465 s, eff 4.26 GB/s, mean lat 112.669 ms, peak QD 8 / 32.0 MiB\n  p0_blocking    28128 req  252273.0 MiB\n  p2_engram      53248 req  214.6 MiB\n  p3_backfill     1214 req  9395.3 MiB\n"
+}
