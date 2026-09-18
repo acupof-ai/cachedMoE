@@ -1,0 +1,14 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 374,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5100 slots (5100 resident, 0 filling, 0 free, 0 pinned)  lookups 120480 hits 105162 (0.873)  fills 15554/15554 ok  runs 31108/31108  evictions 10454 (+0 guard-blocked)",
+ "planner": "planner: 20080 layers, 120480 requests (105162 hits, 15318 misses, 0.873), 10454 evictions (+0 refused), prefetch 237 issued / 0 used / 0 wasted, 9651 stalls, 1 joined; backfill 237 issued / 237 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped",
+ "io": "io: 80514 req (80514 done, 0 failed, 0 cancelled), 144849 chunks, 302607769024 / 302607818752 bytes, busy 75.380 s, eff 4.01 GB/s, mean lat 26.196 ms, peak QD 8 / 32.0 MiB\n  p0_blocking    30634 req  274748.7 MiB\n  p2_engram      48192 req  194.1 MiB\n  p3_backfill     1688 req  13646.5 MiB\n  P0: 30634 req, 274748.6 MiB, lat mean 6.59 / p50 5.34 / p95 15.91 / max 40.36 ms  (queue wait 1.90 + service 4.69)\n  P0: first-of-burst 9651 at 2.81 ms, behind 20983 at 8.33 ms; 9 (0.0%) issued with a non-P0 chunk in flight, mean 4.89; mean QD at issue 3.80\n",
+ "route": "route     resident-only=off\n"
+}

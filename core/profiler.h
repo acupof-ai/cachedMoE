@@ -78,6 +78,11 @@ struct TokenRecord {
     uint64_t hot_bytes       = 0;   // resident weight bytes read by the GPU
     uint64_t miss_bytes      = 0;   // bytes pulled from NVMe for this token
     uint64_t nvme_busy_ns    = 0;   // union of time with >=1 I/O in flight
+    // P0 (BlockingMiss) reads that completed inside this token. The decode
+    // waits on exactly these, so `nvme_stall` is bounded below by the longest
+    // of each layer's burst (docs/p4_p0_queue.md).
+    uint32_t p0_count        = 0;
+    uint64_t p0_lat_ns       = 0;   // sum of their queued->complete latencies
 
     // prefetch quality (design §9.4)
     uint32_t prefetch_issued = 0;
@@ -111,6 +116,7 @@ struct RunSummary {
     std::array<uint64_t, kPhaseCount> phase_ns{};
     uint64_t expert_requests = 0, expert_hits = 0;
     uint64_t hot_bytes = 0, miss_bytes = 0, nvme_busy_ns = 0;
+    uint64_t p0_count = 0, p0_lat_ns = 0;
     uint64_t prefetch_issued = 0, prefetch_used = 0;
     uint64_t accepted_len = 0, draft_len = 0;
 
@@ -154,6 +160,11 @@ public:
     void note_hot_bytes(uint64_t b)  { hot_bytes_.fetch_add(b, std::memory_order_relaxed); }
     void note_miss_bytes(uint64_t b) { miss_bytes_.fetch_add(b, std::memory_order_relaxed); }
     void note_nvme_busy(Nanos d)     { nvme_busy_ns_.fetch_add(static_cast<uint64_t>(d.count()), std::memory_order_relaxed); }
+    // One completed P0 read, reported from the IoEngine dispatcher thread.
+    void note_p0(uint64_t lat_ns) {
+        p0_count_.fetch_add(1, std::memory_order_relaxed);
+        p0_lat_ns_.fetch_add(lat_ns, std::memory_order_relaxed);
+    }
     void note_prefetch_issued(uint32_t n = 1) { pf_issued_.fetch_add(n, std::memory_order_relaxed); }
     void note_prefetch_used(uint32_t n = 1)   { pf_used_.fetch_add(n, std::memory_order_relaxed); }
     void note_speculation(uint32_t draft_len, uint32_t accepted) {
@@ -174,6 +185,8 @@ private:
     std::array<std::atomic<uint64_t>, kPhaseCount> phase_ns_{};
     std::atomic<uint32_t> requests_{0}, hits_{0};
     std::atomic<uint64_t> hot_bytes_{0}, miss_bytes_{0}, nvme_busy_ns_{0};
+    std::atomic<uint32_t> p0_count_{0};
+    std::atomic<uint64_t> p0_lat_ns_{0};
     std::atomic<uint32_t> pf_issued_{0}, pf_used_{0};
     std::atomic<uint32_t> draft_len_{0}, accepted_{0};
 

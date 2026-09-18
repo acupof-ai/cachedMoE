@@ -17,7 +17,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 
 1. [今天的数字](#1-今天的数字)
 2. [优化路径：每一步与它的归因](#2-优化路径每一步与它的归因)
-3. [试过并退掉的（编号，共 40 条）](#3-试过并退掉的编号共-40-条)
+3. [试过并退掉的（编号，共 44 条）](#3-试过并退掉的编号共-40-条)
 4. [为什么 decode 是 NVMe-bound，而不是 kernel 慢](#4-为什么-decode-是-nvme-bound而不是-kernel-慢)
 5. [测试套件](#5-测试套件)
 6. [已知限制与未决风险](#6-已知限制与未决风险)
@@ -57,6 +57,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | **resident-only 路由的四档（4 轮对话，5,100 槽）** | `off` 4.82 tok/s（mass lost 0，P0 262.5 GiB）／`stall1` 5.14（0.048）／**`verify` 7.57 ×1.57（0.1377，P0 62.5 GiB）**／`all` 8.99 ×1.87（0.2587）。质量（64 步 teacher-forced PPL，×`off`）依次 1.00 / 1.11 / **1.376** / 2.29——**四档全部 NO-GO 作默认** | `p4_resident_routing.md` §8.3 / §9.3 / **§10** |
 | **投机解码（DSpark），引擎实测** | 顺序 decode **102.6 ms/位置**；`forward_batch` M=6 **75.9（0.74×）**、M=1 123.7（1.21×）。草稿**白送**时每发出 token：`chain` k=5 **0.86×（更慢）**、k=1 1.06–1.13×；`longest` k=5 **≤1.07×**，而 `longest` **不无损**。加上 `T_draft` 19–42 ms/周期全部打平或更差——**本机 NO-GO** | `p4_dspark_runtime.md` §7；§3 的 41 / 42 |
 | **M1 gate（`forward_batch` vs M=1）** | **不逐位**：前三层 cos = 1.000000000，L07 第一次门控翻转；60 个位置最差 cos **0.9398**、top-1 **54/60**。质量不变（teacher-forced PPL 1.8589 vs 1.8857 = 0.986×）。`suite.spec_forward` 因此**以 WARN 通过**，只在 cos < 0.93 或 top-1 < 50/60 时失败 | §3 的 41 |
+| **P0 的盘时间是怎么花的（Track Q1）** | 4 轮对话、5,100 槽、backfill off：`nvme_stall` **105.2 ms/token**、21.3 个 miss = **383 MiB/token** ⇒ **3.55 GB/s**，而同一块盘 `nvme_bench` 是 **5.16 GB/s**。**0.0% 的 P0 在发出时有非 P0 的 chunk 在飞**（backfill 开也只有 8.2%、平均 1.02 个）——**队列争用 = 0**。一层这一批的第一个 P0 是 **2.83 ms**，后面的每个 **8.46 ms**；发出时平均在飞 chunk **3.80**（上限 8） | `p4_p0_queue.md` §2 |
 
 **一句话结论**：`tok/s ≈ NVMe_eff / (MB per token)`。四种容量下有效读带宽恒定在 8.3–9.2 GB/s，
 hit 0.59 → 0.84 把 MB/token 从 4,998 降到 2,269，tok/s 就翻倍。
@@ -201,7 +202,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 40 条）
+## 3. 试过并退掉的（编号，共 44 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -277,7 +278,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 - **P2 step 2 的不可复现不是 kernel**——是**三条 track 往同一个 `build/shaders` 目录并发重建 `.spv`**。证据：step 2 报 step-0 margin **7.0927**，它自己那个 commit 隔离重建给 **6.7477**，带 Track F 的 kernel 给 **6.9389**——引用的那几次 run **两套 kernel 都没执行**。**这是"安静机"规则的由来**（`plan_p5.md` §1）
 - **`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` 的 A/B**：设计好的表**从未跑过**（沙箱 `SetNamedSecurityInfoW failed (Win32 5)`）。`p4_hitrate.md` §4 至今是空的。**未实测**
 
-### 3.7 P4 收尾四条 track 的否定（2026-09-18）
+### 3.7 P4 收尾四条 track 的否定（2026-09-18）+ Track Q1（43、44）
 
 | # | 实验 | 实测 | 结论 |
 |---|---|---|---|
@@ -289,6 +290,8 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 **这一句被 40 推翻**：`stall1` 的 0.076 是**每一步都掏一次 P0** 买来的，而 verify-only 的四个 draft 位置一次也不掏。它同时推翻了 step 3 的判决（当时读成 ×3.40、比 `all` 还差），差别全在尺子上（§5.5） |
 | **40** | **verify-only 的 resident-only 路由（`DEEPMOE_ROUTE_RESIDENT_ONLY=verify`）作为"投机开着时的默认"**：block-5 里第 1 位精确路由、4 个 draft 位只路由到已驻留的 expert，verify 那一遍一个字节都不为它们去盘上取 | 64 步 teacher-forced L3：PPL **×1.376**（判据 ×1.05 / ×1.30），gate mass lost **0.2099**，**17 个只剩 shared expert 的 layer-step**，top-1 49/64。速度这一侧是真的：四轮对话 **×1.57**（4.82 → 7.57 tok/s），**P0 字节 262.5 → 62.5 GiB（−76%）**，总字节 −19%，输出仍然连贯。反向的中间档（4 个 draft 位改成 `stall1`）质量回到 **×1.033 / mass lost 0.0649 / 0 个 shared-only**，但**速度只剩 ×1.06**，代价 7,687 次 P0 / **42.9 s** 等待 | **NO-GO**（`p4_resident_routing.md` §10）。它**推翻了 39 的那句前提**与 §7 第 3 项的读法：`stall1` 的质量是每步一次 P0 买的，把 P0 的机会从 5/5 降到 1/5，质量就从 ×1.09 掉到 ×1.376。能把质量买回来的那一档**让 verify 那一遍重新等盘**，方案的全部意义随之抵消。**注意口径**：投机解码在引擎里不存在（`Engine::forward_batch` 没写、`generate(speculative)` 是 `unimplemented`、`--spec` 没接进 CLI），所以量的是 verify 那一遍在 M = 1 上的等价物，而且该等价物**偏乐观**（真并集批的 2–5 位用的是取盘前的 cache 状态） |
 | **41** | **`Engine::forward_batch` 与 M=1 decode 的逐位一致性（M1 的 gate）** | 尺子先立住：同一个 reseed 状态上 M=1 重跑 **64/64 逐位相同**。然后两条路径：前三层 **cos = 1.000000000（逐位相同）**，L03 差开 **3e-9**，L07 第一次**门控翻转**，L39 cos 0.962。64 步（60 个位置、块 5、warm cache、routing off）最差 cos **0.9398**、top-1 **54/60**、max\|dlogit\| 8.26。块 = 1 时最差 cos 0.9928——**所以这不是批边界，是 kernel 家族差 + 门控近似平局的放大**。质量没受影响：teacher-forced PPL **1.8589 vs M=1 的 1.8857（0.986×）**，参考 1.8177 | **gate NO，实现 GO**。`docs/p4_dspark_runtime.md` §7.2。直接后果：design §10.2 的硬不变式（温度 0、投机开/关逐 token 相同）**用这个 verify 前向做不到**。同时把 `p4_mgt1.md` §7 缺口 4（G3）关掉一半：机制隔离出来了。**ctest 口径**：`suite.spec_forward` 不在这条 gate 上失败——它把 cos / top-1 作为 **WARN** 打出来并通过，只在**回归地板**之下失败（cos < 0.93 或 top-1 < 50/60；实测 0.9398 / 54/60）；`DEEPMOE_SPEC_STRICT=1` 才断言原来的那条 |
+| **43** | **"P0 独占盘"（非 P0 让路）作为提速手段** | 插桩量到 decode 里 **0.0%** 的 P0 在发出时有任何非 P0 的 chunk 在飞（backfill 开也只有 8.2%、平均 1.02 个 = `kBackgroundOpsWhileBusy` 那一个）。`DEEPMOE_IO_BG_CAP_BUSY=0`（P0 活跃时后台**完全停**）：4.846 → **4.830 tok/s（−0.3%）**，stall 105.8 → 105.4。把 engram（P2）也拉进节流（`DEEPMOE_IO_BG_THROTTLE_P2=1`）**是反的**：**4.846 → 3.500（−27.8%）**，且分项干净地指认原因——`nvme_stall` 不变（105.8 → 103.9）而 **`engram` 4.5 → 85.8 ms/token** | **NO-GO**（`p4_p0_queue.md` §3）。预测是「stall 111 → 75、tok/s +25%」，**实测 105.2 → 105.4、−0.3%**：能让的路今天的节流早就让了。附带一条**永久的「不做」**：**P2 engram 绝不节流**，它的 264 B 行读在关键路径上 |
+| **44** | **给 P0 更深的队列 / 更大的 chunk** | `DEEPMOE_IO_P0_QD=32` + 256 MiB 在飞：发出时平均 QD 3.80 → 6.04，但**每个 P0 更慢**（6.70 → 7.70 ms），tok/s +0.6%（抖动带 ±3%，实测四次基线 ±0.5%）。`P0_CHUNK_MB=16`（一个 run 一个 op，正是 `nvme_bench` 里最快的形状）：**−8.4%**，stall +17%。反方向：2 MiB +0.9%、**1 MiB +1.4%**（P0 延迟 6.70 → 5.76，一层头一个 2.83 → **1.30 ms**） | **全部不作默认**（`p4_p0_queue.md` §3、§6）。1 MiB 方向一致、三次 B 对四次 A 全部为正，但 **+1.4% < ±3% 的判据带**。真正的发现在 §4：**盘对请求大小是平的**（1 MiB–18.4 MiB，QD ≥ 4 都是 5.07–5.16 GB/s），**引擎对它不平**——所以那 30% 的缺口在引擎侧（目的地是 GPU 可见内存，或 dispatcher 的补队速度），**不在盘上，也不在排队上**。旋钮（`DEEPMOE_IO_*` 五个）留着，默认等于今天 |
 | **42** | **投机解码，用实测的 verify 代价重算（不再用 kernel 表）** | `bench.spec_forward_m_curve`（l3_64、5,100 槽、warm、先跑一遍不计时的顺序 decode）：顺序 decode **102.6 ms/位置**；`forward_batch` M=1 **123.7**（慢 1.21×）、M=6 **75.9（0.74×）**。并集实测 u(2..6) = 9.90/13.35/16.53/19.35/22.13，对 `route_union.py` 的离线值**误差 ≤ 2%**。接受长度（`tools/spec_longest.py`，71 个贪心事件）：`chain` E[tokens](k=5) **3.82**、`longest` **4.77**，链外 top-16 命中 **0.5419**。**草稿完全白送**时每发出 token：`chain` k=5 **0.86×（更慢）**、k=1 1.06–1.13×；`longest` k=5 1.06–1.07×。`T_draft` 19–42 ms/周期 = 每 token +4…+23 ms，**全部打平或更差** | **NO-GO，第三次，这次是引擎实测**。而且这还是 **compute-bound 的最好情形**（P0 = 0）；NVMe-bound 下 §6.5 的 [1.00×, 1.80×] miss 区间只会更差。`longest` 另外**不无损**：verify 第 i+1 行条件在链的 token 上，不是被替换进去的那个 |
 
 ---
@@ -329,6 +332,14 @@ MoE live-column mask 在 microbench 上是 1.7×（30 ms/token），端到端**�
 顺带否掉三件看起来可行的事：离线重打包（checkpoint 已经是量化格式，而且 17.7 MB 的请求已经跑在 5.2 GB/s，
 说明没有按请求的固定开销可省）、减少对齐浪费（18.8 MB 里 3 KB，0.02%）、提高 QD（1→4 只有 +16%）。
 **结论**：decode 的每 token 时间 = `MB/token ÷ 5.2 GB/s`。**只有少读字节这一条路。**
+
+⚠️ **2026-09-18 收窄（Track Q1，`p4_p0_queue.md`）**：上面这句里的「没有排队」**现在是实测的**
+（decode 里 **0.0%** 的 P0 在发出时有非 P0 的 chunk 在飞），但「就是盘」**只成立于一次 miss 的量级**。
+聚合速率上不成立：引擎在 stall 窗口里拿到的是 **3.55 GB/s**（383 MiB / 105.2 ms），
+而 `nvme_bench` 在同一块盘、同一请求大小上是 **5.16 GB/s**，而且**盘对请求大小是平的**
+（1 MiB–18.4 MiB，QD ≥ 4 都是 5.07–5.16），**引擎对它不平**（16 MiB 慢 8.4%、1 MiB 快 1.4%）。
+所以那 30% 的缺口在**引擎侧**——目的地是 GPU 可见内存，或 `issue_ready_chunks` 的补队速度
+（上限 QD 8，实测发出时平均只有 3.80）。这两条**本轮没有分开**，是 §7 里新的一项。
 
 ---
 
@@ -561,6 +572,16 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **唯一还开着、方向为正的问题**：verify 批的草稿行用 resident-only 路由把 P0 打到 0、
    ms/位置从 102.6 压到 70.9，而草稿行掉质量的代价是"接受率低一点"而不是"输出差一点"——
    这条要有真实草稿链才测得了。
+3b. **把「引擎只拿到盘的 69%」这件事的两个候选分开**（Track Q1 的唯一遗留，`p4_p0_queue.md` §4、§6）。
+   已知：`nvme_stall` 105.2 ms/token 里，**队列争用是 0**（实测 0.0%），
+   **队列深度不是因**（抬到 32 反而更慢），而引擎拿到 3.55 GB/s、盘能给 5.16 GB/s。
+   剩下两个候选：**(i) 目的地内存**（expert slot 是 GPU 可见的，`nvme_bench` 写的是普通页）、
+   **(ii) dispatcher 的补队速度**（`issue_ready_chunks` → `poll(1 ms)` → `handle_completion` 一圈；
+   上限 QD 8，实测发出时平均 3.80，而 chunk 越碎实测 QD 越高、速率越高）。
+   **最便宜的探针**：给 `bench/nvme_bench` 加一个「写进 GPU 可见 slab」的目的地开关，
+   一个 cell、纯盘、不占 GPU。若那样仍是 5.1 GB/s，缺口就全在 dispatcher 那一圈。
+   **值 105 ms 里的 ~30 ms = 每 token 近 30%**，比第 4–7 项都大，且不动一个权重。
+
 4. **per-dispatch trace 上 GPU**（`plan_p5.md` §4 的命令），把每层 16–29 个 dispatch 的 busy / gap 拆开。
    §2.1 之后所有归因都靠它——没有它，第 5、6 项只能猜。
 5. **persistent-dispatch decode**：一层或一个 token 一次 dispatch，device 侧任务队列 + 自旋等待。
@@ -577,6 +598,8 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    所以按 §4 的排序它排在最后——除非对话里的 prompt 变长到 prefill 压过 decode。
 
 **不做**（有编号的理由，不要再提）：BIOS VGM（§3 的 29）、lookahead 预取（23、**35**）、
+**节流 P2 engram（43：−27.8%，engram 4.5 → 85.8 ms/token）**、
+**为 P0 加深队列或加大 chunk（44）**、
 CPU 分担 GEMV（25）、树采样作为提速手段（32）、静态 pin / 每层配额（24、**35**）、
 LDS x-tiling 配 per-K-chunk barrier（1）、饱和 cache 上的 reheat（21、**F4 §6**）、
 任何预测式预取（**35**）、2-bit / 3-bit expert（**37**）、resident-only 作为默认路由（**38、39**）、verify-only 的 resident-only 路由（**40**）、

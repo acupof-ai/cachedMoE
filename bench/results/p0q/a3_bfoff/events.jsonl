@@ -1,0 +1,279 @@
+{"event": "ready", "load_s": 54.3289968, "max_context": 4096, "vocab": 129280, "cache_gb": 89.3371582, "cache_slots": 5100, "gpu_prefill_min": 0, "check_topk": false, "engram_tables": "C:\\Users\\Asus\\code\\deepmoe-q1\\tests\\data\\l3", "kv_mb": 16.044032, "rollback": true, "max_parked": 8, "reheat": false, "reheat_decay": 0.5, "kv_disk": true, "kv_disk_dir": "C:\\Users\\Asus\\AppData\\Local/deepmoe/kv/D__models_DeepSeek-V4.1-Flash", "host_s": 54.3361}
+{"event": "tokens", "ids": [0, 128803, 65106, 295, 6271, 1192, 260, 48504, 4716, 40077, 4475, 104294, 14653, 49523, 3881, 96380, 14, 305, 1205, 11396, 304, 260, 6361, 396, 344, 17785, 1936, 1009, 6323, 16, 128804, 128822], "host_s": 54.3378}
+{"event": "prefill", "done": 16, "total": 32, "host_s": 59.5117}
+{"event": "prefill", "done": 32, "total": 32, "host_s": 63.0254}
+{"event": "token", "id": 5, "text": "#", "t_ms": 8691.9882, "step_ms": 275.5116, "p": 0, "margin": 9.09964371, "nucleus": 0, "hit": 0, "host_s": 63.0254}
+{"event": "token", "id": 48504, "text": " Vul", "t_ms": 8921.4982, "step_ms": 229.106, "p": 0, "margin": 3.21403122, "nucleus": 0, "hit": 0.875, "host_s": 63.2587}
+{"event": "token", "id": 4716, "text": "kan", "t_ms": 9134.8932, "step_ms": 212.9307, "p": 0, "margin": 15.4286747, "nucleus": 0, "hit": 0.891666667, "host_s": 63.4699}
+{"event": "token", "id": 82588, "text": " Timeline", "t_ms": 9340.2346, "step_ms": 204.9153, "p": 0, "margin": 12.0656338, "nucleus": 0, "hit": 0.895833333, "host_s": 63.6754}
+{"event": "token", "id": 13356, "text": " Sem", "t_ms": 9522.1123, "step_ms": 181.5029, "p": 0, "margin": 15.145874, "nucleus": 0, "hit": 0.929166667, "host_s": 63.8588}
+{"event": "token", "id": 630, "text": "ap", "t_ms": 9738.5146, "step_ms": 216.0279, "p": 0, "margin": 6.47408676, "nucleus": 0, "hit": 0.904166667, "host_s": 64.0754}
+{"event": "token", "id": 103740, "text": "hores", "t_ms": 9965.0041, "step_ms": 226.0239, "p": 0, "margin": 20.3954029, "nucleus": 0, "hit": 0.879166667, "host_s": 64.3032}
+{"event": "token", "id": 28, "text": ":", "t_ms": 10156.0916, "step_ms": 190.6961, "p": 0, "margin": 5.00345993, "nucleus": 0, "hit": 0.9125, "host_s": 64.4935}
+{"event": "token", "id": 13090, "text": " Cross", "t_ms": 10395.9299, "step_ms": 239.4317, "p": 0, "margin": 2.59965515, "nucleus": 0, "hit": 0.8625, "host_s": 64.731}
+{"event": "token", "id": 15, "text": "-", "t_ms": 10608.1449, "step_ms": 211.7928, "p": 0, "margin": 7.52173615, "nucleus": 0, "hit": 0.891666667, "host_s": 64.9421}
+{"event": "token", "id": 22178, "text": "Queue", "t_ms": 10815.7122, "step_ms": 207.1247, "p": 0, "margin": 11.7777538, "nucleus": 0, "hit": 0.9, "host_s": 65.1533}
+{"event": "token", "id": 13966, "text": " Order", "t_ms": 10956.188, "step_ms": 140.0534, "p": 0, "margin": 9.2170639, "nucleus": 0, "hit": 0.958333333, "host_s": 65.2926}
+{"event": "token", "id": 288, "text": "ing", "t_ms": 11183.885, "step_ms": 227.2746, "p": 0, "margin": 18.0314941, "nucleus": 0, "hit": 0.8875, "host_s": 65.5222}
+{"event": "token", "id": 305, "text": " and", "t_ms": 11395.3859, "step_ms": 211.1146, "p": 0, "margin": 2.75735474, "nucleus": 0, "hit": 0.9, "host_s": 65.7311}
+{"event": "token", "id": 6952, "text": " Out", "t_ms": 11573.9215, "step_ms": 178.1104, "p": 0, "margin": 0.559801102, "nucleus": 0, "hit": 0.925, "host_s": 65.9089}
+{"event": "token", "id": 9934, "text": "-of", "t_ms": 11815.6095, "step_ms": 241.2919, "p": 0, "margin": 11.6871548, "nucleus": 0, "hit": 0.875, "host_s": 66.1533}
+{"event": "token", "id": 15, "text": "-", "t_ms": 12021.032, "step_ms": 204.9899, "p": 0, "margin": 12.2619724, "nucleus": 0, "hit": 0.904166667, "host_s": 66.3589}
+{"event": "token", "id": 14073, "text": "Order", "t_ms": 12194.2545, "step_ms": 172.8216, "p": 0, "margin": 16.4066353, "nucleus": 0, "hit": 0.929166667, "host_s": 66.5325}
+{"event": "token", "id": 31200, "text": " Wa", "t_ms": 12350.9295, "step_ms": 156.2719, "p": 0, "margin": 3.70806503, "nucleus": 0, "hit": 0.95, "host_s": 66.6892}
+{"event": "token", "id": 1303, "text": "its", "t_ms": 12602.9384, "step_ms": 251.6131, "p": 0, "margin": 18.9377003, "nucleus": 0, "hit": 0.883333333, "host_s": 66.9372}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 12852.3744, "step_ms": 249.0732, "p": 0, "margin": 13.9122162, "nucleus": 0, "hit": 0.883333333, "host_s": 67.1904}
+{"event": "token", "id": 372, "text": "##", "t_ms": 13065.9139, "step_ms": 213.1675, "p": 0, "margin": 4.33436584, "nucleus": 0, "hit": 0.904166667, "host_s": 67.4034}
+{"event": "token", "id": 223, "text": " ", "t_ms": 13265.5962, "step_ms": 199.2175, "p": 0, "margin": 3.45585632, "nucleus": 0, "hit": 0.9125, "host_s": 67.6033}
+{"event": "token", "id": 19, "text": "1", "t_ms": 13462.7496, "step_ms": 196.7864, "p": 0, "margin": 12.7475834, "nucleus": 0, "hit": 0.9125, "host_s": 67.7978}
+{"event": "token", "id": 16, "text": ".", "t_ms": 13816.8537, "step_ms": 353.7025, "p": 0, "margin": 15.4080353, "nucleus": 0, "hit": 0.7875, "host_s": 68.1534}
+{"event": "token", "id": 1999, "text": " What", "t_ms": 13982.3601, "step_ms": 165.0886, "p": 0, "margin": 5.16148758, "nucleus": 0, "hit": 0.9375, "host_s": 68.3201}
+{"event": "token", "id": 260, "text": " a", "t_ms": 14165.3472, "step_ms": 182.5761, "p": 0, "margin": 6.05187798, "nucleus": 0, "hit": 0.933333333, "host_s": 68.5033}
+{"event": "token", "id": 82588, "text": " Timeline", "t_ms": 14347.9089, "step_ms": 182.1433, "p": 0, "margin": 1.34999847, "nucleus": 0, "hit": 0.933333333, "host_s": 68.6812}
+{"event": "token", "id": 13356, "text": " Sem", "t_ms": 14506.4039, "step_ms": 158.1073, "p": 0, "margin": 15.9773197, "nucleus": 0, "hit": 0.95, "host_s": 68.8436}
+{"event": "token", "id": 104294, "text": "aphore", "t_ms": 14677.5824, "step_ms": 170.7928, "p": 0, "margin": 17.362442, "nucleus": 0, "hit": 0.941666667, "host_s": 69.0158}
+{"event": "token", "id": 2355, "text": " Is", "t_ms": 14819.1246, "step_ms": 141.1235, "p": 0, "margin": 1.78298187, "nucleus": 0, "hit": 0.966666667, "host_s": 69.1556}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 15136.1403, "step_ms": 316.5896, "p": 0, "margin": 5.43144608, "nucleus": 0, "hit": 0.895833333, "host_s": 69.4709}
+{"event": "token", "id": 35, "text": "A", "t_ms": 15320.2237, "step_ms": 183.685, "p": 0, "margin": 2.75314713, "nucleus": 0, "hit": 0.925, "host_s": 69.654}
+{"event": "token", "id": 40077, "text": " timeline", "t_ms": 15462.495, "step_ms": 141.8845, "p": 0, "margin": 3.00073433, "nucleus": 0, "hit": 0.966666667, "host_s": 69.8006}
+{"event": "token", "id": 4475, "text": " sem", "t_ms": 15631.7797, "step_ms": 168.8671, "p": 0, "margin": 12.4920139, "nucleus": 0, "hit": 0.945833333, "host_s": 69.9701}
+{"event": "token", "id": 104294, "text": "aphore", "t_ms": 15814.1327, "step_ms": 181.9461, "p": 0, "margin": 12.6617966, "nucleus": 0, "hit": 0.9375, "host_s": 70.1499}
+{"event": "token", "id": 344, "text": " is", "t_ms": 15967.7278, "step_ms": 153.1831, "p": 0, "margin": 0.457794189, "nucleus": 0, "hit": 0.95, "host_s": 70.3049}
+{"event": "token", "id": 260, "text": " a", "t_ms": 16126.5259, "step_ms": 158.3717, "p": 0, "margin": 5.89600754, "nucleus": 0, "hit": 0.95, "host_s": 70.4646}
+{"event": "token", "id": 55276, "text": " synchronization", "t_ms": 16300.4089, "step_ms": 173.4767, "p": 0, "margin": 0.33319664, "nucleus": 0, "hit": 0.9375, "host_s": 70.6376}
+{"event": "token", "id": 34917, "text": " primitive", "t_ms": 16480.9392, "step_ms": 180.1414, "p": 0, "margin": 3.52459717, "nucleus": 0, "hit": 0.933333333, "host_s": 70.8154}
+{"event": "token", "id": 396, "text": " that", "t_ms": 16671.1352, "step_ms": 189.7987, "p": 0, "margin": 0.0488395691, "nucleus": 0, "hit": 0.925, "host_s": 71.0091}
+{"event": "token", "id": 12927, "text": " holds", "t_ms": 16827.1841, "step_ms": 155.6497, "p": 0, "margin": 0.487007141, "nucleus": 0, "hit": 0.954166667, "host_s": 71.1654}
+{"event": "token", "id": 260, "text": " a", "t_ms": 17061.0616, "step_ms": 233.4646, "p": 0, "margin": 5.87550354, "nucleus": 0, "hit": 0.8875, "host_s": 71.3988}
+{"event": "token", "id": 2619, "text": " **", "t_ms": 17250.6948, "step_ms": 189.2393, "p": 0, "margin": 2.1326561, "nucleus": 0, "hit": 0.925, "host_s": 71.5889}
+{"event": "token", "id": 5088, "text": "mon", "t_ms": 17556.783, "step_ms": 305.731, "p": 0, "margin": 2.24737167, "nucleus": 0, "hit": 0.820833333, "host_s": 71.8932}
+{"event": "token", "id": 28368, "text": "oton", "t_ms": 17783.1835, "step_ms": 226.0065, "p": 0, "margin": 10.4146957, "nucleus": 0, "hit": 0.891666667, "host_s": 72.121}
+{"event": "token", "id": 1875, "text": "ically", "t_ms": 17987.2997, "step_ms": 203.6869, "p": 0, "margin": 20.3517857, "nucleus": 0, "hit": 0.908333333, "host_s": 72.3257}
+{"event": "token", "id": 5767, "text": " increasing", "t_ms": 18197.2615, "step_ms": 209.5964, "p": 0, "margin": 8.03594208, "nucleus": 0, "hit": 0.908333333, "host_s": 72.532}
+{"event": "token", "id": 223, "text": " ", "t_ms": 18415.73, "step_ms": 218.0545, "p": 0, "margin": 10.3288994, "nucleus": 0, "hit": 0.9, "host_s": 72.7541}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 18746.0029, "step_ms": 329.8901, "p": 0, "margin": 15.4906597, "nucleus": 0, "hit": 0.820833333, "host_s": 73.0821}
+{"event": "token", "id": 31841, "text": "-bit", "t_ms": 19099.0332, "step_ms": 352.6113, "p": 0, "margin": 6.87995529, "nucleus": 0, "hit": 0.770833333, "host_s": 73.4369}
+{"event": "token", "id": 8058, "text": " counter", "t_ms": 19300.8673, "step_ms": 201.4315, "p": 0, "margin": 1.81013489, "nucleus": 0, "hit": 0.916666667, "host_s": 73.6388}
+{"event": "token", "id": 42499, "text": "**.", "t_ms": 19533.7368, "step_ms": 232.5307, "p": 0, "margin": 1.40266037, "nucleus": 0, "hit": 0.891666667, "host_s": 73.8711}
+{"event": "token", "id": 27188, "text": " Unlike", "t_ms": 19763.1338, "step_ms": 229.0083, "p": 0, "margin": 3.9343338, "nucleus": 0, "hit": 0.9, "host_s": 74.1001}
+{"event": "token", "id": 260, "text": " a", "t_ms": 20139.9008, "step_ms": 376.3678, "p": 0, "margin": 0.650508881, "nucleus": 0, "hit": 0.8375, "host_s": 74.4767}
+{"event": "token", "id": 11680, "text": " binary", "t_ms": 20294.5666, "step_ms": 154.214, "p": 0, "margin": 9.17193222, "nucleus": 0, "hit": 0.95, "host_s": 74.6322}
+{"event": "token", "id": 4475, "text": " sem", "t_ms": 20513.1039, "step_ms": 218.1374, "p": 0, "margin": 11.5101318, "nucleus": 0, "hit": 0.9, "host_s": 74.8489}
+{"event": "token", "id": 104294, "text": "aphore", "t_ms": 20650.7073, "step_ms": 137.1213, "p": 0, "margin": 15.3263702, "nucleus": 0, "hit": 0.966666667, "host_s": 74.9881}
+{"event": "token", "id": 343, "text": " (", "t_ms": 20838.3803, "step_ms": 187.2356, "p": 0, "margin": 1.12760544, "nucleus": 0, "hit": 0.920833333, "host_s": 75.1764}
+{"event": "token", "id": 9808, "text": "which", "t_ms": 21157.9577, "step_ms": 319.0838, "p": 0, "margin": 5.65852356, "nucleus": 0, "hit": 0.8125, "host_s": 75.4933}
+{"event": "token", "id": 344, "text": " is", "t_ms": 21324.5415, "step_ms": 166.1488, "p": 0, "margin": 1.1690979, "nucleus": 0, "hit": 0.9375, "host_s": 75.6601}
+{"event": "token", "id": 4338, "text": " either", "t_ms": 21468.8978, "step_ms": 143.7736, "p": 0, "margin": 0.981077194, "nucleus": 0, "hit": 0.9625, "host_s": 75.8066}
+{"event": "token", "id": 109434, "text": " signaled", "t_ms": 21760.2333, "step_ms": 290.9336, "p": 0, "margin": 4.30139923, "nucleus": 0, "hit": 0.854166667, "host_s": 76.0981}
+{"event": "token", "id": 469, "text": " or", "t_ms": 21980.2613, "step_ms": 219.6086, "p": 0, "margin": 9.32416344, "nucleus": 0, "hit": 0.895833333, "host_s": 76.3165}
+{"event": "done", "session": "default", "prompt_tokens": 32, "reused_tokens": 0, "prefill_tokens": 32, "generated": 64, "prefill_mode": "decode", "finish": "length", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 8691.4233, "prefill_tok_s": 3.68179053, "ttft_ms": 8691.9882, "decode_ms": 13288.307, "decode_steps": 63, "tok_s": 4.74101027, "total_ms": 21980.2933, "prefill_hit_rate": 0.843229167, "decode_hit_rate": 0.906613757, "prefill_nvme_mb": 22645.8337, "decode_nvme_mb": 26558.0708, "per_token_ms": {"attn": 41.5658725, "moe_gpu": 43.7237335, "moe_host": 1.18828571, "nvme_stall": 110.842425, "engram": 4.43662508, "tail": 6.03499365, "other": 2.7214181, "record": 0.628557143, "submit": 3.16782063, "bind": 0.9446, "fence_wait": 89.1807905, "submits": 57.6666667, "sample_host": 0}, "sampled_steps": 0, "topk_fallbacks": 0, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 0, "context": 95, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "host_s": 76.3165}
+{"event": "text", "text": "# Vulkan Timeline Semaphores: Cross-Queue Ordering and Out-of-Order Waits\n\n## 1. What a Timeline Semaphore Is\n\nA timeline semaphore is a synchronization primitive that holds a **monotonically increasing 64-bit counter**. Unlike a binary semaphore (which is either signaled or", "host_s": 76.3165}
+{"event": "tokens", "ids": [1, 128803, 56761, 28, 1205, 1918, 396, 2716, 362, 260, 6107, 17437, 396, 1952, 78297, 377, 305, 12472, 270, 1975, 40077, 1990, 14, 305, 1192, 1531, 260, 67940, 12175, 1347, 436, 33, 128804, 128822], "host_s": 76.3209}
+{"event": "prefill", "done": 16, "total": 35, "host_s": 80.7615}
+{"event": "prefill", "done": 32, "total": 35, "host_s": 84.3497}
+{"event": "prefill", "done": 35, "total": 35, "host_s": 85.0993}
+{"event": "token", "id": 5, "text": "#", "t_ms": 8779.5116, "step_ms": 317.4486, "p": 0, "margin": 5.01862526, "nucleus": 0, "hit": 0, "host_s": 85.0993}
+{"event": "token", "id": 82588, "text": " Timeline", "t_ms": 8925.4733, "step_ms": 145.5704, "p": 0, "margin": 1.54547882, "nucleus": 0, "hit": 0.954166667, "host_s": 85.244}
+{"event": "token", "id": 13356, "text": " Sem", "t_ms": 9070.2755, "step_ms": 144.4185, "p": 0, "margin": 6.61436272, "nucleus": 0, "hit": 0.958333333, "host_s": 85.3919}
+{"event": "token", "id": 630, "text": "ap", "t_ms": 9221.4691, "step_ms": 150.7838, "p": 0, "margin": 2.17081261, "nucleus": 0, "hit": 0.954166667, "host_s": 85.5435}
+{"event": "token", "id": 103740, "text": "hores", "t_ms": 9429.6572, "step_ms": 207.8066, "p": 0, "margin": 23.845829, "nucleus": 0, "hit": 0.895833333, "host_s": 85.7506}
+{"event": "token", "id": 28, "text": ":", "t_ms": 9626.6995, "step_ms": 196.6176, "p": 0, "margin": 2.65676689, "nucleus": 0, "hit": 0.9125, "host_s": 85.9492}
+{"event": "token", "id": 16463, "text": " Self", "t_ms": 9769.5076, "step_ms": 142.3127, "p": 0, "margin": 2.48296928, "nucleus": 0, "hit": 0.9625, "host_s": 86.0884}
+{"event": "token", "id": 12040, "text": "-W", "t_ms": 10006.6939, "step_ms": 236.7053, "p": 0, "margin": 0.29063797, "nucleus": 0, "hit": 0.879166667, "host_s": 86.3272}
+{"event": "token", "id": 2885, "text": "ait", "t_ms": 10221.946, "step_ms": 214.8458, "p": 0, "margin": 1.78156853, "nucleus": 0, "hit": 0.891666667, "host_s": 86.5438}
+{"event": "token", "id": 11370, "text": "/S", "t_ms": 10416.479, "step_ms": 194.028, "p": 0, "margin": 1.20369148, "nucleus": 0, "hit": 0.916666667, "host_s": 86.7384}
+{"event": "token", "id": 1068, "text": "elf", "t_ms": 10706.7706, "step_ms": 289.8073, "p": 0, "margin": 1.25442505, "nucleus": 0, "hit": 0.829166667, "host_s": 87.0272}
+{"event": "token", "id": 4914, "text": "-S", "t_ms": 10926.1908, "step_ms": 218.9933, "p": 0, "margin": 14.5944729, "nucleus": 0, "hit": 0.891666667, "host_s": 87.2486}
+{"event": "token", "id": 71929, "text": "ignal", "t_ms": 11157.3788, "step_ms": 230.8108, "p": 0, "margin": 12.1218834, "nucleus": 0, "hit": 0.891666667, "host_s": 87.4782}
+{"event": "token", "id": 305, "text": " and", "t_ms": 11324.3067, "step_ms": 166.5068, "p": 0, "margin": 3.04120064, "nucleus": 0, "hit": 0.941666667, "host_s": 87.645}
+{"event": "token", "id": 5629, "text": " Dec", "t_ms": 11485.1085, "step_ms": 160.2067, "p": 0, "margin": 0.555500031, "nucleus": 0, "hit": 0.95, "host_s": 87.8068}
+{"event": "token", "id": 14880, "text": "oder", "t_ms": 11740.9048, "step_ms": 255.4152, "p": 0, "margin": 5.75361252, "nucleus": 0, "hit": 0.879166667, "host_s": 88.0616}
+{"event": "token", "id": 52832, "text": " Loop", "t_ms": 11923.5787, "step_ms": 182.278, "p": 0, "margin": 0.697370529, "nucleus": 0, "hit": 0.929166667, "host_s": 88.2439}
+{"event": "token", "id": 44554, "text": " Usage", "t_ms": 12181.3241, "step_ms": 257.3475, "p": 0, "margin": 1.23403168, "nucleus": 0, "hit": 0.941666667, "host_s": 88.4994}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 12488.2322, "step_ms": 306.5146, "p": 0, "margin": 10.1732712, "nucleus": 0, "hit": 0.829166667, "host_s": 88.8105}
+{"event": "token", "id": 372, "text": "##", "t_ms": 12661.1535, "step_ms": 172.5043, "p": 0, "margin": 6.44117355, "nucleus": 0, "hit": 0.933333333, "host_s": 88.9828}
+{"event": "token", "id": 223, "text": " ", "t_ms": 12944.4807, "step_ms": 282.926, "p": 0, "margin": 3.77458954, "nucleus": 0, "hit": 0.845833333, "host_s": 89.2661}
+{"event": "token", "id": 19, "text": "1", "t_ms": 13199.6472, "step_ms": 254.7851, "p": 0, "margin": 4.16111755, "nucleus": 0, "hit": 0.8625, "host_s": 89.5221}
+{"event": "token", "id": 16, "text": ".", "t_ms": 13495.7415, "step_ms": 295.7338, "p": 0, "margin": 14.4400787, "nucleus": 0, "hit": 0.833333333, "host_s": 89.8161}
+{"event": "token", "id": 109014, "text": " Recap", "t_ms": 13686.2972, "step_ms": 190.1653, "p": 0, "margin": 1.89246178, "nucleus": 0, "hit": 0.920833333, "host_s": 90.005}
+{"event": "token", "id": 28, "text": ":", "t_ms": 13976.2362, "step_ms": 289.5413, "p": 0, "margin": 0.696308136, "nucleus": 0, "hit": 0.8375, "host_s": 90.2987}
+{"event": "token", "id": 1999, "text": " What", "t_ms": 14112.4409, "step_ms": 135.7978, "p": 0, "margin": 0.160934448, "nucleus": 0, "hit": 0.966666667, "host_s": 90.4346}
+{"event": "token", "id": 582, "text": " \"", "t_ms": 14275.4931, "step_ms": 162.648, "p": 0, "margin": 0.0546550751, "nucleus": 0, "hit": 0.954166667, "host_s": 90.5957}
+{"event": "token", "id": 14956, "text": "Mon", "t_ms": 14481.4414, "step_ms": 205.5341, "p": 0, "margin": 1.92141724, "nucleus": 0, "hit": 0.908333333, "host_s": 90.8003}
+{"event": "token", "id": 28368, "text": "oton", "t_ms": 14744.4048, "step_ms": 262.575, "p": 0, "margin": 1.75210571, "nucleus": 0, "hit": 0.879166667, "host_s": 91.0662}
+{"event": "token", "id": 1875, "text": "ically", "t_ms": 14900.3598, "step_ms": 155.5734, "p": 0, "margin": 14.9514694, "nucleus": 0, "hit": 0.95, "host_s": 91.2217}
+{"event": "token", "id": 51991, "text": " Increasing", "t_ms": 15098.9326, "step_ms": 198.1442, "p": 0, "margin": 11.7924271, "nucleus": 0, "hit": 0.916666667, "host_s": 91.4209}
+{"event": "token", "id": 38285, "text": " Counter", "t_ms": 15248.8982, "step_ms": 149.5264, "p": 0, "margin": 0.355703354, "nucleus": 0, "hit": 0.958333333, "host_s": 91.571}
+{"event": "token", "id": 4, "text": "\"", "t_ms": 15412.3288, "step_ms": 163.0792, "p": 0, "margin": 9.07588959, "nucleus": 0, "hit": 0.95, "host_s": 91.7328}
+{"event": "token", "id": 65919, "text": " Means", "t_ms": 15638.8638, "step_ms": 226.1463, "p": 0, "margin": 0.167285919, "nucleus": 0, "hit": 0.9, "host_s": 91.9606}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 15824.5723, "step_ms": 185.3006, "p": 0, "margin": 1.9673214, "nucleus": 0, "hit": 0.929166667, "host_s": 92.144}
+{"event": "token", "id": 35, "text": "A", "t_ms": 15982.8966, "step_ms": 157.9271, "p": 0, "margin": 4.13966751, "nucleus": 0, "hit": 0.954166667, "host_s": 92.3052}
+{"event": "token", "id": 40077, "text": " timeline", "t_ms": 16166.2464, "step_ms": 182.9333, "p": 0, "margin": 3.81196022, "nucleus": 0, "hit": 0.933333333, "host_s": 92.4884}
+{"event": "token", "id": 4475, "text": " sem", "t_ms": 16296.8667, "step_ms": 130.1927, "p": 0, "margin": 14.4026642, "nucleus": 0, "hit": 0.975, "host_s": 92.6165}
+{"event": "token", "id": 104294, "text": "aphore", "t_ms": 16500.6956, "step_ms": 203.4019, "p": 0, "margin": 14.2889099, "nucleus": 0, "hit": 0.908333333, "host_s": 92.823}
+{"event": "token", "id": 12927, "text": " holds", "t_ms": 16675.263, "step_ms": 174.1834, "p": 0, "margin": 0.191963196, "nucleus": 0, "hit": 0.941666667, "host_s": 92.9951}
+{"event": "token", "id": 260, "text": " a", "t_ms": 16892.1419, "step_ms": 216.456, "p": 0, "margin": 5.28538132, "nucleus": 0, "hit": 0.908333333, "host_s": 93.2117}
+{"event": "token", "id": 4031, "text": " single", "t_ms": 17027.8449, "step_ms": 135.2785, "p": 0, "margin": 1.07518768, "nucleus": 0, "hit": 0.970833333, "host_s": 93.3499}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 17291.5944, "step_ms": 263.322, "p": 0, "margin": 1.35861969, "nucleus": 0, "hit": 0.941666667, "host_s": 93.6116}
+{"event": "token", "id": 34671, "text": "uint", "t_ms": 17576.1669, "step_ms": 284.2114, "p": 0, "margin": 7.78399658, "nucleus": 0, "hit": 0.8625, "host_s": 93.8977}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 17962.323, "step_ms": 385.7681, "p": 0, "margin": 16.9201126, "nucleus": 0, "hit": 0.7625, "host_s": 94.2846}
+{"event": "token", "id": 3682, "text": "_t", "t_ms": 18243.1292, "step_ms": 280.4126, "p": 0, "margin": 4.70331192, "nucleus": 0, "hit": 0.8375, "host_s": 94.5655}
+{"event": "token", "id": 66, "text": "`", "t_ms": 18455.8546, "step_ms": 212.3013, "p": 0, "margin": 5.34259796, "nucleus": 0, "hit": 0.9, "host_s": 94.7775}
+{"event": "token", "id": 1990, "text": " value", "t_ms": 18617.8222, "step_ms": 161.5741, "p": 0, "margin": 3.05921555, "nucleus": 0, "hit": 0.95, "host_s": 94.9402}
+{"event": "token", "id": 16, "text": ".", "t_ms": 18821.8849, "step_ms": 203.6415, "p": 0, "margin": 0.525680542, "nucleus": 0, "hit": 0.908333333, "host_s": 95.1441}
+{"event": "token", "id": 25257, "text": " Operations", "t_ms": 19038.1816, "step_ms": 215.8675, "p": 0, "margin": 0.978618622, "nucleus": 0, "hit": 0.895833333, "host_s": 95.3601}
+{"event": "token", "id": 377, "text": " on", "t_ms": 19280.2984, "step_ms": 241.7141, "p": 0, "margin": 0.181663513, "nucleus": 0, "hit": 0.895833333, "host_s": 95.5996}
+{"event": "token", "id": 436, "text": " it", "t_ms": 19481.3987, "step_ms": 200.736, "p": 0, "margin": 10.3627911, "nucleus": 0, "hit": 0.9125, "host_s": 95.7997}
+{"event": "token", "id": 477, "text": " are", "t_ms": 19634.6683, "step_ms": 152.8513, "p": 0, "margin": 2.67850113, "nucleus": 0, "hit": 0.954166667, "host_s": 95.957}
+{"event": "token", "id": 979, "text": ":\n\n", "t_ms": 19931.9227, "step_ms": 296.8916, "p": 0, "margin": 1.37650108, "nucleus": 0, "hit": 0.833333333, "host_s": 96.2538}
+{"event": "token", "id": 15, "text": "-", "t_ms": 20204.1495, "step_ms": 271.8281, "p": 0, "margin": 10.9110298, "nucleus": 0, "hit": 0.854166667, "host_s": 96.522}
+{"event": "token", "id": 2619, "text": " **", "t_ms": 20418.1582, "step_ms": 213.6095, "p": 0, "margin": 8.94096184, "nucleus": 0, "hit": 0.895833333, "host_s": 96.7384}
+{"event": "token", "id": 90238, "text": "Signal", "t_ms": 20621.1261, "step_ms": 202.5624, "p": 0, "margin": 2.06641388, "nucleus": 0, "hit": 0.925, "host_s": 96.9434}
+{"event": "token", "id": 22070, "text": "(value", "t_ms": 20886.333, "step_ms": 264.7959, "p": 0, "margin": 0.94078064, "nucleus": 0, "hit": 0.870833333, "host_s": 97.2053}
+{"event": "token", "id": 11, "text": ")", "t_ms": 21267.9036, "step_ms": 381.1556, "p": 0, "margin": 3.04435349, "nucleus": 0, "hit": 0.741666667, "host_s": 97.5887}
+{"event": "token", "id": 18586, "text": "**:", "t_ms": 21488.2664, "step_ms": 219.9462, "p": 0, "margin": 12.8368416, "nucleus": 0, "hit": 0.8875, "host_s": 97.8107}
+{"event": "token", "id": 270, "text": " the", "t_ms": 21692.7988, "step_ms": 204.1265, "p": 0, "margin": 0.825567245, "nucleus": 0, "hit": 0.908333333, "host_s": 98.0151}
+{"event": "token", "id": 4475, "text": " sem", "t_ms": 21860.9731, "step_ms": 167.7509, "p": 0, "margin": 0.903953552, "nucleus": 0, "hit": 0.945833333, "host_s": 98.1831}
+{"event": "token", "id": 104294, "text": "aphore", "t_ms": 22011.4159, "step_ms": 149.948, "p": 0, "margin": 14.5696335, "nucleus": 0, "hit": 0.9625, "host_s": 98.3334}
+{"event": "token", "id": 734, "text": "'s", "t_ms": 22183.5191, "step_ms": 171.5972, "p": 0, "margin": 6.09202194, "nucleus": 0, "hit": 0.9375, "host_s": 98.5054}
+{"event": "done", "session": "default", "prompt_tokens": 130, "reused_tokens": 95, "prefill_tokens": 35, "generated": 64, "prefill_mode": "decode", "finish": "length", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 8779.5086, "prefill_tok_s": 3.98655569, "ttft_ms": 8779.5116, "decode_ms": 13404.0473, "decode_steps": 63, "tok_s": 4.70007294, "total_ms": 22183.557, "prefill_hit_rate": 0.865833333, "decode_hit_rate": 0.906812169, "prefill_nvme_mb": 21197.5537, "decode_nvme_mb": 26501.6443, "per_token_ms": {"attn": 41.6396717, "moe_gpu": 44.9634713, "moe_host": 1.212, "nvme_stall": 110.727395, "engram": 4.47973048, "tail": 6.08364254, "other": 3.24225381, "record": 0.633773016, "submit": 3.24374127, "bind": 0.948992063, "fence_wait": 90.6115794, "submits": 57.6825397, "sample_host": 0}, "sampled_steps": 0, "topk_fallbacks": 0, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 0, "context": 193, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "host_s": 98.5054}
+{"event": "text", "text": "# Timeline Semaphores: Self-Wait/Self-Signal and Decoder Loop Usage\n\n## 1. Recap: What \"Monotonically Increasing Counter\" Means\n\nA timeline semaphore holds a single `uint64_t` value. Operations on it are:\n\n- **Signal(value)**: the semaphore's", "host_s": 98.5054}
+{"event": "tokens", "ids": [1, 128803, 56761, 28, 15747, 1226, 270, 7027, 362, 5908, 78297, 14842, 5291, 78297, 377, 396, 40077, 14, 305, 270, 8977, 21442, 294, 1660, 16, 128804, 128822], "host_s": 98.5078}
+{"event": "prefill", "done": 16, "total": 28, "host_s": 102.9165}
+{"event": "prefill", "done": 28, "total": 28, "host_s": 105.7282}
+{"event": "token", "id": 5, "text": "#", "t_ms": 7219.4349, "step_ms": 284.6704, "p": 0, "margin": 8.66503716, "nucleus": 0, "hit": 0, "host_s": 105.7282}
+{"event": "token", "id": 31322, "text": " Host", "t_ms": 7410.3365, "step_ms": 190.5535, "p": 0, "margin": 2.38793755, "nucleus": 0, "hit": 0.920833333, "host_s": 105.9179}
+{"event": "token", "id": 31200, "text": " Wa", "t_ms": 7588.1775, "step_ms": 177.4381, "p": 0, "margin": 3.58005524, "nucleus": 0, "hit": 0.9375, "host_s": 106.097}
+{"event": "token", "id": 1303, "text": "its", "t_ms": 7842.7612, "step_ms": 254.1821, "p": 0, "margin": 18.9628277, "nucleus": 0, "hit": 0.866666667, "host_s": 106.3512}
+{"event": "token", "id": 8062, "text": " vs", "t_ms": 8028.9562, "step_ms": 185.7971, "p": 0, "margin": 8.84303856, "nucleus": 0, "hit": 0.920833333, "host_s": 106.5333}
+{"event": "token", "id": 16, "text": ".", "t_ms": 8236.264, "step_ms": 206.8345, "p": 0, "margin": 1.39204788, "nucleus": 0, "hit": 0.904166667, "host_s": 106.7446}
+{"event": "token", "id": 38850, "text": " Device", "t_ms": 8416.1027, "step_ms": 179.4148, "p": 0, "margin": 13.0850983, "nucleus": 0, "hit": 0.929166667, "host_s": 106.9223}
+{"event": "token", "id": 31200, "text": " Wa", "t_ms": 8559.0281, "step_ms": 142.5095, "p": 0, "margin": 8.0494194, "nucleus": 0, "hit": 0.9625, "host_s": 107.0672}
+{"event": "token", "id": 1303, "text": "its", "t_ms": 8748.9705, "step_ms": 189.5239, "p": 0, "margin": 21.0947552, "nucleus": 0, "hit": 0.925, "host_s": 107.2558}
+{"event": "token", "id": 377, "text": " on", "t_ms": 8902.5629, "step_ms": 153.1668, "p": 0, "margin": 11.976862, "nucleus": 0, "hit": 0.95, "host_s": 107.4115}
+{"event": "token", "id": 260, "text": " a", "t_ms": 9063.2845, "step_ms": 159.8912, "p": 0, "margin": 1.72558212, "nucleus": 0, "hit": 0.95, "host_s": 107.5722}
+{"event": "token", "id": 82588, "text": " Timeline", "t_ms": 9275.1771, "step_ms": 211.4597, "p": 0, "margin": 7.35663986, "nucleus": 0, "hit": 0.908333333, "host_s": 107.7835}
+{"event": "token", "id": 13356, "text": " Sem", "t_ms": 9417.9839, "step_ms": 142.4145, "p": 0, "margin": 7.92718124, "nucleus": 0, "hit": 0.9625, "host_s": 107.9223}
+{"event": "token", "id": 104294, "text": "aphore", "t_ms": 9568.9063, "step_ms": 150.5119, "p": 0, "margin": 15.0049458, "nucleus": 0, "hit": 0.958333333, "host_s": 108.0773}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 9762.5641, "step_ms": 193.2286, "p": 0, "margin": 5.19927788, "nucleus": 0, "hit": 0.916666667, "host_s": 108.2696}
+{"event": "token", "id": 372, "text": "##", "t_ms": 9891.7845, "step_ms": 128.7434, "p": 0, "margin": 3.17683411, "nucleus": 0, "hit": 0.970833333, "host_s": 108.4005}
+{"event": "token", "id": 223, "text": " ", "t_ms": 10065.6573, "step_ms": 173.4466, "p": 0, "margin": 6.89682198, "nucleus": 0, "hit": 0.941666667, "host_s": 108.5724}
+{"event": "token", "id": 19, "text": "1", "t_ms": 10236.8825, "step_ms": 170.8176, "p": 0, "margin": 8.9698143, "nucleus": 0, "hit": 0.9375, "host_s": 108.7447}
+{"event": "token", "id": 16, "text": ".", "t_ms": 10465.0344, "step_ms": 227.768, "p": 0, "margin": 14.1818199, "nucleus": 0, "hit": 0.970833333, "host_s": 108.9717}
+{"event": "token", "id": 455, "text": " The", "t_ms": 10601.3232, "step_ms": 135.8978, "p": 0, "margin": 1.71033096, "nucleus": 0, "hit": 0.970833333, "host_s": 109.0995}
+{"event": "token", "id": 8819, "text": " Two", "t_ms": 10760.8902, "step_ms": 159.1382, "p": 0, "margin": 4.2503891, "nucleus": 0, "hit": 0.954166667, "host_s": 109.2609}
+{"event": "token", "id": 657, "text": " K", "t_ms": 10959.3625, "step_ms": 198.0379, "p": 0, "margin": 1.40961456, "nucleus": 0, "hit": 0.916666667, "host_s": 109.4608}
+{"event": "token", "id": 13106, "text": "inds", "t_ms": 11280.3362, "step_ms": 320.5236, "p": 0, "margin": 11.4902649, "nucleus": 0, "hit": 0.808333333, "host_s": 109.7844}
+{"event": "token", "id": 294, "text": " of", "t_ms": 11472.3595, "step_ms": 191.6077, "p": 0, "margin": 13.3670387, "nucleus": 0, "hit": 0.925, "host_s": 109.9787}
+{"event": "token", "id": 37157, "text": " Wait", "t_ms": 11614.1432, "step_ms": 141.3136, "p": 0, "margin": 4.47643089, "nucleus": 0, "hit": 0.9625, "host_s": 110.1217}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 11765.5244, "step_ms": 150.9495, "p": 0, "margin": 7.96790695, "nucleus": 0, "hit": 0.9625, "host_s": 110.2715}
+{"event": "token", "id": 35, "text": "A", "t_ms": 11881.9976, "step_ms": 116.0766, "p": 0, "margin": 4.65361404, "nucleus": 0, "hit": 0.9875, "host_s": 110.3876}
+{"event": "token", "id": 40077, "text": " timeline", "t_ms": 12009.6142, "step_ms": 127.2204, "p": 0, "margin": 5.31752396, "nucleus": 0, "hit": 0.975, "host_s": 110.5145}
+{"event": "token", "id": 4475, "text": " sem", "t_ms": 12149.1747, "step_ms": 139.1606, "p": 0, "margin": 6.45437622, "nucleus": 0, "hit": 0.970833333, "host_s": 110.6569}
+{"event": "token", "id": 104294, "text": "aphore", "t_ms": 12313.428, "step_ms": 163.8152, "p": 0, "margin": 12.7966766, "nucleus": 0, "hit": 0.945833333, "host_s": 110.8179}
+{"event": "token", "id": 588, "text": " can", "t_ms": 12449.7838, "step_ms": 135.9168, "p": 0, "margin": 2.92415619, "nucleus": 0, "hit": 0.970833333, "host_s": 110.9567}
+{"event": "token", "id": 366, "text": " be", "t_ms": 12764.596, "step_ms": 314.4063, "p": 0, "margin": 8.48457146, "nucleus": 0, "hit": 0.8125, "host_s": 111.2732}
+{"event": "token", "id": 28241, "text": " waited", "t_ms": 12942.7497, "step_ms": 177.7642, "p": 0, "margin": 3.7381897, "nucleus": 0, "hit": 0.929166667, "host_s": 111.4496}
+{"event": "token", "id": 377, "text": " on", "t_ms": 13204.5213, "step_ms": 261.3778, "p": 0, "margin": 8.65782928, "nucleus": 0, "hit": 0.8625, "host_s": 111.7129}
+{"event": "token", "id": 538, "text": " from", "t_ms": 13353.0973, "step_ms": 148.1872, "p": 0, "margin": 2.44203949, "nucleus": 0, "hit": 0.958333333, "host_s": 111.8621}
+{"event": "token", "id": 1234, "text": " two", "t_ms": 13623.0835, "step_ms": 269.5998, "p": 0, "margin": 3.75825691, "nucleus": 0, "hit": 0.875, "host_s": 112.129}
+{"event": "token", "id": 1855, "text": " very", "t_ms": 13829.8708, "step_ms": 206.2952, "p": 0, "margin": 1.6678009, "nucleus": 0, "hit": 0.9, "host_s": 112.3385}
+{"event": "token", "id": 1688, "text": " different", "t_ms": 14128.7426, "step_ms": 298.4786, "p": 0, "margin": 11.9515285, "nucleus": 0, "hit": 0.820833333, "host_s": 112.6345}
+{"event": "token", "id": 7892, "text": " places", "t_ms": 14332.1847, "step_ms": 202.9287, "p": 0, "margin": 2.86097336, "nucleus": 0, "hit": 0.908333333, "host_s": 112.8385}
+{"event": "token", "id": 979, "text": ":\n\n", "t_ms": 14524.8816, "step_ms": 192.2642, "p": 0, "margin": 0.403926849, "nucleus": 0, "hit": 0.916666667, "host_s": 113.033}
+{"event": "token", "id": 15, "text": "-", "t_ms": 14729.6523, "step_ms": 204.3529, "p": 0, "margin": 1.66828918, "nucleus": 0, "hit": 0.908333333, "host_s": 113.2389}
+{"event": "token", "id": 2619, "text": " **", "t_ms": 14937.8667, "step_ms": 207.7851, "p": 0, "margin": 7.81571007, "nucleus": 0, "hit": 0.908333333, "host_s": 113.4385}
+{"event": "token", "id": 37505, "text": "Device", "t_ms": 15082.1409, "step_ms": 143.8695, "p": 0, "margin": 1.68818665, "nucleus": 0, "hit": 0.966666667, "host_s": 113.5912}
+{"event": "token", "id": 6361, "text": " wait", "t_ms": 15232.2995, "step_ms": 149.7772, "p": 0, "margin": 5.33439445, "nucleus": 0, "hit": 0.958333333, "host_s": 113.7386}
+{"event": "token", "id": 666, "text": "**", "t_ms": 15469.4004, "step_ms": 236.7276, "p": 0, "margin": 3.81555176, "nucleus": 0, "hit": 0.966666667, "host_s": 113.9775}
+{"event": "token", "id": 2136, "text": " —", "t_ms": 15640.8773, "step_ms": 171.0273, "p": 0, "margin": 4.88565063, "nucleus": 0, "hit": 0.933333333, "host_s": 114.1497}
+{"event": "token", "id": 260, "text": " a", "t_ms": 15832.2091, "step_ms": 190.7938, "p": 0, "margin": 0.945411682, "nucleus": 0, "hit": 0.925, "host_s": 114.3394}
+{"event": "token", "id": 6361, "text": " wait", "t_ms": 15984.1214, "step_ms": 151.4972, "p": 0, "margin": 0.488121033, "nucleus": 0, "hit": 0.958333333, "host_s": 114.4886}
+{"event": "token", "id": 40178, "text": " encoded", "t_ms": 16110.3246, "step_ms": 125.7695, "p": 0, "margin": 1.59658432, "nucleus": 0, "hit": 0.979166667, "host_s": 114.6188}
+{"event": "token", "id": 1055, "text": " into", "t_ms": 16286.8095, "step_ms": 176.0352, "p": 0, "margin": 1.78254318, "nucleus": 0, "hit": 0.9375, "host_s": 114.7956}
+{"event": "token", "id": 260, "text": " a", "t_ms": 16475.9178, "step_ms": 188.6861, "p": 0, "margin": 4.02657509, "nucleus": 0, "hit": 0.933333333, "host_s": 114.9831}
+{"event": "token", "id": 18505, "text": " queue", "t_ms": 16618.5496, "step_ms": 142.2409, "p": 0, "margin": 0.904747009, "nucleus": 0, "hit": 0.9625, "host_s": 115.1275}
+{"event": "token", "id": 30123, "text": " submission", "t_ms": 16794.3176, "step_ms": 175.3292, "p": 0, "margin": 6.65525055, "nucleus": 0, "hit": 0.9375, "host_s": 115.2997}
+{"event": "token", "id": 42936, "text": " (`", "t_ms": 16993.5667, "step_ms": 198.8043, "p": 0, "margin": 1.07936096, "nucleus": 0, "hit": 0.916666667, "host_s": 115.5026}
+{"event": "token", "id": 56, "text": "V", "t_ms": 17333.6282, "step_ms": 339.5682, "p": 0, "margin": 3.3307724, "nucleus": 0, "hit": 0.808333333, "host_s": 115.8393}
+{"event": "token", "id": 77, "text": "k", "t_ms": 17677.7724, "step_ms": 343.5997, "p": 0, "margin": 16.5990715, "nucleus": 0, "hit": 0.7875, "host_s": 116.1865}
+{"event": "token", "id": 34869, "text": "Submit", "t_ms": 18015.4186, "step_ms": 337.2721, "p": 0, "margin": 3.8925705, "nucleus": 0, "hit": 0.7875, "host_s": 116.5243}
+{"event": "token", "id": 10745, "text": "Info", "t_ms": 18299.8671, "step_ms": 284.0533, "p": 0, "margin": 11.3614712, "nucleus": 0, "hit": 0.8375, "host_s": 116.8054}
+{"event": "token", "id": 2366, "text": "::", "t_ms": 18578.0717, "step_ms": 277.845, "p": 0, "margin": 2.55233002, "nucleus": 0, "hit": 0.841666667, "host_s": 117.087}
+{"event": "token", "id": 82, "text": "p", "t_ms": 18887.3394, "step_ms": 308.8458, "p": 0, "margin": 11.355114, "nucleus": 0, "hit": 0.8125, "host_s": 117.3943}
+{"event": "token", "id": 39059, "text": "Wait", "t_ms": 19225.0286, "step_ms": 337.2974, "p": 0, "margin": 15.4855938, "nucleus": 0, "hit": 0.7875, "host_s": 117.7332}
+{"event": "token", "id": 46627, "text": "Sem", "t_ms": 19529.4492, "step_ms": 304.0486, "p": 0, "margin": 13.7371712, "nucleus": 0, "hit": 0.841666667, "host_s": 118.0336}
+{"event": "token", "id": 630, "text": "ap", "t_ms": 19785.1201, "step_ms": 255.1627, "p": 0, "margin": 9.23963547, "nucleus": 0, "hit": 0.866666667, "host_s": 118.2894}
+{"event": "token", "id": 103740, "text": "hores", "t_ms": 19993.288, "step_ms": 207.8073, "p": 0, "margin": 22.2242622, "nucleus": 0, "hit": 0.904166667, "host_s": 118.5002}
+{"event": "done", "session": "default", "prompt_tokens": 221, "reused_tokens": 193, "prefill_tokens": 28, "generated": 64, "prefill_mode": "decode", "finish": "length", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 7219.4322, "prefill_tok_s": 3.87842135, "ttft_ms": 7219.4349, "decode_ms": 12773.8805, "decode_steps": 63, "tok_s": 4.93193905, "total_ms": 19993.3137, "prefill_hit_rate": 0.858482143, "decode_hit_rate": 0.914814815, "prefill_nvme_mb": 17887.1992, "decode_nvme_mb": 24225.7756, "per_token_ms": {"attn": 43.1294673, "moe_gpu": 42.28739, "moe_host": 1.2862873, "nvme_stall": 100.493498, "engram": 4.45903143, "tail": 6.02825905, "other": 4.64713952, "record": 0.688060317, "submit": 3.52557302, "bind": 0.961852381, "fence_wait": 89.9739429, "submits": 56.2063492, "sample_host": 0}, "sampled_steps": 0, "topk_fallbacks": 0, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 0, "context": 284, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "host_s": 118.5002}
+{"event": "text", "text": "# Host Waits vs. Device Waits on a Timeline Semaphore\n\n## 1. The Two Kinds of Wait\n\nA timeline semaphore can be waited on from two very different places:\n\n- **Device wait** — a wait encoded into a queue submission (`VkSubmitInfo::pWaitSemaphores", "host_s": 118.5002}
+{"event": "tokens", "ids": [1, 128803, 22863, 396, 14, 1192, 1531, 260, 45750, 3701, 1009, 8739, 23809, 832, 396, 260, 1606, 12577, 18954, 1009, 3946, 1341, 25137, 33, 128804, 128822], "host_s": 118.5002}
+{"event": "prefill", "done": 16, "total": 27, "host_s": 123.1784}
+{"event": "prefill", "done": 27, "total": 27, "host_s": 125.9319}
+{"event": "token", "id": 5, "text": "#", "t_ms": 7427.8313, "step_ms": 276.1951, "p": 0, "margin": 6.75683975, "nucleus": 0, "hit": 0, "host_s": 125.9319}
+{"event": "token", "id": 327, "text": " S", "t_ms": 7628.991, "step_ms": 200.7788, "p": 0, "margin": 6.95620537, "nucleus": 0, "hit": 0.916666667, "host_s": 126.1335}
+{"event": "token", "id": 4111, "text": "izing", "t_ms": 7865.2087, "step_ms": 235.8454, "p": 0, "margin": 12.4624634, "nucleus": 0, "hit": 0.883333333, "host_s": 126.3683}
+{"event": "token", "id": 411, "text": " an", "t_ms": 8063.1134, "step_ms": 197.4586, "p": 0, "margin": 2.76641464, "nucleus": 0, "hit": 0.925, "host_s": 126.5669}
+{"event": "token", "id": 30872, "text": " Expert", "t_ms": 8282.0903, "step_ms": 218.6045, "p": 0, "margin": 4.99155426, "nucleus": 0, "hit": 0.9, "host_s": 126.7848}
+{"event": "token", "id": 69717, "text": " Cache", "t_ms": 8563.8232, "step_ms": 281.3609, "p": 0, "margin": 4.91181374, "nucleus": 0, "hit": 0.8625, "host_s": 127.0669}
+{"event": "token", "id": 362, "text": " for", "t_ms": 8719.8802, "step_ms": 155.6745, "p": 0, "margin": 3.34754562, "nucleus": 0, "hit": 0.95, "host_s": 127.2225}
+{"event": "token", "id": 260, "text": " a", "t_ms": 8923.2942, "step_ms": 202.9772, "p": 0, "margin": 0.775409698, "nucleus": 0, "hit": 0.9125, "host_s": 127.428}
+{"event": "token", "id": 9266, "text": " Long", "t_ms": 9102.1628, "step_ms": 178.4212, "p": 0, "margin": 10.119297, "nucleus": 0, "hit": 0.933333333, "host_s": 127.6062}
+{"event": "token", "id": 70774, "text": " Conversation", "t_ms": 9262.0008, "step_ms": 159.354, "p": 0, "margin": 5.95869446, "nucleus": 0, "hit": 0.95, "host_s": 127.7669}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 9466.9227, "step_ms": 204.5468, "p": 0, "margin": 3.73110008, "nucleus": 0, "hit": 0.916666667, "host_s": 127.9669}
+{"event": "token", "id": 372, "text": "##", "t_ms": 9654.3747, "step_ms": 187.0332, "p": 0, "margin": 1.23715973, "nucleus": 0, "hit": 0.925, "host_s": 128.1559}
+{"event": "token", "id": 223, "text": " ", "t_ms": 9873.0997, "step_ms": 218.2995, "p": 0, "margin": 7.61787987, "nucleus": 0, "hit": 0.895833333, "host_s": 128.378}
+{"event": "token", "id": 19, "text": "1", "t_ms": 10108.351, "step_ms": 234.854, "p": 0, "margin": 6.48266792, "nucleus": 0, "hit": 0.883333333, "host_s": 128.6128}
+{"event": "token", "id": 16, "text": ".", "t_ms": 10494.6945, "step_ms": 385.9307, "p": 0, "margin": 13.6801033, "nucleus": 0, "hit": 0.85, "host_s": 128.9948}
+{"event": "token", "id": 1999, "text": " What", "t_ms": 10688.5647, "step_ms": 193.4526, "p": 0, "margin": 0.915147781, "nucleus": 0, "hit": 0.916666667, "host_s": 129.1896}
+{"event": "token", "id": 270, "text": " the", "t_ms": 10867.931, "step_ms": 178.8808, "p": 0, "margin": 0.152013779, "nucleus": 0, "hit": 0.933333333, "host_s": 129.3725}
+{"event": "token", "id": 69717, "text": " Cache", "t_ms": 11079.24, "step_ms": 210.8507, "p": 0, "margin": 2.02809143, "nucleus": 0, "hit": 0.9125, "host_s": 129.5837}
+{"event": "token", "id": 2355, "text": " Is", "t_ms": 11351.6851, "step_ms": 272.0737, "p": 0, "margin": 0.769119263, "nucleus": 0, "hit": 0.941666667, "host_s": 129.8559}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 11578.1684, "step_ms": 226.0781, "p": 0, "margin": 2.57833099, "nucleus": 0, "hit": 0.895833333, "host_s": 130.08}
+{"event": "token", "id": 68076, "text": " Holding", "t_ms": 11781.1332, "step_ms": 202.5486, "p": 0, "margin": 3.51669693, "nucleus": 0, "hit": 0.908333333, "host_s": 130.2843}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 12002.3569, "step_ms": 220.8409, "p": 0, "margin": 7.21934509, "nucleus": 0, "hit": 0.904166667, "host_s": 130.5059}
+{"event": "token", "id": 3870, "text": "For", "t_ms": 12175.9809, "step_ms": 173.2115, "p": 0, "margin": 0.462863922, "nucleus": 0, "hit": 0.9375, "host_s": 130.6782}
+{"event": "token", "id": 260, "text": " a", "t_ms": 12352.6345, "step_ms": 176.2819, "p": 0, "margin": 2.19246674, "nucleus": 0, "hit": 0.9375, "host_s": 130.8564}
+{"event": "token", "id": 13376, "text": " mixture", "t_ms": 12505.1362, "step_ms": 152.0964, "p": 0, "margin": 1.07497787, "nucleus": 0, "hit": 0.954166667, "host_s": 131.006}
+{"event": "token", "id": 9934, "text": "-of", "t_ms": 12792.1952, "step_ms": 286.6668, "p": 0, "margin": 8.69329834, "nucleus": 0, "hit": 0.8375, "host_s": 131.2949}
+{"event": "token", "id": 86473, "text": "-exper", "t_ms": 13135.3187, "step_ms": 342.6957, "p": 0, "margin": 8.25160217, "nucleus": 0, "hit": 0.783333333, "host_s": 131.6393}
+{"event": "token", "id": 1648, "text": "ts", "t_ms": 13339.9624, "step_ms": 204.2187, "p": 0, "margin": 15.4818707, "nucleus": 0, "hit": 0.904166667, "host_s": 131.8448}
+{"event": "token", "id": 2645, "text": " model", "t_ms": 13504.4107, "step_ms": 164.0513, "p": 0, "margin": 0.27645874, "nucleus": 0, "hit": 0.945833333, "host_s": 132.0074}
+{"event": "token", "id": 14, "text": ",", "t_ms": 13672.9231, "step_ms": 168.101, "p": 0, "margin": 2.26854324, "nucleus": 0, "hit": 0.945833333, "host_s": 132.1727}
+{"event": "token", "id": 270, "text": " the", "t_ms": 13870.1573, "step_ms": 196.8208, "p": 0, "margin": 2.04726601, "nucleus": 0, "hit": 0.916666667, "host_s": 132.3727}
+{"event": "token", "id": 582, "text": " \"", "t_ms": 14046.9019, "step_ms": 176.3204, "p": 0, "margin": 3.97017097, "nucleus": 0, "hit": 0.933333333, "host_s": 132.5505}
+{"event": "token", "id": 1289, "text": "ex", "t_ms": 14279.1288, "step_ms": 231.8398, "p": 0, "margin": 0.795150757, "nucleus": 0, "hit": 0.8875, "host_s": 132.7838}
+{"event": "token", "id": 7038, "text": "pert", "t_ms": 14516.821, "step_ms": 237.3427, "p": 0, "margin": 15.9300594, "nucleus": 0, "hit": 0.9, "host_s": 133.0188}
+{"event": "token", "id": 23809, "text": " cache", "t_ms": 14700.3977, "step_ms": 183.1694, "p": 0, "margin": 6.96697044, "nucleus": 0, "hit": 0.929166667, "host_s": 133.205}
+{"event": "token", "id": 4, "text": "\"", "t_ms": 14855.8387, "step_ms": 155.052, "p": 0, "margin": 11.0947876, "nucleus": 0, "hit": 0.954166667, "host_s": 133.356}
+{"event": "token", "id": 344, "text": " is", "t_ms": 15071.1098, "step_ms": 214.8356, "p": 0, "margin": 0.55645752, "nucleus": 0, "hit": 0.9, "host_s": 133.5727}
+{"event": "token", "id": 260, "text": " a", "t_ms": 15292.237, "step_ms": 220.699, "p": 0, "margin": 0.407424927, "nucleus": 0, "hit": 0.895833333, "host_s": 133.795}
+{"event": "token", "id": 11761, "text": " pool", "t_ms": 15457.6178, "step_ms": 164.9864, "p": 0, "margin": 0.0078868866, "nucleus": 0, "hit": 0.945833333, "host_s": 133.9616}
+{"event": "token", "id": 294, "text": " of", "t_ms": 15630.6195, "step_ms": 172.6009, "p": 0, "margin": 7.61096191, "nucleus": 0, "hit": 0.9375, "host_s": 134.1354}
+{"event": "token", "id": 5291, "text": " device", "t_ms": 15792.6917, "step_ms": 161.6645, "p": 0, "margin": 0.144430161, "nucleus": 0, "hit": 0.95, "host_s": 134.2975}
+{"event": "token", "id": 6464, "text": " memory", "t_ms": 15933.1283, "step_ms": 140.0092, "p": 0, "margin": 0.24366951, "nucleus": 0, "hit": 0.966666667, "host_s": 134.4377}
+{"event": "token", "id": 343, "text": " (", "t_ms": 16096.9405, "step_ms": 163.3786, "p": 0, "margin": 0.90442276, "nucleus": 0, "hit": 0.95, "host_s": 134.6006}
+{"event": "token", "id": 272, "text": "or", "t_ms": 16392.2415, "step_ms": 294.9138, "p": 0, "margin": 0.401359558, "nucleus": 0, "hit": 0.9125, "host_s": 134.8953}
+{"event": "token", "id": 83119, "text": " pinned", "t_ms": 16726.5072, "step_ms": 333.8445, "p": 0, "margin": 0.70306015, "nucleus": 0, "hit": 0.7875, "host_s": 135.2283}
+{"event": "token", "id": 5908, "text": " host", "t_ms": 16890.0475, "step_ms": 163.1593, "p": 0, "margin": 7.44591141, "nucleus": 0, "hit": 0.941666667, "host_s": 135.395}
+{"event": "token", "id": 6464, "text": " memory", "t_ms": 17082.1564, "step_ms": 191.7153, "p": 0, "margin": 6.95602417, "nucleus": 0, "hit": 0.925, "host_s": 135.5839}
+{"event": "token", "id": 11, "text": ")", "t_ms": 17267.7031, "step_ms": 185.1383, "p": 0, "margin": 1.32433128, "nucleus": 0, "hit": 0.929166667, "host_s": 135.7695}
+{"event": "token", "id": 11630, "text": " holding", "t_ms": 17469.7129, "step_ms": 201.6122, "p": 0, "margin": 0.406692505, "nucleus": 0, "hit": 0.920833333, "host_s": 135.9744}
+{"event": "token", "id": 270, "text": " the", "t_ms": 17619.2137, "step_ms": 149.1144, "p": 0, "margin": 0.566059113, "nucleus": 0, "hit": 0.9625, "host_s": 136.1232}
+{"event": "token", "id": 23997, "text": " weights", "t_ms": 17782.76, "step_ms": 163.1292, "p": 0, "margin": 0.190223694, "nucleus": 0, "hit": 0.945833333, "host_s": 136.2866}
+{"event": "token", "id": 294, "text": " of", "t_ms": 17973.2203, "step_ms": 190.0111, "p": 0, "margin": 5.55008888, "nucleus": 0, "hit": 0.916666667, "host_s": 136.4728}
+{"event": "token", "id": 2811, "text": " individual", "t_ms": 18134.9552, "step_ms": 161.3151, "p": 0, "margin": 0.61397171, "nucleus": 0, "hit": 0.954166667, "host_s": 136.6394}
+{"event": "token", "id": 13523, "text": " experts", "t_ms": 18370.104, "step_ms": 234.7741, "p": 0, "margin": 1.37932968, "nucleus": 0, "hit": 0.8875, "host_s": 136.8729}
+{"event": "token", "id": 16, "text": ".", "t_ms": 18508.3357, "step_ms": 137.8254, "p": 0, "margin": 1.05751038, "nucleus": 0, "hit": 0.966666667, "host_s": 137.0118}
+{"event": "token", "id": 455, "text": " The", "t_ms": 18711.119, "step_ms": 202.3396, "p": 0, "margin": 0.443117142, "nucleus": 0, "hit": 0.9125, "host_s": 137.2121}
+{"event": "token", "id": 3946, "text": " working", "t_ms": 18889.228, "step_ms": 177.6842, "p": 0, "margin": 0.122131348, "nucleus": 0, "hit": 0.9375, "host_s": 137.3921}
+{"event": "token", "id": 1341, "text": " set", "t_ms": 19058.254, "step_ms": 168.5993, "p": 0, "margin": 7.90649414, "nucleus": 0, "hit": 0.945833333, "host_s": 137.5624}
+{"event": "token", "id": 362, "text": " for", "t_ms": 19246.9908, "step_ms": 188.0313, "p": 0, "margin": 0.396692276, "nucleus": 0, "hit": 0.929166667, "host_s": 137.7511}
+{"event": "token", "id": 260, "text": " a", "t_ms": 19413.28, "step_ms": 165.8591, "p": 0, "margin": 2.10455894, "nucleus": 0, "hit": 0.95, "host_s": 137.9177}
+{"event": "token", "id": 4031, "text": " single", "t_ms": 19699.13, "step_ms": 285.4629, "p": 0, "margin": 0.568889618, "nucleus": 0, "hit": 0.8375, "host_s": 138.2037}
+{"event": "token", "id": 17840, "text": " token", "t_ms": 19917.8216, "step_ms": 218.2772, "p": 0, "margin": 1.89091873, "nucleus": 0, "hit": 0.895833333, "host_s": 138.4193}
+{"event": "token", "id": 344, "text": " is", "t_ms": 20129.872, "step_ms": 211.6229, "p": 0, "margin": 2.38211441, "nucleus": 0, "hit": 0.916666667, "host_s": 138.634}
+{"event": "token", "id": 2395, "text": " small", "t_ms": 20335.6827, "step_ms": 205.4128, "p": 0, "margin": 0.889045715, "nucleus": 0, "hit": 0.9125, "host_s": 138.84}
+{"event": "done", "session": "default", "prompt_tokens": 311, "reused_tokens": 284, "prefill_tokens": 27, "generated": 64, "prefill_mode": "decode", "finish": "length", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 7427.8286, "prefill_tok_s": 3.63497887, "ttft_ms": 7427.8313, "decode_ms": 12907.8827, "decode_steps": 63, "tok_s": 4.8807385, "total_ms": 20335.7123, "prefill_hit_rate": 0.851234568, "decode_hit_rate": 0.916137566, "prefill_nvme_mb": 18131.714, "decode_nvme_mb": 23849.599, "per_token_ms": {"attn": 42.570266, "moe_gpu": 42.8574935, "moe_host": 1.21823016, "nvme_stall": 101.560144, "engram": 4.40054698, "tail": 7.4477081, "other": 4.4178219, "record": 0.662304762, "submit": 3.34370317, "bind": 0.953715873, "fence_wait": 91.2076016, "submits": 56.5396825, "sample_host": 0}, "sampled_steps": 0, "topk_fallbacks": 0, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 0, "context": 374, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "host_s": 138.84}
+{"event": "text", "text": "# Sizing an Expert Cache for a Long Conversation\n\n## 1. What the Cache Is Actually Holding\n\nFor a mixture-of-experts model, the \"expert cache\" is a pool of device memory (or pinned host memory) holding the weights of individual experts. The working set for a single token is small", "host_s": 138.84}
+{"event": "status", "session": "default", "context": 374, "max_context": 4096, "kv_mb": 16.044032, "kv_capacity": 4096, "kv_slabs": 1, "kv_largest_slab_mb": 16.044032, "store": "expert store: 5100 slots (5100 resident, 0 filling, 0 free, 0 pinned)  lookups 120480 hits 104978 (0.871)  fills 15502/15502 ok  runs 31004/31004  evictions 10402 (+0 guard-blocked)", "planner": "planner: 20080 layers, 120480 requests (104978 hits, 15502 misses, 0.871), 10402 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 9696 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped", "io": "io: 80410 req (80410 done, 0 failed, 0 cancelled), 144537 chunks, 301629709760 / 301629759488 bytes, busy 75.323 s, eff 4.00 GB/s, mean lat 24.280 ms, peak QD 8 / 32.0 MiB\n  p0_blocking    31004 req  278067.1 MiB\n  p2_engram      48192 req  194.1 MiB\n  p3_backfill     1214 req  9395.3 MiB\n  P0: 31004 req, 278067.1 MiB, lat mean 6.71 / p50 5.42 / p95 16.24 / max 43.90 ms  (queue wait 2.00 + service 4.71)\n  P0: first-of-burst 9696 at 2.84 ms, behind 21308 at 8.47 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 3.80\n", "route": "route     resident-only=off\n", "host_s": 138.84}

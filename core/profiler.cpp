@@ -13,10 +13,12 @@ std::string TokenRecord::to_jsonl() const {
         R"(,"expert_requests":{},"expert_hits":{},"expert_misses":{},"hit_rate":{:.4f})"
         R"(,"hot_bytes":{},"miss_bytes":{},"nvme_busy_ms":{:.4f},"nvme_util":{:.4f},"nvme_gbps":{:.3f})"
         R"(,"prefetch_issued":{},"prefetch_used":{},"prefetch_precision":{:.4f})"
+        R"(,"p0_count":{},"p0_mean_ms":{:.4f})"
         R"(,"draft_len":{},"accepted_len":{}}})",
         expert_requests, expert_hits, expert_misses, hit_rate(),
         hot_bytes, miss_bytes, nvme_busy_ns / 1e6, nvme_util(), nvme_gbps(),
         prefetch_issued, prefetch_used, prefetch_precision(),
+        p0_count, p0_count ? p0_lat_ns / 1e6 / double(p0_count) : 0.0,
         draft_len, accepted_len);
     return s;
 }
@@ -35,6 +37,11 @@ std::string RunSummary::to_string() const {
     if (nvme_busy_ns)
         s += std::format("   eff {:.2f} GB/s", static_cast<double>(miss_bytes) / static_cast<double>(nvme_busy_ns));
     s += "\n";
+    if (p0_count)
+        s += std::format("  P0 {} reads   mean {:.2f} ms   {:.2f} per token   {:.2f} ms per token\n",
+                         p0_count, p0_lat_ns / 1e6 / double(p0_count),
+                         tokens ? double(p0_count) / double(tokens) : 0.0,
+                         tokens ? p0_lat_ns / 1e6 / double(tokens) : 0.0);
     if (draft_len)
         s += std::format("  draft {} accepted {}  mean accept {:.2f}\n",
                          draft_len, accepted_len,
@@ -65,6 +72,8 @@ void Profiler::reset_token_counters() {
     hot_bytes_.store(0, std::memory_order_relaxed);
     miss_bytes_.store(0, std::memory_order_relaxed);
     nvme_busy_ns_.store(0, std::memory_order_relaxed);
+    p0_count_.store(0, std::memory_order_relaxed);
+    p0_lat_ns_.store(0, std::memory_order_relaxed);
     pf_issued_.store(0, std::memory_order_relaxed);
     pf_used_.store(0, std::memory_order_relaxed);
     draft_len_.store(0, std::memory_order_relaxed);
@@ -89,6 +98,8 @@ TokenRecord Profiler::token_end() {
     r.hot_bytes       = hot_bytes_.load(std::memory_order_relaxed);
     r.miss_bytes      = miss_bytes_.load(std::memory_order_relaxed);
     r.nvme_busy_ns    = nvme_busy_ns_.load(std::memory_order_relaxed);
+    r.p0_count        = p0_count_.load(std::memory_order_relaxed);
+    r.p0_lat_ns       = p0_lat_ns_.load(std::memory_order_relaxed);
     r.prefetch_issued = pf_issued_.load(std::memory_order_relaxed);
     r.prefetch_used   = pf_used_.load(std::memory_order_relaxed);
     r.draft_len       = draft_len_.load(std::memory_order_relaxed);
@@ -102,6 +113,8 @@ TokenRecord Profiler::token_end() {
     summary_.hot_bytes       += r.hot_bytes;
     summary_.miss_bytes      += r.miss_bytes;
     summary_.nvme_busy_ns    += r.nvme_busy_ns;
+    summary_.p0_count        += r.p0_count;
+    summary_.p0_lat_ns       += r.p0_lat_ns;
     summary_.prefetch_issued += r.prefetch_issued;
     summary_.prefetch_used   += r.prefetch_used;
     summary_.draft_len       += r.draft_len;

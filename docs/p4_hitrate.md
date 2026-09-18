@@ -345,6 +345,11 @@ rand        17695    4   5.187     286    13.562   15.885
   2. **"减少对齐浪费"** —— 18.8 MB 里对齐税约 3 KB，0.02%。
   3. **"提高 QD"** —— QD 1 → 4 只从 4.47 到 5.19 GB/s（+16%），而 decode 已经拿到
      8.3–9.2 GB/s（跨多个并发 fill）。
+- ⚠️ **2026-09-18 收窄（Track Q1，`p4_p0_queue.md`）**：「没有排队」这一条现在是**实测**的
+  （decode 里 **0.0%** 的 P0 在发出时有非 P0 的 chunk 在飞），但「就是盘」只成立于**一次 miss**。
+  **聚合速率上不成立**：引擎在 stall 窗口里是 **3.55 GB/s**（383 MiB / 105.2 ms），
+  `nvme_bench` 同一块盘同一请求大小是 **5.16 GB/s**，且盘对请求大小是平的而引擎不是。
+  「提高 QD」这一条也被直接测了：`DEEPMOE_IO_P0_QD=32` 让 P0 **更慢**（6.70 → 7.70 ms）。
 - **结论写进一句话**：decode 的每个 token 由 `MB/token ÷ 5.2 GB/s` 决定。
   想让 tok/s 上去，只有**少读字节**这一条路 —— 更高命中率（容量 / 顺序 / reheat），
   或者同一批字节换多个 token（投机）。所有"算得更快"的改动都不在这条路径上。
@@ -787,3 +792,28 @@ optional sub-cases gated on `DEEPMOE_PF_LONGCTX`; running the binary directly,
 `gpu_prefill.forty_layers` reports `free-running: 8/8 before divergence` — **L3
 is 8/8 with the path-A reserve in place**, which is what the reserve had to not
 break, since it changes where the cache's slabs come from.
+
+
+## 10. P0 队列（Track Q1，2026-09-18）→ `p4_p0_queue.md`
+
+这一节原本要回答「stall 里那 ~30 ms 是不是队列争用」。答案是**不是**，
+整份测量单独成文：**[`p4_p0_queue.md`](p4_p0_queue.md)**。
+
+摘要，4 轮对话 `y_turns.json` / 5,100 槽 / backfill off / 四次基线 ±0.5%：
+
+| | |
+|---|---|
+| `nvme_stall` | **105.2 ms/token**（21.3 个 miss = 383 MiB ⇒ **3.55 GB/s**） |
+| 一个 expert | **两个 run、两个 `IoRequest`**，同一个 `fetch` 里背靠背提交；一层所有 miss 提交完才 `wait_layer` |
+| 队列争用 | **0.0%**（backfill 开也只有 8.2%、平均 1.02 个） |
+| QD ramp | 一层这一批第一个 P0 **2.83 ms**，后面的每个 **8.46 ms**；层等的是最后一个 |
+| 发出时平均在飞 chunk | **3.80**（上限 8） |
+| (a) 非 P0 让路 | **−0.3%**；再把 P2 engram 拉进去 **−27.8%**（engram 4.5 → 85.8 ms/token）——**永久不做** |
+| (b) `P0_QD=32` | +0.6%，且 P0 延迟 6.70 → **7.70 ms** ⇒ 退 |
+| (c) `P0_CHUNK_MB=16` | **−8.4%** ⇒ 退；反方向 1 MiB **+1.4%**，低于 ±3% 判据带 ⇒ 不作默认 |
+| 盘的对照 | `nvme_bench` 1 MiB–18.4 MiB、QD ≥ 4 一律 **5.07–5.16 GB/s**（对大小是平的） |
+
+新增的插桩（默认开、零热路径成本）：`IoStats` 的两行 P0 汇总（自动进 `status.json`）、
+`profile.jsonl` 的 `p0_count` / `p0_mean_ms`、报表 `tools/p0q_report.py`。
+新增五个默认等于今天行为的旋钮：`DEEPMOE_IO_BG_CAP_BUSY` / `_BG_THROTTLE_P2` /
+`_P0_QD` / `_P0_INFLIGHT_MB` / `_P0_CHUNK_MB`。

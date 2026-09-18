@@ -39,6 +39,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -87,6 +88,31 @@ struct IoStats {
     uint64_t latency_ns_sum = 0, latency_ns_max = 0;
     uint32_t peak_inflight_ops = 0;
     uint64_t peak_inflight_bytes = 0;
+
+    // --- P0 (BlockingMiss) queue accounting, docs/p4_p0_queue.md ---------
+    // The decode's stall is the sum of these latencies, so they are the only
+    // ones with a per-request breakdown. `queue_wait` is submit -> first chunk
+    // handed to the backend; `service` is first chunk -> last chunk done.
+    uint64_t p0_requests = 0, p0_bytes = 0;
+    uint64_t p0_lat_ns_sum = 0, p0_lat_ns_max = 0;
+    uint64_t p0_queue_wait_ns_sum = 0;
+    uint64_t p0_service_ns_sum = 0;
+    // Split by whether another P0 was already outstanding when this one was
+    // queued: "first" is the head of a layer's burst (the QD ramp), "behind"
+    // is every later miss of the same layer.
+    uint64_t p0_first_n = 0, p0_first_lat_ns_sum = 0;
+    uint64_t p0_behind_n = 0, p0_behind_lat_ns_sum = 0;
+    // Non-P0 chunks the drive was already carrying when this P0's first chunk
+    // went out -- the contention the hypothesis is about.
+    uint64_t p0_with_bg_n = 0, p0_bg_inflight_sum = 0;
+    // Filled in by IoEngine::stats() from the retained per-request samples.
+    uint64_t p0_lat_p50_ns = 0, p0_lat_p95_ns = 0;
+    // Mean chunk queue depth seen at issue, over P0 chunks only.
+    uint64_t p0_chunks_issued = 0, p0_qd_at_issue_sum = 0;
+
+    double p0_mean_ms() const {
+        return p0_requests ? p0_lat_ns_sum / 1e6 / double(p0_requests) : 0.0;
+    }
 
     double mean_latency_ms() const {
         return requests_completed ? latency_ns_sum / 1e6 / static_cast<double>(requests_completed) : 0.0;
@@ -158,6 +184,10 @@ private:
         size_t   done_chunks   = 0;
         uint64_t bytes_moved   = 0;
         TimePoint queued_at{};
+        TimePoint first_issue_at{};      // when the backend took chunk 0
+        bool      issued_once = false;
+        uint32_t  bg_at_issue = 0;       // non-P0 chunks in flight at that moment
+        uint32_t  p0_ahead    = 0;       // other P0 requests outstanding at submit
         Status    status{Err::Ok};
         bool      failed = false;
     };
@@ -178,11 +208,45 @@ private:
 public:
     static constexpr uint32_t kBackgroundOpsWhileBusy = 1;
     static constexpr std::chrono::milliseconds kBackgroundQuiet{100};
+
+    // Track Q1 knobs (docs/p4_p0_queue.md). All default to today's behaviour,
+    // so an A/B is an environment variable and not a rebuild.
+    //   DEEPMOE_IO_BG_CAP_BUSY   non-P0 chunks allowed in flight while P0 work
+    //                            is recent (default kBackgroundOpsWhileBusy = 1)
+    //   DEEPMOE_IO_BG_THROTTLE_P2  1 = the engram class yields too (default 0)
+    //   DEEPMOE_IO_P0_QD         chunk queue depth used while the head of the
+    //                            queue is a P0 (default = cfg.max_inflight_ops)
+    //   DEEPMOE_IO_P0_INFLIGHT_MB in-flight byte ceiling for the same case
+    //   DEEPMOE_IO_P0_CHUNK_MB   chunk size for P0 requests (default = cfg)
+    struct Tuning {
+        uint32_t bg_cap_busy      = kBackgroundOpsWhileBusy;
+        bool     throttle_engram  = false;
+        uint32_t p0_qd            = 0;          // 0 = use cfg_.max_inflight_ops
+        uint64_t p0_inflight_bytes = 0;         // 0 = use cfg_.max_inflight_bytes
+        uint32_t p0_chunk_bytes   = 0;          // 0 = use cfg_.chunk_bytes
+        // The ceilings the background classes keep when P0's are raised, so
+        // "deeper queue for P0" does not silently become "deeper queue for the
+        // backfill as well".
+        uint32_t bg_qd            = 0;
+        uint64_t bg_inflight_bytes = 0;
+        std::string to_string() const;
+    };
+    const Tuning& tuning() const { return tune_; }
+
+    // The backend's queue depth is fixed at construction from the IoConfig, so
+    // a raised P0 depth has to be reflected there before the backend is made.
+    // Call this on the IoConfig once, before make_default_backend().
+    static void widen_for_env(IoConfig& cfg);
     // Chunks of each class in flight right now (tests, the bench).
     uint32_t inflight_chunks(IoPriority p) const {
         return inflight_class_[static_cast<uint8_t>(p)].load(std::memory_order_relaxed);
     }
 private:
+    static Tuning tuning_from_env(const IoConfig& cfg);
+    Tuning tune_{};
+    uint32_t bg_chunk_bytes_ = 0;         // chunk size for P1-P3
+    std::vector<uint32_t> p0_lat_us_;     // one sample per completed P0, for p50/p95
+    uint32_t p0_outstanding_ = 0;         // P0 requests submitted but not finished
     std::atomic<uint32_t> inflight_class_[kIoPriorityCount] = {};
     std::atomic<int64_t>  last_p0_ns_{INT64_MIN / 2};
 

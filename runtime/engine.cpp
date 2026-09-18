@@ -188,6 +188,9 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
 
     if (auto r = open_model_files(); !r) return r;
 
+    // Track Q1: DEEPMOE_IO_P0_QD / _INFLIGHT_MB / _CHUNK_MB raise the ceilings
+    // the BACKEND is built with; IoEngine still holds P1-P3 to the shipped ones.
+    storage::IoEngine::widen_for_env(cfg_.io);
     auto backend = storage::make_default_backend(cfg_.io);
     if (!backend) return std::unexpected(backend.error());
     if (auto r = io_.start(std::move(*backend), cfg_.io, &profiler_); !r) return r;
