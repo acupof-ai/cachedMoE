@@ -87,9 +87,17 @@ public:
     }
 };
 
-// TODO(design §9.3): rank by (heat, last_use) once tools/cache_sim.py shows
-// score-aware beats plain LRU on a real route trace (Q2). Falling back to LRU
-// keeps the runtime correct and honest about which policy actually ran.
+// The TODO that used to sit here -- "rank by (heat, last_use) once a real route
+// trace shows score-aware beats LRU" -- is answered, and the answer is no.
+// Track E1 (docs/p4_cache_policy.md section 12, STATUS section 3 entry 47) put
+// 127 eviction configurations through the measured 4.6 GB/s demand-only timing
+// model on traces/mixed.  The best realizable shape, `last_use + alpha * heat`,
+// is +2.3% tok/s on the held-out half at 5,100 slots -- +1.2% after the halving
+// rule, under the +-3% run-to-run band the engine actually resolves -- and the
+// top-16 "near miss" scores contribute 0.06 pt of that.  Ranking on heat alone,
+// which is what design section 9.3 literally specifies, is -68%: heat converges
+// to 1/(1-decay) and the order collapses.  So this stays a fallback to LRU by
+// decision, not by omission.  Belady's +40% is in the future, not in the scores.
 class ScoreAwarePolicy final : public EvictionPolicy {
 public:
     const char* name() const override { return "score-aware-lru(fallback:lru)"; }
@@ -148,7 +156,9 @@ std::unique_ptr<EvictionPolicy> make_policy(CachePolicy which) {
     switch (which) {
         case CachePolicy::Lru:            return make_lru_policy();
         case CachePolicy::ScoreAwareLru:  return make_score_aware_policy();
-        // TODO(design §9.3): LFU-decay / ARC / static-pin variants, gated on Q2.
+        // Not implemented on purpose: Track E1 measured LFU-decay at -68% and
+        // ARC at -1.5% against LRU on the real trace (docs/p4_cache_policy.md
+        // section 12.4).  LRU is the right fallback, not a placeholder.
         case CachePolicy::Lfu:
         case CachePolicy::StaticPinPlusLru:
             log_warn("planner: policy {} is not implemented, using LRU",

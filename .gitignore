@@ -83,3 +83,6 @@ reports/
 tests/data/l2/token_map.npz
 tests/data/l2x/token_map.npz
 tests/data/l3/token_map.npz
+
+# Track E1: the column cache tools/cache_evict_study.py rebuilds from traces/mixed
+bench/results/cache_evict/trace_cols.npz

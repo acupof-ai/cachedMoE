@@ -1,0 +1,2231 @@
+[
+ {
+  "label": "belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9583655729527841,
+  "miss_per_token": 9.9922624913318,
+  "stall_ms_per_token": 40.83933258370267,
+  "tok_s": 8.275451201348886,
+  "seconds": 11.958973407745361
+ },
+ {
+  "label": "score-ext a=3200 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9120040877404285,
+  "miss_per_token": 21.119018942297163,
+  "stall_ms_per_token": 86.31545049724124,
+  "tok_s": 6.012670482569432,
+  "seconds": 154.20269799232483
+ },
+ {
+  "label": "score-ext a=1600 d=0.95 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9118926177354405,
+  "miss_per_token": 21.145771743494286,
+  "stall_ms_per_token": 86.42479175469748,
+  "tok_s": 6.008720151946798,
+  "seconds": 137.61765122413635
+ },
+ {
+  "label": "score-ext a=1600 d=0.90 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.9,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9117695901310267,
+  "miss_per_token": 21.175298368553598,
+  "stall_ms_per_token": 86.54546989560076,
+  "tok_s": 6.0043662588171935,
+  "seconds": 146.54983067512512
+ },
+ {
+  "label": "score-ext a=2400 d=0.95 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 2400,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9117677652469068,
+  "miss_per_token": 21.17573634074236,
+  "stall_ms_per_token": 86.54725992982922,
+  "tok_s": 6.004301724455427,
+  "seconds": 158.9795777797699
+ },
+ {
+  "label": "score-ext a=2400 d=0.90 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 2400,
+   "decay": 0.9,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9117134749443411,
+  "miss_per_token": 21.18876601335815,
+  "stall_ms_per_token": 86.60051344812648,
+  "tok_s": 6.002382461512429,
+  "seconds": 192.3633897304535
+ },
+ {
+  "label": "score-ext a=2400 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 2400,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9115384381425112,
+  "miss_per_token": 21.230774845797292,
+  "stall_ms_per_token": 86.77220756454139,
+  "tok_s": 5.99620293215221,
+  "seconds": 137.56329655647278
+ },
+ {
+  "label": "ewma-ext a=51200 e=0.125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9114724381668431,
+  "miss_per_token": 21.24661483995766,
+  "stall_ms_per_token": 86.83694713580469,
+  "tok_s": 5.993876159733393,
+  "seconds": 217.81120777130127
+ },
+ {
+  "label": "score-ext a=4800 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 4800,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9113624888986216,
+  "miss_per_token": 21.273002664330814,
+  "stall_ms_per_token": 86.94479669807053,
+  "tok_s": 5.9900039999962305,
+  "seconds": 173.11686491966248
+ },
+ {
+  "label": "score-ext a=800 d=0.98 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.98,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9113325303843206,
+  "miss_per_token": 21.280192707763057,
+  "stall_ms_per_token": 86.97418309332139,
+  "tok_s": 5.9889497973534205,
+  "seconds": 130.8430049419403
+ },
+ {
+  "label": "ewma-ext a=51200 e=0.03125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.03125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9113030280910496,
+  "miss_per_token": 21.287273258148108,
+  "stall_ms_per_token": 87.00312198001514,
+  "tok_s": 5.987912011127958,
+  "seconds": 244.36452865600586
+ },
+ {
+  "label": "score-ext a=3200 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9111844106232587,
+  "miss_per_token": 21.3157414504179,
+  "stall_ms_per_token": 87.11947420486625,
+  "tok_s": 5.983743096116572,
+  "seconds": 11.177046537399292
+ },
+ {
+  "label": "score-ext a=1600 d=0.95 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9111153691740574,
+  "miss_per_token": 21.332311398226214,
+  "stall_ms_per_token": 87.18719716651036,
+  "tok_s": 5.981319245420738,
+  "seconds": 172.38318061828613
+ },
+ {
+  "label": "score-ext a=4800 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 4800,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9110499774930959,
+  "miss_per_token": 21.348005401656994,
+  "stall_ms_per_token": 87.25134005969751,
+  "tok_s": 5.9790253378123435,
+  "seconds": 10.189800024032593
+ },
+ {
+  "label": "score-ext a=3200 raw-demand k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_demand": null,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.91091113422631,
+  "miss_per_token": 21.38132778568561,
+  "stall_ms_per_token": 87.38753183058093,
+  "tok_s": 5.974160614376802,
+  "seconds": 191.60157012939453
+ },
+ {
+  "label": "score-ext a=3200 d=0.90 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9108501526819713,
+  "miss_per_token": 21.395963356326874,
+  "stall_ms_per_token": 87.44734880771593,
+  "tok_s": 5.972026473517509,
+  "seconds": 181.58154034614563
+ },
+ {
+  "label": "score-ext a=2400 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 2400,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9108457425453483,
+  "miss_per_token": 21.39702178911639,
+  "stall_ms_per_token": 87.45167472376808,
+  "tok_s": 5.971872193273802,
+  "seconds": 10.922885417938232
+ },
+ {
+  "label": "score-ext a=2400 d=0.95 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 2400,
+   "decay": 0.95,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9108072679051546,
+  "miss_per_token": 21.406255702762873,
+  "stall_ms_per_token": 87.48941461208517,
+  "tok_s": 5.9705265691927805,
+  "seconds": 10.698649883270264
+ },
+ {
+  "label": "ewma-ext a=25600 e=0.12500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 25600,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9107002080367896,
+  "miss_per_token": 21.43195007117048,
+  "stall_ms_per_token": 87.59442995348925,
+  "tok_s": 5.9667854133190446,
+  "seconds": 229.2041289806366
+ },
+ {
+  "label": "score-ext a=1600 d=0.95 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9106250836405222,
+  "miss_per_token": 21.449979926274683,
+  "stall_ms_per_token": 87.66811969589496,
+  "tok_s": 5.9641630252294355,
+  "seconds": 11.091657161712646
+ },
+ {
+  "label": "score-ext a=1600 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9106161112935995,
+  "miss_per_token": 21.452133289536114,
+  "stall_ms_per_token": 87.67692069751831,
+  "tok_s": 5.963849979115226,
+  "seconds": 126.53043389320374
+ },
+ {
+  "label": "score-ext a=800 d=0.98 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.98,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9105803739795856,
+  "miss_per_token": 21.46071024489945,
+  "stall_ms_per_token": 87.71197553449268,
+  "tok_s": 5.962603426577214,
+  "seconds": 172.99759793281555
+ },
+ {
+  "label": "score-ext a=3200 d=0.95 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.95,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9103968210518633,
+  "miss_per_token": 21.50476294755283,
+  "stall_ms_per_token": 87.89202314397383,
+  "tok_s": 5.956209123422509,
+  "seconds": 10.574092388153076
+ },
+ {
+  "label": "ewma-ext a=51200 e=0.125 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9102652773215567,
+  "miss_per_token": 21.53633344282638,
+  "stall_ms_per_token": 88.02105477794333,
+  "tok_s": 5.95163505741349,
+  "seconds": 131.69550371170044
+ },
+ {
+  "label": "ewma-ext a=102400 e=0.03125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 102400,
+   "ewma": 0.03125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.910244899448885,
+  "miss_per_token": 21.5412241322676,
+  "stall_ms_per_token": 88.04104349349468,
+  "tok_s": 5.950927102155925,
+  "seconds": 275.22487115859985
+ },
+ {
+  "label": "score-ext a=3200 d=0.95 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9102406413859386,
+  "miss_per_token": 21.542246067374723,
+  "stall_ms_per_token": 88.0452202400278,
+  "tok_s": 5.950779192479546,
+  "seconds": 180.59464693069458
+ },
+ {
+  "label": "ewma-ext a=25600 e=0.03125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 25600,
+   "ewma": 0.03125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9100762497414747,
+  "miss_per_token": 21.58170006204606,
+  "stall_ms_per_token": 88.20647249010992,
+  "tok_s": 5.945074438552282,
+  "seconds": 211.42206120491028
+ },
+ {
+  "label": "score-ext a=1600 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9100491806270302,
+  "miss_per_token": 21.588196649512756,
+  "stall_ms_per_token": 88.23302466449901,
+  "tok_s": 5.944136129004775,
+  "seconds": 10.811639785766602
+ },
+ {
+  "label": "score-ext a=800 d=0.98 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.98,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9099491161477913,
+  "miss_per_token": 21.612212124530092,
+  "stall_ms_per_token": 88.33117820802727,
+  "tok_s": 5.940670116169321,
+  "seconds": 187.23630595207214
+ },
+ {
+  "label": "score-ext a=800 d=0.98 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.98,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9098858534983029,
+  "miss_per_token": 21.627395160407314,
+  "stall_ms_per_token": 88.39323272794786,
+  "tok_s": 5.9384809223039055,
+  "seconds": 11.08642578125
+ },
+ {
+  "label": "score-ext a=6400 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 6400,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9098755124882903,
+  "miss_per_token": 21.62987700281032,
+  "stall_ms_per_token": 88.40337625524256,
+  "tok_s": 5.938123226724019,
+  "seconds": 10.577560424804688
+ },
+ {
+  "label": "score-ext a=1600 d=0.90 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.9,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9098700378359308,
+  "miss_per_token": 21.63119091937662,
+  "stall_ms_per_token": 88.40874635792801,
+  "tok_s": 5.93793387592024,
+  "seconds": 262.1014850139618
+ },
+ {
+  "label": "score-ext a=3200 d=0.90 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9096378213316788,
+  "miss_per_token": 21.686922880397095,
+  "stall_ms_per_token": 88.63652821350192,
+  "tok_s": 5.929913350291178,
+  "seconds": 228.17189860343933
+ },
+ {
+  "label": "ewma-ext a=12800 e=0.500 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 12800,
+   "ewma": 0.5,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9096185079747436,
+  "miss_per_token": 21.691558086061534,
+  "stall_ms_per_token": 88.65547274241997,
+  "tok_s": 5.92924726212268,
+  "seconds": 110.02759647369385
+ },
+ {
+  "label": "score-ext a=3200 d=0.90 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9095973697336885,
+  "miss_per_token": 21.696631263914743,
+  "stall_ms_per_token": 88.67620730556654,
+  "tok_s": 5.928518407984139,
+  "seconds": 191.45255637168884
+ },
+ {
+  "label": "ewma-ext a=12800 e=0.125 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 12800,
+   "ewma": 0.125,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.909539885883913,
+  "miss_per_token": 21.71042738786087,
+  "stall_ms_per_token": 88.7325933837636,
+  "tok_s": 5.926537250130511,
+  "seconds": 106.7997932434082
+ },
+ {
+  "label": "s3-fifo s=0.25",
+  "policy": "s3-fifo",
+  "params": {
+   "small_frac": 0.25
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9095036923488692,
+  "miss_per_token": 21.719113836271397,
+  "stall_ms_per_token": 88.7680957292951,
+  "tok_s": 5.925290533608941,
+  "seconds": 8.44838547706604
+ },
+ {
+  "label": "ewma-ext a=12800 e=0.125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 12800,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9093903974597614,
+  "miss_per_token": 21.746304609657287,
+  "stall_ms_per_token": 88.87922702097981,
+  "tok_s": 5.921391385074082,
+  "seconds": 201.8665952682495
+ },
+ {
+  "label": "score-ext a=800 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9092844021071329,
+  "miss_per_token": 21.771743494288113,
+  "stall_ms_per_token": 88.98319817575062,
+  "tok_s": 5.917748100375945,
+  "seconds": 113.5113365650177
+ },
+ {
+  "label": "score-ext a=200 d=0.98 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.98,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9089791902380866,
+  "miss_per_token": 21.844994342859227,
+  "stall_ms_per_token": 89.28258140046367,
+  "tok_s": 5.907282318872182,
+  "seconds": 90.60467386245728
+ },
+ {
+  "label": "score-ext a=800 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9089464943976058,
+  "miss_per_token": 21.85284134457462,
+  "stall_ms_per_token": 89.31465284705726,
+  "tok_s": 5.906163366163617,
+  "seconds": 11.129924297332764
+ },
+ {
+  "label": "score-ext a=3200 d=0.98 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.98,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9089439091451026,
+  "miss_per_token": 21.85346180517537,
+  "stall_ms_per_token": 89.31718872888092,
+  "tok_s": 5.9060749089169535,
+  "seconds": 281.07573437690735
+ },
+ {
+  "label": "s3-fifo s=0.10",
+  "policy": "s3-fifo",
+  "params": {
+   "small_frac": 0.1
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9087640059856199,
+  "miss_per_token": 21.89663856345122,
+  "stall_ms_per_token": 89.49365626990512,
+  "tok_s": 5.899925826177116,
+  "seconds": 8.497766494750977
+ },
+ {
+  "label": "score-ext a=800 raw-demand k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.9,
+   "w_demand": null,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9086244023504507,
+  "miss_per_token": 21.93014343589182,
+  "stall_ms_per_token": 89.63059388838374,
+  "tok_s": 5.895162995526597,
+  "seconds": 144.80848121643066
+ },
+ {
+  "label": "score-ext a=800 d=0.90 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9085447157438836,
+  "miss_per_token": 21.949268221467936,
+  "stall_ms_per_token": 89.70875871636063,
+  "tok_s": 5.892447788574837,
+  "seconds": 159.16027235984802
+ },
+ {
+  "label": "score-ext a=200 d=0.98 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.98,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9085237295765052,
+  "miss_per_token": 21.954304901638746,
+  "stall_ms_per_token": 89.72934410998815,
+  "tok_s": 5.891733131025235,
+  "seconds": 130.04355788230896
+ },
+ {
+  "label": "ewma-ext a=12800 e=0.500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 12800,
+   "ewma": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9084227526552064,
+  "miss_per_token": 21.978539362750464,
+  "stall_ms_per_token": 89.82839267063062,
+  "tok_s": 5.888296911220403,
+  "seconds": 197.92622709274292
+ },
+ {
+  "label": "score-ext a=200 d=0.98 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.98,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9083433701959925,
+  "miss_per_token": 21.997591152961785,
+  "stall_ms_per_token": 89.90625915956944,
+  "tok_s": 5.8855983584503395,
+  "seconds": 11.534207344055176
+ },
+ {
+  "label": "score-ext a=200 d=0.98 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.98,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9082705269048749,
+  "miss_per_token": 22.01507354283003,
+  "stall_ms_per_token": 89.97771135918956,
+  "tok_s": 5.883124275551888,
+  "seconds": 154.04666328430176
+ },
+ {
+  "label": "score-ext a=800 d=0.90 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 800,
+   "decay": 0.9,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.908110545397034,
+  "miss_per_token": 22.05346910471185,
+  "stall_ms_per_token": 90.13463769321952,
+  "tok_s": 5.877697884208405,
+  "seconds": 177.21580338478088
+ },
+ {
+  "label": "ewma-ext a=3200 e=0.500 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 3200,
+   "ewma": 0.5,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9080942735136319,
+  "miss_per_token": 22.05737435672835,
+  "stall_ms_per_token": 90.1505988317568,
+  "tok_s": 5.877146521175574,
+  "seconds": 105.06678104400635
+ },
+ {
+  "label": "ewma-ext a=3200 e=0.125 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 3200,
+   "ewma": 0.125,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9080453057897491,
+  "miss_per_token": 22.069126610460234,
+  "stall_ms_per_token": 90.19863141688762,
+  "tok_s": 5.875487903017162,
+  "seconds": 98.81201934814453
+ },
+ {
+  "label": "ewma-ext a=51200 e=0.500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9079606007518523,
+  "miss_per_token": 22.089455819555457,
+  "stall_ms_per_token": 90.28171883899284,
+  "tok_s": 5.872621011921626,
+  "seconds": 195.69126105308533
+ },
+ {
+  "label": "ewma-ext a=3200 e=0.125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 3200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9079498035208098,
+  "miss_per_token": 22.092047155005655,
+  "stall_ms_per_token": 90.29230987484468,
+  "tok_s": 5.87225577440898,
+  "seconds": 198.6390860080719
+ },
+ {
+  "label": "score-ext a=200 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9078929279657408,
+  "miss_per_token": 22.1056972882222,
+  "stall_ms_per_token": 90.3480992749656,
+  "tok_s": 5.870332596936468,
+  "seconds": 102.45343542098999
+ },
+ {
+  "label": "score-ext a=50 d=0.98 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 50,
+   "decay": 0.98,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.90781886808521,
+  "miss_per_token": 22.12347165954962,
+  "stall_ms_per_token": 90.42074483073803,
+  "tok_s": 5.867830239758666,
+  "seconds": 78.37372946739197
+ },
+ {
+  "label": "score-ext a=200 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9077854118763459,
+  "miss_per_token": 22.131501149676996,
+  "stall_ms_per_token": 90.4535621249268,
+  "tok_s": 5.866700510882207,
+  "seconds": 11.733896732330322
+ },
+ {
+  "label": "ewma-ext a=51200 e=0.500 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.5,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9077314257211334,
+  "miss_per_token": 22.14445782692799,
+  "stall_ms_per_token": 90.50651730418596,
+  "tok_s": 5.864878456323088,
+  "seconds": 121.97083616256714
+ },
+ {
+  "label": "score-ext a=200 raw-demand k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.9,
+   "w_demand": null,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9077035962383055,
+  "miss_per_token": 22.151136902806673,
+  "stall_ms_per_token": 90.53381532617027,
+  "tok_s": 5.863939642043176,
+  "seconds": 125.56048130989075
+ },
+ {
+  "label": "ewma-ext a=3200 e=0.500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 3200,
+   "ewma": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9076826100709272,
+  "miss_per_token": 22.15617358297748,
+  "stall_ms_per_token": 90.55440071979777,
+  "tok_s": 5.863231882494142,
+  "seconds": 206.45834255218506
+ },
+ {
+  "label": "score-ext a=50 d=0.98 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 50,
+   "decay": 0.98,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9076751584607711,
+  "miss_per_token": 22.15796196941494,
+  "stall_ms_per_token": 90.56171002623071,
+  "tok_s": 5.862980617667411,
+  "seconds": 112.94570446014404
+ },
+ {
+  "label": "score-ext a=200 d=0.90 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9076590386510457,
+  "miss_per_token": 22.16183072374904,
+  "stall_ms_per_token": 90.57752199524894,
+  "tok_s": 5.862437138862017,
+  "seconds": 151.15438318252563
+ },
+ {
+  "label": "score-ext a=50 d=0.98 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 50,
+   "decay": 0.98,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9076321216102777,
+  "miss_per_token": 22.16829081353334,
+  "stall_ms_per_token": 90.603925000119,
+  "tok_s": 5.861529856357657,
+  "seconds": 11.797558546066284
+ },
+ {
+  "label": "score-ext a=50 d=0.98 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 50,
+   "decay": 0.98,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9076018589486234,
+  "miss_per_token": 22.175553852330378,
+  "stall_ms_per_token": 90.63360973440795,
+  "tok_s": 5.860510139570421,
+  "seconds": 138.9865198135376
+ },
+ {
+  "label": "score-ext a=4800 d=0.95 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 4800,
+   "decay": 0.95,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9075525870773873,
+  "miss_per_token": 22.18737910142706,
+  "stall_ms_per_token": 90.68194065857686,
+  "tok_s": 5.858850656030136,
+  "seconds": 10.298986196517944
+ },
+ {
+  "label": "score-ext a=200 d=0.90 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 200,
+   "decay": 0.9,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9075516746353274,
+  "miss_per_token": 22.187598087521444,
+  "stall_ms_per_token": 90.68283567569111,
+  "tok_s": 5.858819933716519,
+  "seconds": 171.33028364181519
+ },
+ {
+  "label": "ewma-ext a=800 e=0.500 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 800,
+   "ewma": 0.5,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9075376838570751,
+  "miss_per_token": 22.19095587430198,
+  "stall_ms_per_token": 90.69655927144278,
+  "tok_s": 5.85834889858438,
+  "seconds": 102.6825623512268
+ },
+ {
+  "label": "ewma-ext a=800 e=0.125 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 800,
+   "ewma": 0.125,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9075375317833985,
+  "miss_per_token": 22.19099237198438,
+  "stall_ms_per_token": 90.69670844096181,
+  "tok_s": 5.8583437790533965,
+  "seconds": 92.66341519355774
+ },
+ {
+  "label": "ewma-ext a=800 e=0.125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 800,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9074890202805456,
+  "miss_per_token": 22.202635132669077,
+  "stall_ms_per_token": 90.74429351753555,
+  "tok_s": 5.8567111052370215,
+  "seconds": 200.12298917770386
+ },
+ {
+  "label": "score-ext a=50 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 50,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9074534350402083,
+  "miss_per_token": 22.211175590350013,
+  "stall_ms_per_token": 90.77919918499089,
+  "tok_s": 5.8555140483870245,
+  "seconds": 99.87016224861145
+ },
+ {
+  "label": "score-ext a=50 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 50,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9074397484093093,
+  "miss_per_token": 22.214460381765758,
+  "stall_ms_per_token": 90.79262444170446,
+  "tok_s": 5.855053772192157,
+  "seconds": 11.380111932754517
+ },
+ {
+  "label": "ewma-ext a=800 e=0.500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 800,
+   "ewma": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9074114627054516,
+  "miss_per_token": 22.22124895069163,
+  "stall_ms_per_token": 90.82036997224589,
+  "tok_s": 5.8541027639881325,
+  "seconds": 216.5432472229004
+ },
+ {
+  "label": "score-ext a=50 d=0.90 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 50,
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073930617905763,
+  "miss_per_token": 22.22566517026169,
+  "stall_ms_per_token": 90.83841948404971,
+  "tok_s": 5.853484263200905,
+  "seconds": 146.128112077713
+ },
+ {
+  "label": "ewma-ext a=200 e=0.500 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 200,
+   "ewma": 0.5,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073734442862879,
+  "miss_per_token": 22.230373371290924,
+  "stall_ms_per_token": 90.85766235200586,
+  "tok_s": 5.852825013722658,
+  "seconds": 100.94258093833923
+ },
+ {
+  "label": "score-ext a=50 d=0.90 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 50,
+   "decay": 0.9,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073682737812816,
+  "miss_per_token": 22.231614292492427,
+  "stall_ms_per_token": 90.86273411565321,
+  "tok_s": 5.852651282772533,
+  "seconds": 169.99180626869202
+ },
+ {
+  "label": "ewma-ext a=200 e=0.125 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 200,
+   "ewma": 0.125,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073658406024551,
+  "miss_per_token": 22.232198255410783,
+  "stall_ms_per_token": 90.86512082795785,
+  "tok_s": 5.852569530600037,
+  "seconds": 90.80540442466736
+ },
+ {
+  "label": "ewma-ext a=200 e=0.125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073542830030293,
+  "miss_per_token": 22.234972079272968,
+  "stall_ms_per_token": 90.8764577114049,
+  "tok_s": 5.852181238968043,
+  "seconds": 197.40778374671936
+ },
+ {
+  "label": "ewma-ext a=200 e=0.500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 200,
+   "ewma": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073334489093275,
+  "miss_per_token": 22.239972261761377,
+  "stall_ms_per_token": 90.89689393551335,
+  "tok_s": 5.851481422344297,
+  "seconds": 214.74146795272827
+ },
+ {
+  "label": "ewma-ext a=50 e=0.125 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 50,
+   "ewma": 0.125,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073203705731353,
+  "miss_per_token": 22.243111062447536,
+  "stall_ms_per_token": 90.90972251415079,
+  "tok_s": 5.851042206900799,
+  "seconds": 86.27997374534607
+ },
+ {
+  "label": "ewma-ext a=50 e=0.500 k=6",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 50,
+   "ewma": 0.5,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073190019100453,
+  "miss_per_token": 22.243439541589108,
+  "stall_ms_per_token": 90.91106503982213,
+  "tok_s": 5.850996246305065,
+  "seconds": 100.10982871055603
+ },
+ {
+  "label": "ewma-ext a=50 e=0.125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 50,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073139834787157,
+  "miss_per_token": 22.244643965108217,
+  "stall_ms_per_token": 90.91598763395046,
+  "tok_s": 5.850827730298073,
+  "seconds": 187.92353463172913
+ },
+ {
+  "label": "ewma-ext a=50 e=0.500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 50,
+   "ewma": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9073097254157695,
+  "miss_per_token": 22.245665900215336,
+  "stall_ms_per_token": 90.92016438048357,
+  "tok_s": 5.8506847546314695,
+  "seconds": 213.77062726020813
+ },
+ {
+  "label": "lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9072990802584036,
+  "miss_per_token": 22.24822073798314,
+  "stall_ms_per_token": 90.93060624681637,
+  "tok_s": 5.85032734603447,
+  "seconds": 5.433289051055908
+ },
+ {
+  "label": "score-ext a=6400 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 6400,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9071774213170797,
+  "miss_per_token": 22.27741888390087,
+  "stall_ms_per_token": 91.04994186204827,
+  "tok_s": 5.846245775438495,
+  "seconds": 190.72159361839294
+ },
+ {
+  "label": "score-bypass t=0.3 a=800",
+  "policy": "score-bypass",
+  "params": {
+   "alpha": 800,
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16,
+   "admit_thresh": 0.3
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9071283015195202,
+  "miss_per_token": 22.289207635315158,
+  "stall_ms_per_token": 91.09812361669816,
+  "tok_s": 5.844599454756416,
+  "seconds": 142.93170857429504
+ },
+ {
+  "label": "score-ext a=12800 d=0.90 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 12800,
+   "decay": 0.9,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9065686703894302,
+  "miss_per_token": 22.423519106536734,
+  "stall_ms_per_token": 91.64706744676495,
+  "tok_s": 5.825907863588421,
+  "seconds": 210.08161115646362
+ },
+ {
+  "label": "score-ext a=3200 d=0.98 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.98,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9063723432728689,
+  "miss_per_token": 22.470637614511478,
+  "stall_ms_per_token": 91.83964529584544,
+  "tok_s": 5.819378864978237,
+  "seconds": 294.5120415687561
+ },
+ {
+  "label": "score-ext a=2400 d=0.95 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 2400,
+   "decay": 0.95,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.905065422095697,
+  "miss_per_token": 22.78429869703274,
+  "stall_ms_per_token": 93.12160814247426,
+  "tok_s": 5.776286453953384,
+  "seconds": 237.9611382484436
+ },
+ {
+  "label": "score-ext a=3200 d=0.98 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.98,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9050442838546419,
+  "miss_per_token": 22.789371874885944,
+  "stall_ms_per_token": 93.14234270562079,
+  "tok_s": 5.775594718041993,
+  "seconds": 10.634330749511719
+ },
+ {
+  "label": "arc",
+  "policy": "arc",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9046666849155078,
+  "miss_per_token": 22.879995620278113,
+  "stall_ms_per_token": 93.51273062139684,
+  "tok_s": 5.763265879216614,
+  "seconds": 7.3579607009887695
+ },
+ {
+  "label": "ewma-ext a=102400 e=0.12500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 102400,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9016677920118739,
+  "miss_per_token": 23.59972991715026,
+  "stall_ms_per_token": 96.45435353686344,
+  "tok_s": 5.6671880288353895,
+  "seconds": 273.0308315753937
+ },
+ {
+  "label": "score-ext a=6400 d=0.95 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 6400,
+   "decay": 0.95,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.900248944608684,
+  "miss_per_token": 23.940253293915838,
+  "stall_ms_per_token": 97.84610514950562,
+  "tok_s": 5.62283890985048,
+  "seconds": 10.06736135482788
+ },
+ {
+  "label": "score-ext a=2400 d=0.90 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 2400,
+   "decay": 0.9,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8978160699295594,
+  "miss_per_token": 24.524143216905728,
+  "stall_ms_per_token": 100.23251911510576,
+  "tok_s": 5.54838829812587,
+  "seconds": 328.05534052848816
+ },
+ {
+  "label": "score-ext a=12800 d=0.90 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 12800,
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8973989318344952,
+  "miss_per_token": 24.62425635972116,
+  "stall_ms_per_token": 100.64169110583217,
+  "tok_s": 5.535820628550981,
+  "seconds": 238.19232845306396
+ },
+ {
+  "label": "score-ext a=4800 d=0.95 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 4800,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8968821854812219,
+  "miss_per_token": 24.748275484506735,
+  "stall_ms_per_token": 101.14856913152971,
+  "tok_s": 5.520330658940576,
+  "seconds": 224.6240508556366
+ },
+ {
+  "label": "score-ext a=1600 d=0.95 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8946581079601446,
+  "miss_per_token": 25.282054089565314,
+  "stall_ms_per_token": 103.33017334748808,
+  "tok_s": 5.4546394722737634,
+  "seconds": 324.00492572784424
+ },
+ {
+  "label": "score-ext a=4800 d=0.90 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 4800,
+   "decay": 0.9,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.892663205469786,
+  "miss_per_token": 25.76083068725136,
+  "stall_ms_per_token": 105.28697909825334,
+  "tok_s": 5.397033320240617,
+  "seconds": 296.09618377685547
+ },
+ {
+  "label": "score-ext a=3200 d=0.95 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.95,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8864637699672737,
+  "miss_per_token": 27.2486952078543,
+  "stall_ms_per_token": 111.36802371143345,
+  "tok_s": 5.225533402110658,
+  "seconds": 296.0074088573456
+ },
+ {
+  "label": "score-bypass t=0.5 a=800",
+  "policy": "score-bypass",
+  "params": {
+   "alpha": 800,
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16,
+   "admit_thresh": 0.5
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8854228256505712,
+  "miss_per_token": 27.498521843862914,
+  "stall_ms_per_token": 112.38908906926149,
+  "tok_s": 5.1977999627618825,
+  "seconds": 158.10573291778564
+ },
+ {
+  "label": "ewma-ext a=204800 e=0.03125 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 204800,
+   "ewma": 0.03125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8850032543766804,
+  "miss_per_token": 27.5992189495967,
+  "stall_ms_per_token": 112.80064777229254,
+  "tok_s": 5.186704565334507,
+  "seconds": 334.0204076766968
+ },
+ {
+  "label": "score-ext a=3200 d=0.98 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.98,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8830259924328139,
+  "miss_per_token": 28.073761816124676,
+  "stall_ms_per_token": 114.74014985884918,
+  "tok_s": 5.135047912435192,
+  "seconds": 258.15910363197327
+ },
+ {
+  "label": "score-ext a=12800 d=0.90 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 12800,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8819760757691887,
+  "miss_per_token": 28.32574181539472,
+  "stall_ms_per_token": 115.77001621830055,
+  "tok_s": 5.10803451579078,
+  "seconds": 10.370374202728271
+ },
+ {
+  "label": "score-ext a=3200 d=0.90 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8719589826879327,
+  "miss_per_token": 30.729844154896163,
+  "stall_ms_per_token": 125.59581243745804,
+  "tok_s": 4.863912295413111,
+  "seconds": 381.3940260410309
+ },
+ {
+  "label": "score-ext a=6400 d=0.95 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 6400,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8655639804372423,
+  "miss_per_token": 32.26464469506186,
+  "stall_ms_per_token": 131.86868905212344,
+  "tok_s": 4.719904599749434,
+  "seconds": 257.35927653312683
+ },
+ {
+  "label": "score-ext a=6400 d=0.90 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 6400,
+   "decay": 0.9,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8614531248099079,
+  "miss_per_token": 33.2512500456221,
+  "stall_ms_per_token": 135.9010394908097,
+  "tok_s": 4.631751668998181,
+  "seconds": 333.0849938392639
+ },
+ {
+  "label": "score-ext a=12800 d=0.90 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 12800,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8457738725257613,
+  "miss_per_token": 37.014270593817294,
+  "stall_ms_per_token": 151.28086441237937,
+  "tok_s": 4.323747243598052,
+  "seconds": 277.30725169181824
+ },
+ {
+  "label": "score-ext a=2400 d=0.95 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 2400,
+   "decay": 0.95,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8443101633879582,
+  "miss_per_token": 37.36556078689003,
+  "stall_ms_per_token": 152.7166210331383,
+  "tok_s": 4.297071672665797,
+  "seconds": 390.5210130214691
+ },
+ {
+  "label": "ewma-ext a=204800 e=0.12500 k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 204800,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.835759516770685,
+  "miss_per_token": 39.417715975035584,
+  "stall_ms_per_token": 161.10397558019412,
+  "tok_s": 4.147588183038433,
+  "seconds": 307.8995203971863
+ },
+ {
+  "label": "score-ext a=4800 d=0.95 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 4800,
+   "decay": 0.95,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.829047136756816,
+  "miss_per_token": 41.02868717836417,
+  "stall_ms_per_token": 167.68816898109577,
+  "tok_s": 4.037334540901397,
+  "seconds": 359.171941280365
+ },
+ {
+  "label": "score-bypass t=0.8 a=800",
+  "policy": "score-bypass",
+  "params": {
+   "alpha": 800,
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16,
+   "admit_thresh": 0.8
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8213620935070624,
+  "miss_per_token": 42.87309755830505,
+  "stall_ms_per_token": 175.22645062577655,
+  "tok_s": 3.9180892009748662,
+  "seconds": 195.63080954551697
+ },
+ {
+  "label": "score-ext a=4800 d=0.90 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 4800,
+   "decay": 0.9,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8172232563232235,
+  "miss_per_token": 43.86641848242637,
+  "stall_ms_per_token": 179.28624825596617,
+  "tok_s": 3.856741368762468,
+  "seconds": 441.73728680610657
+ },
+ {
+  "label": "score-ext a=3200 d=0.95 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.95,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.7981734430696984,
+  "miss_per_token": 48.43837366327238,
+  "stall_ms_per_token": 197.97226639753592,
+  "tok_s": 3.597481191054765,
+  "seconds": 435.2147331237793
+ },
+ {
+  "label": "score-ext a=12800 d=0.98 wn=0.5 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 12800,
+   "decay": 0.98,
+   "w_near": 0.5,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.787289834178863,
+  "miss_per_token": 51.05043979707288,
+  "stall_ms_per_token": 208.64803053618266,
+  "tok_s": 3.4644268943821803,
+  "seconds": 367.08375668525696
+ },
+ {
+  "label": "score-ext a=6400 d=0.95 wn=4.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 6400,
+   "decay": 0.95,
+   "w_near": 4.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.7871815577210847,
+  "miss_per_token": 51.07642614693967,
+  "stall_ms_per_token": 208.75423923373907,
+  "tok_s": 3.4631526195205944,
+  "seconds": 366.68765783309937
+ },
+ {
+  "label": "score-ext a=6400 d=0.90 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 6400,
+   "decay": 0.9,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.7795153716072363,
+  "miss_per_token": 52.91631081426329,
+  "stall_ms_per_token": 216.2740238580589,
+  "tok_s": 3.375253716063502,
+  "seconds": 426.7352738380432
+ },
+ {
+  "label": "score-ext a=12800 d=0.98 wn=1.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 12800,
+   "decay": 0.98,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.7490402630266312,
+  "miss_per_token": 60.23033687360853,
+  "stall_ms_per_token": 246.16714796509552,
+  "tok_s": 3.0659126961094625,
+  "seconds": 342.018274307251
+ },
+ {
+  "label": "score-ext a=12800 d=0.98 wn=0.0 k=6",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 12800,
+   "decay": 0.98,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.7454055500809031,
+  "miss_per_token": 61.102667980583234,
+  "stall_ms_per_token": 249.7324486396679,
+  "tok_s": 3.032761877472367,
+  "seconds": 10.357805013656616
+ },
+ {
+  "label": "score-ext a=4800 d=0.95 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 4800,
+   "decay": 0.95,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.7452302091317201,
+  "miss_per_token": 61.14474980838717,
+  "stall_ms_per_token": 249.9044410951209,
+  "tok_s": 3.031180776713677,
+  "seconds": 449.6767861843109
+ },
+ {
+  "label": "score-ext a=6400 d=0.95 wn=8.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 6400,
+   "decay": 0.95,
+   "w_near": 8.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.7124791659062982,
+  "miss_per_token": 69.00500018248842,
+  "stall_ms_per_token": 282.03003622410847,
+  "tok_s": 2.7622017510750605,
+  "seconds": 382.416335105896
+ },
+ {
+  "label": "score-ext a=12800 d=0.98 wn=2.0 k=16",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 12800,
+   "decay": 0.98,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.6776536856576274,
+  "miss_per_token": 77.36311544216942,
+  "stall_ms_per_token": 316.1904527623191,
+  "tok_s": 2.524038610793874,
+  "seconds": 218.82029509544373
+ },
+ {
+  "label": "lru-3",
+  "policy": "lru-k",
+  "params": {
+   "k": 3
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.5675096110563645,
+  "miss_per_token": 103.7976933464725,
+  "stall_ms_per_token": 424.2311011820488,
+  "tok_s": 1.983217611241631,
+  "seconds": 17.2624728679657
+ },
+ {
+  "label": "lru-2",
+  "policy": "lru-k",
+  "params": {
+   "k": 2
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.5447441816611311,
+  "miss_per_token": 109.26139640132851,
+  "stall_ms_per_token": 446.56177818232015,
+  "tok_s": 1.8991123956090743,
+  "seconds": 17.397934198379517
+ },
+ {
+  "label": "lfu-decay d=0.900",
+  "policy": "heat",
+  "params": {
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.5447441816611311,
+  "miss_per_token": 109.26139640132851,
+  "stall_ms_per_token": 446.56177818232015,
+  "tok_s": 1.8991123956090743,
+  "seconds": 11.616291284561157
+ },
+ {
+  "label": "lfu-decay d=0.980",
+  "policy": "heat",
+  "params": {
+   "decay": 0.98,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.5447441816611311,
+  "miss_per_token": 109.26139640132851,
+  "stall_ms_per_token": 446.56177818232015,
+  "tok_s": 1.8991123956090743,
+  "seconds": 11.6594717502594
+ },
+ {
+  "label": "lfu-decay d=0.995",
+  "policy": "heat",
+  "params": {
+   "decay": 0.995,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.5447441816611311,
+  "miss_per_token": 109.26139640132851,
+  "stall_ms_per_token": 446.56177818232015,
+  "tok_s": 1.8991123956090743,
+  "seconds": 11.588387250900269
+ },
+ {
+  "label": "heat score-aware d=0.90",
+  "policy": "heat",
+  "params": {
+   "decay": 0.9,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.5344615679404358,
+  "miss_per_token": 111.72922369429541,
+  "stall_ms_per_token": 456.6480243817213,
+  "tok_s": 1.863418767174466,
+  "seconds": 32.8332417011261
+ },
+ {
+  "label": "heat score-aware d=0.98",
+  "policy": "heat",
+  "params": {
+   "decay": 0.98,
+   "w_near": 1.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.5343158813582004,
+  "miss_per_token": 111.7641884740319,
+  "stall_ms_per_token": 456.7909287809615,
+  "tok_s": 1.8629226881142988,
+  "seconds": 32.59571194648743
+ }
+]

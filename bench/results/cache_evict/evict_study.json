@@ -1,0 +1,875 @@
+[
+ {
+  "label": "full lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.890283860724844,
+  "miss_per_token": 26.331873426037447,
+  "stall_ms_per_token": 107.62088539315144,
+  "tok_s": 5.3298970309437745,
+  "seconds": 4.487881898880005
+ },
+ {
+  "label": "full belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9495199034028006,
+  "miss_per_token": 12.115223183327858,
+  "stall_ms_per_token": 49.51607599769588,
+  "tok_s": 7.721049238843449,
+  "seconds": 10.850733041763306
+ },
+ {
+  "label": "full score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8961113240142584,
+  "miss_per_token": 24.933282236577977,
+  "stall_ms_per_token": 101.9047094235429,
+  "tok_s": 5.497383784999332,
+  "seconds": 127.34800148010254
+ },
+ {
+  "label": "full score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8959040475929778,
+  "miss_per_token": 24.983028577685317,
+  "stall_ms_per_token": 102.10802747799427,
+  "tok_s": 5.491246123792313,
+  "seconds": 114.85506653785706
+ },
+ {
+  "label": "full score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8950150248792536,
+  "miss_per_token": 25.19639402897916,
+  "stall_ms_per_token": 102.98007248630147,
+  "tok_s": 5.4650759856643045,
+  "seconds": 10.053784847259521
+ },
+ {
+  "label": "full ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.8950027069114445,
+  "miss_per_token": 25.199350341253332,
+  "stall_ms_per_token": 102.9921552173437,
+  "tok_s": 5.464715133893465,
+  "seconds": 202.15577864646912
+ },
+ {
+  "label": "train lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.8887579628346041,
+  "miss_per_token": 26.69808891969502,
+  "stall_ms_per_token": 109.11764314503803,
+  "tok_s": 5.287713950797707,
+  "seconds": 3.3546082973480225
+ },
+ {
+  "label": "train belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9488464204376671,
+  "miss_per_token": 12.276859094959898,
+  "stall_ms_per_token": 50.176697429362356,
+  "tok_s": 7.6818664150135545,
+  "seconds": 7.870044231414795
+ },
+ {
+  "label": "train score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.8949246212496287,
+  "miss_per_token": 25.218090900089116,
+  "stall_ms_per_token": 103.06874967388075,
+  "tok_s": 5.46242874210592,
+  "seconds": 91.71821308135986
+ },
+ {
+  "label": "train score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.8947732036175199,
+  "miss_per_token": 25.254431131795226,
+  "stall_ms_per_token": 103.21727567688578,
+  "tok_s": 5.458000596862698,
+  "seconds": 82.96060132980347
+ },
+ {
+  "label": "train score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.8938252962339506,
+  "miss_per_token": 25.481928903851866,
+  "stall_ms_per_token": 104.14708083193773,
+  "tok_s": 5.430441772317056,
+  "seconds": 7.553697824478149
+ },
+ {
+  "label": "train ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.8937976532329933,
+  "miss_per_token": 25.48856322408159,
+  "stall_ms_per_token": 104.17419593330376,
+  "tok_s": 5.42964227389453,
+  "seconds": 162.3297414779663
+ },
+ {
+  "label": "test lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.8945638337267972,
+  "miss_per_token": 25.304679905568673,
+  "stall_ms_per_token": 103.4226472217023,
+  "tok_s": 5.451889475737985,
+  "seconds": 1.5924904346466064
+ },
+ {
+  "label": "test belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9514089478313197,
+  "miss_per_token": 11.661852520483267,
+  "stall_ms_per_token": 47.663106732760546,
+  "tok_s": 7.833116595645112,
+  "seconds": 3.6263821125030518
+ },
+ {
+  "label": "test score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.8994404712308476,
+  "miss_per_token": 24.134286904596586,
+  "stall_ms_per_token": 98.63913907609451,
+  "tok_s": 5.597877403417356,
+  "seconds": 32.95856547355652
+ },
+ {
+  "label": "test score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.8990747812803778,
+  "miss_per_token": 24.222052492709345,
+  "stall_ms_per_token": 98.99784542968065,
+  "tok_s": 5.586659423746251,
+  "seconds": 28.68543577194214
+ },
+ {
+  "label": "test score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.898351502106189,
+  "miss_per_token": 24.39563949451465,
+  "stall_ms_per_token": 99.70731211003302,
+  "tok_s": 5.564603845322164,
+  "seconds": 3.4265124797821045
+ },
+ {
+  "label": "test ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 4500,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.898382747766514,
+  "miss_per_token": 24.388140536036662,
+  "stall_ms_per_token": 99.6766631494418,
+  "tok_s": 5.565553046631736,
+  "seconds": 54.870017528533936
+ },
+ {
+  "label": "full lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9072990802584036,
+  "miss_per_token": 22.24822073798314,
+  "stall_ms_per_token": 90.93060624681637,
+  "tok_s": 5.85032734603447,
+  "seconds": 4.460607290267944
+ },
+ {
+  "label": "full belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9583655729527841,
+  "miss_per_token": 9.9922624913318,
+  "stall_ms_per_token": 40.83933258370267,
+  "tok_s": 8.275451201348886,
+  "seconds": 10.77261209487915
+ },
+ {
+  "label": "full score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9120040877404285,
+  "miss_per_token": 21.119018942297163,
+  "stall_ms_per_token": 86.31545049724124,
+  "tok_s": 6.012670482569432,
+  "seconds": 137.2588894367218
+ },
+ {
+  "label": "full score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9118926177354405,
+  "miss_per_token": 21.145771743494286,
+  "stall_ms_per_token": 86.42479175469748,
+  "tok_s": 6.008720151946798,
+  "seconds": 126.04223299026489
+ },
+ {
+  "label": "full score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9111844106232587,
+  "miss_per_token": 21.3157414504179,
+  "stall_ms_per_token": 87.11947420486625,
+  "tok_s": 5.983743096116572,
+  "seconds": 9.98989224433899
+ },
+ {
+  "label": "full ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9114724381668431,
+  "miss_per_token": 21.24661483995766,
+  "stall_ms_per_token": 86.83694713580469,
+  "tok_s": 5.993876159733393,
+  "seconds": 214.6597192287445
+ },
+ {
+  "label": "train lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9058691867181569,
+  "miss_per_token": 22.59139518764234,
+  "stall_ms_per_token": 92.33319304795567,
+  "tok_s": 5.8027126539791265,
+  "seconds": 3.303044557571411
+ },
+ {
+  "label": "train belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9578143050467043,
+  "miss_per_token": 10.12456678879097,
+  "stall_ms_per_token": 41.38007290261197,
+  "tok_s": 8.238584605253447,
+  "seconds": 7.658076286315918
+ },
+ {
+  "label": "train score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9108981499818464,
+  "miss_per_token": 21.384444004356865,
+  "stall_ms_per_token": 87.40026811436344,
+  "tok_s": 5.973706083414553,
+  "seconds": 99.53498888015747
+ },
+ {
+  "label": "train score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9107824207017197,
+  "miss_per_token": 21.412219031587284,
+  "stall_ms_per_token": 87.5137873073959,
+  "tok_s": 5.969657877562947,
+  "seconds": 91.28969717025757
+ },
+ {
+  "label": "train score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.909993976301284,
+  "miss_per_token": 21.60144568769185,
+  "stall_ms_per_token": 88.28717475083627,
+  "tok_s": 5.942223472944902,
+  "seconds": 7.0565879344940186
+ },
+ {
+  "label": "train ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9103962438525266,
+  "miss_per_token": 21.504901475393602,
+  "stall_ms_per_token": 87.89258932050956,
+  "tok_s": 5.9561890375696365,
+  "seconds": 168.7929334640503
+ },
+ {
+  "label": "test lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.911309771790955,
+  "miss_per_token": 21.285654770170808,
+  "stall_ms_per_token": 86.99650706484002,
+  "tok_s": 5.988149198903473,
+  "seconds": 1.4298865795135498
+ },
+ {
+  "label": "test belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9599118178030829,
+  "miss_per_token": 9.621163727260102,
+  "stall_ms_per_token": 39.32261643853812,
+  "tok_s": 8.38064090318611,
+  "seconds": 3.361309289932251
+ },
+ {
+  "label": "test score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.915106119520437,
+  "miss_per_token": 20.374531315095126,
+  "stall_ms_per_token": 83.27265835300652,
+  "tok_s": 6.124724188895929,
+  "seconds": 34.0783052444458
+ },
+ {
+  "label": "test score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9150060176827293,
+  "miss_per_token": 20.39855575614498,
+  "stall_ms_per_token": 83.37084854156728,
+  "tok_s": 6.1210430681307555,
+  "seconds": 30.047073125839233
+ },
+ {
+  "label": "test score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9145222885710318,
+  "miss_per_token": 20.51465074295237,
+  "stall_ms_per_token": 83.84533985738696,
+  "tok_s": 6.103316706293951,
+  "seconds": 3.1846697330474854
+ },
+ {
+  "label": "test ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9144916215340462,
+  "miss_per_token": 20.52201083182891,
+  "stall_ms_per_token": 83.87542124463388,
+  "tok_s": 6.102196366026092,
+  "seconds": 58.121238470077515
+ },
+ {
+  "label": "full lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.921854355998394,
+  "miss_per_token": 18.754954560385414,
+  "stall_ms_per_token": 76.65329324047052,
+  "tok_s": 6.383523635631143,
+  "seconds": 4.144357442855835
+ },
+ {
+  "label": "full belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9653813399515797,
+  "miss_per_token": 8.308478411620863,
+  "stall_ms_per_token": 33.95754599231645,
+  "tok_s": 8.775197739581236,
+  "seconds": 10.35956072807312
+ },
+ {
+  "label": "full score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9251954146745015,
+  "miss_per_token": 17.95310047811964,
+  "stall_ms_per_token": 73.37603890716417,
+  "tok_s": 6.519923236544676,
+  "seconds": 145.70650577545166
+ },
+ {
+  "label": "full score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9250977833740891,
+  "miss_per_token": 17.97653199021862,
+  "stall_ms_per_token": 73.47180573838779,
+  "tok_s": 6.51585478641352,
+  "seconds": 130.81801414489746
+ },
+ {
+  "label": "full score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.9246488618806039,
+  "miss_per_token": 18.08427314865506,
+  "stall_ms_per_token": 73.91215415859354,
+  "tok_s": 6.497212682564264,
+  "seconds": 9.877182960510254
+ },
+ {
+  "label": "full ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 27399.0,
+  "hit_rate": 0.924927765003589,
+  "miss_per_token": 18.017336399138653,
+  "stall_ms_per_token": 73.63857726067437,
+  "tok_s": 6.508781959776465,
+  "seconds": 204.54188013076782
+ },
+ {
+  "label": "train lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9206571607749943,
+  "miss_per_token": 19.042281414001387,
+  "stall_ms_per_token": 77.82762557463718,
+  "tok_s": 6.336026385489129,
+  "seconds": 3.1423544883728027
+ },
+ {
+  "label": "train belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9649121612700927,
+  "miss_per_token": 8.421081295177741,
+  "stall_ms_per_token": 34.41776474812401,
+  "tok_s": 8.739901554635082,
+  "seconds": 7.50638484954834
+ },
+ {
+  "label": "train score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9241752483744266,
+  "miss_per_token": 18.19794039013764,
+  "stall_ms_per_token": 74.37672304705158,
+  "tok_s": 6.477660493513752,
+  "seconds": 106.79743218421936
+ },
+ {
+  "label": "train score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9241096478199161,
+  "miss_per_token": 18.21368452322012,
+  "stall_ms_per_token": 74.44107082492025,
+  "tok_s": 6.47496158022392,
+  "seconds": 95.34626603126526
+ },
+ {
+  "label": "train score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9236500313562399,
+  "miss_per_token": 18.323992474502425,
+  "stall_ms_per_token": 74.89190997300636,
+  "tok_s": 6.456115107459609,
+  "seconds": 7.03485107421875
+ },
+ {
+  "label": "train ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 20198.0,
+  "hit_rate": 0.9239722579793379,
+  "miss_per_token": 18.246658084958906,
+  "stall_ms_per_token": 74.57583692573952,
+  "tok_s": 6.469316420265701,
+  "seconds": 152.78533411026
+ },
+ {
+  "label": "test lru",
+  "policy": "lru",
+  "params": {},
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9252123547655419,
+  "miss_per_token": 17.94903485626996,
+  "stall_ms_per_token": 73.35942232177896,
+  "tok_s": 6.520629674137651,
+  "seconds": 1.4152462482452393
+ },
+ {
+  "label": "test belady",
+  "policy": "belady",
+  "params": {},
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9666973337036523,
+  "miss_per_token": 7.992639911123455,
+  "stall_ms_per_token": 32.666683830144365,
+  "tok_s": 8.875738292853228,
+  "seconds": 3.2780368328094482
+ },
+ {
+  "label": "test score-ext alpha=3200 decay=0.9 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9280574457251307,
+  "miss_per_token": 17.266213025968614,
+  "stall_ms_per_token": 70.5686641879449,
+  "tok_s": 6.641488156870185,
+  "seconds": 35.73483109474182
+ },
+ {
+  "label": "test score-ext alpha=1600 decay=0.95 near_k=16 w_near=2",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 1600,
+   "decay": 0.95,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9278676572698237,
+  "miss_per_token": 17.31176225524233,
+  "stall_ms_per_token": 70.75482824486937,
+  "tok_s": 6.633286718855274,
+  "seconds": 31.46168303489685
+ },
+ {
+  "label": "test score-ext alpha=3200 decay=0.9 near_k=6 w_near=0",
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 0.0,
+   "near_k": 6
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9274493125954728,
+  "miss_per_token": 17.412164977086515,
+  "stall_ms_per_token": 71.16518377278517,
+  "tok_s": 6.615279888146002,
+  "seconds": 3.283078193664551
+ },
+ {
+  "label": "test ewma-ext alpha=51200 ewma=0.125 near_k=16",
+  "policy": "ewma-ext",
+  "params": {
+   "alpha": 51200,
+   "ewma": 0.125,
+   "near_k": 16
+  },
+  "capacity": 5711,
+  "gbps": 4.6,
+  "tokens": 7201.0,
+  "hit_rate": 0.9276072767671156,
+  "miss_per_token": 17.374253575892237,
+  "stall_ms_per_token": 71.01023624979622,
+  "tok_s": 6.622067648088654,
+  "seconds": 57.99904441833496
+ }
+]

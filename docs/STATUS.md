@@ -60,6 +60,8 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | **P0 的盘时间是怎么花的（Track Q1）** | 4 轮对话、5,100 槽、backfill off：`nvme_stall` **105.2 ms/token**、21.3 个 miss = **383 MiB/token** ⇒ **3.55 GB/s**，而同一块盘 `nvme_bench` 是 **5.16 GB/s**。**0.0% 的 P0 在发出时有非 P0 的 chunk 在飞**（backfill 开也只有 8.2%、平均 1.02 个）——**队列争用 = 0**。一层这一批的第一个 P0 是 **2.83 ms**，后面的每个 **8.46 ms**；发出时平均在飞 chunk **3.80**（上限 8） | `p4_p0_queue.md` §2 |
 | **那 30% 的缺口在哪（Track Q2）** | **不是盘，是 `ReadFile` 本身。** 往 path A（`DEVICE_LOCAL\|HOST_VISIBLE`、uncached）读，一次 4 MiB 的同步 `ReadFile` 要 **704 µs**，读进普通主机内存只要 **70 µs**（path B 导入的 69.6 µs）——内核要先 probe 住再锁住目的地的 1,024 个页。它过去**只在 dispatcher 一条线程上**发生：42.81 s 的 issue 里 **42.71 s 在 `Backend::submit`**，完成回调只占 0.13 s（1.6 µs/次）。**提交搬到 8 条线程 + P0 队列 24 / 96 MiB：4.828 → 4.998 tok/s（+3.5%）**，stall 108.1 → 100.9 ms，busy 窗口 3.90 → 4.10 GB/s。**并且 Q1 的参照系是错的**：`nvme_bench` 默认测的是 `%TEMP%`（C:），而 shard 在 **D:**，D: 的天花板是 **4.60–4.65 GB/s 而不是 5.16**，且对请求大小**不平** | `p4_p0_queue.md` §9–§13 |
 
+| **淘汰策略这个杠杆（Track E1）** | **关掉了。** 在 4.6 GB/s 的 demand-only 模型上扫了 127 种配置：最好的可实现策略是 `last_use + α × heat`（α ≈ 1,600–4,800），C=5,100 测试集 **+2.3%**（hit 0.9113 → 0.9151），折半后 **+1.2%**，低于 ±3% 的抖动带。**top-16 的"近似命中"分数只贡献其中的 0.06 pt（16%）**。`cache_sim` 里那条 `score-aware` 原样跑是 **−68%**（按 heat 排序会退化）。Belady 在同一口径下是 **+40%**——那 40% 在"未来"里，不在分数里 | `p4_cache_policy.md` §12；§3 的 47 |
+
 **一句话结论**：`tok/s ≈ NVMe_eff / (MB per token)`。四种容量下有效读带宽恒定在 8.3–9.2 GB/s，
 hit 0.59 → 0.84 把 MB/token 从 4,998 降到 2,269，tok/s 就翻倍。
 **这一段的性能完全由"每个 token 要读多少字节"决定**，而不是由 kernel 决定（§4）。
@@ -203,7 +205,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 46 条）
+## 3. 试过并退掉的（编号，共 47 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -296,6 +298,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **42** | **投机解码，用实测的 verify 代价重算（不再用 kernel 表）** | `bench.spec_forward_m_curve`（l3_64、5,100 槽、warm、先跑一遍不计时的顺序 decode）：顺序 decode **102.6 ms/位置**；`forward_batch` M=1 **123.7**（慢 1.21×）、M=6 **75.9（0.74×）**。并集实测 u(2..6) = 9.90/13.35/16.53/19.35/22.13，对 `route_union.py` 的离线值**误差 ≤ 2%**。接受长度（`tools/spec_longest.py`，71 个贪心事件）：`chain` E[tokens](k=5) **3.82**、`longest` **4.77**，链外 top-16 命中 **0.5419**。**草稿完全白送**时每发出 token：`chain` k=5 **0.86×（更慢）**、k=1 1.06–1.13×；`longest` k=5 1.06–1.07×。`T_draft` 19–42 ms/周期 = 每 token +4…+23 ms，**全部打平或更差** | **NO-GO，第三次，这次是引擎实测**。而且这还是 **compute-bound 的最好情形**（P0 = 0）；NVMe-bound 下 §6.5 的 [1.00×, 1.80×] miss 区间只会更差。`longest` 另外**不无损**：verify 第 i+1 行条件在链的 token 上，不是被替换进去的那个 |
 | **45** | **「目的地是 GPU 可见内存所以 DMA 慢」**（Q1 §6 留下的候选 i），以及为它做 staging（读进 pinned 主机内存再拷进 path A） | `bench/io_dst_bench`：同一个 `IoEngine`、同一个 chunk、同一个 D: 上的 shard，**只换目的地**。QD 8 的吞吐 `ram` 4.722 / `pinned` 4.758 / **`patha` 4.511** / `pathb` 4.818 GB/s——**path A 只慢 5%，不是 30%**。真正差 8–10 倍的是 `Backend::submit`：**704 µs vs 70–122 µs**。staging 的代价实测：`memcpy` 18.8 MB 要 **0.88 ms（21.5 GB/s）**，每 token 21.3 次 miss = **18.7 ms**，比要救的 ~8 ms 还贵。「path B 优先」同样不做：提交并行之后 path A 的 4.21 → **4.80** 已追平 path B 的 4.82 | **候选 i 成立但读错了方向；staging / path B 优先 NO-GO**（`p4_p0_queue.md` §9、§12.2）。目的地内存**确实**是原因，但它贵在**提交**（锁页）而不是在传输，所以正确的解法是并行提交而不是换内存 |
 | **46** | ~~**`nvme_bench` 的 5.07–5.16 GB/s 是这块盘的天花板，且盘对请求大小是平的**~~（Q1 §4） | `nvme_bench` 不带 `--file` 时把测试文件建在 `%TEMP%`——**C: 盘**，而 runtime 读的 shard 在 **D:**。同一条命令指到 D: 的一个 shard：**4.60–4.65 GB/s 封顶**，而且**对大小不平**（1 MiB @ QD4 只有 3.518，4 MiB 4.383，18.4 MiB 4.647） | **作废，Q1 的缺口要重读**：3.55 vs **4.60** = **23%**，不是 30%。Q1 §3 里「1 MiB chunk +1.4%」也换了解释——不是盘喜欢小请求（D: 对 1 MiB 更慢），是小 chunk 让那条**单线程的提交路**更快开始下一个 |
+| **47** | **score-aware 淘汰**（§7 第 1 项的 (a)，本项目「唯一没跑过」的淘汰策略），以及 ARC / LRU-K / LFU-decay / S3-FIFO / TinyLFU 式准入，全部放进 Track X 的时间模型（`tools/cache_evict_study.py`，4.6 GB/s、demand-only、127 种配置） | 最好的可实现形状是 **`rank = last_use + α × heat`**（α ≈ 1,600–4,800，岭很平）：全量 trace **hit 0.9073 → 0.9120 @ C=5,100**，**测试集 +2.3%**（4,500 上 +2.7%，5,711 上 +1.8%）。**把 top-16 的原始分数整个关掉只掉 0.06 pt**。`cache_sim` 的 `score-aware` 原样（按 heat 排序）**hit 0.5345 = −68%**；LRU-2 / LFU-decay **−68%**；ARC **−1.5%**；按分数拒绝准入 −0.1%…−33%。Belady 同口径 **+40%** | **NO-GO**（`p4_cache_policy.md` §12）。折半后 **+1.2%**，低于 `p4_p0_queue.md` §3 的 **±3% 抖动带**——写出来也测不出来。**§9.4 ablation #3 的证伪条件实测命中**：top-16 分数没有可用信息，Belady 的 40% 全在「未来」里。机制：细粒度 LRU **已经就是**「最早可能的下一次使用」排序（第 L 层的 expert 最早也要等 40 个 layer-step，对每个 key 是同一个常数偏移），周期结构里没有免费信息。`store/planner.cpp` 的 `ScoreAwarePolicy` 保持回退 LRU，那条 TODO 改成「不做」 |
 
 ---
 
@@ -555,11 +558,14 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 每一项的机制、预测（已按"二分之一法则"砍半）、成本与探针在 [plan_p5.md](plan_p5.md)。
 
 1. ~~**给 `ReadFile` 两侧插桩，解释每次 miss 的 20–31 ms。**~~ **已完成，答案是"就是盘"**（§4）。
-   接这一位的是那条式子的两个因子，按性价比：**(a) score-aware 淘汰**——把 `cache_sim` 里
-   用 top-16 原始分数刷 heat 的那个策略接进真 planner，是本项目测过的淘汰策略里**唯一没跑过**、
-   而 Belady 上限有 **+42%** 的那个（§3 的 36）；**(b) 第二块 NVMe**（stripe 到 9 GB/s，
-   **+32–40%**，无预测、无风险，design §3.1 已预留 stripe）。
-   **两条都比任何"算得更快"的改动大一个量级。**
+   接这一位的是那条式子的两个因子。**(a) score-aware 淘汰已经做完了，答案是 NO-GO**
+   （§3 的 47，`p4_cache_policy.md` §12）：127 种淘汰配置在 4.6 GB/s 的 demand-only 模型上
+   跑完，最好的可实现形状 `last_use + α × heat` 在 C=5,100 的测试集上只有 **+2.3%**，
+   折半后 **+1.2%**，低于 ±3% 的抖动带；top-16 的原始分数只贡献其中 0.06 pt。
+   Belady 的 **+40%** 在"未来"里，当前状态的任何函数都够不着它。
+   **所以第 1 项现在只剩 (b)：第二块 NVMe**（stripe 到 9 GB/s，**+32–40%**，
+   无预测、无风险，design §3.1 已预留 stripe）。**它仍然比任何"算得更快"的改动大一个量级**，
+   而且现在是 MB/token 这一侧**唯一**还开着的大杠杆——另一个是容量，已经顶到本机的 5,100 槽。
 2. **把 SSD KV 前缀复用接进 `serve` 的默认路径。**
    已实测 41×（101.6 s → 2.47 s），已实现，只是没默认开。这是当前性价比最高的一项。
 3. ~~**量 verify-only 的 resident-only 路由在 DSpark 上的收益。**~~ **已做，答案是 NO-GO**（§3 的 40，
@@ -599,6 +605,6 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 **为 P0 加深队列或加大 chunk（44）**、
 CPU 分担 GEMV（25）、树采样作为提速手段（32）、静态 pin / 每层配额（24、**35**）、
 LDS x-tiling 配 per-K-chunk barrier（1）、饱和 cache 上的 reheat（21、**F4 §6**）、
-任何预测式预取（**35**）、2-bit / 3-bit expert（**37**）、resident-only 作为默认路由（**38、39**）、verify-only 的 resident-only 路由（**40**）、
+任何预测式预取（**35**）、**score-aware / ARC / LFU-decay / LRU-K / S3-FIFO 任何非 LRU 的淘汰策略（47）**、2-bit / 3-bit expert（**37**）、resident-only 作为默认路由（**38、39**）、verify-only 的 resident-only 路由（**40**）、
 **投机解码本身（41、42：`chain` 0.86×、`longest` ≤1.07× 且不无损）**、
 手写 `--cache-slots`（它绕过三条实测边界，5,500 就是这么够得着的）。
