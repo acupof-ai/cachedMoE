@@ -1,3 +1,5 @@
+#include <thread>
+#include <chrono>
 #include "runtime/engine.h"
 
 #include <algorithm>
@@ -6,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <future>
 #include <set>
 
 #include "core/align.h"
@@ -549,6 +552,33 @@ Result<void> Engine::init_gpu() {
     route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
     // docs/p4_hitrate.md §4: on unless DEEPMOE_MOE_OVERLAP=0 (the A/B switch).
     if (const char* e = std::getenv("DEEPMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
+    // Track Y (docs/p4_resident_routing.md): off | all | stall1. Anything else
+    // is off.
+    if (const char* e = std::getenv("DEEPMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
+        const std::string_view v{e};
+        if (v == "all") resident_only_ = ResidentOnly::All;
+        else if (v == "stall1") resident_only_ = ResidentOnly::Stall1;
+        else if (v != "off" && v != "0" && v != "")
+            log_warn("DEEPMOE_ROUTE_RESIDENT_ONLY={}: expected off|all|stall1, using off", v);
+        if (resident_only_ != ResidentOnly::Off)
+            log_info("route: resident-only={} -- a layer's non-resident experts are "
+                     "dropped and renormalised{}",
+                     resident_only_ == ResidentOnly::All ? "all" : "stall1",
+                     resident_only_ == ResidentOnly::All
+                         ? ", never waited for"
+                         : ", except the single highest-weight one, which is fetched at P0");
+    }
+    // Track Y step 3: the background miss window, in decode steps.
+    if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
+        const int v = std::atoi(e);
+        if (v >= 1 && v <= 1024) rr_queue_steps_ = static_cast<uint32_t>(v);
+        else log_warn("DEEPMOE_RESIDENT_QUEUE_STEPS={}: expected 1..1024, keeping {}", e,
+                      rr_queue_steps_);
+    }
+    if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_EXPERTS"); e && *e) {
+        const int v = std::atoi(e);
+        if (v >= 1 && v <= 4096) rr_outstanding_cap_ = static_cast<uint32_t>(v);
+    }
     if (const char* e = std::getenv("DEEPMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
     gpu_ready_ = true;
     log_info("engine: gpu ready on {}", device_.caps().device_name);
@@ -1118,8 +1148,131 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     // Classify them, fetch the misses at P0, wait, host-signal the timeline the
     // MoE dispatch is gated on, then stage and record it.
     const uint32_t topk = c.num_experts_per_tok;
-    const auto* ids = static_cast<const uint32_t*>(b.gate_ids.host);
-    const auto* wts = static_cast<const float*>(b.gate_weights.host);
+    const auto* ids_raw = static_cast<const uint32_t*>(b.gate_ids.host);
+    const auto* wts_raw = static_cast<const float*>(b.gate_weights.host);
+    const uint32_t* ids = ids_raw;
+    const float*    wts = wts_raw;
+
+    // --- Track Y: resident-only routing (docs/p4_resident_routing.md) ------
+    // Drop the gate's non-resident experts, renormalise the rest over what is
+    // left, and hand the dropped ones to the P3 fetcher. `ids`/`wts` below --
+    // the MoE call, the guard, the route dump -- then describe what will
+    // actually be computed, and `kept_*` is the subset the planner sees, so the
+    // LRU is touched only by experts this step really used.
+    uint32_t eff_ids[16];
+    float    eff_w[16];
+    uint16_t kept_ids[16];
+    float    kept_w[16];
+    uint32_t n_kept = topk;
+    for (uint32_t i = 0; i < topk; ++i) {
+        kept_ids[i] = static_cast<uint16_t>(ids_raw[i]);
+        kept_w[i]   = wts_raw[i];
+    }
+    if (resident_only_ != ResidentOnly::Off) {
+        uint8_t res[16];
+        uint32_t n_res = 0;
+        for (uint32_t i = 0; i < topk; ++i) {
+            res[i] = store_.resident(ExpertKey{static_cast<uint16_t>(L),
+                                               static_cast<uint16_t>(ids_raw[i])}) ? 1 : 0;
+            n_res += res[i];
+        }
+        // (A) Stamp the LRU for every REQUESTED expert, resident or not. The
+        // resident ones are stamped by the planner's `lookup` below; a
+        // non-resident one has no slot to stamp, so its request stamp is parked
+        // and handed to the P3 fetch, which is what lands in `last_use_token`
+        // when the expert arrives. docs/p4_resident_routing.md section 8: step
+        // 2 stamped the arrival at SUBMIT time, so an expert that was 5.6 s
+        // late looked like the newest thing in the cache and evicted something
+        // that was actually in use.
+        {
+            const TokenIndex ds = planner_.demand_stamp();
+            for (uint32_t i = 0; i < topk; ++i) {
+                if (res[i]) continue;
+                const ExpertKey k{static_cast<uint16_t>(L), static_cast<uint16_t>(ids_raw[i])};
+                rr_demand_[rr_pack(k)] = ds;   // a re-request overwrites with the newer stamp
+            }
+        }
+        // `stall1`: one P0 fetch a layer, for the missing expert that carries
+        // the most gate weight. At 18.8 MB / 4.5 GB/s that is about 4 ms
+        // against a 2 ms layer -- the cheap middle ground between waiting for
+        // up to six and waiting for none.
+        if (resident_only_ == ResidentOnly::Stall1 && n_res < topk) {
+            uint32_t best = topk;
+            float    bw   = -1.0f;
+            for (uint32_t i = 0; i < topk; ++i)
+                if (!res[i] && wts_raw[i] > bw) { bw = wts_raw[i]; best = i; }
+            if (best < topk) {
+                const ExpertKey k{static_cast<uint16_t>(L),
+                                  static_cast<uint16_t>(ids_raw[best])};
+                const TimePoint s0 = Clock::now();
+                auto pr  = std::make_shared<std::promise<bool>>();
+                auto fut = pr->get_future();
+                // Shared, not captured by reference: `fetch` calls the callback
+                // from the IoEngine thread on its own error paths too.
+                auto f = planner_.fetch(k, IoPriority::BlockingMiss, token_, L,
+                                        [pr](bool ok) { pr->set_value(ok); },
+                                        rr_demand_[rr_pack(k)]);
+                if (f) {
+                    if (fut.wait_for(std::chrono::seconds(30)) == std::future_status::ready &&
+                        fut.get() && store_.resident(k)) {
+                        res[best] = 1;
+                        ++n_res;
+                        ++rr_.stall1_p0;
+                        rr_demand_.erase(rr_pack(k));
+                    }
+                }
+                rr_.stall1_ms += ms_since(s0);
+            }
+        }
+        // Nothing routed is resident: the layer runs on its shared expert alone,
+        // and the seven slots still need one valid pointer-table row, so borrow
+        // any expert this layer does have in the cache. With 5,100 slots over 40
+        // layers this is ~1e-4 of layer-steps (docs/p4_resident_routing.md §2).
+        // A layer with NOTHING resident cannot be expressed that way, so that
+        // one case falls through to the ordinary demand path.
+        uint32_t fill_id = ids_raw[0];
+        bool     usable  = true;
+        if (n_res == 0) {
+            usable = false;
+            for (uint32_t k = 0; k < c.n_routed_experts && !usable; ++k) {
+                const uint32_t e = (ids_raw[0] + k) % c.n_routed_experts;
+                if (store_.resident(ExpertKey{static_cast<uint16_t>(L),
+                                              static_cast<uint16_t>(e)})) {
+                    fill_id = e;
+                    usable  = true;
+                }
+            }
+        }
+        if (usable) {
+            const ResidentRoute rr = resident_route(ids_raw, wts_raw, topk,
+                                                    std::span<const uint8_t>(res, topk),
+                                                    fill_id, eff_ids, eff_w);
+            ++rr_.layers;
+            rr_.requested     += topk;
+            rr_.served        += rr.kept;
+            rr_.skipped       += topk - rr.kept;
+            rr_.mass_lost_sum += rr.mass_lost;
+            rr_.shared_only   += rr.shared_only ? 1 : 0;
+            ids = eff_ids;
+            wts = eff_w;
+            n_kept = 0;
+            for (uint32_t i = 0; i < topk; ++i) {
+                if (!res[i]) continue;
+                kept_ids[n_kept] = static_cast<uint16_t>(ids_raw[i]);
+                kept_w[n_kept]   = eff_w[i];
+                ++n_kept;
+            }
+            // The misses go to the background fetcher -- but only once this
+            // layer's slots are guarded, or a P3 eviction could take a slot the
+            // dispatch is about to read. Queued here, issued at the bottom of
+            // the layer (`flush_resident_backfill`).
+            rr_pending_.clear();
+            for (uint32_t i = 0; i < topk; ++i)
+                if (!res[i])
+                    rr_pending_.push_back(ExpertKey{static_cast<uint16_t>(L),
+                                                    static_cast<uint16_t>(ids_raw[i])});
+        }
+    }
     MoeCall call;
     call.layer   = L;
     call.ids     = ids;
@@ -1154,14 +1307,18 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         // route_scale, gate.slang), which is what the EWMA wants.
         uint16_t near_ids[16];
         float    near_scores[16];
+        // The heat EWMA is defined over the GATE's own top-16 and raw scores, not
+        // over what residency let through, so it reads the untouched buffers.
         for (uint32_t i = 0; i < 16; ++i) {
-            near_ids[i]    = static_cast<uint16_t>(ids[i]);
-            near_scores[i] = wts[i];
+            near_ids[i]    = static_cast<uint16_t>(ids_raw[i]);
+            near_scores[i] = wts_raw[i];
         }
         store::RouteDecision route;
         route.layer       = L;
-        route.chosen      = std::span<const uint16_t>(chosen, topk);
-        route.weights     = std::span<const float>(wts, topk);
+        // Resident-only mode hands the planner exactly the experts the dispatch
+        // will use, so the LRU is never touched by one that was skipped.
+        route.chosen      = std::span<const uint16_t>(kept_ids, n_kept);
+        route.weights     = std::span<const float>(kept_w, n_kept);
         route.near_ids    = std::span<const uint16_t>(near_ids, 16);
         route.near_scores = std::span<const float>(near_scores, 16);
         auto plan = planner_.plan_layer(route, token_);
@@ -1284,6 +1441,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     }
     // This buffer is the last reader of the layer's slots.
     open_guard_ = layer_guard_;
+    flush_resident_backfill(L);
     profiler_.note_hot_bytes(layer_hot_bytes_[L]);
 
     // A probe reads this layer's MoE output on the host, so it cannot wait
@@ -1900,6 +2058,123 @@ Result<double> Engine::measure_submit_overhead(uint32_t iterations) {
         if (auto r = dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
             return std::unexpected(r.error());
     return ms_since(t0) / iterations;
+}
+
+// Track Y: the dropped experts, at the lowest priority class that still fills
+// the cache. `Planner::fetch` reclaims an LRU slot when the cache is full --
+// which is the point: without an eviction the resident set would freeze at
+// whatever the prefill left and resident-only routing would never refresh.
+// Nothing here is waited on; a refusal (nothing evictable, or the class already
+// saturated) is counted and dropped.
+Result<uint32_t> Engine::warm_cache_from_heat(std::chrono::seconds timeout) {
+    if (heat_order_.empty()) {
+        if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
+            heat_order_ = store::static_heat_order(hf);
+        if (heat_order_.empty()) heat_order_ = store::static_heat_order();
+    }
+    if (store_.free_slots() == 0) return store_.stats().resident;
+    std::vector<ExpertKey> order = heat_order_;
+    // QD 8, the depth docs/p4_resident_routing.md's time model assumes, rather
+    // than the conversational default of 2: nothing else is running.
+    if (auto r = planner_.start_backfill(std::move(order), 8); !r) return std::unexpected(r.error());
+    const TimePoint t0 = Clock::now();
+    while (store_.free_slots() > 0 && planner_.backfill_active()) {
+        if (Clock::now() - t0 > timeout) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    planner_.stop_backfill();
+    // The fills in flight when the order stopped still settle; give them the
+    // read they are already doing before the first token looks at residency.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    return store_.stats().resident;
+}
+
+// (B) The bounded background miss queue (docs/p4_resident_routing.md section 8).
+//
+// Step 2 handed every miss straight to `Planner::fetch`, and the IoEngine's P3
+// queue has no bound: 19,356 experts went in, the drive ran flat out at 4.1
+// GB/s, and the mean P3 latency came out at 5,594 ms against a 100 ms step --
+// so what the drive was reading had been wanted 56 steps earlier, and the cache
+// it filled was a cache for a conversation that had already moved on.
+//
+// The fix is not more bandwidth (there is none) but a shorter queue: keep only
+// the misses of the most recent `rr_queue_steps_` steps, drop the rest
+// unissued, and drain what is left NEWEST-first with at most
+// `rr_outstanding_cap_` experts out at the drive at a time. The drive moves the
+// same number of bytes either way; this decides which bytes.
+void Engine::flush_resident_backfill(uint32_t layer) {
+    if (resident_only_ == ResidentOnly::Off && rr_pending_.empty() && rr_queue_.empty()) return;
+    for (const ExpertKey& key : rr_pending_) rr_queue_.push_back(RrMiss{key, token_});
+    rr_pending_.clear();
+
+    const uint64_t cutoff = resident_queue_cutoff(token_, rr_queue_steps_);
+    while (!rr_queue_.empty() && rr_queue_.front().step < cutoff) {
+        rr_demand_.erase(rr_pack(rr_queue_.front().key));
+        rr_queue_.pop_front();
+        ++rr_.bg_stale;
+    }
+    rr_.bg_depth_sum += rr_queue_.size();
+    ++rr_.bg_depth_n;
+    if (rr_queue_.size() > rr_.bg_depth_peak)
+        rr_.bg_depth_peak = static_cast<uint32_t>(rr_queue_.size());
+
+    while (!rr_queue_.empty() &&
+           rr_outstanding_.load(std::memory_order_relaxed) < rr_outstanding_cap_ &&
+           io_.inflight_chunks(IoPriority::Backfill) < rr_inflight_cap_) {
+        const RrMiss m = rr_queue_.back();          // newest first
+        rr_queue_.pop_back();
+        // It landed on an earlier request, or is already being filled.
+        if (store_.resident(m.key) || store_.slot_of(m.key)) {
+            rr_demand_.erase(rr_pack(m.key));
+            continue;
+        }
+        TokenIndex stamp = 0;
+        if (auto it = rr_demand_.find(rr_pack(m.key)); it != rr_demand_.end()) stamp = it->second;
+        rr_outstanding_.fetch_add(1, std::memory_order_relaxed);
+        const TimePoint q0 = Clock::now();
+        auto f = planner_.fetch(m.key, IoPriority::Backfill, token_, layer,
+                                [this, q0](bool) {
+                                    // IoEngine dispatcher thread: counters only.
+                                    rr_outstanding_.fetch_sub(1, std::memory_order_relaxed);
+                                    rr_fetch_ns_.fetch_add(
+                                        static_cast<uint64_t>((Clock::now() - q0).count()),
+                                        std::memory_order_relaxed);
+                                    rr_fetch_done_.fetch_add(1, std::memory_order_relaxed);
+                                },
+                                stamp);
+        if (f) {
+            ++rr_.bg_enqueued;
+            rr_demand_.erase(rr_pack(m.key));
+        } else {
+            rr_outstanding_.fetch_sub(1, std::memory_order_relaxed);
+            ++rr_.bg_refused;
+        }
+    }
+}
+
+std::string Engine::resident_route_report() const {
+    if (resident_only_ == ResidentOnly::Off && rr_.layers == 0)
+        return std::string("route     resident-only=off\n");
+    const uint64_t done = rr_fetch_done_.load(std::memory_order_relaxed);
+    const double   lat  = done ? double(rr_fetch_ns_.load(std::memory_order_relaxed)) /
+                                 double(done) / 1e6
+                               : 0.0;
+    return std::format(
+        "route     resident-only={} over {} layer-steps\n"
+        "  experts requested {}  served {} ({:.4f})  skipped {}\n"
+        "  gate mass lost    {:.4f} mean over those layer-steps\n"
+        "  shared-expert-only layer-steps {}\n"
+        "  background enqueued {}  refused {}  dropped stale {}\n"
+        "  background queue depth mean {:.1f} peak {} (window {} steps, cap {} experts)\n"
+        "  background fetch latency mean {:.1f} ms over {} completions\n"
+        "  stall1 P0 fetches {}  {:.1f} ms total\n",
+        resident_only_ == ResidentOnly::Stall1
+            ? "stall1"
+            : (resident_only_ == ResidentOnly::All ? "all" : "off"),
+        rr_.layers, rr_.requested, rr_.served, rr_.served_frac(), rr_.skipped,
+        rr_.mass_lost(), rr_.shared_only, rr_.bg_enqueued, rr_.bg_refused, rr_.bg_stale,
+        rr_.bg_depth_mean(), rr_.bg_depth_peak, rr_queue_steps_, rr_outstanding_cap_,
+        lat, done, rr_.stall1_p0, rr_.stall1_ms);
 }
 
 std::span<const float> Engine::last_logits() const {
