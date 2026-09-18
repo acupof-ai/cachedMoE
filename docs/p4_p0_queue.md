@@ -502,3 +502,117 @@ build\io_dst_bench.exe --dst ram,pinned,patha,pathb --qd 4,8,16 --reads 48 --cop
 `ctest -LE needs-model` **25/25**；`suite.decode` **Passed**、`suite.gpu_moe` **Passed**；
 `io.` **8/8**（含 `io.background_is_throttled_while_p0_is_recent`——P1–P3 的深度和
 `bg_cap_busy` 都没动，所以它仍然按原值过）；`integration.` **5/5**；`decode.` **2/2**。
+
+---
+
+# Track S1 — staged fill：**闸在 bench 就关了，path A 的 704 µs 早就被 Q2 盖住了**（2026-09-19）
+
+一句话：假设是「P0 的 miss 填进 path A 要付 704 µs/chunk 的锁页成本，
+把它换成『读进一个 GPU 可读的 pinned 主机环 + 一次 `vkCmdCopyBuffer` 进 path A』
+能省 5 ms/token 的 stall」。**`io_dst_bench` 的新 `stage` 档说端到端只差 +0.12%…+0.35%，
+而 A 臂自己的 sd 是 0.69%——判据要 ≥5%，差一个半数量级。就此关闭，没有写运行时。**
+
+理由不是「拷贝太贵」（它比预想的便宜），是**要救的那笔钱在 Track Q2 就已经被花掉了**：
+8 条提交线程之后，path A 在**发出时的实际队列深度和 path B 一模一样**（QD 8 上 6.87 vs 6.87，
+QD 24 上 22.02 vs 22.04）。704 µs 还在，但它不再挡住任何东西。
+
+## 16. 仪器：`io_dst_bench --gpu-copy`
+
+`bench/io_dst_bench` 多一个目的地 `stage`（`--gpu-copy` 是「把 `stage` 加进 `--dst`」的简写）：
+
+* 读落进一个 **path B**（`VK_EXT_external_memory_host` 导入的 VirtualAlloc）的环，
+  每个槽一个请求大小 —— 这就是假设里说的 pinned 主机环，而且它**本来就是 GPU 可读的**，
+  所以不需要再发明一种内存。
+* 每个请求完成之后，一条**独占命令池的拷贝线程**把那个槽 `vkCmdCopyBuffer` 进对应的
+  path A 槽。一条线程是诚实的形状：Vulkan 的队列提交不是线程安全的，而 `gpu::Device`
+  **只创建一个 compute 队列**（`gpu/vulkan/device.h`）——**这台机器上没有第二条队列可以藏拷贝**。
+* **一个槽的拷贝没退休就不还给读**（`CopyRing::take`）——对应实现约束里的
+  「有未完成拷贝的 slot 不能被淘汰」。环的大小 = QD × 请求大小 ≤ 216 MiB，在 512 MiB 的上限内。
+* 报出来的 `GB/s` 是**端到端**的：墙钟从第一个读发出到**最后一个拷贝退休**，
+  所以它和 `patha` 那一行可以直接比。
+
+`--copy` 这一段也补齐了 Q2 §12.2 里那句「`vkCmdCopyBuffer` 没测」。
+
+## 17. 定价表
+
+`build\io_dst_bench.exe --dst patha,pathb,stage --qd 8,24 --reads 96 --copy`，
+D: 上的一个 shard，请求 9,184 KiB（一个 manifest run），chunk 4 MiB。
+`patha` / `stage` 各 **5 次**（一次混跑 + 两次 ABAB 各两对），`pathb` 一次作参照。
+原始数据 `bench/results/s1/e1_stage_r{1,2,3}.csv`。
+
+| dst | QD | 端到端 GB/s（n=5） | sd | 每请求 mean ms | 每次拷贝 ms | `Backend::submit` µs | QD@issue |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `patha` | 8 | **4.7633** | 0.69% | 7.775 | — | **648–722** | 6.87 |
+| `pathb` | 8 | 4.7799 | — | 7.776 | — | 69.1 | 6.87 |
+| **`stage`** | 8 | **4.7689（+0.12%）** | 0.48% | 7.771（−0.05%） | **0.313** | 72–79 | 6.86 |
+| `patha` | 24 | **4.7040** | 0.40% | 21.021 | — | 648–669 | 22.02 |
+| `pathb` | 24 | 4.6771 | — | 21.146 | — | 79.8 | 22.04 |
+| **`stage`** | 24 | **4.7202（+0.35%）** | 0.16% | 20.880（−0.7%） | **0.294** | 80–88 | 22.04 |
+
+**判据 ≥5%，实测 +0.12% / +0.35%，而 A 臂自己的噪声底是 0.69%（QD 8）/ 0.40%（QD 24）。
+两档都在噪声里。**
+
+一个 expert（18.8 MB）的三种搬法：
+
+| 搬法 | ms | GB/s |
+|---|---:|---:|
+| CPU `memcpy` pinned → path A（Q2 §9 量的是 0.88） | **0.72** | 26.0 |
+| `vkCmdCopyBuffer` path B → path A，**自带一次 submit + wait** | **0.145** | 129.2 |
+| 同上，**8 个 region 一次 submit**（= 折进已有命令缓冲的形状） | **0.201 each** | 93.5 |
+
+两件事值得单独记：
+
+1. **拷贝比预想的便宜但不到 UMA 速率**：假设里写的是 200 GB/s ⇒ 0.1 ms，实测 **129 GB/s ⇒ 0.145 ms**。
+2. **批量反而更慢**（0.201 vs 0.145 each）——所以这条拷贝是**带宽受限，不是提交受限**，
+   「折进 MoE 命令缓冲省掉 submit」这个优化**买不到东西**，负的 submit overhead 就是这个意思。
+
+## 18. 为什么是 0 而不是 5 ms：机制
+
+Q2 §12 把 `Backend::submit` 搬上 8 条线程的时候，**已经把 704 µs 从关键路径上拿走了**。
+这张表给出它的直接证据：**`patha` 和 `pathb` 在发出时的实际队列深度相同**
+（6.87 / 6.87，22.02 / 22.04）。锁页的 CPU 时间还在（648–722 µs，一个字没少），
+但它现在完全跑在 8 条提交线程的并行度里——一个 8 深的队列，8 条线程，每条 0.7 ms，
+刚好把队列填满。**盘看不见它。**
+
+K1b §10.3/10.4 量到的「往 path A 写贵 ~6.8 ms/token」因此**不是提交成本本身**，
+而是提交成本在**突发**里的残留（Q2 §12.1：一层只有 ~9.6 个 chunk，每层重新爬坡再排空，
+`first-of-burst` 2.85 → 1.27 ms）。staging 能咬到的只有那 1.27 ms 里 path A 与 path B 的差，
+而它要付的是每 miss 0.145 ms 的拷贝**在唯一那条 compute 队列上**——
+每 token 21.3 次 miss = **3.1 ms/token 的队列占用**，对着 `moe gpu` 34.33 ms。
+**买的比卖的贵，而且买的那一头还在噪声里。**
+
+## 19. 预测对实测
+
+| | 预测 | 实测 |
+|---|---|---|
+| 端到端字节率（stage vs 直落 path A） | ≥+5% 才继续 | **+0.12%（QD 8）/ +0.35%（QD 24）**，噪声底 0.69% / 0.40% |
+| P0 每请求 mean 延迟 | 降 | **7.775 → 7.771 ms（−0.05%）**、21.021 → 20.880（−0.7%），都在噪声里 |
+| 尾延迟 | — | **变差**：max 10.07–10.46 → 10.5–12.5 ms（拷贝挂在尾上） |
+| `vkCmdCopyBuffer` 18.8 MB | 0.1 ms（200 GB/s） | **0.145 ms（129 GB/s）**；批量 0.201（93.5） |
+| `nvme_stall` −5 ms/token ⇒ 对话 +2.5%（砍半 +1.3%） | — | **没测**：闸写的是「bench 端到端 <5% 就停」，停了 |
+
+## 20. 结论 / 默认状态
+
+**NO-GO。运行时一行没动**——`storage/io_engine.*`、`runtime/engine.cpp`、slot 的填充路径
+全部保持今天的「直接读进 path A slot」。**默认状态 = 改动前的默认状态。**
+
+留在树里的是**仪器**：`io_dst_bench` 的 `stage` 档 / `--gpu-copy`，以及 `--copy` 里
+新的两行 `vkCmdCopyBuffer` 定价。**下一次有人说「staging 会不会更快」，
+这条命令 20 秒给出答案**，而且它现在也是**「这台机器只有一条 compute 队列」**这件事的
+第一个成文出处。
+
+要重开这一条，前提有两个，缺一不可：
+① **一条真正的 transfer 队列**（`Device` 今天只建一个 compute 队列），拷贝才可能不占用计算；
+② 一个**突发**形状的 bench——本节的 bench 是稳态背靠背发请求，
+它量不到 K1b 那 6.8 ms 里属于 `first-of-burst` 的部分。
+
+## 21. 重跑
+
+```powershell
+# ~20 s，纯盘 + 一个 Vulkan 设备，不占 GPU 很久
+build\io_dst_bench.exe --dst patha,pathb,stage --qd 8,24 --reads 96 --copy `
+    --csv bench\results\s1\e1_stage_r1.csv
+# ABAB（两对）
+build\io_dst_bench.exe --dst patha,stage,patha,stage --qd 8,24 --reads 96 `
+    --csv bench\results\s1\e1_stage_r2.csv
+```
