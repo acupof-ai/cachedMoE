@@ -469,3 +469,139 @@ y3「# Sizing an Expert Cache for a Long Conversation / ## 1. What the Cache Is 
   PPL 比值是两个已分叉位置上的概率质量，噪声比信号大。
   **下一步只有一件事**：导出 ≥ 64 个 teacher-forced step（或换一个过引擎的 PPL 路径），
   在上面重量 `off` / `stall1` / verify-only。在那之前不要再写 planner 策略代码。
+
+> **已完成，见第 9 节。** 64 步的 harness 做出来并量完了：`all` 的判决不变（×1.82 – ×2.29），
+> `stall1` 的质量判决**翻了**（×1.09 – ×1.11，在 ≤1.3 的 verify-only 带里）。
+> **本节 8.2 给 `stall1` 的 ×3.40、以及上面 (ii)/(iii) 的理由，以第 9 节为准。**
+
+---
+
+## 9. 64 步的 teacher-forced harness，判决重量（2026-09-18，Track Y step 4）
+
+**一句话：8.6 要的尺子做出来了，量完之后 `all` 的判决不变，`stall1` 的质量判决翻了。**
+64 个 teacher-forced 位置上，`all` 是 **×1.82–2.29**（仍然远在两条线外），
+而 `stall1` 是 **×1.09–1.11**——落在 **≤1.3 的 verify-only 带里**，不到 ≤1.05 的 GO 线。
+8.2 那张表给 `stall1` 的 **×3.40 是 8 步 harness 的假象**，本节取代它。
+
+### 9.1 harness：`traces/l3_64` + `tools/l3_ppl.py`
+
+| 件 | 路径 | 内容 |
+|---|---|---|
+| 导出器 | `tools/oracle_l3_ppl.py` | 64 token 自然语料 prompt + **64 个参考自己的 greedy 续写**，逐步导出 |
+| 驱动 | `tools/l3_ppl.py` | 三档各起一个进程**串行**跑 `run --teacher-force`，出表 + 判据 |
+| ctest | `tests/CMakeLists.txt` `bench.l3_ppl64` | `needs-model;needs-gpu;bench`，`RUN_SERIAL`，没有导出集就 skip |
+| 数据 | `traces/l3_64`（**.gitignore**，5.83 MB + 0.52 MB engram 表） | 65 条记录 |
+| 结果 | `bench/results/resident/ppl64/{off,all,stall1}.log` + `table.json`，`rep2/`、`rep3/` | |
+
+导出集的形状和 `tests/data/l3` 是同一个容器（`runtime/decode_state.h` 原样读），只改了一件事：
+**每步只存 logit 证据**（top-64 的 (id, logit)、整向量的 max/logsumexp/min、输入 token、argmax
+和 argmax 自己的 log 概率），**不存每步的 compressed KV 和 top-k**。
+Track Q 之后引擎自己产这两样（`Engine::produce_ced()`），从来不读它们，
+去掉之后 64 步的导出从 ~45 MB 变成 5.83 MB。prefill 记录一字没动——
+引擎仍然从它 seed 整个 prompt 的注意力状态。
+
+参考的续写是**参考自己逐步解码出来的**（`phase greedy`，和 `oracle.py --level l3` 同一个循环，
+所以每步的注意力状态是**增量**建起来的，和引擎一样）：
+prefill 179 s + 64 × 23.4 s = **1,687.8 s**。
+
+**试过并放弃的捷径，以及它牵出来的一条真事**（`phase prefill` + `phase steps` 留着当探针）：
+teacher forcing 本来一遍 128 token 的 prefill 就能一次拿到全部 65 个 next-token 分布
+（实测 **226.5 s**，比逐步快 7.4 倍，也是 F5 `quant2_l3.py` 的论证）。
+但它要求续写**事先已知**，而续写按定义就是参考的 greedy 路径。
+于是让**引擎**先自由跑一版候选（GPU 上 21 s），再用这一遍去**证明**它
+（位置 63 的 argmax 必须是 c[0]，位置 64+s 的必须是 c[s+1]）。实测 **5/64**。
+
+**但这不是引擎的锅。** 把同一遍原样跑在**参考自己逐步解码出来的**那 64 个 token 上
+（`traces/l3_64_verify`，同样 227.1 s），分叉的位置和分叉的 token **一模一样**：
+index 5，一遍式给 ` either`，参考自己逐步给的是 ` about`。两次对照合起来只能读成一句话：
+
+> **参考的「一遍 prefill 的第 j 个位置」和「逐步解码到第 j 个位置」不是同一个分布。**
+
+（compressor 结尾那个不完整分组的进位、indexer 在整段 compressed cache 上的 top-k 选择，
+在一遍式里都不是逐位置因果的。）所以一遍式在**中间位置**上给的 argmax
+**不能**当 greedy 路径的定义，它作为 teacher-forced PPL 的参考分布也是错的靶子——
+引擎是**逐步**解码的。顺带量到的对照：
+**引擎自由跑跟住参考逐步 greedy 12 个 token**，而一遍式只跟住 5 个——
+这一局**引擎比捷径准**。导出必须走 `phase greedy` 的理由就在这里。
+
+### 9.2 harness 自己的门：`off` 对参考
+
+导出集里存了参考自己在这 64 个位置上的平均 NLL（`reference_nll` = `max − logsumexp` 的均值）。
+比值全部是对 `off` 量的，所以先看 `off` 离参考多远：
+
+| | 参考（fp32 / CPU） | `off`（fp4 / GPU） |
+|---|---|---|
+| NLL | **0.597555** | **0.630051** |
+| PPL | **1.8177** | **1.8777**（**×1.0330**） |
+| top-1 | 64/64（定义如此） | **61/64** |
+
+**×1.0330 就是这把尺子的噪声底。** 下面的 `stall1` 是 ×1.09，只有噪声底的三倍——
+读得出来，但不要把 1.09 和 1.05 的差别当成什么大数字。
+
+### 9.3 结果（5,100 槽，`--warm-cache`，teacher-forced 64 步，一次一个引擎）
+
+`tools/l3_ppl.py --state traces/l3_64 --steps 64`
+
+| | 参考 | **off** | **all** | **stall1** |
+|---|---|---|---|---|
+| NLL | 0.597555 | **0.630051** | 1.456643 | **0.732431** |
+| PPL | 1.8177 | **1.8777** | **4.2915** | **2.0801** |
+| 对 off 的比 | 0.968 | 1.000 | **×2.286** | **×1.108** |
+| 对参考的 top-1 一致 | — | **61/64** | 42/64 | 51/64 |
+| tok/s | — | 3.19 | 8.75（×2.74） | 3.87（×1.21） |
+| cache hit | — | 0.8150 | 1.0000 | 1.0000 |
+| served | — | — | 10,536 (0.6859) | **13,825 (0.9001)** |
+| gate mass lost | — | — | **0.3054** | **0.0760** |
+| 只剩 shared expert 的 layer-step | — | — | 52 / 2,560 | **0 / 2,560** |
+| 后台 入队 / 过期丢弃 | — | — | 2,687 / 2,072 | 1,218 / 309 |
+| 后台补盘延迟 | — | — | 66.5 ms | 100.4 ms |
+| stall1 的 P0 | — | — | — | 1,624 次 / 8,937 ms |
+| nvme_stall 占比 | — | 64.5% | 3.0% | 1.0% |
+
+重复性（同一个导出集，三次独立进程）：
+
+| | 1 | 2 | 3 | 对 off |
+|---|---|---|---|---|
+| off | 1.8777 | 1.8777 | 1.8777 | 确定性 |
+| all | 4.2915 | 3.4223 | 4.0564 | **×1.82 – ×2.29** |
+| stall1 | 2.0801 | 2.0704 | 2.0453 | **×1.089 – ×1.108** |
+
+**尺子确实变准了**，三处可以直接看出来：
+
+1. **两档不再撞在同一个分叉点上。** 8 步时三档都是 6/8 或 8/8，分不开；
+   64 步时 top-1 是 **61 / 42 / 51**，`stall1` 和 `all` 中间隔了 9 个位置。
+2. **PPL 终于和 mass lost 同向了。** 8.2 里 `stall1` 的 mass lost 只有 `all` 的一半、PPL 却更高，
+   那是 harness 的自相矛盾；64 步上 0.0760 对 0.3054，PPL 是 ×1.11 对 ×2.29，**单调**。
+3. **`stall1` 三次跑进 0.0035 的带里**，`all` 三次跨 0.87 个 PPL——
+   后者的方差是真实的（后台补盘的时序），不是测量噪声，而且**三次都在 ×1.3 外**。
+
+### 9.4 判决（取代 8.6 的 (ii) 和 (iii)）
+
+* **(i) `all` 作为默认：NO-GO，不变。** 64 步上 **×1.82 – ×2.29**（判据 ×1.05 / ×1.3），
+  mass lost 0.3054，52 个 layer-step 只剩 shared expert，top-1 掉到 42/64。
+  8 步给的 ×2.56 落在这个区间里，**结论没有被 harness 改变**——第 3 节那条硬预算仍然是原因
+  （2,072 个过期丢弃 vs 2,687 个入队）。
+* **(ii) `stall1` 的质量判决翻了：从「×3.40，比 `all` 还差」变成「×1.09 – ×1.11，在 verify-only 带里」。**
+  8.6 已经怀疑过这一点（「同一张表上它的 mass lost 只有 `all` 的一半」），现在是量出来的。
+  但**作为默认仍然是 NO-GO**，理由和 8.6 的 (ii) 一样、只是现在两侧都有数：
+  质量差 ×1.09 > ×1.05 的线，速度这条 harness 上是 ×1.21（8.3 的四轮对话里是 ×1.07），
+  而买来的代价是 1,624 次 P0、8.9 s 的等待。
+* **(iii) 在 DSpark 上做 verify-only：卡点解除，判据这一侧过了。**
+  8.6 说「真正挡路的是没有能分辨 ×1.05 和 ×1.3 的 harness」——现在有了，
+  而且 `stall1` 这一档的 cache 状态**落在 ≤1.3 带内**（×1.09，mass lost 0.076，0 个 shared-only 层）。
+  也就是说 verify-only 的质量前提**成立**；下一步该量的是它的**收益**
+  （verify 批 M 上的 tok/s），不再是它的质量。
+  `all` 那一档仍然不能当 verify 的 cache 状态（×1.8 – ×2.3）。
+
+### 9.5 重跑
+
+```
+.venv/Scripts/python.exe tools/oracle_l3_ppl.py greedy \
+    --model D:/models/DeepSeek-V4.1-Flash --out traces/l3_64 --steps 64   # ~28 min, CPU
+.venv/Scripts/python.exe tools/l3_ppl.py --state traces/l3_64 --steps 64  # ~3 min, GPU
+ctest --test-dir build -R bench.l3_ppl64                                  # 同一件事
+```
+
+`index.json` 每步重写一次，所以中途杀掉留下的是一个**更短但完整、能加载**的导出集；
+`tools/l3_ppl.py` 会照实说它只有几步。导出集在 `traces/`（`.gitignore`），
+5.83 MB，可再生；committed 的只有两个脚本、ctest 一条和 `bench/results/resident/ppl64/` 的抄本。

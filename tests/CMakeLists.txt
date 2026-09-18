@@ -165,3 +165,37 @@ set_tests_properties("suite.kv_replay" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP kv_replay")
 add_test(NAME "suite.kvdisk" COMMAND deepmoe_tests "kvdisk.")
+
+# Track Y step 4 (docs/p4_resident_routing.md §9): the >= 64-step teacher-forced
+# PPL harness. `tools/l3_ppl.py` runs `deepmoe run --teacher-force` once per
+# routing mode, SERIALLY (one engine at a time on this machine), and prints
+# NLL / PPL / top-1 / served / gate-mass-lost plus the verdict against the
+# 1.05x / 1.30x bars. Its oracle set is ~6 MB and regenerable, so it lives in
+# the .gitignore'd traces/ rather than tests/data; without it -- or without a
+# build of `deepmoe` -- the driver prints "SKIP l3_ppl" and ctest reports a skip.
+#
+#   tools/oracle_l3_ppl.py prefill --out traces/l3_64
+#   deepmoe run --state traces/l3_64 --steps 80 --resident-only off --warm-cache
+#   tools/oracle_l3_ppl.py steps   --out traces/l3_64 --continuation cand.json
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(DEEPMOE_PYTHON "" CACHE FILEPATH
+    "python with torch/numpy for the tools/ oracles (default: .venv, then Python3)")
+if(DEEPMOE_PYTHON)
+    set(_l3ppl_py "${DEEPMOE_PYTHON}")
+elseif(EXISTS "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
+    set(_l3ppl_py "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
+elseif(Python3_Interpreter_FOUND)
+    set(_l3ppl_py "${Python3_EXECUTABLE}")
+endif()
+if(_l3ppl_py)
+    add_test(NAME "bench.l3_ppl64"
+             COMMAND "${_l3ppl_py}" "${CMAKE_SOURCE_DIR}/tools/l3_ppl.py"
+                     --state "${CMAKE_SOURCE_DIR}/traces/l3_64"
+                     --exe $<TARGET_FILE:deepmoe>
+                     --steps 64)
+    set_tests_properties("bench.l3_ppl64" PROPERTIES
+        LABELS "needs-model;needs-gpu;bench"
+        RUN_SERIAL TRUE
+        TIMEOUT 3600
+        SKIP_REGULAR_EXPRESSION "SKIP l3_ppl")
+endif()

@@ -1,0 +1,186 @@
+[INF] engine: deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+[INF] engine: manifest v2 'DeepSeek-V4.1-Flash', 1264 tensors, 475.24 GiB
+[INF] engine: 48 shards open, 475.25 GiB
+[INF] expert store: 1 slots x 18808832 (0.02 GiB) on 'host', table 99072 entries (6 per expert)
+[INF] planner: policy 'lru', cache 1 slots, 48 shards, lookahead d=4 K=12
+[INF] vulkan: AMD Radeon(TM) 8060S Graphics (compute family 1)
+[INF] gpu memory: path A device-local/host-visible (memory type 2)
+[INF] gpu memory: path B external_memory_host (memory type -1)
+[INF] engine: host heap budget 35.36 GiB, 0 B reported in use
+[INF] engine: cache budget auto -> 89.48 GiB (path A 62.26 GiB after 9.17 GiB pinned, path B 27.22 GiB of 53.12 GiB physical free; 134.02 GiB of commit available)
+[INF] pinned weights + expert cache: 105.92 GB wanted, 143.90 GB of commit available
+[INF] pinned weights: 9.85 GB wanted, 143.90 GB of commit available
+[INF] engine: pinned 884 tensors, 9.17 GiB in 2.9s (3.34 GB/s), 10 regions
+[INF] slab pool: path A full after 34 slabs (resource-exhausted: vkAllocateMemory(1880883200 B, type 2) failed (-2)), continuing on path B
+[INF] expert store: 5100 slots x 18808832 (89.34 GiB) on 'path A+B', table 99072 entries (6 per expert)
+[INF] planner: policy 'lru', cache 5100 slots, 48 shards, lookahead d=4 K=12
+[INF] engine: expert cache 5100 slots, 89.34 GiB (34 slabs on path A, 17 on path B)
+[INF] moe bridge: M6 L32 R1 sg32 dec0 hfp16 xglob hqP fp8 (7 slots: 6 fp4 routed + 1 fp8 shared)
+[INF] engine: gpu ready on AMD Radeon(TM) 8060S Graphics
+[INF] l3 state: 64 prompt tokens, 64 steps, 40 layers, cmp<=0 topk<=0
+[INF] engine: decode state loaded -- 64 prompt tokens, 64 reference steps, KV 3.54 MiB (prefill state seeded, every per-step tensor ours)
+warm      5100 experts resident after the P3 heat fill (20.8 s)
+model     deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+weights   48 shards, 475.25 GiB (direct read, no repack)
+io        iocp
+          io: 11414 req (11414 done, 0 failed, 0 cancelled), 33933 chunks, 105776695696 / 105776713728 bytes, busy 22.750 s, eff 4.65 GB/s, mean lat 176.991 ms, peak QD 8 / 32.0 MiB
+  p3_backfill    11414 req  100876.5 MiB
+pinned    884 tensors, 9.17 GiB in 10 regions
+store     expert store: 5100 slots (5100 resident, 0 filling, 0 free, 0 pinned)  lookups 0 hits 0 (0.000)  fills 5100/5100 ok  runs 10200/10200  evictions 0 (+0 guard-blocked)
+planner   planner: 0 layers, 0 requests (0 hits, 0 misses, 0.000), 0 evictions (+0 refused), prefetch 5100 issued / 0 used / 0 wasted, 0 stalls, 0 joined; backfill 5100 issued / 5100 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped
+gpu       AMD Radeon(TM) 8060S Graphics
+LOADED    the state the prompt left behind, from C:\Users\Asus\code\deepmoe-fin-y\traces/l3_64: the window KV, the compressed KV cache, the indexer key cache and the compressor's carried group, after 64 prompt tokens. Every per-step tensor is ours (design 7.4)
+submit    0.169 ms per submit+fence round trip; a decode step makes about 128 of them (design 13.1's dispatch bucket)
+
+step  in     -> out     wall      | the design 13.1 breakdown
+  0   16005 ->     14      89.2 ms | attn  40.1  moe gpu  26.0 host  0.7  stall     0.2  engram  4.6  tail  6.8  other  10.8  submits  41 | hit  51/ 51  nvme    0.0 MB  margin 0.0534
+                                  other = record  0.5 + submit  2.1 + bind  1.3 + fence wait  76.3 (GPU time inside the fences:  72.9); moe host = x  0.0 + act_quant  0.4 + table  0.3
+  1      16 ->   1884      89.4 ms | attn  40.3  moe gpu  27.1 host  0.6  stall     0.2  engram  4.1  tail  6.7  other  10.4  submits  41 | hit  73/ 73  nvme    0.0 MB  margin 0.2459
+                                  other = record  0.7 + submit  2.2 + bind  1.2 + fence wait  77.5 (GPU time inside the fences:  74.0); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  2    2359 ->    270      89.8 ms | attn  40.3  moe gpu  27.5 host  0.6  stall     0.2  engram  4.1  tail  6.7  other  10.4  submits  41 | hit  72/ 72  nvme    0.0 MB  margin 1.0081
+                                  other = record  0.5 + submit  2.0 + bind  1.2 + fence wait  78.3 (GPU time inside the fences:  74.6); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  3     611 ->   4326      90.8 ms | attn  41.3  moe gpu  27.9 host  0.5  stall     0.2  engram  4.2  tail  6.7  other  10.1  submits  41 | hit  69/ 69  nvme    0.0 MB  margin 1.1192
+                                  other = record  0.5 + submit  1.9 + bind  1.2 + fence wait  79.4 (GPU time inside the fences:  75.8); moe host = x  0.0 + act_quant  0.4 + table  0.1
+  4    4866 ->    270      95.4 ms | attn  42.8  moe gpu  31.3 host  0.5  stall     0.2  engram  4.2  tail  6.7  other   9.7  submits  41 | hit  83/ 83  nvme    0.0 MB  margin 0.5919
+                                  other = record  0.6 + submit  1.9 + bind  1.0 + fence wait  84.3 (GPU time inside the fences:  80.8); moe host = x  0.0 + act_quant  0.3 + table  0.1
+  5     943 ->    270      93.1 ms | attn  41.3  moe gpu  29.6 host  0.6  stall     0.2  engram  4.0  tail  6.7  other  10.7  submits  41 | hit  92/ 92  nvme    0.0 MB  margin 2.1574
+                                  other = record  0.5 + submit  2.2 + bind  1.2 + fence wait  81.8 (GPU time inside the fences:  77.6); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  6     270 ->  98109     104.0 ms | attn  45.0  moe gpu  35.4 host  0.6  stall     0.2  engram  5.1  tail  7.0  other  10.7  submits  41 | hit 102/102  nvme    0.0 MB  margin 1.2657
+                                  other = record  0.5 + submit  2.3 + bind  1.2 + fence wait  91.8 (GPU time inside the fences:  87.4); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  7   98109 ->    412     112.7 ms | attn  48.0  moe gpu  39.0 host  0.6  stall     0.2  engram  6.5  tail  6.8  other  11.6  submits  41 | hit  80/ 80  nvme    0.0 MB  margin 3.6425
+                                  other = record  0.9 + submit  2.5 + bind  1.2 + fence wait  99.4 (GPU time inside the fences:  93.8); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  8     412 ->    260      93.5 ms | attn  41.1  moe gpu  30.2 host  0.6  stall     0.2  engram  4.6  tail  6.7  other  10.1  submits  41 | hit  96/ 96  nvme    0.0 MB  margin 1.4261
+                                  other = record  0.5 + submit  2.2 + bind  1.3 + fence wait  81.2 (GPU time inside the fences:  78.0); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  9     260 ->   2445      94.3 ms | attn  41.1  moe gpu  30.9 host  0.6  stall     0.2  engram  4.2  tail  6.7  other  10.5  submits  41 | hit 109/109  nvme    0.0 MB  margin 0.0184
+                                  other = record  0.5 + submit  2.0 + bind  1.2 + fence wait  82.6 (GPU time inside the fences:  78.8); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 10   49059 ->     14      93.4 ms | attn  41.1  moe gpu  31.1 host  0.6  stall     0.2  engram  4.1  tail  6.7  other   9.6  submits  41 | hit 113/113  nvme    0.0 MB  margin 0.3041
+                                  other = record  0.5 + submit  1.8 + bind  1.2 + fence wait  81.7 (GPU time inside the fences:  78.9); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 11      14 ->    851      96.0 ms | attn  42.3  moe gpu  32.2 host  0.5  stall     0.2  engram  4.6  tail  6.7  other   9.4  submits  41 | hit 118/118  nvme    0.0 MB  margin 0.6832
+                                  other = record  0.5 + submit  2.0 + bind  1.2 + fence wait  84.5 (GPU time inside the fences:  81.2); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 12     270 ->  12334      97.0 ms | attn  41.4  moe gpu  32.9 host  0.6  stall     0.2  engram  5.0  tail  6.7  other  10.2  submits  41 | hit 143/143  nvme    0.0 MB  margin 0.7052
+                                  other = record  0.5 + submit  1.9 + bind  1.2 + fence wait  84.7 (GPU time inside the fences:  81.0); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 13    5037 ->    294      97.7 ms | attn  42.0  moe gpu  33.4 host  0.6  stall     0.2  engram  4.4  tail  6.8  other  10.4  submits  41 | hit 127/127  nvme    0.0 MB  margin 2.9526
+                                  other = record  0.5 + submit  2.2 + bind  1.2 + fence wait  85.9 (GPU time inside the fences:  82.2); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 14     294 ->    270      95.4 ms | attn  41.3  moe gpu  32.5 host  0.6  stall     0.2  engram  4.5  tail  6.7  other   9.5  submits  41 | hit 131/131  nvme    0.0 MB  margin 0.3458
+                                  other = record  0.5 + submit  2.4 + bind  1.1 + fence wait  83.8 (GPU time inside the fences:  80.5); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 15   34035 ->    305      95.6 ms | attn  42.0  moe gpu  32.3 host  0.5  stall     0.2  engram  4.5  tail  6.7  other   9.4  submits  41 | hit 120/120  nvme    0.0 MB  margin 0.3109
+                                  other = record  0.5 + submit  2.3 + bind  1.1 + fence wait  83.6 (GPU time inside the fences:  81.0); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 16     305 ->    270      96.3 ms | attn  41.1  moe gpu  33.1 host  0.6  stall     0.2  engram  4.2  tail  6.7  other  10.4  submits  41 | hit 137/137  nvme    0.0 MB  margin 2.4517
+                                  other = record  0.7 + submit  2.3 + bind  1.1 + fence wait  83.8 (GPU time inside the fences:  80.9); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 17     270 ->   7984      97.6 ms | attn  41.3  moe gpu  34.0 host  0.6  stall     0.2  engram  4.1  tail  6.7  other  10.6  submits  41 | hit 166/166  nvme    0.0 MB  margin 0.2742
+                                  other = record  0.4 + submit  2.2 + bind  1.2 + fence wait  86.0 (GPU time inside the fences:  82.1); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 18    6461 ->    294      96.1 ms | attn  41.3  moe gpu  33.2 host  0.6  stall     0.2  engram  4.2  tail  6.7  other   9.9  submits  41 | hit 142/142  nvme    0.0 MB  margin 6.1719
+                                  other = record  0.5 + submit  1.9 + bind  1.2 + fence wait  84.4 (GPU time inside the fences:  81.3); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 19     294 -> 102742     110.3 ms | attn  46.0  moe gpu  41.1 host  0.6  stall     0.2  engram  5.3  tail  6.8  other  10.3  submits  41 | hit 173/173  nvme    0.0 MB  margin 0.8836
+                                  other = record  0.6 + submit  2.2 + bind  1.2 + fence wait  98.3 (GPU time inside the fences:  93.8); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 20  102742 ->     14     112.1 ms | attn  46.7  moe gpu  40.8 host  0.7  stall     0.3  engram  6.1  tail  6.7  other  10.9  submits  41 | hit 148/148  nvme    0.0 MB  margin 1.3135
+                                  other = record  0.6 + submit  2.3 + bind  1.3 + fence wait  99.3 (GPU time inside the fences:  94.2); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 21      14 ->    305      96.8 ms | attn  41.6  moe gpu  33.2 host  0.6  stall     0.2  engram  4.4  tail  6.7  other  10.0  submits  41 | hit 157/157  nvme    0.0 MB  margin 0.2955
+                                  other = record  0.5 + submit  2.0 + bind  1.2 + fence wait  84.9 (GPU time inside the fences:  81.5); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 22     469 ->    851     584.1 ms | attn 523.9  moe gpu  34.9 host  0.6  stall     0.2  engram  4.1  tail  6.8  other  13.7  submits  41 | hit 164/164  nvme    0.0 MB  margin 0.6980
+                                  other = record  0.6 + submit  2.6 + bind  1.4 + fence wait 570.1 (GPU time inside the fences: 565.5); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 23     851 ->    611      96.6 ms | attn  41.9  moe gpu  32.7 host  0.7  stall     0.2  engram  4.2  tail  6.7  other  10.2  submits  41 | hit 149/149  nvme    0.0 MB  margin 5.2011
+                                  other = record  0.5 + submit  2.4 + bind  1.3 + fence wait  84.2 (GPU time inside the fences:  81.3); moe host = x  0.0 + act_quant  0.4 + table  0.3
+ 24     611 ->   4866      97.6 ms | attn  41.4  moe gpu  33.7 host  0.7  stall     0.2  engram  4.3  tail  6.7  other  10.6  submits  41 | hit 160/160  nvme    0.0 MB  margin 2.2189
+                                  other = record  0.5 + submit  1.8 + bind  1.2 + fence wait  85.5 (GPU time inside the fences:  81.8); moe host = x  0.0 + act_quant  0.4 + table  0.3
+ 25    4866 ->    943      99.0 ms | attn  42.0  moe gpu  34.7 host  0.7  stall     0.2  engram  4.1  tail  6.7  other  10.7  submits  41 | hit 161/161  nvme    0.0 MB  margin 3.5235
+                                  other = record  0.5 + submit  2.3 + bind  1.3 + fence wait  86.8 (GPU time inside the fences:  83.4); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 26     943 ->    436     101.6 ms | attn  42.5  moe gpu  36.9 host  0.7  stall     0.2  engram  4.4  tail  6.8  other  10.0  submits  41 | hit 187/187  nvme    0.0 MB  margin 0.6982
+                                  other = record  0.5 + submit  2.0 + bind  1.1 + fence wait  89.8 (GPU time inside the fences:  86.2); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 27     436 ->    412     101.7 ms | attn  42.5  moe gpu  36.6 host  0.7  stall     0.2  engram  4.3  tail  6.8  other  10.6  submits  41 | hit 174/174  nvme    0.0 MB  margin 6.3823
+                                  other = record  0.5 + submit  2.2 + bind  1.2 + fence wait  89.5 (GPU time inside the fences:  85.8); moe host = x  0.0 + act_quant  0.4 + table  0.3
+ 28     412 ->    260      99.5 ms | attn  41.9  moe gpu  35.1 host  0.6  stall     0.2  engram  4.2  tail  6.7  other  10.7  submits  41 | hit 176/176  nvme    0.0 MB  margin 1.8594
+                                  other = record  0.5 + submit  2.1 + bind  1.3 + fence wait  87.1 (GPU time inside the fences:  83.7); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 29     260 ->  12240     201.3 ms | attn  42.8  moe gpu  36.0 host  0.6  stall     0.2  engram  4.6  tail  6.8  other 110.3  submits  41 | hit 179/179  nvme    0.0 MB  margin 0.1208
+                                  other = record  0.6 + submit  2.3 + bind  1.1 + fence wait 188.1 (GPU time inside the fences:  85.6); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 30    9920 ->  27859     110.7 ms | attn  46.0  moe gpu  40.4 host  0.7  stall     0.2  engram  5.9  tail  6.2  other  11.3  submits  41 | hit 154/154  nvme    0.0 MB  margin 0.6667
+                                  other = record  0.5 + submit  2.3 + bind  1.2 + fence wait  98.2 (GPU time inside the fences:  92.5); moe host = x  0.0 + act_quant  0.4 + table  0.3
+ 31   27859 ->     14     201.7 ms | attn 141.0  moe gpu  38.0 host  0.7  stall     0.2  engram 61.1  tail  6.7  other -46.0  submits  41 | hit 181/181  nvme    0.0 MB  margin 2.8133
+                                  other = record  0.6 + submit  2.3 + bind  1.3 + fence wait 132.2 (GPU time inside the fences: 185.7); moe host = x  0.0 + act_quant  0.4 + table  0.3
+ 32      14 ->    270     102.5 ms | attn  42.8  moe gpu  37.1 host  0.6  stall     0.2  engram  4.2  tail  6.7  other  11.0  submits  41 | hit 206/206  nvme    0.0 MB  margin 1.5387
+                                  other = record  0.5 + submit  2.7 + bind  1.1 + fence wait  89.7 (GPU time inside the fences:  86.6); moe host = x  0.0 + act_quant  0.3 + table  0.2
+ 33     270 ->   5037     110.5 ms | attn  45.7  moe gpu  41.4 host  0.6  stall     0.2  engram  5.7  tail  6.8  other  10.0  submits  41 | hit 208/208  nvme    0.0 MB  margin 0.5977
+                                  other = record  0.5 + submit  2.2 + bind  1.2 + fence wait  98.7 (GPU time inside the fences:  93.9); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 34    2303 ->  17213     202.7 ms | attn 145.1  moe gpu  33.5 host  0.6  stall     0.2  engram  4.4  tail  6.7  other  12.1  submits  41 | hit 151/151  nvme    0.0 MB  margin 3.7196
+                                  other = record  0.6 + submit  2.2 + bind  1.2 + fence wait 190.0 (GPU time inside the fences: 185.4); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 35   17213 ->  61490     101.0 ms | attn  43.4  moe gpu  35.7 host  0.6  stall     0.2  engram  4.3  tail  6.7  other  10.1  submits  41 | hit 172/172  nvme    0.0 MB  margin 0.8039
+                                  other = record  0.5 + submit  2.2 + bind  1.2 + fence wait  89.5 (GPU time inside the fences:  85.8); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 36   61490 ->   2237     101.2 ms | attn  43.2  moe gpu  36.3 host  0.6  stall     0.2  engram  4.5  tail  6.9  other   9.5  submits  41 | hit 173/173  nvme    0.0 MB  margin 6.1346
+                                  other = record  0.5 + submit  1.9 + bind  1.1 + fence wait  89.5 (GPU time inside the fences:  86.4); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 37    2237 ->   2077     101.8 ms | attn  43.0  moe gpu  36.9 host  0.6  stall     0.2  engram  4.2  tail  6.7  other  10.0  submits  41 | hit 194/194  nvme    0.0 MB  margin 7.0348
+                                  other = record  0.5 + submit  2.0 + bind  1.1 + fence wait  90.0 (GPU time inside the fences:  86.7); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 38    2077 ->    295     102.8 ms | attn  43.4  moe gpu  37.8 host  0.6  stall     0.2  engram  4.2  tail  6.8  other   9.8  submits  41 | hit 192/192  nvme    0.0 MB  margin 3.3832
+                                  other = record  0.5 + submit  2.0 + bind  1.1 + fence wait  91.9 (GPU time inside the fences:  88.0); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 39     295 ->   4174     100.1 ms | attn  42.6  moe gpu  35.6 host  0.6  stall     0.2  engram  4.2  tail  6.8  other  10.1  submits  41 | hit 174/174  nvme    0.0 MB  margin 2.1748
+                                  other = record  0.5 + submit  1.9 + bind  1.1 + fence wait  88.9 (GPU time inside the fences:  85.0); moe host = x  0.0 + act_quant  0.3 + table  0.2
+ 40    4174 ->     16     102.8 ms | attn  43.0  moe gpu  37.4 host  0.6  stall     0.2  engram  4.3  tail  6.8  other  10.4  submits  41 | hit 192/192  nvme    0.0 MB  margin 0.9079
+                                  other = record  0.5 + submit  2.1 + bind  1.2 + fence wait  90.9 (GPU time inside the fences:  87.3); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 41      16 ->    660     127.4 ms | attn  52.2  moe gpu  47.7 host  0.7  stall     0.2  engram  6.8  tail  7.1  other  12.7  submits  41 | hit 166/166  nvme    0.0 MB  margin 0.0312
+                                  other = record  0.7 + submit  2.8 + bind  1.2 + fence wait 114.0 (GPU time inside the fences: 107.0); moe host = x  0.0 + act_quant  0.4 + table  0.3
+ 42    1162 ->   2339      99.9 ms | attn  42.8  moe gpu  35.4 host  0.6  stall     0.2  engram  4.2  tail  6.9  other   9.8  submits  41 | hit 181/181  nvme    0.0 MB  margin 0.7650
+                                  other = record  0.5 + submit  2.0 + bind  1.1 + fence wait  88.7 (GPU time inside the fences:  85.1); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 43    2339 ->    344     100.4 ms | attn  42.7  moe gpu  35.6 host  0.6  stall     0.2  engram  4.2  tail  6.8  other  10.3  submits  41 | hit 173/173  nvme    0.0 MB  margin 1.1945
+                                  other = record  0.5 + submit  2.2 + bind  1.1 + fence wait  88.8 (GPU time inside the fences:  85.1); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 44     344 ->    943     100.7 ms | attn  43.4  moe gpu  35.5 host  0.6  stall     0.2  engram  4.4  tail  6.5  other  10.0  submits  41 | hit 170/170  nvme    0.0 MB  margin 0.8518
+                                  other = record  0.6 + submit  2.0 + bind  1.1 + fence wait  88.9 (GPU time inside the fences:  85.4); moe host = x  0.0 + act_quant  0.4 + table  0.2
+ 45     943 ->    270     104.2 ms | attn  44.0  moe gpu  39.4 host  0.5  stall     0.2  engram  4.8  tail  6.3  other   8.9  submits  41 | hit 192/192  nvme    0.0 MB  margin 1.5225
+                                  other = record  0.5 + submit  2.1 + bind  1.0 + fence wait  93.8 (GPU time inside the fences:  89.8); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 46     270 ->   1957     107.8 ms | attn  44.2  moe gpu  41.3 host  0.5  stall     0.2  engram  5.5  tail  6.4  other   9.7  submits  41 | hit 215/215  nvme    0.0 MB  margin 0.8582
+                                  other = record  0.5 + submit  2.1 + bind  1.0 + fence wait  96.8 (GPU time inside the fences:  91.8); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 47   10436 ->    294     101.0 ms | attn  43.1  moe gpu  36.9 host  0.5  stall     0.2  engram  4.7  tail  6.4  other   9.2  submits  41 | hit 172/172  nvme    0.0 MB  margin 0.0308
+                                  other = record  0.6 + submit  2.0 + bind  0.9 + fence wait  90.5 (GPU time inside the fences:  86.4); moe host = x  0.1 + act_quant  0.4 + table  0.1
+ 48    1469 ->   1305     100.9 ms | attn  42.6  moe gpu  38.2 host  0.5  stall     0.2  engram  4.4  tail  6.3  other   8.7  submits  41 | hit 217/217  nvme    0.0 MB  margin 0.5477
+                                  other = record  0.5 + submit  2.1 + bind  0.9 + fence wait  90.6 (GPU time inside the fences:  87.2); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 49    1948 ->   1234     107.7 ms | attn  45.2  moe gpu  40.8 host  0.5  stall     0.2  engram  5.5  tail  6.4  other   9.0  submits  41 | hit 198/198  nvme    0.0 MB  margin 3.5306
+                                  other = record  0.6 + submit  2.0 + bind  1.0 + fence wait  96.8 (GPU time inside the fences:  92.4); moe host = x  0.1 + act_quant  0.4 + table  0.1
+ 50    1234 ->  16005     197.9 ms | attn 140.1  moe gpu  37.1 host  0.5  stall     0.2  engram  4.3  tail  6.5  other   9.3  submits  41 | hit 212/212  nvme    0.0 MB  margin 1.4434
+                                  other = record  0.5 + submit  1.8 + bind  1.0 + fence wait 188.1 (GPU time inside the fences: 183.6); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 51   16005 ->     16      99.4 ms | attn  42.1  moe gpu  36.8 host  0.6  stall     0.2  engram  4.7  tail  6.3  other   8.7  submits  41 | hit 200/200  nvme    0.0 MB  margin 0.7074
+                                  other = record  0.5 + submit  2.0 + bind  1.0 + fence wait  87.6 (GPU time inside the fences:  85.2); moe host = x  0.1 + act_quant  0.4 + table  0.1
+ 52      16 ->    983     102.6 ms | attn  43.7  moe gpu  38.9 host  0.5  stall     0.2  engram  4.3  tail  6.4  other   8.5  submits  41 | hit 210/210  nvme    0.0 MB  margin 0.9073
+                                  other = record  0.5 + submit  1.8 + bind  1.0 + fence wait  92.6 (GPU time inside the fences:  89.1); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 53     983 ->    344     107.8 ms | attn  44.9  moe gpu  41.5 host  0.5  stall     0.2  engram  4.9  tail  6.5  other   9.1  submits  41 | hit 225/225  nvme    0.0 MB  margin 1.1130
+                                  other = record  0.5 + submit  1.9 + bind  1.0 + fence wait  98.1 (GPU time inside the fences:  93.0); moe host = x  0.1 + act_quant  0.4 + table  0.1
+ 54     344 ->    943      98.0 ms | attn  41.6  moe gpu  36.5 host  0.6  stall     0.2  engram  4.4  tail  6.3  other   8.4  submits  41 | hit 209/209  nvme    0.0 MB  margin 0.4981
+                                  other = record  0.4 + submit  1.8 + bind  0.9 + fence wait  87.7 (GPU time inside the fences:  84.4); moe host = x  0.0 + act_quant  0.5 + table  0.1
+ 55     943 ->    270      96.6 ms | attn  41.3  moe gpu  36.9 host  0.6  stall     0.2  engram  4.2  tail  5.9  other   7.6  submits  41 | hit 229/229  nvme    0.0 MB  margin 0.4471
+                                  other = record  0.5 + submit  2.0 + bind  1.0 + fence wait  87.3 (GPU time inside the fences:  84.1); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 56    1192 ->    270      97.8 ms | attn  41.6  moe gpu  36.3 host  0.5  stall     0.2  engram  4.3  tail  6.3  other   8.5  submits  41 | hit 209/209  nvme    0.0 MB  margin 1.3720
+                                  other = record  0.4 + submit  2.1 + bind  1.0 + fence wait  87.4 (GPU time inside the fences:  84.3); moe host = x  0.1 + act_quant  0.4 + table  0.1
+ 57     270 ->  98109      96.5 ms | attn  40.8  moe gpu  36.7 host  0.6  stall     0.2  engram  4.3  tail  5.9  other   8.1  submits  41 | hit 229/229  nvme    0.0 MB  margin 0.1465
+                                  other = record  0.5 + submit  2.1 + bind  1.0 + fence wait  86.7 (GPU time inside the fences:  83.4); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 58    5218 ->    305     100.1 ms | attn  42.2  moe gpu  37.1 host  0.5  stall     0.2  engram  4.5  tail  6.4  other   9.2  submits  41 | hit 211/211  nvme    0.0 MB  margin 0.0878
+                                  other = record  0.5 + submit  1.9 + bind  1.1 + fence wait  89.0 (GPU time inside the fences:  85.7); moe host = x  0.1 + act_quant  0.4 + table  0.1
+ 59   37153 ->    294      99.8 ms | attn  41.8  moe gpu  37.1 host  0.5  stall     0.2  engram  5.0  tail  6.3  other   8.7  submits  41 | hit 204/204  nvme    0.0 MB  margin 3.2198
+                                  other = record  0.5 + submit  1.8 + bind  0.9 + fence wait  89.1 (GPU time inside the fences:  85.3); moe host = x  0.1 + act_quant  0.3 + table  0.1
+ 60     294 ->    270      98.9 ms | attn  42.4  moe gpu  38.0 host  0.5  stall     0.2  engram  4.5  tail  6.0  other   7.4  submits  41 | hit 223/223  nvme    0.0 MB  margin 2.9958
+                                  other = record  0.5 + submit  1.7 + bind  1.0 + fence wait  89.5 (GPU time inside the fences:  86.4); moe host = x  0.0 + act_quant  0.4 + table  0.1
+ 61     270 ->  98109      98.3 ms | attn  42.1  moe gpu  36.4 host  0.6  stall     0.2  engram  4.6  tail  6.4  other   7.9  submits  41 | hit 217/217  nvme    0.0 MB  margin 0.5129
+                                  other = record  0.5 + submit  2.0 + bind  1.0 + fence wait  87.4 (GPU time inside the fences:  84.9); moe host = x  0.1 + act_quant  0.4 + table  0.1
+ 62   12334 ->    769      97.7 ms | attn  41.4  moe gpu  37.2 host  0.6  stall     0.2  engram  4.3  tail  6.4  other   7.5  submits  41 | hit 220/220  nvme    0.0 MB  margin 0.1795
+                                  other = record  0.4 + submit  1.9 + bind  1.0 + fence wait  87.7 (GPU time inside the fences:  85.1); moe host = x  0.1 + act_quant  0.4 + table  0.1
+ 63   22567 ->    270      99.1 ms | attn  42.1  moe gpu  36.6 host  0.5  stall     0.2  engram  4.2  tail  6.3  other   9.0  submits  41 | hit 205/205  nvme    0.0 MB  margin 0.7366
+                                  other = record  0.6 + submit  1.9 + bind  0.9 + fence wait  88.2 (GPU time inside the fences:  85.1); moe host = x  0.1 + act_quant  0.4 + table  0.1
+
+tokens   14 1884 270 4326 270 270 98109 412 260 2445 14 851 12334 294 270 305 270 7984 294 102742 14 305 851 611 4866 943 436 412 260 12240 27859 14 270 5037 17213 61490 2237 2077 295 4174 16 660 2339 344 943 270 1957 294 1305 1234 16005 16 983 344 943 270 270 98109 305 294 270 98109 769 270 
+reference 16 2359 611 4866 943 270 98109 412 260 49059 14 270 5037 294 34035 305 270 6461 294 102742 14 469 851 611 4866 943 436 412 260 9920 27859 14 270 2303 17213 61490 2237 2077 295 4174 16 1162 2339 344 943 270 10436 1469 1948 1234 16005 16 983 344 943 1192 270 5218 37153 294 270 12334 22567 270
+42/64 tokens match the fp32 reference (teacher-forced)
+teacher-forced NLL 1.456643 over 64 steps -> PPL 4.2915
+route     resident-only=all over 2560 layer-steps
+  experts requested 15360  served 10536 (0.6859)  skipped 4824
+  gate mass lost    0.3054 mean over those layer-steps
+  shared-expert-only layer-steps 52
+  background enqueued 2687  refused 0  dropped stale 2072
+  background queue depth mean 60.8 peak 273 (window 2 steps, cap 24 experts)
+  background fetch latency mean 66.5 ms over 2687 completions
+  stall1 P0 fetches 0  0.0 ms total
+tokens 64  wall 7.316 s  8.748 tok/s  hit_rate 1.000
+  hot_gemv      3939.59 ms  ( 53.8%)
+  expert_hit    2317.23 ms  ( 31.7%)
+  attn_misc        0.00 ms  (  0.0%)
+  dispatch         0.00 ms  (  0.0%)
+  nvme_stall     222.67 ms  (  3.0%)
+  cpu_sync         0.36 ms  (  0.0%)
+  draft            0.00 ms  (  0.0%)
+  sample           0.00 ms  (  0.0%)
+  hot_bytes  545.46 GB   miss_bytes 28.27 GB   nvme_busy 1.29 s   eff 21.98 GB/s
