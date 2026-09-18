@@ -306,3 +306,166 @@ y0 和 y3 是纯噪声，y1/y2 是「看起来像但词是碎的」。这与 0.5
   这个假设已经被 7.2 证伪。要做的话，先量一次**真机上的 verify 位置 mass_lost**，
   而不是拿模拟的 0.0670 当前提。
 * 代码留下（默认 off）：开关、计数器和单测是量这件事的唯一方式，删了下次还要重写。
+
+> **第 8 节接着把 7.4 诊断的两条都修了**：mass lost 0.5195 → 0.2587，补盘延迟 5,594 ms → 97 ms，
+> 四轮对话都连贯；判据仍不过。下面 7.5 的「没试」项已经被第 8 节取代。
+
+---
+
+## 8. 修两个 bug 之后再量一遍（2026-09-18，Track Y step 3）
+
+**一句话：反馈螺旋修好了，判据还是不过。**
+第 7 节诊断的两条都是真的，也都修得动：`all` 的 gate mass lost 从 **0.5195 → 0.2587**，
+「整层只剩 shared expert」从 8.7% → 4.4%，后台补盘延迟从 **5,594 ms → 97 ms**，
+4 轮对话从「两轮纯噪声」变成**四轮都连贯**。
+但 L3 8 步 PPL 仍是 **×2.56**（判据 ×1.05 / ×1.3）。
+新加的 `stall1` 档把质量几乎修满（mass lost **0.0478**，0 个 shared-only 层，
+输出逐字跟着 `off` 走），代价是**它不快**：4.81 → 5.14 tok/s，只有 **×1.07**。
+
+### 8.1 改了什么（全部 additive，默认 off）
+
+| 修 | 路径 | 内容 |
+|---|---|---|
+| A. 需求戳 | `runtime/engine.cpp`、`store/planner.h` | 每个**被请求**的 top-k expert 都拿一个 LRU 戳，常驻与否都算 |
+| B. 有界队列 | `runtime/engine.cpp`、`runtime/resident_route.h` | 后台 miss 队列只留最近 N 步，最新优先，在飞上限 24 个 expert |
+| C. `stall1` | `runtime/engine.cpp`、`cli/*.cpp` | 每层最多阻塞在**一个**门控权重最高的缺席 expert 上（1 次 P0） |
+
+**A（需求戳）**。第 7.5 节把「让被跳过的 expert 也 touch LRU」列为未试，理由是
+「cache 会为从不被计算的 expert 腾位置」。真实的坑比这个细：常驻的被请求 expert 其实**一直**被
+`Planner::plan_layer` 的 `lookup` 戳着；漏的是**非常驻的那一半**——它没有槽位可戳，
+所以 `Planner::fetch` 用了**提交时刻**的 `next_stamp()`。于是一个晚了 5.6 s 才落盘的 expert
+**一进来就是 cache 里最新的东西**，转头把真正在用的踢掉。
+改法：请求时取一个 demand 戳存进 `rr_demand_`（key → stamp），交给 P3 fetch 当 `stamp_in`，
+`ExpertStore::settle_locked` 把它写进 `last_use_token`。
+落地的 expert 于是**按「什么时候被要过」计龄**，不是按「盘什么时候轮到它」。
+`Planner::demand_stamp()` 是为此开的一行公开访问器（和 `plan_layer` 的命中用同一把时钟）。
+
+**B（有界队列）**。第 7.2 节说 `refused` 的 45,592 是在飞上限挡的、「放开也没用」——
+这话对了一半。挡住的是**提交**，没挡住的是 **IoEngine 自己的 P3 队列**，那条队列没有上限：
+19,356 个 expert 排进去，盘满速 4.12 GB/s 地读，平均 5,594 ms 才落一个。
+一步 100 ms，所以盘读的是 **56 步以前**想要的东西。
+改法：miss 先进 Engine 自己的 `rr_queue_`（带步号），每层做三件事——
+把早于 `resident_queue_cutoff(token, N)` 的整条丢掉（不提交）、
+采一次队列深度、**从队尾（最新）**往外发，直到在飞 24 个 expert 为止。
+`DEEPMOE_RESIDENT_QUEUE_STEPS` 默认 **2**（`DEEPMOE_RESIDENT_QUEUE_EXPERTS` 默认 24）。
+盘搬的字节数不变，**变的是搬哪些字节**。
+
+**C（`stall1`）**。`DEEPMOE_ROUTE_RESIDENT_ONLY=stall1` / `--resident-only stall1`：
+一层里缺席的 expert 里挑**门控权重最高**的那一个，发一次 P0 并等它（18.8 MB / 4.5 GB/s ≈ 4 ms），
+其余照 `all` 跳过。实测每次 P0 花 **5.6 ms**。约 40 行。
+
+CPU 单测 `tests/test_resident_route.cpp` 加到 8 例（窗口截断的边界、0 窗口夹到 1、
+起步不下溢、窗口单调滑动；队列深度与 stall1 计数器的口径）。
+
+### 8.2 L3，teacher-forced 8 步，5,100 槽，`--warm-cache`
+
+`run --model ... --state tests/data/l3 --steps 8 --teacher-force --warm-cache --resident-only off|all|stall1`
+
+| | off | all（step 2） | **all（step 3）** | **stall1** |
+|---|---|---|---|---|
+| PPL | **1.5688** | 4.1273 (×2.63) | **4.0143 (×2.56)** | **5.3336 (×3.40)** |
+| 对 fp32 参考的 top-1 一致 | 8/8 | 6/8 | 6/8 | 6/8 |
+| tok/s | 2.72 | 9.68 | **10.20 (×3.75)** | 3.59 (×1.32) |
+| served | 0.739 (hit) | 0.7552 | 0.7516 | **0.8656** |
+| gate mass lost | — | 0.2232 | 0.2258 | **0.1061** |
+| 只剩 shared expert 的 layer-step | — | 2 / 320 | **0 / 320** | **0 / 320** |
+| 后台队列 深度均值 / 峰值 | — | 无界 | 25.0 / 95 | 5.9 / 45 |
+| 后台补盘延迟（P3 提交→落盘） | — | — | **67 ms** | 99 ms |
+| 丢弃的过期 miss | — | — | 22 | 0 |
+| stall1 的 P0 | — | — | — | 244 次 / 1,336 ms（5.5 ms 一次） |
+
+**这张表上 A/B 几乎没动 PPL**，因为这个 harness 的 cache 是 static heat 先验填满的、只跑 8 步：
+缺席集合由先验决定，反馈螺旋根本来不及转起来。它量到的是**先验有多准**，不是**策略有多稳**。
+
+重复性：`stall1` 三次跑出同一个 5.3336（确定性）；`all` 三次是 4.0143 / 4.5306 / 4.7539。
+两档**都在同样的第 6、7 步上分叉**（`off` 自己在第 6 步只有 90/240 命中，是最难的一步），
+所以 4.0 和 5.3 的差别是**两个已经分叉的位置上分配了多少概率质量**，
+8 步分不开 ×2.5 和 ×3.4。能读的只有一句：**都远在 ×1.05 和 ×1.3 之外。**
+`stall1` 的 mass lost 只有 `all` 的一半却 PPL 更高，就是这个 harness 分辨率不够的直接证据。
+
+### 8.3 4 轮对话（`y_turns.json`，每轮 64 token，5,100 槽，backfill 开）
+
+`tools/hitrate_bench.py --script bench/results/hitrate/y_turns.json --cache-slots 5100
+--env DEEPMOE_BACKFILL=1 --env DEEPMOE_ROUTE_RESIDENT_ONLY=off|all|stall1`，一次一个进程。
+结果在 `bench/results/resident/y3_off`、`y3_all`、`y3_stall1`。
+
+| 全程（≈20,000 个 layer-step） | off | all（step 2） | **all（step 3）** | **stall1** |
+|---|---|---|---|---|
+| decode tok/s（四轮） | 4.75 4.71 4.88 4.88 | 9.81 9.34 9.13 **2.34** | **9.06 9.02 8.96 8.92** | 4.88 5.22 5.36 5.09 |
+| 均值 / 相对 off | 4.81 | — | **8.99 (×1.87)** | 5.14 (**×1.07**) |
+| experts requested | 120,480 | 120,450 | 117,822 | 120,240 |
+| served | 105,284 (**0.874**) | 55,502 (0.4608) | 86,280 (**0.7323**) | 112,629 (**0.9367**) |
+| gate mass lost | 0 | **0.5195** | **0.2587** | **0.0478** |
+| 只剩 shared expert 的 layer-step | 0 | 1,753 (8.7%) | **859 (4.4%)** | **0** |
+| 后台 enqueued / refused / 过期丢弃 | — | 19,356 / 45,592 / — | 10,150 / 0 / **21,151** | 4,354 / 0 / 3,158 |
+| 后台队列 深度均值 / 峰值 | — | 无界 | 67.9 / 419 | 10.0 / 297 |
+| 后台补盘延迟（P3 提交→落盘） | — | — | **97.1 ms** | 172.3 ms |
+| 盘 平均延迟（全类，IoStats） | 24.6 ms | **5,594 ms** | **55.2 ms** | 43.0 ms |
+| 盘 有效带宽 | 3.97 GB/s | 4.12 GB/s | 3.91 GB/s | 3.69 GB/s |
+| 盘 搬的总字节 | 322 GB | 377 GB | **213 GB** | 292 GB |
+| 其中 P0 / P3 | 273 / 34 GB | 0.3 / 359 GB | 0.3 / 203 GB | **180 / 98 GB** |
+| cache eviction | 11,469 | 14,401 | **5,703** | 9,887 |
+
+三件事值得单独拎出来：
+
+1. **螺旋确实断了。** `all` 的 served 从 0.4608 回到 0.7323，eviction 从 14,401 掉到 5,703，
+   盘搬的字节少了 44%（377 → 213 GB）而质量翻倍好转。这正是 A+B 想要的：
+   盘不再为 56 步以前的需求做无用功，落地的 expert 也不再顶着假的「最新」戳踢掉在用的。
+2. **过期丢弃 21,151 vs 入队 10,150**：`all` 的需求仍然是盘的 2 倍——
+   第 3 节「后台补盘是有预算的」这条**没被推翻**，只是现在超出预算的部分是**明着丢最旧的**，
+   而不是排在队里把盘堵死。这也是为什么 `all` 的 mass lost 停在 0.26 而不是回到 0.067。
+3. **`stall1` 的账是反的。** 它把质量买回来了（0.0478 已经低于模拟里 exact-LRU 自己的缺席率
+   0.0674），但一层一次 P0 让 P0 流量回到 180 GB，tok/s 只剩 **×1.07**。
+   花 56.5 s 的 P0（10,055 次 × 5.6 ms）换 7% 速度，这笔交易本身就不成立，和 PPL 判据无关。
+
+### 8.4 输出：`all` 恢复连贯，`stall1` 逐字跟着 `off`
+
+第 7.3 节的两轮纯噪声没有了。四轮都成句、都有正确的 Markdown 结构。
+和 `off` 的贪心输出做公共前缀：
+
+| 轮 | all 与 off 的公共前缀 | stall1 与 off 的公共前缀 |
+|---|---|---|
+| y0 | 0 字符（标题就不同） | **137** |
+| y1 | 2 | **122** |
+| y2 | 15 | **152** |
+| y3 | 50 | **92** |
+
+`stall1` 四轮的**标题和小节结构与 `off` 完全一致**（y0「# Vulkan Timeline Semaphores:
+Cross-Queue Ordering and Out-of-Order Waits / ## 1. What a Timeline Semaphore Is」、
+y3「# Sizing an Expert Cache for a Long Conversation / ## 1. What the Cache Is Actually Holding」），
+之后才在措辞上分岔——这是贪心解码在近似平局上正常的分歧。
+`all` 则从第一句就换了骨架，y3 里还出现了 `runtime (exture, ...` 这种碎词，
+和 0.26 的 mass lost、4.4% 的 shared-only 层一致。
+
+### 8.5 试过 / 回退
+
+* **在飞上限 24（`DEEPMOE_RESIDENT_QUEUE_EXPERTS`）**：留着。`refused` 从 45,592 变成 **0**，
+  因为压力现在由窗口（丢最旧）承担，不再由闸门承担。
+* **窗口 N=2**：默认。没扫 N=1/4——`all` 的过期丢弃已经是入队的 2 倍，
+  N 再大只会把更旧的东西塞进同一条满带宽，N=1 只会多丢；这条曲线的两端都已经被 8.3 的账算死了。
+* **`stall1` 挑「权重最高的缺席者」**：没试过别的挑法（按层、按缺席个数）。
+  在 ×1.07 的 tok/s 面前是二阶的。
+* **让 `all` 在 4,500 槽上跑**：仍然没跑。5,100 的 mass lost 还有 0.26，更小只会更差。
+* **给 8 步以上的 teacher-forced PPL**：`tests/data/l3` 只导出了 8 个 greedy step，
+  这是现在**唯一**挡在判决前面的东西（见 8.6）。
+
+### 8.6 判决
+
+* **(i) `all` 作为默认：NO-GO。** PPL ×2.56（判据 ×1.05 / ×1.3），
+  gate mass lost 0.2587 ≈ 第 1 节尺子上的「top-6 变成 top-4」，4.4% 的 layer-step 只剩 shared expert。
+  比 step 2 好一倍，但好一倍的 0.52 还是 0.26。**两个 bug 不是全部原因**：
+  剩下的是第 3 节那条硬预算——需求仍是盘的 2 倍（21,151 丢弃 vs 10,150 入队）。
+* **(ii) `stall1`：NO-GO，但理由和 (i) 不同。**
+  质量这一侧它基本是干净的（mass lost 0.0478、0 个 shared-only 层、输出结构与 `off` 一致）；
+  **它输在收益**：4.81 → 5.14 tok/s，×1.07，换来 180 GB 的 P0 和 56.5 s 的等待。
+  L3 8 步给的 ×3.40 PPL **不该当作它的判据**——同一张表上它的 mass lost 只有 `all` 的一半，
+  8 步、两个分叉位置的 harness 分不开这两档（8.2）。
+  代码留着（默认 off）：它是目前唯一一个把 resident-only 的质量损失压到 exact-LRU 缺席率以下的档。
+* **(iii) 在 DSpark 上做 verify-only：仍然 NO-GO / 暂缓，但卡点换了。**
+  step 2 的卡点是「第 4 节的前提被证伪」；现在前提的**因果链**（补盘跟不上 → 质量掉）
+  已经被 A+B 修掉一半，verify-only 的 cache 状态会落在 `stall1`（0.048）和 `all`（0.259）之间。
+  真正挡路的已经不是路由策略，而是**没有能分辨 ×1.05 和 ×1.3 的 PPL harness**：
+  `tests/data/l3` 只有 8 个 teacher-forced step，两档在同样的第 6、7 步分叉，
+  PPL 比值是两个已分叉位置上的概率质量，噪声比信号大。
+  **下一步只有一件事**：导出 ≥ 64 个 teacher-forced step（或换一个过引擎的 PPL 路径），
+  在上面重量 `off` / `stall1` / verify-only。在那之前不要再写 planner 策略代码。

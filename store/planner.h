@@ -197,6 +197,12 @@ public:
     TokenIndex reserve_stamps(uint64_t n) {
         return access_clock_.fetch_add(n, std::memory_order_relaxed) + 1;
     }
+    // One demand stamp, the same clock `plan_layer`'s hits are touched with.
+    // Track Y (docs/p4_resident_routing.md section 8) stamps a REQUESTED but
+    // non-resident expert with this at request time and hands it to `fetch` as
+    // `stamp_in`, so the expert lands aged from when it was wanted rather than
+    // from when the drive got round to it.
+    TokenIndex demand_stamp() { return next_stamp(); }
     Result<StreamAdmit> admit_streamed(ExpertKey key, TokenIndex stamp, TimelineValue guard);
     Result<void> finish_streamed(const StreamAdmit& a, bool ok, TokenIndex stamp);
 

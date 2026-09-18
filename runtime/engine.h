@@ -43,8 +43,11 @@
 // which in one line, and docs/p2_decode.md §9 says it at length.
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <deque>
+#include <unordered_map>
 #include <cstdio>
 #include <functional>
 #include <memory>
@@ -377,7 +380,10 @@ public:
     //
     // Set by `DEEPMOE_ROUTE_RESIDENT_ONLY=off|all` at load, or by this setter
     // (the `--resident-only` CLI flag), which wins over the environment.
-    enum class ResidentOnly : uint8_t { Off = 0, All = 1 };
+    // `Stall1` is the middle ground: a layer may block on at most ONE expert --
+    // the highest-gate-weight missing one, a single P0 fetch of about 4 ms --
+    // and skips the rest exactly as `All` does.
+    enum class ResidentOnly : uint8_t { Off = 0, All = 1, Stall1 = 2 };
     // Fills every free slot from the static heat table at P3 and blocks until
     // the cache is full (or `timeout` passes), so a measurement can start from
     // a warm cache instead of the cold one `load_state` leaves. `begin_session`
@@ -583,6 +589,35 @@ private:
     uint32_t      rr_inflight_cap_ = 48;
     std::vector<ExpertKey> rr_pending_;   // this layer's dropped experts
     void flush_resident_backfill(uint32_t layer);
+
+    // --- Track Y step 3 (docs/p4_resident_routing.md section 8) -----------
+    //
+    // (B) The background miss queue is bounded to the most recent
+    // `rr_queue_steps_` decode steps and drained newest-first, and no more
+    // than `rr_outstanding_cap_` experts of it are allowed to be out at the
+    // drive at once. Step 2 handed every miss straight to the IoEngine, whose
+    // P3 queue is unbounded: the mean P3 latency was 5,594 ms against a 100 ms
+    // step, so the drive was saturated with demand 56 steps out of date.
+    // `DEEPMOE_RESIDENT_QUEUE_STEPS` sets the window (default 2).
+    struct RrMiss { ExpertKey key; uint64_t step; };
+    std::deque<RrMiss>    rr_queue_;             // oldest at the front
+    uint32_t              rr_queue_steps_    = 2;
+    uint32_t              rr_outstanding_cap_ = 24;   // ~ one step's drive budget
+    std::atomic<uint32_t> rr_outstanding_{0};
+    std::atomic<uint64_t> rr_fetch_ns_{0};       // P3 submit -> settle, summed
+    std::atomic<uint64_t> rr_fetch_done_{0};
+    //
+    // (A) The LRU stamp of every REQUESTED top-k expert, resident or not. A
+    // resident one is stamped by the planner's own lookup; a non-resident one
+    // has nothing to stamp, so its request stamp is parked here and handed to
+    // the P3 fetch as `stamp_in`, which is what `ExpertStore::settle_locked`
+    // writes into `last_use_token` when it lands. Without it the arrival was
+    // stamped at SUBMIT time, so a 5.6 s-late expert looked like the newest
+    // thing in the cache; with it, eviction ranks against when it was wanted.
+    std::unordered_map<uint64_t, uint64_t> rr_demand_;   // (layer<<16|expert) -> stamp
+    static uint64_t rr_pack(ExpertKey k) {
+        return (uint64_t(k.layer) << 16) | uint64_t(k.expert);
+    }
 
     bool          overlap_ = true;
     bool          handoff_ = true;       // gpu_prefill's experts go to the decode cache (§3)

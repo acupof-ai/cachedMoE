@@ -149,3 +149,34 @@ DEEPMOE_TEST(resident_route, stats_average_over_layer_steps) {
     CHECK_EQ(z.mass_lost(), 0.0);
     CHECK_EQ(z.served_frac(), 0.0);
 }
+
+// --- Track Y step 3: the bounded background miss queue -----------------------
+//
+// docs/p4_resident_routing.md section 8. The window is "the most recent N
+// steps", inclusive of the current one, so at N = 2 and step 9 the queue keeps
+// steps 8 and 9 and drops everything at 7 or below.
+DEEPMOE_TEST(resident_route, queue_cutoff_keeps_the_most_recent_n_steps) {
+    CHECK_EQ(resident_queue_cutoff(9, 2), 8u);
+    CHECK_EQ(resident_queue_cutoff(9, 1), 9u);      // only this step's misses
+    CHECK_EQ(resident_queue_cutoff(9, 10), 0u);     // the whole run so far
+    // A window of 0 would keep nothing at all and starve the drive; it is
+    // clamped to 1, which is what the env parser also refuses to set.
+    CHECK_EQ(resident_queue_cutoff(9, 0), 9u);
+    // No underflow in the first steps of a run.
+    CHECK_EQ(resident_queue_cutoff(0, 2), 0u);
+    CHECK_EQ(resident_queue_cutoff(1, 4), 0u);
+    // Monotone in the step: the window slides, it does not grow.
+    for (uint64_t t = 1; t < 50; ++t)
+        CHECK_EQ(resident_queue_cutoff(t, 3) - resident_queue_cutoff(t - 1, 3),
+                 t >= 3 ? 1u : 0u);
+}
+
+DEEPMOE_TEST(resident_route, queue_depth_and_stall1_counters) {
+    ResidentRouteStats s;
+    s.bg_depth_sum = 10 + 6 + 2; s.bg_depth_n = 3; s.bg_depth_peak = 10;
+    CHECK_CLOSE(static_cast<float>(s.bg_depth_mean()), 6.0f, 1e-6f);
+    s.bg_stale = 7; s.stall1_p0 = 40; s.stall1_ms = 160.0;
+    CHECK_CLOSE(static_cast<float>(s.stall1_ms / double(s.stall1_p0)), 4.0f, 1e-6f);
+    ResidentRouteStats z;
+    CHECK_EQ(z.bg_depth_mean(), 0.0);
+}

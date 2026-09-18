@@ -255,8 +255,9 @@ int cmd_serve(int argc, char** argv) {
     // Track Y. The flag wins over DEEPMOE_ROUTE_RESIDENT_ONLY, which the load read.
     if (!resident_only.empty()) {
         if (resident_only == "all")      engine.set_resident_only(runtime::Engine::ResidentOnly::All);
+        else if (resident_only == "stall1") engine.set_resident_only(runtime::Engine::ResidentOnly::Stall1);
         else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
-        else { std::fprintf(stderr, "--resident-only takes off|all, got '%s'\n", resident_only.c_str()); return 1; }
+        else { std::fprintf(stderr, "--resident-only takes off|all|stall1, got '%s'\n", resident_only.c_str()); return 1; }
     }
     runtime::SessionPool pool(engine, *tok, so, po);
     if (!po.disk.dir.empty()) {

@@ -82,6 +82,18 @@ inline ResidentRoute resident_route(const uint32_t* ids_in, const float* w_in, u
     return r;
 }
 
+// The background miss queue's staleness cutoff (docs/p4_resident_routing.md
+// section 8). The first measurement's P3 queue was unbounded: the drive saw
+// 19,356 experts at a mean latency of 5.6 s against a 100 ms step, so what it
+// was fetching was 56 steps out of date by the time it landed. Bounding the
+// queue to the most recent `keep_steps` steps and draining it newest-first is
+// what makes the drive spend its 4 GB/s on demand that is still current.
+// Returns the oldest step id worth keeping; anything below it is dropped.
+inline uint64_t resident_queue_cutoff(uint64_t now_step, uint32_t keep_steps) {
+    if (keep_steps == 0) keep_steps = 1;
+    return now_step >= keep_steps ? now_step - keep_steps + 1 : 0;
+}
+
 // What a run spent in resident-only mode. Printed at the end of a run.
 struct ResidentRouteStats {
     uint64_t layers        = 0;   // layer-steps routed in resident-only mode
@@ -92,6 +104,13 @@ struct ResidentRouteStats {
     double   mass_lost_sum = 0.0; // sum over layer-steps of the dropped gate mass
     uint64_t bg_enqueued   = 0;   // dropped experts handed to the P3 fetcher
     uint64_t bg_refused    = 0;   // ... that the cache would not admit right now
+    uint64_t bg_stale      = 0;   // ... dropped unissued: older than the queue window
+    uint64_t bg_depth_sum  = 0;   // queue depth sampled once per layer
+    uint64_t bg_depth_n    = 0;
+    uint32_t bg_depth_peak = 0;
+    uint64_t stall1_p0     = 0;   // stall1: single highest-weight experts fetched at P0
+    double   stall1_ms     = 0.0; // ... and the wall time that cost
+    double bg_depth_mean() const { return bg_depth_n ? double(bg_depth_sum) / double(bg_depth_n) : 0.0; }
     double mass_lost() const { return layers ? mass_lost_sum / double(layers) : 0.0; }
     double served_frac() const { return requested ? double(served) / double(requested) : 0.0; }
 };

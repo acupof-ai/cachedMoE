@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <future>
 #include <set>
 
 #include "core/align.h"
@@ -532,15 +533,32 @@ Result<void> Engine::init_gpu() {
     route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
     // docs/p4_hitrate.md §4: on unless DEEPMOE_MOE_OVERLAP=0 (the A/B switch).
     if (const char* e = std::getenv("DEEPMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
-    // Track Y (docs/p4_resident_routing.md): off | all. Anything else is off.
+    // Track Y (docs/p4_resident_routing.md): off | all | stall1. Anything else
+    // is off.
     if (const char* e = std::getenv("DEEPMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
         const std::string_view v{e};
         if (v == "all") resident_only_ = ResidentOnly::All;
+        else if (v == "stall1") resident_only_ = ResidentOnly::Stall1;
         else if (v != "off" && v != "0" && v != "")
-            log_warn("DEEPMOE_ROUTE_RESIDENT_ONLY={}: expected off|all, using off", v);
-        if (resident_only_ == ResidentOnly::All)
-            log_info("route: resident-only=all -- a layer's non-resident experts are "
-                     "dropped and renormalised, never waited for");
+            log_warn("DEEPMOE_ROUTE_RESIDENT_ONLY={}: expected off|all|stall1, using off", v);
+        if (resident_only_ != ResidentOnly::Off)
+            log_info("route: resident-only={} -- a layer's non-resident experts are "
+                     "dropped and renormalised{}",
+                     resident_only_ == ResidentOnly::All ? "all" : "stall1",
+                     resident_only_ == ResidentOnly::All
+                         ? ", never waited for"
+                         : ", except the single highest-weight one, which is fetched at P0");
+    }
+    // Track Y step 3: the background miss window, in decode steps.
+    if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
+        const int v = std::atoi(e);
+        if (v >= 1 && v <= 1024) rr_queue_steps_ = static_cast<uint32_t>(v);
+        else log_warn("DEEPMOE_RESIDENT_QUEUE_STEPS={}: expected 1..1024, keeping {}", e,
+                      rr_queue_steps_);
+    }
+    if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_EXPERTS"); e && *e) {
+        const int v = std::atoi(e);
+        if (v >= 1 && v <= 4096) rr_outstanding_cap_ = static_cast<uint32_t>(v);
     }
     if (const char* e = std::getenv("DEEPMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
     gpu_ready_ = true;
@@ -1120,13 +1138,61 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         kept_ids[i] = static_cast<uint16_t>(ids_raw[i]);
         kept_w[i]   = wts_raw[i];
     }
-    if (resident_only_ == ResidentOnly::All) {
+    if (resident_only_ != ResidentOnly::Off) {
         uint8_t res[16];
         uint32_t n_res = 0;
         for (uint32_t i = 0; i < topk; ++i) {
             res[i] = store_.resident(ExpertKey{static_cast<uint16_t>(L),
                                                static_cast<uint16_t>(ids_raw[i])}) ? 1 : 0;
             n_res += res[i];
+        }
+        // (A) Stamp the LRU for every REQUESTED expert, resident or not. The
+        // resident ones are stamped by the planner's `lookup` below; a
+        // non-resident one has no slot to stamp, so its request stamp is parked
+        // and handed to the P3 fetch, which is what lands in `last_use_token`
+        // when the expert arrives. docs/p4_resident_routing.md section 8: step
+        // 2 stamped the arrival at SUBMIT time, so an expert that was 5.6 s
+        // late looked like the newest thing in the cache and evicted something
+        // that was actually in use.
+        {
+            const TokenIndex ds = planner_.demand_stamp();
+            for (uint32_t i = 0; i < topk; ++i) {
+                if (res[i]) continue;
+                const ExpertKey k{static_cast<uint16_t>(L), static_cast<uint16_t>(ids_raw[i])};
+                rr_demand_[rr_pack(k)] = ds;   // a re-request overwrites with the newer stamp
+            }
+        }
+        // `stall1`: one P0 fetch a layer, for the missing expert that carries
+        // the most gate weight. At 18.8 MB / 4.5 GB/s that is about 4 ms
+        // against a 2 ms layer -- the cheap middle ground between waiting for
+        // up to six and waiting for none.
+        if (resident_only_ == ResidentOnly::Stall1 && n_res < topk) {
+            uint32_t best = topk;
+            float    bw   = -1.0f;
+            for (uint32_t i = 0; i < topk; ++i)
+                if (!res[i] && wts_raw[i] > bw) { bw = wts_raw[i]; best = i; }
+            if (best < topk) {
+                const ExpertKey k{static_cast<uint16_t>(L),
+                                  static_cast<uint16_t>(ids_raw[best])};
+                const TimePoint s0 = Clock::now();
+                auto pr  = std::make_shared<std::promise<bool>>();
+                auto fut = pr->get_future();
+                // Shared, not captured by reference: `fetch` calls the callback
+                // from the IoEngine thread on its own error paths too.
+                auto f = planner_.fetch(k, IoPriority::BlockingMiss, token_, L,
+                                        [pr](bool ok) { pr->set_value(ok); },
+                                        rr_demand_[rr_pack(k)]);
+                if (f) {
+                    if (fut.wait_for(std::chrono::seconds(30)) == std::future_status::ready &&
+                        fut.get() && store_.resident(k)) {
+                        res[best] = 1;
+                        ++n_res;
+                        ++rr_.stall1_p0;
+                        rr_demand_.erase(rr_pack(k));
+                    }
+                }
+                rr_.stall1_ms += ms_since(s0);
+            }
         }
         // Nothing routed is resident: the layer runs on its shared expert alone,
         // and the seven slots still need one valid pointer-table row, so borrow
@@ -1967,29 +2033,92 @@ Result<uint32_t> Engine::warm_cache_from_heat(std::chrono::seconds timeout) {
     return store_.stats().resident;
 }
 
+// (B) The bounded background miss queue (docs/p4_resident_routing.md section 8).
+//
+// Step 2 handed every miss straight to `Planner::fetch`, and the IoEngine's P3
+// queue has no bound: 19,356 experts went in, the drive ran flat out at 4.1
+// GB/s, and the mean P3 latency came out at 5,594 ms against a 100 ms step --
+// so what the drive was reading had been wanted 56 steps earlier, and the cache
+// it filled was a cache for a conversation that had already moved on.
+//
+// The fix is not more bandwidth (there is none) but a shorter queue: keep only
+// the misses of the most recent `rr_queue_steps_` steps, drop the rest
+// unissued, and drain what is left NEWEST-first with at most
+// `rr_outstanding_cap_` experts out at the drive at a time. The drive moves the
+// same number of bytes either way; this decides which bytes.
 void Engine::flush_resident_backfill(uint32_t layer) {
-    for (const ExpertKey& key : rr_pending_) {
-        if (io_.inflight_chunks(IoPriority::Backfill) >= rr_inflight_cap_) {
-            ++rr_.bg_refused;
+    if (resident_only_ == ResidentOnly::Off && rr_pending_.empty() && rr_queue_.empty()) return;
+    for (const ExpertKey& key : rr_pending_) rr_queue_.push_back(RrMiss{key, token_});
+    rr_pending_.clear();
+
+    const uint64_t cutoff = resident_queue_cutoff(token_, rr_queue_steps_);
+    while (!rr_queue_.empty() && rr_queue_.front().step < cutoff) {
+        rr_demand_.erase(rr_pack(rr_queue_.front().key));
+        rr_queue_.pop_front();
+        ++rr_.bg_stale;
+    }
+    rr_.bg_depth_sum += rr_queue_.size();
+    ++rr_.bg_depth_n;
+    if (rr_queue_.size() > rr_.bg_depth_peak)
+        rr_.bg_depth_peak = static_cast<uint32_t>(rr_queue_.size());
+
+    while (!rr_queue_.empty() &&
+           rr_outstanding_.load(std::memory_order_relaxed) < rr_outstanding_cap_ &&
+           io_.inflight_chunks(IoPriority::Backfill) < rr_inflight_cap_) {
+        const RrMiss m = rr_queue_.back();          // newest first
+        rr_queue_.pop_back();
+        // It landed on an earlier request, or is already being filled.
+        if (store_.resident(m.key) || store_.slot_of(m.key)) {
+            rr_demand_.erase(rr_pack(m.key));
             continue;
         }
-        auto f = planner_.fetch(key, IoPriority::Backfill, token_, layer);
-        if (f) ++rr_.bg_enqueued; else ++rr_.bg_refused;
+        TokenIndex stamp = 0;
+        if (auto it = rr_demand_.find(rr_pack(m.key)); it != rr_demand_.end()) stamp = it->second;
+        rr_outstanding_.fetch_add(1, std::memory_order_relaxed);
+        const TimePoint q0 = Clock::now();
+        auto f = planner_.fetch(m.key, IoPriority::Backfill, token_, layer,
+                                [this, q0](bool) {
+                                    // IoEngine dispatcher thread: counters only.
+                                    rr_outstanding_.fetch_sub(1, std::memory_order_relaxed);
+                                    rr_fetch_ns_.fetch_add(
+                                        static_cast<uint64_t>((Clock::now() - q0).count()),
+                                        std::memory_order_relaxed);
+                                    rr_fetch_done_.fetch_add(1, std::memory_order_relaxed);
+                                },
+                                stamp);
+        if (f) {
+            ++rr_.bg_enqueued;
+            rr_demand_.erase(rr_pack(m.key));
+        } else {
+            rr_outstanding_.fetch_sub(1, std::memory_order_relaxed);
+            ++rr_.bg_refused;
+        }
     }
-    rr_pending_.clear();
 }
 
 std::string Engine::resident_route_report() const {
     if (resident_only_ == ResidentOnly::Off && rr_.layers == 0)
         return std::string("route     resident-only=off\n");
+    const uint64_t done = rr_fetch_done_.load(std::memory_order_relaxed);
+    const double   lat  = done ? double(rr_fetch_ns_.load(std::memory_order_relaxed)) /
+                                 double(done) / 1e6
+                               : 0.0;
     return std::format(
-        "route     resident-only=all over {} layer-steps\n"
+        "route     resident-only={} over {} layer-steps\n"
         "  experts requested {}  served {} ({:.4f})  skipped {}\n"
         "  gate mass lost    {:.4f} mean over those layer-steps\n"
         "  shared-expert-only layer-steps {}\n"
-        "  background fetches enqueued {}  refused {}\n",
+        "  background enqueued {}  refused {}  dropped stale {}\n"
+        "  background queue depth mean {:.1f} peak {} (window {} steps, cap {} experts)\n"
+        "  background fetch latency mean {:.1f} ms over {} completions\n"
+        "  stall1 P0 fetches {}  {:.1f} ms total\n",
+        resident_only_ == ResidentOnly::Stall1
+            ? "stall1"
+            : (resident_only_ == ResidentOnly::All ? "all" : "off"),
         rr_.layers, rr_.requested, rr_.served, rr_.served_frac(), rr_.skipped,
-        rr_.mass_lost(), rr_.shared_only, rr_.bg_enqueued, rr_.bg_refused);
+        rr_.mass_lost(), rr_.shared_only, rr_.bg_enqueued, rr_.bg_refused, rr_.bg_stale,
+        rr_.bg_depth_mean(), rr_.bg_depth_peak, rr_queue_steps_, rr_outstanding_cap_,
+        lat, done, rr_.stall1_p0, rr_.stall1_ms);
 }
 
 std::span<const float> Engine::last_logits() const {
