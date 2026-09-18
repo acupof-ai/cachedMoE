@@ -540,7 +540,13 @@ Result<void> GpuMoeBridge::stage_batch_union(const BatchCall& call) {
     for (uint32_t m = 0; m < call.m; ++m)
         for (uint32_t s = 0; s < call.topk; ++s) {
             const uint32_t u = union_slot_of_[call.ids[size_t(m) * call.topk + s]];
-            w[size_t(m) * slots + u] = call.weights[size_t(m) * call.topk + s];
+            // `+=`, not `=`: the gate's own top-k has no duplicates, but Track Y's
+            // resident-only routing fills a skipped slot with a BORROWED resident
+            // id at weight 0 (runtime/resident_route.h), so one column can name the
+            // same expert twice. At M = 1 those are two runner slots and the sum is
+            // the kernel's; collapsed onto one union slot, an assignment would let
+            // the borrowed 0 clobber a real weight.
+            w[size_t(m) * slots + u] += call.weights[size_t(m) * call.topk + s];
         }
     for (uint32_t m = 0; m < call.m; ++m) w[size_t(m) * slots + n_routed] = 1.0f;
 

@@ -277,6 +277,44 @@ public:
     Result<GenerateResult> generate(std::span<const uint32_t> prompt,
                                     const GenerateOptions& opts);
 
+    // --- M1: one forward over M <= 6 consecutive tokens -------------------
+    //
+    // docs/p4_dspark_runtime.md §6.4. `forward_batch(p0, tokens)` appends
+    // `tokens` at positions p0 .. p0 + M - 1 to whatever the KV store already
+    // holds and runs ONE forward over all M through the gpu/shaders/mgt1_*
+    // kernels -- causal within the batch -- returning every position's logits
+    // row. It is the verify half of a speculative cycle; at M = 1 it is a
+    // second implementation of a decode step and the gate
+    // (`spec_forward.batch_matches_m1`) is exactly that comparison.
+    //
+    // What it does NOT do that `decode_step` does: sampling, the profiler's
+    // per-phase accounting, the MOE_OVERLAP split. Routing per position honours
+    // `set_resident_only` with the block phase taken from the position INSIDE
+    // the batch (mode `verify`: row 0 exact, rows 1.. resident-only), which is
+    // the shape a real verify batch has.
+    struct BatchRow {
+        uint32_t argmax = 0;
+        float    top1 = 0.0f, top2 = 0.0f;
+    };
+    // `logits`, when non-empty, must be [M][vocab] and receives every row.
+    Result<void> forward_batch(uint32_t p0, std::span<const uint32_t> tokens,
+                               std::span<BatchRow> rows, std::span<float> logits = {});
+    // Builds the M > 1 runner, its scratch and its tail buffers. Called by
+    // `forward_batch` on first use; separate so a caller can pay for it up front.
+    Result<void> init_batch(uint32_t m_cap);
+    bool batch_ready() const { return batch_ready_; }
+    // The union of the last forward_batch's routed experts, summed over layers,
+    // and the P0 bytes it missed.
+    uint32_t last_batch_union() const { return batch_union_; }
+    uint64_t last_batch_miss_bytes() const { return batch_miss_bytes_; }
+
+    // The window ring around a verify batch (docs/p3_dspark.md §3.5). Take the
+    // snapshot BEFORE `forward_batch` writes the M positions; `restore` undoes
+    // positions p0 + accepted + 1 .. p0 + m - 1 and the host state that went
+    // with them.
+    Result<void> snapshot_batch_ring(uint32_t p0, uint32_t m);
+    Result<void> restore_batch_ring(uint32_t p0, uint32_t accepted, uint32_t m);
+
     // --- Track P: conversations (docs/p3_chat.md) ------------------------------
     //
     // A session is the engine without an L3 export: an empty KV store sized for
@@ -450,6 +488,11 @@ public:
     // different token. Costs a host read of write-combining memory, so it is
     // not something to leave on.
     std::function<void(uint32_t, const DecodeLayer&)> layer_probe;
+    // The same hook for the M > 1 forward, called once a layer after the batch
+    // attention has landed: batch() then holds every row's ffn_norm output and
+    // gate ids, which is what a first-divergent-layer bisect between the two
+    // implementations needs.
+    std::function<void(uint32_t, const DecodeLayer&)> batch_probe;
 
 private:
     Result<void> open_model_files();
@@ -459,6 +502,18 @@ private:
     Result<void> embed_token(uint32_t token);
     Result<void> run_layer(uint32_t layer, uint32_t position, bool& apply_post,
                            LayerTiming& t);
+    // The M > 1 twin of `run_layer`. `st` carries everything the batch decided
+    // once (p0, m, the list index, the ced sources); this fills in the layer.
+    Result<void> run_layer_batch(uint32_t L, uint32_t p0, uint32_t m, bool& apply_post);
+    // One position's resident-only decision, shared by run_layer and the batch:
+    // `mode` is already resolved (no Verify), `ids_raw`/`wts_raw` are the gate's
+    // 16, and the effective top-k lands in `eff_ids`/`eff_w`. `kept_*` is the
+    // subset the planner should see. Returns false when the layer has nothing
+    // resident at all and must fall through to the ordinary demand path.
+    bool route_resident_only(uint32_t L, ResidentOnly mode, const uint32_t* ids_raw,
+                             const float* wts_raw, uint32_t topk, uint32_t* eff_ids,
+                             float* eff_w, uint16_t* kept_ids, float* kept_w,
+                             uint32_t& n_kept, std::vector<ExpertKey>& dropped);
     Result<DecodeStepResult> collapse_and_sample(uint32_t position);
 
     // --- the token loop's command buffer (design §7.1) ----------------------
@@ -535,6 +590,23 @@ private:
     Result<void>         sample_into(DecodeStepResult& res, uint32_t position);
     gpu::GpuBuffer       ffn_in_buf_{};   // the FFN input, in cached host pages (path B)
     gpu::MemoryAllocator* ffn_in_alloc_ = nullptr;
+
+    // --- M1: the M > 1 forward (docs/p4_dspark_runtime.md §6.4) -----------
+    gpu::MgtRunner       mgt_;
+    gpu::GpuScratch      bscratch_;
+    gpu::GpuBuffer       blogits_{};     // [M][vocab] fp32
+    gpu::GpuBuffer       bsample_{};     // [M] gpu::SampleOut
+    gpu::GpuBuffer       btopk_out_{};   // [M][kMgtTopKRecordWords]
+    gpu::GpuBuffer       btopk_hist_{};
+    bool                 batch_ready_ = false;
+    uint32_t             batch_cap_ = 0;
+    std::vector<uint32_t> batch_list_;   // layer -> BatchScratch list index
+    uint32_t             batch_union_ = 0;
+    uint64_t             batch_miss_bytes_ = 0;
+    KvStore::RingSnapshot batch_snap_{};
+    uint32_t             batch_snap_p0_ = 0, batch_snap_m_ = 0;
+    uint32_t             batch_snap_pub_ = 0;
+    size_t               batch_snap_hist_ = 0;
 
     KvCache        kv_;
     KvStore        kvs_;

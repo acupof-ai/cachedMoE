@@ -326,6 +326,10 @@ public:
     // The tracer does the stamping through the callback its owner bound; this
     // class only says which dispatch is starting and which is done. See
     // runtime/trace.h.
+    // The M = 1 candidate mask in the scratch is cached by (position, n_cmp).
+    // A batch forward, or a rollback, invalidates whatever it was built for.
+    void invalidate_candidates() { cand_position_ = ~0u; cand_n_cmp_ = 0; }
+
     void set_tracer(trace::Tracer* t) { tracer_ = t; }
     trace::Tracer* tracer() const { return tracer_; }
     uint64_t ffn_in_addr() const { return ffn_in_addr_ ? ffn_in_addr_ : buf_.u.addr; }

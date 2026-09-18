@@ -20,6 +20,7 @@ add_executable(deepmoe_tests
     test_gpu_prefill.cpp
     test_dspark_tree.cpp
     test_speculate.cpp
+    test_spec_forward.cpp
     test_tokenizer.cpp
     test_engram_tables.cpp
     test_kvstore.cpp
@@ -97,6 +98,13 @@ add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")
 set_tests_properties("suite.decode" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP decode")
+
+# M1: `Engine::forward_batch` against the M = 1 decode path on the 64-step L3
+# export, plus the ring rollback. Needs the model, a GPU and traces/l3_64.
+add_test(NAME "suite.spec_forward" COMMAND deepmoe_tests "spec_forward.")
+set_tests_properties("suite.spec_forward" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP spec_forward")
 
 # Long-context decode (4K / 17K) against Track M's exports, tie-aware. The
 # kernel case needs a GPU and traces/longctx; the engine case the model too.

@@ -783,6 +783,15 @@ void Engine::shutdown() {
     if (sample_.valid()) alloc_a_.free(sample_);
     if (topk_out_.valid()) alloc_a_.free(topk_out_);
     if (topk_hist_.valid()) alloc_a_.free(topk_hist_);
+    // M1: the M > 1 forward's own runner, scratch and tail buffers.
+    if (blogits_.valid()) alloc_a_.free(blogits_);
+    if (bsample_.valid()) alloc_a_.free(bsample_);
+    if (btopk_out_.valid()) alloc_a_.free(btopk_out_);
+    if (btopk_hist_.valid()) alloc_a_.free(btopk_hist_);
+    bscratch_.destroy();
+    mgt_.destroy();
+    batch_ready_ = false;
+    batch_cap_ = 0;
     scratch_.destroy();
     dec_.destroy();
     attn_.destroy();
@@ -1105,6 +1114,118 @@ void Engine::read_timestamps(DecodeStepResult& res) {
     res.breakdown.gpu_timed = true;
 }
 
+// The resident-only decision for ONE position, lifted out of `run_layer` so the
+// M > 1 forward can make it per row of the batch (docs/p4_resident_routing.md
+// §10: a verify batch routes row 0 exactly and the draft rows resident-only).
+// `mode` is already resolved -- `Verify` is a phase rule the caller applies, not
+// something this can see.
+bool Engine::route_resident_only(uint32_t L, ResidentOnly ro, const uint32_t* ids_raw,
+                                 const float* wts_raw, uint32_t topk, uint32_t* eff_ids,
+                                 float* eff_w, uint16_t* kept_ids, float* kept_w,
+                                 uint32_t& n_kept, std::vector<ExpertKey>& dropped) {
+    const TextConfig& c = model_cfg_.text;
+    uint8_t res[16];
+    uint32_t n_res = 0;
+    for (uint32_t i = 0; i < topk; ++i) {
+        res[i] = store_.resident(ExpertKey{static_cast<uint16_t>(L),
+                                           static_cast<uint16_t>(ids_raw[i])}) ? 1 : 0;
+        n_res += res[i];
+    }
+    // (A) Stamp the LRU for every REQUESTED expert, resident or not. The
+    // resident ones are stamped by the planner's `lookup` below; a
+    // non-resident one has no slot to stamp, so its request stamp is parked
+    // and handed to the P3 fetch, which is what lands in `last_use_token`
+    // when the expert arrives. docs/p4_resident_routing.md section 8: step
+    // 2 stamped the arrival at SUBMIT time, so an expert that was 5.6 s
+    // late looked like the newest thing in the cache and evicted something
+    // that was actually in use.
+    {
+        const TokenIndex ds = planner_.demand_stamp();
+        for (uint32_t i = 0; i < topk; ++i) {
+            if (res[i]) continue;
+            const ExpertKey k{static_cast<uint16_t>(L), static_cast<uint16_t>(ids_raw[i])};
+            rr_demand_[rr_pack(k)] = ds;   // a re-request overwrites with the newer stamp
+        }
+    }
+    // `stall1`: one P0 fetch a layer, for the missing expert that carries
+    // the most gate weight. At 18.8 MB / 4.5 GB/s that is about 4 ms
+    // against a 2 ms layer -- the cheap middle ground between waiting for
+    // up to six and waiting for none.
+    if (ro == ResidentOnly::Stall1 && n_res < topk) {
+        uint32_t best = topk;
+        float    bw   = -1.0f;
+        for (uint32_t i = 0; i < topk; ++i)
+            if (!res[i] && wts_raw[i] > bw) { bw = wts_raw[i]; best = i; }
+        if (best < topk) {
+            const ExpertKey k{static_cast<uint16_t>(L),
+                              static_cast<uint16_t>(ids_raw[best])};
+            const TimePoint s0 = Clock::now();
+            auto pr  = std::make_shared<std::promise<bool>>();
+            auto fut = pr->get_future();
+            // Shared, not captured by reference: `fetch` calls the callback
+            // from the IoEngine thread on its own error paths too.
+            auto f = planner_.fetch(k, IoPriority::BlockingMiss, token_, L,
+                                    [pr](bool ok) { pr->set_value(ok); },
+                                    rr_demand_[rr_pack(k)]);
+            if (f) {
+                if (fut.wait_for(std::chrono::seconds(30)) == std::future_status::ready &&
+                    fut.get() && store_.resident(k)) {
+                    res[best] = 1;
+                    ++n_res;
+                    ++rr_.stall1_p0;
+                    rr_demand_.erase(rr_pack(k));
+                }
+            }
+            rr_.stall1_ms += ms_since(s0);
+        }
+    }
+    // Nothing routed is resident: the layer runs on its shared expert alone,
+    // and the seven slots still need one valid pointer-table row, so borrow
+    // any expert this layer does have in the cache. With 5,100 slots over 40
+    // layers this is ~1e-4 of layer-steps (docs/p4_resident_routing.md §2).
+    // A layer with NOTHING resident cannot be expressed that way, so that
+    // one case falls through to the ordinary demand path.
+    uint32_t fill_id = ids_raw[0];
+    bool     usable  = true;
+    if (n_res == 0) {
+        usable = false;
+        for (uint32_t k = 0; k < c.n_routed_experts && !usable; ++k) {
+            const uint32_t e = (ids_raw[0] + k) % c.n_routed_experts;
+            if (store_.resident(ExpertKey{static_cast<uint16_t>(L),
+                                          static_cast<uint16_t>(e)})) {
+                fill_id = e;
+                usable  = true;
+            }
+        }
+    }
+    if (!usable) return false;
+    const ResidentRoute rr = resident_route(ids_raw, wts_raw, topk,
+                                            std::span<const uint8_t>(res, topk),
+                                            fill_id, eff_ids, eff_w);
+    ++rr_.layers;
+    rr_.requested     += topk;
+    rr_.served        += rr.kept;
+    rr_.skipped       += topk - rr.kept;
+    rr_.mass_lost_sum += rr.mass_lost;
+    rr_.shared_only   += rr.shared_only ? 1 : 0;
+    n_kept = 0;
+    for (uint32_t i = 0; i < topk; ++i) {
+        if (!res[i]) continue;
+        kept_ids[n_kept] = static_cast<uint16_t>(ids_raw[i]);
+        kept_w[n_kept]   = eff_w[i];
+        ++n_kept;
+    }
+    // The misses go to the background fetcher -- but only once this
+    // layer's slots are guarded, or a P3 eviction could take a slot the
+    // dispatch is about to read. Queued here, issued at the bottom of
+    // the layer (`flush_resident_backfill`).
+    for (uint32_t i = 0; i < topk; ++i)
+        if (!res[i])
+            dropped.push_back(ExpertKey{static_cast<uint16_t>(L),
+                                        static_cast<uint16_t>(ids_raw[i])});
+    return true;
+}
+
 Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
                                LayerTiming& t) {
     const TextConfig& c = model_cfg_.text;
@@ -1252,108 +1373,11 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     if (ro == ResidentOnly::Verify)
         ro = (token_ % kVerifyBlock) == 0 ? verify_first_ : verify_draft_;
     if (ro != ResidentOnly::Off) {
-        uint8_t res[16];
-        uint32_t n_res = 0;
-        for (uint32_t i = 0; i < topk; ++i) {
-            res[i] = store_.resident(ExpertKey{static_cast<uint16_t>(L),
-                                               static_cast<uint16_t>(ids_raw[i])}) ? 1 : 0;
-            n_res += res[i];
-        }
-        // (A) Stamp the LRU for every REQUESTED expert, resident or not. The
-        // resident ones are stamped by the planner's `lookup` below; a
-        // non-resident one has no slot to stamp, so its request stamp is parked
-        // and handed to the P3 fetch, which is what lands in `last_use_token`
-        // when the expert arrives. docs/p4_resident_routing.md section 8: step
-        // 2 stamped the arrival at SUBMIT time, so an expert that was 5.6 s
-        // late looked like the newest thing in the cache and evicted something
-        // that was actually in use.
-        {
-            const TokenIndex ds = planner_.demand_stamp();
-            for (uint32_t i = 0; i < topk; ++i) {
-                if (res[i]) continue;
-                const ExpertKey k{static_cast<uint16_t>(L), static_cast<uint16_t>(ids_raw[i])};
-                rr_demand_[rr_pack(k)] = ds;   // a re-request overwrites with the newer stamp
-            }
-        }
-        // `stall1`: one P0 fetch a layer, for the missing expert that carries
-        // the most gate weight. At 18.8 MB / 4.5 GB/s that is about 4 ms
-        // against a 2 ms layer -- the cheap middle ground between waiting for
-        // up to six and waiting for none.
-        if (ro == ResidentOnly::Stall1 && n_res < topk) {
-            uint32_t best = topk;
-            float    bw   = -1.0f;
-            for (uint32_t i = 0; i < topk; ++i)
-                if (!res[i] && wts_raw[i] > bw) { bw = wts_raw[i]; best = i; }
-            if (best < topk) {
-                const ExpertKey k{static_cast<uint16_t>(L),
-                                  static_cast<uint16_t>(ids_raw[best])};
-                const TimePoint s0 = Clock::now();
-                auto pr  = std::make_shared<std::promise<bool>>();
-                auto fut = pr->get_future();
-                // Shared, not captured by reference: `fetch` calls the callback
-                // from the IoEngine thread on its own error paths too.
-                auto f = planner_.fetch(k, IoPriority::BlockingMiss, token_, L,
-                                        [pr](bool ok) { pr->set_value(ok); },
-                                        rr_demand_[rr_pack(k)]);
-                if (f) {
-                    if (fut.wait_for(std::chrono::seconds(30)) == std::future_status::ready &&
-                        fut.get() && store_.resident(k)) {
-                        res[best] = 1;
-                        ++n_res;
-                        ++rr_.stall1_p0;
-                        rr_demand_.erase(rr_pack(k));
-                    }
-                }
-                rr_.stall1_ms += ms_since(s0);
-            }
-        }
-        // Nothing routed is resident: the layer runs on its shared expert alone,
-        // and the seven slots still need one valid pointer-table row, so borrow
-        // any expert this layer does have in the cache. With 5,100 slots over 40
-        // layers this is ~1e-4 of layer-steps (docs/p4_resident_routing.md §2).
-        // A layer with NOTHING resident cannot be expressed that way, so that
-        // one case falls through to the ordinary demand path.
-        uint32_t fill_id = ids_raw[0];
-        bool     usable  = true;
-        if (n_res == 0) {
-            usable = false;
-            for (uint32_t k = 0; k < c.n_routed_experts && !usable; ++k) {
-                const uint32_t e = (ids_raw[0] + k) % c.n_routed_experts;
-                if (store_.resident(ExpertKey{static_cast<uint16_t>(L),
-                                              static_cast<uint16_t>(e)})) {
-                    fill_id = e;
-                    usable  = true;
-                }
-            }
-        }
-        if (usable) {
-            const ResidentRoute rr = resident_route(ids_raw, wts_raw, topk,
-                                                    std::span<const uint8_t>(res, topk),
-                                                    fill_id, eff_ids, eff_w);
-            ++rr_.layers;
-            rr_.requested     += topk;
-            rr_.served        += rr.kept;
-            rr_.skipped       += topk - rr.kept;
-            rr_.mass_lost_sum += rr.mass_lost;
-            rr_.shared_only   += rr.shared_only ? 1 : 0;
+        rr_pending_.clear();
+        if (route_resident_only(L, ro, ids_raw, wts_raw, topk, eff_ids, eff_w, kept_ids, kept_w,
+                                n_kept, rr_pending_)) {
             ids = eff_ids;
             wts = eff_w;
-            n_kept = 0;
-            for (uint32_t i = 0; i < topk; ++i) {
-                if (!res[i]) continue;
-                kept_ids[n_kept] = static_cast<uint16_t>(ids_raw[i]);
-                kept_w[n_kept]   = eff_w[i];
-                ++n_kept;
-            }
-            // The misses go to the background fetcher -- but only once this
-            // layer's slots are guarded, or a P3 eviction could take a slot the
-            // dispatch is about to read. Queued here, issued at the bottom of
-            // the layer (`flush_resident_backfill`).
-            rr_pending_.clear();
-            for (uint32_t i = 0; i < topk; ++i)
-                if (!res[i])
-                    rr_pending_.push_back(ExpertKey{static_cast<uint16_t>(L),
-                                                    static_cast<uint16_t>(ids_raw[i])});
         }
     }
     MoeCall call;
@@ -1535,6 +1559,435 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         layer_probe(L, layer_);
     }
     apply_post = true;
+    return {};
+}
+
+
+// --- M1: the M > 1 forward (docs/p4_dspark_runtime.md §6.4) -----------------
+//
+// This is the second implementation of a decode step in this file, and that is
+// the point: the gate (`spec_forward.batch_matches_m1`) runs the same tokens
+// through both and asks for the same logits. What it shares with `run_layer` is
+// the routing decision (`route_resident_only`), the planner contract and the
+// command-buffer discipline; what it does not share is every kernel, because
+// the M > 1 kernels are a separate family (gpu/shaders/mgt1_*.slang).
+//
+// Three things here are weaker than the M = 1 path and are so on purpose:
+//   * no MOE_OVERLAP split -- the union's dispatch A cannot start on the
+//     resident half without a second union table;
+//   * the engram runs ROW BY ROW (`EngramRunner` holds one row plane per LAYER,
+//     not per position), which costs M submits on layers 1 and 14;
+//   * `idx_key_pub` is one value for the whole batch instead of one per
+//     position. It only matters on an index SOURCE layer whose ratio-2 group
+//     does not complete inside the batch, and `key_sel` already carries the
+//     per-query half of that choice.
+Result<void> Engine::init_batch(uint32_t m_cap) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (m_cap < 1 || m_cap > gpu::kMgtMaxM)
+        return fail(Err::InvalidArgument,
+                    std::format("forward_batch takes 1..{} tokens, not {}", gpu::kMgtMaxM, m_cap));
+    if (batch_ready_) {
+        if (m_cap <= batch_cap_) return {};
+        return fail(Err::FailedPrecondition,
+                    std::format("the batch scratch was built for M <= {}", batch_cap_));
+    }
+    const TextConfig& c = model_cfg_.text;
+    const std::string dir = gpu::default_shader_dir();
+    if (auto r = mgt_.create(device_, alloc_a_, dir); !r) return r;
+    // The batch activations. 6 columns of everything design §7.14 touches plus
+    // the per-query score planes; 128 MB is the round number above what the
+    // largest context this store can hold needs (the plane that grows with
+    // context is idx_score, M x max_context floats).
+    if (auto r = bscratch_.create(alloc_a_, 128ull << 20); !r) return r;
+    const uint32_t maxc = std::max<uint32_t>(max_context(), 1);
+    if (auto r = layer_.create_batch(mgt_, bscratch_, m_cap, maxc); !r) return r;
+
+    auto lg = alloc_a_.allocate(uint64_t(m_cap) * c.vocab_size * sizeof(float), true, true);
+    if (!lg) return std::unexpected(lg.error());
+    blogits_ = *lg;
+    auto sm = alloc_a_.allocate_host_coherent(
+        align_up(uint64_t(m_cap) * sizeof(gpu::SampleOut), 4096));
+    if (!sm) return std::unexpected(sm.error());
+    bsample_ = *sm;
+    std::memset(bsample_.host_ptr, 0, static_cast<size_t>(bsample_.bytes));
+
+    // `ced_src` of tests/test_gpu_layer.cpp: list 0 serves every window-only
+    // layer, list 1 + rank the rank-th index source and everything that reads it.
+    batch_list_.assign(c.num_hidden_layers, 0);
+    uint32_t rank = 0;
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+        if (c.is_index_source(L)) ++rank;
+        batch_list_[L] = c.compress_ratio(L) ? rank : 0u;
+    }
+    batch_cap_   = m_cap;
+    batch_ready_ = true;
+    log_info("engine: M>1 forward ready (M <= {}, {} lists, {} compressed positions)", m_cap,
+             layer_.batch().n_lists, layer_.batch().score_stride);
+    return {};
+}
+
+Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& apply_post) {
+    const TextConfig& c = model_cfg_.text;
+    BatchScratch& bb = layer_.batch();
+    const uint64_t hcstride = uint64_t(c.hc_mult) * c.hidden_size * sizeof(float);
+
+    auto view = kvs_.layer(L);
+    if (!view) return std::unexpected(view.error());
+
+    BatchStep st;
+    st.layer          = L;
+    st.p0             = p0;
+    st.m              = M;
+    st.compress_ratio = c.compress_ratio(L);
+    st.apply_hc_post  = apply_post;
+    st.kv             = *view;
+    st.list           = batch_list_[L];
+    if (!ced_.empty() && st.compress_ratio) {
+        const CedPlan& p = ced_[L];
+        st.run_compressor = p.is_kv_source;
+        st.run_indexer    = p.is_index_source;
+        auto cmp = kvs_.layer(p.cmp_src);
+        if (!cmp) return std::unexpected(cmp.error());
+        st.kv.cmp_kv = cmp->cmp_kv;
+        auto key = kvs_.layer(pub_index_k_);
+        if (!key) return std::unexpected(key.error());
+        st.idx_key_own = view->idx_key;
+        st.idx_key_pub = key->idx_key;
+        for (uint32_t m = 0; m < M; ++m)
+            if (st.run_compressor && ((p0 + m + 1) % st.compress_ratio) == 0) st.key_sel |= 1u << m;
+        // Publish before the layers below read: a source that completes anywhere
+        // inside the batch is what they score against, which is the batch's
+        // coarsening of the M = 1 rule (docs/p2_attention.md §9.3 item 5).
+        if (st.key_sel) pub_index_k_ = L;
+    }
+
+    // The engram writes into the residual stream BEFORE the block (design §2.1),
+    // so the previous layer's deferred hc_post has to be materialised first --
+    // the same order `run_layer` uses, one dispatch for all M rows.
+    if (engram_.has_layer(L)) {
+        if (auto r = cmd_open(); !r) return r;
+        if (apply_post) {
+            BatchStep prev = st;
+            prev.layer = L - 1;
+            if (auto r = layer_.record_close_batch(tok_cmd_, prev); !r) return r;
+        }
+        for (uint32_t m = 0; m < M; ++m) {
+            if (auto r = engram_.fetch(L, history_, p0 + m, &profiler_); !r) return r;
+            if (auto r = cmd_open(); !r) return r;
+            const DeviceAddress in  = (apply_post ? bb.xout.addr : bb.x.addr) + m * hcstride;
+            const DeviceAddress out = bb.x.addr + m * hcstride;
+            if (auto r = engram_.record(tok_cmd_, L, in, out); !r) return r;
+            // One row at a time: `EngramRunner` keeps ONE pair of row planes per
+            // layer, so row m's dispatch has to consume its rows before row m+1's
+            // fetch overwrites them. A batch engram is Track T's (docs/p4_mgt1.md §7).
+            if (auto r = cmd_flush(0); !r) return r;
+        }
+        apply_post       = false;
+        st.apply_hc_post = false;
+        st.bind_close    = false;
+    }
+
+    {
+        const TimePoint b0 = Clock::now();
+        if (auto r = layer_.bind_batch(weights_[L], st); !r) return r;
+        // `bind_batch` points hc_post's `A` at the batch scratch's own moe_y;
+        // the MoE output actually lives in the union runner's y, where the M = 1
+        // path's `set_moe_output` would have put it.
+        const uint64_t y = moe_.union_y_address();
+        uint64_t* s = mgt_.slots(gpu::MgtStage::MhcPost);
+        s[gpu::slot::kA] = y;
+        std::memcpy(mgt_.slots(gpu::MgtStage::MhcMix), s, gpu::kAttnStageStride);
+        std::memcpy(mgt_.slots(gpu::MgtStage::MhcFinal), s, gpu::kAttnStageStride);
+        if (st.bind_close) mgt_.slots(gpu::MgtStage::MhcClose)[gpu::slot::kA] = y;
+        bind_ms_ += ms_since(b0);
+    }
+    if (auto r = cmd_open(); !r) return r;
+    {
+        const TimePoint r0 = Clock::now();
+        if (auto r = layer_.record_attention_batch(tok_cmd_, st); !r) return r;
+        rec_ms_ += ms_since(r0);
+    }
+    if (auto r = cmd_flush(0); !r) return r;
+    if (auto r = layer_.verify_after_attention_batch(st); !r) return r;
+    if (batch_probe) batch_probe(L, layer_);
+
+    // --- routing, one decision per POSITION ---------------------------------
+    const uint32_t topk = c.num_experts_per_tok;
+    const auto* ids_all = static_cast<const uint32_t*>(bb.gate_ids.host);
+    const auto* wts_all = static_cast<const float*>(bb.gate_weights.host);
+    std::array<uint32_t, gpu::kMgtMaxM * 16> bids{};
+    std::array<float,    gpu::kMgtMaxM * 16> bwts{};
+    std::vector<uint16_t> near_ids;
+    std::vector<float>    near_scores;
+    near_ids.reserve(size_t(M) * 16);
+    near_scores.reserve(size_t(M) * 16);
+    rr_pending_.clear();
+    for (uint32_t m = 0; m < M; ++m) {
+        const uint32_t* ids_raw = ids_all + size_t(m) * 16;
+        const float*    wts_raw = wts_all + size_t(m) * 16;
+        for (uint32_t i = 0; i < 16; ++i) {
+            near_ids.push_back(static_cast<uint16_t>(ids_raw[i]));
+            near_scores.push_back(wts_raw[i]);
+        }
+        uint32_t eff_ids[16];
+        float    eff_w[16];
+        uint16_t kept_ids[16];
+        float    kept_w[16];
+        uint32_t n_kept = topk;
+        const uint32_t* ids = ids_raw;
+        const float*    wts = wts_raw;
+        // The DSpark block's phase inside a verify batch is the ROW, not the LRU
+        // clock: row 0 is the last accepted token and routes exactly, rows 1..
+        // are the drafts and route resident-only (docs/p4_resident_routing.md §10).
+        ResidentOnly ro = resident_only_;
+        if (ro == ResidentOnly::Verify) ro = (m == 0) ? verify_first_ : verify_draft_;
+        if (ro != ResidentOnly::Off &&
+            route_resident_only(L, ro, ids_raw, wts_raw, topk, eff_ids, eff_w, kept_ids, kept_w,
+                                n_kept, rr_pending_)) {
+            ids = eff_ids;
+            wts = eff_w;
+        }
+        for (uint32_t i = 0; i < topk; ++i) {
+            bids[size_t(m) * topk + i] = ids[i];
+            bwts[size_t(m) * topk + i] = wts[i];
+        }
+    }
+
+    GpuMoeBridge::BatchCall bc;
+    bc.layer   = L;
+    bc.m       = M;
+    bc.ids     = bids.data();
+    bc.weights = bwts.data();
+    bc.topk    = topk;
+    bc.x       = static_cast<const float*>(bb.u.host);
+    bc.y       = nullptr;
+    bc.hidden  = c.hidden_size;
+
+    // The union is what the batch READS, so it is what the planner is handed:
+    // one expert is fetched once for the whole batch, which is the whole point
+    // of the union dispatch (docs/p4_dspark_runtime.md §6.1).
+    const std::vector<uint32_t> un = moe_.union_experts(bc);
+    if (un.empty()) return fail(Err::Internal, "the verify batch routed to no expert");
+    std::vector<uint16_t> chosen(un.size());
+    std::vector<float>    chosen_w(un.size(), 0.0f);
+    for (size_t u = 0; u < un.size(); ++u) {
+        chosen[u] = static_cast<uint16_t>(un[u]);
+        for (uint32_t m = 0; m < M; ++m)
+            for (uint32_t i = 0; i < topk; ++i)
+                if (bids[size_t(m) * topk + i] == un[u])
+                    chosen_w[u] = std::max(chosen_w[u], bwts[size_t(m) * topk + i]);
+    }
+    layer_guard_pending_ = false;
+    {
+        const TimePoint g0 = Clock::now();
+        store::RouteDecision route;
+        route.layer       = L;
+        route.chosen      = std::span<const uint16_t>(chosen);
+        route.weights     = std::span<const float>(chosen_w);
+        route.near_ids    = std::span<const uint16_t>(near_ids);
+        route.near_scores = std::span<const float>(near_scores);
+        auto plan = planner_.plan_layer(route, token_);
+        if (!plan) return std::unexpected(plan.error());
+        timings_[L].hits       = static_cast<uint32_t>(plan->hits.size());
+        timings_[L].misses     = static_cast<uint32_t>(plan->misses.size());
+        timings_[L].miss_bytes = plan->miss_bytes;
+        batch_miss_bytes_ += plan->miss_bytes;
+        if (auto r = planner_.wait_layer(*plan); !r) return std::unexpected(r.error());
+        timings_[L].gate_ms = ms_since(g0);
+        for (uint32_t e : un)
+            if (!store_.resident(ExpertKey{static_cast<uint16_t>(L), static_cast<uint16_t>(e)}))
+                return fail(Err::Internal,
+                            std::format("layer {} expert {} is not resident after the verify "
+                                        "batch's gate; store: {}", L, e,
+                                        store_.stats().to_string()));
+    }
+    {
+        std::vector<uint32_t> slots(un.size());
+        for (uint32_t i = 0; i < slots.size(); ++i) slots[i] = i;
+        guard_layer(L, std::span<const uint32_t>(slots), un.data());
+    }
+    {
+        const TimePoint h0 = Clock::now();
+        if (auto r = moe_.stage_batch_union(bc); !r) return r;
+        timings_[L].moe_host_ms = ms_since(h0);
+    }
+    batch_union_ += moe_.union_info().routed;
+    if (auto r = cmd_open(); !r) return r;
+    {
+        const TimePoint r0 = Clock::now();
+        if (auto r = moe_.record_batch_union(tok_cmd_); !r) return r;
+        rec_ms_ += ms_since(r0);
+    }
+    // This buffer is the last reader of the layer's slots; the next layer's
+    // attention joins it, exactly as at M = 1.
+    open_guard_ = layer_guard_;
+    flush_resident_backfill(L);
+    profiler_.note_hot_bytes(layer_hot_bytes_[L]);
+    apply_post = true;
+    return {};
+}
+
+Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens,
+                                   std::span<BatchRow> rows, std::span<float> logits) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (weights_.empty()) return fail(Err::FailedPrecondition, "no layer weights resolved");
+    const TextConfig& c = model_cfg_.text;
+    const uint32_t M = static_cast<uint32_t>(tokens.size());
+    if (M == 0 || M > gpu::kMgtMaxM)
+        return fail(Err::InvalidArgument,
+                    std::format("forward_batch takes 1..{} tokens, not {}", gpu::kMgtMaxM, M));
+    if (rows.size() < M)
+        return fail(Err::InvalidArgument, std::format("{} rows for a batch of {}", rows.size(), M));
+    if (!logits.empty() && logits.size() < size_t(M) * c.vocab_size)
+        return fail(Err::InvalidArgument,
+                    std::format("the logits span holds {} floats; a batch of {} needs {}",
+                                logits.size(), M, size_t(M) * c.vocab_size));
+    if (!produce_ced_)
+        return fail(Err::FailedPrecondition,
+                    "forward_batch produces design §7.4's state itself; the LOADED per-step "
+                    "seeding has no batch form (set_produce_ced(true))");
+    if (auto r = init_batch(std::max(M, batch_cap_)); !r) return r;
+    if (uint64_t(p0) + M > max_context())
+        return fail(Err::ResourceExhausted,
+                    std::format("a batch at {}..{} past the {}-position context", p0, p0 + M - 1,
+                                max_context()));
+
+    const TimePoint t_start = Clock::now();
+    if (history_.size() < size_t(p0) + M) history_.resize(size_t(p0) + M, 0);
+    for (uint32_t m = 0; m < M; ++m) history_[p0 + m] = tokens[m];
+
+    timings_.assign(c.num_hidden_layers, LayerTiming{});
+    submits_ = 0;
+    rec_ms_ = sub_ms_ = wait_ms_ = bind_ms_ = 0.0;
+    batch_union_ = 0;
+    batch_miss_bytes_ = 0;
+    tok_first_ = true;
+    if (tok_open_) { (void)tok_cmd_.end(); tok_open_ = false; }
+    layer_.invalidate_candidates();
+
+    // Once for the batch, not once a layer: the counts every layer may read are
+    // the LAST position's, and the window half of every list is the same shape
+    // for all M queries (docs/p4_dspark_runtime.md §6.4 item 3).
+    if (auto r = prepare_ced(p0 + M - 1); !r) return r;
+    BatchScratch& bb = layer_.batch();
+    write_batch_window_lists(bb, c.sliding_window, p0, M);
+
+    // The M embeddings, in the layout `Engine::embed_token` writes for M = 1.
+    {
+        std::vector<uint16_t> row(c.hidden_size);
+        std::vector<float>    wide(c.hidden_size);
+        auto* x = static_cast<float*>(bb.x.host);
+        for (uint32_t m = 0; m < M; ++m) {
+            const uint32_t tok = tokens[m];
+            if (tok >= c.vocab_size)
+                return fail(Err::OutOfRange, std::format("token {} >= vocab {}", tok, c.vocab_size));
+            std::memcpy(row.data(),
+                        static_cast<const std::byte*>(embed_->data_host) +
+                            uint64_t(tok) * c.hidden_size * 2,
+                        size_t(c.hidden_size) * 2);
+            for (uint32_t d = 0; d < c.hidden_size; ++d) wide[d] = bf16_to_f32(row[d]);
+            float* dst = x + size_t(m) * c.hc_mult * c.hidden_size;
+            for (uint32_t j = 0; j < c.hc_mult; ++j)
+                std::memcpy(dst + size_t(j) * c.hidden_size, wide.data(),
+                            size_t(c.hidden_size) * sizeof(float));
+            auto* mix = static_cast<float*>(bb.mix_a.host) + size_t(m) * 32;
+            std::memset(mix, 0, 128);
+            mix[0] = 1.0f;
+        }
+    }
+
+    bool apply_post = false;
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
+        if (auto r = run_layer_batch(L, p0, M, apply_post); !r) {
+            if (tok_open_) { (void)tok_cmd_.end(); tok_open_ = false; }
+            return r;
+        }
+
+    // The tail runs the last layer's hc_post, the collapse, the model norm, the
+    // head and the per-row argmax. `record_tail_batch` does the close itself, so
+    // there is no `record_close_batch` for layer 39.
+    BatchStep last;
+    last.layer = c.num_hidden_layers - 1;
+    last.p0    = p0;
+    last.m     = M;
+    DecodeLayer::BatchTail bt;
+    bt.norm_w = norm_w_;
+    bt.head_w = head_w_;
+    bt.logits = blogits_.dev_addr;
+    bt.sample = bsample_.dev_addr;
+    if (auto r = cmd_open(); !r) return r;
+    if (auto r = layer_.record_tail_batch(tok_cmd_, last, bt); !r) return r;
+    if (auto r = cmd_flush(0); !r) return r;
+    profiler_.note_hot_bytes(uint64_t(c.vocab_size) * c.hidden_size * 2);
+
+    for (uint32_t m = 0; m < M; ++m) {
+        gpu::SampleOut out{};
+        std::memcpy(&out, static_cast<const std::byte*>(bsample_.host_ptr) + size_t(m) * sizeof out,
+                    sizeof out);
+        if (out.rows != c.vocab_size)
+            return fail(Err::Internal,
+                        std::format("verify row {} scanned {} rows, not the {}-wide vocabulary", m,
+                                    out.rows, c.vocab_size));
+        rows[m].argmax = out.token;
+        rows[m].top1   = out.top1;
+        rows[m].top2   = out.top2;
+    }
+    if (!logits.empty())
+        std::memcpy(logits.data(), blogits_.host_ptr, size_t(M) * c.vocab_size * sizeof(float));
+    ++token_;
+    (void)t_start;
+    return {};
+}
+
+Result<void> Engine::snapshot_batch_ring(uint32_t p0, uint32_t m) {
+    const TextConfig& c = model_cfg_.text;
+    if (m == 0 || m > gpu::kMgtMaxM) return fail(Err::InvalidArgument, "snapshot of 0 positions");
+    std::vector<uint32_t> slots(m), layers(c.num_hidden_layers);
+    for (uint32_t i = 0; i < m; ++i) slots[i] = (p0 + i) % c.sliding_window;
+    for (uint32_t l = 0; l < c.num_hidden_layers; ++l) layers[l] = l;
+    auto s = kvs_.snapshot_ring(slots, layers);
+    if (!s) return std::unexpected(s.error());
+    batch_snap_      = std::move(*s);
+    batch_snap_p0_   = p0;
+    batch_snap_m_    = m;
+    batch_snap_pub_  = pub_index_k_;
+    batch_snap_hist_ = history_.size();
+    return {};
+}
+
+Result<void> Engine::restore_batch_ring(uint32_t p0, uint32_t accepted, uint32_t m) {
+    if (batch_snap_m_ == 0 || batch_snap_p0_ != p0 || batch_snap_m_ != m)
+        return fail(Err::FailedPrecondition,
+                    std::format("no ring snapshot for p0 {} m {} (have p0 {} m {})", p0, m,
+                                batch_snap_p0_, batch_snap_m_));
+    if (accepted + 1 >= m) {              // nothing was rejected
+        pub_index_k_ = batch_snap_pub_;
+        return {};
+    }
+    // Positions p0 + accepted + 1 .. p0 + m - 1: the accepted drafts stay, and
+    // so does the correction's own slot -- the next cycle's row 0 rewrites it
+    // with the corrected token (docs/p3_dspark.md §3.5).
+    KvStore::RingSnapshot sub;
+    sub.latent_dim = batch_snap_.latent_dim;
+    sub.layer      = batch_snap_.layer;
+    const uint32_t row  = batch_snap_.latent_dim;
+    const uint32_t srow = row / 32;
+    std::vector<uint32_t> take;
+    for (uint32_t i = accepted + 1; i < m; ++i) take.push_back(i);
+    for (uint32_t i : take) sub.slot.push_back(batch_snap_.slot[i]);
+    sub.val.resize(size_t(sub.layer.size()) * take.size() * row);
+    sub.scale.resize(size_t(sub.layer.size()) * take.size() * srow);
+    for (size_t li = 0; li < sub.layer.size(); ++li)
+        for (size_t si = 0; si < take.size(); ++si) {
+            const size_t src = li * batch_snap_.slot.size() + take[si];
+            const size_t dst = li * take.size() + si;
+            std::memcpy(sub.val.data() + dst * row, batch_snap_.val.data() + src * row, row);
+            std::memcpy(sub.scale.data() + dst * srow, batch_snap_.scale.data() + src * srow, srow);
+        }
+    if (auto r = kvs_.restore_ring(sub); !r) return r;
+    pub_index_k_ = batch_snap_pub_;
+    if (history_.size() > size_t(p0) + accepted + 2) history_.resize(size_t(p0) + accepted + 2);
+    layer_.invalidate_candidates();
     return {};
 }
 
