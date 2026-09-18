@@ -59,7 +59,7 @@ void stage_scores(uint gid, uint m, uint tid) {
     const float dot = row_reduce(acc, tid, sublane);
     if (live && sublane == 0) {
         const float z = dot / pc.gate_temp;
-        const float sp = (z > 20.0f) ? z : log(1.0f + exp(z));
+        const float sp = softplus_stable(z);        // attn_common.slang
         *(float*)(Ptr[kScores] + ((uint64_t)m * pc.n_experts + row) * 4) = sqrt(sp);
     }
 }

@@ -95,6 +95,9 @@ struct DecodeScratch {
     // design §2.1's candidate blocks: the source's per-block radix keys and the
     // keep flags every consumer layer of the same step reads.
     gpu::GpuScratch::View idx_blk_key, idx_cand;
+    // The P3 kernels (docs/p2_attention.md §13.7): the K-split partial plane
+    // and the tiled attention's per-(head, tile) maxima.
+    gpu::GpuScratch::View ksp_part, tile_max;
 
     Result<void> create(gpu::GpuScratch& s, const TextConfig& cfg);
 };
@@ -332,6 +335,11 @@ public:
     const float* ffn_norm_out() const;
 
     const TextConfig& config() const { return *cfg_; }
+
+    // Benchmarks only: called after every dispatch's barrier is recorded, with
+    // the stage's name, so a caller can put a GPU timestamp there. Unset in
+    // every real caller.
+    std::function<void(const char*)> stamp;
 
     // --- Track T: the verify batch ---------------------------------------
     // Borrows the M > 1 runner and allocates the batch activations. Separate
