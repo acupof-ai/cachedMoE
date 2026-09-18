@@ -135,6 +135,12 @@ struct StepBreakdown {
     double   moe_x_ms = 0.0, moe_quant_ms = 0.0, moe_table_ms = 0.0;
     uint32_t submits = 0;
     bool     gpu_timed = false; // false if the device has no timestamp queries
+    // Track MS: this STEP's own expert-cache accounting, summed from the
+    // layers. The store's counters are process-wide, so with two streams
+    // decoding at once a delta of them is both streams' traffic; these are the
+    // stream's own and are what a per-stream hit rate has to be built from.
+    uint32_t requests = 0, hits = 0;
+    uint64_t miss_bytes = 0;
 };
 
 struct DecodeStepResult {
@@ -176,9 +182,113 @@ struct SessionConfig {
     bool        backfill = false;
 };
 
+// --- Track MS: one decode stream (docs/p4_multistream.md) -------------------
+//
+// Everything a SEQUENCE owns, as opposed to what the process owns. The split
+// is exactly design §4's ownership graph cut in two: the expert cache, the
+// planner, the pinned set, the I/O engine, the device and the resolved weight
+// addresses are the process's and are shared by every stream; the KV store,
+// the activations, the address tables the shaders read, the command buffer and
+// the two timelines belong to the sequence being decoded.
+//
+// Why the address tables have to be per stream. `AttnRunner::slots(stage)` is
+// host-visible memory a DISPATCH READS WHEN IT RUNS, not something baked into
+// the command buffer at record time -- runtime/decode_layer.h's `bind_close`
+// comment is the single-stream version of the same hazard. So a second stream
+// that binds while the first stream's submitted-but-not-yet-executed
+// dispatches are still outstanding would rewrite the table under them. One
+// AttnRunner / DecodeRunner / MoeRunner per stream is the cheap fix: the
+// pipelines are compiled SPIR-V modules and the tables are a few KB, while the
+// 89 GiB expert cache -- the only thing that is actually big -- stays shared.
+//
+// A stream costs ~50 MB: the 32 MB GpuScratch, the KV store (~15 MB at a 4,096
+// position context), the logit buffer and the runners' tables.
+struct Stream {
+    uint32_t             id = 0;
+    bool                 made_ = false;   // its GPU resources exist
+    gpu::AttnRunner      attn_;
+    gpu::DecodeRunner    dec_;
+    gpu::GpuScratch      scratch_;
+    gpu::Timeline        timeline_;     // residency gate, host-signalled
+    gpu::Timeline        fence_;        // completion, GPU-signalled
+    TimelineValue        fence_value_ = 0;
+    gpu::CommandPool     tok_pool_;
+    gpu::CommandBuffer   tok_cmd_{};
+    bool                 tok_open_ = false;
+    bool                 tok_first_ = true;
+    gpu::QueryPool       tsq_;
+    uint32_t             tsq_used_ = 0;
+    gpu::GpuBuffer       logits_{};
+    gpu::GpuBuffer       sample_{};
+    gpu::GpuBuffer       topk_out_{};
+    gpu::GpuBuffer       topk_hist_{};
+    gpu::GpuBuffer       ffn_in_buf_{};
+    gpu::MemoryAllocator* ffn_in_alloc_ = nullptr;
+    DecodeLayer          layer_;
+    GpuMoeBridge         moe_;
+    EngramRunner         engram_;
+    KvStore              kvs_;
+    std::vector<uint32_t> history_;
+    // The stream's own token counter. It numbers the residency timeline
+    // (`gpu::timeline_value(token_, L)`), which is per stream because the
+    // timeline is; the cache's LRU clock is the process-wide `Engine::clock_`,
+    // so eviction still ranks every stream's accesses on one axis.
+    TokenIndex           token_ = 0;
+    uint32_t             pub_index_k_ = 0;
+    bool                 prefill_loaded_ = false;
+    bool                 sample_step_ = false;
+    // --- per-step scratch (reset at the top of a step) ---
+    struct Stamp { uint32_t begin = ~0u, end = ~0u; };
+    std::vector<LayerTiming> timings_;
+    std::vector<Stamp>   ts_attn_, ts_moe_, ts_engram_, ts_moe_early_;
+    Stamp                ts_tail_{};
+    std::vector<double>  engram_host_ms_;
+    std::vector<uint16_t> route_ids_;
+    uint32_t             submits_ = 0;
+    double               rec_ms_ = 0.0, sub_ms_ = 0.0, wait_ms_ = 0.0, bind_ms_ = 0.0;
+    double               mx_ms_ = 0.0, mq_ms_ = 0.0, mt_ms_ = 0.0;
+    uint64_t             spin_hits_ = 0, spin_misses_ = 0;
+    TimelineValue        layer_guard_ = 0;
+    bool                 layer_guard_pending_ = false;
+    TimelineValue        open_guard_ = 0;
+    TimelineValue        inflight_guard_ = 0;
+    std::vector<ExpertKey> rr_pending_;
+    // --- the M > 1 forward, stream 0 only (docs/p4_dspark_runtime.md) ---
+    gpu::MgtRunner       mgt_;
+    gpu::GpuScratch      bscratch_;
+    gpu::GpuBuffer       blogits_{}, bsample_{}, btopk_out_{}, btopk_hist_{};
+    // Track MS: what `run_layer` decided in its first two phases and its third
+    // needs. In a single-stream step the three phases are consecutive
+    // statements and this is dead bookkeeping; in an interleaved step the
+    // other stream runs between them.
+    struct LayerCtx {
+        LayerStep st{};
+        MoeCall   call{};
+        store::LayerPlan plan{};
+        LayerTiming* t = nullptr;
+        uint32_t  ids_eff[16]{};
+        float     wts_eff[16]{};
+        const uint32_t* ids = nullptr;
+        const float*    wts = nullptr;
+        uint32_t  late[16]{};
+        uint32_t  n_late = 0;
+        bool      split = false;
+        bool      staged = false;
+        bool      engram = false;
+        TimePoint g0{}, gp_w0{}, gp_w1{}, gp_p0{};
+    };
+    LayerCtx             lc_{};
+    // Track G's probe rows are the Engine's (they aggregate); which row the
+    // NEXT layer's prologue belongs to is the stream's.
+    void*                gp_open_ = nullptr;
+    TimePoint            gp_top_{};
+};
+
 class Engine {
 public:
-    Engine() = default;
+    // Stream 0 exists from construction (without GPU resources) so that every
+    // accessor that reaches through `cur_` is safe before init_gpu().
+    Engine();
     ~Engine();
 
     Engine(const Engine&) = delete;
@@ -256,11 +366,11 @@ public:
     void set_produce_ced(bool on) { produce_ced_ = on; }
     bool produce_ced() const { return produce_ced_; }
 
-    const KvStore& kv() const { return kvs_; }
+    const KvStore& kv() const { return cur_->kvs_; }
     // Track R2 (runtime/session.h): rollback, parking and window replay write
     // the store between steps.
-    KvStore& kv_store() { return kvs_; }
-    const std::vector<uint32_t>& history() const { return history_; }
+    KvStore& kv_store() { return cur_->kvs_; }
+    const std::vector<uint32_t>& history() const { return cur_->history_; }
 
     // What layer `l` actually read at the last step: its own window ring, and
     // whichever layer's compressed plane and top-k list `shared_attn` pointed
@@ -332,7 +442,7 @@ public:
     // state is unpacked. Runs nothing and writes nothing in the store; the
     // caller has made the store agree (runtime/session.h).
     Result<void> set_context_tokens(std::span<const uint32_t> tokens);
-    uint32_t context_length() const { return static_cast<uint32_t>(history_.size()); }
+    uint32_t context_length() const { return static_cast<uint32_t>(cur_->history_.size()); }
     // The longest sequence this session can hold.
     uint32_t max_context() const;
 
@@ -449,6 +559,54 @@ public:
     // One line per counter, for the end of a run.
     std::string resident_route_report() const;
 
+    // --- Track MS: several streams in one engine (docs/p4_multistream.md) ---
+    //
+    // The point is the shape of a decode step: ~97 ms of GPU compute and ~100 ms
+    // of NVMe stall per token, and the two do not overlap -- the drive is idle
+    // while the kernels run and the GPU is idle while the drive reads
+    // (docs/p4_p0_queue.md). Two INDEPENDENT sequences have no data dependency
+    // between them, so one's stall is the other's compute window.
+    //
+    // `set_streams(n)` creates n - 1 more Streams (each ~50 MB; the 89 GiB
+    // expert cache stays shared, which is also why the hit rate has to be
+    // reported: two working sets share one LRU). It may only grow, and only
+    // before a step is in flight. Every existing entry point acts on the
+    // SELECTED stream, so a single-stream caller is unchanged.
+    Result<void> set_streams(uint32_t n);
+    uint32_t     streams() const { return static_cast<uint32_t>(streams_.size()); }
+    Result<void> select_stream(uint32_t i);
+    uint32_t     current_stream() const { return cur_ ? cur_->id : 0; }
+    // `begin_session` for one more stream: its own KV store and engram planes.
+    Result<void> begin_session_on(uint32_t stream, const SessionConfig& sc);
+
+    // One decode step on each of `steps`, layer-interleaved: layer L of every
+    // stream, then layer L + 1, so that while stream A's layer-L MoE waits on
+    // its P0 misses stream B's layer-L attention chain is on the GPU and
+    // stream B's misses are also outstanding at the drive. `out` must be the
+    // same length as `steps`. With one entry it is exactly `decode_step`.
+    struct MultiStep {
+        uint32_t stream = 0;
+        uint32_t in_token = 0;
+        uint32_t position = 0;
+    };
+    Result<void> decode_step_multi(std::span<const MultiStep> steps,
+                                   std::span<DecodeStepResult> out);
+    // `feed` for several streams at once: one token each, interleaved. Every
+    // entry appends at that stream's own `context_length()`.
+    Result<void> feed_multi(std::span<const MultiStep> steps,
+                            std::span<DecodeStepResult> out);
+    // Token-level ping-pong instead of the layer interleave (design D2, the
+    // control): whole token of A, then whole token of B. No compute/stall
+    // overlap -- only the drive's queue depth is shared.
+    // `Pipeline` is the one that overlaps: see docs/p4_multistream.md §2. The
+    // other two are the measured intermediates -- `Interleave` groups the
+    // phases (every stream's attention, then every gate, then every MoE),
+    // which issues both streams' misses early but leaves the GPU with nothing
+    // queued while either of them waits; `PingPong` is design D2.
+    enum class MsSched : uint8_t { Pipeline = 0, Interleave = 1, PingPong = 2 };
+    void    set_ms_sched(MsSched s) { ms_sched_ = s; }
+    MsSched ms_sched() const { return ms_sched_; }
+
     // --- accessors --------------------------------------------------------
 
     const RuntimeConfig&    config()   const { return cfg_; }
@@ -460,11 +618,11 @@ public:
     store::PinnedStore&     pinned()         { return pinned_; }
     storage::IoEngine&      io()             { return io_; }
     gpu::Device&            device()         { return device_; }
-    TokenIndex              token_index() const { return token_; }
+    TokenIndex              token_index() const { return cur_->token_; }
     bool                    gpu_ready()  const { return gpu_ready_; }
 
     // The per-layer breakdown of the last decode step (design §13.1).
-    const std::vector<LayerTiming>& layer_timings() const { return timings_; }
+    const std::vector<LayerTiming>& layer_timings() const { return cur_->timings_; }
     // Every fp32 logit of the last step, in GPU-visible memory. Reading it on
     // the host is a write-combining read and costs ~0.5 ms; the decode loop
     // never does, only the validators do.
@@ -531,6 +689,29 @@ private:
     Result<void> embed_token(uint32_t token);
     Result<void> run_layer(uint32_t layer, uint32_t position, bool& apply_post,
                            LayerTiming& t);
+    // Track MS: `run_layer` in the three pieces the interleave needs. Every one
+    // of them sets `cur_` to `s` first, so the body -- and the trace callback,
+    // which reaches the engine through a void* -- acts on that stream.
+    //   (1) begin  engram, bind, record the attention chain, submit it
+    //   (2) gate   fence, read the gate's ids, route, plan -- ISSUES the P0
+    //              misses and returns without waiting for them
+    //   (3) moe    wait for residency, signal, stage and record the MoE
+    // The window between (2) and (3) is the whole point: it is where another
+    // stream's (1) and (2) run while this one's drive reads are in flight.
+    Result<void> layer_begin(Stream& s, uint32_t L, uint32_t position, bool& apply_post,
+                             LayerTiming& t);
+    Result<void> layer_gate(Stream& s, uint32_t L, uint32_t position);
+    Result<void> layer_moe(Stream& s, uint32_t L, bool& apply_post);
+    // Everything decode_step does around the layer loop, so both schedulers
+    // share it.
+    Result<void> step_prologue(Stream& s, uint32_t in_token, uint32_t position,
+                               int32_t state_step, double& prep_ms);
+    Result<DecodeStepResult> step_epilogue(Stream& s, uint32_t position, double prep_ms,
+                                           TimePoint t_start);
+    // Multi-stream: submit a layer's MoE as soon as it is recorded instead of
+    // letting the next layer's attention carry it. Costs one submit a layer
+    // (~0.15 ms) and buys the other stream's stall window a GPU dispatch.
+    static bool ms_eager_moe();
     // The M > 1 twin of `run_layer`. `st` carries everything the batch decided
     // once (p0, m, the list index, the ced sources); this fills in the layer.
     Result<void> run_layer_batch(uint32_t L, uint32_t p0, uint32_t m, bool& apply_post);
@@ -578,17 +759,15 @@ private:
 
     gpu::Device          device_;
     gpu::MemoryAllocator alloc_a_, alloc_b_;
-    gpu::Timeline        timeline_;
-    // The GPU signals this one when a token-loop submit completes; the host
-    // signals `timeline_` when a layer's experts are resident.
-    gpu::Timeline        fence_;
-    TimelineValue        fence_value_ = 0;
-    gpu::CommandPool     tok_pool_;
-    gpu::CommandBuffer   tok_cmd_{};
-    bool                 tok_open_ = false;
-    bool                 tok_first_ = true;       // the next open is a token's first
-    gpu::QueryPool       tsq_;
-    uint32_t             tsq_used_ = 0;
+    // Track MS: the per-sequence half, one per stream. `cur_` is the stream
+    // every member function acts on; single-stream callers never see it move.
+    std::vector<std::unique_ptr<Stream>> streams_;
+    Stream*              cur_ = nullptr;
+    // The expert cache's LRU clock, process-wide: every stream's accesses are
+    // ranked on one axis or eviction would prefer whichever stream ticked last.
+    TokenIndex           clock_ = 0;
+    Result<void>         create_stream(Stream& s);
+    using Stamp = Stream::Stamp;
     // ADDITIVE (Track W): the per-dispatch trace. Idle unless
     // RuntimeConfig::trace_file is set; `trace_stamp` is the callback it
     // stamps through, which is just `cmd_stamp` behind a C pointer.
@@ -596,48 +775,23 @@ private:
     static uint32_t      trace_stamp(void* ctx) {
         return static_cast<Engine*>(ctx)->cmd_stamp();
     }
-    uint32_t             submits_ = 0;
-    double               rec_ms_ = 0.0, sub_ms_ = 0.0, wait_ms_ = 0.0, bind_ms_ = 0.0;
-    // Track G's probe. `gp_open_` is the row the NEXT layer's prologue belongs
-    // to: segment (v) is measured one layer later than the rest of the round
-    // trip, because the buffer that carries layer L's MoE is not submitted
-    // until layer L+1 has bound and recorded its attention chain.
+    // Track G's probe. `Stream::gp_open_` is the row the NEXT layer's prologue
+    // belongs to: segment (v) is measured one layer later than the rest of the
+    // round trip, because the buffer that carries layer L's MoE is not
+    // submitted until layer L+1 has bound and recorded its attention chain.
     bool                 gate_probe_ = false;
     // Track G: DEEPMOE_FENCE_SPIN_US, and how often the spin caught the signal.
     static double        fence_spin_us();
-    uint64_t             spin_hits_ = 0, spin_misses_ = 0;
     GateSeg              gp_hit_{}, gp_miss_{};
-    GateSeg*             gp_open_ = nullptr;
-    TimePoint            gp_top_{};
-    double               mx_ms_ = 0.0, mq_ms_ = 0.0, mt_ms_ = 0.0;
-    struct Stamp { uint32_t begin = ~0u, end = ~0u; };
-    std::vector<Stamp>   ts_attn_, ts_moe_, ts_engram_, ts_moe_early_;
-    Stamp                ts_tail_{};
-    std::vector<double>  engram_host_ms_;
-    gpu::AttnRunner      attn_;
-    gpu::DecodeRunner    dec_;
-    gpu::GpuScratch      scratch_;
-    gpu::GpuBuffer       logits_{};   // [vocab] fp32
-    gpu::GpuBuffer       sample_{};   // SampleOut, host-coherent
-    gpu::GpuBuffer       topk_out_{};   // sample_topk.slang's header + candidate segments
-    gpu::GpuBuffer       topk_hist_{};  // its per-thread histograms
     SamplingParams       sampling_{};
-    bool                 sample_step_ = false;   // set by feed() for its last step
     bool                 check_topk_ = false;
     uint32_t             topk_mismatches_ = 0;
     // Draws the emitted token for a sampled step from the kernel's top set (or
     // the full logits) into `res`.
     Result<void>         sample_into(DecodeStepResult& res, uint32_t position);
-    gpu::GpuBuffer       ffn_in_buf_{};   // the FFN input, in cached host pages (path B)
-    gpu::MemoryAllocator* ffn_in_alloc_ = nullptr;
-
     // --- M1: the M > 1 forward (docs/p4_dspark_runtime.md §6.4) -----------
-    gpu::MgtRunner       mgt_;
-    gpu::GpuScratch      bscratch_;
-    gpu::GpuBuffer       blogits_{};     // [M][vocab] fp32
-    gpu::GpuBuffer       bsample_{};     // [M] gpu::SampleOut
-    gpu::GpuBuffer       btopk_out_{};   // [M][kMgtTopKRecordWords]
-    gpu::GpuBuffer       btopk_hist_{};
+    // The runner, the scratch and the tail buffers are the stream's; the batch
+    // is only ever run on stream 0.
     bool                 batch_ready_ = false;
     uint32_t             batch_cap_ = 0;
     std::vector<uint32_t> batch_list_;   // layer -> BatchScratch list index
@@ -649,10 +803,6 @@ private:
     size_t               batch_snap_hist_ = 0;
 
     KvCache        kv_;
-    KvStore        kvs_;
-    DecodeLayer    layer_;
-    GpuMoeBridge   moe_;
-    EngramRunner   engram_;
 
     std::unique_ptr<DecodeState> state_;
     std::vector<LayerWeights>    weights_;
@@ -661,8 +811,6 @@ private:
     // rather than assumed, so the profiler's hot_bytes and the §9.8 NVMe
     // utilisation figures are the real ratio.
     std::vector<uint64_t>        layer_hot_bytes_;
-    std::vector<LayerTiming>     timings_;
-    std::vector<uint32_t>        history_;
     DeviceAddress                norm_w_ = kNoDeviceAddress;
     DeviceAddress                head_w_ = kNoDeviceAddress;
     const store::PinnedTensor*   embed_  = nullptr;
@@ -682,12 +830,9 @@ private:
     // a ratio-2 source whose group is incomplete publishes nothing, so at an
     // even position layers 2, 8 and 14 score against layer 20's keys and at an
     // odd one against their own (docs/p2_attention.md §9.3 item 5).
-    uint32_t   pub_index_k_ = 0;
     bool       produce_ced_ = false;
-    // Whether the window ring came from the export or from `slow_prefill`.
-    bool       prefill_loaded_ = false;
+    SessionConfig session_cfg_{};
 
-    TokenIndex token_ = 0;
     bool       ready_ = false;
     bool       gpu_ready_ = false;
 
@@ -698,7 +843,7 @@ private:
     // the accesses this process made through cache_sim's LRU and compare it
     // step for step. Off (null) unless the variable is set.
     std::FILE*            route_dump_ = nullptr;
-    std::vector<uint16_t> route_ids_;     // [layers][topk] of the current step
+    MsSched               ms_sched_ = MsSched::Pipeline;
     void write_route_record(uint32_t position);
 
     // Whether the serve loop reheats the cache after every turn (§7).
@@ -726,7 +871,6 @@ private:
     // cannot queue the whole model. docs/p4_resident_routing.md §3: the drive
     // can land about 19 experts per 80 ms step, so a couple of steps' worth.
     uint32_t      rr_inflight_cap_ = 48;
-    std::vector<ExpertKey> rr_pending_;   // this layer's dropped experts
     void flush_resident_backfill(uint32_t layer);
 
     // --- Track Y step 3 (docs/p4_resident_routing.md section 8) -----------
@@ -761,11 +905,10 @@ private:
     bool          overlap_ = true;
     bool          handoff_ = true;       // gpu_prefill's experts go to the decode cache (§3)
     TimelineValue guard_clock_ = 0;
-    TimelineValue layer_guard_ = 0;
-    bool          layer_guard_pending_ = false;
-    TimelineValue open_guard_ = 0;       // guard of the buffer being recorded
-    TimelineValue inflight_guard_ = 0;   // guard of the last buffer submitted
     void guard_layer(uint32_t layer, std::span<const uint32_t> slots, const uint32_t* ids);
+    // Track MS: the completed-guard value it is safe to publish to the store
+    // when several streams have buffers in flight.
+    void advance_store_guard(const Stream& me, TimelineValue mine);
 };
 
 }  // namespace deepmoe::runtime

@@ -180,17 +180,52 @@ std::string GenerateStats::json_fields() const {
     return s;
 }
 
-Result<GenerateStats> Session::generate(
-    const GenerateRequest& req, const std::function<void(const TokenEvent&)>& on_token,
-    const std::function<void(uint32_t, uint32_t)>& on_prefill) {
-    const TimePoint t0 = Clock::now();
-    Engine& e = *engine_;
-    GenerateStats st;
+// --- Track MS: one turn as a state machine (docs/p4_multistream.md) --------
+//
+// `Session::generate` used to be one function with the prompt handling, the
+// prefill and the generation loop inline. The multi-stream driver needs the
+// same three parts with the LOOP under someone else's control, so they are
+// split here and `Session::generate` is the single-stream composition of them.
+// Nothing in the single-stream path changed order.
+namespace {
+
+struct TurnState {
+    const GenerateRequest* req = nullptr;
+    uint32_t               stream = 0;
+    GenerateStats          st{};
+    TimePoint              t0{}, td{};
+    DecodeStepResult       cur{};
+    double                 step_ms = 0.0;
+    double                 step_hit = 0.0;
+    std::unique_ptr<text::StreamDecoder> sd;
+    bool                   live = false;    // still generating
+    uint32_t               emitted_token = 0;
+};
+
+void account_sample(GenerateStats& st, const DecodeStepResult& r) {
+    if (!r.sampled) return;
+    ++st.sampled_steps;
+    st.topk_fallbacks += r.topk_fallback;
+    st.topk_checked += r.topk_checked;
+    st.topk_mismatches += r.topk_mismatch;
+    st.nucleus_sum += r.nucleus_size;
+    st.sample_ms_sum += r.sample_ms;
+}
+
+// Prompt reuse / rollback / prefill, on whatever stream is selected. Leaves
+// `ts.cur` holding the step that produces the turn's first token, and
+// `ts.live` false when the turn is over before it began (a cancel).
+Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOptions& opt,
+                          TurnState& ts,
+                          const std::function<void(uint32_t, uint32_t)>& on_prefill) {
+    GenerateStats& st = ts.st;
+    const GenerateRequest& req = *ts.req;
+    ts.t0 = Clock::now();
     const std::vector<uint32_t>& prompt = req.prompt_ids;
     st.prompt_tokens = static_cast<uint32_t>(prompt.size());
     if (prompt.empty()) return fail(Err::InvalidArgument, "empty prompt");
     for (uint32_t id : prompt)
-        if (id >= tok_->vocab_size())
+        if (id >= tok.vocab_size())
             return fail(Err::InvalidArgument, std::format("token id {} is outside the vocabulary", id));
     if (prompt.size() >= e.max_context())
         return fail(Err::ResourceExhausted,
@@ -212,10 +247,10 @@ Result<GenerateStats> Session::generate(
             uint32_t keep = static_cast<uint32_t>(std::min(common, prompt.size() - 1));
             keep &= ~1u;
             ReplayPlan plan;
-            const bool try_rb = req.reuse && opt_.rollback && keep > 0;
-            if (try_rb) plan = plan_rollback(e, keep, opt_.replay);
+            const bool try_rb = req.reuse && opt.rollback && keep > 0;
+            if (try_rb) plan = plan_rollback(e, keep, opt.replay);
             if (try_rb && keep > plan.steps()) {
-                auto rb = rollback_context(e, keep, opt_.replay);
+                auto rb = rollback_context(e, keep, opt.replay);
                 if (!rb) return std::unexpected(rb.error());
                 reuse = keep;
                 st.rollback_dropped = rb->dropped;
@@ -236,8 +271,8 @@ Result<GenerateStats> Session::generate(
     DecodeStepResult first{};
     const TimePoint tp = Clock::now();
     bool done_prefill = false;
-    if (reuse == 0 && opt_.gpu_prefill_min && suffix.size() >= opt_.gpu_prefill_min) {
-        auto r = e.gpu_prefill(suffix, opt_.replay);
+    if (reuse == 0 && opt.gpu_prefill_min && suffix.size() >= opt.gpu_prefill_min) {
+        auto r = e.gpu_prefill(suffix, opt.replay);
         if (r) {
             first = *r;
             st.prefill_mode = "gpu";
@@ -251,22 +286,22 @@ Result<GenerateStats> Session::generate(
     if (!done_prefill) {
         st.prefill_mode = "decode";
         const uint32_t total = static_cast<uint32_t>(suffix.size());
-        const uint32_t chunk = std::max<uint32_t>(1, opt_.progress_every);
+        const uint32_t chunk = std::max<uint32_t>(1, opt.progress_every);
         for (uint32_t at = 0; at < total;) {
             if (cancelled()) {
                 st.prefilled_tokens = at;
                 st.finish = "cancel";
                 st.prefill_ms = ms_since(tp);
-                st.total_ms = ms_since(t0);
+                st.total_ms = ms_since(ts.t0);
                 st.context_after = e.context_length();
-                return st;
+                ts.live = false;
+                return {};
             }
             const uint32_t n = std::min(chunk, total - at);
-            auto r = e.feed(suffix.subspan(at, n), [&](uint32_t, const DecodeStepResult&) {
-                const CacheCount c = count_step(e);
-                st.prefill_requests += c.req;
-                st.prefill_hits += c.hit;
-                st.prefill_nvme_bytes += c.bytes;
+            auto r = e.feed(suffix.subspan(at, n), [&](uint32_t, const DecodeStepResult& sr) {
+                st.prefill_requests += sr.breakdown.requests;
+                st.prefill_hits += sr.breakdown.hits;
+                st.prefill_nvme_bytes += sr.breakdown.miss_bytes;
             });
             if (!r) return std::unexpected(r.error());
             at += n;
@@ -275,69 +310,73 @@ Result<GenerateStats> Session::generate(
         }
     }
     st.prefill_ms = ms_since(tp);
+    ts.sd = std::make_unique<text::StreamDecoder>(tok, /*skip_special=*/true);
+    account_sample(st, first);
+    ts.cur = first;
+    ts.step_ms = first.wall_ms;
+    ts.step_hit = 0.0;
+    ts.td = Clock::now();
+    ts.live = true;
+    return {};
+}
 
-    text::StreamDecoder sd(*tok_, /*skip_special=*/true);
-    auto account_sample = [&](const DecodeStepResult& r) {
-        if (!r.sampled) return;
-        ++st.sampled_steps;
-        st.topk_fallbacks += r.topk_fallback;
-        st.topk_checked += r.topk_checked;
-        st.topk_mismatches += r.topk_mismatch;
-        st.nucleus_sum += r.nucleus_size;
-        st.sample_ms_sum += r.sample_ms;
-    };
-    account_sample(first);
+// Emits `ts.cur`'s token and decides whether the turn continues. Returns true
+// when another step is wanted.
+bool turn_emit(Engine& e, TurnState& ts, uint32_t index,
+               const std::function<void(uint32_t, const TokenEvent&)>& on_token) {
+    GenerateStats& st = ts.st;
+    const GenerateRequest& req = *ts.req;
+    const uint32_t tok_id = ts.cur.token;
+    ++st.generated;
+    TokenEvent ev;
+    ev.id = tok_id;
+    ev.text = ts.sd->push(tok_id);
+    ev.t_ms = ms_since(ts.t0);
+    ev.step_ms = ts.step_ms;
+    ev.p = ts.cur.p_token;
+    ev.margin = ts.cur.margin();
+    ev.nucleus = ts.cur.nucleus_size;
+    ev.fallback = ts.cur.topk_fallback;
+    ev.hit_rate = ts.step_hit;
+    if (st.generated == 1) st.ttft_ms = ev.t_ms;
+    const bool stop = std::find(req.stop_ids.begin(), req.stop_ids.end(), tok_id) != req.stop_ids.end();
+    if (stop) ev.text += ts.sd->flush();
+    if (on_token) on_token(index, ev);
+    ts.emitted_token = tok_id;
+    if (stop)                                     { st.finish = "stop";    return false; }
+    if (st.generated >= req.max_tokens)           { st.finish = "length";  return false; }
+    if (e.context_length() + 1 >= e.max_context()){ st.finish = "context"; return false; }
+    // Between tokens: the emitted token is not fed, so the store holds exactly
+    // history() and the next request continues or rolls back as usual.
+    if (req.cancel && req.cancel())               { st.finish = "cancel";  return false; }
+    return true;
+}
 
-    DecodeStepResult cur = first;
-    double step_ms = first.wall_ms;
-    double step_hit = 0.0;
-    const TimePoint td = Clock::now();
-    for (;;) {
-        const uint32_t tok = cur.token;
-        ++st.generated;
-        TokenEvent ev;
-        ev.id = tok;
-        ev.text = sd.push(tok);
-        ev.t_ms = ms_since(t0);
-        ev.step_ms = step_ms;
-        ev.p = cur.p_token;
-        ev.margin = cur.margin();
-        ev.nucleus = cur.nucleus_size;
-        ev.fallback = cur.topk_fallback;
-        ev.hit_rate = step_hit;
-        if (st.generated == 1) st.ttft_ms = ev.t_ms;
-        const bool stop = std::find(req.stop_ids.begin(), req.stop_ids.end(), tok) != req.stop_ids.end();
-        if (stop) ev.text += sd.flush();
-        if (on_token) on_token(ev);
-        if (stop) { st.finish = "stop"; break; }
-        if (st.generated >= req.max_tokens) { st.finish = "length"; break; }
-        if (e.context_length() + 1 >= e.max_context()) { st.finish = "context"; break; }
-        // Between tokens: the emitted token is not fed, so the store holds
-        // exactly history() and the next request continues or rolls back as usual.
-        if (cancelled()) { st.finish = "cancel"; break; }
-        const std::array<uint32_t, 1> one{tok};
-        auto r = e.feed(one);
-        if (!r) return std::unexpected(r.error());
-        cur = *r;
-        step_ms = cur.wall_ms;
-        const CacheCount c = count_step(e);
-        st.decode_requests += c.req;
-        st.decode_hits += c.hit;
-        st.decode_nvme_bytes += c.bytes;
-        step_hit = c.req ? double(c.hit) / double(c.req) : 0.0;
-        add(st.decode_sum, cur.breakdown);
-        ++st.decode_steps;
-        account_sample(cur);
-    }
-    st.decode_ms = st.decode_steps ? ms_since(td) : 0.0;
-    st.total_ms = ms_since(t0);
+void turn_account(TurnState& ts, const DecodeStepResult& r) {
+    GenerateStats& st = ts.st;
+    ts.cur = r;
+    ts.step_ms = r.wall_ms;
+    st.decode_requests += r.breakdown.requests;
+    st.decode_hits += r.breakdown.hits;
+    st.decode_nvme_bytes += r.breakdown.miss_bytes;
+    ts.step_hit = r.breakdown.requests
+                      ? double(r.breakdown.hits) / double(r.breakdown.requests) : 0.0;
+    add(st.decode_sum, r.breakdown);
+    ++st.decode_steps;
+    account_sample(st, r);
+}
+
+void turn_finish(Engine& e, TurnState& ts, const SessionOptions& opt) {
+    GenerateStats& st = ts.st;
+    if (st.decode_ms == 0.0) st.decode_ms = st.decode_steps ? ms_since(ts.td) : 0.0;
+    st.total_ms = ms_since(ts.t0);
     st.context_after = e.context_length();
     // docs/p4_hitrate.md §7: the turn is over, so this is the boundary the heat
     // is aged at. Nothing reads the order back here -- the pass issues P3 reads
     // and returns -- so a reheat can never change this turn's numbers, only the
     // next one's. A turn that generated nothing is not a boundary.
-    if (opt_.reheat && st.generated > 0) {
-        auto h = e.reheat(opt_.reheat_decay);
+    if (opt.reheat && st.generated > 0) {
+        auto h = e.reheat(opt.reheat_decay);
         if (h) {
             st.reheat_turn = h->turn;
             st.reheat_free_slots = h->free_slots;
@@ -346,7 +385,100 @@ Result<GenerateStats> Session::generate(
             log_warn("session: reheat: {}", h.error().str());
         }
     }
-    return st;
+}
+
+}  // namespace
+
+Result<GenerateStats> Session::generate(
+    const GenerateRequest& req, const std::function<void(const TokenEvent&)>& on_token,
+    const std::function<void(uint32_t, uint32_t)>& on_prefill) {
+    Engine& e = *engine_;
+    TurnState ts;
+    ts.req = &req;
+    if (auto r = turn_prepare(e, *tok_, opt_, ts, on_prefill); !r)
+        return std::unexpected(r.error());
+    if (!ts.live) return ts.st;
+    auto emit = [&](uint32_t, const TokenEvent& ev) { if (on_token) on_token(ev); };
+    for (;;) {
+        if (!turn_emit(e, ts, 0, emit)) break;
+        const std::array<uint32_t, 1> one{ts.emitted_token};
+        auto r = e.feed(one);
+        if (!r) return std::unexpected(r.error());
+        turn_account(ts, *r);
+    }
+    turn_finish(e, ts, opt_);
+    return ts.st;
+}
+
+// --- Track MS: the multi-stream driver --------------------------------------
+
+Result<MultiStats> generate_multi(
+    Engine& e, const text::Tokenizer& tok, const SessionOptions& opt,
+    std::span<const MultiTurn> turns,
+    const std::function<void(uint32_t, const TokenEvent&)>& on_token,
+    const std::function<void(uint32_t, uint32_t, uint32_t)>& on_prefill) {
+    if (turns.empty()) return fail(Err::InvalidArgument, "no turns");
+    if (turns.size() > e.streams())
+        return fail(Err::ResourceExhausted,
+                    std::format("{} turns against {} stream(s); call set_streams first",
+                                turns.size(), e.streams()));
+    const uint32_t n = static_cast<uint32_t>(turns.size());
+    std::vector<TurnState> ts(n);
+    MultiStats ms;
+    // (1) Each turn's prompt on its own stream, one at a time.
+    for (uint32_t i = 0; i < n; ++i) {
+        ts[i].req = &turns[i].req;
+        ts[i].stream = turns[i].stream;
+        if (auto r = e.select_stream(turns[i].stream); !r) return std::unexpected(r.error());
+        auto pf = [&, i](uint32_t done, uint32_t total) {
+            if (on_prefill) on_prefill(i, done, total);
+        };
+        if (auto r = turn_prepare(e, tok, opt, ts[i], pf); !r) return std::unexpected(r.error());
+    }
+    // (2) The generation loops, interleaved. Every stream's decode clock starts
+    // HERE -- not when its own prompt was prefilled -- so the per-stream tok/s
+    // of an interleaved round and of a serial one are the same measurement.
+    const TimePoint td = Clock::now();
+    for (uint32_t i = 0; i < n; ++i) ts[i].td = td;
+    std::vector<Engine::MultiStep> steps;
+    std::vector<DecodeStepResult>  out;
+    std::vector<uint32_t>          who;
+    for (;;) {
+        steps.clear();
+        who.clear();
+        for (uint32_t i = 0; i < n; ++i) {
+            if (!ts[i].live) continue;
+            if (auto r = e.select_stream(ts[i].stream); !r) return std::unexpected(r.error());
+            if (!turn_emit(e, ts[i], i, on_token)) {
+                ts[i].live = false;
+                // This stream stops here; the others may run on, so its own
+                // decode_ms must be taken now.
+                ts[i].st.decode_ms = ts[i].st.decode_steps ? ms_since(ts[i].td) : 0.0;
+                continue;
+            }
+            Engine::MultiStep m;
+            m.stream = ts[i].stream;
+            m.in_token = ts[i].emitted_token;
+            steps.push_back(m);
+            who.push_back(i);
+        }
+        if (steps.empty()) break;
+        out.assign(steps.size(), DecodeStepResult{});
+        if (auto r = e.feed_multi(steps, out); !r) return std::unexpected(r.error());
+        ++ms.rounds;
+        if (steps.size() == n) ++ms.full_rounds;
+        for (size_t k = 0; k < who.size(); ++k) {
+            turn_account(ts[who[k]], out[k]);
+            ++ms.decode_steps;
+        }
+    }
+    ms.decode_ms = ms_since(td);
+    for (uint32_t i = 0; i < n; ++i) {
+        if (auto r = e.select_stream(ts[i].stream); !r) return std::unexpected(r.error());
+        turn_finish(e, ts[i], opt);
+        ms.turns.push_back(ts[i].st);
+    }
+    return ms;
 }
 
 // --- named sessions -------------------------------------------------------------------

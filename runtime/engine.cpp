@@ -148,6 +148,11 @@ uint64_t host_heap_headroom(const gpu::Device& d, uint64_t* budget_out, uint64_t
 
 Engine::~Engine() { shutdown(); }
 
+Engine::Engine() {
+    streams_.push_back(std::make_unique<Stream>());
+    cur_ = streams_[0].get();
+}
+
 Result<void> Engine::open_model_files() {
     // design §5.1 (v0.5): there are no repacked blobs. Every file the runtime
     // reads is an original safetensors shard named by the manifest.
@@ -232,7 +237,7 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
                                &profiler_); !r)
         return r;
 
-    token_ = 0;
+    clock_ = 0;
     ready_ = true;
     return {};
 }
@@ -416,7 +421,7 @@ Result<void> Engine::init_gpu() {
 
     if (auto r = device_.create(); !r) return r;
     if (auto r = device_.caps().check_required(); !r) return r;
-    if (auto r = timeline_.create(device_, 0); !r) return r;
+    if (auto r = cur_->timeline_.create(device_, 0); !r) return r;
     if (auto r = alloc_a_.init(device_, MemoryPath::DeviceLocalHostVisible); !r) return r;
     // Path B is optional: it only widens the expert cache. A machine that
     // cannot import host memory still runs, with a path-A-sized cache.
@@ -539,84 +544,24 @@ Result<void> Engine::init_gpu() {
     if (auto r = build_expert_cache(); !r) return r;
     if (auto r = resolve_weights(); !r) return r;
 
-    const std::string dir = gpu::default_shader_dir();
-    if (auto r = attn_.create(device_, alloc_a_, dir); !r) return r;
-    if (auto r = dec_.create(device_, alloc_a_, dir); !r) return r;
-    if (auto r = scratch_.create(alloc_a_, 32ull << 20); !r) return r;
-
     const TextConfig& c = model_cfg_.text;
-    auto lg = alloc_a_.allocate(uint64_t(c.vocab_size) * sizeof(float), true, true);
-    if (!lg) return std::unexpected(lg.error());
-    logits_ = *lg;
-    auto sm = alloc_a_.allocate_host_coherent(sizeof(gpu::SampleOut));
-    if (!sm) return std::unexpected(sm.error());
-    sample_ = *sm;
-    std::memset(sample_.host_ptr, 0, sizeof(gpu::SampleOut));
-    {
-        const uint64_t out_bytes =
-            uint64_t(kTopKHeaderWords + kTopKThreads + 2ull * kTopKThreads * kTopKCapPerThread) * 4;
-        auto to = alloc_a_.allocate_host_coherent(align_up(out_bytes, 4096));
-        if (!to) return std::unexpected(to.error());
-        topk_out_ = *to;
-        std::memset(topk_out_.host_ptr, 0, static_cast<size_t>(topk_out_.bytes));
-        auto th = alloc_a_.allocate_host_coherent(uint64_t(kTopKThreads) * kTopKBins * 4);
-        if (!th) return std::unexpected(th.error());
-        topk_hist_ = *th;
-    }
-
-    if (auto r = layer_.create(device_, attn_, scratch_, c); !r) return r;
-    if (auto r = moe_.create(device_, alloc_a_, dir, store_, planner_, pinned_, c); !r) return r;
-    // The MoE output stays on the GPU: the next layer's hc_post reads the
-    // bridge's `y` by address instead of the host copying it into scratch.
-    layer_.set_moe_output(moe_.y_address(), moe_.y_host());
-    // The FFN input the host reads every layer, in cached host pages rather than
-    // path A's write-combining mapping (DecodeLayer::set_ffn_input). Path A if
-    // there is no path B: slower, still correct.
-    {
-        const uint64_t bytes = align_up(uint64_t(c.hidden_size) * sizeof(float), 1ull << 16);
-        auto fb = alloc_b_.path() == MemoryPath::ExternalMemoryHost
-                      ? alloc_b_.allocate_imported(bytes, /*device_address=*/true)
-                      : alloc_a_.allocate(bytes, true, true);
-        if (!fb) fb = alloc_a_.allocate(bytes, true, true);
-        if (!fb) return std::unexpected(fb.error());
-        ffn_in_buf_ = *fb;
-        ffn_in_alloc_ = (fb->host_alloc != nullptr) ? &alloc_b_ : &alloc_a_;
-        layer_.set_ffn_input(ffn_in_buf_.dev_addr, static_cast<float*>(ffn_in_buf_.host_ptr));
-    }
-
-    // The token loop's buffer, its completion fence and its timestamps.
-    if (auto r = fence_.create(device_, 0); !r) return r;
-    fence_value_ = 0;
-    if (auto r = tok_pool_.create(device_); !r) return r;
-    {
-        auto cb = tok_pool_.acquire();
-        if (!cb) return std::unexpected(cb.error());
-        tok_cmd_ = *cb;
-    }
-    // 40 layers x (attention + MoE) x 2 stamps, two engram layers, the tail.
-    // ADDITIVE (Track W): tracing stamps every dispatch, not every phase, so
-    // the pool grows to `suggested_pool` -- ~2,800 slots at 40 layers. A query
-    // slot is 8 bytes on the device; the untraced size is unchanged.
-    const uint32_t tsq_slots =
-        tracer_.enabled() ? trace::Tracer::suggested_pool(c.num_hidden_layers) : 256u;
-    if (auto r = tsq_.create(device_, tsq_slots); !r)
-        log_warn("engine: no GPU timestamps ({}); the breakdown will be host-only",
-                 r.error().str());
+    build_ced_plan();
+    // Track MS: the per-sequence half, one stream to start with. Everything a
+    // second stream needs is in `create_stream`, so `set_streams(n)` is the
+    // only thing a multi-stream caller has to say.
+    if (auto r = set_streams(1); !r) return r;
 
     if (tracer_.enabled()) {
         tracer_.set_period_ns(device_.caps().timestamp_period_ns);
         tracer_.set_valid_bits(device_.caps().timestamp_valid_bits);
-        layer_.set_tracer(&tracer_);
+        cur_->layer_.set_tracer(&tracer_);
     }
 
-    build_ced_plan();
-    timings_.assign(c.num_hidden_layers, LayerTiming{});
     if (const char* e = std::getenv("DEEPMOE_ROUTE_DUMP"); e && *e && !route_dump_) {
         route_dump_ = std::fopen(e, "ab");
         if (route_dump_) log_info("engine: routing dump -> {}", e);
         else log_warn("engine: cannot open the routing dump '{}'", e);
     }
-    route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
     // docs/p4_hitrate.md §4: on unless DEEPMOE_MOE_OVERLAP=0 (the A/B switch).
     if (const char* e = std::getenv("DEEPMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
     if (const char* e = std::getenv("DEEPMOE_GATE_PROBE"); e && *e && *e != '0') gate_probe_ = true;
@@ -698,7 +643,7 @@ void Engine::build_ced_plan() {
     // A full prefill pass ends with the last kv_source layer having published
     // -- layer 20 at ratio 1, which completes at every position -- so that is
     // what the first decode step's ratio-2 indexers score against.
-    pub_index_k_ = cmp_src;
+    cur_->pub_index_k_ = cmp_src;
 }
 
 // How many compressed positions each layer may read this step, and the window
@@ -732,8 +677,8 @@ Result<void> Engine::prepare_ced(uint32_t position) {
         // docs/p3_prefill.md 8.3 item 2 reports (docs/p3_chat.md 5).
         const uint32_t n_sel = std::min<uint32_t>(n_cmp, c.index_topk);
         if (p.ratio == 0 || p.is_index_source) {
-            if (auto r = kvs_.set_decode_topk(L, position, n_cmp, n_sel); !r) return r;
-        } else if (auto r = kvs_.set_counts(L, n_cmp, c.sliding_window + n_sel); !r) {
+            if (auto r = cur_->kvs_.set_decode_topk(L, position, n_cmp, n_sel); !r) return r;
+        } else if (auto r = cur_->kvs_.set_counts(L, n_cmp, c.sliding_window + n_sel); !r) {
             return r;
         }
     }
@@ -741,12 +686,12 @@ Result<void> Engine::prepare_ced(uint32_t position) {
 }
 
 Result<KvLayerView> Engine::effective_kv(uint32_t l) const {
-    auto v = kvs_.layer(l);
+    auto v = cur_->kvs_.layer(l);
     if (!v) return v;
     if (!produce_ced_ || l >= ced_.size() || ced_[l].ratio == 0) return v;
-    auto cmp = kvs_.layer(ced_[l].cmp_src);
+    auto cmp = cur_->kvs_.layer(ced_[l].cmp_src);
     if (!cmp) return cmp;
-    auto idx = kvs_.layer(ced_[l].idx_src);
+    auto idx = cur_->kvs_.layer(ced_[l].idx_src);
     if (!idx) return idx;
     v->cmp_kv       = cmp->cmp_kv;
     v->cmp_kv_host  = cmp->cmp_kv_host;
@@ -775,28 +720,29 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
                     std::format("the export needs {} compressed positions and the "
                                 "indexer's score plane holds {}", kc.max_context,
                                 kMaxIndexPositions));
-    if (auto r = kvs_.create(alloc_a_, kc); !r) return r;
-    if (auto r = state_->seed_prefill(kvs_); !r) return r;
+    if (auto r = cur_->kvs_.create(alloc_a_, kc); !r) return r;
+    if (auto r = state_->seed_prefill(cur_->kvs_); !r) return r;
     // Producing the compressed KV and the top-k list is the default, and the
     // only thing that can stop it is an export that predates the prefill-state
     // record -- which cannot supply the index-key cache the indexer scores
     // against, and from which it cannot be recovered (§7.4's key comes off the
     // PRE-RoPE latent).
     produce_ced_    = state_->has_prefill_ced();
-    prefill_loaded_ = true;
-    pub_index_k_    = ced_.empty() ? 0 : ced_.back().cmp_src;
+    cur_->prefill_loaded_ = true;
+    cur_->pub_index_k_    = ced_.empty() ? 0 : ced_.back().cmp_src;
 
     auto tables = EngramTables::load(dir);
     if (!tables) return std::unexpected(tables.error());
-    if (auto r = engram_.create(device_, alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
+    if (auto r = cur_->engram_.create(device_, alloc_a_, cur_->dec_, manifest_, shards_, io_, pinned_, c,
                                 *std::move(tables)); !r)
         return r;
 
-    history_ = state_->prompt_ids();
-    token_   = state_->prefill_len();
+    cur_->history_ = state_->prompt_ids();
+    cur_->token_   = state_->prefill_len();
+    clock_         = state_->prefill_len();
     log_info("engine: decode state loaded -- {} prompt tokens, {} reference steps, "
              "KV {} ({})",
-             history_.size(), state_->steps(), human_bytes(kvs_.bytes()),
+             cur_->history_.size(), state_->steps(), human_bytes(cur_->kvs_.bytes()),
              produce_ced_ ? "prefill state seeded, every per-step tensor ours"
                           : "window REAL, compressed+topk LOADED per step");
     return {};
@@ -804,11 +750,11 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
 
 Result<void> Engine::reseed_decode_state() {
     if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
-    kvs_.clear();
-    if (auto r = state_->seed_prefill(kvs_); !r) return r;
-    prefill_loaded_ = true;
-    history_     = state_->prompt_ids();
-    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    cur_->kvs_.clear();
+    if (auto r = state_->seed_prefill(cur_->kvs_); !r) return r;
+    cur_->prefill_loaded_ = true;
+    cur_->history_     = state_->prompt_ids();
+    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 
@@ -818,55 +764,159 @@ void Engine::shutdown() {
     if (route_dump_) { std::fclose(route_dump_); route_dump_ = nullptr; }
     // ADDITIVE (Track W): the trace's name table and record count are written
     // on close, so a process that never closes leaves an unreadable file.
-    layer_.set_tracer(nullptr);
+    if (cur_) cur_->layer_.set_tracer(nullptr);
     tracer_.close();
     // A P3 backfill writes into slab memory from the I/O threads: stop issuing
     // and let what is in flight land before the slabs go back.
     planner_.stop_backfill();
     if (io_.running()) io_.drain();
     state_.reset();
-    engram_.destroy();
-    moe_.destroy();
-    layer_.destroy();
-    kvs_.destroy();
-    tsq_.destroy();
-    tok_pool_.destroy();
-    tok_cmd_ = gpu::CommandBuffer{};
-    tok_open_ = false;
-    fence_.destroy();
-    if (ffn_in_buf_.valid() && ffn_in_alloc_) ffn_in_alloc_->free(ffn_in_buf_);
-    ffn_in_alloc_ = nullptr;
-    if (logits_.valid()) alloc_a_.free(logits_);
-    if (sample_.valid()) alloc_a_.free(sample_);
-    if (topk_out_.valid()) alloc_a_.free(topk_out_);
-    if (topk_hist_.valid()) alloc_a_.free(topk_hist_);
-    // M1: the M > 1 forward's own runner, scratch and tail buffers.
-    if (blogits_.valid()) alloc_a_.free(blogits_);
-    if (bsample_.valid()) alloc_a_.free(bsample_);
-    if (btopk_out_.valid()) alloc_a_.free(btopk_out_);
-    if (btopk_hist_.valid()) alloc_a_.free(btopk_hist_);
-    bscratch_.destroy();
-    mgt_.destroy();
+    for (auto& up : streams_) {
+        Stream& s = *up;
+        s.engram_.destroy();
+        s.moe_.destroy();
+        s.layer_.destroy();
+        s.kvs_.destroy();
+        s.tsq_.destroy();
+        s.tok_pool_.destroy();
+        s.tok_cmd_ = gpu::CommandBuffer{};
+        s.tok_open_ = false;
+        s.fence_.destroy();
+        if (s.ffn_in_buf_.valid() && s.ffn_in_alloc_) s.ffn_in_alloc_->free(s.ffn_in_buf_);
+        s.ffn_in_alloc_ = nullptr;
+        if (s.logits_.valid()) alloc_a_.free(s.logits_);
+        if (s.sample_.valid()) alloc_a_.free(s.sample_);
+        if (s.topk_out_.valid()) alloc_a_.free(s.topk_out_);
+        if (s.topk_hist_.valid()) alloc_a_.free(s.topk_hist_);
+        // M1: the M > 1 forward's own runner, scratch and tail buffers.
+        if (s.blogits_.valid()) alloc_a_.free(s.blogits_);
+        if (s.bsample_.valid()) alloc_a_.free(s.bsample_);
+        if (s.btopk_out_.valid()) alloc_a_.free(s.btopk_out_);
+        if (s.btopk_hist_.valid()) alloc_a_.free(s.btopk_hist_);
+        s.bscratch_.destroy();
+        s.mgt_.destroy();
+        s.scratch_.destroy();
+        s.dec_.destroy();
+        s.attn_.destroy();
+        s.timeline_.destroy();
+        s.timings_.clear();
+        s.history_.clear();
+    }
     batch_ready_ = false;
     batch_cap_ = 0;
-    scratch_.destroy();
-    dec_.destroy();
-    attn_.destroy();
     store_.reset();      // the slabs came from alloc_a_/alloc_b_; give them back first
     pinned_.reset();
     io_.stop();
     shards_.close();
     alloc_a_.shutdown();
     alloc_b_.shutdown();
-    timeline_.destroy();
     device_.destroy();
     kv_.reset();
     weights_.clear();
-    timings_.clear();
-    history_.clear();
+    streams_.clear();
+    streams_.push_back(std::make_unique<Stream>());
+    cur_ = streams_[0].get();
     profiler_.close();
     ready_ = false;
     gpu_ready_ = false;
+}
+
+// --- Track MS: streams (docs/p4_multistream.md) ------------------------------
+
+// The per-sequence resources of one stream. Everything here comes out of path
+// A and is small; the expert cache, the pinned set and the planner are the
+// process's and are never duplicated.
+Result<void> Engine::create_stream(Stream& s) {
+    const TextConfig& c = model_cfg_.text;
+    const std::string dir = gpu::default_shader_dir();
+    if (auto r = s.timeline_.create(device_, 0); !r) return r;
+    if (auto r = s.attn_.create(device_, alloc_a_, dir); !r) return r;
+    if (auto r = s.dec_.create(device_, alloc_a_, dir); !r) return r;
+    if (auto r = s.scratch_.create(alloc_a_, 32ull << 20); !r) return r;
+    auto lg = alloc_a_.allocate(uint64_t(c.vocab_size) * sizeof(float), true, true);
+    if (!lg) return std::unexpected(lg.error());
+    s.logits_ = *lg;
+    auto sm = alloc_a_.allocate_host_coherent(sizeof(gpu::SampleOut));
+    if (!sm) return std::unexpected(sm.error());
+    s.sample_ = *sm;
+    std::memset(s.sample_.host_ptr, 0, sizeof(gpu::SampleOut));
+    {
+        const uint64_t out_bytes =
+            uint64_t(kTopKHeaderWords + kTopKThreads + 2ull * kTopKThreads * kTopKCapPerThread) * 4;
+        auto to = alloc_a_.allocate_host_coherent(align_up(out_bytes, 4096));
+        if (!to) return std::unexpected(to.error());
+        s.topk_out_ = *to;
+        std::memset(s.topk_out_.host_ptr, 0, static_cast<size_t>(s.topk_out_.bytes));
+        auto th = alloc_a_.allocate_host_coherent(uint64_t(kTopKThreads) * kTopKBins * 4);
+        if (!th) return std::unexpected(th.error());
+        s.topk_hist_ = *th;
+    }
+    if (auto r = s.layer_.create(device_, s.attn_, s.scratch_, c); !r) return r;
+    if (auto r = s.moe_.create(device_, alloc_a_, dir, store_, planner_, pinned_, c); !r) return r;
+    // The MoE output stays on the GPU: the next layer's hc_post reads the
+    // bridge's `y` by address instead of the host copying it into scratch.
+    s.layer_.set_moe_output(s.moe_.y_address(), s.moe_.y_host());
+    // The FFN input the host reads every layer, in cached host pages rather than
+    // path A's write-combining mapping (DecodeLayer::set_ffn_input). Path A if
+    // there is no path B: slower, still correct.
+    {
+        const uint64_t bytes = align_up(uint64_t(c.hidden_size) * sizeof(float), 1ull << 16);
+        auto fb = alloc_b_.path() == MemoryPath::ExternalMemoryHost
+                      ? alloc_b_.allocate_imported(bytes, /*device_address=*/true)
+                      : alloc_a_.allocate(bytes, true, true);
+        if (!fb) fb = alloc_a_.allocate(bytes, true, true);
+        if (!fb) return std::unexpected(fb.error());
+        s.ffn_in_buf_ = *fb;
+        s.ffn_in_alloc_ = (fb->host_alloc != nullptr) ? &alloc_b_ : &alloc_a_;
+        s.layer_.set_ffn_input(s.ffn_in_buf_.dev_addr, static_cast<float*>(s.ffn_in_buf_.host_ptr));
+    }
+    if (auto r = s.fence_.create(device_, 0); !r) return r;
+    s.fence_value_ = 0;
+    if (auto r = s.tok_pool_.create(device_); !r) return r;
+    {
+        auto cb = s.tok_pool_.acquire();
+        if (!cb) return std::unexpected(cb.error());
+        s.tok_cmd_ = *cb;
+    }
+    // 40 layers x (attention + MoE) x 2 stamps, two engram layers, the tail.
+    const uint32_t tsq_slots =
+        tracer_.enabled() ? trace::Tracer::suggested_pool(c.num_hidden_layers) : 256u;
+    if (auto r = s.tsq_.create(device_, tsq_slots); !r)
+        log_warn("engine: no GPU timestamps ({}); the breakdown will be host-only",
+                 r.error().str());
+    s.timings_.assign(c.num_hidden_layers, LayerTiming{});
+    s.route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
+    s.pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    return {};
+}
+
+Result<void> Engine::set_streams(uint32_t n) {
+    if (n == 0) return fail(Err::InvalidArgument, "a run needs at least one stream");
+    if (n < streams_.size())
+        return fail(Err::InvalidArgument,
+                    std::format("streams only grow ({} are up, {} asked for)", streams_.size(), n));
+    const size_t was = streams_.size();
+    while (streams_.size() < n) {
+        auto up = std::make_unique<Stream>();
+        up->id = static_cast<uint32_t>(streams_.size());
+        streams_.push_back(std::move(up));
+    }
+    for (auto& up : streams_)
+        if (!up->made_) {
+            if (auto r = create_stream(*up); !r) return r;
+            up->made_ = true;
+        }
+    cur_ = streams_[0].get();
+    if (streams_.size() != was)
+        log_info("engine: {} decode stream(s)", streams_.size());
+    return {};
+}
+
+Result<void> Engine::select_stream(uint32_t i) {
+    if (i >= streams_.size())
+        return fail(Err::OutOfRange, std::format("stream {} of {}", i, streams_.size()));
+    cur_ = streams_[i].get();
+    return {};
 }
 
 // TODO(design §11, §9.7): encoder over the full prompt, decoder bounded replay
@@ -894,10 +944,10 @@ Result<DecodeStepResult> Engine::slow_prefill(std::span<const uint32_t> prompt) 
 
     // Position 0 starts from nothing: an empty ring, an empty compressed plane,
     // an empty key cache and a compressor state of -inf.
-    kvs_.clear();
-    history_.assign(prompt.begin(), prompt.end());
-    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
-    // `token_` is deliberately NOT reset. It is the cache's LRU clock, not a
+    cur_->kvs_.clear();
+    cur_->history_.assign(prompt.begin(), prompt.end());
+    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    // `cur_->token_` is deliberately NOT reset. It is the cache's LRU clock, not a
     // position: winding it back makes everything already resident look newer
     // than what the next layer fetches, and the policy then evicts the slot it
     // just filled -- which surfaces as "expert (4, 1) is not resident at the
@@ -910,7 +960,7 @@ Result<DecodeStepResult> Engine::slow_prefill(std::span<const uint32_t> prompt) 
         if (!r) return r;
         last = *r;
     }
-    prefill_loaded_ = false;
+    cur_->prefill_loaded_ = false;
     log_info("engine: slow prefill of {} tokens in {:.2f} s ({:.1f} ms/token), "
              "next token {}", prompt.size(), ms_since(t0) / 1000.0,
              ms_since(t0) / double(prompt.size()), last.token);
@@ -1027,13 +1077,13 @@ Result<void> Engine::embed_token(uint32_t token) {
     // read problem runtime/moe_bridge.cpp documents.
     std::vector<float> wide(c.hidden_size);
     for (uint32_t d = 0; d < c.hidden_size; ++d) wide[d] = bf16_to_f32(row[d]);
-    auto* x = static_cast<float*>(layer_.scratch().x.host);
+    auto* x = static_cast<float*>(cur_->layer_.scratch().x.host);
     for (uint32_t j = 0; j < c.hc_mult; ++j)
         std::memcpy(x + size_t(j) * c.hidden_size, wide.data(),
                     size_t(c.hidden_size) * sizeof(float));
     // `make_identity_pre_mix`: the first sublayer collapses the four copies
     // onto copy 0. post/comb stay zero -- the first sublayer applies no hc_post.
-    auto* mix = static_cast<float*>(layer_.scratch().mix_a.host);
+    auto* mix = static_cast<float*>(cur_->layer_.scratch().mix_a.host);
     std::memset(mix, 0, 128);
     mix[0] = 1.0f;
     return {};
@@ -1055,43 +1105,43 @@ Result<void> Engine::embed_token(uint32_t token) {
 // P2 step 2, whose shape was one submit per dispatch group.
 
 Result<void> Engine::cmd_open() {
-    if (tok_open_) return {};
-    if (auto r = tok_cmd_.begin(); !r) return r;
-    tok_open_ = true;
-    if (tok_first_) {
-        if (tsq_.count()) (void)tok_cmd_.reset_queries(tsq_, 0, tsq_.count());
-        tsq_used_  = 0;
-        tok_first_ = false;
+    if (cur_->tok_open_) return {};
+    if (auto r = cur_->tok_cmd_.begin(); !r) return r;
+    cur_->tok_open_ = true;
+    if (cur_->tok_first_) {
+        if (cur_->tsq_.count()) (void)cur_->tok_cmd_.reset_queries(cur_->tsq_, 0, cur_->tsq_.count());
+        cur_->tsq_used_  = 0;
+        cur_->tok_first_ = false;
     }
     return {};
 }
 
 uint32_t Engine::cmd_stamp() {
-    if (!tok_open_ || tsq_.count() == 0 || tsq_used_ >= tsq_.count()) return ~0u;
-    const uint32_t i = tsq_used_++;
-    (void)tok_cmd_.write_timestamp(tsq_, i, /*bottom=*/true);
+    if (!cur_->tok_open_ || cur_->tsq_.count() == 0 || cur_->tsq_used_ >= cur_->tsq_.count()) return ~0u;
+    const uint32_t i = cur_->tsq_used_++;
+    (void)cur_->tok_cmd_.write_timestamp(cur_->tsq_, i, /*bottom=*/true);
     return i;
 }
 
 Result<void> Engine::cmd_submit(TimelineValue wait_value) {
-    if (!tok_open_) return {};
-    if (auto r = tok_cmd_.end(); !r) return r;
-    tok_open_ = false;
+    if (!cur_->tok_open_) return {};
+    if (auto r = cur_->tok_cmd_.end(); !r) return r;
+    cur_->tok_open_ = false;
     gpu::Submission s;
-    s.cmd = &tok_cmd_;
+    s.cmd = &cur_->tok_cmd_;
     TimelineValue w[1] = {wait_value};
     if (wait_value) {
-        s.timeline    = &timeline_;
+        s.timeline    = &cur_->timeline_;
         s.wait_values = std::span<const TimelineValue>(w, 1);
     }
-    s.signal_timeline    = &fence_;
-    s.signal_value       = ++fence_value_;
+    s.signal_timeline    = &cur_->fence_;
+    s.signal_value       = ++cur_->fence_value_;
     s.signal_on_complete = true;
     const TimePoint t0 = Clock::now();
     if (auto r = gpu::submit(device_, s); !r) return r;
-    if (open_guard_) { inflight_guard_ = open_guard_; open_guard_ = 0; }
-    sub_ms_ += ms_since(t0);
-    ++submits_;
+    if (cur_->open_guard_) { cur_->inflight_guard_ = cur_->open_guard_; cur_->open_guard_ = 0; }
+    cur_->sub_ms_ += ms_since(t0);
+    ++cur_->submits_;
     tracer_.note_submit();
     return {};
 }
@@ -1139,23 +1189,54 @@ double Engine::fence_spin_us() {
     return v;
 }
 
+// Track MS: the eviction guard with more than one stream in flight.
+//
+// A slot read by a submitted buffer is stamped with that buffer's guard number
+// and may not be recycled until the store's completed timeline reaches it
+// (design §5.3). With ONE stream the rule is "publish the guard of the buffer
+// I just waited for", and that is what this does when `streams_.size() == 1`
+// -- bit for bit the single-stream behaviour, including its conservatism about
+// buffers that carry no guard of their own.
+//
+// With two, stream A's buffer can complete while stream B still has an OLDER
+// guard outstanding, and publishing A's (larger) number would free slots B is
+// still reading. So A's number is clamped to one below the oldest guard any
+// OTHER stream has not yet proven complete -- which is any guard it has
+// assigned for a layer still being recorded (`layer_guard_pending_`), any
+// buffer it has recorded but not submitted (`open_guard_`), and the buffer it
+// has submitted but not waited for (`inflight_guard_`).
+void Engine::advance_store_guard(const Stream& me, TimelineValue mine) {
+    if (!mine) return;
+    TimelineValue safe = mine;
+    const auto clamp = [&safe](TimelineValue v) {
+        if (v && v - 1 < safe) safe = v - 1;
+    };
+    for (const auto& up : streams_) {
+        if (up.get() == &me) continue;
+        clamp(up->open_guard_);
+        clamp(up->inflight_guard_);
+    }
+    store_.set_completed_timeline(safe);
+}
+
 Result<void> Engine::cmd_wait() {
     const TimePoint t0 = Clock::now();
     if (const double spin_us = fence_spin_us(); spin_us > 0.0) {
         const double budget_ms = spin_us / 1000.0;
         for (;;) {
-            auto v = fence_.value();
+            auto v = cur_->fence_.value();
             if (!v) break;                       // fall through to the blocking wait
-            if (*v >= fence_value_) {
-                wait_ms_ += ms_since(t0);
-                spin_hits_ += 1;
-                if (inflight_guard_) {
-                    store_.set_completed_timeline(inflight_guard_);
-                    inflight_guard_ = 0;
+            if (*v >= cur_->fence_value_) {
+                cur_->wait_ms_ += ms_since(t0);
+                cur_->spin_hits_ += 1;
+                if (cur_->inflight_guard_) {
+                    const TimelineValue mine = cur_->inflight_guard_;
+                    cur_->inflight_guard_ = 0;
+                    advance_store_guard(*cur_, mine);
                 }
                 return {};
             }
-            if (ms_since(t0) >= budget_ms) { spin_misses_ += 1; break; }
+            if (ms_since(t0) >= budget_ms) { cur_->spin_misses_ += 1; break; }
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
             __builtin_ia32_pause();
 #endif
@@ -1165,38 +1246,39 @@ Result<void> Engine::cmd_wait() {
     Result<void> r{};
     bool warned = false;
     for (;;) {
-        r = fence_.wait(fence_value_, std::chrono::seconds(15));
+        r = cur_->fence_.wait(cur_->fence_value_, std::chrono::seconds(15));
         if (r || r.error().code != Err::Cancelled) break;   // done, or a real error
         const double waited = std::chrono::duration<double>(Clock::now() - t0).count();
         if (!warned && waited >= 15.0) {
             warned = true;
             log_warn("engine: still waiting for GPU fence {} after {:.0f} s (token {}, {} submits "
                      "this step) -- the queue is shared; giving it {:.0f} s "
-                     "(DEEPMOE_GPU_WAIT_S)", fence_value_, waited, token_, submits_, budget_s);
+                     "(DEEPMOE_GPU_WAIT_S)", cur_->fence_value_, waited, cur_->token_, cur_->submits_, budget_s);
         }
         if (waited >= budget_s) {
             r = fail(Err::Cancelled,
                      std::format("the GPU did not signal fence {} within {:.0f} s (token {}, "
                                  "{} submits this step). A queued submission and a wedged device "
                                  "look the same here: raise DEEPMOE_GPU_WAIT_S if the machine is "
-                                 "shared", fence_value_, waited, token_, submits_));
+                                 "shared", cur_->fence_value_, waited, cur_->token_, cur_->submits_));
             break;
         }
     }
-    wait_ms_ += ms_since(t0);
-    if (r && inflight_guard_) {
-        store_.set_completed_timeline(inflight_guard_);
-        inflight_guard_ = 0;
+    cur_->wait_ms_ += ms_since(t0);
+    if (r && cur_->inflight_guard_) {
+        const TimelineValue mine = cur_->inflight_guard_;
+        cur_->inflight_guard_ = 0;
+        advance_store_guard(*cur_, mine);
     }
     return r;
 }
 
 void Engine::read_timestamps(DecodeStepResult& res) {
     res.breakdown.gpu_timed = false;
-    if (tsq_.count() == 0 || tsq_used_ == 0) return;
-    auto raw = tsq_.read_range(0, tsq_used_);
+    if (cur_->tsq_.count() == 0 || cur_->tsq_used_ == 0) return;
+    auto raw = cur_->tsq_.read_range(0, cur_->tsq_used_);
     if (!raw) return;
-    tracer_.token_end(raw->data(), tsq_used_, 0);
+    tracer_.token_end(raw->data(), cur_->tsq_used_, 0);
     const uint32_t bits = device_.caps().timestamp_valid_bits;
     const uint64_t mask = bits >= 64 ? ~0ull : ((1ull << bits) - 1);
     const double   ns   = device_.caps().timestamp_period_ns;
@@ -1206,13 +1288,13 @@ void Engine::read_timestamps(DecodeStepResult& res) {
         const uint64_t t = b >= a ? b - a : (mask - a) + b + 1;
         return double(t) * ns * 1e-6;
     };
-    for (uint32_t L = 0; L < timings_.size(); ++L) {
-        timings_[L].attn_ms    = span_ms(ts_attn_[L]);
-        timings_[L].moe_gpu_ms = span_ms(ts_moe_[L]) + span_ms(ts_moe_early_[L]);
-        timings_[L].moe_ms     = timings_[L].moe_gpu_ms + timings_[L].moe_host_ms;
-        timings_[L].engram_ms  = engram_host_ms_[L] + span_ms(ts_engram_[L]);
+    for (uint32_t L = 0; L < cur_->timings_.size(); ++L) {
+        cur_->timings_[L].attn_ms    = span_ms(cur_->ts_attn_[L]);
+        cur_->timings_[L].moe_gpu_ms = span_ms(cur_->ts_moe_[L]) + span_ms(cur_->ts_moe_early_[L]);
+        cur_->timings_[L].moe_ms     = cur_->timings_[L].moe_gpu_ms + cur_->timings_[L].moe_host_ms;
+        cur_->timings_[L].engram_ms  = cur_->engram_host_ms_[L] + span_ms(cur_->ts_engram_[L]);
     }
-    res.breakdown.tail_ms   = span_ms(ts_tail_);
+    res.breakdown.tail_ms   = span_ms(cur_->ts_tail_);
     res.breakdown.gpu_timed = true;
 }
 
@@ -1266,7 +1348,7 @@ bool Engine::route_resident_only(uint32_t L, ResidentOnly ro, const uint32_t* id
             auto fut = pr->get_future();
             // Shared, not captured by reference: `fetch` calls the callback
             // from the IoEngine thread on its own error paths too.
-            auto f = planner_.fetch(k, IoPriority::BlockingMiss, token_, L,
+            auto f = planner_.fetch(k, IoPriority::BlockingMiss, clock_, L,
                                     [pr](bool ok) { pr->set_value(ok); },
                                     rr_demand_[rr_pack(k)]);
             if (f) {
@@ -1328,17 +1410,30 @@ bool Engine::route_resident_only(uint32_t L, ResidentOnly ro, const uint32_t* id
     return true;
 }
 
-Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
-                               LayerTiming& t) {
+// --- Track MS: `run_layer` in three phases (docs/p4_multistream.md) --------
+//
+// Phase boundaries are where a decode layer actually blocks:
+//   (1) begin  ... ends having SUBMITTED the attention chain; the GPU is busy
+//   (2) gate   ... waits that submit's fence, routes, and ISSUES the P0 misses
+//   (3) moe    ... waits for residency (the NVMe stall) and records the MoE
+// Between (2) and (3) this stream owns nothing but outstanding drive reads --
+// which is exactly the ~2.5 ms/layer the single-stream engine spends idle
+// (docs/p4_p0_queue.md) and exactly where another stream's (1) and (2) fit.
+Result<void> Engine::layer_begin(Stream& s, uint32_t L, uint32_t position, bool& apply_post,
+                                 LayerTiming& t) {
+    cur_ = &s;
+    Stream::LayerCtx& lc = s.lc_;
+    lc = Stream::LayerCtx{};
+    lc.t = &t;
     const TextConfig& c = model_cfg_.text;
-    DecodeScratch& b = layer_.scratch();
+    DecodeScratch& b = cur_->layer_.scratch();
 
-    if (gate_probe_) gp_top_ = Clock::now();
+    if (gate_probe_) cur_->gp_top_ = Clock::now();
 
-    auto view = kvs_.layer(L);
+    auto view = cur_->kvs_.layer(L);
     if (!view) return std::unexpected(view.error());
 
-    LayerStep st;
+    LayerStep& st = lc.st;
     st.layer          = L;
     st.position       = position;
     st.compress_ratio = c.compress_ratio(L);
@@ -1354,16 +1449,16 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         st.idx_key_write  = view->idx_key;
         // Publish before reading, exactly as `Indexer.forward` does: a source
         // that completes here is what this layer's own scoring will use.
-        if (st.run_compressor && st.cmp_complete) pub_index_k_ = L;
+        if (st.run_compressor && st.cmp_complete) cur_->pub_index_k_ = L;
         // The three caches this layer READS may each belong to a different
         // layer: the compressed KV to the last kv_source at or above it, the
         // top-k list to the last index_source, and the index keys to whichever
         // source published last -- which is not the same thing.
-        auto cmp = kvs_.layer(p.cmp_src);
+        auto cmp = cur_->kvs_.layer(p.cmp_src);
         if (!cmp) return std::unexpected(cmp.error());
-        auto idx = kvs_.layer(p.idx_src);
+        auto idx = cur_->kvs_.layer(p.idx_src);
         if (!idx) return std::unexpected(idx.error());
-        auto key = kvs_.layer(pub_index_k_);
+        auto key = cur_->kvs_.layer(cur_->pub_index_k_);
         if (!key) return std::unexpected(key.error());
         st.kv.cmp_kv  = cmp->cmp_kv;
         st.kv.top_idx = idx->top_idx;
@@ -1372,7 +1467,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
 
     // The residency gate the open buffer's first dispatch -- the previous
     // layer's MoE -- is waiting on. Zero on layer 0, whose buffer has none.
-    const TimelineValue prev_gate = L ? gpu::timeline_value(token_, L - 1) : 0;
+    const TimelineValue prev_gate = L ? gpu::timeline_value(cur_->token_, L - 1) : 0;
 
     // The engram writes into the residual stream BEFORE the block (design
     // §2.1). design §7.7 normally defers the previous sublayer's hc_post into
@@ -1384,12 +1479,13 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     // hc_post, the engram's two dispatches and this layer's attention. The
     // rows were fetched at the start of the token (design §9.5), while layer
     // 0 ran; only a caller that skipped that pays for the fetch here.
-    const bool engram = engram_.has_layer(L);
+    const bool engram = cur_->engram_.has_layer(L);
+    lc.engram = engram;
     if (engram) {
-        if (!engram_.fetched(L, position)) {
+        if (!cur_->engram_.fetched(L, position)) {
             const TimePoint f0 = Clock::now();
-            if (auto r = engram_.fetch(L, history_, position, &profiler_); !r) return r;
-            engram_host_ms_[L] += ms_since(f0);
+            if (auto r = cur_->engram_.fetch(L, cur_->history_, position, &profiler_); !r) return r;
+            cur_->engram_host_ms_[L] += ms_since(f0);
         }
         if (auto r = cmd_open(); !r) return r;
         if (apply_post) {
@@ -1399,17 +1495,17 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
             // buffer runs.
             LayerStep prev = st;
             prev.layer = L - 1;
-            if (auto r = layer_.record_close(tok_cmd_, prev); !r) return r;
+            if (auto r = cur_->layer_.record_close(cur_->tok_cmd_, prev); !r) return r;
         }
-        ts_engram_[L].begin = cmd_stamp();
+        cur_->ts_engram_[L].begin = cmd_stamp();
         const DeviceAddress in = apply_post ? b.xout.addr : b.x.addr;
         // One record, not two: the gemv and the gate are dispatched inside
         // EngramRunner::record, which Track W does not own.
         const uint32_t tr_eg = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Engram, 0,
                                                     "engram_gemv+gate");
-        if (auto r = engram_.record(tok_cmd_, L, in, b.x.addr); !r) return r;
+        if (auto r = cur_->engram_.record(cur_->tok_cmd_, L, in, b.x.addr); !r) return r;
         trace::close_dispatch(&tracer_, tr_eg);
-        ts_engram_[L].end = cmd_stamp();
+        cur_->ts_engram_[L].end = cmd_stamp();
         apply_post = false;
         st.apply_hc_post = false;
         st.bind_close = false;
@@ -1417,41 +1513,55 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
 
     {
         const TimePoint b0 = Clock::now();
-        if (auto r = layer_.bind(weights_[L], st); !r) return r;
-        bind_ms_ += ms_since(b0);
+        if (auto r = cur_->layer_.bind(weights_[L], st); !r) return r;
+        cur_->bind_ms_ += ms_since(b0);
     }
     if (auto r = cmd_open(); !r) return r;
     {
         const TimePoint r0 = Clock::now();
-        ts_attn_[L].begin = cmd_stamp();
-        if (auto r = layer_.record_attention(tok_cmd_, st); !r) return r;
-        ts_attn_[L].end = cmd_stamp();
-        rec_ms_ += ms_since(r0);
+        cur_->ts_attn_[L].begin = cmd_stamp();
+        if (auto r = cur_->layer_.record_attention(cur_->tok_cmd_, st); !r) return r;
+        cur_->ts_attn_[L].end = cmd_stamp();
+        cur_->rec_ms_ += ms_since(r0);
     }
     const TimePoint gp_sub0 = Clock::now();
     if (auto r = cmd_submit(prev_gate); !r) return r;
     const double gp_sub_us = gate_probe_ ? ms_since(gp_sub0) * 1000.0 : 0.0;
-    if (gate_probe_ && gp_open_) {
-        gp_open_->next_us += ms_between(gp_top_, Clock::now()) * 1000.0;
-        gp_open_->sub_us  += gp_sub_us;
-        gp_open_ = nullptr;
+    if (gate_probe_ && cur_->gp_open_) {
+        GateSeg* g = static_cast<GateSeg*>(cur_->gp_open_);
+        g->next_us += ms_between(cur_->gp_top_, Clock::now()) * 1000.0;
+        g->sub_us  += gp_sub_us;
+        cur_->gp_open_ = nullptr;
     }
     // design §9.5: the engram's 96 row reads depend only on the token ids, so
     // they go out the moment the first buffer of the token is on the GPU and
     // overlap it, instead of blocking the engram layers when they are reached.
     if (L == 0) {
         for (uint32_t E = 1; E < c.num_hidden_layers; ++E) {
-            if (!engram_.has_layer(E)) continue;
+            if (!cur_->engram_.has_layer(E)) continue;
             const TimePoint f0 = Clock::now();
-            if (auto r = engram_.fetch(E, history_, position, &profiler_); !r) return r;
-            engram_host_ms_[E] += ms_since(f0);
+            if (auto r = cur_->engram_.fetch(E, cur_->history_, position, &profiler_); !r) return r;
+            cur_->engram_host_ms_[E] += ms_since(f0);
         }
     }
+    return {};
+}
+
+Result<void> Engine::layer_gate(Stream& s, uint32_t L, uint32_t position) {
+    cur_ = &s;
+    Stream::LayerCtx& lc = s.lc_;
+    LayerStep& st = lc.st;
+    LayerTiming& t = *lc.t;
+    const TextConfig& c = model_cfg_.text;
+    DecodeScratch& b = cur_->layer_.scratch();
+    (void)position;
     const TimePoint gp_w0 = Clock::now();
+    lc.gp_w0 = gp_w0;
     if (auto r = cmd_wait(); !r) return r;
     const TimePoint gp_w1 = Clock::now();
+    lc.gp_w1 = gp_w1;
     // The indexer wrote every compressed entry of the list sparse_attn just read.
-    if (auto r = layer_.verify_after_attention(st); !r) return r;
+    if (auto r = cur_->layer_.verify_after_attention(st); !r) return r;
 
     // design §7.1 / §7.8: the gate's ids are already in host-coherent memory.
     // Classify them, fetch the misses at P0, wait, host-signal the timeline the
@@ -1459,8 +1569,10 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     const uint32_t topk = c.num_experts_per_tok;
     const auto* ids_raw = static_cast<const uint32_t*>(b.gate_ids.host);
     const auto* wts_raw = static_cast<const float*>(b.gate_weights.host);
-    const uint32_t* ids = ids_raw;
-    const float*    wts = wts_raw;
+    const uint32_t*& ids = lc.ids;
+    const float*&   wts = lc.wts;
+    ids = ids_raw;
+    wts = wts_raw;
 
     // --- Track Y: resident-only routing (docs/p4_resident_routing.md) ------
     // Drop the gate's non-resident experts, renormalise the rest over what is
@@ -1468,8 +1580,8 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     // the MoE call, the guard, the route dump -- then describe what will
     // actually be computed, and `kept_*` is the subset the planner sees, so the
     // LRU is touched only by experts this step really used.
-    uint32_t eff_ids[16];
-    float    eff_w[16];
+    uint32_t* eff_ids = lc.ids_eff;
+    float*    eff_w = lc.wts_eff;
     uint16_t kept_ids[16];
     float    kept_w[16];
     uint32_t n_kept = topk;
@@ -1480,42 +1592,43 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     // `verify` picks one of the other two modes per STEP: the DSpark block's
     // first position routes exactly (mode off -- its misses are fetched at P0
     // and warm the cache for the rest of the block), the four draft positions
-    // route resident-only. The phase is `token_ % 5`; which residue is the
+    // route resident-only. The phase is `cur_->token_ % 5`; which residue is the
     // exact one is arbitrary, since the block boundary is arbitrary.
     ResidentOnly ro = resident_only_;
     if (ro == ResidentOnly::Verify)
-        ro = (token_ % kVerifyBlock) == 0 ? verify_first_ : verify_draft_;
+        ro = (cur_->token_ % kVerifyBlock) == 0 ? verify_first_ : verify_draft_;
     if (ro != ResidentOnly::Off) {
-        rr_pending_.clear();
+        cur_->rr_pending_.clear();
         if (route_resident_only(L, ro, ids_raw, wts_raw, topk, eff_ids, eff_w, kept_ids, kept_w,
-                                n_kept, rr_pending_)) {
+                                n_kept, cur_->rr_pending_)) {
             ids = eff_ids;
             wts = eff_w;
         }
     }
-    MoeCall call;
+    MoeCall& call = lc.call;
     call.layer   = L;
     call.ids     = ids;
     call.weights = wts;
     call.topk    = topk;
-    call.x       = layer_.ffn_norm_out();                  // ffn_norm output
+    call.x       = cur_->layer_.ffn_norm_out();                  // ffn_norm output
     call.y       = nullptr;                                // stays on the GPU
     call.hidden  = c.hidden_size;
     // Track R1 (docs/p4_hitrate.md §4): when this layer waits on NVMe, dispatch
     // A over what is already resident -- the hits and the shared expert -- is
     // submitted before the wait instead of after it. `late` is what it did not
     // cover.
-    layer_guard_pending_ = false;
-    bool split = false;
-    uint32_t late[16];
-    uint32_t n_late = 0;
-    bool staged = false;   // stage_input has run for this layer
+    cur_->layer_guard_pending_ = false;
+    bool& split = lc.split;
+    uint32_t* late = lc.late;
+    uint32_t& n_late = lc.n_late;
+    bool& staged = lc.staged;
     {
         const TimePoint g0 = Clock::now();
+        lc.g0 = g0;
         uint16_t chosen[16];
         for (uint32_t i = 0; i < topk; ++i) chosen[i] = static_cast<uint16_t>(ids[i]);
         if (route_dump_)
-            std::memcpy(route_ids_.data() + size_t(L) * topk, chosen, topk * sizeof(uint16_t));
+            std::memcpy(cur_->route_ids_.data() + size_t(L) * topk, chosen, topk * sizeof(uint16_t));
         // design §9.3: the gate kernel already wrote the top-16 ids AND their raw
         // scores into the same two host-coherent buffers (gpu/shaders/gate.slang
         // stage 1, GatePush::record = 16), and the Planner's heat EWMA is defined
@@ -1542,14 +1655,16 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         route.near_ids    = std::span<const uint16_t>(near_ids, 16);
         route.near_scores = std::span<const float>(near_scores, 16);
         const TimePoint gp_p0 = Clock::now();
-        auto plan = planner_.plan_layer(route, token_);
+        lc.gp_p0 = gp_p0;
+        auto plan = planner_.plan_layer(route, clock_);
         if (!plan) return std::unexpected(plan.error());
-        t.hits       = static_cast<uint32_t>(plan->hits.size());
-        t.misses     = static_cast<uint32_t>(plan->misses.size());
-        t.miss_bytes = plan->miss_bytes;
+        lc.plan = std::move(*plan);
+        t.hits       = static_cast<uint32_t>(lc.plan.hits.size());
+        t.misses     = static_cast<uint32_t>(lc.plan.misses.size());
+        t.miss_bytes = lc.plan.miss_bytes;
         t.gate_ms    = ms_since(g0);
-        if (overlap_ && (!plan->issued.empty() || !plan->joined.empty())) {
-            if (auto r = moe_.stage_input(call); !r) return r;
+        if (overlap_ && (!lc.plan.issued.empty() || !lc.plan.joined.empty())) {
+            if (auto r = cur_->moe_.stage_input(call); !r) return r;
             staged = true;
             uint32_t early[16];
             uint32_t n_early = 0;
@@ -1564,27 +1679,45 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
                 // host waits, so nothing may recycle them until the buffer that
                 // carries dispatch B -- the last reader -- has completed.
                 guard_layer(L, std::span<const uint32_t>(early, n_early), ids);
-                if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(early, n_early)); !r)
+                if (auto r = cur_->moe_.stage_rows(call, std::span<const uint32_t>(early, n_early)); !r)
                     return r;
                 early[n_early++] = topk;                        // the shared expert
                 if (auto r = cmd_open(); !r) return r;
                 const TimePoint r0 = Clock::now();
-                ts_moe_early_[L].begin = cmd_stamp();
+                cur_->ts_moe_early_[L].begin = cmd_stamp();
                 const uint32_t tr_me = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe,
                                                             0, "moe_gateup_early");
-                if (auto r = moe_.record_gateup(tok_cmd_, std::span<const uint32_t>(early, n_early)); !r)
+                if (auto r = cur_->moe_.record_gateup(cur_->tok_cmd_, std::span<const uint32_t>(early, n_early)); !r)
                     return r;
                 trace::close_dispatch(&tracer_, tr_me);
-                ts_moe_early_[L].end = cmd_stamp();
-                rec_ms_ += ms_since(r0);
+                cur_->ts_moe_early_[L].end = cmd_stamp();
+                cur_->rec_ms_ += ms_since(r0);
                 if (auto r = cmd_submit(0); !r) return r;
                 split = true;
             }
         }
+    }
+    return {};
+}
+
+Result<void> Engine::layer_moe(Stream& s, uint32_t L, bool& apply_post) {
+    cur_ = &s;
+    Stream::LayerCtx& lc = s.lc_;
+    LayerTiming& t = *lc.t;
+    const TextConfig& c = model_cfg_.text;
+    MoeCall& call = lc.call;
+    const uint32_t topk = c.num_experts_per_tok;
+    const uint32_t* ids = lc.ids;
+    const bool split = lc.split;
+    const bool staged = lc.staged;
+    uint32_t* late = lc.late;
+    const uint32_t n_late = lc.n_late;
+    const TimePoint gp_w0 = lc.gp_w0, gp_w1 = lc.gp_w1, gp_p0 = lc.gp_p0;
+    {
         double gp_pwait_us = 0.0;
         {
             const TimePoint w0 = Clock::now();
-            if (auto r = planner_.wait_layer(*plan); !r) return std::unexpected(r.error());
+            if (auto r = planner_.wait_layer(lc.plan); !r) return std::unexpected(r.error());
             t.gate_ms += ms_since(w0);
             gp_pwait_us = ms_since(w0) * 1000.0;
             if (gate_probe_) {
@@ -1597,7 +1730,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
                 g.plan_us  += ms_between(gp_p0, w0) * 1000.0;
                 g.pwait_us += gp_pwait_us;
                 ++g.n;
-                gp_open_ = &g;      // segments (iv) and (v) land in the same row
+                cur_->gp_open_ = &g;      // segments (iv) and (v) land in the same row
             }
         }
         // Every routed expert must be resident now. When one is not, say how
@@ -1606,8 +1739,8 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         for (uint32_t i = 0; i < topk; ++i) {
             const ExpertKey key{static_cast<uint16_t>(L), static_cast<uint16_t>(ids[i])};
             if (store_.resident(key)) continue;
-            const bool was_hit = std::find(plan->hits.begin(), plan->hits.end(), key) !=
-                                 plan->hits.end();
+            const bool was_hit = std::find(lc.plan.hits.begin(), lc.plan.hits.end(), key) !=
+                                 lc.plan.hits.end();
             auto slot = store_.slot_for(key);
             return fail(Err::Internal,
                         std::format("layer {} expert {} is not resident after the gate: it was "
@@ -1619,10 +1752,10 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         }
     }
     {
-        const TimelineValue v = gpu::timeline_value(token_, L);
-        auto cur = timeline_.value();
+        const TimelineValue v = gpu::timeline_value(cur_->token_, L);
+        auto cur = cur_->timeline_.value();
         if (cur && *cur < v)
-            if (auto r = timeline_.signal(v); !r) return r;
+            if (auto r = cur_->timeline_.signal(v); !r) return r;
     }
     profiler_.add_phase(Phase::NvmeStall, Nanos(int64_t(t.gate_ms * 1e6)));
 
@@ -1633,52 +1766,59 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         // before the list is rewritten for the late slots.
         if (auto r = cmd_wait(); !r) return r;
         guard_layer(L, std::span<const uint32_t>(late, n_late), ids);
-        if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(late, n_late)); !r) return r;
+        if (auto r = cur_->moe_.stage_rows(call, std::span<const uint32_t>(late, n_late)); !r) return r;
     } else {
         uint32_t all[16];
         for (uint32_t s = 0; s < topk; ++s) all[s] = s;
         guard_layer(L, std::span<const uint32_t>(all, topk), ids);
         if (staged) {
-            if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(all, topk)); !r) return r;
-        } else if (auto r = moe_.stage(call); !r) {
+            if (auto r = cur_->moe_.stage_rows(call, std::span<const uint32_t>(all, topk)); !r) return r;
+        } else if (auto r = cur_->moe_.stage(call); !r) {
             return r;
         }
     }
     // stage_input resets the bridge's timing and stage_rows adds to it, so this
     // is the whole layer's host half whichever way it ran.
-    if (gate_probe_ && gp_open_) gp_open_->stage_us += ms_since(gp_s0) * 1000.0;
-    t.moe_host_ms = moe_.timing().host_ms;
-    mx_ms_ += moe_.timing().x_read_ms;
-    mq_ms_ += moe_.timing().quant_ms;
-    mt_ms_ += moe_.timing().table_ms;
+    if (gate_probe_ && cur_->gp_open_) static_cast<GateSeg*>(cur_->gp_open_)->stage_us += ms_since(gp_s0) * 1000.0;
+    t.moe_host_ms = cur_->moe_.timing().host_ms;
+    cur_->mx_ms_ += cur_->moe_.timing().x_read_ms;
+    cur_->mq_ms_ += cur_->moe_.timing().quant_ms;
+    cur_->mt_ms_ += cur_->moe_.timing().table_ms;
 
     if (auto r = cmd_open(); !r) return r;
     {
         const TimePoint r0 = Clock::now();
-        ts_moe_[L].begin = cmd_stamp();
+        cur_->ts_moe_[L].begin = cmd_stamp();
         if (split) {
             const uint32_t tr_a = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 1,
                                                        "moe_gateup");
-            if (auto r = moe_.record_gateup(tok_cmd_, std::span<const uint32_t>(late, n_late)); !r)
+            if (auto r = cur_->moe_.record_gateup(cur_->tok_cmd_, std::span<const uint32_t>(late, n_late)); !r)
                 return r;
             trace::close_dispatch(&tracer_, tr_a);
             const uint32_t tr_b = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 2,
                                                        "moe_down");
-            if (auto r = moe_.record_down(tok_cmd_); !r) return r;
+            if (auto r = cur_->moe_.record_down(cur_->tok_cmd_); !r) return r;
             trace::close_dispatch(&tracer_, tr_b);
         } else {
             // gate/up, h-quant and down, all recorded inside MoeBridge::record.
             const uint32_t tr_m = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 3,
                                                        "moe_gateup+hquant+down");
-            if (auto r = moe_.record(tok_cmd_); !r) return r;
+            if (auto r = cur_->moe_.record(cur_->tok_cmd_); !r) return r;
             trace::close_dispatch(&tracer_, tr_m);
         }
-        ts_moe_[L].end = cmd_stamp();
-        rec_ms_ += ms_since(r0);
-        if (gate_probe_ && gp_open_) gp_open_->rec_us += ms_since(r0) * 1000.0;
+        cur_->ts_moe_[L].end = cmd_stamp();
+        cur_->rec_ms_ += ms_since(r0);
+        if (gate_probe_ && cur_->gp_open_) static_cast<GateSeg*>(cur_->gp_open_)->rec_us += ms_since(r0) * 1000.0;
     }
     // This buffer is the last reader of the layer's slots.
-    open_guard_ = layer_guard_;
+    cur_->open_guard_ = cur_->layer_guard_;
+    // Track MS: with another stream waiting for the GPU, the MoE is worth a
+    // submit of its own (~0.15 ms) instead of riding along with the NEXT
+    // layer's attention -- which would not be recorded until this stream came
+    // back round, i.e. after the other stream's whole layer.
+    if (streams_.size() > 1 && ms_sched_ != MsSched::PingPong && ms_eager_moe()) {
+        if (auto r = cmd_submit(gpu::timeline_value(cur_->token_, L)); !r) return r;
+    }
     flush_resident_backfill(L);
     profiler_.note_hot_bytes(layer_hot_bytes_[L]);
 
@@ -1686,12 +1826,31 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     // for the next layer's submit to carry it. It costs a submit a layer and
     // is never on in a real run.
     if (layer_probe) {
-        if (auto r = cmd_flush(gpu::timeline_value(token_, L)); !r) return r;
-        layer_probe(L, layer_);
+        if (auto r = cmd_flush(gpu::timeline_value(cur_->token_, L)); !r) return r;
+        layer_probe(L, cur_->layer_);
     }
     apply_post = true;
     return {};
 }
+
+// The single-stream composition of the three: exactly the statements that
+// used to be one function, in the same order.
+Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
+                               LayerTiming& t) {
+    Stream& s = *cur_;
+    if (auto r = layer_begin(s, L, position, apply_post, t); !r) return r;
+    if (auto r = layer_gate(s, L, position); !r) return r;
+    return layer_moe(s, L, apply_post);
+}
+
+bool Engine::ms_eager_moe() {
+    static const bool v = [] {
+        const char* e = std::getenv("DEEPMOE_MS_EAGER_MOE");
+        return !(e && *e == '0');
+    }();
+    return v;
+}
+
 
 
 // --- M1: the M > 1 forward (docs/p4_dspark_runtime.md §6.4) -----------------
@@ -1714,6 +1873,14 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
 //     per-query half of that choice.
 Result<void> Engine::init_batch(uint32_t m_cap) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    // Track MS: the M > 1 runner, its 128 MB scratch and its tail buffers are
+    // the SELECTED stream's, and `batch_ready_` is the engine's. DSpark is one
+    // sequence speculating on itself, so the batch lives on stream 0 and says
+    // so rather than quietly building a second copy on whatever is selected.
+    if (cur_ != streams_.front().get())
+        return fail(Err::FailedPrecondition,
+                    std::format("the M > 1 forward runs on stream 0; stream {} is selected",
+                                cur_->id));
     if (m_cap < 1 || m_cap > gpu::kMgtMaxM)
         return fail(Err::InvalidArgument,
                     std::format("forward_batch takes 1..{} tokens, not {}", gpu::kMgtMaxM, m_cap));
@@ -1724,23 +1891,23 @@ Result<void> Engine::init_batch(uint32_t m_cap) {
     }
     const TextConfig& c = model_cfg_.text;
     const std::string dir = gpu::default_shader_dir();
-    if (auto r = mgt_.create(device_, alloc_a_, dir); !r) return r;
+    if (auto r = cur_->mgt_.create(device_, alloc_a_, dir); !r) return r;
     // The batch activations. 6 columns of everything design §7.14 touches plus
     // the per-query score planes; 128 MB is the round number above what the
     // largest context this store can hold needs (the plane that grows with
     // context is idx_score, M x max_context floats).
-    if (auto r = bscratch_.create(alloc_a_, 128ull << 20); !r) return r;
+    if (auto r = cur_->bscratch_.create(alloc_a_, 128ull << 20); !r) return r;
     const uint32_t maxc = std::max<uint32_t>(max_context(), 1);
-    if (auto r = layer_.create_batch(mgt_, bscratch_, m_cap, maxc); !r) return r;
+    if (auto r = cur_->layer_.create_batch(cur_->mgt_, cur_->bscratch_, m_cap, maxc); !r) return r;
 
     auto lg = alloc_a_.allocate(uint64_t(m_cap) * c.vocab_size * sizeof(float), true, true);
     if (!lg) return std::unexpected(lg.error());
-    blogits_ = *lg;
+    cur_->blogits_ = *lg;
     auto sm = alloc_a_.allocate_host_coherent(
         align_up(uint64_t(m_cap) * sizeof(gpu::SampleOut), 4096));
     if (!sm) return std::unexpected(sm.error());
-    bsample_ = *sm;
-    std::memset(bsample_.host_ptr, 0, static_cast<size_t>(bsample_.bytes));
+    cur_->bsample_ = *sm;
+    std::memset(cur_->bsample_.host_ptr, 0, static_cast<size_t>(cur_->bsample_.bytes));
 
     // `ced_src` of tests/test_gpu_layer.cpp: list 0 serves every window-only
     // layer, list 1 + rank the rank-th index source and everything that reads it.
@@ -1753,16 +1920,16 @@ Result<void> Engine::init_batch(uint32_t m_cap) {
     batch_cap_   = m_cap;
     batch_ready_ = true;
     log_info("engine: M>1 forward ready (M <= {}, {} lists, {} compressed positions)", m_cap,
-             layer_.batch().n_lists, layer_.batch().score_stride);
+             cur_->layer_.batch().n_lists, cur_->layer_.batch().score_stride);
     return {};
 }
 
 Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& apply_post) {
     const TextConfig& c = model_cfg_.text;
-    BatchScratch& bb = layer_.batch();
+    BatchScratch& bb = cur_->layer_.batch();
     const uint64_t hcstride = uint64_t(c.hc_mult) * c.hidden_size * sizeof(float);
 
-    auto view = kvs_.layer(L);
+    auto view = cur_->kvs_.layer(L);
     if (!view) return std::unexpected(view.error());
 
     BatchStep st;
@@ -1777,10 +1944,10 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         const CedPlan& p = ced_[L];
         st.run_compressor = p.is_kv_source;
         st.run_indexer    = p.is_index_source;
-        auto cmp = kvs_.layer(p.cmp_src);
+        auto cmp = cur_->kvs_.layer(p.cmp_src);
         if (!cmp) return std::unexpected(cmp.error());
         st.kv.cmp_kv = cmp->cmp_kv;
-        auto key = kvs_.layer(pub_index_k_);
+        auto key = cur_->kvs_.layer(cur_->pub_index_k_);
         if (!key) return std::unexpected(key.error());
         st.idx_key_own = view->idx_key;
         st.idx_key_pub = key->idx_key;
@@ -1789,25 +1956,25 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         // Publish before the layers below read: a source that completes anywhere
         // inside the batch is what they score against, which is the batch's
         // coarsening of the M = 1 rule (docs/p2_attention.md §9.3 item 5).
-        if (st.key_sel) pub_index_k_ = L;
+        if (st.key_sel) cur_->pub_index_k_ = L;
     }
 
     // The engram writes into the residual stream BEFORE the block (design §2.1),
     // so the previous layer's deferred hc_post has to be materialised first --
     // the same order `run_layer` uses, one dispatch for all M rows.
-    if (engram_.has_layer(L)) {
+    if (cur_->engram_.has_layer(L)) {
         if (auto r = cmd_open(); !r) return r;
         if (apply_post) {
             BatchStep prev = st;
             prev.layer = L - 1;
-            if (auto r = layer_.record_close_batch(tok_cmd_, prev); !r) return r;
+            if (auto r = cur_->layer_.record_close_batch(cur_->tok_cmd_, prev); !r) return r;
         }
         for (uint32_t m = 0; m < M; ++m) {
-            if (auto r = engram_.fetch(L, history_, p0 + m, &profiler_); !r) return r;
+            if (auto r = cur_->engram_.fetch(L, cur_->history_, p0 + m, &profiler_); !r) return r;
             if (auto r = cmd_open(); !r) return r;
             const DeviceAddress in  = (apply_post ? bb.xout.addr : bb.x.addr) + m * hcstride;
             const DeviceAddress out = bb.x.addr + m * hcstride;
-            if (auto r = engram_.record(tok_cmd_, L, in, out); !r) return r;
+            if (auto r = cur_->engram_.record(cur_->tok_cmd_, L, in, out); !r) return r;
             // One row at a time: `EngramRunner` keeps ONE pair of row planes per
             // layer, so row m's dispatch has to consume its rows before row m+1's
             // fetch overwrites them. A batch engram is Track T's (docs/p4_mgt1.md §7).
@@ -1820,27 +1987,27 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
 
     {
         const TimePoint b0 = Clock::now();
-        if (auto r = layer_.bind_batch(weights_[L], st); !r) return r;
+        if (auto r = cur_->layer_.bind_batch(weights_[L], st); !r) return r;
         // `bind_batch` points hc_post's `A` at the batch scratch's own moe_y;
         // the MoE output actually lives in the union runner's y, where the M = 1
         // path's `set_moe_output` would have put it.
-        const uint64_t y = moe_.union_y_address();
-        uint64_t* s = mgt_.slots(gpu::MgtStage::MhcPost);
+        const uint64_t y = cur_->moe_.union_y_address();
+        uint64_t* s = cur_->mgt_.slots(gpu::MgtStage::MhcPost);
         s[gpu::slot::kA] = y;
-        std::memcpy(mgt_.slots(gpu::MgtStage::MhcMix), s, gpu::kAttnStageStride);
-        std::memcpy(mgt_.slots(gpu::MgtStage::MhcFinal), s, gpu::kAttnStageStride);
-        if (st.bind_close) mgt_.slots(gpu::MgtStage::MhcClose)[gpu::slot::kA] = y;
-        bind_ms_ += ms_since(b0);
+        std::memcpy(cur_->mgt_.slots(gpu::MgtStage::MhcMix), s, gpu::kAttnStageStride);
+        std::memcpy(cur_->mgt_.slots(gpu::MgtStage::MhcFinal), s, gpu::kAttnStageStride);
+        if (st.bind_close) cur_->mgt_.slots(gpu::MgtStage::MhcClose)[gpu::slot::kA] = y;
+        cur_->bind_ms_ += ms_since(b0);
     }
     if (auto r = cmd_open(); !r) return r;
     {
         const TimePoint r0 = Clock::now();
-        if (auto r = layer_.record_attention_batch(tok_cmd_, st); !r) return r;
-        rec_ms_ += ms_since(r0);
+        if (auto r = cur_->layer_.record_attention_batch(cur_->tok_cmd_, st); !r) return r;
+        cur_->rec_ms_ += ms_since(r0);
     }
     if (auto r = cmd_flush(0); !r) return r;
-    if (auto r = layer_.verify_after_attention_batch(st); !r) return r;
-    if (batch_probe) batch_probe(L, layer_);
+    if (auto r = cur_->layer_.verify_after_attention_batch(st); !r) return r;
+    if (batch_probe) batch_probe(L, cur_->layer_);
 
     // --- routing, one decision per POSITION ---------------------------------
     const uint32_t topk = c.num_experts_per_tok;
@@ -1852,7 +2019,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     std::vector<float>    near_scores;
     near_ids.reserve(size_t(M) * 16);
     near_scores.reserve(size_t(M) * 16);
-    rr_pending_.clear();
+    cur_->rr_pending_.clear();
     for (uint32_t m = 0; m < M; ++m) {
         const uint32_t* ids_raw = ids_all + size_t(m) * 16;
         const float*    wts_raw = wts_all + size_t(m) * 16;
@@ -1874,7 +2041,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         if (ro == ResidentOnly::Verify) ro = (m == 0) ? verify_first_ : verify_draft_;
         if (ro != ResidentOnly::Off &&
             route_resident_only(L, ro, ids_raw, wts_raw, topk, eff_ids, eff_w, kept_ids, kept_w,
-                                n_kept, rr_pending_)) {
+                                n_kept, cur_->rr_pending_)) {
             ids = eff_ids;
             wts = eff_w;
         }
@@ -1897,7 +2064,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     // The union is what the batch READS, so it is what the planner is handed:
     // one expert is fetched once for the whole batch, which is the whole point
     // of the union dispatch (docs/p4_dspark_runtime.md §6.1).
-    const std::vector<uint32_t> un = moe_.union_experts(bc);
+    const std::vector<uint32_t> un = cur_->moe_.union_experts(bc);
     if (un.empty()) return fail(Err::Internal, "the verify batch routed to no expert");
     std::vector<uint16_t> chosen(un.size());
     std::vector<float>    chosen_w(un.size(), 0.0f);
@@ -1908,7 +2075,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
                 if (bids[size_t(m) * topk + i] == un[u])
                     chosen_w[u] = std::max(chosen_w[u], bwts[size_t(m) * topk + i]);
     }
-    layer_guard_pending_ = false;
+    cur_->layer_guard_pending_ = false;
     {
         const TimePoint g0 = Clock::now();
         store::RouteDecision route;
@@ -1917,14 +2084,14 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         route.weights     = std::span<const float>(chosen_w);
         route.near_ids    = std::span<const uint16_t>(near_ids);
         route.near_scores = std::span<const float>(near_scores);
-        auto plan = planner_.plan_layer(route, token_);
+        auto plan = planner_.plan_layer(route, clock_);
         if (!plan) return std::unexpected(plan.error());
-        timings_[L].hits       = static_cast<uint32_t>(plan->hits.size());
-        timings_[L].misses     = static_cast<uint32_t>(plan->misses.size());
-        timings_[L].miss_bytes = plan->miss_bytes;
+        cur_->timings_[L].hits       = static_cast<uint32_t>(plan->hits.size());
+        cur_->timings_[L].misses     = static_cast<uint32_t>(plan->misses.size());
+        cur_->timings_[L].miss_bytes = plan->miss_bytes;
         batch_miss_bytes_ += plan->miss_bytes;
         if (auto r = planner_.wait_layer(*plan); !r) return std::unexpected(r.error());
-        timings_[L].gate_ms = ms_since(g0);
+        cur_->timings_[L].gate_ms = ms_since(g0);
         for (uint32_t e : un)
             if (!store_.resident(ExpertKey{static_cast<uint16_t>(L), static_cast<uint16_t>(e)}))
                 return fail(Err::Internal,
@@ -1939,19 +2106,19 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     }
     {
         const TimePoint h0 = Clock::now();
-        if (auto r = moe_.stage_batch_union(bc); !r) return r;
-        timings_[L].moe_host_ms = ms_since(h0);
+        if (auto r = cur_->moe_.stage_batch_union(bc); !r) return r;
+        cur_->timings_[L].moe_host_ms = ms_since(h0);
     }
-    batch_union_ += moe_.union_info().routed;
+    batch_union_ += cur_->moe_.union_info().routed;
     if (auto r = cmd_open(); !r) return r;
     {
         const TimePoint r0 = Clock::now();
-        if (auto r = moe_.record_batch_union(tok_cmd_); !r) return r;
-        rec_ms_ += ms_since(r0);
+        if (auto r = cur_->moe_.record_batch_union(cur_->tok_cmd_); !r) return r;
+        cur_->rec_ms_ += ms_since(r0);
     }
     // This buffer is the last reader of the layer's slots; the next layer's
     // attention joins it, exactly as at M = 1.
-    open_guard_ = layer_guard_;
+    cur_->open_guard_ = cur_->layer_guard_;
     flush_resident_backfill(L);
     profiler_.note_hot_bytes(layer_hot_bytes_[L]);
     apply_post = true;
@@ -1984,24 +2151,24 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
                                 max_context()));
 
     const TimePoint t_start = Clock::now();
-    if (history_.size() < size_t(p0) + M) history_.resize(size_t(p0) + M, 0);
-    for (uint32_t m = 0; m < M; ++m) history_[p0 + m] = tokens[m];
+    if (cur_->history_.size() < size_t(p0) + M) cur_->history_.resize(size_t(p0) + M, 0);
+    for (uint32_t m = 0; m < M; ++m) cur_->history_[p0 + m] = tokens[m];
 
-    timings_.assign(c.num_hidden_layers, LayerTiming{});
-    submits_ = 0;
-    rec_ms_ = sub_ms_ = wait_ms_ = bind_ms_ = 0.0;
-    gp_open_ = nullptr;
+    cur_->timings_.assign(c.num_hidden_layers, LayerTiming{});
+    cur_->submits_ = 0;
+    cur_->rec_ms_ = cur_->sub_ms_ = cur_->wait_ms_ = cur_->bind_ms_ = 0.0;
+    cur_->gp_open_ = nullptr;
     batch_union_ = 0;
     batch_miss_bytes_ = 0;
-    tok_first_ = true;
-    if (tok_open_) { (void)tok_cmd_.end(); tok_open_ = false; }
-    layer_.invalidate_candidates();
+    cur_->tok_first_ = true;
+    if (cur_->tok_open_) { (void)cur_->tok_cmd_.end(); cur_->tok_open_ = false; }
+    cur_->layer_.invalidate_candidates();
 
     // Once for the batch, not once a layer: the counts every layer may read are
     // the LAST position's, and the window half of every list is the same shape
     // for all M queries (docs/p4_dspark_runtime.md §6.4 item 3).
     if (auto r = prepare_ced(p0 + M - 1); !r) return r;
-    BatchScratch& bb = layer_.batch();
+    BatchScratch& bb = cur_->layer_.batch();
     write_batch_window_lists(bb, c.sliding_window, p0, M);
 
     // The M embeddings, in the layout `Engine::embed_token` writes for M = 1.
@@ -2031,7 +2198,7 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     bool apply_post = false;
     for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
         if (auto r = run_layer_batch(L, p0, M, apply_post); !r) {
-            if (tok_open_) { (void)tok_cmd_.end(); tok_open_ = false; }
+            if (cur_->tok_open_) { (void)cur_->tok_cmd_.end(); cur_->tok_open_ = false; }
             return r;
         }
 
@@ -2045,16 +2212,16 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     DecodeLayer::BatchTail bt;
     bt.norm_w = norm_w_;
     bt.head_w = head_w_;
-    bt.logits = blogits_.dev_addr;
-    bt.sample = bsample_.dev_addr;
+    bt.logits = cur_->blogits_.dev_addr;
+    bt.sample = cur_->bsample_.dev_addr;
     if (auto r = cmd_open(); !r) return r;
-    if (auto r = layer_.record_tail_batch(tok_cmd_, last, bt); !r) return r;
+    if (auto r = cur_->layer_.record_tail_batch(cur_->tok_cmd_, last, bt); !r) return r;
     if (auto r = cmd_flush(0); !r) return r;
     profiler_.note_hot_bytes(uint64_t(c.vocab_size) * c.hidden_size * 2);
 
     for (uint32_t m = 0; m < M; ++m) {
         gpu::SampleOut out{};
-        std::memcpy(&out, static_cast<const std::byte*>(bsample_.host_ptr) + size_t(m) * sizeof out,
+        std::memcpy(&out, static_cast<const std::byte*>(cur_->bsample_.host_ptr) + size_t(m) * sizeof out,
                     sizeof out);
         if (out.rows != c.vocab_size)
             return fail(Err::Internal,
@@ -2065,8 +2232,9 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         rows[m].top2   = out.top2;
     }
     if (!logits.empty())
-        std::memcpy(logits.data(), blogits_.host_ptr, size_t(M) * c.vocab_size * sizeof(float));
-    ++token_;
+        std::memcpy(logits.data(), cur_->blogits_.host_ptr, size_t(M) * c.vocab_size * sizeof(float));
+    ++cur_->token_;
+    ++clock_;
     (void)t_start;
     return {};
 }
@@ -2077,13 +2245,13 @@ Result<void> Engine::snapshot_batch_ring(uint32_t p0, uint32_t m) {
     std::vector<uint32_t> slots(m), layers(c.num_hidden_layers);
     for (uint32_t i = 0; i < m; ++i) slots[i] = (p0 + i) % c.sliding_window;
     for (uint32_t l = 0; l < c.num_hidden_layers; ++l) layers[l] = l;
-    auto s = kvs_.snapshot_ring(slots, layers);
+    auto s = cur_->kvs_.snapshot_ring(slots, layers);
     if (!s) return std::unexpected(s.error());
     batch_snap_      = std::move(*s);
     batch_snap_p0_   = p0;
     batch_snap_m_    = m;
-    batch_snap_pub_  = pub_index_k_;
-    batch_snap_hist_ = history_.size();
+    batch_snap_pub_  = cur_->pub_index_k_;
+    batch_snap_hist_ = cur_->history_.size();
     return {};
 }
 
@@ -2093,7 +2261,7 @@ Result<void> Engine::restore_batch_ring(uint32_t p0, uint32_t accepted, uint32_t
                     std::format("no ring snapshot for p0 {} m {} (have p0 {} m {})", p0, m,
                                 batch_snap_p0_, batch_snap_m_));
     if (accepted + 1 >= m) {              // nothing was rejected
-        pub_index_k_ = batch_snap_pub_;
+        cur_->pub_index_k_ = batch_snap_pub_;
         return {};
     }
     // Positions p0 + accepted + 1 .. p0 + m - 1: the accepted drafts stay, and
@@ -2116,16 +2284,16 @@ Result<void> Engine::restore_batch_ring(uint32_t p0, uint32_t accepted, uint32_t
             std::memcpy(sub.val.data() + dst * row, batch_snap_.val.data() + src * row, row);
             std::memcpy(sub.scale.data() + dst * srow, batch_snap_.scale.data() + src * srow, srow);
         }
-    if (auto r = kvs_.restore_ring(sub); !r) return r;
-    pub_index_k_ = batch_snap_pub_;
-    if (history_.size() > size_t(p0) + accepted + 2) history_.resize(size_t(p0) + accepted + 2);
-    layer_.invalidate_candidates();
+    if (auto r = cur_->kvs_.restore_ring(sub); !r) return r;
+    cur_->pub_index_k_ = batch_snap_pub_;
+    if (cur_->history_.size() > size_t(p0) + accepted + 2) cur_->history_.resize(size_t(p0) + accepted + 2);
+    cur_->layer_.invalidate_candidates();
     return {};
 }
 
 Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     const TextConfig& c = model_cfg_.text;
-    DecodeScratch& b = layer_.scratch();
+    DecodeScratch& b = cur_->layer_.scratch();
     const uint32_t n_wg0 = (c.hidden_size + 255) / 256;
 
     // `h = layer.hc_pre(h, pre_mix); logits = head(norm(h))`. mega_mhc stage 0
@@ -2135,18 +2303,18 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     // The norm weight is the model's own `norm.weight`, not the layer's, so
     // MhcClose's slice is repointed and copied into MhcFinal's -- one slice per
     // stage is why the copy exists at all.
-    uint64_t* close = attn_.slots(gpu::AttnStage::MhcClose);
+    uint64_t* close = cur_->attn_.slots(gpu::AttnStage::MhcClose);
     close[gpu::slot::kNormW] = norm_w_;
-    std::memcpy(attn_.slots(gpu::AttnStage::MhcFinal), close, gpu::kAttnStageStride);
+    std::memcpy(cur_->attn_.slots(gpu::AttnStage::MhcFinal), close, gpu::kAttnStageStride);
 
-    uint64_t* hd = attn_.slots(gpu::AttnStage::Head);
+    uint64_t* hd = cur_->attn_.slots(gpu::AttnStage::Head);
     hd[gpu::slot::kHeadW]      = head_w_;
     hd[gpu::slot::kHeadX]      = b.u.addr;
-    hd[gpu::slot::kHeadLogits] = logits_.dev_addr;
+    hd[gpu::slot::kHeadLogits] = cur_->logits_.dev_addr;
 
-    uint64_t* sm = dec_.slots(gpu::DecodeStage::Argmax);
-    sm[gpu::dslot::kHeadLogits] = logits_.dev_addr;
-    sm[gpu::dslot::kHeadSample] = sample_.dev_addr;
+    uint64_t* sm = cur_->dec_.slots(gpu::DecodeStage::Argmax);
+    sm[gpu::dslot::kHeadLogits] = cur_->logits_.dev_addr;
+    sm[gpu::dslot::kHeadSample] = cur_->sample_.dev_addr;
 
     gpu::MhcPush mp{c.hidden_size, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
                     c.hc_sinkhorn_iters,
@@ -2159,21 +2327,21 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     // 129,280-wide logit vector) go in behind it.
     const TimePoint t0 = Clock::now();
     if (auto r = cmd_open(); !r) return std::unexpected(r.error());
-    ts_tail_.begin = cmd_stamp();
+    cur_->ts_tail_.begin = cmd_stamp();
     auto rec = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                    uint32_t groups) -> Result<void> {
         const uint32_t tr = trace::open_dispatch(&tracer_, trace::kNoLayer, trace::Cls::Tail,
                                                  uint16_t(s), gpu::attn_stage_name(s));
-        if (auto r = attn_.record(tok_cmd_, s, push, bytes, groups); !r) return r;
+        if (auto r = cur_->attn_.record(cur_->tok_cmd_, s, push, bytes, groups); !r) return r;
         trace::close_dispatch(&tracer_, tr);
-        return tok_cmd_.barrier();
+        return cur_->tok_cmd_.barrier();
     };
     auto rec_dec = [&](gpu::DecodeStage s, const void* push, uint32_t bytes,
                        uint32_t groups) -> Result<void> {
         const uint32_t tr = trace::open_dispatch(&tracer_, trace::kNoLayer, trace::Cls::Tail,
                                                  uint16_t(0x100u + uint32_t(s)),
                                                  gpu::decode_stage_name(s));
-        if (auto r = dec_.record(tok_cmd_, s, push, bytes, groups); !r) return r;
+        if (auto r = cur_->dec_.record(cur_->tok_cmd_, s, push, bytes, groups); !r) return r;
         trace::close_dispatch(&tracer_, tr);
         return {};
     };
@@ -2182,32 +2350,32 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     if (auto r = rec(gpu::AttnStage::MhcFinal, &mp, sizeof mp, n_wg0); !r)
         return std::unexpected(r.error());
     if (auto r = rec(gpu::AttnStage::Head, &hp, sizeof hp,
-                     attn_.gemv_groups(gpu::AttnStage::Head, c.vocab_size)); !r)
+                     cur_->attn_.gemv_groups(gpu::AttnStage::Head, c.vocab_size)); !r)
         return std::unexpected(r.error());
     if (auto r = rec_dec(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
         return std::unexpected(r.error());
     // Track P: a sampled step also reduces the logits to their top set and the
     // tail mass (gpu/shaders/sample_topk.slang), in the same buffer.
-    const bool sample = sample_step_ && !sampling_.greedy();
+    const bool sample = cur_->sample_step_ && !sampling_.greedy();
     if (sample) {
-        uint64_t* tk = dec_.slots(gpu::DecodeStage::SampleTopK);
-        tk[gpu::dslot::kTopKLogits] = logits_.dev_addr;
-        tk[gpu::dslot::kTopKOut]    = topk_out_.dev_addr;
-        tk[gpu::dslot::kTopKHist]   = topk_hist_.dev_addr;
+        uint64_t* tk = cur_->dec_.slots(gpu::DecodeStage::SampleTopK);
+        tk[gpu::dslot::kTopKLogits] = cur_->logits_.dev_addr;
+        tk[gpu::dslot::kTopKOut]    = cur_->topk_out_.dev_addr;
+        tk[gpu::dslot::kTopKHist]   = cur_->topk_hist_.dev_addr;
         gpu::TopKPush kp{c.vocab_size, kTopKDefaultK, 1.0f / sampling_.temperature,
                          kTopKBinsPerLogit};
-        if (auto r = tok_cmd_.barrier(); !r) return std::unexpected(r.error());
+        if (auto r = cur_->tok_cmd_.barrier(); !r) return std::unexpected(r.error());
         if (auto r = rec_dec(gpu::DecodeStage::SampleTopK, &kp, sizeof kp, 1); !r)
             return std::unexpected(r.error());
     }
-    ts_tail_.end = cmd_stamp();
-    if (auto r = cmd_flush(gpu::timeline_value(token_, c.num_hidden_layers - 1)); !r)
+    cur_->ts_tail_.end = cmd_stamp();
+    if (auto r = cmd_flush(gpu::timeline_value(cur_->token_, c.num_hidden_layers - 1)); !r)
         return std::unexpected(r.error());
     (void)t0;
     profiler_.note_hot_bytes(uint64_t(c.vocab_size) * c.hidden_size * 2);
 
     gpu::SampleOut out{};
-    std::memcpy(&out, sample_.host_ptr, sizeof out);
+    std::memcpy(&out, cur_->sample_.host_ptr, sizeof out);
     if (out.rows != c.vocab_size)
         return fail(Err::Internal,
                     std::format("the sampler scanned {} rows, not the {}-wide vocabulary",
@@ -2228,7 +2396,7 @@ Result<void> Engine::sample_into(DecodeStepResult& res, uint32_t position) {
     const TimePoint t0 = Clock::now();
     const TextConfig& c = model_cfg_.text;
     const float T = sampling_.temperature, P = sampling_.top_p;
-    const auto* w = static_cast<const uint32_t*>(topk_out_.host_ptr);
+    const auto* w = static_cast<const uint32_t*>(cur_->topk_out_.host_ptr);
     if (w[0] != c.vocab_size || w[4] != kTopKCapPerThread || w[6] != kTopKBins)
         return fail(Err::Internal,
                     std::format("sample_topk header: rows {} cap {} bins {}", w[0], w[4], w[6]));
@@ -2252,7 +2420,7 @@ Result<void> Engine::sample_into(DecodeStepResult& res, uint32_t position) {
     auto copy_logits = [&] {
         if (host.empty()) {
             host.resize(c.vocab_size);
-            std::memcpy(host.data(), logits_.host_ptr, host.size() * sizeof(float));
+            std::memcpy(host.data(), cur_->logits_.host_ptr, host.size() * sizeof(float));
         }
     };
     if (check_topk_) {
@@ -2297,17 +2465,23 @@ Result<void> Engine::sample_into(DecodeStepResult& res, uint32_t position) {
 // --- Track P: conversations ---------------------------------------------------
 
 uint32_t Engine::max_context() const {
-    return std::min<uint32_t>(kvs_.config().max_context, kMaxIndexPositions);
+    return std::min<uint32_t>(cur_->kvs_.config().max_context, kMaxIndexPositions);
 }
 
-Result<void> Engine::begin_session(const SessionConfig& sc) {
+// The per-stream half of `begin_session`: the KV store this sequence attends
+// and its own engram row planes. The expert cache, the planner's clock and the
+// P3 backfill are the process's and are set up once, by `begin_session`.
+Result<void> Engine::begin_session_on(uint32_t stream, const SessionConfig& sc) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (stream >= streams_.size())
+        return fail(Err::OutOfRange, std::format("stream {} of {}", stream, streams_.size()));
+    Stream& s = *streams_[stream];
     const TextConfig& c = model_cfg_.text;
     // Track R2: planes on the kv sources only, allocated for 4,096 positions
     // and grown by the store as the context does.
     const uint32_t limit = std::min<uint32_t>(std::max<uint32_t>(sc.max_context, 256), kMaxIndexPositions);
     KvStoreConfig kc = KvStoreConfig::for_model(c, limit, std::min<uint32_t>(limit, 4096));
-    if (auto r = kvs_.create(alloc_a_, kc); !r) return r;
+    if (auto r = s.kvs_.create(alloc_a_, kc); !r) return r;
     auto tables = sc.engram_tables_dir.empty() ? derive_engram_tables(cfg_.model_dir, c)
                                                : EngramTables::load(sc.engram_tables_dir);
     if (!tables)
@@ -2316,12 +2490,26 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
                                 sc.engram_tables_dir.empty() ? cfg_.model_dir + "/tokenizer.json"
                                                              : sc.engram_tables_dir,
                                 tables.error().message));
-    if (auto r = engram_.create(device_, alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
-                                *std::move(tables)); !r)
+    if (auto r = s.engram_.create(device_, alloc_a_, s.dec_, manifest_, shards_, io_, pinned_, c,
+                                  *std::move(tables)); !r)
         return r;
+    s.kvs_.clear();
+    s.history_.clear();
+    s.prefill_loaded_ = false;
+    s.pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    log_info("engine: stream {} -- KV store {} in {} slab(s) (largest {}) for {} positions at "
+             "capacity {}", stream, human_bytes(s.kvs_.bytes()), s.kvs_.slabs(),
+             human_bytes(s.kvs_.largest_slab()), s.kvs_.config().max_context, s.kvs_.capacity());
+    return {};
+}
+
+Result<void> Engine::begin_session(const SessionConfig& sc) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    session_cfg_ = sc;
+    for (uint32_t i = 0; i < streams_.size(); ++i)
+        if (auto r = begin_session_on(i, sc); !r) return r;
     state_.reset();
     produce_ced_ = true;
-    reset_context();
     bool backfill = sc.backfill;
     if (const char* e = std::getenv("DEEPMOE_BACKFILL"); e && *e) backfill = *e != '0';
     // One heat order for the whole process: the startup P3 backfill and every
@@ -2340,11 +2528,9 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
         else
             log_info("engine: P3 backfill started into {} free slots", store_.free_slots());
     }
-    log_info("engine: session -- KV store {} in {} slab(s) (largest {}) for {} positions at "
-             "capacity {}, engram tables from {}",
-             human_bytes(kvs_.bytes()), kvs_.slabs(), human_bytes(kvs_.largest_slab()),
-             max_context(), kvs_.capacity(),
-             sc.engram_tables_dir.empty() ? std::string("derived from tokenizer.json") : sc.engram_tables_dir);
+    log_info("engine: session -- engram tables from {}",
+             sc.engram_tables_dir.empty() ? std::string("derived from tokenizer.json")
+                                          : sc.engram_tables_dir);
     return {};
 }
 
@@ -2353,17 +2539,17 @@ Result<void> Engine::set_context_tokens(std::span<const uint32_t> tokens) {
     if (tokens.size() > max_context())
         return fail(Err::ResourceExhausted,
                     std::format("{} tokens against a {}-position context", tokens.size(), max_context()));
-    history_.assign(tokens.begin(), tokens.end());
-    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    cur_->history_.assign(tokens.begin(), tokens.end());
+    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 
 void Engine::reset_context() {
-    kvs_.clear();
-    history_.clear();
-    prefill_loaded_ = false;
-    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
-    // `token_` stays: it is the expert cache's LRU clock (see slow_prefill).
+    cur_->kvs_.clear();
+    cur_->history_.clear();
+    cur_->prefill_loaded_ = false;
+    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    // `cur_->token_` stays: it is the expert cache's LRU clock (see slow_prefill).
 }
 
 Result<DecodeStepResult> Engine::feed(
@@ -2380,9 +2566,9 @@ Result<DecodeStepResult> Engine::feed(
                                 tokens.size(), max_context()));
     DecodeStepResult last{};
     for (uint32_t i = 0; i < tokens.size(); ++i) {
-        sample_step_ = (i + 1 == tokens.size());
+        cur_->sample_step_ = (i + 1 == tokens.size());
         auto r = decode_step(tokens[i], base + i, -1);
-        sample_step_ = false;
+        cur_->sample_step_ = false;
         if (!r) return r;
         if (on_step) on_step(i, *r);
         last = *r;
@@ -2401,33 +2587,33 @@ Result<void> Engine::seed_from_prefill(const gpu::PrefillHandoff& h) {
         return fail(Err::ResourceExhausted,
                     std::format("a {}-token prompt against a {}-position session", h.prompt.size(),
                                 max_context()));
-    kvs_.clear();
+    cur_->kvs_.clear();
     for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
         const gpu::PrefillHandoff::Layer& l = h.layers[L];
         const uint32_t rows = static_cast<uint32_t>(l.win_kv.size() / c.head_dim);
         if (rows)
-            if (auto r = kvs_.seed_window(L, l.win_kv.data(), rows); !r) return r;
+            if (auto r = cur_->kvs_.seed_window(L, l.win_kv.data(), rows); !r) return r;
         if (!l.cmp_cache.empty() && l.n_cmp) {
-            if (auto r = kvs_.seed_compressed(L, l.cmp_cache.data(), l.n_cmp); !r) return r;
-            if (auto r = kvs_.seed_index_k(L, l.index_k.data(), l.n_cmp); !r) return r;
+            if (auto r = cur_->kvs_.seed_compressed(L, l.cmp_cache.data(), l.n_cmp); !r) return r;
+            if (auto r = cur_->kvs_.seed_index_k(L, l.index_k.data(), l.n_cmp); !r) return r;
         }
         if (!l.cmp_state_kv.empty() && l.ratio)
-            if (auto r = kvs_.seed_cmp_state(L, l.cmp_state_kv.data(), l.cmp_state_score.data(),
+            if (auto r = cur_->kvs_.seed_cmp_state(L, l.cmp_state_kv.data(), l.cmp_state_score.data(),
                                              l.ratio); !r)
                 return r;
     }
-    history_.assign(h.prompt.begin(), h.prompt.end());
+    cur_->history_.assign(h.prompt.begin(), h.prompt.end());
     // At start_pos == 0 every source publishes, so the last one did.
-    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
+    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     produce_ced_ = true;
-    prefill_loaded_ = false;
+    cur_->prefill_loaded_ = false;
     return {};
 }
 
 Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, uint32_t replay) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     if (prompt.empty()) return fail(Err::InvalidArgument, "the prompt is empty");
-    if (!engram_.tables().valid())
+    if (!cur_->engram_.tables().valid())
         return fail(Err::FailedPrecondition, "gpu_prefill needs the engram tables (begin_session)");
     const TextConfig& c = model_cfg_.text;
     const TimePoint t0 = Clock::now();
@@ -2438,7 +2624,7 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     pc.replay     = replay;
     gpu::Prefill pf;
     if (auto r = pf.create(device_, alloc_a_, runner, manifest_, shards_, io_, pinned_, c,
-                           &engram_.tables(), pc); !r)
+                           &cur_->engram_.tables(), pc); !r)
         return std::unexpected(r.error());
 
     // Track R1 (docs/p4_hitrate.md §3): the experts the prefill streams land in
@@ -2538,58 +2724,55 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     return res;
 }
 
-Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t position,
-                                             int32_t state_step) {
-    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
-    if (weights_.empty()) return fail(Err::FailedPrecondition, "no layer weights resolved");
+// --- Track MS: a decode step, in the two halves a scheduler needs ----------
+//
+// `step_prologue` is everything before the layer loop and `step_epilogue`
+// everything after it, so the single-stream loop and the interleaved one run
+// the SAME code around the same forty layers.
+Result<void> Engine::step_prologue(Stream& s, uint32_t in_token, uint32_t position,
+                                   int32_t state_step, double& prep_ms) {
+    cur_ = &s;
     const TextConfig& c = model_cfg_.text;
-
-    profiler_.token_begin(position);
-    tracer_.token_begin(position);
-    const TimePoint t_start = Clock::now();
-
-    if (history_.size() <= position) history_.resize(position + 1, 0);
-    history_[position] = in_token;
+    if (s.history_.size() <= position) s.history_.resize(position + 1, 0);
+    s.history_[position] = in_token;
 
     const TimePoint t_prep = Clock::now();
     {
         ScopedPhaseIf p(&profiler_, Phase::CpuSync);
         if (produce_ced_) {
-            if (auto r = prepare_ced(position); !r) return std::unexpected(r.error());
+            if (auto r = prepare_ced(position); !r) return r;
         } else if (state_step >= 0) {
             if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
-            if (auto r = state_->seed_step(kvs_, static_cast<uint32_t>(state_step)); !r)
-                return std::unexpected(r.error());
+            if (auto r = state_->seed_step(s.kvs_, static_cast<uint32_t>(state_step)); !r) return r;
         }
     }
-
-    if (auto r = embed_token(in_token); !r) return std::unexpected(r.error());
-    const double prep_ms = ms_since(t_prep);
+    if (auto r = embed_token(in_token); !r) return r;
+    prep_ms = ms_since(t_prep);
 
     // The token's first buffer resets the timestamp pool; everything after
     // appends to it and it is read once, after the last fence.
-    timings_.assign(c.num_hidden_layers, LayerTiming{});
-    ts_attn_.assign(c.num_hidden_layers, Stamp{});
-    ts_moe_.assign(c.num_hidden_layers, Stamp{});
-    ts_moe_early_.assign(c.num_hidden_layers, Stamp{});
-    ts_engram_.assign(c.num_hidden_layers, Stamp{});
-    engram_host_ms_.assign(c.num_hidden_layers, 0.0);
-    ts_tail_   = Stamp{};
-    submits_   = 0;
-    rec_ms_ = sub_ms_ = wait_ms_ = bind_ms_ = 0.0;
-    gp_open_ = nullptr;
-    mx_ms_ = mq_ms_ = mt_ms_ = 0.0;
-    tok_first_ = true;
-    if (tok_open_) {                      // a previous step failed mid-buffer
-        (void)tok_cmd_.end();
-        tok_open_ = false;
+    s.timings_.assign(c.num_hidden_layers, LayerTiming{});
+    s.ts_attn_.assign(c.num_hidden_layers, Stamp{});
+    s.ts_moe_.assign(c.num_hidden_layers, Stamp{});
+    s.ts_moe_early_.assign(c.num_hidden_layers, Stamp{});
+    s.ts_engram_.assign(c.num_hidden_layers, Stamp{});
+    s.engram_host_ms_.assign(c.num_hidden_layers, 0.0);
+    s.ts_tail_   = Stamp{};
+    s.submits_   = 0;
+    s.rec_ms_ = s.sub_ms_ = s.wait_ms_ = s.bind_ms_ = 0.0;
+    s.gp_open_ = nullptr;
+    s.mx_ms_ = s.mq_ms_ = s.mt_ms_ = 0.0;
+    s.tok_first_ = true;
+    if (s.tok_open_) {                      // a previous step failed mid-buffer
+        (void)s.tok_cmd_.end();
+        s.tok_open_ = false;
     }
     // The residency timeline is per token and monotone; a token that starts
     // below where the last one left it would have every wait satisfied before
     // its experts were resident.
     {
-        auto cur = timeline_.value();
-        const TimelineValue base = gpu::timeline_value(token_, 0) - 1;
+        auto cur = s.timeline_.value();
+        const TimelineValue base = gpu::timeline_value(s.token_, 0) - 1;
         if (cur && *cur == ~0ull)
             return fail(Err::Internal,
                         "the residency timeline reads UINT64_MAX, which is what a LOST "
@@ -2598,36 +2781,40 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
         if (cur && *cur > base)
             return fail(Err::Internal,
                         std::format("the residency timeline is at {} but token {} starts "
-                                    "at {}", *cur, token_, base));
+                                    "at {}", *cur, s.token_, base));
     }
+    return {};
+}
 
-    bool apply_post = false;   // the very first sublayer has nothing to fold in
-    for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
-        if (auto r = run_layer(L, position, apply_post, timings_[L]); !r) {
-            if (tok_open_) { (void)tok_cmd_.end(); tok_open_ = false; }
-            return std::unexpected(r.error());
-        }
-
+Result<DecodeStepResult> Engine::step_epilogue(Stream& s, uint32_t position, double prep_ms,
+                                               TimePoint t_start) {
+    cur_ = &s;
     auto res = collapse_and_sample(position);
     if (!res) return res;
     res->wall_ms = ms_since(t_start);
     read_timestamps(*res);
     StepBreakdown& bd = res->breakdown;
-    for (const LayerTiming& t : timings_) {
+    for (const LayerTiming& t : s.timings_) {
         bd.attn_ms     += t.attn_ms;
         bd.moe_gpu_ms  += t.moe_gpu_ms;
         bd.moe_host_ms += t.moe_host_ms;
         bd.gate_ms     += t.gate_ms;
         bd.engram_ms   += t.engram_ms;
+        // Track MS: the step's own cache accounting. The store's counters are
+        // the whole process's, so with two streams running a delta of them is
+        // both streams' traffic and cannot give a per-stream hit rate.
+        bd.requests   += t.hits + t.misses;
+        bd.hits       += t.hits;
+        bd.miss_bytes += t.miss_bytes;
     }
-    bd.submits   = submits_;
-    bd.record_ms = rec_ms_;
-    bd.submit_ms = sub_ms_;
-    bd.wait_ms   = wait_ms_;
-    bd.bind_ms   = bind_ms_ + prep_ms;
-    bd.moe_x_ms     = mx_ms_;
-    bd.moe_quant_ms = mq_ms_;
-    bd.moe_table_ms = mt_ms_;
+    bd.submits   = s.submits_;
+    bd.record_ms = s.rec_ms_;
+    bd.submit_ms = s.sub_ms_;
+    bd.wait_ms   = s.wait_ms_;
+    bd.bind_ms   = s.bind_ms_ + prep_ms;
+    bd.moe_x_ms     = s.mx_ms_;
+    bd.moe_quant_ms = s.mq_ms_;
+    bd.moe_table_ms = s.mt_ms_;
     bd.other_ms = res->wall_ms - bd.attn_ms - bd.moe_gpu_ms - bd.moe_host_ms - bd.gate_ms -
                   bd.engram_ms - bd.tail_ms;
     // design 13.1's phases, from the same numbers: the GPU halves are only
@@ -2637,46 +2824,198 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
                         Nanos(int64_t((bd.moe_gpu_ms + bd.moe_host_ms) * 1e6)));
     res->record  = profiler_.token_end();
     if (route_dump_) write_route_record(position);
-    ++token_;
+    ++s.token_;
+    ++clock_;
     return res;
 }
 
-// One record: u32 step (the LRU clock `token_`), u32 position, u16[layers x
+Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t position,
+                                             int32_t state_step) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (weights_.empty()) return fail(Err::FailedPrecondition, "no layer weights resolved");
+    const TextConfig& c = model_cfg_.text;
+    Stream& s = *cur_;
+
+    profiler_.token_begin(position);
+    tracer_.token_begin(position);
+    const TimePoint t_start = Clock::now();
+    double prep_ms = 0.0;
+    if (auto r = step_prologue(s, in_token, position, state_step, prep_ms); !r)
+        return std::unexpected(r.error());
+
+    bool apply_post = false;   // the very first sublayer has nothing to fold in
+    for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
+        if (auto r = run_layer(L, position, apply_post, s.timings_[L]); !r) {
+            if (s.tok_open_) { (void)s.tok_cmd_.end(); s.tok_open_ = false; }
+            return std::unexpected(r.error());
+        }
+    return step_epilogue(s, position, prep_ms, t_start);
+}
+
+// --- Track MS: the interleaved step (docs/p4_multistream.md) ---------------
+//
+// Layer L of every stream, then layer L + 1. The three phases are ordered so
+// that every stream's attention chain is on the GPU before any stream's gate
+// blocks, and so that the P0 misses of ALL of them are outstanding at the
+// drive together -- which is the second, independent gain: the engine's own
+// measurement (docs/p4_p0_queue.md §2) is 3.80 chunks in flight against a
+// queue that holds 8.
+Result<void> Engine::decode_step_multi(std::span<const MultiStep> steps,
+                                       std::span<DecodeStepResult> out) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (weights_.empty()) return fail(Err::FailedPrecondition, "no layer weights resolved");
+    if (steps.empty()) return fail(Err::InvalidArgument, "no steps");
+    if (out.size() != steps.size())
+        return fail(Err::InvalidArgument, "one result per step, please");
+    const TextConfig& c = model_cfg_.text;
+    const uint32_t n = static_cast<uint32_t>(steps.size());
+    for (const MultiStep& m : steps)
+        if (m.stream >= streams_.size())
+            return fail(Err::OutOfRange, std::format("stream {} of {}", m.stream, streams_.size()));
+    for (uint32_t i = 0; i < n; ++i)
+        for (uint32_t j = i + 1; j < n; ++j)
+            if (steps[i].stream == steps[j].stream)
+                return fail(Err::InvalidArgument, "a stream may take one step at a time");
+
+    // The token-level control (design D2): no compute/stall overlap at all,
+    // only whatever the drive gets out of two sequences asking at once.
+    if (n == 1 || ms_sched_ == MsSched::PingPong) {
+        for (uint32_t i = 0; i < n; ++i) {
+            if (auto r = select_stream(steps[i].stream); !r) return r;
+            auto res = decode_step(steps[i].in_token, steps[i].position, -1);
+            if (!res) return std::unexpected(res.error());
+            out[i] = *res;
+        }
+        return {};
+    }
+
+    std::vector<Stream*>  st(n);
+    std::vector<bool>     apply_post(n, false);
+    std::vector<double>   prep_ms(n, 0.0);
+    std::vector<TimePoint> t_start(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        st[i] = streams_[steps[i].stream].get();
+        t_start[i] = Clock::now();
+        profiler_.token_begin(steps[i].position);
+        if (auto r = step_prologue(*st[i], steps[i].in_token, steps[i].position, -1, prep_ms[i]); !r)
+            return r;
+    }
+    auto unwind = [&] {
+        for (uint32_t i = 0; i < n; ++i)
+            if (st[i]->tok_open_) { (void)st[i]->tok_cmd_.end(); st[i]->tok_open_ = false; }
+    };
+    auto begin_at = [&](uint32_t i, uint32_t L) -> Result<void> {
+        bool ap = apply_post[i];
+        auto r = layer_begin(*st[i], L, steps[i].position, ap, st[i]->timings_[L]);
+        apply_post[i] = ap;
+        return r;
+    };
+    auto moe_at = [&](uint32_t i, uint32_t L) -> Result<void> {
+        bool ap = apply_post[i];
+        auto r = layer_moe(*st[i], L, ap);
+        apply_post[i] = ap;
+        return r;
+    };
+    if (ms_sched_ == MsSched::Interleave) {
+        // The phase-grouped schedule: every stream's attention, then every
+        // gate, then every MoE. Both streams' misses are outstanding before
+        // either waits -- but by the time the first MoE waits, every submit of
+        // the round has already retired, so the GPU idles through the stall.
+        // Measured at +9% (docs/p4_multistream.md §5); kept as the arm that
+        // shows why the pipeline below is the one that matters.
+        for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+            for (uint32_t i = 0; i < n; ++i)
+                if (auto r = begin_at(i, L); !r) { unwind(); return r; }
+            for (uint32_t i = 0; i < n; ++i)
+                if (auto r = layer_gate(*st[i], L, steps[i].position); !r) { unwind(); return r; }
+            for (uint32_t i = 0; i < n; ++i)
+                if (auto r = moe_at(i, L); !r) { unwind(); return r; }
+        }
+        // fall through to the epilogues
+    } else {
+        // The pipeline. The rule is: NEVER enter a stall with an empty queue.
+        // Before stream i blocks on its P0 misses, the next unit of GPU work is
+        // already submitted -- the next stream's attention for this layer, or,
+        // for the last stream, the first stream's attention for the next layer
+        // (which its own MoE, recorded and submitted a moment ago, gates).
+        if (auto r = begin_at(0, 0); !r) { unwind(); return r; }
+        for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
+            for (uint32_t i = 0; i < n; ++i) {
+                if (auto r = layer_gate(*st[i], L, steps[i].position); !r) { unwind(); return r; }
+                if (i + 1 < n) {
+                    if (auto r = begin_at(i + 1, L); !r) { unwind(); return r; }
+                } else if (L + 1 < c.num_hidden_layers) {
+                    // Stream 0's MoE for this layer was submitted at i == 0, so
+                    // its residency value is signalled and this submit does not
+                    // block the queue on a semaphore.
+                    if (auto r = begin_at(0, L + 1); !r) { unwind(); return r; }
+                }
+                if (auto r = moe_at(i, L); !r) { unwind(); return r; }
+            }
+        }
+    }
+    for (uint32_t i = 0; i < n; ++i) {
+        auto res = step_epilogue(*st[i], steps[i].position, prep_ms[i], t_start[i]);
+        if (!res) { unwind(); return std::unexpected(res.error()); }
+        out[i] = *res;
+    }
+    return {};
+}
+
+Result<void> Engine::feed_multi(std::span<const MultiStep> steps,
+                                std::span<DecodeStepResult> out) {
+    if (!produce_ced_)
+        return fail(Err::FailedPrecondition, "feed needs design 7.4's kernels on (begin_session)");
+    std::vector<MultiStep> at(steps.begin(), steps.end());
+    for (MultiStep& m : at) {
+        if (m.stream >= streams_.size())
+            return fail(Err::OutOfRange, std::format("stream {} of {}", m.stream, streams_.size()));
+        Stream& s = *streams_[m.stream];
+        m.position = static_cast<uint32_t>(s.history_.size());
+        if (uint64_t(m.position) + 1 > s.kvs_.config().max_context)
+            return fail(Err::ResourceExhausted,
+                        std::format("stream {} is at its {}-position context", m.stream,
+                                    s.kvs_.config().max_context));
+    }
+    return decode_step_multi(at, out);
+}
+
+// One record: u32 step (the LRU clock `cur_->token_`), u32 position, u16[layers x
 // topk] gate ids in gate order, u8[layers] hits. 528 B at 40 x 6.
 void Engine::guard_layer(uint32_t layer, std::span<const uint32_t> slots, const uint32_t* ids) {
-    if (!layer_guard_pending_) {
-        layer_guard_ = ++guard_clock_;
-        layer_guard_pending_ = true;
+    if (!cur_->layer_guard_pending_) {
+        cur_->layer_guard_ = ++guard_clock_;
+        cur_->layer_guard_pending_ = true;
     }
     for (uint32_t s : slots) {
         const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(ids[s])};
-        if (auto slot = store_.slot_of(key)) (void)store_.set_guard(*slot, layer_guard_);
+        if (auto slot = store_.slot_of(key)) (void)store_.set_guard(*slot, cur_->layer_guard_);
     }
 }
 
 void Engine::write_route_record(uint32_t position) {
-    const uint32_t step = static_cast<uint32_t>(token_);
-    std::vector<uint8_t> hits(timings_.size());
-    for (size_t L = 0; L < timings_.size(); ++L) hits[L] = static_cast<uint8_t>(timings_[L].hits);
+    const uint32_t step = static_cast<uint32_t>(cur_->token_);
+    std::vector<uint8_t> hits(cur_->timings_.size());
+    for (size_t L = 0; L < cur_->timings_.size(); ++L) hits[L] = static_cast<uint8_t>(cur_->timings_[L].hits);
     std::fwrite(&step, sizeof step, 1, route_dump_);
     std::fwrite(&position, sizeof position, 1, route_dump_);
-    std::fwrite(route_ids_.data(), sizeof(uint16_t), route_ids_.size(), route_dump_);
+    std::fwrite(cur_->route_ids_.data(), sizeof(uint16_t), cur_->route_ids_.size(), route_dump_);
     std::fwrite(hits.data(), 1, hits.size(), route_dump_);
     std::fflush(route_dump_);
 }
 
 Result<SampleResult> Engine::decode_step() {
     if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
-    if (history_.empty()) return fail(Err::FailedPrecondition, "nothing to decode from");
+    if (cur_->history_.empty()) return fail(Err::FailedPrecondition, "nothing to decode from");
     // A step's `position` is the position of its INPUT token, which is the last
     // one in the history; the token it produces is appended, so repeated calls
     // walk forward. `state_step` is -1 because there is no way to know which of
     // the export's per-step records this position corresponds to -- a caller
     // that needs the LOADED compressed KV uses the three-argument form.
-    const uint32_t position = static_cast<uint32_t>(history_.size()) - 1;
-    auto r = decode_step(history_.back(), position, -1);
+    const uint32_t position = static_cast<uint32_t>(cur_->history_.size()) - 1;
+    auto r = decode_step(cur_->history_.back(), position, -1);
     if (!r) return std::unexpected(r.error());
-    history_.push_back(r->token);
+    cur_->history_.push_back(r->token);
     SampleResult s;
     s.token   = r->token;
     s.logprob = r->top1;
@@ -2717,16 +3056,16 @@ Result<GenerateResult> Engine::generate(std::span<const uint32_t> prompt,
 Result<double> Engine::measure_submit_overhead(uint32_t iterations) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     if (iterations == 0) return fail(Err::InvalidArgument, "iterations must be >= 1");
-    uint64_t* sm = dec_.slots(gpu::DecodeStage::Argmax);
-    sm[gpu::dslot::kHeadLogits] = logits_.dev_addr;
-    sm[gpu::dslot::kHeadSample] = sample_.dev_addr;
+    uint64_t* sm = cur_->dec_.slots(gpu::DecodeStage::Argmax);
+    sm[gpu::dslot::kHeadLogits] = cur_->logits_.dev_addr;
+    sm[gpu::dslot::kHeadSample] = cur_->sample_.dev_addr;
     gpu::HeadPush hp{model_cfg_.text.vocab_size, model_cfg_.text.hidden_size, 0};
     // One warm-up, so the first submit's pipeline bind does not land in the mean.
-    if (auto r = dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
+    if (auto r = cur_->dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
         return std::unexpected(r.error());
     const TimePoint t0 = Clock::now();
     for (uint32_t i = 0; i < iterations; ++i)
-        if (auto r = dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
+        if (auto r = cur_->dec_.dispatch_now(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
             return std::unexpected(r.error());
     return ms_since(t0) / iterations;
 }
@@ -2774,11 +3113,11 @@ Result<uint32_t> Engine::warm_cache_from_heat(std::chrono::seconds timeout) {
 // `rr_outstanding_cap_` experts out at the drive at a time. The drive moves the
 // same number of bytes either way; this decides which bytes.
 void Engine::flush_resident_backfill(uint32_t layer) {
-    if (resident_only_ == ResidentOnly::Off && rr_pending_.empty() && rr_queue_.empty()) return;
-    for (const ExpertKey& key : rr_pending_) rr_queue_.push_back(RrMiss{key, token_});
-    rr_pending_.clear();
+    if (resident_only_ == ResidentOnly::Off && cur_->rr_pending_.empty() && rr_queue_.empty()) return;
+    for (const ExpertKey& key : cur_->rr_pending_) rr_queue_.push_back(RrMiss{key, clock_});
+    cur_->rr_pending_.clear();
 
-    const uint64_t cutoff = resident_queue_cutoff(token_, rr_queue_steps_);
+    const uint64_t cutoff = resident_queue_cutoff(clock_, rr_queue_steps_);
     while (!rr_queue_.empty() && rr_queue_.front().step < cutoff) {
         rr_demand_.erase(rr_pack(rr_queue_.front().key));
         rr_queue_.pop_front();
@@ -2803,7 +3142,7 @@ void Engine::flush_resident_backfill(uint32_t layer) {
         if (auto it = rr_demand_.find(rr_pack(m.key)); it != rr_demand_.end()) stamp = it->second;
         rr_outstanding_.fetch_add(1, std::memory_order_relaxed);
         const TimePoint q0 = Clock::now();
-        auto f = planner_.fetch(m.key, IoPriority::Backfill, token_, layer,
+        auto f = planner_.fetch(m.key, IoPriority::Backfill, clock_, layer,
                                 [this, q0](bool) {
                                     // IoEngine dispatcher thread: counters only.
                                     rr_outstanding_.fetch_sub(1, std::memory_order_relaxed);
@@ -2847,8 +3186,8 @@ std::string Engine::resident_route_report() const {
 }
 
 std::span<const float> Engine::last_logits() const {
-    if (!logits_.valid()) return {};
-    return {static_cast<const float*>(logits_.host_ptr), model_cfg_.text.vocab_size};
+    if (!cur_->logits_.valid()) return {};
+    return {static_cast<const float*>(cur_->logits_.host_ptr), model_cfg_.text.vocab_size};
 }
 
 // Track G: the gate host round trip, one line per residency class. The GPU-side
@@ -2874,10 +3213,10 @@ std::string Engine::gate_probe_report() const {
                       "(DEEPMOE_GATE_PROBE):\n";
     out += row("hit", gp_hit_);
     out += row("miss", gp_miss_);
-    if (spin_hits_ + spin_misses_)
+    if (cur_->spin_hits_ + cur_->spin_misses_)
         out += std::format("  DEEPMOE_FENCE_SPIN_US={:.0f}: the spin caught the signal "
-                           "{} of {} times\n", fence_spin_us(), spin_hits_,
-                           spin_hits_ + spin_misses_);
+                           "{} of {} times\n", fence_spin_us(), cur_->spin_hits_,
+                           cur_->spin_hits_ + cur_->spin_misses_);
     out += "  (i) blocked in cmd_wait; (ii) verify + top-k, already host-coherent; "
            "(iii) planner lookup and miss issue, then the wait on it; "
            "(iv) MoE staging and recording; (v) the next layer's prologue up to the "
@@ -2909,7 +3248,7 @@ std::string Engine::status() const {
                          "(design 7.4's kernels exist; this run is not using them)\n",
                          state_ ? state_->prefill_len() : 0,
                          state_ ? state_->dir() : std::string("(nowhere)"));
-    } else if (prefill_loaded_) {
+    } else if (cur_->prefill_loaded_) {
         s += std::format("LOADED    the state the prompt left behind, from {}: the "
                          "window KV, the compressed KV cache, the indexer key cache "
                          "and the compressor's carried group, after {} prompt tokens. "

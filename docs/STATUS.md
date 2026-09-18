@@ -17,7 +17,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 
 1. [今天的数字](#1-今天的数字)
 2. [优化路径：每一步与它的归因](#2-优化路径每一步与它的归因)
-3. [试过并退掉的（编号，共 55 条）](#3-试过并退掉的编号共-40-条)
+3. [试过并退掉的（编号，共 57 条）](#3-试过并退掉的编号共-40-条)
 4. [为什么 decode 是 NVMe-bound，而不是 kernel 慢](#4-为什么-decode-是-nvme-bound而不是-kernel-慢)
 5. [测试套件](#5-测试套件)
 6. [已知限制与未决风险](#6-已知限制与未决风险)
@@ -66,6 +66,8 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | **M1 gate（`forward_batch` vs M=1）** | **不逐位**：前三层 cos = 1.000000000，L07 第一次门控翻转；60 个位置最差 cos **0.9398**、top-1 **54/60**。质量不变（teacher-forced PPL 1.8589 vs 1.8857 = 0.986×）。`suite.spec_forward` 因此**以 WARN 通过**，只在 cos < 0.93 或 top-1 < 50/60 时失败 | §3 的 41 |
 | **P0 的盘时间是怎么花的（Track Q1）** | 4 轮对话、5,100 槽、backfill off：`nvme_stall` **105.2 ms/token**、21.3 个 miss = **383 MiB/token** ⇒ **3.55 GB/s**，而同一块盘 `nvme_bench` 是 **5.16 GB/s**。**0.0% 的 P0 在发出时有非 P0 的 chunk 在飞**（backfill 开也只有 8.2%、平均 1.02 个）——**队列争用 = 0**。一层这一批的第一个 P0 是 **2.83 ms**，后面的每个 **8.46 ms**；发出时平均在飞 chunk **3.80**（上限 8） | `p4_p0_queue.md` §2 |
 | **那 30% 的缺口在哪（Track Q2）** | **不是盘，是 `ReadFile` 本身。** 往 path A（`DEVICE_LOCAL\|HOST_VISIBLE`、uncached）读，一次 4 MiB 的同步 `ReadFile` 要 **704 µs**，读进普通主机内存只要 **70 µs**（path B 导入的 69.6 µs）——内核要先 probe 住再锁住目的地的 1,024 个页。它过去**只在 dispatcher 一条线程上**发生：42.81 s 的 issue 里 **42.71 s 在 `Backend::submit`**，完成回调只占 0.13 s（1.6 µs/次）。**提交搬到 8 条线程 + P0 队列 24 / 96 MiB：4.828 → 4.998 tok/s（+3.5%）**，stall 108.1 → 100.9 ms，busy 窗口 3.90 → 4.10 GB/s。**并且 Q1 的参照系是错的**：`nvme_bench` 默认测的是 `%TEMP%`（C:），而 shard 在 **D:**，D: 的天花板是 **4.60–4.65 GB/s 而不是 5.16**，且对请求大小**不平** | `p4_p0_queue.md` §9–§13 |
+
+| **两条并发对话的系统吞吐（Track MS）** | 一个引擎进程里两条 decode 流，按层交错（`Engine::decode_step_multi` 的 `pipeline` 档）：合计 **4.6474 → 5.4602 tok/s（+17.5%）**，ABAB 三对、cell 间 sd ≤0.83%，每路延迟 4.415/4.906 → 2.730 tok/s（**0.62×，吞吐换延迟**）。**token 级乒乓（D2）是 −5.1%**，所以收益确实来自重叠。盘的聚合速率 **2.21 → 2.83 GB/s（+28%）**，但两个工作集抢一个 5,100 槽的 LRU 让 `y_turns` 的 hit 掉 **1.6 pt**、MB/token 涨 **13.5%**，把一半收益吃回去；**N≥3 是负的**（5,100 槽装不下三个工作集） | `p4_multistream.md` §5 |
 
 | **淘汰策略这个杠杆（Track E1）** | **关掉了。** 在 4.6 GB/s 的 demand-only 模型上扫了 127 种配置：最好的可实现策略是 `last_use + α × heat`（α ≈ 1,600–4,800），C=5,100 测试集 **+2.3%**（hit 0.9113 → 0.9151），折半后 **+1.2%**，低于 ±3% 的抖动带。**top-16 的"近似命中"分数只贡献其中的 0.06 pt（16%）**。`cache_sim` 里那条 `score-aware` 原样跑是 **−68%**（按 heat 排序会退化）。Belady 在同一口径下是 **+40%**——那 40% 在"未来"里，不在分数里 | `p4_cache_policy.md` §12；§3 的 47 |
 
@@ -213,7 +215,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 56 条）
+## 3. 试过并退掉的（编号，共 57 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -316,6 +318,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **54** | **「热步 102 vs 81.5 那 25% 没有解释」**（Track G 顺带，§1 的 ✅ 行） | 四件事，前两件有 commit 有数：① **命令不同**——Track I 是 `--cache-gb 24`，今天默认 `auto` = 5,100 槽，**51 个 slab 里 17 个在 path B**；同 binary 同 session：24 GB **96.4 ms / moe gpu 33.8**、48 GB 96.6 / 33.8、`auto` **102.1 / 38.4** = **+5.5 ms**。② **`fb53514`（Track T 的 live-column mask）是 Track I 之后唯一动过 MoE kernel 的 commit**；`kernel_bench --quick --layer-cycle 8 --iters 48` 同 session、raw-read 216.3 / 216.7：`fb53514^` **0.6035 ms/pair（218.08 GB/s）** → HEAD **0.6426（204.80）**，M=1 **+6.5% = +1.6 ms/token**。③ `vkQueueSubmit2` 的 host 成本 1.6 → **4.2 ms/token**（同样 41 次 submit）= +2.6。④ 余下 **+7.2 ms**（attn 36.0 → 39.0、MoE 扣掉 kernel 漂移仍多 2.9、engram +0.7、moe host +0.6）**仍未解释**，与限制 6.5 同源 | ①**不是 bug，是一次做对的取舍**（`auto` 的 5,100 槽买的是 hit 0.673 vs 0.583，而 §2.4 说 hit 才是杠杆）——但 §1 的两行**必须标明它们是两条不同的命令**。②**是一笔该退的税**：同一个 commit 把 M=6 压 1.56×，而 M=6 是 §3 的 41/42 已经判 NO-GO 的投机批——**decode 每 token 为一个已经关掉的方向付 1.6 ms**。进 §7 第 7 项 |
 | **55** | **「让热工作集迁移到 path A」的三个做法**（Track K1b，`plan_p5.md` §3(i)）——前提是 §3 的 30：MoE 从 path B 读慢。新仪器：`ExpertStoreStats` 的 `hits_path_a / hits_path_b / fills_path_a / fills_path_b`（引擎在建完 slab pool 后把 `a_slabs()` 交给 store） | **先给 path B 定价**（K1a 之后，热步 ABAB 三对）：`auto`（34 A + 17 B）**96.43 ms / moe gpu 33.87**，`--cache-gb 24`（全 path A）**92.67 / 30.97** = **−2.90 ms（−8.6%）**，即每次 path-B 的 expert 读 **≈0.036 ms**。**再看命中怎么分**：4 轮对话上 **path A 命中占 0.7861**，而 path A 的槽只占 0.6667——**LRU 本来就偏 A**，可动的只有 21.4% = **1.85 ms/token 的天花板，对着 240 ms 的 token = 0.8%**。**(i) 按原假设做是负的**：`DEEPMOE_EVICT_PATH=a`（先淘汰 path A，新 expert 就落在 path A）把 fills 从 10,197/5,305 推到 **14,093/1,700**，而 path A 的命中占比只动 **1.5 个点**（命中落在长寿常驻上，不落在刚进来的那批）；`expert_hit` −0.64 ms，`nvme_stall` **+3.94 ms**，四轮 decode **5.083 → 4.808 tok/s（−5.4%，三对）** | **四个做法全部 NO-GO，默认保持单一全局 LRU**。**(i) 的镜像先赢后输**：`DEEPMOE_EVICT_PATH=b`（新 expert 落 path B）在 4 轮对话上 **+7.0%**（5.0942 → 5.4517 tok/s，三对，A 臂 sd 0.06%；`nvme_stall` 141.14 → **134.36**、`expert_hit` +1.79、hit 0.8713 → 0.8760）——机制是**往 path A 写比读贵得多**（Track Q2：4 MiB 同步 `ReadFile` 落 path A **704 µs**、落普通主机内存 **70 µs**），而 decode 每 token 写 21–31 个 expert、只读它们几次。**但它顺带把 path A 冻成了 pin**：`fills path A = 3,400` 正好是 path A 的槽数——冷启动填满一次之后再也不淘汰，全部 churn 挤进 path B 的 1,700 槽。换一个会换话题的脚本（`long_turns.json`，8 轮中英混合，2,617 步）：hit **0.914 → 0.879**、fills **53,957 → 76,102（miss ×1.41）**、`nvme_stall` 96.99 → **130.88**、逐轮 decode **5.894 → 4.684 tok/s（−20.5%）**。它是 §3 的 24 / 35（静态 pin / 逐层配额）同一个形状，先验换成 first-touch 而已。**(ii) 迁移拷贝关掉**：18.8 MB 一次 ≈0.087 ms，要吃掉那 1.85 ms 得每步搬 6–7 个 = 1.15 ms，净 **+0.35%**。**(iii) 抬 path A 关掉**：`auto` 日志 `path A 62.26 GiB after 9.17 GiB pinned`，74 GiB 的 `DEVICE_LOCAL\|HOST_VISIBLE` 堆减 pinned 减 `kPathAOther` 3 GiB 减 `kPathAReserve` 4 GiB = 34 个 slab，而 commit 还剩 **133 GiB**——**不是 commit 在卡是堆在卡**；再要就得动 F4 量过的那两个预留（TTFT 10.6×），而 VGM 是 §3 的 29 已封的条目 |
 | **56** | **staged fill**（Track S1，`p4_p0_queue.md` §16–§21）——45 判过一次「staging NO-GO」，理由是 CPU `memcpy` 0.88 ms；这次换成**不用 memcpy 的形状**：读落进一个 **path B**（`VK_EXT_external_memory_host`）的环（提交 70 µs 而不是 704），再用 **`vkCmdCopyBuffer`** 把它搬进 path A 槽。新仪器：`io_dst_bench --gpu-copy` / `--dst stage`，报的 `GB/s` 是**端到端**（墙钟含每一次拷贝退休），一条独占命令池的拷贝线程，**有未退休拷贝的槽不还给读** | 同一个 D: shard、请求 9,184 KiB、chunk 4 MiB、`patha` 与 `stage` 各 **n=5**（一次混跑 + 两次 ABAB 两对）：QD 8 **4.7633（sd 0.69%）→ 4.7689（+0.12%）**、QD 24 **4.7040（sd 0.40%）→ 4.7202（+0.35%）**；每请求 mean 7.775 → 7.771 ms、21.021 → 20.880，**尾延迟反而变差**（max 10.07–10.46 → 10.5–12.5，拷贝挂在尾上）。拷贝定价：`vkCmdCopyBuffer` path B → path A **18.8 MB = 0.145 ms（129 GB/s）**，8 region 一次 submit **0.201 each（93.5 GB/s）**——**批量更慢 ⇒ 带宽受限，折进已有命令缓冲省不到 submit**；CPU `memcpy` 同机今天是 0.72 ms（26.0 GB/s）。`ctest -LE needs-model` **25/25** | **NO-GO，闸在 bench 就关，运行时一行没动**（`storage/io_engine.*`、`runtime/engine.cpp` 未改，默认状态 = 改动前）。机制：**Q2 的 8 条提交线程已经把 704 µs 从关键路径上拿走了**——证据是 `patha` 与 `pathb` **发出时的队列深度相同**（6.87/6.87、22.02/22.04），锁页的 CPU 时间一个字没少（648–722 µs）但盘看不见它。**K1b 的 6.8 ms/token 因此是提交成本在突发里的残留**（`first-of-burst` 1.27 ms），不是提交成本本身，而本节的 bench 是稳态背靠背，量不到它。要重开需要两件：① **一条真正的 transfer 队列**——`gpu/vulkan/device.h` 今天只建**一个 compute 队列**，每次拷贝都和 decode 抢它（21.3 miss × 0.145 = **3.1 ms/token**，对着 moe gpu 34.33）；② 一个突发形状的 bench。留在树里的是仪器 |
+| **57** | **多路 decode 的三件事**（Track MS，`p4_multistream.md`）——前提是 §4 的时间线：一个 token 是 ~97 ms 计算 + ~100 ms stall，两段不重叠，而两条独立对话之间没有数据依赖。新仪器：`runtime::Stream`（引擎按「进程的」/「序列的」切开）、`Engine::decode_step_multi`、`StepBreakdown` 的 per-step `requests/hits/miss_bytes`、`serve --streams N --ms-sched`、`tools/ms_bench.py` + `bench/ms_abab.py` | **(a) 按相分组的交错（`interleave`）：4.584 → 4.992（+8.9%）**——走到第一个 MoE 的时候这一轮所有 submit 都退休了，**GPU 在整个 stall 里是空的**；被 (b) 取代。**(b) 流水线（`pipeline`，留下来的那个）：4.6474 → 5.4602（+17.5%，三对，sd ≤0.83%）**。**(c) token 级乒乓（D2）：4.4123（−5.1%）**——没有重叠，只把「两个工作集抢一个 LRU」这项成本原样付了。**(d) N≥3：负的**——N=2→3 第一路 hit 0.861 → 0.830、MB/token 626 → 768（+23%），合计 5.199 → 4.807 | **(b) 落地并默认开**（`MsSched::Pipeline`，`--streams` 不给就是单流，单流路径与 main 逐字相同）；**(a)(c)(d) 保留为对照臂不作默认**。**预测 1.6–1.8× 没达到，差在哪是量到的**：盘的聚合速率确实涨了 28%（2.21 → 2.83 GB/s），但同时 hit 掉 1.6 pt、MB/token 涨 13.5%，而 2.83 只到 D: 突发天花板 4.10 的 69%——**剩下的缺口是每次 `wait_layer` 之前只压得进一条 attention 链（~2.1 ms）对着 ~3.4 ms 的 stall**，要盖满就得更多条流，而 (d) 把那条路关了。**下一次开这一条的前提是 MB/token 先降下来**（§7 第 1 项：第二块盘） |
 
 ---
 
@@ -574,6 +577,17 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 顺序的依据是 §4：**先降 MB/token 和 stall，再降 kernel 时间**。
 每一项的机制、预测（已按"二分之一法则"砍半）、成本与探针在 [plan_p5.md](plan_p5.md)。
 
+0b. **2026-09-19：多路 decode 落地（Track MS，`p4_multistream.md`，§3 的 57）。**
+   引擎按「进程拥有的」（expert cache、planner、pinned、IO、device）和「序列拥有的」
+   （KV、激活、**shader 在执行时才读的那几张地址表**、command buffer、两条 timeline）
+   切成 `Engine` 与 `runtime::Stream`；`run_layer` 拆成 begin / gate / moe 三段，
+   交错的规则是**「进 stall 之前队列里必须有活」**。
+   **两条并发对话：4.6474 → 5.4602 tok/s（+17.5%，ABAB 三对）**，每路延迟 0.62×。
+   **预测的 1.6–1.8× 没达到**，而且**缺口是量到的**：盘的聚合速率 +28%，但两个工作集
+   抢一个 5,100 槽的 LRU 让 MB/token 涨 13.5%，且 2.83 GB/s 只到 D: 天花板的 69%。
+   **N≥3 是负的**，所以「再加一条流」这条路是关的。**接这一位的仍然是第 1 项**：
+   MB/token 这一侧唯一还开着的杠杆（第二块盘）——它同时是多路这条路的解锁条件。
+   单流路径与 main 逐字相同（`l3_ppl` 的 `off` 臂 **NLL 0.630051** 逐位复现）。
 0. **2026-09-19：K1a 落地并默认开，K1b 两个方向都退掉**（`plan_p5.md` §3(h) / §3(i)）：
    **K1a**——decode 一直在跑 M=6 的 MoE kernel（引擎的 runner 是 `spec.m = kMoeBatchMax`，decode 只设 `live_columns = 1`）。
    M=1 特化的 pipeline：热步 **101.8 → 97.0 ms**、moe gpu **37.87 → 34.33**。第 7 项点名的 live-column mask 只是其中 1.6 ms。

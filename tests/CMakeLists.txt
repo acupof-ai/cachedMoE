@@ -25,6 +25,7 @@ add_executable(deepmoe_tests
     test_engram_tables.cpp
     test_kvstore.cpp
     test_kv_replay.cpp
+    test_multistream.cpp
     test_trace.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
@@ -47,6 +48,13 @@ add_test(NAME "suite.integration" COMMAND deepmoe_tests "integration.")
 set_tests_properties("suite.integration" PROPERTIES
     LABELS "needs-model"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR")
+
+# Track MS (docs/p4_multistream.md): two decode streams in one engine, and the
+# claim that they cannot see each other.
+add_test(NAME "suite.multistream" COMMAND deepmoe_tests "multistream.")
+set_tests_properties("suite.multistream" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP multistream")
 
 # The Vulkan plumbing of design §3.3 / §5.3 / §7.1. Needs a GPU but no weights.
 add_test(NAME "suite.gpu" COMMAND deepmoe_tests "gpu.")

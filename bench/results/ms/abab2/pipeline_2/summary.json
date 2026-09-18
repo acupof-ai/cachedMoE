@@ -1,0 +1,87 @@
+{
+ "cmd": [
+  "C:\\Users\\Asus\\code\\deepmoe-ms\\build\\deepmoe.exe",
+  "serve",
+  "--model",
+  "D:\\models\\DeepSeek-V4.1-Flash",
+  "--max-context",
+  "4096",
+  "--engram-tables",
+  "C:\\Users\\Asus\\code\\deepmoe-ms\\tests\\data\\l3",
+  "--profile",
+  "bench/results/ms/abab2\\pipeline_2\\profile.jsonl",
+  "--streams",
+  "2",
+  "--no-kv-disk",
+  "--cache-slots",
+  "5100",
+  "--warm-cache",
+  "--ms-sched",
+  "pipeline"
+ ],
+ "scripts": [
+  "bench/results/hitrate/y_turns.json",
+  "bench/results/hitrate/long_turns.json"
+ ],
+ "streams": 2,
+ "sched": "pipeline",
+ "turns": 4,
+ "decode_steps": 504,
+ "decode_ms": 92359.2099,
+ "aggregate_tok_s": 5.456954434167371,
+ "wall_s": 166.207781791687,
+ "per_stream": [
+  {
+   "script": "y_turns.json",
+   "decode_steps": 252,
+   "decode_ms": 92359.18669999999,
+   "tok_s": 2.7284779024586197,
+   "hit_rate": 0.868501984,
+   "nvme_mb_per_token": 593.5977813492063,
+   "per_token_ms": {
+    "attn": 44.678556175,
+    "moe_gpu": 41.446350425,
+    "moe_host": 1.3922813475,
+    "nvme_stall": 136.87881875,
+    "engram": 4.6453493625,
+    "tail": 6.183586985,
+    "other": 124.307844,
+    "fence_wait": 48.931098025000004,
+    "submits": 102.460317475
+   }
+  },
+  {
+   "script": "long_turns.json",
+   "decode_steps": 252,
+   "decode_ms": 92359.2097,
+   "tok_s": 2.7284772229920886,
+   "hit_rate": 0.9021660055,
+   "nvme_mb_per_token": 441.63436071428566,
+   "per_token_ms": {
+    "attn": 44.12241865,
+    "moe_gpu": 41.3944624,
+    "moe_host": 1.359754365,
+    "nvme_stall": 107.567783,
+    "engram": 10.0832667275,
+    "tail": 6.015383172499999,
+    "other": 155.46079975,
+    "fence_wait": 41.315731324999994,
+    "submits": 98.3769841
+   }
+  }
+ ],
+ "status": {
+  "event": "status",
+  "session": "default",
+  "context": 356,
+  "max_context": 4096,
+  "kv_mb": 16.044032,
+  "kv_capacity": 4096,
+  "kv_slabs": 1,
+  "kv_largest_slab_mb": 16.044032,
+  "store": "expert store: 5100 slots (5100 resident, 0 filling, 0 free, 0 pinned)  lookups 174480 hits 150290 (0.861)  fills 29290/29290 ok  runs 58580/58580  evictions 24190 (+0 guard-blocked)  path A hits 107742 / B 42548 (0.7169 A)  fills A 18526 / B 10764",
+  "planner": "planner: 29080 layers, 174480 requests (150290 hits, 24190 misses, 0.861), 24190 evictions (+0 refused), prefetch 5100 issued / 0 used / 0 wasted, 15642 stalls, 0 joined; backfill 5100 issued / 5100 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped",
+  "io": "io: 129586 req (129586 done, 0 failed, 0 cancelled), 248865 chunks, 561057043824 / 561057161216 bytes, busy 134.215 s, eff 4.18 GB/s, mean lat 17.638 ms, peak QD 24 / 87.0 MiB\n  p0_blocking    48380 req  433908.1 MiB\n  p2_engram      69792 req  281.1 MiB\n  p3_backfill    11414 req  100876.5 MiB\n  P0: 48380 req, 433908.0 MiB, lat mean 4.87 / p50 4.73 / p95 12.89 / max 51.66 ms  (queue wait 0.05 + service 4.82)\n  P0: first-of-burst 15642 at 1.34 ms, behind 32738 at 6.56 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 5.46\n  dispatcher: 271320 iters, issue 0.83 s / poll 132.93 s / handle 0.42 s (callbacks 0.19 s, 129586 at 1.5 us mean)\n  dispatcher: Backend::submit 89.12 s over 248865 chunks, mean 358.1 us, max 2.68 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.3% of the non-waiting loop; refill gap 1.5 us mean over 87995 reaps\n",
+  "route": "route     resident-only=off\n"
+ }
+}

@@ -1,0 +1,124 @@
+{
+ "cmd": [
+  "C:\\Users\\Asus\\code\\deepmoe-ms\\build\\deepmoe.exe",
+  "serve",
+  "--model",
+  "D:\\models\\DeepSeek-V4.1-Flash",
+  "--max-context",
+  "4096",
+  "--engram-tables",
+  "C:\\Users\\Asus\\code\\deepmoe-ms\\tests\\data\\l3",
+  "--profile",
+  "bench/results/ms/nscan/n4_serial\\profile.jsonl",
+  "--streams",
+  "4",
+  "--no-kv-disk",
+  "--cache-slots",
+  "5100"
+ ],
+ "scripts": [
+  "bench/results/hitrate/y_turns.json",
+  "bench/results/hitrate/long_turns.json",
+  "bench/results/chat/smoke_turns.json",
+  "bench/results/hitrate/chat3_turns.json"
+ ],
+ "streams": 4,
+ "sched": "serial",
+ "turns": 2,
+ "decode_steps": 376,
+ "decode_ms": 74652.73629999999,
+ "aggregate_tok_s": 5.036653961202492,
+ "wall_s": 136.58374190330505,
+ "per_stream": [
+  {
+   "script": "y_turns.json",
+   "decode_steps": 94,
+   "decode_ms": 23321.662,
+   "tok_s": 4.030587528453161,
+   "hit_rate": 0.862101064,
+   "nvme_mb_per_token": 622.4923010638298,
+   "per_token_ms": {
+    "attn": 42.54422,
+    "moe_gpu": 44.32345585,
+    "moe_host": 1.251274465,
+    "nvme_stall": 147.47570549999998,
+    "engram": 4.50450617,
+    "tail": 6.222601275000001,
+    "other": 1.3685518085000001,
+    "fence_wait": 87.42262125,
+    "submits": 103.52127650000001
+   }
+  },
+  {
+   "script": "long_turns.json",
+   "decode_steps": 94,
+   "decode_ms": 19626.680399999997,
+   "tok_s": 4.789398822635335,
+   "hit_rate": 0.8984485814999998,
+   "nvme_mb_per_token": 458.4152563829788,
+   "per_token_ms": {
+    "attn": 42.1415699,
+    "moe_gpu": 41.31987245,
+    "moe_host": 1.3123085149999998,
+    "nvme_stall": 111.32913950000001,
+    "engram": 4.5145382949999995,
+    "tail": 6.074462979999999,
+    "other": 1.702142553,
+    "fence_wait": 84.36151064999999,
+    "submits": 98.8723404
+   }
+  },
+  {
+   "script": "smoke_turns.json",
+   "decode_steps": 94,
+   "decode_ms": 22727.9599,
+   "tok_s": 4.135874949339382,
+   "hit_rate": 0.8672872339999999,
+   "nvme_mb_per_token": 599.0813085106382,
+   "per_token_ms": {
+    "attn": 40.98979445,
+    "moe_gpu": 43.182625,
+    "moe_host": 1.2869670199999999,
+    "nvme_stall": 143.839853,
+    "engram": 4.568128294999999,
+    "tail": 6.179701275,
+    "other": 1.3408307444999998,
+    "fence_wait": 85.1535085,
+    "submits": 102.32978720000001
+   }
+  },
+  {
+   "script": "chat3_turns.json",
+   "decode_steps": 94,
+   "decode_ms": 8976.433,
+   "tok_s": 10.471865606304863,
+   "hit_rate": 1.0,
+   "nvme_mb_per_token": 0.0,
+   "per_token_ms": {
+    "attn": 37.8726877,
+    "moe_gpu": 33.8227264,
+    "moe_host": 1.5853627650000002,
+    "nvme_stall": 0.5475212764999999,
+    "engram": 4.70010298,
+    "tail": 5.909120424999999,
+    "other": 10.70998062,
+    "fence_wait": 79.73725425,
+    "submits": 81.0
+   }
+  }
+ ],
+ "status": {
+  "event": "status",
+  "session": "default",
+  "context": 131,
+  "max_context": 4096,
+  "kv_mb": 16.044032,
+  "kv_capacity": 4096,
+  "kv_slabs": 1,
+  "kv_largest_slab_mb": 16.044032,
+  "store": "expert store: 5100 slots (5100 resident, 0 filling, 0 free, 0 pinned)  lookups 135120 hits 117930 (0.873)  fills 17190/17190 ok  runs 34380/34380  evictions 12090 (+0 guard-blocked)  path A hits 86094 / B 31836 (0.7300 A)  fills A 11537 / B 5653",
+  "planner": "planner: 22520 layers, 135120 requests (117930 hits, 17190 misses, 0.873), 12090 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 10105 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped",
+  "io": "io: 89642 req (89642 done, 0 failed, 0 cancelled), 160521 chunks, 333403760800 / 333403832320 bytes, busy 80.578 s, eff 4.14 GB/s, mean lat 20.661 ms, peak QD 24 / 83.9 MiB\n  p0_blocking    34380 req  308345.6 MiB\n  p2_engram      54048 req  217.8 MiB\n  p3_backfill     1214 req  9395.3 MiB\n  P0: 34380 req, 308345.6 MiB, lat mean 5.41 / p50 4.79 / p95 15.10 / max 26.71 ms  (queue wait 0.08 + service 5.33)\n  P0: first-of-burst 10105 at 1.32 ms, behind 24275 at 7.11 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 6.27\n  dispatcher: 172366 iters, issue 0.54 s / poll 79.74 s / handle 0.28 s (callbacks 0.13 s, 89642 at 1.4 us mean)\n  dispatcher: Backend::submit 52.32 s over 160521 chunks, mean 325.9 us, max 1.82 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.3% of the non-waiting loop; refill gap 1.6 us mean over 44536 reaps\n",
+  "route": "route     resident-only=off\n"
+ }
+}

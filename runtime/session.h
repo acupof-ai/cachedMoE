@@ -222,6 +222,45 @@ private:
     SessionOptions         opt_;
 };
 
+// --- Track MS: several turns at once (docs/p4_multistream.md) -------------------------
+//
+// One turn per Engine stream, decoded layer-interleaved. Each turn's prompt is
+// continued / rolled back / prefilled on its OWN stream first, one at a time
+// (a prefill is a decode-path loop and has the same shape as a turn, so there
+// is nothing to gain by interleaving it and a great deal of state to get
+// wrong), and then the generation loops of all of them run together: one
+// `Engine::feed_multi` per round, every still-running turn contributing one
+// token.
+//
+// The turns end at different times. A round therefore carries only the streams
+// that are still going, and the last one finishes alone -- at single-stream
+// speed, which is why the aggregate figure has to be quoted with the number of
+// rounds that were actually N-wide.
+struct MultiTurn {
+    GenerateRequest req;
+    uint32_t        stream = 0;
+};
+
+struct MultiStats {
+    std::vector<GenerateStats> turns;
+    // Wall clock of the generation loop -- prefills excluded -- and the tokens
+    // every stream emitted inside it.
+    double   decode_ms = 0.0;
+    uint32_t decode_steps = 0;          // summed over the streams
+    uint32_t rounds = 0;                // feed_multi calls
+    uint32_t full_rounds = 0;           // of those, with every stream still live
+    double aggregate_tok_s() const {
+        return decode_ms > 0 ? decode_steps * 1e3 / decode_ms : 0.0;
+    }
+};
+
+// `on_token(stream_index_into_turns, event)`.
+Result<MultiStats> generate_multi(
+    Engine& e, const text::Tokenizer& tok, const SessionOptions& opt,
+    std::span<const MultiTurn> turns,
+    const std::function<void(uint32_t, const TokenEvent&)>& on_token,
+    const std::function<void(uint32_t, uint32_t, uint32_t)>& on_prefill = {});
+
 // --- named sessions -------------------------------------------------------------------
 
 struct SessionPoolOptions {

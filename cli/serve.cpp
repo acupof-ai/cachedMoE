@@ -164,6 +164,9 @@ int cmd_serve(int argc, char** argv) {
     bool check_topk = false;
     bool engine_reheat = false;
     std::string resident_only;   // Track Y: docs/p4_resident_routing.md
+    uint32_t    streams = 1;     // Track MS: docs/p4_multistream.md
+    bool        warm_cache = false;
+    std::string ms_sched;
     bool kv_disk_off = false;
     bool kv_dir_given = false;
     for (int i = 2; i < argc; ++i) {
@@ -187,6 +190,14 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--trace")           cfg.trace_file = value_of(argc, argv, i);
         else if (a == "--check-topk")      check_topk = true;
         else if (a == "--resident-only")   resident_only = value_of(argc, argv, i);
+        // Track MS (docs/p4_multistream.md): decode streams inside this one
+        // engine process, and how a multi-stream round is scheduled.
+        else if (a == "--streams")         streams = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
+        else if (a == "--ms-sched")        ms_sched = value_of(argc, argv, i);
+        // The `run` path's --warm-cache: block until the P3 backfill has filled
+        // every free slot from the static heat order, so a measurement starts
+        // from a full cache instead of racing the fill.
+        else if (a == "--warm-cache")      warm_cache = true;
         else {
             std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data());
             return 2;
@@ -260,6 +271,34 @@ int cmd_serve(int argc, char** argv) {
         else if (resident_only == "verify") engine.set_resident_only(runtime::Engine::ResidentOnly::Verify);
         else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
         else { std::fprintf(stderr, "--resident-only takes off|all|stall1|verify, got '%s'\n", resident_only.c_str()); return 1; }
+    }
+    // Track MS: the extra streams, and the session each of them starts from.
+    // They are created BEFORE begin_session so every one of them gets its own
+    // KV store and engram planes from it.
+    if (streams > 1) {
+        if (auto r = engine.set_streams(streams); !r) {
+            emit_error("streams: " + r.error().str());
+            return 1;
+        }
+        if (auto r = engine.begin_session(sc); !r) {
+            emit_error("session: " + r.error().str());
+            return 1;
+        }
+        if (ms_sched == "pingpong") engine.set_ms_sched(runtime::Engine::MsSched::PingPong);
+        else if (ms_sched == "interleave") engine.set_ms_sched(runtime::Engine::MsSched::Interleave);
+        else if (ms_sched == "pipeline") engine.set_ms_sched(runtime::Engine::MsSched::Pipeline);
+        else if (!ms_sched.empty()) {
+            std::fprintf(stderr, "--ms-sched takes pipeline, interleave or pingpong, got '%s'\n",
+                         ms_sched.c_str());
+            return 1;
+        }
+    }
+    if (warm_cache) {
+        const TimePoint w0 = Clock::now();
+        auto w = engine.warm_cache_from_heat();
+        if (!w) log_warn("serve: warm-cache: {}", w.error().str());
+        else log_info("serve: warm-cache filled {} slots in {:.1f} s", *w,
+                      std::chrono::duration<double>(Clock::now() - w0).count());
     }
     runtime::SessionPool pool(engine, *tok, so, po);
     if (!po.disk.dir.empty()) {
@@ -368,6 +407,61 @@ int cmd_serve(int argc, char** argv) {
                              "\"evicted\":{},\"keys\":{},\"free_slots\":{},\"decay\":{},\"ms\":{}}}",
                              h->turn, h->slots, h->warm, h->evicted, h->passed, h->free_slots,
                              json_number(h->decay), json_number(h->ms)));
+            continue;
+        }
+        // Track MS (docs/p4_multistream.md): N turns at once, one per engine
+        // stream, layer-interleaved. Sessions are the STREAMS here, not the
+        // parking pool: each stream keeps its own KV across turns, which is
+        // what two concurrent conversations are.
+        if (op == "generate_multi") {
+            const JsonValue* rs = doc->find("requests");
+            if (!rs || !rs->is_array()) { emit_error("generate_multi needs \"requests\":[...]"); continue; }
+            std::vector<runtime::MultiTurn> turns;
+            bool bad = false;
+            uint32_t idx = 0;
+            for (const JsonValue& rv : **rs->as_array()) {
+                if (!rv.is_object()) { bad = true; break; }
+                runtime::MultiTurn t;
+                t.stream = static_cast<uint32_t>(rv.int_or("stream", idx));
+                if (const JsonValue* ids = rv.find("prompt_ids"); ids && ids->is_array())
+                    t.req.prompt_ids = uint_array(*ids);
+                else
+                    t.req.prompt_ids = tok->encode(rv.string_or("text", ""));
+                t.req.max_tokens = static_cast<uint32_t>(rv.int_or("max_tokens", 256));
+                t.req.sampling.temperature = static_cast<float>(rv.double_or("temperature", 1.0));
+                t.req.sampling.top_p = static_cast<float>(rv.double_or("top_p", 0.95));
+                t.req.sampling.seed = static_cast<uint64_t>(rv.int_or("seed", 0));
+                if (const JsonValue* sp = rv.find("stop_ids"); sp && sp->is_array())
+                    t.req.stop_ids = uint_array(*sp);
+                t.req.reuse = rv.bool_or("reuse", true);
+                turns.push_back(std::move(t));
+                ++idx;
+            }
+            if (bad || turns.empty()) { emit_error("generate_multi: bad requests"); continue; }
+            auto r = runtime::generate_multi(
+                engine, *tok, so, turns,
+                [&](uint32_t i, const runtime::TokenEvent& ev) {
+                    const uint32_t sid = turns[i].stream;
+                    emit(std::format("{{\"event\":\"token\",\"stream\":{},\"id\":{},\"text\":{},"
+                                     "\"t_ms\":{},\"step_ms\":{},\"p\":{},\"margin\":{},"
+                                     "\"nucleus\":{},\"hit\":{}}}",
+                                     sid, ev.id, json_quote(ev.text), json_number(ev.t_ms),
+                                     json_number(ev.step_ms), json_number(ev.p),
+                                     json_number(ev.margin), ev.nucleus, json_number(ev.hit_rate)));
+                },
+                [&](uint32_t i, uint32_t done, uint32_t total) {
+                    emit(std::format("{{\"event\":\"prefill\",\"stream\":{},\"done\":{},\"total\":{}}}",
+                                     turns[i].stream, done, total));
+                });
+            if (!r) { emit_error(r.error().str()); continue; }
+            for (size_t i = 0; i < r->turns.size(); ++i)
+                emit(std::format("{{\"event\":\"done\",\"stream\":{},", turns[i].stream) +
+                     r->turns[i].json_fields() + "}");
+            emit(std::format("{{\"event\":\"done_multi\",\"streams\":{},\"decode_ms\":{},"
+                             "\"decode_steps\":{},\"rounds\":{},\"full_rounds\":{},"
+                             "\"aggregate_tok_s\":{}}}",
+                             r->turns.size(), json_number(r->decode_ms), r->decode_steps,
+                             r->rounds, r->full_rounds, json_number(r->aggregate_tok_s())));
             continue;
         }
         if (op != "generate") { emit_error("unknown op '" + op + "'"); continue; }
