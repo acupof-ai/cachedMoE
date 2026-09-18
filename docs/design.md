@@ -640,6 +640,26 @@ kernel 上快 12%（§3.3），所以**热 expert 优先落在路径 A 的 slab 
 **再要更多容量只能换硬件。** 两个约束都已经顶到物理量：heap 是 VGM 决定的，
 可见内存是 128 GB 这颗料决定的。**不要再提出"调 pagefile"类的软办法**，它已经用完了。
 
+**v0.10（2026-09-18，Track F4 实测，`p4_hitrate.md` §4–§5）——这一节的 5,711 是空闲机
+`heap_capacity` 的上限，不是 engine 能安全用的容量，默认也不再是任何手写常数：**
+
+- **默认 = `auto`**（`cache.budget_bytes == 0`），本机落在 **5,100 槽 / 89.3 GiB**，是实测最好的一格
+  （decode hit 0.9383、stall 76.0 ms/token、5.603 tok/s）。三条边界都在 boot 时从机器量出来：
+  `avail_phys − kPhysFloor`、`kPathBAutoCeiling`（30 GiB）、`heap_a − pinned − kPathAOther`。
+- **上限往下移了**：5,400 槽能过三轮、在八轮中途死（`io: layer 21: an expert read failed`），
+  **5,500 槽（36 A + 19 B slab）在第一个 token 就丢设备**，安静机 53.8 GiB 空闲。
+  所以**生产里不要传 `--cache-slots` / `--cache-gb`**——它们绕过上面三条边界，5,500 就是这么够得着的。
+- **路径 A 预留 4 GiB（`kPathAReserve`）**：≥ 3,600 槽的 cache 会吃光路径 A 的每一个 slab，
+  之后 GPU prefill 连 21 MB 都分配不到而静默退回 decode 路径。`Engine::build_expert_cache`
+  现在在建池期间按 2 GiB 一块持住 4 GiB 再释放（一次性 4 GiB 会被 `maxMemoryAllocationSize` 拒绝），
+  代价两个 slab，收益是 4,133-token prompt 的 prefill **1,061.7 s → 100.0 s（10.6×）**；
+  auto 预算里的 `kPathAOther` 同步从 1 GiB 提到 3 GiB。
+- **per-turn reheat 退出默认**（`--reheat` 仍在，默认 off）：旧实现按构造是空转——它把**驻留**键交给
+  `backfill_pump`，而 pump 对驻留键 `continue`，于是每轮白白淘汰 `slots/32` 个槽（+32 MB/token）。
+  修好之后（候选改成**非驻留**键、没有候选就不淘汰）在 4,500 / 5,000 两个容量、八轮脚本上
+  **逐轮 hit 与 off 到小数点后四位相同**。P3 backfill 同样默认 off（整体 +0.0011 hit 不值 21.5 GiB 的额外读）；
+  `MOE_OVERLAP`（+1–4%）与 `PREFILL_HANDOFF`（短 prompt +17–72%）**默认 on，现在有数**。
+
 ### 5.3 Slab 池
 
 - slab = 1.88 GB = 100 个 expert 槽；**~57 个 slab**（v0.7：100 GiB 池，§5.2）。**2 GiB 上限只约束路径 A**
@@ -2362,6 +2382,15 @@ v0.9-draft 的"N ≥ 512 时 ≈ 256 GB / 57 s、与 N 无关"作废。**第二�
 > **v0.9-draft 引的 Track K 的数作废**——1.93 tokens / verify、"h = 0.92 下最好 +5%、按实测 M 缩放每个 k 都亏"、confidence"没有被否定"：
 > 那是单条贪心链 + 精确前缀接受，在一条出两个 EOS 之后退化的 L3 轨迹上 14 个周期量的；而且温度 1 下单链方案根本不是无损的投机采样（p3_dspark.md §3 开头）。
 > v0.9-draft 的 §10.1.2–§10.1.4（旧模型、以接受率为参数的表、两处缺口）由下面取代；缺口 1（MoE 未计并集）已计入 K2 的模型。
+>
+> **v0.10（2026-09-18，Track Y）：门槛不变，但"verify 批的 MoE 并集"这道门现在有了一个候选钥匙——
+> verify-only 的 resident-only 路由。** 只路由到已在 cache 里的 expert，作为**默认**是 NO-GO
+> （64 步 teacher-forced PPL：`all` ×1.82–×2.29，判据 ×1.05 / ×1.30；`stall1` ×1.09–×1.11，
+> 速度只有 ×1.21，代价 1,624 次 P0 / 8.9 s 等待，`p4_resident_routing.md` §9.4）。
+> 但 `stall1` 这一档的**质量落在 ≤ ×1.3 带内**（mass lost 0.076、0 个只剩 shared expert 的 layer-step），
+> 也就是说**把它只用在 verify 那一遍**——draft 照常、verify 不为并集去盘上取字节——
+> 的质量前提**成立**。下一步该量的是它的**收益**（verify 批 M 上的 tok/s），不再是它的质量。
+> `all` 那一档不能当 verify 的 cache 状态。
 
 #### 10.1.1 带宽论证（数字更新）
 

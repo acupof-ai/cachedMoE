@@ -17,7 +17,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 
 1. [今天的数字](#1-今天的数字)
 2. [优化路径：每一步与它的归因](#2-优化路径每一步与它的归因)
-3. [试过并退掉的（编号，共 34 条）](#3-试过并退掉的编号共-34-条)
+3. [试过并退掉的（编号，共 39 条）](#3-试过并退掉的编号共-39-条)
 4. [为什么 decode 是 NVMe-bound，而不是 kernel 慢](#4-为什么-decode-是-nvme-bound而不是-kernel-慢)
 5. [测试套件](#5-测试套件)
 6. [已知限制与未决风险](#6-已知限制与未决风险)
@@ -51,7 +51,9 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 采样 | GPU top 集合 + 主机精确核；650 个采样步 **0 次回退** | README |
 | KV（按模型格式） | 17,010 位置实测 **54.96 MiB**；64K 上下文 61 MB、1M 上下文 0.94 GB | `p4_summary.md` §6 |
 | decode 逐位确定性 | 3 个进程同一 hash `a919aaf6…` | `p2_decode.md` §4.4 |
-| cache 容量上限（本机） | **5500 槽 = 96.34 GiB 可用；5600 在 path B 第 20 个 slab 失败（98.10 GiB）** | `p4_hitrate.md` 容量实测 |
+| **cache 默认（`auto`）** | **5,100 槽 / 89.3 GiB**：hit 0.9383、stall 76.0 ms/token、**5.603 tok/s**（八轮脚本，安静机） | `p4_hitrate.md` §4（F4） |
+| cache 容量上限（本机） | **安全上限 5,000 槽**。5,400 过三轮、八轮中途死；**5,500 第一个 token 就丢设备**（36 A + 19 B slab，53.8 GiB 空闲）。~~5500 槽 = 96.34 GiB 可用~~ 作废 | `p4_hitrate.md` §4（F4） |
+| 长 prompt TTFT（4,133 token，4,500 槽） | GPU prefill 被路径 A 饿死时 **1,061.7 s**；加 4 GiB 路径 A 预留后 **100.0 s（10.6×）** | `p4_hitrate.md` §5（F4） |
 
 **一句话结论**：`tok/s ≈ NVMe_eff / (MB per token)`。四种容量下有效读带宽恒定在 8.3–9.2 GB/s，
 hit 0.59 → 0.84 把 MB/token 从 4,998 降到 2,269，tok/s 就翻倍。
@@ -133,6 +135,14 @@ ms/token **0.5912 → 0.1621 = 3.65×**——**这就是投机解码真正买到
 **容量每翻一倍，hit +0.093**（0.5912 → 0.7431 → 0.8370）。
 5500 槽实测的 0.9431 与 `cache_sim` 在 5711 槽的 0.9451 对上——**收益来自容量，不是策略**。
 
+**F4（2026-09-18，`p4_hitrate.md` §0/§3/§4）把"策略"这一侧彻底关掉了：engine 就是纯 LRU。**
+把一次 run 自己的 `route.bin` 回放进 `cache_sim` 的 LRU，engine 与模拟器在**每一步**上一致
+（4,500 槽 2,489/2,489；5,000 槽 2,489/2,489；4 轮 `config_sweep` 214/214）。
+所谓"engine 比纯 LRU 低 6.8 点"的前提**不存在**——那是拿一个 4 轮 92 步冷 cache 的 run
+去比一个 8 轮 2,193 步的 run。把 `BACKFILL` / `PREFILL_HANDOFF` / `MOE_OVERLAP` 全关掉的
+ablation 从另一侧确认：hit 0.9250 → 0.9252，MB/token 338.3 → 337.8，**没有东西可关**。
+容量曲线在本机上限处**仍在爬**（sim：5,100 → 0.9383，6,500 → 0.9532），所以**每一点 hit 都是吞吐**。
+
 路由事实（`p4_expert_patterns.md`）：`prefill_hit = 0.7607`，decode 选中的 expert **86.6% 在 prompt prefill 里已经出现过**
 → prefill→decode 交接是最大的单一杠杆。掉命中率的原因是**换话题，不是上下文变长**
 （同话题每 128 步 hit 0.94–0.955，跨话题 0.877–0.90；stall 58 ms ↔ 151 ms）。
@@ -154,11 +164,20 @@ ms/token **0.5912 → 0.1621 = 3.65×**——**这就是投机解码真正买到
 **prefill 唯一一个大的保留项**：host 的 top-6 每 token 通过 device-mapped 内存读 gate bias ~3,000 次——
 **4K prefill 里 58 s（1.45 s/层）→ 1.1 s**，只是把 384 个 float 每层拷一次。
 
+**F4 找到的更大一件事：GPU prefill 一个字节都分配不到（`p4_hitrate.md` §5）。**
+slab 池会把路径 A 填到 `vkAllocateMemory` 拒绝为止，所以 **≥ 3,600 槽的 cache 之后，
+晚一步分配、且只认路径 A 的 GPU prefill 连 21 MB 都要不到**，静默退回 decode 路径——
+这就是为什么本文档此前每一格都报 `prefill_mode: "decode"`。
+修法是 `Engine::build_expert_cache` 在建池期间持住 **4 GiB 路径 A 预留**（`kPathAReserve`，
+按 2 GiB 一块，因为一次性 4 GiB 会撞 `maxMemoryAllocationSize`），建完立刻释放。
+代价两个 slab，收益：**4,133-token prompt 的 prefill 1,061.7 s → 100.0 s（10.6×），
+prefill 吞吐 3.89 → 41.3 tok/s，整格 19 min → 3 min**。
+
 Track S 的 coopmat：N=4133 **legacy 103.67 s vs coop 99.89 s，只快 3.6%**，5× 目标未达成（§3 的 32）。
 
 ---
 
-## 3. 试过并退掉的（编号，共 34 条）
+## 3. 试过并退掉的（编号，共 39 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -232,6 +251,16 @@ Track S 的 coopmat：N=4133 **legacy 103.67 s vs coop 99.89 s，只快 3.6%**�
 - **压缩 KV 存 bf16 而不是打包 FP4**：64K 上省 18 MB（66 vs 48 MB），代价是 `sparse_attn` 内循环里一次 nibble 解包。**故意推迟**
 - **P2 step 2 的不可复现不是 kernel**——是**三条 track 往同一个 `build/shaders` 目录并发重建 `.spv`**。证据：step 2 报 step-0 margin **7.0927**，它自己那个 commit 隔离重建给 **6.7477**，带 Track F 的 kernel 给 **6.9389**——引用的那几次 run **两套 kernel 都没执行**。**这是"安静机"规则的由来**（`plan_p5.md` §1）
 - **`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` 的 A/B**：设计好的表**从未跑过**（沙箱 `SetNamedSecurityInfoW failed (Win32 5)`）。`p4_hitrate.md` §4 至今是空的。**未实测**
+
+### 3.7 P4 收尾四条 track 的否定（2026-09-18）
+
+| # | 实验 | 实测 | 结论 |
+|---|---|---|---|
+| **35** | **预测式预取**（Markov / token-id 表 / token 内共现 / 隐状态 lookahead d=1..8），真实路由 trace、诚实盘模型、80 余种配置 × 253 次完整 replay | 在 4,500 / 5,711 槽下**全部净负或持平**，最好的一个 +0.8%。翻正需要 **precision = 1.00**：精度 0.9 仍比不预取**慢 15%**（5.47 vs 6.45 @ 5,711）。"最后四层"不特殊（逐层 LRU hit 0.856–0.918 几乎是平的，36–39 层 0.884–0.889；全知只预取最后 4 层只值 +5.5%）。整层 pin **一律变差**（pin 最后 4 层 −14%），每层静态热集 −0.5%，逐层配额 −3.9%，整层 streaming 要 90–361 GB/s。预测感知淘汰 ±0.1% | **不要实现**（`p4_cache_policy.md` §9.1）。根因：demand miss 本身每 token 就要 95–106 ms 盘时间，而计算窗口只有 80 ms——**盘已经欠着 25 ms 的债，浪费预算是负数**。天花板确实很高（全知预取 +50%、配全知淘汰 +101%），只是**够不着** |
+| **36** | **第二块 NVMe（stripe 到 9 GB/s）vs 任何软件策略** | C=5,711 下 **+32%**，C=4,500 下 +40%，无预测、无风险 | **不是否定，是排序**：它比本项目测过的每一种软件策略都大。design §3.1 已经预留了 stripe。同表里**唯一没跑过的软件候选是 score-aware 淘汰**（用 top-16 的原始分数刷 heat）——Belady 上限是 +42%，它是最有可能吃到其中一部分的那个，**至今未测** |
+| **37** | **2-bit routed expert** | 13 种方案。L3 端到端 **PPL 29 → 14,290,394，64 个位置上 argmax 0 次一致**；最好与最坏方案之间的差**小于任一个离"可用"的距离**。**3-bit 也过不了**（PPL 13.25M，top-1 1/64）。根因是结构性的：checkpoint 是 QAT 到 FP4 的，码流熵 **3.8375 bit** 对 log2(15)=3.9069 的上限，误差在行 / 块 / 矩阵 / 层 / expert 之间**摊得完全均匀**——**没有冗余可压，也没有显著子集可保护**。判据侧：**L1 上 expert 输出相对误差 0.31 端到端就已经致命** | **NO-GO，两个位宽都是**（`p4_quant2.md` §8）。它本来是本项目 decode 工作里最大的一个数（7.09 → 15.83 tok/s，×2.23）。**重定向**：那个 ×2.23 里**约一半其实是"多出来的槽"而不是"更窄的读"**——保住 FP4 的 hit 只把字节减半是 10.58 tok/s，而槽是不用动一个权重就能拿的。design §6"用 checkpoint 自己的精度，一个 bit 都不改"**第一次被认真挑战，活下来了** |
+| **38** | **resident-only 路由（`all`）作为默认**：只路由到已在 cache 里的 expert | 64 步 teacher-forced L3：PPL **×1.82 – ×2.29**（判据 ×1.05 / ×1.30，三次独立进程），gate mass lost **0.3054**，**52 / 2,560 个 layer-step 只剩 shared expert**，对参考 top-1 42/64（`off` 是 61/64）。速度确实是 ×2.74，输出**不连贯** | **NO-GO**（`p4_resident_routing.md` §9.4）。原因是第 3 节那条硬预算：后台补盘 2,687 入队 / **2,072 过期丢弃** |
+| **39** | **resident-only 路由（`stall1`，只在会 stall 时降级一个 expert）作为默认** | 质量 **×1.09 – ×1.11**（mass lost 0.076，**0 个只剩 shared expert 的层**，top-1 51/64），速度 harness 上 ×1.21、四轮对话里只有 ×1.07，代价 **1,624 次 P0 / 8.9 s 等待** | **作为默认 NO-GO**（质量 ×1.09 > ×1.05 的线，速度买不回来）。**但它的质量落在 ≤ ×1.3 带内，所以"只在 DSpark 的 verify 那一遍上用"的前提成立**——见 §7 的下一步。它同时推翻了 step 3 的判决（当时读成 ×3.40、比 `all` 还差），差别全在尺子上（§5.5） |
 
 ---
 
@@ -311,6 +340,7 @@ MoE live-column mask 在 microbench 上是 1.7×（30 ms/token），端到端**�
 | `suite.gpu_prefill` | prefill 逐 stage **110 项**，worst cos 0.999912 | pass |
 | `suite.gpu_dspark` | DSpark 草稿 kernel 逐阶段对参考 | pass |
 | `suite.kv_replay` | KV 回放/回退记账 | pass（l3_64：(1) 8/8；(3) restore ≈52 s + 8/8；(4) 0 raw rows） |
+| `bench.l3_ppl64` | **64 步教师强制 L3 PPL 尺**，三档路由各起一个进程串行跑，出 NLL / PPL / top-1 / served / mass lost 与判据 | 有导出集（`traces/l3_64`，.gitignore）才跑，否则 skip；§5.5 |
 | `bench.mgt1_m_curve` / `bench.mgt1_moe_m_curve` | C(M) 曲线 | **未产出**（`bench/results/mgt1_p4.csv` 缺） |
 
 ### 5.3 命令
@@ -364,12 +394,35 @@ ctest --test-dir build --output-on-failure
 这也是 `run_all.py` 问 ctest 要 `unit` 标签、而不是自己维护一张列表的原因：
 列表会把这种缺陷藏起来。
 
+### 5.5 尺子本身：8 步分不开的东西，64 步分得开
+
+Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 harness——这条值得单列，
+因为它是这份文件里唯一一次"结论被尺子决定"。
+
+- **8 步的 teacher-forced L3 分不开档位**：三档都落在 6/8 或 8/8，而且出现过自相矛盾
+  （`stall1` 的 gate mass lost 只有 `all` 的一半，PPL 却更高）。
+- **64 步（`traces/l3_64` + `tools/l3_ppl.py`）就分得开**：top-1 **61 / 42 / 51**，
+  PPL ×1.00 / ×2.29 / ×1.11，**与 mass lost 单调同向**；`stall1` 三次独立进程跑进 0.0035 的带里，
+  `all` 三次跨 0.87 个 PPL（那是后台补盘时序的真实方差，不是测量噪声）。
+- **这把尺子自己的噪声底是 ×1.0330**（`off` 对 fp32 参考：NLL 0.5976 → 0.6301，top-1 61/64）。
+  所以 ×1.09 只有噪声底的三倍——**读得出来，但不要把 1.09 和 1.05 的差别当大数字**。
+- **导出必须逐步解码，不能用一遍 prefill 抄近路。** 一遍 128 token 的 prefill 能一次拿到全部 65 个
+  next-token 分布，快 7.4 倍（226.5 s vs 1,687.8 s），但它只能**证明** 5/64 个位置。
+  把同一遍跑在参考**自己逐步**解码出的 token 上，分叉位置和分叉 token 一模一样（index 5）——
+  **"一遍 prefill 的第 j 个位置"和"逐步解码到第 j 个位置"不是同一个分布**
+  （compressor 结尾不完整分组的进位、indexer 在整段 compressed cache 上的 top-k，在一遍式里都不是逐位置因果的）。
+  顺带的对照：**引擎自由跑跟住参考 12 个 token，一遍式只跟住 5 个——这一局引擎比捷径准。**
+
+一句话：**任何跨 routing / cache 策略的质量判决，尺子至少要 64 步，而且参考续写必须是逐步产的。**
+
 ---
 
 ## 6. 已知限制与未决风险
 
-1. **decode 被 NVMe 钉死**：每 token 60% 是 stall。5500 槽（96.34 GiB，本机上限）能到 6.05 tok/s / hit 0.9431，
-   再往上没有容量了。20 tok/s 需要把 MB/token 再砍 3×，只有投机解码能做到，而它今天做不到（§3 的 34）。
+1. **decode 被 NVMe 钉死**：每 token 60% 是 stall。**默认 `auto` = 5,100 槽 / 89.3 GiB，6.05 → 5.60 tok/s / hit 0.9383**，
+   而且这已经是本机安全上限附近（5,400 八轮中途死、5,500 第一个 token 丢设备，§3 的 30 / `p4_hitrate.md` §4）。
+   容量曲线还在爬（sim 6,500 槽 +2.2 点），但**本机没有字节了**。20 tok/s 需要把 MB/token 再砍 3×：
+   2-bit 已经否掉（§3 的 37），只剩投机解码，而它今天做不到（§3 的 34）。
 2. **每次 expert miss 20–31 ms，真实盘时间 ~2 ms，10× 的差没有解释。**（§4）
 3. **热步只剩 ~7% 余量**（81.5 vs 地板 75.8 ms）。剩下的是结构性的：每 token 40 次 host 往返读 gate
    （~1.6 ms submit + ~2 ms fence），以及 MoE 的 `x` 每层往 host 走一趟。
@@ -378,12 +431,26 @@ ctest --test-dir build --output-on-failure
 5. **`Engine::generate` 的 `speculative` 是 `unimplemented`**，缺三个 kernel 能力（M=6 的 MoE、草稿链的 bf16 输入 GEMV、`accept_sampling_exact` 的四个读回）。
 6. **Track J 的接口（K-split / tiled attention，696 µs/层）没有被 runtime 采纳**，
    而且**它的 LDS 修复在真机上看不到**：attention 在 Track I 是 36.0 ms、Track Q 后是 36.9 ms，J 声称 −3.8 ms 且"已生效"。**这个矛盾未解决。**
-7. **`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` 从未 A/B 过。** 三个默认开着的开关，没有一个有自己的数字。
+7. ~~**`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` 从未 A/B 过。**~~ **已做（F4，`p4_hitrate.md` §6）**：
+   `MOE_OVERLAP` +1–4%（hit 到小数点后四位不变——它搬运工作，不改 cache 内容）**默认 on**；
+   `PREFILL_HANDOFF` 在 512 / 1,024 / 2,048 token prompt 上 **+72% / +49% / +17%**，
+   还顺带削掉 prefill 自己的 9–14%，**默认 on**；`BACKFILL` 整体只值 +0.0011 hit 却多读 21.5 GiB，
+   **默认 off**（而且计数器显示它一直就是 off 的）。**留下一个未解释的格子**：两对 2,048-token
+   run 只差 `--max-context`（4,096 vs 8,192），handoff-**off** 那一侧从 0.8487 跳到 0.9715，
+   而 handoff-on 两侧完全相同（0.8874/0.8874）。在这条被命名之前，4,133-token 那一行**不能**读成"长 prompt 上 handoff 输了"。
 8. **C(M) 曲线缺失**（`bench/results/mgt1_p4.csv`），DSpark 的 20 tok/s 判定挂在它上面。
 9. **`serve` 单会话、不能中途打断**；GPU prefill 默认关（`--gpu-prefill-min` 默认 0）。
-10. **`p4/one-pr` 是 draft**：合并在一个禁止创建子进程的沙箱里完成，多数数字是合并前会话的记录，不是在这棵树上重跑的。
+10. **口径分裂：本文件 §1 / §2.4 里 5,500 槽那一行（6.05 tok/s / 0.9431）是在一台当时能撑住 5,500 槽的机器上量的**，
+    而 F4 在安静机上复现不出来（第一个 token 就丢设备）。两个数都留着，但**可依赖的默认是 5,100 槽那一行**。
 11. **路径 B 封顶 16 GiB**，因为按物理内存定大小会让下一次 submit 发现设备丢失（§3 的 30）。
 12. **没有 per-dispatch 的时间线**（本轮补上：`runtime/trace.*` + `tools/trace_timeline.py`，但**尚未在 GPU 上验证**，命令见 `plan_p5.md` §4）。
+13. **F3（prefill kernel 几何）与 F2（KV / session）都是部分工作。** F3 的四处几何修正 + `wo_a` 的 coopmat
+    已合入，每个 pre-F3 几何都留了一个环境变量开关用于归因（`tests/test_gpu_prefill.cpp`），
+    但**没有新的端到端 prefill 墙钟对照**——§2.5 的 TTFT 仍是 Track L 的数。
+    F2 的 KV 多 slab、`clear()` 批量化、fence 等待改成预算（不再是 120 s 死线）、`.pkv`
+    字段表与三会话 park/spill 演示已合入，但 **SSD KV 前缀复用仍然不是 `serve` 的默认路径**（见 §7 的 2）。
+14. **`p4/one-pr` 合进 main 时，整个 P4 的数字没有在合并后的这棵树上重跑**——
+    合并后跑的是 build + 全量 ctest，不是 bench。任何性能数字的出处仍然是它自己那一行指的报告。
 
 ---
 
@@ -397,8 +464,11 @@ ctest --test-dir build --output-on-failure
    便宜：两个时间戳 + 一条 JSONL 字段。**在做任何 kernel 工作之前做这个。**
 2. **把 SSD KV 前缀复用接进 `serve` 的默认路径。**
    已实测 41×（101.6 s → 2.47 s），已实现，只是没默认开。这是当前性价比最高的一项。
-3. **跑完 §6 第 7 项的三个 A/B**（`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL`），安静机、成对交替。
-   三个默认开着但没有数字的开关，其中任何一个可能是负的（参见 §3 的 20、21、22：三个"显然有用"的东西都是 0）。
+3. **量 verify-only 的 resident-only 路由在 DSpark 上的收益。**
+   §3 的 39 已经把质量这一侧关掉了（`stall1` 落在 ≤ ×1.3 带内，0 个只剩 shared expert 的层），
+   而 §3 的 34 说 DSpark 唯一过不去的门就是"verify 批的 MoE 并集随 M 线性增长"。
+   **该量的不再是它的质量，是 verify 批 M 上的 tok/s。**（`all` 那一档不能当 verify 的 cache 状态。）
+   ~~跑完三个 A/B~~ 已完成，见 §6 的 7。
 4. **per-dispatch trace 上 GPU**（`plan_p5.md` §4 的命令），把每层 16–29 个 dispatch 的 busy / gap 拆开。
    §2.1 之后所有归因都靠它——没有它，第 5、6 项只能猜。
 5. **persistent-dispatch decode**：一层或一个 token 一次 dispatch，device 侧任务队列 + 自旋等待。
@@ -408,8 +478,13 @@ ctest --test-dir build --output-on-failure
    代数在 `plan_p5.md` §3(b)，读 `D:\models\DeepSeek-V4.1-Flash\inference\`（只读）。
 7. **prologue/epilogue 融合**：把 norm / residual / act_quant 折进 GEMV。
    今天一个非源层 16 个 dispatch、源层最多 29 个；融合能删掉其中 5–7 个和它们的 barrier。
-8. **2-bit expert**（等 F5 的精度判定）、**命中率杠杆**（等 F4）。这两项依赖别的 track。
+8. ~~**2-bit expert**（等 F5 的精度判定）~~ **已否决**（§3 的 37，2 bit 与 3 bit 都是 NO-GO）。
+   ~~**命中率杠杆**（等 F4）~~ **已交付**（默认 `auto`、路径 A 预留、三个 A/B，§2.4 / §2.5 / §6 的 7）。
+   接替这两项的是：**(a) score-aware 淘汰**——本项目测过的淘汰策略里唯一没跑过、
+   而 Belady 上限有 +42% 的那个（§3 的 36）；**(b) 第二块 NVMe**（+32–40%，无风险，design §3.1 已预留）。
 
-**不做**（有编号的理由，不要再提）：BIOS VGM（§3 的 29）、lookahead 预取（23）、
-CPU 分担 GEMV（25）、树采样作为提速手段（32）、静态 pin / 每层配额（24）、
-LDS x-tiling 配 per-K-chunk barrier（1）、饱和 cache 上的 reheat（21）。
+**不做**（有编号的理由，不要再提）：BIOS VGM（§3 的 29）、lookahead 预取（23、**35**）、
+CPU 分担 GEMV（25）、树采样作为提速手段（32）、静态 pin / 每层配额（24、**35**）、
+LDS x-tiling 配 per-K-chunk barrier（1）、饱和 cache 上的 reheat（21、**F4 §6**）、
+任何预测式预取（**35**）、2-bit / 3-bit expert（**37**）、resident-only 作为默认路由（**38、39**）、
+手写 `--cache-slots`（它绕过三条实测边界，5,500 就是这么够得着的）。
