@@ -1,0 +1,23 @@
+{
+ "generator": "tools/quant2_l3.py (l3_64 pass) + compare() re-run after the process was stopped",
+ "variant": "int2_b32",
+ "scale_steps": [
+  -2,
+  -1,
+  0,
+  1
+ ],
+ "note": "the corpus2k pass was cancelled on the owner time budget after one layer (264.7 s/layer, ~2 h projected); this record is the 64-token L3 prompt only. The run did not write its own JSON because it was stopped mid-pass.",
+ "l3_64_seconds": 1777,
+ "compare": {
+  "l3_64": {
+   "positions": 64,
+   "argmax_agreement": 0.0,
+   "variant_argmax_in_fp4_top5": 0.0,
+   "mean_kl_nats": 14.25708,
+   "ppl_fp4": 29.2551,
+   "ppl_variant": 14290393.9471,
+   "ppl_ratio": 488474.7406
+  }
+ }
+}
