@@ -456,6 +456,8 @@ private:
     uint32_t     cmd_stamp();                           // ~0u when untimed
     Result<void> cmd_submit(TimelineValue wait_value);  // 0 = no gate
     Result<void> cmd_wait();
+    // The wall-clock budget one GPU fence wait gets (DEEPMOE_GPU_WAIT_S, 900 s).
+    static double gpu_wait_budget_s();
     Result<void> cmd_flush(TimelineValue wait_value) {
         if (auto r = cmd_submit(wait_value); !r) return r;
         return cmd_wait();

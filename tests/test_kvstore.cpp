@@ -4,6 +4,7 @@
 // replay restores from.
 //
 // `kvstore.*` needs nothing; `gpu.kvstore_*` needs a Vulkan device, no weights.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -280,6 +281,129 @@ DEEPMOE_TEST(gpu, kvstore_planes_growth_floor_and_packing) {
 
     // Past the limit: refused.
     CHECK(!kv.reserve(16385).has_value());
+    kv.destroy();
+    alloc.shutdown();
+}
+
+// The measured KV bill of design §11.3, and the multi-slab layout that lifts
+// its "KvStore is ONE allocation, so max_context <~ 41.7K" (docs/p4_kv_ux.md §9).
+//
+// Two things are checked that only a real allocation can show: what
+// `KvStore::create` actually takes at 64 / 4,096 / 17,010 / 65,536 positions,
+// and that a 65,536-position store cut into slabs -- here forced small, so the
+// cut is exercised on a machine whose driver would have taken one allocation --
+// still round-trips its rows. A plane must lie wholly inside one slab, so a
+// plane address plus a row offset is still one address; the pack/unpack pair is
+// what proves it.
+DEEPMOE_TEST(gpu, kvstore_measured_bytes_and_64k_slabs) {
+    gpu::Device dev;
+    if (skip_without_gpu(dev)) return;
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(dev, MemoryPath::DeviceLocalHostVisible));
+    auto c = V41Config::load(cfg_path());
+    REQUIRE_OK(c);
+    const TextConfig& t = c->text;
+
+    // design §11.3's model-format column: 2,703,360 B of window (never stored)
+    // + 894 B a token, of which 890 B is the non-SWA state it persists.
+    auto model_format = [](uint64_t ctx) { return 2703360.0 + 894.0 * double(ctx); };
+
+    std::printf("    %8s %12s %7s %8s %12s %12s %10s\n", "positions", "allocated", "slabs",
+                "largest", "bf16 live", "model fmt", "x");
+    for (uint32_t ctx : {64u, 4096u, 17010u, 65536u}) {
+        runtime::KvStore kv;
+        KvStoreConfig k = KvStoreConfig::for_model(t, ctx, ctx);
+        REQUIRE_OK(kv.create(alloc, k));
+        CHECK_EQ(kv.capacity(), ctx);
+        // Every slab is inside the 2 GiB maxMemoryAllocationSize of design §1.1.
+        CHECK(kv.largest_slab() <= (2ull << 30));
+        std::printf("    %8u %9.2f MB %7u %6.1f MB %9.2f MB %9.2f MB %9.1fx\n", ctx,
+                    kv.bytes() / 1e6, kv.slabs(), kv.largest_slab() / 1e6,
+                    k.total_bytes(ctx) / 1e6, model_format(ctx) / 1e6,
+                    kv.bytes() / model_format(ctx));
+        // The allocation is the layout plus alignment padding, never less.
+        CHECK(kv.bytes() >= k.total_bytes(ctx));
+        CHECK(kv.bytes() < k.total_bytes(ctx) + (1u << 20) + 4096u * (kv.slabs() + 8));
+        kv.destroy();
+    }
+
+    // 64K with the slab cap forced down to 80 MiB: the layout has to spread the
+    // planes over several allocations, and the store must still work.
+    const uint32_t P = 65536;
+    runtime::KvStore kv;
+    KvStoreConfig k = KvStoreConfig::for_model(t, P, P);
+    k.slab_bytes = 80ull << 20;   // just above the largest single region (67.1 MB)
+    REQUIRE_OK(kv.create(alloc, k));
+    CHECK(kv.slabs() >= 4u);
+    CHECK(kv.largest_slab() <= (80ull << 20));
+    std::printf("    forced 80 MiB cap at %u positions: %u slabs, %.2f MB, largest %.2f MB\n", P,
+                kv.slabs(), kv.bytes() / 1e6, kv.largest_slab() / 1e6);
+
+    // Planes on different slabs have unrelated addresses; reuse layers still
+    // see their own source's.
+    auto v2 = kv.layer(2), v5 = kv.layer(5), v20 = kv.layer(20), v39 = kv.layer(39);
+    REQUIRE_OK(v2); REQUIRE_OK(v5); REQUIRE_OK(v20); REQUIRE_OK(v39);
+    CHECK_EQ(v2->cmp_kv, v5->cmp_kv);
+    CHECK_EQ(v20->cmp_kv, v39->cmp_kv);
+    CHECK(v2->cmp_kv != v20->cmp_kv);
+
+    // Synthetic data over the whole 64K: 256 quantised rows tiled, so every
+    // plane is written end to end without quantising 163,840 rows one by one.
+    std::mt19937 rng(20260917);
+    std::normal_distribution<float> nd(0.0f, 0.3f);
+    const uint32_t kTile = 256;
+    std::vector<float> tile_kv(size_t(kTile) * 512), tile_k(size_t(kTile) * 128);
+    {
+        std::vector<float> xf(512), kf(128);
+        std::vector<uint16_t> q(512), qk(128);
+        for (uint32_t r = 0; r < kTile; ++r) {
+            for (auto& e : xf) e = nd(rng);
+            for (auto& e : kf) e = nd(rng);
+            quantise_row(xf.data(), 512, 16, false, q.data());
+            quantise_row(kf.data(), 128, 32, true, qk.data());
+            for (uint32_t i = 0; i < 512; ++i) tile_kv[size_t(r) * 512 + i] = cpu::bf16_to_float(q[i]);
+            for (uint32_t i = 0; i < 128; ++i) tile_k[size_t(r) * 128 + i] = cpu::bf16_to_float(qk[i]);
+        }
+    }
+    std::vector<float> big_kv(size_t(P) * 512), big_k(size_t(P) * 128);
+    for (uint32_t r = 0; r < P; r += kTile) {
+        const uint32_t n = std::min(kTile, P - r);
+        std::memcpy(big_kv.data() + size_t(r) * 512, tile_kv.data(), size_t(n) * 512 * 4);
+        std::memcpy(big_k.data() + size_t(r) * 128, tile_k.data(), size_t(n) * 128 * 4);
+    }
+    for (uint32_t L : {2u, 8u, 14u, 20u}) {
+        const uint32_t rows = P / t.compress_ratio(L);
+        REQUIRE_OK(kv.seed_compressed(L, big_kv.data(), rows));
+        REQUIRE_OK(kv.seed_index_k(L, big_k.data(), rows));
+        if (t.compress_ratio(L) > 1) {
+            std::vector<float> skv(2 * 512), ssc(2 * 512);
+            for (auto& e : skv) e = nd(rng);
+            for (auto& e : ssc) e = nd(rng);
+            REQUIRE_OK(kv.seed_cmp_state(L, skv.data(), ssc.data(), 2));
+        }
+    }
+    // The last row of the ratio-1 plane -- the far end of the last slab -- is
+    // the tile's last row, which is what proves the addressing across the cut.
+    const uint16_t* p20 = kv.layer(20)->cmp_kv_host;
+    for (uint32_t i = 0; i < 512; ++i)
+        CHECK_EQ(p20[size_t(P - 1) * 512 + i],
+                 cpu::float_to_bf16(tile_kv[size_t((P - 1) % kTile) * 512 + i]));
+
+    auto packed = kv.pack(P);
+    REQUIRE_OK(packed);
+    CHECK_EQ(packed->raw_rows(), 0u);
+    std::printf("    packed 64K non-SWA state: %.2f MB (design §11.3 says %.2f MB)\n",
+                packed->bytes() / 1e6, k.packed_bytes(P) / 1e6);
+    std::vector<uint16_t> ref(size_t(P) * 512);
+    std::memcpy(ref.data(), p20, ref.size() * 2);
+    kv.clear();
+    CHECK_EQ(kv.layer(20)->cmp_kv_host[size_t(P - 1) * 512], uint16_t(0));
+    // clear() must also put score_state back to -inf, over every slab.
+    CHECK(kv.layer(2)->cmp_state_score_host[0] == -std::numeric_limits<float>::infinity());
+    CHECK(kv.layer(14)->cmp_state_score_host[1023] == -std::numeric_limits<float>::infinity());
+    REQUIRE_OK(kv.unpack(*packed));
+    CHECK(std::memcmp(ref.data(), kv.layer(20)->cmp_kv_host, ref.size() * 2) == 0);
+
     kv.destroy();
     alloc.shutdown();
 }

@@ -198,12 +198,32 @@ uint64_t KvRowBackup::bytes() const {
 
 // --- the store --------------------------------------------------------------------
 
+uint32_t KvStore::Layout::slab_of(uint64_t off) const {
+    for (size_t i = slab_at.size(); i-- > 0;)
+        if (off >= slab_at[i]) return static_cast<uint32_t>(i);
+    return 0;
+}
+
+// The regions in a flat space cut into slabs of at most `cfg_.slab_bytes`: a
+// region that would cross the cap starts the next slab instead, so every
+// region -- and so every row address derived from one -- lies in a single
+// allocation (design §5.3; the 2 GiB maxMemoryAllocationSize of §1.1 is what
+// §11.3 called "max_context <~ 41.7K").
 KvStore::Layout KvStore::layout_for(uint32_t cap) const {
     Layout l;
     l.cap = cap;
+    const uint64_t limit = cfg_.slab_bytes ? cfg_.slab_bytes : ~0ull;
     uint64_t off = 0;
+    l.slab_at.push_back(0);
     auto place = [&](uint64_t bytes) {
-        const uint64_t at = align_up(off, 256);
+        uint64_t at = align_up(off, 256);
+        if (bytes && at + bytes - l.slab_at.back() > limit && at > l.slab_at.back()) {
+            // Close this slab and open the next. `bytes` may still be over the
+            // cap on its own, which allocate_slabs() reports as it is.
+            l.slab_size.push_back(align_up(at, 4096) - l.slab_at.back());
+            at = l.slab_at.back() + l.slab_size.back();
+            l.slab_at.push_back(at);
+        }
         off = at + bytes;
         return at;
     };
@@ -217,7 +237,57 @@ KvStore::Layout KvStore::layout_for(uint32_t cap) const {
     for (uint32_t o : owners_) l.off_cmp.push_back(place(uint64_t(c.rows_for(o, cap)) * c.latent_dim * 2));
     for (uint32_t o : owners_) l.off_idx.push_back(place(uint64_t(c.rows_for(o, cap)) * c.index_dim * 2));
     l.total = align_up(off, 4096);
+    l.slab_size.push_back(l.total - l.slab_at.back());
     return l;
+}
+
+std::byte* KvStore::at(uint64_t off) const {
+    const uint32_t s = lay_.slab_of(off);
+    return static_cast<std::byte*>(bufs_[s].host_ptr) + (off - lay_.slab_at[s]);
+}
+
+DeviceAddress KvStore::dev(uint64_t off) const {
+    const uint32_t s = lay_.slab_of(off);
+    return bufs_[s].dev_addr + (off - lay_.slab_at[s]);
+}
+
+uint64_t KvStore::bytes() const {
+    uint64_t n = 0;
+    for (const gpu::GpuBuffer& b : bufs_) n += b.bytes;
+    return n;
+}
+
+uint64_t KvStore::largest_slab() const {
+    uint64_t n = 0;
+    for (const gpu::GpuBuffer& b : bufs_) n = std::max(n, b.bytes);
+    return n;
+}
+
+void KvStore::free_slabs(gpu::MemoryAllocator* a, std::vector<gpu::GpuBuffer>& v) {
+    if (a)
+        for (gpu::GpuBuffer& b : v)
+            if (b.valid()) a->free(b);
+    v.clear();
+}
+
+Result<std::vector<gpu::GpuBuffer>> KvStore::allocate_slabs(const Layout& l) const {
+    std::vector<gpu::GpuBuffer> out;
+    for (size_t i = 0; i < l.slab_size.size(); ++i) {
+        auto b = alloc_->allocate(l.slab_size[i], /*host_visible=*/true, /*device_address=*/true);
+        if (!b) {
+            free_slabs(alloc_, out);
+            return fail(b.error().code,
+                        std::format("KV slab {} of {} ({} B): {}", i + 1, l.slab_size.size(),
+                                    l.slab_size[i], b.error().message));
+        }
+        if (!b->host_ptr || b->dev_addr == kNoDeviceAddress) {
+            alloc_->free(*b);
+            free_slabs(alloc_, out);
+            return fail(Err::Internal, "the KV store must be host-writable and device-addressable");
+        }
+        out.push_back(*b);
+    }
+    return out;
 }
 
 uint32_t KvStore::owner_index(uint32_t l) const {
@@ -245,43 +315,59 @@ Result<void> KvStore::create(gpu::MemoryAllocator& alloc, const KvStoreConfig& c
     }
     const uint32_t cap = cfg.initial_context ? std::min(cfg.initial_context, cfg.max_context)
                                              : cfg.max_context;
-    Layout lay = layout_for(cap);
-    auto b = alloc.allocate(lay.total, /*host_visible=*/true, /*device_address=*/true);
-    if (!b) return std::unexpected(b.error());
-    if (!b->host_ptr || b->dev_addr == kNoDeviceAddress) {
-        alloc.free(*b);
-        return fail(Err::Internal, "the KV store must be host-writable and device-addressable");
-    }
     alloc_ = &alloc;
-    buf_   = *b;
-    lay_   = std::move(lay);
+    // A driver whose cap is below `slab_bytes` refuses the SIZE (InvalidArgument)
+    // rather than failing to find memory; halve and lay out again, so a device
+    // with a smaller maxMemoryAllocationSize needs no configuration.
+    Status last{};
+    for (int tries = 0; tries < 8 && bufs_.empty(); ++tries) {
+        Layout lay = layout_for(cap);
+        auto b = allocate_slabs(lay);
+        if (b) {
+            bufs_ = std::move(*b);
+            lay_  = std::move(lay);
+            break;
+        }
+        last = b.error();
+        if (b.error().code != Err::InvalidArgument || cfg_.slab_bytes <= (64ull << 20)) break;
+        cfg_.slab_bytes /= 2;
+    }
+    if (bufs_.empty()) {
+        alloc_ = nullptr;
+        return std::unexpected(last);
+    }
     cap_   = cap;
     rows_hw_.assign(owners_.size(), 0);
     n_cmp_.assign(cfg.layers, 0);
     n_kv_.assign(cfg.layers, 0);
-    std::memset(buf_.host_ptr, 0, static_cast<size_t>(buf_.bytes));
+    for (gpu::GpuBuffer& b : bufs_) std::memset(b.host_ptr, 0, static_cast<size_t>(b.bytes));
     clear();
     return {};
 }
 
 void KvStore::clear() {
-    if (!buf_.valid()) return;
+    if (!valid()) return;
     const KvStoreConfig& c = cfg_;
-    std::memset(host() + lay_.off_win_val, 0, size_t(c.layers) * c.window * c.latent_dim);
-    std::memset(host() + lay_.off_win_scale, 0, size_t(c.layers) * c.window * c.window_scales());
-    std::memset(host() + lay_.off_top, 0, static_cast<size_t>(c.topk_bytes()));
+    std::memset(at(lay_.off_win_val), 0, size_t(c.layers) * c.window * c.latent_dim);
+    std::memset(at(lay_.off_win_scale), 0, size_t(c.layers) * c.window * c.window_scales());
+    std::memset(at(lay_.off_top), 0, static_cast<size_t>(c.topk_bytes()));
     // `Compressor.score_state` starts at -inf, not at zero: a slot that has
     // never held a token must contribute nothing to the pooling softmax, and
     // exp(-inf - max) is the only value that does that. Zero would make an
     // unwritten slot an equal partner (model.py, `torch.full(..., -torch.inf)`).
+    //
+    // -inf is not a byte pattern, so the fill is built ONCE in ordinary host
+    // memory and memcpy'd in: design §7.1 rule 10 forbids a scalar loop over
+    // GPU-visible memory, and written that way this one is 16,384 uncached
+    // stores (~230 ns each = 3.8 ms) on every clear() -- every context reset,
+    // every restore, every rollback that resets.
     const uint64_t n = uint64_t(owners_.size()) * c.max_ratio * c.latent_dim;
-    std::memset(host() + lay_.off_state, 0, size_t(n) * 4);
-    auto* score = reinterpret_cast<float*>(host() + lay_.off_state + n * 4);
-    const float ninf = -std::numeric_limits<float>::infinity();
-    for (uint64_t i = 0; i < n; ++i) score[i] = ninf;
+    std::memset(at(lay_.off_state), 0, size_t(n) * 4);
+    if (ninf_.size() < n) ninf_.assign(size_t(n), -std::numeric_limits<float>::infinity());
+    std::memcpy(at(lay_.off_state + n * 4), ninf_.data(), size_t(n) * 4);
     for (size_t oi = 0; oi < owners_.size(); ++oi) {
-        std::memset(host() + lay_.off_cmp[oi], 0, size_t(rows_hw_[oi]) * c.latent_dim * 2);
-        std::memset(host() + lay_.off_idx[oi], 0, size_t(rows_hw_[oi]) * c.index_dim * 2);
+        std::memset(at(lay_.off_cmp[oi]), 0, size_t(rows_hw_[oi]) * c.latent_dim * 2);
+        std::memset(at(lay_.off_idx[oi]), 0, size_t(rows_hw_[oi]) * c.index_dim * 2);
         rows_hw_[oi] = 0;
     }
     std::fill(n_cmp_.begin(), n_cmp_.end(), 0u);
@@ -305,8 +391,7 @@ bool KvStore::ring_holds(uint32_t position) const {
 }
 
 void KvStore::destroy() {
-    if (alloc_ && buf_.valid()) alloc_->free(buf_);
-    buf_ = gpu::GpuBuffer{};
+    free_slabs(alloc_, bufs_);
     alloc_ = nullptr;
     lay_ = Layout{};
     cap_ = 0;
@@ -320,7 +405,7 @@ void KvStore::destroy() {
 }
 
 Result<void> KvStore::reserve(uint32_t positions) {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     if (positions <= cap_) return {};
     if (positions > cfg_.max_context)
         return fail(Err::ResourceExhausted,
@@ -329,33 +414,39 @@ Result<void> KvStore::reserve(uint32_t positions) {
     const uint32_t doubled = cap_ > cfg_.max_context / 2 ? cfg_.max_context : cap_ * 2;
     const uint32_t nc = std::min(cfg_.max_context, std::max(positions, doubled));
     Layout nl = layout_for(nc);
-    auto b = alloc_->allocate(nl.total, /*host_visible=*/true, /*device_address=*/true);
-    if (!b) return std::unexpected(b.error());
-    if (!b->host_ptr || b->dev_addr == kNoDeviceAddress) {
-        alloc_->free(*b);
-        return fail(Err::Internal, "the KV store must be host-writable and device-addressable");
-    }
-    auto* dst = static_cast<std::byte*>(b->host_ptr);
-    std::memset(dst, 0, static_cast<size_t>(b->bytes));
+    auto nb = allocate_slabs(nl);
+    if (!nb) return std::unexpected(nb.error());
+    for (gpu::GpuBuffer& b : *nb) std::memset(b.host_ptr, 0, static_cast<size_t>(b.bytes));
     const KvStoreConfig& c = cfg_;
-    // The fixed-size regions sit at the same offsets in both layouts.
-    std::memcpy(dst, host(), static_cast<size_t>(lay_.off_cmp.empty() ? lay_.total
-                                                                       : lay_.off_cmp.front()));
+    // Region by region: the two layouts may cut their slabs differently, so
+    // "the fixed head is one memcpy" no longer holds. Each of these is still
+    // one bulk copy (§7.1 rule 10) between two mappings of GPU-visible memory.
+    auto dst = [&](uint64_t off) {
+        const uint32_t si = nl.slab_of(off);
+        return static_cast<std::byte*>((*nb)[si].host_ptr) + (off - nl.slab_at[si]);
+    };
+    std::memcpy(dst(nl.off_win_val), at(lay_.off_win_val),
+                size_t(c.layers) * c.window * c.latent_dim);
+    std::memcpy(dst(nl.off_win_scale), at(lay_.off_win_scale),
+                size_t(c.layers) * c.window * c.window_scales());
+    std::memcpy(dst(nl.off_top), at(lay_.off_top), static_cast<size_t>(c.topk_bytes()));
+    std::memcpy(dst(nl.off_state), at(lay_.off_state),
+                size_t(owners_.size()) * c.max_ratio * c.latent_dim * 4 * 2);
     for (size_t oi = 0; oi < owners_.size(); ++oi) {
-        std::memcpy(dst + nl.off_cmp[oi], host() + lay_.off_cmp[oi],
+        std::memcpy(dst(nl.off_cmp[oi]), at(lay_.off_cmp[oi]),
                     size_t(rows_hw_[oi]) * c.latent_dim * 2);
-        std::memcpy(dst + nl.off_idx[oi], host() + lay_.off_idx[oi],
+        std::memcpy(dst(nl.off_idx[oi]), at(lay_.off_idx[oi]),
                     size_t(rows_hw_[oi]) * c.index_dim * 2);
     }
-    alloc_->free(buf_);
-    buf_ = *b;
+    free_slabs(alloc_, bufs_);
+    bufs_ = std::move(*nb);
     lay_ = std::move(nl);
     cap_ = nc;
     return {};
 }
 
 Result<KvLayerView> KvStore::layer(uint32_t l) const {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     if (l >= cfg_.layers)
         return fail(Err::OutOfRange, std::format("layer {} of {}", l, cfg_.layers));
     const KvStoreConfig& c = cfg_;
@@ -371,21 +462,21 @@ Result<KvLayerView> KvStore::layer(uint32_t l) const {
     if (!own) oi = 0;
 
     KvLayerView v;
-    v.win_val   = buf_.dev_addr + lay_.off_win_val + l * win;
-    v.win_scale = buf_.dev_addr + lay_.off_win_scale + l * wins;
-    v.top_idx   = buf_.dev_addr + lay_.off_top + l * top;
-    v.win_val_host   = reinterpret_cast<uint8_t*>(host() + lay_.off_win_val + l * win);
-    v.win_scale_host = reinterpret_cast<uint8_t*>(host() + lay_.off_win_scale + l * wins);
-    v.top_idx_host   = reinterpret_cast<uint32_t*>(host() + lay_.off_top + l * top);
+    v.win_val   = dev(lay_.off_win_val + l * win);
+    v.win_scale = dev(lay_.off_win_scale + l * wins);
+    v.top_idx   = dev(lay_.off_top + l * top);
+    v.win_val_host   = reinterpret_cast<uint8_t*>(at(lay_.off_win_val + l * win));
+    v.win_scale_host = reinterpret_cast<uint8_t*>(at(lay_.off_win_scale + l * wins));
+    v.top_idx_host   = reinterpret_cast<uint32_t*>(at(lay_.off_top + l * top));
     if (!owners_.empty()) {
-        v.cmp_kv  = buf_.dev_addr + lay_.off_cmp[oi];
-        v.idx_key = buf_.dev_addr + lay_.off_idx[oi];
-        v.cmp_state_kv    = buf_.dev_addr + lay_.off_state + oi * stp;
-        v.cmp_state_score = buf_.dev_addr + score_base + oi * stp;
-        v.cmp_kv_host  = reinterpret_cast<uint16_t*>(host() + lay_.off_cmp[oi]);
-        v.idx_key_host = reinterpret_cast<uint16_t*>(host() + lay_.off_idx[oi]);
-        v.cmp_state_kv_host    = reinterpret_cast<float*>(host() + lay_.off_state + oi * stp);
-        v.cmp_state_score_host = reinterpret_cast<float*>(host() + score_base + oi * stp);
+        v.cmp_kv  = dev(lay_.off_cmp[oi]);
+        v.idx_key = dev(lay_.off_idx[oi]);
+        v.cmp_state_kv    = dev(lay_.off_state + oi * stp);
+        v.cmp_state_score = dev(score_base + oi * stp);
+        v.cmp_kv_host  = reinterpret_cast<uint16_t*>(at(lay_.off_cmp[oi]));
+        v.idx_key_host = reinterpret_cast<uint16_t*>(at(lay_.off_idx[oi]));
+        v.cmp_state_kv_host    = reinterpret_cast<float*>(at(lay_.off_state + oi * stp));
+        v.cmp_state_score_host = reinterpret_cast<float*>(at(score_base + oi * stp));
         if (own) v.plane_owner = owners_[oi];
     }
     v.n_cmp = n_cmp_[l];
@@ -538,7 +629,7 @@ Result<void> KvStore::set_decode_topk(uint32_t layer, uint32_t position, uint32_
 // --- packing whole contexts -------------------------------------------------------
 
 Result<KvPacked> KvStore::pack(uint32_t positions) const {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     const KvStoreConfig& c = cfg_;
     KvPacked out;
     out.positions = positions;
@@ -560,8 +651,8 @@ Result<KvPacked> KvStore::pack(uint32_t positions) const {
         // One copy out of the mapping first: reading GPU-visible memory element
         // by element is the slow way (a write-combining read, design §3.3).
         std::vector<uint16_t> cmp(size_t(p.rows) * cd), key(size_t(p.rows) * kd);
-        std::memcpy(cmp.data(), host() + lay_.off_cmp[oi], cmp.size() * 2);
-        std::memcpy(key.data(), host() + lay_.off_idx[oi], key.size() * 2);
+        std::memcpy(cmp.data(), at(lay_.off_cmp[oi]), cmp.size() * 2);
+        std::memcpy(key.data(), at(lay_.off_idx[oi]), key.size() * 2);
         for (uint32_t r = 0; r < p.rows; ++r) {
             const bool okc = pack_fp4_row(cmp.data() + size_t(r) * cd, cd, 16, false,
                                           p.cmp_fp4.data() + size_t(r) * cd / 2,
@@ -580,8 +671,8 @@ Result<KvPacked> KvStore::pack(uint32_t positions) const {
             const size_t n = size_t(p.ratio) * cd;
             p.carry_kv.resize(n);
             p.carry_score.resize(n);
-            std::memcpy(p.carry_kv.data(), host() + lay_.off_state + oi * stp, n * 4);
-            std::memcpy(p.carry_score.data(), host() + score_base + oi * stp, n * 4);
+            std::memcpy(p.carry_kv.data(), at(lay_.off_state + oi * stp), n * 4);
+            std::memcpy(p.carry_score.data(), at(score_base + oi * stp), n * 4);
         }
         out.planes.push_back(std::move(p));
     }
@@ -589,7 +680,7 @@ Result<KvPacked> KvStore::pack(uint32_t positions) const {
 }
 
 Result<void> KvStore::unpack(const KvPacked& pk) {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     if (auto r = reserve(std::max<uint32_t>(pk.positions, 1)); !r) return r;
     const KvStoreConfig& c = cfg_;
     const uint32_t cd = c.latent_dim, kd = c.index_dim;
@@ -611,14 +702,14 @@ Result<void> KvStore::unpack(const KvPacked& pk) {
             std::memcpy(cmp.data() + size_t(r) * cd, p.raw_cmp.data() + i * cd, size_t(cd) * 2);
             std::memcpy(key.data() + size_t(r) * kd, p.raw_key.data() + i * kd, size_t(kd) * 2);
         }
-        std::memcpy(host() + lay_.off_cmp[oi], cmp.data(), cmp.size() * 2);
-        std::memcpy(host() + lay_.off_idx[oi], key.data(), key.size() * 2);
+        std::memcpy(at(lay_.off_cmp[oi]), cmp.data(), cmp.size() * 2);
+        std::memcpy(at(lay_.off_idx[oi]), key.data(), key.size() * 2);
         rows_hw_[oi] = std::max(rows_hw_[oi], p.rows);
         if (p.ratio > 1 && p.carry_kv.size() == size_t(p.ratio) * cd) {
             const uint64_t stp = uint64_t(c.max_ratio) * cd * 4;
             const uint64_t score_base = lay_.off_state + uint64_t(owners_.size()) * stp;
-            std::memcpy(host() + lay_.off_state + oi * stp, p.carry_kv.data(), p.carry_kv.size() * 4);
-            std::memcpy(host() + score_base + oi * stp, p.carry_score.data(), p.carry_score.size() * 4);
+            std::memcpy(at(lay_.off_state + oi * stp), p.carry_kv.data(), p.carry_kv.size() * 4);
+            std::memcpy(at(score_base + oi * stp), p.carry_score.data(), p.carry_score.size() * 4);
         }
     }
     for (uint32_t l = 0; l < c.layers; ++l) {
@@ -629,7 +720,7 @@ Result<void> KvStore::unpack(const KvPacked& pk) {
 }
 
 Result<KvRowBackup> KvStore::backup_rows(uint32_t first_pos, uint32_t end_pos) const {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     const KvStoreConfig& c = cfg_;
     KvRowBackup b;
     b.first_pos = first_pos;
@@ -649,22 +740,22 @@ Result<KvRowBackup> KvStore::backup_rows(uint32_t first_pos, uint32_t end_pos) c
                                     p.first_row, p.first_row + p.rows, p.layer, rows_hw_[oi]));
         p.cmp.resize(size_t(p.rows) * c.latent_dim);
         p.key.resize(size_t(p.rows) * c.index_dim);
-        std::memcpy(p.cmp.data(), host() + lay_.off_cmp[oi] + uint64_t(p.first_row) * c.latent_dim * 2,
+        std::memcpy(p.cmp.data(), at(lay_.off_cmp[oi] + uint64_t(p.first_row) * c.latent_dim * 2),
                     p.cmp.size() * 2);
-        std::memcpy(p.key.data(), host() + lay_.off_idx[oi] + uint64_t(p.first_row) * c.index_dim * 2,
+        std::memcpy(p.key.data(), at(lay_.off_idx[oi] + uint64_t(p.first_row) * c.index_dim * 2),
                     p.key.size() * 2);
         const size_t n = size_t(c.max_ratio) * c.latent_dim;
         p.carry_kv.resize(n);
         p.carry_score.resize(n);
-        std::memcpy(p.carry_kv.data(), host() + lay_.off_state + oi * stp, n * 4);
-        std::memcpy(p.carry_score.data(), host() + score_base + oi * stp, n * 4);
+        std::memcpy(p.carry_kv.data(), at(lay_.off_state + oi * stp), n * 4);
+        std::memcpy(p.carry_score.data(), at(score_base + oi * stp), n * 4);
         b.planes.push_back(std::move(p));
     }
     return b;
 }
 
 Result<void> KvStore::restore_rows(const KvRowBackup& b, uint32_t position) {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     const KvStoreConfig& c = cfg_;
     for (const KvRowBackup::Plane& p : b.planes) {
         if ((position + 1) % p.ratio) continue;
@@ -673,31 +764,31 @@ Result<void> KvStore::restore_rows(const KvRowBackup& b, uint32_t position) {
         const uint32_t oi = owner_index(p.layer);
         if (oi == KvStoreConfig::kNoPlane) return fail(Err::InvalidArgument, "backup of another store");
         const size_t k = r - p.first_row;
-        std::memcpy(host() + lay_.off_cmp[oi] + uint64_t(r) * c.latent_dim * 2,
+        std::memcpy(at(lay_.off_cmp[oi] + uint64_t(r) * c.latent_dim * 2),
                     p.cmp.data() + k * c.latent_dim, size_t(c.latent_dim) * 2);
-        std::memcpy(host() + lay_.off_idx[oi] + uint64_t(r) * c.index_dim * 2,
+        std::memcpy(at(lay_.off_idx[oi] + uint64_t(r) * c.index_dim * 2),
                     p.key.data() + k * c.index_dim, size_t(c.index_dim) * 2);
     }
     return {};
 }
 
 Result<void> KvStore::restore_carry(const KvRowBackup& b) {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     const KvStoreConfig& c = cfg_;
     const uint64_t stp = uint64_t(c.max_ratio) * c.latent_dim * 4;
     const uint64_t score_base = lay_.off_state + uint64_t(owners_.size()) * stp;
     for (const KvRowBackup::Plane& p : b.planes) {
         const uint32_t oi = owner_index(p.layer);
         if (oi == KvStoreConfig::kNoPlane) return fail(Err::InvalidArgument, "backup of another store");
-        std::memcpy(host() + lay_.off_state + oi * stp, p.carry_kv.data(), p.carry_kv.size() * 4);
-        std::memcpy(host() + score_base + oi * stp, p.carry_score.data(), p.carry_score.size() * 4);
+        std::memcpy(at(lay_.off_state + oi * stp), p.carry_kv.data(), p.carry_kv.size() * 4);
+        std::memcpy(at(score_base + oi * stp), p.carry_score.data(), p.carry_score.size() * 4);
     }
     return {};
 }
 
 Result<KvStore::RingSnapshot> KvStore::snapshot_ring(std::span<const uint32_t> slots,
                                                      std::span<const uint32_t> layers) const {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     const KvStoreConfig& c = cfg_;
     if (slots.empty()) return fail(Err::InvalidArgument, "snapshot_ring: no slots");
     if (layers.empty()) return fail(Err::InvalidArgument, "snapshot_ring: no layers");
@@ -720,16 +811,16 @@ Result<KvStore::RingSnapshot> KvStore::snapshot_ring(std::span<const uint32_t> s
             const uint32_t sl = s.slot[si];
             const size_t o = li * s.slot.size() + si;
             std::memcpy(s.val.data() + o * row,
-                        host() + lay_.off_win_val + (uint64_t(l) * c.window + sl) * row, row);
+                        at(lay_.off_win_val + (uint64_t(l) * c.window + sl) * row), row);
             std::memcpy(s.scale.data() + o * srow,
-                        host() + lay_.off_win_scale + (uint64_t(l) * c.window + sl) * srow, srow);
+                        at(lay_.off_win_scale + (uint64_t(l) * c.window + sl) * srow), srow);
         }
     }
     return s;
 }
 
 Result<void> KvStore::restore_ring(const RingSnapshot& s) {
-    if (!buf_.valid()) return fail(Err::FailedPrecondition, "KV store is not created");
+    if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     const KvStoreConfig& c = cfg_;
     if (s.latent_dim != c.latent_dim)
         return fail(Err::InvalidArgument, "ring snapshot of another store");
@@ -743,9 +834,9 @@ Result<void> KvStore::restore_ring(const RingSnapshot& s) {
         for (size_t si = 0; si < s.slot.size(); ++si) {
             const uint32_t sl = s.slot[si];
             const size_t o = li * s.slot.size() + si;
-            std::memcpy(host() + lay_.off_win_val + (uint64_t(l) * c.window + sl) * row,
+            std::memcpy(at(lay_.off_win_val + (uint64_t(l) * c.window + sl) * row),
                         s.val.data() + o * row, row);
-            std::memcpy(host() + lay_.off_win_scale + (uint64_t(l) * c.window + sl) * srow,
+            std::memcpy(at(lay_.off_win_scale + (uint64_t(l) * c.window + sl) * srow),
                         s.scale.data() + o * srow, srow);
         }
     }
