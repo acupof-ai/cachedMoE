@@ -373,6 +373,28 @@ MoE live-column mask 在 microbench 上是 1.7×（30 ms/token），端到端**�
 | `bench.l3_ppl64` | **64 步教师强制 L3 PPL 尺**，三档路由各起一个进程串行跑，出 NLL / PPL / top-1 / served / mass lost 与判据 | 有导出集（`traces/l3_64`，.gitignore）才跑，否则 skip；§5.5 |
 | `bench.mgt1_m_curve` / `bench.mgt1_moe_m_curve` | C(M) 曲线 | **未产出**（`bench/results/mgt1_p4.csv` 缺） |
 
+**本轮合并后的全量 gate（2026-09-18，`p4/one-pr`，安静机，`ctest -j 1`）**：
+
+```
+100% tests passed, 0 tests failed out of 41
+Total Test time (real) = 3514.80 sec
+The following tests did not run:  25 - suite.gpu_layer (Skipped)
+                                  34 - suite.gpu_prefill (Skipped)
+                                  41 - bench.l3_ppl64 (Skipped)
+```
+
+三条 Skipped **都不是失败，是可选子用例的 skip 正则命中了整条 ctest 项**，直接跑二进制可以看到：
+
+- `gpu_layer`：2 个用例过（层 0 / 39 的 chained `block_out` cos 0.99993 / 0.99998，gate 6/6），
+  只有 `mgt1_layer_batch_vs_steps` 的两档因为这棵工作树里没有 `traces/mgt1` 而 skip。
+- `gpu_prefill`：5 个用例过——**110 项 stage 检查 0 失败、worst cos 0.999912**，
+  `forty_layers` 自由运行 **8/8**，`longctx` **8/8**（这是 F3 改了 prefill kernel 几何之后的复核）；
+  只有 opt-in 的 `gpu_prefill.repeat` 要 `DEEPMOE_PF_REPEAT=1` 才跑。
+- `bench.l3_ppl64`：导出集 `traces/l3_64` 只在主 checkout 里（`traces/` 是 .gitignore 的），
+  按设计 skip。
+
+`tests/run_all.py`：**28/28 gates passed**。
+
 ### 5.3 命令
 
 ```powershell
