@@ -55,6 +55,8 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | cache 容量上限（本机） | **安全上限 5,000 槽**。5,400 过三轮、八轮中途死；**5,500 第一个 token 就丢设备**（36 A + 19 B slab，53.8 GiB 空闲）。~~5500 槽 = 96.34 GiB 可用~~ 作废 | `p4_hitrate.md` §4（F4） |
 | 长 prompt TTFT（4,133 token，4,500 槽） | GPU prefill 被路径 A 饿死时 **1,061.7 s**；加 4 GiB 路径 A 预留后 **100.0 s（10.6×）** | `p4_hitrate.md` §5（F4） |
 | **resident-only 路由的四档（4 轮对话，5,100 槽）** | `off` 4.82 tok/s（mass lost 0，P0 262.5 GiB）／`stall1` 5.14（0.048）／**`verify` 7.57 ×1.57（0.1377，P0 62.5 GiB）**／`all` 8.99 ×1.87（0.2587）。质量（64 步 teacher-forced PPL，×`off`）依次 1.00 / 1.11 / **1.376** / 2.29——**四档全部 NO-GO 作默认** | `p4_resident_routing.md` §8.3 / §9.3 / **§10** |
+| **投机解码（DSpark），引擎实测** | 顺序 decode **102.6 ms/位置**；`forward_batch` M=6 **75.9（0.74×）**、M=1 123.7（1.21×）。草稿**白送**时每发出 token：`chain` k=5 **0.86×（更慢）**、k=1 1.06–1.13×；`longest` k=5 **≤1.07×**，而 `longest` **不无损**。加上 `T_draft` 19–42 ms/周期全部打平或更差——**本机 NO-GO** | `p4_dspark_runtime.md` §7；§3 的 41 / 42 |
+| **M1 gate（`forward_batch` vs M=1）** | **不逐位**：前三层 cos = 1.000000000，L07 第一次门控翻转；60 个位置最差 cos **0.9398**、top-1 **54/60**。质量不变（teacher-forced PPL 1.8589 vs 1.8857 = 0.986×）。`suite.spec_forward` 因此**以 WARN 通过**，只在 cos < 0.93 或 top-1 < 50/60 时失败 | §3 的 41 |
 
 **一句话结论**：`tok/s ≈ NVMe_eff / (MB per token)`。四种容量下有效读带宽恒定在 8.3–9.2 GB/s，
 hit 0.59 → 0.84 把 MB/token 从 4,998 降到 2,269，tok/s 就翻倍。
@@ -286,8 +288,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **39** | **resident-only 路由（`stall1`，只在会 stall 时降级一个 expert）作为默认** | 质量 **×1.09 – ×1.11**（mass lost 0.076，**0 个只剩 shared expert 的层**，top-1 51/64），速度 harness 上 ×1.21、四轮对话里只有 ×1.07，代价 **1,624 次 P0 / 8.9 s 等待** | **作为默认 NO-GO**（质量 ×1.09 > ×1.05 的线，速度买不回来）。~~**但它的质量落在 ≤ ×1.3 带内，所以"只在 DSpark 的 verify 那一遍上用"的前提成立**~~——
 **这一句被 40 推翻**：`stall1` 的 0.076 是**每一步都掏一次 P0** 买来的，而 verify-only 的四个 draft 位置一次也不掏。它同时推翻了 step 3 的判决（当时读成 ×3.40、比 `all` 还差），差别全在尺子上（§5.5） |
 | **40** | **verify-only 的 resident-only 路由（`DEEPMOE_ROUTE_RESIDENT_ONLY=verify`）作为"投机开着时的默认"**：block-5 里第 1 位精确路由、4 个 draft 位只路由到已驻留的 expert，verify 那一遍一个字节都不为它们去盘上取 | 64 步 teacher-forced L3：PPL **×1.376**（判据 ×1.05 / ×1.30），gate mass lost **0.2099**，**17 个只剩 shared expert 的 layer-step**，top-1 49/64。速度这一侧是真的：四轮对话 **×1.57**（4.82 → 7.57 tok/s），**P0 字节 262.5 → 62.5 GiB（−76%）**，总字节 −19%，输出仍然连贯。反向的中间档（4 个 draft 位改成 `stall1`）质量回到 **×1.033 / mass lost 0.0649 / 0 个 shared-only**，但**速度只剩 ×1.06**，代价 7,687 次 P0 / **42.9 s** 等待 | **NO-GO**（`p4_resident_routing.md` §10）。它**推翻了 39 的那句前提**与 §7 第 3 项的读法：`stall1` 的质量是每步一次 P0 买的，把 P0 的机会从 5/5 降到 1/5，质量就从 ×1.09 掉到 ×1.376。能把质量买回来的那一档**让 verify 那一遍重新等盘**，方案的全部意义随之抵消。**注意口径**：投机解码在引擎里不存在（`Engine::forward_batch` 没写、`generate(speculative)` 是 `unimplemented`、`--spec` 没接进 CLI），所以量的是 verify 那一遍在 M = 1 上的等价物，而且该等价物**偏乐观**（真并集批的 2–5 位用的是取盘前的 cache 状态） |
-
-| **41** | **`Engine::forward_batch` 与 M=1 decode 的逐位一致性（M1 的 gate）** | 尺子先立住：同一个 reseed 状态上 M=1 重跑 **64/64 逐位相同**。然后两条路径：前三层 **cos = 1.000000000（逐位相同）**，L03 差开 **3e-9**，L07 第一次**门控翻转**，L39 cos 0.962。64 步（60 个位置、块 5、warm cache、routing off）最差 cos **0.9398**、top-1 **54/60**、max\|dlogit\| 8.26。块 = 1 时最差 cos 0.9928——**所以这不是批边界，是 kernel 家族差 + 门控近似平局的放大**。质量没受影响：teacher-forced PPL **1.8589 vs M=1 的 1.8857（0.986×）**，参考 1.8177 | **gate NO，实现 GO**。`docs/p4_dspark_runtime.md` §7.2。直接后果：design §10.2 的硬不变式（温度 0、投机开/关逐 token 相同）**用这个 verify 前向做不到**。同时把 `p4_mgt1.md` §7 缺口 4（G3）关掉一半：机制隔离出来了 |
+| **41** | **`Engine::forward_batch` 与 M=1 decode 的逐位一致性（M1 的 gate）** | 尺子先立住：同一个 reseed 状态上 M=1 重跑 **64/64 逐位相同**。然后两条路径：前三层 **cos = 1.000000000（逐位相同）**，L03 差开 **3e-9**，L07 第一次**门控翻转**，L39 cos 0.962。64 步（60 个位置、块 5、warm cache、routing off）最差 cos **0.9398**、top-1 **54/60**、max\|dlogit\| 8.26。块 = 1 时最差 cos 0.9928——**所以这不是批边界，是 kernel 家族差 + 门控近似平局的放大**。质量没受影响：teacher-forced PPL **1.8589 vs M=1 的 1.8857（0.986×）**，参考 1.8177 | **gate NO，实现 GO**。`docs/p4_dspark_runtime.md` §7.2。直接后果：design §10.2 的硬不变式（温度 0、投机开/关逐 token 相同）**用这个 verify 前向做不到**。同时把 `p4_mgt1.md` §7 缺口 4（G3）关掉一半：机制隔离出来了。**ctest 口径**：`suite.spec_forward` 不在这条 gate 上失败——它把 cos / top-1 作为 **WARN** 打出来并通过，只在**回归地板**之下失败（cos < 0.93 或 top-1 < 50/60；实测 0.9398 / 54/60）；`DEEPMOE_SPEC_STRICT=1` 才断言原来的那条 |
 | **42** | **投机解码，用实测的 verify 代价重算（不再用 kernel 表）** | `bench.spec_forward_m_curve`（l3_64、5,100 槽、warm、先跑一遍不计时的顺序 decode）：顺序 decode **102.6 ms/位置**；`forward_batch` M=1 **123.7**（慢 1.21×）、M=6 **75.9（0.74×）**。并集实测 u(2..6) = 9.90/13.35/16.53/19.35/22.13，对 `route_union.py` 的离线值**误差 ≤ 2%**。接受长度（`tools/spec_longest.py`，71 个贪心事件）：`chain` E[tokens](k=5) **3.82**、`longest` **4.77**，链外 top-16 命中 **0.5419**。**草稿完全白送**时每发出 token：`chain` k=5 **0.86×（更慢）**、k=1 1.06–1.13×；`longest` k=5 1.06–1.07×。`T_draft` 19–42 ms/周期 = 每 token +4…+23 ms，**全部打平或更差** | **NO-GO，第三次，这次是引擎实测**。而且这还是 **compute-bound 的最好情形**（P0 = 0）；NVMe-bound 下 §6.5 的 [1.00×, 1.80×] miss 区间只会更差。`longest` 另外**不无损**：verify 第 i+1 行条件在链的 token 上，不是被替换进去的那个 |
 
 ---
@@ -378,7 +379,7 @@ MoE live-column mask 在 microbench 上是 1.7×（30 ms/token），端到端**�
 | `suite.kv_replay` | KV 回放/回退记账 | pass（l3_64：(1) 8/8；(3) restore ≈52 s + 8/8；(4) 0 raw rows） |
 | `bench.l3_ppl64` | **64 步教师强制 L3 PPL 尺**，三档路由各起一个进程串行跑，出 NLL / PPL / top-1 / served / mass lost 与判据 | 有导出集（`traces/l3_64`，.gitignore）才跑，否则 skip；§5.5 |
 | `bench.mgt1_m_curve` / `bench.mgt1_moe_m_curve` | C(M) 曲线 | **未产出**（`bench/results/mgt1_p4.csv` 缺） |
-| `suite.spec_forward` | **M1**：`Engine::forward_batch` 对 M=1 decode（64 步 teacher-forced、块 5、逐层 bisect、环回滚逐字节） | pass（默认判据：PPL 比 ≤1.05×、cos ≥0.90；原 gate 在 `DEEPMOE_SPEC_STRICT=1` 后面，**它不过**，§3 的 41）；要 `traces/l3_64` |
+| `suite.spec_forward` | **M1**：`Engine::forward_batch` 对 M=1 decode（64 步 teacher-forced、块 5、逐层 bisect、环回滚逐字节） | pass **带 WARN**（gate 不逐位：打印 cos 0.9398 / top-1 54/60；默认判据是回归地板 **cos ≥0.93、top-1 ≥50/60**，加 PPL 比 ≤1.05×；原 gate 在 `DEEPMOE_SPEC_STRICT=1` 后面，**它不过**，§3 的 41）；要 `traces/l3_64` |
 | `bench.spec_forward_m_curve` | verify 前向在引擎里的 M=1..6 代价、并集大小、P0 字节，对顺序 decode | 出表（§3 的 42）；要 `traces/l3_64` |
 
 **本轮合并后的全量 gate（2026-09-18，`p4/one-pr`，安静机，`ctest -j 1`）**：
@@ -579,4 +580,5 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 CPU 分担 GEMV（25）、树采样作为提速手段（32）、静态 pin / 每层配额（24、**35**）、
 LDS x-tiling 配 per-K-chunk barrier（1）、饱和 cache 上的 reheat（21、**F4 §6**）、
 任何预测式预取（**35**）、2-bit / 3-bit expert（**37**）、resident-only 作为默认路由（**38、39**）、verify-only 的 resident-only 路由（**40**）、
+**投机解码本身（41、42：`chain` 0.86×、`longest` ≤1.07× 且不无损）**、
 手写 `--cache-slots`（它绕过三条实测边界，5,500 就是这么够得着的）。

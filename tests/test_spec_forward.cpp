@@ -44,6 +44,10 @@
 // "different rounding, same model" looks like. (The fp32 reference's own NLL on
 // the same targets is 0.597555.)
 //
+// This test therefore does NOT fail on that gate. It prints the two numbers as
+// a WARN and enforces a regression floor instead: cos >= 0.93 and top-1
+// >= 50/60. DEEPMOE_SPEC_STRICT=1 asserts the original, unreachable bar.
+//
 // The consequence is not this test's to draw but it is worth writing down here:
 // design §10.2's speculation invariant -- temperature 0, spec on and spec off
 // give the same token stream -- cannot hold with this verify forward, because
@@ -263,10 +267,19 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
         CHECK(worst_cos >= 0.9999);
         CHECK(top1_same == counted);
     }
-    // A wiring error -- a wrong buffer, a missed hc_post, the MoE output read
-    // from the wrong place -- does not land at cos 0.94; it lands at cos 0.2 or
-    // at a NaN. This is the floor that separates the two.
-    CHECK(worst_cos >= 0.90);
+    // The default verdict is a WARN, not a failure: the specified gate is known
+    // not to hold (STATUS.md 3, 41/42), so what this test enforces instead is a
+    // REGRESSION FLOOR around the numbers that were actually measured --
+    // worst cos 0.9398 and top-1 54/60. A wiring error -- a wrong buffer, a
+    // missed hc_post, the MoE output read from the wrong place -- does not land
+    // at cos 0.94; it lands at cos 0.2 or at a NaN, and it does not agree with
+    // the M = 1 path on 5 tokens out of 6. Below either floor this FAILS.
+    const double top1_frac = counted ? double(top1_same) / double(counted) : 0.0;
+    std::printf("      WARN spec_forward gate: mgt1 vs M=1 are not bitwise -- worst cos %.7f "
+                "(floor 0.93), top-1 %u/%u = %.1f%% (floor 50/60 = 83.3%%)\n",
+                worst_cos, top1_same, counted, 100.0 * top1_frac);
+    CHECK(worst_cos >= 0.93);
+    CHECK(top1_frac >= 50.0 / 60.0);
     if (nll_n) {
         const double ratio = std::exp(nll_batch / double(nll_n)) / std::exp(nll_m1 / double(nll_n));
         CHECK(ratio <= 1.05);
