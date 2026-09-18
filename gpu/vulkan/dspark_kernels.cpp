@@ -16,6 +16,7 @@ const char* dspark_stage_name(DsparkStage s) {
         case DsparkStage::MarkovBias:    return "dspark.markov.bias";
         case DsparkStage::AddBiasArgmax: return "dspark.markov.argmax";
         case DsparkStage::Confidence:    return "dspark.confidence";
+        case DsparkStage::VerifyRows:    return "dspark.verify.rows";
         case DsparkStage::Count:         break;
     }
     return "?";
@@ -78,6 +79,7 @@ constexpr StageDef kStages[] = {
     {DsparkStage::MarkovBias,    "dspark_head", 0, 0},
     {DsparkStage::AddBiasArgmax, "dspark_head", 1, 0},
     {DsparkStage::Confidence,    "dspark_head", 2, 0},
+    {DsparkStage::VerifyRows,    "dspark_verify", 0, 0},
 };
 static_assert(sizeof(kStages) / sizeof(kStages[0]) ==
               static_cast<size_t>(DsparkStage::Count));
@@ -85,6 +87,7 @@ static_assert(sizeof(kStages) / sizeof(kStages[0]) ==
 static_assert(sizeof(DsparkGemvPush) <= kPushBytes);
 static_assert(sizeof(DsparkAttnPush) <= kPushBytes);
 static_assert(sizeof(DsparkHeadPush) <= kPushBytes);
+static_assert(sizeof(DsparkVerifyPush) <= kPushBytes);
 }  // namespace
 
 Result<void> DsparkRunner::make(DsparkStage s, const std::string& spv, uint32_t stage_const) {

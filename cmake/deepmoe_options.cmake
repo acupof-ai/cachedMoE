@@ -70,6 +70,7 @@ set(DEEPMOE_RUNTIME_SOURCES
     runtime/engram.cpp
     runtime/sampling.cpp
     runtime/session.cpp
+    runtime/speculate.cpp
     runtime/engram_tables.cpp
     runtime/trace.cpp)
 
@@ -112,6 +113,7 @@ set(DEEPMOE_SHADERS
     gpu/shaders/dspark_gemv.slang
     gpu/shaders/dspark_attn.slang
     gpu/shaders/dspark_head.slang
+    gpu/shaders/dspark_verify.slang
     gpu/shaders/mgt1_gemv.slang
     gpu/shaders/mgt1_mhc.slang
     gpu/shaders/mgt1_attn.slang

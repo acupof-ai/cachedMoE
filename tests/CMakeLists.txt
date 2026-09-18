@@ -19,6 +19,7 @@ add_executable(deepmoe_tests
     test_gpu_dspark.cpp
     test_gpu_prefill.cpp
     test_dspark_tree.cpp
+    test_speculate.cpp
     test_tokenizer.cpp
     test_engram_tables.cpp
     test_kvstore.cpp
@@ -82,6 +83,14 @@ set_tests_properties("bench.mgt1_moe_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP mgt1.moe_m_curve")
 
+# Track F1: the same batch as ONE dispatch over the columns' expert union
+# (docs/p4_dspark_runtime.md §2.2 plan C, no new kernel). Per column against the
+# per-column path, and the per-layer cost of both.
+add_test(NAME "bench.mgt1_moe_union_m_curve" COMMAND deepmoe_tests "mgt1.moe_union_m_curve")
+set_tests_properties("bench.mgt1_moe_union_m_curve" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP")
+
 # The whole decode step -- forty layers, the head and the argmax -- against the
 # oracle's L3 tokens. Needs the ~17.7 GB pinned set and tests/data/l3.
 add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")
@@ -113,6 +122,12 @@ foreach(_t deepmoe_tests align layout types json profiler status bytes
         set_tests_properties("suite.${_t}" PROPERTIES LABELS "unit")
     endif()
 endforeach()
+
+# Track F1: the speculative cycle's arithmetic -- position alignment, acceptance,
+# which ring slots a rejection undoes, and design §10.2's invariant at the loop
+# level. No GPU, no checkpoint.
+add_test(NAME "suite.speculate" COMMAND deepmoe_tests "speculate.")
+set_tests_properties("suite.speculate" PROPERTIES LABELS "unit")
 
 # The design §7.12 DSpark draft kernels against tools/oracle_dspark.py's golden
 # draft cycle. Needs the ~2 GB of mtp + head weights and tests/data/dspark.

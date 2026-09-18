@@ -157,16 +157,31 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     if (auto r = runner_.create(device, alloc, shader_dir, spec, d); !r) return r;
     shared_index_ = cfg.n_routed_experts;
 
+    // Track F1: the union runner. Same pipelines' shape, a wider slot axis --
+    // `MoeDims::slots` is what sizes ids/list/route_weights/h and the shaders
+    // take it as `num_slots` in a push constant, so nothing about the kernels
+    // changes. h is the one buffer this grows: [6][49][2304] fp16 + the fp8
+    // plane is ~2.1 MB against 295 KB at seven slots, which is the whole cost of
+    // making a verify batch one dispatch instead of six.
+    gpu::MoeDims du = d;
+    du.slots = kUnionSlotsMax;
+    if (cfg.num_experts_per_tok * kMoeBatchMax + 1 < du.slots)
+        du.slots = cfg.num_experts_per_tok * kMoeBatchMax + 1;
+    if (auto r = union_runner_.create(device, alloc, shader_dir, spec, du); !r) return r;
+    union_ids_.assign(du.slots, 0);
+    union_slot_of_.assign(size_t(cfg.n_routed_experts) + 1, ~0u);
+
     xf_.assign(cfg.hidden_size, 0.0f);
     xq_.assign(cfg.hidden_size, 0);
     xf_batch_.assign(size_t(kMoeBatchMax) * cfg.hidden_size, 0.0f);
     xq_batch_.assign(size_t(kMoeBatchMax) * cfg.hidden_size, 0);
-    log_info("moe bridge: {} ({} slots: {} fp4 routed + 1 fp8 shared)",
-             spec.name(), d.slots, cfg.num_experts_per_tok);
+    log_info("moe bridge: {} ({} slots: {} fp4 routed + 1 fp8 shared; union runner {} slots)",
+             spec.name(), d.slots, cfg.num_experts_per_tok, du.slots);
     return {};
 }
 
 void GpuMoeBridge::destroy() {
+    union_runner_.destroy();
     runner_.destroy();
     store_ = nullptr;
     planner_ = nullptr;
@@ -176,11 +191,15 @@ void GpuMoeBridge::destroy() {
 }
 
 Result<void> GpuMoeBridge::bind_shared(uint32_t layer) {
+    return bind_shared_into(layer, runner_.pointer_table());
+}
+
+Result<void> GpuMoeBridge::bind_shared_into(uint32_t layer, uint64_t* dest_table) {
     // Resolved once per layer for the life of the bridge: the pinned set never
     // moves, and three formatted-name lookups a layer were most of the
     // "table" line of the host breakdown.
     if (layer < shared_rows_.size() && shared_rows_[layer][0]) {
-        std::memcpy(runner_.pointer_table() + size_t(shared_index_) * kExpertPartCount,
+        std::memcpy(dest_table + size_t(shared_index_) * kExpertPartCount,
                     shared_rows_[layer].data(), sizeof(uint64_t) * kExpertPartCount);
         shared_ok_ = true;
         return {};
@@ -208,7 +227,7 @@ Result<void> GpuMoeBridge::bind_shared(uint32_t layer) {
     }
     // Written every call, not only on a layer change: row 0 is shared by every
     // layer and nothing else guarantees the previous writer left it alone.
-    std::memcpy(runner_.pointer_table() + size_t(shared_index_) * kExpertPartCount,
+    std::memcpy(dest_table + size_t(shared_index_) * kExpertPartCount,
                 shared_addr_, sizeof shared_addr_);
     return {};
 }
@@ -438,6 +457,139 @@ Result<void> GpuMoeBridge::run_batch(const BatchCall& call) {
                         size_t(dim) * sizeof(float));
     }
     batch_timing_.wall_ms = ms_between(t_all, Clock::now());
+    return {};
+}
+
+// --- the union batch (Track F1) ---------------------------------------------
+
+std::string GpuMoeBridge::UnionInfo::to_string() const {
+    return std::format("{} columns over {} distinct experts (+ shared, {} slots): "
+                       "stage {:.2f} ms, expert rows {:.2f} ms, dispatch {:.2f} ms, "
+                       "wall {:.2f} ms ({:.2f} ms a column)",
+                       columns, routed, slots, stage_ms, table_ms, gpu_ms, wall_ms,
+                       columns ? wall_ms / columns : 0.0);
+}
+
+std::vector<uint32_t> GpuMoeBridge::union_experts(const BatchCall& call) const {
+    std::vector<uint32_t> out;
+    if (!call.ids || call.m == 0 || call.m > kMoeBatchMax || call.topk == 0) return out;
+    out.reserve(size_t(call.m) * call.topk);
+    for (uint32_t m = 0; m < call.m; ++m)
+        for (uint32_t s = 0; s < call.topk; ++s) {
+            const uint32_t e = call.ids[size_t(m) * call.topk + s];
+            if (std::find(out.begin(), out.end(), e) == out.end()) out.push_back(e);
+        }
+    return out;
+}
+
+Result<void> GpuMoeBridge::stage_batch_union(const BatchCall& call) {
+    if (!store_ || !planner_) return fail(Err::FailedPrecondition, "MoE bridge is not created");
+    if (call.m == 0 || call.m > kMoeBatchMax)
+        return fail(Err::InvalidArgument,
+                    std::format("a verify batch of {} columns; the interface takes 1..{}",
+                                call.m, kMoeBatchMax));
+    const uint32_t dim   = call.hidden;
+    const uint32_t slots = union_runner_.dims().slots;
+    const TimePoint t0 = Clock::now();
+    const uint32_t prev_routed = union_info_.routed;
+    union_info_ = UnionInfo{};
+    union_info_.columns = call.m;
+
+    // 1. The activations, once for the whole batch, column m into column m --
+    //    the same contract `stage_batch` has, and the reason the union pays one
+    //    act_quant for six tokens instead of six.
+    for (uint32_t m = 0; m < call.m; ++m) {
+        const float* xin = call.x + size_t(m) * dim;
+        float*    xf = xf_batch_.data() + size_t(m) * dim;
+        uint16_t* xq = xq_batch_.data() + size_t(m) * dim;
+        std::memcpy(xf, xin, size_t(dim) * sizeof(float));
+        act_quant_to_fp16(xf, xq, xf, dim);
+        std::memcpy(union_runner_.x_fp16() + size_t(m) * dim, xq,
+                    size_t(dim) * sizeof(uint16_t));
+    }
+    const TimePoint t1 = Clock::now();
+
+    // 2. The union. `union_slot_of_` is an expert-id -> slot scratch cleared by
+    //    walking the ids we set, not by clearing 385 entries a layer.
+    for (uint32_t u = 0; u < prev_routed; ++u)
+        if (union_ids_[u] < union_slot_of_.size()) union_slot_of_[union_ids_[u]] = ~0u;
+    uint32_t n_routed = 0;
+    for (uint32_t m = 0; m < call.m; ++m)
+        for (uint32_t s = 0; s < call.topk; ++s) {
+            const uint32_t e = call.ids[size_t(m) * call.topk + s];
+            if (e >= union_slot_of_.size())
+                return fail(Err::InvalidArgument,
+                            std::format("expert {} is out of range for layer {}", e, call.layer));
+            if (union_slot_of_[e] != ~0u) continue;
+            if (n_routed + 1 >= slots)
+                return fail(Err::InvalidArgument,
+                            std::format("the batch's expert union is larger than the union "
+                                        "runner's {} slots", slots));
+            union_slot_of_[e] = n_routed;
+            union_ids_[n_routed] = e;
+            ++n_routed;
+        }
+    union_info_.routed = n_routed;
+    union_info_.slots  = n_routed + 1;
+
+    // 3. The weight matrix. Dense `[m][slots]`, zero wherever token m does not
+    //    route to that slot's expert: dispatch A multiplies h by this, so a zero
+    //    makes the slot contribute exactly +0.0 to that column in dispatch B.
+    float* w = union_runner_.route_weights();
+    std::fill(w, w + size_t(call.m) * slots, 0.0f);
+    for (uint32_t m = 0; m < call.m; ++m)
+        for (uint32_t s = 0; s < call.topk; ++s) {
+            const uint32_t u = union_slot_of_[call.ids[size_t(m) * call.topk + s]];
+            w[size_t(m) * slots + u] = call.weights[size_t(m) * call.topk + s];
+        }
+    for (uint32_t m = 0; m < call.m; ++m) w[size_t(m) * slots + n_routed] = 1.0f;
+
+    // 4. The slot table and the expert pointer rows. The shared expert is the
+    //    last live slot, exactly as at M = 1.
+    uint32_t* ids  = union_runner_.ids();
+    uint32_t* list = union_runner_.slot_list();
+    uint64_t* table = union_runner_.pointer_table();
+    uint64_t row[kExpertPartCount];
+    for (uint32_t u = 0; u < n_routed; ++u) {
+        ids[u]  = union_ids_[u];
+        list[u] = u;
+        const ExpertKey key{static_cast<uint16_t>(call.layer),
+                            static_cast<uint16_t>(union_ids_[u])};
+        if (auto r = store_->table_row(key, row); !r)
+            return fail(r.error().code,
+                        std::format("at the verify batch's expert union (expert {}): {}",
+                                    union_ids_[u], r.error().message));
+        std::memcpy(table + size_t(union_ids_[u]) * kExpertPartCount, row, sizeof row);
+    }
+    if (auto r = bind_shared_into(call.layer, table); !r) return r;
+    ids[n_routed]  = shared_index_ | gpu::kSlotFp8;
+    list[n_routed] = n_routed;
+    union_runner_.set_list_count(n_routed + 1);
+    union_runner_.set_accumulate(false);
+    union_runner_.set_live_columns(call.m);
+    const TimePoint t2 = Clock::now();
+    union_info_.stage_ms = ms_between(t0, t1);
+    union_info_.table_ms = ms_between(t1, t2);
+    return {};
+}
+
+Result<void> GpuMoeBridge::record_batch_union(gpu::CommandBuffer& cmd) {
+    return union_runner_.record_into(cmd, gpu::MoePhase::Both);
+}
+
+Result<void> GpuMoeBridge::run_batch_union(const BatchCall& call) {
+    const TimePoint t_all = Clock::now();
+    if (auto r = stage_batch_union(call); !r) return r;
+    const TimePoint t0 = Clock::now();
+    auto rt = union_runner_.run(1);
+    if (!rt) return std::unexpected(rt.error());
+    union_info_.gpu_ms = rt->seconds_total * 1e3;
+    if (call.y) {
+        const uint32_t dim = call.hidden;
+        std::memcpy(call.y, union_runner_.y(), size_t(call.m) * dim * sizeof(float));
+    }
+    (void)t0;
+    union_info_.wall_ms = ms_between(t_all, Clock::now());
     return {};
 }
 

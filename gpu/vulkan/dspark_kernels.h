@@ -79,6 +79,10 @@ enum class DsparkStage : uint32_t {
     MarkovBias,     // §7.12: bias[v] = sum_d head_m[v][d] * embed_m[tok][d], 66.2 MB
     AddBiasArgmax,  // §7.12: logits[pos] += bias, then argmax over 129,280
     Confidence,     // §7.12: c[m] = dot(cat(x[m], markov_embed[m]), proj[5376])
+    // --- dspark_verify.slang -------------------------------------------------
+    VerifyRows,     // §3.3 rule 2: per verify row -- the candidates' logits, the
+                    // exact full-vocabulary logsumexp, a draw with the
+                    // candidates masked out, and a draw over the whole row
     Count,
 };
 
@@ -142,6 +146,40 @@ struct DsparkAttnPush {
     uint32_t q_stride;       // elements between draft columns of q and o = 32768
     float    softmax_scale;  // head_dim ** -0.5 = 512 ** -0.5
 };
+
+// gpu/shaders/dspark_verify.slang. The four numbers `accept_sampling_exact`
+// needs per verify row (docs/p4_dspark_runtime.md §2.4).
+struct DsparkVerifyPush {
+    uint32_t m;             // live verify rows = k + 1 <= 6
+    uint32_t rows;          // vocab_size = 129280
+    uint32_t n_cand;        // candidates per row, <= kDsVerifyMaxCand
+    uint32_t cand_stride;   // int32s between candidate rows
+    uint32_t logit_stride;  // floats between logit rows = 129280
+    uint32_t seed;          // the cycle's counter-based RNG seed
+    uint32_t flags;         // reserved; 0
+    float    inv_t;         // 1 / temperature; 1.0 for the lossless rule
+};
+
+// Mirrors dspark_verify.slang: the record layout and the candidate bound.
+inline constexpr uint32_t kDsVerifyHeaderWords = 8;
+inline constexpr uint32_t kDsVerifyMaxCand     = 64;
+inline constexpr uint32_t kDsVerifyRecordWords = kDsVerifyHeaderWords + kDsVerifyMaxCand;
+
+// One row's record, as the kernel lays it out. `cand_logit[i]` is this verify
+// row's logit at candidate i of the DRAFT's candidate list for that position,
+// in candidate order -- which is the order `cpu::dspark::Lattice` indexes by.
+struct DsparkVerifyRow {
+    uint32_t rows = 0;          // the vocabulary the dispatch scanned
+    float    max_logit = 0.0f;
+    float    lse = 0.0f;        // exact, full-vocabulary
+    uint32_t masked_token = 0;  // a draw from p restricted to the complement of C_j
+    uint32_t full_token = 0;    // a draw from the whole row (the bonus)
+    uint32_t n_cand = 0;
+    float    masked_key = 0.0f; // the winning Gumbel keys, for diagnostics
+    float    full_key = 0.0f;
+    float    cand_logit[kDsVerifyMaxCand]{};
+};
+static_assert(sizeof(DsparkVerifyRow) == kDsVerifyRecordWords * 4);
 
 // gpu/shaders/dspark_head.slang, all three stages.
 struct DsparkHeadPush {
@@ -207,6 +245,13 @@ enum : uint32_t { kAbLogits = 0, kAbBias = 1, kAbSample = 2, kAbOutIds = 3 };
 enum : uint32_t { kCfX = 0, kCfEmbed = 1, kCfProj = 2, kCfOut = 3 };
 }  // namespace dkslot
 
+// VerifyRows lives in its own shader, so its slots get their own namespace: the
+// head's [M][vocab] logits, the [M][cand_stride] candidate ids (an entry < 0
+// ends a row's list), and [M] DsparkVerifyRow records.
+namespace dvslot {
+enum : uint32_t { kVLogits = 0, kVCand = 1, kVOut = 2 };
+}  // namespace dvslot
+
 class DsparkRunner {
 public:
     DsparkRunner() = default;
@@ -265,6 +310,9 @@ public:
     // whole-vocabulary reduction and the confidence head is a 5376-wide dot
     // product per position.
     static uint32_t single_group() { return 1u; }
+
+    // VerifyRows: one workgroup a verify row, each scanning the whole vocabulary.
+    static uint32_t verify_groups(uint32_t m) { return m ? m : 1u; }
 
 private:
     Result<void> make(DsparkStage s, const std::string& spv, uint32_t stage_const);

@@ -150,6 +150,37 @@ split-A 逐位一致；所以掩码没有改变任何数值。）
   那时 30 ms/token 才会浮出来；
 - 这也是为什么本轮所有"算得快一点"的改动都该排在"少读一点"后面。
 
+### 并集 dispatch：MoE 终于在 M 上次线性（2026-09-18，Track F1）
+
+上面那句"要让它摊薄，只能让一次 dispatch 同时吃多列的不同 expert 集……而那条路需要
+'每 token 一个物理槽行'的两级索引，目前的 `Ids[slot]` 单级索引表达不了"**是错的**，
+而且错在一个具体的地方：**`MoeRunner` 的槽轴本来就不是 7**。`MoeDims::slots` 决定
+`ids`/`slot_list`/`route_weights`/`h` 的大小，两个 shader 都把它当 push constant
+（`num_slots`）读，而 `route_weights` 已经是稠密的 `[m][slots]`——**这正是并集要的那张矩阵**。
+所以并集只要把槽轴放宽到整批的 expert 并集、没路由到的格子填 0，一次 dispatch 就吃完所有列，
+**不需要任何 kernel 改动**（`runtime/moe_bridge.h` 的 `stage_batch_union` / `run_batch_union`，
+`docs/p4_dspark_runtime.md` §6.1）。
+
+`ctest -R bench.mgt1_moe_union_m_curve`（层 0、全部驻留、40 次迭代；⚠️ 这一轮机器上另有四个
+worktree 在编译/跑测，绝对毫秒比上面两张表高 1.5–1.8×，**只有同一次运行里背靠背的比值可信**）：
+
+| 列的 expert 集 | M | 并集 | 逐列 ms/层 | 并集 ms/层 | 并集 ms/token | 并集/逐列 |
+|---|---:|---:|---:|---:|---:|---:|
+| 互不相交（最坏） | 6 | 36/36 | 15.04 | 15.36 | 2.560 | 0.98× |
+| 有重叠（真实形状） | 2 | 9/12 | 3.80 | 2.80 | 1.400 | **1.36×** |
+| 有重叠 | 4 | 15/24 | 8.36 | 6.07 | 1.517 | **1.38×** |
+| 有重叠 | 6 | 21/36 | 19.63 | 9.69 | 1.615 | **2.03×** |
+
+并集**正好只花并集那么多钱**：没有重叠时与逐列打平（没有可省的），有重叠时省下的就是重叠。
+数值上，只要并集的槽序与该列自己的顺序一致（gate 的输出顺序是一致的，真实路由落在这一格）
+就**逐位等于 M=1**；不一致时差的只是 fp32 槽和的结合律（实测 1.775e-08 of |y|max）。
+
+**但这没有改变 go / no-go**：decode 是 NVMe 受限的（下面那条 274 ms/token 的账），
+而字节 ∝ **并集大小**，并集随 M 几乎线性长（每多一列多 ~4 个 expert）。
+重算见 `docs/p4_dspark_runtime.md` §6.5：k=1–2 省 ~10% 的 expert 字节，k=5 仍然是亏的。
+
+**（下面是 2026-09-17 的结论，保留原文；"只能……两级索引"那一句已被上面推翻。）**
+
 **结论与 C(M) 相反：MoE 在 M 上不摊薄，是"每 token 一份"的 6.5×。**
 原因是几何：`MoeRunner::ids()` 是 `[slots]`——一组专家——所以一批不同路由的 token
 只能逐列 dispatch（方案 A），每列的权重读取（6 routed × 18.8 MB + shared）都是完整的
@@ -208,7 +239,10 @@ powershell -NoProfile -File C:\Users\Asus\code\deepmoe\build\p4_gpu_lock.ps1 rel
 
 ## 7. 缺口（交给下一阶段）
 
-1. **MoE 并集 / 多 runner**：今天的 `MoeRunner` 是 7 槽、`route_weights` 是稠密 `[M][slots]`；M>1 verify 需要 >7 槽或分组 dispatch（design §10.1.3 缺口 1）。
+1. ~~**MoE 并集 / 多 runner**~~ **已关闭（2026-09-18，Track F1）**：`MoeDims::slots` 不是常数，
+   `num_slots` 是 push constant，`route_weights` 已经是 `[M][slots]`——所以"> 7 槽"就是把
+   `slots` 放宽到整批的 expert 并集，没有 kernel 改动。见上一节与
+   `docs/p4_dspark_runtime.md` §6.1（`gpu_moe.the_verify_batch_runs_its_expert_union_once`）。
 2. **`head` / `engram` 的 M=5**：DSpark 草稿链需要 M=5 的 head；今天 head 是 M=1 循环五次（≈42 ms vs ≈19 ms）。
 3. **DSpark G1**：接受率需在 ≥5 个正常 prompt × ≥64 token、空闲机上重测（先修 dsref 层 1/14 的 98 GB 未触碰占位）。
 4. **G3 长上下文的批边界**：M>1 verify 与逐 token decode 的 logits 分歧机制未隔离（§10.2 不变量），runtime 对齐哪一侧未定。
