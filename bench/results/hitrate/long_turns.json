@@ -1,0 +1,13 @@
+{
+ "comment": "docs/p4_hitrate.md §1: chat-like prompts back to back in one serve process, sampled (T 1.0, top_p 0.95, fixed seeds so every run emits the same tokens). Two follow-ups reuse the KV state; the resets drop only the context, never the expert cache.",
+ "turns": [
+  {"label": "zh essay", "user": "请写一篇三百字左右的短文，谈谈城市里的夜跑为什么越来越流行，以及夜跑时需要注意的安全问题。", "temperature": 1.0, "top_p": 0.95, "seed": 41001, "max_tokens": 400},
+  {"label": "zh follow-up", "user": "把上面的短文压缩成五条要点，每条不超过二十个字。", "seed": 41002, "max_tokens": 200},
+  {"label": "en explain", "reset": true, "user": "Explain to a curious high-school student how a refrigerator moves heat from the inside to the outside. Use one everyday analogy and keep it under 300 words.", "seed": 41003, "max_tokens": 400},
+  {"label": "en follow-up", "user": "Now explain why a refrigerator with its door left open makes the kitchen warmer, not cooler.", "seed": 41004, "max_tokens": 300},
+  {"label": "code", "reset": true, "user": "Write a Python function `merge_intervals(intervals)` that merges overlapping closed intervals given as a list of (start, end) tuples. Include type hints, a docstring, handle an empty list, and add three small doctest examples. Then explain its time complexity in two sentences.", "seed": 41005, "max_tokens": 450},
+  {"label": "zh travel", "reset": true, "user": "我下个月想去杭州玩三天，喜欢自然风景和本地小吃，不太想去人太多的地方。请帮我排一个行程，每天分上午、下午、晚上。", "seed": 41006, "max_tokens": 450},
+  {"label": "en email", "reset": true, "user": "Draft a polite email to my landlord explaining that the kitchen sink has been leaking for a week, asking for a repair visit this Friday or Saturday, and mentioning that I can send photos.", "seed": 41007, "max_tokens": 300},
+  {"label": "zh math", "reset": true, "user": "一个水池有进水管和出水管。单开进水管6小时注满，单开出水管8小时放空。如果两管同时打开，空池多久能注满？请一步一步说明。", "seed": 41008, "max_tokens": 350}
+ ]
+}

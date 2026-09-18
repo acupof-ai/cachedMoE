@@ -67,14 +67,17 @@ int usage(int code = 2) {
         "      --cache-gb 0 (the default) sizes the routed-expert cache from the\n"
         "      machine. See docs/p2_decode.md.\n"
         "\n"
-        "  deepmoe serve --model DIR [--cache-gb N] [--max-context N]\n"
+        "  deepmoe serve --model DIR [--cache-gb N | --cache-slots N] [--max-context N]\n"
         "                [--engram-tables DIR] [--gpu-prefill-min N] [--replay N]\n"
+        "                [--no-rollback] [--max-parked N] [--park-budget-mb N]\n"
+        "                [--kv-dir DIR] [--kv-max-gb N]\n"
+        "                [--cache-slots N]  (5711 slots ~ 100 GiB, design P1/P2)\n"
         "                [--check-topk] [--profile FILE.jsonl]\n"
         "      A long-running engine behind line-delimited JSON on stdin/stdout:\n"
         "      generate (streamed tokens, temperature/top_p/seed, KV continuation\n"
-        "      when a prompt extends the previous context), reset, tokenize,\n"
-        "      detokenize, status. See cli/serve.cpp and docs/p3_chat.md;\n"
-        "      tools/chat.py is the terminal client.\n"
+        "      or rollback to the common prefix, named sessions), cancel, reset,\n"
+        "      sessions, drop, tokenize, detokenize, status. See cli/serve.cpp,\n"
+        "      docs/p3_chat.md and docs/p4_kv_ux.md; tools/chat.py is the client.\n"
         "\n"
         "  deepmoe tokenize --model DIR --in CASES.json --out IDS.jsonl\n"
         "      Encode every {\"text\": ...} of CASES.json (a JSON array, or an\n"
@@ -483,6 +486,8 @@ int cmd_run(int argc, char** argv) {
     std::string prompt_ids_file;
     std::string state_dir = "tests/data/l3";
     uint32_t steps = 8;
+    std::string resident_only;
+    bool warm_cache = false;
     bool teacher_force = false;
     bool per_layer = false;
     bool slow_prefill = false;
@@ -498,6 +503,7 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--prompt-ids")  prompt_ids_file = arg_value(argc, argv, i, a);
         else if (a == "--state")       state_dir = arg_value(argc, argv, i, a);
         else if (a == "--profile")     cfg.profile_jsonl = arg_value(argc, argv, i, a);
+        else if (a == "--trace")       cfg.trace_file = arg_value(argc, argv, i, a);
         else if (a == "--kvcache")     cfg.kvcache_dir = arg_value(argc, argv, i, a);
         else if (a == "--steps")       steps = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--teacher-force") teacher_force = true;
@@ -512,6 +518,8 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--chunk-kb")    cfg.io.chunk_bytes = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data())) << 10;
         else if (a == "--qd")          cfg.io.max_inflight_ops = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--buffered")    cfg.io.unbuffered = false;
+        else if (a == "--resident-only") resident_only = arg_value(argc, argv, i, a);
+        else if (a == "--warm-cache")  warm_cache = true;
         else { std::fprintf(stderr, "unknown option %.*s\n", static_cast<int>(a.size()), a.data()); return usage(); }
     }
     if (cfg.model_dir.empty()) {
@@ -538,6 +546,14 @@ int cmd_run(int argc, char** argv) {
         return 1;
     }
     if (loaded_ced) engine.set_produce_ced(false);
+    // Track Y (docs/p4_resident_routing.md). The flag wins over
+    // DEEPMOE_ROUTE_RESIDENT_ONLY, which Engine::load already read.
+    if (!resident_only.empty()) {
+        if (resident_only == "all")      engine.set_resident_only(runtime::Engine::ResidentOnly::All);
+        else if (resident_only == "stall1") engine.set_resident_only(runtime::Engine::ResidentOnly::Stall1);
+        else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
+        else { std::fprintf(stderr, "--resident-only takes off|all|stall1, got '%s'\n", resident_only.c_str()); return 1; }
+    }
     const runtime::DecodeState* st = engine.decode_state();
     std::vector<uint32_t> prompt;
     if (!prompt_ids_file.empty()) {
@@ -561,6 +577,16 @@ int cmd_run(int argc, char** argv) {
                     st->prompt_ids().size(), pre->token, st->greedy_tokens().front(),
                     pre->token == st->greedy_tokens().front() ? "MATCH" : "DIFFER");
         print_prefill_state(engine, *st);
+    }
+    // Track Y: `run` loads a state, not a session, so nothing has filled the
+    // expert cache. Fill it from the static heat table before measuring, so the
+    // comparison is the warm-cache one docs/p4_resident_routing.md is about.
+    if (warm_cache) {
+        const auto t0 = std::chrono::steady_clock::now();
+        auto w = engine.warm_cache_from_heat();
+        if (!w) { std::fprintf(stderr, "warm cache: %s\n", w.error().str().c_str()); return 1; }
+        std::printf("warm      %u experts resident after the P3 heat fill (%.1f s)\n", *w,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
     }
     std::fputs(engine.status().c_str(), stdout);
 
@@ -594,6 +620,8 @@ int cmd_run(int argc, char** argv) {
         print_token_line(w, st->greedy_tokens().front(), *r, engine);
     }
 
+    double   nll_sum = 0.0;
+    uint32_t nll_n = 0;
     uint32_t next = st->greedy_tokens().front();
     std::vector<uint32_t> produced;
     for (uint32_t s = 0; s < n; ++s) {
@@ -661,6 +689,24 @@ int cmd_run(int argc, char** argv) {
             }
             std::printf("\n");
         }
+        // Teacher-forced NLL of the reference's own next token, from the head's
+        // logits (Engine::last_logits is the host mapping of the head output,
+        // written every step). exp(mean NLL) is the 64-token PPL Track Y's
+        // quality bar is stated against; because the forced sequence IS the
+        // fp32 reference's greedy continuation, the absolute value is small --
+        // what the bar reads is the RATIO between two modes on the same steps.
+        if (teacher_force && s + 1 < st->greedy_tokens().size()) {
+            auto lg = engine.last_logits();
+            const uint32_t ref = st->greedy_tokens()[s + 1];
+            if (!lg.empty() && ref < lg.size()) {
+                double mx = -1e30;
+                for (float v : lg) mx = std::max(mx, double(v));
+                double sum = 0.0;
+                for (float v : lg) sum += std::exp(double(v) - mx);
+                nll_sum += -(double(lg[ref]) - mx - std::log(sum));
+                ++nll_n;
+            }
+        }
         produced.push_back(r->token);
         next = r->token;
     }
@@ -684,6 +730,10 @@ int cmd_run(int argc, char** argv) {
     }
     std::printf("\n%u/%u tokens match the fp32 reference%s\n", match, nref,
                 teacher_force ? " (teacher-forced)" : " before divergence");
+    if (nll_n)
+        std::printf("teacher-forced NLL %.6f over %u steps -> PPL %.4f\n",
+                    nll_sum / nll_n, nll_n, std::exp(nll_sum / nll_n));
+    std::fputs(engine.resident_route_report().c_str(), stdout);
     std::fputs(engine.profiler().summary().to_string().c_str(), stdout);
     return 0;
 }

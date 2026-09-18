@@ -246,7 +246,19 @@ Result<void> DecodeState::seed_step(KvStore& kv, uint32_t s) const {
         return fail(Err::OutOfRange, std::format("step {} of {}", s, steps_));
     const uint32_t rec = s + 1;
     for (uint32_t L = 0; L < layers_; ++L) {
-        if (const StateTensor* c = tensor(rec, std::format("L{:02d}.cmp_kv", L))) {
+        const std::string cname = std::format("L{:02d}.cmp_kv", L);
+        const uint32_t owner = kv.config().owner(L);
+        if (owner != L && owner != KvStoreConfig::kNoPlane) {
+            // A reuse layer's per-step plane is its source's (model.py
+            // `shared_attn`), which the store already holds: only the count is
+            // this layer's, and it comes from the shape without decoding a
+            // [T][512] tensor (Track R2).
+            auto it = records_[rec].t.find(cname);
+            if (it != records_[rec].t.end())
+                if (auto r = kv.set_counts(L, static_cast<uint32_t>(it->second.elements() / head_dim_),
+                                           kv.layer(L)->n_kv); !r)
+                    return r;
+        } else if (const StateTensor* c = tensor(rec, cname)) {
             const uint32_t n = static_cast<uint32_t>(c->elements() / head_dim_);
             if (auto r = kv.seed_compressed(L, c->f.data(), n); !r) return r;
         }

@@ -14,6 +14,13 @@
 // issued until the P0 queue is empty. Chunks already in flight are not
 // cancelled -- at 4 MiB they retire in about a millisecond.
 //
+// Idle-time classes (P1, P3) are also THROTTLED while P0 work is recent: within
+// `kBackgroundQuiet` of the last P0 submit they may hold at most
+// `kBackgroundOpsWhileBusy` chunks in flight, so a decode that issues a P0 burst
+// every layer finds the queue nearly empty instead of eight 4 MiB background
+// chunks ahead of it (docs/p4_hitrate.md §5). Once decode goes quiet they get
+// the whole queue depth. P2 (the engram's 4 KiB rows) is not throttled.
+//
 // Ownership/threading:
 //   - IoEngine owns the Backend and one dispatcher thread.
 //   - submit()/cancel() are safe from any thread (planner, engine, prefetcher).
@@ -167,6 +174,17 @@ private:
     void   handle_completion(const ChunkCompletion& c);
     void   finish(std::shared_ptr<Pending> p);
     Pending* top_of_queue();            // highest-priority non-empty queue head
+
+public:
+    static constexpr uint32_t kBackgroundOpsWhileBusy = 1;
+    static constexpr std::chrono::milliseconds kBackgroundQuiet{100};
+    // Chunks of each class in flight right now (tests, the bench).
+    uint32_t inflight_chunks(IoPriority p) const {
+        return inflight_class_[static_cast<uint8_t>(p)].load(std::memory_order_relaxed);
+    }
+private:
+    std::atomic<uint32_t> inflight_class_[kIoPriorityCount] = {};
+    std::atomic<int64_t>  last_p0_ns_{INT64_MIN / 2};
 
     std::unique_ptr<Backend> backend_;
     IoConfig   cfg_{};

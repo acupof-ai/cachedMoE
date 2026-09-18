@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "core/status.h"
 #include "gpu/vulkan/attn_kernels.h"
@@ -125,6 +126,177 @@ private:
 #if defined(DEEPMOE_ENABLE_VULKAN)
     VkDescriptorSet  sets_[static_cast<uint32_t>(DecodeStage::Count)]{};
 #endif
+};
+
+// ===========================================================================
+// Track T: the non-MoE decode stages for a verify batch of M = k + 1 <= 6
+// tokens (docs/p4_mgt1.md). Eight shaders, gpu/shaders/mgt1_*.slang, each
+// specialised to M: a stage owns one 32-slot slice of a shared address table
+// (as in AttnRunner) and one pipeline per M, built the first time that M is
+// asked for (`ensure`).
+// ===========================================================================
+
+enum class MgtStage : uint32_t {
+    // mgt1_gemv: the fp8 GEMVs and their tails
+    WqASplit = 0, WqACombine,
+    QNorm,                      // q_norm, per token
+    WqBSplit, WqBFinish,        // wq_b + RoPE + bf16 q
+    WkvSplit, WkvFinish,        // wkv + kv_norm + RoPE + overflow copy + ring write
+    WoASplit, WoACombine,       // ActQuant 0
+    WoBSplit, WoBCombine,
+    IdxQSplit, IdxQCombine,     // the indexer's wq_b
+    // mgt1_mhc, one slice each for the three uses (mega_mhc's argument)
+    MhcPost, MhcMix, MhcFinal, MhcPostB, MhcMixB, MhcFinalB, MhcClose,
+    // mgt1_attn
+    AttnScore, AttnPv,
+    // mgt1_gate
+    GateScore, GateTopK,
+    // mgt1_cmp
+    CmpKvGemv, CmpGateGemv, CmpPool, CmpState, CmpStore,
+    // mgt1_idx
+    IdxQFinish, IdxKey, IdxWeights, IdxScore, IdxTopK, IdxBlockKeys, IdxBlockSelect,
+    IdxApplyCand,
+    // mgt1_head
+    Head, HeadArgmax, HeadTopK,
+    // mgt1_engram
+    EngramGemv, EngramGate,
+    Count,
+};
+
+const char* mgt_stage_name(MgtStage s);
+
+inline constexpr uint32_t kMgtMaxM = 6;
+
+// The knobs. A K-split factor must be a power of two dividing K / 32 with
+// K / factor <= 1024 (mgt1_gemv.slang's staged slice).
+struct MgtSpec {
+    uint32_t lanes_per_row = 32;
+    uint32_t subgroup_size = 32;
+    uint32_t ksplit_wq_a = 8;       // 5120 / 8 = 640
+    uint32_t ksplit_wq_b = 2;       // 1280 / 2 = 640
+    uint32_t ksplit_wkv  = 8;
+    uint32_t ksplit_wo_a = 4;       // 4096 / 4 = 1024
+    uint32_t ksplit_wo_b = 8;       // 8192 / 8 = 1024
+    uint32_t ksplit_idx  = 2;
+    uint32_t tile_heads_per_wg = 8;
+    uint32_t head_slices   = 5;     // 5120 / 5 = 1024
+    uint32_t engram_slices = 8;     // 6144 / 8 = 768
+};
+
+// mgt1_gemv.slang
+struct MgtGemvPush {
+    uint32_t rows = 0, k = 0, scale_cols = 0, rows_per_group = 0, part_stride = 0;
+    uint32_t x_stride = 0, y_stride = 0, head_dim = 0, rope_dim = 0, p0 = 0, window = 0;
+    float    eps = 0.0f;
+    // kGemmFlagInBf16: the activation pointer holds bf16 rather than fp32. The
+    // DSpark draft chain's inputs (`main_hidden` after the three target layers'
+    // hc mean, `main_x` out of main_norm) are bf16 in the reference
+    // (docs/p4_dspark_runtime.md §2.3); everything else about the dispatch --
+    // amax, the ActQuant round trip, the LDS layout -- is unchanged.
+    uint32_t flags = 0;
+};
+inline constexpr uint32_t kGemmFlagInBf16 = 1u;
+// mgt1_attn.slang
+struct MgtAttnPush {
+    uint32_t n_kv = 0, n_win = 0, n_ovf = 0, head_dim = 0, rope_dim = 0, score_stride = 0;
+    float    softmax_scale = 0.0f;
+    uint32_t n_heads = 0, n_tiles = 0, tile_len = 0, list_stride = 0;
+};
+// mgt1_cmp.slang
+struct MgtCmpPush {
+    uint32_t rows = 0, k = 0, ratio = 1, p0 = 0, rope_dim = 0;
+    float    norm_eps = 0.0f;
+};
+// mgt1_idx.slang
+struct MgtIdxPush {
+    uint32_t n_heads = 0, head_dim = 0, rope_dim = 0, k = 0, p0 = 0, ratio = 1, topk = 0;
+    uint32_t offset = 0, score_stride = 0, list_stride = 0, key_sel = 0, blk_stride = 0;
+    float    norm_eps = 0.0f, wscale = 0.0f;
+};
+// mgt1_head.slang
+struct MgtHeadPush {
+    uint32_t rows = 0, k = 0, slice = 0, slices = 1, x_stride = 0, topk_k = 0;
+    float    inv_t = 1.0f, bins_per_logit = 16.0f;
+};
+// mgt1_engram.slang
+struct MgtEngramPush {
+    uint32_t rows = 0, k = 0, scale_cols = 0, dim = 0, hc = 0;
+    float    norm_eps = 0.0f;
+    uint32_t slice = 0, slices = 1;
+};
+
+namespace mslot {
+// mgt1_gemv
+enum : uint32_t { kGW = 0, kGS = 1, kGX = 2, kGY = 3, kGP = 4, kGNormW = 5, kGRope = 6,
+                  kGRingVal = 7, kGRingScale = 8, kGOvfVal = 9, kGOvfScale = 10, kGKvOut = 11 };
+// mgt1_mhc: gpu::slot's mega_mhc indices (kPostIn / kCombIn unused: offsets of kPreMix)
+// mgt1_attn: gpu::slot's nine + tile max, then the overflow planes
+enum : uint32_t { kAQ = 0, kAWinVal = 1, kAWinScale = 2, kACmpKv = 3, kATopIdx = 4,
+                  kASink = 5, kARope = 6, kAScore = 7, kAO = 8, kATileMax = 9,
+                  kAOvfVal = 10, kAOvfScale = 11 };
+// mgt1_gate: gpu::slot's gate indices.  mgt1_cmp: gpu::slot's compressor indices.
+// mgt1_idx
+enum : uint32_t { kIQRaw = 0, kIQ = 1, kIQFp4 = 2, kIQScale = 3, kIRope = 4, kIWk = 5,
+                  kIKNormW = 6, kILatent = 7, kIKRaw = 8, kIKCache = 9, kIKFp4 = 10,
+                  kIKScale = 11, kIWProjW = 12, kIX = 13, kIWeights = 14, kIScore = 15,
+                  kIOut = 16, kIKCachePub = 17, kIBlkKey = 18, kICand = 19 };
+// mgt1_head
+enum : uint32_t { kHW = 0, kHX = 1, kHLogits = 2, kHSample = 3, kHTopOut = 4, kHHist = 5 };
+// mgt1_engram: dslot's engram indices
+}  // namespace mslot
+
+// Words of one row's record in mgt1_head stage 2's output.
+inline constexpr uint32_t kMgtTopKRecordWords = 8 + 256 + 256 * 32 * 2;
+
+class MgtRunner {
+public:
+    MgtRunner() = default;
+    ~MgtRunner() { destroy(); }
+    MgtRunner(const MgtRunner&) = delete;
+    MgtRunner& operator=(const MgtRunner&) = delete;
+
+    Result<void> create(Device& device, MemoryAllocator& alloc, const std::string& shader_dir,
+                        const MgtSpec& spec = {});
+    void destroy();
+    const MgtSpec& spec() const { return spec_; }
+
+    // Builds every pipeline for batch size `m` (1..6; the bench's M = 1 column
+    // runs the same kernels specialised to one token).
+    Result<void> ensure(uint32_t m);
+
+    uint64_t* slots(MgtStage s);
+    Result<void> record(CommandBuffer& cmd, uint32_t m, MgtStage s, const void* push,
+                        uint32_t push_bytes, uint32_t gx, uint32_t gy = 1);
+    Result<void> dispatch_now(uint32_t m, MgtStage s, const void* push, uint32_t push_bytes,
+                              uint32_t gx, uint32_t gy = 1);
+
+    uint32_t ksplit(MgtStage s) const;
+    uint32_t row_groups(uint32_t rows) const {
+        const uint32_t per = 256 / spec_.lanes_per_row;
+        return (rows + per - 1) / per;
+    }
+    // Workgroups of a split stage: row groups x slices.
+    uint32_t split_groups(MgtStage s, uint32_t rows) const { return row_groups(rows) * ksplit(s); }
+    static uint32_t combine_groups(uint32_t rows) { return (rows + 255) / 256; }
+
+private:
+    Result<void> make(uint32_t m, MgtStage s);
+
+    Device*          device_ = nullptr;
+    MemoryAllocator* alloc_  = nullptr;
+    MgtSpec          spec_{};
+    std::string      dir_;
+    struct PerM {
+        bool ready = false;
+        std::vector<Pipeline> pipes;
+#if defined(DEEPMOE_ENABLE_VULKAN)
+        std::vector<VkDescriptorSet> sets;
+#endif
+    };
+    PerM             per_m_[kMgtMaxM + 1];
+    DescriptorPool   descriptors_;
+    CommandPool      pool_;
+    GpuBuffer        table_{};
 };
 
 }  // namespace deepmoe::gpu

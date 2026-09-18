@@ -192,10 +192,35 @@ def install_batched_decode(ref) -> None:
                     kv[:, -win:].split([win - cutoff, cutoff], dim=1)
             window_kv = kv
             return window_kv, ref.get_window_topk_idxs(win, bsz, seqlen, start_pos)
-        # decode, generalised: one ring slot per token of the batch
+        if seqlen == 1:                          # the reference's decode branch, verbatim
+            self.window_kv_cache[:bsz, start_pos % win] = kv.squeeze(1)
+            return self.window_kv_cache[:bsz], ref.get_window_topk_idxs(win, bsz, seqlen,
+                                                                       start_pos)
+        # decode, generalised: one ring slot per token of the batch.
+        #
+        # Track T (docs/p4_mgt1.md, closing docs/p3_dspark.md section 4.9): once the
+        # ring has wrapped, token j >= 1 of the batch overwrites slot (start_pos + j)
+        # % win, which held position start_pos + j - win -- still inside the window
+        # of every EARLIER query of the batch. Writing all M slots and then masking
+        # would silently drop up to M - 1 of the oldest window positions of those
+        # queries. The overwritten rows are kept here as an overflow tail
+        # appended to the window half ([win + M - 1] rows, so the compressed half's
+        # offset is win + M - 1) and each query sees overflow row j - 1 iff j > i
+        # and the row held a real position. At seqlen == 1 this branch is not taken.
+        ovf = self.window_kv_cache.new_zeros(bsz, seqlen - 1, kv.size(-1))
         for j in range(seqlen):
-            self.window_kv_cache[:bsz, (start_pos + j) % win] = kv[:, j]
-        return self.window_kv_cache[:bsz], _window_topk_idxs_m(win, bsz, seqlen, start_pos)
+            slot = (start_pos + j) % win
+            if j >= 1:
+                ovf[:, j - 1] = self.window_kv_cache[:bsz, slot]
+            self.window_kv_cache[:bsz, slot] = kv[:, j]
+        ring_idx = _window_topk_idxs_m(win, bsz, seqlen, start_pos)
+        ovf_idx = torch.full((bsz, seqlen, seqlen - 1), -1, dtype=torch.int32)
+        for i in range(seqlen):
+            for j in range(i + 1, seqlen):
+                if start_pos + j - win >= 0:
+                    ovf_idx[:, i, j - 1] = win + j - 1
+        return (torch.cat([self.window_kv_cache[:bsz], ovf], dim=1),
+                torch.cat([ring_idx, ovf_idx], dim=-1))
 
     ref.Attention._window_kv = _window_kv
 
@@ -1852,6 +1877,266 @@ def run_tree(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# 6. Track T: the M > 1 per-stage reference (docs/p4_mgt1.md)
+# --------------------------------------------------------------------------- #
+
+MGT1_VERSION = 1
+MGT1_PROBES = (0, 2, 13, 14, 20, 24, 39)
+MGT1_CONTEXTS = {
+    # name -> (L3-container export whose PREFILL record seeds the state, max_seq_len)
+    "l3": (os.path.join(os.path.dirname(_HERE), "tests", "data", "l3"), 128),
+    "ctx4k": (os.path.join(os.path.dirname(_HERE), "..", "deepmoe", "traces", "longctx",
+                           "ctx4k"), 4149),
+}
+
+
+def _mgt1_state_from_l3(margs, rec: dict) -> tuple[dict, torch.Tensor]:
+    """Per-layer attention state at the end of the prompt, rebuilt from an L3
+    container's prefill record in `_l2_save_attn_state`'s naming, and the key
+    cache the first decode step's ratio-2 indexers score against (layer 20's)."""
+    kv: dict[int, dict] = {}
+    for L in range(margs.n_layers):
+        p = f"L{L:02d}."
+        st = {"window_kv_cache": torch.from_numpy(np.array(rec[p + "win_kv"])).unsqueeze(0)}
+        if p + "cmp_cache" in rec:
+            st["compress_kv_cache"] = torch.from_numpy(np.array(rec[p + "cmp_cache"])).unsqueeze(0)
+        if p + "index_k" in rec:
+            st["indexer.k_cache"] = torch.from_numpy(np.array(rec[p + "index_k"])).unsqueeze(0)
+        if p + "cmp_state_kv" in rec:
+            st["compressor.kv_state"] = torch.from_numpy(np.array(rec[p + "cmp_state_kv"])).unsqueeze(0)
+            st["compressor.score_state"] = torch.from_numpy(
+                np.array(rec[p + "cmp_state_score"])).unsqueeze(0)
+        kv[L] = st
+    last = max(margs.kv_source_layers)
+    # the block buffers are bf16 (built under set_dtype(bf16)); einsum wants q's dtype
+    index_k = kv[last]["indexer.k_cache"].to(torch.bfloat16).clone()
+    return kv, index_k
+
+
+def _mgt1_collect(cap, block, margs, M: int, n_win_ext: int, extra: dict) -> dict:
+    """`_l2_collect` with the batch dimension kept: every tensor is [M, ...]."""
+    b = block.b
+    nh, hd = margs.n_heads, margs.head_dim
+    t = cap.t
+    out = dict(extra)
+
+    def put(name, kind, v):
+        out[name] = (kind, v.contiguous())
+
+    attn_pre, attn_post, attn_comb = cap.mixes[0]
+    put("attn_pre", "f32", attn_pre[0])
+    put("attn_post", "f32", attn_post[0])
+    put("attn_comb", "f32", attn_comb[0])
+    put("attn_hc_pre_out", "bf16", t["attn_norm.in"][0])
+    put("attn_norm_out", "bf16", t["attn_norm"][0])
+    put("wq_a_out", "bf16", t["wq_a"][0])
+    put("qr", "bf16", t["q_norm"][0])
+    put("q_pre_rope", "bf16", t["wq_b"][0].reshape(M, nh, hd))
+    put("q", "bf16", cap.live["wq_b"][0].reshape(M, nh, hd))
+    put("wkv_out", "bf16", t["wkv"][0])
+    put("kv_pre_rope", "bf16", t["kv_norm"][0])
+    kv_pre, kv_post = cap.q8[0]
+    put("kv_pre_quant", "bf16", kv_pre[0])
+    put("kv", "bf16", kv_post[0])
+
+    if b.attn.compressor is not None and "cmp_wkv" in t:
+        put("cmp_wkv_out", "f32", t["cmp_wkv"][0].float())
+        if "cmp_norm" in t:
+            put("latent_pre_rope", "bf16", t["cmp_norm"][0])
+            cmp = [e for e in cap.q4 if e[0] == oracle.L2_CMP_KV_BLOCK]
+            if cmp:
+                put("latent", "bf16", cmp[0][3][0])
+    if b.attn.indexer is not None:
+        ix = b.attn.indexer
+        put("index_q_pre_rope", "bf16", t["idx_q"][0].reshape(M, ix.n_heads, ix.index_head_dim))
+        idxq = [e for e in cap.q4 if e[0] == oracle.L2_INDEX_BLOCK and e[2].ndim == 4]
+        idxk = [e for e in cap.q4 if e[0] == oracle.L2_INDEX_BLOCK and e[2].ndim == 3]
+        if idxq:
+            put("index_q", "bf16", idxq[0][3][0])
+        if idxk:
+            put("index_k_new", "bf16", idxk[0][3][0])
+        put("index_weights", "bf16", t["idx_w"][0])
+
+    sp = cap.sparse
+    kv_all = sp["kv"][0]
+    put("attn_sink", "f32", sp["sink"])
+    put("win_kv_ext", "bf16", kv_all[:n_win_ext])
+    put("topk_idxs", "i32", sp["idx"][0].int())
+    put("attn_out", "bf16", sp["o_pre_inverse"][0].reshape(M, nh, hd))
+    put("attn_out_irope", "bf16", cap.live["o"][0].reshape(M, nh, hd))
+    put("wo_a_out", "bf16", t["wo_b.in"][0])
+    put("wo_b_out", "bf16", t["wo_b"][0])
+    put("attn_block_out", "bf16", cap.posts[0][0])
+    ffn_pre, ffn_post, ffn_comb = cap.mixes[1]
+    put("ffn_pre", "f32", ffn_pre[0])
+    put("ffn_post", "f32", ffn_post[0])
+    put("ffn_comb", "f32", ffn_comb[0])
+    put("ffn_hc_pre_out", "bf16", t["ffn_norm.in"][0])
+    put("ffn_norm_out", "bf16", t["ffn_norm"][0])
+    put("block_out", "bf16", cap.posts[1][0])
+    return out
+
+
+def run_mgt1(args: argparse.Namespace) -> int:
+    """Per-stage tensors and all-row logits of ONE verify batch of M tokens, run
+    through the generalised decode path with decode-emulated key sources (section
+    4.8), from the prefill state of an L3-container export. See docs/p4_mgt1.md."""
+    import oracle_longctx as olc
+    log = olc.log
+    _scan = olc.other_processes
+
+    def other_processes():
+        heavy, gpu = _scan()
+        return [h for h in heavy if "oracle_dspark" not in h], gpu
+    olc.other_processes = other_processes
+    env = olc.wait_quiet(args.need_gb, args.poll_s, args.max_wait_h)
+
+    torch.set_grad_enabled(False)
+    if args.threads:
+        torch.set_num_threads(args.threads)
+    inference_dir = os.path.join(args.model, "inference")
+    ref = dsref.load_reference(inference_dir)
+    ref.ParallelEngramEmbedding = olc._NoEngramTable
+    install_batched_decode(ref)
+    store = dsref.WeightStore(args.model, args.manifest)
+    tokenizer = dsref.TokenizerAdapter(os.path.join(args.model, "tokenizer.json"))
+    embed_w = store.tensor("embed.weight")
+    norm_w = store.tensor("norm.weight")
+    head_w = store.tensor("head.weight")
+    ms = [int(x) for x in args.mgt1_m.split(",")]
+    probes = set(MGT1_PROBES)
+    cap = oracle.L2Capture(ref)          # module-level interceptions: install once
+    sys.path.insert(0, inference_dir)
+    import engram as eng                                          # noqa: E402
+
+    for ctx in args.mgt1_ctx.split(","):
+        src, max_seq_len = MGT1_CONTEXTS[ctx]
+        src = os.path.normpath(src)
+        meta, recs = olc._read_l3(src)
+        pre = recs[0]
+        N = int(meta["prefill_len"])
+        prompt = [int(i) for i in meta["prompt_ids"]]
+        greedy = [int(i) for i in meta["greedy_tokens"]]
+        margs = dsref.build_args(ref, inference_dir, max_seq_len=max_seq_len)
+        layout_e = ref.EngramLayout.from_args(margs)
+        cached = dsref.CachedTokenMap.build(tokenizer, os.path.join(
+            os.path.dirname(_HERE), "..", "deepmoe", "traces", "longctx", "token_map.npz"))
+        orig_build = eng.build_compressed_token_map
+        eng.build_compressed_token_map = lambda _t: (cached.lookup, cached.size)
+        try:
+            ngram = ref.NgramHashState(margs, layout_e, tokenizer)
+        finally:
+            eng.build_compressed_token_map = orig_build
+        ngram(torch.tensor(prompt, dtype=torch.long).unsqueeze(0), 0, None)
+        base_kv, base_index_k = _mgt1_state_from_l3(margs, pre)
+        odir = os.path.join(args.mgt1_out, ctx)
+        l2w = oracle.L2Writer(os.path.join(odir, "l2"))
+        l3w = oracle.L3Writer(odir)
+        runs = []
+        for M in ms:
+            t0 = time.perf_counter()
+            tokens = greedy[:M]
+            kv = {L: dict(st) for L, st in base_kv.items()}
+            sa = ref.shared_attn
+            sa.compress_kv = sa.topk_idxs = sa.candidates = None
+            sa.index_k = base_index_k.clone()
+            tt = torch.tensor(tokens, dtype=torch.long).unsqueeze(0)
+            h = embed_w[tt[0]].unsqueeze(1).repeat(1, margs.hc_mult, 1).unsqueeze(0).to(torch.bfloat16)
+            hashes = ngram(tt, N, None)
+            pre_mix = ref.make_identity_pre_mix(h, margs.hc_mult)
+            ref._dm_emulate_decode = [sa.index_k] * M
+            small: dict = {}
+            try:
+                for L in range(margs.n_layers):
+                    block = dsref.make_block(ref, margs, L, layout_e, store, args.engram_threads)
+                    oracle._l2_load_attn_state(block, kv[L])
+                    attn = block.b.attn
+                    probe = L in probes
+                    want = probe or attn.indexer is not None
+                    if probe:
+                        cap.attach(block)
+                    cap.reset(want)
+                    extra = {"h_in": ("bf16", h[0].contiguous()),
+                             "pre_mix_in": ("f32", pre_mix[0].float().contiguous())}
+                    if block.b.engram is not None:
+                        hi = layout_e.layer_ids.index(L)
+                        h = block.b.engram(h, hashes[:, :, hi, :], None)
+                    extra["attn_resid_in"] = ("bf16", h[0].contiguous())
+                    ffn_in, resid, fpre, fpost, fcomb = block.forward_attn(h, N, pre_mix)
+                    moe = block.b.ffn
+                    flat = ffn_in.view(-1, margs.dim)
+                    weights, indices = moe.route(flat)
+                    y = torch.zeros(flat.size(0), margs.dim, dtype=torch.float32)
+                    used = sorted(set(indices.reshape(-1).tolist()))
+                    for e, w1, w2, w3 in store.expert_stream(L, used, margs.dim,
+                                                             margs.moe_inter_dim):
+                        r, s = torch.where(indices == e)
+                        y[r] += dsref.expert_ffn(flat[r], w1, w2, w3, weights[r, s, None],
+                                                 margs.swiglu_limit).float()
+                        del w1, w2, w3
+                    y += moe.shared_experts(flat).float()
+                    h_out = block.finish_ffn(y.unsqueeze(0), resid, fpost, fcomb)
+                    small[f"L{L:02d}.gate_ids"] = ("i32", indices.int().contiguous())
+                    small[f"L{L:02d}.gate_weights"] = ("f32", weights.float().contiguous())
+                    if want and cap.sparse is not None:
+                        small[f"L{L:02d}.topk_idxs"] = ("i32", cap.sparse["idx"][0].int().contiguous())
+                    if probe:
+                        extra["gate_ids"] = ("i32", indices.int().contiguous())
+                        extra["gate_weights"] = ("f32", weights.float().contiguous())
+                        extra["moe_out"] = ("f32", y.contiguous())
+                        n_win_ext = margs.window_size + M - 1
+                        l2w.write(L, f"m{M}", _mgt1_collect(cap, block, margs, M, n_win_ext, extra))
+                        cap.detach()
+                    kv[L] = oracle._l2_save_attn_state(block)
+                    h, pre_mix = h_out, fpre
+                    del block
+            finally:
+                ref._dm_emulate_decode = None
+                cap.detach()
+                cap.reset(False)
+            logits, normed = collapse_and_head_all(h, pre_mix, norm_w, head_w, margs.norm_eps)
+            lg = logits.float()
+            vals, ids = torch.topk(lg, args.topk, dim=-1)
+            small["top_ids"] = ("i32", ids.int())
+            small["top_logits"] = ("f32", vals)
+            small["lse"] = ("f32", torch.logsumexp(lg.double(), dim=-1).float())
+            small["logits"] = ("f32", lg.contiguous())
+            small["norm_out"] = ("bf16", normed.contiguous())
+            small["collapse_in"] = ("bf16", h[0].contiguous())
+            small["pre_mix_final"] = ("f32", pre_mix[0].float().contiguous())
+            small["tokens"] = ("i32", torch.tensor(tokens, dtype=torch.int32))
+            l3w.write(f"m{M}", small)
+            # the reference's own one-token-at-a-time steps at the same positions
+            seq = []
+            for j in range(M):
+                if j + 1 >= len(recs):
+                    break
+                r = recs[j + 1]
+                sid = [int(x) for x in r["top_ids"]]
+                common = [k for k, i in enumerate(sid) if i in set(ids[j].tolist())]
+                a = torch.tensor([float(r["top_logits"][k]) for k in common])
+                bb = torch.tensor([float(lg[j, sid[k]]) for k in common])
+                seq.append({"row": j, "argmax_batch": int(ids[j, 0]), "argmax_seq": sid[0],
+                            "top64_common": len(common),
+                            "top64_cos": float(F.cosine_similarity(a, bb, dim=0)),
+                            "max_abs": float((a - bb).abs().max())})
+            dt = time.perf_counter() - t0
+            runs.append({"M": M, "tokens": tokens, "seconds": round(dt, 1), "vs_sequential": seq})
+            log(f"{ctx} M={M}: {dt:.0f}s, argmax {ids[:, 0].tolist()}; vs one-at-a-time "
+                f"{[(s['argmax_batch'] == s['argmax_seq'], round(s['top64_cos'], 6)) for s in seq]}")
+        common_meta = {"version": MGT1_VERSION, "generator": "tools/oracle_dspark.py --mgt1",
+                       "source": src, "prefill_len": N, "start_pos": N, "probes": sorted(probes),
+                       "ms": ms, "emulate_decode_keys": True, "window_overflow": True,
+                       "runs": runs, "env_start": env,
+                       "config": {"window_size": margs.window_size, "head_dim": margs.head_dim,
+                                  "n_heads": margs.n_heads, "vocab_size": margs.vocab_size,
+                                  "max_seq_len": max_seq_len}}
+        l2w.finish(dict(common_meta))
+        l3w.finish(dict(common_meta))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="oracle_dspark.py",
@@ -1881,6 +2166,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="greedy cycles per prompt re-verified with decode-emulated indexing")
     p.add_argument("--seq-check", type=int, default=1,
                    help="also decode prompt 0's first verify batch one token at a time")
+    p.add_argument("--mgt1", action="store_true",
+                   help="Track T: per-stage M > 1 verify-batch reference (docs/p4_mgt1.md)")
+    p.add_argument("--mgt1-ctx", default="l3,ctx4k")
+    p.add_argument("--mgt1-m", default="2,4,6")
+    p.add_argument("--mgt1-out", default=os.path.join(os.path.dirname(_HERE), "..", "deepmoe",
+                                                      "traces", "mgt1"))
     p.add_argument("--need-gb", type=float, default=8.0)
     p.add_argument("--poll-s", type=int, default=120)
     p.add_argument("--max-wait-h", type=float, default=6.0)
@@ -1893,6 +2184,8 @@ def main(argv=None) -> int:
         return resummarise(args)
     if args.tree:
         return run_tree(args)
+    if args.mgt1:
+        return run_mgt1(args)
     return run(args)
 
 

@@ -1,0 +1,231 @@
+{
+ "generator": "tools/quant2_model.py",
+ "started": "2026-09-18 08:28:20",
+ "ended": "2026-09-18 08:28:20",
+ "trace": "C:\\Users\\Asus\\code\\deepmoe\\traces\\mixed",
+ "accesses": 6575760,
+ "cold_frac": 0.00231,
+ "slab_gib": 100.0,
+ "model": {
+  "resident_ms": 42.0,
+  "lpddr_gbps": 200.0,
+  "nvme_gbps": 4.5,
+  "routed_reads_per_token": 240,
+  "moe_kernel_ms_fp4": 25.0
+ },
+ "cross_check_vs_cache_sweep": [
+  {
+   "capacity": 768,
+   "published": 0.5521,
+   "recomputed": 0.554,
+   "delta": 0.00192
+  },
+  {
+   "capacity": 1536,
+   "published": 0.6934,
+   "recomputed": 0.6944,
+   "delta": 0.00098
+  },
+  {
+   "capacity": 2304,
+   "published": 0.7735,
+   "recomputed": 0.7745,
+   "delta": 0.00096
+  },
+  {
+   "capacity": 3072,
+   "published": 0.8281,
+   "recomputed": 0.8298,
+   "delta": 0.00171
+  },
+  {
+   "capacity": 3840,
+   "published": 0.8646,
+   "recomputed": 0.8665,
+   "delta": 0.00188
+  },
+  {
+   "capacity": 4608,
+   "published": 0.8916,
+   "recomputed": 0.8935,
+   "delta": 0.00193
+  },
+  {
+   "capacity": 4787,
+   "published": 0.8969,
+   "recomputed": 0.8988,
+   "delta": 0.00194
+  },
+  {
+   "capacity": 5376,
+   "published": 0.9124,
+   "recomputed": 0.9141,
+   "delta": 0.00173
+  },
+  {
+   "capacity": 6144,
+   "published": 0.9293,
+   "recomputed": 0.9308,
+   "delta": 0.00151
+  },
+  {
+   "capacity": 7680,
+   "published": 0.9536,
+   "recomputed": 0.9546,
+   "delta": 0.00098
+  }
+ ],
+ "curve": {
+  "768": 0.554,
+  "1536": 0.6944,
+  "2304": 0.7745,
+  "3072": 0.8298,
+  "3840": 0.8665,
+  "4608": 0.8935,
+  "4787": 0.8988,
+  "5376": 0.9141,
+  "5711": 0.9219,
+  "6144": 0.9308,
+  "7680": 0.9546,
+  "8192": 0.9604,
+  "9216": 0.9704,
+  "9708": 0.9745,
+  "10240": 0.9785,
+  "10787": 0.9823,
+  "11264": 0.9853,
+  "12288": 0.9906,
+  "15360": 0.9977
+ },
+ "rows": [
+  {
+   "hit_rate": 0.9219,
+   "routed_gb_per_token": 4.512,
+   "resident_ms": 42.0,
+   "hit_read_ms": 20.8,
+   "nvme_stall_ms": 78.3,
+   "t_token_ms": 141.1,
+   "tok_s": 7.09,
+   "bits_per_weight": 4.25,
+   "expert_bytes": 18800640,
+   "slots": 5711,
+   "slot_frac_of_model": 0.3718,
+   "all_experts_gb": 288.8,
+   "moe_kernel_ms": 25.0
+  },
+  {
+   "hit_rate": 0.9506,
+   "routed_gb_per_token": 3.494,
+   "resident_ms": 42.0,
+   "hit_read_ms": 16.6,
+   "nvme_stall_ms": 38.4,
+   "t_token_ms": 97.0,
+   "tok_s": 10.31,
+   "bits_per_weight": 3.29,
+   "expert_bytes": 14557184,
+   "slots": 7376,
+   "slot_frac_of_model": 0.4802,
+   "all_experts_gb": 223.6,
+   "moe_kernel_ms": 19.4
+  },
+  {
+   "hit_rate": 0.9518,
+   "routed_gb_per_token": 3.45,
+   "resident_ms": 42.0,
+   "hit_read_ms": 16.4,
+   "nvme_stall_ms": 36.9,
+   "t_token_ms": 95.3,
+   "tok_s": 10.49,
+   "bits_per_weight": 3.25,
+   "expert_bytes": 14376960,
+   "slots": 7468,
+   "slot_frac_of_model": 0.4862,
+   "all_experts_gb": 220.8,
+   "moe_kernel_ms": 19.1
+  },
+  {
+   "hit_rate": 0.9745,
+   "routed_gb_per_token": 2.654,
+   "resident_ms": 42.0,
+   "hit_read_ms": 12.9,
+   "nvme_stall_ms": 15.0,
+   "t_token_ms": 69.9,
+   "tok_s": 14.3,
+   "bits_per_weight": 2.5,
+   "expert_bytes": 11059200,
+   "slots": 9709,
+   "slot_frac_of_model": 0.6321,
+   "all_experts_gb": 169.9,
+   "moe_kernel_ms": 14.7
+  },
+  {
+   "hit_rate": 0.9791,
+   "routed_gb_per_token": 2.495,
+   "resident_ms": 42.0,
+   "hit_read_ms": 12.2,
+   "nvme_stall_ms": 11.6,
+   "t_token_ms": 65.8,
+   "tok_s": 15.2,
+   "bits_per_weight": 2.35,
+   "expert_bytes": 10395648,
+   "slots": 10328,
+   "slot_frac_of_model": 0.6724,
+   "all_experts_gb": 159.7,
+   "moe_kernel_ms": 13.8
+  },
+  {
+   "hit_rate": 0.9816,
+   "routed_gb_per_token": 2.41,
+   "resident_ms": 42.0,
+   "hit_read_ms": 11.8,
+   "nvme_stall_ms": 9.9,
+   "t_token_ms": 63.7,
+   "tok_s": 15.7,
+   "bits_per_weight": 2.27,
+   "expert_bytes": 10043392,
+   "slots": 10691,
+   "slot_frac_of_model": 0.696,
+   "all_experts_gb": 154.3,
+   "moe_kernel_ms": 13.4
+  },
+  {
+   "hit_rate": 0.9823,
+   "routed_gb_per_token": 2.389,
+   "resident_ms": 42.0,
+   "hit_read_ms": 11.7,
+   "nvme_stall_ms": 9.4,
+   "t_token_ms": 63.2,
+   "tok_s": 15.83,
+   "bits_per_weight": 2.25,
+   "expert_bytes": 9953280,
+   "slots": 10787,
+   "slot_frac_of_model": 0.7023,
+   "all_experts_gb": 152.9,
+   "moe_kernel_ms": 13.2
+  },
+  {
+   "hit_rate": 0.9862,
+   "routed_gb_per_token": 2.256,
+   "resident_ms": 42.0,
+   "hit_read_ms": 11.1,
+   "nvme_stall_ms": 6.9,
+   "t_token_ms": 60.0,
+   "tok_s": 16.66,
+   "bits_per_weight": 2.125,
+   "expert_bytes": 9400320,
+   "slots": 11422,
+   "slot_frac_of_model": 0.7436,
+   "all_experts_gb": 144.4,
+   "moe_kernel_ms": 12.5
+  }
+ ],
+ "isolated_bytes_only": {
+  "hit_rate": 0.9219,
+  "routed_gb_per_token": 2.389,
+  "resident_ms": 42.0,
+  "hit_read_ms": 11.0,
+  "nvme_stall_ms": 41.5,
+  "t_token_ms": 94.5,
+  "tok_s": 10.58,
+  "note": "2-bit bytes at the FP4 hit rate: separates the 'halve the miss' effect from the 'double the slots' effect"
+ }
+}

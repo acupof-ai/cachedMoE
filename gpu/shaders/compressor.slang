@@ -197,7 +197,7 @@ void stage_store(uint tid) {
     // itself is an E4M3 number, not a power of two.
     float amax = 0.0f;
     [unroll] for (uint i = 0; i < kCmpBlock; ++i) amax = max(amax, abs(v[i]));
-    const float sc  = fp8_round(clamp(max(amax, kFp4Floor) / kFp4Max, 0.0f, kFp8MaxF));
+    const float sc  = fp8_decode(fp8_encode_rn(clamp(max(amax, kFp4Floor) / kFp4Max, 0.0f, kFp8MaxF)));
     const float inv = 1.0f / sc;
 
     uint packed[kCmpBlock / 2];

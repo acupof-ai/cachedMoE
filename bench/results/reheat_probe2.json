@@ -1,0 +1,82 @@
+{
+ "ready": {
+  "event": "ready",
+  "load_s": 4.532365,
+  "max_context": 4096,
+  "vocab": 129280,
+  "cache_gb": 8.75854492,
+  "cache_slots": 500,
+  "gpu_prefill_min": 0,
+  "check_topk": false,
+  "engram_tables": "derived",
+  "kv_mb": 16.044032,
+  "rollback": true,
+  "max_parked": 8,
+  "reheat": true,
+  "reheat_decay": 0.5
+ },
+ "turns": [
+  {
+   "turn": "A",
+   "prompt_tokens": 13,
+   "reused_tokens": 0,
+   "generated": 6,
+   "prefill_mode": "decode",
+   "ttft_ms": 9832.6858,
+   "tok_s": 1.29238139,
+   "decode_hit_rate": 0.373333333,
+   "prefill_hit_rate": 0.390705128,
+   "decode_nvme_mb": 14144.2417,
+   "context": 18,
+   "wall_s": 13.7,
+   "reheat": {
+    "turn": 1,
+    "keys": 15,
+    "free_slots": 0
+   },
+   "reheat_op": {
+    "event": "reheat",
+    "turn": 2,
+    "slots": 485,
+    "warm": 90,
+    "evicted": 15,
+    "keys": 30,
+    "free_slots": 15,
+    "decay": 0.5,
+    "ms": 0.5427
+   },
+   "store_after": "expert store: 500 slots (470 resident, 0 filling, 30 free, 0 pinned)  lookups 4320 hits 1667 (0.386)  fills 2653/2653 ok  runs 5306/5306  evictions 2183 (+0 guard-blocked)"
+  },
+  {
+   "turn": "B",
+   "prompt_tokens": 11,
+   "reused_tokens": 0,
+   "generated": 1,
+   "prefill_mode": "decode",
+   "ttft_ms": 8422.8176,
+   "tok_s": 0,
+   "decode_hit_rate": 0,
+   "prefill_hit_rate": 0.381818182,
+   "decode_nvme_mb": 0,
+   "context": 11,
+   "wall_s": 8.42,
+   "reheat": {
+    "turn": 3,
+    "keys": 15,
+    "free_slots": 0
+   },
+   "reheat_op": {
+    "event": "reheat",
+    "turn": 4,
+    "slots": 485,
+    "warm": 121,
+    "evicted": 15,
+    "keys": 30,
+    "free_slots": 15,
+    "decay": 0.5,
+    "ms": 0.4434
+   },
+   "store_after": "expert store: 500 slots (470 resident, 0 filling, 30 free, 0 pinned)  lookups 6960 hits 2675 (0.384)  fills 4285/4285 ok  runs 8570/8570  evictions 3815 (+0 guard-blocked)"
+  }
+ ]
+}

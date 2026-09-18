@@ -1,15 +1,21 @@
+#include <thread>
+#include <chrono>
 #include "runtime/engine.h"
 
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <format>
+#include <future>
+#include <set>
 
 #include "core/align.h"
 #include "core/log.h"
 #include "gpu/vulkan/moe_kernels.h"   // gpu::default_shader_dir
 #include "gpu/vulkan/prefill_kernels.h"
+#include "runtime/engram_tables.h"
 #include "model/layout.h"
 #include "storage/backend.h"
 
@@ -144,6 +150,14 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
         log_info("engine: profiler -> {}", cfg_.profile_jsonl);
     }
 
+    // ADDITIVE (Track W): the per-dispatch trace. Opened before anything
+    // else touches the device so the query pool below can be sized for it.
+    if (!cfg_.trace_file.empty()) {
+        if (auto r = tracer_.open(cfg_.trace_file); !r) return r;
+        tracer_.bind_stamp(&Engine::trace_stamp, this);
+        log_info("engine: per-dispatch trace -> {}", cfg_.trace_file);
+    }
+
     if (cfg_.model_dir.empty())
         return fail(Err::InvalidArgument, "RuntimeConfig::model_dir is empty");
 
@@ -234,6 +248,54 @@ Result<void> Engine::load_pinned() {
 Result<void> Engine::build_expert_cache() {
     CacheConfig cache = cfg_.cache;
     cache.budget_bytes = cache_budget_;
+    // Path-A headroom, held across the pool build and handed back after it
+    // (docs/p4_hitrate.md, Track F4 §3). The slab pool fills path A until
+    // `vkAllocateMemory` refuses, so on this machine a cache of 3,600 slots or
+    // more takes *every* path-A slab -- and then the GPU prefill, which is
+    // allocated later and only from path A, cannot get its workspace:
+    //
+    //   [WRN] session: GPU prefill failed (resource-exhausted: prefill buffers
+    //   (1203765248 B): vkAllocateMemory(1203765248 B, type 2) failed (-2));
+    //   falling back to the decode path
+    //
+    // at `--cache-slots 4500`, and again for an allocation of 10,584,064 B --
+    // path A was empty, not merely short. The fallback is silent in every
+    // metric except the clock: a 4,133-token prompt took 1,070 s of decode-path
+    // prefill at 3.86 tok/s. `kPathAOther` already reserves this in the
+    // *auto* budget, but `--cache-slots` / `--cache-gb` bypass that arithmetic
+    // entirely, so the reserve has to be taken from the heap, not from a number.
+    //
+    // 4 GiB, not 2. A 2 GiB reserve is enough for a 512-token prompt at a
+    // 4,096-position context (`ho_512_*`: the GPU prefill ran, 43.7 s against
+    // 151 s on the decode path), but the same reserve with `--max-context 8192`
+    // still lost the 1.12 GiB workspace to the same refusal, so roughly another
+    // gigabyte of path A goes to whatever the larger context sizes up front.
+    // 4 GiB covers both measured cases and costs ~214 slots (~0.4 points of hit
+    // on the 8-turn curve) against an order of magnitude of TTFT.
+    //
+    // It is held in `maxMemoryAllocationSize` pieces: one 4 GiB allocation is
+    // refused outright ("4294967296 B exceeds maxMemoryAllocationSize
+    // 2147483648 B"), which is the same 2 GiB cap that made slabs exist
+    // (design §1.1 / §5.3).
+    constexpr uint64_t kPathAReserve = 4ull << 30;
+    constexpr uint64_t kReservePiece = 2ull << 30;
+    std::vector<gpu::GpuBuffer> reserve;
+    for (uint64_t held = 0; held < kPathAReserve; held += kReservePiece) {
+        auto r = alloc_a_.allocate_slab(std::min(kReservePiece, kPathAReserve - held));
+        if (!r) {
+            log_warn("engine: could only hold {} of the {} path-A reserve for the GPU "
+                     "prefill ({}); the cache will take what it can and the prefill may "
+                     "fall back to the decode path",
+                     human_bytes(held), human_bytes(kPathAReserve), r.error().str());
+            break;
+        }
+        reserve.push_back(*r);
+    }
+    struct ReserveGuard {
+        gpu::MemoryAllocator& a; std::vector<gpu::GpuBuffer>& v;
+        ~ReserveGuard() { for (gpu::GpuBuffer& b : v) a.free(b); }
+    } reserve_guard{alloc_a_, reserve};
+
     auto a = alloc_a_.make_slab_backing();
     if (!a) return std::unexpected(a.error());
     std::unique_ptr<store::SlabBacking> b;
@@ -295,6 +357,12 @@ Result<void> Engine::init_gpu() {
         log_warn("engine: path B unavailable ({}); the expert cache is path A only",
                  r.error().str());
 
+    // init() backed the store with HOST memory sized by `--cache-gb` -- 100 GiB
+    // of commit for `--cache-gb 100` -- and build_expert_cache re-backs it on
+    // the GPU paths anyway. Let it go first, or the commit check below counts
+    // the cache twice and refuses (docs/p4_hitrate.md §2).
+    planner_.stop_backfill();
+    store_.reset();
     cache_budget_ = cfg_.cache.budget_bytes;
     if (cache_budget_ == 0) {
         // "As much as the machine will give". On Windows that is the commit
@@ -317,7 +385,15 @@ Result<void> Engine::init_gpu() {
         // set also living there left ~64 GiB of experts and never touched B.
         constexpr uint64_t kCommitMargin = 8ull << 30;
         constexpr uint64_t kPhysFloor    = 12ull << 30;
-        constexpr uint64_t kPathAOther   = 1ull << 30;   // KV, scratch, logits, runners
+        // What else lives on path A and is allocated AFTER the cache: the KV
+        // store (16 MB at a 4,096-position context, but KvStoreConfig grows it
+        // with --max-context, and the parked-session pool holds up to `max_parked`
+        // of them), the GPU prefill's workspace, the decode scratch, the logits
+        // buffer and every pipeline's runner. 1 GiB was the P2 figure for a
+        // 4K-context decode-only run; 3 GiB is what a long context plus a GPU
+        // prefill needs, and it is the difference between "the cache took the
+        // heap" and a prefill that cannot allocate (docs/p4_hitrate.md).
+        constexpr uint64_t kPathAOther   = 3ull << 30;
         const uint64_t avail_commit = store::available_commit_bytes();
         const uint64_t avail_phys   = store::available_physical_bytes();
         std::vector<std::string> pnames = store::pinned_global_tensors(manifest_);
@@ -359,10 +435,24 @@ Result<void> Engine::init_gpu() {
         }
         // What does: a fixed ceiling on path B. Imports failed -- and took the
         // device with them -- at 33 GiB on an idle machine with 50 GB free, and
-        // at 15.8 GiB while another track's GPU test held host-heap memory.
-        // 16 GiB is under both, and puts the auto-sized cache at ~80 GiB.
-        // `--cache-gb` asks for more explicitly, and owns the risk.
-        constexpr uint64_t kPathBAutoCeiling = 16ull << 30;
+        // at 15.8 GiB while another track's GPU test held host-heap memory. The
+        // 16 GiB that was under both put the auto-sized cache at ~80 GiB
+        // (4,500 slots), and the hit-rate curve measured since then says that
+        // is 1.5-2 points of hit and ~1.5 tok/s below what this machine can
+        // hold: `--cache-slots 5,500` (96.3 GiB) ran the 8-turn script at hit
+        // 0.9431 / 6.05 tok/s against 4,500's 0.9234, and 5,600 (98.1 GiB) is
+        // where path B's 20th slab refuses (docs/p4_hitrate.md).
+        //
+        // So the ceiling is 30 GiB, which puts auto at ~92 GiB / ~5,240 slots:
+        // above the 16 GiB that the contended run survived only because the
+        // cache was small, and ~6 GiB under the measured refusal. The other
+        // three bounds above are what protect the contended case -- imported
+        // pages charge physical memory, so `avail_phys - kPhysFloor` shrinks
+        // this machine's path B whenever another track is holding host memory --
+        // and the slab pool stops and logs rather than failing if the OS
+        // refuses early. `--cache-slots` / `--cache-gb` still ask for more
+        // explicitly and own the risk.
+        constexpr uint64_t kPathBAutoCeiling = 30ull << 30;
         b_cache = std::min(b_cache, kPathBAutoCeiling);
         uint64_t want = a_cache + b_cache;
         if (avail_commit) {
@@ -437,12 +527,59 @@ Result<void> Engine::init_gpu() {
         tok_cmd_ = *cb;
     }
     // 40 layers x (attention + MoE) x 2 stamps, two engram layers, the tail.
-    if (auto r = tsq_.create(device_, 256); !r)
+    // ADDITIVE (Track W): tracing stamps every dispatch, not every phase, so
+    // the pool grows to `suggested_pool` -- ~2,800 slots at 40 layers. A query
+    // slot is 8 bytes on the device; the untraced size is unchanged.
+    const uint32_t tsq_slots =
+        tracer_.enabled() ? trace::Tracer::suggested_pool(c.num_hidden_layers) : 256u;
+    if (auto r = tsq_.create(device_, tsq_slots); !r)
         log_warn("engine: no GPU timestamps ({}); the breakdown will be host-only",
                  r.error().str());
 
+    if (tracer_.enabled()) {
+        tracer_.set_period_ns(device_.caps().timestamp_period_ns);
+        tracer_.set_valid_bits(device_.caps().timestamp_valid_bits);
+        layer_.set_tracer(&tracer_);
+    }
+
     build_ced_plan();
     timings_.assign(c.num_hidden_layers, LayerTiming{});
+    if (const char* e = std::getenv("DEEPMOE_ROUTE_DUMP"); e && *e && !route_dump_) {
+        route_dump_ = std::fopen(e, "ab");
+        if (route_dump_) log_info("engine: routing dump -> {}", e);
+        else log_warn("engine: cannot open the routing dump '{}'", e);
+    }
+    route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
+    // docs/p4_hitrate.md §4: on unless DEEPMOE_MOE_OVERLAP=0 (the A/B switch).
+    if (const char* e = std::getenv("DEEPMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
+    // Track Y (docs/p4_resident_routing.md): off | all | stall1. Anything else
+    // is off.
+    if (const char* e = std::getenv("DEEPMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
+        const std::string_view v{e};
+        if (v == "all") resident_only_ = ResidentOnly::All;
+        else if (v == "stall1") resident_only_ = ResidentOnly::Stall1;
+        else if (v != "off" && v != "0" && v != "")
+            log_warn("DEEPMOE_ROUTE_RESIDENT_ONLY={}: expected off|all|stall1, using off", v);
+        if (resident_only_ != ResidentOnly::Off)
+            log_info("route: resident-only={} -- a layer's non-resident experts are "
+                     "dropped and renormalised{}",
+                     resident_only_ == ResidentOnly::All ? "all" : "stall1",
+                     resident_only_ == ResidentOnly::All
+                         ? ", never waited for"
+                         : ", except the single highest-weight one, which is fetched at P0");
+    }
+    // Track Y step 3: the background miss window, in decode steps.
+    if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
+        const int v = std::atoi(e);
+        if (v >= 1 && v <= 1024) rr_queue_steps_ = static_cast<uint32_t>(v);
+        else log_warn("DEEPMOE_RESIDENT_QUEUE_STEPS={}: expected 1..1024, keeping {}", e,
+                      rr_queue_steps_);
+    }
+    if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_EXPERTS"); e && *e) {
+        const int v = std::atoi(e);
+        if (v >= 1 && v <= 4096) rr_outstanding_cap_ = static_cast<uint32_t>(v);
+    }
+    if (const char* e = std::getenv("DEEPMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
     gpu_ready_ = true;
     log_info("engine: gpu ready on {}", device_.caps().device_name);
     return {};
@@ -532,18 +669,14 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
     state_ = std::make_unique<DecodeState>(std::move(*st));
 
     const TextConfig& c = model_cfg_.text;
-    KvStoreConfig kc;
-    kc.layers      = c.num_hidden_layers;
-    kc.window      = c.sliding_window;
-    kc.latent_dim  = c.head_dim;
     // Sized from what the export actually holds, plus the room the remaining
     // steps will need; the compressed half grows by one row a step at ratio 1.
-    kc.index_dim   = c.index_head_dim;
     // The PREFILL record's buffers are max_seq_len // ratio rows (2,074 / 4,149
     // at 4K, 8,513 / 17,026 at 17K) -- more than the widest per-step run
     // `max_compressed()` sees -- and seed_compressed is handed all of them.
-    kc.max_context = std::max<uint32_t>(
-        256, std::max(state_->max_compressed(), state_->max_prefill_rows()) + 64);
+    // Planes on the kv sources only (Track R2, docs/p4_kv_ux.md).
+    KvStoreConfig kc = KvStoreConfig::for_model(
+        c, std::max<uint32_t>(256, std::max(state_->max_compressed(), state_->max_prefill_rows()) + 64));
     if (kc.max_context > kMaxIndexPositions)
         return fail(Err::ResourceExhausted,
                     std::format("the export needs {} compressed positions and the "
@@ -577,9 +710,10 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
 }
 
 Result<void> Engine::reseed_decode_state() {
-    if (!state_ || !prefill_loaded_) return fail(Err::FailedPrecondition, "no decode state is loaded");
+    if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
     kvs_.clear();
     if (auto r = state_->seed_prefill(kvs_); !r) return r;
+    prefill_loaded_ = true;
     history_     = state_->prompt_ids();
     pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
@@ -588,6 +722,15 @@ Result<void> Engine::reseed_decode_state() {
 void Engine::shutdown() {
     // Everything that holds memory from an allocator has to let go before the
     // allocator does, and the allocators before the device.
+    if (route_dump_) { std::fclose(route_dump_); route_dump_ = nullptr; }
+    // ADDITIVE (Track W): the trace's name table and record count are written
+    // on close, so a process that never closes leaves an unreadable file.
+    layer_.set_tracer(nullptr);
+    tracer_.close();
+    // A P3 backfill writes into slab memory from the I/O threads: stop issuing
+    // and let what is in flight land before the slabs go back.
+    planner_.stop_backfill();
+    if (io_.running()) io_.drain();
     state_.reset();
     engram_.destroy();
     moe_.destroy();
@@ -674,6 +817,94 @@ Result<DecodeStepResult> Engine::slow_prefill(std::span<const uint32_t> prompt) 
 
 // --- one decode step --------------------------------------------------------
 
+// --- R1 round 2: per-turn reheat (docs/p4_hitrate.md §7) ---------------------
+
+std::string Engine::HeatOrder::to_string() const {
+    return std::format("reheat turn {}: decay {:.3f}, {} resident experts ranked in {:.1f} ms "
+                       "({} above the floor), {} coldest freed ({} were free), {} keys to the backfill",
+                       turn, decay, slots, ms, warm, evicted, free_slots, passed);
+}
+
+Result<Engine::HeatOrder> Engine::reheat(float decay) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (decay < 0.0f || decay > 1.0f)
+        return fail(Err::InvalidArgument, std::format("reheat decay {} outside [0, 1]", decay));
+
+    const TimePoint t0 = Clock::now();
+    HeatOrder out;
+    out.decay = decay;
+    out.turn = ++reheat_turn_;
+    out.free_slots = store_.free_slots();
+    // The heat the store kept is the same EWMA the planner has been updating for
+    // the chosen experts and the near misses, so it does not need a second
+    // accumulator. Decaying it makes the last turn's routing the newest
+    // information in the order.
+    store_.decay_heat(decay);
+    const std::vector<ExpertKey> heat = store_.heat_order();
+    out.slots = static_cast<uint32_t>(heat.size());
+    // How far down the order is still "this conversation". Everything below is
+    // an expert the router has not wanted for several turns, and it is what the
+    // pass is allowed to reclaim -- but only that: at 5,500 slots a full resident
+    // set is ~1 GB of reads a slot, and a pass that evicted an eighth of it every
+    // turn would spend 12 GB of NVMe on a topic that did not change. `decay_heat`
+    // renormalises, so `head` is ~1.0 and these thresholds mean the same thing
+    // from one turn to the next: 0.05 is a single weak note_heat, 10% of the
+    // hottest expert in the cache.
+    const float head = out.slots ? store_.slot_for(heat.front())->heat : 0.0f;
+    const float floor_heat = std::max(0.05f, 0.1f * head);
+    uint32_t warm = 0;                       // the prefix of the order at/above the floor
+    while (warm < out.slots && store_.slot_for(heat[warm])->heat >= floor_heat) ++warm;
+    // Fill the free slots first; when there are none, reclaim the tail. The tail
+    // is where the previous topic lives, and evicting it is what makes room --
+    // with no decay and no new routing this is exactly what the LRU would have
+    // picked anyway, which is why it is a move of the reheat and not a second
+    // eviction policy.
+    uint32_t want = out.free_slots ? out.free_slots : std::max<uint32_t>(4, out.slots / 32);
+    want = std::min(want, out.slots - warm);
+
+    // What the backfill can actually do something with: keys that are NOT in the
+    // cache. `Planner::backfill_pump` skips every resident key it is handed
+    // (`if (store_->slot_of(key)) continue;`), so an order built resident-first
+    // and then truncated to the budget -- which is what the first version did --
+    // is a list of keys the pump walks straight past. That is why the 2,200-slot
+    // A/B in docs/p4_hitrate.md §7 measured turn 3 decode hit 0.7210 against
+    // 0.7210: on a saturated cache the pass evicted `slots/32` experts and then
+    // fetched nothing, so it was a pure cost (the +32 MB/token of the §8 sweep).
+    //
+    // `StaticHeat` is the startup order (store/static_heat.inc, or a heat file
+    // from the last run); its head is the best available estimate of what a
+    // never-seen-token expert would score, and it is the only signal this
+    // process has about an expert that is not resident -- `heat` lives on the
+    // slot, so an evicted expert's heat is gone with it.
+    std::vector<ExpertKey> order;
+    order.reserve(want + out.free_slots);
+    const std::vector<ExpertKey>& heat_table =
+        heat_order_.empty() ? (heat_order_ = store::static_heat_order()) : heat_order_;
+    for (const ExpertKey& k : heat_table) {
+        if (order.size() >= size_t(want) + out.free_slots) break;
+        if (!store_.resident(k)) order.push_back(k);
+    }
+    // Never evict without a candidate to put in the hole. With no non-resident
+    // candidate left the pass is a no-op rather than a round of eviction the
+    // next turn's misses have to pay back.
+    const uint32_t have = static_cast<uint32_t>(order.size());
+    want = out.free_slots >= have ? 0 : std::min(want, have - out.free_slots);
+    for (uint32_t i = 0; i < want; ++i) {
+        const ExpertKey& k = heat[out.slots - 1 - i];
+        if (store_.evict_key(k)) ++out.evicted;
+    }
+    const uint32_t budget = out.free_slots + out.evicted;
+    if (order.size() > budget) order.resize(budget);
+    out.passed = static_cast<uint32_t>(order.size());
+    out.warm = warm;
+    out.ms = ms_since(t0);
+    if (!order.empty())
+        if (auto r = planner_.start_backfill(std::move(order), /*inflight=*/2, /*keep=*/true); !r)
+            return std::unexpected(r.error());
+    log_info("engine: {}", out.to_string());
+    return out;
+}
+
 Result<void> Engine::embed_token(uint32_t token) {
     const TextConfig& c = model_cfg_.text;
     if (token >= c.vocab_size)
@@ -756,15 +987,60 @@ Result<void> Engine::cmd_submit(TimelineValue wait_value) {
     s.signal_on_complete = true;
     const TimePoint t0 = Clock::now();
     if (auto r = gpu::submit(device_, s); !r) return r;
+    if (open_guard_) { inflight_guard_ = open_guard_; open_guard_ = 0; }
     sub_ms_ += ms_since(t0);
     ++submits_;
+    tracer_.note_submit();
     return {};
+}
+
+// Track R2 (docs/p4_kv_ux.md §2): the deadline on this wait used to be a flat
+// 120 s, which is a POLICY ("the GPU is ours alone"), not a correctness check.
+// A submission that is merely queued behind another process's work is
+// indistinguishable from a wedged device at the semaphore, and 120 s of queueing
+// is ordinary when several builds share this APU -- which is how a 64-step
+// window replay died as `timeline wait for 5579 timed out` after running for
+// 102 s. The budget is now DEEPMOE_GPU_WAIT_S (default 900 s), the wait is
+// taken in slices so a slow machine says so instead of looking hung, and the
+// failure names what it waited for and for how long.
+double Engine::gpu_wait_budget_s() {
+    static const double v = [] {
+        const char* e = std::getenv("DEEPMOE_GPU_WAIT_S");
+        const double x = e ? std::atof(e) : 0.0;
+        return x > 0.0 ? x : 900.0;
+    }();
+    return v;
 }
 
 Result<void> Engine::cmd_wait() {
     const TimePoint t0 = Clock::now();
-    auto r = fence_.wait(fence_value_, std::chrono::seconds(120));
+    const double budget_s = gpu_wait_budget_s();
+    Result<void> r{};
+    bool warned = false;
+    for (;;) {
+        r = fence_.wait(fence_value_, std::chrono::seconds(15));
+        if (r || r.error().code != Err::Cancelled) break;   // done, or a real error
+        const double waited = std::chrono::duration<double>(Clock::now() - t0).count();
+        if (!warned && waited >= 15.0) {
+            warned = true;
+            log_warn("engine: still waiting for GPU fence {} after {:.0f} s (token {}, {} submits "
+                     "this step) -- the queue is shared; giving it {:.0f} s "
+                     "(DEEPMOE_GPU_WAIT_S)", fence_value_, waited, token_, submits_, budget_s);
+        }
+        if (waited >= budget_s) {
+            r = fail(Err::Cancelled,
+                     std::format("the GPU did not signal fence {} within {:.0f} s (token {}, "
+                                 "{} submits this step). A queued submission and a wedged device "
+                                 "look the same here: raise DEEPMOE_GPU_WAIT_S if the machine is "
+                                 "shared", fence_value_, waited, token_, submits_));
+            break;
+        }
+    }
     wait_ms_ += ms_since(t0);
+    if (r && inflight_guard_) {
+        store_.set_completed_timeline(inflight_guard_);
+        inflight_guard_ = 0;
+    }
     return r;
 }
 
@@ -773,6 +1049,7 @@ void Engine::read_timestamps(DecodeStepResult& res) {
     if (tsq_.count() == 0 || tsq_used_ == 0) return;
     auto raw = tsq_.read_range(0, tsq_used_);
     if (!raw) return;
+    tracer_.token_end(raw->data(), tsq_used_, 0);
     const uint32_t bits = device_.caps().timestamp_valid_bits;
     const uint64_t mask = bits >= 64 ? ~0ull : ((1ull << bits) - 1);
     const double   ns   = device_.caps().timestamp_period_ns;
@@ -784,7 +1061,7 @@ void Engine::read_timestamps(DecodeStepResult& res) {
     };
     for (uint32_t L = 0; L < timings_.size(); ++L) {
         timings_[L].attn_ms    = span_ms(ts_attn_[L]);
-        timings_[L].moe_gpu_ms = span_ms(ts_moe_[L]);
+        timings_[L].moe_gpu_ms = span_ms(ts_moe_[L]) + span_ms(ts_moe_early_[L]);
         timings_[L].moe_ms     = timings_[L].moe_gpu_ms + timings_[L].moe_host_ms;
         timings_[L].engram_ms  = engram_host_ms_[L] + span_ms(ts_engram_[L]);
     }
@@ -865,7 +1142,12 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         }
         ts_engram_[L].begin = cmd_stamp();
         const DeviceAddress in = apply_post ? b.xout.addr : b.x.addr;
+        // One record, not two: the gemv and the gate are dispatched inside
+        // EngramRunner::record, which Track W does not own.
+        const uint32_t tr_eg = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Engram, 0,
+                                                    "engram_gemv+gate");
         if (auto r = engram_.record(tok_cmd_, L, in, b.x.addr); !r) return r;
+        trace::close_dispatch(&tracer_, tr_eg);
         ts_engram_[L].end = cmd_stamp();
         apply_post = false;
         st.apply_hc_post = false;
@@ -905,23 +1187,223 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     // Classify them, fetch the misses at P0, wait, host-signal the timeline the
     // MoE dispatch is gated on, then stage and record it.
     const uint32_t topk = c.num_experts_per_tok;
-    const auto* ids = static_cast<const uint32_t*>(b.gate_ids.host);
-    const auto* wts = static_cast<const float*>(b.gate_weights.host);
+    const auto* ids_raw = static_cast<const uint32_t*>(b.gate_ids.host);
+    const auto* wts_raw = static_cast<const float*>(b.gate_weights.host);
+    const uint32_t* ids = ids_raw;
+    const float*    wts = wts_raw;
+
+    // --- Track Y: resident-only routing (docs/p4_resident_routing.md) ------
+    // Drop the gate's non-resident experts, renormalise the rest over what is
+    // left, and hand the dropped ones to the P3 fetcher. `ids`/`wts` below --
+    // the MoE call, the guard, the route dump -- then describe what will
+    // actually be computed, and `kept_*` is the subset the planner sees, so the
+    // LRU is touched only by experts this step really used.
+    uint32_t eff_ids[16];
+    float    eff_w[16];
+    uint16_t kept_ids[16];
+    float    kept_w[16];
+    uint32_t n_kept = topk;
+    for (uint32_t i = 0; i < topk; ++i) {
+        kept_ids[i] = static_cast<uint16_t>(ids_raw[i]);
+        kept_w[i]   = wts_raw[i];
+    }
+    if (resident_only_ != ResidentOnly::Off) {
+        uint8_t res[16];
+        uint32_t n_res = 0;
+        for (uint32_t i = 0; i < topk; ++i) {
+            res[i] = store_.resident(ExpertKey{static_cast<uint16_t>(L),
+                                               static_cast<uint16_t>(ids_raw[i])}) ? 1 : 0;
+            n_res += res[i];
+        }
+        // (A) Stamp the LRU for every REQUESTED expert, resident or not. The
+        // resident ones are stamped by the planner's `lookup` below; a
+        // non-resident one has no slot to stamp, so its request stamp is parked
+        // and handed to the P3 fetch, which is what lands in `last_use_token`
+        // when the expert arrives. docs/p4_resident_routing.md section 8: step
+        // 2 stamped the arrival at SUBMIT time, so an expert that was 5.6 s
+        // late looked like the newest thing in the cache and evicted something
+        // that was actually in use.
+        {
+            const TokenIndex ds = planner_.demand_stamp();
+            for (uint32_t i = 0; i < topk; ++i) {
+                if (res[i]) continue;
+                const ExpertKey k{static_cast<uint16_t>(L), static_cast<uint16_t>(ids_raw[i])};
+                rr_demand_[rr_pack(k)] = ds;   // a re-request overwrites with the newer stamp
+            }
+        }
+        // `stall1`: one P0 fetch a layer, for the missing expert that carries
+        // the most gate weight. At 18.8 MB / 4.5 GB/s that is about 4 ms
+        // against a 2 ms layer -- the cheap middle ground between waiting for
+        // up to six and waiting for none.
+        if (resident_only_ == ResidentOnly::Stall1 && n_res < topk) {
+            uint32_t best = topk;
+            float    bw   = -1.0f;
+            for (uint32_t i = 0; i < topk; ++i)
+                if (!res[i] && wts_raw[i] > bw) { bw = wts_raw[i]; best = i; }
+            if (best < topk) {
+                const ExpertKey k{static_cast<uint16_t>(L),
+                                  static_cast<uint16_t>(ids_raw[best])};
+                const TimePoint s0 = Clock::now();
+                auto pr  = std::make_shared<std::promise<bool>>();
+                auto fut = pr->get_future();
+                // Shared, not captured by reference: `fetch` calls the callback
+                // from the IoEngine thread on its own error paths too.
+                auto f = planner_.fetch(k, IoPriority::BlockingMiss, token_, L,
+                                        [pr](bool ok) { pr->set_value(ok); },
+                                        rr_demand_[rr_pack(k)]);
+                if (f) {
+                    if (fut.wait_for(std::chrono::seconds(30)) == std::future_status::ready &&
+                        fut.get() && store_.resident(k)) {
+                        res[best] = 1;
+                        ++n_res;
+                        ++rr_.stall1_p0;
+                        rr_demand_.erase(rr_pack(k));
+                    }
+                }
+                rr_.stall1_ms += ms_since(s0);
+            }
+        }
+        // Nothing routed is resident: the layer runs on its shared expert alone,
+        // and the seven slots still need one valid pointer-table row, so borrow
+        // any expert this layer does have in the cache. With 5,100 slots over 40
+        // layers this is ~1e-4 of layer-steps (docs/p4_resident_routing.md §2).
+        // A layer with NOTHING resident cannot be expressed that way, so that
+        // one case falls through to the ordinary demand path.
+        uint32_t fill_id = ids_raw[0];
+        bool     usable  = true;
+        if (n_res == 0) {
+            usable = false;
+            for (uint32_t k = 0; k < c.n_routed_experts && !usable; ++k) {
+                const uint32_t e = (ids_raw[0] + k) % c.n_routed_experts;
+                if (store_.resident(ExpertKey{static_cast<uint16_t>(L),
+                                              static_cast<uint16_t>(e)})) {
+                    fill_id = e;
+                    usable  = true;
+                }
+            }
+        }
+        if (usable) {
+            const ResidentRoute rr = resident_route(ids_raw, wts_raw, topk,
+                                                    std::span<const uint8_t>(res, topk),
+                                                    fill_id, eff_ids, eff_w);
+            ++rr_.layers;
+            rr_.requested     += topk;
+            rr_.served        += rr.kept;
+            rr_.skipped       += topk - rr.kept;
+            rr_.mass_lost_sum += rr.mass_lost;
+            rr_.shared_only   += rr.shared_only ? 1 : 0;
+            ids = eff_ids;
+            wts = eff_w;
+            n_kept = 0;
+            for (uint32_t i = 0; i < topk; ++i) {
+                if (!res[i]) continue;
+                kept_ids[n_kept] = static_cast<uint16_t>(ids_raw[i]);
+                kept_w[n_kept]   = eff_w[i];
+                ++n_kept;
+            }
+            // The misses go to the background fetcher -- but only once this
+            // layer's slots are guarded, or a P3 eviction could take a slot the
+            // dispatch is about to read. Queued here, issued at the bottom of
+            // the layer (`flush_resident_backfill`).
+            rr_pending_.clear();
+            for (uint32_t i = 0; i < topk; ++i)
+                if (!res[i])
+                    rr_pending_.push_back(ExpertKey{static_cast<uint16_t>(L),
+                                                    static_cast<uint16_t>(ids_raw[i])});
+        }
+    }
+    MoeCall call;
+    call.layer   = L;
+    call.ids     = ids;
+    call.weights = wts;
+    call.topk    = topk;
+    call.x       = layer_.ffn_norm_out();                  // ffn_norm output
+    call.y       = nullptr;                                // stays on the GPU
+    call.hidden  = c.hidden_size;
+    // Track R1 (docs/p4_hitrate.md §4): when this layer waits on NVMe, dispatch
+    // A over what is already resident -- the hits and the shared expert -- is
+    // submitted before the wait instead of after it. `late` is what it did not
+    // cover.
+    layer_guard_pending_ = false;
+    bool split = false;
+    uint32_t late[16];
+    uint32_t n_late = 0;
+    bool staged = false;   // stage_input has run for this layer
     {
         const TimePoint g0 = Clock::now();
         uint16_t chosen[16];
         for (uint32_t i = 0; i < topk; ++i) chosen[i] = static_cast<uint16_t>(ids[i]);
+        if (route_dump_)
+            std::memcpy(route_ids_.data() + size_t(L) * topk, chosen, topk * sizeof(uint16_t));
+        // design §9.3: the gate kernel already wrote the top-16 ids AND their raw
+        // scores into the same two host-coherent buffers (gpu/shaders/gate.slang
+        // stage 1, GatePush::record = 16), and the Planner's heat EWMA is defined
+        // over them -- "so a bursty expert survives one bad round". They were
+        // never passed, so every slot's heat stayed at exactly 0 in the decode
+        // path: the reheat pass (docs/p4_hitrate.md §7) had nothing to rank, and
+        // any future score-aware policy would have been ranking zeros. Entries
+        // [topk, 16) carry the RAW score (only the first six are normalised by
+        // route_scale, gate.slang), which is what the EWMA wants.
+        uint16_t near_ids[16];
+        float    near_scores[16];
+        // The heat EWMA is defined over the GATE's own top-16 and raw scores, not
+        // over what residency let through, so it reads the untouched buffers.
+        for (uint32_t i = 0; i < 16; ++i) {
+            near_ids[i]    = static_cast<uint16_t>(ids_raw[i]);
+            near_scores[i] = wts_raw[i];
+        }
         store::RouteDecision route;
-        route.layer   = L;
-        route.chosen  = std::span<const uint16_t>(chosen, topk);
-        route.weights = std::span<const float>(wts, topk);
+        route.layer       = L;
+        // Resident-only mode hands the planner exactly the experts the dispatch
+        // will use, so the LRU is never touched by one that was skipped.
+        route.chosen      = std::span<const uint16_t>(kept_ids, n_kept);
+        route.weights     = std::span<const float>(kept_w, n_kept);
+        route.near_ids    = std::span<const uint16_t>(near_ids, 16);
+        route.near_scores = std::span<const float>(near_scores, 16);
         auto plan = planner_.plan_layer(route, token_);
         if (!plan) return std::unexpected(plan.error());
         t.hits       = static_cast<uint32_t>(plan->hits.size());
         t.misses     = static_cast<uint32_t>(plan->misses.size());
         t.miss_bytes = plan->miss_bytes;
-        if (!plan->issued.empty()) io_.drain();
-        t.gate_ms = ms_since(g0);
+        t.gate_ms    = ms_since(g0);
+        if (overlap_ && (!plan->issued.empty() || !plan->joined.empty())) {
+            if (auto r = moe_.stage_input(call); !r) return r;
+            staged = true;
+            uint32_t early[16];
+            uint32_t n_early = 0;
+            for (uint32_t s = 0; s < topk; ++s) {
+                const ExpertKey key{static_cast<uint16_t>(L), static_cast<uint16_t>(ids[s])};
+                if (store_.resident(key)) early[n_early++] = s;
+                else late[n_late++] = s;
+            }
+            if (n_late) {
+                // The eviction guard (design §5.3, docs/p2_decode.md §13): the
+                // early slots are read by a buffer that is in flight while the
+                // host waits, so nothing may recycle them until the buffer that
+                // carries dispatch B -- the last reader -- has completed.
+                guard_layer(L, std::span<const uint32_t>(early, n_early), ids);
+                if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(early, n_early)); !r)
+                    return r;
+                early[n_early++] = topk;                        // the shared expert
+                if (auto r = cmd_open(); !r) return r;
+                const TimePoint r0 = Clock::now();
+                ts_moe_early_[L].begin = cmd_stamp();
+                const uint32_t tr_me = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe,
+                                                            0, "moe_gateup_early");
+                if (auto r = moe_.record_gateup(tok_cmd_, std::span<const uint32_t>(early, n_early)); !r)
+                    return r;
+                trace::close_dispatch(&tracer_, tr_me);
+                ts_moe_early_[L].end = cmd_stamp();
+                rec_ms_ += ms_since(r0);
+                if (auto r = cmd_submit(0); !r) return r;
+                split = true;
+            }
+        }
+        {
+            const TimePoint w0 = Clock::now();
+            if (auto r = planner_.wait_layer(*plan); !r) return std::unexpected(r.error());
+            t.gate_ms += ms_since(w0);
+        }
         // Every routed expert must be resident now. When one is not, say how
         // it got that way -- a hit that a later miss in the same layer evicted
         // and a fill whose read failed look identical at the MoE dispatch.
@@ -948,15 +1430,25 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     }
     profiler_.add_phase(Phase::NvmeStall, Nanos(int64_t(t.gate_ms * 1e6)));
 
-    MoeCall call;
-    call.layer   = L;
-    call.ids     = ids;
-    call.weights = wts;
-    call.topk    = topk;
-    call.x       = layer_.ffn_norm_out();                  // ffn_norm output
-    call.y       = nullptr;                                // stays on the GPU
-    call.hidden  = c.hidden_size;
-    if (auto r = moe_.stage(call); !r) return r;
+    if (split) {
+        // The early dispatch reads the alternate slot list while it runs; it is
+        // done by now in all but a pathological case, and this wait proves it
+        // before the list is rewritten for the late slots.
+        if (auto r = cmd_wait(); !r) return r;
+        guard_layer(L, std::span<const uint32_t>(late, n_late), ids);
+        if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(late, n_late)); !r) return r;
+    } else {
+        uint32_t all[16];
+        for (uint32_t s = 0; s < topk; ++s) all[s] = s;
+        guard_layer(L, std::span<const uint32_t>(all, topk), ids);
+        if (staged) {
+            if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(all, topk)); !r) return r;
+        } else if (auto r = moe_.stage(call); !r) {
+            return r;
+        }
+    }
+    // stage_input resets the bridge's timing and stage_rows adds to it, so this
+    // is the whole layer's host half whichever way it ran.
     t.moe_host_ms = moe_.timing().host_ms;
     mx_ms_ += moe_.timing().x_read_ms;
     mq_ms_ += moe_.timing().quant_ms;
@@ -966,10 +1458,29 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     {
         const TimePoint r0 = Clock::now();
         ts_moe_[L].begin = cmd_stamp();
-        if (auto r = moe_.record(tok_cmd_); !r) return r;
+        if (split) {
+            const uint32_t tr_a = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 1,
+                                                       "moe_gateup");
+            if (auto r = moe_.record_gateup(tok_cmd_, std::span<const uint32_t>(late, n_late)); !r)
+                return r;
+            trace::close_dispatch(&tracer_, tr_a);
+            const uint32_t tr_b = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 2,
+                                                       "moe_down");
+            if (auto r = moe_.record_down(tok_cmd_); !r) return r;
+            trace::close_dispatch(&tracer_, tr_b);
+        } else {
+            // gate/up, h-quant and down, all recorded inside MoeBridge::record.
+            const uint32_t tr_m = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 3,
+                                                       "moe_gateup+hquant+down");
+            if (auto r = moe_.record(tok_cmd_); !r) return r;
+            trace::close_dispatch(&tracer_, tr_m);
+        }
         ts_moe_[L].end = cmd_stamp();
         rec_ms_ += ms_since(r0);
     }
+    // This buffer is the last reader of the layer's slots.
+    open_guard_ = layer_guard_;
+    flush_resident_backfill(L);
     profiler_.note_hot_bytes(layer_hot_bytes_[L]);
 
     // A probe reads this layer's MoE output on the host, so it cannot wait
@@ -1022,8 +1533,20 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     ts_tail_.begin = cmd_stamp();
     auto rec = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                    uint32_t groups) -> Result<void> {
+        const uint32_t tr = trace::open_dispatch(&tracer_, trace::kNoLayer, trace::Cls::Tail,
+                                                 uint16_t(s), gpu::attn_stage_name(s));
         if (auto r = attn_.record(tok_cmd_, s, push, bytes, groups); !r) return r;
+        trace::close_dispatch(&tracer_, tr);
         return tok_cmd_.barrier();
+    };
+    auto rec_dec = [&](gpu::DecodeStage s, const void* push, uint32_t bytes,
+                       uint32_t groups) -> Result<void> {
+        const uint32_t tr = trace::open_dispatch(&tracer_, trace::kNoLayer, trace::Cls::Tail,
+                                                 uint16_t(0x100u + uint32_t(s)),
+                                                 gpu::decode_stage_name(s));
+        if (auto r = dec_.record(tok_cmd_, s, push, bytes, groups); !r) return r;
+        trace::close_dispatch(&tracer_, tr);
+        return {};
     };
     if (auto r = rec(gpu::AttnStage::MhcClose, &mp, sizeof mp, n_wg0); !r)
         return std::unexpected(r.error());
@@ -1032,7 +1555,7 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     if (auto r = rec(gpu::AttnStage::Head, &hp, sizeof hp,
                      attn_.gemv_groups(gpu::AttnStage::Head, c.vocab_size)); !r)
         return std::unexpected(r.error());
-    if (auto r = dec_.record(tok_cmd_, gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
+    if (auto r = rec_dec(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
         return std::unexpected(r.error());
     // Track P: a sampled step also reduces the logits to their top set and the
     // tail mass (gpu/shaders/sample_topk.slang), in the same buffer.
@@ -1045,7 +1568,7 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
         gpu::TopKPush kp{c.vocab_size, kTopKDefaultK, 1.0f / sampling_.temperature,
                          kTopKBinsPerLogit};
         if (auto r = tok_cmd_.barrier(); !r) return std::unexpected(r.error());
-        if (auto r = dec_.record(tok_cmd_, gpu::DecodeStage::SampleTopK, &kp, sizeof kp, 1); !r)
+        if (auto r = rec_dec(gpu::DecodeStage::SampleTopK, &kp, sizeof kp, 1); !r)
             return std::unexpected(r.error());
     }
     ts_tail_.end = cmd_stamp();
@@ -1151,17 +1674,18 @@ uint32_t Engine::max_context() const {
 Result<void> Engine::begin_session(const SessionConfig& sc) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     const TextConfig& c = model_cfg_.text;
-    KvStoreConfig kc;
-    kc.layers      = c.num_hidden_layers;
-    kc.window      = c.sliding_window;
-    kc.latent_dim  = c.head_dim;
-    kc.index_dim   = c.index_head_dim;
-    kc.max_context = std::min<uint32_t>(std::max<uint32_t>(sc.max_context, 256), kMaxIndexPositions);
+    // Track R2: planes on the kv sources only, allocated for 4,096 positions
+    // and grown by the store as the context does.
+    const uint32_t limit = std::min<uint32_t>(std::max<uint32_t>(sc.max_context, 256), kMaxIndexPositions);
+    KvStoreConfig kc = KvStoreConfig::for_model(c, limit, std::min<uint32_t>(limit, 4096));
     if (auto r = kvs_.create(alloc_a_, kc); !r) return r;
-    auto tables = EngramTables::load(sc.engram_tables_dir);
+    auto tables = sc.engram_tables_dir.empty() ? derive_engram_tables(cfg_.model_dir, c)
+                                               : EngramTables::load(sc.engram_tables_dir);
     if (!tables)
         return fail(tables.error().code,
-                    std::format("engram tables from '{}': {}", sc.engram_tables_dir,
+                    std::format("engram tables from '{}': {}",
+                                sc.engram_tables_dir.empty() ? cfg_.model_dir + "/tokenizer.json"
+                                                             : sc.engram_tables_dir,
                                 tables.error().message));
     if (auto r = engram_.create(device_, alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
                                 *std::move(tables)); !r)
@@ -1169,8 +1693,39 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     state_.reset();
     produce_ced_ = true;
     reset_context();
-    log_info("engine: session -- KV store {} for {} positions, engram tables from {}",
-             human_bytes(kvs_.bytes()), max_context(), sc.engram_tables_dir);
+    bool backfill = sc.backfill;
+    if (const char* e = std::getenv("DEEPMOE_BACKFILL"); e && *e) backfill = *e != '0';
+    // One heat order for the whole process: the startup P3 backfill and every
+    // later reheat pass rank non-resident experts by the same table, so
+    // `DEEPMOE_HEAT_FILE` (tools/hitrate_bench.py --write-heat / --heat-recent)
+    // steers both instead of only the first fill.
+    if (heat_order_.empty()) {
+        if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
+            heat_order_ = store::static_heat_order(hf);
+        if (heat_order_.empty()) heat_order_ = store::static_heat_order();
+    }
+    if (backfill && store_.free_slots() > 0) {
+        std::vector<ExpertKey> order = heat_order_;
+        if (auto r = planner_.start_backfill(std::move(order)); !r)
+            log_warn("engine: backfill: {}", r.error().str());
+        else
+            log_info("engine: P3 backfill started into {} free slots", store_.free_slots());
+    }
+    log_info("engine: session -- KV store {} in {} slab(s) (largest {}) for {} positions at "
+             "capacity {}, engram tables from {}",
+             human_bytes(kvs_.bytes()), kvs_.slabs(), human_bytes(kvs_.largest_slab()),
+             max_context(), kvs_.capacity(),
+             sc.engram_tables_dir.empty() ? std::string("derived from tokenizer.json") : sc.engram_tables_dir);
+    return {};
+}
+
+Result<void> Engine::set_context_tokens(std::span<const uint32_t> tokens) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (tokens.size() > max_context())
+        return fail(Err::ResourceExhausted,
+                    std::format("{} tokens against a {}-position context", tokens.size(), max_context()));
+    history_.assign(tokens.begin(), tokens.end());
+    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 
@@ -1256,11 +1811,74 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     if (auto r = pf.create(device_, alloc_a_, runner, manifest_, shards_, io_, pinned_, c,
                            &engram_.tables(), pc); !r)
         return std::unexpected(r.error());
+
+    // Track R1 (docs/p4_hitrate.md §3): the experts the prefill streams land in
+    // the decode cache under design §9.7.3's rule -- what a global LRU over the
+    // prompt's routing table in token order would keep -- and a cached expert
+    // is computed from where it is instead of being read again. Stamps are the
+    // token-major access order `base + (pos * layers + layer) * topk + rank`.
+    const uint64_t n_layers = c.num_hidden_layers, k6 = c.num_experts_per_tok;
+    const TokenIndex stamp_base = planner_.reserve_stamps(uint64_t(prompt.size()) * n_layers * k6);
+    struct Held { store::StreamAdmit a; TokenIndex stamp = 0; TimelineValue guard = 0; bool open = false; };
+    std::vector<Held> held;
+    std::set<TimelineValue> open_guards;   // of reservations not yet computed
+    gpu::PfExpertSink sink;
+    sink.reserve = [&](uint32_t layer, uint32_t expert, uint32_t pos, uint32_t rank) {
+        gpu::PfExpertSink::Dest d;
+        if (!handoff_) return d;   // DEEPMOE_PREFILL_HANDOFF=0: the transit, as before
+        const TokenIndex stamp = stamp_base + (uint64_t(pos) * n_layers + layer) * k6 + rank;
+        const TimelineValue guard = ++guard_clock_;
+        auto a = planner_.admit_streamed({static_cast<uint16_t>(layer), static_cast<uint16_t>(expert)},
+                                         stamp, guard);
+        if (!a) {
+            log_warn("engine: prefill handoff of ({}, {}): {}", layer, expert, a.error().str());
+            return d;
+        }
+        if (a->kind == store::StreamKind::Drop) return d;
+        d.kind = a->kind == store::StreamKind::Fill ? gpu::PfExpertSink::Kind::Fill
+                                                    : gpu::PfExpertSink::Kind::Resident;
+        d.host = a->addr.host_ptr;
+        d.dev  = a->addr.dev_addr;
+        d.cookie = held.size();
+        held.push_back({*a, stamp, guard, true});
+        open_guards.insert(guard);
+        return d;
+    };
+    sink.release = [&](uint32_t, uint32_t, const gpu::PfExpertSink::Dest& d, bool ok) {
+        Held& hd = held[d.cookie];
+        if (!hd.open) return;
+        hd.open = false;
+        open_guards.erase(hd.guard);
+        if (auto r = planner_.finish_streamed(hd.a, ok, hd.stamp); !r)
+            log_warn("engine: prefill handoff settle: {}", r.error().str());
+        // Batch i+1's reservations are made before batch i computes, so only
+        // the guards below the oldest reservation still waiting may retire.
+        store_.set_completed_timeline(open_guards.empty() ? guard_clock_ : *open_guards.begin() - 1);
+    };
+    pf.expert_sink = &sink;
+    const store::PlannerStats ps0 = planner_.stats();
     auto h = pf.run(prompt);
+    pf.expert_sink = nullptr;
+    // A failed prefill leaves reservations open: release them (a Fill whose
+    // bytes may be partial is dropped) so no slot stays Filling.
+    for (Held& hd : held)
+        if (hd.open) {
+            (void)planner_.finish_streamed(hd.a, false, hd.stamp);
+            hd.open = false;
+        }
+    store_.set_completed_timeline(guard_clock_);
     if (!h) return std::unexpected(h.error());
     const gpu::PrefillTimes tm = pf.times();
     pf.destroy();
     runner.destroy();
+    {
+        const store::PlannerStats ps1 = planner_.stats();
+        log_info("engine: prefill handoff -- {} experts already cached, {} kept, {} dropped; "
+                 "cache {} resident of {}", ps1.streamed_resident - ps0.streamed_resident,
+                 ps1.streamed_filled - ps0.streamed_filled,
+                 ps1.streamed_dropped - ps0.streamed_dropped, store_.stats().resident,
+                 store_.slot_count());
+    }
     if (auto r = seed_from_prefill(*h); !r) return std::unexpected(r.error());
 
     DecodeStepResult res;
@@ -1298,6 +1916,7 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     const TextConfig& c = model_cfg_.text;
 
     profiler_.token_begin(position);
+    tracer_.token_begin(position);
     const TimePoint t_start = Clock::now();
 
     if (history_.size() <= position) history_.resize(position + 1, 0);
@@ -1323,6 +1942,7 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     timings_.assign(c.num_hidden_layers, LayerTiming{});
     ts_attn_.assign(c.num_hidden_layers, Stamp{});
     ts_moe_.assign(c.num_hidden_layers, Stamp{});
+    ts_moe_early_.assign(c.num_hidden_layers, Stamp{});
     ts_engram_.assign(c.num_hidden_layers, Stamp{});
     engram_host_ms_.assign(c.num_hidden_layers, 0.0);
     ts_tail_   = Stamp{};
@@ -1386,8 +2006,33 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     profiler_.add_phase(Phase::ExpertHit,
                         Nanos(int64_t((bd.moe_gpu_ms + bd.moe_host_ms) * 1e6)));
     res->record  = profiler_.token_end();
+    if (route_dump_) write_route_record(position);
     ++token_;
     return res;
+}
+
+// One record: u32 step (the LRU clock `token_`), u32 position, u16[layers x
+// topk] gate ids in gate order, u8[layers] hits. 528 B at 40 x 6.
+void Engine::guard_layer(uint32_t layer, std::span<const uint32_t> slots, const uint32_t* ids) {
+    if (!layer_guard_pending_) {
+        layer_guard_ = ++guard_clock_;
+        layer_guard_pending_ = true;
+    }
+    for (uint32_t s : slots) {
+        const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(ids[s])};
+        if (auto slot = store_.slot_of(key)) (void)store_.set_guard(*slot, layer_guard_);
+    }
+}
+
+void Engine::write_route_record(uint32_t position) {
+    const uint32_t step = static_cast<uint32_t>(token_);
+    std::vector<uint8_t> hits(timings_.size());
+    for (size_t L = 0; L < timings_.size(); ++L) hits[L] = static_cast<uint8_t>(timings_[L].hits);
+    std::fwrite(&step, sizeof step, 1, route_dump_);
+    std::fwrite(&position, sizeof position, 1, route_dump_);
+    std::fwrite(route_ids_.data(), sizeof(uint16_t), route_ids_.size(), route_dump_);
+    std::fwrite(hits.data(), 1, hits.size(), route_dump_);
+    std::fflush(route_dump_);
 }
 
 Result<SampleResult> Engine::decode_step() {
@@ -1456,6 +2101,123 @@ Result<double> Engine::measure_submit_overhead(uint32_t iterations) {
     return ms_since(t0) / iterations;
 }
 
+// Track Y: the dropped experts, at the lowest priority class that still fills
+// the cache. `Planner::fetch` reclaims an LRU slot when the cache is full --
+// which is the point: without an eviction the resident set would freeze at
+// whatever the prefill left and resident-only routing would never refresh.
+// Nothing here is waited on; a refusal (nothing evictable, or the class already
+// saturated) is counted and dropped.
+Result<uint32_t> Engine::warm_cache_from_heat(std::chrono::seconds timeout) {
+    if (heat_order_.empty()) {
+        if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
+            heat_order_ = store::static_heat_order(hf);
+        if (heat_order_.empty()) heat_order_ = store::static_heat_order();
+    }
+    if (store_.free_slots() == 0) return store_.stats().resident;
+    std::vector<ExpertKey> order = heat_order_;
+    // QD 8, the depth docs/p4_resident_routing.md's time model assumes, rather
+    // than the conversational default of 2: nothing else is running.
+    if (auto r = planner_.start_backfill(std::move(order), 8); !r) return std::unexpected(r.error());
+    const TimePoint t0 = Clock::now();
+    while (store_.free_slots() > 0 && planner_.backfill_active()) {
+        if (Clock::now() - t0 > timeout) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    planner_.stop_backfill();
+    // The fills in flight when the order stopped still settle; give them the
+    // read they are already doing before the first token looks at residency.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    return store_.stats().resident;
+}
+
+// (B) The bounded background miss queue (docs/p4_resident_routing.md section 8).
+//
+// Step 2 handed every miss straight to `Planner::fetch`, and the IoEngine's P3
+// queue has no bound: 19,356 experts went in, the drive ran flat out at 4.1
+// GB/s, and the mean P3 latency came out at 5,594 ms against a 100 ms step --
+// so what the drive was reading had been wanted 56 steps earlier, and the cache
+// it filled was a cache for a conversation that had already moved on.
+//
+// The fix is not more bandwidth (there is none) but a shorter queue: keep only
+// the misses of the most recent `rr_queue_steps_` steps, drop the rest
+// unissued, and drain what is left NEWEST-first with at most
+// `rr_outstanding_cap_` experts out at the drive at a time. The drive moves the
+// same number of bytes either way; this decides which bytes.
+void Engine::flush_resident_backfill(uint32_t layer) {
+    if (resident_only_ == ResidentOnly::Off && rr_pending_.empty() && rr_queue_.empty()) return;
+    for (const ExpertKey& key : rr_pending_) rr_queue_.push_back(RrMiss{key, token_});
+    rr_pending_.clear();
+
+    const uint64_t cutoff = resident_queue_cutoff(token_, rr_queue_steps_);
+    while (!rr_queue_.empty() && rr_queue_.front().step < cutoff) {
+        rr_demand_.erase(rr_pack(rr_queue_.front().key));
+        rr_queue_.pop_front();
+        ++rr_.bg_stale;
+    }
+    rr_.bg_depth_sum += rr_queue_.size();
+    ++rr_.bg_depth_n;
+    if (rr_queue_.size() > rr_.bg_depth_peak)
+        rr_.bg_depth_peak = static_cast<uint32_t>(rr_queue_.size());
+
+    while (!rr_queue_.empty() &&
+           rr_outstanding_.load(std::memory_order_relaxed) < rr_outstanding_cap_ &&
+           io_.inflight_chunks(IoPriority::Backfill) < rr_inflight_cap_) {
+        const RrMiss m = rr_queue_.back();          // newest first
+        rr_queue_.pop_back();
+        // It landed on an earlier request, or is already being filled.
+        if (store_.resident(m.key) || store_.slot_of(m.key)) {
+            rr_demand_.erase(rr_pack(m.key));
+            continue;
+        }
+        TokenIndex stamp = 0;
+        if (auto it = rr_demand_.find(rr_pack(m.key)); it != rr_demand_.end()) stamp = it->second;
+        rr_outstanding_.fetch_add(1, std::memory_order_relaxed);
+        const TimePoint q0 = Clock::now();
+        auto f = planner_.fetch(m.key, IoPriority::Backfill, token_, layer,
+                                [this, q0](bool) {
+                                    // IoEngine dispatcher thread: counters only.
+                                    rr_outstanding_.fetch_sub(1, std::memory_order_relaxed);
+                                    rr_fetch_ns_.fetch_add(
+                                        static_cast<uint64_t>((Clock::now() - q0).count()),
+                                        std::memory_order_relaxed);
+                                    rr_fetch_done_.fetch_add(1, std::memory_order_relaxed);
+                                },
+                                stamp);
+        if (f) {
+            ++rr_.bg_enqueued;
+            rr_demand_.erase(rr_pack(m.key));
+        } else {
+            rr_outstanding_.fetch_sub(1, std::memory_order_relaxed);
+            ++rr_.bg_refused;
+        }
+    }
+}
+
+std::string Engine::resident_route_report() const {
+    if (resident_only_ == ResidentOnly::Off && rr_.layers == 0)
+        return std::string("route     resident-only=off\n");
+    const uint64_t done = rr_fetch_done_.load(std::memory_order_relaxed);
+    const double   lat  = done ? double(rr_fetch_ns_.load(std::memory_order_relaxed)) /
+                                 double(done) / 1e6
+                               : 0.0;
+    return std::format(
+        "route     resident-only={} over {} layer-steps\n"
+        "  experts requested {}  served {} ({:.4f})  skipped {}\n"
+        "  gate mass lost    {:.4f} mean over those layer-steps\n"
+        "  shared-expert-only layer-steps {}\n"
+        "  background enqueued {}  refused {}  dropped stale {}\n"
+        "  background queue depth mean {:.1f} peak {} (window {} steps, cap {} experts)\n"
+        "  background fetch latency mean {:.1f} ms over {} completions\n"
+        "  stall1 P0 fetches {}  {:.1f} ms total\n",
+        resident_only_ == ResidentOnly::Stall1
+            ? "stall1"
+            : (resident_only_ == ResidentOnly::All ? "all" : "off"),
+        rr_.layers, rr_.requested, rr_.served, rr_.served_frac(), rr_.skipped,
+        rr_.mass_lost(), rr_.shared_only, rr_.bg_enqueued, rr_.bg_refused, rr_.bg_stale,
+        rr_.bg_depth_mean(), rr_.bg_depth_peak, rr_queue_steps_, rr_outstanding_cap_,
+        lat, done, rr_.stall1_p0, rr_.stall1_ms);
+}
+
 std::span<const float> Engine::last_logits() const {
     if (!logits_.valid()) return {};
     return {static_cast<const float*>(logits_.host_ptr), model_cfg_.text.vocab_size};
@@ -1499,3 +2261,4 @@ std::string Engine::status() const {
 }
 
 }  // namespace deepmoe::runtime
+

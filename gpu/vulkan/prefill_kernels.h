@@ -67,7 +67,9 @@ struct PfKernel {
     uint32_t tile  = 8;
     uint32_t extra0 = 0;    // prefill_coopmat: CmRows
     uint32_t extra1 = 0;    // prefill_coopmat: CmCols
-    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1); }
+    uint32_t extra2 = 0;    // prefill_coopmat: CmTokTiles (0 = 2)
+    uint32_t extra3 = 0;    // prefill_coopmat: CmRowTilesPerWg (0 = 1)
+    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1, extra2, extra3); }
     bool operator<(const PfKernel& o) const { return key() < o.key(); }
 };
 
@@ -93,7 +95,10 @@ struct PfJob {
 };
 
 // prefill_coopmat.slang
-struct PfCoopPush { uint32_t n = 0, k = 0, idx_off = 0, flags = 0; };
+struct PfCoopPush {
+    uint32_t n = 0, k = 0, idx_off = 0, flags = 0, row0 = 0, x_off = 0;
+    uint32_t x_stride = 0, x_col0 = 0, y_stride = 0, y_row0 = 0;   // stage 0: 0 = K, 0, R, 0
+};
 enum : uint32_t { kPcW = 0, kPcX = 1, kPcY = 2, kPcQ = 3, kPcQS = 4, kPcIdx = 5 };
 
 // --- host helpers shared by the driver, the test and the bench ---------------
@@ -119,6 +124,11 @@ struct PfExpert {
 Result<PfExpert> pf_load_expert(MemoryAllocator& alloc, const Manifest& manifest,
                                 const store::ShardSet& shards, storage::IoEngine& io,
                                 ExpertKey key);
+
+// Rows of slack on every plane a cooperative-matrix GEMM stages into: one
+// workgroup covers 16 * CmTokTiles (<= 128) tokens, so the last workgroup of a
+// dispatch touches up to that many rows past the real row count.
+inline constexpr uint64_t kPfRowSlack = 160;
 
 inline constexpr uint32_t kPfSlotsPerKernel = 32;
 inline constexpr uint32_t kPfKernelStride   = kPfSlotsPerKernel * sizeof(uint64_t);
@@ -229,6 +239,32 @@ struct PrefillConfig {
     uint32_t coopmat_dense_min_rows = 64;
     // Validation only: hand every layer's per-stage buffers to `probe`.
     bool     probe_layers = false;
+    // Band attention on cooperative-matrix tiles (docs/p4_prefill_speed.md §3):
+    // gather, tile scores, softmax, tile P.V, finish, one submit. false = the
+    // per-(head, query) kernel of docs/p3_prefill.md §6.
+    bool     attn_coop = true;
+    // 16-head tiles per workgroup of the two tile stages (1, 2 or 4).
+    uint32_t attn_head_tiles = 1;
+    // 16-dim output tiles held at once by the P.V stage (1, 2, 4 or 8). The
+    // contraction there is over the entries and the output index is the dim, so
+    // one dim tile at a time walks the gathered KV plane with a 16 KiB stride
+    // and re-reads it head_dim/16 times. > 1 forces attn_head_tiles = 1 for
+    // that stage (accumulators) and is the geometry docs/p4_prefill_speed.md
+    // §3.1 measures.
+    uint32_t attn_pv_dim_tiles = 4;
+    // sqrtsoftplus + noaux_tc top-6 on the GPU (prefill_elem stage 11) instead
+    // of reading all n x 384 gate scores back and sorting them on the host.
+    // false = the host path, which is the correctness reference.
+    bool     gate_topk_gpu = true;
+    // 16-token tiles per workgroup of the cooperative-matrix GEMM
+    // (prefill_coopmat stage 0's CmTokTiles, 1..8). The weight tile is loaded
+    // once per workgroup and reused by every token tile it holds, so the WEIGHT
+    // traffic of a GEMM is ceil(n / (16 * this)) passes over the matrix: at
+    // n = 512 and the old value of 2 that was 16 passes over wq_b's 84 MB.
+    uint32_t coop_tok_tiles = 8;
+    // wo_a (and any grouped linear) on cooperative matrix instead of the
+    // tiled GEMV. false = the pre-F3 path, which is the reference.
+    bool     coop_grouped_dense = true;
 };
 
 // What a decode engine inherits (docs/p3_prefill.md §8.1).
@@ -260,6 +296,8 @@ struct PrefillTimes {
     double shared_expert = 0, expert_io = 0, expert_gpu = 0, host = 0, head = 0, total = 0;
     uint64_t expert_bytes = 0, engram_reads = 0;
     uint32_t experts_read = 0, dispatches = 0, submits = 0;
+    // Of per_op: entries measured by GPU timestamps inside a multi-dispatch
+    // submit carry a "gpu: " prefix (GPU time only, no submit or wait).
     // Wall time of every single-dispatch op (submit + wait), by kernel shape:
     // "gemm RxK w<fmt> x<fmt>" or "<shader> s<stage>". ms and calls.
     std::map<std::string, std::pair<double, uint32_t>> per_op;
@@ -299,6 +337,25 @@ namespace deepmoe::runtime { struct EngramTables; }
 
 namespace deepmoe::gpu {
 
+// ADDITIVE (Track R1, docs/p4_hitrate.md §3; docs/p3_prefill.md §3.4 / §8.3
+// item 3): where the routed experts this prefill streams come from and go to.
+// Null = the prefill's own transit, every expert read and dropped (as before).
+struct PfExpertSink {
+    enum class Kind : uint8_t { Drop = 0, Fill, Resident };
+    struct Dest {
+        Kind     kind = Kind::Drop;
+        void*    host = nullptr;     // the slot base, Fill: the runs go at run.slot_offset
+        uint64_t dev  = 0;           // the slot base (Fill and Resident)
+        uint64_t cookie = 0;         // the sink's own
+    };
+    // Before an expert's read is issued. `last_pos` is the absolute prompt
+    // position of the LAST row routed to it and `last_slot` its rank in that
+    // row's top-6. Resident = no read; Fill = read into the slot; Drop = transit.
+    std::function<Dest(uint32_t layer, uint32_t expert, uint32_t last_pos, uint32_t last_slot)> reserve;
+    // After the batch that computed from `d` has run (`ok`), or its read failed.
+    std::function<void(uint32_t layer, uint32_t expert, const Dest& d, bool ok)> release;
+};
+
 class Prefill {
 public:
     Prefill() = default;
@@ -317,6 +374,7 @@ public:
     Result<PrefillHandoff> run(std::span<const uint32_t> prompt);
 
     std::function<void(const PrefillProbe&)> probe;
+    PfExpertSink* expert_sink = nullptr;   // Track R1; borrowed
     const PrefillTimes& times() const { return times_; }
     const PrefillConfig& config() const { return pcfg_; }
 
@@ -337,12 +395,22 @@ public:
     // op_gemm's option (a) branch: decode W to fp16 (skipped when the transit
     // already holds it), stage x as fp16, cooperative-matrix GEMM into a padded
     // plane, copy (and round) into y. One submit. False = not applicable.
+    // `rows_per_group` != 0 is the grouped form (wo_a: 8 groups of [1024][4096]
+    // over one [32768] row): the weight is decoded once and each group is one
+    // staging pass over its own column slice plus one GEMM into its own output
+    // rows. Only the fp32-activation staging supports it.
     Result<bool> op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
-                              uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags);
+                              uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
+                              uint32_t rows_per_group = 0);
     Result<void> op_rmsnorm(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint64_t w);
     Result<void> op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff, uint32_t coeff_stride,
                                  uint64_t norm_w, uint64_t out, uint64_t rs);
     Result<void> op_sinkhorn(uint64_t raw, uint64_t out, uint32_t n, uint64_t base, uint64_t scale);
+    // cpu::gate_topk for `n` rows on the GPU: raw gate scores [n][E] ->
+    // sqrtsoftplus, top-6 of (score + bias), normalised weights. Only
+    // n x 6 ids and weights come back, not n x 384 scores.
+    Result<void> op_gate_topk(uint64_t scores, uint64_t bias, uint32_t n, uint64_t ids,
+                              uint64_t wts);
     Result<void> op_mhc_post(uint64_t h, uint64_t a, uint64_t coeff, uint64_t out, uint32_t n);
     // mode: 0 RoPE only, 1 fp8/UE8M0-32, 2 FP4/UE8M0-32, 3 FP4/E4M3-16
     Result<void> op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint32_t head_dim,
@@ -387,6 +455,16 @@ public:
 private:
     Result<void> flush_one(uint32_t kernel, const void* push, uint32_t bytes, uint32_t gx,
                            uint32_t gy = 1);
+    // A multi-dispatch submit with GPU timestamps between its steps:
+    // cmd_open() begins cmd_ and stamps; rec() records one dispatch and a
+    // barrier; mark(name) closes the step since the last mark; cmd_close()
+    // submits, waits, and adds every step to times_.per_op as "gpu: <name>".
+    Result<void> cmd_open();
+    Result<void> rec(uint32_t kernel, const void* push, uint32_t bytes, uint32_t gx, uint32_t gy = 1);
+    void mark(const char* name);
+    Result<void> cmd_close();
+    Result<void> op_attention_legacy(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
+                                     uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b);
     Result<void> build_rope(uint32_t positions);
     Result<void> run_layer(uint32_t L, std::span<const uint32_t> prompt, PrefillHandoff& out);
     Result<void> run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq, uint64_t xs,
@@ -407,7 +485,11 @@ private:
     PrefillTimes              times_{};
     CommandBuffer             cmd_{};
     bool                      cmd_valid_ = false;
+    QueryPool                 qp_;
+    bool                      qp_ok_ = false;
+    std::vector<const char*>  marks_;
     uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
+    uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
     // A host-side step's wall time into times_.per_op.
     void host_op(const char* name, std::chrono::steady_clock::time_point t0) {
         auto& slot = times_.per_op[name];
@@ -422,10 +504,11 @@ private:
         GpuBuffer kv_raw, kv_norm, kv;
         GpuBuffer ckv, cscore, latent_pre, latent, key_raw, key_norm;
         GpuBuffer qr_raw, qr, qrq, qrs, q, iq, iw, iscore, idx, score, o, woa, woaq, woas, attn;
-        GpuBuffer fx, fxq, fxs, gate, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
+        GpuBuffer fx, fxq, fxs, gate, gids, gwts, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
         GpuBuffer x16, h16, gu, dout, w16;          // the cooperative-matrix MoE
         GpuBuffer eng_x, eng_xq, eng_xs, eng_kv;
         GpuBuffer transit, rope_win, rope_cmp, logits, nrm;
+        GpuBuffer q16, g16, p16, inv;               // the cooperative-matrix attention
     } b_{};
     struct SourceState { GpuBuffer cache, keys; uint32_t n = 0; bool valid = false; };
     std::vector<SourceState> sources_;      // per layer; only kv sources fill theirs

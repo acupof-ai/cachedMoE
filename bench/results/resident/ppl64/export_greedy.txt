@@ -1,0 +1,109 @@
+[14:00:42] greedy: 64 prompt tokens + 64 decode steps, max_seq_len 136, out -> traces/l3_64
+    layer  0  148 experts    7.0s  |h| 8.8977e+01
+    layer  1  131 experts    7.1s  |h| 1.1528e+02
+    layer  2  116 experts    5.5s  |h| 1.2269e+02
+    layer  3  124 experts    5.8s  |h| 1.3951e+02
+    layer  4  103 experts    5.0s  |h| 1.6174e+02
+    layer  5   88 experts    4.3s  |h| 1.8387e+02
+    layer  6   80 experts    3.9s  |h| 2.2530e+02
+    layer  7   71 experts    3.6s  |h| 2.7105e+02
+    layer  8   82 experts    4.1s  |h| 2.7775e+02
+    layer  9   86 experts    4.3s  |h| 2.9124e+02
+    layer 10   92 experts    4.7s  |h| 2.9325e+02
+    layer 11   87 experts    4.4s  |h| 3.1037e+02
+    layer 12   93 experts    4.7s  |h| 3.2672e+02
+    layer 13  109 experts    5.2s  |h| 3.5708e+02
+    layer 14   82 experts    5.0s  |h| 4.5314e+02
+    layer 15  116 experts    5.3s  |h| 5.0806e+02
+    layer 16   77 experts    3.8s  |h| 5.8850e+02
+    layer 17   99 experts    4.7s  |h| 6.9598e+02
+    layer 18   77 experts    3.9s  |h| 9.3666e+02
+    layer 19  134 experts    6.5s  |h| 1.0778e+03
+    layer 20   90 experts    4.4s  |h| 1.0696e+03
+    layer 21   99 experts    4.7s  |h| 1.2113e+03
+    layer 22  100 experts    4.7s  |h| 1.2554e+03
+    layer 23  128 experts    6.3s  |h| 1.3435e+03
+    layer 24   65 experts    3.2s  |h| 1.3881e+03
+    layer 25   67 experts    3.5s  |h| 1.4855e+03
+    layer 26   80 experts    4.1s  |h| 1.7913e+03
+    layer 27   97 experts    4.8s  |h| 1.8502e+03
+    layer 28   82 experts    4.0s  |h| 1.9605e+03
+    layer 29   82 experts    4.0s  |h| 2.1164e+03
+    layer 30  102 experts    4.9s  |h| 2.1797e+03
+    layer 31  108 experts    5.4s  |h| 2.3035e+03
+    layer 32   98 experts    4.7s  |h| 2.4819e+03
+    layer 33   95 experts    4.7s  |h| 2.7996e+03
+    layer 34   98 experts    4.9s  |h| 3.0171e+03
+    layer 35  114 experts    5.7s  |h| 3.3659e+03
+    layer 36  100 experts    4.9s  |h| 3.5887e+03
+    layer 37   88 experts    4.5s  |h| 3.6871e+03
+    layer 38  101 experts    5.0s  |h| 3.8440e+03
+    layer 39   95 experts    4.7s  |h| 2.3903e+04
+[14:03:55] prefill 192.2s -> l3_prefill.bin (5.80 MB), next token 16005
+  step  0 @pos 64: 16005 -> 16  ( 25.9s, logp -1.1082)
+  step  1 @pos 65: 16 -> 2359  ( 23.8s, logp -1.5015)
+  step  2 @pos 66: 2359 -> 611  ( 23.4s, logp -0.4065)
+  step  3 @pos 67: 611 -> 4866  ( 23.4s, logp -0.5109)
+  step  4 @pos 68: 4866 -> 943  ( 23.4s, logp -0.8060)
+  step  5 @pos 69: 943 -> 270  ( 23.3s, logp -0.5066)
+  step  6 @pos 70: 270 -> 98109  ( 23.6s, logp -0.0843)
+  step  7 @pos 71: 98109 -> 412  ( 23.4s, logp -0.0943)
+  step  8 @pos 72: 412 -> 260  ( 23.5s, logp -0.2910)
+  step  9 @pos 73: 260 -> 49059  ( 23.2s, logp -1.4458)
+  step 10 @pos 74: 49059 -> 14  ( 23.4s, logp -0.6368)
+  step 11 @pos 75: 14 -> 270  ( 23.3s, logp -1.0393)
+  step 12 @pos 76: 270 -> 5037  ( 23.4s, logp -1.7491)
+  step 13 @pos 77: 5037 -> 294  ( 23.2s, logp -0.0555)
+  step 14 @pos 78: 294 -> 34035  ( 23.3s, logp -1.8036)
+  step 15 @pos 79: 34035 -> 305  ( 23.3s, logp -0.2777)
+  step 16 @pos 80: 305 -> 270  ( 23.4s, logp -0.9219)
+  step 17 @pos 81: 270 -> 6461  ( 23.0s, logp -1.6199)
+  step 18 @pos 82: 6461 -> 294  ( 23.2s, logp -0.0024)
+  step 19 @pos 83: 294 -> 102742  ( 23.3s, logp -0.3550)
+  step 20 @pos 84: 102742 -> 14  ( 23.3s, logp -0.8228)
+  step 21 @pos 85: 14 -> 469  ( 23.2s, logp -0.1014)
+  step 22 @pos 86: 469 -> 851  ( 23.3s, logp -0.3626)
+  step 23 @pos 87: 851 -> 611  ( 23.6s, logp -0.0006)
+  step 24 @pos 88: 611 -> 4866  ( 23.3s, logp -0.1029)
+  step 25 @pos 89: 4866 -> 943  ( 23.2s, logp -0.0026)
+  step 26 @pos 90: 943 -> 436  ( 23.1s, logp -0.1997)
+  step 27 @pos 91: 436 -> 412  ( 23.2s, logp -0.0013)
+  step 28 @pos 92: 412 -> 260  ( 23.1s, logp -0.2432)
+  step 29 @pos 93: 260 -> 9920  ( 23.2s, logp -1.3546)
+  step 30 @pos 94: 9920 -> 27859  ( 23.3s, logp -0.0891)
+  step 31 @pos 95: 27859 -> 14  ( 23.4s, logp -0.0884)
+  step 32 @pos 96: 14 -> 270  ( 23.1s, logp -0.5884)
+  step 33 @pos 97: 270 -> 2303  ( 23.0s, logp -1.7050)
+  step 34 @pos 98: 2303 -> 17213  ( 23.4s, logp -0.0002)
+  step 35 @pos 99: 17213 -> 61490  ( 23.5s, logp -0.0736)
+  step 36 @pos 100: 61490 -> 2237  ( 23.4s, logp -0.0108)
+  step 37 @pos 101: 2237 -> 2077  ( 23.3s, logp -0.0023)
+  step 38 @pos 102: 2077 -> 295  ( 23.4s, logp -0.0117)
+  step 39 @pos 103: 295 -> 4174  ( 23.5s, logp -0.0457)
+  step 40 @pos 104: 4174 -> 16  ( 23.5s, logp -0.3940)
+  step 41 @pos 105: 16 -> 1162  ( 23.5s, logp -1.2272)
+  step 42 @pos 106: 1162 -> 2339  ( 23.5s, logp -0.2740)
+  step 43 @pos 107: 2339 -> 344  ( 23.5s, logp -1.0123)
+  step 44 @pos 108: 344 -> 943  ( 23.3s, logp -0.3224)
+  step 45 @pos 109: 943 -> 270  ( 23.5s, logp -0.8825)
+  step 46 @pos 110: 270 -> 10436  ( 23.1s, logp -1.7720)
+  step 47 @pos 111: 10436 -> 1469  ( 23.4s, logp -0.6022)
+  step 48 @pos 112: 1469 -> 1948  ( 23.6s, logp -0.4487)
+  step 49 @pos 113: 1948 -> 1234  ( 23.4s, logp -0.0596)
+  step 50 @pos 114: 1234 -> 16005  ( 23.3s, logp -1.2011)
+  step 51 @pos 115: 16005 -> 16  ( 23.4s, logp -0.7266)
+  step 52 @pos 116: 16 -> 983  ( 23.3s, logp -0.5495)
+  step 53 @pos 117: 983 -> 344  ( 23.3s, logp -0.7840)
+  step 54 @pos 118: 344 -> 943  ( 23.4s, logp -0.3124)
+  step 55 @pos 119: 943 -> 1192  ( 23.3s, logp -0.6443)
+  step 56 @pos 120: 1192 -> 270  ( 23.2s, logp -0.4702)
+  step 57 @pos 121: 270 -> 5218  ( 23.2s, logp -1.6399)
+  step 58 @pos 122: 5218 -> 37153  ( 23.2s, logp -1.8655)
+  step 59 @pos 123: 37153 -> 294  ( 23.3s, logp -0.0227)
+  step 60 @pos 124: 294 -> 270  ( 23.4s, logp -0.0629)
+  step 61 @pos 125: 270 -> 12334  ( 23.2s, logp -0.2928)
+  step 62 @pos 126: 12334 -> 22567  ( 23.2s, logp -1.2569)
+  step 63 @pos 127: 22567 -> 270  ( 23.3s, logp -0.3966)
+[14:28:50] wrote 65 records, 5.83 MB -> traces/l3_64/index.json in 1687.8s
+[14:28:50] reference NLL 0.597555 over 64 steps -> PPL 1.8177
+[14:28:50] continuation: ' faces. They have written about the Rhine as a frontier, the site of battles and the limit of empires, or they have written about it as a commercial artery, the busiest inland waterway in Europe. This book is about the interaction between those two faces. It is about how the political geography of the river shaped the'

@@ -1,0 +1,9 @@
+{
+ "comment": "Track Y (docs/p4_resident_routing.md): the 4-turn TOPIC of bench/config_sweep.py at 64 tokens a turn, so resident-only routing is judged on a conversation's own warm cache rather than on the static heat prior",
+ "turns": [
+  {"label": "y0", "user": "Explain in detail how a Vulkan timeline semaphore orders submissions across queues, and what happens to a wait that is submitted before its signal.", "temperature": 0, "max_tokens": 64},
+  {"label": "y1", "user": "Continue: what does that mean for a command buffer that both waits on and signals the same timeline value, and how should a decoder loop use it?", "temperature": 0, "max_tokens": 64},
+  {"label": "y2", "user": "Continue: summarise the rules for host waits versus device waits on that timeline, and the failure modes of each.", "temperature": 0, "max_tokens": 64},
+  {"label": "y3", "user": "Given that, how should a runtime size its expert cache so that a long conversation keeps its working set resident?", "temperature": 0, "max_tokens": 64}
+ ]
+}

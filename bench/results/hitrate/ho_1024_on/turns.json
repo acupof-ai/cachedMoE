@@ -1,0 +1,102 @@
+{
+ "server": {
+  "event": "ready",
+  "load_s": 49.5436547,
+  "max_context": 4096,
+  "vocab": 129280,
+  "cache_gb": 78.8269043,
+  "cache_slots": 4500,
+  "gpu_prefill_min": 256,
+  "check_topk": false,
+  "engram_tables": "C:\\Users\\Asus\\code\\deepmoe-fin-r1\\tests\\data\\l3",
+  "kv_mb": 16.044032,
+  "rollback": true,
+  "max_parked": 8,
+  "reheat": false,
+  "reheat_decay": 0.5,
+  "kv_disk": true,
+  "kv_disk_dir": "C:\\Users\\Asus\\AppData\\Local/deepmoe/kv/D__models_DeepSeek-V4.1-Flash"
+ },
+ "turns": [
+  {
+   "event": "done",
+   "session": "default",
+   "prompt_tokens": 1024,
+   "reused_tokens": 0,
+   "prefill_tokens": 1024,
+   "generated": 65,
+   "prefill_mode": "gpu",
+   "finish": "length",
+   "rollback_dropped": 0,
+   "replay_steps": 0,
+   "replay_ms": 0,
+   "prefill_ms": 46512.5019,
+   "prefill_tok_s": 22.0155863,
+   "ttft_ms": 46513.2159,
+   "decode_ms": 13191.8713,
+   "decode_steps": 64,
+   "tok_s": 4.85147244,
+   "total_ms": 59705.0854,
+   "prefill_hit_rate": 0,
+   "decode_hit_rate": 0.917057292,
+   "prefill_nvme_mb": 0,
+   "decode_nvme_mb": 23962.452,
+   "per_token_ms": {
+    "attn": 47.4155011,
+    "moe_gpu": 40.3242725,
+    "moe_host": 1.26930625,
+    "nvme_stall": 100.478463,
+    "engram": 4.5213,
+    "tail": 6.02638687,
+    "other": 5.66854578,
+    "record": 0.669646875,
+    "submit": 3.61179531,
+    "bind": 0.957423437,
+    "fence_wait": 92.4566516,
+    "submits": 55.796875,
+    "sample_host": 0
+   },
+   "sampled_steps": 0,
+   "topk_fallbacks": 0,
+   "topk_checked": 0,
+   "topk_mismatches": 0,
+   "mean_nucleus": 0,
+   "context": 1088,
+   "reheat": {
+    "turn": 0,
+    "keys": 0,
+    "free_slots": 0
+   }
+  }
+ ],
+ "cmd": [
+  "C:\\Users\\Asus\\code\\deepmoe-fin-r1\\build\\deepmoe.exe",
+  "serve",
+  "--model",
+  "D:\\models\\DeepSeek-V4.1-Flash",
+  "--max-context",
+  "4096",
+  "--engram-tables",
+  "C:\\Users\\Asus\\code\\deepmoe-fin-r1\\tests\\data\\l3",
+  "--profile",
+  "bench/results/hitrate/ho_1024_on\\profile.jsonl",
+  "--cache-slots",
+  "4500",
+  "--gpu-prefill-min",
+  "256"
+ ],
+ "env": [
+  "DEEPMOE_PREFILL_HANDOFF=1"
+ ],
+ "status": {
+  "event": "status",
+  "session": "default",
+  "context": 1088,
+  "max_context": 4096,
+  "kv_mb": 16.044032,
+  "kv_capacity": 4096,
+  "store": "expert store: 4500 slots (4500 resident, 0 filling, 0 free, 0 pinned)  lookups 46080 hits 39751 (0.863)  fills 13774/13774 ok  runs 27548/27548  evictions 9274 (+0 guard-blocked)",
+  "planner": "planner: 7680 layers, 46080 requests (39751 hits, 6329 misses, 0.863), 1829 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 3730 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 942 resident / 7445 kept / 281 dropped",
+  "io": "io: 114316 req (114316 done, 0 failed, 0 cancelled), 172655 chunks, 274568771560 / 274568822784 bytes, busy 64.501 s, eff 4.26 GB/s, mean lat 210.153 ms, peak QD 8 / 32.0 MiB\n  p0_blocking    28110 req  252111.6 MiB\n  p2_engram      84992 req  342.4 MiB\n  p3_backfill     1214 req  9395.3 MiB\n"
+ }
+}

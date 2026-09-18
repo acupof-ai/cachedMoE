@@ -89,6 +89,12 @@ struct Options {
     std::vector<uint32_t> coop_min = {16};    // section prefill: PrefillConfig::coopmat_min_rows (-1 = never)
     std::vector<uint32_t> coop_dense = {64};  // PrefillConfig::coopmat_dense_min_rows (-1 = never)
     std::string handoff_dir;
+    std::string only;                      // section coopgeo: shape names to run
+    // PrefillConfig::attn_pv_dim_tiles, swept in ONE process so the A/B sees
+    // the same machine (docs/p4_prefill_speed.md §3.1).
+    std::vector<uint32_t> attn_dv = {};
+    // PrefillConfig::coop_tok_tiles, swept the same way.
+    std::vector<uint32_t> coop_tt = {};
 };
 
 const char* env(const char* name) {
@@ -441,6 +447,127 @@ int run_gemm(const Options& o) {
 }
 
 
+// --- section `coopgeo`: the cooperative-matrix GEMM's dispatch geometry ---------------
+// Random fp16 W [R][K] and X [n][K] (the kernel's cost does not depend on the
+// values), every variant writing the same fp32 [n][R]; each variant is one
+// command buffer holding all of its block dispatches between two timestamps.
+// tt = 16-token tiles per workgroup, rt = 16-row output tiles per workgroup,
+// tb / rb = tokens / rows per dispatch (0 = all). Outputs are compared with
+// the first variant's bit for bit (the tile arithmetic is the same).
+int run_coopgeo(const Options& o) {
+    Rig rig;
+    if (auto r = rig.up(o.model_dir); !r) {
+        std::fprintf(stderr, "bring-up: %s\n", r.error().str().c_str());
+        return 1;
+    }
+    Csv csv;
+    csv.open(o.csv);
+    struct Shape { const char* name; uint32_t R, K; };
+    const Shape shapes[] = {{"w1", 2304, 5120}, {"w2", 5120, 2304}, {"wq_b", 32768, 1280},
+                            {"wo_b", 5120, 8192}, {"wo_a.g", 1024, 4096}, {"eng.wkv", 25600, 6144}};
+    struct Geo { uint32_t tt, rt, tb, rb; };
+    std::vector<Geo> geos;
+    for (uint32_t tt : {1u, 2u, 4u})
+        for (uint32_t rt : {1u, 4u, 16u})
+            for (uint32_t tb : {0u, 256u})
+                for (uint32_t rb : {0u, 2048u})
+                    geos.push_back({tt, rt, tb, rb});
+    if (const char* g = env("DEEPMOE_PF_GEO")) {
+        // "tt,rt,tb,rb;tt,rt,tb,rb;..."
+        geos.clear();
+        std::string s = g;
+        size_t p = 0;
+        while (p < s.size()) {
+            size_t q = s.find(';', p);
+            if (q == std::string::npos) q = s.size();
+            Geo x{};
+            if (std::sscanf(s.substr(p, q - p).c_str(), "%u,%u,%u,%u", &x.tt, &x.rt, &x.tb, &x.rb) == 4)
+                geos.push_back(x);
+            p = q + 1;
+        }
+    }
+    std::mt19937 gen(7);
+    std::normal_distribution<float> dist(0.0f, 1.0f);
+    for (const Shape& sh : shapes) {
+        if (!o.only.empty() && o.only.find(sh.name) == std::string::npos) continue;
+        const uint32_t R = sh.R, K = sh.K;
+        const uint32_t nmax = *std::max_element(o.ns.begin(), o.ns.end());
+        const uint32_t npad = (nmax + 127) / 128 * 128;
+        gpu::GpuBuffer W = must_alloc(rig.alloc, uint64_t(R) * K * 2);
+        gpu::GpuBuffer X = must_alloc(rig.alloc, uint64_t(npad) * K * 2);
+        gpu::GpuBuffer Y = must_alloc(rig.alloc, uint64_t(npad) * R * 4);
+        {
+            std::vector<uint16_t> w(size_t(R) * K), x(size_t(npad) * K);
+            for (auto& v : w) v = cpu::float_to_fp16(dist(gen) * 0.02f);
+            for (auto& v : x) v = cpu::float_to_fp16(dist(gen));
+            std::memcpy(W.host_ptr, w.data(), w.size() * 2);
+            std::memcpy(X.host_ptr, x.data(), x.size() * 2);
+        }
+        for (uint32_t n : o.ns) {
+            // Round robin: every rep visits every variant, starting one further
+            // along each time, so a burst of another process's GPU work lands
+            // on different variants in different reps; the best rep is kept.
+            struct Var { Geo g; uint32_t kh, tok, ntok, tb, rtile, rb, dispatches = 0; double best = 1e30; size_t diff = 0; };
+            std::vector<Var> vars;
+            for (const Geo& g : geos) {
+                Var v;
+                v.g = g;
+                v.tok = 16 * g.tt;
+                v.ntok = (n + v.tok - 1) / v.tok * v.tok;
+                if (v.ntok > npad) continue;
+                v.tb = g.tb ? std::max(v.tok, g.tb / v.tok * v.tok) : v.ntok;
+                v.rtile = 16 * g.rt;
+                v.rb = g.rb ? std::max(v.rtile, g.rb / v.rtile * v.rtile) : (R + v.rtile - 1) / v.rtile * v.rtile;
+                auto k = rig.runner.kernel({"prefill_coopmat", 0, 0, 0, 8, R, K, g.tt, g.rt});
+                if (!k) { std::fprintf(stderr, "%s\n", k.error().str().c_str()); return 1; }
+                v.kh = *k;
+                vars.push_back(v);
+            }
+            std::vector<float> ref;
+            for (uint32_t rep = 0; rep < o.reps; ++rep)
+                for (size_t vi = 0; vi < vars.size(); ++vi) {
+                    Var& v = vars[(vi + rep) % vars.size()];
+                    uint64_t* sl = rig.runner.slots(v.kh);
+                    sl[gpu::kPcW] = W.dev_addr; sl[gpu::kPcX] = X.dev_addr; sl[gpu::kPcY] = Y.dev_addr;
+                    v.dispatches = 0;
+                    auto ms = rig.timed([&](gpu::CommandBuffer& c) -> Result<void> {
+                        for (uint32_t x0 = 0; x0 < v.ntok; x0 += v.tb)
+                            for (uint32_t r0 = 0; r0 < R; r0 += v.rb) {
+                                gpu::PfCoopPush p;
+                                p.n = v.ntok; p.flags = 64; p.x_off = x0; p.row0 = r0;
+                                const uint32_t gx = (std::min(v.tb, v.ntok - x0) + v.tok - 1) / v.tok;
+                                const uint32_t gy = (std::min(v.rb, R - r0) + v.rtile - 1) / v.rtile;
+                                if (auto r = rig.runner.record(c, v.kh, &p, sizeof(p), gx, gy); !r) return r;
+                                ++v.dispatches;
+                            }
+                        return {};
+                    });
+                    if (!ms) { std::fprintf(stderr, "%s\n", ms.error().str().c_str()); return 1; }
+                    v.best = std::min(v.best, *ms);
+                    if (rep == 0) {
+                        const float* y = static_cast<const float*>(Y.host_ptr);
+                        if (ref.empty()) ref.assign(y, y + size_t(n) * R);
+                        else for (size_t i = 0; i < ref.size(); ++i) v.diff += (std::memcmp(&ref[i], &y[i], 4) != 0);
+                    }
+                }
+            for (const Var& v : vars) {
+                const double tps = double(n) * R * K / (v.best / 1e3) / 1e12;
+                const std::string name = std::format("tt{} rt{} tb{} rb{}", v.g.tt, v.g.rt, v.g.tb, v.g.rb);
+                std::printf("  %-8s n=%5u %-22s %9.3f ms  %6.2f T flop/s  %5u dispatches  %s\n", sh.name, n,
+                            name.c_str(), v.best, tps, v.dispatches, v.diff ? std::format("DIFF {}", v.diff).c_str() : "same");
+                if (csv.f)
+                    std::fprintf(csv.f, "coopgeo,%s,%s,%u,%u,%u,%llu,%.4f,%.1f,%.3f,%zu,0,\"%s\"\n", sh.name, name.c_str(),
+                                 n, R, K, (unsigned long long)(uint64_t(R) * K * 2), v.best, n / (v.best / 1e3), tps,
+                                 v.diff, o.load.c_str());
+            }
+            std::fflush(stdout);
+            if (csv.f) std::fflush(csv.f);
+        }
+        for (gpu::GpuBuffer* b : {&W, &X, &Y}) rig.alloc.free(*b);
+    }
+    return 0;
+}
+
 // --- section `prefill`: a whole prefill, per stage -----------------------------------
 
 std::vector<uint32_t> read_ids(const std::string& path) {
@@ -501,9 +628,15 @@ int run_prefill(const Options& o) {
         else if (text_ids.size() >= n) { prompt.assign(text_ids.begin(), text_ids.begin() + n); source = o.ids; }
         else { std::fprintf(stderr, "N=%u: no %u token ids (--ids)\n", n, n); return 1; }
 
+        std::vector<uint32_t> dvs = o.attn_dv;
+        if (dvs.empty()) dvs.push_back(0);   // 0 = leave PrefillConfig's default
+        std::vector<uint32_t> tts = o.coop_tt;
+        if (tts.empty()) tts.push_back(0);
         for (uint32_t replay : o.replays)
         for (uint32_t cmin : o.coop_min)
-        for (uint32_t cden : o.coop_dense) {
+        for (uint32_t cden : o.coop_dense)
+        for (uint32_t dv : dvs)
+        for (uint32_t ctt : tts) {
             gpu::PrefillConfig pc;
             pc.max_tokens = n;
             pc.replay = replay ? replay : n;
@@ -511,6 +644,12 @@ int run_prefill(const Options& o) {
             pc.transit_slots = o.transit;
             pc.coopmat_min_rows = cmin;
             pc.coopmat_dense_min_rows = cden;
+            if (const char* e = env("DEEPMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
+            if (const char* e = env("DEEPMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
+            if (const char* e = env("DEEPMOE_PF_ATTN_DV")) pc.attn_pv_dim_tiles = static_cast<uint32_t>(std::atoi(e));
+            if (dv) pc.attn_pv_dim_tiles = dv;
+            if (ctt) pc.coop_tok_tiles = ctt;
+            if (const char* e = env("DEEPMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
             gpu::Prefill pf;
             if (auto r = pf.create(rig.device, rig.alloc, rig.runner, rig.manifest, rig.shards, rig.io,
                                    rig.pinned, c, &*tables, pc); !r) {
@@ -521,7 +660,9 @@ int run_prefill(const Options& o) {
                                     : cmin == 0 ? "MoE coopmat" : std::format("MoE coopmat n>={}", cmin);
             const std::string dense = cden == UINT32_MAX ? "dense tiled" : std::format("dense coopmat n>={}", cden);
             const std::string mode = (pc.replay >= n ? std::string("oracle mode") : std::format("replay {}", pc.replay)) +
-                                     " " + moe + " " + dense;
+                                     " " + moe + " " + dense +
+                                     std::format(" pv_dv {} ht {} tt {}", pc.attn_pv_dim_tiles,
+                                                 pc.attn_head_tiles, pc.coop_tok_tiles);
             std::printf("\nN=%u (%s), %s, load = %s\n", n, source.c_str(), mode.c_str(), o.load.c_str());
             auto out = pf.run(prompt);
             if (!out) { std::fprintf(stderr, "prefill: %s\n", out.error().str().c_str()); return 1; }
@@ -545,11 +686,21 @@ int run_prefill(const Options& o) {
                                                                                    t.per_op.end());
                 std::sort(ops.begin(), ops.end(),
                           [](const auto& a, const auto& b) { return a.second.first > b.second.first; });
+                // DEEPMOE_PF_ALLOPS=1 prints the whole profile, not just the top 14.
+                const size_t show = env("DEEPMOE_PF_ALLOPS") ? ops.size() : std::min<size_t>(ops.size(), 14);
                 std::printf("  ops by wall time:");
-                for (size_t i = 0; i < ops.size() && i < 14; ++i)
+                for (size_t i = 0; i < show; ++i)
                     std::printf("%s %s %.0f ms/%u", i % 3 ? "," : "\n   ", ops[i].first.c_str(),
                                 ops[i].second.first, ops[i].second.second);
                 std::printf("\n");
+                if (csv.f) {
+                    // one row per op, so the whole profile survives the run
+                    const std::string vv = std::format("N={} {}", n, mode);
+                    for (const auto& [nm, v2] : ops)
+                        std::fprintf(csv.f, "op,%s,%s,%u,%u,0,0,%.1f,0,0,0,0,\"%s\"\n", vv.c_str(),
+                                     nm.c_str(), n, v2.second, v2.first, o.load.c_str());
+                    std::fflush(csv.f);
+                }
             }
             if (csv.f) {
                 const std::string v = std::format("N={} {}", n, mode);
@@ -621,11 +772,15 @@ int main(int argc, char** argv) {
         else if (a == "--coop-dense") o.coop_dense = list(next());
         else if (a == "--transit") o.transit = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (a == "--handoff-dir") o.handoff_dir = next();
+        else if (a == "--only")    o.only = next();
+        else if (a == "--attn-dv") o.attn_dv = list(next());
+        else if (a == "--coop-tt") o.coop_tt = list(next());
         else { std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data()); return 2; }
     }
     if (o.model_dir.empty()) { std::fputs("set --model-dir or DEEPMOE_MODEL_DIR\n", stderr); return 2; }
     if (o.section == "gemm") return run_gemm(o);
     if (o.section == "prefill") return run_prefill(o);
+    if (o.section == "coopgeo") return run_coopgeo(o);
     std::fprintf(stderr, "unknown section '%s'\n", o.section.c_str());
     return 2;
 }

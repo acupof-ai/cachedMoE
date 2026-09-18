@@ -7,7 +7,7 @@
 //
 //   window KV      43 x 128 x (512 B + 16 B scale)          2.8 MB
 //   compressed KV  sources 2/8/14 at ratio 2, 20 at ratio 1  84 MB fp8 / 48 MB fp4
-//   indexer K      8 source layers, 128 dims fp4 + scale     ~2 MB
+//   indexer K      4 kv sources, 128 dims fp4 + scale        11 MB
 //   candidate pool layer 20 -> layers 24..36, 2048 blocks    KB
 //   engram hash    C x 8 B                                   0.5 MB
 //
@@ -50,10 +50,14 @@ struct KvGeometry {
         }
         return n;
     }
-    // 128-dim FP4 index keys plus one E8M0 scale per 32, for each index source.
+    // 128-dim FP4 index keys plus one E8M0 scale per 32, for each layer that
+    // OWNS a key cache: model.py's `Indexer.owns_k` is `layer_id in
+    // kv_source_layers`. Layers 24..36 are index sources that score layer 20's
+    // keys with their own weights, so they add no cache (Track R2 correction of
+    // design 搂11.3's v0.4 "8 sources, 28.97 MB"; docs/p4_kv_ux.md 搂1).
     uint64_t indexer_bytes(const TextConfig& cfg) const {
         uint64_t n = 0;
-        for (int64_t src : cfg.index_source_layer_ids) {
+        for (int64_t src : cfg.kv_source_layer_ids) {
             const uint32_t r = cfg.compress_ratio(static_cast<uint32_t>(src));
             if (r) n += (max_context / r) * (cfg.index_head_dim / 2 + cfg.index_head_dim / 32);
         }

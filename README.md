@@ -2,6 +2,7 @@
 
 Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB / NVMe）专用的超大 MoE 本地推理 Runtime。目标模型：**DeepSeek-V4.1-Flash**（552B backbone + 196B Engram，decode 激活 16B，510 GB 权重）。
 
+- **单一入口：[docs/STATUS.md](docs/STATUS.md)** — 今天量到了什么、什么被试过并退掉（编号）、测试套件、下一步顺序。**相信任何数字之前先看这里。**
 - 设计方案：[docs/design.md](docs/design.md)（v0.9）
 - 模块依赖与线程模型：[docs/architecture.md](docs/architecture.md)
 - 构建、环境、对话与 worktree 工作流：[docs/build.md](docs/build.md)

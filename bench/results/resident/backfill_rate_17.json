@@ -1,0 +1,272 @@
+{
+ "args": {
+  "trace": [
+   "C:/Users/Asus/code/deepmoe/traces/mixed"
+  ],
+  "capacities": "5711",
+  "modes": "backfill",
+  "max_tokens": 0,
+  "warmup_frac": 0.05,
+  "t_layer_ms": 2.0,
+  "t_io_ms": 4.18,
+  "io_qd": 8,
+  "nvme_gbps": 4.5,
+  "backfill_per_token": 17.0,
+  "queue_cap": 2048,
+  "accepted_per_block": 3.7,
+  "model_config": "D:\\models\\DeepSeek-V4.1-Flash\\config.json",
+  "out": "bench/results/resident",
+  "tag": "backfill_rate_17"
+ },
+ "results": [
+  {
+   "mode": "backfill",
+   "capacity": 5711,
+   "tokens": 26029,
+   "exact_steps": 0,
+   "resident_only_steps": 26029,
+   "stall_ms_total": 0.0,
+   "experts_fetched_demand": 0,
+   "experts_fetched_backfill": 442984,
+   "queue_drops": 505,
+   "queue_len_end": 1,
+   "t_compute_ms": 80.0,
+   "resident_only": {
+    "label": "resident-only steps",
+    "rows": 1041162,
+    "resident_count_frac": [
+     0.0009,
+     0.0048,
+     0.0162,
+     0.0448,
+     0.1155,
+     0.2805,
+     0.5373
+    ],
+    "mean_resident_of_k": 5.26,
+    "frac_rows_all_k_resident": 0.5373,
+    "frac_tokens_all_k_all_layers": 0.001,
+    "served_frac": 0.8767,
+    "mean_mass_lost": 0.1107,
+    "sd_mass_lost": 0.16738,
+    "frac_rows_top1_missing": 0.08173,
+    "layer_groups": {
+     "L00-09": {
+      "resident_count_frac": [
+       0.0008,
+       0.0042,
+       0.0147,
+       0.0447,
+       0.1206,
+       0.2853,
+       0.5298
+      ],
+      "mean_resident": 5.255,
+      "mass_lost": 0.11386
+     },
+     "L10-19": {
+      "resident_count_frac": [
+       0.0008,
+       0.005,
+       0.0176,
+       0.0477,
+       0.1178,
+       0.2796,
+       0.5316
+      ],
+      "mean_resident": 5.242,
+      "mass_lost": 0.117
+     },
+     "L20-29": {
+      "resident_count_frac": [
+       0.0012,
+       0.0051,
+       0.0164,
+       0.0436,
+       0.1102,
+       0.2785,
+       0.545
+      ],
+      "mean_resident": 5.272,
+      "mass_lost": 0.10524
+     },
+     "L30-39": {
+      "resident_count_frac": [
+       0.0008,
+       0.0047,
+       0.016,
+       0.0433,
+       0.1134,
+       0.2788,
+       0.5429
+      ],
+      "mean_resident": 5.272,
+      "mass_lost": 0.10671
+     }
+    },
+    "mass_lost_per_layer": [
+     0.12203,
+     0.13209,
+     0.11511,
+     0.10961,
+     0.1247,
+     0.12723,
+     0.10874,
+     0.09525,
+     0.09902,
+     0.1048,
+     0.12065,
+     0.11609,
+     0.1253,
+     0.13209,
+     0.1194,
+     0.11837,
+     0.10236,
+     0.11243,
+     0.10878,
+     0.11449,
+     0.11849,
+     0.11903,
+     0.11082,
+     0.1177,
+     0.10561,
+     0.086,
+     0.10229,
+     0.10223,
+     0.09269,
+     0.09756,
+     0.10176,
+     0.1058,
+     0.1026,
+     0.10546,
+     0.10471,
+     0.10757,
+     0.1137,
+     0.11552,
+     0.10771,
+     0.10226
+    ],
+    "frac_all_k_per_layer": [
+     0.5003,
+     0.4698,
+     0.5195,
+     0.5521,
+     0.4993,
+     0.4963,
+     0.5577,
+     0.5548,
+     0.5804,
+     0.5681,
+     0.5306,
+     0.5348,
+     0.5211,
+     0.5,
+     0.539,
+     0.5251,
+     0.5668,
+     0.5281,
+     0.5486,
+     0.5215,
+     0.5427,
+     0.5246,
+     0.5309,
+     0.5147,
+     0.5521,
+     0.5877,
+     0.5544,
+     0.526,
+     0.5815,
+     0.5352,
+     0.5298,
+     0.5442,
+     0.5323,
+     0.5325,
+     0.5363,
+     0.5558,
+     0.5414,
+     0.5369,
+     0.5512,
+     0.5683
+    ],
+    "worst_layers": [
+     {
+      "layer": 1,
+      "mass_lost": 0.13209,
+      "frac_all_k": 0.4698
+     },
+     {
+      "layer": 13,
+      "mass_lost": 0.13209,
+      "frac_all_k": 0.5
+     },
+     {
+      "layer": 5,
+      "mass_lost": 0.12723,
+      "frac_all_k": 0.4963
+     },
+     {
+      "layer": 12,
+      "mass_lost": 0.1253,
+      "frac_all_k": 0.5211
+     },
+     {
+      "layer": 4,
+      "mass_lost": 0.1247,
+      "frac_all_k": 0.4993
+     },
+     {
+      "layer": 0,
+      "mass_lost": 0.12203,
+      "frac_all_k": 0.5003
+     }
+    ]
+   },
+   "ms_per_token": 80.0,
+   "tokens_per_s": 12.5
+  }
+ ],
+ "groups": {
+  "config": {
+   "n_group": null,
+   "topk_group": null,
+   "topk_method": "noaux_tc",
+   "scoring_func": "sqrtsoftplus",
+   "num_experts_per_tok": 6,
+   "n_routed_experts": 384,
+   "norm_topk_prob": true,
+   "routed_scaling_factor": 1.5,
+   "n_shared_experts": 1
+  },
+  "group_limited_routing": false,
+  "contiguous_block_occupancy": {
+   "G=8": {
+    "experts_per_block": 48,
+    "mean_distinct_blocks_per_row": 4.443,
+    "max_possible": 6,
+    "frac_rows_using_6_distinct": 0.0829,
+    "fetch_amplification_if_block_is_unit": 35.55
+   },
+   "G=16": {
+    "experts_per_block": 24,
+    "mean_distinct_blocks_per_row": 5.165,
+    "max_possible": 6,
+    "frac_rows_using_6_distinct": 0.3609,
+    "fetch_amplification_if_block_is_unit": 20.66
+   },
+   "G=32": {
+    "experts_per_block": 12,
+    "mean_distinct_blocks_per_row": 5.578,
+    "max_possible": 6,
+    "frac_rows_using_6_distinct": 0.6329,
+    "fetch_amplification_if_block_is_unit": 11.16
+   },
+   "G=64": {
+    "experts_per_block": 6,
+    "mean_distinct_blocks_per_row": 5.807,
+    "max_possible": 6,
+    "frac_rows_using_6_distinct": 0.8175,
+    "fetch_amplification_if_block_is_unit": 5.81
+   }
+  }
+ }
+}

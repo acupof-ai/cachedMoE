@@ -1,0 +1,61 @@
+{
+ "server": {
+  "event": "ready",
+  "load_s": 17.3411636,
+  "max_context": 4096,
+  "vocab": 129280,
+  "cache_gb": 73.5717773,
+  "cache_slots": 4200,
+  "gpu_prefill_min": 0,
+  "check_topk": false
+ },
+ "turns": [
+  {
+   "event": "done",
+   "prompt_tokens": 13,
+   "reused_tokens": 0,
+   "prefill_tokens": 13,
+   "generated": 54,
+   "prefill_mode": "decode",
+   "finish": "stop",
+   "prefill_ms": 16251.6052,
+   "prefill_tok_s": 0.799920983,
+   "ttft_ms": 16251.6091,
+   "decode_ms": 26344.2803,
+   "decode_steps": 53,
+   "tok_s": 2.0118219,
+   "total_ms": 42595.8881,
+   "prefill_hit_rate": 0.541987179,
+   "decode_hit_rate": 0.836163522,
+   "prefill_nvme_mb": 26877.8209,
+   "decode_nvme_mb": 39197.6059,
+   "per_token_ms": {
+    "attn": 80.8651666,
+    "moe_gpu": 72.9863387,
+    "moe_host": 1.10486226,
+    "nvme_stall": 268.123632,
+    "engram": 12.3714702,
+    "tail": 7.29658868,
+    "other": 53.8477302,
+    "record": 0.862288679,
+    "submit": 3.50775849,
+    "bind": 1.00771698,
+    "fence_wait": 211.570513,
+    "submits": 65.7924528,
+    "sample_host": 0
+   },
+   "sampled_steps": 0,
+   "topk_fallbacks": 0,
+   "topk_checked": 0,
+   "topk_mismatches": 0,
+   "mean_nucleus": 0,
+   "context": 66,
+   "seed": 3984687066418041685,
+   "mode": "chat",
+   "temperature": 0.0,
+   "top_p": 0.95,
+   "wall_s": 42.59658360481262,
+   "label": "greedy, zh"
+  }
+ ]
+}

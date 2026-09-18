@@ -243,6 +243,7 @@ void ExpertStore::settle_locked(uint32_t slot, bool ok, TokenIndex token) {
         release_locked(slot);
         ++stats_.fills_failed;
     }
+    settled_.notify_all();
 }
 
 Result<bool> ExpertStore::finish_run(uint32_t slot, bool ok, TokenIndex token) {
@@ -338,6 +339,60 @@ void ExpertStore::note_heat(ExpertKey key, float score, float alpha) {
     h = (1.0f - alpha) * h + alpha * score;
 }
 
+void ExpertStore::decay_heat(float factor) {
+    if (factor >= 1.0f) return;
+    if (factor < 0.0f) factor = 0.0f;
+    std::lock_guard lk(mutex_);
+    // The hot end is rescaled to 1.0 -- the EWMA's own ceiling -- whatever the
+    // decay was, so `heat` is always "how wanted is this expert, relative to the
+    // hottest thing in the cache" and a floor like 0.05 means the same thing at
+    // every turn. Without that a long conversation drives every value towards
+    // zero (1.0 -> 0.5 -> 0.25 ...) and every absolute threshold on heat becomes
+    // meaningless -- which is how the first version of the reheat pass came to
+    // call 68 of 2,200 experts cold on every turn. The decay still does its job:
+    // an expert that stops being routed falls by `factor` a turn relative to the
+    // hot end, so a fresh expert overtakes it after about 1/log2(1/factor) turns.
+    float top = 0.0f;
+    for (const ExpertSlot& s : slots_)
+        if (s.heat > top) top = s.heat;
+    if (top <= 0.0f) return;
+    const float scale = 1.0f / top;
+    for (ExpertSlot& s : slots_) s.heat *= scale;
+}
+
+float ExpertStore::heat_max() const {
+    std::lock_guard lk(mutex_);
+    float top = 0.0f;
+    for (const ExpertSlot& s : slots_)
+        if (s.heat > top) top = s.heat;
+    return top;
+}
+
+std::vector<ExpertKey> ExpertStore::heat_order() const {
+    std::lock_guard lk(mutex_);
+    std::vector<ExpertSlot> live;
+    live.reserve(slots_.size());
+    for (const ExpertSlot& s : slots_)
+        if (s.state == SlotState::Resident && s.tier != Tier::Pinned) live.push_back(s);
+    std::sort(live.begin(), live.end(), [](const ExpertSlot& a, const ExpertSlot& b) {
+        if (a.heat != b.heat) return a.heat > b.heat;
+        if (a.key.layer != b.key.layer) return a.key.layer < b.key.layer;
+        return a.key.expert < b.key.expert;
+    });
+    std::vector<ExpertKey> out;
+    out.reserve(live.size());
+    for (const ExpertSlot& s : live) out.push_back(s.key);
+    return out;
+}
+
+uint32_t ExpertStore::heat_slots() const {
+    std::lock_guard lk(mutex_);
+    uint32_t n = 0;
+    for (const ExpertSlot& s : slots_)
+        if (s.state == SlotState::Resident && s.tier != Tier::Pinned) ++n;
+    return n;
+}
+
 std::optional<ExpertSlot> ExpertStore::slot_info(uint32_t slot) const {
     std::lock_guard lk(mutex_);
     if (slot >= slots_.size()) return std::nullopt;
@@ -384,6 +439,45 @@ Result<uint32_t> ExpertStore::evict_lru() {
     --stats_.resident;
     ++stats_.evictions;
     return best;
+}
+
+bool ExpertStore::touch(ExpertKey key, TokenIndex stamp) {
+    std::lock_guard lk(mutex_);
+    auto it = index_.find(key);
+    if (it == index_.end() || slots_[it->second].state != SlotState::Resident) return false;
+    ExpertSlot& s = slots_[it->second];
+    if (stamp > s.last_use_token) s.last_use_token = stamp;
+    return true;
+}
+
+std::optional<TokenIndex> ExpertStore::oldest_evictable_stamp() const {
+    std::lock_guard lk(mutex_);
+    std::optional<TokenIndex> best;
+    for (const ExpertSlot& s : slots_) {
+        if (s.state != SlotState::Resident || s.tier == Tier::Pinned ||
+            s.guard_timeline > completed_timeline_)
+            continue;
+        if (!best || s.last_use_token < *best) best = s.last_use_token;
+    }
+    return best;
+}
+
+bool ExpertStore::wait_settled(ExpertKey key, std::chrono::milliseconds timeout) {
+    std::unique_lock lk(mutex_);
+    auto filling = [&] {
+        auto it = index_.find(key);
+        return it != index_.end() && slots_[it->second].state == SlotState::Filling;
+    };
+    settled_.wait_for(lk, timeout, [&] { return !filling(); });
+    auto it = index_.find(key);
+    return it != index_.end() && slots_[it->second].state == SlotState::Resident;
+}
+
+std::optional<uint32_t> ExpertStore::slot_of(ExpertKey key) const {
+    std::lock_guard lk(mutex_);
+    auto it = index_.find(key);
+    if (it == index_.end()) return std::nullopt;
+    return it->second;
 }
 
 uint32_t ExpertStore::free_slots() const {

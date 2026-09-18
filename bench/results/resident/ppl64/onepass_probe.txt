@@ -1,0 +1,47 @@
+[14:44:36] steps: one teacher-forced pass over 128 tokens (64 prompt + 64 candidate continuation)
+    layer  0  182 experts    7.7s  |h| 1.2400e+02
+    layer  1  176 experts    7.8s  |h| 1.5996e+02
+    layer  2  145 experts    6.2s  |h| 1.6922e+02
+    layer  3  153 experts    6.6s  |h| 1.9449e+02
+    layer  4  147 experts    6.2s  |h| 2.2686e+02
+    layer  5  131 experts    5.6s  |h| 2.6083e+02
+    layer  6  101 experts    4.5s  |h| 3.2196e+02
+    layer  7   91 experts    4.2s  |h| 3.9116e+02
+    layer  8  110 experts    5.0s  |h| 3.9991e+02
+    layer  9  109 experts    4.8s  |h| 4.1738e+02
+    layer 10  116 experts    5.0s  |h| 4.2070e+02
+    layer 11  113 experts    4.9s  |h| 4.4630e+02
+    layer 12  125 experts    5.4s  |h| 4.7298e+02
+    layer 13  147 experts    6.4s  |h| 5.1608e+02
+    layer 14  111 experts    5.5s  |h| 6.5242e+02
+    layer 15  146 experts    6.6s  |h| 7.2147e+02
+    layer 16  108 experts    4.8s  |h| 8.5152e+02
+    layer 17  129 experts    5.5s  |h| 1.0127e+03
+    layer 18  102 experts    4.4s  |h| 1.3610e+03
+    layer 19  171 experts    7.8s  |h| 1.5796e+03
+    layer 20  115 experts    5.4s  |h| 1.5713e+03
+    layer 21  116 experts    5.3s  |h| 1.7508e+03
+    layer 22  126 experts    5.9s  |h| 1.8225e+03
+    layer 23  152 experts    6.8s  |h| 1.9494e+03
+    layer 24   84 experts    4.2s  |h| 2.0162e+03
+    layer 25   94 experts    4.5s  |h| 2.1635e+03
+    layer 26  115 experts    5.4s  |h| 2.5900e+03
+    layer 27  131 experts    6.0s  |h| 2.6737e+03
+    layer 28  102 experts    4.9s  |h| 2.8565e+03
+    layer 29  108 experts    5.1s  |h| 3.0589e+03
+    layer 30  122 experts    5.9s  |h| 3.1368e+03
+    layer 31  140 experts    6.3s  |h| 3.2975e+03
+    layer 32  115 experts    5.3s  |h| 3.5063e+03
+    layer 33  121 experts    5.8s  |h| 3.9408e+03
+    layer 34  127 experts    5.9s  |h| 4.2485e+03
+    layer 35  136 experts    6.5s  |h| 4.7449e+03
+    layer 36  121 experts    6.0s  |h| 5.0626e+03
+    layer 37  106 experts    5.0s  |h| 5.2160e+03
+    layer 38  125 experts    5.7s  |h| 5.4267e+03
+    layer 39  117 experts    5.5s  |h| 3.3683e+04
+[14:48:23] pass done in 227.1s; 65 next-token distributions
+[14:48:23] greedy-chain proof: the candidate is the reference's own greedy path for 5/64 tokens
+[14:48:23]   first divergence at index 5: candidate 943 (' about'), reference 4338 (' either')
+[14:48:23] wrote 6 records, 5.80 MB -> traces/l3_64_verify\index.json
+[14:48:23] reference NLL 0.781853 over 5 steps -> PPL 2.1855
+[14:48:23] continuation: ' faces. They have written either'

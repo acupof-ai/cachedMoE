@@ -6,6 +6,7 @@ add_executable(deepmoe_tests
     test_core.cpp
     test_dequant.cpp
     test_store.cpp
+    test_resident_route.cpp
     test_io.cpp
     test_model.cpp
     test_integration.cpp
@@ -18,7 +19,12 @@ add_executable(deepmoe_tests
     test_gpu_dspark.cpp
     test_gpu_prefill.cpp
     test_dspark_tree.cpp
-    test_tokenizer.cpp)
+    test_speculate.cpp
+    test_tokenizer.cpp
+    test_engram_tables.cpp
+    test_kvstore.cpp
+    test_kv_replay.cpp
+    test_trace.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -27,8 +33,8 @@ target_compile_definitions(deepmoe_tests PRIVATE
 add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
 
 foreach(_suite align layout types json profiler status bytes
-                dequant gate slab expert_store planner
-                io v41_config manifest block_info kvcache)
+                dequant gate slab expert_store planner resident_route
+                io v41_config manifest block_info kvcache kvstore trace)
     add_test(NAME "suite.${_suite}" COMMAND deepmoe_tests "${_suite}.")
 endforeach()
 
@@ -60,6 +66,31 @@ set_tests_properties("suite.gpu_layer" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_layer")
 
+# Track T's C(M) curve (docs/p4_mgt1.md §4): the per-layer cost of one verify
+# batch's non-MoE attention chain at M = 1/2/4/6. It is a workbench, not a
+# correctness gate -- 30 timed iterations x 4 batch sizes x 2 layers x 2 contexts
+# -- so it is registered as its own name. `DEEPMOE_MGT1_CSV=path` writes the
+# table; `DEEPMOE_MGT1_ITERS` sets the iterations.
+add_test(NAME "bench.mgt1_m_curve" COMMAND deepmoe_tests "mgt1.m_curve")
+set_tests_properties("bench.mgt1_m_curve" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_layer")
+
+# Track T / DSpark's MoE(M): one layer's MoE with a different expert set a
+# column, experts resident so it is the kernel's cost (docs/p4_mgt1.md §4).
+add_test(NAME "bench.mgt1_moe_m_curve" COMMAND deepmoe_tests "mgt1.moe_m_curve")
+set_tests_properties("bench.mgt1_moe_m_curve" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP mgt1.moe_m_curve")
+
+# Track F1: the same batch as ONE dispatch over the columns' expert union
+# (docs/p4_dspark_runtime.md §2.2 plan C, no new kernel). Per column against the
+# per-column path, and the per-layer cost of both.
+add_test(NAME "bench.mgt1_moe_union_m_curve" COMMAND deepmoe_tests "mgt1.moe_union_m_curve")
+set_tests_properties("bench.mgt1_moe_union_m_curve" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP")
+
 # The whole decode step -- forty layers, the head and the argmax -- against the
 # oracle's L3 tokens. Needs the ~17.7 GB pinned set and tests/data/l3.
 add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")
@@ -83,14 +114,20 @@ set_tests_properties("suite.gpu_moe" PROPERTIES
 
 # Everything else must keep passing on a machine with no weights at all.
 foreach(_t deepmoe_tests align layout types json profiler status bytes
-           dequant gate slab expert_store planner io v41_config manifest
-           block_info kvcache)
+           dequant gate slab expert_store planner resident_route io v41_config
+           manifest block_info kvcache kvstore)
     if(_t STREQUAL "deepmoe_tests")
         set_tests_properties("${_t}" PROPERTIES LABELS "unit;needs-model")
     else()
         set_tests_properties("suite.${_t}" PROPERTIES LABELS "unit")
     endif()
 endforeach()
+
+# Track F1: the speculative cycle's arithmetic -- position alignment, acceptance,
+# which ring slots a rejection undoes, and design §10.2's invariant at the loop
+# level. No GPU, no checkpoint.
+add_test(NAME "suite.speculate" COMMAND deepmoe_tests "speculate.")
+set_tests_properties("suite.speculate" PROPERTIES LABELS "unit")
 
 # The design §7.12 DSpark draft kernels against tools/oracle_dspark.py's golden
 # draft cycle. Needs the ~2 GB of mtp + head weights and tests/data/dspark.
@@ -128,3 +165,57 @@ set_tests_properties("suite.tokenizer" PROPERTIES
     SKIP_REGULAR_EXPRESSION "SKIP tokenizer")
 add_test(NAME "suite.sampling" COMMAND deepmoe_tests "sampling.")
 set_tests_properties("suite.sampling" PROPERTIES LABELS "unit")
+
+# Track R2: the engram hash constants derived from tokenizer.json + config.json at
+# startup, against the L3 export's (the RNG / normaliser case needs nothing).
+add_test(NAME "suite.engram_tables" COMMAND deepmoe_tests "engram_tables.")
+set_tests_properties("suite.engram_tables" PROPERTIES
+    LABELS "needs-model"
+    SKIP_REGULAR_EXPRESSION "SKIP engram_tables")
+
+# Track R2: the window ring rebuilt by replay -- rollback, park / restore, the
+# Session's rollback / cancel / named sessions -- on the L3 export and Track M's
+# 4K export (DEEPMOE_LONGCTX_DIR).
+add_test(NAME "suite.kv_replay" COMMAND deepmoe_tests "kv_replay.")
+set_tests_properties("suite.kv_replay" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP kv_replay")
+add_test(NAME "suite.kvdisk" COMMAND deepmoe_tests "kvdisk.")
+set_tests_properties("suite.kvdisk" PROPERTIES LABELS "unit")
+
+# Track W: the per-dispatch trace's format and resolver. No GPU, no checkpoint.
+set_tests_properties("suite.trace" PROPERTIES LABELS "unit")
+
+# Track Y step 4 (docs/p4_resident_routing.md §9): the >= 64-step teacher-forced
+# PPL harness. `tools/l3_ppl.py` runs `deepmoe run --teacher-force` once per
+# routing mode, SERIALLY (one engine at a time on this machine), and prints
+# NLL / PPL / top-1 / served / gate-mass-lost plus the verdict against the
+# 1.05x / 1.30x bars. Its oracle set is ~6 MB and regenerable, so it lives in
+# the .gitignore'd traces/ rather than tests/data; without it -- or without a
+# build of `deepmoe` -- the driver prints "SKIP l3_ppl" and ctest reports a skip.
+#
+#   tools/oracle_l3_ppl.py prefill --out traces/l3_64
+#   deepmoe run --state traces/l3_64 --steps 80 --resident-only off --warm-cache
+#   tools/oracle_l3_ppl.py steps   --out traces/l3_64 --continuation cand.json
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(DEEPMOE_PYTHON "" CACHE FILEPATH
+    "python with torch/numpy for the tools/ oracles (default: .venv, then Python3)")
+if(DEEPMOE_PYTHON)
+    set(_l3ppl_py "${DEEPMOE_PYTHON}")
+elseif(EXISTS "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
+    set(_l3ppl_py "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
+elseif(Python3_Interpreter_FOUND)
+    set(_l3ppl_py "${Python3_EXECUTABLE}")
+endif()
+if(_l3ppl_py)
+    add_test(NAME "bench.l3_ppl64"
+             COMMAND "${_l3ppl_py}" "${CMAKE_SOURCE_DIR}/tools/l3_ppl.py"
+                     --state "${CMAKE_SOURCE_DIR}/traces/l3_64"
+                     --exe $<TARGET_FILE:deepmoe>
+                     --steps 64)
+    set_tests_properties("bench.l3_ppl64" PROPERTIES
+        LABELS "needs-model;needs-gpu;bench"
+        RUN_SERIAL TRUE
+        TIMEOUT 3600
+        SKIP_REGULAR_EXPRESSION "SKIP l3_ppl")
+endif()

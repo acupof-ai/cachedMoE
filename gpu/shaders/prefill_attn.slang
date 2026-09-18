@@ -22,6 +22,22 @@
 //          then the prefill branch's completion mask, `-inf` where key t is not
 //          yet complete for this query: t >= (pos + 1) / ratio.
 //
+// Stages 3-5 are the same attention with the two dot-product passes moved onto
+// cooperative-matrix tiles (prefill_coopmat.slang stages 3 and 4,
+// docs/p4_prefill_speed.md §3):
+//
+// Stage 3  gather: G[b][t] = the KV row idx[b][t] names, as fp16 (zeros for
+//          -1). One thread per (query, entry). pc.n_idx = E, the entry stride
+//          of G / S / P (a multiple of 16); pc.g = the index list's own stride
+//          (<= E): entries past it are -1.
+// Stage 4  softmax: from the tile scores S[b][h][t] (q.k, fp32 sums of fp16
+//          products), per (query, head): s = S * scale, the row max over the
+//          valid entries clamped at -1e30, p = bf16(exp(s - mx)) written as
+//          fp16 into P [b][h][t] (0 for -1), and 1 / (sum p + exp(sink - mx))
+//          into kW [b][h]. One thread per (query, head).
+// Stage 5  finish: O[b][h][d] = bf16(O * inv[b][h]) in place, sixteen dims a
+//          thread.
+//
 // The KV rows are fp32 VALUES (the window KV already on its E4M3 grid, the
 // compressed KV on its FP4 grid), so nothing here decodes a byte.
 
@@ -177,10 +193,80 @@ void s_index_score(uint3 gid, uint tid) {
     }
 }
 
+// --- stage 3: gather ------------------------------------------------------------
+// kIdx [B][g] int32, kKv [n_win][hd] f32, kCmp [..][hd] f32, kO = G16 [B][E][hd].
+void s_gather(uint3 gid, uint tid) {
+    const uint i = gid_linear(gid) * kWg + tid;
+    const uint b = i / pc.n_idx, t = i % pc.n_idx;
+    if (b >= pc.b) return;
+    const int idx = (t < pc.g) ? load_i32(Ptr[kIdx] + ((uint64_t)b * pc.g + t) * 4) : -1;
+    const uint hd = pc.head_dim;
+    const uint64_t dst = Ptr[kO] + ((uint64_t)b * pc.n_idx + t) * hd * 2;
+    if (idx < 0) {
+        for (uint e = 0; e < hd; e += 16)
+            [unroll] for (uint q = 0; q < 16; ++q) *(uint16_t*)(dst + (uint64_t)(e + q) * 2) = 0;
+        return;
+    }
+    const uint64_t src = (uint(idx) < pc.n_win)
+        ? Ptr[kKv]  + (uint64_t)uint(idx) * hd * 4
+        : Ptr[kCmp] + (uint64_t)(uint(idx) - pc.n_win) * hd * 4;
+    for (uint e = 0; e < hd; e += 16) {
+        [unroll] for (uint w = 0; w < 4; ++w) {
+            const uint4 a = load16(src + (uint64_t)(e + w * 4) * 4);
+            [unroll] for (uint j = 0; j < 4; ++j)
+                *(uint16_t*)(dst + (uint64_t)(e + w * 4 + j) * 2) = (uint16_t)f32tof16(asfloat(a[j]));
+        }
+    }
+}
+
+// --- stage 4: softmax -----------------------------------------------------------
+// kScore = S [B][H][E] f32 (q.k), kIdx [B][g], kSink [H] f32, kO = P16
+// [B][H][E], kW = inv [B][H] f32.
+void s_softmax(uint3 gid, uint tid) {
+    const uint i = gid_linear(gid) * kWg + tid;
+    const uint b = i / pc.n_heads, h = i % pc.n_heads;
+    if (b >= pc.b) return;
+    const uint E = pc.n_idx;
+    const uint64_t srow = Ptr[kScore] + ((uint64_t)b * pc.n_heads + h) * E * 4;
+    const uint64_t irow = Ptr[kIdx] + (uint64_t)b * pc.g * 4;
+    const uint64_t prow = Ptr[kO] + ((uint64_t)b * pc.n_heads + h) * E * 2;
+    float mx = -3.0e38f;
+    for (uint t = 0; t < pc.g; ++t)
+        if (load_i32(irow + (uint64_t)t * 4) >= 0) mx = max(mx, load_f32(srow + (uint64_t)t * 4) * pc.scale);
+    mx = max(mx, -1.0e30f);
+    float den = 0.0f;
+    for (uint t = 0; t < E; ++t) {
+        float p = 0.0f;
+        if (t < pc.g && load_i32(irow + (uint64_t)t * 4) >= 0)
+            p = bf16_round(exp(load_f32(srow + (uint64_t)t * 4) * pc.scale - mx));
+        den += p;
+        *(uint16_t*)(prow + (uint64_t)t * 2) = (uint16_t)f32tof16(p);
+    }
+    den += exp(load_f32(Ptr[kSink] + (uint64_t)h * 4) - mx);
+    store_f32(Ptr[kW] + ((uint64_t)b * pc.n_heads + h) * 4, 1.0f / den);
+}
+
+// --- stage 5: finish ------------------------------------------------------------
+// kO [B][H][hd] f32 in place, kW = inv [B][H].
+void s_finish(uint3 gid, uint tid) {
+    const uint i = gid_linear(gid) * kWg + tid;
+    const uint chunks = pc.head_dim / 16;
+    const uint bh = i / chunks, c0 = (i % chunks) * 16;
+    const uint b = bh / pc.n_heads;
+    if (b >= pc.b) return;
+    const float inv = load_f32(Ptr[kW] + (uint64_t)bh * 4);
+    const uint64_t o = Ptr[kO] + ((uint64_t)bh * pc.head_dim + c0) * 4;
+    [unroll] for (uint q = 0; q < 16; ++q)
+        store_f32(o + (uint64_t)q * 4, maybe_round(load_f32(o + (uint64_t)q * 4) * inv, pc.flags));
+}
+
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     if (Stage == 0)      s_score(gid, tid);
     else if (Stage == 1) s_combine(gid, tid);
-    else                 s_index_score(gid, tid);
+    else if (Stage == 2) s_index_score(gid, tid);
+    else if (Stage == 3) s_gather(gid, tid);
+    else if (Stage == 4) s_softmax(gid, tid);
+    else                 s_finish(gid, tid);
 }

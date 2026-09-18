@@ -1,0 +1,74 @@
+[INF] engine: deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+[INF] engine: manifest v2 'DeepSeek-V4.1-Flash', 1264 tensors, 475.24 GiB
+[INF] engine: 48 shards open, 475.25 GiB
+[INF] expert store: 1 slots x 18808832 (0.02 GiB) on 'host', table 99072 entries (6 per expert)
+[INF] planner: policy 'lru', cache 1 slots, 48 shards, lookahead d=4 K=12
+[INF] vulkan: AMD Radeon(TM) 8060S Graphics (compute family 1)
+[INF] gpu memory: path A device-local/host-visible (memory type 2)
+[INF] gpu memory: path B external_memory_host (memory type -1)
+[INF] engine: host heap budget 35.36 GiB, 0 B reported in use
+[INF] engine: cache budget auto -> 89.48 GiB (path A 62.26 GiB after 9.17 GiB pinned, path B 27.22 GiB of 53.55 GiB physical free; 134.00 GiB of commit available)
+[INF] pinned weights + expert cache: 105.92 GB wanted, 143.89 GB of commit available
+[INF] pinned weights: 9.85 GB wanted, 143.89 GB of commit available
+[INF] engine: pinned 884 tensors, 9.17 GiB in 3.0s (3.33 GB/s), 10 regions
+[INF] slab pool: path A full after 34 slabs (resource-exhausted: vkAllocateMemory(1880883200 B, type 2) failed (-2)), continuing on path B
+[INF] expert store: 5100 slots x 18808832 (89.34 GiB) on 'path A+B', table 99072 entries (6 per expert)
+[INF] planner: policy 'lru', cache 5100 slots, 48 shards, lookahead d=4 K=12
+[INF] engine: expert cache 5100 slots, 89.34 GiB (34 slabs on path A, 17 on path B)
+[INF] moe bridge: M6 L32 R1 sg32 dec0 hfp16 xglob hqP fp8 (7 slots: 6 fp4 routed + 1 fp8 shared)
+[INF] engine: gpu ready on AMD Radeon(TM) 8060S Graphics
+[INF] l3 state: 64 prompt tokens, 8 steps, 40 layers, cmp<=72 topk<=200
+[INF] engine: decode state loaded -- 64 prompt tokens, 8 reference steps, KV 3.54 MiB (prefill state seeded, every per-step tensor ours)
+warm      5100 experts resident after the P3 heat fill (20.7 s)
+model     deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+weights   48 shards, 475.25 GiB (direct read, no repack)
+io        iocp
+          io: 11414 req (11414 done, 0 failed, 0 cancelled), 33933 chunks, 105776695696 / 105776713728 bytes, busy 22.749 s, eff 4.65 GB/s, mean lat 178.190 ms, peak QD 8 / 32.0 MiB
+  p3_backfill    11414 req  100876.5 MiB
+pinned    884 tensors, 9.17 GiB in 10 regions
+store     expert store: 5100 slots (5100 resident, 0 filling, 0 free, 0 pinned)  lookups 0 hits 0 (0.000)  fills 5100/5100 ok  runs 10200/10200  evictions 0 (+0 guard-blocked)
+planner   planner: 0 layers, 0 requests (0 hits, 0 misses, 0.000), 0 evictions (+0 refused), prefetch 5100 issued / 0 used / 0 wasted, 0 stalls, 0 joined; backfill 5100 issued / 5100 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped
+gpu       AMD Radeon(TM) 8060S Graphics
+LOADED    the state the prompt left behind, from tests/data/l3: the window KV, the compressed KV cache, the indexer key cache and the compressor's carried group, after 64 prompt tokens. Every per-step tensor is ours (design 7.4)
+submit    0.152 ms per submit+fence round trip; a decode step makes about 128 of them (design 13.1's dispatch bucket)
+
+step  in     -> out     wall      | the design 13.1 breakdown
+  0    3006 ->    223      96.1 ms | attn  40.2  moe gpu  31.8 host  0.8  stall     0.2  engram  4.3  tail  6.8  other  12.0  submits  41 | hit 161/161  nvme    0.0 MB  margin 4.3270
+                                  other = record  0.8 + submit  2.9 + bind  1.3 + fence wait  82.5 (GPU time inside the fences:  78.8); moe host = x  0.0 + act_quant  0.4 + table  0.4
+  1     223 ->     18      97.4 ms | attn  41.1  moe gpu  34.1 host  0.5  stall     0.2  engram  4.8  tail  6.7  other   9.9  submits  41 | hit 200/200  nvme    0.0 MB  margin 5.2019
+                                  other = record  0.5 + submit  2.1 + bind  1.2 + fence wait  85.4 (GPU time inside the fences:  81.9); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  2      18 ->     16      96.6 ms | attn  40.4  moe gpu  33.1 host  0.6  stall     0.2  engram  4.2  tail  6.7  other  11.4  submits  41 | hit 180/180  nvme    0.0 MB  margin 5.1262
+                                  other = record  0.5 + submit  2.2 + bind  1.2 + fence wait  84.0 (GPU time inside the fences:  80.2); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  3      16 ->     18      97.6 ms | attn  40.7  moe gpu  34.7 host  0.6  stall     0.2  engram  4.2  tail  6.7  other  10.5  submits  41 | hit 206/206  nvme    0.0 MB  margin 5.5112
+                                  other = record  0.5 + submit  2.6 + bind  1.3 + fence wait  85.4 (GPU time inside the fences:  82.1); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  4      18 ->    201      97.7 ms | attn  40.9  moe gpu  34.8 host  0.5  stall     0.2  engram  4.5  tail  6.8  other  10.0  submits  41 | hit 195/195  nvme    0.0 MB  margin 0.6870
+                                  other = record  0.5 + submit  2.6 + bind  1.3 + fence wait  85.4 (GPU time inside the fences:  82.5); moe host = x  0.0 + act_quant  0.3 + table  0.1
+  5     201 ->      1     104.1 ms | attn  44.2  moe gpu  37.6 host  0.6  stall     0.2  engram  4.5  tail  6.9  other  10.2  submits  41 | hit 198/198  nvme    0.0 MB  margin 1.5591
+                                  other = record  0.9 + submit  2.3 + bind  1.1 + fence wait  91.8 (GPU time inside the fences:  88.6); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  6       1 ->  58603      94.3 ms | attn  41.6  moe gpu  31.1 host  0.6  stall     0.2  engram  4.5  tail  6.7  other   9.7  submits  41 | hit 122/122  nvme    0.0 MB  margin 0.5485
+                                  other = record  0.5 + submit  2.0 + bind  1.2 + fence wait  82.8 (GPU time inside the fences:  79.4); moe host = x  0.0 + act_quant  0.4 + table  0.2
+  7     201 ->    671      98.3 ms | attn  41.4  moe gpu  34.6 host  0.6  stall     0.2  engram  4.3  tail  6.8  other  10.4  submits  41 | hit 181/181  nvme    0.0 MB  margin 0.1197
+                                  other = record  0.5 + submit  2.4 + bind  1.2 + fence wait  86.6 (GPU time inside the fences:  82.8); moe host = x  0.0 + act_quant  0.4 + table  0.2
+
+tokens   223 18 16 18 201 1 58603 671 
+reference 223 18 16 18 201 1 201 61
+6/8 tokens match the fp32 reference (teacher-forced)
+teacher-forced NLL 1.389856 over 8 steps -> PPL 4.0143
+route     resident-only=all over 320 layer-steps
+  experts requested 1920  served 1443 (0.7516)  skipped 477
+  gate mass lost    0.2258 mean over those layer-steps
+  shared-expert-only layer-steps 0
+  background enqueued 359  refused 0  dropped stale 22
+  background queue depth mean 25.0 peak 95 (window 2 steps, cap 24 experts)
+  background fetch latency mean 67.0 ms over 359 completions
+  stall1 P0 fetches 0  0.0 ms total
+tokens 8  wall 0.785 s  10.196 tok/s  hit_rate 1.000
+  hot_gemv       384.56 ms  ( 49.0%)
+  expert_hit     276.58 ms  ( 35.3%)
+  attn_misc        0.00 ms  (  0.0%)
+  dispatch         0.00 ms  (  0.0%)
+  nvme_stall      21.98 ms  (  2.8%)
+  cpu_sync         0.05 ms  (  0.0%)
+  draft            0.00 ms  (  0.0%)
+  sample           0.00 ms  (  0.0%)
+  hot_bytes  68.18 GB   miss_bytes 3.47 GB   nvme_busy 0.02 s   eff 185.60 GB/s
