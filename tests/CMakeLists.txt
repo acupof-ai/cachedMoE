@@ -6,6 +6,7 @@ add_executable(deepmoe_tests
     test_core.cpp
     test_dequant.cpp
     test_store.cpp
+    test_resident_route.cpp
     test_io.cpp
     test_model.cpp
     test_integration.cpp
@@ -30,7 +31,7 @@ target_compile_definitions(deepmoe_tests PRIVATE
 add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
 
 foreach(_suite align layout types json profiler status bytes
-                dequant gate slab expert_store planner
+                dequant gate slab expert_store planner resident_route
                 io v41_config manifest block_info kvcache kvstore)
     add_test(NAME "suite.${_suite}" COMMAND deepmoe_tests "${_suite}.")
 endforeach()

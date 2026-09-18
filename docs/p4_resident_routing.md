@@ -173,3 +173,136 @@ verify-only 比全程 backfill **又快又准**，因为那一次 exact step 既
 * 模拟的是「跳过并归一化」，没有模拟「用第 7..16 名里已常驻的 expert 顶替」这一变体（trace 里有 top-16，做得了，没做）；
 * PPL 只能上 GPU 量——本 track 全部在 CPU 上，任何「输出还正常」的说法都还没有证据；
 * C = 8,000 只是参照量，150 GB 在这台机器上装不下。
+
+---
+
+## 7. GPU results（2026-09-18，Track Y step 2，实测）
+
+**一句话：NO-GO。** `all` 档在真机上跑出来的 `mass_lost` 是 **0.52**，不是模拟的 0.072；
+输出直接坏掉。模拟第 3 节那条「后台补盘是有预算的」是对的，但它低估了**反馈**：
+resident-only 让 LRU 只被服务过的 expert 触摸，cache 于是偏离真实路由，miss 变多，
+跳过变多，再偏离更多。C = 5,711 上模拟算的是「静态 19.1 个 miss/token」，
+真机量到的是 **129 个/token**（64,948 skipped / 20,075 layer-step × 40 层），盘的预算差 6.7 倍。
+
+实现（本 track 写的，全部 additive、默认关）：
+
+| 东西 | 路径 |
+|---|---|
+| 归一化 + 跳过的纯函数 | `runtime/resident_route.h` |
+| 引擎接线、计数器、`DEEPMOE_ROUTE_RESIDENT_ONLY=off\|all` | `runtime/engine.cpp` / `.h` |
+| `--resident-only off\|all`（run / serve）、`--warm-cache`（run） | `cli/deepmoe_main.cpp` / `cli/serve.cpp` |
+| CPU 单测（6 例，变异可杀） | `tests/test_resident_route.cpp` |
+| 结果 | `bench/results/resident/chat_off`、`chat_all` |
+
+MoE runner 的槽位是**固定七个**（`moe_bridge.cpp` 断言 `topk + 1 == slots`），所以被跳过的槽
+不是删掉，而是借用第一个常驻 expert 的 id + 权重**恰好 0**；
+`gpu/shaders/moe_gateup.slang` 在 dispatch A 里乘 `RouteW[m * num_slots + slot]`，
+所以那一槽的 h 是精确的 0，dispatch B 加 0。代价是多算一个 expert 的算术——本 track 要省的是**等盘**，不是 FLOPs。
+
+### 7.1 64-token L3 PPL：没有这个 harness，实际做的是 8 步
+
+F5 的 `tools/quant2_l3.py` 是**参考实现侧**的（`dsref` + CPU shim），一遍 64 token 要 388 s，
+而且它根本不过引擎，量不到引擎的路由。`tests/data/l3` 的导出只有 **8 个 greedy step**（`steps_exported = 8`），
+所以「64-token teacher-forced」在这条路上不存在。实际做的是：
+`run --state tests/data/l3 --steps 8 --teacher-force --warm-cache`，
+PPL = `exp(mean −log p(参考的下一个 token))`，从 head 的 logits 在主机侧算（`Engine::last_logits`，每步都有）。
+因为被 teacher-force 的序列**就是 fp32 参考自己的 greedy 续写**，绝对值很小（1.57），
+能读的是**同样 8 步上两档之间的比值**——这正是判据要的东西。`off ≈ 29.26` 没有对应物，不要再引用。
+
+`--warm-cache`（新增）在解码前用 static heat 表把 5,100 槽全部填满（20.8 s），
+否则 `run` 是冷 cache，两档都没有意义。
+
+| 5,100 槽，L3，teacher-forced 8 步 | off | all |
+|---|---|---|
+| PPL | **1.5688** | **4.1273**（×2.63） |
+| 对 fp32 参考的 top-1 一致 | 8/8 | **6/8** |
+| tok/s | 2.71 | 9.68（×3.6） |
+| served | 0.739（hit） | **0.7552** |
+| mass_lost | — | **0.2232** |
+| 只剩 shared expert 的 layer-step | — | 2 / 320 |
+| nvme_stall 占比 | 73.5% | 4.8% |
+
+判据是 `all ≤ 1.05 × off`，实测 **×2.63**。**不过。**
+注意这里的 0.2232 恰好是第 1 节那把尺子上的「top-6 变成 top-4」。
+这一档的 cache 是 static heat 先验填的（不是这段对话自己的 LRU），所以它对 `all` 偏不利——
+下面 7.2 用对话自己的 warm cache 又量了一遍，结果**更差**。
+
+### 7.2 4 轮对话（`bench/results/hitrate/y_turns.json`，每轮 64 token，5,100 槽，backfill 开）
+
+`tools/hitrate_bench.py --env DEEPMOE_BACKFILL=1 --env DEEPMOE_ROUTE_RESIDENT_ONLY=off|all`，一次一个进程。
+
+| 轮 | off tok/s | off decode hit | all tok/s | all decode hit |
+|---|---|---|---|---|
+| y0 | 4.29 | 0.885 | 9.81 | 1.000 |
+| y1 | 4.74 | 0.907 | 9.34 | 1.000 |
+| y2 | 4.89 | 0.915 | 9.13 | 1.000 |
+| y3 | 4.86 | 0.916 | **2.34** | 1.000 |
+
+`all` 的 hit 恒等于 1.000 是定义使然（只路由到常驻的），**它不是质量指标**，真正的指标是：
+
+| 全程（20,075 个 layer-step） | off | all |
+|---|---|---|
+| experts requested | 120,450 | 120,450 |
+| served | 104,286 (0.866) | **55,502 (0.4608)** |
+| skipped | 0 | **64,948** |
+| gate mass lost（均值） | 0 | **0.5195** |
+| 只剩 shared expert 的 layer-step | 0 | **1,753**（8.7%） |
+| 后台补盘 enqueued / refused | — | 19,356 / **45,592** |
+| 盘：busy / 有效带宽 | 85.8 s / 3.99 GB/s | 91.5 s / **4.12 GB/s** |
+| 盘的流量分布 | P0 290 GB | **P3 359 GB** |
+| 盘的平均延迟 | 24.3 ms | **5,594 ms** |
+| cache eviction | 12,548 | 14,401 |
+
+**盘一直是满的**——两档都把 NVMe 跑到 4 GB/s。区别只是 `off` 在等它、`all` 不等。
+P3 的平均延迟 5.6 s 说明补盘**完全跟不上**：一个 100 ms 的 step 要的 expert 56 步之后才到。
+`refused` 的 45,592 是本实现的在飞上限（48 个 chunk）挡掉的，但放开也没用——盘已经饱和。
+
+### 7.3 输出还正常吗：不正常
+
+off（y2 开头，连贯）：
+
+> \# Host Waits vs. Device Waits on a Timeline Semaphore
+> \#\# 1. The Two Kinds of Wait
+> A timeline semaphore can be waited on from two very different places: …
+
+all（y0 全部，退化）：
+
+> 2022027: 2022027: 2027 2027 2027 2027 202\# 202 202 202 202 202 202 202 …
+
+all（y1，半连贯但词都烂了）：
+
+> A timeline semaphore is a **monfon** (counter that advances monotononly, not only via signal/w wait operations. …
+
+y0 和 y3 是纯噪声，y1/y2 是「看起来像但词是碎的」。这与 0.52 的 mass_lost 和 8.7% 的
+「整层只剩 shared expert」完全一致。
+
+### 7.4 为什么模拟乐观了 7 倍
+
+模拟把 miss 需求当成**外生**的：`240 × (1 − hit_exact)`，在 C = 5,711 上是 19.1/token，正好等于盘的预算。
+真机上它是**内生**的：跳过的 expert 不被 touch → LRU 里它老化 → 下一次更可能不在 → 跳过更多。
+静态的 19.1 变成实测的 129。第 3 节那张带宽扫表的 15 → 0.1456 那一格已经指向这个方向
+（预算掉 20% 质量就翻倍），但它没有把「质量掉 → 需求涨」这一环接回去，
+所以它算的是不动点之外的一次迭代，不是不动点。
+
+第 4 节「verify-only 在 C = 5,711 上 mass_lost 与 exact 相同」的论证依赖同一个假设
+（每 5 步一次的 exact step 足以把 cache 维持在 exact 状态），**因此也不再可信**，
+在 p4/fin-t 上照搬之前必须先量。
+
+### 7.5 试过 / 回退
+
+* **压低在飞上限**（48 个 chunk 的 P3 闸门，`Engine::rr_inflight_cap_`）：挡掉 45,592 次入队，
+  但盘本来就满，放开只会把平均延迟从 5.6 s further 推高。留着，没调。
+* **让被跳过的 expert 也 touch LRU**：没试。它会把 LRU 变回 exact 的状态（好），
+  但那样 cache 就会为从不被计算的 expert 腾位置（坏）。模拟里明确建模了「不 touch」这一支，
+  换一支要重跑模拟，不是一个引擎改动。
+* **按 gate 分数给后台队列排优先级**（第 6 节的未做项）：在 0.52 的 mass_lost 面前是二阶的，没做。
+* **C = 4,500 的 all 档**（step 2c）：没跑。5,100 已经塌了，4,500 只会更塌，机时省下来。
+
+### 7.6 判决
+
+* **`all` 作为默认：NO-GO。** ×2.63 PPL、8.7% 的层只剩 shared expert、两轮纯噪声。
+* **在 DSpark 上做 verify-only 变体（p4/fin-t）：NO-GO / 暂缓。**
+  它的全部论证来自第 4 节，而第 4 节和第 2 节用的是同一个「补盘跟得上」的假设，
+  这个假设已经被 7.2 证伪。要做的话，先量一次**真机上的 verify 位置 mass_lost**，
+  而不是拿模拟的 0.0670 当前提。
+* 代码留下（默认 off）：开关、计数器和单测是量这件事的唯一方式，删了下次还要重写。

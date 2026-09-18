@@ -43,6 +43,7 @@
 // which in one line, and docs/p2_decode.md §9 says it at length.
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -68,6 +69,7 @@
 #include "runtime/kvcache.h"
 #include "runtime/kvstore.h"
 #include "runtime/moe_bridge.h"
+#include "runtime/resident_route.h"
 #include "runtime/sampler.h"
 #include "runtime/sampling.h"
 #include "storage/file.h"
@@ -364,6 +366,31 @@ public:
     void set_reheat(bool on) { reheat_on_ = on; }
     bool reheat_enabled() const { return reheat_on_; }
 
+    // --- Track Y: resident-only routing (docs/p4_resident_routing.md) ------
+    //
+    // `Off` is the shipped behaviour: a layer's missing experts are fetched at
+    // P0 and the step waits for them. `All` never waits -- the gate's experts
+    // that are not resident are dropped, the rest are renormalised
+    // (runtime/resident_route.h) and the dropped ones are handed to the
+    // background fetcher at P3, which evicts the LRU to admit them so the cache
+    // still tracks the conversation.
+    //
+    // Set by `DEEPMOE_ROUTE_RESIDENT_ONLY=off|all` at load, or by this setter
+    // (the `--resident-only` CLI flag), which wins over the environment.
+    enum class ResidentOnly : uint8_t { Off = 0, All = 1 };
+    // Fills every free slot from the static heat table at P3 and blocks until
+    // the cache is full (or `timeout` passes), so a measurement can start from
+    // a warm cache instead of the cold one `load_state` leaves. `begin_session`
+    // does the same thing for a conversation; this is the `run` path's version.
+    Result<uint32_t> warm_cache_from_heat(std::chrono::seconds timeout = std::chrono::seconds(180));
+
+    void set_resident_only(ResidentOnly m) { resident_only_ = m; }
+    ResidentOnly resident_only() const { return resident_only_; }
+    const ResidentRouteStats& resident_route_stats() const { return rr_; }
+    void reset_resident_route_stats() { rr_ = {}; }
+    // One line per counter, for the end of a run.
+    std::string resident_route_report() const;
+
     // --- accessors --------------------------------------------------------
 
     const RuntimeConfig&    config()   const { return cfg_; }
@@ -548,6 +575,15 @@ private:
     // advanced when that buffer's fence returns, so no fill -- a later layer's,
     // the P3 backfill's, the prefill handoff's -- can recycle a slot a
     // submitted buffer still reads.
+    ResidentOnly       resident_only_ = ResidentOnly::Off;
+    ResidentRouteStats rr_{};
+    // Ceiling on P3 reads this mode may have in flight at once, so a cold cache
+    // cannot queue the whole model. docs/p4_resident_routing.md §3: the drive
+    // can land about 19 experts per 80 ms step, so a couple of steps' worth.
+    uint32_t      rr_inflight_cap_ = 48;
+    std::vector<ExpertKey> rr_pending_;   // this layer's dropped experts
+    void flush_resident_backfill(uint32_t layer);
+
     bool          overlap_ = true;
     bool          handoff_ = true;       // gpu_prefill's experts go to the decode cache (§3)
     TimelineValue guard_clock_ = 0;

@@ -163,6 +163,7 @@ int cmd_serve(int argc, char** argv) {
     runtime::SessionPoolOptions po;
     bool check_topk = false;
     bool engine_reheat = false;
+    std::string resident_only;   // Track Y: docs/p4_resident_routing.md
     bool kv_disk_off = false;
     bool kv_dir_given = false;
     for (int i = 2; i < argc; ++i) {
@@ -184,6 +185,7 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--no-kv-disk")      kv_disk_off = true;
         else if (a == "--profile")         cfg.profile_jsonl = value_of(argc, argv, i);
         else if (a == "--check-topk")      check_topk = true;
+        else if (a == "--resident-only")   resident_only = value_of(argc, argv, i);
         else {
             std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data());
             return 2;
@@ -250,6 +252,12 @@ int cmd_serve(int argc, char** argv) {
     if (auto r = engine.begin_session(sc); !r) { emit_error("session: " + r.error().str()); return 1; }
     engine.set_check_topk(check_topk);
     engine.set_reheat(engine_reheat);
+    // Track Y. The flag wins over DEEPMOE_ROUTE_RESIDENT_ONLY, which the load read.
+    if (!resident_only.empty()) {
+        if (resident_only == "all")      engine.set_resident_only(runtime::Engine::ResidentOnly::All);
+        else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
+        else { std::fprintf(stderr, "--resident-only takes off|all, got '%s'\n", resident_only.c_str()); return 1; }
+    }
     runtime::SessionPool pool(engine, *tok, so, po);
     if (!po.disk.dir.empty()) {
         auto loaded = pool.restore_active_from_disk();
@@ -335,12 +343,13 @@ int cmd_serve(int argc, char** argv) {
         if (op == "status") {
             emit(std::format("{{\"event\":\"status\",\"session\":{},\"context\":{},\"max_context\":{},"
                              "\"kv_mb\":{},\"kv_capacity\":{},\"store\":{},\"planner\":{},"
-                             "\"io\":{}}}",
+                             "\"io\":{},\"route\":{}}}",
                              json_quote(pool.active()), engine.context_length(), engine.max_context(),
                              json_number(engine.kv().bytes() / 1e6), engine.kv().capacity(),
                              json_quote(engine.store().stats().to_string()),
                              json_quote(engine.planner().stats().to_string()),
-                             json_quote(engine.io().stats().to_string())));
+                             json_quote(engine.io().stats().to_string()),
+                             json_quote(engine.resident_route_report())));
             continue;
         }
         // Track R1 round 2 (docs/p4_hitrate.md §7): the same pass the turn
