@@ -188,8 +188,19 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
 
     if (auto r = open_model_files(); !r) return r;
 
-    // Track Q1: DEEPMOE_IO_P0_QD / _INFLIGHT_MB / _CHUNK_MB raise the ceilings
-    // the BACKEND is built with; IoEngine still holds P1-P3 to the shipped ones.
+    // Track Q2 (docs/p4_p0_queue.md §9). Q1 tried a deeper P0 queue and got
+    // nothing, because the engine could not FILL the queue it already had: on
+    // one thread, the synchronous ReadFile into path A memory costs ~700 us per
+    // 4 MiB chunk, so a layer's burst of ~10 chunks took ~7 ms just to reach
+    // the drive. With IoEngine::kDefaultSubmitThreads threads doing the
+    // submitting, depth becomes worth having -- 24 chunks / 96 MiB is what a
+    // layer's whole burst needs, and the pair is +4.4% tok/s on the 4-turn
+    // chat where either alone is +2.4-2.9%. Only P0 gets this; P1-P3 keep the
+    // IoConfig defaults (IoEngine::tuning_from_env).
+    cfg_.io.max_inflight_ops   = std::max(cfg_.io.max_inflight_ops, 24u);
+    cfg_.io.max_inflight_bytes = std::max(cfg_.io.max_inflight_bytes, 96u << 20);
+    // DEEPMOE_IO_P0_QD / _INFLIGHT_MB / _CHUNK_MB raise the ceilings the
+    // BACKEND is built with; IoEngine still holds P1-P3 to the shipped ones.
     storage::IoEngine::widen_for_env(cfg_.io);
     auto backend = storage::make_default_backend(cfg_.io);
     if (!backend) return std::unexpected(backend.error());

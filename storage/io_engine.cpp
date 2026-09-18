@@ -43,6 +43,24 @@ std::string IoStats::to_string() const {
             p0_with_bg_n ? double(p0_bg_inflight_sum) / double(p0_with_bg_n) : 0.0,
             p0_chunks_issued ? double(p0_qd_at_issue_sum) / double(p0_chunks_issued) : 0.0);
     }
+    if (disp_iters) {
+        const double tot = double(disp_issue_ns + disp_poll_ns + disp_handle_ns);
+        s += std::format(
+            "  dispatcher: {} iters, issue {:.2f} s / poll {:.2f} s / handle {:.2f} s"
+            " (callbacks {:.2f} s, {} at {:.1f} us mean)\n",
+            disp_iters, disp_issue_ns / 1e9, disp_poll_ns / 1e9, disp_handle_ns / 1e9,
+            disp_cb_ns / 1e9, disp_cbs, disp_cb_mean_us());
+        s += std::format(
+            "  dispatcher: Backend::submit {:.2f} s over {} chunks, mean {:.1f} us,"
+            " max {:.2f} ms  <- synchronous, on the only issuing thread\n",
+            disp_submit_ns / 1e9, disp_submits, disp_submit_mean_us(),
+            disp_submit_ns_max / 1e6);
+        s += std::format(
+            "  dispatcher: handle is {:.1f}% of the non-waiting loop;"
+            " refill gap {:.1f} us mean over {} reaps\n",
+            tot > 0 ? 100.0 * double(disp_handle_ns) / tot : 0.0,
+            disp_refill_mean_us(), disp_refills);
+    }
     return s;
 }
 
@@ -71,7 +89,8 @@ std::string IoEngine::Tuning::to_string() const {
                        "p0_chunk {} MiB bg_qd {} bg_inflight {} MiB",
                        bg_cap_busy, throttle_engram ? 1 : 0, p0_qd,
                        p0_inflight_bytes >> 20, p0_chunk_bytes >> 20,
-                       bg_qd, bg_inflight_bytes >> 20);
+                       bg_qd, bg_inflight_bytes >> 20) +
+           std::format(" submit_threads {}", submit_threads);
 }
 
 void IoEngine::widen_for_env(IoConfig& cfg) {
@@ -112,12 +131,21 @@ IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
     // have to be held to the ceiling they shipped with. An untouched runtime,
     // and bench/nvme_bench (which builds its own IoConfig per point), keep
     // exactly the config they were given.
+    //
+    // Track Q2 made the runtime raise the same ceilings in its own IoConfig
+    // (runtime/engine.cpp), not only through the environment, so the clamp is
+    // now unconditional: whatever P0's depth ends up being, P1-P3 keep the
+    // depth the IoConfig shipped with. Every caller that deliberately runs a
+    // shallower or deeper queue -- bench/nvme_bench, bench/io_dst_bench -- uses
+    // P0 only, so this does not touch a measurement.
     const IoConfig d{};
-    if (t.p0_qd > qd_before && t.bg_qd > d.max_inflight_ops)
-        t.bg_qd = d.max_inflight_ops;
-    if (t.p0_inflight_bytes > byt_before && t.bg_inflight_bytes > d.max_inflight_bytes)
-        t.bg_inflight_bytes = d.max_inflight_bytes;
+    (void)qd_before; (void)byt_before;
+    if (t.bg_qd > d.max_inflight_ops)               t.bg_qd = d.max_inflight_ops;
+    if (t.bg_inflight_bytes > d.max_inflight_bytes) t.bg_inflight_bytes = d.max_inflight_bytes;
     u32("DEEPMOE_IO_BG_QD", t.bg_qd);
+    u32("DEEPMOE_IO_SUBMIT_THREADS", t.submit_threads);
+    if (t.submit_threads == 0) t.submit_threads = 1;
+    if (t.submit_threads > 16) t.submit_threads = 16;
     return t;
 }
 
@@ -148,6 +176,11 @@ Result<void> IoEngine::start(std::unique_ptr<Backend> backend, const IoConfig& c
     stopping_.store(false, std::memory_order_release);
     running_.store(true, std::memory_order_release);
     thread_ = std::thread([this] { dispatcher(); });
+    if (tune_.submit_threads > 1) {
+        submit_workers_.reserve(tune_.submit_threads);
+        for (uint32_t i = 0; i < tune_.submit_threads; ++i)
+            submit_workers_.emplace_back([this] { submit_worker(); });
+    }
     log_info("IoEngine tuning: {}", tune_.to_string());
     log_debug("IoEngine started on '{}' (chunk {} B, QD {}, {} MiB in flight)",
               backend_->caps().name, cfg_.chunk_bytes, cfg_.max_inflight_ops,
@@ -159,7 +192,11 @@ void IoEngine::stop() {
     if (!running_.exchange(false, std::memory_order_acq_rel)) return;
     stopping_.store(true, std::memory_order_release);
     cv_.notify_all();
+    sq_cv_.notify_all();
     if (thread_.joinable()) thread_.join();
+    sq_cv_.notify_all();
+    for (auto& t : submit_workers_) if (t.joinable()) t.join();
+    submit_workers_.clear();
     if (backend_) backend_->cancel_all();
     backend_.reset();
 }
@@ -279,6 +316,7 @@ uint32_t IoEngine::queued_requests() const {
 IoStats IoEngine::stats() const {
     std::lock_guard lk(stats_mutex_);
     IoStats s = stats_;
+    s.disp_submit_threads = tune_.submit_threads;
     // Fold in the currently open busy window so a mid-run reader sees a live
     // utilisation figure rather than a stale one.
     if (busy_) s.busy_ns += static_cast<uint64_t>((Clock::now() - busy_since_).count());
@@ -369,49 +407,100 @@ size_t IoEngine::issue_ready_chunks() {
             std::min<uint64_t>(ch.bytes, fsize > ch.off ? fsize - ch.off : 0));
         cr.dst      = static_cast<std::byte*>(p->req.dst) + (ch.off - p->req.file_off);
 
-        auto r = backend_->submit(cr);
-        if (!r) {
-            bool give_up = false;
-            {
-                std::lock_guard lk(mutex_);
-                chunk_owner_.erase(cid);
-                --p->next_chunk;              // still at the head of its queue
-                if (r.error().code == Err::ResourceExhausted) {
-                    // The backend's own queue is full: retry after the next poll.
-                } else {
-                    // A real failure (a bad handle, a closed file). Retrying
-                    // would spin forever, so fail the request and let the owner
-                    // drop the slot.
-                    log_warn("io: backend submit failed: {}", r.error().str());
-                    p->failed = true;
-                    p->status = r.error();
-                    p->next_chunk = p->chunks.size();   // abandon the rest
-                    give_up = (p->done_chunks == p->issued_chunks);
-                }
-            }
-            if (give_up) finish(p);           // nothing of this request is in flight
-            break;
-        }
+        // The queue slot, the bytes and the class are charged HERE, before the
+        // backend call, so the depth caps above hold whether the submit happens
+        // on this thread or on a submitter. chunk_owner_ was already populated
+        // under the lock, so a completion that lands mid-submit still resolves.
+        const TimePoint handed_at = Clock::now();
         ++p->issued_chunks;
         ++issued;
         inflight_class_[static_cast<uint8_t>(p->req.priority)].fetch_add(1, std::memory_order_relaxed);
-
         const uint32_t ops = inflight_ops_.fetch_add(1, std::memory_order_relaxed) + 1;
         const uint64_t byt = inflight_bytes_.fetch_add(ch.bytes, std::memory_order_relaxed) + ch.bytes;
         {
             std::lock_guard lk(stats_mutex_);
             ++stats_.chunks_submitted;
+            // Track Q2 E2: how long the freed queue slot stayed empty. Only the
+            // first chunk after a reap closes the gap; the rest of the same
+            // issue burst are limited by the backend, not by the refill.
+            if (reap_pending_) {
+                stats_.disp_refill_ns += uint64_t((handed_at - reaped_at_).count());
+                ++stats_.disp_refills;
+                reap_pending_ = false;
+            }
             if (ops > stats_.peak_inflight_ops)   stats_.peak_inflight_ops = ops;
             if (byt > stats_.peak_inflight_bytes) stats_.peak_inflight_bytes = byt;
             if (!busy_) { busy_ = true; busy_since_ = Clock::now(); }
+        }
+
+        if (submit_workers_.empty()) {
+            do_submit(PickedChunk{p, cr});          // exactly the old behaviour
+        } else {
+            {
+                std::lock_guard lk(sq_mutex_);
+                submit_q_.push_back(PickedChunk{p, cr});
+            }
+            sq_cv_.notify_one();
         }
     }
     return issued;
 }
 
+void IoEngine::do_submit(PickedChunk pc) {
+    const TimePoint sub0 = Clock::now();
+    auto r = backend_->submit(pc.req);
+    const uint64_t sub_ns = uint64_t((Clock::now() - sub0).count());
+    {
+        std::lock_guard sk(stats_mutex_);
+        stats_.disp_submit_ns += sub_ns;
+        ++stats_.disp_submits;
+        if (sub_ns > stats_.disp_submit_ns_max) stats_.disp_submit_ns_max = sub_ns;
+    }
+    if (r) return;
+    // The IOCP backend reports a failed ReadFile through the completion path
+    // and only refuses synchronously when the chunk is unusable or its own
+    // queue is full -- and the queue cannot be full, because the engine charges
+    // its own slot before calling and its cap is never above the backend's. So
+    // this is the unusable case: turn it into a failed completion and let the
+    // dispatcher unwind it, which keeps every mutation of request state on one
+    // thread (storage/backend.h).
+    log_warn("io: backend submit failed: {}", r.error().str());
+    ChunkCompletion c;
+    c.chunk_id = pc.req.chunk_id;
+    c.status   = r.error();
+    {
+        std::lock_guard lk(fq_mutex_);
+        failed_q_.push_back(c);
+    }
+    cv_.notify_one();
+}
+
+void IoEngine::submit_worker() {
+    for (;;) {
+        PickedChunk pc;
+        {
+            std::unique_lock lk(sq_mutex_);
+            sq_cv_.wait(lk, [this] {
+                return !submit_q_.empty() || stopping_.load(std::memory_order_acquire);
+            });
+            if (submit_q_.empty()) {
+                if (stopping_.load(std::memory_order_acquire)) return;
+                continue;
+            }
+            pc = std::move(submit_q_.front());
+            submit_q_.pop_front();
+        }
+        do_submit(std::move(pc));
+    }
+}
+
 void IoEngine::handle_completion(const ChunkCompletion& c) {
     std::shared_ptr<Pending> p;
     uint32_t charged = 0;
+    // Whether the freed queue slot has something waiting for it. Only then is
+    // the wall time until the next submit a REFILL gap; otherwise it is just
+    // the engine being idle between layers.
+    bool ready_to_issue = false;
     {
         std::lock_guard lk(mutex_);
         auto it = chunk_owner_.find(c.chunk_id);
@@ -431,6 +520,11 @@ void IoEngine::handle_completion(const ChunkCompletion& c) {
             // is now undefined and the owner will drop the slot.
             p->next_chunk = p->chunks.size();
         }
+        for (auto& q : queues_) {
+            for (const auto& w : q)
+                if (w->next_chunk < w->chunks.size()) { ready_to_issue = true; break; }
+            if (ready_to_issue) break;
+        }
     }
 
     inflight_ops_.fetch_sub(1, std::memory_order_relaxed);
@@ -441,6 +535,8 @@ void IoEngine::handle_completion(const ChunkCompletion& c) {
         std::lock_guard lk(stats_mutex_);
         ++stats_.chunks_completed;
         stats_.bytes_completed += c.bytes_moved;
+        reaped_at_ = Clock::now();
+        reap_pending_ = ready_to_issue;
         if (busy_ && inflight_ops_.load(std::memory_order_relaxed) == 0) {
             closed_window_ns = static_cast<uint64_t>((Clock::now() - busy_since_).count());
             stats_.busy_ns += closed_window_ns;
@@ -511,7 +607,14 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
     // its way to ExpertStore::finish_run, and the MoE dispatch found a slot
     // still Filling ("layer 30 expert 212 is not resident after the gate: it
     // was a miss this layer, its slot is filling", docs/p2_decode.md §11.4).
-    if (p->cb) p->cb(r);          // runs on the dispatcher thread, must be short
+    if (p->cb) {
+        const TimePoint cb0 = Clock::now();
+        p->cb(r);                 // runs on the dispatcher thread, must be short
+        const uint64_t cb_ns = uint64_t((Clock::now() - cb0).count());
+        std::lock_guard lk(stats_mutex_);
+        stats_.disp_cb_ns += cb_ns;
+        ++stats_.disp_cbs;
+    }
     {
         std::lock_guard lk(mutex_);
         --outstanding_requests_;
@@ -523,17 +626,45 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
 void IoEngine::dispatcher() {
     std::vector<ChunkCompletion> comps(std::max<uint32_t>(cfg_.max_inflight_ops, 8));
     for (;;) {
+        const TimePoint t_issue0 = Clock::now();
         const size_t issued = issue_ready_chunks();
+        const TimePoint t_issue1 = Clock::now();
+
+        // Synchronous submit refusals, unwound here so that every mutation of
+        // request state stays on this thread.
+        for (;;) {
+            ChunkCompletion fc;
+            {
+                std::lock_guard lk(fq_mutex_);
+                if (failed_q_.empty()) break;
+                fc = failed_q_.front();
+                failed_q_.pop_front();
+            }
+            handle_completion(fc);
+        }
 
         size_t got = 0;
-        if (inflight_ops_.load(std::memory_order_relaxed) > 0) {
+        TimePoint t_poll1 = t_issue1, t_handle1 = t_issue1;
+        const bool had_inflight = inflight_ops_.load(std::memory_order_relaxed) > 0;
+        if (had_inflight) {
             auto n = backend_->poll(comps, std::chrono::milliseconds(1));
+            t_poll1 = Clock::now();
             if (!n) {
                 log_error("io: backend poll failed: {}", n.error().str());
             } else {
                 got = *n;
                 for (size_t i = 0; i < got; ++i) handle_completion(comps[i]);
             }
+            t_handle1 = Clock::now();
+        }
+        // Track Q2 E2. Only iterations that actually had work in flight are
+        // counted, so an idle engine does not dilute the shares.
+        if (had_inflight) {
+            std::lock_guard lk(stats_mutex_);
+            ++stats_.disp_iters;
+            stats_.disp_issue_ns  += uint64_t((t_issue1 - t_issue0).count());
+            stats_.disp_poll_ns   += uint64_t((t_poll1 - t_issue1).count());
+            stats_.disp_handle_ns += uint64_t((t_handle1 - t_poll1).count());
         }
 
         if (issued == 0 && got == 0) {

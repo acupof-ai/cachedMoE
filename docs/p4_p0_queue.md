@@ -272,3 +272,233 @@ foreach ($c in @(
 断言，默认值没动所以仍然过）；
 `build\tests\deepmoe_tests.exe integration.` **5/5**（`every_run_is_a_legal_unbuffered_read`
 就是 §3 (d) 的出处：15,744 expert / 31,488 run / `max 2 per expert`）。
+
+---
+
+# Track Q2 — 那 30% 的缺口：**不是盘，是 `ReadFile` 本身**（2026-09-18）
+
+一句话：Q1 留下的两个嫌疑人，**两个都对，但它们是同一件事**。
+往 path A（`DEVICE_LOCAL|HOST_VISIBLE`、uncached）内存里读，**一次 4 MiB 的
+同步 `ReadFile` 要 704 µs**，而读进普通主机内存只要 70 µs——内核要先把目的地
+的 1,024 个页 probe 住再锁住，写合并的设备映射页贵一个数量级。
+这个调用过去**只在 dispatcher 一条线程上**发生，于是一层 ~10 个 chunk 光是
+「交到盘手上」就要 ~7 ms，队列永远填不满（8 深度只跑到 3.80）。
+**把提交搬到 8 条线程上，再把 P0 队列开到 24 / 96 MiB：4 轮聊天 +3.5%（过判据）。**
+
+另外：**Q1 的参照系是错的**。`nvme_bench` 默认把测试文件建在 `%TEMP%`——**C: 盘**，
+而 runtime 读的 shard 在 **D:**。D: 的天花板是 **4.60–4.65 GB/s，不是 5.16**，
+而且 **D: 对请求大小不平**（1 MiB @ QD4 只有 3.52 GB/s）。缺口是 23%，不是 30%。
+
+出处：`C:\Users\Asus\code\deepmoe-q2`（分支 `p4/q2-io-gap`），同一个脚本
+`bench/results/hitrate/y_turns.json`，`--cache-slots 5100`，一次一个引擎。
+原始结果 `bench/results/q2/`，报表 `tools/p0q_report.py`。
+
+---
+
+## 9. E1 — 目的地内存
+
+新增 `bench/io_dst_bench.cpp`：同一个 `IoEngine`、同一个 chunk 大小、同一个
+优先级类、同一个文件，**只换目的地**。请求 9,184 KiB（= 一个 run），chunk 4 MiB。
+文件是 D: 上的一个 shard，所以盘的混淆也一起去掉了。
+
+```
+build\io_dst_bench.exe --dst ram,pinned,patha,pathb --qd 4,8,16 --reads 48 --copy
+```
+
+| dst | QD 4 | QD 8 | QD 16 | submit µs @QD8 | QD@issue @QD8 |
+|---|---:|---:|---:|---:|---:|
+| `ram` 普通可分页主机内存（`nvme_bench` 用的） | 4.403 | 4.722 | 4.632 | **121.9** | 6.77 |
+| `pinned` VirtualAlloc + VirtualLock | 4.534 | 4.758 | 4.740 | **83.5** | 6.77 |
+| `patha` DEVICE_LOCAL\|HOST_VISIBLE，映射 | **4.054** | **4.511** | 4.598 | **704.0** | **4.48** |
+| `pathb` external_memory_host（导入的 VirtualAlloc） | 4.618 | 4.818 | 4.727 | **69.6** | 6.81 |
+
+**吞吐上 path A 只慢 5–8%，但 `Backend::submit` 慢 8–10 倍。**
+这一栏才是答案：慢的不是 DMA，是**提交**。path B 拿到的也是 GPU 可见的内存，
+而它的提交和普通主机内存一样便宜（69.6 µs）——所以「GPU 可见」本身不贵，
+**「path A 的那种映射」贵**。
+
+18.8 MB 的搬运成本（如果真要走 staging）：`CPU memcpy pinned -> path A`
+**0.88 ms（21.5 GB/s）**。每 token 21.3 次 miss 就是 18.7 ms 的 memcpy——
+**比要救的 ~8 ms 还贵**，所以 staging 这条路不走，见 §12.2。
+
+### 9.1 盘本身（参照系订正）
+
+```
+build\nvme_bench.exe --file D:\...\model-00020-of-00048.safetensors --size-gb 0 ^
+    --chunk-kb 1024,2048,4096,9184,18360 --qd 1,4,8 --pattern rand --reads 48
+```
+
+| chunk_kb | QD 1 | QD 4 | QD 8 |
+|---:|---:|---:|---:|
+| 1024 | 1.657 | **3.518** | 4.088 |
+| 2048 | 2.375 | 4.079 | 4.434 |
+| 4096 | 3.021 | 4.383 | 4.581 |
+| 9184 | 3.640 | 4.603 | 4.609 |
+| 18360 | 3.875 | **4.647** | 4.638 |
+
+对比 Q1 §4 记的 C: 盘 5.07–5.16 GB/s「对大小是平的」：**D: 两条都不成立**。
+Q1 的「30% 缺口」应读作 **3.55 vs 4.60 = 23%**；
+Q1 §3 里「1 MiB chunk +1.4%」也有了解释——不是盘喜欢小请求（D: 对 1 MiB 更慢），
+是**小 chunk 让那条单线程的提交路更快开始下一个**。
+
+---
+
+## 10. E2 — dispatcher 补队
+
+几个加法计数器（`IoStats`，`status.json` 自带），把 dispatcher 一圈拆开：
+`issue_ready_chunks` / `backend_->poll` / `handle_completion`，外加
+`Backend::submit` 单独一项和「一个 chunk 退休到下一个 chunk 出门」的补队间隙。
+
+基线（`a2_st1`，全程含 prefill，144,537 个 chunk）：
+
+```
+dispatcher: 110527 iters, issue 42.81 s / poll 34.23 s / handle 0.23 s
+            (callbacks 0.13 s, 80410 at 1.6 us mean)
+dispatcher: Backend::submit 42.71 s over 144537 chunks, mean 295.5 us, max 2.58 ms
+dispatcher: handle is 0.3% of the non-waiting loop; refill gap 137.9 us mean
+```
+
+读出来三件事：
+
+1. **回调是清白的。** 80,410 次回调一共 0.13 s，**平均 1.6 µs**。
+   「完成回调在 dispatcher 线程上做实事」这个担心不成立——`ExpertStore::finish_run`
+   本来就只是翻个状态。`handle` 占非等待时间的 **0.3%**。
+2. **`issue` 就是 `submit`。** 42.81 s 的 issue 里 **42.71 s 在 `Backend::submit`**，
+   也就是 `::ReadFile`。均值 295.5 µs（混了 48,192 个 4 KiB 的 engram 提交；
+   单看 4 MiB 的 P0 chunk 就是 E1 量到的 ~700 µs）。
+3. **它是串行的。** 一个 P0 请求 ≈ 2.91 个 chunk，一个 token 42.67 个请求
+   ≈ **124 个 chunk × ~700 µs ≈ 87 ms 的纯提交**，而 `nvme_stall` 是 105 ms。
+   **stall 的绝大部分是这条线程在锁页，不是盘在读。**
+   这正是 `first-of-burst 2.84 ms` 与 `mean QD at issue 3.80` 的出处。
+
+「一个 expert 的 chunk 是不是一次性全发」——Q1 §3(d) 已经证实是；
+问题从来不是发得晚，是**发一个要 0.7 ms**。
+读是 `FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED`，对齐也没有逼出额外拷贝
+（`integration.every_run_is_a_legal_unbuffered_read` 保证每个 run 本身就是合法的
+非缓冲读），**所以没有「多一次拷贝」可省**。
+
+---
+
+## 11. 改动
+
+**一句话：策略还在 dispatcher 一条线程上，`Backend::submit` 搬到线程池。**
+
+`IoEngine` 多一个提交线程池（`IoEngine::kDefaultSubmitThreads = 8`，旋钮
+`DEEPMOE_IO_SUBMIT_THREADS`，`=1` 就是改动前的行为，所以 A/B 是环境变量）。
+`issue_ready_chunks` 现在只做**策略**：在锁里挑 chunk、占掉队列槽位和字节额度、
+填好 `chunk_owner_`，然后把 `PickedChunk` 丢进队列；提交线程去调 backend。
+
+三处必须讲清楚的：
+
+* **额度在挑的时候就扣**，不是提交成功之后。否则 dispatcher 会超发。
+  `chunk_owner_` 也在锁里先填好，所以一个在提交途中就回来的完成照样能解析。
+* **同步的提交失败**不再就地回滚 `next_chunk`（并行下那个「还在队头」的前提没了），
+  而是变成一个失败的 `ChunkCompletion` 塞进 `failed_q_`，由 dispatcher 走正常
+  的 `handle_completion` 解开——**请求状态仍然只有一条线程改**，
+  `storage/backend.h` 的约定不变。IOCP backend 本来就把 `ReadFile` 的错误
+  当完成事件报，同步只在「句柄不可用」和「自己的队列满了」时拒绝，
+  而后者已经不可能（引擎先扣自己的槽位，且上限从不超过 backend 的）。
+* **P1–P3 的队列深度不跟着涨。** `tuning_from_env` 里对背景类的钳制改成无条件：
+  不管 P0 的深度变成多少，P1–P3 永远是 `IoConfig` 出厂的 8 / 32 MiB。
+  `nvme_bench` / `io_dst_bench` 只用 P0，不受影响。
+
+以及 runtime 自己的 `IoConfig`（`runtime/engine.cpp`）：
+`max_inflight_ops 8 -> 24`、`max_inflight_bytes 32 -> 96 MiB`。
+**Q1 试过深队列（`P0_QD=32`）并且判它 NO-GO——那个结论在当时是对的**：
+填不满的队列再深也没用。提交并行之后深度才重新变得值钱，一层的整批
+（~10 个 chunk）这才装得下。**两个一起才够判据，单独任何一个都不够**（§12）。
+
+---
+
+## 12. A/B，ABAB 交替，同一个脚本
+
+判据 **±3%**。`a*` = `DEEPMOE_IO_SUBMIT_THREADS=1`（改动前的行为），
+`d*` = 新的默认值，中间穿插 b/c 两档。
+
+| cell | 变量 | tok/s | Δ | stall ms | P0 lat | first | behind | QD@issue |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `a1/a2/a3/a4` | 提交 1 线程，QD 8（**改动前**） | **4.828** | — | 108.1 | 5.25 | 2.85 | 8.49 | 3.80 |
+| `b1/b2` | 提交 4 线程，QD 8 | 4.965 | +2.9% | 103.2 | 4.03 | **0.89** | 7.61 | 4.14 |
+| `c1` | 提交 4 线程，QD 16 / 64 MiB | 4.937 | +2.4% | 103.0 | 4.06 | 0.91 | 7.73 | 5.58 |
+| `c2/c3/c4` | 提交 8 线程，QD 24 / 96 MiB | **5.035** | **+4.3%** | 99.7 | 3.89 | 1.28 | **7.07** | 6.02 |
+| `d1/d2` | **新默认**（同上，不设任何环境变量） | **4.998** | **+3.5%** | 100.9 | 3.89 | 1.27 | 7.10 | 6.02 |
+
+四次 A：4.824 / 4.834 / 4.811 / 4.842（**±0.3%**）。
+顺序 b → a → b → a → c → a → c → c → d → a → d。
+
+dispatcher 那一圈的变化（`d1_default`）：
+
+```
+dispatcher: issue 42.81 s -> 0.51 s          <- 策略线程不再锁页
+dispatcher: Backend::submit 49.21 s over 144537 chunks, mean 340.5 us, over 8 submitter thread(s)
+P0: queue wait 2.01 -> 0.09 ms;  first-of-burst 2.85 -> 1.27 ms;  behind 8.49 -> 7.10 ms
+peak QD 8 / 32.0 MiB -> 24 / 87.0 MiB
+```
+
+**提交的总成本一点没少（42.7 s -> 49.2 s，还略涨），少的是它挡在关键路径上的部分。**
+
+### 12.1 预测对实测
+
+| | 预测 | 实测 |
+|---|---|---|
+| 有效带宽 | 3.55 -> ≥4.5 GB/s | **3.47 -> 3.72**（+7.2%） |
+| `nvme_stall` | 105 -> ~83 ms | **108.1 -> 100.9 ms**（−6.7%） |
+| tok/s | ~5.5（+13%） | **4.828 -> 4.998（+3.5%）** |
+
+**预测偏乐观，机制说对了。** 差在参照系：预测里的 4.5 GB/s 是拿 C: 盘的
+5.16 推的，而 **D: 的天花板是 4.60**，而且那是**连续流**的天花板。
+引擎是**突发**的——一层只有 ~3.2 个请求 ≈ 9.6 个 chunk，
+每层都要重新爬坡再排空，`behind` 7.07 ms 对 28.6 MiB 就是 4.05 GB/s，
+**已经是 4.60 的 88%**。剩下的不是「填队列」能拿的，是突发形状本身。
+
+引擎自己的 busy 窗口从 **3.90 -> 4.10 GB/s**，也就是说
+**盘在被用到的时候已经跑到它天花板的 89%**，Q1 §4 说的那个缺口**关掉了**。
+
+### 12.2 退掉的
+
+* **staging（pinned 读 + memcpy 进 path A）**：memcpy 18.8 MB 要 0.88 ms，
+  每 token 18.7 ms，**比要救的还贵**。`vkCmdCopyBuffer` 没测——上一条已经
+  判了这条路，而且它还要一次 GPU 提交和一次同步。
+* **path B 优先**：path B 的提交便宜（69.6 µs），但它被物理内存和 host heap
+  卡住（这台机器 34 个 slab 在 A、17 个在 B），把顺序反过来也只能挪 1/3 的槽位，
+  而且 **提交并行之后 path A 的 4.21 -> 4.80 GB/s 已经追平 path B 的 4.82**
+  （`io_dst_bench --dst patha --qd 8`），**没有剩下的差可赚**。
+* **`P0_QD` 单独调大**：Q1 判的 NO-GO 仍然成立，见 §11。
+
+---
+
+## 13. 保留什么
+
+| 改动 | 结论 |
+|---|---|
+| `IoEngine` 提交线程池，默认 8（`DEEPMOE_IO_SUBMIT_THREADS`） | **保留，默认开** |
+| runtime 的 `IoConfig` QD 24 / 96 MiB（只给 P0） | **保留，默认开** |
+| dispatcher 分项计数器（issue/poll/handle/submit/补队间隙） | **保留，默认开**，热路径上是每圈 4 次 `Clock::now()` |
+| `bench/io_dst_bench` | **保留**。目的地内存这一维以后还会再问 |
+| P1–P3 深度无条件钳在出厂值 | **保留** |
+| staging / path B 优先 | **不做**，理由见 §12.2 |
+
+## 14. 重跑
+
+```powershell
+# A/B（每个 cell ~2 min 20 s，一次一个引擎）
+foreach ($c in @(@{n='d_default'; e=@()},
+                 @{n='a_st1'; e=@('DEEPMOE_IO_SUBMIT_THREADS=1','DEEPMOE_IO_P0_QD=8',
+                                  'DEEPMOE_IO_P0_INFLIGHT_MB=32')})) {
+  $ea=@(); foreach ($v in $c.e) { $ea+='--env'; $ea+=$v }
+  .venv\Scripts\python.exe tools\hitrate_bench.py --script bench\results\hitrate\y_turns.json `
+      --cache-slots 5100 --out "bench\results\q2\$($c.n)" --exe build\deepmoe.exe `
+      --shader-dir build\shaders @ea
+}
+.venv\Scripts\python.exe tools\p0q_report.py bench\results\q2\*
+
+# E1（纯盘 + 一个 Vulkan 设备，~2 min）
+build\io_dst_bench.exe --dst ram,pinned,patha,pathb --qd 4,8,16 --reads 48 --copy `
+    --csv bench\results\q2\e1_dram_D.csv
+```
+
+## 15. 测试
+
+`ctest -LE needs-model` **25/25**；`suite.decode` **Passed**、`suite.gpu_moe` **Passed**；
+`io.` **8/8**（含 `io.background_is_throttled_while_p0_is_recent`——P1–P3 的深度和
+`bg_cap_busy` 都没动，所以它仍然按原值过）；`integration.` **5/5**；`decode.` **2/2**。

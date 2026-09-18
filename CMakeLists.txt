@@ -99,6 +99,11 @@ add_dependencies(deepmoe shaders)
 add_executable(nvme_bench bench/nvme_bench.cpp)
 target_link_libraries(nvme_bench PRIVATE deepmoe_core)
 
+# Track Q2 E1: the same IoEngine reads, varying only the destination memory.
+add_executable(io_dst_bench bench/io_dst_bench.cpp)
+target_link_libraries(io_dst_bench PRIVATE deepmoe_core)
+add_dependencies(io_dst_bench shaders)
+
 add_executable(bw_matrix bench/bw_matrix.cpp)
 target_link_libraries(bw_matrix PRIVATE deepmoe_core)
 add_dependencies(bw_matrix shaders)

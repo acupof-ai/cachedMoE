@@ -110,6 +110,39 @@ struct IoStats {
     // Mean chunk queue depth seen at issue, over P0 chunks only.
     uint64_t p0_chunks_issued = 0, p0_qd_at_issue_sum = 0;
 
+    // --- dispatcher refill accounting, Track Q2 E2 --------------------------
+    // The dispatcher is one thread running issue -> poll -> handle -> issue.
+    // Anything it spends in `handle` (which is where completion CALLBACKS run,
+    // and an expert fill's callback settles the slot) is time in which no new
+    // chunk can go to the drive, however deep the queue nominally is. These
+    // four counters split one loop iteration so that "the queue never fills"
+    // can be attributed to a phase instead of guessed at.
+    uint64_t disp_iters     = 0;   // loop iterations with work in flight
+    uint64_t disp_issue_ns  = 0;   // inside issue_ready_chunks()
+    uint64_t disp_poll_ns   = 0;   // inside backend_->poll()
+    uint64_t disp_handle_ns = 0;   // inside handle_completion(), callbacks included
+    uint64_t disp_cb_ns     = 0;   // the callbacks alone, a subset of handle
+    uint64_t disp_cbs       = 0;   // how many callbacks that was
+    // Backend::submit() alone, a subset of issue: on Windows that is a
+    // synchronous ReadFile, which has to probe-and-lock the destination pages
+    // before it can return ERROR_IO_PENDING.
+    uint64_t disp_submit_ns = 0, disp_submits = 0, disp_submit_ns_max = 0;
+    uint32_t disp_submit_threads = 1;   // how many threads shared that time
+    // Wall time from a chunk completion being reaped to the next chunk reaching
+    // the backend, counted only when the engine had a chunk ready to issue --
+    // the refill gap the drive sees.
+    uint64_t disp_refill_ns = 0, disp_refills = 0;
+
+    double disp_cb_mean_us() const {
+        return disp_cbs ? disp_cb_ns / 1e3 / double(disp_cbs) : 0.0;
+    }
+    double disp_submit_mean_us() const {
+        return disp_submits ? disp_submit_ns / 1e3 / double(disp_submits) : 0.0;
+    }
+    double disp_refill_mean_us() const {
+        return disp_refills ? disp_refill_ns / 1e3 / double(disp_refills) : 0.0;
+    }
+
     double p0_mean_ms() const {
         return p0_requests ? p0_lat_ns_sum / 1e6 / double(p0_requests) : 0.0;
     }
@@ -199,7 +232,19 @@ private:
         uint32_t bytes = 0;
     };
 
+    // One chunk that policy has already committed to: its queue slot, its
+    // bytes and its chunk id are all accounted for, and the only thing left is
+    // the call into the backend. Track Q2 E2 made that call the bottleneck --
+    // ReadFile into path A memory costs ~700 us -- so it can be handed to a
+    // submitter thread instead of running on the dispatcher.
+    struct PickedChunk {
+        std::shared_ptr<Pending> owner;
+        ChunkRequest req{};
+    };
+
     void dispatcher();                  // the single I/O policy thread
+    void submit_worker();               // optional: drains submit_q_
+    void do_submit(PickedChunk pc);     // the backend call plus its failure path
     size_t issue_ready_chunks();        // returns how many chunks were handed to the backend
     void   handle_completion(const ChunkCompletion& c);
     void   finish(std::shared_ptr<Pending> p);
@@ -207,6 +252,16 @@ private:
 
 public:
     static constexpr uint32_t kBackgroundOpsWhileBusy = 1;
+    // Track Q2: Backend::submit() is a synchronous ReadFile, and into path A
+    // (DEVICE_LOCAL|HOST_VISIBLE) memory it costs ~700 us per 4 MiB chunk
+    // against ~70 us into ordinary host pages -- the kernel has to probe and
+    // lock the destination pages before the transfer can even start. On one
+    // thread that caps issue at ~1.4 chunks/ms, so a layer's burst of ~10
+    // chunks takes ~7 ms just to reach the drive and the queue never fills
+    // (mean depth 3.80 of 8). Submitting from several threads decouples the
+    // issue rate from that cost. Measured on the 4-turn chat: 1 -> 8 threads
+    // with the deeper P0 queue below is +4.4% tok/s. docs/p4_p0_queue.md §9.
+    static constexpr uint32_t kDefaultSubmitThreads = 8;
     static constexpr std::chrono::milliseconds kBackgroundQuiet{100};
 
     // Track Q1 knobs (docs/p4_p0_queue.md). All default to today's behaviour,
@@ -218,6 +273,11 @@ public:
     //                            queue is a P0 (default = cfg.max_inflight_ops)
     //   DEEPMOE_IO_P0_INFLIGHT_MB in-flight byte ceiling for the same case
     //   DEEPMOE_IO_P0_CHUNK_MB   chunk size for P0 requests (default = cfg)
+    //   DEEPMOE_IO_SUBMIT_THREADS  how many threads call Backend::submit.
+    //                            1 (the default before Track Q2) means the
+    //                            dispatcher does it inline; N > 1 starts N
+    //                            submitter threads and the dispatcher only
+    //                            decides which chunk goes next.
     struct Tuning {
         uint32_t bg_cap_busy      = kBackgroundOpsWhileBusy;
         bool     throttle_engram  = false;
@@ -229,6 +289,7 @@ public:
         // backfill as well".
         uint32_t bg_qd            = 0;
         uint64_t bg_inflight_bytes = 0;
+        uint32_t submit_threads   = kDefaultSubmitThreads;
         std::string to_string() const;
     };
     const Tuning& tuning() const { return tune_; }
@@ -255,6 +316,15 @@ private:
     Profiler*  profiler_ = nullptr;
 
     std::thread            thread_;
+    std::vector<std::thread> submit_workers_;
+    mutable std::mutex       sq_mutex_;
+    std::condition_variable  sq_cv_;
+    std::deque<PickedChunk>  submit_q_;
+    // Submit failures the backend reports synchronously. They are drained and
+    // turned into completions by the dispatcher, so request state stays
+    // single-threaded (storage/backend.h).
+    std::mutex                  fq_mutex_;
+    std::deque<ChunkCompletion> failed_q_;
     std::atomic<bool>      running_{false};
     std::atomic<bool>      stopping_{false};
 
@@ -271,6 +341,10 @@ private:
     std::atomic<uint64_t> inflight_bytes_{0};
     TimePoint busy_since_{};
     bool      busy_ = false;
+    // Set when handle_completion() frees a queue slot, cleared by the next
+    // chunk that reaches the backend: the two ends of the refill gap.
+    TimePoint reaped_at_{};
+    bool      reap_pending_ = false;
 
     mutable std::mutex stats_mutex_;
     IoStats            stats_{};

@@ -1,0 +1,13 @@
+dst,req_kb,chunk_kb,qd,bytes,seconds,gbps,mean_ms,max_ms,qd_at_issue,note
+ram,9184,4096,4,451411968,0.102521,4.4031,4.2288,6.2170,2.60,pageable host (AlignedBuffer)
+ram,9184,4096,8,451411968,0.095599,4.7219,7.7192,10.5968,6.75,pageable host (AlignedBuffer)
+ram,9184,4096,16,451411968,0.097455,4.6320,15.0431,23.5297,14.08,pageable host (AlignedBuffer)
+pinned,9184,4096,4,451411968,0.099570,4.5336,4.1058,6.4433,2.72,VirtualAlloc + VirtualLock (non-pageable)
+pinned,9184,4096,8,451411968,0.094865,4.7585,7.6761,10.3692,6.75,VirtualAlloc + VirtualLock (non-pageable)
+pinned,9184,4096,16,451411968,0.095233,4.7401,14.9037,23.0981,14.16,VirtualAlloc + VirtualLock (non-pageable)
+patha,9184,4096,4,451411968,0.111343,4.0543,4.6046,6.6017,2.53,memory type 2, mapped
+patha,9184,4096,8,451411968,0.100075,4.5107,8.1191,11.1828,5.42,memory type 2, mapped
+patha,9184,4096,16,451411968,0.098183,4.5977,15.6708,18.9840,9.15,memory type 2, mapped
+pathb,9184,4096,4,451411968,0.097757,4.6177,4.0301,5.7186,2.68,memory type 1, imported
+pathb,9184,4096,8,451411968,0.093690,4.8181,7.5535,11.3085,6.78,memory type 1, imported
+pathb,9184,4096,16,451411968,0.095495,4.7271,14.8755,20.4360,14.17,memory type 1, imported

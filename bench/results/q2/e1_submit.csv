@@ -1,0 +1,5 @@
+dst,req_kb,chunk_kb,qd,bytes,seconds,gbps,mean_ms,max_ms,qd_at_issue,note
+ram,9184,4096,8,451411968,0.095435,4.7300,7.7133,9.8271,6.77,pageable host (AlignedBuffer)
+pinned,9184,4096,8,451411968,0.094631,4.7702,7.6855,11.8101,6.77,VirtualAlloc + VirtualLock (non-pageable)
+patha,9184,4096,8,451411968,0.103243,4.3723,8.4043,11.4008,4.48,memory type 2, mapped
+pathb,9184,4096,8,451411968,0.095790,4.7125,7.6961,8.9262,6.81,memory type 1, imported
