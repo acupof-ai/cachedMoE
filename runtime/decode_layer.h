@@ -49,6 +49,7 @@
 #include "model/v41_config.h"
 #include "runtime/kvstore.h"
 #include "runtime/rope.h"
+#include "runtime/trace.h"
 #include "store/pinned.h"
 
 namespace deepmoe::runtime {
@@ -319,6 +320,14 @@ public:
     // a token. The token loop points it at ordinary host pages imported for
     // the GPU (path B), where the same read is a cached memcpy.
     void set_ffn_input(uint64_t addr, float* host) { ffn_in_addr_ = addr; ffn_in_host_ = host; }
+
+    // ADDITIVE (Track W): a per-dispatch GPU trace. Null (the default) makes
+    // every hook in record_attention / record_ced / record_close a null test.
+    // The tracer does the stamping through the callback its owner bound; this
+    // class only says which dispatch is starting and which is done. See
+    // runtime/trace.h.
+    void set_tracer(trace::Tracer* t) { tracer_ = t; }
+    trace::Tracer* tracer() const { return tracer_; }
     uint64_t ffn_in_addr() const { return ffn_in_addr_ ? ffn_in_addr_ : buf_.u.addr; }
     const float* moe_out() const {
         return moe_out_host_ ? moe_out_host_ : static_cast<const float*>(buf_.moe_y.host);
@@ -411,6 +420,7 @@ private:
     float*            ffn_in_host_ = nullptr;
     const float*      moe_out_host_ = nullptr;
     uint32_t          hcdim_ = 0;
+    trace::Tracer*    tracer_ = nullptr;   // ADDITIVE (Track W)
 };
 
 }  // namespace deepmoe::runtime

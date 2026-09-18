@@ -21,7 +21,8 @@ add_executable(deepmoe_tests
     test_tokenizer.cpp
     test_engram_tables.cpp
     test_kvstore.cpp
-    test_kv_replay.cpp)
+    test_kv_replay.cpp
+    test_trace.cpp)
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
@@ -31,7 +32,7 @@ add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
 
 foreach(_suite align layout types json profiler status bytes
                 dequant gate slab expert_store planner
-                io v41_config manifest block_info kvcache kvstore)
+                io v41_config manifest block_info kvcache kvstore trace)
     add_test(NAME "suite.${_suite}" COMMAND deepmoe_tests "${_suite}.")
 endforeach()
 
@@ -164,3 +165,7 @@ set_tests_properties("suite.kv_replay" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP kv_replay")
 add_test(NAME "suite.kvdisk" COMMAND deepmoe_tests "kvdisk.")
+set_tests_properties("suite.kvdisk" PROPERTIES LABELS "unit")
+
+# Track W: the per-dispatch trace's format and resolver. No GPU, no checkpoint.
+set_tests_properties("suite.trace" PROPERTIES LABELS "unit")

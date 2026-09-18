@@ -77,6 +77,8 @@ struct RuntimeConfig {
     // (design §5.1 v0.5 -- there is no repack).
     std::string model_dir;
     std::string profile_jsonl;    // empty = no JSONL sink
+    std::string trace_file;       // ADDITIVE (Track W): per-dispatch GPU trace,
+                                  // empty = off. runtime/trace.h has the format.
     std::string kvcache_dir;      // design §11.4 prefix KV persistence
 
     MemoryPath  memory_path = MemoryPath::Auto;

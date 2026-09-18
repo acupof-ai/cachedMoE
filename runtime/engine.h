@@ -70,6 +70,7 @@
 #include "runtime/moe_bridge.h"
 #include "runtime/sampler.h"
 #include "runtime/sampling.h"
+#include "runtime/trace.h"
 #include "storage/file.h"
 #include "storage/io_engine.h"
 #include "store/expert_store.h"
@@ -456,6 +457,13 @@ private:
     bool                 tok_first_ = true;       // the next open is a token's first
     gpu::QueryPool       tsq_;
     uint32_t             tsq_used_ = 0;
+    // ADDITIVE (Track W): the per-dispatch trace. Idle unless
+    // RuntimeConfig::trace_file is set; `trace_stamp` is the callback it
+    // stamps through, which is just `cmd_stamp` behind a C pointer.
+    trace::Tracer        tracer_;
+    static uint32_t      trace_stamp(void* ctx) {
+        return static_cast<Engine*>(ctx)->cmd_stamp();
+    }
     uint32_t             submits_ = 0;
     double               rec_ms_ = 0.0, sub_ms_ = 0.0, wait_ms_ = 0.0, bind_ms_ = 0.0;
     double               mx_ms_ = 0.0, mq_ms_ = 0.0, mt_ms_ = 0.0;

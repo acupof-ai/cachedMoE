@@ -183,6 +183,7 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--kv-max-gb")       po.disk.max_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 30;
         else if (a == "--no-kv-disk")      kv_disk_off = true;
         else if (a == "--profile")         cfg.profile_jsonl = value_of(argc, argv, i);
+        else if (a == "--trace")           cfg.trace_file = value_of(argc, argv, i);
         else if (a == "--check-topk")      check_topk = true;
         else {
             std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data());

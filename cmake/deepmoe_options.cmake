@@ -70,7 +70,8 @@ set(DEEPMOE_RUNTIME_SOURCES
     runtime/engram.cpp
     runtime/sampling.cpp
     runtime/session.cpp
-    runtime/engram_tables.cpp)
+    runtime/engram_tables.cpp
+    runtime/trace.cpp)
 
 # Track P: the tokenizer (docs/p3_chat.md).
 set(DEEPMOE_TEXT_SOURCES
