@@ -1,0 +1,28 @@
+tools/spec_longest.py -- 2026-09-18, traces/dspark_tree, K = 16, 1.6 s of CPU
+
+71 greedy draft events, K = 16  (1.6s)
+  chain    mean a 2.8169   E[tokens](k=1..5) 1.83 / 2.51 / 3.03 / 3.46 / 3.82
+  longest  mean a 3.7746   E[tokens](k=1..5) 1.99 / 2.85 / 3.59 / 4.25 / 4.77
+  off-chain: the target's argmax is in the draft's top-16 at 84/155 = 0.5419 of the positions the chain did not take
+    position 0: 11/12 = 0.9167
+    position 1: 13/23 = 0.5652
+    position 2: 18/34 = 0.5294
+    position 3: 22/40 = 0.5500
+    position 4: 20/46 = 0.4348
+  at the FIRST mismatch only, by how far the chain got:
+    chain a = 0: 11/12 = 0.9167
+    chain a = 1: 7/11 = 0.6364
+    chain a = 2: 8/11 = 0.7273
+    chain a = 3: 5/6 = 0.8333
+    chain a = 4: 5/6 = 0.8333
+
+`longest` buys +0.96 accepted positions a cycle (2.82 -> 3.77), i.e. E[tokens]
+at k = 5 goes 3.82 -> 4.77, +25%.
+
+It is not lossless and the reason is structural, not a detail: verify row i + 1
+was computed with the CHAIN's token at position i in its KV, not the token
+`longest` substitutes there. Every position after the first substitution is
+conditioned on a prefix that never happened. docs/p4_dspark_runtime.md 7.4.
+
+(The 3.77 here is greedy trajectories only; dspark_tree.py analyse's `coverage`
+figure of 3.44 for anchor/K16 averages greedy and sampling trajectories.)

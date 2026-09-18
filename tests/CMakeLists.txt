@@ -106,6 +106,13 @@ set_tests_properties("suite.spec_forward" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP spec_forward")
 
+# M1: what a verify forward costs in the engine at M = 1..6, against the same
+# positions as sequential decode steps. A bench, not a gate.
+add_test(NAME "bench.spec_forward_m_curve" COMMAND deepmoe_tests "bench_spec.")
+set_tests_properties("bench.spec_forward_m_curve" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP bench_spec")
+
 # Long-context decode (4K / 17K) against Track M's exports, tie-aware. The
 # kernel case needs a GPU and traces/longctx; the engine case the model too.
 add_test(NAME "suite.decode_longctx" COMMAND deepmoe_tests "decode_longctx.")

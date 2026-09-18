@@ -579,6 +579,193 @@ token 里被用第二次 → 命中"——**那正是并集省下的那一部分
 
 ---
 
+## 7. Track SP（2026-09-18）：`Engine::forward_batch` 落地了，以及它测出来的三个数
+
+§6.4 那件"还缺的一件"做完了。这一节写三件事：**它是什么**、**它的 gate 没过而且为什么**、
+**拿它重算的 go / no-go**。结论方向和 §6.5 一样，但从"按 kernel 表算"变成"在引擎里实测"。
+
+### 7.1 落地的东西（`runtime/engine.{h,cpp}`，`tests/test_spec_forward.cpp`）
+
+| | |
+|---|---|
+| `Engine::init_batch(m_cap)` | 首次使用时建 `gpu::MgtRunner`、128 MB 的 `bscratch_`、`[M][vocab]` logits 与 `[M]` sample；M=1 的 token loop 一个字节都不为它付 |
+| `Engine::forward_batch(p0, tokens[M], rows, logits)` | 把 M 个 token 追加到当前 KV 上跑一遍前向（批内因果），返回每行 argmax/top1/top2 与可选的整行 logits |
+| `Engine::run_layer_batch` | `run_layer` 的孪生：批 attention → **每个位置各一次**路由决策 → expert 并集 → Planner → `stage_batch_union` + `record_batch_union` |
+| `route_resident_only` | 从 `run_layer` 里原样抬出来的，两条路径共用一个决策；`verify` 模式的 block 相位在批路径上是**行号**（第 0 行精确、1..M−1 resident-only），不是 LRU 时钟 |
+| `snapshot_batch_ring` / `restore_batch_ring` | 批前快照 M 个环槽，拒绝后只恢复 p0+a+1 .. p0+M−1，并把 `pub_index_k_`、`history_` 一起退回 |
+| `stage_batch_union` 的一行修 | 权重矩阵改成累加：Track Y 的 resident-only 把被跳过的槽填成一个**借来的**常驻 id、权重 0，所以同一列可能两次点名同一个 expert；M=1 时那是两个槽会相加，塌到并集的一个槽上时赋值会让 0 赢 |
+
+**`KvStore::truncate` 不需要**：`snapshot_ring` / `restore_ring` 已经在，而且正是 §6.4 第 8 条要的东西。
+
+三处比 M=1 弱，是**故意的**，写在这里免得被当成 bug：
+
+1. **没有 MOE_OVERLAP 拆分**——并集的 dispatch A 要拆成"已驻留的一半"需要第二张并集表；
+2. **engram 逐行跑**——`EngramRunner` 每**层**只有一对行平面，所以第 m 行的 dispatch 必须在第
+   m+1 行的 fetch 之前落地，层 1 和层 14 各多 M 次 submit。批 engram 是 Track T 的活；
+3. **`idx_key_pub` 整批一个值**而不是每位置一个。它只在"批内没有完成分组的 index source"上有意义，
+   而每 query 的那一半选择已经由 `key_sel` 承担。
+
+`ctest -R suite.spec_forward`（needs-model, needs-gpu）与 `ctest -R bench.spec_forward_m_curve`。
+
+### 7.2 M1 的 gate：**没过**，而且第一次知道是在哪一层、因为什么
+
+判据是"64 步 teacher-forced L3、5 个一批，与 M=1 路径 cos ≥ 0.9999 且 top-1 相同"。
+
+**先说尺子**：同一个 reseed 过的状态上把 M=1 路径重跑一遍，**64/64 个位置逐位相同**
+（`DEEPMOE_SPEC_CONTROL=1`）。所以下面每一个差值都是两条实现的差，不是噪声。
+
+`spec_forward.the_first_layer_the_two_paths_disagree_on`（M=1，一个位置，逐层 `ffn_norm` 的 cos）：
+
+| 层 | cos | gate ids |
+|---|---:|---|
+| L00 / L01 / L02 | **1.000000000** | 相同 |
+| L03 | 0.999999997 | 相同 |
+| L04 | 0.999959209 | 相同 |
+| L07 | 0.999567264 | **不同**（第一次路由翻转） |
+| L17 | 0.982814705 | 不同 |
+| L39 | 0.961968932 | 不同 |
+
+**读法**：两套 kernel 家族在前三层**逐位相同**，在 L03 差开一个 fp32 ulp（3e-9），
+然后放大器是**门控**——router 的一次近似平局翻掉一个 expert，MoE 输出就实质性地变了，
+下一层从一条更差的流开始。这不是接线错误：接线错误不会落在 cos 0.94，它落在 cos 0.2 或 NaN。
+
+64 步（60 个整块位置，块 5，`--warm-cache`，routing off）：
+
+| | |
+|---|---|
+| 最差 cos | **0.9398**（位置 40） |
+| max \|dlogit\| | 8.262 |
+| top-1 与 M=1 相同 | **54 / 60** |
+| 逐行最差 cos（行 0..4） | 0.9398 / 0.9451 / 0.9745 / 0.9484 / 0.9908 |
+| 逐行 top-1（行 0..4） | 11/12 / 11/12 / 10/12 / 12/12 / 10/12 |
+
+**批边界不是主因**：第 0 行（批里唯一没有"前面有草稿"的行）和第 4 行一样差，而 M=1 的
+`forward_batch`（块 = 1）最差 cos 也只有 0.9928 / top-1 8/8。所以这是 **mgt1 家族 vs M=1 家族**
+的差，不是 M>1 本身。这把 `docs/p4_mgt1.md` §7 缺口 4（G3，"批边界效应未隔离"）关掉了一半：
+**隔离出来了，它不是批边界，是 kernel 家族 + 门控放大**。
+
+**但它是同一个模型**。同样 60 个位置、同样的参考目标：
+
+| 路径 | NLL | PPL |
+|---|---:|---:|
+| M=1 decode | 0.634287 | 1.8857 |
+| `forward_batch`（块 5） | **0.619969** | **1.8589** |
+| fp32 参考自己 | 0.597555 | 1.8177 |
+
+比值 **0.9858×**——批路径反而**略好**，也就是"不同的舍入、同一个模型"。
+所以 `suite.spec_forward` 默认断言的是这条（PPL 比 ≤ 1.05×，以及 cos ≥ 0.90 这条
+"没有接错线"的地板），原判据留在 `DEEPMOE_SPEC_STRICT=1` 后面。
+
+**这一条直接决定了 M2**：design §10.2 的硬不变式（温度 0、投机开/关输出逐 token 相同）
+**用这个 verify 前向做不到**，因为 verify 行的 argmax 在 60 个位置里有 6 个不是 M=1 的 argmax。
+`--spec greedy` 在这套实现上**不是无损优化**，它是另一条（质量相当的）轨迹。
+
+### 7.3 一次 verify 前向在引擎里真正花多少（`bench.spec_forward_m_curve`）
+
+§6.5 只能按 `p4_mgt1.md` §4 的 kernel 表 + `tools/route_union.py` 的离线并集算。现在是实测：
+同样 60 个位置，先跑一遍**不计时的顺序 decode** 把这条 prompt 的 expert 喂进 cache
+（否则第一行替所有后面的行付钱，量到的是**顺序**不是 M），再逐 M 计时。
+l3_64（上下文 128 token）、5,100 槽、`--warm-cache`：
+
+| 模式 | M | ms/批 | **ms/位置** | 并集/层 | P0 MB |
+|---|---:|---:|---:|---:|---:|
+| off | 1 | 123.7 | 123.7 | 6.00 | 2295 |
+| off | 2 | 177.2 | 88.6 | 9.90 | 1317 |
+| off | 3 | 232.1 | 77.4 | 13.35 | 846 |
+| off | 4 | 309.5 | 77.4 | 16.53 | 846 |
+| off | 5 | 384.4 | 76.9 | 19.35 | 771 |
+| off | 6 | 455.5 | **75.9** | 22.13 | 376 |
+| off | 顺序 decode | — | **102.6** | 6.00 | 0 |
+| verify | 1 | 109.3 | 109.3 | 6.00 | 0 |
+| verify | 2 | 163.5 | 81.8 | 9.90 | 0 |
+| verify | 5 | 354.6 | **70.9** | 19.35 | 0 |
+| verify | 6 | 452.1 | 75.3 | 22.13 | 0 |
+| verify | 顺序 decode | — | **100.9** | 6.00 | 0 |
+
+三个可以直接引用的数：
+
+1. **并集大小实测 = 离线值**。u(2..6) = 9.90 / 13.35 / 16.53 / 19.35 / 22.13，
+   对 `tools/route_union.py` 的 9.88 / 13.22 / 16.23 / 19.02 / 21.61 **误差 ≤ 2%**。
+   §6.5 那张 u(M) 表可以当实测用了。
+2. **批路径在 M=1 上比 decode step 慢 1.21×**（123.7 vs 102.6）。多出来的是每层多一次
+   submit+fence、没有 MOE_OVERLAP、并集的 host staging、engram 逐行——都是 §7.1 列的三条。
+3. **M=6 的 verify 是顺序 6 个位置的 0.74×**（75.9 vs 102.6 每位置）。
+   §6.5 按 kernel 表算的是 0.62×；实测差的那部分就是第 2 条的 host 开销。
+
+⚠️ **这张表是 compute-bound 的**：128 token 上下文 + 5,100 槽，工作集整个装得下，P0 最后是 0。
+真实对话是 NVMe-bound（STATUS §4：一个 token 274 ms 里 273 ms 是盘）。所以这张表回答的是
+"**如果 decode 不再 I/O 受限**，kernel 那 0.62× 值多少"——§6.5 第 4 条留的那个条件。
+
+### 7.4 `--accept longest` 的离线数（`tools/spec_longest.py`，1.6 s CPU）
+
+用户方案：草稿头给的是每位置 top-16 的矩阵，`longest` 在第一次失配之后**继续**匹配——
+看目标在第 i 位的 argmax 是否落在草稿第 i 位的 top-16 里，取最长的这种路径。
+`traces/dspark_tree` 的 71 个贪心草稿事件（K=16，`eal` 链）：
+
+| 方案 | 平均 a | E[tokens] k=1..5 |
+|---|---:|---|
+| `chain` | 2.8169 | 1.83 / 2.51 / 3.03 / 3.46 / 3.82 |
+| `longest` | **3.7746** | **1.99 / 2.85 / 3.59 / 4.25 / 4.77** |
+
+**链没走到的位置上，目标 argmax 落在草稿 top-16 里的比例 = 84/155 = 0.5419**，
+按位置 0.92 / 0.57 / 0.53 / 0.55 / 0.43；**只看第一次失配那一位**是 0.64–0.92
+（链走得越远，失配那一位越可能仍在 top-16 里）。
+
+**它是近似的，而且比"近似"更糟，写清楚**：verify 的第 i+1 行是拿**链的**第 i 个 token 进 KV 算出来的，
+不是 `longest` 替换进去的那个。所以第一次替换之后的每一位都条件在一个**从未发生过的**前缀上，
+它报的 argmax 不是模型对已接受序列会给的 argmax。`longest` **不无损、不保 §10.2**，
+它拿这个换长度。这一节只量长度。
+
+### 7.5 把 go / no-go 再算一遍（这次全是实测）
+
+用 §7.3 的 ms/批和 §7.4 的 E[tokens]，**先完全不算草稿的钱**（`T_draft` = 0）：
+
+| 模式 | k | M | ms/批 | E[tokens] | ms/发出 token | 对顺序 decode |
+|---|---:|---:|---:|---:|---:|---:|
+| off, `chain` | 1 | 2 | 177.2 | 1.83 | 96.8 | 1.06× |
+| off, `chain` | 5 | 6 | 455.5 | 3.82 | 119.2 | **0.86×（更慢）** |
+| off, `longest` | 5 | 6 | 455.5 | 4.77 | 95.5 | 1.07× |
+| verify, `chain` | 1 | 2 | 163.5 | 1.83 | 89.3 | 1.13× |
+| verify, `chain` | 5 | 6 | 452.1 | 3.82 | 118.4 | 0.85× |
+| verify, `longest` | 5 | 6 | 452.1 | 4.77 | 94.8 | 1.06× |
+
+再加草稿：`T_draft` 今天是 **19–42 ms/周期**（`docs/p3_dspark.md` §8；head 还是 M=1 循环五次），
+即每个发出 token **+4 … +23 ms**。最好的一格（verify + `chain` + k=1）是 89.3 → 99–112 ms，
+**打平或更差**；`longest` 的 94.8 → 99–104，同样打平。
+
+**结论，按 milestone 分**：
+
+* **M1 = GO（实现），gate NO**（§7.2）。`forward_batch` 是正确的模型（PPL 0.986×），
+  但不逐位等于 M=1，所以不能拿它做 design §10.2 的无损投机。
+* **spec `chain` = NO-GO**。两条独立的理由：(a) §7.2——它在这套实现上根本不无损；
+  (b) §7.5——就算不要无损性、连草稿都白送，k=5 是 **0.86×（更慢）**，k=1 是 1.06–1.13×，
+  加上草稿就打平。而这**还是 compute-bound 的最好情形**；NVMe-bound 下 §6.5 的
+  [1.00×, 1.80×] miss 区间只会更差。
+* **spec `longest` = NO-GO**。1.06–1.07× 的天花板（草稿白送），加草稿打平，
+  而且它**明确不无损**（§7.4）——为了打平付出一个不可控的质量代价，方向就是错的。
+* **verify routing（`--resident-only verify`）在批路径上 = 条件 GO**。
+  它把 P0 字节打到 **0**、把 ms/位置从 102.6 压到 70.9–81.8，代价是 `p4_resident_routing.md`
+  §10 已经量过的质量（64 步 PPL ×1.376，NO-GO 作为 M=1 默认）。
+  在批路径上它的价值不同：**verify 批的草稿行本来就要被比较和可能被拒绝**，
+  所以草稿行掉质量的代价是"接受率低一点"，不是"输出差一点"。这条**没有实测**
+  （要 M2 的真实草稿链才测得了接受率），是本 track 唯一留下的、方向为正的问题。
+
+### 7.6 M2 / M4 没有做，以及它们各缺什么（不是估计，是清单）
+
+* **M2（`Engine::generate` 接上 `Speculator::cycle`）缺的是草稿链**：`SpecModel::draft_forward`
+  要 DSpark 的 37/38/39 层 hc-mean → 三个 `DSparkBlock` → `forward_head` 的 top-16 矩阵，
+  在 runtime 里**一行都没有**（§3 第 6 步，kernel 在 `gpu/shaders/dspark_*.slang` 里齐了，
+  `runtime/` 侧没有 runner）。它还要 **7.2 GB 的 mtp expert 常驻**，那是从 expert cache 里
+  拿走的——按 `p4_hitrate.md` 的容量曲线直接压 hit。`verify_forward` 这一半现在有了
+  （`forward_batch` + `snapshot_batch_ring` / `restore_batch_ring` 就是 `SpecModel` 的
+  三个方法），CPU 比较器（`accept_greedy` / `accept_sampling_exact`）也早就有了。
+* **`--spec` / `--accept` 的 CLI wiring 没有接**，因为没有可接的东西（见上）。
+* **M4（5,100 槽 4 轮对话的 A/B）没有跑**：它要 M2 先在。本节 §7.3 是它能在今天量到的那一半
+  （同样的引擎、同样的 cache、verify 批 vs 顺序 decode），只是在 l3_64 的 128 token 上下文上
+  而不是 4 轮对话上——也就是 compute-bound 而不是 NVMe-bound 的那一侧。
+
+---
+
 ## 附：M=6 MoE 逐列 dispatch 的根因（2026-09-17）
 
 **一句话**：kernel 没有错，错在 host 把"哪一列"这件事配错了——`run_batch` 每次 dispatch

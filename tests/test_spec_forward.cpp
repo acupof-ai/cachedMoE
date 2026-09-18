@@ -53,6 +53,7 @@
 // <repo>/traces/l3_64) and on a Vulkan device. It loads the ~17.7 GB pinned set
 // and runs 128 forward passes, so it is `needs-model` and takes minutes.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -292,6 +293,7 @@ DEEPMOE_TEST(spec_forward, a_rollback_restores_exactly_the_rejected_slots) {
     runtime::Engine engine;
     RuntimeConfig cfg;
     cfg.model_dir            = model_dir();
+    cfg.cache.budget_bytes   = 0;       // as much as the machine gives
     cfg.cache.slots_per_slab = 100;
     if (auto r = engine.init(cfg); !r) {
         std::printf("      SKIP spec_forward rollback: %s\n", r.error().str().c_str());
@@ -378,6 +380,7 @@ DEEPMOE_TEST(spec_forward, the_first_layer_the_two_paths_disagree_on) {
     runtime::Engine engine;
     RuntimeConfig cfg;
     cfg.model_dir            = model_dir();
+    cfg.cache.budget_bytes   = 0;       // as much as the machine gives
     cfg.cache.slots_per_slab = 100;
     if (auto r = engine.init(cfg); !r) {
         std::printf("      SKIP spec_forward bisect: %s\n", r.error().str().c_str());
@@ -435,5 +438,115 @@ DEEPMOE_TEST(spec_forward, the_first_layer_the_two_paths_disagree_on) {
     std::printf("      M=1 token %u, batch token %u; first layer past cos 0.99999: %s\n", r1->token,
                 rows[0].argmax, first_bad == nL ? "none" : std::format("L{}", first_bad).c_str());
     CHECK(rows[0].argmax == r1->token);
+    engine.shutdown();
+}
+
+// What a verify forward actually costs in the ENGINE, at M = 1..6.
+//
+// docs/p4_dspark_runtime.md §6.5 had to answer this from the kernel tables of
+// docs/p4_mgt1.md §4 plus `tools/route_union.py`'s offline union sizes, because
+// `Engine::forward_batch` did not exist: "verify M=6 with the union MoE is
+// 0.62x six sequential M=1 steps, by kernel time, and the I/O side is
+// [1.00x, 1.80x] per emitted token". This measures the whole thing instead --
+// the same 64 positions, once as M = 1 decode steps and once as blocks of M,
+// on the same warm cache, with the wall clock, the expert union and the P0
+// bytes the engine really read.
+//
+// It is a bench, not a gate: it asserts only that every M ran.
+DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
+    if (skip_without_model("bench_spec.forward_batch_m_curve")) return;
+    const std::string dir = l3_64_dir();
+    if (!file_exists(dir + "/index.json")) {
+        std::printf("      SKIP bench_spec: no export at %s\n", dir.c_str());
+        return;
+    }
+    runtime::Engine engine;
+    RuntimeConfig cfg;
+    cfg.model_dir            = model_dir();
+    cfg.cache.budget_bytes   = 0;       // as much as the machine gives
+    cfg.cache.slots_per_slab = 100;
+    if (auto r = engine.init(cfg); !r) {
+        std::printf("      SKIP bench_spec: %s\n", r.error().str().c_str());
+        return;
+    }
+    if (auto r = engine.init_gpu(); !r) {
+        std::printf("      SKIP bench_spec: %s\n", r.error().str().c_str());
+        return;
+    }
+    if (auto r = engine.load_decode_state(dir); !r) {
+        std::printf("      SKIP bench_spec: %s\n", r.error().str().c_str());
+        return;
+    }
+    REQUIRE_OK(engine.init_batch(6));
+    if (auto w = engine.warm_cache_from_heat(); w)
+        std::printf("      warm: %u experts resident\n", *w);
+    const runtime::DecodeState* st = engine.decode_state();
+    const uint32_t base = st->decode_pos();
+    const uint32_t steps = std::min<uint32_t>(env_u32("DEEPMOE_SPEC_STEPS", 60),
+                                              static_cast<uint32_t>(st->greedy_tokens().size()) - 1);
+    // `verify` as well as `off`, because the whole point of the resident-only
+    // draft rows is that a verify batch never waits on the drive.
+    const char* mode_name[2] = {"off", "verify"};
+    const runtime::Engine::ResidentOnly modes[2] = {runtime::Engine::ResidentOnly::Off,
+                                                    runtime::Engine::ResidentOnly::Verify};
+    std::printf("      mode   M  positions  ms/batch  ms/position  union/layer  P0 MB  "
+                "vs M=1/pos\n");
+    for (uint32_t mi = 0; mi < 2; ++mi) {
+        engine.set_resident_only(modes[mi]);
+        // One untimed sequential pass first. Without it the M = 1 row pays for
+        // every expert THIS PROMPT routes to (the static heat fill is a global
+        // average, not this prompt) and every later row inherits a cache the
+        // earlier one warmed -- which is a measurement of the ORDER, not of M.
+        REQUIRE_OK(engine.reseed_decode_state());
+        for (uint32_t s = 0; s < steps; ++s) {
+            auto r = engine.decode_step(st->greedy_tokens()[s], base + s, -1);
+            REQUIRE_OK(r);
+        }
+        double per_pos_m1 = 0.0;
+        for (uint32_t M = 1; M <= 6; ++M) {
+            REQUIRE_OK(engine.reseed_decode_state());
+            engine.reset_resident_route_stats();
+            std::vector<uint32_t> toks(M);
+            std::vector<runtime::Engine::BatchRow> rows(M);
+            const auto t0 = std::chrono::steady_clock::now();
+            uint32_t n = 0, batches = 0;
+            uint64_t un = 0, bytes = 0;
+            for (uint32_t s = 0; s + M <= steps; s += M) {
+                for (uint32_t m = 0; m < M; ++m) toks[m] = st->greedy_tokens()[s + m];
+                auto r = engine.forward_batch(base + s, std::span<const uint32_t>(toks),
+                                              std::span<runtime::Engine::BatchRow>(rows));
+                REQUIRE_OK(r);
+                un += engine.last_batch_union();
+                bytes += engine.last_batch_miss_bytes();
+                n += M;
+                ++batches;
+            }
+            const double ms =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                    .count();
+            const double per_pos = n ? ms / double(n) : 0.0;
+            if (M == 1) per_pos_m1 = per_pos;
+            std::printf("      %-6s %u  %9u  %8.1f  %11.1f  %11.2f  %5.0f  %9.3fx\n",
+                        mode_name[mi], M, n, batches ? ms / double(batches) : 0.0, per_pos,
+                        batches ? double(un) / double(batches) / 40.0 : 0.0, double(bytes) / 1e6,
+                        per_pos_m1 > 0 ? per_pos / per_pos_m1 : 0.0);
+            CHECK(n > 0);
+        }
+        // The thing the batch has to beat: the same positions as ordinary decode
+        // steps, on the same warm cache.
+        REQUIRE_OK(engine.reseed_decode_state());
+        const auto t0 = std::chrono::steady_clock::now();
+        uint64_t bytes = 0;
+        for (uint32_t s = 0; s < steps; ++s) {
+            auto r = engine.decode_step(st->greedy_tokens()[s], base + s, -1);
+            REQUIRE_OK(r);
+            for (const runtime::LayerTiming& t : engine.layer_timings()) bytes += t.miss_bytes;
+        }
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                .count();
+        std::printf("      %-6s -  %9u  %8s  %11.1f  %11s  %5.0f  (sequential decode steps)\n",
+                    mode_name[mi], steps, "-", ms / double(steps), "-", double(bytes) / 1e6);
+    }
     engine.shutdown();
 }

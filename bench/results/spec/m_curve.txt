@@ -1,0 +1,62 @@
+bench.spec_forward_m_curve -- 2026-09-18, quiet machine, one engine, ctest -j 1
+traces/l3_64 (64-token prompt, 60 timed positions from 64), --warm-cache, cache auto (5,100 slots)
+
+Each (mode, M) is preceded by ONE UNTIMED sequential decode pass over the same
+60 positions, so the M = 1 row does not pay for every expert this prompt routes
+to and hand a warm cache to every row after it. Without that warm-up the table
+measures the ORDER, not M (the first run of this bench is kept below for that
+reason).
+
+      mode   M  positions  ms/batch  ms/position  union/layer  P0 MB  vs M=1/pos
+      warm: 5100 experts resident
+      off    1         60     123.7        123.7         6.00   2295      1.000x
+      off    2         60     177.2         88.6         9.90   1317      0.716x
+      off    3         60     232.1         77.4        13.35    846      0.625x
+      off    4         60     309.5         77.4        16.53    846      0.625x
+      off    5         60     384.4         76.9        19.35    771      0.621x
+      off    6         60     455.5         75.9        22.13    376      0.614x
+      off    -         60         -        102.6            -      0  (sequential decode steps)
+      verify 1         60     109.3        109.3         6.00      0      1.000x
+      verify 2         60     163.5         81.8         9.90      0      0.748x
+      verify 3         60     221.2         73.7        13.35      0      0.674x
+      verify 4         60     288.5         72.1        16.53      0      0.660x
+      verify 5         60     354.6         70.9        19.35      0      0.649x
+      verify 6         60     452.1         75.3        22.13      0      0.689x
+      verify -         60         -        100.9            -      0  (sequential decode steps)
+
+Reading it
+----------
+* the union sizes are MEASURED and they reproduce tools/route_union.py's offline
+  u(M) to within 2%: 9.90 / 13.35 / 16.53 / 19.35 / 22.13 against 9.88 / 13.22 /
+  16.23 / 19.02 / 21.61.
+* forward_batch at M = 1 is 1.21x SLOWER than a decode step (123.7 vs 102.6):
+  one more submit+fence a layer, no MOE_OVERLAP, the union's host staging, and
+  the engram run row by row.
+* at M = 6 a verify batch costs 0.74x six sequential positions (75.9 vs 102.6).
+  docs/p4_dspark_runtime.md 6.5 projected 0.62x from the kernel tables; the gap
+  is the host overhead above.
+* P0 goes to 0: at a 128-token context with 5,100 slots the whole working set is
+  resident, so this table is the COMPUTE-BOUND regime. A real conversation is
+  NVMe-bound (STATUS 4: 273 of 274 ms is the drive), so this answers "what is
+  the kernel-side 0.62x worth IF decode stops being I/O bound", which is the
+  condition docs/p4_dspark_runtime.md 6.5 item 4 left open.
+
+
+--- the first run, WITHOUT the warm-up pass, kept as the counter-example ------
+
+      warm: 5100 experts resident
+      off    1         60    1159.9       1159.9         6.00 270828      1.000x   <- cache budget was default, not auto
+      ...
+
+      warm: 5100 experts resident
+      off    1         60     337.5        337.5         6.00  51743      1.000x
+      off    2         60     239.8        119.9         9.90   2313      0.355x
+      off    3         60     325.2        108.4        13.35   1241      0.321x
+      off    4         60     429.6        107.4        16.53   1185      0.318x
+      off    5         60     392.3         78.5        19.35   1016      0.232x
+      off    6         60     643.9        107.3        22.13    433      0.318x
+      off    -         60         -        105.9            -    602  (sequential decode steps)
+
+The 0.23x-0.36x column is not a speed-up: the M = 1 row read 51.7 GB at P0 and
+every row after it inherited the cache that read filled. The static heat fill is
+a global average over a 27k-token trace, not this prompt.

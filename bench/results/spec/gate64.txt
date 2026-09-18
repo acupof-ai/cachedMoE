@@ -1,0 +1,84 @@
+suite.spec_forward -- 2026-09-18, quiet machine, one engine
+traces/l3_64, --warm-cache, cache auto (5,100 slots), resident-only off
+
+M1's gate was "64-step teacher-forced L3 in blocks of 5 through forward_batch
+must give cos >= 0.9999 and identical top-1 against the M = 1 path". It FAILS.
+
+      warm: 5100 experts resident
+      64 teacher-forced positions from 64, blocks of 5, vocab 129280
+      control: the M=1 path re-run on the same reseeded state is bit-identical at 64/64 positions
+      position 9 (block row 4): batch 16429 vs M=1 49059, cos 0.9951059
+      position 14 (block row 4): batch 9675 vs M=1 34035, cos 0.9943728
+      position 46 (block row 1): batch 1482 vs M=1 10436, cos 0.9976054
+      position 47 (block row 2): batch 1469 vs M=1 294, cos 0.9901376
+      position 55 (block row 0): batch 1192 vs M=1 270, cos 0.9976200
+      position 57 (block row 2): batch 12334 vs M=1 5218, cos 0.9971001
+      row 0: worst cos 0.9398023, top-1 11/12
+      row 1: worst cos 0.9450689, top-1 11/12
+      row 2: worst cos 0.9745057, top-1 10/12
+      row 3: worst cos 0.9484209, top-1 12/12
+      row 4: worst cos 0.9907613, top-1 10/12
+      60 positions: worst cos 0.9398023 at 40, max |dlogit| 8.262e+00, top-1 54/60
+      teacher-forced over 60 positions: M=1 NLL 0.634287 (PPL 1.8857), batch NLL 0.619969 (PPL 1.8589), ratio 0.9858x
+
+The control matters: the same M = 1 run twice on the same reseeded state is
+BIT-identical at 64/64, so every number above is a difference between the two
+implementations, not noise.
+
+At block = 1 (DEEPMOE_SPEC_BLOCK=1, 8 positions) the worst cos is 0.9927784 and
+top-1 is 8/8 -- so this is NOT a batch-boundary effect, it is the mgt1 kernel
+family against the M = 1 family.
+
+spec_forward.the_first_layer_the_two_paths_disagree_on (M=1, one position):
+
+      layer  cos(ffn_norm)   gate ids equal
+      L00    1.000000000     yes
+      L01    1.000000000     yes
+      L02    1.000000000     yes
+      L03    0.999999997     yes
+      L04    0.999959209     yes
+      L05    0.999715466     yes
+      L06    0.999626704     yes
+      L07    0.999567264     NO      <- the first routing flip
+      L08    0.999374608     yes
+      L09    0.999060574     NO
+      L10    0.998755949     yes
+      L11    0.998722973     yes
+      L12    0.998572602     NO
+      L13    0.998842785     yes
+      L14    0.998867594     yes
+      L15    0.999705244     yes
+      L16    0.998537617     NO
+      L17    0.982814705     NO
+      L18    0.982768443     NO
+      L19    0.994161518     yes
+      L20    0.988441746     NO
+      L21    0.991814842     NO
+      L22    0.993492085     NO
+      L23    0.996342871     NO
+      L24    0.994308608     NO
+      L25    0.994991108     NO
+      L26    0.992356551     NO
+      L27    0.992055031     yes
+      L28    0.992801671     NO
+      L29    0.993669479     NO
+      L30    0.993005634     yes
+      L31    0.992340489     NO
+      L32    0.993052125     NO
+      L33    0.994000907     NO
+      L34    0.993028048     yes
+      L35    0.993317542     NO
+      L36    0.994511905     NO
+      L37    0.994422800     NO
+      L38    0.992471439     NO
+      L39    0.961968932     NO
+      M=1 token 16, batch token 16; first layer past cos 0.99999: L4
+
+Three layers bit-equal, one fp32 ulp at L03, and the gate is the amplifier.
+
+spec_forward.a_rollback_restores_exactly_the_rejected_slots:
+
+      rollback: 3/3 rejected slots were written and 3/3 restored; 2/2 accepted slots untouched
+
+suite.decode (the M = 1 path, after route_resident_only was lifted out of
+run_layer): teacher-forced 8/8, free-running on our own slow prefill 8/8.

@@ -287,6 +287,9 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 **这一句被 40 推翻**：`stall1` 的 0.076 是**每一步都掏一次 P0** 买来的，而 verify-only 的四个 draft 位置一次也不掏。它同时推翻了 step 3 的判决（当时读成 ×3.40、比 `all` 还差），差别全在尺子上（§5.5） |
 | **40** | **verify-only 的 resident-only 路由（`DEEPMOE_ROUTE_RESIDENT_ONLY=verify`）作为"投机开着时的默认"**：block-5 里第 1 位精确路由、4 个 draft 位只路由到已驻留的 expert，verify 那一遍一个字节都不为它们去盘上取 | 64 步 teacher-forced L3：PPL **×1.376**（判据 ×1.05 / ×1.30），gate mass lost **0.2099**，**17 个只剩 shared expert 的 layer-step**，top-1 49/64。速度这一侧是真的：四轮对话 **×1.57**（4.82 → 7.57 tok/s），**P0 字节 262.5 → 62.5 GiB（−76%）**，总字节 −19%，输出仍然连贯。反向的中间档（4 个 draft 位改成 `stall1`）质量回到 **×1.033 / mass lost 0.0649 / 0 个 shared-only**，但**速度只剩 ×1.06**，代价 7,687 次 P0 / **42.9 s** 等待 | **NO-GO**（`p4_resident_routing.md` §10）。它**推翻了 39 的那句前提**与 §7 第 3 项的读法：`stall1` 的质量是每步一次 P0 买的，把 P0 的机会从 5/5 降到 1/5，质量就从 ×1.09 掉到 ×1.376。能把质量买回来的那一档**让 verify 那一遍重新等盘**，方案的全部意义随之抵消。**注意口径**：投机解码在引擎里不存在（`Engine::forward_batch` 没写、`generate(speculative)` 是 `unimplemented`、`--spec` 没接进 CLI），所以量的是 verify 那一遍在 M = 1 上的等价物，而且该等价物**偏乐观**（真并集批的 2–5 位用的是取盘前的 cache 状态） |
 
+| **41** | **`Engine::forward_batch` 与 M=1 decode 的逐位一致性（M1 的 gate）** | 尺子先立住：同一个 reseed 状态上 M=1 重跑 **64/64 逐位相同**。然后两条路径：前三层 **cos = 1.000000000（逐位相同）**，L03 差开 **3e-9**，L07 第一次**门控翻转**，L39 cos 0.962。64 步（60 个位置、块 5、warm cache、routing off）最差 cos **0.9398**、top-1 **54/60**、max\|dlogit\| 8.26。块 = 1 时最差 cos 0.9928——**所以这不是批边界，是 kernel 家族差 + 门控近似平局的放大**。质量没受影响：teacher-forced PPL **1.8589 vs M=1 的 1.8857（0.986×）**，参考 1.8177 | **gate NO，实现 GO**。`docs/p4_dspark_runtime.md` §7.2。直接后果：design §10.2 的硬不变式（温度 0、投机开/关逐 token 相同）**用这个 verify 前向做不到**。同时把 `p4_mgt1.md` §7 缺口 4（G3）关掉一半：机制隔离出来了 |
+| **42** | **投机解码，用实测的 verify 代价重算（不再用 kernel 表）** | `bench.spec_forward_m_curve`（l3_64、5,100 槽、warm、先跑一遍不计时的顺序 decode）：顺序 decode **102.6 ms/位置**；`forward_batch` M=1 **123.7**（慢 1.21×）、M=6 **75.9（0.74×）**。并集实测 u(2..6) = 9.90/13.35/16.53/19.35/22.13，对 `route_union.py` 的离线值**误差 ≤ 2%**。接受长度（`tools/spec_longest.py`，71 个贪心事件）：`chain` E[tokens](k=5) **3.82**、`longest` **4.77**，链外 top-16 命中 **0.5419**。**草稿完全白送**时每发出 token：`chain` k=5 **0.86×（更慢）**、k=1 1.06–1.13×；`longest` k=5 1.06–1.07×。`T_draft` 19–42 ms/周期 = 每 token +4…+23 ms，**全部打平或更差** | **NO-GO，第三次，这次是引擎实测**。而且这还是 **compute-bound 的最好情形**（P0 = 0）；NVMe-bound 下 §6.5 的 [1.00×, 1.80×] miss 区间只会更差。`longest` 另外**不无损**：verify 第 i+1 行条件在链的 token 上，不是被替换进去的那个 |
+
 ---
 
 ## 4. 为什么 decode 是 NVMe-bound，而不是 kernel 慢
@@ -375,6 +378,8 @@ MoE live-column mask 在 microbench 上是 1.7×（30 ms/token），端到端**�
 | `suite.kv_replay` | KV 回放/回退记账 | pass（l3_64：(1) 8/8；(3) restore ≈52 s + 8/8；(4) 0 raw rows） |
 | `bench.l3_ppl64` | **64 步教师强制 L3 PPL 尺**，三档路由各起一个进程串行跑，出 NLL / PPL / top-1 / served / mass lost 与判据 | 有导出集（`traces/l3_64`，.gitignore）才跑，否则 skip；§5.5 |
 | `bench.mgt1_m_curve` / `bench.mgt1_moe_m_curve` | C(M) 曲线 | **未产出**（`bench/results/mgt1_p4.csv` 缺） |
+| `suite.spec_forward` | **M1**：`Engine::forward_batch` 对 M=1 decode（64 步 teacher-forced、块 5、逐层 bisect、环回滚逐字节） | pass（默认判据：PPL 比 ≤1.05×、cos ≥0.90；原 gate 在 `DEEPMOE_SPEC_STRICT=1` 后面，**它不过**，§3 的 41）；要 `traces/l3_64` |
+| `bench.spec_forward_m_curve` | verify 前向在引擎里的 M=1..6 代价、并集大小、P0 字节，对顺序 decode | 出表（§3 的 42）；要 `traces/l3_64` |
 
 **本轮合并后的全量 gate（2026-09-18，`p4/one-pr`，安静机，`ctest -j 1`）**：
 
@@ -492,7 +497,12 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    2.1 TFLOP/s = 35 s，而 5 ms/token 只有 20.7 s——**要 3.56 TFLOP/s 持续**。
    唯一能动速率的是重写 `prefill_coopmat` stage 0（多 wave + LDS + 双缓冲），**未做**（§2.5）。
    **另外它已经有一个 41× 的复用手段（SSD KV）没接进 `serve` 的默认路径。**
-5. **`Engine::generate` 的 `speculative` 是 `unimplemented`**，缺三个 kernel 能力（M=6 的 MoE、草稿链的 bf16 输入 GEMV、`accept_sampling_exact` 的四个读回）。
+5. ~~**`Engine::generate` 的 `speculative` 是 `unimplemented`**，缺三个 kernel 能力~~ **verify 那一半做完了，draft 那一半没有**（Track SP，`p4_dspark_runtime.md` §7）：
+   `Engine::forward_batch(p0, tokens[M<=6])` + `snapshot_batch_ring` / `restore_batch_ring` 已经是 `SpecModel` 的三个方法，
+   CPU 比较器早就有。**`Engine::generate` 的 `speculative` 仍然是 `unimplemented`**，因为 `SpecModel::draft_forward`
+   缺 runtime 侧的 DSpark 草稿链（37/38/39 层 hc-mean → 三个 `DSparkBlock` → top-16 矩阵；kernel 齐了，`runtime/` 里一行没有），
+   而且它要 **7.2 GB 的 mtp expert 常驻**，那是从 expert cache 里拿走的。`--spec` / `--accept` 的 CLI **没有接**，因为没有可接的东西。
+   **接不接得下去现在是个已答的问题**：§3 的 42 说，就算草稿白送，投机在这台机器上也只是打平。
 6. **Track J 的接口（K-split / tiled attention，696 µs/层）没有被 runtime 采纳**，
    而且**它的 LDS 修复在真机上看不到**：attention 在 Track I 是 36.0 ms、Track Q 后是 36.9 ms，J 声称 −3.8 ms 且"已生效"。**这个矛盾未解决。**
    （有一份**从未编译、从未验证**的采纳尝试，是 P4 合并时在 `deepmoe-t` 工作树里捡到的未提交改动，
@@ -541,10 +551,15 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    速度这一侧过了（四轮对话 ×1.57，P0 字节 −76%），**质量这一侧 ×1.376 出了 ≤1.3 的带**。
    本条原本的前提——「`stall1` 的 ≤×1.3 就是 verify-only 的 cache 状态」——**是错的**：
    那 0.076 是每步一次 P0 买的。
-   **接这一位的是投机解码本身**：在 `Engine::forward_batch` + 贪心循环落地之前
-   （§6 的 5，`p4_dspark_runtime.md` §3 的第 3 / 5 / 6 步，自估 1–2 + 2 + 3–5 天），
-   接受率、每 block 接受的 token 数、spec-on 的 tok/s **一个都量不了**，
-   也不该再在这条路上写 planner 或路由代码。
+   ~~**接这一位的是投机解码本身**~~ **也做完了，也是 NO-GO**（§3 的 41 / 42，`p4_dspark_runtime.md` §7）：
+   `Engine::forward_batch` 落地了，于是 verify 的代价第一次是**实测**的——M=6 每位置 0.74× 顺序 decode，
+   并集实测对离线值误差 ≤2%，接受长度 `chain` 3.82 / `longest` 4.77。把这些代进去，
+   **草稿白送时 k=5 反而更慢（0.86×），k=1 最好 1.13×，加上 19–42 ms 的草稿就打平**。
+   **不要再往投机上写代码**，除非第 1 项（score-aware 淘汰 / 第二块盘）先把 MB/token 压下来；
+   那时要重跑的是 `bench.spec_forward_m_curve` 和 `tools/spec_longest.py`，不是重写循环。
+   **唯一还开着、方向为正的问题**：verify 批的草稿行用 resident-only 路由把 P0 打到 0、
+   ms/位置从 102.6 压到 70.9，而草稿行掉质量的代价是"接受率低一点"而不是"输出差一点"——
+   这条要有真实草稿链才测得了。
 4. **per-dispatch trace 上 GPU**（`plan_p5.md` §4 的命令），把每层 16–29 个 dispatch 的 busy / gap 拆开。
    §2.1 之后所有归因都靠它——没有它，第 5、6 项只能猜。
 5. **persistent-dispatch decode**：一层或一个 token 一次 dispatch，device 侧任务队列 + 自旋等待。

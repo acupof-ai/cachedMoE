@@ -1,0 +1,86 @@
+{
+ "generated": "2026-09-18 18:43:12",
+ "traces": "C:/Users/Asus/code/deepmoe/traces/dspark_tree",
+ "K": 16,
+ "events": 71,
+ "chain": {
+  "mean_a": 2.8169,
+  "E_tokens_k1": 1.831,
+  "E_tokens_k2": 2.507,
+  "E_tokens_k3": 3.0282,
+  "E_tokens_k4": 3.4648,
+  "E_tokens_k5": 3.8169
+ },
+ "longest": {
+  "mean_a": 3.7746,
+  "E_tokens_k1": 1.9859,
+  "E_tokens_k2": 2.8451,
+  "E_tokens_k3": 3.5915,
+  "E_tokens_k4": 4.2535,
+  "E_tokens_k5": 4.7746
+ },
+ "off_chain_top16_hit": {
+  "all": {
+   "n": 155,
+   "hit": 84,
+   "rate": 0.5419
+  },
+  "pos0": {
+   "n": 12,
+   "hit": 11,
+   "rate": 0.9167
+  },
+  "pos1": {
+   "n": 23,
+   "hit": 13,
+   "rate": 0.5652
+  },
+  "pos2": {
+   "n": 34,
+   "hit": 18,
+   "rate": 0.5294
+  },
+  "pos3": {
+   "n": 40,
+   "hit": 22,
+   "rate": 0.55
+  },
+  "pos4": {
+   "n": 46,
+   "hit": 20,
+   "rate": 0.4348
+  }
+ },
+ "by_chain_a": {
+  "0": {
+   "n": 12,
+   "hit": 11,
+   "rate": 0.9167
+  },
+  "1": {
+   "n": 11,
+   "hit": 7,
+   "rate": 0.6364
+  },
+  "2": {
+   "n": 11,
+   "hit": 8,
+   "rate": 0.7273
+  },
+  "3": {
+   "n": 6,
+   "hit": 5,
+   "rate": 0.8333
+  },
+  "4": {
+   "n": 6,
+   "hit": 5,
+   "rate": 0.8333
+  },
+  "5": {
+   "n": 0,
+   "hit": 0,
+   "rate": null
+  }
+ }
+}
