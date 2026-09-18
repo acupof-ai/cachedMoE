@@ -1,0 +1,14 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 374,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5100 slots (5094 resident, 6 filling, 0 free, 0 pinned)  lookups 115482 hits 112230 (0.972)  fills 15044/15050 ok  runs 30089/30100  evictions 9950 (+0 guard-blocked)",
+ "planner": "planner: 20080 layers, 115482 requests (112230 hits, 3252 misses, 0.972), 9950 evictions (+0 refused), prefetch 4136 issued / 0 used / 0 wasted, 1923 stalls, 25 joined; backfill 727 issued / 727 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped",
+ "io": "io: 79506 req (79495 done, 0 failed, 0 cancelled), 141790 chunks, 293016325408 / 293128118272 bytes, busy 78.101 s, eff 3.75 GB/s, mean lat 38.727 ms, peak QD 8 / 32.0 MiB\n  p0_blocking    21828 req  195769.9 MiB\n  p2_engram      48192 req  194.1 MiB\n  p3_backfill     9486 req  83584.8 MiB\n",
+ "route": "route     resident-only=verify over 16040 layer-steps\n  experts requested 96240  served 91242 (0.9481)  skipped 4998\n  gate mass lost    0.0385 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 3409  refused 0  dropped stale 1488\n  background queue depth mean 5.4 peak 230 (window 2 steps, cap 24 experts)\n  background fetch latency mean 168.6 ms over 3403 completions\n  stall1 P0 fetches 7687  42850.6 ms total\n"
+}

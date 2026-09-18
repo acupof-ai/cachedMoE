@@ -551,8 +551,9 @@ int cmd_run(int argc, char** argv) {
     if (!resident_only.empty()) {
         if (resident_only == "all")      engine.set_resident_only(runtime::Engine::ResidentOnly::All);
         else if (resident_only == "stall1") engine.set_resident_only(runtime::Engine::ResidentOnly::Stall1);
+        else if (resident_only == "verify") engine.set_resident_only(runtime::Engine::ResidentOnly::Verify);
         else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
-        else { std::fprintf(stderr, "--resident-only takes off|all|stall1, got '%s'\n", resident_only.c_str()); return 1; }
+        else { std::fprintf(stderr, "--resident-only takes off|all|stall1|verify, got '%s'\n", resident_only.c_str()); return 1; }
     }
     const runtime::DecodeState* st = engine.decode_state();
     std::vector<uint32_t> prompt;

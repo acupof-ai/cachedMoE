@@ -1,0 +1,14 @@
+[16:53:48] state C:/Users/Asus/code/deepmoe/traces/l3_64: 64 prompt tokens, 64 exported steps, running 64; reference NLL 0.5975552797317505
+[16:53:48] off     run --model D:\models\DeepSeek-V4.1-Flash --state C:/Users/Asus/code/deepmoe/traces/l3_64 --steps 64 --warm-cache --resident-only off --teacher-force
+[16:55:07] off     NLL 0.630051 PPL 1.8777 top1 61/64 3.224 tok/s (78 s)
+[16:55:07] verify  run --model D:\models\DeepSeek-V4.1-Flash --state C:/Users/Asus/code/deepmoe/traces/l3_64 --steps 64 --warm-cache --resident-only verify --teacher-force
+[16:56:04] verify  NLL 0.948936 PPL 2.583 top1 49/64 5.849 tok/s (58 s)
+
+gate  reference NLL 0.597555 (PPL 1.8177)  vs  off NLL 0.630051 (PPL 1.8777)   delta +0.032496 (1.0330x)
+      the engine is FP4 on a GPU and the reference fp32 on a CPU, so this is the harness's noise floor: every ratio below is only readable to the extent it is small.
+
+| mode | NLL | PPL | xoff | top-1 | tok/s | cache hit | served | mass lost | shared-only | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| off | 0.630051 | 1.8777 | 1.000x | 61/64 | 3.22 | 0.8150 | - | - | - | baseline |
+| verify | 0.948936 | 2.5830 | 1.376x | 49/64 | 5.85 | 0.9460 | 9449 (0.7720) | 0.2099 | 17 | NO-GO |
+[16:56:04] wrote C:/Users/Asus/AppData/Local/Temp/claude/C--Users-Asus-code-deepmoe/44cbc966-fff4-4ace-b0aa-5c2e21f8cd2e/scratchpad/z/ppl64/table.json

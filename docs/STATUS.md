@@ -17,7 +17,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 
 1. [今天的数字](#1-今天的数字)
 2. [优化路径：每一步与它的归因](#2-优化路径每一步与它的归因)
-3. [试过并退掉的（编号，共 39 条）](#3-试过并退掉的编号共-39-条)
+3. [试过并退掉的（编号，共 40 条）](#3-试过并退掉的编号共-40-条)
 4. [为什么 decode 是 NVMe-bound，而不是 kernel 慢](#4-为什么-decode-是-nvme-bound而不是-kernel-慢)
 5. [测试套件](#5-测试套件)
 6. [已知限制与未决风险](#6-已知限制与未决风险)
@@ -54,6 +54,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | **cache 默认（`auto`）** | **5,100 槽 / 89.3 GiB**：hit 0.9383、stall 76.0 ms/token、**5.603 tok/s**（八轮脚本，安静机） | `p4_hitrate.md` §4（F4） |
 | cache 容量上限（本机） | **安全上限 5,000 槽**。5,400 过三轮、八轮中途死；**5,500 第一个 token 就丢设备**（36 A + 19 B slab，53.8 GiB 空闲）。~~5500 槽 = 96.34 GiB 可用~~ 作废 | `p4_hitrate.md` §4（F4） |
 | 长 prompt TTFT（4,133 token，4,500 槽） | GPU prefill 被路径 A 饿死时 **1,061.7 s**；加 4 GiB 路径 A 预留后 **100.0 s（10.6×）** | `p4_hitrate.md` §5（F4） |
+| **resident-only 路由的四档（4 轮对话，5,100 槽）** | `off` 4.82 tok/s（mass lost 0，P0 262.5 GiB）／`stall1` 5.14（0.048）／**`verify` 7.57 ×1.57（0.1377，P0 62.5 GiB）**／`all` 8.99 ×1.87（0.2587）。质量（64 步 teacher-forced PPL，×`off`）依次 1.00 / 1.11 / **1.376** / 2.29——**四档全部 NO-GO 作默认** | `p4_resident_routing.md` §8.3 / §9.3 / **§10** |
 
 **一句话结论**：`tok/s ≈ NVMe_eff / (MB per token)`。四种容量下有效读带宽恒定在 8.3–9.2 GB/s，
 hit 0.59 → 0.84 把 MB/token 从 4,998 降到 2,269，tok/s 就翻倍。
@@ -198,7 +199,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 39 条）
+## 3. 试过并退掉的（编号，共 40 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -282,7 +283,9 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **36** | **第二块 NVMe（stripe 到 9 GB/s）vs 任何软件策略** | C=5,711 下 **+32%**，C=4,500 下 +40%，无预测、无风险 | **不是否定，是排序**：它比本项目测过的每一种软件策略都大。design §3.1 已经预留了 stripe。同表里**唯一没跑过的软件候选是 score-aware 淘汰**（用 top-16 的原始分数刷 heat）——Belady 上限是 +42%，它是最有可能吃到其中一部分的那个，**至今未测** |
 | **37** | **2-bit routed expert** | 13 种方案。L3 端到端 **PPL 29 → 14,290,394，64 个位置上 argmax 0 次一致**；最好与最坏方案之间的差**小于任一个离"可用"的距离**。**3-bit 也过不了**（PPL 13.25M，top-1 1/64）。根因是结构性的：checkpoint 是 QAT 到 FP4 的，码流熵 **3.8375 bit** 对 log2(15)=3.9069 的上限，误差在行 / 块 / 矩阵 / 层 / expert 之间**摊得完全均匀**——**没有冗余可压，也没有显著子集可保护**。判据侧：**L1 上 expert 输出相对误差 0.31 端到端就已经致命** | **NO-GO，两个位宽都是**（`p4_quant2.md` §8）。它本来是本项目 decode 工作里最大的一个数（7.09 → 15.83 tok/s，×2.23）。**重定向**：那个 ×2.23 里**约一半其实是"多出来的槽"而不是"更窄的读"**——保住 FP4 的 hit 只把字节减半是 10.58 tok/s，而槽是不用动一个权重就能拿的。design §6"用 checkpoint 自己的精度，一个 bit 都不改"**第一次被认真挑战，活下来了** |
 | **38** | **resident-only 路由（`all`）作为默认**：只路由到已在 cache 里的 expert | 64 步 teacher-forced L3：PPL **×1.82 – ×2.29**（判据 ×1.05 / ×1.30，三次独立进程），gate mass lost **0.3054**，**52 / 2,560 个 layer-step 只剩 shared expert**，对参考 top-1 42/64（`off` 是 61/64）。速度确实是 ×2.74，输出**不连贯** | **NO-GO**（`p4_resident_routing.md` §9.4）。原因是第 3 节那条硬预算：后台补盘 2,687 入队 / **2,072 过期丢弃** |
-| **39** | **resident-only 路由（`stall1`，只在会 stall 时降级一个 expert）作为默认** | 质量 **×1.09 – ×1.11**（mass lost 0.076，**0 个只剩 shared expert 的层**，top-1 51/64），速度 harness 上 ×1.21、四轮对话里只有 ×1.07，代价 **1,624 次 P0 / 8.9 s 等待** | **作为默认 NO-GO**（质量 ×1.09 > ×1.05 的线，速度买不回来）。**但它的质量落在 ≤ ×1.3 带内，所以"只在 DSpark 的 verify 那一遍上用"的前提成立**——见 §7 的下一步。它同时推翻了 step 3 的判决（当时读成 ×3.40、比 `all` 还差），差别全在尺子上（§5.5） |
+| **39** | **resident-only 路由（`stall1`，只在会 stall 时降级一个 expert）作为默认** | 质量 **×1.09 – ×1.11**（mass lost 0.076，**0 个只剩 shared expert 的层**，top-1 51/64），速度 harness 上 ×1.21、四轮对话里只有 ×1.07，代价 **1,624 次 P0 / 8.9 s 等待** | **作为默认 NO-GO**（质量 ×1.09 > ×1.05 的线，速度买不回来）。~~**但它的质量落在 ≤ ×1.3 带内，所以"只在 DSpark 的 verify 那一遍上用"的前提成立**~~——
+**这一句被 40 推翻**：`stall1` 的 0.076 是**每一步都掏一次 P0** 买来的，而 verify-only 的四个 draft 位置一次也不掏。它同时推翻了 step 3 的判决（当时读成 ×3.40、比 `all` 还差），差别全在尺子上（§5.5） |
+| **40** | **verify-only 的 resident-only 路由（`DEEPMOE_ROUTE_RESIDENT_ONLY=verify`）作为"投机开着时的默认"**：block-5 里第 1 位精确路由、4 个 draft 位只路由到已驻留的 expert，verify 那一遍一个字节都不为它们去盘上取 | 64 步 teacher-forced L3：PPL **×1.376**（判据 ×1.05 / ×1.30），gate mass lost **0.2099**，**17 个只剩 shared expert 的 layer-step**，top-1 49/64。速度这一侧是真的：四轮对话 **×1.57**（4.82 → 7.57 tok/s），**P0 字节 262.5 → 62.5 GiB（−76%）**，总字节 −19%，输出仍然连贯。反向的中间档（4 个 draft 位改成 `stall1`）质量回到 **×1.033 / mass lost 0.0649 / 0 个 shared-only**，但**速度只剩 ×1.06**，代价 7,687 次 P0 / **42.9 s** 等待 | **NO-GO**（`p4_resident_routing.md` §10）。它**推翻了 39 的那句前提**与 §7 第 3 项的读法：`stall1` 的质量是每步一次 P0 买的，把 P0 的机会从 5/5 降到 1/5，质量就从 ×1.09 掉到 ×1.376。能把质量买回来的那一档**让 verify 那一遍重新等盘**，方案的全部意义随之抵消。**注意口径**：投机解码在引擎里不存在（`Engine::forward_batch` 没写、`generate(speculative)` 是 `unimplemented`、`--spec` 没接进 CLI），所以量的是 verify 那一遍在 M = 1 上的等价物，而且该等价物**偏乐观**（真并集批的 2–5 位用的是取盘前的 cache 状态） |
 
 ---
 
@@ -532,11 +535,16 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **两条都比任何"算得更快"的改动大一个量级。**
 2. **把 SSD KV 前缀复用接进 `serve` 的默认路径。**
    已实测 41×（101.6 s → 2.47 s），已实现，只是没默认开。这是当前性价比最高的一项。
-3. **量 verify-only 的 resident-only 路由在 DSpark 上的收益。**
-   §3 的 39 已经把质量这一侧关掉了（`stall1` 落在 ≤ ×1.3 带内，0 个只剩 shared expert 的层），
-   而 §3 的 34 说 DSpark 唯一过不去的门就是"verify 批的 MoE 并集随 M 线性增长"。
-   **该量的不再是它的质量，是 verify 批 M 上的 tok/s。**（`all` 那一档不能当 verify 的 cache 状态。）
-   ~~跑完三个 A/B~~ 已完成，见 §6 的 7。
+3. ~~**量 verify-only 的 resident-only 路由在 DSpark 上的收益。**~~ **已做，答案是 NO-GO**（§3 的 40，
+   `p4_resident_routing.md` §10）。`DEEPMOE_ROUTE_RESIDENT_ONLY=verify` 已经实现（第四档，
+   两个 CLI 都收，`DEEPMOE_VERIFY_FIRST` / `DEEPMOE_VERIFY_DRAFT` 拆开两半）：
+   速度这一侧过了（四轮对话 ×1.57，P0 字节 −76%），**质量这一侧 ×1.376 出了 ≤1.3 的带**。
+   本条原本的前提——「`stall1` 的 ≤×1.3 就是 verify-only 的 cache 状态」——**是错的**：
+   那 0.076 是每步一次 P0 买的。
+   **接这一位的是投机解码本身**：在 `Engine::forward_batch` + 贪心循环落地之前
+   （§6 的 5，`p4_dspark_runtime.md` §3 的第 3 / 5 / 6 步，自估 1–2 + 2 + 3–5 天），
+   接受率、每 block 接受的 token 数、spec-on 的 tok/s **一个都量不了**，
+   也不该再在这条路上写 planner 或路由代码。
 4. **per-dispatch trace 上 GPU**（`plan_p5.md` §4 的命令），把每层 16–29 个 dispatch 的 busy / gap 拆开。
    §2.1 之后所有归因都靠它——没有它，第 5、6 项只能猜。
 5. **persistent-dispatch decode**：一层或一个 token 一次 dispatch，device 侧任务队列 + 自旋等待。
@@ -555,5 +563,5 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 **不做**（有编号的理由，不要再提）：BIOS VGM（§3 的 29）、lookahead 预取（23、**35**）、
 CPU 分担 GEMV（25）、树采样作为提速手段（32）、静态 pin / 每层配额（24、**35**）、
 LDS x-tiling 配 per-K-chunk barrier（1）、饱和 cache 上的 reheat（21、**F4 §6**）、
-任何预测式预取（**35**）、2-bit / 3-bit expert（**37**）、resident-only 作为默认路由（**38、39**）、
+任何预测式预取（**35**）、2-bit / 3-bit expert（**37**）、resident-only 作为默认路由（**38、39**）、verify-only 的 resident-only 路由（**40**）、
 手写 `--cache-slots`（它绕过三条实测边界，5,500 就是这么够得着的）。

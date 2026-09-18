@@ -605,3 +605,143 @@ ctest --test-dir build -R bench.l3_ppl64                                  # 同�
 `index.json` 每步重写一次，所以中途杀掉留下的是一个**更短但完整、能加载**的导出集；
 `tools/l3_ppl.py` 会照实说它只有几步。导出集在 `traces/`（`.gitignore`），
 5.83 MB，可再生；committed 的只有两个脚本、ctest 一条和 `bench/results/resident/ppl64/` 的抄本。
+
+---
+
+## 10. verify-only 在真机上量出来了：判据这一侧**没过**（2026-09-18，Track Z）
+
+§9.4 的 (iii) 说「verify-only 的质量前提成立，下一步该量的是它的收益」。
+本节把这两件事都量了，结论是 **(iii) 的前提被推翻**：
+`stall1` 那一档的质量（×1.09、mass lost 0.076、0 个只剩 shared expert 的层）
+**不是 verify-only 的 cache 状态**，因为 `stall1` 每一步都做一次 P0 取盘，
+而 verify-only 的四个 draft 位置一次也不做。把 P0 的刷新率降到 1/5 之后，
+质量落到 **×1.376**——连 ≤1.3 那条带都出去了。
+
+### 10.1 先说清楚**没能**量的那一半：投机解码在引擎里不存在
+
+任务要的是「接受率 / 每 block 接受的 token 数」和「spec-on 的 decode tok/s」。
+这两个数今天**量不了**，而且原因在 §6 的 5 与 §3 的 34b 里已经写着：
+
+* `Engine::generate` 的 `speculative` 是 `unimplemented`（`runtime/engine.cpp`）；
+* `Engine::forward_batch` **不存在**——`runtime/speculate.h` 的注释自己说「which does not exist yet」；
+* `GpuMoeBridge::record_batch_union` **没有调用者**，`run_batch_union` 只被 `tests/test_gpu_moe.cpp` 调用；
+* `--spec` **没有接进 CLI**；`runtime::Speculator` 唯一的 `SpecModel` 是 `tests/test_speculate.cpp` 里
+  回放 token 流的 `ReplayModel`。
+
+`p4_dspark_runtime.md` §3 的实施顺序里，第 3（`forward_batch`）、5（贪心循环 + `generate`）、
+6（草稿链进 runtime）三步都没做，自己估的工期是 1–2 天 + 2 天 + 3–5 天。
+**所以本节量的不是 DSpark，是 DSpark 的 verify 那一遍在 M = 1 上的等价物。**
+
+### 10.2 `DEEPMOE_ROUTE_RESIDENT_ONLY=verify`：block-5 的形状，一次一个位置
+
+新增的第四档（`runtime/engine.h` 的 `ResidentOnly::Verify`，`--resident-only verify`，
+两个 CLI 都收）：**每五个 decode step 里有一个精确路由**（block 的第一个位置——
+它的 miss 照常 P0 取、照常 warm cache），**另外四个走 resident-only**，
+和 `all` 完全一样：跳过不驻留的 expert、按 `resident_route()` 重新归一化、
+盖 LRU 需求戳、把 miss 交给 Y3 那条有界后台队列。相位是 `token_ % 5`，
+哪一个余数是精确的那个无所谓，因为 block 边界本来就是任意的。
+落地是引擎里的两行：
+
+```cpp
+ResidentOnly ro = resident_only_;
+if (ro == ResidentOnly::Verify)
+    ro = (token_ % kVerifyBlock) == 0 ? verify_first_ : verify_draft_;
+```
+
+两个环境变量把这两半拆开，便于扫：`DEEPMOE_VERIFY_FIRST`（`exact` 默认 / `stall1` / `all`）、
+`DEEPMOE_VERIFY_DRAFT`（`all` 默认 / `stall1` / `exact`）。
+
+**这个 M = 1 等价物在哪里偏乐观**：真正的并集 verify 批里，五个位置的 gate 是**同一次 forward**
+算出来的，所以 2–5 位的驻留判断用的是**取盘之前**的 cache 状态；
+而 M = 1 逐位跑时，第 1 位的 P0 取盘**先落地**，2–5 位看到的是一个更热的 cache。
+也就是说真机上的 verify 批只会比下面这张表**更差**，不会更好。
+计数器证实了相位：64 步里 51 步走 resident-only（51 × 40 = 2,040 层-步），
+四轮对话里 16,040 / 20,080 = 79.9%。
+
+### 10.3 质量：64 步 teacher-forced，5,100 槽，`--warm-cache`（`tools/l3_ppl.py`）
+
+导出集在本机上重生成过一次（`traces/l3_64` 不在仓库里），
+reference NLL **0.597555**，与 §9 那次**逐位相同**；`off` 也复现到小数点后六位
+（NLL 0.630051 / PPL 1.8777 / top-1 61/64），所以下面的比值与 §9.3 同尺。
+
+| mode | NLL | PPL | ×off | top-1 | tok/s | cache hit | served | mass lost | 只剩 shared 的层-步 | 判据 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| `off` | 0.630051 | 1.8777 | 1.000× | 61/64 | 3.22 | 0.815 | — | 0 | 0 | baseline |
+| **`verify`（draft = `all`）** | 0.948936 | 2.5830 | **1.376×** | 49/64 | 5.85 | 0.946 | 9,449 (0.7720) | **0.2099** | **17** | **NO-GO** |
+| `verify`（draft = `stall1`） | 0.662515 | 1.9397 | **1.033×** | 54/64 | 3.82 | 0.958 | 11,177 (0.9132) | 0.0649 | 0 | 在 ≤1.05 带内 |
+| `stall1`（§9.3 抄本） | 0.732431 | 2.0801 | 1.108× | 51/64 | 3.87 | — | 0.9001 | 0.076 | 0 | — |
+| `all`（§9.3 抄本） | 1.456643 | 4.2915 | 2.286× | 42/64 | 8.75 | — | 0.6859 | 0.3054 | 52 | — |
+
+**这张表的中心一行是第二行。** 任务要的那个设计——verify 那一遍**一个字节都不为 draft 位置去盘上取**——
+量出来是 **×1.376**，比 `stall1` 差、比 `all` 好，而且**在 ≤1.3 的带外**。
+mass lost 0.2099 与 `all` 的 0.3054 同一个量级，不是 `stall1` 的 0.076。
+
+**为什么**，一句话：`stall1` 的 0.076 是**每一步都掏一次 P0** 买来的。
+`verify` 把 P0 的机会从 5/5 降到 1/5，cache 的刷新率就掉到 1/5，
+而后台那条有界队列补不上（§3 那条硬预算没被推翻）：
+64 步里入队 —— 四轮对话里 enqueued 9,026 / 过期丢弃 5,422，仍然是**需求超出盘的预算**。
+第三行是同一件事的反证：只要把四个 draft 位置也给一次 P0（`draft = stall1`），
+质量立刻回到 **×1.033**、mass lost 0.0649、**0 个只剩 shared expert 的层**——
+但那样 verify 那一遍**就又在等盘了**，整个方案的前提没了（收益见 10.4）。
+
+### 10.4 速度：4 轮对话，每轮 64 token，5,100 槽，backfill 开（`tools/hitrate_bench.py --script y_turns.json`）
+
+| 全程（20,080 层-步） | `off` | **`verify`（draft = `all`）** | `verify`（draft = `stall1`） |
+|---|---|---|---|
+| decode tok/s（四轮） | 4.77 4.76 4.90 4.86 | **7.48 8.10 7.49 7.22** | 4.71 5.13 5.44 5.11 |
+| 均值 / 相对 `off` | 4.82 | **7.57（×1.57）** | 5.10（×1.06） |
+| cache hit | 0.876 | 0.966 | 0.972 |
+| resident-only 的层-步 | 0 | 16,040 (79.9%) | 16,040 (79.9%) |
+| experts requested / served | 120,480 / 全部 | 96,240 / 81,621 (**0.8481**) | 96,240 / 91,242 (0.9481) |
+| gate mass lost | 0 | **0.1377** | 0.0385 |
+| 只剩 shared expert 的层-步 | 0 | **123** | **0** |
+| 后台 enqueued / 过期丢弃 | — | 9,026 / 5,422 | 3,409 / 1,488 |
+| 盘 搬的总字节 | 317.5 GB | **258.5 GB** | 293.0 GB |
+| 其中 P0 / P3 | **262.5 / 33.0 GiB** | **62.5 / 178.2 GiB** | 191.2 / 81.6 GiB |
+| 盘 有效带宽 / 平均延迟 | 3.98 GB/s / 24.8 ms | 3.87 GB/s / 51.0 ms | 3.75 GB/s / 38.7 ms |
+| cache eviction | 11,247 | 8,116 | 9,950 |
+| `stall1` P0 次数 / 等待 | — | 0 | 7,687 / **42.9 s** |
+
+`verify` 这一档**确实把盘从 decode 的关键路径上搬走了**：P0 从 262.5 GiB 掉到 62.5 GiB（−76%），
+总字节少 19%，tok/s ×1.57，四轮输出仍然成句、Markdown 结构正确
+（转写在 `bench/results/resident/z_verify/transcript.md`）。
+**但这 ×1.57 买不回 ×1.376 的质量**，而唯一能把质量买回来的那一档（draft = `stall1`）
+只剩 **×1.06**，代价是 7,687 次 P0、42.9 s 的等待——和 §8.3 说 `stall1` 的那笔账**一模一样**，
+只是次数少了一半。
+
+### 10.5 判决
+
+* **把 `verify` 当作「投机开着时的默认路由」：NO-GO。** 质量 **×1.376 > 1.30**，
+  连 §9 给 verify-only 留的那条宽带都出去了。
+* **§9.4 (iii) 的前提被推翻。** 「`stall1` 的 cache 状态就是 verify-only 的 cache 状态」
+  这个读法是错的：`stall1` 的质量是每步一次 P0 买的，verify-only 不买。
+  要改写 §9.4 (iii) 的话：verify-only 的 cache 状态落在 `stall1`（0.048）和 `all`（0.259）之间，
+  **实测 0.1377**，对应 PPL **×1.376**。
+* **任务问的那个变体（block 首位用 `stall1` 而不是 exact）：不用跑也知道更差**，
+  因为它在首位取的字节是 exact 的真子集（每层最多一个，而不是最多六个），
+  cache 刷新只会更少。开关已经在（`DEEPMOE_VERIFY_FIRST=stall1`），但没有理由花一次 run。
+* **真正的中间档是反过来的那个**（首位 exact + 四个 draft 位 `stall1`，
+  `DEEPMOE_VERIFY_DRAFT=stall1`）：质量 **×1.033 落在 ≤1.05 的 GO 带内**，
+  0 个只剩 shared expert 的层——但它的 verify 那一遍**仍然等盘**（每层一个 expert），
+  速度只有 **×1.06**。**作为 DSpark 的 verify 路由，它把方案的全部意义都抵消了。**
+* **对 DSpark 的净结论**：§3 的 34b 说「并集相对热缓存省下的 miss 是 0」，
+  本节说「把 verify 的取盘全砍掉能省 76% 的 P0，但要付 ×1.376 的质量」。
+  两条合起来，**verify-only 不是 34b 那道门的钥匙**。在投机解码本身落地之前
+  （`forward_batch` + 贪心循环，见 10.1），不值得再在这条路上写 planner 或路由代码。
+
+### 10.6 重跑
+
+```
+# 导出（~29 min，纯 CPU；traces/ 在 .gitignore 里）
+.venv/Scripts/python.exe tools/oracle_l3_ppl.py greedy --out traces/l3_64 --steps 64
+
+# 质量（每档 ~60 s GPU，一次一个引擎）
+.venv/Scripts/python.exe tools/l3_ppl.py --state traces/l3_64 --steps 64 --modes off,verify
+DEEPMOE_VERIFY_DRAFT=stall1 .venv/Scripts/python.exe tools/l3_ppl.py --state traces/l3_64 \
+    --steps 64 --modes verify
+
+# 速度（每档 ~4 min GPU）
+.venv/Scripts/python.exe tools/hitrate_bench.py --script bench/results/hitrate/y_turns.json \
+    --cache-slots 5100 --env DEEPMOE_BACKFILL=1 \
+    --env DEEPMOE_ROUTE_RESIDENT_ONLY=off|verify --out bench/results/resident/z_<mode>
+```

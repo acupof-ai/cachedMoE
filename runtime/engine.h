@@ -384,7 +384,20 @@ public:
     // `Stall1` is the middle ground: a layer may block on at most ONE expert --
     // the highest-gate-weight missing one, a single P0 fetch of about 4 ms --
     // and skips the rest exactly as `All` does.
-    enum class ResidentOnly : uint8_t { Off = 0, All = 1, Stall1 = 2 };
+    // `Verify` is the DSpark block-5 shape (docs/p4_resident_routing.md §10):
+    // one step in every five routes EXACTLY -- it is the block's first
+    // position, whose misses are fetched at P0 and which warms the cache --
+    // and the other four route resident-only exactly as `All` does. In a real
+    // speculative cycle those four are the draft positions of the verify
+    // batch, so the verify forward never waits on the drive; run at M = 1 it is
+    // the same cache state and the same routing decision, one position at a
+    // time, which is what makes it measurable on the teacher-forced harness
+    // while `Engine::forward_batch` does not exist.
+    enum class ResidentOnly : uint8_t { Off = 0, All = 1, Stall1 = 2, Verify = 3 };
+    // DSpark's block: one verify forward over [last accepted, 4 drafts].
+    // `Verify` mode routes step `token_ % kVerifyBlock == 0` exactly and the
+    // other four resident-only.
+    static constexpr uint64_t kVerifyBlock = 5;
     // Fills every free slot from the static heat table at P3 and blocks until
     // the cache is full (or `timeout` passes), so a measurement can start from
     // a warm cache instead of the cold one `load_state` leaves. `begin_session`
@@ -592,6 +605,10 @@ private:
     // the P3 backfill's, the prefill handoff's -- can recycle a slot a
     // submitted buffer still reads.
     ResidentOnly       resident_only_ = ResidentOnly::Off;
+    // What `Verify` does at the block's first position and at its four draft
+    // positions (DEEPMOE_VERIFY_FIRST / DEEPMOE_VERIFY_DRAFT).
+    ResidentOnly       verify_first_ = ResidentOnly::Off;
+    ResidentOnly       verify_draft_ = ResidentOnly::All;
     ResidentRouteStats rr_{};
     // Ceiling on P3 reads this mode may have in flight at once, so a cold cache
     // cannot queue the whole model. docs/p4_resident_routing.md §3: the drive

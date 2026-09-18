@@ -95,6 +95,17 @@ private:
     bool     a_done_ = false;
 };
 
+// Track Y's four routing modes, for logs and for the end-of-run report.
+const char* resident_only_name(Engine::ResidentOnly m) {
+    switch (m) {
+        case Engine::ResidentOnly::Off:    return "off";
+        case Engine::ResidentOnly::All:    return "all";
+        case Engine::ResidentOnly::Stall1: return "stall1";
+        case Engine::ResidentOnly::Verify: return "verify";
+    }
+    return "?";
+}
+
 // VK_EXT_memory_budget's view of the HOST heap: what the OS says this process
 // may still put there, given everything every other process already has. Zero
 // when the extension is not there. Path B's imports are charged to this heap,
@@ -552,21 +563,46 @@ Result<void> Engine::init_gpu() {
     route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
     // docs/p4_hitrate.md §4: on unless DEEPMOE_MOE_OVERLAP=0 (the A/B switch).
     if (const char* e = std::getenv("DEEPMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
-    // Track Y (docs/p4_resident_routing.md): off | all | stall1. Anything else
-    // is off.
+    // Track Y (docs/p4_resident_routing.md): off | all | stall1 | verify.
+    // Anything else is off.
     if (const char* e = std::getenv("DEEPMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
         const std::string_view v{e};
         if (v == "all") resident_only_ = ResidentOnly::All;
         else if (v == "stall1") resident_only_ = ResidentOnly::Stall1;
+        else if (v == "verify") resident_only_ = ResidentOnly::Verify;
         else if (v != "off" && v != "0" && v != "")
-            log_warn("DEEPMOE_ROUTE_RESIDENT_ONLY={}: expected off|all|stall1, using off", v);
+            log_warn("DEEPMOE_ROUTE_RESIDENT_ONLY={}: expected off|all|stall1|verify, "
+                     "using off", v);
         if (resident_only_ != ResidentOnly::Off)
-            log_info("route: resident-only={} -- a layer's non-resident experts are "
-                     "dropped and renormalised{}",
-                     resident_only_ == ResidentOnly::All ? "all" : "stall1",
+            log_info("route: resident-only={} -- {}", resident_only_name(resident_only_),
                      resident_only_ == ResidentOnly::All
-                         ? ", never waited for"
-                         : ", except the single highest-weight one, which is fetched at P0");
+                         ? "a layer's non-resident experts are dropped and renormalised, "
+                           "never waited for"
+                     : resident_only_ == ResidentOnly::Verify
+                         ? "one decode step in five routes exactly (the DSpark block's "
+                           "first position); the other four drop and renormalise and "
+                           "never wait"
+                         : "a layer's non-resident experts are dropped and renormalised, "
+                           "except the single highest-weight one, which is fetched at P0");
+    }
+    // `verify`'s two halves, for the sweep of docs/p4_resident_routing.md §10:
+    // what the block's first position does (`exact` = off, the default, or
+    // `stall1`) and what its four draft positions do (`all`, the default --
+    // never wait -- or `stall1`, one P0 fetch a layer). Anything else keeps the
+    // default.
+    if (const char* e = std::getenv("DEEPMOE_VERIFY_FIRST"); e && *e) {
+        const std::string_view v{e};
+        if (v == "stall1") verify_first_ = ResidentOnly::Stall1;
+        else if (v == "all") verify_first_ = ResidentOnly::All;
+        else if (v != "exact" && v != "off")
+            log_warn("DEEPMOE_VERIFY_FIRST={}: expected exact|stall1|all, keeping exact", v);
+    }
+    if (const char* e = std::getenv("DEEPMOE_VERIFY_DRAFT"); e && *e) {
+        const std::string_view v{e};
+        if (v == "stall1") verify_draft_ = ResidentOnly::Stall1;
+        else if (v == "exact" || v == "off") verify_draft_ = ResidentOnly::Off;
+        else if (v != "all")
+            log_warn("DEEPMOE_VERIFY_DRAFT={}: expected all|stall1|exact, keeping all", v);
     }
     // Track Y step 3: the background miss window, in decode steps.
     if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
@@ -1207,7 +1243,15 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         kept_ids[i] = static_cast<uint16_t>(ids_raw[i]);
         kept_w[i]   = wts_raw[i];
     }
-    if (resident_only_ != ResidentOnly::Off) {
+    // `verify` picks one of the other two modes per STEP: the DSpark block's
+    // first position routes exactly (mode off -- its misses are fetched at P0
+    // and warm the cache for the rest of the block), the four draft positions
+    // route resident-only. The phase is `token_ % 5`; which residue is the
+    // exact one is arbitrary, since the block boundary is arbitrary.
+    ResidentOnly ro = resident_only_;
+    if (ro == ResidentOnly::Verify)
+        ro = (token_ % kVerifyBlock) == 0 ? verify_first_ : verify_draft_;
+    if (ro != ResidentOnly::Off) {
         uint8_t res[16];
         uint32_t n_res = 0;
         for (uint32_t i = 0; i < topk; ++i) {
@@ -1235,7 +1279,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         // the most gate weight. At 18.8 MB / 4.5 GB/s that is about 4 ms
         // against a 2 ms layer -- the cheap middle ground between waiting for
         // up to six and waiting for none.
-        if (resident_only_ == ResidentOnly::Stall1 && n_res < topk) {
+        if (ro == ResidentOnly::Stall1 && n_res < topk) {
             uint32_t best = topk;
             float    bw   = -1.0f;
             for (uint32_t i = 0; i < topk; ++i)
@@ -2209,9 +2253,7 @@ std::string Engine::resident_route_report() const {
         "  background queue depth mean {:.1f} peak {} (window {} steps, cap {} experts)\n"
         "  background fetch latency mean {:.1f} ms over {} completions\n"
         "  stall1 P0 fetches {}  {:.1f} ms total\n",
-        resident_only_ == ResidentOnly::Stall1
-            ? "stall1"
-            : (resident_only_ == ResidentOnly::All ? "all" : "off"),
+        resident_only_name(resident_only_),
         rr_.layers, rr_.requested, rr_.served, rr_.served_frac(), rr_.skipped,
         rr_.mass_lost(), rr_.shared_only, rr_.bg_enqueued, rr_.bg_refused, rr_.bg_stale,
         rr_.bg_depth_mean(), rr_.bg_depth_peak, rr_queue_steps_, rr_outstanding_cap_,
