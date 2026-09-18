@@ -1,0 +1,1193 @@
+{
+ "version": 1,
+ "generator": "tools/quant2_golden.py",
+ "model": "DeepSeek-V4.1-Flash",
+ "rows_per_tensor": 64,
+ "written": "2026-09-18 07:54:05",
+ "format": {
+  "codes": "[rows, K/4] u8, 4 codes per byte, element j in bits 2*(j%4), element 0 in the lowest bits",
+  "scales": "[rows, K/block] u8 UE8M0, value = 2^(code-127) -- identical in shape and meaning to the FP4 path's",
+  "lut": "[rows, n_levels] f32, ascending",
+  "dequant": "value(r, j) = lut[r][code(r, j)] * 2^(scale[r][j/block]-127)",
+  "deq": "the first 2 rows x 256 columns of the reference dequantisation, for a direct value comparison",
+  "hash64": "tools/oracle.py:block_hash64, the same one tests/test_integration.cpp re-implements"
+ },
+ "files": [
+  {
+   "file": "q2_int2_b32_L00_E000.bin",
+   "layer": 0,
+   "expert": 0,
+   "scheme": "int2_b32",
+   "rows": 64,
+   "block": 32,
+   "n_levels": 4,
+   "data_offset": 28,
+   "bytes": 235008,
+   "entries": [
+    {
+     "tensor": "w1",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 0,
+     "bytes": 81920,
+     "hash64": 10020200516201426671,
+     "sha256": "dd3c4249cf388efcd2cd41731e39d71cb89eabb71eb4189c1077a7a1ff953531"
+    },
+    {
+     "tensor": "w1",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 81920,
+     "bytes": 10240,
+     "hash64": 15852218978478816028,
+     "sha256": "7749fcb2852beb6ac311e8e0a00d779432baeabe298c784d8f12273e359560df"
+    },
+    {
+     "tensor": "w1",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 92160,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 93184,
+     "bytes": 2048,
+     "hash64": 3091927979187260212,
+     "sha256": "0e8bbde7418a37a04f464dc938b041c41ddd59038900d8e1be993a20c026894c"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.358176,
+     "cos_vs_fp4": 0.93401879,
+     "hash64": 12727071978723652313,
+     "bits_per_weight": 2.2502
+    },
+    {
+     "tensor": "w2",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      576
+     ],
+     "offset": 95232,
+     "bytes": 36864,
+     "hash64": 11181854189205203812,
+     "sha256": "59d870fe1b6b6390bdeb0641dbc1e927dc29f8aa5a93b184e2fff454c6f10c98"
+    },
+    {
+     "tensor": "w2",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      72
+     ],
+     "offset": 132096,
+     "bytes": 4608,
+     "hash64": 15106938016123200638,
+     "sha256": "c97245a6dc7533cd18d09f310cbc415ac65b9e35edc816f32791b58602ea4433"
+    },
+    {
+     "tensor": "w2",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 136704,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 137728,
+     "bytes": 2048,
+     "hash64": 7221019427325598342,
+     "sha256": "c215e45af48e8597eaad09fac3b97cb24f78ca43c8cd4de4357d35948d84bf58"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.354435,
+     "cos_vs_fp4": 0.93525685,
+     "hash64": 8525178622254567494,
+     "bits_per_weight": 2.2504
+    },
+    {
+     "tensor": "w3",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 139776,
+     "bytes": 81920,
+     "hash64": 16122116991563098216,
+     "sha256": "07447e6c9a6ca78f36b15781ff870b1af3a89c98c7138bddddce431341cbf5b3"
+    },
+    {
+     "tensor": "w3",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 221696,
+     "bytes": 10240,
+     "hash64": 4787407278543082780,
+     "sha256": "4d795c5994ea4c739a84d35af27b1ee6d9d47031672f6774f1d5f74fa661078a"
+    },
+    {
+     "tensor": "w3",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 231936,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 232960,
+     "bytes": 2048,
+     "hash64": 15026717221747834099,
+     "sha256": "2d7359b7b7fd522fdaed00eb2ab9fa11e3aac0eea3624d852aa2b1b29a4b50ee"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.355824,
+     "cos_vs_fp4": 0.93488937,
+     "hash64": 12936746927717098412,
+     "bits_per_weight": 2.2502
+    }
+   ]
+  },
+  {
+   "file": "q2_lloyd_row_b32_L00_E000.bin",
+   "layer": 0,
+   "expert": 0,
+   "scheme": "lloyd_row_b32",
+   "rows": 64,
+   "block": 32,
+   "n_levels": 4,
+   "data_offset": 28,
+   "bytes": 235008,
+   "entries": [
+    {
+     "tensor": "w1",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 0,
+     "bytes": 81920,
+     "hash64": 10020200516201426671,
+     "sha256": "dd3c4249cf388efcd2cd41731e39d71cb89eabb71eb4189c1077a7a1ff953531"
+    },
+    {
+     "tensor": "w1",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 81920,
+     "bytes": 10240,
+     "hash64": 15852218978478816028,
+     "sha256": "7749fcb2852beb6ac311e8e0a00d779432baeabe298c784d8f12273e359560df"
+    },
+    {
+     "tensor": "w1",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 92160,
+     "bytes": 1024,
+     "hash64": 10080175448844079752,
+     "sha256": "8ee968d49a3edbe36eef3cf1aabdab6f91a0d4640cf757fec5897cbe378d637f"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 93184,
+     "bytes": 2048,
+     "hash64": 832966329461314250,
+     "sha256": "d4c64f16532e5b23bc22b542001f6c7b04d66ccb75456320d95a777739389ee1"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.345608,
+     "cos_vs_fp4": 0.93839663,
+     "hash64": 7684655689292464394,
+     "bits_per_weight": 2.2625
+    },
+    {
+     "tensor": "w2",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      576
+     ],
+     "offset": 95232,
+     "bytes": 36864,
+     "hash64": 11181854189205203812,
+     "sha256": "59d870fe1b6b6390bdeb0641dbc1e927dc29f8aa5a93b184e2fff454c6f10c98"
+    },
+    {
+     "tensor": "w2",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      72
+     ],
+     "offset": 132096,
+     "bytes": 4608,
+     "hash64": 15106938016123200638,
+     "sha256": "c97245a6dc7533cd18d09f310cbc415ac65b9e35edc816f32791b58602ea4433"
+    },
+    {
+     "tensor": "w2",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 136704,
+     "bytes": 1024,
+     "hash64": 10895473996752168639,
+     "sha256": "6bac22ad3c3e57844602336ba0933a30d806e203baee747e04181006acd47d03"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 137728,
+     "bytes": 2048,
+     "hash64": 15558725098951075912,
+     "sha256": "8db825feb002ee714015f63bcf98c1c3eda7a3401db41915d7052c937a594723"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.343099,
+     "cos_vs_fp4": 0.93930853,
+     "hash64": 964751171350033588,
+     "bits_per_weight": 2.2778
+    },
+    {
+     "tensor": "w3",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 139776,
+     "bytes": 81920,
+     "hash64": 16122116991563098216,
+     "sha256": "07447e6c9a6ca78f36b15781ff870b1af3a89c98c7138bddddce431341cbf5b3"
+    },
+    {
+     "tensor": "w3",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 221696,
+     "bytes": 10240,
+     "hash64": 4787407278543082780,
+     "sha256": "4d795c5994ea4c739a84d35af27b1ee6d9d47031672f6774f1d5f74fa661078a"
+    },
+    {
+     "tensor": "w3",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 231936,
+     "bytes": 1024,
+     "hash64": 4965061975652535705,
+     "sha256": "39aa14c46c2b99ac609d7b8ed6cae3d2c41eec69023ab7bda039f5ed0eac73ac"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 232960,
+     "bytes": 2048,
+     "hash64": 8961658587205615518,
+     "sha256": "e323fff9017a1a2c6010f24364df5c31d3f897984e6ab80802898ba86e5a73b5"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.343907,
+     "cos_vs_fp4": 0.93902531,
+     "hash64": 6961593623043785911,
+     "bits_per_weight": 2.2625
+    }
+   ]
+  },
+  {
+   "file": "q2_int2_b32_L20_E191.bin",
+   "layer": 20,
+   "expert": 191,
+   "scheme": "int2_b32",
+   "rows": 64,
+   "block": 32,
+   "n_levels": 4,
+   "data_offset": 28,
+   "bytes": 235008,
+   "entries": [
+    {
+     "tensor": "w1",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 0,
+     "bytes": 81920,
+     "hash64": 10569428818906657866,
+     "sha256": "c4c823799cd2f0426c0c9e66cc0b21f8099c1f92b3ef17c899e2b84dd1728711"
+    },
+    {
+     "tensor": "w1",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 81920,
+     "bytes": 10240,
+     "hash64": 18442254776356531911,
+     "sha256": "4b83423b3e20d9522ffd63b5e6eaf79a665e6339436881abddb2968ea417ecf6"
+    },
+    {
+     "tensor": "w1",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 92160,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 93184,
+     "bytes": 2048,
+     "hash64": 10834511641270806573,
+     "sha256": "5da6a877ede0194882a1f946fcf4f63246c2c34e968d98fe35e6685f91f05437"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.359125,
+     "cos_vs_fp4": 0.93329158,
+     "hash64": 8620979256829938735,
+     "bits_per_weight": 2.2502
+    },
+    {
+     "tensor": "w2",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      576
+     ],
+     "offset": 95232,
+     "bytes": 36864,
+     "hash64": 14105197607100847385,
+     "sha256": "a61c5c9e8cfca28f7ee3b350e4663443a7b1e48a40d77a6b348ca8ed93f0db47"
+    },
+    {
+     "tensor": "w2",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      72
+     ],
+     "offset": 132096,
+     "bytes": 4608,
+     "hash64": 6014209653792466057,
+     "sha256": "0ab40ab59297eed25a8f9810caa65707ea4332fd971d10b873f06e1510fb16b3"
+    },
+    {
+     "tensor": "w2",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 136704,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 137728,
+     "bytes": 2048,
+     "hash64": 2709437309604349825,
+     "sha256": "b37b07137a791798778b2e2db812a61d30e8a1fa28ffa148e281f79ac5282419"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.357726,
+     "cos_vs_fp4": 0.93382666,
+     "hash64": 4674592278020350171,
+     "bits_per_weight": 2.2504
+    },
+    {
+     "tensor": "w3",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 139776,
+     "bytes": 81920,
+     "hash64": 15247743714278631835,
+     "sha256": "c19833ef5bca39d47ce9b2d22468674277de2acb43d1cf6975cabf18e0684704"
+    },
+    {
+     "tensor": "w3",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 221696,
+     "bytes": 10240,
+     "hash64": 6125791490878791552,
+     "sha256": "87c78ec5844019fb6c31e11fc75bf729313c0c63e9fa922e9fe2b0a46ea3564f"
+    },
+    {
+     "tensor": "w3",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 231936,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 232960,
+     "bytes": 2048,
+     "hash64": 12339531244429408525,
+     "sha256": "0cd437c195d639e2f93fac56dedac8a297f20c91052a02a67ed189d56b6be03b"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.359079,
+     "cos_vs_fp4": 0.93330875,
+     "hash64": 15502056403395755837,
+     "bits_per_weight": 2.2502
+    }
+   ]
+  },
+  {
+   "file": "q2_lloyd_row_b32_L20_E191.bin",
+   "layer": 20,
+   "expert": 191,
+   "scheme": "lloyd_row_b32",
+   "rows": 64,
+   "block": 32,
+   "n_levels": 4,
+   "data_offset": 28,
+   "bytes": 235008,
+   "entries": [
+    {
+     "tensor": "w1",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 0,
+     "bytes": 81920,
+     "hash64": 10569428818906657866,
+     "sha256": "c4c823799cd2f0426c0c9e66cc0b21f8099c1f92b3ef17c899e2b84dd1728711"
+    },
+    {
+     "tensor": "w1",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 81920,
+     "bytes": 10240,
+     "hash64": 18442254776356531911,
+     "sha256": "4b83423b3e20d9522ffd63b5e6eaf79a665e6339436881abddb2968ea417ecf6"
+    },
+    {
+     "tensor": "w1",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 92160,
+     "bytes": 1024,
+     "hash64": 18283283991568109652,
+     "sha256": "ebb218d74a2dde83606ab6ffa1af90f08764f29c94fc5d7cbe629b4d590ccc8c"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 93184,
+     "bytes": 2048,
+     "hash64": 17298601748350404259,
+     "sha256": "c53cc19a464100bacc734f380b64f8f996ea8bebc473acf89d2a876d9957614f"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.347185,
+     "cos_vs_fp4": 0.93785984,
+     "hash64": 9723589040681355455,
+     "bits_per_weight": 2.2625
+    },
+    {
+     "tensor": "w2",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      576
+     ],
+     "offset": 95232,
+     "bytes": 36864,
+     "hash64": 14105197607100847385,
+     "sha256": "a61c5c9e8cfca28f7ee3b350e4663443a7b1e48a40d77a6b348ca8ed93f0db47"
+    },
+    {
+     "tensor": "w2",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      72
+     ],
+     "offset": 132096,
+     "bytes": 4608,
+     "hash64": 6014209653792466057,
+     "sha256": "0ab40ab59297eed25a8f9810caa65707ea4332fd971d10b873f06e1510fb16b3"
+    },
+    {
+     "tensor": "w2",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 136704,
+     "bytes": 1024,
+     "hash64": 8596835940755452705,
+     "sha256": "871bf5e6e351898b4421d246212e667e400372b19d8791762afba03312ee7db5"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 137728,
+     "bytes": 2048,
+     "hash64": 13017559243512274842,
+     "sha256": "6a8ad779eee1b8861f15983addf11bcd7cd4e33ebb5e0ad865a39ddadf9d3567"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.345867,
+     "cos_vs_fp4": 0.93831635,
+     "hash64": 2101339988894340338,
+     "bits_per_weight": 2.2778
+    },
+    {
+     "tensor": "w3",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 139776,
+     "bytes": 81920,
+     "hash64": 15247743714278631835,
+     "sha256": "c19833ef5bca39d47ce9b2d22468674277de2acb43d1cf6975cabf18e0684704"
+    },
+    {
+     "tensor": "w3",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 221696,
+     "bytes": 10240,
+     "hash64": 6125791490878791552,
+     "sha256": "87c78ec5844019fb6c31e11fc75bf729313c0c63e9fa922e9fe2b0a46ea3564f"
+    },
+    {
+     "tensor": "w3",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 231936,
+     "bytes": 1024,
+     "hash64": 12004011506092663450,
+     "sha256": "d1feed7cec032bc5df84840493f396aed7085552b95577bb10e02d08d66a7303"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 232960,
+     "bytes": 2048,
+     "hash64": 6309843142934652247,
+     "sha256": "24f5515c21086b54a61080411078a18266cac72260f17735387f2ff6a21589c7"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.347617,
+     "cos_vs_fp4": 0.93769603,
+     "hash64": 9128696424713417355,
+     "bits_per_weight": 2.2625
+    }
+   ]
+  },
+  {
+   "file": "q2_int2_b32_L39_E383.bin",
+   "layer": 39,
+   "expert": 383,
+   "scheme": "int2_b32",
+   "rows": 64,
+   "block": 32,
+   "n_levels": 4,
+   "data_offset": 28,
+   "bytes": 235008,
+   "entries": [
+    {
+     "tensor": "w1",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 0,
+     "bytes": 81920,
+     "hash64": 4516960097584333325,
+     "sha256": "8eef9b2b753a7a5aa47d90445ad0b4405604fc15663a34fda3ac59ca25ef315b"
+    },
+    {
+     "tensor": "w1",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 81920,
+     "bytes": 10240,
+     "hash64": 3266367566052057564,
+     "sha256": "cae7ff2624c1d8b37d4915719d596a125a0f0017fbc5032eae91278fc3a5c02c"
+    },
+    {
+     "tensor": "w1",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 92160,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 93184,
+     "bytes": 2048,
+     "hash64": 17374228070554382065,
+     "sha256": "29251f659694ad7855abcb3bdaaa015dea838b1510ceb8f321cfe4b3e3b1b90d"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.363483,
+     "cos_vs_fp4": 0.93161527,
+     "hash64": 15335784962173154177,
+     "bits_per_weight": 2.2502
+    },
+    {
+     "tensor": "w2",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      576
+     ],
+     "offset": 95232,
+     "bytes": 36864,
+     "hash64": 10508687616741954970,
+     "sha256": "ffcb92348a1c2bb5d6a3370d18d1a05de718f00e7434e764e74b15cb1c90d665"
+    },
+    {
+     "tensor": "w2",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      72
+     ],
+     "offset": 132096,
+     "bytes": 4608,
+     "hash64": 7785691033201095895,
+     "sha256": "63066757ad0a6a11dd00a93f182f2779e45ad5fcdde59ba79dbf8b52c88e1777"
+    },
+    {
+     "tensor": "w2",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 136704,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 137728,
+     "bytes": 2048,
+     "hash64": 7922226704938001550,
+     "sha256": "c554f79c4116e8f7b665670f94fa8464735d39a8d9906ade29c654acc49a3524"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.36624,
+     "cos_vs_fp4": 0.93052129,
+     "hash64": 4851432736238818549,
+     "bits_per_weight": 2.2504
+    },
+    {
+     "tensor": "w3",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 139776,
+     "bytes": 81920,
+     "hash64": 16713746952972550786,
+     "sha256": "b55a5a6b72e4961f7fe7262cff6035daa43f4c04f952ee57f17f8feb62a09d3c"
+    },
+    {
+     "tensor": "w3",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 221696,
+     "bytes": 10240,
+     "hash64": 7200637740871833733,
+     "sha256": "0d3ca7b4ab886ee14566c3c48bf670354180ede917a51bb40a2638ee7052b5b5"
+    },
+    {
+     "tensor": "w3",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 231936,
+     "bytes": 1024,
+     "hash64": 14101997730269465284,
+     "sha256": "e17f2d6ba57f0ff56a578b9c2081b2c5781bcde628a38ea6efdff1ee7b10f2d0"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 232960,
+     "bytes": 2048,
+     "hash64": 17271738088173716459,
+     "sha256": "2594da3d1986e87a86f800d5c5605582f3bbf63df8489f3a2bb52aa469f55345"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.364554,
+     "cos_vs_fp4": 0.93118713,
+     "hash64": 6655121679899136748,
+     "bits_per_weight": 2.2502
+    }
+   ]
+  },
+  {
+   "file": "q2_lloyd_row_b32_L39_E383.bin",
+   "layer": 39,
+   "expert": 383,
+   "scheme": "lloyd_row_b32",
+   "rows": 64,
+   "block": 32,
+   "n_levels": 4,
+   "data_offset": 28,
+   "bytes": 235008,
+   "entries": [
+    {
+     "tensor": "w1",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 0,
+     "bytes": 81920,
+     "hash64": 4516960097584333325,
+     "sha256": "8eef9b2b753a7a5aa47d90445ad0b4405604fc15663a34fda3ac59ca25ef315b"
+    },
+    {
+     "tensor": "w1",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 81920,
+     "bytes": 10240,
+     "hash64": 3266367566052057564,
+     "sha256": "cae7ff2624c1d8b37d4915719d596a125a0f0017fbc5032eae91278fc3a5c02c"
+    },
+    {
+     "tensor": "w1",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 92160,
+     "bytes": 1024,
+     "hash64": 2062518534985719759,
+     "sha256": "e27ef9a37115214698d523632ffb2aaaa357b55e68b9b32fc0070b4a3b8303c1"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 93184,
+     "bytes": 2048,
+     "hash64": 10662775153990045241,
+     "sha256": "1def1c53f7f9c515cbe2fcbe6ea9c3972794e56d14fec70fab3603d8c5f20bfa"
+    },
+    {
+     "tensor": "w1",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.351082,
+     "cos_vs_fp4": 0.93653923,
+     "hash64": 6742092587170565619,
+     "bits_per_weight": 2.2625
+    },
+    {
+     "tensor": "w2",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      576
+     ],
+     "offset": 95232,
+     "bytes": 36864,
+     "hash64": 10508687616741954970,
+     "sha256": "ffcb92348a1c2bb5d6a3370d18d1a05de718f00e7434e764e74b15cb1c90d665"
+    },
+    {
+     "tensor": "w2",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      72
+     ],
+     "offset": 132096,
+     "bytes": 4608,
+     "hash64": 7785691033201095895,
+     "sha256": "63066757ad0a6a11dd00a93f182f2779e45ad5fcdde59ba79dbf8b52c88e1777"
+    },
+    {
+     "tensor": "w2",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 136704,
+     "bytes": 1024,
+     "hash64": 9571812618029929535,
+     "sha256": "72be98fb52195b04367433dd1e08a36b83c0875cad34163dc1c54d8fce6f1d74"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 137728,
+     "bytes": 2048,
+     "hash64": 8895364280273127080,
+     "sha256": "3e95670a88cb4592b2f7639d031565334f5e346c4afd8851372800416aff71fd"
+    },
+    {
+     "tensor": "w2",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.353476,
+     "cos_vs_fp4": 0.93581716,
+     "hash64": 16959977118912696019,
+     "bits_per_weight": 2.2778
+    },
+    {
+     "tensor": "w3",
+     "part": "codes",
+     "dtype": "u8",
+     "shape": [
+      64,
+      1280
+     ],
+     "offset": 139776,
+     "bytes": 81920,
+     "hash64": 16713746952972550786,
+     "sha256": "b55a5a6b72e4961f7fe7262cff6035daa43f4c04f952ee57f17f8feb62a09d3c"
+    },
+    {
+     "tensor": "w3",
+     "part": "scales",
+     "dtype": "u8",
+     "shape": [
+      64,
+      160
+     ],
+     "offset": 221696,
+     "bytes": 10240,
+     "hash64": 7200637740871833733,
+     "sha256": "0d3ca7b4ab886ee14566c3c48bf670354180ede917a51bb40a2638ee7052b5b5"
+    },
+    {
+     "tensor": "w3",
+     "part": "lut",
+     "dtype": "f32",
+     "shape": [
+      64,
+      4
+     ],
+     "offset": 231936,
+     "bytes": 1024,
+     "hash64": 11242944070226651349,
+     "sha256": "db32e3938b317a0a8728185ce808da14378bcb7f5aead3002f7dfbdd9aeeae9d"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq",
+     "dtype": "f32",
+     "shape": [
+      2,
+      256
+     ],
+     "offset": 232960,
+     "bytes": 2048,
+     "hash64": 8937579559495602370,
+     "sha256": "014081ce9e891ffac0eb7aaab45065f87dbcf341aab8a1e02b2976f684c9799d"
+    },
+    {
+     "tensor": "w3",
+     "part": "deq_full_stats",
+     "dtype": "meta",
+     "rel_l2_vs_fp4": 0.351925,
+     "cos_vs_fp4": 0.93629139,
+     "hash64": 11088152357716315550,
+     "bits_per_weight": 2.2625
+    }
+   ]
+  }
+ ]
+}

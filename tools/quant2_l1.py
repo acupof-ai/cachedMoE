@@ -359,14 +359,47 @@ def main(argv=None) -> int:
 
     started = time.strftime("%Y-%m-%d %H:%M:%S")
     t0 = time.perf_counter()
+
+    # Per-expert checkpoint. A sweep over 216 experts is an hour and a half, and
+    # the first attempt at this rung was lost to a dead process, so every record
+    # is appended to a JSONL as soon as it exists and a re-run picks up where it
+    # stopped. A record is only reused if it carries every scheme asked for.
+    ckpt = os.path.join(a.out, f"l1_{tag}.partial.jsonl")
+    done: dict[tuple[int, int], dict] = {}
+    if os.path.exists(ckpt):
+        with io.open(ckpt, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:            # a half-written trailing line
+                    continue
+                if all(s in r.get("schemes", {}) for s in schemes):
+                    done[(r["layer"], r["expert"])] = r
+        print(f"resuming from {ckpt}: {len(done)} experts already done", flush=True)
+
     records = []
-    for i, (L, e) in enumerate(pairs):
-        rec = eval_expert(reader, acts, L, e, schemes, table, a.n_x)
-        records.append(rec)
-        best = min(rec["schemes"], key=lambda k: rec["schemes"][k]["y_rel_l2"])
-        print(f"[{i + 1:3d}/{len(pairs)}] L{L:02d} e{e:03d} {rec['x_kind']:9s} "
-              f"best {best} y_rel_l2 {rec['schemes'][best]['y_rel_l2']:.4f} "
-              f"({time.perf_counter() - t0:.0f}s)", flush=True)
+    ck = io.open(ckpt, "a", encoding="utf-8")
+    try:
+        for i, (L, e) in enumerate(pairs):
+            rec = done.get((L, e))
+            if rec is None:
+                rec = eval_expert(reader, acts, L, e, schemes, table, a.n_x)
+                ck.write(json.dumps(rec) + chr(10))
+                ck.flush()
+                os.fsync(ck.fileno())
+                note = ""
+            else:
+                note = " (checkpoint)"
+            records.append(rec)
+            best = min(rec["schemes"], key=lambda k: rec["schemes"][k]["y_rel_l2"])
+            print(f"[{i + 1:3d}/{len(pairs)}] L{L:02d} e{e:03d} {rec['x_kind']:9s} "
+                  f"best {best} y_rel_l2 {rec['schemes'][best]['y_rel_l2']:.4f} "
+                  f"({time.perf_counter() - t0:.0f}s){note}", flush=True)
+    finally:
+        ck.close()
 
     summary = {}
     for s in schemes:
