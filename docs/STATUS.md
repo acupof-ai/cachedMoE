@@ -352,6 +352,9 @@ MoE live-column mask 在 microbench 上是 1.7×（30 ms/token），端到端**�
 | `suite.dspark_tree` | 树采样的格 / 路径 / confidence / 精确接受，**对 Python 参考逐位** | 单元 |
 | `suite.sampling` | L3 logits 上 **200,000 次抽样的 χ²** | 单元 |
 | `suite.kvdisk` | SSD parked-context 存/取/丢 round-trip | 单元 |
+| `suite.resident_route` | resident-only 路由的选择逻辑（`runtime/resident_route.h`） | 单元 |
+| `suite.speculate` | 投机周期的算术：位置对齐、接受、回滚记账 | 单元 |
+| `suite.trace` | per-dispatch trace 的格式与解析 | 单元 |
 
 ### 5.2 需要 checkpoint 或 GPU
 
@@ -414,6 +417,11 @@ ctest --test-dir build --output-on-failure
 2. 另外两条活下来的是**变异本身太弱**，不是测试弱（一个浮点和上的 `>=` vs `>`、
    一个 1e-9 的 CDF 亏空，两者都是测度零），已换成真的会改变行为的版本。
    **记在这里是因为它是这套方法的失败模式**：一个"survived"要先怀疑变异，再怀疑测试。
+
+**这套方法第二次抓到同一类缺陷**：合并 Track Y 时 `suite.resident_route` 被加进了 suite 列表
+却**没有加进 `unit` 标签那个 foreach**——于是它在 `ctest -LE needs-model` 里会跑（它没有任何标签），
+但 `run_all.py` 和 `ctest -L unit` 都**看不见它**。本轮补上（27 → 28 个 gate）。
+**教训和 `suite.kvdisk` 那次是同一条**：新套件要改两处，而只改一处的症状是"全绿但少跑了一个"。
 
 **已知的标签缺陷**：`deepmoe_tests`（整个二进制这一条 ctest 项）挂着 `needs-model`，
 所以 `ctest -LE needs-model` 会把它整条跳掉。

@@ -114,8 +114,8 @@ set_tests_properties("suite.gpu_moe" PROPERTIES
 
 # Everything else must keep passing on a machine with no weights at all.
 foreach(_t deepmoe_tests align layout types json profiler status bytes
-           dequant gate slab expert_store planner io v41_config manifest
-           block_info kvcache kvstore)
+           dequant gate slab expert_store planner resident_route io v41_config
+           manifest block_info kvcache kvstore)
     if(_t STREQUAL "deepmoe_tests")
         set_tests_properties("${_t}" PROPERTIES LABELS "unit;needs-model")
     else()
