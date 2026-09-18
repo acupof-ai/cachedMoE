@@ -90,6 +90,11 @@ struct Options {
     std::vector<uint32_t> coop_dense = {64};  // PrefillConfig::coopmat_dense_min_rows (-1 = never)
     std::string handoff_dir;
     std::string only;                      // section coopgeo: shape names to run
+    // PrefillConfig::attn_pv_dim_tiles, swept in ONE process so the A/B sees
+    // the same machine (docs/p4_prefill_speed.md §3.1).
+    std::vector<uint32_t> attn_dv = {};
+    // PrefillConfig::coop_tok_tiles, swept the same way.
+    std::vector<uint32_t> coop_tt = {};
 };
 
 const char* env(const char* name) {
@@ -623,9 +628,15 @@ int run_prefill(const Options& o) {
         else if (text_ids.size() >= n) { prompt.assign(text_ids.begin(), text_ids.begin() + n); source = o.ids; }
         else { std::fprintf(stderr, "N=%u: no %u token ids (--ids)\n", n, n); return 1; }
 
+        std::vector<uint32_t> dvs = o.attn_dv;
+        if (dvs.empty()) dvs.push_back(0);   // 0 = leave PrefillConfig's default
+        std::vector<uint32_t> tts = o.coop_tt;
+        if (tts.empty()) tts.push_back(0);
         for (uint32_t replay : o.replays)
         for (uint32_t cmin : o.coop_min)
-        for (uint32_t cden : o.coop_dense) {
+        for (uint32_t cden : o.coop_dense)
+        for (uint32_t dv : dvs)
+        for (uint32_t ctt : tts) {
             gpu::PrefillConfig pc;
             pc.max_tokens = n;
             pc.replay = replay ? replay : n;
@@ -635,6 +646,10 @@ int run_prefill(const Options& o) {
             pc.coopmat_dense_min_rows = cden;
             if (const char* e = env("DEEPMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
             if (const char* e = env("DEEPMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
+            if (const char* e = env("DEEPMOE_PF_ATTN_DV")) pc.attn_pv_dim_tiles = static_cast<uint32_t>(std::atoi(e));
+            if (dv) pc.attn_pv_dim_tiles = dv;
+            if (ctt) pc.coop_tok_tiles = ctt;
+            if (const char* e = env("DEEPMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
             gpu::Prefill pf;
             if (auto r = pf.create(rig.device, rig.alloc, rig.runner, rig.manifest, rig.shards, rig.io,
                                    rig.pinned, c, &*tables, pc); !r) {
@@ -645,7 +660,9 @@ int run_prefill(const Options& o) {
                                     : cmin == 0 ? "MoE coopmat" : std::format("MoE coopmat n>={}", cmin);
             const std::string dense = cden == UINT32_MAX ? "dense tiled" : std::format("dense coopmat n>={}", cden);
             const std::string mode = (pc.replay >= n ? std::string("oracle mode") : std::format("replay {}", pc.replay)) +
-                                     " " + moe + " " + dense;
+                                     " " + moe + " " + dense +
+                                     std::format(" pv_dv {} ht {} tt {}", pc.attn_pv_dim_tiles,
+                                                 pc.attn_head_tiles, pc.coop_tok_tiles);
             std::printf("\nN=%u (%s), %s, load = %s\n", n, source.c_str(), mode.c_str(), o.load.c_str());
             auto out = pf.run(prompt);
             if (!out) { std::fprintf(stderr, "prefill: %s\n", out.error().str().c_str()); return 1; }
@@ -669,11 +686,21 @@ int run_prefill(const Options& o) {
                                                                                    t.per_op.end());
                 std::sort(ops.begin(), ops.end(),
                           [](const auto& a, const auto& b) { return a.second.first > b.second.first; });
+                // DEEPMOE_PF_ALLOPS=1 prints the whole profile, not just the top 14.
+                const size_t show = env("DEEPMOE_PF_ALLOPS") ? ops.size() : std::min<size_t>(ops.size(), 14);
                 std::printf("  ops by wall time:");
-                for (size_t i = 0; i < ops.size() && i < 14; ++i)
+                for (size_t i = 0; i < show; ++i)
                     std::printf("%s %s %.0f ms/%u", i % 3 ? "," : "\n   ", ops[i].first.c_str(),
                                 ops[i].second.first, ops[i].second.second);
                 std::printf("\n");
+                if (csv.f) {
+                    // one row per op, so the whole profile survives the run
+                    const std::string vv = std::format("N={} {}", n, mode);
+                    for (const auto& [nm, v2] : ops)
+                        std::fprintf(csv.f, "op,%s,%s,%u,%u,0,0,%.1f,0,0,0,0,\"%s\"\n", vv.c_str(),
+                                     nm.c_str(), n, v2.second, v2.first, o.load.c_str());
+                    std::fflush(csv.f);
+                }
             }
             if (csv.f) {
                 const std::string v = std::format("N={} {}", n, mode);
@@ -746,6 +773,8 @@ int main(int argc, char** argv) {
         else if (a == "--transit") o.transit = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (a == "--handoff-dir") o.handoff_dir = next();
         else if (a == "--only")    o.only = next();
+        else if (a == "--attn-dv") o.attn_dv = list(next());
+        else if (a == "--coop-tt") o.coop_tt = list(next());
         else { std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data()); return 2; }
     }
     if (o.model_dir.empty()) { std::fputs("set --model-dir or DEEPMOE_MODEL_DIR\n", stderr); return 2; }

@@ -125,6 +125,11 @@ Result<PfExpert> pf_load_expert(MemoryAllocator& alloc, const Manifest& manifest
                                 const store::ShardSet& shards, storage::IoEngine& io,
                                 ExpertKey key);
 
+// Rows of slack on every plane a cooperative-matrix GEMM stages into: one
+// workgroup covers 16 * CmTokTiles (<= 128) tokens, so the last workgroup of a
+// dispatch touches up to that many rows past the real row count.
+inline constexpr uint64_t kPfRowSlack = 160;
+
 inline constexpr uint32_t kPfSlotsPerKernel = 32;
 inline constexpr uint32_t kPfKernelStride   = kPfSlotsPerKernel * sizeof(uint64_t);
 inline constexpr uint32_t kPfPushBytes      = 64;
@@ -240,6 +245,26 @@ struct PrefillConfig {
     bool     attn_coop = true;
     // 16-head tiles per workgroup of the two tile stages (1, 2 or 4).
     uint32_t attn_head_tiles = 1;
+    // 16-dim output tiles held at once by the P.V stage (1, 2, 4 or 8). The
+    // contraction there is over the entries and the output index is the dim, so
+    // one dim tile at a time walks the gathered KV plane with a 16 KiB stride
+    // and re-reads it head_dim/16 times. > 1 forces attn_head_tiles = 1 for
+    // that stage (accumulators) and is the geometry docs/p4_prefill_speed.md
+    // §3.1 measures.
+    uint32_t attn_pv_dim_tiles = 4;
+    // sqrtsoftplus + noaux_tc top-6 on the GPU (prefill_elem stage 11) instead
+    // of reading all n x 384 gate scores back and sorting them on the host.
+    // false = the host path, which is the correctness reference.
+    bool     gate_topk_gpu = true;
+    // 16-token tiles per workgroup of the cooperative-matrix GEMM
+    // (prefill_coopmat stage 0's CmTokTiles, 1..8). The weight tile is loaded
+    // once per workgroup and reused by every token tile it holds, so the WEIGHT
+    // traffic of a GEMM is ceil(n / (16 * this)) passes over the matrix: at
+    // n = 512 and the old value of 2 that was 16 passes over wq_b's 84 MB.
+    uint32_t coop_tok_tiles = 8;
+    // wo_a (and any grouped linear) on cooperative matrix instead of the
+    // tiled GEMV. false = the pre-F3 path, which is the reference.
+    bool     coop_grouped_dense = true;
 };
 
 // What a decode engine inherits (docs/p3_prefill.md §8.1).
@@ -370,12 +395,22 @@ public:
     // op_gemm's option (a) branch: decode W to fp16 (skipped when the transit
     // already holds it), stage x as fp16, cooperative-matrix GEMM into a padded
     // plane, copy (and round) into y. One submit. False = not applicable.
+    // `rows_per_group` != 0 is the grouped form (wo_a: 8 groups of [1024][4096]
+    // over one [32768] row): the weight is decoded once and each group is one
+    // staging pass over its own column slice plus one GEMM into its own output
+    // rows. Only the fp32-activation staging supports it.
     Result<bool> op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
-                              uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags);
+                              uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
+                              uint32_t rows_per_group = 0);
     Result<void> op_rmsnorm(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint64_t w);
     Result<void> op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff, uint32_t coeff_stride,
                                  uint64_t norm_w, uint64_t out, uint64_t rs);
     Result<void> op_sinkhorn(uint64_t raw, uint64_t out, uint32_t n, uint64_t base, uint64_t scale);
+    // cpu::gate_topk for `n` rows on the GPU: raw gate scores [n][E] ->
+    // sqrtsoftplus, top-6 of (score + bias), normalised weights. Only
+    // n x 6 ids and weights come back, not n x 384 scores.
+    Result<void> op_gate_topk(uint64_t scores, uint64_t bias, uint32_t n, uint64_t ids,
+                              uint64_t wts);
     Result<void> op_mhc_post(uint64_t h, uint64_t a, uint64_t coeff, uint64_t out, uint32_t n);
     // mode: 0 RoPE only, 1 fp8/UE8M0-32, 2 FP4/UE8M0-32, 3 FP4/E4M3-16
     Result<void> op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint32_t head_dim,
@@ -469,7 +504,7 @@ private:
         GpuBuffer kv_raw, kv_norm, kv;
         GpuBuffer ckv, cscore, latent_pre, latent, key_raw, key_norm;
         GpuBuffer qr_raw, qr, qrq, qrs, q, iq, iw, iscore, idx, score, o, woa, woaq, woas, attn;
-        GpuBuffer fx, fxq, fxs, gate, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
+        GpuBuffer fx, fxq, fxs, gate, gids, gwts, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
         GpuBuffer x16, h16, gu, dout, w16;          // the cooperative-matrix MoE
         GpuBuffer eng_x, eng_xq, eng_xs, eng_kv;
         GpuBuffer transit, rope_win, rope_cmp, logits, nrm;
