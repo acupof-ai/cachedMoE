@@ -294,8 +294,8 @@ void KvStore::resolve_ring(uint32_t n) {
     const uint32_t w = cfg_.window;
     for (uint32_t s = 0; s < slot_pos_.size(); ++s) {
         if (slot_pos_[s] != kSlotUnknown) continue;
-        if (n <= s) { slot_pos_[s] = kSlotEmpty; continue; }
-        slot_pos_[s] = int64_t(s) + int64_t((n - 1 - s) / w) * w;
+        const int64_t p = ring_slot_position(s, n, w);
+        slot_pos_[s] = (p < 0) ? kSlotEmpty : p;
     }
 }
 
