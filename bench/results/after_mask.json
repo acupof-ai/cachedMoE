@@ -1,0 +1,77 @@
+{
+ "config": "cache-4500",
+ "args": [
+  "--cache-slots",
+  "4500"
+ ],
+ "turns": [
+  {
+   "prompt_tokens": 28,
+   "reused_tokens": 0,
+   "generated": 24,
+   "prefill_mode": "decode",
+   "ttft_ms": 15041.4465,
+   "tok_s": 3.2052275,
+   "decode_steps": 23,
+   "decode_hit_rate": 0.80923913,
+   "prefill_hit_rate": 0.606547619,
+   "decode_nvme_mb": 19805.7001,
+   "prefill_nvme_mb": 49730.5518,
+   "total_ms": 22217.2223,
+   "context": 51
+  },
+  {
+   "prompt_tokens": 30,
+   "reused_tokens": 0,
+   "generated": 1,
+   "prefill_mode": "decode",
+   "ttft_ms": 8236.7774,
+   "tok_s": 0,
+   "decode_steps": 0,
+   "decode_hit_rate": 0,
+   "prefill_hit_rate": 0.841388889,
+   "decode_nvme_mb": 0,
+   "prefill_nvme_mb": 21479.6861,
+   "total_ms": 8236.7969,
+   "context": 30
+  },
+  {
+   "prompt_tokens": 23,
+   "reused_tokens": 2,
+   "generated": 24,
+   "prefill_mode": "decode",
+   "ttft_ms": 6312.6991,
+   "tok_s": 3.57581105,
+   "decode_steps": 23,
+   "decode_hit_rate": 0.834057971,
+   "prefill_hit_rate": 0.824603175,
+   "decode_nvme_mb": 17228.8901,
+   "prefill_nvme_mb": 16627.0075,
+   "total_ms": 12744.8042,
+   "context": 46
+  },
+  {
+   "prompt_tokens": 22,
+   "reused_tokens": 0,
+   "generated": 24,
+   "prefill_mode": "decode",
+   "ttft_ms": 6744.1914,
+   "tok_s": 3.89295412,
+   "decode_steps": 23,
+   "decode_hit_rate": 0.867753623,
+   "prefill_hit_rate": 0.818939394,
+   "decode_nvme_mb": 13730.4474,
+   "prefill_nvme_mb": 17981.2434,
+   "total_ms": 12652.2992,
+   "context": 45
+  }
+ ],
+ "ok": true,
+ "cache_slots": 4500,
+ "cache_gb": 78.8269043,
+ "wall_s": 55.9,
+ "decode_tok_s": 3.536,
+ "decode_hit": 0.837,
+ "nvme_mb": 156584,
+ "nvme_mb_per_decode_token": 2269.3
+}

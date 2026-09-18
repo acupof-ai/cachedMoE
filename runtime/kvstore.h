@@ -1,94 +1,115 @@
 // The decode-time KV storage of design §11.3, allocated in GPU-addressable
 // memory and shaped exactly as gpu/shaders/wkv.slang writes it and
-// sparse_attn.slang reads it.
+// sparse_attn.slang / indexer.slang read it. docs/p4_kv_ux.md has the byte
+// accounting this layout follows.
 //
-// runtime/kvcache.h next to this file is the *geometry*: what 64K of context
-// costs, and the rollback and prefix-persistence interfaces of §10.2 and §11.4.
-// This is the buffer that exists during a decode step.
+// What lives here
+// ---------------
+//   window KV        A 128-slot ring per layer of E4M3 bytes plus one UE8M0 scale
+//                    per 32 dims, written by the wkv kernel every decode step
+//                    exactly as `Attention._window_kv` writes it. 2.7 MB for 40
+//                    layers whatever the context. NEVER parked or snapshotted:
+//                    whatever restores a context rebuilds it by replaying the
+//                    last <= 128 tokens (design §11.2; runtime/session.h).
+//   compressed KV    One plane per kv_source_layer (2, 8, 14 at ratio 2; 20 at
+//                    ratio 1), `ceil(positions / ratio)` rows of 512 bf16. The
+//                    other 34 compressed layers READ their source's plane
+//                    (model.py's `shared_attn`), so `layer(l)` hands them its
+//                    addresses. Track Q's store gave all 40 layers a plane.
+//   index keys       One plane per kv source too (model.py `Indexer.owns_k` is
+//                    `layer_id in kv_source_layers`; layers 24..36 run their own
+//                    indexer against layer 20's keys), 128 bf16 a row.
+//   compressor state The [ratio][latent_dim] fp32 tail of an incomplete group
+//                    (`kv_state`, `score_state`), per source.
+//   top-k list       Per layer, window + min(index_topk, context) int32.
 //
-// What is real, as of P2 step 3
-// ----------------------------
-//   window KV       REAL. A 128-slot ring per layer of E4M3 bytes plus one
-//                   UE8M0 scale per 32 dims, written by the wkv kernel every
-//                   decode step exactly as `Attention._window_kv` writes it.
-//   compressed KV   REAL. `compressor.slang` writes one row per completed
-//                   group into the source layer's plane (design §7.4).
-//   indexer K       REAL. `indexer.slang` stage 2 writes the key cache of the
-//                   layer that owns it.
-//   compressor state REAL. The [ratio][latent_dim] tail of an incomplete group,
-//                   carried across decode steps, which is why it lives here
-//                   and not in the per-step scratch.
-//   top-k list      REAL. The window half is written by the host
-//                   (`set_decode_topk`, model.py's `get_window_topk_idxs`) and
-//                   the compressed half by `indexer.slang` stage 5.
+// Why bf16 and not the packed formats. The compressor writes FP4 E2M1 block-16
+// + E4M3 and the indexer FP4 block-32 + E8M0 (design §11.3), but
+// `sparse_attn.slang` reads the compressed half and `indexer.slang` scores the
+// keys as bf16 rows of the dequantised values, and the top-k list that picks
+// the rows is computed on the GPU inside the same command buffer -- so there is
+// no host point at which a bounded working set could be gathered. The live
+// store therefore stays bf16 (3.6x the packed size: 2,560 + 640 B per token
+// against 720 + 170), sized per source and by the context actually reached;
+// every copy that is NOT being attended -- a parked session, a rollback's saved
+// rows -- is packed (`pack` / `unpack`), bit-exactly: the bf16 values are on
+// the FP4 grid already, so the pair (nibble, scale) is recovered, not re-quantised.
 //
-// The `seed_*` entry points remain, because a decode run still starts from
-// what the prompt left behind -- either the L3 export's prefill record or our
-// own slow prefill. What they no longer do is stand in for a kernel.
-//
-// Storage is per LAYER, not per source, even though only the four
-// `kv_source_layers` ever write a compressed plane, an index-key cache or a
-// compressor state. 40 planes instead of 4 costs 45 MB at this decode geometry
-// and keeps `layer(l)` a pure function of l; the Engine points a reuse layer's
-// view at its source's addresses (model.py's `shared_attn`), which is a
-// decision about which cache, not about where caches live.
-//
-// Storage note: the compressed half is bf16 here, not the FP4 E2M1 + E4M3/16
-// of design §11.3. The VALUES are already on the fp4 grid -- the compressor
-// quantises them -- so this is a packing choice, not a precision one: 66 MB
-// instead of 48 MB at 64K context. Packing it costs a nibble unpack in
-// sparse_attn's inner loop and buys 18 MB; that is a P3 decision, once the
-// compressor kernel exists to write the packed form.
+// Growth. `create` allocates `initial_context` positions and the store doubles
+// (copying what is live) whenever a step or a seed needs more, up to
+// `max_context`. Addresses change on growth, which is safe because every
+// caller takes `layer(l)` afresh per step.
 //
 // Ownership/threading: KvStore owns its allocation through the MemoryAllocator
-// it was created with. Written by the GPU, seeded by the host before a step.
+// it was created with. Written by the GPU, seeded and grown by the host
+// between steps, on the engine thread.
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "core/status.h"
 #include "core/types.h"
 #include "gpu/vulkan/memory.h"
+#include "model/v41_config.h"
 
 namespace deepmoe::runtime {
 
 struct KvStoreConfig {
+    static constexpr uint32_t kNoPlane = 0xFFFFFFFFu;
+
     uint32_t layers      = 40;
     uint32_t window      = 128;
     uint32_t latent_dim  = 512;    // head_dim; MQA over one KV head
     uint32_t index_dim   = 128;
-    uint32_t max_context = 1024;   // decode geometry, not the 64K of §11.3
+    uint32_t max_context = 1024;   // positions the store may grow to
     uint32_t scale_block = 32;
     // Slots in a compressor's carried group state. compressor.slang's
     // `kMaxRatio`; the checkpoint's largest compress_ratio is 2.
     uint32_t max_ratio   = 8;
+    uint32_t index_topk  = 512;
+    // Positions `create` allocates; 0 = max_context. The store grows past it.
+    uint32_t initial_context = 0;
+    // model.py's `shared_attn`: whose compressed / index-key / state planes
+    // layer l uses (kNoPlane for a window-only layer) and the ratio its rows
+    // are counted at. Both empty = every layer owns planes at ratio 1, which is
+    // what a rig that seeds one arbitrary layer at a time wants.
+    std::vector<uint32_t> plane_of;
+    std::vector<uint32_t> ratio;
 
+    // The plan config.json implies: planes on kv_source_layer_ids only.
+    static KvStoreConfig for_model(const TextConfig& c, uint32_t max_context,
+                                   uint32_t initial_context = 0);
+
+    bool     per_source() const { return !plane_of.empty(); }
+    uint32_t owner(uint32_t l) const;          // kNoPlane for a window-only layer
+    uint32_t plane_ratio(uint32_t owner) const;   // >= 1
+    std::vector<uint32_t> owners() const;
+    uint32_t rows_for(uint32_t owner, uint32_t positions) const {
+        const uint32_t r = plane_ratio(owner);
+        return (positions + r - 1) / r;
+    }
+    uint32_t topk_rows() const;
     uint32_t window_scales() const { return latent_dim / scale_block; }
+
+    // What the store allocates for `positions` (bf16 planes, as the kernels
+    // read them), and what the same state costs in the model's packed formats.
     uint64_t window_bytes() const {
         return uint64_t(layers) * window * (latent_dim + window_scales());
     }
-    // One compressed entry per source; ratio 1 is the worst case, so the
-    // decode-time allocation is sized for it and the caller says how many
-    // entries are live.
-    uint64_t compressed_bytes() const {
-        return uint64_t(layers) * max_context * latent_dim * 2;   // bf16
+    uint64_t compressed_bytes(uint32_t positions) const;
+    uint64_t index_key_bytes(uint32_t positions) const;
+    uint64_t cmp_state_bytes() const;
+    uint64_t topk_bytes() const { return uint64_t(layers) * topk_rows() * sizeof(uint32_t); }
+    uint64_t total_bytes(uint32_t positions) const {
+        return window_bytes() + compressed_bytes(positions) + index_key_bytes(positions) +
+               cmp_state_bytes() + topk_bytes();
     }
-    uint64_t topk_bytes() const {
-        return uint64_t(layers) * (window + max_context) * sizeof(uint32_t);
-    }
-    // One index key per compressed position, bf16, on the layers that own one.
-    uint64_t index_key_bytes() const {
-        return uint64_t(layers) * max_context * index_dim * 2;
-    }
-    // kv_state and score_state, [max_ratio][latent_dim] fp32 each.
-    uint64_t cmp_state_bytes() const {
-        return uint64_t(layers) * max_ratio * latent_dim * 4 * 2;
-    }
-    uint64_t total_bytes() const {
-        return window_bytes() + compressed_bytes() + topk_bytes() +
-               index_key_bytes() + cmp_state_bytes();
-    }
+    // FP4 E2M1 block-16 + E4M3 compressed rows, FP4 block-32 + E8M0 index keys,
+    // the carried state of the ratio > 1 sources: the non-SWA state a parked
+    // context keeps (before its token ids).
+    uint64_t packed_bytes(uint32_t positions) const;
 };
 
 // Where one layer's KV lives, as the kernels address it.
@@ -109,6 +130,50 @@ struct KvLayerView {
     float*        cmp_state_score_host = nullptr;
     uint32_t      n_cmp = 0;
     uint32_t      n_kv  = 0;
+    uint32_t      plane_owner = KvStoreConfig::kNoPlane;   // whose planes these are
+};
+
+// --- the packed forms -----------------------------------------------------------
+
+// `n` bf16 values that some FP4 quantiser put on its grid -> E2M1 nibbles (low
+// nibble = even element) and one scale per `block`: an E4M3 byte (`e8m0` false,
+// the compressor's block-16) or a UE8M0 byte (the indexer's block-32). Returns
+// false, leaving the outputs unspecified, when a block is not exactly
+// representable -- the caller keeps that row raw. Exact means the bf16 bits
+// come back identical from `unpack_fp4_row`, including -0.
+bool pack_fp4_row(const uint16_t* bf16, uint32_t n, uint32_t block, bool e8m0,
+                  uint8_t* nibbles, uint8_t* scales);
+void unpack_fp4_row(const uint8_t* nibbles, const uint8_t* scales, uint32_t n,
+                    uint32_t block, bool e8m0, uint16_t* bf16);
+
+struct KvPackedPlane {
+    uint32_t layer = 0, ratio = 1, rows = 0;
+    std::vector<uint8_t>  cmp_fp4, cmp_scale;    // [rows][latent/2], [rows][latent/16] E4M3
+    std::vector<uint8_t>  key_fp4, key_scale;    // [rows][index/2],  [rows][index/32]  E8M0
+    std::vector<uint32_t> raw_rows;              // rows kept as bf16 (not on the grid)
+    std::vector<uint16_t> raw_cmp, raw_key;
+    std::vector<float>    carry_kv, carry_score; // [ratio][latent], ratio > 1 only
+};
+
+// The non-SWA KV state of a context of `positions` tokens.
+struct KvPacked {
+    uint32_t positions = 0;
+    std::vector<KvPackedPlane> planes;
+    uint64_t bytes() const;
+    uint32_t raw_rows() const;
+};
+
+// bf16 copies of the rows some range of positions completes, and the carried
+// state, taken before a replay overwrites them (runtime/session.h).
+struct KvRowBackup {
+    uint32_t first_pos = 0, end_pos = 0;
+    struct Plane {
+        uint32_t layer = 0, ratio = 1, first_row = 0, rows = 0;
+        std::vector<uint16_t> cmp, key;
+        std::vector<float>    carry_kv, carry_score;
+    };
+    std::vector<Plane> planes;
+    uint64_t bytes() const;
 };
 
 class KvStore {
@@ -122,31 +187,38 @@ public:
     Result<void> create(gpu::MemoryAllocator& alloc, const KvStoreConfig& cfg);
     void         destroy();
     // Back to the state a fresh `create` leaves: everything zero, every
-    // `score_state` slot -inf, every count 0. What a prefill from position 0
-    // starts from.
+    // `score_state` slot -inf, every count 0, the window floor 0. What a
+    // prefill from position 0 starts from. Keeps the capacity.
     void         clear();
 
     const KvStoreConfig& config() const { return cfg_; }
     uint64_t bytes() const { return buf_.bytes; }
+    // Positions currently allocated (<= config().max_context).
+    uint32_t capacity() const { return cap_; }
+    // Grows to hold `positions`, copying the live rows. A no-op when it
+    // already does; ResourceExhausted past max_context.
+    Result<void> reserve(uint32_t positions);
 
     // The addresses layer `l`'s dispatches need. `n_cmp` and `n_kv` come from
     // whatever seeded the layer.
     Result<KvLayerView> layer(uint32_t l) const;
 
-    // --- seeding (see the header: prefill is not ours yet) -----------------
+    // --- seeding ------------------------------------------------------------
 
     // `values` is [rows][latent_dim] in fp32, the post-quantisation window KV
     // the oracle exported. Re-encoded to the E4M3 byte + UE8M0 scale the
     // kernels read; because the values are already on that grid the round trip
     // is exact, which `tests/test_gpu_attn.cpp` asserts.
     Result<void> seed_window(uint32_t layer, const float* values, uint32_t rows);
-    // `values` is [n_cmp][latent_dim] fp32, stored as bf16.
+    // `values` is [n_cmp][latent_dim] fp32, stored as bf16. On a layer that
+    // reads another layer's plane only the count is recorded: the rows are the
+    // owner's.
     Result<void> seed_compressed(uint32_t layer, const float* values, uint32_t n_cmp);
     // The concatenated index list `sparse_attn` walks: window ring slots below
     // `window`, compressed rows offset by it, -1 for a slot holding nothing.
     Result<void> seed_topk(uint32_t layer, const int32_t* idx, uint32_t n_kv);
     // `values` is [rows][index_dim] fp32, stored as bf16: the indexer's key
-    // cache, which only a kv_source_layer owns.
+    // cache, which only a kv_source_layer owns (ignored on any other layer).
     Result<void> seed_index_k(uint32_t layer, const float* values, uint32_t rows);
     // The compressor's carried group state. `score` is -inf in the slots the
     // reference has never written, which is what makes them score zero.
@@ -156,23 +228,104 @@ public:
     // --- per-step bookkeeping (design §7.4, produced not loaded) ------------
 
     // model.py's `get_window_topk_idxs` for one decode query: the ring slots
-    // oldest first, with a slot the sequence has not reached yet marked -1.
-    // Writes the window half of the top-k list and sets n_cmp / n_kv, leaving
-    // the compressed half for `indexer.slang` stage 5 to fill at offset
-    // `window`. `n_sel` is how many compressed picks the list carries --
-    // min(index_topk, n_cmp) -- so n_kv = window + n_sel.
+    // oldest first, with a slot the sequence has not reached yet -- or one
+    // below the window floor -- marked -1. Writes the window half of the top-k
+    // list and sets n_cmp / n_kv, leaving the compressed half for
+    // `indexer.slang` stage 5 to fill at offset `window`. `n_sel` is how many
+    // compressed picks the list carries -- min(index_topk, n_cmp) -- so
+    // n_kv = window + n_sel. Grows the store to `position + 1`.
     Result<void> set_decode_topk(uint32_t layer, uint32_t position, uint32_t n_cmp,
                                  uint32_t n_sel);
     // n_cmp alone, for a layer whose compressed plane belongs to a source.
     Result<void> set_counts(uint32_t layer, uint32_t n_cmp, uint32_t n_kv);
 
+    // --- restoring a context without its window (runtime/session.h) --------
+
+    // The lowest position whose window KV the ring holds. A ring slot whose
+    // position (as the step at `position` implies it) is below this is listed
+    // -1, exactly like a slot the sequence has not reached. 0 in every normal
+    // run; a replay that rebuilds the ring from position f sets f.
+    void     set_window_floor(uint32_t position) { win_lo_ = position; }
+    uint32_t window_floor() const { return win_lo_; }
+    // Which position each ring slot holds, as far as the store knows: the step
+    // that listed it (`set_decode_topk`) records it, `clear` empties it, and a
+    // seeded ring (`seed_window`) is "unknown" until `resolve_ring(n)` says the
+    // seed came from a context of `n` tokens -- every slot then holds the last
+    // position below n in its residue class. A slot is only ever overwritten by
+    // a later position, so this is exact.
+    void resolve_ring(uint32_t n);
+    // Whether slot `position % window` holds `position` and the floor admits it.
+    bool ring_holds(uint32_t position) const;
+
+    // The non-SWA state of the first `positions` tokens, packed: rows
+    // floor(positions / ratio) of every plane and the carried state as it is
+    // now (which is the state after `positions` only if that is where the
+    // store is).
+    Result<KvPacked> pack(uint32_t positions) const;
+    // Writes a packed state back (rows, carried state, every layer's n_cmp).
+    // The window ring and the top-k lists are not touched.
+    Result<void> unpack(const KvPacked& p);
+
+    // bf16 copies of the rows positions [first_pos, end_pos) complete -- rows
+    // [first_pos / ratio, end_pos / ratio) of each plane -- and the carry.
+    Result<KvRowBackup> backup_rows(uint32_t first_pos, uint32_t end_pos) const;
+    // Writes back the rows that the step at `position` completes, if the backup
+    // holds them.
+    Result<void> restore_rows(const KvRowBackup& b, uint32_t position);
+    Result<void> restore_carry(const KvRowBackup& b);
+
+    // --- speculation: the window ring's rollback (docs/p3_dspark.md §3.5) ---
+    //
+    // A verify batch writes its positions' ring KV before it knows how many are
+    // accepted. The compressed rows and the carried group state do not need
+    // undoing -- a group's row is rewritten in place when the group completes
+    // again and a half-filled group is not visible -- but the RING does: once
+    // the ring has wrapped, position p' hands its slot to p' - window, which is
+    // still inside an earlier query's window, so a rejected position leaves a
+    // wrong row where a live query reads.
+    //
+    // A snapshot is `<= k` slots of `[window]` E4M3 rows plus their UE8M0
+    // scales, per layer: 40 layers x 5 slots x (512 + 16) B = 105 KB at k = 5,
+    // which is why this is a memcpy and not a scheme. `slots` are the ring slot
+    // indices to save (position % window); saving a slot that is not written
+    // costs a copy and nothing else.
+    struct RingSnapshot {
+        std::vector<uint32_t> layer;     // one plane a layer, in `slots` order
+        std::vector<uint32_t> slot;
+        std::vector<uint8_t>  val;       // [layer][slot][latent_dim]
+        std::vector<uint8_t>  scale;     // [layer][slot][latent_dim / 32]
+        uint32_t latent_dim = 0;
+        uint64_t bytes() const { return val.size() + scale.size(); }
+        size_t index(uint32_t li, uint32_t si) const {
+            return (size_t(li) * slot.size() + si);
+        }
+    };
+    Result<RingSnapshot> snapshot_ring(std::span<const uint32_t> slots,
+                                       std::span<const uint32_t> layers) const;
+    Result<void> restore_ring(const RingSnapshot& s);
+
 private:
+    struct Layout {
+        uint32_t cap = 0;
+        uint64_t off_win_val = 0, off_win_scale = 0, off_top = 0, off_state = 0, total = 0;
+        std::vector<uint64_t> off_cmp, off_idx;   // per owner
+    };
+    Layout layout_for(uint32_t cap) const;
+    uint32_t owner_index(uint32_t l) const;   // index into owners_, or kNoPlane
+    std::byte* host() const { return static_cast<std::byte*>(buf_.host_ptr); }
+
     gpu::MemoryAllocator* alloc_ = nullptr;
     gpu::GpuBuffer        buf_{};
     KvStoreConfig         cfg_{};
-    uint64_t              off_win_val_ = 0, off_win_scale_ = 0, off_cmp_ = 0, off_top_ = 0;
-    uint64_t              off_idx_k_ = 0, off_state_ = 0;
+    Layout                lay_{};
+    uint32_t              cap_ = 0;
+    std::vector<uint32_t> owners_;       // owner layer ids, ascending
+    std::vector<uint32_t> owner_of_;     // [layers] -> index into owners_ or kNoPlane
+    std::vector<uint32_t> rows_hw_;      // per owner: rows that may hold data
     std::vector<uint32_t> n_cmp_, n_kv_;
+    uint32_t              win_lo_ = 0;
+    static constexpr int64_t kSlotEmpty = -1, kSlotUnknown = -2;
+    std::vector<int64_t>  slot_pos_;     // [window]
 };
 
 }  // namespace deepmoe::runtime

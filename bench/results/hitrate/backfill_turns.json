@@ -1,0 +1,26 @@
+{
+ "comment": "docs/p4_hitrate.md 5: long_turns.json turns 0-2 from a fresh process after --idle-s of idle time, P3 backfill on vs off",
+ "turns": [
+  {
+   "label": "zh essay",
+   "user": "请写一篇三百字左右的短文，谈谈城市里的夜跑为什么越来越流行，以及夜跑时需要注意的安全问题。",
+   "temperature": 1.0,
+   "top_p": 0.95,
+   "seed": 41001,
+   "max_tokens": 400
+  },
+  {
+   "label": "zh follow-up",
+   "user": "把上面的短文压缩成五条要点，每条不超过二十个字。",
+   "seed": 41002,
+   "max_tokens": 200
+  },
+  {
+   "label": "en explain",
+   "reset": true,
+   "user": "Explain to a curious high-school student how a refrigerator moves heat from the inside to the outside. Use one everyday analogy and keep it under 300 words.",
+   "seed": 41003,
+   "max_tokens": 400
+  }
+ ]
+}

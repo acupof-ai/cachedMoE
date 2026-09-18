@@ -348,6 +348,18 @@ float wg_max(float v, uint tid) {
     return r;
 }
 
+// --- softplus ----------------------------------------------------------------
+// `F.softplus(z)` = max(z, 0) + log1p(exp(-|z|)), the stable form cpu/gate.cpp
+// uses. `log(1 + exp(z))` -- what gate.slang computed before -- rounds 1 + t to 1
+// once t < 2^-24, so a very negative score came out as exactly 0 where torch
+// returns exp(z), an error of up to ~1.5e-4 after the sqrt (design v0.9 review).
+// Slang has no log1p: below t = 1e-3 the cubic series is exact to 3e-13, above
+// it log(1 + t) loses only an ulp of fp32.
+float log1p_small(float t) {
+    return (t < 1e-3f) ? (t - t * t * 0.5f + t * t * t * (1.0f / 3.0f)) : log(1.0f + t);
+}
+float softplus_stable(float z) { return max(z, 0.0f) + log1p_small(exp(-abs(z))); }
+
 // --- RoPE -------------------------------------------------------------------
 // `RopeTab` is [rows][rope_head_dim/2][2] of (cos, sin) for the positions the
 // dispatch needs, so the kernel never evaluates a transcendental and YaRN lives

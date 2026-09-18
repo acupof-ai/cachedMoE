@@ -447,3 +447,234 @@ DEEPMOE_TEST(planner, unimplemented_paths_report_themselves) {
     REQUIRE_OK(empty);
     CHECK(empty->empty());
 }
+
+// --- Track R1 (docs/p4_hitrate.md) --------------------------------------------
+
+namespace {
+
+Result<void> fill_stamped(ExpertStore& s, ExpertKey k, TokenIndex stamp) {
+    auto r = s.begin_fill(k);
+    if (!r) return std::unexpected(r.error());
+    return s.finish_fill(r->slot, true, stamp);
+}
+
+}  // namespace
+
+DEEPMOE_TEST(expert_store, touch_oldest_stamp_and_the_guard_in_evict_lru) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(4, 1)));
+    for (uint16_t e = 0; e < 4; ++e) REQUIRE_OK(fill_stamped(s, ExpertKey{1, e}, 10 + e));
+    CHECK_EQ(*s.oldest_evictable_stamp(), 10u);
+    // touch only ever makes a key newer, and does not count a lookup.
+    CHECK(s.touch(ExpertKey{1, 0}, 50));
+    CHECK(s.touch(ExpertKey{1, 0}, 20));
+    CHECK_EQ(s.slot_for(ExpertKey{1, 0})->last_use_token, 50u);
+    CHECK(!s.touch(ExpertKey{1, 9}, 60));
+    CHECK_EQ(s.stats().lookups, 0u);
+    CHECK_EQ(*s.oldest_evictable_stamp(), 11u);
+    // The eviction guard: a slot a submitted buffer still reads is skipped, and
+    // the next-oldest goes instead; once the timeline passes, it is fair game.
+    const uint32_t slot1 = *s.slot_of(ExpertKey{1, 1});
+    REQUIRE_OK(s.set_guard(slot1, 7));
+    s.set_completed_timeline(6);
+    CHECK_EQ(*s.oldest_evictable_stamp(), 12u);
+    REQUIRE_OK(s.evict_lru());
+    CHECK(!s.resident(ExpertKey{1, 2}));
+    CHECK(s.resident(ExpertKey{1, 1}));
+    s.set_completed_timeline(7);
+    CHECK_EQ(*s.oldest_evictable_stamp(), 11u);
+    REQUIRE_OK(s.evict_lru());
+    CHECK(!s.resident(ExpertKey{1, 1}));
+    // wait_settled on a key nobody is filling returns at once.
+    CHECK(s.wait_settled(ExpertKey{1, 3}, std::chrono::milliseconds(1)));
+    CHECK(!s.wait_settled(ExpertKey{1, 2}, std::chrono::milliseconds(1)));
+}
+
+// docs/p4_hitrate.md §7: per-turn reheat. What the backfill pass is handed is
+// the resident experts ordered by their decayed heat, so the test is that
+// decay + order really do put the turn that just ran on top, and that the order
+// is empty-safe and deterministic.
+DEEPMOE_TEST(expert_store, heat_decay_and_order_drive_the_reheat_pass) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(4, 2), 2, 4));
+    for (uint16_t e = 0; e < 4; ++e) REQUIRE_OK(fill(s, ExpertKey{0, e}, 1 + e));
+    for (uint16_t e = 0; e < 4; ++e) REQUIRE_OK(fill(s, ExpertKey{1, e}, 1 + e));
+    // Turn A routed (0,0) and (0,1) eight times; then a turn boundary halves
+    // everything, and turn B routes (1,2) and (1,3) eight times. Turn A's
+    // experts still carry the larger heat (they were routed before the halving,
+    // so their value saturated and was then only halved), but the point of the
+    // exercise is the ORDER and the SCALE, not which of the two wins:
+    //   * exactly the four routed experts are above zero, the other four at 0;
+    //   * the order is a pure function of heat (layer, then id, break ties);
+    //   * a further boundary rescales the hot end to 1.0 and preserves ratios.
+    for (int i = 0; i < 8; ++i) {
+        s.note_heat(ExpertKey{0, 0}, 1.0f);
+        s.note_heat(ExpertKey{0, 1}, 1.0f);
+    }
+    s.decay_heat(0.5f);
+    for (int i = 0; i < 8; ++i) {
+        s.note_heat(ExpertKey{1, 2}, 1.0f);
+        s.note_heat(ExpertKey{1, 3}, 1.0f);
+    }
+    // The heat the two turns leave behind, from the EWMA definition plus the
+    // renormalisation: turn A's experts saturated and the boundary rescaled the
+    // hot end straight back to 1.0, and turn B's eight notes reach 1 - 0.875^8.
+    const float sat = 1.0f - std::pow(0.875f, 8);     // 8 notes at alpha 0.125
+    auto want = [&](uint16_t layer, uint16_t expert) -> float {
+        if (layer == 0 && (expert == 0 || expert == 1)) return 1.0f;
+        if (layer == 1 && (expert == 2 || expert == 3)) return sat;
+        return 0.0f;
+    };
+    auto ord = s.heat_order();
+    REQUIRE_EQ(ord.size(), 8u);
+    for (const ExpertKey& k : ord) CHECK_CLOSE(s.slot_for(k)->heat, want(k.layer, k.expert), 1e-4);
+    // The warm four come first, in heat order; the four never-routed ones last.
+    uint32_t warm_n = 0;
+    for (uint32_t i = 0; i < ord.size(); ++i)
+        if (want(ord[i].layer, ord[i].expert) > 0.0f) ++warm_n;
+    CHECK_EQ(warm_n, 4u);
+    for (uint32_t i = 1; i < ord.size(); ++i)
+        CHECK(s.slot_for(ord[i - 1])->heat >= s.slot_for(ord[i])->heat);
+    CHECK_EQ(s.slot_for(ord[7])->heat, 0.0f);
+
+    // A turn boundary rescales the hot end to 1.0 -- the EWMA's own ceiling --
+    // so that a floor like "5% of the hottest expert" means the same thing at
+    // every turn. The RATIOS are what the ranking is, and they survive.
+    const float head = s.slot_for(ord[0])->heat;
+    const float warm = s.slot_for(ord[2])->heat;
+    CHECK(warm > 0.0f);
+    CHECK(warm < head);
+    s.decay_heat(0.1f);
+    auto ord_b = s.heat_order();
+    REQUIRE_EQ(ord_b.size(), 8u);
+    CHECK_CLOSE(s.slot_for(ord_b[0])->heat, 1.0f, 1e-5);
+    CHECK(ord_b[0] == ord[0]);            // rescaling does not reorder anything
+    CHECK(ord_b[2] == ord[2]);
+    CHECK_CLOSE(s.slot_for(ord_b[2])->heat, warm / head, 1e-4);
+    CHECK_EQ(s.slot_for(ord_b[7])->heat, 0.0f);
+    s.decay_heat(1.0f);                       // the identity: no rescale, no ageing
+    CHECK_CLOSE(s.slot_for(ord_b[0])->heat, 1.0f, 1e-5);
+    CHECK_CLOSE(s.slot_for(ord_b[2])->heat, warm / head, 1e-4);
+
+    // A second boundary with no routing since leaves the ranking alone, and the
+    // hot end is back at 1.0 -- the scale is the same at every turn.
+    s.decay_heat(0.5f);
+    auto ord2 = s.heat_order();
+    REQUIRE_EQ(ord2.size(), 8u);
+    CHECK(ord2[0] == ord[0]);
+    CHECK_CLOSE(s.slot_for(ord2[0])->heat, 1.0f, 1e-5);
+    CHECK_CLOSE(s.slot_for(ord2[2])->heat, warm / head, 1e-4);
+    s.decay_heat(1.0f);
+    CHECK_CLOSE(s.slot_for(ord2[0])->heat, 1.0f, 1e-5);
+    auto ord3 = s.heat_order();
+    CHECK(ord3[0] == ord[0]);
+
+    // Every key in the order is resident -- that is what makes it safe to hand
+    // to a backfill that never evicts -- and a pinned expert is not in it, since
+    // a reheat pass may not move the pinned set either.
+    for (const ExpertKey& k : ord) CHECK(s.resident(k));
+    REQUIRE_OK(s.evict_key(ExpertKey{1, 0}));
+    REQUIRE_OK(fill(s, ExpertKey{1, 0}, 1, Tier::Pinned));
+    auto ord4 = s.heat_order();
+    REQUIRE_EQ(ord4.size(), 7u);
+    for (const ExpertKey& k : ord4) CHECK(!(k.layer == 1 && k.expert == 0));
+    CHECK_EQ(s.heat_slots(), 7u);
+}
+
+// design 9.7.3 / docs/p3_prefill.md 3.4: after a prefill streams its experts
+// layer by layer, in batches whose reads are issued before the previous batch
+// computes, the cache holds exactly what a global LRU over the prompt's routing
+// table -- walked token by token, layer by layer, in gate order -- would hold,
+// including what was resident before.
+DEEPMOE_TEST(planner, streamed_admission_is_the_lru_of_the_routing_table) {
+    constexpr uint32_t kLayers = 4, kTopk = 3, kExperts = 12;
+    for (uint32_t trial = 0; trial < 6; ++trial) {
+        const uint32_t cap = 3 + trial;              // 3..8 slots
+        const uint32_t T   = 6 + 3 * trial;          // prompt rows
+        ExpertStore s;
+        REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(1, cap)));
+        uint64_t seed = 0x9E3779B97F4A7C15ull * (trial + 1);
+        auto rnd = [&] { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; return seed; };
+
+        // What was resident before: stamps below every prompt stamp.
+        std::vector<uint32_t> ref;   // global keys, oldest first
+        const uint32_t pre = std::min<uint32_t>(cap, 2 + trial);
+        for (uint32_t i = 0; i < pre; ++i) {
+            const uint32_t k = static_cast<uint32_t>(rnd() % (kLayers * kExperts));
+            if (std::find(ref.begin(), ref.end(), k) != ref.end()) continue;
+            REQUIRE_OK(fill_stamped(s, ExpertKey{static_cast<uint16_t>(k / kExperts),
+                                                 static_cast<uint16_t>(k % kExperts)}, 100 + i));
+            ref.push_back(k);
+        }
+        // The routing table [T][layers][topk], distinct ids per row.
+        const uint32_t pool = (trial % 2) ? 5 : kExperts;
+        std::vector<uint32_t> ids(size_t(T) * kLayers * kTopk);
+        for (uint32_t t = 0; t < T; ++t)
+            for (uint32_t L = 0; L < kLayers; ++L)
+                for (uint32_t j = 0; j < kTopk; ++j) {
+                    uint32_t e = 0;
+                    bool dup = true;
+                    while (dup) {
+                        e = static_cast<uint32_t>(rnd() % pool);
+                        dup = false;
+                        for (uint32_t q = 0; q < j; ++q)
+                            dup |= ids[(size_t(t) * kLayers + L) * kTopk + q] == e;
+                    }
+                    ids[(size_t(t) * kLayers + L) * kTopk + j] = e;
+                }
+        // Reference: the simulator's LRU, token-major.
+        for (uint32_t t = 0; t < T; ++t)
+            for (uint32_t L = 0; L < kLayers; ++L)
+                for (uint32_t j = 0; j < kTopk; ++j) {
+                    const uint32_t k = L * kExperts + ids[(size_t(t) * kLayers + L) * kTopk + j];
+                    auto it = std::find(ref.begin(), ref.end(), k);
+                    if (it != ref.end()) ref.erase(it);
+                    ref.push_back(k);
+                    if (ref.size() > cap) ref.erase(ref.begin());
+                }
+        // Streamed: layer-major, experts in id order ("shard order"), batches of
+        // two whose admissions happen before the previous batch has settled.
+        const TokenIndex base = 1000;
+        TimelineValue guard_clock = 0;
+        uint32_t dropped = 0;
+        struct Held { StreamAdmit a; TokenIndex stamp; TimelineValue guard; };
+        for (uint32_t L = 0; L < kLayers; ++L) {
+            std::vector<int64_t> last(kExperts, -1);
+            for (uint32_t t = 0; t < T; ++t)
+                for (uint32_t j = 0; j < kTopk; ++j)
+                    last[ids[(size_t(t) * kLayers + L) * kTopk + j]] =
+                        int64_t((uint64_t(t) * kLayers + L) * kTopk + j);
+            std::vector<uint32_t> used;
+            for (uint32_t e = 0; e < kExperts; ++e) if (last[e] >= 0) used.push_back(e);
+            std::vector<Held> prev, cur;
+            for (size_t i = 0; i < used.size(); i += 2) {
+                cur.clear();
+                for (size_t q = i; q < std::min(used.size(), i + 2); ++q) {
+                    const uint32_t e = used[q];
+                    const TokenIndex stamp = base + TokenIndex(last[e]);
+                    const TimelineValue g = ++guard_clock;
+                    auto a = admit_streamed(s, ExpertKey{static_cast<uint16_t>(L), static_cast<uint16_t>(e)},
+                                            stamp, nullptr, g);
+                    REQUIRE_OK(a);
+                    if (a->kind == StreamKind::Drop) ++dropped;
+                    cur.push_back({*a, stamp, g});
+                }
+                // The previous batch "computes" only now, then settles.
+                for (const Held& h : prev) REQUIRE_OK(finish_streamed(s, h.a, true, h.stamp));
+                s.set_completed_timeline(cur.front().guard - 1);
+                prev = cur;
+            }
+            for (const Held& h : prev) REQUIRE_OK(finish_streamed(s, h.a, true, h.stamp));
+            s.set_completed_timeline(guard_clock);
+        }
+        std::vector<uint32_t> got;
+        for (uint32_t k = 0; k < kLayers * kExperts; ++k)
+            if (s.resident(ExpertKey{static_cast<uint16_t>(k / kExperts), static_cast<uint16_t>(k % kExperts)}))
+                got.push_back(k);
+        std::vector<uint32_t> want = ref;
+        std::sort(want.begin(), want.end());
+        CHECK(got == want);
+        CHECK_EQ(s.stats().filling, 0u);
+        if (trial == 0) CHECK(dropped > 0);
+    }
+}

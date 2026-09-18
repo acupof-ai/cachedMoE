@@ -44,6 +44,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <span>
@@ -156,12 +157,17 @@ struct DecodeStepResult {
 
 // Track P: what a conversation needs that the L3 export used to supply.
 struct SessionConfig {
-    // The engram hash constants (EngramTables::load): a pure function of the
-    // tokenizer and config.json, exported once by tools/oracle.py into the L3
-    // directory. Nothing else is read from it.
-    std::string engram_tables_dir = "tests/data/l3";
+    // The engram hash constants: a pure function of the tokenizer and
+    // config.json. Empty (the default) derives them from the model directory at
+    // startup (runtime/engram_tables.h, Track R2); a directory loads the tables
+    // tools/oracle.py exported into it (EngramTables::load).
+    std::string engram_tables_dir;
     // Positions the KV store is sized for; capped by kMaxIndexPositions.
     uint32_t    max_context = 4096;
+    // design §9.6 P3 (Track R1, docs/p4_hitrate.md §5): fill the cache's free
+    // slots in the background, hottest static experts first, while the drive
+    // is not serving P0 misses. Also DEEPMOE_BACKFILL=1/0.
+    bool        backfill = false;
 };
 
 class Engine {
@@ -245,6 +251,9 @@ public:
     bool produce_ced() const { return produce_ced_; }
 
     const KvStore& kv() const { return kvs_; }
+    // Track R2 (runtime/session.h): rollback, parking and window replay write
+    // the store between steps.
+    KvStore& kv_store() { return kvs_; }
     const std::vector<uint32_t>& history() const { return history_; }
 
     // What layer `l` actually read at the last step: its own window ring, and
@@ -274,6 +283,11 @@ public:
     // the pinned set and the planner's clock are untouched (that warmth is the
     // point of a long-running process).
     void reset_context();
+    // Track R2: declares that the KV store holds `tokens` -- a prefix of the
+    // history after a rollback, or a parked context's ids after its non-SWA
+    // state is unpacked. Runs nothing and writes nothing in the store; the
+    // caller has made the store agree (runtime/session.h).
+    Result<void> set_context_tokens(std::span<const uint32_t> tokens);
     uint32_t context_length() const { return static_cast<uint32_t>(history_.size()); }
     // The longest sequence this session can hold.
     uint32_t max_context() const;
@@ -306,6 +320,49 @@ public:
     // the kernel's answer (a validation mode; costs ~5 ms a token).
     void set_check_topk(bool on) { check_topk_ = on; }
     uint32_t topk_mismatches() const { return topk_mismatches_; }
+
+    // --- R1 round 2: per-turn reheat -----------------------------------------
+    //
+    // docs/p4_hitrate.md §7. The expert cache is filled once, at begin_session,
+    // from the static heat order -- a global average over a 27k-token trace --
+    // and from then on only demand fills it. That is enough for a single topic
+    // and wrong for a conversation: docs/p4_expert_patterns.md measures 86.6% of
+    // a decode step's experts already appearing in the prompt's prefill, and a
+    // topic switch dropping the hit rate from 0.94-0.96 to 0.88-0.91, because
+    // the cache is full of the previous topic's experts and nothing puts the
+    // new topic's in until each one misses.
+    //
+    // `reheat(decay)` is the turn boundary. It decays every slot's heat by
+    // `decay` and re-runs the P3 backfill with the now-coldest-first order. The
+    // backfill never evicts -- it only fills FREE slots, which the LRU has
+    // meanwhile made out of the previous topic's leftovers -- so the pass is a
+    // no-op when the cache has no free slot, and it cannot cost a hit. The read
+    // is P3, i.e. it runs behind demand traffic on the IoEngine, so a turn's
+    // first token does not wait for it.
+    //
+    // The heat itself needs no new bookkeeping: `ExpertSlot::heat` is already an
+    // EWMA of the router score over the chosen top-6 and the near misses
+    // (design §9.3), updated at every layer of every token, so decaying it makes
+    // the current turn's routing the newest information in the order.
+    //
+    // `HeatOrder` reports what the pass was asked to do; `free_slots` is how
+    // many slots it could fill, i.e. the ceiling on its effect.
+    struct HeatOrder {
+        uint32_t   slots = 0;            // resident, unpinned experts considered
+        uint32_t   warm = 0;             // of those, at or above the reheat floor
+        uint32_t   evicted = 0;          // the coldest tail, freed for the pass
+        uint32_t   passed = 0;           // keys handed to the backfill
+        uint32_t   free_slots = 0;       // free slots when the pass started
+        uint32_t   turn = 0;             // reheat passes so far
+        float      decay = 1.0f;
+        double     ms = 0.0;             // building the order (one store scan + sort)
+        std::string to_string() const;
+    };
+    // Safe to call whether or not reheat is enabled; `set_reheat` only decides
+    // whether the serve loop calls it after every turn.
+    Result<HeatOrder> reheat(float decay = 0.5f);
+    void set_reheat(bool on) { reheat_on_ = on; }
+    bool reheat_enabled() const { return reheat_on_; }
 
     // --- accessors --------------------------------------------------------
 
@@ -403,7 +460,7 @@ private:
     double               rec_ms_ = 0.0, sub_ms_ = 0.0, wait_ms_ = 0.0, bind_ms_ = 0.0;
     double               mx_ms_ = 0.0, mq_ms_ = 0.0, mt_ms_ = 0.0;
     struct Stamp { uint32_t begin = ~0u, end = ~0u; };
-    std::vector<Stamp>   ts_attn_, ts_moe_, ts_engram_;
+    std::vector<Stamp>   ts_attn_, ts_moe_, ts_engram_, ts_moe_early_;
     Stamp                ts_tail_{};
     std::vector<double>  engram_host_ms_;
     gpu::AttnRunner      attn_;
@@ -465,6 +522,40 @@ private:
     TokenIndex token_ = 0;
     bool       ready_ = false;
     bool       gpu_ready_ = false;
+
+    // docs/p4_hitrate.md §1: `DEEPMOE_ROUTE_DUMP=FILE` appends one fixed-size
+    // record per decode step (prefill-by-decode steps included) -- the step's
+    // LRU clock, its position, the forty layers' top-6 in gate order and each
+    // layer's measured hit count -- so tools/hitrate_sim.py can replay exactly
+    // the accesses this process made through cache_sim's LRU and compare it
+    // step for step. Off (null) unless the variable is set.
+    std::FILE*            route_dump_ = nullptr;
+    std::vector<uint16_t> route_ids_;     // [layers][topk] of the current step
+    void write_route_record(uint32_t position);
+
+    // Whether the serve loop reheats the cache after every turn (§7).
+    bool                  reheat_on_ = false;
+    uint32_t              reheat_turn_ = 0;
+    // The non-resident ranking the whole process uses: DEEPMOE_HEAT_FILE if one
+    // was given, else store/static_heat.inc. Read once, by both the startup P3
+    // backfill and every reheat pass (docs/p4_hitrate.md).
+    mutable std::vector<ExpertKey> heat_order_;
+
+    // Track R1 (docs/p4_hitrate.md §4). `overlap_`: dispatch A over the
+    // resident experts goes out before a layer's NVMe wait. The eviction guard:
+    // `guard_clock_` numbers the buffers that read expert slots; a slot read by
+    // one is guarded with its number and the store's completed timeline is
+    // advanced when that buffer's fence returns, so no fill -- a later layer's,
+    // the P3 backfill's, the prefill handoff's -- can recycle a slot a
+    // submitted buffer still reads.
+    bool          overlap_ = true;
+    bool          handoff_ = true;       // gpu_prefill's experts go to the decode cache (§3)
+    TimelineValue guard_clock_ = 0;
+    TimelineValue layer_guard_ = 0;
+    bool          layer_guard_pending_ = false;
+    TimelineValue open_guard_ = 0;       // guard of the buffer being recorded
+    TimelineValue inflight_guard_ = 0;   // guard of the last buffer submitted
+    void guard_layer(uint32_t layer, std::span<const uint32_t> slots, const uint32_t* ids);
 };
 
 }  // namespace deepmoe::runtime

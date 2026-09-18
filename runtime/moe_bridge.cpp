@@ -12,6 +12,9 @@
 #include "model/layout.h"
 
 namespace deepmoe::runtime {
+
+void debug_act_quant_to_fp16(const float* x, uint16_t* out, float* scratch, uint32_t n);
+
 namespace {
 
 double ms_between(TimePoint a, TimePoint b) {
@@ -102,6 +105,10 @@ Result<void> self_check() {
 
 }  // namespace
 
+void debug_act_quant_to_fp16(const float* x, uint16_t* out, float* scratch, uint32_t n) {
+    act_quant_to_fp16(x, out, scratch, n);
+}
+
 Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& alloc,
                                   const std::string& shader_dir, store::ExpertStore& store,
                                   store::Planner& planner, const store::PinnedStore& pinned,
@@ -114,7 +121,13 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     cfg_ = &cfg;
 
     gpu::MoeSpec spec;
-    spec.m             = 1;
+    // The batch axis the kernels are specialised to: `m` is a specialisation
+    // constant, so the M = 1 token loop and the M = 6 verify batch share one
+    // pipeline. There is no live-count push constant -- every shader loop runs
+    // `for (m = 0; m < M; ++m)` over the whole buffer (see `run_batch` below), so
+    // the buffers carry all six columns: x 60 KB, h 295 KB (fp16 + fp8 + scale
+    // planes), y 120 KB.
+    spec.m             = kMoeBatchMax;
     spec.lanes_per_row = bc.lanes_per_row;
     spec.subgroup_size = bc.subgroup_size;
     spec.decode_mode   = bc.decode_mode;
@@ -146,6 +159,8 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
 
     xf_.assign(cfg.hidden_size, 0.0f);
     xq_.assign(cfg.hidden_size, 0);
+    xf_batch_.assign(size_t(kMoeBatchMax) * cfg.hidden_size, 0.0f);
+    xq_batch_.assign(size_t(kMoeBatchMax) * cfg.hidden_size, 0);
     log_info("moe bridge: {} ({} slots: {} fp4 routed + 1 fp8 shared)",
              spec.name(), d.slots, cfg.num_experts_per_tok);
     return {};
@@ -199,6 +214,43 @@ Result<void> GpuMoeBridge::bind_shared(uint32_t layer) {
 }
 
 Result<void> GpuMoeBridge::stage(const MoeCall& call) {
+    if (auto r = stage_input(call); !r) return r;
+    uint32_t all[16];
+    for (uint32_t s = 0; s < call.topk; ++s) all[s] = s;
+    return stage_rows(call, std::span<const uint32_t>(all, call.topk));
+}
+
+Result<void> GpuMoeBridge::stage_rows(const MoeCall& call, std::span<const uint32_t> slots) {
+    const TimePoint t0 = Clock::now();
+    uint64_t row[kExpertPartCount];
+    uint64_t* table = runner_.pointer_table();
+    for (uint32_t s : slots) {
+        if (s >= call.topk) return fail(Err::InvalidArgument, "stage_rows: not a routed slot");
+        const ExpertKey key{static_cast<uint16_t>(call.layer),
+                            static_cast<uint16_t>(call.ids[s])};
+        if (auto r = store_->table_row(key, row); !r)
+            return fail(r.error().code,
+                        std::format("at the MoE dispatch: {}", r.error().message));
+        std::memcpy(table + size_t(call.ids[s]) * kExpertPartCount, row, sizeof row);
+    }
+    const double ms = ms_between(t0, Clock::now());
+    timing_.table_ms += ms;
+    timing_.host_ms  += ms;
+    return {};
+}
+
+Result<void> GpuMoeBridge::record_gateup(gpu::CommandBuffer& cmd, std::span<const uint32_t> slots) {
+    if (slots.empty() || slots.size() > runner_.dims().slots)
+        return fail(Err::InvalidArgument, "record_gateup: 1..slots slots");
+    std::memcpy(runner_.slot_list_alt(), slots.data(), slots.size() * sizeof(uint32_t));
+    return runner_.record_gateup_alt(cmd, static_cast<uint32_t>(slots.size()));
+}
+
+Result<void> GpuMoeBridge::record_down(gpu::CommandBuffer& cmd) {
+    return runner_.record_into(cmd, gpu::MoePhase::DownOnly);
+}
+
+Result<void> GpuMoeBridge::stage_input(const MoeCall& call) {
     if (!store_ || !planner_) return fail(Err::FailedPrecondition, "MoE bridge is not created");
     const uint32_t dim = call.hidden;
     const uint32_t slots = runner_.dims().slots;
@@ -223,18 +275,8 @@ Result<void> GpuMoeBridge::stage(const MoeCall& call) {
     std::memcpy(runner_.x_fp16(), xq_.data(), size_t(dim) * sizeof(uint16_t));
     const TimePoint t2 = Clock::now();
 
-    // The routed half. design §7.1's residency gate has already run by the
-    // time we get here, so this only has to confirm it.
-    uint64_t row[kExpertPartCount];
-    uint64_t* table = runner_.pointer_table();
-    for (uint32_t s = 0; s < call.topk; ++s) {
-        const ExpertKey key{static_cast<uint16_t>(call.layer),
-                            static_cast<uint16_t>(call.ids[s])};
-        if (auto r = store_->table_row(key, row); !r)
-            return fail(r.error().code,
-                        std::format("at the MoE dispatch: {}", r.error().message));
-        std::memcpy(table + size_t(call.ids[s]) * kExpertPartCount, row, sizeof row);
-    }
+    // The routed half's table rows are `stage_rows`'s: design §7.1's residency
+    // gate decides when each one may be written.
     if (auto r = bind_shared(call.layer); !r) return r;
 
     uint32_t ids[16];
@@ -265,6 +307,138 @@ Result<void> GpuMoeBridge::stage(const MoeCall& call) {
 
 Result<void> GpuMoeBridge::record(gpu::CommandBuffer& cmd) {
     return runner_.record_into(cmd, gpu::MoePhase::Both);
+}
+
+// --- the verify batch (docs/p4_dspark_runtime.md §2.2) -----------------------
+
+std::string GpuMoeBridge::BatchTiming::to_string() const {
+    return std::format("{} columns: stage {:.2f} ms, expert rows {:.2f} ms, "
+                       "dispatches {:.2f} ms, wall {:.2f} ms ({:.2f} ms a column)",
+                       columns, stage_ms, table_ms, gpu_ms, wall_ms,
+                       columns ? wall_ms / columns : 0.0);
+}
+
+Result<void> GpuMoeBridge::stage_batch(const BatchCall& call) {
+    if (!store_ || !planner_) return fail(Err::FailedPrecondition, "MoE bridge is not created");
+    if (call.m == 0 || call.m > kMoeBatchMax)
+        return fail(Err::InvalidArgument,
+                    std::format("a verify batch of {} columns; the interface takes 1..{}",
+                                call.m, kMoeBatchMax));
+    const uint32_t dim = call.hidden;
+    const uint32_t slots = runner_.dims().slots;
+    if (call.topk + 1 != slots)
+        return fail(Err::InvalidArgument,
+                    std::format("{} routed experts, but the runner has {} slots for routed + shared",
+                                call.topk, slots));
+    const TimePoint t0 = Clock::now();
+    batch_timing_ = BatchTiming{};
+    batch_timing_.columns = call.m;
+
+    // Every column's activation into its own column of the runner's x buffer,
+    // once for the whole batch. `run_batch` reads each column back from the same
+    // index it staged, so nothing re-stages x per dispatch.
+    for (uint32_t m = 0; m < call.m; ++m) {
+        const float* xin = call.x + size_t(m) * dim;
+        float*    xf = xf_batch_.data() + size_t(m) * dim;
+        uint16_t* xq = xq_batch_.data() + size_t(m) * dim;
+        std::memcpy(xf, xin, size_t(dim) * sizeof(float));
+        act_quant_to_fp16(xf, xq, xf, dim);
+        std::memcpy(runner_.x_fp16() + size_t(m) * dim, xq, size_t(dim) * sizeof(uint16_t));
+    }
+    if (auto r = bind_shared(call.layer); !r) return r;
+    const TimePoint t1 = Clock::now();
+
+    // Every column's routing weights, once: the kernel reads
+    // `route_weights[m * slots + s]`, which is the one axis of this runner that
+    // is already a batch axis.
+    for (uint32_t m = 0; m < call.m; ++m) {
+        float* w = runner_.route_weights() + size_t(m) * slots;
+        for (uint32_t s = 0; s < call.topk; ++s) w[s] = call.weights[size_t(m) * call.topk + s];
+        w[call.topk] = 1.0f;                       // the shared expert
+    }
+    const TimePoint t2 = Clock::now();
+    batch_timing_.stage_ms = ms_between(t0, t1);
+    batch_timing_.table_ms += ms_between(t1, t2);
+    return {};
+}
+
+Result<void> GpuMoeBridge::run_batch(const BatchCall& call) {
+    const TimePoint t_all = Clock::now();
+    if (auto r = stage_batch(call); !r) return r;
+    const uint32_t slots = runner_.dims().slots;
+    const uint32_t dim = call.hidden;
+
+    // There is no live-count mask on the kernel side. M is a specialisation
+    // constant and BOTH shaders loop `for (m = 0; m < M; ++m)` over the whole
+    // buffer -- GateUpPush/DownPush carry layer, experts_per_layer, num_slots,
+    // n_rows, k (, list_count, flags) and NO column count -- so one dispatch
+    // recomputes every column of h and of y from x[m'] and RouteW[m'],
+    // whatever the caller's live count is. A dispatch expresses one expert set
+    // (`ids()` is `[slots]`), and after dispatch m the only column whose
+    // (x, routing weight, y) triple is token m's is COLUMN m:
+    //
+    //     dispatch m:  ids = token m's experts
+    //                  h[m]  from x[m] and RouteW[m * num_slots + slot]
+    //                  y[m]  = token m's MoE output
+    //
+    // So a column's activation, its routing weights and the y it is read back
+    // from must all carry the SAME column index. Pairing column m's x with
+    // RouteW row 0 -- or copying y[0] for every column, as this did -- mixes one
+    // token's activation with another token's routing and is off by 15-22% of
+    // |y|max (docs/p4_dspark_runtime.md: the appendix added 2026-09-17, last
+    // section of the file).
+    //
+    // Columns >= call.m still hold the previous call's activations; their h and
+    // y are computed and thrown away, which is what M being a compile-time
+    // constant costs (that appendix's "per-column cost" item).
+    for (uint32_t m = 0; m < call.m; ++m) {
+        // One column at a time: MoeRunner expresses one expert set per dispatch
+        // (ids() is [slots]), so token m's six experts are made visible here.
+        // The pointer table rows are the residency gate's, as at M = 1.
+        uint64_t row[kExpertPartCount];
+        uint64_t* table = runner_.pointer_table();
+        for (uint32_t s = 0; s < call.topk; ++s) {
+            const ExpertKey key{static_cast<uint16_t>(call.layer),
+                                static_cast<uint16_t>(call.ids[size_t(m) * call.topk + s])};
+            if (auto r = store_->table_row(key, row); !r)
+                return fail(r.error().code,
+                            std::format("at the verify batch's column {}: {}", m,
+                                        r.error().message));
+            std::memcpy(table + size_t(call.ids[size_t(m) * call.topk + s]) * kExpertPartCount,
+                        row, sizeof row);
+        }
+        uint32_t ids[16];
+        uint32_t list[16];
+        for (uint32_t s = 0; s < call.topk; ++s) {
+            ids[s]  = call.ids[size_t(m) * call.topk + s];
+            list[s] = s;
+        }
+        ids[call.topk]  = shared_index_ | gpu::kSlotFp8;
+        list[call.topk] = call.topk;
+        std::memcpy(runner_.ids(), ids, slots * sizeof(uint32_t));
+        std::memcpy(runner_.slot_list(), list, slots * sizeof(uint32_t));
+        runner_.set_list_count(slots);
+        runner_.set_accumulate(false);
+        // The kernels are specialised on M and loop `m < pc.m`, so a dispatch
+        // pays only for the columns it is TOLD to compute. Column m's activation
+        // is in x[m] and its weights are in route_weights()[m], so `pc.m = m+1`
+        // makes this dispatch compute exactly column m of both -- the shape of
+        // one token, instead of six columns of work for it. docs/p4_mgt1.md §4
+        // measured the difference: 1.79-1.95 ms a column at M=6 against 1.786 at
+        // M=1, which was all shape.
+        runner_.set_live_columns(m + 1);
+        auto rt = runner_.run(1);
+        if (!rt) return std::unexpected(rt.error());
+        batch_timing_.gpu_ms += rt->seconds_total * 1e3;
+        // Column m, not column 0: y[m] is the column the dispatch above computed
+        // from x[m] and RouteW[m], so it is bit-for-bit the M = 1 result for
+        // token m (tests/test_gpu_moe.cpp checks exactly that).
+        if (call.y)
+            std::memcpy(call.y + size_t(m) * dim, runner_.y() + size_t(m) * dim,
+                        size_t(dim) * sizeof(float));
+    }
+    batch_timing_.wall_ms = ms_between(t_all, Clock::now());
+    return {};
 }
 
 Result<void> GpuMoeBridge::run(const MoeCall& call) {

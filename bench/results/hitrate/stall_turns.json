@@ -1,0 +1,27 @@
+{
+ "comment": "docs/p4_hitrate.md 4: long_turns.json turns 0, 2, 4 (sampled, fixed seeds, context reset between them); run with --repeat 2 so pass 1 is a cold cache and pass 2 the same tokens on a warm one",
+ "turns": [
+  {
+   "label": "zh essay",
+   "user": "请写一篇三百字左右的短文，谈谈城市里的夜跑为什么越来越流行，以及夜跑时需要注意的安全问题。",
+   "temperature": 1.0,
+   "top_p": 0.95,
+   "seed": 41001,
+   "max_tokens": 400
+  },
+  {
+   "label": "en explain",
+   "reset": true,
+   "user": "Explain to a curious high-school student how a refrigerator moves heat from the inside to the outside. Use one everyday analogy and keep it under 300 words.",
+   "seed": 41003,
+   "max_tokens": 400
+  },
+  {
+   "label": "code",
+   "reset": true,
+   "user": "Write a Python function `merge_intervals(intervals)` that merges overlapping closed intervals given as a list of (start, end) tuples. Include type hints, a docstring, handle an empty list, and add three small doctest examples. Then explain its time complexity in two sentences.",
+   "seed": 41005,
+   "max_tokens": 450
+  }
+ ]
+}

@@ -9,14 +9,19 @@ docs/p3_chat.md).
 
 Prompts are rendered by the checkpoint's own encoding/encoding.py, imported
 read-only (bytecode writing off), and tokenised by the server's C++ tokenizer.
-The server keeps one KV context: a turn whose token ids extend the previous
-turn's (prompt + reply) only prefills the new tokens. To keep that true in
-thinking mode, earlier turns' reasoning is kept in the context
-(drop_thinking=False); `/drop` switches to the official default, which drops it
-and so re-prefills the whole conversation every turn.
+The server keeps a KV context per named session: a turn whose token ids extend
+the previous turn's (prompt + reply) only prefills the new tokens, and one that
+diverges rolls the server's KV back to the common prefix (Track R2,
+docs/p4_kv_ux.md) -- which is what makes the official thinking-mode default,
+drop_thinking=True (earlier turns' reasoning removed from the prompt), cheap: the
+divergence is at the previous reasoning, so the turn re-prefills only what
+follows it plus a <= 128-token window replay. `/drop` toggles it.
+
+Ctrl+C while a reply streams sends {"op":"cancel"}; the server stops between
+tokens and the partial reply is kept as the assistant message.
 
 Commands: /reset  /think  /drop  /temp X  /top_p X  /greedy  /max N  /seed N
-          /system TEXT  /stats  /quit
+          /system TEXT  /session NAME  /sessions  /stats  /quit
 """
 from __future__ import annotations
 
@@ -44,14 +49,19 @@ def load_encoding():
 class Server:
     def __init__(self, args):
         exe = args.exe
-        cmd = [exe, "serve", "--model", MODEL, "--max-context", str(args.max_context),
-               "--engram-tables", os.path.join(REPO, "tests", "data", "l3")]
-        if args.cache_gb:
+        cmd = [exe, "serve", "--model", MODEL, "--max-context", str(args.max_context)]
+        if getattr(args, "cache_slots", 0):
+            cmd += ["--cache-slots", str(args.cache_slots)]
+        elif args.cache_gb:
             cmd += ["--cache-gb", str(args.cache_gb)]
         if args.gpu_prefill_min:
             cmd += ["--gpu-prefill-min", str(args.gpu_prefill_min)]
         if args.check_topk:
             cmd += ["--check-topk"]
+        if getattr(args, "kv_dir", ""):
+            cmd += ["--kv-dir", args.kv_dir]
+            if getattr(args, "kv_max_gb", 0):
+                cmd += ["--kv-max-gb", str(args.kv_max_gb)]
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=self.log, bufsize=0)
@@ -64,10 +74,18 @@ class Server:
         self.p.stdin.flush()
 
     def read_event(self):
-        line = self.p.stdout.readline()
-        if not line:
-            raise SystemExit("server exited (see --log)")
-        return json.loads(line.decode("utf-8"))
+        # `cancel` acknowledgements and `session` switches are informational and
+        # may arrive between any two replies.
+        while True:
+            line = self.p.stdout.readline()
+            if not line:
+                raise SystemExit("server exited (see --log)")
+            ev = json.loads(line.decode("utf-8"))
+            if ev.get("event") == "session":
+                self.last_switch = ev
+                continue
+            if ev.get("event") != "cancel":
+                return ev
 
     def tokenize(self, text):
         self.send({"op": "tokenize", "text": text})
@@ -82,11 +100,17 @@ class Server:
             self.p.kill()
 
 
+def kind_is(ev, *kinds):
+    return ev.get("event") in kinds
+
+
 class Chat:
     def __init__(self, server, enc, args, out=sys.stdout):
         self.s, self.enc, self.out = server, enc, out
         self.think = args.think
-        self.drop_thinking = False
+        self.drop_thinking = True
+        self.session = "default"
+        self.saved = {}       # parked chat state per session name
         self.temp, self.top_p = args.temp, args.top_p
         self.max_tokens = args.max_tokens
         self.seed = args.seed
@@ -116,14 +140,21 @@ class Chat:
             ids = self.s.tokenize(full)
         seed = self.seed if self.seed is not None else random.randrange(1 << 62)
         req = {"op": "generate", "prompt_ids": ids, "max_tokens": self.max_tokens,
-               "temperature": self.temp, "top_p": self.top_p, "seed": seed, "stop_ids": [1]}
+               "temperature": self.temp, "top_p": self.top_p, "seed": seed, "stop_ids": [1],
+               "session": self.session}
         self.s.send(req)
         gen, text = [], []
         in_think = self.think
         if echo and in_think and self.color:
             self.out.write(DIM)
         while True:
-            ev = self.s.read_event()
+            try:
+                ev = self.s.read_event()
+            except KeyboardInterrupt:
+                self.s.send({"op": "cancel"})
+                continue
+            if kind_is(ev, "cancel", "session"):
+                continue
             kind = ev.get("event")
             if kind == "prefill":
                 if echo and ev["total"] > 32:
@@ -187,14 +218,16 @@ class Chat:
         s = (f"[TTFT {st['ttft_ms'] / 1e3:.1f} s | prefill {st['prefill_tokens']} tok"
              f" ({st['prefill_mode']}, reused {st['reused_tokens']}) {st['prefill_tok_s']:.2f} tok/s"
              f" hit {st['prefill_hit_rate']:.2f} | decode {st['generated']} tok {st['tok_s']:.2f} tok/s"
-             f" hit {st['decode_hit_rate']:.3f} | {st['finish']} | ctx {st['context']}]")
+             f" hit {st['decode_hit_rate']:.3f} | {st['finish']} | ctx {st['context']}"
+             + (f" | rollback -{st['rollback_dropped']} replay {st['replay_steps']}"
+                f" ({st['replay_ms'] / 1e3:.1f} s)" if st.get('rollback_dropped') else "") + "]")
         return f"{CYAN}{s}{RESET_C}" if self.color else s
 
     def command(self, line):
         parts = line.split(maxsplit=1)
         c, arg = parts[0], (parts[1] if len(parts) > 1 else "")
         if c == "/reset":
-            self.s.send({"op": "reset"})
+            self.s.send({"op": "reset", "session": self.session})
             self.s.read_event()
             self.reset()
             return "context cleared (expert cache stays warm)"
@@ -223,9 +256,21 @@ class Chat:
             self.system = arg
             self.reset()
             return "system prompt set; context cleared"
+        if c == "/session":
+            name = arg or "default"
+            if name != self.session:
+                self.saved[self.session] = (self.messages, self.ctx_ids, self.ctx_text)
+                self.messages, self.ctx_ids, self.ctx_text = self.saved.pop(
+                    name, ([{"role": "system", "content": self.system}] if self.system else [], [], ""))
+                self.session = name
+            return f"session '{name}' (the server parks the others' KV and replays <= 128 tokens on return)"
+        if c == "/sessions":
+            self.s.send({"op": "sessions"})
+            return json.dumps(self.s.read_event(), indent=1)
         if c == "/stats":
             return json.dumps(self.turn_stats[-1] if self.turn_stats else {}, indent=1)
-        return "commands: /reset /think /drop /temp X /top_p X /greedy /max N /seed N /system TEXT /stats /quit"
+        return ("commands: /reset /think /drop /temp X /top_p X /greedy /max N /seed N /system TEXT "
+                "/session NAME /sessions /stats /quit")
 
 
 def run_script(chat, server, script, transcript_path, stats_path):
@@ -278,9 +323,12 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--system", default="")
     ap.add_argument("--cache-gb", type=int, default=0)
+    ap.add_argument("--cache-slots", type=int, default=0, help="expert cache slots (5711 ~ 100 GiB)")
     ap.add_argument("--max-context", type=int, default=4096)
     ap.add_argument("--gpu-prefill-min", type=int, default=0)
     ap.add_argument("--check-topk", action="store_true")
+    ap.add_argument("--kv-dir", default="", help="directory for the SSD parked-session/prefix KV cache")
+    ap.add_argument("--kv-max-gb", type=int, default=0, help="disk cache budget in GiB (0 = server default)")
     ap.add_argument("--log", default=os.path.join(REPO, "build", "serve.log"))
     ap.add_argument("--script")
     ap.add_argument("--transcript")

@@ -67,7 +67,9 @@ struct PfKernel {
     uint32_t tile  = 8;
     uint32_t extra0 = 0;    // prefill_coopmat: CmRows
     uint32_t extra1 = 0;    // prefill_coopmat: CmCols
-    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1); }
+    uint32_t extra2 = 0;    // prefill_coopmat: CmTokTiles (0 = 2)
+    uint32_t extra3 = 0;    // prefill_coopmat: CmRowTilesPerWg (0 = 1)
+    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1, extra2, extra3); }
     bool operator<(const PfKernel& o) const { return key() < o.key(); }
 };
 
@@ -93,7 +95,10 @@ struct PfJob {
 };
 
 // prefill_coopmat.slang
-struct PfCoopPush { uint32_t n = 0, k = 0, idx_off = 0, flags = 0; };
+struct PfCoopPush {
+    uint32_t n = 0, k = 0, idx_off = 0, flags = 0, row0 = 0, x_off = 0;
+    uint32_t x_stride = 0, x_col0 = 0, y_stride = 0, y_row0 = 0;   // stage 0: 0 = K, 0, R, 0
+};
 enum : uint32_t { kPcW = 0, kPcX = 1, kPcY = 2, kPcQ = 3, kPcQS = 4, kPcIdx = 5 };
 
 // --- host helpers shared by the driver, the test and the bench ---------------
@@ -229,6 +234,12 @@ struct PrefillConfig {
     uint32_t coopmat_dense_min_rows = 64;
     // Validation only: hand every layer's per-stage buffers to `probe`.
     bool     probe_layers = false;
+    // Band attention on cooperative-matrix tiles (docs/p4_prefill_speed.md §3):
+    // gather, tile scores, softmax, tile P.V, finish, one submit. false = the
+    // per-(head, query) kernel of docs/p3_prefill.md §6.
+    bool     attn_coop = true;
+    // 16-head tiles per workgroup of the two tile stages (1, 2 or 4).
+    uint32_t attn_head_tiles = 1;
 };
 
 // What a decode engine inherits (docs/p3_prefill.md §8.1).
@@ -260,6 +271,8 @@ struct PrefillTimes {
     double shared_expert = 0, expert_io = 0, expert_gpu = 0, host = 0, head = 0, total = 0;
     uint64_t expert_bytes = 0, engram_reads = 0;
     uint32_t experts_read = 0, dispatches = 0, submits = 0;
+    // Of per_op: entries measured by GPU timestamps inside a multi-dispatch
+    // submit carry a "gpu: " prefix (GPU time only, no submit or wait).
     // Wall time of every single-dispatch op (submit + wait), by kernel shape:
     // "gemm RxK w<fmt> x<fmt>" or "<shader> s<stage>". ms and calls.
     std::map<std::string, std::pair<double, uint32_t>> per_op;
@@ -299,6 +312,25 @@ namespace deepmoe::runtime { struct EngramTables; }
 
 namespace deepmoe::gpu {
 
+// ADDITIVE (Track R1, docs/p4_hitrate.md §3; docs/p3_prefill.md §3.4 / §8.3
+// item 3): where the routed experts this prefill streams come from and go to.
+// Null = the prefill's own transit, every expert read and dropped (as before).
+struct PfExpertSink {
+    enum class Kind : uint8_t { Drop = 0, Fill, Resident };
+    struct Dest {
+        Kind     kind = Kind::Drop;
+        void*    host = nullptr;     // the slot base, Fill: the runs go at run.slot_offset
+        uint64_t dev  = 0;           // the slot base (Fill and Resident)
+        uint64_t cookie = 0;         // the sink's own
+    };
+    // Before an expert's read is issued. `last_pos` is the absolute prompt
+    // position of the LAST row routed to it and `last_slot` its rank in that
+    // row's top-6. Resident = no read; Fill = read into the slot; Drop = transit.
+    std::function<Dest(uint32_t layer, uint32_t expert, uint32_t last_pos, uint32_t last_slot)> reserve;
+    // After the batch that computed from `d` has run (`ok`), or its read failed.
+    std::function<void(uint32_t layer, uint32_t expert, const Dest& d, bool ok)> release;
+};
+
 class Prefill {
 public:
     Prefill() = default;
@@ -317,6 +349,7 @@ public:
     Result<PrefillHandoff> run(std::span<const uint32_t> prompt);
 
     std::function<void(const PrefillProbe&)> probe;
+    PfExpertSink* expert_sink = nullptr;   // Track R1; borrowed
     const PrefillTimes& times() const { return times_; }
     const PrefillConfig& config() const { return pcfg_; }
 
@@ -387,6 +420,16 @@ public:
 private:
     Result<void> flush_one(uint32_t kernel, const void* push, uint32_t bytes, uint32_t gx,
                            uint32_t gy = 1);
+    // A multi-dispatch submit with GPU timestamps between its steps:
+    // cmd_open() begins cmd_ and stamps; rec() records one dispatch and a
+    // barrier; mark(name) closes the step since the last mark; cmd_close()
+    // submits, waits, and adds every step to times_.per_op as "gpu: <name>".
+    Result<void> cmd_open();
+    Result<void> rec(uint32_t kernel, const void* push, uint32_t bytes, uint32_t gx, uint32_t gy = 1);
+    void mark(const char* name);
+    Result<void> cmd_close();
+    Result<void> op_attention_legacy(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
+                                     uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b);
     Result<void> build_rope(uint32_t positions);
     Result<void> run_layer(uint32_t L, std::span<const uint32_t> prompt, PrefillHandoff& out);
     Result<void> run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq, uint64_t xs,
@@ -407,7 +450,11 @@ private:
     PrefillTimes              times_{};
     CommandBuffer             cmd_{};
     bool                      cmd_valid_ = false;
+    QueryPool                 qp_;
+    bool                      qp_ok_ = false;
+    std::vector<const char*>  marks_;
     uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
+    uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
     // A host-side step's wall time into times_.per_op.
     void host_op(const char* name, std::chrono::steady_clock::time_point t0) {
         auto& slot = times_.per_op[name];
@@ -426,6 +473,7 @@ private:
         GpuBuffer x16, h16, gu, dout, w16;          // the cooperative-matrix MoE
         GpuBuffer eng_x, eng_xq, eng_xs, eng_kv;
         GpuBuffer transit, rope_win, rope_cmp, logits, nrm;
+        GpuBuffer q16, g16, p16, inv;               // the cooperative-matrix attention
     } b_{};
     struct SourceState { GpuBuffer cache, keys; uint32_t n = 0; bool valid = false; };
     std::vector<SourceState> sources_;      // per layer; only kv sources fill theirs

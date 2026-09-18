@@ -3,13 +3,16 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <format>
+#include <set>
 
 #include "core/align.h"
 #include "core/log.h"
 #include "gpu/vulkan/moe_kernels.h"   // gpu::default_shader_dir
 #include "gpu/vulkan/prefill_kernels.h"
+#include "runtime/engram_tables.h"
 #include "model/layout.h"
 #include "storage/backend.h"
 
@@ -234,6 +237,54 @@ Result<void> Engine::load_pinned() {
 Result<void> Engine::build_expert_cache() {
     CacheConfig cache = cfg_.cache;
     cache.budget_bytes = cache_budget_;
+    // Path-A headroom, held across the pool build and handed back after it
+    // (docs/p4_hitrate.md, Track F4 §3). The slab pool fills path A until
+    // `vkAllocateMemory` refuses, so on this machine a cache of 3,600 slots or
+    // more takes *every* path-A slab -- and then the GPU prefill, which is
+    // allocated later and only from path A, cannot get its workspace:
+    //
+    //   [WRN] session: GPU prefill failed (resource-exhausted: prefill buffers
+    //   (1203765248 B): vkAllocateMemory(1203765248 B, type 2) failed (-2));
+    //   falling back to the decode path
+    //
+    // at `--cache-slots 4500`, and again for an allocation of 10,584,064 B --
+    // path A was empty, not merely short. The fallback is silent in every
+    // metric except the clock: a 4,133-token prompt took 1,070 s of decode-path
+    // prefill at 3.86 tok/s. `kPathAOther` already reserves this in the
+    // *auto* budget, but `--cache-slots` / `--cache-gb` bypass that arithmetic
+    // entirely, so the reserve has to be taken from the heap, not from a number.
+    //
+    // 4 GiB, not 2. A 2 GiB reserve is enough for a 512-token prompt at a
+    // 4,096-position context (`ho_512_*`: the GPU prefill ran, 43.7 s against
+    // 151 s on the decode path), but the same reserve with `--max-context 8192`
+    // still lost the 1.12 GiB workspace to the same refusal, so roughly another
+    // gigabyte of path A goes to whatever the larger context sizes up front.
+    // 4 GiB covers both measured cases and costs ~214 slots (~0.4 points of hit
+    // on the 8-turn curve) against an order of magnitude of TTFT.
+    //
+    // It is held in `maxMemoryAllocationSize` pieces: one 4 GiB allocation is
+    // refused outright ("4294967296 B exceeds maxMemoryAllocationSize
+    // 2147483648 B"), which is the same 2 GiB cap that made slabs exist
+    // (design §1.1 / §5.3).
+    constexpr uint64_t kPathAReserve = 4ull << 30;
+    constexpr uint64_t kReservePiece = 2ull << 30;
+    std::vector<gpu::GpuBuffer> reserve;
+    for (uint64_t held = 0; held < kPathAReserve; held += kReservePiece) {
+        auto r = alloc_a_.allocate_slab(std::min(kReservePiece, kPathAReserve - held));
+        if (!r) {
+            log_warn("engine: could only hold {} of the {} path-A reserve for the GPU "
+                     "prefill ({}); the cache will take what it can and the prefill may "
+                     "fall back to the decode path",
+                     human_bytes(held), human_bytes(kPathAReserve), r.error().str());
+            break;
+        }
+        reserve.push_back(*r);
+    }
+    struct ReserveGuard {
+        gpu::MemoryAllocator& a; std::vector<gpu::GpuBuffer>& v;
+        ~ReserveGuard() { for (gpu::GpuBuffer& b : v) a.free(b); }
+    } reserve_guard{alloc_a_, reserve};
+
     auto a = alloc_a_.make_slab_backing();
     if (!a) return std::unexpected(a.error());
     std::unique_ptr<store::SlabBacking> b;
@@ -295,6 +346,12 @@ Result<void> Engine::init_gpu() {
         log_warn("engine: path B unavailable ({}); the expert cache is path A only",
                  r.error().str());
 
+    // init() backed the store with HOST memory sized by `--cache-gb` -- 100 GiB
+    // of commit for `--cache-gb 100` -- and build_expert_cache re-backs it on
+    // the GPU paths anyway. Let it go first, or the commit check below counts
+    // the cache twice and refuses (docs/p4_hitrate.md §2).
+    planner_.stop_backfill();
+    store_.reset();
     cache_budget_ = cfg_.cache.budget_bytes;
     if (cache_budget_ == 0) {
         // "As much as the machine will give". On Windows that is the commit
@@ -317,7 +374,15 @@ Result<void> Engine::init_gpu() {
         // set also living there left ~64 GiB of experts and never touched B.
         constexpr uint64_t kCommitMargin = 8ull << 30;
         constexpr uint64_t kPhysFloor    = 12ull << 30;
-        constexpr uint64_t kPathAOther   = 1ull << 30;   // KV, scratch, logits, runners
+        // What else lives on path A and is allocated AFTER the cache: the KV
+        // store (16 MB at a 4,096-position context, but KvStoreConfig grows it
+        // with --max-context, and the parked-session pool holds up to `max_parked`
+        // of them), the GPU prefill's workspace, the decode scratch, the logits
+        // buffer and every pipeline's runner. 1 GiB was the P2 figure for a
+        // 4K-context decode-only run; 3 GiB is what a long context plus a GPU
+        // prefill needs, and it is the difference between "the cache took the
+        // heap" and a prefill that cannot allocate (docs/p4_hitrate.md).
+        constexpr uint64_t kPathAOther   = 3ull << 30;
         const uint64_t avail_commit = store::available_commit_bytes();
         const uint64_t avail_phys   = store::available_physical_bytes();
         std::vector<std::string> pnames = store::pinned_global_tensors(manifest_);
@@ -359,10 +424,24 @@ Result<void> Engine::init_gpu() {
         }
         // What does: a fixed ceiling on path B. Imports failed -- and took the
         // device with them -- at 33 GiB on an idle machine with 50 GB free, and
-        // at 15.8 GiB while another track's GPU test held host-heap memory.
-        // 16 GiB is under both, and puts the auto-sized cache at ~80 GiB.
-        // `--cache-gb` asks for more explicitly, and owns the risk.
-        constexpr uint64_t kPathBAutoCeiling = 16ull << 30;
+        // at 15.8 GiB while another track's GPU test held host-heap memory. The
+        // 16 GiB that was under both put the auto-sized cache at ~80 GiB
+        // (4,500 slots), and the hit-rate curve measured since then says that
+        // is 1.5-2 points of hit and ~1.5 tok/s below what this machine can
+        // hold: `--cache-slots 5,500` (96.3 GiB) ran the 8-turn script at hit
+        // 0.9431 / 6.05 tok/s against 4,500's 0.9234, and 5,600 (98.1 GiB) is
+        // where path B's 20th slab refuses (docs/p4_hitrate.md).
+        //
+        // So the ceiling is 30 GiB, which puts auto at ~92 GiB / ~5,240 slots:
+        // above the 16 GiB that the contended run survived only because the
+        // cache was small, and ~6 GiB under the measured refusal. The other
+        // three bounds above are what protect the contended case -- imported
+        // pages charge physical memory, so `avail_phys - kPhysFloor` shrinks
+        // this machine's path B whenever another track is holding host memory --
+        // and the slab pool stops and logs rather than failing if the OS
+        // refuses early. `--cache-slots` / `--cache-gb` still ask for more
+        // explicitly and own the risk.
+        constexpr uint64_t kPathBAutoCeiling = 30ull << 30;
         b_cache = std::min(b_cache, kPathBAutoCeiling);
         uint64_t want = a_cache + b_cache;
         if (avail_commit) {
@@ -443,6 +522,15 @@ Result<void> Engine::init_gpu() {
 
     build_ced_plan();
     timings_.assign(c.num_hidden_layers, LayerTiming{});
+    if (const char* e = std::getenv("DEEPMOE_ROUTE_DUMP"); e && *e && !route_dump_) {
+        route_dump_ = std::fopen(e, "ab");
+        if (route_dump_) log_info("engine: routing dump -> {}", e);
+        else log_warn("engine: cannot open the routing dump '{}'", e);
+    }
+    route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
+    // docs/p4_hitrate.md §4: on unless DEEPMOE_MOE_OVERLAP=0 (the A/B switch).
+    if (const char* e = std::getenv("DEEPMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
+    if (const char* e = std::getenv("DEEPMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
     gpu_ready_ = true;
     log_info("engine: gpu ready on {}", device_.caps().device_name);
     return {};
@@ -532,18 +620,14 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
     state_ = std::make_unique<DecodeState>(std::move(*st));
 
     const TextConfig& c = model_cfg_.text;
-    KvStoreConfig kc;
-    kc.layers      = c.num_hidden_layers;
-    kc.window      = c.sliding_window;
-    kc.latent_dim  = c.head_dim;
     // Sized from what the export actually holds, plus the room the remaining
     // steps will need; the compressed half grows by one row a step at ratio 1.
-    kc.index_dim   = c.index_head_dim;
     // The PREFILL record's buffers are max_seq_len // ratio rows (2,074 / 4,149
     // at 4K, 8,513 / 17,026 at 17K) -- more than the widest per-step run
     // `max_compressed()` sees -- and seed_compressed is handed all of them.
-    kc.max_context = std::max<uint32_t>(
-        256, std::max(state_->max_compressed(), state_->max_prefill_rows()) + 64);
+    // Planes on the kv sources only (Track R2, docs/p4_kv_ux.md).
+    KvStoreConfig kc = KvStoreConfig::for_model(
+        c, std::max<uint32_t>(256, std::max(state_->max_compressed(), state_->max_prefill_rows()) + 64));
     if (kc.max_context > kMaxIndexPositions)
         return fail(Err::ResourceExhausted,
                     std::format("the export needs {} compressed positions and the "
@@ -577,9 +661,10 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
 }
 
 Result<void> Engine::reseed_decode_state() {
-    if (!state_ || !prefill_loaded_) return fail(Err::FailedPrecondition, "no decode state is loaded");
+    if (!state_) return fail(Err::FailedPrecondition, "no decode state is loaded");
     kvs_.clear();
     if (auto r = state_->seed_prefill(kvs_); !r) return r;
+    prefill_loaded_ = true;
     history_     = state_->prompt_ids();
     pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
@@ -588,6 +673,11 @@ Result<void> Engine::reseed_decode_state() {
 void Engine::shutdown() {
     // Everything that holds memory from an allocator has to let go before the
     // allocator does, and the allocators before the device.
+    if (route_dump_) { std::fclose(route_dump_); route_dump_ = nullptr; }
+    // A P3 backfill writes into slab memory from the I/O threads: stop issuing
+    // and let what is in flight land before the slabs go back.
+    planner_.stop_backfill();
+    if (io_.running()) io_.drain();
     state_.reset();
     engram_.destroy();
     moe_.destroy();
@@ -674,6 +764,94 @@ Result<DecodeStepResult> Engine::slow_prefill(std::span<const uint32_t> prompt) 
 
 // --- one decode step --------------------------------------------------------
 
+// --- R1 round 2: per-turn reheat (docs/p4_hitrate.md §7) ---------------------
+
+std::string Engine::HeatOrder::to_string() const {
+    return std::format("reheat turn {}: decay {:.3f}, {} resident experts ranked in {:.1f} ms "
+                       "({} above the floor), {} coldest freed ({} were free), {} keys to the backfill",
+                       turn, decay, slots, ms, warm, evicted, free_slots, passed);
+}
+
+Result<Engine::HeatOrder> Engine::reheat(float decay) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (decay < 0.0f || decay > 1.0f)
+        return fail(Err::InvalidArgument, std::format("reheat decay {} outside [0, 1]", decay));
+
+    const TimePoint t0 = Clock::now();
+    HeatOrder out;
+    out.decay = decay;
+    out.turn = ++reheat_turn_;
+    out.free_slots = store_.free_slots();
+    // The heat the store kept is the same EWMA the planner has been updating for
+    // the chosen experts and the near misses, so it does not need a second
+    // accumulator. Decaying it makes the last turn's routing the newest
+    // information in the order.
+    store_.decay_heat(decay);
+    const std::vector<ExpertKey> heat = store_.heat_order();
+    out.slots = static_cast<uint32_t>(heat.size());
+    // How far down the order is still "this conversation". Everything below is
+    // an expert the router has not wanted for several turns, and it is what the
+    // pass is allowed to reclaim -- but only that: at 5,500 slots a full resident
+    // set is ~1 GB of reads a slot, and a pass that evicted an eighth of it every
+    // turn would spend 12 GB of NVMe on a topic that did not change. `decay_heat`
+    // renormalises, so `head` is ~1.0 and these thresholds mean the same thing
+    // from one turn to the next: 0.05 is a single weak note_heat, 10% of the
+    // hottest expert in the cache.
+    const float head = out.slots ? store_.slot_for(heat.front())->heat : 0.0f;
+    const float floor_heat = std::max(0.05f, 0.1f * head);
+    uint32_t warm = 0;                       // the prefix of the order at/above the floor
+    while (warm < out.slots && store_.slot_for(heat[warm])->heat >= floor_heat) ++warm;
+    // Fill the free slots first; when there are none, reclaim the tail. The tail
+    // is where the previous topic lives, and evicting it is what makes room --
+    // with no decay and no new routing this is exactly what the LRU would have
+    // picked anyway, which is why it is a move of the reheat and not a second
+    // eviction policy.
+    uint32_t want = out.free_slots ? out.free_slots : std::max<uint32_t>(4, out.slots / 32);
+    want = std::min(want, out.slots - warm);
+
+    // What the backfill can actually do something with: keys that are NOT in the
+    // cache. `Planner::backfill_pump` skips every resident key it is handed
+    // (`if (store_->slot_of(key)) continue;`), so an order built resident-first
+    // and then truncated to the budget -- which is what the first version did --
+    // is a list of keys the pump walks straight past. That is why the 2,200-slot
+    // A/B in docs/p4_hitrate.md §7 measured turn 3 decode hit 0.7210 against
+    // 0.7210: on a saturated cache the pass evicted `slots/32` experts and then
+    // fetched nothing, so it was a pure cost (the +32 MB/token of the §8 sweep).
+    //
+    // `StaticHeat` is the startup order (store/static_heat.inc, or a heat file
+    // from the last run); its head is the best available estimate of what a
+    // never-seen-token expert would score, and it is the only signal this
+    // process has about an expert that is not resident -- `heat` lives on the
+    // slot, so an evicted expert's heat is gone with it.
+    std::vector<ExpertKey> order;
+    order.reserve(want + out.free_slots);
+    const std::vector<ExpertKey>& heat_table =
+        heat_order_.empty() ? (heat_order_ = store::static_heat_order()) : heat_order_;
+    for (const ExpertKey& k : heat_table) {
+        if (order.size() >= size_t(want) + out.free_slots) break;
+        if (!store_.resident(k)) order.push_back(k);
+    }
+    // Never evict without a candidate to put in the hole. With no non-resident
+    // candidate left the pass is a no-op rather than a round of eviction the
+    // next turn's misses have to pay back.
+    const uint32_t have = static_cast<uint32_t>(order.size());
+    want = out.free_slots >= have ? 0 : std::min(want, have - out.free_slots);
+    for (uint32_t i = 0; i < want; ++i) {
+        const ExpertKey& k = heat[out.slots - 1 - i];
+        if (store_.evict_key(k)) ++out.evicted;
+    }
+    const uint32_t budget = out.free_slots + out.evicted;
+    if (order.size() > budget) order.resize(budget);
+    out.passed = static_cast<uint32_t>(order.size());
+    out.warm = warm;
+    out.ms = ms_since(t0);
+    if (!order.empty())
+        if (auto r = planner_.start_backfill(std::move(order), /*inflight=*/2, /*keep=*/true); !r)
+            return std::unexpected(r.error());
+    log_info("engine: {}", out.to_string());
+    return out;
+}
+
 Result<void> Engine::embed_token(uint32_t token) {
     const TextConfig& c = model_cfg_.text;
     if (token >= c.vocab_size)
@@ -756,6 +934,7 @@ Result<void> Engine::cmd_submit(TimelineValue wait_value) {
     s.signal_on_complete = true;
     const TimePoint t0 = Clock::now();
     if (auto r = gpu::submit(device_, s); !r) return r;
+    if (open_guard_) { inflight_guard_ = open_guard_; open_guard_ = 0; }
     sub_ms_ += ms_since(t0);
     ++submits_;
     return {};
@@ -765,6 +944,10 @@ Result<void> Engine::cmd_wait() {
     const TimePoint t0 = Clock::now();
     auto r = fence_.wait(fence_value_, std::chrono::seconds(120));
     wait_ms_ += ms_since(t0);
+    if (r && inflight_guard_) {
+        store_.set_completed_timeline(inflight_guard_);
+        inflight_guard_ = 0;
+    }
     return r;
 }
 
@@ -784,7 +967,7 @@ void Engine::read_timestamps(DecodeStepResult& res) {
     };
     for (uint32_t L = 0; L < timings_.size(); ++L) {
         timings_[L].attn_ms    = span_ms(ts_attn_[L]);
-        timings_[L].moe_gpu_ms = span_ms(ts_moe_[L]);
+        timings_[L].moe_gpu_ms = span_ms(ts_moe_[L]) + span_ms(ts_moe_early_[L]);
         timings_[L].moe_ms     = timings_[L].moe_gpu_ms + timings_[L].moe_host_ms;
         timings_[L].engram_ms  = engram_host_ms_[L] + span_ms(ts_engram_[L]);
     }
@@ -907,21 +1090,91 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     const uint32_t topk = c.num_experts_per_tok;
     const auto* ids = static_cast<const uint32_t*>(b.gate_ids.host);
     const auto* wts = static_cast<const float*>(b.gate_weights.host);
+    MoeCall call;
+    call.layer   = L;
+    call.ids     = ids;
+    call.weights = wts;
+    call.topk    = topk;
+    call.x       = layer_.ffn_norm_out();                  // ffn_norm output
+    call.y       = nullptr;                                // stays on the GPU
+    call.hidden  = c.hidden_size;
+    // Track R1 (docs/p4_hitrate.md §4): when this layer waits on NVMe, dispatch
+    // A over what is already resident -- the hits and the shared expert -- is
+    // submitted before the wait instead of after it. `late` is what it did not
+    // cover.
+    layer_guard_pending_ = false;
+    bool split = false;
+    uint32_t late[16];
+    uint32_t n_late = 0;
+    bool staged = false;   // stage_input has run for this layer
     {
         const TimePoint g0 = Clock::now();
         uint16_t chosen[16];
         for (uint32_t i = 0; i < topk; ++i) chosen[i] = static_cast<uint16_t>(ids[i]);
+        if (route_dump_)
+            std::memcpy(route_ids_.data() + size_t(L) * topk, chosen, topk * sizeof(uint16_t));
+        // design §9.3: the gate kernel already wrote the top-16 ids AND their raw
+        // scores into the same two host-coherent buffers (gpu/shaders/gate.slang
+        // stage 1, GatePush::record = 16), and the Planner's heat EWMA is defined
+        // over them -- "so a bursty expert survives one bad round". They were
+        // never passed, so every slot's heat stayed at exactly 0 in the decode
+        // path: the reheat pass (docs/p4_hitrate.md §7) had nothing to rank, and
+        // any future score-aware policy would have been ranking zeros. Entries
+        // [topk, 16) carry the RAW score (only the first six are normalised by
+        // route_scale, gate.slang), which is what the EWMA wants.
+        uint16_t near_ids[16];
+        float    near_scores[16];
+        for (uint32_t i = 0; i < 16; ++i) {
+            near_ids[i]    = static_cast<uint16_t>(ids[i]);
+            near_scores[i] = wts[i];
+        }
         store::RouteDecision route;
-        route.layer   = L;
-        route.chosen  = std::span<const uint16_t>(chosen, topk);
-        route.weights = std::span<const float>(wts, topk);
+        route.layer       = L;
+        route.chosen      = std::span<const uint16_t>(chosen, topk);
+        route.weights     = std::span<const float>(wts, topk);
+        route.near_ids    = std::span<const uint16_t>(near_ids, 16);
+        route.near_scores = std::span<const float>(near_scores, 16);
         auto plan = planner_.plan_layer(route, token_);
         if (!plan) return std::unexpected(plan.error());
         t.hits       = static_cast<uint32_t>(plan->hits.size());
         t.misses     = static_cast<uint32_t>(plan->misses.size());
         t.miss_bytes = plan->miss_bytes;
-        if (!plan->issued.empty()) io_.drain();
-        t.gate_ms = ms_since(g0);
+        t.gate_ms    = ms_since(g0);
+        if (overlap_ && (!plan->issued.empty() || !plan->joined.empty())) {
+            if (auto r = moe_.stage_input(call); !r) return r;
+            staged = true;
+            uint32_t early[16];
+            uint32_t n_early = 0;
+            for (uint32_t s = 0; s < topk; ++s) {
+                const ExpertKey key{static_cast<uint16_t>(L), static_cast<uint16_t>(ids[s])};
+                if (store_.resident(key)) early[n_early++] = s;
+                else late[n_late++] = s;
+            }
+            if (n_late) {
+                // The eviction guard (design §5.3, docs/p2_decode.md §13): the
+                // early slots are read by a buffer that is in flight while the
+                // host waits, so nothing may recycle them until the buffer that
+                // carries dispatch B -- the last reader -- has completed.
+                guard_layer(L, std::span<const uint32_t>(early, n_early), ids);
+                if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(early, n_early)); !r)
+                    return r;
+                early[n_early++] = topk;                        // the shared expert
+                if (auto r = cmd_open(); !r) return r;
+                const TimePoint r0 = Clock::now();
+                ts_moe_early_[L].begin = cmd_stamp();
+                if (auto r = moe_.record_gateup(tok_cmd_, std::span<const uint32_t>(early, n_early)); !r)
+                    return r;
+                ts_moe_early_[L].end = cmd_stamp();
+                rec_ms_ += ms_since(r0);
+                if (auto r = cmd_submit(0); !r) return r;
+                split = true;
+            }
+        }
+        {
+            const TimePoint w0 = Clock::now();
+            if (auto r = planner_.wait_layer(*plan); !r) return std::unexpected(r.error());
+            t.gate_ms += ms_since(w0);
+        }
         // Every routed expert must be resident now. When one is not, say how
         // it got that way -- a hit that a later miss in the same layer evicted
         // and a fill whose read failed look identical at the MoE dispatch.
@@ -948,15 +1201,25 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     }
     profiler_.add_phase(Phase::NvmeStall, Nanos(int64_t(t.gate_ms * 1e6)));
 
-    MoeCall call;
-    call.layer   = L;
-    call.ids     = ids;
-    call.weights = wts;
-    call.topk    = topk;
-    call.x       = layer_.ffn_norm_out();                  // ffn_norm output
-    call.y       = nullptr;                                // stays on the GPU
-    call.hidden  = c.hidden_size;
-    if (auto r = moe_.stage(call); !r) return r;
+    if (split) {
+        // The early dispatch reads the alternate slot list while it runs; it is
+        // done by now in all but a pathological case, and this wait proves it
+        // before the list is rewritten for the late slots.
+        if (auto r = cmd_wait(); !r) return r;
+        guard_layer(L, std::span<const uint32_t>(late, n_late), ids);
+        if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(late, n_late)); !r) return r;
+    } else {
+        uint32_t all[16];
+        for (uint32_t s = 0; s < topk; ++s) all[s] = s;
+        guard_layer(L, std::span<const uint32_t>(all, topk), ids);
+        if (staged) {
+            if (auto r = moe_.stage_rows(call, std::span<const uint32_t>(all, topk)); !r) return r;
+        } else if (auto r = moe_.stage(call); !r) {
+            return r;
+        }
+    }
+    // stage_input resets the bridge's timing and stage_rows adds to it, so this
+    // is the whole layer's host half whichever way it ran.
     t.moe_host_ms = moe_.timing().host_ms;
     mx_ms_ += moe_.timing().x_read_ms;
     mq_ms_ += moe_.timing().quant_ms;
@@ -966,10 +1229,18 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     {
         const TimePoint r0 = Clock::now();
         ts_moe_[L].begin = cmd_stamp();
-        if (auto r = moe_.record(tok_cmd_); !r) return r;
+        if (split) {
+            if (auto r = moe_.record_gateup(tok_cmd_, std::span<const uint32_t>(late, n_late)); !r)
+                return r;
+            if (auto r = moe_.record_down(tok_cmd_); !r) return r;
+        } else if (auto r = moe_.record(tok_cmd_); !r) {
+            return r;
+        }
         ts_moe_[L].end = cmd_stamp();
         rec_ms_ += ms_since(r0);
     }
+    // This buffer is the last reader of the layer's slots.
+    open_guard_ = layer_guard_;
     profiler_.note_hot_bytes(layer_hot_bytes_[L]);
 
     // A probe reads this layer's MoE output on the host, so it cannot wait
@@ -1151,17 +1422,18 @@ uint32_t Engine::max_context() const {
 Result<void> Engine::begin_session(const SessionConfig& sc) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     const TextConfig& c = model_cfg_.text;
-    KvStoreConfig kc;
-    kc.layers      = c.num_hidden_layers;
-    kc.window      = c.sliding_window;
-    kc.latent_dim  = c.head_dim;
-    kc.index_dim   = c.index_head_dim;
-    kc.max_context = std::min<uint32_t>(std::max<uint32_t>(sc.max_context, 256), kMaxIndexPositions);
+    // Track R2: planes on the kv sources only, allocated for 4,096 positions
+    // and grown by the store as the context does.
+    const uint32_t limit = std::min<uint32_t>(std::max<uint32_t>(sc.max_context, 256), kMaxIndexPositions);
+    KvStoreConfig kc = KvStoreConfig::for_model(c, limit, std::min<uint32_t>(limit, 4096));
     if (auto r = kvs_.create(alloc_a_, kc); !r) return r;
-    auto tables = EngramTables::load(sc.engram_tables_dir);
+    auto tables = sc.engram_tables_dir.empty() ? derive_engram_tables(cfg_.model_dir, c)
+                                               : EngramTables::load(sc.engram_tables_dir);
     if (!tables)
         return fail(tables.error().code,
-                    std::format("engram tables from '{}': {}", sc.engram_tables_dir,
+                    std::format("engram tables from '{}': {}",
+                                sc.engram_tables_dir.empty() ? cfg_.model_dir + "/tokenizer.json"
+                                                             : sc.engram_tables_dir,
                                 tables.error().message));
     if (auto r = engram_.create(device_, alloc_a_, dec_, manifest_, shards_, io_, pinned_, c,
                                 *std::move(tables)); !r)
@@ -1169,8 +1441,37 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     state_.reset();
     produce_ced_ = true;
     reset_context();
+    bool backfill = sc.backfill;
+    if (const char* e = std::getenv("DEEPMOE_BACKFILL"); e && *e) backfill = *e != '0';
+    // One heat order for the whole process: the startup P3 backfill and every
+    // later reheat pass rank non-resident experts by the same table, so
+    // `DEEPMOE_HEAT_FILE` (tools/hitrate_bench.py --write-heat / --heat-recent)
+    // steers both instead of only the first fill.
+    if (heat_order_.empty()) {
+        if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
+            heat_order_ = store::static_heat_order(hf);
+        if (heat_order_.empty()) heat_order_ = store::static_heat_order();
+    }
+    if (backfill && store_.free_slots() > 0) {
+        std::vector<ExpertKey> order = heat_order_;
+        if (auto r = planner_.start_backfill(std::move(order)); !r)
+            log_warn("engine: backfill: {}", r.error().str());
+        else
+            log_info("engine: P3 backfill started into {} free slots", store_.free_slots());
+    }
     log_info("engine: session -- KV store {} for {} positions, engram tables from {}",
-             human_bytes(kvs_.bytes()), max_context(), sc.engram_tables_dir);
+             human_bytes(kvs_.bytes()), max_context(),
+             sc.engram_tables_dir.empty() ? std::string("derived from tokenizer.json") : sc.engram_tables_dir);
+    return {};
+}
+
+Result<void> Engine::set_context_tokens(std::span<const uint32_t> tokens) {
+    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (tokens.size() > max_context())
+        return fail(Err::ResourceExhausted,
+                    std::format("{} tokens against a {}-position context", tokens.size(), max_context()));
+    history_.assign(tokens.begin(), tokens.end());
+    pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 
@@ -1256,11 +1557,74 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     if (auto r = pf.create(device_, alloc_a_, runner, manifest_, shards_, io_, pinned_, c,
                            &engram_.tables(), pc); !r)
         return std::unexpected(r.error());
+
+    // Track R1 (docs/p4_hitrate.md §3): the experts the prefill streams land in
+    // the decode cache under design §9.7.3's rule -- what a global LRU over the
+    // prompt's routing table in token order would keep -- and a cached expert
+    // is computed from where it is instead of being read again. Stamps are the
+    // token-major access order `base + (pos * layers + layer) * topk + rank`.
+    const uint64_t n_layers = c.num_hidden_layers, k6 = c.num_experts_per_tok;
+    const TokenIndex stamp_base = planner_.reserve_stamps(uint64_t(prompt.size()) * n_layers * k6);
+    struct Held { store::StreamAdmit a; TokenIndex stamp = 0; TimelineValue guard = 0; bool open = false; };
+    std::vector<Held> held;
+    std::set<TimelineValue> open_guards;   // of reservations not yet computed
+    gpu::PfExpertSink sink;
+    sink.reserve = [&](uint32_t layer, uint32_t expert, uint32_t pos, uint32_t rank) {
+        gpu::PfExpertSink::Dest d;
+        if (!handoff_) return d;   // DEEPMOE_PREFILL_HANDOFF=0: the transit, as before
+        const TokenIndex stamp = stamp_base + (uint64_t(pos) * n_layers + layer) * k6 + rank;
+        const TimelineValue guard = ++guard_clock_;
+        auto a = planner_.admit_streamed({static_cast<uint16_t>(layer), static_cast<uint16_t>(expert)},
+                                         stamp, guard);
+        if (!a) {
+            log_warn("engine: prefill handoff of ({}, {}): {}", layer, expert, a.error().str());
+            return d;
+        }
+        if (a->kind == store::StreamKind::Drop) return d;
+        d.kind = a->kind == store::StreamKind::Fill ? gpu::PfExpertSink::Kind::Fill
+                                                    : gpu::PfExpertSink::Kind::Resident;
+        d.host = a->addr.host_ptr;
+        d.dev  = a->addr.dev_addr;
+        d.cookie = held.size();
+        held.push_back({*a, stamp, guard, true});
+        open_guards.insert(guard);
+        return d;
+    };
+    sink.release = [&](uint32_t, uint32_t, const gpu::PfExpertSink::Dest& d, bool ok) {
+        Held& hd = held[d.cookie];
+        if (!hd.open) return;
+        hd.open = false;
+        open_guards.erase(hd.guard);
+        if (auto r = planner_.finish_streamed(hd.a, ok, hd.stamp); !r)
+            log_warn("engine: prefill handoff settle: {}", r.error().str());
+        // Batch i+1's reservations are made before batch i computes, so only
+        // the guards below the oldest reservation still waiting may retire.
+        store_.set_completed_timeline(open_guards.empty() ? guard_clock_ : *open_guards.begin() - 1);
+    };
+    pf.expert_sink = &sink;
+    const store::PlannerStats ps0 = planner_.stats();
     auto h = pf.run(prompt);
+    pf.expert_sink = nullptr;
+    // A failed prefill leaves reservations open: release them (a Fill whose
+    // bytes may be partial is dropped) so no slot stays Filling.
+    for (Held& hd : held)
+        if (hd.open) {
+            (void)planner_.finish_streamed(hd.a, false, hd.stamp);
+            hd.open = false;
+        }
+    store_.set_completed_timeline(guard_clock_);
     if (!h) return std::unexpected(h.error());
     const gpu::PrefillTimes tm = pf.times();
     pf.destroy();
     runner.destroy();
+    {
+        const store::PlannerStats ps1 = planner_.stats();
+        log_info("engine: prefill handoff -- {} experts already cached, {} kept, {} dropped; "
+                 "cache {} resident of {}", ps1.streamed_resident - ps0.streamed_resident,
+                 ps1.streamed_filled - ps0.streamed_filled,
+                 ps1.streamed_dropped - ps0.streamed_dropped, store_.stats().resident,
+                 store_.slot_count());
+    }
     if (auto r = seed_from_prefill(*h); !r) return std::unexpected(r.error());
 
     DecodeStepResult res;
@@ -1323,6 +1687,7 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     timings_.assign(c.num_hidden_layers, LayerTiming{});
     ts_attn_.assign(c.num_hidden_layers, Stamp{});
     ts_moe_.assign(c.num_hidden_layers, Stamp{});
+    ts_moe_early_.assign(c.num_hidden_layers, Stamp{});
     ts_engram_.assign(c.num_hidden_layers, Stamp{});
     engram_host_ms_.assign(c.num_hidden_layers, 0.0);
     ts_tail_   = Stamp{};
@@ -1386,8 +1751,33 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     profiler_.add_phase(Phase::ExpertHit,
                         Nanos(int64_t((bd.moe_gpu_ms + bd.moe_host_ms) * 1e6)));
     res->record  = profiler_.token_end();
+    if (route_dump_) write_route_record(position);
     ++token_;
     return res;
+}
+
+// One record: u32 step (the LRU clock `token_`), u32 position, u16[layers x
+// topk] gate ids in gate order, u8[layers] hits. 528 B at 40 x 6.
+void Engine::guard_layer(uint32_t layer, std::span<const uint32_t> slots, const uint32_t* ids) {
+    if (!layer_guard_pending_) {
+        layer_guard_ = ++guard_clock_;
+        layer_guard_pending_ = true;
+    }
+    for (uint32_t s : slots) {
+        const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(ids[s])};
+        if (auto slot = store_.slot_of(key)) (void)store_.set_guard(*slot, layer_guard_);
+    }
+}
+
+void Engine::write_route_record(uint32_t position) {
+    const uint32_t step = static_cast<uint32_t>(token_);
+    std::vector<uint8_t> hits(timings_.size());
+    for (size_t L = 0; L < timings_.size(); ++L) hits[L] = static_cast<uint8_t>(timings_[L].hits);
+    std::fwrite(&step, sizeof step, 1, route_dump_);
+    std::fwrite(&position, sizeof position, 1, route_dump_);
+    std::fwrite(route_ids_.data(), sizeof(uint16_t), route_ids_.size(), route_dump_);
+    std::fwrite(hits.data(), 1, hits.size(), route_dump_);
+    std::fflush(route_dump_);
 }
 
 Result<SampleResult> Engine::decode_step() {
@@ -1499,3 +1889,4 @@ std::string Engine::status() const {
 }
 
 }  // namespace deepmoe::runtime
+

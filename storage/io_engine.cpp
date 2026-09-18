@@ -114,6 +114,9 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& req, IoCallback cb) {
                                 req.file_off, req.file->path(), size));
 
     IoRequestId id;
+    if (req.priority == IoPriority::BlockingMiss)
+        last_p0_ns_.store(std::chrono::duration_cast<Nanos>(Clock::now().time_since_epoch()).count(),
+                          std::memory_order_relaxed);
     {
         std::lock_guard lk(mutex_);
         id = next_request_id_++;
@@ -213,6 +216,17 @@ size_t IoEngine::issue_ready_chunks() {
                 if (!q.empty()) p = q.front();
             }
             if (!p) break;
+            const IoPriority cls = p->req.priority;
+            if (cls == IoPriority::Lookahead || cls == IoPriority::Backfill) {
+                const int64_t since = std::chrono::duration_cast<Nanos>(Clock::now().time_since_epoch()).count() -
+                                      last_p0_ns_.load(std::memory_order_relaxed);
+                const uint32_t bg =
+                    inflight_class_[uint8_t(IoPriority::Lookahead)].load(std::memory_order_relaxed) +
+                    inflight_class_[uint8_t(IoPriority::Backfill)].load(std::memory_order_relaxed);
+                if (since < std::chrono::duration_cast<Nanos>(kBackgroundQuiet).count() &&
+                    bg >= kBackgroundOpsWhileBusy)
+                    break;
+            }
             ch  = p->chunks[p->next_chunk++];
             cid = next_chunk_id_++;
             chunk_owner_.emplace(cid, InflightChunk{p, ch.bytes});
@@ -254,6 +268,7 @@ size_t IoEngine::issue_ready_chunks() {
         }
         ++p->issued_chunks;
         ++issued;
+        inflight_class_[static_cast<uint8_t>(p->req.priority)].fetch_add(1, std::memory_order_relaxed);
 
         const uint32_t ops = inflight_ops_.fetch_add(1, std::memory_order_relaxed) + 1;
         const uint64_t byt = inflight_bytes_.fetch_add(ch.bytes, std::memory_order_relaxed) + ch.bytes;
@@ -294,6 +309,7 @@ void IoEngine::handle_completion(const ChunkCompletion& c) {
 
     inflight_ops_.fetch_sub(1, std::memory_order_relaxed);
     inflight_bytes_.fetch_sub(charged, std::memory_order_relaxed);
+    inflight_class_[static_cast<uint8_t>(p->req.priority)].fetch_sub(1, std::memory_order_relaxed);
     uint64_t closed_window_ns = 0;
     {
         std::lock_guard lk(stats_mutex_);
