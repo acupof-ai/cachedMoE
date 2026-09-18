@@ -430,3 +430,57 @@ DEEPMOE_TEST(integration, planner_wait_layer_is_lru_and_backfill_joins) {
     }
     io.stop();
 }
+
+// docs/p4_hitrate.md §7: what the per-turn reheat pass may hand the P3 backfill.
+// `Planner::backfill_pump` skips every key that is already resident, so an order
+// made of resident keys issues nothing at all -- which is what made the first
+// reheat pass a no-op on a saturated cache (it ranked the residents, truncated
+// the order to the budget, and so passed only residents). The pass must select
+// NON-resident candidates, and must not evict more slots than it has candidates
+// for. This pins the planner half of that invariant.
+DEEPMOE_TEST(integration, a_backfill_order_of_resident_keys_fetches_nothing) {
+    if (skip_without_model("integration.a_backfill_order_of_resident_keys_fetches_nothing")) return;
+    const std::string dir = model_dir();
+    auto mf = Manifest::load(join(dir, layout::kManifestFile));
+    REQUIRE_OK(mf);
+    ShardSet shards;
+    REQUIRE_OK(shards.open_all(dir, *mf, true));
+    IoConfig io_cfg;
+    auto backend = storage::make_default_backend(io_cfg);
+    REQUIRE_OK(backend);
+    storage::IoEngine io;
+    REQUIRE_OK(io.start(std::move(*backend), io_cfg));
+
+    CacheConfig cache;
+    cache.slots_per_slab = 1;
+    cache.budget_bytes   = 4 * layout::kExpertSlotBytes;
+    ExpertStore store;
+    REQUIRE_OK(store.init(std::make_unique<HostSlabBacking>(), cache,
+                          layout::kTotalLogicalLayers, layout::kRoutedExperts));
+    Planner planner;
+    REQUIRE_OK(planner.init(store, io, *mf, shards, cache, PrefetchConfig{}));
+
+    // Fill the cache by demand, so every slot is resident and none is free.
+    const uint16_t row[4] = {40, 41, 42, 43};
+    RouteDecision route;
+    route.layer  = 11;
+    route.chosen = std::span<const uint16_t>(row, 4);
+    auto plan = planner.plan_layer(route, 1);
+    REQUIRE_OK(plan);
+    REQUIRE_OK(planner.wait_layer(*plan));
+    CHECK_EQ(store.free_slots(), 0u);
+    const PlannerStats before = planner.stats();
+
+    std::vector<ExpertKey> resident_order;
+    for (uint16_t e : row) resident_order.push_back(ExpertKey{11, e});
+    REQUIRE_OK(planner.start_backfill(resident_order, 2, /*keep=*/true));
+    for (int i = 0; i < 400 && planner.backfill_active(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    io.drain();
+    const PlannerStats after = planner.stats();
+    CHECK(!planner.backfill_active());
+    CHECK_EQ(after.backfill_issued, before.backfill_issued);   // nothing was fetched
+    CHECK_EQ(after.backfill_done, before.backfill_done);
+    CHECK_EQ(after.evictions, before.evictions);               // and nothing was evicted
+    io.stop();
+}

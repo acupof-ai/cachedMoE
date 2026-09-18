@@ -1,0 +1,205 @@
+{"event": "ready", "load_s": 48.0496337, "max_context": 4096, "vocab": 129280, "cache_gb": 94.5922852, "cache_slots": 5400, "gpu_prefill_min": 0, "check_topk": false, "engram_tables": "C:\\Users\\Asus\\code\\deepmoe-fin-r1\\tests\\data\\l3", "kv_mb": 16.044032, "rollback": true, "max_parked": 8, "reheat": false, "reheat_decay": 0.5, "kv_disk": true, "kv_disk_dir": "C:\\Users\\Asus\\AppData\\Local/deepmoe/kv/D__models_DeepSeek-V4.1-Flash", "host_s": 48.0665}
+{"event": "tokens", "ids": [0, 128803, 30594, 1175, 2788, 642, 99743, 11572, 70979, 36005, 320, 128804, 128822], "host_s": 48.0665}
+{"event": "prefill", "done": 13, "total": 13, "host_s": 52.6722}
+{"event": "token", "id": 30594, "text": "你好", "t_ms": 4600.4828, "step_ms": 198.8958, "p": 0, "margin": 6.55384636, "nucleus": 0, "hit": 0, "host_s": 52.6722}
+{"event": "token", "id": 1175, "text": "！", "t_ms": 4874.9601, "step_ms": 274.0985, "p": 0, "margin": 4.74205017, "nucleus": 0, "hit": 0.833333333, "host_s": 52.9465}
+{"event": "token", "id": 10805, "text": "我是", "t_ms": 5040.7009, "step_ms": 165.3649, "p": 0, "margin": 6.58276558, "nucleus": 0, "hit": 0.9375, "host_s": 53.1112}
+{"event": "token", "id": 53091, "text": "Deep", "t_ms": 5325.178, "step_ms": 283.9335, "p": 0, "margin": 2.10828018, "nucleus": 0, "hit": 0.829166667, "host_s": 53.3945}
+{"event": "token", "id": 4374, "text": "Se", "t_ms": 5764.886, "step_ms": 439.282, "p": 0, "margin": 19.6973782, "nucleus": 0, "hit": 0.6875, "host_s": 53.8334}
+{"event": "token", "id": 1465, "text": "ek", "t_ms": 6037.5866, "step_ms": 272.3261, "p": 0, "margin": 24.9475212, "nucleus": 0, "hit": 0.845833333, "host_s": 54.106}
+{"event": "token", "id": 303, "text": "，", "t_ms": 6355.5974, "step_ms": 317.6138, "p": 0, "margin": 12.0284309, "nucleus": 0, "hit": 0.808333333, "host_s": 54.4227}
+{"event": "token", "id": 1516, "text": "由", "t_ms": 6558.184, "step_ms": 202.215, "p": 0, "margin": 1.43280411, "nucleus": 0, "hit": 0.9125, "host_s": 54.6285}
+{"event": "token", "id": 17180, "text": "深度", "t_ms": 6892.5416, "step_ms": 333.9513, "p": 0, "margin": 15.3672371, "nucleus": 0, "hit": 0.804166667, "host_s": 54.962}
+{"event": "token", "id": 1645, "text": "求", "t_ms": 7250.0626, "step_ms": 357.124, "p": 0, "margin": 18.7603035, "nucleus": 0, "hit": 0.770833333, "host_s": 55.3168}
+{"event": "token", "id": 4568, "text": "索", "t_ms": 7485.0535, "step_ms": 234.6136, "p": 0, "margin": 20.1586685, "nucleus": 0, "hit": 0.879166667, "host_s": 55.5557}
+{"event": "token", "id": 2086, "text": "公司", "t_ms": 7762.0192, "step_ms": 276.5655, "p": 0, "margin": 13.7378502, "nucleus": 0, "hit": 0.845833333, "host_s": 55.8335}
+{"event": "token", "id": 81502, "text": "创造的", "t_ms": 8003.8558, "step_ms": 241.4795, "p": 0, "margin": 7.777565, "nucleus": 0, "hit": 0.883333333, "host_s": 56.0724}
+{"event": "token", "id": 13503, "text": "AI", "t_ms": 8260.634, "step_ms": 256.4123, "p": 0, "margin": 8.87690735, "nucleus": 0, "hit": 0.870833333, "host_s": 56.3299}
+{"event": "token", "id": 52334, "text": "助手", "t_ms": 8540.6391, "step_ms": 279.6412, "p": 0, "margin": 11.5261383, "nucleus": 0, "hit": 0.845833333, "host_s": 56.6113}
+{"event": "token", "id": 303, "text": "，", "t_ms": 8796.5353, "step_ms": 255.5171, "p": 0, "margin": 2.05163765, "nucleus": 0, "hit": 0.8625, "host_s": 56.8668}
+{"event": "token", "id": 4363, "text": "能够", "t_ms": 8945.2959, "step_ms": 148.3564, "p": 0, "margin": 0.334857941, "nucleus": 0, "hit": 0.954166667, "host_s": 57.0168}
+{"event": "token", "id": 41103, "text": "帮你", "t_ms": 9213.118, "step_ms": 267.3892, "p": 0, "margin": 5.00385666, "nucleus": 0, "hit": 0.8625, "host_s": 57.2844}
+{"event": "token", "id": 20750, "text": "解答", "t_ms": 9446.9159, "step_ms": 233.3867, "p": 0, "margin": 4.58204651, "nucleus": 0, "hit": 0.8875, "host_s": 57.5169}
+{"event": "token", "id": 2056, "text": "问题", "t_ms": 9698.0831, "step_ms": 250.7949, "p": 0, "margin": 3.06114578, "nucleus": 0, "hit": 0.870833333, "host_s": 57.7669}
+{"event": "token", "id": 410, "text": "、", "t_ms": 9912.17, "step_ms": 213.6684, "p": 0, "margin": 14.8682137, "nucleus": 0, "hit": 0.9, "host_s": 57.9836}
+{"event": "token", "id": 4398, "text": "处理", "t_ms": 10168.7055, "step_ms": 256.0709, "p": 0, "margin": 2.07032776, "nucleus": 0, "hit": 0.8625, "host_s": 58.2398}
+{"event": "token", "id": 25728, "text": "文档", "t_ms": 10425.1725, "step_ms": 256.094, "p": 0, "margin": 0.224723816, "nucleus": 0, "hit": 0.866666667, "host_s": 58.4947}
+{"event": "token", "id": 410, "text": "、", "t_ms": 10709.1851, "step_ms": 283.6364, "p": 0, "margin": 13.7537079, "nucleus": 0, "hit": 0.8375, "host_s": 58.7781}
+{"event": "token", "id": 1824, "text": "进行", "t_ms": 10882.8742, "step_ms": 173.2974, "p": 0, "margin": 5.0916481, "nucleus": 0, "hit": 0.933333333, "host_s": 58.9503}
+{"event": "token", "id": 14592, "text": "创作", "t_ms": 11083.3278, "step_ms": 200.053, "p": 0, "margin": 0.0657615662, "nucleus": 0, "hit": 0.929166667, "host_s": 59.1525}
+{"event": "token", "id": 75846, "text": "等各种", "t_ms": 11275.6066, "step_ms": 191.8748, "p": 0, "margin": 2.74571228, "nucleus": 0, "hit": 0.916666667, "host_s": 59.3451}
+{"event": "token", "id": 6533, "text": "任务", "t_ms": 11510.3804, "step_ms": 234.3425, "p": 0, "margin": 16.4079971, "nucleus": 0, "hit": 0.875, "host_s": 59.5781}
+{"event": "token", "id": 320, "text": "。", "t_ms": 11795.474, "step_ms": 284.6442, "p": 0, "margin": 7.62988281, "nucleus": 0, "hit": 0.916666667, "host_s": 59.8672}
+{"event": "token", "id": 531, "text": "我", "t_ms": 11941.9876, "step_ms": 146.1088, "p": 0, "margin": 4.2486248, "nucleus": 0, "hit": 0.958333333, "host_s": 60.0115}
+{"event": "token", "id": 5852, "text": "支持", "t_ms": 12146.7893, "step_ms": 204.3724, "p": 0, "margin": 5.47319031, "nucleus": 0, "hit": 0.904166667, "host_s": 60.217}
+{"event": "token", "id": 3185, "text": "超", "t_ms": 12392.1567, "step_ms": 244.9332, "p": 0, "margin": 0.501253128, "nucleus": 0, "hit": 0.870833333, "host_s": 60.4615}
+{"event": "token", "id": 1122, "text": "长", "t_ms": 12678.1366, "step_ms": 285.5358, "p": 0, "margin": 14.6559887, "nucleus": 0, "hit": 0.829166667, "host_s": 60.7496}
+{"event": "token", "id": 82600, "text": "上下文", "t_ms": 12908.2463, "step_ms": 229.7521, "p": 0, "margin": 16.9995384, "nucleus": 0, "hit": 0.8875, "host_s": 60.98}
+{"event": "token", "id": 1237, "text": "（", "t_ms": 13133.7937, "step_ms": 225.1927, "p": 0, "margin": 1.87430573, "nucleus": 0, "hit": 0.9, "host_s": 61.2055}
+{"event": "token", "id": 19, "text": "1", "t_ms": 13276.9825, "step_ms": 142.8165, "p": 0, "margin": 4.98664856, "nucleus": 0, "hit": 0.9625, "host_s": 61.3487}
+{"event": "token", "id": 47, "text": "M", "t_ms": 13474.7402, "step_ms": 197.3639, "p": 0, "margin": 22.1141434, "nucleus": 0, "hit": 0.920833333, "host_s": 61.5449}
+{"event": "token", "id": 35977, "text": " tokens", "t_ms": 13728.8719, "step_ms": 253.7056, "p": 0, "margin": 3.08742905, "nucleus": 0, "hit": 0.879166667, "host_s": 61.8004}
+{"event": "token", "id": 7417, "text": "），", "t_ms": 13930.1489, "step_ms": 200.8853, "p": 0, "margin": 2.35190964, "nucleus": 0, "hit": 0.920833333, "host_s": 62.002}
+{"event": "token", "id": 1263, "text": "可以", "t_ms": 14089.7012, "step_ms": 159.1494, "p": 0, "margin": 7.43558121, "nucleus": 0, "hit": 0.954166667, "host_s": 62.1618}
+{"event": "token", "id": 40755, "text": "一次性", "t_ms": 14242.0735, "step_ms": 151.9948, "p": 0, "margin": 5.75245285, "nucleus": 0, "hit": 0.954166667, "host_s": 62.3132}
+{"event": "token", "id": 4398, "text": "处理", "t_ms": 14425.9827, "step_ms": 183.5229, "p": 0, "margin": 17.8181705, "nucleus": 0, "hit": 0.929166667, "host_s": 62.497}
+{"event": "token", "id": 2299, "text": "像", "t_ms": 14577.9304, "step_ms": 151.572, "p": 0, "margin": 4.09737015, "nucleus": 0, "hit": 0.95, "host_s": 62.6449}
+{"event": "token", "id": 1342, "text": "《", "t_ms": 14815.2463, "step_ms": 236.886, "p": 0, "margin": 13.6326675, "nucleus": 0, "hit": 0.895833333, "host_s": 62.8867}
+{"event": "token", "id": 1131, "text": "三", "t_ms": 15084.745, "step_ms": 268.6164, "p": 0, "margin": 15.1194038, "nucleus": 0, "hit": 0.895833333, "host_s": 63.156}
+{"event": "token", "id": 933, "text": "体", "t_ms": 15313.9051, "step_ms": 228.7768, "p": 0, "margin": 13.6879845, "nucleus": 0, "hit": 0.9, "host_s": 63.3838}
+{"event": "token", "id": 1338, "text": "》", "t_ms": 15674.8158, "step_ms": 360.4705, "p": 0, "margin": 20.1078262, "nucleus": 0, "hit": 0.804166667, "host_s": 63.7465}
+{"event": "token", "id": 103664, "text": "三部", "t_ms": 15925.3709, "step_ms": 250.1388, "p": 0, "margin": 16.5660324, "nucleus": 0, "hit": 0.9, "host_s": 63.9966}
+{"event": "token", "id": 4703, "text": "曲", "t_ms": 16271.5309, "step_ms": 345.4444, "p": 0, "margin": 20.358511, "nucleus": 0, "hit": 0.879166667, "host_s": 64.3406}
+{"event": "token", "id": 3996, "text": "那么", "t_ms": 16494.1434, "step_ms": 222.1065, "p": 0, "margin": 0.588813782, "nucleus": 0, "hit": 0.954166667, "host_s": 64.5653}
+{"event": "token", "id": 53143, "text": "大体", "t_ms": 16717.3588, "step_ms": 222.8435, "p": 0, "margin": 3.70705414, "nucleus": 0, "hit": 0.954166667, "host_s": 64.7894}
+{"event": "token", "id": 7359, "text": "量的", "t_ms": 17021.8332, "step_ms": 304.0426, "p": 0, "margin": 24.6414528, "nucleus": 0, "hit": 0.85, "host_s": 65.0933}
+{"event": "token", "id": 3975, "text": "内容", "t_ms": 17202.2122, "step_ms": 179.9925, "p": 0, "margin": 8.80442047, "nucleus": 0, "hit": 0.95, "host_s": 65.2728}
+{"event": "token", "id": 303, "text": "，", "t_ms": 17355.5007, "step_ms": 152.9248, "p": 0, "margin": 10.5379543, "nucleus": 0, "hit": 0.954166667, "host_s": 65.4238}
+{"event": "token", "id": 4225, "text": "而且", "t_ms": 17489.8049, "step_ms": 133.9065, "p": 0, "margin": 3.18619919, "nucleus": 0, "hit": 0.966666667, "host_s": 65.5616}
+{"event": "token", "id": 5467, "text": "完全", "t_ms": 17721.5084, "step_ms": 231.2787, "p": 0, "margin": 12.7808456, "nucleus": 0, "hit": 0.9, "host_s": 65.7917}
+{"event": "token", "id": 17193, "text": "免费", "t_ms": 18021.6612, "step_ms": 299.7672, "p": 0, "margin": 15.1292686, "nucleus": 0, "hit": 0.85, "host_s": 66.0912}
+{"event": "token", "id": 2541, "text": "使用", "t_ms": 18260.9007, "step_ms": 238.8344, "p": 0, "margin": 17.1033897, "nucleus": 0, "hit": 0.895833333, "host_s": 66.3306}
+{"event": "token", "id": 320, "text": "。", "t_ms": 18431.3285, "step_ms": 170.035, "p": 0, "margin": 0.384780884, "nucleus": 0, "hit": 0.9375, "host_s": 66.5027}
+{"event": "token", "id": 10457, "text": "有什么", "t_ms": 18577.0169, "step_ms": 144.9594, "p": 0, "margin": 11.6809578, "nucleus": 0, "hit": 0.9625, "host_s": 66.6484}
+{"event": "token", "id": 34071, "text": "我可以", "t_ms": 18909.1142, "step_ms": 331.3325, "p": 0, "margin": 7.94878387, "nucleus": 0, "hit": 0.8875, "host_s": 66.9806}
+{"event": "token", "id": 3950, "text": "帮", "t_ms": 19175.7128, "step_ms": 266.0915, "p": 0, "margin": 12.4676437, "nucleus": 0, "hit": 0.925, "host_s": 67.2467}
+{"event": "token", "id": 4597, "text": "你的", "t_ms": 19394.3122, "step_ms": 218.1547, "p": 0, "margin": 14.5013008, "nucleus": 0, "hit": 0.925, "host_s": 67.4654}
+{"event": "token", "id": 3467, "text": "吗", "t_ms": 19565.2673, "step_ms": 170.5585, "p": 0, "margin": 16.9648705, "nucleus": 0, "hit": 0.945833333, "host_s": 67.6354}
+{"event": "token", "id": 1148, "text": "？", "t_ms": 19764.9083, "step_ms": 199.2721, "p": 0, "margin": 17.0760021, "nucleus": 0, "hit": 0.920833333, "host_s": 67.8363}
+{"event": "token", "id": 28927, "text": "", "t_ms": 19887.7038, "step_ms": 122.4253, "p": 0, "margin": 0.664241791, "nucleus": 0, "hit": 0.979166667, "host_s": 67.9583}
+{"event": "token", "id": 235, "text": "😊", "t_ms": 20186.2788, "step_ms": 298.1833, "p": 0, "margin": 23.0149136, "nucleus": 0, "hit": 0.866666667, "host_s": 68.2573}
+{"event": "token", "id": 1, "text": "", "t_ms": 20376.4755, "step_ms": 189.7979, "p": 0, "margin": 15.446537, "nucleus": 0, "hit": 0.925, "host_s": 68.4465}
+{"event": "done", "session": "default", "prompt_tokens": 13, "reused_tokens": 0, "prefill_tokens": 13, "generated": 68, "prefill_mode": "decode", "finish": "stop", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 4599.9109, "prefill_tok_s": 2.8261417, "ttft_ms": 4600.4828, "decode_ms": 15776.0281, "decode_steps": 67, "tok_s": 4.24694984, "total_ms": 20376.508, "prefill_hit_rate": 0.761538462, "decode_hit_rate": 0.893656716, "prefill_nvme_mb": 13993.771, "decode_nvme_mb": 32163.1027, "per_token_ms": {"attn": 45.3095713, "moe_gpu": 48.7426504, "moe_host": 1.2242403, "nvme_stall": 125.984173, "engram": 5.25109254, "tail": 6.38059224, "other": 2.14487851, "record": 0.785267164, "submit": 3.86298209, "bind": 0.963531343, "fence_wait": 97.6233045, "submits": 59.6119403, "sample_host": 0}, "sampled_steps": 0, "topk_fallbacks": 0, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 0, "context": 80, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "host_s": 68.4465}
+{"event": "text", "text": "你好！我是DeepSeek，由深度求索公司创造的AI助手，能够帮你解答问题、处理文档、进行创作等各种任务。我支持超长上下文（1M tokens），可以一次性处理像《三体》三部曲那么大体量的内容，而且完全免费使用。有什么我可以帮你的吗？😊<｜end▁of▁sentence｜>", "host_s": 68.4465}
+{"event": "tokens", "ids": [128803, 3085, 344, 270, 6102, 294, 8760, 14, 305, 1205, 344, 834, 7699, 1577, 943, 436, 33, 9361, 295, 3947, 16, 128804, 128822], "host_s": 68.4507}
+{"event": "prefill", "done": 16, "total": 24, "host_s": 74.1469}
+{"event": "prefill", "done": 24, "total": 24, "host_s": 76.1221}
+{"event": "token", "id": 671, "text": "The", "t_ms": 7678.1976, "step_ms": 163.5559, "p": 0, "margin": 14.9964714, "nucleus": 0, "hit": 0, "host_s": 76.1221}
+{"event": "token", "id": 6102, "text": " capital", "t_ms": 7898.8883, "step_ms": 220.3118, "p": 0, "margin": 21.2260361, "nucleus": 0, "hit": 0.9, "host_s": 76.3469}
+{"event": "token", "id": 294, "text": " of", "t_ms": 8249.1743, "step_ms": 349.861, "p": 0, "margin": 17.1137238, "nucleus": 0, "hit": 0.783333333, "host_s": 76.701}
+{"event": "token", "id": 8760, "text": " France", "t_ms": 8484.8779, "step_ms": 235.3284, "p": 0, "margin": 15.9132767, "nucleus": 0, "hit": 0.875, "host_s": 76.93}
+{"event": "token", "id": 344, "text": " is", "t_ms": 8789.0558, "step_ms": 303.7758, "p": 0, "margin": 17.4283047, "nucleus": 0, "hit": 0.841666667, "host_s": 77.2399}
+{"event": "token", "id": 2619, "text": " **", "t_ms": 9032.2008, "step_ms": 242.7414, "p": 0, "margin": 4.38857269, "nucleus": 0, "hit": 0.875, "host_s": 77.4804}
+{"event": "token", "id": 51119, "text": "Paris", "t_ms": 9335.6849, "step_ms": 303.0871, "p": 0, "margin": 14.9991531, "nucleus": 0, "hit": 0.820833333, "host_s": 77.786}
+{"event": "token", "id": 42499, "text": "**.", "t_ms": 9743.4793, "step_ms": 407.3449, "p": 0, "margin": 10.081192, "nucleus": 0, "hit": 0.8, "host_s": 78.1912}
+{"event": "token", "id": 4114, "text": " One", "t_ms": 9943.3494, "step_ms": 199.4514, "p": 0, "margin": 16.0414009, "nucleus": 0, "hit": 0.908333333, "host_s": 78.3858}
+{"event": "token", "id": 7699, "text": " interesting", "t_ms": 10137.5835, "step_ms": 193.752, "p": 0, "margin": 20.5678139, "nucleus": 0, "hit": 0.908333333, "host_s": 78.5883}
+{"event": "token", "id": 1577, "text": " fact", "t_ms": 10361.4639, "step_ms": 223.4357, "p": 0, "margin": 17.6429596, "nucleus": 0, "hit": 0.891666667, "host_s": 78.8122}
+{"event": "token", "id": 943, "text": " about", "t_ms": 10598.3785, "step_ms": 236.5045, "p": 0, "margin": 10.1831436, "nucleus": 0, "hit": 0.870833333, "host_s": 79.046}
+{"event": "token", "id": 436, "text": " it", "t_ms": 10776.7735, "step_ms": 177.9603, "p": 0, "margin": 11.2008324, "nucleus": 0, "hit": 0.925, "host_s": 79.2238}
+{"event": "token", "id": 344, "text": " is", "t_ms": 11023.347, "step_ms": 246.1082, "p": 0, "margin": 16.900032, "nucleus": 0, "hit": 0.870833333, "host_s": 79.4675}
+{"event": "token", "id": 396, "text": " that", "t_ms": 11181.6064, "step_ms": 157.8401, "p": 0, "margin": 15.2543812, "nucleus": 0, "hit": 0.945833333, "host_s": 79.6234}
+{"event": "token", "id": 270, "text": " the", "t_ms": 11467.2458, "step_ms": 285.1823, "p": 0, "margin": 14.314579, "nucleus": 0, "hit": 0.829166667, "host_s": 79.9182}
+{"event": "token", "id": 2619, "text": " **", "t_ms": 11720.2673, "step_ms": 252.6484, "p": 0, "margin": 3.11034012, "nucleus": 0, "hit": 0.875, "host_s": 80.1712}
+{"event": "token", "id": 39, "text": "E", "t_ms": 11878.171, "step_ms": 157.1358, "p": 0, "margin": 19.2648048, "nucleus": 0, "hit": 0.945833333, "host_s": 80.3293}
+{"event": "token", "id": 4280, "text": "iff", "t_ms": 12214.4545, "step_ms": 335.7724, "p": 0, "margin": 23.2599316, "nucleus": 0, "hit": 0.779166667, "host_s": 80.6577}
+{"event": "token", "id": 317, "text": "el", "t_ms": 12590.9651, "step_ms": 376.1019, "p": 0, "margin": 26.4462318, "nucleus": 0, "hit": 0.741666667, "host_s": 81.0405}
+{"event": "token", "id": 36788, "text": " Tower", "t_ms": 12857.9396, "step_ms": 266.5784, "p": 0, "margin": 22.6545944, "nucleus": 0, "hit": 0.854166667, "host_s": 81.306}
+{"event": "token", "id": 515, "text": " was", "t_ms": 13155.5463, "step_ms": 297.1905, "p": 0, "margin": 1.76570511, "nucleus": 0, "hit": 0.829166667, "host_s": 81.607}
+{"event": "token", "id": 15568, "text": " originally", "t_ms": 13501.8148, "step_ms": 345.8762, "p": 0, "margin": 12.996479, "nucleus": 0, "hit": 0.783333333, "host_s": 81.9472}
+{"event": "token", "id": 11353, "text": " intended", "t_ms": 13869.2012, "step_ms": 366.9776, "p": 0, "margin": 4.17864227, "nucleus": 0, "hit": 0.7625, "host_s": 82.3195}
+{"event": "token", "id": 304, "text": " to", "t_ms": 14255.8969, "step_ms": 386.2628, "p": 0, "margin": 13.9599209, "nucleus": 0, "hit": 0.741666667, "host_s": 82.7012}
+{"event": "token", "id": 366, "text": " be", "t_ms": 14647.4493, "step_ms": 391.1258, "p": 0, "margin": 20.2049866, "nucleus": 0, "hit": 0.733333333, "host_s": 83.0967}
+{"event": "token", "id": 260, "text": " a", "t_ms": 14876.6488, "step_ms": 228.8181, "p": 0, "margin": 12.8452301, "nucleus": 0, "hit": 0.891666667, "host_s": 83.3277}
+{"event": "token", "id": 18658, "text": " temporary", "t_ms": 15151.8289, "step_ms": 274.8199, "p": 0, "margin": 18.8099098, "nucleus": 0, "hit": 0.854166667, "host_s": 83.5958}
+{"event": "token", "id": 4456, "text": " structure", "t_ms": 15477.5278, "step_ms": 325.2929, "p": 0, "margin": 4.84514999, "nucleus": 0, "hit": 0.808333333, "host_s": 83.9217}
+{"event": "token", "id": 666, "text": "**", "t_ms": 15786.6803, "step_ms": 308.7602, "p": 0, "margin": 2.93264008, "nucleus": 0, "hit": 0.8125, "host_s": 84.2365}
+{"event": "token", "id": 7379, "text": " built", "t_ms": 15990.9788, "step_ms": 203.8987, "p": 0, "margin": 1.01465607, "nucleus": 0, "hit": 0.908333333, "host_s": 84.4418}
+{"event": "token", "id": 362, "text": " for", "t_ms": 16327.8453, "step_ms": 336.4587, "p": 0, "margin": 21.7593784, "nucleus": 0, "hit": 0.8, "host_s": 84.7709}
+{"event": "token", "id": 270, "text": " the", "t_ms": 16619.3821, "step_ms": 291.0752, "p": 0, "margin": 20.958271, "nucleus": 0, "hit": 0.825, "host_s": 85.0684}
+{"event": "token", "id": 223, "text": " ", "t_ms": 16785.4362, "step_ms": 165.6608, "p": 0, "margin": 20.5393486, "nucleus": 0, "hit": 0.9375, "host_s": 85.2332}
+{"event": "token", "id": 6860, "text": "188", "t_ms": 17185.3036, "step_ms": 399.4427, "p": 0, "margin": 18.2671242, "nucleus": 0, "hit": 0.733333333, "host_s": 85.6335}
+{"event": "token", "id": 27, "text": "9", "t_ms": 17530.0972, "step_ms": 344.4206, "p": 0, "margin": 18.4665642, "nucleus": 0, "hit": 0.779166667, "host_s": 85.9807}
+{"event": "token", "id": 4495, "text": " World", "t_ms": 17810.9953, "step_ms": 280.4725, "p": 0, "margin": 18.0107574, "nucleus": 0, "hit": 0.854166667, "host_s": 86.2514}
+{"event": "token", "id": 734, "text": "'s", "t_ms": 18115.8894, "step_ms": 304.4426, "p": 0, "margin": 19.4320869, "nucleus": 0, "hit": 0.816666667, "host_s": 86.5569}
+{"event": "token", "id": 18875, "text": " Fair", "t_ms": 18395.296, "step_ms": 279.0434, "p": 0, "margin": 18.255455, "nucleus": 0, "hit": 0.841666667, "host_s": 86.8459}
+{"event": "token", "id": 14, "text": ",", "t_ms": 18591.4027, "step_ms": 195.7168, "p": 0, "margin": 8.24732208, "nucleus": 0, "hit": 0.920833333, "host_s": 87.0408}
+{"event": "token", "id": 305, "text": " and", "t_ms": 18886.6652, "step_ms": 294.8519, "p": 0, "margin": 7.99406052, "nucleus": 0, "hit": 0.916666667, "host_s": 87.3384}
+{"event": "token", "id": 436, "text": " it", "t_ms": 19060.908, "step_ms": 173.8559, "p": 0, "margin": 12.9639816, "nucleus": 0, "hit": 0.945833333, "host_s": 87.5125}
+{"event": "token", "id": 515, "text": " was", "t_ms": 19267.4289, "step_ms": 206.128, "p": 0, "margin": 17.0054417, "nucleus": 0, "hit": 0.925, "host_s": 87.7175}
+{"event": "token", "id": 13313, "text": " supposed", "t_ms": 19489.1937, "step_ms": 220.9425, "p": 0, "margin": 1.15777206, "nucleus": 0, "hit": 0.908333333, "host_s": 87.9404}
+{"event": "token", "id": 304, "text": " to", "t_ms": 19730.5396, "step_ms": 240.9801, "p": 0, "margin": 19.453577, "nucleus": 0, "hit": 0.8875, "host_s": 88.1793}
+{"event": "token", "id": 366, "text": " be", "t_ms": 19911.643, "step_ms": 180.7047, "p": 0, "margin": 19.3505936, "nucleus": 0, "hit": 0.9375, "host_s": 88.3588}
+{"event": "token", "id": 66325, "text": " dismant", "t_ms": 20106.089, "step_ms": 194.0292, "p": 0, "margin": 9.69158936, "nucleus": 0, "hit": 0.925, "host_s": 88.5575}
+{"event": "token", "id": 1610, "text": "led", "t_ms": 20483.2525, "step_ms": 376.591, "p": 0, "margin": 23.5867271, "nucleus": 0, "hit": 0.820833333, "host_s": 88.9348}
+{"event": "token", "id": 1561, "text": " after", "t_ms": 20858.711, "step_ms": 375.0186, "p": 0, "margin": 19.1565475, "nucleus": 0, "hit": 0.808333333, "host_s": 89.3098}
+{"event": "token", "id": 223, "text": " ", "t_ms": 21190.7548, "step_ms": 331.6111, "p": 0, "margin": 23.1459122, "nucleus": 0, "hit": 0.845833333, "host_s": 89.6405}
+{"event": "token", "id": 397, "text": "20", "t_ms": 21580.4868, "step_ms": 389.0151, "p": 0, "margin": 18.9026985, "nucleus": 0, "hit": 0.825, "host_s": 90.0313}
+{"event": "token", "id": 1737, "text": " years", "t_ms": 21937.3115, "step_ms": 356.3986, "p": 0, "margin": 20.639904, "nucleus": 0, "hit": 0.85, "host_s": 90.3874}
+{"event": "token", "id": 965, "text": "—", "t_ms": 22251.1203, "step_ms": 313.4074, "p": 0, "margin": 1.50180817, "nucleus": 0, "hit": 0.858333333, "host_s": 90.6979}
+{"event": "token", "id": 5887, "text": "but", "t_ms": 22543.3141, "step_ms": 291.7853, "p": 0, "margin": 6.75339508, "nucleus": 0, "hit": 0.866666667, "host_s": 90.9923}
+{"event": "token", "id": 436, "text": " it", "t_ms": 22800.6438, "step_ms": 256.9191, "p": 0, "margin": 14.9693565, "nucleus": 0, "hit": 0.8875, "host_s": 91.2518}
+{"event": "token", "id": 515, "text": " was", "t_ms": 22989.1723, "step_ms": 188.1084, "p": 0, "margin": 1.55763626, "nucleus": 0, "hit": 0.929166667, "host_s": 91.435}
+{"event": "token", "id": 16141, "text": " saved", "t_ms": 23207.2373, "step_ms": 217.6246, "p": 0, "margin": 6.12469101, "nucleus": 0, "hit": 0.920833333, "host_s": 91.6586}
+{"event": "token", "id": 1754, "text": " because", "t_ms": 23541.033, "step_ms": 333.3176, "p": 0, "margin": 11.472084, "nucleus": 0, "hit": 0.833333333, "host_s": 91.9924}
+{"event": "token", "id": 436, "text": " it", "t_ms": 23882.8139, "step_ms": 341.37, "p": 0, "margin": 2.7776413, "nucleus": 0, "hit": 0.9, "host_s": 92.3348}
+{"event": "token", "id": 16477, "text": " proved", "t_ms": 24183.4689, "step_ms": 299.9596, "p": 0, "margin": 15.4732933, "nucleus": 0, "hit": 0.920833333, "host_s": 92.6303}
+{"event": "token", "id": 6923, "text": " useful", "t_ms": 24539.8527, "step_ms": 355.9184, "p": 0, "margin": 8.41894913, "nucleus": 0, "hit": 0.85, "host_s": 92.9891}
+{"event": "token", "id": 412, "text": " as", "t_ms": 24786.6352, "step_ms": 246.3727, "p": 0, "margin": 3.76343155, "nucleus": 0, "hit": 0.904166667, "host_s": 93.2369}
+{"event": "token", "id": 260, "text": " a", "t_ms": 24989.9702, "step_ms": 202.9609, "p": 0, "margin": 22.5378876, "nucleus": 0, "hit": 0.925, "host_s": 93.4404}
+{"event": "token", "id": 10600, "text": " radio", "t_ms": 25144.4389, "step_ms": 154.0287, "p": 0, "margin": 1.5719986, "nucleus": 0, "hit": 0.958333333, "host_s": 93.5961}
+{"event": "token", "id": 29831, "text": " antenna", "t_ms": 25553.8732, "step_ms": 409.0034, "p": 0, "margin": 5.90544128, "nucleus": 0, "hit": 0.758333333, "host_s": 94.0032}
+{"event": "token", "id": 16, "text": ".", "t_ms": 25773.1047, "step_ms": 218.7874, "p": 0, "margin": 4.15671539, "nucleus": 0, "hit": 0.9, "host_s": 94.2248}
+{"event": "token", "id": 1, "text": "", "t_ms": 25983.8889, "step_ms": 210.3598, "p": 0, "margin": 12.1151772, "nucleus": 0, "hit": 0.908333333, "host_s": 94.4283}
+{"event": "done", "session": "default", "prompt_tokens": 104, "reused_tokens": 80, "prefill_tokens": 24, "generated": 67, "prefill_mode": "decode", "finish": "stop", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 7678.1945, "prefill_tok_s": 3.12573483, "ttft_ms": 7678.1976, "decode_ms": 18305.7237, "decode_steps": 66, "tok_s": 3.60542971, "total_ms": 25983.9193, "prefill_hit_rate": 0.810243056, "decode_hit_rate": 0.860479798, "prefill_nvme_mb": 20558.0534, "decode_nvme_mb": 41567.5187, "per_token_ms": {"attn": 47.0317539, "moe_gpu": 54.3207676, "moe_host": 1.29560909, "nvme_stall": 161.329145, "engram": 5.26603394, "tail": 6.43362242, "other": 1.24318576, "record": 0.831, "submit": 4.06020909, "bind": 0.936351515, "fence_wait": 103.477685, "submits": 63.8030303, "sample_host": 0}, "sampled_steps": 0, "topk_fallbacks": 0, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 0, "context": 170, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "host_s": 94.4361}
+{"event": "text", "text": "The capital of France is **Paris**. One interesting fact about it is that the **Eiffel Tower was originally intended to be a temporary structure** built for the 1889 World's Fair, and it was supposed to be dismantled after 20 years—but it was saved because it proved useful as a radio antenna.<｜end▁of▁sentence｜>", "host_s": 94.4361}
+{"event": "tokens", "ids": [128803, 38785, 59054, 9090, 17542, 743, 21134, 320, 128804, 128822], "host_s": 94.4361}
+{"event": "prefill", "done": 11, "total": 11, "host_s": 97.5035}
+{"event": "token", "id": 102240, "text": "法国的", "t_ms": 3068.9714, "step_ms": 146.3308, "p": 0, "margin": 6.69079018, "nucleus": 0, "hit": 0, "host_s": 97.5035}
+{"event": "token", "id": 2793, "text": "首", "t_ms": 3396.9168, "step_ms": 327.5339, "p": 0, "margin": 11.7234039, "nucleus": 0, "hit": 0.808333333, "host_s": 97.8352}
+{"event": "token", "id": 3139, "text": "都是", "t_ms": 3677.1797, "step_ms": 279.8543, "p": 0, "margin": 14.9206772, "nucleus": 0, "hit": 0.85, "host_s": 98.1145}
+{"event": "token", "id": 666, "text": "**", "t_ms": 3866.2098, "step_ms": 188.6201, "p": 0, "margin": 29.9699097, "nucleus": 0, "hit": 0.920833333, "host_s": 98.3029}
+{"event": "token", "id": 33870, "text": "巴黎", "t_ms": 4028.5977, "step_ms": 161.9683, "p": 0, "margin": 22.8588371, "nucleus": 0, "hit": 0.95, "host_s": 98.463}
+{"event": "token", "id": 666, "text": "**", "t_ms": 4255.8015, "step_ms": 226.7924, "p": 0, "margin": 23.2390976, "nucleus": 0, "hit": 0.891666667, "host_s": 98.6918}
+{"event": "token", "id": 320, "text": "。", "t_ms": 4560.0098, "step_ms": 303.8661, "p": 0, "margin": 20.040657, "nucleus": 0, "hit": 0.908333333, "host_s": 98.9976}
+{"event": "token", "id": 5149, "text": "关于", "t_ms": 4761.3848, "step_ms": 201.007, "p": 0, "margin": 8.04935837, "nucleus": 0, "hit": 0.908333333, "host_s": 99.1983}
+{"event": "token", "id": 8301, "text": "它的", "t_ms": 5011.3453, "step_ms": 249.5807, "p": 0, "margin": 3.27813339, "nucleus": 0, "hit": 0.870833333, "host_s": 99.447}
+{"event": "token", "id": 1057, "text": "一个", "t_ms": 5262.4441, "step_ms": 250.7155, "p": 0, "margin": 11.3658562, "nucleus": 0, "hit": 0.875, "host_s": 99.6958}
+{"event": "token", "id": 24982, "text": "有趣", "t_ms": 5460.2438, "step_ms": 197.3885, "p": 0, "margin": 12.4758034, "nucleus": 0, "hit": 0.9125, "host_s": 99.8964}
+{"event": "token", "id": 10897, "text": "事实", "t_ms": 5685.0651, "step_ms": 224.3954, "p": 0, "margin": 5.95214844, "nucleus": 0, "hit": 0.895833333, "host_s": 100.1173}
+{"event": "token", "id": 389, "text": "是", "t_ms": 5917.4777, "step_ms": 232.0097, "p": 0, "margin": 30.0256653, "nucleus": 0, "hit": 0.8875, "host_s": 100.354}
+{"event": "token", "id": 768, "text": "：", "t_ms": 6061.6146, "step_ms": 143.7255, "p": 0, "margin": 6.69312286, "nucleus": 0, "hit": 0.9625, "host_s": 100.4965}
+{"event": "token", "id": 666, "text": "**", "t_ms": 6273.6549, "step_ms": 211.6179, "p": 0, "margin": 29.9003334, "nucleus": 0, "hit": 0.908333333, "host_s": 100.7116}
+{"event": "token", "id": 15839, "text": "埃", "t_ms": 6416.5119, "step_ms": 142.4718, "p": 0, "margin": 25.6552887, "nucleus": 0, "hit": 0.966666667, "host_s": 100.8542}
+{"event": "token", "id": 121835, "text": "菲尔", "t_ms": 6672.0223, "step_ms": 255.08, "p": 0, "margin": 17.5192986, "nucleus": 0, "hit": 0.883333333, "host_s": 101.11}
+{"event": "token", "id": 4887, "text": "铁", "t_ms": 6878.2215, "step_ms": 205.7733, "p": 0, "margin": 26.4144115, "nucleus": 0, "hit": 0.9125, "host_s": 101.312}
+{"event": "token", "id": 8414, "text": "塔", "t_ms": 7103.5161, "step_ms": 224.9048, "p": 0, "margin": 18.1136208, "nucleus": 0, "hit": 0.891666667, "host_s": 101.5329}
+{"event": "token", "id": 22848, "text": "最初", "t_ms": 7276.0114, "step_ms": 172.0917, "p": 0, "margin": 2.88772964, "nucleus": 0, "hit": 0.9375, "host_s": 101.7145}
+{"event": "token", "id": 4417, "text": "只是", "t_ms": 7488.5498, "step_ms": 212.1233, "p": 0, "margin": 1.27384949, "nucleus": 0, "hit": 0.904166667, "host_s": 101.9186}
+{"event": "token", "id": 545, "text": "为", "t_ms": 7729.5563, "step_ms": 240.5351, "p": 0, "margin": 8.07891464, "nucleus": 0, "hit": 0.879166667, "host_s": 102.1672}
+{"event": "token", "id": 6860, "text": "188", "t_ms": 7899.2166, "step_ms": 169.2273, "p": 0, "margin": 22.1782265, "nucleus": 0, "hit": 0.941666667, "host_s": 102.3366}
+{"event": "token", "id": 27, "text": "9", "t_ms": 8087.6765, "step_ms": 187.98, "p": 0, "margin": 20.1471233, "nucleus": 0, "hit": 0.925, "host_s": 102.5258}
+{"event": "token", "id": 695, "text": "年", "t_ms": 8243.7431, "step_ms": 155.689, "p": 0, "margin": 18.276165, "nucleus": 0, "hit": 0.954166667, "host_s": 102.681}
+{"event": "token", "id": 3427, "text": "世界", "t_ms": 8396.0124, "step_ms": 151.8523, "p": 0, "margin": 12.8458214, "nucleus": 0, "hit": 0.954166667, "host_s": 102.8346}
+{"event": "token", "id": 91132, "text": "博览会", "t_ms": 8578.8207, "step_ms": 182.3971, "p": 0, "margin": 17.1974297, "nucleus": 0, "hit": 0.929166667, "host_s": 103.0137}
+{"event": "token", "id": 28470, "text": "建造", "t_ms": 8775.7042, "step_ms": 196.5039, "p": 0, "margin": 3.22690582, "nucleus": 0, "hit": 0.920833333, "host_s": 103.2132}
+{"event": "token", "id": 301, "text": "的", "t_ms": 8971.2548, "step_ms": 195.1524, "p": 0, "margin": 9.24477768, "nucleus": 0, "hit": 0.916666667, "host_s": 103.4034}
+{"event": "token", "id": 20488, "text": "临时", "t_ms": 9131.9446, "step_ms": 160.2432, "p": 0, "margin": 21.0417404, "nucleus": 0, "hit": 0.95, "host_s": 103.5698}
+{"event": "token", "id": 6786, "text": "建筑", "t_ms": 9293.1015, "step_ms": 160.76, "p": 0, "margin": 17.3062286, "nucleus": 0, "hit": 0.95, "host_s": 103.7235}
+{"event": "token", "id": 666, "text": "**", "t_ms": 9580.3202, "step_ms": 286.865, "p": 0, "margin": 19.3369904, "nucleus": 0, "hit": 0.916666667, "host_s": 104.0188}
+{"event": "token", "id": 303, "text": "，", "t_ms": 9741.2034, "step_ms": 160.534, "p": 0, "margin": 18.7497005, "nucleus": 0, "hit": 0.945833333, "host_s": 104.1757}
+{"event": "token", "id": 15321, "text": "原本", "t_ms": 9919.9536, "step_ms": 178.3245, "p": 0, "margin": 4.21603394, "nucleus": 0, "hit": 0.933333333, "host_s": 104.3531}
+{"event": "token", "id": 5391, "text": "计划", "t_ms": 10087.0108, "step_ms": 166.6163, "p": 0, "margin": 5.23876953, "nucleus": 0, "hit": 0.945833333, "host_s": 104.5204}
+{"event": "token", "id": 445, "text": "在", "t_ms": 10216.8049, "step_ms": 129.3808, "p": 0, "margin": 10.5835419, "nucleus": 0, "hit": 0.975, "host_s": 104.6539}
+{"event": "token", "id": 397, "text": "20", "t_ms": 10403.7031, "step_ms": 186.4417, "p": 0, "margin": 20.7475605, "nucleus": 0, "hit": 0.929166667, "host_s": 104.8368}
+{"event": "token", "id": 40574, "text": "年后", "t_ms": 10548.0413, "step_ms": 143.909, "p": 0, "margin": 18.0117569, "nucleus": 0, "hit": 0.966666667, "host_s": 104.9856}
+{"event": "token", "id": 46133, "text": "拆除", "t_ms": 10724.5972, "step_ms": 176.0931, "p": 0, "margin": 13.5285873, "nucleus": 0, "hit": 0.941666667, "host_s": 105.1588}
+{"event": "token", "id": 2206, "text": "——", "t_ms": 10946.5415, "step_ms": 221.5495, "p": 0, "margin": 2.46459961, "nucleus": 0, "hit": 0.895833333, "host_s": 105.3799}
+{"event": "token", "id": 39946, "text": "但由于", "t_ms": 11168.581, "step_ms": 221.6107, "p": 0, "margin": 1.89471054, "nucleus": 0, "hit": 0.895833333, "host_s": 105.6026}
+{"event": "token", "id": 40341, "text": "它在", "t_ms": 11316.4248, "step_ms": 147.4347, "p": 0, "margin": 0.784492493, "nucleus": 0, "hit": 0.958333333, "host_s": 105.7533}
+{"event": "token", "id": 77747, "text": "无线电", "t_ms": 11497.0361, "step_ms": 180.1903, "p": 0, "margin": 8.88224792, "nucleus": 0, "hit": 0.929166667, "host_s": 105.9286}
+{"event": "token", "id": 61319, "text": "天线", "t_ms": 11706.2418, "step_ms": 208.7951, "p": 0, "margin": 11.4732475, "nucleus": 0, "hit": 0.904166667, "host_s": 106.1421}
+{"event": "token", "id": 3202, "text": "方面", "t_ms": 11884.2911, "step_ms": 177.6515, "p": 0, "margin": 4.83285141, "nucleus": 0, "hit": 0.929166667, "host_s": 106.3227}
+{"event": "token", "id": 68461, "text": "证明了", "t_ms": 12086.5727, "step_ms": 201.8449, "p": 0, "margin": 0.45388031, "nucleus": 0, "hit": 0.908333333, "host_s": 106.5237}
+{"event": "token", "id": 21843, "text": "实用", "t_ms": 12263.2533, "step_ms": 176.2298, "p": 0, "margin": 4.3531456, "nucleus": 0, "hit": 0.929166667, "host_s": 106.6912}
+{"event": "token", "id": 5599, "text": "价值", "t_ms": 12494.5168, "step_ms": 230.8572, "p": 0, "margin": 19.8758392, "nucleus": 0, "hit": 0.883333333, "host_s": 106.9301}
+{"event": "token", "id": 303, "text": "，", "t_ms": 12733.3659, "step_ms": 238.4287, "p": 0, "margin": 16.0937004, "nucleus": 0, "hit": 0.891666667, "host_s": 107.1675}
+{"event": "token", "id": 1787, "text": "才", "t_ms": 12890.685, "step_ms": 156.887, "p": 0, "margin": 1.38036728, "nucleus": 0, "hit": 0.95, "host_s": 107.3277}
+{"event": "token", "id": 24736, "text": "得以", "t_ms": 13119.4769, "step_ms": 228.3584, "p": 0, "margin": 10.4278183, "nucleus": 0, "hit": 0.891666667, "host_s": 107.5467}
+{"event": "token", "id": 18901, "text": "保留", "t_ms": 13313.8778, "step_ms": 193.948, "p": 0, "margin": 14.0820084, "nucleus": 0, "hit": 0.920833333, "host_s": 107.7518}
+{"event": "token", "id": 6189, "text": "下来", "t_ms": 13552.5268, "step_ms": 238.2641, "p": 0, "margin": 13.424408, "nucleus": 0, "hit": 0.891666667, "host_s": 107.9871}
+{"event": "token", "id": 320, "text": "。", "t_ms": 13771.3072, "step_ms": 218.3735, "p": 0, "margin": 16.1534271, "nucleus": 0, "hit": 0.895833333, "host_s": 108.2069}
+{"event": "token", "id": 1, "text": "", "t_ms": 13920.2092, "step_ms": 148.5002, "p": 0, "margin": 22.7303925, "nucleus": 0, "hit": 0.9625, "host_s": 108.3519}
+{"event": "done", "session": "default", "prompt_tokens": 181, "reused_tokens": 170, "prefill_tokens": 11, "generated": 55, "prefill_mode": "decode", "finish": "stop", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 3068.9673, "prefill_tok_s": 3.58426758, "ttft_ms": 3068.9714, "decode_ms": 10851.28, "decode_steps": 54, "tok_s": 4.97637145, "total_ms": 13920.2486, "prefill_hit_rate": 0.84469697, "decode_hit_rate": 0.917746914, "prefill_nvme_mb": 7711.62112, "decode_nvme_mb": 20050.2149, "per_token_ms": {"attn": 40.93736, "moe_gpu": 43.22394, "moe_host": 1.23256481, "nvme_stall": 99.546413, "engram": 4.52476074, "tail": 7.7418113, "other": 3.32923352, "record": 0.629383333, "submit": 3.3048537, "bind": 0.968412963, "fence_wait": 90.0571981, "submits": 56.4259259, "sample_host": 0}, "sampled_steps": 0, "topk_fallbacks": 0, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 0, "context": 235, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "host_s": 108.3519}
+{"event": "text", "text": "法国的首都是**巴黎**。关于它的一个有趣事实是：**埃菲尔铁塔最初只是为1889年世界博览会建造的临时建筑**，原本计划在20年后拆除——但由于它在无线电天线方面证明了实用价值，才得以保留下来。<｜end▁of▁sentence｜>", "host_s": 108.3519}
+{"event": "status", "session": "default", "context": 235, "max_context": 4096, "kv_mb": 16.044032, "kv_capacity": 4096, "store": "expert store: 5400 slots (5400 resident, 0 filling, 0 free, 0 pinned)  lookups 87120 hits 75357 (0.865)  fills 11763/11763 ok  runs 23526/23526  evictions 6363 (+0 guard-blocked)", "planner": "planner: 14520 layers, 87120 requests (75357 hits, 11763 misses, 0.865), 6363 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 7483 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped", "io": "io: 59588 req (59588 done, 0 failed, 0 cancelled), 108759 chunks, 231246969088 / 231247011840 bytes, busy 58.405 s, eff 3.96 GB/s, mean lat 35.313 ms, peak QD 8 / 32.0 MiB\n  p0_blocking    23526 req  210998.8 MiB\n  p2_engram      34848 req  140.2 MiB\n  p3_backfill     1214 req  9395.3 MiB\n", "host_s": 108.3624}

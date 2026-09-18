@@ -335,11 +335,13 @@ int cmd_serve(int argc, char** argv) {
         }
         if (op == "status") {
             emit(std::format("{{\"event\":\"status\",\"session\":{},\"context\":{},\"max_context\":{},"
-                             "\"kv_mb\":{},\"kv_capacity\":{},\"store\":{},\"planner\":{}}}",
+                             "\"kv_mb\":{},\"kv_capacity\":{},\"store\":{},\"planner\":{},"
+                             "\"io\":{}}}",
                              json_quote(pool.active()), engine.context_length(), engine.max_context(),
                              json_number(engine.kv().bytes() / 1e6), engine.kv().capacity(),
                              json_quote(engine.store().stats().to_string()),
-                             json_quote(engine.planner().stats().to_string())));
+                             json_quote(engine.planner().stats().to_string()),
+                             json_quote(engine.io().stats().to_string())));
             continue;
         }
         // Track R1 round 2 (docs/p4_hitrate.md §7): the same pass the turn

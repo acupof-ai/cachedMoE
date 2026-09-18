@@ -245,6 +245,54 @@ Result<void> Engine::load_pinned() {
 Result<void> Engine::build_expert_cache() {
     CacheConfig cache = cfg_.cache;
     cache.budget_bytes = cache_budget_;
+    // Path-A headroom, held across the pool build and handed back after it
+    // (docs/p4_hitrate.md, Track F4 §3). The slab pool fills path A until
+    // `vkAllocateMemory` refuses, so on this machine a cache of 3,600 slots or
+    // more takes *every* path-A slab -- and then the GPU prefill, which is
+    // allocated later and only from path A, cannot get its workspace:
+    //
+    //   [WRN] session: GPU prefill failed (resource-exhausted: prefill buffers
+    //   (1203765248 B): vkAllocateMemory(1203765248 B, type 2) failed (-2));
+    //   falling back to the decode path
+    //
+    // at `--cache-slots 4500`, and again for an allocation of 10,584,064 B --
+    // path A was empty, not merely short. The fallback is silent in every
+    // metric except the clock: a 4,133-token prompt took 1,070 s of decode-path
+    // prefill at 3.86 tok/s. `kPathAOther` already reserves this in the
+    // *auto* budget, but `--cache-slots` / `--cache-gb` bypass that arithmetic
+    // entirely, so the reserve has to be taken from the heap, not from a number.
+    //
+    // 4 GiB, not 2. A 2 GiB reserve is enough for a 512-token prompt at a
+    // 4,096-position context (`ho_512_*`: the GPU prefill ran, 43.7 s against
+    // 151 s on the decode path), but the same reserve with `--max-context 8192`
+    // still lost the 1.12 GiB workspace to the same refusal, so roughly another
+    // gigabyte of path A goes to whatever the larger context sizes up front.
+    // 4 GiB covers both measured cases and costs ~214 slots (~0.4 points of hit
+    // on the 8-turn curve) against an order of magnitude of TTFT.
+    //
+    // It is held in `maxMemoryAllocationSize` pieces: one 4 GiB allocation is
+    // refused outright ("4294967296 B exceeds maxMemoryAllocationSize
+    // 2147483648 B"), which is the same 2 GiB cap that made slabs exist
+    // (design §1.1 / §5.3).
+    constexpr uint64_t kPathAReserve = 4ull << 30;
+    constexpr uint64_t kReservePiece = 2ull << 30;
+    std::vector<gpu::GpuBuffer> reserve;
+    for (uint64_t held = 0; held < kPathAReserve; held += kReservePiece) {
+        auto r = alloc_a_.allocate_slab(std::min(kReservePiece, kPathAReserve - held));
+        if (!r) {
+            log_warn("engine: could only hold {} of the {} path-A reserve for the GPU "
+                     "prefill ({}); the cache will take what it can and the prefill may "
+                     "fall back to the decode path",
+                     human_bytes(held), human_bytes(kPathAReserve), r.error().str());
+            break;
+        }
+        reserve.push_back(*r);
+    }
+    struct ReserveGuard {
+        gpu::MemoryAllocator& a; std::vector<gpu::GpuBuffer>& v;
+        ~ReserveGuard() { for (gpu::GpuBuffer& b : v) a.free(b); }
+    } reserve_guard{alloc_a_, reserve};
+
     auto a = alloc_a_.make_slab_backing();
     if (!a) return std::unexpected(a.error());
     std::unique_ptr<store::SlabBacking> b;
@@ -334,7 +382,15 @@ Result<void> Engine::init_gpu() {
         // set also living there left ~64 GiB of experts and never touched B.
         constexpr uint64_t kCommitMargin = 8ull << 30;
         constexpr uint64_t kPhysFloor    = 12ull << 30;
-        constexpr uint64_t kPathAOther   = 1ull << 30;   // KV, scratch, logits, runners
+        // What else lives on path A and is allocated AFTER the cache: the KV
+        // store (16 MB at a 4,096-position context, but KvStoreConfig grows it
+        // with --max-context, and the parked-session pool holds up to `max_parked`
+        // of them), the GPU prefill's workspace, the decode scratch, the logits
+        // buffer and every pipeline's runner. 1 GiB was the P2 figure for a
+        // 4K-context decode-only run; 3 GiB is what a long context plus a GPU
+        // prefill needs, and it is the difference between "the cache took the
+        // heap" and a prefill that cannot allocate (docs/p4_hitrate.md).
+        constexpr uint64_t kPathAOther   = 3ull << 30;
         const uint64_t avail_commit = store::available_commit_bytes();
         const uint64_t avail_phys   = store::available_physical_bytes();
         std::vector<std::string> pnames = store::pinned_global_tensors(manifest_);
@@ -376,10 +432,24 @@ Result<void> Engine::init_gpu() {
         }
         // What does: a fixed ceiling on path B. Imports failed -- and took the
         // device with them -- at 33 GiB on an idle machine with 50 GB free, and
-        // at 15.8 GiB while another track's GPU test held host-heap memory.
-        // 16 GiB is under both, and puts the auto-sized cache at ~80 GiB.
-        // `--cache-gb` asks for more explicitly, and owns the risk.
-        constexpr uint64_t kPathBAutoCeiling = 16ull << 30;
+        // at 15.8 GiB while another track's GPU test held host-heap memory. The
+        // 16 GiB that was under both put the auto-sized cache at ~80 GiB
+        // (4,500 slots), and the hit-rate curve measured since then says that
+        // is 1.5-2 points of hit and ~1.5 tok/s below what this machine can
+        // hold: `--cache-slots 5,500` (96.3 GiB) ran the 8-turn script at hit
+        // 0.9431 / 6.05 tok/s against 4,500's 0.9234, and 5,600 (98.1 GiB) is
+        // where path B's 20th slab refuses (docs/p4_hitrate.md).
+        //
+        // So the ceiling is 30 GiB, which puts auto at ~92 GiB / ~5,240 slots:
+        // above the 16 GiB that the contended run survived only because the
+        // cache was small, and ~6 GiB under the measured refusal. The other
+        // three bounds above are what protect the contended case -- imported
+        // pages charge physical memory, so `avail_phys - kPhysFloor` shrinks
+        // this machine's path B whenever another track is holding host memory --
+        // and the slab pool stops and logs rather than failing if the OS
+        // refuses early. `--cache-slots` / `--cache-gb` still ask for more
+        // explicitly and own the risk.
+        constexpr uint64_t kPathBAutoCeiling = 30ull << 30;
         b_cache = std::min(b_cache, kPathBAutoCeiling);
         uint64_t want = a_cache + b_cache;
         if (avail_commit) {
@@ -761,23 +831,38 @@ Result<Engine::HeatOrder> Engine::reheat(float decay) {
     // eviction policy.
     uint32_t want = out.free_slots ? out.free_slots : std::max<uint32_t>(4, out.slots / 32);
     want = std::min(want, out.slots - warm);
+
+    // What the backfill can actually do something with: keys that are NOT in the
+    // cache. `Planner::backfill_pump` skips every resident key it is handed
+    // (`if (store_->slot_of(key)) continue;`), so an order built resident-first
+    // and then truncated to the budget -- which is what the first version did --
+    // is a list of keys the pump walks straight past. That is why the 2,200-slot
+    // A/B in docs/p4_hitrate.md §7 measured turn 3 decode hit 0.7210 against
+    // 0.7210: on a saturated cache the pass evicted `slots/32` experts and then
+    // fetched nothing, so it was a pure cost (the +32 MB/token of the §8 sweep).
+    //
+    // `StaticHeat` is the startup order (store/static_heat.inc, or a heat file
+    // from the last run); its head is the best available estimate of what a
+    // never-seen-token expert would score, and it is the only signal this
+    // process has about an expert that is not resident -- `heat` lives on the
+    // slot, so an evicted expert's heat is gone with it.
+    std::vector<ExpertKey> order;
+    order.reserve(want + out.free_slots);
+    const std::vector<ExpertKey>& heat_table =
+        heat_order_.empty() ? (heat_order_ = store::static_heat_order()) : heat_order_;
+    for (const ExpertKey& k : heat_table) {
+        if (order.size() >= size_t(want) + out.free_slots) break;
+        if (!store_.resident(k)) order.push_back(k);
+    }
+    // Never evict without a candidate to put in the hole. With no non-resident
+    // candidate left the pass is a no-op rather than a round of eviction the
+    // next turn's misses have to pay back.
+    const uint32_t have = static_cast<uint32_t>(order.size());
+    want = out.free_slots >= have ? 0 : std::min(want, have - out.free_slots);
     for (uint32_t i = 0; i < want; ++i) {
         const ExpertKey& k = heat[out.slots - 1 - i];
         if (store_.evict_key(k)) ++out.evicted;
     }
-    // The order the backfill gets is the *demand shape*: every resident slot
-    // hottest first, then the keys that are not resident at all, also hottest
-    // first. A pass that saw only residents could not fetch a hot expert that is
-    // not in the cache, which is most of what a topic switch needs.
-    std::vector<ExpertKey> order;
-    order.reserve(heat.size() + 256);
-    for (const ExpertKey& k : heat)
-        if (store_.resident(k)) order.push_back(k);
-    // `StaticHeat` is the startup order (store/static_heat.inc, or a heat file
-    // from the last run); its head is the best available estimate of what a
-    // never-seen-token expert would score.
-    for (const ExpertKey& k : store::static_heat_order())
-        if (!store_.resident(k)) order.push_back(k);
     const uint32_t budget = out.free_slots + out.evicted;
     if (order.size() > budget) order.resize(budget);
     out.passed = static_cast<uint32_t>(order.size());
@@ -1413,11 +1498,17 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     reset_context();
     bool backfill = sc.backfill;
     if (const char* e = std::getenv("DEEPMOE_BACKFILL"); e && *e) backfill = *e != '0';
-    if (backfill && store_.free_slots() > 0) {
-        std::vector<ExpertKey> order;
+    // One heat order for the whole process: the startup P3 backfill and every
+    // later reheat pass rank non-resident experts by the same table, so
+    // `DEEPMOE_HEAT_FILE` (tools/hitrate_bench.py --write-heat / --heat-recent)
+    // steers both instead of only the first fill.
+    if (heat_order_.empty()) {
         if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
-            order = store::static_heat_order(hf);
-        if (order.empty()) order = store::static_heat_order();
+            heat_order_ = store::static_heat_order(hf);
+        if (heat_order_.empty()) heat_order_ = store::static_heat_order();
+    }
+    if (backfill && store_.free_slots() > 0) {
+        std::vector<ExpertKey> order = heat_order_;
         if (auto r = planner_.start_backfill(std::move(order)); !r)
             log_warn("engine: backfill: {}", r.error().str());
         else
