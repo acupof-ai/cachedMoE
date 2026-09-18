@@ -176,8 +176,19 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     ps.lanes_per_row = spec.lanes_per_row;
     ps.rows_per_wg   = 256 / spec.lanes_per_row;
     ps.subgroup_size = spec.subgroup_size;
+    // Track K1a: constant id 10. `pc.m` is opaque to the shader compiler, so
+    // Track T's live-column mask turned all 26 column loops into dynamic-trip
+    // loops even on the decode path, where the count is always 1 -- 6.5% of the
+    // M = 1 kernel (docs/plan_p5.md §3(g) 8.7 / §3(h)). When this runner is
+    // specialised on M == 1 the count is 1 for every dispatch it can ever
+    // issue, so hand it to the pipeline as a specialisation constant and the
+    // loops fold away again. M > 1 (the verify batch) keeps the mask.
+    // DEEPMOE_MOE_STATIC_M1=0 is the A arm of the A/B; default on.
+    bool m1_default = true;
+    if (const char* e = std::getenv("DEEPMOE_MOE_STATIC_M1"); e && *e == '0') m1_default = false;
+    const uint32_t static_m = (spec.m == 1 && m1_default) ? 1u : 0u;
     ps.extra = {spec.decode_mode, spec.h_precision, spec.rows_per_lane,
-                spec.x_mode, spec.h_quant, spec.fp8_slots};
+                spec.x_mode, spec.h_quant, spec.fp8_slots, static_m};
     PipelineSpec ps_b = ps;
     ps_b.extra[3] = spec.b_mode();
 
@@ -207,6 +218,36 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         lx.push_constant_size = sizeof(XQuantPush);
         if (auto r = xquant_.create(device, shader_dir + "/moe_xquant.spv", lx, ps); !r) {
             destroy(); return r;
+        }
+    }
+
+    // Track K1a: the decode-shaped twin of the three dispatches above. The
+    // engine's runner is specialised on M = kMoeBatchMax so that one runner can
+    // also serve a verify batch, so every decode token ran the M = 6 kernel
+    // with one live column: six accumulators a lane a row of register pressure
+    // for one column of work, plus (since fb53514) a trip count the compiler
+    // cannot fold. `live_columns_ == 1` now picks a pipeline that is M = 1 all
+    // the way down. x_mode 6 is excluded because its int8 x plane offsets are
+    // M-dependent and written by moe_xquant, which would have to agree too.
+    if (spec.m > 1 && spec.x_mode != 6 && m1_default) {
+        PipelineSpec ps1 = ps;
+        ps1.m = 1;
+        ps1.extra[6] = 1;               // StaticM
+        PipelineSpec ps1_b = ps1;
+        ps1_b.extra[3] = spec.b_mode();
+        if (auto r = gateup_m1_.create(device, shader_dir + "/moe_gateup.spv", la, ps1); !r) {
+            destroy(); return r;
+        }
+        if (auto r = down_m1_.create(device, shader_dir + "/moe_down.spv", lb, ps1_b); !r) {
+            destroy(); return r;
+        }
+        if (spec.h_quant == 3) {
+            PipelineLayoutSpec lh;
+            lh.storage_buffers   = 2;
+            lh.push_constant_size = sizeof(HQuantPush);
+            if (auto r = hquant_m1_.create(device, shader_dir + "/moe_hquant.spv", lh, ps1); !r) {
+                destroy(); return r;
+            }
         }
     }
     if (auto r = descriptors_.create(device, 8, 64); !r) { destroy(); return r; }
@@ -312,6 +353,9 @@ void MoeRunner::destroy() {
     down_.destroy();
     hquant_.destroy();
     xquant_.destroy();
+    gateup_m1_.destroy();
+    down_m1_.destroy();
+    hquant_m1_.destroy();
     if (alloc_) {
         for (GpuBuffer* b : {&table_, &ids_, &list_, &routew_, &x_, &h_, &y_, &list_alt_})
             if (b->valid()) alloc_->free(*b);
@@ -324,6 +368,11 @@ void MoeRunner::destroy() {
 }
 
 Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
+    // Track K1a: one decision for the whole chain -- A, the h quantiser and B
+    // must agree on M or the fp8 h plane offsets do not line up.
+    const Pipeline& pipe_a  = use_m1() ? gateup_m1_ : gateup_;
+    const Pipeline& pipe_b  = use_m1() ? down_m1_   : down_;
+    const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter  / rows_per_wg;
     const uint32_t groups_b = dims_.hidden / rows_per_wg;
@@ -336,7 +385,7 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
     HQuantPush ph{dims_.slots, list_count_, dims_.inter};
     XQuantPush px{dims_.hidden};
     const uint32_t hq_groups =
-        (spec_.m * list_count_ * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
+        (effective_m() * list_count_ * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
     const uint32_t xq_groups =
         (spec_.m * (dims_.hidden / layout::kFp4ScaleBlock) + 255) / 256;
 
@@ -369,16 +418,16 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
                 if (auto r = cmd_.dispatch(xq_groups); !r) return r;
                 if (auto r = cmd_.barrier(); !r) return r;
             }
-            if (auto r = cmd_.bind(gateup_, set_a_); !r) return r;
-            if (auto r = cmd_.push(gateup_, &pa, sizeof(pa)); !r) return r;
+            if (auto r = cmd_.bind(pipe_a, set_a_); !r) return r;
+            if (auto r = cmd_.push(pipe_a, &pa, sizeof(pa)); !r) return r;
             if (auto r = cmd_.dispatch(groups_a, list_count_); !r) return r;
             // HQuant 3: the fp8 round trip of design §7.9 v0.6, as its own
             // dispatch, so dispatch A above is free to keep the workgroup shape
             // that is fastest for it (docs/kernel_p2_moe.md §8 item 1).
-            if (hquant_.valid()) {
+            if (pipe_hq.valid()) {
                 if (auto r = cmd_.barrier(); !r) return r;
-                if (auto r = cmd_.bind(hquant_, set_hq_); !r) return r;
-                if (auto r = cmd_.push(hquant_, &ph, sizeof(ph)); !r) return r;
+                if (auto r = cmd_.bind(pipe_hq, set_hq_); !r) return r;
+                if (auto r = cmd_.push(pipe_hq, &ph, sizeof(ph)); !r) return r;
                 if (auto r = cmd_.dispatch(hq_groups); !r) return r;
             }
             first = false;
@@ -386,8 +435,8 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
         }
         if (run_b) {
             if (!first) { if (auto r = cmd_.barrier(); !r) return r; }
-            if (auto r = cmd_.bind(down_, set_b_); !r) return r;
-            if (auto r = cmd_.push(down_, &pb, sizeof(pb)); !r) return r;
+            if (auto r = cmd_.bind(pipe_b, set_b_); !r) return r;
+            if (auto r = cmd_.push(pipe_b, &pb, sizeof(pb)); !r) return r;
             if (auto r = cmd_.dispatch(groups_b); !r) return r;
             first = false;
         }
@@ -406,6 +455,11 @@ Result<void> MoeRunner::record_into(CommandBuffer& cmd, MoePhase phase) {
     // One iteration of `record`, minus the begin/end and the timestamps. Kept
     // as a separate function rather than a flag on `record` so the measured
     // path in bench/kernel_bench is byte-for-byte what it was.
+    // Track K1a: one decision for the whole chain -- A, the h quantiser and B
+    // must agree on M or the fp8 h plane offsets do not line up.
+    const Pipeline& pipe_a  = use_m1() ? gateup_m1_ : gateup_;
+    const Pipeline& pipe_b  = use_m1() ? down_m1_   : down_;
+    const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter  / rows_per_wg;
     const uint32_t groups_b = dims_.hidden / rows_per_wg;
@@ -416,7 +470,7 @@ Result<void> MoeRunner::record_into(CommandBuffer& cmd, MoePhase phase) {
     const HQuantPush ph{dims_.slots, list_count_, dims_.inter};
     const XQuantPush px{dims_.hidden};
     const uint32_t hq_groups =
-        (spec_.m * list_count_ * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
+        (effective_m() * list_count_ * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
     const uint32_t xq_groups =
         (spec_.m * (dims_.hidden / layout::kFp4ScaleBlock) + 255) / 256;
 
@@ -427,20 +481,20 @@ Result<void> MoeRunner::record_into(CommandBuffer& cmd, MoePhase phase) {
             if (auto r = cmd.dispatch(xq_groups); !r) return r;
             if (auto r = cmd.barrier(); !r) return r;
         }
-        if (auto r = cmd.bind(gateup_, set_a_); !r) return r;
-        if (auto r = cmd.push(gateup_, &pa, sizeof(pa)); !r) return r;
+        if (auto r = cmd.bind(pipe_a, set_a_); !r) return r;
+        if (auto r = cmd.push(pipe_a, &pa, sizeof(pa)); !r) return r;
         if (auto r = cmd.dispatch(groups_a, list_count_); !r) return r;
         if (auto r = cmd.barrier(); !r) return r;
-        if (hquant_.valid()) {
-            if (auto r = cmd.bind(hquant_, set_hq_); !r) return r;
-            if (auto r = cmd.push(hquant_, &ph, sizeof(ph)); !r) return r;
+        if (pipe_hq.valid()) {
+            if (auto r = cmd.bind(pipe_hq, set_hq_); !r) return r;
+            if (auto r = cmd.push(pipe_hq, &ph, sizeof(ph)); !r) return r;
             if (auto r = cmd.dispatch(hq_groups); !r) return r;
             if (auto r = cmd.barrier(); !r) return r;
         }
     }
     if (phase != MoePhase::GateUpOnly) {
-        if (auto r = cmd.bind(down_, set_b_); !r) return r;
-        if (auto r = cmd.push(down_, &pb, sizeof(pb)); !r) return r;
+        if (auto r = cmd.bind(pipe_b, set_b_); !r) return r;
+        if (auto r = cmd.push(pipe_b, &pb, sizeof(pb)); !r) return r;
         if (auto r = cmd.dispatch(groups_b); !r) return r;
         if (auto r = cmd.barrier(); !r) return r;
     }
@@ -452,6 +506,10 @@ uint32_t* MoeRunner::slot_list_alt() { return static_cast<uint32_t*>(list_alt_.h
 Result<void> MoeRunner::record_gateup_alt(CommandBuffer& cmd, uint32_t count) {
     if (!device_ || !gateup_.valid()) return fail(Err::FailedPrecondition, "runner is not created");
     if (count == 0 || count > dims_.slots) return fail(Err::InvalidArgument, "count must be 1..slots");
+    // Track K1a: one decision for the whole chain -- A, the h quantiser and B
+    // must agree on M or the fp8 h plane offsets do not line up.
+    const Pipeline& pipe_a  = use_m1() ? gateup_m1_ : gateup_;
+    const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter / rows_per_wg;
     GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
@@ -459,7 +517,7 @@ Result<void> MoeRunner::record_gateup_alt(CommandBuffer& cmd, uint32_t count) {
     const HQuantPush ph{dims_.slots, count, dims_.inter};
     const XQuantPush px{dims_.hidden};
     const uint32_t hq_groups =
-        (spec_.m * count * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
+        (effective_m() * count * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
     const uint32_t xq_groups =
         (spec_.m * (dims_.hidden / layout::kFp4ScaleBlock) + 255) / 256;
     if (xquant_.valid()) {
@@ -468,13 +526,13 @@ Result<void> MoeRunner::record_gateup_alt(CommandBuffer& cmd, uint32_t count) {
         if (auto r = cmd.dispatch(xq_groups); !r) return r;
         if (auto r = cmd.barrier(); !r) return r;
     }
-    if (auto r = cmd.bind(gateup_, set_a_alt_); !r) return r;
-    if (auto r = cmd.push(gateup_, &pa, sizeof(pa)); !r) return r;
+    if (auto r = cmd.bind(pipe_a, set_a_alt_); !r) return r;
+    if (auto r = cmd.push(pipe_a, &pa, sizeof(pa)); !r) return r;
     if (auto r = cmd.dispatch(groups_a, count); !r) return r;
     if (auto r = cmd.barrier(); !r) return r;
-    if (hquant_.valid()) {
-        if (auto r = cmd.bind(hquant_, set_hq_alt_); !r) return r;
-        if (auto r = cmd.push(hquant_, &ph, sizeof(ph)); !r) return r;
+    if (pipe_hq.valid()) {
+        if (auto r = cmd.bind(pipe_hq, set_hq_alt_); !r) return r;
+        if (auto r = cmd.push(pipe_hq, &ph, sizeof(ph)); !r) return r;
         if (auto r = cmd.dispatch(hq_groups); !r) return r;
         if (auto r = cmd.barrier(); !r) return r;
     }

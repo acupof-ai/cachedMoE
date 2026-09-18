@@ -234,6 +234,23 @@ private:
     // and B when spec.h_quant == 3, `xquant_` quantises x before A when
     // spec.x_mode == 6. Both are tiny and both are absent otherwise.
     Pipeline       gateup_, down_, hquant_, xquant_;
+    // Track K1a: the same three pipelines specialised on M == 1 (and StaticM
+    // == 1), created only when the runner itself is specialised on M > 1 and
+    // used whenever `live_columns_ == 1`. The decode path of the engine runs on
+    // a runner created with M = kMoeBatchMax so that one MoeRunner can also
+    // serve a verify batch (runtime/moe_bridge.cpp), which meant every decode
+    // token paid the M = 6 shape: six accumulators a lane a row, an M = 6 LDS
+    // tile, and -- since fb53514 -- a push-constant trip count the shader
+    // compiler cannot fold. These are empty when spec.m == 1 (the M = 1 runner
+    // is already the specialised one) or when x_mode == 6, whose int8 x plane
+    // offsets are M-dependent and written by a separate pipeline.
+    Pipeline       gateup_m1_, down_m1_, hquant_m1_;
+    // Whether this dispatch should take them: every M-dependent buffer offset
+    // (the fp8 h plane of moe_common.slang hq_value_words, the LDS tile) is
+    // consistent only if A, the h quantiser and B agree, so it is one decision
+    // for the whole chain.
+    bool           use_m1() const { return live_columns_ == 1 && gateup_m1_.valid(); }
+    uint32_t       effective_m() const { return use_m1() ? 1u : spec_.m; }
     DescriptorPool descriptors_;
     CommandPool    pool_;
     CommandBuffer  cmd_{};

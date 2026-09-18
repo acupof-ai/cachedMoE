@@ -64,6 +64,12 @@ struct GateUpPush {
 };
 [[vk::push_constant]] GateUpPush pc;
 
+// Track K1a: the trip count of every column loop below. At M == 1 the host
+// specialises StaticM to 1 and this folds to a literal, which is what the
+// pre-fb53514 `m < M` loops were; StaticM == 0 keeps Track T's push-constant
+// mask for any M > 1 caller. See moe_common.slang's StaticM.
+#define kLiveM ((StaticM != 0u) ? StaticM : pc.m)
+
 static const uint kRowsPerWg = kWgSize / LanesPerRow;
 static const uint kWgRows    = kRowsPerWg * RowsPerLane;
 
@@ -272,21 +278,21 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         [unroll] for (uint g = 0; g < 2; ++g) {
                             const uint d1 = fp4_nibbles_to_i8x4(pw1, g);
                             const uint d3 = fp4_nibbles_to_i8x4(pw3, g);
-                            for (uint m = 0; m < pc.m; ++m) {
+                            for (uint m = 0; m < kLiveM; ++m) {
                                 const uint xw = sX[m * LanesPerRow * 8 + sublane * 8 + w * 2 + g];
                                 a1[m] = dot4add_i8packed(d1, xw, a1[m]);
                                 a3[m] = dot4add_i8packed(d3, xw, a3[m]);
                             }
                         }
                     }
-                    for (uint m = 0; m < pc.m; ++m) {
+                    for (uint m = 0; m < kLiveM; ++m) {
                         const float s = sXS[m * LanesPerRow + sublane];
                         p1[r][m] = float(a1[m]) * s;
                         p3[r][m] = float(a3[m]) * s;
                     }
                 }
                 for (uint r = 0; r < RowsPerLane; ++r)
-                    for (uint m = 0; m < pc.m; ++m) {
+                    for (uint m = 0; m < kLiveM; ++m) {
                         accGate[r][m] += ldexp(p1[r][m], e1[r] - 1);
                         accUp[r][m]   += ldexp(p3[r][m], e3[r] - 1);
                     }
@@ -305,7 +311,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                                                   float16_t(fp4_decode((pw3 >> (8 * j + 4)) & 0xFu)));
                         }
                     }
-                    for (uint m = 0; m < pc.m; ++m) {
+                    for (uint m = 0; m < kLiveM; ++m) {
                         float16_t2 xv[4];
                         read_x8_h2(m, sublane, w, xv);
                         for (uint r = 0; r < RowsPerLane; ++r) {
@@ -330,7 +336,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             d3[r][j] = fp4_decode((pw3 >> (4 * j)) & 0xFu);
                         }
                     }
-                    for (uint m = 0; m < pc.m; ++m) {
+                    for (uint m = 0; m < kLiveM; ++m) {
                         float xv[8];
                         read_x8(m, sublane, blk, w, xv);
                         [unroll] for (uint j = 0; j < 8; ++j)
@@ -342,7 +348,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 }
             }
             for (uint r = 0; r < RowsPerLane; ++r)
-                for (uint m = 0; m < pc.m; ++m) {
+                for (uint m = 0; m < kLiveM; ++m) {
                     accGate[r][m] += ldexp(p1[r][m], e1[r]);
                     accUp[r][m]   += ldexp(p3[r][m], e3[r]);
                 }
@@ -402,7 +408,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             g3[r][j] = fp4_pair_h2(pw3, j);
                         }
                     }
-                    for (uint m = 0; m < pc.m; ++m) {
+                    for (uint m = 0; m < kLiveM; ++m) {
                         const uint4 xr = X[m * (pc.k / 8) + blk * 4 + w];
                         float16_t2 xv[4];
                         [unroll] for (uint j = 0; j < 4; ++j) xv[j] = bit_cast<float16_t2>(xr[j]);
@@ -414,7 +420,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                     }
                 }
                 for (uint r = 0; r < RowsPerLane; ++r)
-                    for (uint m = 0; m < pc.m; ++m) {
+                    for (uint m = 0; m < kLiveM; ++m) {
                         p1[r][m] = float(t1[r][m].x) + float(t1[r][m].y);
                         p3[r][m] = float(t3[r][m].x) + float(t3[r][m].y);
                     }
@@ -435,7 +441,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 const uint xElems = M * pc.k;
                 const uint xBase4 = xq_value_words(xElems) / 4;   // in uint4
                 const uint xScale = xq_scale_words(xElems);
-                for (uint m = 0; m < pc.m; ++m) {
+                for (uint m = 0; m < kLiveM; ++m) {
                     const float sx = asfloat(XU[xScale + m * blocks + blk]);
                     // 32 int8 are two uint4, i.e. two global_load_dwordx4 --
                     // the same instruction count as one fp16 element group of
@@ -467,7 +473,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             q1[r][w * 2 + g] = fp4_nibbles_to_i8x4(w1q[r][w], g);
                             q3[r][w * 2 + g] = fp4_nibbles_to_i8x4(w3q[r][w], g);
                         }
-                for (uint m = 0; m < pc.m; ++m) {
+                for (uint m = 0; m < kLiveM; ++m) {
                     float xv[32];
                     [unroll] for (uint w = 0; w < 4; ++w) {
                         const uint4 xr = X[m * (pc.k / 8) + blk * 4 + w];
@@ -521,7 +527,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         }
                     }
                 }
-                for (uint m = 0; m < pc.m; ++m) {
+                for (uint m = 0; m < kLiveM; ++m) {
                     const uint4 xr = X[m * (pc.k / 8) + blk * 4 + w];
                     [unroll] for (uint j = 0; j < 8; ++j) {
                         const float xv = unpack_half(xr, j);
@@ -536,7 +542,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             // one lower than the fp4 path's.
             const int esh = ((XMode == 5 || XMode == 6) && !isFp8) ? 1 : 0;
             for (uint r = 0; r < RowsPerLane; ++r)
-                for (uint m = 0; m < pc.m; ++m) {
+                for (uint m = 0; m < kLiveM; ++m) {
                     accGate[r][m] += ldexp(p1[r][m], e1[r] - esh);
                     accUp[r][m]   += ldexp(p3[r][m], e3[r] - esh);
                 }
@@ -545,7 +551,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
 
     // --- SwiGLU, the route weight, and the write-out -------------------------
     for (uint r = 0; r < RowsPerLane; ++r) {
-        for (uint m = 0; m < pc.m; ++m) {
+        for (uint m = 0; m < kLiveM; ++m) {
             const float g = row_reduce(accGate[r][m], tid, sublane);
             const float u = row_reduce(accUp[r][m], tid, sublane);
             if (HQuant == 2) {

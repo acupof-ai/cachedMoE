@@ -192,6 +192,25 @@ uint i8_pack4(float v0, float v1, float v2, float v3, float inv) {
 // six routed FP4 experts and the fp8 shared expert.
 [vk::constant_id(9)] const uint Fp8Slots = 0;
 
+// Track K1a: the live-column count as a SPECIALISATION constant, not a push
+// constant.
+//
+// fb53514 (Track T) made every column loop `m < pc.m` so that a dispatch pays
+// only for the columns it actually computes. That is right for a verify batch
+// but it cost the decode path 6.5% (kernel_bench M=1: 0.6035 -> 0.6426
+// ms/pair, docs/plan_p5.md §3(g) 8.7), because at M == 1 the old bound was the
+// specialisation constant `M` -- a literal 1, so all 26 loops folded away --
+// and `pc.m` is opaque to the shader compiler.
+//
+// StaticM == 0 keeps the push-constant mask (any M > 1 caller, and the A arm of
+// the A/B). StaticM != 0 says "this pipeline always computes exactly StaticM
+// columns", which the host only ever sets when the runner is specialised on
+// M == 1, i.e. StaticM == 1. `kLiveM` is then a spec-constant expression and
+// the M == 1 variant gets its literal trip count back. Nothing about the
+// arithmetic changes: at M == 1 `pc.m` is 1 on every dispatch anyway, so the
+// two arms are bit-identical by construction.
+[vk::constant_id(10)] const uint StaticM = 0;
+
 static const uint  kSlotFp8Bit  = 0x80000000u;
 static const float kFp8ActMax   = 448.0f;      // inference/kernel.py fp8_max
 static const float kFp8ActMin   = 1e-4f;       // act_quant_kernel's amax floor

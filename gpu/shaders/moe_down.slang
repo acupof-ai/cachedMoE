@@ -50,6 +50,12 @@ struct DownPush {
 };
 [[vk::push_constant]] DownPush pc;
 
+// Track K1a: the trip count of every column loop below. At M == 1 the host
+// specialises StaticM to 1 and this folds to a literal, which is what the
+// pre-fb53514 `m < M` loops were; StaticM == 0 keeps Track T's push-constant
+// mask for any M > 1 caller. See moe_common.slang's StaticM.
+#define kLiveM ((StaticM != 0u) ? StaticM : pc.m)
+
 static const uint kRowsPerWg = kWgSize / LanesPerRow;
 
 groupshared float sRed[kWgSize];
@@ -297,16 +303,16 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             const uint pw = w2q[r][w];
                             [unroll] for (uint g = 0; g < 2; ++g) {
                                 const uint d = fp4_nibbles_to_i8x4(pw, g);
-                                for (uint m = 0; m < pc.m; ++m)
+                                for (uint m = 0; m < kLiveM; ++m)
                                     a[m] = dot4add_i8packed(
                                         d, sX[m * LanesPerRow * 8 + sublane * 8 + w * 2 + g], a[m]);
                             }
                         }
-                        for (uint m = 0; m < pc.m; ++m)
+                        for (uint m = 0; m < kLiveM; ++m)
                             p[r][m] = float(a[m]) * sXS[m * LanesPerRow + sublane];
                     }
                     for (uint r = 0; r < RowsPerLane; ++r)
-                        for (uint m = 0; m < pc.m; ++m) acc[r][m] += ldexp(p[r][m], e2[r] - 1);
+                        for (uint m = 0; m < kLiveM; ++m) acc[r][m] += ldexp(p[r][m], e2[r] - 1);
                 } else {
                     [unroll] for (uint w = 0; w < 4; ++w) {
                         if (XMode == 2) {
@@ -318,7 +324,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                                         float16_t(fp4_decode((pw >> (8 * j)) & 0xFu)),
                                         float16_t(fp4_decode((pw >> (8 * j + 4)) & 0xFu)));
                             }
-                            for (uint m = 0; m < pc.m; ++m) {
+                            for (uint m = 0; m < kLiveM; ++m) {
                                 float16_t2 hv[4];
                                 read_h8_h2_lds(m, sublane, w, hv);
                                 for (uint r = 0; r < RowsPerLane; ++r) {
@@ -334,7 +340,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                                 [unroll] for (uint j = 0; j < 8; ++j)
                                     d[r][j] = fp4_decode((pw >> (4 * j)) & 0xFu);
                             }
-                            for (uint m = 0; m < pc.m; ++m) {
+                            for (uint m = 0; m < kLiveM; ++m) {
                                 float hv[8];
                                 read_h8_lds(m, sublane, w, hv);
                                 [unroll] for (uint j = 0; j < 8; ++j)
@@ -343,7 +349,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         }
                     }
                     for (uint r = 0; r < RowsPerLane; ++r)
-                        for (uint m = 0; m < pc.m; ++m) acc[r][m] += ldexp(p[r][m], e2[r]);
+                        for (uint m = 0; m < kLiveM; ++m) acc[r][m] += ldexp(p[r][m], e2[r]);
                 }
             }
         }
@@ -370,7 +376,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 float hs[M];
                 for (uint j = 0; j < M; ++j) hs[j] = 1.0f;
                 if (HQuant != 0)
-                    for (uint m = 0; m < pc.m; ++m) hs[m] = h_block_scale(m, slot, blk);
+                    for (uint m = 0; m < kLiveM; ++m) hs[m] = h_block_scale(m, slot, blk);
 
                 const bool packed = (XMode == 4) && !isFp8 && HQuant == 0 && HPrecision == 0;
                 const bool asI8   = (XMode == 5) && !isFp8;
@@ -387,7 +393,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             const uint pw = w2q[r][w];
                             [unroll] for (uint j = 0; j < 4; ++j) gw[r][j] = fp4_pair_h2(pw, j);
                         }
-                        for (uint m = 0; m < pc.m; ++m) {
+                        for (uint m = 0; m < kLiveM; ++m) {
                             const uint e0 = ((m * pc.num_slots + slot) * pc.k
                                              + blk * kBlockK + w * 8) >> 1;
                             float16_t2 hv[4];
@@ -397,7 +403,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         }
                     }
                     for (uint r = 0; r < RowsPerLane; ++r)
-                        for (uint m = 0; m < pc.m; ++m)
+                        for (uint m = 0; m < kLiveM; ++m)
                             p[r][m] = float(t[r][m].x) + float(t[r][m].y);
                 } else if (asI8) {
                     uint q[RowsPerLane][8];
@@ -405,7 +411,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         [unroll] for (uint w = 0; w < 4; ++w)
                             [unroll] for (uint g = 0; g < 2; ++g)
                                 q[r][w * 2 + g] = fp4_nibbles_to_i8x4(w2q[r][w], g);
-                    for (uint m = 0; m < pc.m; ++m) {
+                    for (uint m = 0; m < kLiveM; ++m) {
                         float hv[32];
                         if (HQuant != 0) load_h_block(m, slot, blk, hv);
                         else load_h_block_raw(m * pc.num_slots + slot, blk, hv);
@@ -446,7 +452,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                                 d[r][j] = fp4_decode((pw >> (4 * j)) & 0xFu);
                         }
                     }
-                    for (uint m = 0; m < pc.m; ++m) {
+                    for (uint m = 0; m < kLiveM; ++m) {
                         float hv[8];
                         if (HQuant != 0) load_h8q(m, slot, blk, w, hs[m], hv);
                         else load_h8((m * pc.num_slots + slot) * pc.k + blk * kBlockK + w * 8, hv);
@@ -459,14 +465,14 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 // grid, in which case this is where the block scale lands.
                 const bool folded = (HQuant != 0) && !packed && !asI8;
                 for (uint r = 0; r < RowsPerLane; ++r)
-                    for (uint m = 0; m < pc.m; ++m)
+                    for (uint m = 0; m < kLiveM; ++m)
                         acc[r][m] += ldexp(folded ? (p[r][m] * hs[m]) : p[r][m], e2[r] - esh);
             }
         }
     }
 
     for (uint r = 0; r < RowsPerLane; ++r)
-        for (uint m = 0; m < pc.m; ++m) {
+        for (uint m = 0; m < kLiveM; ++m) {
             const float s = row_reduce(acc[r][m], tid, sublane);
             if (live && sublane == 0) {
                 const uint oi = m * pc.n_rows + rowBase + r;
