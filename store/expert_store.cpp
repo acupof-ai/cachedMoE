@@ -12,10 +12,12 @@ std::string ExpertStoreStats::to_string() const {
     return std::format(
         "expert store: {} slots ({} resident, {} filling, {} free, {} pinned)  "
         "lookups {} hits {} ({:.3f})  fills {}/{} ok  runs {}/{}  "
-        "evictions {} (+{} guard-blocked)",
+        "evictions {} (+{} guard-blocked)  "
+        "path A hits {} / B {} ({:.4f} A)  fills A {} / B {}",
         resident + filling + free, resident, filling, free, pinned,
         lookups, hits, hit_rate(), fills_ok, fills_started, runs_done, runs_started,
-        evictions, eviction_blocked_by_guard);
+        evictions, eviction_blocked_by_guard,
+        hits_path_a, hits_path_b, path_a_hit_share(), fills_path_a, fills_path_b);
 }
 
 Result<void> ExpertStore::init(std::unique_ptr<SlabBacking> backing,
@@ -106,6 +108,9 @@ std::optional<SlotAddress> ExpertStore::lookup(ExpertKey key, TokenIndex token) 
     ExpertSlot& s = slots_[it->second];
     s.last_use_token = token;
     ++stats_.hits;
+    // Track K1b: a demand hit's memory path, which is what decides whether the
+    // MoE kernel reads it at path-A or path-B speed.
+    if (s.slab >= path_b_first_slab_) ++stats_.hits_path_b; else ++stats_.hits_path_a;
     return SlotAddress{s.host_ptr, s.dev_addr};
 }
 
@@ -238,6 +243,8 @@ void ExpertStore::settle_locked(uint32_t slot, bool ok, TokenIndex token) {
         publish_locked(slot);
         ++stats_.resident;
         ++stats_.fills_ok;
+        // Track K1b: which path this admission landed on.
+        if (s.slab >= path_b_first_slab_) ++stats_.fills_path_b; else ++stats_.fills_path_a;
         if (s.tier == Tier::Pinned) ++stats_.pinned;
     } else {
         release_locked(slot);
@@ -419,20 +426,37 @@ std::vector<ExpertSlot> ExpertStore::evictable() const {
 
 Result<uint32_t> ExpertStore::evict_lru() {
     std::lock_guard lk(mutex_);
-    uint32_t best = UINT32_MAX;
-    TokenIndex oldest = 0;
-    for (uint32_t i = 0; i < slots_.size(); ++i) {
-        const ExpertSlot& s = slots_[i];
-        if (s.state != SlotState::Resident || s.tier == Tier::Pinned ||
-            s.guard_timeline > completed_timeline_)
-            continue;
-        // Strictly older wins, so equal stamps keep the lowest slot index --
-        // the same deterministic tie-break as the policy's sort.
-        if (best == UINT32_MAX || s.last_use_token < oldest) {
-            best = i;
-            oldest = s.last_use_token;
+    // Track K1b: one LRU scan, optionally restricted to one memory path. The
+    // slot this returns is the slot the caller's admission will occupy, so
+    // restricting the scan to path A puts new experts on path A and leaves path
+    // B holding whatever it already holds. If nothing on the preferred path is
+    // evictable the scan repeats over both paths, so the policy can never turn
+    // a working eviction into a failure.
+    const auto scan = [&](int restrict_to) {
+        uint32_t best = UINT32_MAX;
+        TokenIndex oldest = 0;
+        for (uint32_t i = 0; i < slots_.size(); ++i) {
+            const ExpertSlot& s = slots_[i];
+            if (s.state != SlotState::Resident || s.tier == Tier::Pinned ||
+                s.guard_timeline > completed_timeline_)
+                continue;
+            if (restrict_to >= 0) {
+                const bool on_b = s.slab >= path_b_first_slab_;
+                if (on_b != (restrict_to == 1)) continue;
+            }
+            // Strictly older wins, so equal stamps keep the lowest slot index --
+            // the same deterministic tie-break as the policy's sort.
+            if (best == UINT32_MAX || s.last_use_token < oldest) {
+                best = i;
+                oldest = s.last_use_token;
+            }
         }
-    }
+        return best;
+    };
+    uint32_t best = UINT32_MAX;
+    if (evict_path_ == EvictPath::PreferA)      best = scan(0);
+    else if (evict_path_ == EvictPath::PreferB) best = scan(1);
+    if (best == UINT32_MAX) best = scan(-1);
     if (best == UINT32_MAX) return fail(Err::NotFound, "no evictable slot");
     unpublish_locked(best);
     release_locked(best);

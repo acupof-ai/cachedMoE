@@ -516,6 +516,200 @@ STATUS §1 里那条 ⚠️ 挂了两条 track。这次一起量了。**它不�
 
 ---
 
+### (h) M=1 的 live-column 特化 —— 但真正的东西在它后面（Track K1a，2026-09-19）
+
+§7 第 7 项点名的是 `fb53514`：Track T 把 MoE 的 26 个列循环从 `m < M`（`M` 是特化常量，
+M=1 时是字面量 1，整圈折掉）改成 `m < pc.m`（push constant，编译器折不掉），
+`kernel_bench` 上 M=1 **+6.5% = 1.6 ms/token**。预测是热步 −1.6 ms（−1.6%），砍半 −0.8%，
+**自己够不到 ±3% 的地板**，所以判据放在 microbench（那里是 6.5%，可分辨）加热步上。
+
+做完之后热步是 **−4.7%**，不是 −1.6%。差的那一半是一个读代码才看得见的事实。
+
+#### 9.1 两件事，不是一件
+
+**(1) 把 mask 特化掉。** `moe_common.slang` 新增 `StaticM`（constant id 10），两个 shader 的
+循环上界变成 `kLiveM = StaticM ? StaticM : pc.m`。host 在 runner 本身就是 M=1 时把它置 1。
+`kernel_bench --quick --layer-cycle 8 --iters 48`，ABAB 四对，A = `DEEPMOE_MOE_STATIC_M1=0`：
+
+| 对 | A（mask） | B（特化） |
+|---|---:|---:|
+| 1 | 0.6380 ms/pair | 0.5982 |
+| 2 | 0.6755 | 0.6054 |
+| 3 | 0.6636 | 0.5993 |
+| 4 | 0.6415 | 0.6083 |
+| **均值** | **0.6547**（sd 2.7%） | **0.6028**（−7.9%） |
+
+八个格子无一交叠。B 的 0.6028 正好落在 8.7 里 `fb53514^` 的 **0.6035**——**mask 就是全部**，
+在 microbench 上。
+
+**(2) 但引擎从来没有创建过 M=1 的 pipeline。** `runtime/moe_bridge.cpp` 用
+`spec.m = kMoeBatchMax`（=6）建 runner，这样同一个 `MoeRunner` 也能跑 verify 批；
+decode 只是把 `live_columns` 设成 1。于是**每个 decode token 跑的是 M=6 的 kernel**——
+一个 lane 一行六个累加器的寄存器压力，去算一列的活。
+`fb53514` 的 mask 是让这件事**变得可以忍受**的东西，不是让它变慢的东西。
+
+`MoeRunner` 现在多带一套 M=1 特化的 gate/up + h 量化 + down，`live_columns == 1` 时取它。
+三个必须一起换：`moe_common.slang` 的 `hq_value_words` 里 fp8 h 平面的偏移是 M 的函数，
+A、量化、B 不同 M 就对不上。`x_mode 6` 因为同样的理由（int8 x 平面）排除在外。
+
+#### 9.2 A/B（热步，ABAB 三对，默认 `auto` cache）
+
+`deepmoe run --steps 1 --warm 12 --slow-prefill`，步 0，全命中；A = `DEEPMOE_MOE_STATIC_M1=0`。
+
+| 对 | A 热步 | B 热步 | A moe gpu | B moe gpu |
+|---|---:|---:|---:|---:|
+| 1 | 103.9 ms | 96.2 | 38.4 | 34.2 |
+| 2 | 99.7 | 97.9 | 37.5 | 34.5 |
+| 3 | 101.9 | 97.0 | 37.7 | 34.3 |
+| **均值** | **101.8** | **97.0（−4.7%）** | **37.87** | **34.33（−9.3%）** |
+
+A 臂的抖动：热步 sd **2.1%**、moe gpu sd **1.2%**。moe gpu 的六个格子无一交叠。
+**预测 −1.6 ms，实测 −4.8 ms**：mask 是其中的 1.6，M=6 的形状是另外的 ~3.2。
+
+顺带把 8.7 那张表改写了一格：34.33 就是 8.7 里 `--cache-gb 24` 的 **33.8**。
+也就是说 **8.7 归给"path B"的 +5.5 ms 里，有一大半其实是 M=6 的形状**——
+K1b 重新量了今天的 path B（见 (i)），是 **2.90 ms**，不是 4.6。
+
+#### 9.3 两道闸
+
+`tools/l3_ppl.py --modes off` 在 `traces/l3_64` 上 **NLL 0.630051**（逐位复现 8.4 的同一个数）；
+`suite.gpu_moe`（它本身就逐位比较 verify 批的每一列与 M=1 run——也就是这条新 pipeline）、
+`suite.decode` 8/8、`suite.decode_longctx` 全过。
+
+**GO，默认开。** `DEEPMOE_MOE_STATIC_M1=0` 是 A 臂，也是退路。
+
+---
+
+### (i) path 的放置策略 —— 假设是反的（Track K1b，2026-09-19）
+
+**假设**：`auto` 的 51 个 slab 里 17 个在 path B，而 §3 的 30 说 MoE 从 path B **读**慢 12%，
+所以应该让热工作集往 path A 迁移。预测 MoE gpu 38.4 → ~34.5、热步 −4 ms、对话 +2–3%，砍半 +1–2%。
+
+**结论**：**方向是反的，而且赢的那一边大得多**。往 path A **写**比读贵得多，
+而 decode 每 token 写 21–31 个 expert、只读它们几次。
+
+---
+
+#### 10.1 先给 path B 定今天的价（K1a 之后）
+
+热步 ABAB 三对，同 binary 同 session，`auto`（34 A + 17 B）对 `--cache-gb 24`（13 slab 全 path A）：
+
+| | 热步 | moe gpu |
+|---|---:|---:|
+| `auto` | 96.43 ms | **33.87** |
+| `--cache-gb 24` | 92.67 | **30.97** |
+| 差 | −3.76 | **−2.90（−8.6%）** |
+
+8.7 记的是 +5.5 ms，**今天是 2.90**——差的那 2.6 是 K1a 拿走的（§3(h) 9.2）。
+热步全驻留，B 槽占 17/51 = 33.3%，所以**每次 path-B 的 expert 读多花 ≈0.036 ms**。
+
+#### 10.2 命中是从哪条 path 上来的（新仪器）
+
+`ExpertStoreStats` 新增 `hits_path_a / hits_path_b / fills_path_a / fills_path_b`；
+引擎在建完 slab pool 之后把 `a_slabs()` 告诉 store（`set_path_b_first_slab`），
+path 就是 slot 的 slab 号对这个边界。4 轮对话（`y_turns.json`，5,100 槽，502 步）：
+
+**path A 命中占 0.7861**，而 path A 的槽位占 0.6667——**LRU 本来就偏向 A**。
+可动的只有剩下的 **21.4%**，而它按 10.1 的单价是 **240 × 0.214 × 0.036 = 1.85 ms/token**，
+对着一个 ~240 ms 的 token：**天花板 0.8%**，砍半 0.4%。**(ii) 的迁移拷贝就此关掉**——
+18.8 MB 一次 ≈0.087 ms，要吃掉那 1.85 ms 得每步搬 6–7 个 expert = 1.15 ms，净 +0.35%。
+
+**(iii) 也关掉**：path A 不是策略问题是堆的问题。
+`auto` 日志：`path A 62.26 GiB after 9.17 GiB pinned`，74 GiB 的 `DEVICE_LOCAL|HOST_VISIBLE`
+堆减去 pinned、`kPathAOther` 3 GiB、建池期间握住的 `kPathAReserve` 4 GiB = 34 个 slab，
+而 commit 还剩 133 GiB——**不是 commit 在卡**。要多拿 path A 只能动 F4 量过的那两个预留
+（TTFT 10.6×），而 VGM 是 §3 的 29 已经封掉的条目。
+
+#### 10.3 (i) 按原假设做：**输 5.4%**
+
+`ExpertStore::evict_lru` 加一个"先只扫某一条 path"的限制（扫不到就退回扫全部，
+所以它永远不会把一次能成功的淘汰变成失败）。`DEEPMOE_EVICT_PATH=a` = 先淘汰 path A 的，
+于是**被淘汰的那个槽就是新 expert 要住进去的槽**——新 expert 落在 path A。
+
+| 4 轮对话，三对 ABAB | `off`（全局 LRU） | `a`（新 expert 进 path A） |
+|---|---:|---:|
+| fills path A / B | 10,197 / 5,305 | **14,093 / 1,700** |
+| path A 命中占 | 0.7861 | **0.8007（+1.5 pt）** |
+| cache hit | 0.8713 | 0.8689 |
+| `expert_hit` ms/token | 42.35 | **41.71（−0.64）** |
+| `nvme_stall` ms/token | 141.38 | **145.32（+3.94）** |
+| wall ms/token | 240.11（sd 0.2%） | 244.72（**+1.9%**） |
+| 四轮 decode tok/s | 5.083 | **4.808（−5.4%）** |
+
+**89% 的 admission 进了 path A，path A 的命中占比只动了 1.5 个点**——
+因为命中主要落在长寿的常驻上，不落在刚进来的那批。
+而 stall 涨了 3.94 ms：**往 path A 写是要钱的**，这正是 Track Q2 量到的那件事——
+往 `DEVICE_LOCAL|HOST_VISIBLE` 同步 `ReadFile` 一个 4 MiB chunk 是 **704 µs**，
+往普通主机内存是 **70 µs**（内核要 probe 住再锁住 1,024 个写合并的设备映射页）。
+一次 admission 就是 18.8 MB 的这种写。
+
+#### 10.4 反过来：4 轮对话上**赢 7.0%**
+
+`DEEPMOE_EVICT_PATH=b`——先淘汰 path B 的槽，于是新 expert 落在 path B。
+
+| 4 轮对话（`y_turns.json`），三对 ABAB | `off`（全局 LRU） | `b` |
+|---|---:|---:|
+| fills path A / B | 10,197 / 5,305 | **3,400 / 11,591** |
+| path A 命中占 | 0.7861 | 0.7896 |
+| cache hit | 0.8713 | **0.8760** |
+| `expert_hit` ms/token | 41.90 | 43.69（**+1.79**） |
+| `nvme_stall` ms/token | 141.14 | **134.36（−6.78）** |
+| wall ms/token | 240.35 | 234.41（−2.5%） |
+| 四轮 decode tok/s | 5.0875 / 5.1000 / 5.0950 = **5.0942**（sd **0.06%**） | 5.4825 / 5.4575 / 5.4150 = **5.4517（+7.0%）** |
+
+六个格子无一交叠。读的那 1.79 ms 确实付了，写省下来的 6.78 ms 更大。
+砍半 +3.5%，在 ±3% 之上——**看起来该留**。
+
+#### 10.5 第二个脚本把它推翻了：**输 20.5%**
+
+`fills path A = 3,400` **正好是 path A 的槽数**。也就是说这条策略还干了第二件事：
+**path A 在冷启动被填满一次之后再也不淘汰**，它变成一个 3,400 槽的
+"第一次碰到就永远留下"的保护段，而全部 churn 挤在 path B 的 1,700 槽里。
+这和 §3 的 24 / 35（静态 pin、逐层配额，都是负的）是**同一个形状**，只是先验换成了 first-touch。
+4 轮同题对话上这个先验碰巧是好的（hit 0.8713 → 0.8760）；换一个会**换话题**的脚本就不是了。
+
+`long_turns.json`（8 轮，中英混合，逐轮换题，2,617 个 decode 步），ABAB 两对：
+
+| | `off` | `b` |
+|---|---:|---:|
+| cache hit | **0.914 / 0.917** | 0.879 / 0.879 |
+| fills path A / B | 36,309 / 17,648；34,452 / 17,377 | **3,400 / 72,702**（两次一模一样） |
+| `nvme_stall` ms/token | **96.99 / 93.48** | 130.88 / 130.91（**+35.6**） |
+| wall ms/token | **196.56 / 192.73** | 232.68 / 232.39 |
+| 逐轮 decode tok/s（均值） | 5.894 / 5.918 = **5.906** | 4.684 / 4.707 = **4.696（−20.5%）** |
+
+四个格子无一交叠。`fills path A = 3,400` 两次一字不差——**它被钉死了**。
+
+**miss 涨了 41%**（fills 53,957 → 76,102）。写便宜了没用——**要写的字节多了太多**。
+这正是 §4 那条式子：`tok/s ≈ NVMe_eff ÷ (MB per token)`，而这条策略是拿分母换分子。
+
+#### 10.6 结论
+
+**K1b 三个做法全部 NO-GO，默认保持单一全局 LRU**（`DEEPMOE_EVICT_PATH` 默认不设）。
+
+- (iii) 抬 path A：**堆在卡不是 commit 在卡**（10.2），再要就得动 F4 量过的两个预留（TTFT 10.6×）。
+- (ii) 迁移拷贝：天花板 1.85 ms/token，拷贝成本 1.15 ms，净 **+0.35%**（10.2）。
+- (i) 原假设（新 expert 进 path A）：四轮 **−5.4%**（10.3）。
+- (i) 的镜像（新 expert 进 path B）：四轮 +7.0%，八轮 **−20.5%**（10.4 / 10.5）。
+
+**留下来的是两个数，不是一个策略**：
+① path B 对 MoE 的读今天值 **0.036 ms/expert-read**（10.1，比 §3 的 30 那 12% 大，因为 K1a 之后 kernel 更快了）；
+② **往 path A 写一次 admission 比往 path B 写贵 ~6.8 ms/token**（10.3 的 +3.94 与 10.4 的 −6.78 是同一个系数的两半），
+这是 Track Q2 的 704 µs vs 70 µs 第一次在**策略**上显形，而不是在 dispatcher 上。
+②比①大一个量级。**下一次要开这一条，要的是一个"只改放置、不顺带变成 pin"的形式**——
+例如只在 path-B 的 LRU 受害者与全局 LRU 受害者的 `last_use` 相差不超过一个上界时才取前者，
+上界是新的自由度，而它必须在**两个以上的脚本**上同时为正才算数。
+
+闸（都过，但结论不靠它们）：`suite.decode` 8/8、`suite.gpu_moe`、`suite.expert_store` /
+`suite.planner` / `suite.slab`；6 次 4 轮对话 + 2 次 8 轮 + 一个 **2,048 token 的 prompt**
+（`handoff_2048.json`）**0 条错误、无 device-lost**。淘汰策略只改"挑哪个槽"不改分配，
+所以 F4 的容量边界（5,100 槽、5,500 丢设备）一个字没动。
+
+**留在树里的是仪器**：`ExpertStoreStats` 的 `hits_path_a / hits_path_b / fills_path_a /
+fills_path_b`（默认开，零成本）——**"命中从哪条 path 上来"这件事以后不用再猜**。
+
+---
+
 ### 汇总：预测表
 
 | # | 实验 | 作用在 | 预测（砍半后） | 成本 | 前置 |

@@ -338,6 +338,44 @@ Result<void> Engine::build_expert_cache() {
     if (auto r = planner_.init(store_, io_, manifest_, shards_, cache, cfg_.prefetch,
                                &profiler_); !r)
         return r;
+    // Track K1b: the store allocates through SlabBacking and cannot see which
+    // path a slab came from, so tell it where path B starts. Everything from
+    // this slab up is imported host memory, which the MoE kernel reads slower
+    // (STATUS §3 row 30).
+    store_.set_path_b_first_slab(raw->a_slabs());
+    // Track K1b: which memory path evict_lru drains first. DEFAULT OFF -- a
+    // single global LRU over both paths, which is what every measurement before
+    // K1b used and what every measurement after it still uses.
+    //
+    // Both directions were measured and both are NO-GO (plan_p5.md §3(i),
+    // STATUS §3 row 55):
+    //
+    //   `a`  the original hypothesis -- path B is 28% slower for the MoE kernel
+    //        to READ, so free path-A slots and let new experts land there. The
+    //        4-turn chat lost 5.4%: path-A hit share moved 1.5 points while
+    //        nvme_stall rose 3.9 ms, because writing an admission into
+    //        DEVICE_LOCAL|HOST_VISIBLE costs 704 us a 4 MiB ReadFile against
+    //        70 us into ordinary host memory (Track Q2).
+    //   `b`  the mirror. It won the 4-turn chat by 7.0% for exactly that reason
+    //        -- stall -6.8 ms against +1.8 ms of read -- and then lost the
+    //        8-turn script by 20.5%, because it also freezes path A: fills into
+    //        path A stop at 3,400, i.e. the slab pool's path-A slots are filled
+    //        once at cold start and never evicted again. That is a first-touch
+    //        pin of two thirds of the cache, the shape §3 rows 24/35 already
+    //        measured as negative, and a conversation that changes topic pays
+    //        for it (hit 0.914 -> 0.879).
+    //
+    // The knob stays so the next attempt starts from the measurement rather
+    // than from the hypothesis. What it would take is a placement preference
+    // that is NOT also a pin -- e.g. taking the path-B victim only while its
+    // last_use is within a bounded slack of the global LRU victim.
+    if (const char* e = std::getenv("DEEPMOE_EVICT_PATH"); e && *e) {
+        if (*e == 'a' || *e == 'A')
+            store_.set_evict_path(store::ExpertStore::EvictPath::PreferA);
+        else if (*e == 'b' || *e == 'B')
+            store_.set_evict_path(store::ExpertStore::EvictPath::PreferB);
+        log_info("engine: evict path preference '{}'", e);
+    }
     log_info("engine: expert cache {} slots, {} ({} slabs on path A, {} on path B)",
              store_.slot_count(), human_bytes(store_.capacity_bytes()),
              raw->a_slabs(), raw->b_slabs());

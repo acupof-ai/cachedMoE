@@ -86,8 +86,20 @@ struct ExpertStoreStats {
     uint64_t runs_started = 0, runs_done = 0;
     uint64_t evictions = 0, eviction_blocked_by_guard = 0;
     uint32_t resident = 0, filling = 0, free = 0, pinned = 0;
+    // Track K1b: which memory path a demand hit was served from. The slab pool
+    // fills path A (DEVICE_LOCAL|HOST_VISIBLE) until vkAllocateMemory refuses
+    // and then continues on path B (imported host pages), so a slot's path is
+    // just its slab index against the A/B boundary. The MoE kernel reads path B
+    // measurably slower (STATUS §3 row 30), so the fraction of hits served from
+    // A is what any path-placement policy has to move.
+    uint64_t hits_path_a = 0, hits_path_b = 0;
+    uint64_t fills_path_a = 0, fills_path_b = 0;
 
     double hit_rate() const { return lookups ? static_cast<double>(hits) / lookups : 0.0; }
+    double path_a_hit_share() const {
+        const uint64_t n = hits_path_a + hits_path_b;
+        return n ? static_cast<double>(hits_path_a) / n : 0.0;
+    }
     std::string to_string() const;
 };
 
@@ -101,6 +113,27 @@ public:
 
     // `layers` includes the three DSpark blocks (design: logical layers 40..42),
     // so the pointer table covers everything the MoE kernel can address.
+    // Track K1b: the first slab that lives on path B (slab_count when the pool
+    // never left path A). Set by the engine right after the pool is built --
+    // ExpertStore allocates through SlabBacking and cannot see which path a
+    // slab came from.
+    void set_path_b_first_slab(uint32_t slab) { path_b_first_slab_ = slab; }
+    // Track K1b: which memory path evict_lru looks at FIRST. The victim's slot
+    // is what the next admission gets, so this is really an admission-placement
+    // policy: PreferA frees path-A slots, so freshly demanded experts -- the
+    // ones with the reuse, 6.8 hits an admission on the 4-turn chat -- land on
+    // the path the MoE kernel reads fastest, and path B keeps whatever
+    // long-lived set it already holds. PreferB is the mirror, and is here so
+    // the A/B has a third arm rather than a prediction. Off is a single global
+    // LRU over both paths, which is what every measurement before K1b used.
+    enum class EvictPath : uint8_t { Off = 0, PreferA, PreferB };
+    void set_evict_path(EvictPath p) { evict_path_ = p; }
+    EvictPath evict_path() const { return evict_path_; }
+    uint32_t path_b_first_slab() const { return path_b_first_slab_; }
+    bool slot_on_path_b(uint32_t slot) const {
+        return slot < slots_.size() && slots_[slot].slab >= path_b_first_slab_;
+    }
+
     Result<void> init(std::unique_ptr<SlabBacking> backing,
                       const CacheConfig& cache,
                       uint32_t layers = layout::kTotalLogicalLayers,
@@ -277,6 +310,8 @@ private:
     CacheConfig cache_{};
     uint32_t    layers_ = 0;
     uint32_t    experts_per_layer_ = 0;
+    uint32_t    path_b_first_slab_ = UINT32_MAX;   // Track K1b; UINT32_MAX = all path A
+    EvictPath   evict_path_ = EvictPath::Off;      // Track K1b
 
     std::vector<ExpertSlot> slots_;
     std::vector<uint32_t>   free_list_;
