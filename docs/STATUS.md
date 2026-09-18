@@ -173,7 +173,28 @@ slab 池会把路径 A 填到 `vkAllocateMemory` 拒绝为止，所以 **≥ 3,6
 代价两个 slab，收益：**4,133-token prompt 的 prefill 1,061.7 s → 100.0 s（10.6×），
 prefill 吞吐 3.89 → 41.3 tok/s，整格 19 min → 3 min**。
 
-Track S 的 coopmat：N=4133 **legacy 103.67 s vs coop 99.89 s，只快 3.6%**，5× 目标未达成（§3 的 32）。
+Track S 的 coopmat：N=4133 **legacy 103.67 s vs coop 99.89 s，只快 3.6%**，5× 目标未达成。
+
+**F3（`p4_prefill_speed.md` v1.0）说清楚了那 3.6% 为什么这么小，以及 5× 为什么够不着。**
+那次 coopmat 是**对的**（110 项 stage 全过），但它的 **P·V 那一段访存顺序是坏的**——
+它按 dim 索引输出、按 entry 归约，于是一个 dim tile 以 16 KiB 的步长走一遍聚合后的 KV 平面、
+**把它重读 32 遍**：13,119 ms → **3,032 ms**。另外三处同样是**网格/循环顺序**而不是算术：
+每个 coopmat GEMM 固定 2 个 token tile/workgroup（n=512 时对 `wq_b` 的 84 MB 走 16 遍）、
+mHC pre-norm **一行一个线程**（4,133 个线程，每个走 20,480 个 float）、
+gate top-6 把 n × 384 个分数经 device-mapped 映射读回主机再 `partial_sort`；
+再加上 `wo_a`——唯一还留在 tiled GEMV 上的大 linear，因为 `op_gemm` 对**分组** linear 拒绝走 coopmat 分支。
+
+修完之后 4,133 token 的 **compute 是 80.6 s = 19.5 ms/prompt token**
+（band attention 38.2 / routed expert GPU 27.1 / mHC 4.9 / shared expert 3.2 / engram 2.8 / gate+route 2.5 / 其它 1.9）。
+
+**≥ 5× 在这台机器上低于算术地板，这是一句可以据此停手的话**：replay 128 下这个 prompt 是
+**73.5 TFLOP**（光 routed expert 就 36.2），而这趟 prefill 里**任何** kernel 达到过的最好速率是
+**2.1 TFLOP/s**（shared expert，最干净的大 GEMM；routed expert 只有 1.15–1.34）。
+5 ms/prompt token = 20.7 s = **需要 3.56 TFLOP/s 持续**，是最好速率的 1.7 倍。
+所以**目标不是靠"少算"能到的**——§6 那七项去work/重叠加起来值 12–15 s。
+唯一能动速率的是把 `prefill_coopmat` stage 0 重写成
+**多 wave 经 LDS 协作一个输出 tile + 下一个 K 切片预取**（今天是一个 workgroup 一个 32-lane wave、
+tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这是 F3 的建议，也是它没做的事。**
 
 ---
 
@@ -240,6 +261,7 @@ Track S 的 coopmat：N=4133 **legacy 103.67 s vs coop 99.89 s，只快 3.6%**�
 |---|---|---|---|
 | **32** | **树采样（K=16 格）作为提速手段** | 贪心，runtime replay tokens/verify：单链 k=1..5 **1.83 / 2.59 / 2.89 / 3.33 / 3.33**；树 K=16 `eal` **1.83 / 2.50 / 2.85 / 3.33 / 3.33**。每事件 E[tokens] 在 k=5：单链 **3.93**、K=4 3.93、K=8 3.87、**K=16 3.82**、K=32 3.87。采样（温度 1）：单链 1.78/2.38/2.74/3.05/3.22，树 1.77/2.39/2.70/3.02/3.22。TPS：**贪心 −0…−4%，采样 ±1%** | **作为提速手段 NO-GO**。只保留为温度 1 的 CPU 侧无损比较器（`accept_sampling_exact`）与 confidence 计算；路径目标退回 `chain`（= 单链）。配套否掉的：`base` 候选（接受率 **1.65 vs 2.93**，试跑 6 分钟就停）；`union2`/`union4`（覆盖率升到 3.99/4.13 但选中路径**并不更好**：2.87/2.85 vs 2.93）；精确全词表归一（改变 1–13% 的事件路径但 **≤0.1 token** 的接受长度，"要 1+4K 次 66 MB 的 GEMV，不值"） |
 | **33** | **MoE 列式 dispatch（方案 A）作为 DSpark 的落地路径** | 每层 MoE（layer 0，每列 6 个不相交 expert，全驻留）：M=1 **1.786 ms/层**、M=2 3.615（2.02×）、M=4 7.484（4.19×）、M=6 **11.674（6.54×）**——**零摊薄**。verify 一层 ≈ C(M) 4.7 + MoE 11.7 ≈ **16 ms**，40 层 ≈ **640 ms**；同样 6 个 token 顺序跑 M=1 是 40 × (1.3+1.8) = **124 ms**。**列式 verify 比顺序 M=1 慢约 5×**。字节侧同样：M=6 每层读 36 × 18.8 MB ≈ 677 MB，40 层 ≈ **27 GB/batch** ≈ 3 s | 方案 A 只是正确性基线，**不是性能路径**。DSpark 的 TPS 预测应该用小 k（1–2），不是 k=5 |
+| **34b** | **verify 批的并集能省下多少 miss（F1 实测，`tools/route_union.py`）** | **u(6) = 21.6**（不是外插的 26），而并集相对热缓存省下的 miss 是 **0** | 34 的那个"有条件 GO"现在挂在一个**实测为 0** 的数上。**go/no-go 不再是未知数**：只要 decode 还是 I/O 受限的，投机就先亏。能翻盘的只有"让 decode 不再 I/O 受限"，那是容量/命中率的事。顺带记下**没测过的**：`GpuMoeBridge::record_batch_union` 没有调用者因而从未被执行；`--spec` 没接进 CLI；"同 prompt、温度 0、`--dspark` 开关输出逐 token 相同"这条判据在真模型上没跑过 |
 | **34** | **在一个 NVMe-bound 的 decode 上做投机，总体** | l3 的 M=1 是 1.28–1.33 ms/层 → 40 层 ≈ **51 ms**，但热步实测 **81.5 ms**；差的 ~30 ms 是 MoE+head，而 MoE 按需从 NVMe 取 expert。**verify 的 MoE 代价不随 M 摊薄，它随并集线性增长**——6 个 token 的并集 ≈26 expert/层。C(M) 曲线本身**过了**（M=6 最差 2.98×，判据 ≤3.06×），但 MoE(M) 没过。整体：**有条件 GO ×1.18–1.19**（confidence θ=0.5），刚过 1.15 门槛；固定 k 过不了（最好 ×1.14）；如果 head 退化成 M=1 循环（`T_draft` 42 ms）就掉到 **×1.11 = NO-GO** | `Engine::generate` 的 `speculative` 至今是 `unimplemented`。缺三个 kernel 能力（`p4_dspark_runtime.md` §2）。**投机解码在"权重读取"这一侧才有意义（§2.3 的 3.65×），但它的 MoE 并集把这个收益又吃回去了**——这是 P5 必须先关掉的那道门 |
 
 ### 3.6 其它记下来的
@@ -426,8 +448,11 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 2. **每次 expert miss 20–31 ms，真实盘时间 ~2 ms，10× 的差没有解释。**（§4）
 3. **热步只剩 ~7% 余量**（81.5 vs 地板 75.8 ms）。剩下的是结构性的：每 token 40 次 host 往返读 gate
    （~1.6 ms submit + ~2 ms fence），以及 MoE 的 `x` 每层往 host 走一趟。
-4. **prefill 是 24 ms/prompt token**，在对话里比 decode 还贵（4,133 token ≈ 100 s）。
-   Track S 的 coopmat 只买到 3.6%，5× 目标未达成。**它已经有一个 41× 的复用手段（SSD KV）没接进 `serve` 的默认路径。**
+4. **prefill 是 19.5 ms/prompt token 的 compute**（F3 实测，4,133 token = 80.6 s），
+   在对话里比 decode 还贵。**≥ 5× 的目标低于这台机器的算术地板**：73.5 TFLOP ÷ 本趟最好的
+   2.1 TFLOP/s = 35 s，而 5 ms/token 只有 20.7 s——**要 3.56 TFLOP/s 持续**。
+   唯一能动速率的是重写 `prefill_coopmat` stage 0（多 wave + LDS + 双缓冲），**未做**（§2.5）。
+   **另外它已经有一个 41× 的复用手段（SSD KV）没接进 `serve` 的默认路径。**
 5. **`Engine::generate` 的 `speculative` 是 `unimplemented`**，缺三个 kernel 能力（M=6 的 MoE、草稿链的 bf16 输入 GEMV、`accept_sampling_exact` 的四个读回）。
 6. **Track J 的接口（K-split / tiled attention，696 µs/层）没有被 runtime 采纳**，
    而且**它的 LDS 修复在真机上看不到**：attention 在 Track I 是 36.0 ms、Track Q 后是 36.9 ms，J 声称 −3.8 ms 且"已生效"。**这个矛盾未解决。**
@@ -446,7 +471,9 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 12. **没有 per-dispatch 的时间线**（本轮补上：`runtime/trace.*` + `tools/trace_timeline.py`，但**尚未在 GPU 上验证**，命令见 `plan_p5.md` §4）。
 13. **F3（prefill kernel 几何）与 F2（KV / session）都是部分工作。** F3 的四处几何修正 + `wo_a` 的 coopmat
     已合入，每个 pre-F3 几何都留了一个环境变量开关用于归因（`tests/test_gpu_prefill.cpp`），
-    但**没有新的端到端 prefill 墙钟对照**——§2.5 的 TTFT 仍是 Track L 的数。
+    它的报告与 per-op CSV 也已合入（本轮从 `p4/fin-s` 的工作树里捡回来的，**当时没提交**）。
+    但 **F3 自己的那次测量是在另一条 track 的三个 `deepmoe_tests` 同时占着 GPU/NVMe 时做的**——
+    只有 per-op 那几列可比，墙钟不可比；§2.5 的 TTFT 仍是 Track L 的数，**没有新的安静机端到端对照**。
     F2 的 KV 多 slab、`clear()` 批量化、fence 等待改成预算（不再是 120 s 死线）、`.pkv`
     字段表与三会话 park/spill 演示已合入，但 **SSD KV 前缀复用仍然不是 `serve` 的默认路径**（见 §7 的 2）。
 14. **`p4/one-pr` 合进 main 时，整个 P4 的数字没有在合并后的这棵树上重跑**——
