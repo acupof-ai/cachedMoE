@@ -207,7 +207,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 50 条）
+## 3. 试过并退掉的（编号，共 52 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -304,6 +304,8 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **49** | **dispatch 融合 / 合并 command buffer 能拿到的上限（plan_p5 §3(c1–c3)、§3(a) 的退化形）** | 热步的 per-dispatch trace（`--steps 8 --warm 8 --trace`，741 dispatch/token、41 submit，7 个稳态 token）：**span 102.07 ms = GPU busy 85.23 + gap 16.84（16.5%）**。而那 16.84 ms 的**分布不是平的**：**16.04 ms 全部坐在每层 MoE dispatch 前面**（40 × 0.40 ms，命令缓冲在 gate 处被切开的那个 host 往返），attention / ced / tail 的 **700 个 dispatch 加起来只有 0.80 ms**（层内 barrier 0.4–2.2 µs 一个，与 §3 的 27 的 0.56–0.66 µs 一致）。逐层：普通层 17 dispatch、busy 1,895 µs、层内 gap **18 µs** + MoE 前 335 µs；源层 26 dispatch、busy 2,112 µs、层内 gap **24 µs** + MoE 前 271 µs | **c1–c3 划掉，(a) 的便宜形已经在树里**。「把一层的非 MoE 链录进一个 command buffer」**是今天的实现**（§2.1，~128 → 41 submit，只在 gate 处切开）；再融合任何 dispatch 的天花板是 **0.80 ms/token = 0.8%**，四分之一个 ±3% 抖动带。剩下的 16.0 ms 只有一个机制够得着——device 侧的 gate——**而 48 把它关掉了**。trace 本身是**免费的**：带 `--trace` 102.07 ms vs 不带 102.3–106.2 ms |
 | **50** | **「读一次再发布」这一类共享读设计（plan_p5 §5.2，fleet 的 microbench (g)）** | `build/sharing_probe --buffer-mb 256 --max-groups 320 --disjoint`。**SHARED 的行是平的**：4 MiB working set 在 1 → 16 个并发 reader 上是 96.2 / 97.7 / 98.6 / 98.8 / 97.2 GB/s **每个 reader**，8 MiB 102.4 → 99.1，16 MiB 90.1 → 97.3；32 个 reader 才开始掉（92.0），80 个 83.9，320 个 31.4。DISJOINT（rawread 的切片）**同一行从 16 个 reader 起就崩**：4 MiB 91.4 / 94.3 / 93.8 / 91.6 / **59.0 / 29.7 / 20.5 / 10.2 / 5.1**——聚合带宽封顶，每个 reader 线性摊薄 | **共享是免费的（到 ~16–32 个 workgroup 为止），所以「读一次再发布」不可能赚**（`bench/results/p4pd/sharing_probe.csv`）。这一次性解释了 §3 的 10（`heads_per_wg` 1/2/4/8 = 69/100/169/288 µs）和 11（`pv_heads_per_wg=8` 120 µs vs 25）：它们慢不是因为重复读，重复读本来就不要钱。**封掉将来每一个同形状的提议** |
 | **47** | **score-aware 淘汰**（§7 第 1 项的 (a)，本项目「唯一没跑过」的淘汰策略），以及 ARC / LRU-K / LFU-decay / S3-FIFO / TinyLFU 式准入，全部放进 Track X 的时间模型（`tools/cache_evict_study.py`，4.6 GB/s、demand-only、127 种配置） | 最好的可实现形状是 **`rank = last_use + α × heat`**（α ≈ 1,600–4,800，岭很平）：全量 trace **hit 0.9073 → 0.9120 @ C=5,100**，**测试集 +2.3%**（4,500 上 +2.7%，5,711 上 +1.8%）。**把 top-16 的原始分数整个关掉只掉 0.06 pt**。`cache_sim` 的 `score-aware` 原样（按 heat 排序）**hit 0.5345 = −68%**；LRU-2 / LFU-decay **−68%**；ARC **−1.5%**；按分数拒绝准入 −0.1%…−33%。Belady 同口径 **+40%** | **NO-GO**（`p4_cache_policy.md` §12）。折半后 **+1.2%**，低于 `p4_p0_queue.md` §3 的 **±3% 抖动带**——写出来也测不出来。**§9.4 ablation #3 的证伪条件实测命中**：top-16 分数没有可用信息，Belady 的 40% 全在「未来」里。机制：细粒度 LRU **已经就是**「最早可能的下一次使用」排序（第 L 层的 expert 最早也要等 40 个 layer-step，对每个 key 是同一个常数偏移），周期结构里没有免费信息。`store/planner.cpp` 的 `ScoreAwarePolicy` 保持回退 LRU，那条 TODO 改成「不做」 |
+| **51** | **idle-window 预取，在 Q2 之后的 regime 上重算**（Track F6，`tools/idle_prefetch_sim.py`：4.6 GB/s、C=5,100、每层 1.3 ms 的 first-of-layer 斜坡、按 chunk 抢占、真 trace 的隐状态 lookahead + 两种合成降级） | 基线复现 stall **107.2 ms / 4.897 tok/s**（引擎 93–101 / 4.998–5.098，同模型内可比）。**诚实的 lookahead 全部为负**：lead=1（只能用 `pred_d2`，p=0.588）**−1.2…−1.9%**，lead=2 −3.5%，lead=3 −4.7…−5.1%。**Track X 的「盈亏平衡 precision = 1.00」被证伪**：均匀随机错误模型下平衡点是 **≈0.85**，改成真实的「近似错」形状（错的候选来自本层 top-16，而那些本来就驻留）后是 **≈0.60**——**那个 +78% 的悬崖是降级方法的性质，不是预测器的性质**。`provisional gate`（用第 L 层 pre-MoE 残差预测 L+1，买两层提前量）的**天花板**是 **+3.5%** | **NO-GO**（`p4_idle_prefetch.md` §5）。砍半后 **+1.8%**，低于 ±3% 的抖动带。**验收线从此是一个数**：两层提前量上 per-expert precision **≥ 0.77**（p=0.77 时 +9.9% raw / +5.0% 砍半），而最乐观的读数（真 post-MoE gate）只有 **0.674**。顺带订正一个 off-by-one：`route_trace.py` 的 `snapshot[L]` 是 `run_layer(L)` **之后**取的，所以在第 L 层开头能用的是 `pred_d(d+1)` 不是 `pred_dd`——搞错这一位会白拿一层提前量和一整档精度 |
+| **52** | **「MoE / attention kernel 还有带宽余量」**（Track F6 的 roofline，全部由既有数据算出，没有新测量） | MoE：4.512 GB/token ÷ `moe_gpu` 42.14 ms = **107 GB/s = UMA(216) 的 50%**，看着有 16 ms；但 `kernel_p2_moe.md` §3.5 的 M=1 最优变体是 **222.6 GB/s = 上限的 102%**（0.5912 ms/dispatch 对，7 个 FP4 槽）——**kernel 已经打满**，`MoeRunner` 单层 1.044 ms 与引擎的 1.053 几乎相等，**缺口 18.5–21.9 ms/token 全在 dispatch / 间隙**（host 侧 `submit` 只有 3.73 ms / 56.5 次）。attention/dense：逐张量加出来 **8,522.8 MB/token = 引擎 `hot_bytes` 8,522,849,728 逐字节相等**，÷ `attn` 43.51 ms = **196 GB/s = 91% of UMA**，kernel 地板（`attn_bench` P3 33.5 ms + shared expert 6.53 ms）**40.0 ms** | **attention 这条线关掉**（`p4_idle_prefetch.md` §8）：已经在 80% 之上，「提到 80%」是**更慢 5.8 ms**，打满 100% 也只有 **+1.1%（砍半）**。**MoE 那 ≥5% 是真的，但它不在 shader 里**：压到 kernel 自己的速率是 **+5.2%…+6.3%（砍半）**，这笔钱记在 §7 第 4 项（per-dispatch trace）名下 |
 
 ---
 
@@ -593,6 +595,9 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 4. ~~**per-dispatch trace 上 GPU**~~ **已完成**（Track PD，§3 的 49）。trace 在真机上工作、没有丢 stamp、开销为 0。
    拿到的数：热步 **busy 85.23 + gap 16.84 = 102.07 ms**，而 gap 的分布是 **16.04 ms 在 gate 往返、0.80 ms 在全部 700 个非 MoE dispatch 的 barrier 上**。
    **这个分布就是第 5、7 项的判决**。
+   **Track F6 的 roofline（§3 的 52）把这 16 ms 标了价**：MoE 每 token 读 4.512 GB，`moe_gpu` 42.14 ms = 107 GB/s = UMA 的 50%，而 kernel 本身 222.6 GB/s；缺口 18.5–21.9 ms/token 全在 dispatch / 间隙，与 trace 的 16.04 ms gate 往返一致。
+   **压到 kernel 速率 = +5.2%…+6.3%（砍半）**，但唯一够得着它的机制（device 侧 gate）被第 5 项关掉；剩下的路是把 gate 往返本身从 0.40 ms 压小（host 侧轮询 / 预录 MoE 命令缓冲 / 间接参数），未测。
+   **attention 这条线关掉**：dense 8,522.8 MB/token ÷ 43.51 ms = 196 GB/s = 91% of UMA，打满也只有 +1.1%（砍半）。
 5. ~~**persistent-dispatch decode**~~ **关闭**（§3 的 48 + 49）。两侧同时倒：
    合法性——`residency_probe` 说**两个 workgroup 的握手 1,000 次里第 3 次就超时**，自旋等待在这台机器上不可用（常驻上限 ~406 组，但共存不蕴含前进）；
    收益——「一张 dispatch 图」的退化形**已经是今天的实现**（41 submit，只在 gate 处切开），再融合的天花板是 **0.8 ms/token**。
@@ -607,7 +612,10 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    它是 F3 点名的、唯一能动 2.1 TFLOP/s 这个速率的改动（§2.5），但它**只动 prefill**，
    所以按 §4 的排序它排在最后——除非对话里的 prompt 变长到 prefill 压过 decode。
 
-**不做**（有编号的理由，不要再提）：BIOS VGM（§3 的 29）、lookahead 预取（23、**35**）、
+**不做**（有编号的理由，不要再提）：BIOS VGM（§3 的 29）、lookahead 预取（23、**35**、**51**——
+**48 换掉了 35 的理由**：盈亏平衡不是 precision 1.00 而是 **≈0.60**，NO-GO 的原因是
+**可用的提前量只有 2 ms/层**，诚实的 lead=1 只拿得到 `pred_d2` 的 0.588；验收线是
+**两层提前量上 precision ≥ 0.77**）、**attention / dense kernel 的带宽（49：已经 91% of UMA）**、
 **节流 P2 engram（43：−27.8%，engram 4.5 → 85.8 ms/token）**、
 **为 P0 加深队列或加大 chunk（44）**、
 CPU 分担 GEMV（25）、树采样作为提速手段（32）、静态 pin / 每层配额（24、**35**）、
