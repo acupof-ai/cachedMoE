@@ -254,6 +254,17 @@ public:
     // position below n in its residue class. A slot is only ever overwritten by
     // a later position, so this is exact.
     void resolve_ring(uint32_t n);
+    // The same arithmetic as a pure function, so a CPU test can pin it without
+    // a device: slot `s` of a `window`-slot ring, after a context of `n`
+    // tokens, holds the last position below n congruent to s, or -1 (empty)
+    // when the sequence never reached s. `resolve_ring` is this function in a
+    // loop -- ADDITIVE (Track W): the mutation audit found that nothing
+    // outside suite.kv_replay (needs-model, needs-gpu) covered it, so a
+    // one-generation shift in it was invisible to every CPU gate.
+    static constexpr int64_t ring_slot_position(uint32_t s, uint32_t n, uint32_t window) {
+        return (window == 0 || n <= s) ? -1
+                                       : int64_t(s) + int64_t((n - 1 - s) / window) * window;
+    }
     // Whether slot `position % window` holds `position` and the floor admits it.
     bool ring_holds(uint32_t position) const;
 

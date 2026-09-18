@@ -444,7 +444,11 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
 
     auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                     uint32_t groups) -> Result<void> {
+        const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer),
+                                                 trace::Cls::Attention, uint16_t(s),
+                                                 gpu::attn_stage_name(s));
         if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
+        trace::close_dispatch(tracer_, tr);
         return cmd.barrier();
     };
 
@@ -546,7 +550,10 @@ Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& s
 
     auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                     uint32_t groups) -> Result<void> {
+        const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer), trace::Cls::Ced,
+                                                 uint16_t(s), gpu::attn_stage_name(s));
         if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
+        trace::close_dispatch(tracer_, tr);
         return cmd.barrier();
     };
 
@@ -739,9 +746,12 @@ Result<void> DecodeLayer::record_close(gpu::CommandBuffer& cmd, const LayerStep&
     gpu::MhcPush mp{c.hidden_size, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
                     c.hc_sinkhorn_iters, gpu::kMhcFlagPost | gpu::kMhcFlagSkipSinkhorn,
                     static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
-    (void)st;
+    const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer), trace::Cls::Attention,
+                                            uint16_t(gpu::AttnStage::MhcClose),
+                                            gpu::attn_stage_name(gpu::AttnStage::MhcClose));
     if (auto r = runner_->record(cmd, gpu::AttnStage::MhcClose, &mp, sizeof mp, n_wg0); !r)
         return r;
+    trace::close_dispatch(tracer_, tr);
     return cmd.barrier();
 }
 

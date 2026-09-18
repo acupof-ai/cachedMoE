@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <random>
 #include <string>
@@ -401,4 +402,45 @@ DEEPMOE_TEST(gpu, kvstore_ring_snapshot_restores_the_rejected_slots) {
     }
     kv.destroy();
     alloc.shutdown();
+}
+
+// ADDITIVE (Track W): the window ring's slot -> position map.
+//
+// The mutation audit (tests/mutate.py) found this uncovered: a one-generation
+// shift in `KvStore::resolve_ring`'s arithmetic, and an off-by-one in its
+// "this slot was never reached" test, both survived every CPU gate. The only
+// thing exercising it was `suite.kv_replay`, which needs the checkpoint AND a
+// GPU -- so a replay that rebuilt the window from the wrong positions would
+// have shipped.
+//
+// The arithmetic is now a pure function (`KvStore::ring_slot_position`) that
+// `resolve_ring` calls, and this pins it against the definition: write every
+// position of a context of n tokens into slot `p % window` in order, then ask
+// what each slot holds.
+DEEPMOE_TEST(kvstore, ring_slot_positions_match_a_replayed_write_order) {
+    for (uint32_t window : {1u, 2u, 8u, 128u}) {
+        for (uint32_t n : {0u, 1u, 7u, 8u, 9u, 127u, 128u, 129u, 1000u}) {
+            // The definition: every position below n, written in order.
+            std::vector<int64_t> expect(window, -1);
+            for (uint32_t p = 0; p < n; ++p) expect[p % window] = int64_t(p);
+            for (uint32_t s = 0; s < window; ++s) {
+                const int64_t got = runtime::KvStore::ring_slot_position(s, n, window);
+                if (got != expect[s]) {
+                    _ctx.fail(__FILE__, __LINE__,
+                              std::format("window {} n {} slot {}: ring says {}, the write order "
+                                          "says {}", window, n, s, got, expect[s]));
+                    return;
+                }
+            }
+        }
+    }
+    // A slot the sequence never reached is empty, not position 0: the two
+    // states mean different things to `ring_holds` and a replay treats them
+    // differently.
+    CHECK_EQ(runtime::KvStore::ring_slot_position(5, 5, 128), int64_t(-1));
+    CHECK_EQ(runtime::KvStore::ring_slot_position(5, 6, 128), int64_t(5));
+    // The newest generation wins, and only the newest.
+    CHECK_EQ(runtime::KvStore::ring_slot_position(3, 1000, 128), int64_t(899));
+    CHECK_EQ(runtime::KvStore::ring_slot_position(0, 1000, 128), int64_t(896));
+    CHECK_EQ(runtime::KvStore::ring_slot_position(0, 0, 0), int64_t(-1));
 }

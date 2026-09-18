@@ -501,6 +501,7 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--prompt-ids")  prompt_ids_file = arg_value(argc, argv, i, a);
         else if (a == "--state")       state_dir = arg_value(argc, argv, i, a);
         else if (a == "--profile")     cfg.profile_jsonl = arg_value(argc, argv, i, a);
+        else if (a == "--trace")       cfg.trace_file = arg_value(argc, argv, i, a);
         else if (a == "--kvcache")     cfg.kvcache_dir = arg_value(argc, argv, i, a);
         else if (a == "--steps")       steps = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--teacher-force") teacher_force = true;

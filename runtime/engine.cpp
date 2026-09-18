@@ -147,6 +147,14 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
         log_info("engine: profiler -> {}", cfg_.profile_jsonl);
     }
 
+    // ADDITIVE (Track W): the per-dispatch trace. Opened before anything
+    // else touches the device so the query pool below can be sized for it.
+    if (!cfg_.trace_file.empty()) {
+        if (auto r = tracer_.open(cfg_.trace_file); !r) return r;
+        tracer_.bind_stamp(&Engine::trace_stamp, this);
+        log_info("engine: per-dispatch trace -> {}", cfg_.trace_file);
+    }
+
     if (cfg_.model_dir.empty())
         return fail(Err::InvalidArgument, "RuntimeConfig::model_dir is empty");
 
@@ -446,9 +454,20 @@ Result<void> Engine::init_gpu() {
         tok_cmd_ = *cb;
     }
     // 40 layers x (attention + MoE) x 2 stamps, two engram layers, the tail.
-    if (auto r = tsq_.create(device_, 256); !r)
+    // ADDITIVE (Track W): tracing stamps every dispatch, not every phase, so
+    // the pool grows to `suggested_pool` -- ~2,800 slots at 40 layers. A query
+    // slot is 8 bytes on the device; the untraced size is unchanged.
+    const uint32_t tsq_slots =
+        tracer_.enabled() ? trace::Tracer::suggested_pool(c.num_hidden_layers) : 256u;
+    if (auto r = tsq_.create(device_, tsq_slots); !r)
         log_warn("engine: no GPU timestamps ({}); the breakdown will be host-only",
                  r.error().str());
+
+    if (tracer_.enabled()) {
+        tracer_.set_period_ns(device_.caps().timestamp_period_ns);
+        tracer_.set_valid_bits(device_.caps().timestamp_valid_bits);
+        layer_.set_tracer(&tracer_);
+    }
 
     build_ced_plan();
     timings_.assign(c.num_hidden_layers, LayerTiming{});
@@ -604,6 +623,10 @@ void Engine::shutdown() {
     // Everything that holds memory from an allocator has to let go before the
     // allocator does, and the allocators before the device.
     if (route_dump_) { std::fclose(route_dump_); route_dump_ = nullptr; }
+    // ADDITIVE (Track W): the trace's name table and record count are written
+    // on close, so a process that never closes leaves an unreadable file.
+    layer_.set_tracer(nullptr);
+    tracer_.close();
     // A P3 backfill writes into slab memory from the I/O threads: stop issuing
     // and let what is in flight land before the slabs go back.
     planner_.stop_backfill();
@@ -852,6 +875,7 @@ Result<void> Engine::cmd_submit(TimelineValue wait_value) {
     if (open_guard_) { inflight_guard_ = open_guard_; open_guard_ = 0; }
     sub_ms_ += ms_since(t0);
     ++submits_;
+    tracer_.note_submit();
     return {};
 }
 
@@ -871,6 +895,7 @@ void Engine::read_timestamps(DecodeStepResult& res) {
     if (tsq_.count() == 0 || tsq_used_ == 0) return;
     auto raw = tsq_.read_range(0, tsq_used_);
     if (!raw) return;
+    tracer_.token_end(raw->data(), tsq_used_, 0);
     const uint32_t bits = device_.caps().timestamp_valid_bits;
     const uint64_t mask = bits >= 64 ? ~0ull : ((1ull << bits) - 1);
     const double   ns   = device_.caps().timestamp_period_ns;
@@ -963,7 +988,12 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         }
         ts_engram_[L].begin = cmd_stamp();
         const DeviceAddress in = apply_post ? b.xout.addr : b.x.addr;
+        // One record, not two: the gemv and the gate are dispatched inside
+        // EngramRunner::record, which Track W does not own.
+        const uint32_t tr_eg = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Engram, 0,
+                                                    "engram_gemv+gate");
         if (auto r = engram_.record(tok_cmd_, L, in, b.x.addr); !r) return r;
+        trace::close_dispatch(&tracer_, tr_eg);
         ts_engram_[L].end = cmd_stamp();
         apply_post = false;
         st.apply_hc_post = false;
@@ -1077,8 +1107,11 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
                 if (auto r = cmd_open(); !r) return r;
                 const TimePoint r0 = Clock::now();
                 ts_moe_early_[L].begin = cmd_stamp();
+                const uint32_t tr_me = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe,
+                                                            0, "moe_gateup_early");
                 if (auto r = moe_.record_gateup(tok_cmd_, std::span<const uint32_t>(early, n_early)); !r)
                     return r;
+                trace::close_dispatch(&tracer_, tr_me);
                 ts_moe_early_[L].end = cmd_stamp();
                 rec_ms_ += ms_since(r0);
                 if (auto r = cmd_submit(0); !r) return r;
@@ -1145,11 +1178,21 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
         const TimePoint r0 = Clock::now();
         ts_moe_[L].begin = cmd_stamp();
         if (split) {
+            const uint32_t tr_a = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 1,
+                                                       "moe_gateup");
             if (auto r = moe_.record_gateup(tok_cmd_, std::span<const uint32_t>(late, n_late)); !r)
                 return r;
+            trace::close_dispatch(&tracer_, tr_a);
+            const uint32_t tr_b = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 2,
+                                                       "moe_down");
             if (auto r = moe_.record_down(tok_cmd_); !r) return r;
-        } else if (auto r = moe_.record(tok_cmd_); !r) {
-            return r;
+            trace::close_dispatch(&tracer_, tr_b);
+        } else {
+            // gate/up, h-quant and down, all recorded inside MoeBridge::record.
+            const uint32_t tr_m = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 3,
+                                                       "moe_gateup+hquant+down");
+            if (auto r = moe_.record(tok_cmd_); !r) return r;
+            trace::close_dispatch(&tracer_, tr_m);
         }
         ts_moe_[L].end = cmd_stamp();
         rec_ms_ += ms_since(r0);
@@ -1208,8 +1251,20 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     ts_tail_.begin = cmd_stamp();
     auto rec = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                    uint32_t groups) -> Result<void> {
+        const uint32_t tr = trace::open_dispatch(&tracer_, trace::kNoLayer, trace::Cls::Tail,
+                                                 uint16_t(s), gpu::attn_stage_name(s));
         if (auto r = attn_.record(tok_cmd_, s, push, bytes, groups); !r) return r;
+        trace::close_dispatch(&tracer_, tr);
         return tok_cmd_.barrier();
+    };
+    auto rec_dec = [&](gpu::DecodeStage s, const void* push, uint32_t bytes,
+                       uint32_t groups) -> Result<void> {
+        const uint32_t tr = trace::open_dispatch(&tracer_, trace::kNoLayer, trace::Cls::Tail,
+                                                 uint16_t(0x100u + uint32_t(s)),
+                                                 gpu::decode_stage_name(s));
+        if (auto r = dec_.record(tok_cmd_, s, push, bytes, groups); !r) return r;
+        trace::close_dispatch(&tracer_, tr);
+        return {};
     };
     if (auto r = rec(gpu::AttnStage::MhcClose, &mp, sizeof mp, n_wg0); !r)
         return std::unexpected(r.error());
@@ -1218,7 +1273,7 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
     if (auto r = rec(gpu::AttnStage::Head, &hp, sizeof hp,
                      attn_.gemv_groups(gpu::AttnStage::Head, c.vocab_size)); !r)
         return std::unexpected(r.error());
-    if (auto r = dec_.record(tok_cmd_, gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
+    if (auto r = rec_dec(gpu::DecodeStage::Argmax, &hp, sizeof hp, 1); !r)
         return std::unexpected(r.error());
     // Track P: a sampled step also reduces the logits to their top set and the
     // tail mass (gpu/shaders/sample_topk.slang), in the same buffer.
@@ -1231,7 +1286,7 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
         gpu::TopKPush kp{c.vocab_size, kTopKDefaultK, 1.0f / sampling_.temperature,
                          kTopKBinsPerLogit};
         if (auto r = tok_cmd_.barrier(); !r) return std::unexpected(r.error());
-        if (auto r = dec_.record(tok_cmd_, gpu::DecodeStage::SampleTopK, &kp, sizeof kp, 1); !r)
+        if (auto r = rec_dec(gpu::DecodeStage::SampleTopK, &kp, sizeof kp, 1); !r)
             return std::unexpected(r.error());
     }
     ts_tail_.end = cmd_stamp();
@@ -1571,6 +1626,7 @@ Result<DecodeStepResult> Engine::decode_step(uint32_t in_token, uint32_t positio
     const TextConfig& c = model_cfg_.text;
 
     profiler_.token_begin(position);
+    tracer_.token_begin(position);
     const TimePoint t_start = Clock::now();
 
     if (history_.size() <= position) history_.resize(position + 1, 0);
