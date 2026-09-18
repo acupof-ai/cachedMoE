@@ -1,0 +1,32 @@
+{
+ "generator": "tools/quant2_l3.py",
+ "variant": "fp4",
+ "started": "2026-09-18 01:10:15",
+ "ended": "2026-09-18 01:35:00",
+ "seconds": 1485.7,
+ "experts_requantised": 0,
+ "scale_steps": [
+  -3.0,
+  -2.0,
+  -1.0,
+  0.0,
+  1.0,
+  2.0,
+  3.0
+ ],
+ "passes": {
+  "l3_64": {
+   "tag": "l3_64",
+   "n": 64,
+   "seconds": 388.1,
+   "logits": "C:/Users/Asus/AppData/Local/Temp/claude/C--Users-Asus-code-deepmoe/44cbc966-fff4-4ace-b0aa-5c2e21f8cd2e/scratchpad/quant2_logits\\logits_fp4_l3_64.npy"
+  },
+  "corpus2k": {
+   "tag": "corpus2k",
+   "n": 2048,
+   "seconds": 1079.2,
+   "logits": "C:/Users/Asus/AppData/Local/Temp/claude/C--Users-Asus-code-deepmoe/44cbc966-fff4-4ace-b0aa-5c2e21f8cd2e/scratchpad/quant2_logits\\logits_fp4_corpus2k.npy"
+  }
+ },
+ "compare": {}
+}
