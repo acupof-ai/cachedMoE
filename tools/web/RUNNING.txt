@@ -3,23 +3,42 @@ deepMoE web UI —— 正在运行的实例
 
 打开： http://127.0.0.1:8080/
 
+镜像（第二个读源）：**关**。Track D3（docs/p4_dual_source.md §7、STATUS §3 的 59）
+判了 NO-GO —— 带 `--mirror E:\...` 时引擎**连初始化都过不去**
+（`pinned load of 'norm.weight': overlapped read failed`，win32 1117 = ERROR_IO_DEVICE）。
+所以下面的命令**不带 `--mirror`**，和 main 的默认行为逐字相同。
+
 启动命令（已用 Start-Process 脱离本会话，关掉终端也不会停）：
 
   $env:DEEPMOE_MODEL_DIR = 'D:\models\DeepSeek-V4.1-Flash'
   Start-Process -FilePath C:\Users\Asus\code\deepmoe\.venv\Scripts\python.exe `
-    -ArgumentList C:\Users\Asus\code\deepmoe-web\tools\web\server.py,
+    -ArgumentList C:\Users\Asus\code\deepmoe\tools\web\server.py,
                   --exe,C:\Users\Asus\code\deepmoe\build\deepmoe.exe,
-                  --max-context,524280,--port,8080,
+                  --max-context,524280,--port,8080,--cache-slots,5000,
                   --log,C:\Users\Asus\code\deepmoe\build\web_serve.log `
-    -WorkingDirectory C:\Users\Asus\code\deepmoe-web -WindowStyle Hidden `
+    -WorkingDirectory C:\Users\Asus\code\deepmoe -WindowStyle Hidden `
     -RedirectStandardOutput C:\Users\Asus\code\deepmoe\build\web_ui.out `
     -RedirectStandardError  C:\Users\Asus\code\deepmoe\build\web_ui.err
 
+⚠️ `--cache-slots 5000` 是**必须的，不是调优**。不给它就是 `auto` = 5,100 槽，
+而 5,100 今天在这台机器上**第一个 decode submit 就死**
+（`vkQueueSubmit2 failed (-2)` = VK_ERROR_OUT_OF_DEVICE_MEMORY，slab 布局 34 A + 17 B）。
+5,000 槽是 34 A + 16 B，干净。见 STATUS §1「cache 容量上限」与 §3 的 59。
+（上一版 RUNNING.txt 的命令没有这一项——它是在 `auto` 还能起来的时候写的。）
+
 PID
 ---
-  server.py 启动器 (python.exe)  45144
-  server.py 实际解释器          45292
-  deepmoe serve                 43564
+  server.py 启动器 (.venv python.exe)   46232
+  server.py 实际解释器 (Python312)       2500
+  deepmoe serve                         27044
+
+状态
+----
+  引擎就绪      12.7 s
+  专家缓存      87.6 GiB / 5000 slots
+  max_context   524280（满载 live KV ≈ 1.56 GiB）
+  读源          1 个（D: 单盘）；`status.json` 的 io 段没有 src[] 行 = 镜像确实是关的
+  /api/status   已验证返回 200
 
 日志
 ----
@@ -27,17 +46,26 @@ PID
   C:\Users\Asus\code\deepmoe\build\web_ui.err     server.py 的 stderr
   C:\Users\Asus\code\deepmoe\build\web_serve.log  引擎的 stderr（专家缓存 / IO / 路由日志）
 
-配置
-----
-  --max-context 524280   引擎硬上限（= kMaxIndexPositions，见 README.md）
-  专家缓存               auto = 89.3 GiB / 5100 slots
-  引擎就绪               73.9 s
-  .pkv 前缀 KV 缓存      serve 默认目录
-    %LOCALAPPDATA%\deepmoe\kv\D__models_DeepSeek-V4.1-Flash
+.pkv 前缀 KV 缓存
+-----------------
+  目录  %LOCALAPPDATA%\deepmoe\kv\D__models_DeepSeek-V4.1-Flash
+
+  ⚠️ **重启前先清空这个目录。** 默认 cache 大小下 path A 会被 expert cache 占满
+  （`slab pool: path A full after 34 slabs`），此时 `.pkv` 恢复拿不到显存：
+
+      serve: kv-disk restore failed: internal: vkQueueSubmit2 failed (-2)
+
+  而这个错误**不是降级成 warning，是直接杀掉那一轮对话**（抛进 tools/chat.py:186）。
+  一行绕开：
+
+      Remove-Item "$env:LOCALAPPDATA\deepmoe\kv\D__models_DeepSeek-V4.1-Flash\*.pkv"
+
+  本次启动前该目录已清空，所以当前实例不受影响；**下一次重启会踩到**。
+  修它的前提见 STATUS §7 第 2 项（恢复失败要降级成冷启动 warning）。
 
 停止
 ----
-  Get-Process -Id 45144,45292,43564 | Stop-Process -Force
+  Get-Process -Id 46232,2500,27044 | Stop-Process -Force
 
 注意：同一时刻只能有一个 deepmoe 引擎进程。再起一个之前先把这个停掉
 （`Get-Process deepmoe` 应该是空的）。
