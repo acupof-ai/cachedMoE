@@ -14,7 +14,7 @@ deepMoE web UI —— 正在运行的实例
   Start-Process -FilePath C:\Users\Asus\code\deepmoe\.venv\Scripts\python.exe `
     -ArgumentList C:\Users\Asus\code\deepmoe\tools\web\server.py,
                   --exe,C:\Users\Asus\code\deepmoe\build\deepmoe.exe,
-                  --max-context,524280,--port,8080,--cache-slots,5000,
+                  --max-context,524280,--port,8080,
                   --log,C:\Users\Asus\code\deepmoe\build\web_serve.log `
     -WorkingDirectory C:\Users\Asus\code\deepmoe -WindowStyle Hidden `
     -RedirectStandardOutput C:\Users\Asus\code\deepmoe\build\web_ui.out `
@@ -87,3 +87,8 @@ PID
 
 注意：同一时刻只能有一个 deepmoe 引擎进程。再起一个之前先把这个停掉
 （`Get-Process deepmoe` 应该是空的）。
+
+
+2026-09-19 重启（H1 之后，auto 探测生效，无 --cache-slots）：
+  server.py 启动器 32028 / 解释器 42856 / deepmoe serve 46276
+  auto 落在 5000 槽（budget 5100 → cap 5000，probe 通过）；smoke.auto_cache 在 GPU 上通过。
