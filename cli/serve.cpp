@@ -321,14 +321,18 @@ int cmd_serve(int argc, char** argv) {
     emit(std::format("{{\"event\":\"ready\",\"load_s\":{},\"max_context\":{},\"vocab\":{},"
                      "\"cache_gb\":{},\"cache_slots\":{},\"gpu_prefill_min\":{},\"check_topk\":{},"
                      "\"engram_tables\":{},\"kv_mb\":{},\"rollback\":{},\"max_parked\":{},"
-                     "\"reheat\":{},\"reheat_decay\":{},\"kv_disk\":{},\"kv_disk_dir\":{}}}",
+                     "\"reheat\":{},\"reheat_decay\":{},\"kv_disk\":{},\"kv_disk_dir\":{},\"sources\":{}}}",
                      json_number(load_s), engine.max_context(), tok->vocab_size(),
                      json_number(engine.store().capacity_bytes() / double(1ull << 30)),
                      engine.store().slot_count(), so.gpu_prefill_min, check_topk ? "true" : "false",
                      json_quote(sc.engram_tables_dir.empty() ? std::string("derived") : sc.engram_tables_dir),
                      json_number(engine.kv().bytes() / 1e6), so.rollback ? "true" : "false",
                      po.max_parked, so.reheat ? "true" : "false", json_number(so.reheat_decay),
-                     po.disk.dir.empty() ? "false" : "true", json_quote(po.disk.dir)));
+                     po.disk.dir.empty() ? "false" : "true", json_quote(po.disk.dir),
+                     // Track D4: how many read sources survived the mirror
+                     // health gate, so the banner says what the run is actually
+                     // reading from rather than what it was asked for.
+                     engine.io().live_source_count()));
 
     Inbox inbox;
     std::thread reader([&] { inbox.run(); });

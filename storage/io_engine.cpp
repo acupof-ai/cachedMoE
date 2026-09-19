@@ -53,12 +53,16 @@ std::string IoStats::to_string() const {
             const SourceStats& e = sources[i];
             s += std::format(
                 "  src[{}] {}  w {:.2f} GB/s  {} req  {:.1f} GiB ({:.1f}%)  "
-                "mean lat {:.2f} ms  inflight {} req / {:.1f} MiB\n",
+                "mean lat {:.2f} ms  inflight {} req / {:.1f} MiB{}\n",
                 i, e.root.empty() ? std::string("(primary)") : e.root, e.weight,
                 e.requests, e.bytes / 1073741824.0,
                 bytes_completed ? 100.0 * double(e.bytes) / double(bytes_completed) : 0.0,
                 e.mean_latency_ms(), e.inflight_requests,
-                e.outstanding_bytes / 1048576.0);
+                e.outstanding_bytes / 1048576.0,
+                // Appended, never inserted: bench/d2_abab.py parses the head of
+                // this line.
+                e.dropped ? std::format("  DROPPED after {} errors", e.errors)
+                          : (e.errors ? std::format("  {} errors", e.errors) : std::string()));
         }
     }
     if (disp_iters) {
@@ -178,6 +182,11 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     for (size_t i = 0; i < src_weights_.size() && i < weights.size(); ++i)
         if (weights[i] > 0.0) src_weights_[i] = weights[i];
     std::lock_guard lk(src_mutex_);
+    // A fresh set of sources is a fresh verdict on each of them.
+    uint32_t budget = kDefaultSourceErrorBudget;
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_ERROR_BUDGET"); e && *e)
+        budget = static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
+    src_health_ = SourceHealth(budget);
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
         src_outstanding_[i] = 0;
         src_inflight_[i]    = 0;
@@ -208,6 +217,28 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
         log_info("IoEngine: {} read sources ({}), routing classes 0x{:x}",
                  src_roots_.size(), w, route_classes_);
     }
+}
+
+void IoEngine::drop_source(uint32_t src) {
+    std::lock_guard lk(src_mutex_);
+    if (src == 0 || src >= kMaxIoSources || src_health_.dropped(src)) return;
+    src_health_.drop(src);
+    if (src < src_weights_.size()) src_weights_[src] = 0.0;
+    src_stats_[src].weight  = 0.0;
+    src_stats_[src].dropped = true;
+}
+
+bool IoEngine::source_dropped(uint32_t src) const {
+    std::lock_guard lk(src_mutex_);
+    return src_health_.dropped(src);
+}
+
+uint32_t IoEngine::live_source_count() const {
+    std::lock_guard lk(src_mutex_);
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < src_roots_.size(); ++i)
+        if (!src_health_.dropped(i)) ++n;
+    return n ? n : 1u;
 }
 
 Result<void> IoEngine::add_mirror(const File* primary, uint32_t src, const File* alt) {
@@ -341,6 +372,11 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
             for (uint32_t i = 0; i < kMaxIoSources; ++i)
                 if (it->second[i] && it->second[i]->is_open()) mask |= 1u << i;
             std::lock_guard lk(src_mutex_);
+            // Track D4: a source that has been dropped -- by the runtime's
+            // startup health probe or by a run of I/O errors -- is simply not a
+            // candidate. One AND on the hot path, and the request goes to the
+            // primary exactly as if the mirror had never held this shard.
+            mask = src_health_.live_mask(mask);
             const uint32_t pick = pick_source(src_weights_,
                                               std::span<const uint64_t>(src_outstanding_,
                                                                         src_weights_.size()),
@@ -767,6 +803,22 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
         ++src_stats_[s].requests;
         src_stats_[s].bytes      += r.bytes_moved;
         src_stats_[s].lat_ns_sum += static_cast<uint64_t>(r.latency.count());
+        // Track D4: and whether it is still worth asking. A drive that has
+        // stopped answering fails every read after the first, so the budget is
+        // consecutive failures -- a success anywhere in between puts it back.
+        if (r.ok()) {
+            src_health_.note_success(s);
+        } else {
+            ++src_stats_[s].errors;
+            if (src_health_.note_error(s)) {
+                src_weights_[s]        = 0.0;
+                src_stats_[s].weight   = 0.0;
+                src_stats_[s].dropped  = true;
+                log_warn("IoEngine: source {} '{}' dropped after {} consecutive I/O errors "
+                         "(last: {}); reading from the remaining sources",
+                         s, src_stats_[s].root, src_health_.budget(), r.status.message);
+            }
+        }
     }
     {
         std::lock_guard lk(stats_mutex_);

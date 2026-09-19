@@ -61,6 +61,70 @@ inline uint32_t pick_source(std::span<const double> weights,
     return best;
 }
 
+// --- runtime health: dropping a source that stops answering ------------------
+//
+// docs/p4_e_drive_diag.md §5.2. `open_mirror` succeeding says the files are
+// there, not that the drive can serve them: Track DX watched E: open all 48
+// handles and then stop answering 17 seconds in, and because the pinned load
+// runs through the router, that killed the engine. A mirror is an optimisation
+// (docs/p4_dual_source.md §2), so the right answer to "this source is failing"
+// is to stop using it, not to fail the run.
+//
+// The router already chooses by candidate mask, so "drop it" is one AND on the
+// submit path and nothing else.
+//
+// CONSECUTIVE, not cumulative. One bad read is a retry; a drive that has fallen
+// off the bus fails every read after it. A cumulative counter would eventually
+// drop a perfectly healthy source on a long enough run, which is why
+// `io.source_health_drops_a_mirror_that_keeps_failing` checks that a success in
+// between puts the budget back.
+//
+// Source 0 is never dropped: it is the only copy the run is guaranteed to have,
+// and its failures are the run's failures -- reported by the read that failed,
+// not swallowed here.
+inline constexpr uint32_t kDefaultSourceErrorBudget = 3;
+
+class SourceHealth {
+public:
+    explicit SourceHealth(uint32_t budget = kDefaultSourceErrorBudget)
+        : budget_(budget ? budget : 1) {}
+
+    // Returns true when THIS error is the one that takes the source out, so the
+    // caller logs once rather than once per failed request.
+    bool note_error(uint32_t s) {
+        if (s == 0 || s >= kMaxIoSources) return false;
+        if (dropped_ & (1u << s)) return false;
+        if (++consecutive_[s] >= budget_) { dropped_ |= 1u << s; return true; }
+        return false;
+    }
+    void note_success(uint32_t s) {
+        if (s > 0 && s < kMaxIoSources) consecutive_[s] = 0;
+    }
+    // The startup gate (a failed health probe) uses the same switch.
+    void drop(uint32_t s) { if (s > 0 && s < kMaxIoSources) dropped_ |= 1u << s; }
+
+    bool dropped(uint32_t s) const {
+        return s < kMaxIoSources && (dropped_ & (1u << s)) != 0;
+    }
+    uint32_t consecutive_errors(uint32_t s) const {
+        return s < kMaxIoSources ? consecutive_[s] : 0;
+    }
+    uint32_t budget() const { return budget_; }
+
+    // `candidates` with the dropped sources removed. Bit 0 always survives.
+    uint32_t live_mask(uint32_t candidates) const { return candidates & ~dropped_; }
+
+    void reset() {
+        dropped_ = 0;
+        for (uint32_t& c : consecutive_) c = 0;
+    }
+
+private:
+    uint32_t budget_;
+    uint32_t consecutive_[kMaxIoSources] = {};
+    uint32_t dropped_ = 0;
+};
+
 // Per-source accounting, reported through IoStats and so through the serve
 // endpoint's status.json.
 struct SourceStats {
@@ -71,6 +135,8 @@ struct SourceStats {
     uint64_t lat_ns_sum = 0;       // submit -> last chunk, summed
     uint64_t outstanding_bytes = 0;  // routed but not yet finished
     uint32_t inflight_requests = 0;
+    uint64_t errors   = 0;         // routed requests that came back failed
+    bool     dropped  = false;     // taken out of the router (SourceHealth)
 
     double mean_latency_ms() const {
         return requests ? lat_ns_sum / 1e6 / static_cast<double>(requests) : 0.0;

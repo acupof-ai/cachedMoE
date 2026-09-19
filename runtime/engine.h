@@ -745,6 +745,11 @@ private:
     // Track D2: probes each read source and hands the mirror table to the
     // IoEngine. A no-op when no mirror was given.
     Result<void> configure_io_sources();
+    // Track D4 (docs/p4_e_drive_diag.md §5.2): reads a handful of small,
+    // pinned-weight-shaped tensors from mirror `source` (1-based) before the
+    // router is allowed to send anything there. Opening the shards is not proof
+    // the drive can serve them.
+    Result<void> probe_mirror_health(uint32_t source) const;
     Result<void> load_pinned();
     Result<void> build_expert_cache();
     // H1a: one trivial submit against the freshly built slab pool. This is the

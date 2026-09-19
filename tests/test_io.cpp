@@ -491,6 +491,70 @@ DEEPMOE_TEST(io, source_router_defaults_to_the_primary) {
                          0b11, 9u << 20), 1u);
 }
 
+// Track D4 (docs/p4_e_drive_diag.md §5.2): a mirror that stops answering is
+// dropped, and "stops answering" means CONSECUTIVE failures.
+//
+// The discriminator is the success in the middle. A drive that has fallen off
+// the bus fails every read after the first -- Track DX watched E: go from 0.85
+// GB/s to zero completions inside one second and never come back -- so three in
+// a row is a dead source. A drive that returns one error in a million and
+// serves everything else is a working drive, and a cumulative counter would
+// eventually drop it on a long enough run for no reason. Deleting the reset in
+// note_success() (or counting `errors` instead of `consecutive`) is the
+// mutation this case is written against.
+DEEPMOE_TEST(io, source_health_drops_a_mirror_that_keeps_failing) {
+    SourceHealth h(3);
+    CHECK_EQ(h.live_mask(0b11), 0b11u);
+
+    // Under budget: still a candidate.
+    CHECK(!h.note_error(1));
+    CHECK(!h.note_error(1));
+    CHECK_EQ(h.consecutive_errors(1), 2u);
+    CHECK(!h.dropped(1));
+    CHECK_EQ(h.live_mask(0b11), 0b11u);
+
+    // A success in between puts the whole budget back -- this is the line the
+    // mutation deletes.
+    h.note_success(1);
+    CHECK_EQ(h.consecutive_errors(1), 0u);
+    CHECK(!h.note_error(1));
+    CHECK(!h.note_error(1));
+    CHECK(!h.dropped(1));
+    CHECK_EQ(h.live_mask(0b11), 0b11u);
+
+    // Three in a row, and only the third one reports the drop, so the caller
+    // logs once rather than once per failed read.
+    h.note_success(1);
+    CHECK(!h.note_error(1));
+    CHECK(!h.note_error(1));
+    CHECK(h.note_error(1));
+    CHECK(h.dropped(1));
+    CHECK(!h.note_error(1));           // already out: no second announcement
+    CHECK_EQ(h.live_mask(0b11), 0b01u);
+
+    // And the router never picks it again, even while it is the idle one and
+    // the primary is carrying a full queue -- the case that would otherwise
+    // send the next 9 MiB run straight back to the dead drive.
+    const double w[2] = {4.6, 1.0};
+    const uint64_t busy[2] = {96u << 20, 0};
+    CHECK_EQ(pick_source(std::span<const double>(w, 2), std::span<const uint64_t>(busy, 2),
+                         h.live_mask(0b11), 9u << 20), 0u);
+
+    // The primary is never dropped: it is the only copy the run is guaranteed
+    // to have, and hiding its failures here would turn a hard I/O error into a
+    // silently wrong read.
+    SourceHealth p(1);
+    for (int i = 0; i < 10; ++i) CHECK(!p.note_error(0));
+    CHECK(!p.dropped(0));
+    CHECK_EQ(p.live_mask(0b11), 0b11u);
+
+    // The startup gate uses the same switch, with no errors involved.
+    SourceHealth g(3);
+    g.drop(1);
+    CHECK(g.dropped(1));
+    CHECK_EQ(g.live_mask(0b11), 0b01u);
+}
+
 // The engine end: with no sources declared, nothing about a request changes and
 // IoStats carries no per-source rows -- the "off by default is off" check.
 DEEPMOE_TEST(io, no_mirror_leaves_the_stats_untouched) {

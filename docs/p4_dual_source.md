@@ -320,3 +320,164 @@ KV 盘恢复拿不到显存：`serve: kv-disk restore failed: internal: vkQueueS
 `(b1) 第二块真 NVMe` 仍然是 §7 第 1 项唯一开着的大杠杆，读路径的代码仍然就位。
 
 网页 UI 因此**以 mirror 关**重新启动 —— 和 main 的默认行为逐字相同。
+
+---
+
+## 8. Track D4：闸加上了，盘还是死在同一个 tensor 上（2026-09-19 晚）
+
+一句话：**DX §5.1 的验收门 PASS 了，镜像侧的健康闸也加上了，A/B 表还是不存在——
+第一个 `on` cell 依旧是 `win32 1117 / norm.weight`，这是跨三个会话的第四次复现。**
+
+出处：本文所有数字来自 `C:\Users\Asus\code\deepmoe`（分支 `p4/d4-dual-ab`），
+`bench/results/d4/`（on cell 的 `serve.log`、harness 日志、失败时段的系统事件）。
+一次一个引擎；网页 UI 的三个 PID 在动工之前停掉，`Get-Process deepmoe*` 为空。
+
+### 8.1 前提：这一次盘是「好的」，而且是按 DX 的门验的
+
+用户把盒子换到另一个 USB 口，NTFS 用 `chkdsk /spotfix` 修过，丢掉的 2 个文件重拷；
+`E:\models\DeepSeek-V4.1-Flash` 与 D: **逐文件相同**（48 shard + manifest，名字与长度）。
+
+**DX §5.1 gate: PASS after port change** —— `dx_probe`，48 句柄 × QD 24：
+
+| 臂 | 时长 | 结果 |
+|---|---:|---|
+| 纯 4 MiB 随机读 | 300 s | ✅ 1.041 GB/s，**零错误** |
+| + 每 8 个插一个 12 KiB | 300 s | ✅ 1.040 GB/s，**零错误** |
+| 48 个句柄开销 | — | ✅ **158 ms**（换口之前 **17 s**） |
+| 本轮开跑前的复核（同一条命令，60 s） | 60 s | ✅ 1.033 GB/s，**句柄 0 ms**，零错误 |
+
+**这不是「`ls` 过了」那种健康检查**——它正是 D2 §7.3 付学费之后写下的那道门。
+**它还是不够**（§8.4）。
+
+### 8.2 先落地 DX §5.2 建议的那条闸（三件，全做了）
+
+| # | DX §5.2 的建议 | 落地 |
+|---|---|---|
+| ① | 启动时从镜像试读 pinned 权重 | `Engine::probe_mirror_health()`（`runtime/engine.cpp`）：48 个 shard 句柄**都开着**的时候，从镜像读 **8 个 pinned 尺寸的小 tensor**（≤256 KiB，按名字排序、每个 shard 至多一个，所以 A/B 的两个 cell 读同一批字节），用自己新开的句柄——Win32 句柄一辈子只能绑一个完成端口 |
+| ② | 失败 → 摘镜像，降级成 warning | 探针失败就 `io_.drop_source(s)` + 一条 warning，引擎继续**单盘**跑。摘源发生在 `set_sources` **之后**，所以失败的镜像**仍然出现在 `status.json` 里**、标着 `DROPPED`，而不是凭空消失。`DEEPMOE_MIRROR_HEALTH=0` 关掉这道门 |
+| ③ | 运行期连续 N 次 I/O 错误 → 动态摘源 | `storage/source_router.h` 新增 `SourceHealth`：**连续**（不是累计）`DEEPMOE_MIRROR_ERROR_BUDGET`（默认 **3**）次失败就把源从候选 mask 里摘掉、权重归零、`status.json` 行尾追加 `DROPPED after N errors`。**源 0 永不摘**——它是唯一保证存在的那份拷贝，把它的失败藏起来就是把硬错误变成静默的错读 |
+
+**热路径上多出来的是一个 AND**（`mask = src_health_.live_mask(mask)`），
+而且它整个在 `if (mirrors_on_ && ...)` 里面——**不给 `--mirror` 的那条路逐字不变**。
+
+**变异测试**（`io.source_health_drops_a_mirror_that_keeps_failing`）：
+
+```cpp
+void note_success(uint32_t s) { consecutive_[s] = 0; }   // 原：连续
+void note_success(uint32_t s) { (void)s; }               // 变异：累计
+```
+
+变异后 **5 个断言失败**（两次「错、错、成功、错、错 ⇒ 还不该摘」的 case）。
+恢复后 `io.` 套件通过，CPU 全量 `ctest -LE "needs-model;needs-gpu"` **46/46**。
+
+**靶子为什么是这一条**：掉出总线的盘，**第一次失败之后每一次都失败**；
+偶尔报一个错的盘是**能用的盘**，而累计计数器早晚会在一条足够长的 run 上把它摘掉。
+「连续」这两个字就是这条规则的全部内容，所以它就是唯一值得打的靶。
+
+### 8.3 ABAB：**12 个 cell 跑了 2 个**
+
+命令（`--cache-slots 0` = auto，D3 §7.6(i) 之后 auto 自己封顶到 5,000 槽；
+`--serve-arg=--no-kv-disk` 对**两个臂**都加，免得 cell N 的 `.pkv` 漏进 cell N+1）：
+
+```
+.venv/Scripts/python.exe bench/d2_abab.py --out bench/results/d4/abab \
+    --script bench/results/hitrate/y_turns.json \
+    --script bench/results/hitrate/long_turns.json \
+    --mirror "E:\models\DeepSeek-V4.1-Flash" --pairs 3 \
+    --cache-slots 0 --serve-arg=--no-kv-disk
+```
+
+| cell | 臂 | 结果 |
+|---|---|---|
+| `y_turns_off_0` | off | ✅ **4.5607 tok/s**，`nvme_stall` **113.0 ms**，hit **0.8957**，114 s，`sources` 空 |
+| `y_turns_on_0` | on | ❌ `gpu init: io: pinned load of 'norm.weight': overlapped read failed (**win32 1117**, 12288 B at off **1323827200**)` |
+
+**off 臂和 D3 §7.2 对得上**（4.5693 / 113.5 / 0.8957），而且这一轮是 **auto 选的 5,000 槽**，
+不是 `--cache-slots 5000`——H1 的自动封顶 + 探测在 A/B 的形状下也是对的。
+
+**`norm.weight`、12288 B、偏移 1323827200 —— 和 D3 §7 逐字相同。**
+
+### 8.4 闸做了它该做的，然后不够
+
+`on` cell 的 `serve.log`，按发生顺序：
+
+```
+engine: 48 shards open, 475.25 GiB
+engine: mirror 'E:\...' holds 48 of 48 shards, 475.25 GiB
+engine: source 'D:\...' probes at 4.78 GB/s     <- 主盘探针
+engine: source 'E:\...' probes at 1.03 GB/s     <- 镜像探针：盘是活的
+IoEngine: 2 read sources ..., routing classes 0x9
+engine: mirror 'E:\...' health probe: 8 pinned-sized reads, all served   <- ① 过了
+...
+IoEngine: source 1 'E:\...' dropped after 3 consecutive I/O errors
+          (last: overlapped read failed (win32 433, 8192 B at off 8146944))   <- ③ 触发
+gpu init: io: pinned load of 'norm.weight': overlapped read failed (win32 1117, ...)
+```
+
+**四件要读出来的事：**
+
+1. **① 启动健康探针过了。** 8 个 pinned 尺寸的读，48 个句柄都开着，全部送到。
+   **所以「开得出来 ≠ 能用」这条闸拦不住这块盘**——它在被探的那一刻确实是好的。
+2. **③ 运行期摘源触发了，而且它读出来的码是 `win32 433 = ERROR_NO_SUCH_DEVICE`**，
+   不是 1117。**盘不是读失败，是不在总线上了。** DX §4 把桥排第一，这是第五条证据。
+3. **摘晚了一步。** `PinnedStore::load` 把**第一个失败的请求**直接抛出去
+   （`store/pinned.cpp:183`），所以摘源和「引擎决定失败」是同一秒的两件事。
+   **还差一条**：被摘掉的源上那个失败的请求应该**在主盘上重放**，而不是成为 `load()` 的返回值。
+   **没有写**——判决已定，而且写了也没有盘能验它（`feedback-fast-experiments`）。
+4. **失败之后 `Get-Process` 又挂住了**（超过 120 秒无返回）——要枚举磁盘的调用卡在
+   不可中断 I/O 等待里，D2 §4 那个签名原样回来。
+
+同一时刻的系统日志（`bench/results/d4/winevent_d4.txt`），19:51:30 起：
+
+```
+39 x disk      153   已在磁盘 1 ... 重试 IO 操作
+ 7 x UASPStor  129   发出了对设备 \Device\RaidPort4 的重置
+```
+
+**19:51:30 正是 `on` cell 起引擎的那一秒。**
+
+### 8.5 判据与判决
+
+任务书：**两个脚本都 ≥3% + 闸全过 + 零 E: 错误**。
+
+| 条件 | 结果 |
+|---|---|
+| y_turns ≥3% | **无法测量**（B 臂不启动） |
+| long_turns ≥3% | **没跑到** |
+| 零 E: 错误 | ❌ **win32 1117 + win32 433 + 46 条系统盘事件** |
+
+**⇒ NO-GO。** 而且任务书写明「E: 出 win32 1117 就停、记、不带 mirror 起网页、报告」——
+**照做，没有重试。** D2 已经记过重试的代价（整台机器进不可中断 I/O 等待，
+`taskkill /F` 都杀不掉），这一轮的下游是把用户的网页 UI 起回来。
+
+**§4.1 那个预测（+14%，砍半 +7%）第三次没有拿到它要的数。**
+这不是「预测错了」，是**这块盘三次都没让人测**。它要的仍然是 **STATUS §7 第 1 项的 (b1)：一块真 NVMe**
+（或者 DX §4.1 那个还没试过的 USB4/雷电盒子——**它把 UAS 桥那一层整个拿掉**）。
+
+### 8.6 闸（`suite.decode` / `l3_ppl` / `suite.integration`）
+
+**跑了，mirror 关**——理由和 D2 §6 / D3 §7.4 一样：它们要验的是「打开 mirror 之后仍然逐位相同」，
+而 **mirror 打不开**。但这一轮**动了默认路径上的一行**（`ready` 事件多了一个 `"sources"` 字段），
+所以默认这一侧必须自己验一遍，不能靠「逐字相同」的担保。**跑了，全过：**
+
+| 闸 | 结果 |
+|---|---|
+| `suite.decode` | ✅ **Passed**（141.5 s） |
+| `tools/l3_ppl.py --modes off`（`traces/l3_64`） | ✅ **NLL 0.630051 / PPL 1.8777 / top-1 61/64** —— 与 §7 之前逐位相同 |
+| `suite.integration` | ✅ **Passed**（1.5 s） |
+| device lost | ✅ **0**（三个闸的全部输出里一次都没有） |
+| CPU 全量 `ctest -LE "needs-model;needs-gpu"` | ✅ **46/46** |
+
+**默认（关）这一侧仍然逐字不变的担保有三件**：
+`io.no_mirror_leaves_the_stats_untouched`、
+新加的那个 AND 整个在 `if (mirrors_on_)` 里面、
+以及 `finish()` 里的健康计数整个在 `if (p->routed)` 里面。
+
+### 8.7 顺带修掉的一个东西
+
+**`tools/web/server.py` 根本没有 `--mirror` 透传。** D3（以及本轮任务书）都写着「透传存在」——
+**不存在**，`Serve.__init__` 的命令行里没有这个分支。现在有了（可重复，默认不给），
+同时 `ready` 事件与就绪横幅多出 **`read sources N`** ——
+N 是**过了健康闸之后真正在读的源数**，不是「要来的」源数。
+镜像判 NO-GO 之后网页 UI 仍然不带 `--mirror` 起，所以这条透传今天是**空转的**；
+它值得留下的理由是：**下一块盘到货时，验它的那个人不必先发现文档说了谎。**

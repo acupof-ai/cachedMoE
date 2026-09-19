@@ -1,0 +1,1 @@
+{"event": "error", "message": "gpu init: io: pinned load of 'norm.weight': overlapped read failed (win32 1117, 12288 B at off 1323827200)", "host_s": 11.5609}

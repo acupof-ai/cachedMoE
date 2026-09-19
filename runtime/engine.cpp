@@ -243,6 +243,76 @@ Result<void> Engine::open_model_files() {
     return {};
 }
 
+// The mirror-side health gate (Track D4, docs/p4_e_drive_diag.md §5.2).
+//
+// `open_mirror` succeeding means the files are there at the right length. It
+// does NOT mean the drive can serve them: Track DX watched E: open all 48
+// handles and then stop answering seventeen seconds later, and because the
+// pinned load runs through the router (P3 is a routed class), that turned an
+// optional mirror into `gpu init: io: pinned load of 'norm.weight': overlapped
+// read failed` -- a fatal error from an optimisation. D2 §2's rule is that a
+// mirror is never a correctness input, and this is the missing half of it.
+//
+// So: read the shape that failed. A few small tensors -- the pinned-weight
+// size class, not 4 MiB expert chunks -- from the mirror, with every shard
+// handle on both drives already open. Deterministic choice (sorted by name,
+// one per shard) so two cells of an A/B read the same bytes.
+//
+// The probe opens its own handle rather than using the ShardSet's, for the
+// reason probe_source_gbps does: a Win32 handle belongs to one completion port
+// for life (storage/backend.h), and the ShardSet's are about to be the
+// backend's.
+Result<void> Engine::probe_mirror_health(uint32_t source) const {
+    if (source == 0 || source > shards_.mirror_count())
+        return fail(Err::OutOfRange, "no such mirror");
+    const auto& m = shards_.mirror(source - 1);
+
+    std::vector<std::string> names;
+    for (const auto& [name, t] : manifest_.tensors()) {
+        if (t.file >= m.present.size() || !m.present[t.file]) continue;
+        if (t.bytes == 0 || t.bytes > (256ull << 10)) continue;   // pinned-weight sized
+        names.push_back(name);
+    }
+    if (names.empty())
+        return fail(Err::NotFound,
+                    std::format("mirror '{}' holds no small tensor to probe with", m.root));
+    std::sort(names.begin(), names.end());
+
+    constexpr size_t kProbes = 8;
+    std::set<uint32_t> shards_seen;
+    size_t done = 0;
+    for (const std::string& name : names) {
+        if (done >= kProbes) break;
+        auto rd = manifest_.tensor_read(name);
+        if (!rd) continue;
+        if (!shards_seen.insert(rd->file).second) continue;   // one per shard
+        const std::string path = store::ShardSet::join(m.root, manifest_.files()[rd->file].path);
+        storage::FileFlags flags =
+            storage::FileFlags::Overlapped | storage::FileFlags::Random;
+        if (cfg_.io.unbuffered) flags = flags | storage::FileFlags::Unbuffered;
+        auto f = storage::File::open(path, flags);
+        if (!f)
+            return fail(f.error().code,
+                        std::format("health probe: open '{}': {}", path, f.error().message));
+        AlignedBuffer buf(rd->aligned_bytes, kPageSize);
+        auto n = f->read_at(rd->aligned_off, MutBytes(buf.data(), rd->aligned_bytes));
+        if (!n)
+            return fail(n.error().code,
+                        std::format("health probe: read of '{}' ({} B at {}) from '{}': {}",
+                                    name, rd->aligned_bytes, rd->aligned_off, m.root,
+                                    n.error().message));
+        if (*n < uint64_t(rd->skew) + rd->bytes)
+            return fail(Err::Io,
+                        std::format("health probe: short read of '{}' from '{}': {} of {} B",
+                                    name, m.root, *n, rd->aligned_bytes));
+        ++done;
+    }
+    if (done == 0)
+        return fail(Err::NotFound, std::format("mirror '{}': nothing probed", m.root));
+    log_info("engine: mirror '{}' health probe: {} pinned-sized reads, all served", m.root, done);
+    return {};
+}
+
 // Measures each source's 4 MiB random-read rate and hands the ratio to the
 // router. The probe reads a mirrored shard through its own handle and closes
 // it, so it never touches the handles the IoEngine is about to own.
@@ -295,6 +365,27 @@ Result<void> Engine::configure_io_sources() {
     (void)probed;
 
     io_.set_sources(roots, weights);
+
+    // Track D4: the gate runs after set_sources so a mirror that fails it still
+    // appears in status.json -- marked DROPPED, with the reason in the log --
+    // rather than vanishing as if it had never been asked for.
+    // DEEPMOE_MIRROR_HEALTH=0 skips it (for a deliberate negative test); the
+    // default is on, because the whole point is that "it opened" is not enough.
+    bool gate = true;
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_HEALTH"); e && *e)
+        gate = std::strtol(e, nullptr, 10) != 0;
+    if (gate) {
+        for (size_t m = 1; m <= shards_.mirror_count(); ++m) {
+            const uint32_t s = static_cast<uint32_t>(m);
+            if (auto r = probe_mirror_health(s); !r) {
+                log_warn("engine: mirror '{}' failed its health probe ({}); "
+                         "dropped, reading from the primary only",
+                         shards_.mirror(m - 1).root, r.error().message);
+                io_.drop_source(s);
+            }
+        }
+    }
+
     for (uint32_t i = 0; i < shards_.size(); ++i) {
         const storage::File* prim = shards_.at(i);
         if (!prim) continue;

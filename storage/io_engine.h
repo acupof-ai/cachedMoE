@@ -219,6 +219,20 @@ public:
     bool     mirrors_enabled() const { return mirrors_on_; }
     uint32_t source_count() const { return static_cast<uint32_t>(src_roots_.size()); }
 
+    // --- mirror health (Track D4, docs/p4_e_drive_diag.md §5.2) -------------
+    // Takes a source out of the router for the rest of the run: its weight goes
+    // to zero and the submit path stops offering it. Source 0 is ignored -- the
+    // primary is the correctness source and has nothing to fall back to. Used
+    // by the runtime's startup health probe; the engine itself calls it after
+    // `DEEPMOE_MIRROR_ERROR_BUDGET` (default 3) CONSECUTIVE failed reads from
+    // one source, which is what a drive falling off the bus looks like.
+    void drop_source(uint32_t src);
+    bool source_dropped(uint32_t src) const;
+    // How many sources are actually being read from: the declared ones less the
+    // dropped ones, and always at least 1 (the primary, which is never
+    // dropped -- including the no-mirror case, where nothing is declared).
+    uint32_t live_source_count() const;
+
     // The startup probe: 4 MiB random reads at queue depth `qd` against
     // `sample_path` for `ms` milliseconds, returning GB/s. Opens and closes its
     // own handle, so it must not be pointed at a File already handed to a
@@ -391,6 +405,7 @@ private:
     uint32_t route_classes_ = (1u << static_cast<uint8_t>(IoPriority::BlockingMiss)) |
                               (1u << static_cast<uint8_t>(IoPriority::Backfill));
     mutable std::mutex src_mutex_;
+    SourceHealth src_health_;
     uint64_t src_outstanding_[kMaxIoSources] = {};
     uint32_t src_inflight_[kMaxIoSources]    = {};
     SourceStats src_stats_[kMaxIoSources]{};

@@ -105,6 +105,12 @@ class Serve:
             cmd += ["--kv-max-gb", str(args.kv_max_gb)]
         if args.max_parked:
             cmd += ["--max-parked", str(args.max_parked)]
+        # Track D4: the second read source. Repeatable, off unless asked for, and
+        # the engine drops a mirror that fails its health probe rather than
+        # dying on it (docs/p4_e_drive_diag.md §5.2), so a passthrough here
+        # cannot take the web UI down with the drive.
+        for d in args.mirror:
+            cmd += ["--mirror", d]
         self.cmd = cmd
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -621,6 +627,9 @@ def main():
     ap.add_argument("--kv-max-gb", type=int, default=0)
     ap.add_argument("--no-kv-disk", action="store_true")
     ap.add_argument("--max-parked", type=int, default=0)
+    ap.add_argument("--mirror", action="append", default=[],
+                    help="a second read source holding the same checkpoint "
+                         "(repeatable); passed through to `deepmoe serve`")
     ap.add_argument("--system", default="")
     ap.add_argument("--think", action="store_true")
     ap.add_argument("--log", default=os.path.join(REPO, "build", "web_serve.log"))
@@ -643,7 +652,8 @@ def main():
     r = serve.ready
     print(f"ready in {r['load_s']:.1f} s | expert cache {r['cache_gb']:.1f} GiB "
           f"({r['cache_slots']} slots) | max_context {serve.max_context} "
-          f"(live KV ~{kv_gb:.2f} GiB at full) | kv disk {r.get('kv_disk_dir', '')}", flush=True)
+          f"(live KV ~{kv_gb:.2f} GiB at full) | kv disk {r.get('kv_disk_dir', '')} "
+          f"| read sources {r.get('sources', 1)}", flush=True)
 
     bridge = Bridge(serve, enc, args)
     Handler.bridge = bridge

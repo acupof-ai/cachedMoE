@@ -1,0 +1,249 @@
+﻿
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15859c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15855c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15851c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15841c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1583dc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15839c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15869c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15861c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x23ba0d00 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1584dc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15849c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1586dc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15817c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1581fc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1490328 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15813c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1581bc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15823c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15827c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15845c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15835c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1582fc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1582bc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15831c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15807c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1580bc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15865c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1580fc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15871c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x1585dc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x157ffc8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:30
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011a)的逻辑块地址 0x15803c8 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:55
+ProviderName : UASPStor
+Id           : 129
+Message      : 发出了对设备 \Device\RaidPort6 的重置。
+
+TimeCreated  : 2026/9/19 19:51:55
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011c)的逻辑块地址 0x628 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:51:55
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011c)的逻辑块地址 0x228 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:52:11
+ProviderName : UASPStor
+Id           : 129
+Message      : 发出了对设备 \Device\RaidPort6 的重置。
+
+TimeCreated  : 2026/9/19 19:53:01
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011c)的逻辑块地址 0x64800 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:53:01
+ProviderName : UASPStor
+Id           : 129
+Message      : 发出了对设备 \Device\RaidPort6 的重置。
+
+TimeCreated  : 2026/9/19 19:53:17
+ProviderName : UASPStor
+Id           : 129
+Message      : 发出了对设备 \Device\RaidPort6 的重置。
+
+TimeCreated  : 2026/9/19 19:53:17
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011c)的逻辑块地址 0x649f10 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:54:07
+ProviderName : UASPStor
+Id           : 129
+Message      : 发出了对设备 \Device\RaidPort6 的重置。
+
+TimeCreated  : 2026/9/19 19:54:07
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011c)的逻辑块地址 0x651f10 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:54:57
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011c)的逻辑块地址 0x659f10 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:54:57
+ProviderName : UASPStor
+Id           : 129
+Message      : 发出了对设备 \Device\RaidPort6 的重置。
+
+TimeCreated  : 2026/9/19 19:55:47
+ProviderName : UASPStor
+Id           : 129
+Message      : 发出了对设备 \Device\RaidPort6 的重置。
+
+TimeCreated  : 2026/9/19 19:55:47
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011c)的逻辑块地址 0x661f10 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:56:21
+ProviderName : Microsoft-Windows-Ntfs
+Id           : 98
+Message      : 卷 E: (\Device\HarddiskVolume19) 运行状况良好。无需执行任何操作。
+
+TimeCreated  : 2026/9/19 19:56:37
+ProviderName : disk
+Id           : 153
+Message      : 已在磁盘 1 (PDO 名称: \Device\0000011c)的逻辑块地址 0x64800 处重试 IO 操作。
+
+TimeCreated  : 2026/9/19 19:56:37
+ProviderName : UASPStor
+Id           : 129
+Message      : 发出了对设备 \Device\RaidPort6 的重置。
+
+
+
