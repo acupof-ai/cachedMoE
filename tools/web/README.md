@@ -6,8 +6,16 @@
 .venv\Scripts\python.exe tools\web\server.py --max-context 524280
 ```
 
-（`--max-context 524280` 就是引擎硬上限，不给 `--cache-gb` 就是自动专家缓存 ≈ 89 GiB / 5100 slots；
+（`--max-context 524280` 就是引擎硬上限；不给 `--cache-gb` / `--cache-slots` 就是 `auto`。
 启动约 75 秒。当前跑着的实例见 `RUNNING.txt`。）
+
+**`auto` 是安全的（Track H1a，2026-09-19）**：算出来的预算先封顶到 **5,000 槽 ≈ 87.6 GiB**
+（`DEEPMOE_CACHE_SLOT_CAP` 可改，0 = 关），然后**建完 slab 池探一次提交**——
+这正是 over-size 被发现的那一刻——被拒就退 200 槽（`DEEPMOE_CACHE_BACKOFF_SLOTS`）重建，最多 5 次。
+在这之前 `auto` = 5,100 槽 / 89.3 GiB，而 5,100 在这台机器上第一个 decode submit 就丢设备，
+所以 `RUNNING.txt` 里的命令一直手写着 `--cache-slots 5000`。
+**要让它生效得重新链接 `build\deepmoe.exe` 并重启 server.py**；
+手写的 `--cache-slots` / `--cache-gb` 一样会被探，但**不会被悄悄改小**，失败就是致命错并报下一个该试的数。
 
 `server.py` 把 `deepmoe serve`（docs/p3_chat.md §1）当子进程拉起来，自己不碰 GPU；
 提示词用 checkpoint 自带的 `encoding/encoding.py` 渲染，和 `tools/chat.py` 逐字一样，

@@ -142,6 +142,13 @@ struct Submission {
     Timeline*            signal_timeline = nullptr;
 };
 
+// H1a: the symbolic name of a VkResult, for the codes this project actually
+// meets ("VK_ERROR_OUT_OF_DEVICE_MEMORY" rather than "-2"). Unknown codes give
+// "VK_ERROR_?". Callers that must BRANCH on device loss -- the engine's cache
+// back-off -- compare against this name rather than re-parsing a number out of
+// a message.
+const char* vk_result_name(int result);
+
 Result<void> submit(Device& device, const Submission& s);
 
 // Submit and block until the queue is idle. Benchmarks and tests only -- the

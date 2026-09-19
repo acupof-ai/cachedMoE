@@ -20,6 +20,47 @@
 #include "storage/backend.h"
 
 namespace deepmoe::runtime {
+
+// --- H1a: the hard cap on the auto-sized cache (see runtime/engine.h) -------
+uint32_t auto_slot_cap() {
+    static const uint32_t v = [] {
+        const char* e = std::getenv("DEEPMOE_CACHE_SLOT_CAP");
+        if (!e || !*e) return kAutoSlotCap;
+        const long long x = std::atoll(e);
+        return x < 0 ? kAutoSlotCap : static_cast<uint32_t>(x);   // 0 = no cap, deliberately
+    }();
+    return v;
+}
+
+uint64_t cap_auto_budget(uint64_t budget_bytes, uint64_t slot_bytes, uint32_t slot_cap) {
+    if (slot_cap == 0 || slot_bytes == 0) return budget_bytes;
+    const uint64_t cap_bytes = uint64_t(slot_cap) * slot_bytes;
+    return budget_bytes > cap_bytes ? cap_bytes : budget_bytes;
+}
+
+uint32_t cache_backoff_step() {
+    static const uint32_t v = [] {
+        const char* e = std::getenv("DEEPMOE_CACHE_BACKOFF_SLOTS");
+        const long long x = (e && *e) ? std::atoll(e) : 0;
+        return x > 0 ? static_cast<uint32_t>(x) : kCacheBackoffSlots;
+    }();
+    return v;
+}
+
+std::vector<uint32_t> cache_backoff_slots(uint32_t start, uint32_t step, uint32_t attempts,
+                                          uint32_t floor_slots) {
+    std::vector<uint32_t> out;
+    if (start == 0 || attempts == 0) return out;
+    if (step == 0) step = kCacheBackoffSlots;
+    uint32_t n = start;
+    for (uint32_t i = 0; i < attempts; ++i) {
+        out.push_back(n);
+        if (n <= floor_slots) break;               // the floor is tried once, then we stop
+        n = n > step + floor_slots ? n - step : floor_slots;
+    }
+    return out;
+}
+
 namespace {
 
 std::string join_path(const std::string& dir, const std::string& name) {
@@ -495,6 +536,81 @@ Result<void> Engine::build_expert_cache() {
     return {};
 }
 
+// H1a. One empty command buffer, submitted and waited on. Nothing in it
+// matters: what matters is that a submit makes the process's allocations
+// resident, which is the step that fails when the expert cache is too big for
+// this machine. The alternative -- discovering it on the first real decode --
+// is what killed the 5,100-slot run on 2026-09-19 (STATUS §3 row 59).
+Result<void> Engine::probe_submit() {
+    gpu::CommandPool pool;
+    if (auto r = pool.create(device_); !r) return r;
+    auto cb = pool.acquire();
+    if (!cb) return std::unexpected(cb.error());
+    if (auto r = cb->begin(); !r) return r;
+    if (auto r = cb->barrier(); !r) return r;
+    if (auto r = cb->end(); !r) return r;
+    return gpu::submit_and_wait(device_, *cb);
+}
+
+Result<void> Engine::build_expert_cache_probed(bool backoff) {
+    const uint64_t slot_bytes = layout::kExpertSlotBytes;
+    const uint32_t want_slots = static_cast<uint32_t>(budget_slots(cache_budget_, slot_bytes));
+    const uint32_t step       = cache_backoff_step();
+    const std::vector<uint32_t> plan =
+        backoff ? cache_backoff_slots(want_slots, step, kCacheBackoffTries)
+                : std::vector<uint32_t>{want_slots};
+    if (plan.empty()) return fail(Err::InvalidArgument, "expert cache budget is zero slots");
+
+    std::string tried;
+    for (size_t i = 0; i < plan.size(); ++i) {
+        cache_budget_ = uint64_t(plan[i]) * slot_bytes;
+        if (i) log_warn("engine: retrying the expert cache at {} slots ({} of {})", plan[i],
+                        i + 1, plan.size());
+        if (auto r = build_expert_cache(); !r) return r;
+        auto probe = probe_submit();
+        if (probe) {
+            if (i) log_info("engine: cache probe passed at {} slots after {} refusal(s); the "
+                            "budget-derived {} was not usable on this machine",
+                            store_.slot_count(), i, want_slots);
+            else log_info("engine: cache probe passed at {} slots", store_.slot_count());
+            return {};
+        }
+        const std::string why = probe.error().str();
+        if (!tried.empty()) tried += ", ";
+        tried += std::format("{} -> refused", plan[i]);
+        // A lost device cannot be reused: every queue, pipeline and allocation
+        // made from it is gone, and recreating it here would mean tearing down
+        // and rebuilding the allocators, the pinned set (17.7 GiB, ~10 s) and
+        // every runner. That is a far bigger change than this fix, so the
+        // honest move is to stop and name the number to pass.
+        if (why.find("VK_ERROR_DEVICE_LOST") != std::string::npos) {
+            return fail(Err::ResourceExhausted,
+                        std::format(
+                            "the expert cache probe LOST THE DEVICE at {} slots ({}). A lost "
+                            "device cannot be reused in this process, so there is nothing to back "
+                            "off to from here. Start again with --cache-slots {}, and keep going "
+                            "down in steps of {} if it happens again "
+                            "(docs/p4_hitrate.md §4, docs/STATUS.md §1 'cache capacity').",
+                            plan[i], why, plan[i] > step ? plan[i] - step : 1, step));
+        }
+        log_warn("engine: expert cache probe refused at {} slots ({})", plan[i], why);
+        planner_.stop_backfill();
+        store_.reset();
+        if (!backoff)
+            return fail(Err::ResourceExhausted,
+                        std::format(
+                            "the expert cache probe was refused at {} slots ({}). This size was "
+                            "asked for explicitly (--cache-slots / --cache-gb), so it is not "
+                            "silently reduced. Retry with --cache-slots {} (100 fewer), or drop "
+                            "the flag and let `auto` probe for a size that works.",
+                            plan[i], why, plan[i] > 100 ? plan[i] - 100 : 1));
+    }
+    return fail(Err::ResourceExhausted,
+                std::format("the expert cache probe was refused at every size tried ({}). Pass "
+                            "--cache-slots with something smaller than {}.",
+                            tried, plan.back()));
+}
+
 Result<void> Engine::resolve_weights() {
     // Resolved once per layer, not per token: the whole point of the pinned set
     // is that these addresses never move.
@@ -642,14 +758,40 @@ Result<void> Engine::init_gpu() {
         }
         cache_budget_ = std::max<uint64_t>(want, 8ull << 30);
         const uint64_t avail = avail_commit;
+        // H1a: the arithmetic above is bounded by heaps, commit and physical
+        // memory -- none of which can see that this machine loses the device
+        // above 5,000 slots. Cap it with the MEASURED number and log both, so a
+        // startup log always says whether the cap bit (engine.h, kAutoSlotCap).
+        const uint64_t slot_bytes  = layout::kExpertSlotBytes;
+        const uint32_t slot_cap    = auto_slot_cap();
+        const uint64_t from_budget = cache_budget_;
+        cache_budget_ = cap_auto_budget(cache_budget_, slot_bytes, slot_cap);
         log_info("engine: cache budget auto -> {} (path A {} after {} pinned, path B {} of "
                  "{} physical free; {} of commit available)",
                  human_bytes(cache_budget_), human_bytes(a_cache), human_bytes(pinned),
                  human_bytes(b_cache), human_bytes(avail_phys), human_bytes(avail));
+        if (slot_cap == 0) {
+            log_warn("engine: auto slot cap DISABLED (DEEPMOE_CACHE_SLOT_CAP=0); the budget-derived "
+                     "{} slots ({}) are what this run will try to allocate -- above 5,000 slots "
+                     "this machine has lost the device on the first submit (STATUS §3 row 59)",
+                     budget_slots(from_budget, slot_bytes), human_bytes(from_budget));
+        } else if (cache_budget_ < from_budget) {
+            log_info("engine: auto slot cap {} applied: budget-derived {} slots ({}) -> {} slots "
+                     "({}). --cache-slots / --cache-gb bypass this cap and own the risk; "
+                     "DEEPMOE_CACHE_SLOT_CAP changes it",
+                     slot_cap, budget_slots(from_budget, slot_bytes), human_bytes(from_budget),
+                     budget_slots(cache_budget_, slot_bytes), human_bytes(cache_budget_));
+        } else {
+            log_info("engine: auto slot cap {} not reached: budget-derived {} slots ({})",
+                     slot_cap, budget_slots(cache_budget_, slot_bytes), human_bytes(cache_budget_));
+        }
     }
 
     if (auto r = load_pinned(); !r) return r;
-    if (auto r = build_expert_cache(); !r) return r;
+    // H1a: auto probes rather than computes -- build, submit once, and back the
+    // slot count off if the submit is refused. An explicit --cache-slots /
+    // --cache-gb is probed too, but is never silently reduced.
+    if (auto r = build_expert_cache_probed(/*backoff=*/cfg_.cache.budget_bytes == 0); !r) return r;
     if (auto r = resolve_weights(); !r) return r;
 
     const TextConfig& c = model_cfg_.text;
@@ -1246,7 +1388,32 @@ Result<void> Engine::cmd_submit(TimelineValue wait_value) {
     s.signal_value       = ++cur_->fence_value_;
     s.signal_on_complete = true;
     const TimePoint t0 = Clock::now();
-    if (auto r = gpu::submit(device_, s); !r) return r;
+    if (auto r = gpu::submit(device_, s); !r) {
+        // H1a: the first submit of the process is where an over-sized expert
+        // cache shows up. Every slab allocation succeeded -- the driver only
+        // discovers it cannot make them all resident when work is queued -- so
+        // `vkQueueSubmit2 failed (-2)` here means VK_ERROR_OUT_OF_DEVICE_MEMORY
+        // on a cache that is too big, not a bug in the command buffer. 5,100
+        // slots (34 path-A + 17 path-B slabs) died exactly here on 2026-09-19;
+        // 5,000 (34 A + 16 B) ran clean. Say so, with the number to pass.
+        if (!any_submit_ok_) {
+            const uint64_t slots = store_.slot_count();
+            return fail(Err::ResourceExhausted,
+                        std::format(
+                            "the FIRST GPU submit of this process failed ({}). The command buffer "
+                            "is not the suspect: this is where a too-large expert cache is "
+                            "discovered, because slab allocation succeeds and residency is only "
+                            "checked when work is queued. This run has {} cache slots ({:.1f} GiB). "
+                            "Retry with --cache-slots {} (100 fewer); if that also fails, keep "
+                            "going down in steps of 100. See docs/p4_hitrate.md §4 (F4) and "
+                            "docs/STATUS.md §1 'cache capacity'.",
+                            r.error().str(), slots,
+                            store_.capacity_bytes() / double(1ull << 30),
+                            slots > 100 ? slots - 100 : 1));
+        }
+        return r;
+    }
+    any_submit_ok_ = true;
     if (cur_->open_guard_) { cur_->inflight_guard_ = cur_->open_guard_; cur_->open_guard_ = 0; }
     cur_->sub_ms_ += ms_since(t0);
     ++cur_->submits_;

@@ -678,3 +678,78 @@ DEEPMOE_TEST(planner, streamed_admission_is_the_lru_of_the_routing_table) {
         if (trial == 0) CHECK(dropped > 0);
     }
 }
+
+
+// --- H1a: the auto cache size never exceeds the measured safe slot count -----
+//
+// Pure CPU, no device: `cap_auto_budget` is the whole fix reduced to a
+// function, and `cache_backoff_slots` is the probe's retry plan. Both are the
+// mutation targets named in the brief:
+//   * a cap that is ignored (returning the budget unchanged) must fail here;
+//   * a back-off that never decreases must fail here.
+// (suite.cache_cap)
+#include "runtime/engine.h"
+
+DEEPMOE_TEST(cache_cap, budget_is_capped) {
+    const uint64_t slot = layout::kExpertSlotBytes;
+    // The measured pair from 2026-09-19: the heap arithmetic lands at 5,100
+    // slots / 89.3 GiB and this machine dies on the first submit above 5,000.
+    const uint64_t derived = 5100ull * slot;
+    const uint64_t capped  = runtime::cap_auto_budget(derived, slot, runtime::kAutoSlotCap);
+    CHECK_EQ(runtime::budget_slots(derived, slot), 5100ull);
+    CHECK_EQ(runtime::budget_slots(capped, slot), 5000ull);
+    // The mutation: "cap ignored" means capped == derived. It must not be.
+    CHECK(capped < derived);
+    CHECK_EQ(capped, 5000ull * slot);
+
+    // A budget already under the cap is untouched -- the cap is a ceiling, not
+    // a target, and must never GROW a cache.
+    const uint64_t small = 4500ull * slot;
+    CHECK_EQ(runtime::cap_auto_budget(small, slot, runtime::kAutoSlotCap), small);
+    // Exactly at the cap: also untouched.
+    const uint64_t exact = uint64_t(runtime::kAutoSlotCap) * slot;
+    CHECK_EQ(runtime::cap_auto_budget(exact, slot, runtime::kAutoSlotCap), exact);
+    // Cap off (DEEPMOE_CACHE_SLOT_CAP=0) hands the arithmetic back untouched,
+    // and a zero slot size cannot divide, so it is a no-op too.
+    CHECK_EQ(runtime::cap_auto_budget(derived, slot, 0), derived);
+    CHECK_EQ(runtime::cap_auto_budget(derived, 0, runtime::kAutoSlotCap), derived);
+    // Whatever the cap is, the result never buys more slots than it allows.
+    for (uint32_t cap : {1u, 7u, 199u, 5000u, 99999u}) {
+        const uint64_t b = runtime::cap_auto_budget(derived, slot, cap);
+        CHECK(runtime::budget_slots(b, slot) <= cap);
+        CHECK(b <= derived);
+    }
+}
+
+DEEPMOE_TEST(cache_cap, backoff_plan_decreases) {
+    // Five attempts from the capped default, 200 slots apart.
+    const std::vector<uint32_t> plan = runtime::cache_backoff_slots(5000, 200, 5);
+    REQUIRE_EQ(plan.size(), size_t(5));
+    CHECK_EQ(plan[0], 5000u);
+    CHECK_EQ(plan[1], 4800u);
+    CHECK_EQ(plan[2], 4600u);
+    CHECK_EQ(plan[3], 4400u);
+    CHECK_EQ(plan[4], 4200u);
+    // The mutation: a back-off that never decreases (or that grows) must fail.
+    // Strictly decreasing, every step, with no repeats.
+    for (size_t i = 1; i < plan.size(); ++i) CHECK(plan[i] < plan[i - 1]);
+    CHECK(plan.back() < plan.front());
+
+    // The floor is tried once and then the plan stops, rather than repeating a
+    // size that has already been refused.
+    const std::vector<uint32_t> low = runtime::cache_backoff_slots(500, 200, 5, /*floor=*/200);
+    REQUIRE(low.size() >= 2);
+    for (size_t i = 1; i < low.size(); ++i) CHECK(low[i] < low[i - 1]);
+    CHECK_EQ(low.back(), 200u);
+    CHECK(low.size() <= 5);
+
+    // Degenerate inputs give a plan that is empty or single, never infinite.
+    CHECK(runtime::cache_backoff_slots(0, 200, 5).empty());
+    CHECK(runtime::cache_backoff_slots(5000, 200, 0).empty());
+    REQUIRE_EQ(runtime::cache_backoff_slots(5000, 200, 1).size(), size_t(1));
+    // A zero step would otherwise loop forever at the same size; it falls back
+    // to the default and still decreases.
+    const std::vector<uint32_t> zero = runtime::cache_backoff_slots(5000, 0, 3);
+    REQUIRE_EQ(zero.size(), size_t(3));
+    for (size_t i = 1; i < zero.size(); ++i) CHECK(zero[i] < zero[i - 1]);
+}

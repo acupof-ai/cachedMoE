@@ -714,3 +714,49 @@ DEEPMOE_TEST(sampling, topk_nucleus_equals_full_vocabulary_nucleus) {
                 exact_cases, fallback_cases);
     CHECK(exact_cases >= 40);
 }
+
+
+// H1a: the class of failure this whole fix is about, as a test that runs on the
+// GPU. `auto` sizes the expert cache from heap arithmetic; on 2026-09-19 that
+// arithmetic landed at 5,100 slots and the FIRST decode submit returned
+// VK_ERROR_OUT_OF_DEVICE_MEMORY, which nothing in the CPU suite can see. This
+// case brings the engine up with `cache.budget_bytes = 0` -- the real default,
+// cap and back-off probe included -- and decodes two tokens. Two, not one: the
+// first submit is the probe's successor, the second is an ordinary step.
+//
+// Registered as `smoke.auto_cache` with LABELS "needs-model;needs-gpu", so
+// run_all.py on a GPU machine catches this class from now on. It takes the
+// whole pinned set and a full-size cache, so it is never part of a CPU run.
+DEEPMOE_TEST(smoke, auto_cache) {
+    if (skip_without_model("smoke.auto_cache")) return;
+    const char* dir = model_dir();
+    RuntimeConfig cfg;
+    cfg.model_dir            = dir;
+    cfg.cache.budget_bytes   = 0;      // auto: the thing under test
+    cfg.cache.slots_per_slab = 100;
+    runtime::Engine e;
+    {
+        auto r = e.init(cfg);
+        if (!r) { std::printf("      SKIP smoke.auto_cache: %s\n", r.error().str().c_str()); return; }
+    }
+    // Not a SKIP: a refused init_gpu with an auto budget is exactly the failure
+    // this case exists to catch. The back-off should have found a size.
+    REQUIRE_OK(e.init_gpu());
+    const uint32_t slots = e.store().slot_count();
+    std::printf("    auto cache settled at %u slots (%.1f GiB)\n", slots,
+                e.store().capacity_bytes() / double(1ull << 30));
+    CHECK(slots > 0);
+    // The cap, observed end to end rather than as arithmetic. With the cap off
+    // (DEEPMOE_CACHE_SLOT_CAP=0) this is the probe's business alone, so only
+    // assert it when the cap is in force.
+    if (const uint32_t cap = runtime::auto_slot_cap(); cap) CHECK(slots <= cap);
+
+    e.reset_context();
+    uint32_t tok = 0;                  // BOS; the ids do not matter, the submits do
+    for (uint32_t pos = 0; pos < 2; ++pos) {
+        auto r = e.decode_step(tok, pos, -1);
+        REQUIRE_OK(r);
+        tok = r->token;
+    }
+    std::printf("    two decode steps on the auto-sized cache: ok\n");
+}

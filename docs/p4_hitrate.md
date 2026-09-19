@@ -566,6 +566,20 @@ eight. So the safe hand-set maximum is 5,000, and **the default is not a
 hand-set number at all — it is `auto`**, which on this machine lands at 5,100
 slots / 89.3 GiB and is the best cell measured:
 
+> ⚠️ **2026-09-19 (Track H1a).** That 5,100 stopped being usable: on this
+> machine it now dies on the *first* decode submit (`vkQueueSubmit2 failed
+> (-2)`, 34 path-A + 17 path-B slabs; STATUS §3 row 59). `auto` no longer
+> hands the arithmetic straight to the pool — it is **capped at
+> `kAutoSlotCap = 5,000`** (`DEEPMOE_CACHE_SLOT_CAP`, 0 = off) and then
+> **probed**: one empty command buffer is submitted against the freshly built
+> slab pool, and a refusal releases the pool, drops 200 slots
+> (`DEEPMOE_CACHE_BACKOFF_SLOTS`) and rebuilds, up to five times. So the
+> default cell below is `m_5000_off` (5,000 / 87.6 GiB / 5.264 tok/s), not the
+> 5,100 row. `--cache-slots` / `--cache-gb` are probed too but are **never
+> silently reduced**: they fail with the next count to try.
+> The probe itself has **not been run on a GPU yet** (STATUS §6 item 14); the
+> gate is `ctest -R smoke.auto_cache -L needs-gpu`.
+
 | cell | slots | GiB | decode hit | stall ms/tok | MB/token | tok/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `m_4500_off` | 4,500 | 78.8 | 0.9250 | 92.2 | 338.3 | 5.144 |

@@ -36,7 +36,8 @@ add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
 
 foreach(_suite align layout types json profiler status bytes
                 dequant gate slab expert_store planner resident_route
-                io v41_config manifest block_info kvcache kvstore trace)
+                io v41_config manifest block_info kvcache kvstore trace
+                cache_cap)
     add_test(NAME "suite.${_suite}" COMMAND deepmoe_tests "${_suite}.")
 endforeach()
 
@@ -209,6 +210,22 @@ set_tests_properties("suite.kv_replay" PROPERTIES
     SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP kv_replay")
 add_test(NAME "suite.kvdisk" COMMAND deepmoe_tests "kvdisk.")
 set_tests_properties("suite.kvdisk" PROPERTIES LABELS "unit")
+
+# H1a: the auto cache-size cap and the probe's back-off plan, as pure functions.
+# No GPU, no checkpoint -- it runs in every CPU sweep (suite.cache_cap is in the
+# foreach above; this is the label that keeps `ctest -L unit` honest).
+set_tests_properties("suite.cache_cap" PROPERTIES LABELS "unit")
+
+# H1a: the auto-sized expert cache, end to end. Brings the engine up with
+# `--cache-gb auto` (budget_bytes = 0) and decodes two tokens, which is the
+# exact shape that died on 2026-09-19 (STATUS §3 row 59): allocation succeeded
+# and the FIRST submit returned VK_ERROR_OUT_OF_DEVICE_MEMORY. Nothing in the
+# CPU suite can see that, so it is registered here for run_all.py on a GPU
+# machine. Needs the real checkpoint AND a device.
+add_test(NAME "smoke.auto_cache" COMMAND deepmoe_tests "smoke.auto_cache")
+set_tests_properties("smoke.auto_cache" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_REGULAR_EXPRESSION "SKIP smoke.auto_cache|set DEEPMOE_MODEL_DIR")
 
 # Track W: the per-dispatch trace's format and resolver. No GPU, no checkpoint.
 set_tests_properties("suite.trace" PROPERTIES LABELS "unit")

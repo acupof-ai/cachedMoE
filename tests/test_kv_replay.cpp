@@ -646,3 +646,71 @@ DEEPMOE_TEST(kvdisk, roundtrip) {
     CHECK(!runtime::load_parked_context(opt, "unit/session one"));
     fs::remove_all(dir, ec);
 }
+
+
+// H1b: a `.pkv` restore is an optimization, never a correctness input. Pure
+// CPU, no checkpoint, no GPU: `restore_or_cold` is the decision reduced to a
+// function, so the failure can be INJECTED -- which is the only way to test the
+// case that matters (the real one needs a machine whose path A is full).
+//
+// The mutation the brief names: a fallback that still returns an error must
+// fail here. That is pinned by the signature itself (restore_or_cold returns
+// ReplayStats, not Result<ReplayStats>) plus the checks below, which require
+// that the cold callback ran and that the reason survived. (suite.kvdisk)
+DEEPMOE_TEST(kvdisk, restore_failure_degrades) {
+    // (1) Allocation refused -- the D3 case, verbatim: path A is full because
+    //     the expert cache took every slab, so the restore's submit is refused.
+    int cold_calls = 0;
+    runtime::ReplayStats st = runtime::restore_or_cold(
+        "session 'web'",
+        [] {
+            return fail(Err::Internal, "vkQueueSubmit2 failed (-2 VK_ERROR_OUT_OF_DEVICE_MEMORY)");
+        },
+        [&] { ++cold_calls; });
+    CHECK(st.cold_fallback);
+    CHECK_EQ(cold_calls, 1);
+    CHECK(st.cold_reason.find("vkQueueSubmit2") != std::string::npos);
+    // Nothing was replayed, and the stats say so rather than claiming a restore.
+    CHECK_EQ(st.plan.steps(), 0u);
+    CHECK_EQ(st.ms, 0.0);
+
+    // (2) Corrupt file / size mismatch: same outcome, different reason. Every
+    //     failure code degrades -- there is no class of restore error that is
+    //     allowed to kill the turn.
+    for (Err code : {Err::Corrupt, Err::InvalidArgument, Err::ResourceExhausted, Err::Io,
+                     Err::OutOfRange, Err::Internal}) {
+        int cold = 0;
+        runtime::ReplayStats r = runtime::restore_or_cold(
+            "kv disk copy of 'x'", [code] { return fail(code, "injected"); }, [&] { ++cold; });
+        CHECK(r.cold_fallback);
+        CHECK_EQ(cold, 1);
+        CHECK(r.cold_reason.find("injected") != std::string::npos);
+    }
+
+    // (3) The success path is untouched: the stats come through, the cold
+    //     callback does NOT run, and nothing is marked as a fallback. A
+    //     "degradation" that always degrades would be a different bug.
+    int cold_on_success = 0;
+    runtime::ReplayStats ok = runtime::restore_or_cold(
+        "session 'ok'",
+        [] {
+            runtime::ReplayStats good;
+            good.plan.first = 10;
+            good.plan.end   = 42;
+            good.ms         = 12.5;
+            return Result<runtime::ReplayStats>(good);
+        },
+        [&] { ++cold_on_success; });
+    CHECK(!ok.cold_fallback);
+    CHECK(ok.cold_reason.empty());
+    CHECK_EQ(cold_on_success, 0);
+    CHECK_EQ(ok.plan.steps(), 32u);
+    CHECK_EQ(ok.ms, 12.5);
+
+    // (4) A restore with no cold callback at all still returns rather than
+    //     throwing or faulting -- serve passes one, the unit test must not be
+    //     the only caller that is safe.
+    runtime::ReplayStats none =
+        runtime::restore_or_cold("nobody", [] { return fail(Err::Corrupt, "no cb"); }, {});
+    CHECK(none.cold_fallback);
+}

@@ -130,6 +130,23 @@ Result<ParkedContext> park_context(Engine& e) {
     return p;
 }
 
+// H1b (see the header): a restore that is refused degrades to a cold prefill.
+ReplayStats restore_or_cold(std::string_view what,
+                            const std::function<Result<ReplayStats>()>& restore,
+                            const std::function<void()>& cold) {
+    auto r = restore();
+    if (r) return *r;
+    ReplayStats st;
+    st.cold_fallback = true;
+    st.cold_reason   = r.error().str();
+    if (cold) cold();
+    log_warn("session: {} could not be restored ({}); falling back to a cold prefill for this "
+             "session. The saved state is an optimization, not a correctness input -- the turn "
+             "continues, it just pays the full prompt again (docs/p4_kv_ux.md §5).",
+             what, st.cold_reason);
+    return st;
+}
+
 Result<ReplayStats> restore_context(Engine& e, const ParkedContext& p, uint32_t replay_max) {
     if (p.kv.positions != p.tokens.size())
         return fail(Err::InvalidArgument,
@@ -522,16 +539,21 @@ Result<ReplayStats> SessionPool::activate(const std::string& name) {
     if (it == parked_.end()) {
         e.reset_context();
     } else {
-        auto r = restore_context(e, it->second, session_.options().replay);
-        if (!r) {
-            e.reset_context();
-            return std::unexpected(r.error());
-        }
-        st = *r;
-        log_info("session pool: restored '{}' ({} tokens), replayed {} positions in {:.0f} ms", name,
-                 it->second.tokens.size(), st.plan.steps(), st.ms);
+        const uint32_t replay = session_.options().replay;
+        st = restore_or_cold(
+            "session '" + name + "'",
+            [&] { return restore_context(e, it->second, replay); },
+            [&] { e.reset_context(); });
+        if (!st.cold_fallback)
+            log_info("session pool: restored '{}' ({} tokens), replayed {} positions in {:.0f} ms",
+                     name, it->second.tokens.size(), st.plan.steps(), st.ms);
+        // Either way this session is now live: on the cold path with an empty
+        // context, which the next turn prefills. The parked copy goes -- it is
+        // the state we just failed to install, and keeping it would only make
+        // the next activate fail the same way.
         parked_.erase(it);
         lru_.remove(name);
+        if (st.cold_fallback) drop_parked_context(pool_.disk, name);
     }
     active_ = name;
     enforce_budget();
@@ -557,12 +579,32 @@ Result<ReplayStats> SessionPool::restore_active_from_disk() {
     if (pool_.disk.dir.empty()) return fail(Err::InvalidArgument, "kv disk dir is empty");
     if (engine_->context_length() > 0) return ReplayStats{};
     auto loaded = load_parked_context(pool_.disk, active_);
-    if (!loaded) return std::unexpected(loaded.error());
-    auto r = restore_context(*engine_, *loaded, session_.options().replay);
-    if (!r) return std::unexpected(r.error());
+    // NotFound stays NotFound -- "there is no file" is not a failure, and serve
+    // keeps quiet about it. Anything else (corrupt, truncated, wrong version,
+    // a size that does not match) is a refusal, and H1b degrades it.
+    if (!loaded) {
+        if (loaded.error().code == Err::NotFound) return std::unexpected(loaded.error());
+        ReplayStats st;
+        st.cold_fallback = true;
+        st.cold_reason   = loaded.error().str();
+        engine_->reset_context();
+        drop_parked_context(pool_.disk, active_);
+        log_warn("session: kv disk copy of '{}' is unusable ({}); starting cold", active_,
+                 st.cold_reason);
+        return st;
+    }
+    const uint32_t replay = session_.options().replay;
+    ReplayStats st = restore_or_cold(
+        "kv disk copy of '" + active_ + "'",
+        [&] { return restore_context(*engine_, *loaded, replay); },
+        [&] { engine_->reset_context(); });
+    if (st.cold_fallback) {
+        drop_parked_context(pool_.disk, active_);
+        return st;
+    }
     log_info("session pool: restored '{}' from kv disk ({} tokens, replayed {} positions)",
-             active_, loaded->tokens.size(), r->plan.steps());
-    return *r;
+             active_, loaded->tokens.size(), st.plan.steps());
+    return st;
 }
 
 bool SessionPool::drop(const std::string& name) {

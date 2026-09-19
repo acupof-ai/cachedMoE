@@ -207,6 +207,33 @@ replay 的步数 = 真正丢掉的环位置数，不是固定 128：回退 d < 1
 
 指纹不符 / 版本不符 / 截断都按 miss 或 Corrupt 处理，回退到重 prefill。
 
+### 5.2 恢复失败是降级，不是致命（Track H1b，2026-09-19）
+
+镜像那一侧早就有这条规矩——**优化永远不是正确性输入，开不出来就降级成 warning**
+（`p4_dual_source.md` §2）。**KV 盘这一侧到今天才有。**
+
+以前：默认 cache 大小下 path A 被 expert cache 占满（`slab pool: path A full after 34 slabs`），
+`.pkv` 恢复拿不到显存，`SessionPool::activate` 把
+`internal: vkQueueSubmit2 failed (-2)` 一路抛到 serve 的 `emit_error`，
+**杀掉那一轮对话**（`tools/chat.py:186`）。
+
+现在：`restore_or_cold()`（`runtime/session.h`）夹在中间。
+
+| | 行为 |
+|---|---|
+| 恢复成功 | 和以前逐字相同 |
+| 恢复失败（**任何**错误码：分配被拒 / 损坏 / 版本 / 尺寸不符） | 一条 warning、`Engine::reset_context()`、`ReplayStats.cold_fallback = true` + `cold_reason`，**返回值不是错误**。那一轮照常跑，只是把整个 prompt 重新 prefill 一遍 |
+| 失败之后那份 `.pkv` | 删掉。留着只会让下一次 activate 以同样的方式再失败一次 |
+| 文件不存在 | 仍然是 `NotFound`，`serve` 照旧不出声——「没有文件」不是失败 |
+
+`serve` 的 `session` 事件因此多一个 `"cold_fallback"` 字段，启动横幅在降级时写
+`serve: kv-disk restore declined (...); starting cold`。
+
+**函数签名本身就是判据**：`restore_or_cold` 返回 `ReplayStats` 而不是
+`Result<ReplayStats>`，所以「降级了但仍然返回错误」这个变异**编译不过**，
+剩下的（不调冷启动回调、不置 `cold_fallback`）由 `kvdisk.restore_failure_degrades`
+注入六种错误码逐一挡住，并登记在 `tests/mutate.py`。
+
 ### 5.1 跨进程 TTFT（SSD 命中 vs 冷 prefill）
 
 {{SEC51}}
@@ -331,5 +358,9 @@ cmake --build build
 1. **live 平面仍是 bf16**（§3.2）：3.2× 的开销，换成 nibble 平面要改
    `sparse_attn` / `indexer` 的读法，代价未测。
 2. **R ∈ {128, 256} 的取舍**没测（design §15 未决问题 24）；现在一律 R = 128。
-3. **前缀的前缀命中**：`.pkv` 是按会话名存的，design §11.4 说的"按 prompt 前缀 hash 分文件、
+3. **H1b 只保证「不致命」，不保证「恢复得成」**：path A 被 expert cache 占满时恢复仍然拿不到显存，
+   降级之后那一轮付的是完整 prefill——41× 的复用在这种情况下**拿不到**。
+   缺的那一半是 STATUS §7 第 2 项的 ②：**给 KV 留一块 path A**（像 `p4_hitrate.md` §5
+   给 GPU prefill 留的 4 GiB 那样），或者让恢复退到 path B。**未做。**
+4. **前缀的前缀命中**：`.pkv` 是按会话名存的，design §11.4 说的"按 prompt 前缀 hash 分文件、
    前缀的前缀也能命中"还没做（字段本身都是按位置可截的，缺的是索引）。

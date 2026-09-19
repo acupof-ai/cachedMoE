@@ -124,6 +124,27 @@ MUTATIONS = [
                         "numpy_rng_integers(10007ull * lt.layer",
                         "numpy_rng_integers(10009ull * lt.layer")],
      "change the engram per-layer seed", "caught", True),
+
+    # --- H1a: the auto cache-size cap and the probe's back-off plan ------
+    ("cache_cap", [("runtime/engine.cpp",
+                    "return budget_bytes > cap_bytes ? cap_bytes : budget_bytes;",
+                    "return budget_bytes;")],
+     "ignore the auto slot cap (the 5,100-slot default that dies on submit)",
+     "caught", False),
+    ("cache_cap", [("runtime/engine.cpp",
+                    "n = n > step + floor_slots ? n - step : floor_slots;",
+                    "n = n;")],
+     "make the cache back-off plan never decrease", "caught", False),
+
+    # --- H1b: a .pkv restore is a degradation, never fatal ---------------
+    ("kvdisk", [("runtime/session.cpp",
+                 "st.cold_fallback = true;\n"
+                 "    st.cold_reason   = r.error().str();\n"
+                 "    if (cold) cold();",
+                 "st.cold_fallback = false;\n"
+                 "    st.cold_reason   = r.error().str();")],
+     "let a refused .pkv restore propagate instead of falling back cold",
+     "caught", False),
 ]
 
 # Original bytes, not text: reading a file as text translates CRLF to LF on

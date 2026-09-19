@@ -7,6 +7,27 @@ namespace deepmoe::gpu {
 CommandPool::~CommandPool() { destroy(); }
 QueryPool::~QueryPool() { destroy(); }
 
+// H1a. Written as plain integers so it also compiles in the no-Vulkan build,
+// where the header is not available. Only the codes this project has actually
+// seen are named; the point of the name is that a caller can branch on
+// "VK_ERROR_DEVICE_LOST" without re-parsing a number out of a message.
+const char* vk_result_name(int result) {
+    switch (result) {
+        case  0: return "VK_SUCCESS";
+        case -1: return "VK_ERROR_OUT_OF_HOST_MEMORY";
+        case -2: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+        case -3: return "VK_ERROR_INITIALIZATION_FAILED";
+        case -4: return "VK_ERROR_DEVICE_LOST";
+        case -5: return "VK_ERROR_MEMORY_MAP_FAILED";
+        case -7: return "VK_ERROR_FEATURE_NOT_PRESENT";
+        case -9: return "VK_ERROR_TOO_MANY_OBJECTS";
+        case -12: return "VK_ERROR_FRAGMENTED_POOL";
+        case -13: return "VK_ERROR_UNKNOWN";
+        case -1000072003: return "VK_ERROR_INVALID_EXTERNAL_HANDLE";
+        default: return "VK_ERROR_?";
+    }
+}
+
 #if !defined(DEEPMOE_ENABLE_VULKAN)
 
 Result<void> CommandPool::create(Device&) { return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN"); }
@@ -235,7 +256,8 @@ Result<void> submit(Device& device, const Submission& s) {
     }
     const VkResult r = vkQueueSubmit2(device.compute_queue(), 1, &si, VK_NULL_HANDLE);
     if (r != VK_SUCCESS)
-        return fail(Err::Internal, std::format("vkQueueSubmit2 failed ({})", static_cast<int>(r)));
+        return fail(Err::Internal, std::format("vkQueueSubmit2 failed ({} {})",
+                                               static_cast<int>(r), vk_result_name(r)));
     return {};
 }
 
@@ -245,7 +267,8 @@ Result<void> submit_and_wait(Device& device, const CommandBuffer& cmd) {
     if (auto r = submit(device, s); !r) return r;
     const VkResult r = vkQueueWaitIdle(device.compute_queue());
     if (r != VK_SUCCESS)
-        return fail(Err::Internal, std::format("vkQueueWaitIdle failed ({})", static_cast<int>(r)));
+        return fail(Err::Internal, std::format("vkQueueWaitIdle failed ({} {})",
+                                               static_cast<int>(r), vk_result_name(r)));
     return {};
 }
 

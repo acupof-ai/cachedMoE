@@ -60,6 +60,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | KV（按模型格式） | 17,010 位置实测 **54.96 MiB**；64K 上下文 61 MB、1M 上下文 0.94 GB | `p4_summary.md` §6 |
 | decode 逐位确定性 | 3 个进程同一 hash `a919aaf6…` | `p2_decode.md` §4.4 |
 | **cache 默认（`auto`）** | **5,100 槽 / 89.3 GiB**：hit 0.9383、stall 76.0 ms/token、**5.603 tok/s**（八轮脚本，安静机） | `p4_hitrate.md` §4（F4） |
+| **`auto` 现在会探，而不只是算（Track H1a，2026-09-19）** | 算出来的预算多一步：① **硬上限 `kAutoSlotCap = 5,000` 槽**（`DEEPMOE_CACHE_SLOT_CAP` 可改，0 = 关），日志同时打「算出来的」与「封顶后的」；② **建完 slab 池先提交一个空命令缓冲**——这正是 over-size 被发现的那一刻（分配全成功，驻留要到有活入队才检查），refused 就**释放池、槽数减 200（`DEEPMOE_CACHE_BACKOFF_SLOTS`）、重建**，最多 5 次；③ 丢设备（`VK_ERROR_DEVICE_LOST`）**不退**，因为丢了的 device 在本进程里不能复用，直接报「下一次用 `--cache-slots N-200`」。`--cache-slots` / `--cache-gb` 一样探，但**不会被悄悄改小**，失败就是致命错并报下一个该试的数。纯函数 `cap_auto_budget` / `cache_backoff_slots` 有 CPU 单测 + 3 条变异（`suite.cache_cap`、`tests/mutate.py`）；GPU 侧新增 `smoke.auto_cache`（`needs-model;needs-gpu`，auto 起引擎 + decode 两个 token）**本轮未跑** | `runtime/engine.cpp` `build_expert_cache_probed`；`tests/test_store.cpp` |
 | cache 容量上限（本机） | **安全上限 5,000 槽**（**2026-09-19 下午再次确认，而且 `auto` today 在它上面**：`--cache-slots 5100`（34 A + 17 B）**第一个 decode submit 就 `vkQueueSubmit2 failed (-2)`**，5,000（34 A + 16 B）干净跑完四轮 —— §3 的 59）。5,400 过三轮、八轮中途死；**5,500 第一个 token 就丢设备**（36 A + 19 B slab，53.8 GiB 空闲）。~~5500 槽 = 96.34 GiB 可用~~ 作废 | `p4_hitrate.md` §4（F4） |
 | 长 prompt TTFT（4,133 token，4,500 槽） | GPU prefill 被路径 A 饿死时 **1,061.7 s**；加 4 GiB 路径 A 预留后 **100.0 s（10.6×）** | `p4_hitrate.md` §5（F4） |
 | **resident-only 路由的四档（4 轮对话，5,100 槽）** | `off` 4.82 tok/s（mass lost 0，P0 262.5 GiB）／`stall1` 5.14（0.048）／**`verify` 7.57 ×1.57（0.1377，P0 62.5 GiB）**／`all` 8.99 ×1.87（0.2587）。质量（64 步 teacher-forced PPL，×`off`）依次 1.00 / 1.11 / **1.376** / 2.29——**四档全部 NO-GO 作默认** | `p4_resident_routing.md` §8.3 / §9.3 / **§10** |
@@ -528,6 +529,8 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ## 6. 已知限制与未决风险
 
 1. **decode 被 NVMe 钉死**：每 token 60% 是 stall。**默认 `auto` = 5,100 槽 / 89.3 GiB，6.05 → 5.60 tok/s / hit 0.9383**，
+   ⚠️ **2026-09-19（Track H1a）改了**：`auto` 现在先封顶到 **5,000 槽**再**探一次提交**，refused 就每次退 200 槽重建（最多 5 次）。
+   所以 `auto` 不再会起不来；代价是默认容量从算出来的 5,100 降到 5,000（约 −0.2 点 hit）。
    而且这已经是本机安全上限附近（5,400 八轮中途死、5,500 第一个 token 丢设备，§3 的 30 / `p4_hitrate.md` §4）。
    容量曲线还在爬（sim 6,500 槽 +2.2 点），但**本机没有字节了**。20 tok/s 需要把 MB/token 再砍 3×：
    2-bit 已经否掉（§3 的 37），只剩投机解码，而它今天做不到（§3 的 34）。
@@ -570,7 +573,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
     只有 per-op 那几列可比，墙钟不可比；§2.5 的 TTFT 仍是 Track L 的数，**没有新的安静机端到端对照**。
     F2 的 KV 多 slab、`clear()` 批量化、fence 等待改成预算（不再是 120 s 死线）、`.pkv`
     字段表与三会话 park/spill 演示已合入，但 **SSD KV 前缀复用仍然不是 `serve` 的默认路径**（见 §7 的 2）。
-14. **`p4/one-pr` 合进 main 时，整个 P4 的数字没有在合并后的这棵树上重跑**——
+14. **H1a 的三条新行为一行都没在 GPU 上跑过**（2026-09-19，Track H1a）：封顶、探测提交、退让重建、
+    以及丢设备时的致命信息，**全部只过了 CPU 单测 + 变异**。这台机器的引擎正被网页 UI 占着，
+    本轮按约定没有起第二个引擎。闸是新注册的 `smoke.auto_cache`（`ctest -L needs-gpu`，
+    auto 起引擎 + decode 两个 token）；**在它绿之前，「`auto` 安全了」是一个设计声明，不是一个测量**。
+    另外那个空命令缓冲究竟够不够触发驻留检查，**只能在真机上验**——如果不够，探测会假阳性通过，
+    而封顶（① 那一半）仍然挡着本机已知的 5,100。
+15. **`p4/one-pr` 合进 main 时，整个 P4 的数字没有在合并后的这棵树上重跑**——
     合并后跑的是 build + 全量 ctest，不是 bench。任何性能数字的出处仍然是它自己那一行指的报告。
 
 ---
@@ -641,8 +650,15 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    `serve: kv-disk restore failed: internal: vkQueueSubmit2 failed (-2)`，
    这个错误**直接抛进 `tools/chat.py:186` 杀掉那一轮**。
    镜像那一侧有「优化永远不是正确性输入，开不出来就降级成 warning」这条规矩（`p4_dual_source.md` §2），
-   **KV 盘这一侧没有**。默认开之前要先补两件：① 恢复失败降级成冷启动 warning；
-   ② path A 满时的落点（退到 path B，或者像 `p4_hitrate.md` §5 给 GPU prefill 留 4 GiB 那样给 KV 留一块）。
+   **KV 盘这一侧没有**。默认开之前要先补两件：~~① 恢复失败降级成冷启动 warning；~~
+   **① 已做（Track H1b，2026-09-19）**：`restore_or_cold()`（`runtime/session.h`）把恢复失败——
+   分配被拒、文件损坏、尺寸不符，**一个错误码都不例外**——变成一条 warning + 冷 prefill，
+   `ReplayStats.cold_fallback` / `cold_reason` 带出来，`serve` 的 `session` 事件多一个
+   `"cold_fallback"` 字段，**那一轮不再报错**。失败后那份 `.pkv` 会被删掉，
+   免得下一次 activate 以同样的方式再失败一次。注入失败的 CPU 单测在 `kvdisk.restore_failure_degrades`，
+   变异（「降级了但仍然返回错误」）在 `tests/mutate.py`。
+   ② path A 满时的落点（退到 path B，或者像 `p4_hitrate.md` §5 给 GPU prefill 留 4 GiB 那样给 KV 留一块）
+   **仍然没做**——H1b 只保证不致命，不保证恢复得成，所以 41× 的复用在 path A 满时拿不到。
 3. ~~**量 verify-only 的 resident-only 路由在 DSpark 上的收益。**~~ **已做，答案是 NO-GO**（§3 的 40，
    `p4_resident_routing.md` §10）。`DEEPMOE_ROUTE_RESIDENT_ONLY=verify` 已经实现（第四档，
    两个 CLI 都收，`DEEPMOE_VERIFY_FIRST` / `DEEPMOE_VERIFY_DRAFT` 拆开两半）：

@@ -87,6 +87,65 @@ namespace deepmoe::gpu { struct PrefillHandoff; }
 
 namespace deepmoe::runtime {
 
+// --- H1a: the auto cache size never exceeds the measured safe slot count -----
+//
+// `--cache-gb` / `--cache-slots` are explicit and own their risk. The *auto*
+// budget is not: it is arithmetic over two heaps, and on this machine the
+// arithmetic lands at 5,100 slots / 89.3 GiB (docs/p4_hitrate.md, F4) while the
+// measured ceiling is 5,000 -- 5,100 died on the FIRST decode submit today
+// (`vkQueueSubmit2 failed (-2)`, slab layout 34 A + 17 B), 5,400 died after
+// twelve minutes and 5,500 lost the device on the first token (STATUS §1
+// "cache 容量上限", §3 row 59). The heap arithmetic cannot see any of that, so
+// the measured number is a hard cap applied AFTER it.
+//
+// 5,000 = 34 path-A slabs + 16 path-B slabs, which is the layout that ran four
+// clean turns on 2026-09-19. `DEEPMOE_CACHE_SLOT_CAP` overrides it for a
+// different machine; 0 turns the cap off and puts you back on the arithmetic.
+inline constexpr uint32_t kAutoSlotCap = 5000;
+
+// The cap in force: `DEEPMOE_CACHE_SLOT_CAP` if set (0 = no cap), else
+// kAutoSlotCap. Read once per process.
+uint32_t auto_slot_cap();
+
+// Pure: the auto budget, capped. Returns `budget_bytes` unchanged when the cap
+// is off (`slot_cap == 0`), when `slot_bytes == 0`, or when the budget already
+// sits at or under the cap; otherwise `slot_cap * slot_bytes`. Whole slabs are
+// the pool's business -- capping the byte budget is enough, because the pool
+// only ever allocates slabs that fit inside it.
+uint64_t cap_auto_budget(uint64_t budget_bytes, uint64_t slot_bytes, uint32_t slot_cap);
+
+// How many whole slots a byte budget buys, for logging the before/after.
+inline uint64_t budget_slots(uint64_t budget_bytes, uint64_t slot_bytes) {
+    return slot_bytes ? budget_bytes / slot_bytes : 0;
+}
+
+// --- H1a: auto PROBES rather than computes ---------------------------------
+//
+// The cap above is a fallback -- a number measured on one machine on one day.
+// The real check is empirical: build the slab pool, submit once, and see. The
+// submit is where an over-sized cache is discovered (the driver accepts every
+// allocation and only has to make them all resident when work is queued), so a
+// trivial command buffer is a sufficient probe. A refused probe releases the
+// pool, drops the slot budget by `cache_backoff_step()` and rebuilds.
+//
+// Only `auto` backs off. `--cache-slots` / `--cache-gb` are a deliberate
+// request: they get the same probe, but a failure is fatal with the number to
+// try next, because silently handing back a smaller cache would corrupt every
+// A/B that pins the slot count.
+inline constexpr uint32_t kCacheBackoffSlots   = 200;
+inline constexpr uint32_t kCacheBackoffTries   = 5;   // the first try included
+inline constexpr uint32_t kCacheBackoffFloor   = 200; // never probe below this
+
+// `DEEPMOE_CACHE_BACKOFF_SLOTS` if set and > 0, else kCacheBackoffSlots.
+uint32_t cache_backoff_step();
+
+// Pure: the slot counts an auto-sized cache tries, in order, first one first.
+// Strictly DECREASING by `step` and floored at `floor_slots`; the sequence
+// stops early once `floor_slots` is reached, so it never repeats a count and
+// never grows. `attempts == 0` or `start == 0` gives an empty plan.
+std::vector<uint32_t> cache_backoff_slots(uint32_t start, uint32_t step, uint32_t attempts,
+                                          uint32_t floor_slots = kCacheBackoffFloor);
+
 struct GenerateOptions {
     uint32_t max_tokens = 64;
     bool     greedy     = true;     // design §10.2 invariant
@@ -688,6 +747,17 @@ private:
     Result<void> configure_io_sources();
     Result<void> load_pinned();
     Result<void> build_expert_cache();
+    // H1a: one trivial submit against the freshly built slab pool. This is the
+    // moment an over-sized expert cache is discovered -- allocation succeeded,
+    // residency is only checked when work is queued -- so the probe costs one
+    // empty command buffer and answers the question the arithmetic cannot.
+    Result<void> probe_submit();
+    // H1a: build_expert_cache + probe_submit, backing the slot count off by
+    // `cache_backoff_step()` and rebuilding when the probe is refused. Only
+    // called with `backoff = true` for an auto-sized budget; an explicit
+    // --cache-slots / --cache-gb gets one attempt and a fatal message naming
+    // the next count to try.
+    Result<void> build_expert_cache_probed(bool backoff);
     Result<void> resolve_weights();
     Result<void> embed_token(uint32_t token);
     Result<void> run_layer(uint32_t layer, uint32_t position, bool& apply_post,
@@ -818,6 +888,11 @@ private:
     DeviceAddress                head_w_ = kNoDeviceAddress;
     const store::PinnedTensor*   embed_  = nullptr;
     uint64_t                     cache_budget_ = 0;
+    // H1a: has any queue submission of this process ever succeeded? The first
+    // one is the one that discovers an over-sized expert cache -- the driver
+    // accepts every allocation and then refuses the submit that has to make
+    // them resident -- so a failure here is a capacity report, not a raw code.
+    bool                         any_submit_ok_ = false;
 
     // design §7.4's routing of caches between layers, which is model.py's
     // `shared_attn` written down. Fixed at bring-up except `pub_index_k_`.

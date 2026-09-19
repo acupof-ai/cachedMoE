@@ -20,11 +20,24 @@ deepMoE web UI —— 正在运行的实例
     -RedirectStandardOutput C:\Users\Asus\code\deepmoe\build\web_ui.out `
     -RedirectStandardError  C:\Users\Asus\code\deepmoe\build\web_ui.err
 
-⚠️ `--cache-slots 5000` 是**必须的，不是调优**。不给它就是 `auto` = 5,100 槽，
-而 5,100 今天在这台机器上**第一个 decode submit 就死**
+⚠️ `--cache-slots 5000` 对**正在跑的这个实例**仍然是必须的。
+不给它就是 `auto` = 5,100 槽，而 5,100 在这台机器上**第一个 decode submit 就死**
 （`vkQueueSubmit2 failed (-2)` = VK_ERROR_OUT_OF_DEVICE_MEMORY，slab 布局 34 A + 17 B）。
 5,000 槽是 34 A + 16 B，干净。见 STATUS §1「cache 容量上限」与 §3 的 59。
-（上一版 RUNNING.txt 的命令没有这一项——它是在 `auto` 还能起来的时候写的。）
+
+✅ **下一次重启可以不再给它**（Track H1a，分支 `p4/h1-defaults`）：`auto` 现在
+① 封顶到 5,000 槽（`DEEPMOE_CACHE_SLOT_CAP` 可改，0 = 关），并且
+② 建完 slab 池**先提交一个空命令缓冲探一下**，被拒就退 200 槽重建（最多 5 次，
+`DEEPMOE_CACHE_BACKOFF_SLOTS`）。丢设备时不重试，直接报「下一次用 --cache-slots N-200」。
+
+⚠️ **两个前提，缺一不可**：
+  1. **必须先重新链接 `build\deepmoe.exe`**——正在跑的这个 exe 是改动之前的，
+     旧 exe 里 `auto` 还是 5,100，去掉 `--cache-slots` 会当场死。
+  2. **必须重启网页 UI**（停掉下面那三个 PID 再按上面的命令起），
+     serve 的缓存大小只在启动时决定。
+  在这两件做完之前，命令里的 `--cache-slots 5000` **不要删**。
+  并且 H1a 本身**还没在 GPU 上验过**（STATUS §6 的 14）——第一次不带 `--cache-slots`
+  重启时，看一眼 `build\web_serve.log` 里的 `engine: cache probe passed at N slots`。
 
 PID
 ---
@@ -61,7 +74,12 @@ PID
       Remove-Item "$env:LOCALAPPDATA\deepmoe\kv\D__models_DeepSeek-V4.1-Flash\*.pkv"
 
   本次启动前该目录已清空，所以当前实例不受影响；**下一次重启会踩到**。
-  修它的前提见 STATUS §7 第 2 项（恢复失败要降级成冷启动 warning）。
+
+  ✅ **已修（Track H1b，同一个分支）**：恢复失败——分配被拒 / 损坏 / 尺寸不符，
+  任何错误码——现在是一条 warning + 冷 prefill，那一轮照常跑完，失败的那份 `.pkv` 被删掉。
+  见 docs/p4_kv_ux.md §5.2。**同样要求重新链接 exe + 重启网页 UI 才生效**；
+  在那之前上面那条 `Remove-Item` 仍然是重启前的必做项。
+  注意这只是「不致命」：path A 满时恢复仍然拿不到显存，那一轮付完整 prefill（STATUS §7 第 2 项的 ②）。
 
 停止
 ----

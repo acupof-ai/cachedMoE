@@ -304,8 +304,15 @@ int cmd_serve(int argc, char** argv) {
     runtime::SessionPool pool(engine, *tok, so, po);
     if (!po.disk.dir.empty()) {
         auto loaded = pool.restore_active_from_disk();
-        if (loaded) std::fprintf(stderr, "serve: restored %u tokens from kv disk\n",
-                                 engine.context_length());
+        // H1b: a refused restore is a degradation, not a failure -- the pool has
+        // already reset the context, so the first turn simply prefills.
+        if (loaded && loaded->cold_fallback)
+            std::fprintf(stderr,
+                         "serve: kv-disk restore declined (%s); starting cold, the first "
+                         "turn prefills the whole prompt\n",
+                         loaded->cold_reason.c_str());
+        else if (loaded) std::fprintf(stderr, "serve: restored %u tokens from kv disk\n",
+                                      engine.context_length());
         else if (loaded.error().code != Err::NotFound)
             std::fprintf(stderr, "serve: kv-disk restore failed: %s\n",
                          loaded.error().str().c_str());
@@ -333,10 +340,14 @@ int cmd_serve(int argc, char** argv) {
             emit_error("session '" + name + "': " + r.error().str());
             return false;
         }
+        if (r->cold_fallback)
+            std::fprintf(stderr, "serve: session '%s' restore declined (%s); starting cold\n",
+                         name.c_str(), r->cold_reason.c_str());
         emit(std::format("{{\"event\":\"session\",\"name\":{},\"tokens\":{},\"replay_steps\":{},"
-                         "\"replay_ms\":{},\"evicted\":{}}}",
+                         "\"replay_ms\":{},\"evicted\":{},\"cold_fallback\":{}}}",
                          json_quote(name), engine.context_length(), r->plan.steps(),
-                         json_number(r->ms), pool.evicted()));
+                         json_number(r->ms), pool.evicted(),
+                         r->cold_fallback ? "true" : "false"));
         return true;
     };
 

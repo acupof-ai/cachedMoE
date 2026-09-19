@@ -52,6 +52,7 @@
 #include <list>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/status.h"
@@ -78,7 +79,29 @@ struct ReplayStats {
     double     backup_ms = 0.0;   // copying and restoring rows
     uint64_t   backup_bytes = 0;
     bool       cancelled = false;
+    // H1b: the restore was refused and the context was reset instead, so the
+    // next turn pays a cold prefill. `cold_reason` carries the refusal.
+    bool        cold_fallback = false;
+    std::string cold_reason;
 };
+
+// H1b: a `.pkv` restore is an OPTIMIZATION, never a correctness input --
+// the same rule the mirror already has (docs/p4_dual_source.md §2), which the
+// KV-disk side did not. Restoring a saved context can be refused for reasons
+// that have nothing to do with the conversation: on a machine whose expert
+// cache has taken every path-A slab, the restore's own allocation fails and the
+// submit behind it returns `vkQueueSubmit2 failed (-2)` -- and before H1b that
+// error travelled all the way out of `SessionPool::activate` into serve's
+// `emit_error`, killing the turn (STATUS §7 item 2, tools/web/RUNNING.txt).
+//
+// `restore_or_cold` runs `restore`; on ANY failure -- allocation refused, file
+// corrupt, size mismatch -- it logs a warning, calls `cold` (which resets the
+// context, so the turn re-prefills from scratch) and returns stats with
+// `cold_fallback` set. It NEVER returns an error: that is the whole point, and
+// it is what the mutation test pins down.
+ReplayStats restore_or_cold(std::string_view what,
+                            const std::function<Result<ReplayStats>()>& restore,
+                            const std::function<void()>& cold);
 
 // What rolling the engine's context back to `keep` tokens would replay.
 // `replay_max` bounds it (<= window); fewer replayed positions leave the
