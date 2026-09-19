@@ -3,10 +3,19 @@ deepMoE web UI —— 正在运行的实例
 
 打开： http://127.0.0.1:8080/
 
-镜像（第二个读源）：**关**。Track D3（docs/p4_dual_source.md §7、STATUS §3 的 59）
-判了 NO-GO —— 带 `--mirror E:\...` 时引擎**连初始化都过不去**
-（`pinned load of 'norm.weight': overlapped read failed`，win32 1117 = ERROR_IO_DEVICE）。
+镜像（第二个读源）：**关**。Track D4（docs/p4_dual_source.md §8、STATUS §3 的 60）
+是第三次判 NO-GO —— 这一次 E: **通过了为它写的那道验收门**
+（DX §5.1：48 句柄 × QD 24，两条 300 秒臂各 1.04 GB/s、零错误，句柄 158 ms），
+**引擎照样死在同一个 tensor、同一个偏移**：
+`pinned load of 'norm.weight': overlapped read failed (win32 1117, 12288 B at off 1323827200)`，
+摘源时的码是 **win32 433 = ERROR_NO_SUCH_DEVICE**（盘不在总线上了）。
 所以下面的命令**不带 `--mirror`**，和 main 的默认行为逐字相同。
+
+ℹ️ `server.py` 现在**有** `--mirror DIR` 透传了（Track D4；之前文档说有、其实没有），
+并且引擎侧有了镜像健康闸：启动时从镜像试读 pinned 权重、失败就摘镜像单盘跑，
+运行期连续 3 次 I/O 错误也动态摘源。**闸能让镜像不再是致命的，但它救不了这块 U 盘**
+（pinned load 的第一个失败请求仍然会被抛出去）。
+**这块 U 盘不要再试** —— 包括在它通过了那道门之后。
 
 启动命令（已用 Start-Process 脱离本会话，关掉终端也不会停）：
 
@@ -20,38 +29,30 @@ deepMoE web UI —— 正在运行的实例
     -RedirectStandardOutput C:\Users\Asus\code\deepmoe\build\web_ui.out `
     -RedirectStandardError  C:\Users\Asus\code\deepmoe\build\web_ui.err
 
-⚠️ `--cache-slots 5000` 对**正在跑的这个实例**仍然是必须的。
-不给它就是 `auto` = 5,100 槽，而 5,100 在这台机器上**第一个 decode submit 就死**
-（`vkQueueSubmit2 failed (-2)` = VK_ERROR_OUT_OF_DEVICE_MEMORY，slab 布局 34 A + 17 B）。
-5,000 槽是 34 A + 16 B，干净。见 STATUS §1「cache 容量上限」与 §3 的 59。
+✅ **`--cache-slots` 已经不用给了**（Track H1a 生效，本实例就是这样起的）：
+`auto` 自己封顶到 5,000 槽（`DEEPMOE_CACHE_SLOT_CAP` 可改，0 = 关），
+并且建完 slab 池先提交一个空命令缓冲探一下，被拒就退 200 槽重建（最多 5 次）。
+本次就绪横幅：`expert cache 87.6 GiB (5000 slots)`。
 
-✅ **下一次重启可以不再给它**（Track H1a，分支 `p4/h1-defaults`）：`auto` 现在
-① 封顶到 5,000 槽（`DEEPMOE_CACHE_SLOT_CAP` 可改，0 = 关），并且
-② 建完 slab 池**先提交一个空命令缓冲探一下**，被拒就退 200 槽重建（最多 5 次，
-`DEEPMOE_CACHE_BACKOFF_SLOTS`）。丢设备时不重试，直接报「下一次用 --cache-slots N-200」。
-
-⚠️ **两个前提，缺一不可**：
-  1. **必须先重新链接 `build\deepmoe.exe`**——正在跑的这个 exe 是改动之前的，
-     旧 exe 里 `auto` 还是 5,100，去掉 `--cache-slots` 会当场死。
-  2. **必须重启网页 UI**（停掉下面那三个 PID 再按上面的命令起），
-     serve 的缓存大小只在启动时决定。
-  在这两件做完之前，命令里的 `--cache-slots 5000` **不要删**。
-  并且 H1a 本身**还没在 GPU 上验过**（STATUS §6 的 14）——第一次不带 `--cache-slots`
-  重启时，看一眼 `build\web_serve.log` 里的 `engine: cache probe passed at N slots`。
+✅ **`.pkv` 也不用在重启前清了**（Track H1b 生效）：恢复失败——分配被拒 / 损坏 / 尺寸不符——
+是一条 warning + 冷 prefill，那一轮照常跑完，失败的那份 `.pkv` 被删掉。
+本次启动前仍然顺手清了一次，日志里 `serve: restored 374 tokens from kv disk` 是之后写的。
 
 PID
 ---
-  server.py 启动器 (.venv python.exe)   46232
-  server.py 实际解释器 (Python312)       2500
-  deepmoe serve                         27044
+  server.py 启动器 (.venv python.exe)   44620
+  server.py 实际解释器 (Python312)      46980
+  deepmoe serve                         43132
 
 状态
 ----
-  引擎就绪      12.7 s
-  专家缓存      87.6 GiB / 5000 slots
+  引擎就绪      12.9 s
+  专家缓存      87.6 GiB / 5000 slots（`auto`，没给 --cache-slots）
   max_context   524280（满载 live KV ≈ 1.56 GiB）
-  读源          1 个（D: 单盘）；`status.json` 的 io 段没有 src[] 行 = 镜像确实是关的
-  /api/status   已验证返回 200
+  读源          **1 个**（D: 单盘）——就绪横幅现在直接写着 `read sources 1`
+                （Track D4 给 `ready` 事件加的 `"sources"`：过了健康闸之后**真正在读**的源数，
+                 不是「要来的」源数）；`status.json` 的 io 段没有 src[] 行
+  /api/status   已验证返回 **200**
 
 日志
 ----
@@ -63,27 +64,25 @@ PID
 -----------------
   目录  %LOCALAPPDATA%\deepmoe\kv\D__models_DeepSeek-V4.1-Flash
 
-  ⚠️ **重启前先清空这个目录。** 默认 cache 大小下 path A 会被 expert cache 占满
-  （`slab pool: path A full after 34 slabs`），此时 `.pkv` 恢复拿不到显存：
+  ✅ **不用再在重启前清空了**（Track H1b，本实例的 exe 已经带上）：`.pkv` 恢复失败——
+  分配被拒 / 损坏 / 尺寸不符，任何错误码——现在是一条 warning + 冷 prefill，
+  那一轮照常跑完，失败的那份 `.pkv` 自己被删掉。见 docs/p4_kv_ux.md §5.2。
 
-      serve: kv-disk restore failed: internal: vkQueueSubmit2 failed (-2)
+  它以前是致命的：默认 cache 大小下 path A 会被 expert cache 占满
+  （`slab pool: path A full after 34 slabs`），恢复拿不到显存就报
+  `serve: kv-disk restore failed: internal: vkQueueSubmit2 failed (-2)`，
+  而这个错误**直接杀掉那一轮对话**（抛进 tools/chat.py:186）。
 
-  而这个错误**不是降级成 warning，是直接杀掉那一轮对话**（抛进 tools/chat.py:186）。
-  一行绕开：
+  注意「不致命」不等于「能恢复」：path A 满时恢复仍然拿不到显存，
+  那一轮付完整 prefill（STATUS §7 第 2 项的 ②）。要手动清的话还是这一行：
 
       Remove-Item "$env:LOCALAPPDATA\deepmoe\kv\D__models_DeepSeek-V4.1-Flash\*.pkv"
 
-  本次启动前该目录已清空，所以当前实例不受影响；**下一次重启会踩到**。
-
-  ✅ **已修（Track H1b，同一个分支）**：恢复失败——分配被拒 / 损坏 / 尺寸不符，
-  任何错误码——现在是一条 warning + 冷 prefill，那一轮照常跑完，失败的那份 `.pkv` 被删掉。
-  见 docs/p4_kv_ux.md §5.2。**同样要求重新链接 exe + 重启网页 UI 才生效**；
-  在那之前上面那条 `Remove-Item` 仍然是重启前的必做项。
-  注意这只是「不致命」：path A 满时恢复仍然拿不到显存，那一轮付完整 prefill（STATUS §7 第 2 项的 ②）。
-
 停止
 ----
-  Get-Process -Id 46232,2500,27044 | Stop-Process -Force
+  Get-Process -Id 44620,46980,43132 | Stop-Process -Force
+
+  （停完确认 `Get-Process deepmoe*` 为空；上一次 deepmoe 要再 Stop-Process 一次才真的退。）
 
 注意：同一时刻只能有一个 deepmoe 引擎进程。再起一个之前先把这个停掉
 （`Get-Process deepmoe` 应该是空的）。
@@ -92,3 +91,9 @@ PID
 2026-09-19 重启（H1 之后，auto 探测生效，无 --cache-slots）：
   server.py 启动器 32028 / 解释器 42856 / deepmoe serve 46276
   auto 落在 5000 槽（budget 5100 → cap 5000，probe 通过）；smoke.auto_cache 在 GPU 上通过。
+
+2026-09-19 晚重启（Track D4 之后，main d2ba271，仍然**不带 --mirror**）：
+  server.py 启动器 44620 / 解释器 46980 / deepmoe serve 43132
+  就绪 12.9 s，auto → 5,000 槽，`read sources 1`，/api/status 200。
+  这一次 exe 里多了镜像健康闸（启动 pinned 试读 / 失败摘镜像 / 运行期连续 3 次错误摘源），
+  默认路径（不给 --mirror）与之前逐字相同——闸整个在 `if (mirrors_on_)` 里。
