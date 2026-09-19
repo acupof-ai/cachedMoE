@@ -1,0 +1,13 @@
+[E_a_cold] opened 48 handles in 17000 ms (dir=E:\models\DeepSeek-V4.1-Flash)
+[E_a_cold] qd=24 big=4096 KiB small=12 KiB every=0 secs=180
+[E_a_cold] t=  5s  0.769 GB/s  reads=917 small=0 inflight=24
+[E_a_cold] t= 10s  0.846 GB/s  reads=1926 small=0 inflight=24
+[E_a_cold] t= 15s  0.851 GB/s  reads=2940 small=0 inflight=24
+[E_a_cold] t= 20s  0.105 GB/s  reads=3065 small=0 inflight=24
+[E_a_cold] t= 25s  0.000 GB/s  reads=3065 small=0 inflight=24
+[E_a_cold] t= 30s  0.000 GB/s  reads=3065 small=0 inflight=24
+[E_a_cold] t= 35s  0.000 GB/s  reads=3065 small=0 inflight=24
+[E_a_cold] t= 40s  0.000 GB/s  reads=3065 small=0 inflight=24
+[E_a_cold] t= 45s  0.000 GB/s  reads=3065 small=0 inflight=24
+[E_a_cold] STOP reason=STALL elapsed=46.1s total=11.97 GiB avg=0.279 GB/s reads=3065 small=0
+[E_a_cold] NO COMPLETION for 30 s -- device wedged; do NOT retry, replug needed

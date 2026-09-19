@@ -1,0 +1,63 @@
+﻿# E: / disk 1 device state, captured 2026-09-19T19:05:25
+
+## Get-Disk
+Number FriendlyName             BusType HealthStatus OperationalStatus          Size
+------ ------------             ------- ------------ -----------------          ----
+     1 J.ZAO KP SERIES 2TB SSD  USB     Healthy      Online            2048408248320
+     0 WD PC SN740 SDDPTQE-2T00 NVMe    Healthy      Online            2048408248320
+
+## Get-PhysicalDisk
+DeviceId FriendlyName             BusType MediaType HealthStatus OperationalStatus
+-------- ------------             ------- --------- ------------ -----------------
+0        WD PC SN740 SDDPTQE-2T00 NVMe    SSD       Healthy      OK               
+1        J.ZAO KP SERIES 2TB SSD  USB     SSD       Healthy      OK
+
+## Get-StorageReliabilityCounter
+  NOT AVAILABLE: 'Unable to access the CIM resource from the client' -- this session is NOT elevated
+  (IsInRole(Administrator) = False).  No temperature, no read-error counters.
+## smartctl
+  NOT INSTALLED (Get-Command smartctl -> null; C:\Program Files\smartmontools missing).
+  winget install not allowed by the task -> SMART for the J.ZAO was NOT read.
+  Note: even with smartctl, the RTL9210 must pass SCSI/ATA translate for -d sntasmedia|sntrealtek to work.
+
+## UAS bridge
+FriendlyName                    Service  Status InstanceId                              
+------------                    -------  ------ ----------                              
+USB Attached SCSI (UAS) 大容量存储设备 UASPStor OK     USB\VID_0BDA&PID_9210\MSFT30012938001712
+KeyName                               Data                                                                                                              
+-------                               ----                                                                                                              
+DEVPKEY_Device_Driver                 {4d36e97b-e325-11ce-bfc1-08002be10318}\0003                                                                       
+DEVPKEY_Device_LocationInfo           Port_#0002.Hub_#0003                                                                                              
+DEVPKEY_Device_BusTypeGuid            {9D7DEBBC-C85D-11D1-9EB4-006008C3A19A}                                                                            
+DEVPKEY_Device_LegacyBusType          15                                                                                                                
+DEVPKEY_Device_BusNumber              0                                                                                                                 
+DEVPKEY_Device_Address                2                                                                                                                 
+DEVPKEY_Device_InstallState           0                                                                                                                 
+DEVPKEY_Device_BusRelations           SCSI\Disk&Ven_J.ZAO_KP&Prod__SERIES_2TB_SSD\7&36582068&0&000000                                                   
+DEVPKEY_Device_Parent                 USB\ROOT_HUB30\5&73e03df&0&0                                                                                      
+DEVPKEY_Device_BusReportedDeviceDesc  Ugreen Storage Device                                                                                             
+DEVPKEY_Device_PhysicalDeviceLocation 130,0,0,0,0,0,0,0,97,13,0,1,0,0,0,0,255,255,255,255                                                               
+DEVPKEY_Device_InstallDate            09/19/2026 09:53:11                                                                                               
+DEVPKEY_Device_FirstInstallDate       09/19/2026 09:53:11                                                                                               
+DEVPKEY_Device_LocationPaths          PCIROOT(0)#PCI(0803)#PCI(0004)#USBROOT(0)#USB(2),ACPI(_SB_)#ACPI(PCI0)#ACPI(GPPC)#ACPI(XHC4)#ACPI(RHUB)#ACPI(PRT2)
+DEVPKEY_Device_DriverDate             06/21/2006 08:00:00                                                                                               
+DEVPKEY_Device_DriverVersion          10.0.26100.9444                                                                                                   
+DEVPKEY_Device_DriverDesc             USB Attached SCSI (UAS) Mass Storage Device                                                                       
+DEVPKEY_Device_DriverInfPath          uaspstor.inf                                                                                                      
+DEVPKEY_Device_DriverInfSection       UASPort_Install_Control                                                                                           
+DEVPKEY_Device_DriverProvider         Microsoft                                                                                                         
+DEVPKEY_Device_DriverRank             16719875
+
+## power
+  active scheme: 电源方案 GUID: 27fa6203-3987-4dcc-918d-748559d549ec  (Performance)
+电源方案 GUID: 27fa6203-3987-4dcc-918d-748559d549ec  (Performance)
+  子组 GUID: 2a737441-1930-4402-8d77-b2bebba308a3  (USB 设置)
+    电源设置 GUID: 48e6b7a6-50f5-4782-a5d4-53bb8f07e226  (USB 选择性暂停设置)
+      可能的设置索引: 000
+      可能的设置友好名称: 已禁用
+      可能的设置索引: 001
+      可能的设置友好名称: 已启用
+    当前交流电源设置索引: 0x00000001
+    当前直流电源设置索引: 0x00000001
+  device key DeviceSelectiveSuspended = 1
+  AC/battery: 2 (2 = on AC)

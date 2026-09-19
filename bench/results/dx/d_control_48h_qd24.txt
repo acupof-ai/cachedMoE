@@ -1,0 +1,14 @@
+[D_ctrl] opened 48 handles in 1 ms (dir=D:\models\DeepSeek-V4.1-Flash)
+[D_ctrl] qd=24 big=4096 KiB small=12 KiB every=0 secs=60
+[D_ctrl] t=  5s  4.557 GB/s  reads=5432 small=0 inflight=24
+[D_ctrl] t= 10s  4.565 GB/s  reads=10874 small=0 inflight=24
+[D_ctrl] t= 15s  4.558 GB/s  reads=16308 small=0 inflight=24
+[D_ctrl] t= 20s  4.578 GB/s  reads=21765 small=0 inflight=24
+[D_ctrl] t= 25s  4.577 GB/s  reads=27221 small=0 inflight=24
+[D_ctrl] t= 30s  4.426 GB/s  reads=32497 small=0 inflight=24
+[D_ctrl] t= 35s  4.560 GB/s  reads=37933 small=0 inflight=24
+[D_ctrl] t= 40s  4.558 GB/s  reads=43367 small=0 inflight=24
+[D_ctrl] t= 45s  4.559 GB/s  reads=48802 small=0 inflight=24
+[D_ctrl] t= 50s  4.527 GB/s  reads=54199 small=0 inflight=24
+[D_ctrl] t= 55s  4.543 GB/s  reads=59615 small=0 inflight=24
+[D_ctrl] STOP reason=time elapsed=60.0s total=252.90 GiB avg=4.526 GB/s reads=64743 small=0
