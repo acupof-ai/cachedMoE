@@ -266,6 +266,36 @@ async function preview(){
   }catch(e){ $("count").textContent = "统计失败：" + e; }
 }
 
+// ---------- history: the server keeps the transcript per session, so a reload
+// (or a restarted server.py) shows the same conversation the engine's KV holds.
+async function loadHistory(){
+  log.innerHTML = "";
+  try{
+    const r = await fetch("/api/history?session=" + encodeURIComponent($("sess").value));
+    const h = await r.json();
+    const msgs = h.messages || [];
+    for (const m of msgs){
+      if (m.role === "user"){
+        const ub = bubble("我", "user");
+        const t = m.content || "";
+        ub.textContent = t.length > 4000 ? t.slice(0, 4000) + "\n… （共 " + t.length.toLocaleString() + " 字符）" : t;
+      } else if (m.role === "assistant"){
+        const body = bubble("deepMoE");
+        const r0 = (m.reasoning_content || "").trim();
+        body.innerHTML = (r0 ? '<div class="think">' + md(r0) + "</div>" : "") + md(m.content || "");
+        const s = m.stat;
+        if (s) statline("TTFT " + ((s.ttft_ms||0)/1000).toFixed(1) + " s | 预填充 " + (s.prefill_tokens ?? "–")
+          + " tok (" + (s.prefill_mode || "–") + "，复用 " + (s.reused ?? "–") + ") | 解码 " + (s.generated ?? "–")
+          + " tok " + (s.tok_s||0).toFixed(2) + " tok/s 命中 " + (s.hit||0).toFixed(3)
+          + " | 盘等待 " + (s.stall||0).toFixed(0) + " ms/tok | " + (s.finish || "–") + " | ctx " + (s.context ?? "–"));
+      }
+    }
+    if (msgs.length) note("已恢复 " + msgs.filter(m => m.role === "user").length + " 轮对话（引擎里的上下文仍在）");
+    if (typeof h.think === "boolean") $("think").checked = h.think;
+  }catch(e){ note("历史读取失败：" + e, true); }
+  log.scrollTop = log.scrollHeight;
+}
+
 // ---------- send ----------
 async function send(){
   if (running) return;
@@ -410,10 +440,11 @@ $("box").addEventListener("paste", () => setTimeout(schedulePreview, 0));
 $("box").addEventListener("keydown", e => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)){ e.preventDefault(); send(); }
 });
-$("sess").addEventListener("change", () => { log.innerHTML = ""; refreshStatus(); lastPreview = null; schedulePreview(); });
+$("sess").addEventListener("change", () => { loadHistory(); refreshStatus(); lastPreview = null; schedulePreview(); });
 $("think").addEventListener("change", schedulePreview);
 setInterval(() => { if (!running) refreshStatus(); }, 5000);
 loadConfig();
+loadHistory();
 </script>
 </body>
 </html>

@@ -123,3 +123,8 @@ PID
   这一次的新默认是 **GPU prefill 开（512）** —— 命令行一个字没变（不用给
   `--gpu-prefill-min`），变的是引擎的默认值。`web_serve.log` 从 2 行变成开机 26 行 +
   每轮一行 session 决策。
+
+
+2026-09-19 重启（网页对话按会话落盘 + /api/history）：
+  server.py 启动器 25888 / 解释器 33280 / deepmoe serve 43652
+  会话记录在 %LOCALAPPDATA%\deepmoe\web_chat\<会话名>.json，刷新页面或重启 server.py 都会回放。

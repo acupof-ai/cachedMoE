@@ -48,6 +48,7 @@ import json
 import os
 import queue
 import random
+import re
 import subprocess
 import sys
 import threading
@@ -238,18 +239,54 @@ class Serve:
 class ChatState:
     """One named session's conversation -- the same fields tools/chat.py keeps."""
 
-    def __init__(self, enc, system=""):
+    def __init__(self, enc, system="", path=None):
         self.enc = enc
         self.system = system
         self.think = False
         self.drop_thinking = True
         self.lock = threading.Lock()
+        self.path = path     # where the transcript lives across page reloads / restarts
         self.reset()
+        self.load()
 
     def reset(self):
         self.messages = [{"role": "system", "content": self.system}] if self.system else []
         self.ctx_ids = []    # prompt + reply ids of the last turn: what serve's KV holds (+1)
         self.ctx_text = ""   # the text those ids render to
+
+    # The browser keeps nothing: a reload used to lose the transcript while the
+    # engine still held the KV. The transcript (plus the ids/text that let the
+    # next turn reuse the prefix) is written after every turn and read back at
+    # startup, so a reload -- or a restarted server.py -- shows the same chat.
+    def save(self):
+        if not self.path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"messages": self.messages, "ctx_ids": self.ctx_ids,
+                           "ctx_text": self.ctx_text, "think": self.think}, f, ensure_ascii=False)
+            os.replace(tmp, self.path)
+        except Exception as e:
+            sys.stderr.write(f"chat state: save failed ({e})\n")
+
+    def load(self):
+        if not self.path or not os.path.exists(self.path):
+            return
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                d = json.load(f)
+            self.messages = d.get("messages", self.messages)
+            self.ctx_ids = d.get("ctx_ids", [])
+            self.ctx_text = d.get("ctx_text", "")
+            self.think = bool(d.get("think", self.think))
+        except Exception as e:
+            sys.stderr.write(f"chat state: load failed ({e}); starting empty\n")
+
+    def history(self):
+        """What the page shows on load: the non-system turns."""
+        return [m for m in self.messages if m.get("role") != "system"]
 
     def mode(self):
         return "thinking" if self.think else "chat"
@@ -320,14 +357,21 @@ class Bridge:
         # would block for the whole turn. Callers check this and say so instead.
         self.busy = False
         self.prefill_ms_per_token = PREFILL_MS_PER_TOKEN
+        # Transcripts, one JSON per session name, next to serve's KV disk so a
+        # session and its .pkv travel together.
+        base = args.kv_dir or os.path.join(os.environ.get("LOCALAPPDATA", HERE), "deepmoe")
+        self.chat_dir = os.path.join(base, "web_chat")
         threading.Thread(target=self._worker, daemon=True).start()
 
     def state(self, session):
         with self.states_lock:
             st = self.states.get(session)
             if st is None:
-                st = ChatState(self.enc, self.args.system)
-                st.think = self.args.think
+                safe = re.sub(r"[^A-Za-z0-9_.\-一-鿿]+", "_", session)[:64] or "default"
+                st = ChatState(self.enc, self.args.system,
+                               path=os.path.join(self.chat_dir, safe + ".json"))
+                if not st.messages or all(m.get("role") == "system" for m in st.messages):
+                    st.think = self.args.think
                 self.states[session] = st
             return st
 
@@ -456,6 +500,14 @@ class Bridge:
                     completion = serve.detokenize(gen) if gen else ""
                     with st.lock:
                         msg = st.commit(user_text, full, ids, gen, completion)
+                        pt = ev.get("per_token_ms") or {}
+                        msg["stat"] = {"tok_s": ev.get("tok_s"), "hit": ev.get("decode_hit_rate"),
+                                       "stall": pt.get("nvme_stall"), "ttft_ms": ev.get("ttft_ms"),
+                                       "prefill_tokens": ev.get("prefill_tokens"),
+                                       "prefill_mode": ev.get("prefill_mode"),
+                                       "reused": ev.get("reused_tokens"), "generated": ev.get("generated"),
+                                       "finish": ev.get("finish"), "context": ev.get("context"), "seed": seed}
+                        st.save()
                     ev["seed"] = seed
                     ev["mode"] = st.mode()
                     ev["content"] = msg.get("content") or ""
@@ -530,6 +582,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, ev)
             if u.path == "/api/sessions":
                 return self._send(200, self.bridge.serve.sessions())
+            if u.path == "/api/history":
+                q = parse_qs(u.query)
+                s = (q.get("session") or ["default"])[0]
+                stt = self.bridge.state(s)
+                with stt.lock:
+                    return self._send(200, {"session": s, "think": stt.think,
+                                            "messages": stt.history()})
             return self._send(404, {"error": "not found"})
         except Exception as e:
             return self._send(500, {"error": str(e)})
@@ -551,6 +610,7 @@ class Handler(BaseHTTPRequestHandler):
                 stt = self.bridge.state(s)
                 with stt.lock:
                     stt.reset()
+                    stt.save()
                 return self._send(200, {"ok": True, "session": s})
             return self._send(404, {"error": "not found"})
         except Exception as e:
