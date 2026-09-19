@@ -252,34 +252,74 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
 
     // KV continuation: extend the history, roll back to the common prefix, or
     // start over -- whichever feeds fewer tokens.
+    //
+    // Track PF adds a fourth option and it is often the winner. Reuse is only
+    // worth what the tokens it SAVES would have cost, and a continuation pays
+    // the DECODE path for its suffix (~200 ms/token on this machine) while a
+    // cold prompt can go to Track L's GPU prefill (~24 ms/token). So a
+    // continuation that reuses r of p tokens costs (p - r) decode tokens, and
+    // throwing the reuse away costs p GPU tokens: re-prefilling the WHOLE
+    // prompt on the GPU is cheaper whenever p / speedup < p - r. At r = 70% of
+    // a 1,600-token prompt that is 267 GPU tokens against 480 decode -- 1.8x.
+    // The engine cannot yet prefill a suffix at a nonzero position
+    // (docs/p3_chat.md §8.4), so until it can, this is how a continuation gets
+    // off the decode path. Output is unaffected either way: a cold GPU prefill of p is exactly
+    // what the turn would have done with an empty store.
     uint32_t reuse = 0;
+    uint32_t hist_n = 0, common_n = 0;
+    const char* reuse_why = "cold";
     {
         const std::vector<uint32_t>& hist = e.history();
         size_t common = 0;
         while (common < hist.size() && common < prompt.size() && hist[common] == prompt[common]) ++common;
-        if (req.reuse && !hist.empty() && common == hist.size() && hist.size() < prompt.size()) {
-            reuse = static_cast<uint32_t>(hist.size());
-        } else if (!hist.empty()) {
-            // Keep at least one prompt token to feed, and stop on a group boundary.
-            uint32_t keep = static_cast<uint32_t>(std::min(common, prompt.size() - 1));
+        hist_n = static_cast<uint32_t>(hist.size());
+        common_n = static_cast<uint32_t>(common);
+        const bool extend =
+            req.reuse && !hist.empty() && common == hist.size() && hist.size() < prompt.size();
+        // Keep at least one prompt token to feed, and stop on a group boundary.
+        uint32_t   keep = 0;
+        ReplayPlan plan;
+        bool       do_rb = false;
+        if (!extend && !hist.empty()) {
+            keep = static_cast<uint32_t>(std::min(common, prompt.size() - 1));
             keep &= ~1u;
-            ReplayPlan plan;
             const bool try_rb = req.reuse && opt.rollback && keep > 0;
             if (try_rb) plan = plan_rollback(e, keep, opt.replay);
-            if (try_rb && keep > plan.steps()) {
-                auto rb = rollback_context(e, keep, opt.replay);
-                if (!rb) return std::unexpected(rb.error());
-                reuse = keep;
-                st.rollback_dropped = rb->dropped;
-                st.replay_steps = rb->plan.steps();
-                st.replay_ms = rb->ms;
-            } else {
-                log_info("session: prompt does not extend the {} tokens in the KV store (common "
-                         "prefix {}); resetting", hist.size(), common);
-                e.reset_context();
-            }
+            do_rb = try_rb && keep > plan.steps();
+        }
+        const uint32_t cand = extend ? hist_n : (do_rb ? keep : 0u);
+        const bool gpu_ok = opt.gpu_prefill_min && prompt.size() >= opt.gpu_prefill_min;
+        const bool cold_wins =
+            cand > 0 && gpu_ok && opt.gpu_prefill_speedup > 1.0f &&
+            double(prompt.size()) / opt.gpu_prefill_speedup < double(prompt.size() - cand);
+
+        if (cold_wins) {
+            log_info("session: dropping a {}-token reuse of {}: {} decode tokens vs {} on the GPU "
+                     "from 0 (speedup {:.1f}x)", cand, hist_n, prompt.size() - cand, prompt.size(),
+                     opt.gpu_prefill_speedup);
+            e.reset_context();
+            reuse_why = "gpu-recompute";
+        } else if (extend) {
+            reuse = hist_n;
+            reuse_why = "extend";
+        } else if (do_rb) {
+            auto rb = rollback_context(e, keep, opt.replay);
+            if (!rb) return std::unexpected(rb.error());
+            reuse = keep;
+            st.rollback_dropped = rb->dropped;
+            st.replay_steps = rb->plan.steps();
+            st.replay_ms = rb->ms;
+            reuse_why = "rollback";
+        } else if (!hist.empty()) {
+            log_info("session: prompt does not extend the {} tokens in the KV store (common "
+                     "prefix {}); resetting", hist_n, common_n);
+            e.reset_context();
+            reuse_why = "reset";
         }
     }
+    log_info("session: prompt {} tokens, history {}, common prefix {} -> reuse {} ({}), {} to "
+             "prefill (gpu_prefill_min {})", prompt.size(), hist_n, common_n, reuse, reuse_why,
+             prompt.size() - reuse, opt.gpu_prefill_min);
     st.reused_tokens = reuse;
     e.set_sampling(req.sampling);
 
@@ -294,6 +334,9 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
             first = *r;
             st.prefill_mode = "gpu";
             done_prefill = true;
+            const double pf_ms = ms_since(tp);
+            log_info("session: {} tokens prefilled on the GPU in {:.1f} s ({:.1f} ms/token)",
+                     suffix.size(), pf_ms / 1e3, pf_ms / double(suffix.size()));
         } else {
             log_warn("session: GPU prefill failed ({}); falling back to the decode path",
                      r.error().str());
@@ -302,6 +345,12 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
     }
     if (!done_prefill) {
         st.prefill_mode = "decode";
+        if (suffix.size() >= 64)
+            log_info("session: {} tokens on the DECODE path ({})", suffix.size(),
+                     reuse ? "a continuation; the GPU prefill only starts at position 0"
+                           : opt.gpu_prefill_min
+                                 ? "shorter than gpu_prefill_min"
+                                 : "gpu_prefill_min is 0");
         const uint32_t total = static_cast<uint32_t>(suffix.size());
         const uint32_t chunk = std::max<uint32_t>(1, opt.progress_every);
         for (uint32_t at = 0; at < total;) {

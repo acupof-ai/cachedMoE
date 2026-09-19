@@ -95,8 +95,13 @@ class Serve:
             cmd += ["--cache-slots", str(args.cache_slots)]
         elif args.cache_gb:
             cmd += ["--cache-gb", str(args.cache_gb)]
-        if args.gpu_prefill_min:
+        # Track PF: the engine default is 512 now (runtime/session.h), so this
+        # passes through only when the flag was actually given -- and 0, which
+        # is how you turn the GPU prefill OFF, is a real value, not a no-op.
+        if args.gpu_prefill_min is not None:
             cmd += ["--gpu-prefill-min", str(args.gpu_prefill_min)]
+        if args.gpu_prefill_speedup is not None:
+            cmd += ["--gpu-prefill-speedup", str(args.gpu_prefill_speedup)]
         if args.kv_dir:
             cmd += ["--kv-dir", args.kv_dir]
         if args.no_kv_disk:
@@ -622,7 +627,9 @@ def main():
     ap.add_argument("--max-context", type=int, default=65536)
     ap.add_argument("--cache-gb", type=int, default=0)
     ap.add_argument("--cache-slots", type=int, default=0)
-    ap.add_argument("--gpu-prefill-min", type=int, default=0)
+    ap.add_argument("--gpu-prefill-min", type=int, default=None,
+                    help="override the engine default (512); 0 turns the GPU prefill off")
+    ap.add_argument("--gpu-prefill-speedup", type=float, default=None)
     ap.add_argument("--kv-dir", default="", help="SSD .pkv prefix/parked KV cache directory")
     ap.add_argument("--kv-max-gb", type=int, default=0)
     ap.add_argument("--no-kv-disk", action="store_true")

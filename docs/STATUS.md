@@ -54,6 +54,9 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | **NVMe 有效读带宽** | **8.3–9.2 GB/s**，四种 cache 容量下都一样 | `p4_summary.md` §8 |
 | 短 prompt TTFT | 5–23 s（11–46 token，走 decode 路径，1.5–3 tok/s） | README |
 | 长 prompt TTFT（GPU prefill，冷 cache） | 64 / 4,133 / 17,010 token：**43 s / ≈150 s / ≈445 s**，compute ≈ **24 ms/prompt token** | `p3_prefill.md` §10.2 |
+| **长 prompt TTFT：GPU prefill 默认开了（Track PF）** | `gpu_prefill_min` **0 → 512**。1,118-token 新 prompt，5,000 槽：**热 cache 168.8 s（151.0 ms/token，decode）→ 28.6 s（25.6 ms/token，gpu）= 5.9×**；冷 cache 176.7 → 39.2 s = 4.5×。§6 当初关掉它的两条理由都没了：F4 的 path-A 预留让它在 5,000 槽旁边能分配，`PREFILL_HANDOFF` 让它顺带热 cache | `p3_chat.md` §8 |
+| **续写也离开了 decode 路径（Track PF）** | 引擎**还不能在非零位置 prefill 后缀**（卡点见 §3 的 61），所以走的是「**算一算、把 reuse 扔掉**」：reuse 了 p 中 r 个要付 `p−r` 个 decode token，整个重新 GPU prefill 只要 `p/6` 个。1,514-token 第二轮（reuse 1,116）：**70.5 s → 35.5 s = 2.0×**。输出逐字不变——它就是这一轮碰上空 store 会做的事 | `p3_chat.md` §8.3；`p4_kv_ux.md` §6 |
+| **serve 的日志之前根本没进 `--log`（Track PF）** | `serve` 把 stdout 让给协议、`dup2(stderr, 1)`，但 `core/log.h` 写的是 **`FILE* stdout`，pipe 上全缓冲**，`emit` 只在 `>= Warn` 时 flush ⇒ 每一条 `log_info` 都躺在没人 flush 的 4 KiB 缓冲里、进程被杀时一起没。`web_serve.log` 里那两行是 `fprintf(stderr,...)` 直接写的。修：log sink + **每行 flush**，serve 调 `set_log_stream(stderr)`。同一份文件现在开机 37 行 | `p3_chat.md` §8.1 |
 | **SSD KV 前缀复用** | 同一 4,133-token prompt：冷 **101.6 s** → 新进程 SSD 命中 **2.47 s（41×）** | `p4_test_report.md` §5 |
 | 正确性（对 fp32 参考） | 64 token 8/8；4K / 17K 教师强制 8/8、自由运行 8/8 | `p4_test_report.md` §2 |
 | tokenizer | 对 HF `tokenizers` 24,897 用例 / 7.69 M id **100% 一致** | README |
@@ -218,7 +221,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 60 条）
+## 3. 试过并退掉的（编号，共 61 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -325,6 +328,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **58** | **第二个读源**（Track D2，`p4_dual_source.md`）——§7 第 1 项 (b) 的前半段。这台机器上没有第二块 NVMe，有的是一块 **USB 3.2 Gen2 的外置 SSD（E:，1.0 GB/s）**，所以量的不是「stripe 到 9 GB/s」而是「4.6 + 1.0」。新东西：`storage/source_router.h` 的**加权最小在飞字节** `argmin_s (outstanding[s] + bytes) / weight[s]`、`ShardSet::open_mirror`、`IoEngine::set_sources/add_mirror/probe_source_gbps`、`--mirror DIR` 与 `DEEPMOE_MODEL_MIRRORS`、`IoStats` 的 per-source 行（进 `status.json`）、`nvme_bench --mirror` | **拷贝** 510 GB / 529 s = **964 MB/s**，94 个文件长度全对 + 5 个抽样 SHA-256 全对。**聚合随机读**（同一个 6.8 GB shard，4 MiB）：D: 单盘 3.453（QD 16）→ D:+E: **4.555 GB/s（+31%）**，分流 **78 : 22**，**D: 自己的份额没掉**（3.53 vs 3.47）——慢盘的带宽是**净加**的。E: 单盘 QD 8 只有 0.494、QD 16 才 1.038。CPU `ctest -LE "needs-model;needs-gpu"` **34/34** | **默认关，端到端没测成，而且理由不是「没测到 3%」**。第一次是机器不是我的（另一条 track 的 serve 从 10:22 起常驻，commit 只剩 30/172 GB）；机器空了之后第二次，**E: 自己掉了**：off 臂正常跑完 144 s，第一个 on 臂 `pinned load of 'norm.weight': overlapped read failed`，第二个 on 臂**卡在 `48 shards open` 之后，12 分钟只用 2 秒 CPU / 8 线程 / 73 MB——全在等 I/O**；之后 `ls E:\` 挂住、`nvme_bench` 对 E: 挂住、`Get-Process`/`Get-Counter` 挂住，**`taskkill /F` 报成功但进程还在**。**这块 USB 外置盘在 decode 的负载形状（510 GB 持续写之后、48 个 `NO_BUFFERING\|OVERLAPPED` 句柄上的并发随机读）下会掉出总线**，要物理拔插才回来。**所以默认关的理由比判据更硬：一个会把整台机器拖进不可中断 I/O 等待的读源不能进默认路径。** 代码侧没查出问题（E: 还活着时 `nvme_bench --mirror` 四个 QD 点全跑满，路由/分流/计数全对；`io.` 11/11；CPU ctest 34/34）；`iocp.cpp` 的那条错误现在带 Win32 码 + 长度 + 偏移。harness 已提交：`bench/d2_abab.py`。预测留在 `p4_dual_source.md` §4.1（+14%，砍半 +7%，大概率落进 ±3% 带）。**§7 第 1 项那句「+32–40%」只对第二块真 NVMe 成立——读路径的代码已经就位，它等的是盘** |
 | **59** | **把 D2 §4.2 欠的那条 ABAB 跑了**（Track D3，`p4_dual_source.md` §7）——E: 已物理重插，机器空（`Get-Process deepmoe` 为空），先 relink 再测 | **E: 轻 I/O 与 `nvme_bench` 都过了**：`ls` / 小读正常，`nvme_bench --file <E: shard> --chunk-kb 4096 --qd 8 --reads 32 --pattern rand` = **0.962 GB/s**（与 §1 的 1.0 一致），顶层 61 项与 D: 逐项相同。**然后 on 臂在引擎初始化就死了**：`gpu init: io: pinned load of 'norm.weight': overlapped read failed (**win32 1117 = ERROR_IO_DEVICE**, 12288 B at off 1323827200)`——**和 D2 §4 第 2 个 cell 同一条错误、同一个 tensor**，只是这次带着 D2 加的那个码。off 臂（`y_turns`，252 step，5,000 槽）：**4.5693 tok/s / `nvme_stall` 113.5 ms / hit 0.8957 / `sources` 空** | **NO-GO，A/B 表不存在，因为 B 臂起不来**。判据是「两脚本 ≥3% + 闸全过 + 零挂零错」，**第一个 on cell 就是硬错误**。**没有重试**：D2 已经记过重试的代价是整台机器进不可中断 I/O 等待。**新教训：`ls` / `nvme_bench` 过了不等于盘能跑引擎**——轻 I/O 恢复 ≠ 可用，下次别拿 `ls` 当健康检查。闸本轮没跑，理由同 D2 §6 且更强：它们要验「开了 mirror 仍逐位相同」，而 **mirror 打不开**。**顺带修掉两个**：① `d2_abab.py` 的 `cell_stats` 找 `e["type"]=="done"`，而 serve 写的是 `e["event"]`——**每个 cell 都静默报 0.0000 tok/s**，D2 §4 那个「正常跑完 144 s」的 off 臂就是这样丢掉数的；② `--serve-arg` 现在对称加到两臂。**顺带量到两件机器事实**：③ **`--cache-slots 5100` 今天起不来**（第一个 submit `vkQueueSubmit2 failed (-2)`，34 A + 17 B），**5,000 槽（34 A + 16 B）干净**——§1 的「安全上限 5,000」是对的而 `auto` 选的 5,100 在它上面；④ **`.pkv` 恢复失败是致命的不是降级的**（`kv-disk restore failed: vkQueueSubmit2 failed (-2)`，直接抛进 `chat.py:186` 杀掉那一轮），镜像有「优化永不是正确性输入」这条规矩，**KV 盘没有**——它挡着 §7 第 2 项默认开 |
 | **60** | **镜像侧健康闸 + 第三次 ABAB**（Track D4，`p4_dual_source.md` §8、`p4_e_drive_diag.md` §5.1.1/§5.2.1）——用户换了 USB 口、`chkdsk /spotfix` 修了 E: 的 NTFS、补拷了丢掉的 2 个文件；**DX §5.1 的验收门这一次 PASS**（`dx_probe` 48 句柄 × QD 24：300 s 纯 4 MiB **1.041 GB/s 零错误**，300 s 带 12 KiB 插入 **1.040 GB/s 零错误**，句柄开销 **158 ms**，原 17 s；开跑前 60 s 复核 1.033 GB/s 零错误）。先把 DX §5.2 建议的三件全部落地：① `Engine::probe_mirror_health()`（48 句柄都开着时从镜像读 8 个 pinned 尺寸小 tensor，自己的句柄，按名字排序所以两个 cell 读同一批字节）、② 探针失败 → `io_.drop_source()` + warning、单盘继续（`DEEPMOE_MIRROR_HEALTH=0` 关）、③ `storage/source_router.h` 的 `SourceHealth`：**连续** `DEEPMOE_MIRROR_ERROR_BUDGET`（默认 3）次 I/O 错误就把源摘出候选 mask、权重归零、`status.json` 行尾加 `DROPPED`，**源 0 永不摘**。热路径只多一个 AND，且整个在 `if (mirrors_on_)` 里。顺带发现 **`tools/web/server.py` 根本没有 `--mirror` 透传**（D3 说有，说谎），补上，并给 `ready` 事件加 `"sources"` = 过闸之后真正在读的源数 | **off 臂 4.5607 tok/s / `nvme_stall` 113.0 ms / hit 0.8957**（`y_turns`，114 s，**auto 选的 5,000 槽**，与 D3 的 4.5693/113.5/0.8957 对得上）。**第一个 `on` cell 依旧 `gpu init: io: pinned load of 'norm.weight': overlapped read failed (win32 1117, 12288 B at off 1323827200)`——和 D3 逐字相同的 tensor 与偏移，跨三个会话第四次复现。**同一秒系统日志 **39 条 `disk 153` + 7 条 `UASPStor 129`**，失败后 `Get-Process` 再次挂住（>120 s）。**闸本身工作正常**：启动探针 `8 pinned-sized reads, all served` **过了**；运行期摘源**触发了**，而且读出来的码是 **win32 433 = ERROR_NO_SUCH_DEVICE**——盘不是读失败，是不在总线上了。变异测试：`note_success()` 里的 `consecutive_[s] = 0` 删掉（连续→累计）⇒ **5 个断言失败**；恢复后 CPU 全量 `ctest -LE "needs-model;needs-gpu"` **46/46** | **NO-GO，判据都没轮到看**（零 E: 错误这一条先挂）。**按任务书停、记、不重试**——D2 已经付过重试的学费。**两条新结论**：(i) **`dx_probe` 也不是健康检查**——单盘 48 句柄 QD 24 的稳态过 600 秒，不等于引擎的形状（两块盘各 48 句柄 + pinned load 的上千并发请求 + 权重路由）能活 10 秒；**唯一算数的门是引擎跑完一个 cell**。(ii) **闸差最后一条**：`PinnedStore::load` 把第一个失败请求直接抛出（`store/pinned.cpp:183`），所以摘源和「引擎决定失败」同秒发生；要让镜像在 pinned load 阶段也只是「慢一点」，还得**把被摘源上失败的请求在主盘上重放**——**没写，判决已定，写了也没盘能验**。`(b2) 这块 U 盘不要再试` 升级成：**包括在它通过了为它专门写的那道门之后**。代码留在 main：下一块盘（真 NVMe，或 DX §4.1 那个把 UAS 桥整层拿掉的 USB4 盒子）插上就能验 |
+| **61** | **在非零位置 prefill 一个后缀**（Track PF，`p3_chat.md` §8.4）——理想形状 `gpu_prefill(suffix, at = h)`：只算新的 n 个 token，接在已有 KV 后面。预算 ≲150 行 | **不是「复杂」，是五条具体的卡点**：① `gpu::Prefill::run(prompt)` **没有起始位置**——`run_layer` 的 `fpos0 = (replay && L > 20) ? N - R : 0`，那个非零分支只给**纯 SWA 层的有界 replay**，KV 源 L0–L20 永远从 0 跑；② attention 看不到旧 KV：`topk_rows(..., kv_pos0, ...)` 把绝对位置映射成行号 `pos - kv_pos0`，所以 kv 平面必须真的存着 [h−127, h)、cmp 平面必须存着 [0, h/ratio)，而这些行在引擎的 `KvStore` 设备缓冲里、布局不同，**且 `KvStore` 没有窗口环的读回口**（只有 `pack`，按设计 §11.2 从不含 SWA 状态）⇒ 旧窗口得先用 128 步 decode replay 重建，**而那正是要省的**；③ index 同理（`op_index_score(..., pos0)` / `candidate_blocks` 要 `g=(h+n)/ratio` 行旧 key，还要复现 `pub_index_k_` 的发布顺序）；④ `Engine::seed_from_prefill` 是**清空再整体播种**（`kvs_.clear()` + 逐层 `seed_*` + `history_ = h.prompt`），续写要的是按行偏移**合并**；⑤ `PrefillConfig.max_tokens` 决定每个平面的大小，续写要按 `h+n` 开——h=5,000 时光 cmp/idx 就是每层 ~13 MB 的 **path A**，而 path A 正是 F4 不得不加 4 GiB 预留的那块 | **没做**。合起来要动 `prefill_kernels.{h,cpp}` 的位置管线 + `engine.cpp` 的合并 seed + `kvstore.{h,cpp}` 的含环读回，**远超 150 行，且全在 `gpu_prefill.forty_layers` 守着的数值敏感代码里**。**换成了一条 8 行的规则**（§1 第二行）：reuse 不值钱就扔掉，整个 prompt 重新 GPU prefill——**2.0×，零数值风险**（它走的是已经 8/8 的那条冷路径）。重开这一条的前提是先给 `KvStore` 一个逐层读回（含环）|
 
 ---
 
@@ -596,6 +600,21 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0c. **2026-09-19：GPU prefill 默认开，续写也上了 GPU（Track PF，`p3_chat.md` §8）。**
+   用户在 web UI 上看到 `预填充 304 / 1,067 token · 199.6 ms/token` —— 那个 `total` 是
+   `to_prefill`，所以是 **reuse 0、整个 prompt 在 decode 路径上**，TTFT ≈ 213 s。
+   三件事：① **`--log` 里之前只有两行**，因为 `core/log.h` 写 `FILE* stdout` 而它在 pipe 上
+   全缓冲、只有 `>= Warn` 才 flush——现在有 sink + 每行 flush，session 的
+   reuse / rollback / prefill 决策每轮一行；② **`gpu_prefill_min` 0 → 512**
+   （§6 当初关它的两条理由被 F4 的 path-A 预留和 `PREFILL_HANDOFF` 拆掉了）：
+   1,118-token 热 cache **168.8 → 28.6 s（5.9×）**；③ **续写**：引擎还不能在非零位置
+   prefill 后缀（§3 的 61 逐条记了卡点），改成**算一算就把 reuse 扔掉**
+   ——`p−r` 个 decode token 对 `p/6` 个 GPU token ——**70.5 → 35.5 s（2.0×）**，
+   输出逐字不变。门：`gpu_prefill.forty_layers` 8/8 + `longctx`（4,133）8/8、
+   `kv_replay.l3_64` 的回退场景 (5)(6) 不变。
+   **`thinking` 模式不是 reuse=0 的原因**（R2 的回退给的是 1,116 不是 0，实测复现），
+   渲染器没改。
 
 顺序的依据是 §4：**先降 MB/token 和 stall，再降 kernel 时间**。
 每一项的机制、预测（已按"二分之一法则"砍半）、成本与探针在 [plan_p5.md](plan_p5.md)。

@@ -267,6 +267,30 @@ replay 重建，然后喂 p[k..)。**k 取偶**是"半满的 ratio-2 组"的处�
   这就是"半满的 ratio-2 组 + compressor 状态精确"的判据——不是声明，是对照。
 - 25 个 token 被丢掉（上一轮的 reasoning + 回复），只重喂 3 个。
 
+**Track PF 复验（2026-09-19，web UI 自己的渲染器，思考开）**：同一条路径在
+1,514-token 的真实一轮上量到的是
+
+```
+[INF] session: prompt 1514 tokens, history 1125, common prefix 1117 -> reuse 0 (gpu-recompute), ...
+```
+
+history 1,125、共同前缀 1,117 —— 差的 8 个 token 正是 `drop_thinking` 删掉的那段，
+回退点 1,116。**所以"思考模式把 reuse 打成 0"是不成立的**：R2 的回退给的是
+1,116 而不是 0，渲染器不用改（`docs/p3_chat.md` §8.2）。
+
+**但 reuse 未必值得要。** 续写的后缀只能走 decode 路径（本机热态 151–172 ms/token），
+而一个冷 prompt 整个走 GPU prefill 只要 23–26 ms/token。Track PF 因此加了一条规则：
+reuse 了 p 中 r 个 token 要付 `p − r` 个 decode token，把 reuse **扔掉**、整个 prompt
+重新 GPU prefill 只要 `p / speedup` 个 GPU token，后者更小就扔（`speedup` 默认 6.0，
+`--gpu-prefill-speedup`，`<= 1` 关）。上面那一轮：398 个 decode token = **70.5 s**，
+对 1,514 个 GPU token = **35.5 s**，**2.0×**。输出不变——从 0 重新 prefill 整个 prompt，
+和这一轮碰上空 store 时做的事逐字相同。
+
+引擎**还不能在非零位置 prefill 一个后缀**（卡点逐条见 `docs/p3_chat.md` §8.4：
+`gpu::Prefill::run` 没有起始位置、attention/index 平面看不到旧 KV、
+`KvStore` 没有窗口环读回口、`seed_from_prefill` 是清空再整体播种、
+缓冲按 `max_tokens` 开）。这条规则是在那之前**让续写离开 decode 路径**的办法。
+
 ---
 
 ## 7. serve：取消、命名会话、LRU 挂起
@@ -354,6 +378,13 @@ cmake --build build
 ---
 
 ## 9. 遗留
+
+**Track PF（2026-09-19）**：`gpu_prefill_min` 默认 **0 → 512**（`runtime/session.h`），
+serve 继承、web 不传；serve 的 `log_info` 现在真的进 `--log` 文件了
+（`core/log.h` 的 sink + 每行 flush，之前全缓冲在 stdout 里丢掉，
+`web_serve.log` 只有两行）。1,118-token 新 prompt 热态 **168.8 → 28.6 s（5.9×）**，
+续写 **70.5 → 35.5 s（2.0×）**。细节与没做的那一条见 `docs/p3_chat.md` §8。
+
 
 1. **live 平面仍是 bf16**（§3.2）：3.2× 的开销，换成 nibble 平面要改
    `sparse_attn` / `indexer` 的读法，代价未测。

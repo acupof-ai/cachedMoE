@@ -344,10 +344,17 @@ session logs a warning, resets, and falls back to the decode path. Short
 prompts and every continuation use the decode path, which also warms the
 decode cache.
 
-**Default is off.** At N = 64 the GPU prefill streams 94 GB of experts (43 s)
-and warms nothing. The decode path took 5–23 s for this document's 11–46-token
-prompts. Pick a threshold of ~500 tokens, and pass an explicit
-`--cache-gb ≲ 60` so path A has room.
+~~**Default is off.**~~ **Default is ON at 512 since Track PF** (§8). At N = 64
+the GPU prefill streams 94 GB of experts (43 s) and warms nothing, and the decode
+path took 5–23 s for this document's 11–46-token prompts — so the threshold stays
+at the ~500 tokens this paragraph named. What changed is everything above it:
+F4's path-A reserve made the prefill allocatable beside a 5,000-slot cache
+(`p4_hitrate.md` §5, so no explicit `--cache-gb` is needed any more), and
+`PREFILL_HANDOFF` puts the streamed experts into the decode cache, so it no
+longer "warms nothing". Measured at 1,118 tokens: **168.8 s → 28.6 s**.
+And a CONTINUATION now reaches the GPU too, by throwing the reuse away when
+that is cheaper (§8.3(b)) — the engine still cannot prefill a suffix at a
+nonzero position (§8.4).
 
 Still not done: §8.3 item 3 (`ExpertStore::adopt`, so the prefill's
 experts fill the decode cache).
@@ -426,7 +433,131 @@ By eye, the checks pass:
 * thinking mode reasons, then closes `</think>` and answers;
 * EOS stops every turn (no `length` finishes).
 
-## 8. Done / not done
+## 8. Track PF：prefill 为什么一直走 decode 路径（2026-09-19）
+
+用户在 web UI 上看到的那一行：**`预填充 304 / 1,067 token · 199.6 ms/token`**。
+`total` 是 `to_prefill`（tools/web/server.py `_run`），所以 **reuse = 0、整个 1,067 token
+都在 decode 路径上重新 prefill**，一轮 TTFT ≈ 213 s。这一节是三个原因、两个改动和
+一个没做的。
+
+### 8.1 为什么 `--log` 文件里只有两行
+
+`deepmoe serve` 把**真正的 stdout 复制成协议通道**，然后 `dup2(stderr, 1)`
+（`cli/serve.cpp`）——所以 fd 1 指向 stderr，注释说"其他打到 fd 1 的都去 stderr"。
+**但 `core/log.h` 写的是 `FILE* stdout`，而 pipe 上的 `stdout` 是全缓冲的**，
+`emit` 只在 `>= Warn` 时 `fflush`。于是一个 serve 会话写的每一条 `log_info`
+都躺在一个没人 flush 的 4 KiB 缓冲里，进程被 `Stop-Process` 杀掉时一起消失。
+`build/web_serve.log` 里那两行是 `fprintf(stderr, ...)` **直接写的**
+（`serve: restored 374 tokens from kv disk`），不是 logger 写的。
+
+修：`core/log.h` 加一个进程级 sink（`set_log_stream(FILE*)`，默认 null = 旧行为），
+并且**每一行都 flush**；`cli/serve.cpp` 在 dup 之后调 `set_log_stream(stderr)`。
+同一份 `--log` 文件现在开机就有 37 行，其中包括本节所有的 session 决策行。
+
+### 8.2 reuse 为什么是 0
+
+**`Session::generate` 原来只会为 `reuse == 0` 的 prompt 走 GPU prefill**
+（`runtime/session.cpp`），而 `gpu_prefill_min` **默认是 0**——所以两条路都关着：
+一个全新的长 prompt 因为默认关而走 decode；一个续写因为 `reuse > 0` 而走 decode。
+用户那一轮是前者（新会话 / `.pkv` 恢复的 history 与浏览器这一侧的 `ctx_ids` 对不上，
+两种都让 `common prefix = 0`）。
+
+**thinking 模式本身不是原因。** 官方模板 `drop_thinking=True` 会把更早轮次的
+reasoning 从 prompt 里删掉，所以第二轮的 prompt 不是 history 的延长——但
+Track R2 的回退已经覆盖了这条路径（`docs/p4_kv_ux.md` §6），它给出的是
+**共同前缀那么多的 reuse，不是 0**。本轮实测复现（web UI 的渲染器、思考开）：
+
+```
+[INF] session: prompt 1514 tokens, history 1125, common prefix 1117 -> reuse 0 (gpu-recompute), ...
+```
+
+history 1,125、共同前缀 1,117——**差的 8 个 token 正是被 `drop_thinking` 删掉的那段**，
+回退点 1,116，reuse 1,116 而不是 0。**渲染器不用改**。
+
+新增的日志（每轮一行，`--log` 里）：
+
+```
+[INF] session: prompt N tokens, history H, common prefix C -> reuse R (cold|extend|rollback|reset|gpu-recompute), S to prefill (gpu_prefill_min M)
+[INF] session: S tokens prefilled on the GPU in T s (X ms/token)
+[INF] session: S tokens on the DECODE path (<为什么>)
+```
+
+### 8.3 两个改动
+
+**(a) GPU prefill 默认开，阈值 512**（`runtime/session.h` `gpu_prefill_min = 512`；
+serve 继承，web 什么都不传）。§6 当初关掉它的两条理由**今天都不成立了**：
+F4 的 path-A 预留让它在 5,000 槽的 cache 旁边**能分配**（`p4_hitrate.md` §5），
+`PREFILL_HANDOFF`（F4 之后默认开）把 prefill 流过的 expert 交给 decode cache，
+所以它不再"什么都没热"。512 是 §6 自己给的阈值，本轮没有改它的数据。
+
+**(b) 续写也能上 GPU——靠扔掉 reuse。** reuse 只值它**省下的那些 token 的价钱**：
+一个续写的后缀走 decode（本机实测 151–172 ms/token），而一个冷 prompt 可以整个走
+GPU prefill（23–26 ms/token）。于是 reuse 了 p 中 r 个 token 的一轮，代价是
+`p − r` 个 decode token，而**把 reuse 扔掉、整个 prompt 重新 GPU prefill** 的代价是
+`p / speedup` 个 GPU token。`speedup` 默认 **6.0**（实测热态比值 5.9–7.3，取下界留余量；
+`--gpu-prefill-speedup`，`<= 1` 关掉这条规则）。规则在 `r < p × (1 − 1/6) = 83%` 时触发。
+
+**输出不受影响**：从 0 重新 GPU prefill 整个 prompt，和这一轮碰上空 store 时会做的事
+**逐字相同**。门是 Track L 的 `suite.gpu_prefill`：
+`gpu_prefill.forty_layers` **教师强制 8/8 + 自由运行 8/8**，
+`gpu_prefill.longctx`（`DEEPMOE_PF_LONGCTX=traces/longctx/ctx4k`，4,133 token）
+**自由运行 8/8**，worst window KV cos 0.957 / compressed 0.969 / index keys 0.978。
+回退路径不变：`kv_replay.l3_64` 场景 (5)(6) 仍然是 reused 60 / 44
+（那些 prompt 只有 64–69 个 token，远在 512 之下，新规则够不着）。
+
+一个已知的降级：`cold_wins` 先 `reset_context()` 再 prefill，**万一 GPU prefill 失败**，
+回退的 decode 路径要喂整个 prompt 而不是后缀。`gpu_prefill` 失败在 F4 的 path-A 预留之后
+没有再出现过，而它失败时本来也要 `reset_context()`。
+
+### 8.4 没做：在非零位置 prefill 一个后缀
+
+理想的形状是 `gpu_prefill(suffix, at = h)`：只算新的那 n 个 token，接在已有的 KV 后面。
+**在 ~150 行的预算内做不到**，卡点是具体的五条，不是"复杂"：
+
+1. **`gpu::Prefill::run(prompt)` 没有起始位置。** `run_layer` 里的两个位置基准
+   （`fpos0` / `apos0`）只由本次 prompt 决定：`fpos0 = (replay && L > 20) ? N - R : 0`。
+   那个非零分支是**给纯 SWA 层的有界 replay 用的**，KV 源（L0–L20）永远从 0 跑。
+2. **attention 看不到旧的 KV。** `op_attention(q, kv, n_win, cmp, idx, ...)` 读的是
+   prefill **自己为本次 token 建的**平面；`topk_rows(..., kv_pos0, ...)` 把绝对位置映射成
+   行号 `pos - kv_pos0`，所以 kv 平面必须**真的存着** [h−127, h) 的窗口行、
+   cmp 平面必须存着 [0, h/ratio) 的压缩行。这些行在引擎的 `KvStore` 设备缓冲里，
+   布局不同，而 **`KvStore` 根本没有窗口环的读回口**——只有 `pack`，而 `pack`
+   按设计 §11.2 **从不含 SWA 状态**。也就是说旧窗口得先用 128 步 decode replay 重建，
+   而那正是这个改动想省掉的代价。
+3. **index 这一侧同理。** `op_index_score(..., pos0)` 与 `candidate_blocks(b, pos0, ...)`
+   需要 `g = (h + n)/ratio` 行旧的 index key 在 prefill 自己的 `idx` 平面里，
+   还要复现 `pub_index_k_` 的发布顺序。
+4. **`Engine::seed_from_prefill` 是"清空再整体播种"**（`cur_->kvs_.clear()`，
+   然后逐层 `seed_*`，最后 `history_ = h.prompt`、`pub_index_k_` = "位置 0，每个源都发布过"）。
+   续写要的是**按行偏移合并**。
+5. **缓冲尺寸。** `PrefillConfig.max_tokens` 决定每一个激活与 KV 平面的大小，
+   续写要按 `h + n` 开；h = 5,000 时光 cmp/idx 平面就是每层 ~13 MB 的 path-A 内存——
+   而 path A 正是 F4 不得不加 4 GiB 预留的那块。
+
+合起来要动 `gpu/vulkan/prefill_kernels.{h,cpp}`（run / run_layer / topk_rows /
+candidate_blocks / op_index_score 的位置管线）、`runtime/engine.cpp`（一个会合并的
+seed + 一条 KvStore 读回路径）和 `runtime/kvstore.{h,cpp}`（含环的逐层读回），
+且全都落在 `gpu_prefill.forty_layers` 守着的数值敏感代码里。**没做，走 8.3(b)。**
+
+### 8.5 测到的数（1,118-token prompt，5,000 槽，`--no-kv-disk`，一次一个引擎）
+
+| | 之前（`gpu_prefill_min 0`） | 之后（默认 512） | |
+|---|---|---|---|
+| 新 prompt 1,118 token，**冷 cache** | **176.7 s**（158.1 ms/token，decode） | **39.2 s**（35.1 ms/token，gpu） | **4.5×** |
+| 新 prompt 1,118 token，**热 cache** | **168.8 s**（151.0 ms/token，decode） | **28.6 s**（25.6 ms/token，gpu） | **5.9×** |
+| 第二轮续写（+396 token → 1,514） | reuse **1,116**、prefill 398 个 decode token，**70.5 s**（171.5 ms/token） | reuse **扔掉**、1,514 整个走 GPU，**35.5 s**（23.4 ms/token） | **2.0×** |
+
+预测对实测：预测"1,067 token 213 s → ~26 s（24 ms/token）"，实测 1,118 token
+**168.8 → 28.6 s（25.6 ms/token）**；预测"续写 500 token 100 s → 若 GPU 续写不落地则不变"，
+实测 **70.5 → 35.5 s**——比预测好，因为 8.3(b) 这条规则落地了。
+热态 decode/GPU 比值实测 **151.0 / 25.6 = 5.9×**，正好是默认 `speedup = 6.0` 的来处。
+
+顺带修掉的：`tools/web/server.py` 的 `if args.gpu_prefill_min:` 让 **`--gpu-prefill-min 0`
+（关掉 GPU prefill 的唯一方式）变成空操作**；默认改成 `None`，并加了
+`--gpu-prefill-speedup` 透传。
+
+
+## 9. Done / not done
 
 **Done**
 * `deepmoe serve`: JSON over stdio, streamed tokens, §13.1 stats, KV
@@ -447,12 +578,17 @@ By eye, the checks pass:
 **Not done / gaps**
 * **Speed.** 3.4–4.5 tok/s at hit rate 0.84–0.90; the stall is 60% of every
   token. Prefetch (design §9.4) and a cache that starts warm are the levers.
-  The GPU prefill does not feed the decode cache (p3_prefill.md §8.3 item 3).
+  ~~The GPU prefill does not feed the decode cache (p3_prefill.md §8.3 item 3).~~
+  Done in Track R1/F4: `PREFILL_HANDOFF` is on by default (`p4_hitrate.md` §8).
 * **Short-prompt TTFT is the decode-path prefill** at 1.5–3 tok/s. The GPU
-  prefill only pays above ~500 tokens and needs path-A headroom; it is off by
-  default.
-* **No KV rollback.** A prompt that diverges from the context re-prefills from
-  0. This includes thinking mode with the official `drop_thinking=True`.
+  prefill only pays above ~500 tokens, which is where its default threshold now
+  is (§8); below that the decode path is still the whole TTFT.
+* ~~**No KV rollback.**~~ Done in Track R2 (`p4_kv_ux.md` §6), thinking mode
+  with the official `drop_thinking=True` included — and Track PF measured it
+  working on the web UI's own renderer (§8.2). What is still missing is a
+  prefill that can START at a nonzero position, so a reused context's suffix
+  has only the decode path (§8.4); Track PF works around it by dropping the
+  reuse when a whole-prompt GPU prefill is cheaper.
 * **Context above 16,384 compressed positions** needs design 2.1's
   candidate-block mask (refused, not wrong). Between ~4K and 16K only the
   indexer's cost grows. Decode was validated at 4,133 tokens; 16K was not run.

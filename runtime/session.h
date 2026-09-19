@@ -209,9 +209,25 @@ struct GenerateStats {
 
 struct SessionOptions {
     // Prompts (fed from position 0) at least this long go through Track L's
-    // GPU prefill; 0 = never. Shorter ones, and every continuation, go through
-    // the decode path, which also warms the expert cache for the reply.
-    uint32_t gpu_prefill_min = 0;
+    // GPU prefill; 0 = never. Shorter ones go through the decode path, which
+    // also warms the expert cache for the reply.
+    //
+    // Track PF (docs/p3_chat.md §8) turned this ON by default at 512, the
+    // threshold docs/p3_chat.md §6 named. The two reasons it was off are both
+    // gone: F4's path-A reserve made the GPU prefill allocatable beside a
+    // 5,000-slot cache at all (docs/p4_hitrate.md §5), and PREFILL_HANDOFF --
+    // on by default since F4 -- puts the experts the prefill streams into the
+    // decode cache, so it no longer "warms nothing" (+72%/+49%/+17% tok/s at
+    // 512/1,024/2,048). Below 512 the expert streaming still costs more than
+    // the decode path saves, so the threshold stays where §6 put it.
+    uint32_t gpu_prefill_min = 512;
+    // How much faster a GPU-prefilled token is than a decode-path one. Used to
+    // decide whether to THROW AWAY a KV reuse and re-prefill the whole prompt
+    // on the GPU: a reuse of r out of p costs (p - r) decode tokens against
+    // p / speedup GPU ones. Measured on this machine at ~183 ms/token decode vs
+    // ~24 ms/token GPU = 7.6x; 6.0 is that with margin, so the rule only fires
+    // when it wins clearly. <= 1 disables the rule (reuse always kept).
+    float    gpu_prefill_speedup = 6.0f;
     uint32_t replay = 128;
     // A progress callback (and a cancel check) every this many prefill tokens.
     uint32_t progress_every = 16;

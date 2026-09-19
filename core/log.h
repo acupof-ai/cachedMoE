@@ -20,6 +20,14 @@ enum class LogLevel : int { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4,
 namespace detail {
 inline std::atomic<int> g_log_level{static_cast<int>(LogLevel::Info)};
 inline std::mutex       g_log_mutex;
+// Where Info/Debug/Trace go. Null = stdout, which is the default and what
+// the one-shot commands want. `deepmoe serve` OWNS stdout -- the NDJSON
+// protocol is duplicated off fd 1 and fd 1 is then pointed at stderr -- and a
+// FILE* stdout pointed at a pipe is BLOCK buffered, so before Track PF every
+// log_info a serve session wrote sat in an unflushed 4 KiB buffer and
+// `--log web_serve.log` held only the few lines written with fprintf(stderr).
+// serve calls set_log_stream(stderr).
+inline std::atomic<std::FILE*> g_log_stream{nullptr};
 
 inline constexpr std::string_view level_tag(LogLevel l) {
     switch (l) {
@@ -35,11 +43,20 @@ inline constexpr std::string_view level_tag(LogLevel l) {
 
 inline void emit(LogLevel l, std::string_view msg) {
     std::lock_guard lk(g_log_mutex);
-    std::FILE* out = (l >= LogLevel::Warn) ? stderr : stdout;
+    std::FILE* sink = g_log_stream.load(std::memory_order_relaxed);
+    std::FILE* out = sink ? sink : ((l >= LogLevel::Warn) ? stderr : stdout);
     std::fprintf(out, "[%s] %.*s\n", level_tag(l).data(), static_cast<int>(msg.size()), msg.data());
-    if (l >= LogLevel::Warn) std::fflush(out);
+    // Always: a diagnostic still sitting in a buffer when the process is
+    // killed (which is how the web UI stops its engine) never existed.
+    std::fflush(out);
 }
 }  // namespace detail
+
+// Sends every level to `f` instead of the stdout/stderr split. Null restores
+// the default. Relaxed atomic: safe to set before the first log line.
+inline void set_log_stream(std::FILE* f) {
+    detail::g_log_stream.store(f, std::memory_order_relaxed);
+}
 
 inline void set_log_level(LogLevel l) {
     detail::g_log_level.store(static_cast<int>(l), std::memory_order_relaxed);

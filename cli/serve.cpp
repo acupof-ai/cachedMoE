@@ -178,6 +178,7 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--max-context")     sc.max_context = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--engram-tables")   sc.engram_tables_dir = value_of(argc, argv, i);
         else if (a == "--gpu-prefill-min") so.gpu_prefill_min = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
+        else if (a == "--gpu-prefill-speedup") so.gpu_prefill_speedup = float(std::atof(value_of(argc, argv, i).c_str()));
         else if (a == "--replay")          so.replay = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--no-rollback")     so.rollback = false;
         else if (a == "--reheat")          { so.reheat = true; engine_reheat = true; }
@@ -255,6 +256,13 @@ int cmd_serve(int argc, char** argv) {
     dup2(fileno(stderr), fileno(stdout));
 #endif
     if (!g_proto) { std::fputs("cannot duplicate stdout\n", stderr); return 1; }
+    // Track PF: and the LOGGER goes with it. fd 1 now points at stderr, but the
+    // FILE* stdout behind it is block buffered against a pipe, so every
+    // log_info -- the session reuse / rollback / prefill decisions above all --
+    // used to sit in an unflushed buffer instead of reaching the web UI --log
+    // file (which held 2 lines before this). Every level now goes to stderr,
+    // flushed per line.
+    set_log_stream(stderr);
 
     const TimePoint t0 = Clock::now();
     auto tok = text::Tokenizer::load(cfg.model_dir + "/tokenizer.json");
