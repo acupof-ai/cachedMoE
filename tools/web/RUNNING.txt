@@ -1,0 +1,43 @@
+deepMoE web UI —— 正在运行的实例
+================================
+
+打开： http://127.0.0.1:8080/
+
+启动命令（已用 Start-Process 脱离本会话，关掉终端也不会停）：
+
+  $env:DEEPMOE_MODEL_DIR = 'D:\models\DeepSeek-V4.1-Flash'
+  Start-Process -FilePath C:\Users\Asus\code\deepmoe\.venv\Scripts\python.exe `
+    -ArgumentList C:\Users\Asus\code\deepmoe-web\tools\web\server.py,
+                  --exe,C:\Users\Asus\code\deepmoe\build\deepmoe.exe,
+                  --max-context,524280,--port,8080,
+                  --log,C:\Users\Asus\code\deepmoe\build\web_serve.log `
+    -WorkingDirectory C:\Users\Asus\code\deepmoe-web -WindowStyle Hidden `
+    -RedirectStandardOutput C:\Users\Asus\code\deepmoe\build\web_ui.out `
+    -RedirectStandardError  C:\Users\Asus\code\deepmoe\build\web_ui.err
+
+PID
+---
+  server.py 启动器 (python.exe)  45144
+  server.py 实际解释器          45292
+  deepmoe serve                 43564
+
+日志
+----
+  C:\Users\Asus\code\deepmoe\build\web_ui.out     server.py 的 stdout（就绪横幅）
+  C:\Users\Asus\code\deepmoe\build\web_ui.err     server.py 的 stderr
+  C:\Users\Asus\code\deepmoe\build\web_serve.log  引擎的 stderr（专家缓存 / IO / 路由日志）
+
+配置
+----
+  --max-context 524280   引擎硬上限（= kMaxIndexPositions，见 README.md）
+  专家缓存               auto = 89.3 GiB / 5100 slots
+  引擎就绪               73.9 s
+  .pkv 前缀 KV 缓存      serve 默认目录
+    %LOCALAPPDATA%\deepmoe\kv\D__models_DeepSeek-V4.1-Flash
+
+停止
+----
+  Get-Process -Id 45144,45292,43564 | Stop-Process -Force
+
+注意：同一时刻只能有一个 deepmoe 引擎进程。再起一个之前先把这个停掉
+（`Get-Process deepmoe` 应该是空的）。
