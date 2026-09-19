@@ -51,8 +51,11 @@ def load_jsonl(path):
 
 def cell_stats(out_dir):
     """Decode tok/s and decode-only per-token ms, averaged over the turns."""
+    # serve writes `{"event": "done", ...}` -- NOT `"type"`. Reading the wrong key
+    # made every cell report 0.0000 tok/s, which is why the D2 A/B never produced a
+    # table even on the cells that ran to completion.
     events = [e for e in load_jsonl(os.path.join(out_dir, "events.jsonl"))
-              if e.get("type") == "done" and e.get("decode_steps")]
+              if e.get("event") == "done" and e.get("decode_steps")]
     steps = sum(e["decode_steps"] for e in events)
     # `tok_s` on a done event is already decode-only; weight by that turn's steps
     # so a short turn does not count as much as a long one.
@@ -89,6 +92,8 @@ def run_cell(args, arm, script, i):
         cmd += ["--cache-slots", str(args.cache_slots)]
     if args.max_context:
         cmd += ["--max-context", str(args.max_context)]
+    for sa in args.serve_arg:
+        cmd += [f"--serve-arg={sa}"]
     if arm == "on":
         cmd += ["--serve-arg=--mirror", f"--serve-arg={args.mirror}"]
         if args.weights:
@@ -124,6 +129,9 @@ def main() -> int:
     ap.add_argument("--max-context", type=int, default=4096)
     ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
     ap.add_argument("--env", action="append", default=[])
+    ap.add_argument("--serve-arg", action="append", default=[],
+                    help="extra `deepmoe serve` arg, added to BOTH arms (keep the A/B symmetric); "
+                         "e.g. --serve-arg=--no-kv-disk so cell N's .pkv cannot leak into cell N+1")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
