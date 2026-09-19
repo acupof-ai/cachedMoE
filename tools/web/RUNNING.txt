@@ -34,15 +34,22 @@ deepMoE web UI —— 正在运行的实例
 并且建完 slab 池先提交一个空命令缓冲探一下，被拒就退 200 槽重建（最多 5 次）。
 本次就绪横幅：`expert cache 87.6 GiB (5000 slots)`。
 
+✅ **GPU prefill 现在默认开着，不用给 `--gpu-prefill-min`**（Track PF，docs/p3_chat.md §8）：
+引擎默认 `gpu_prefill_min = 512`（`runtime/session.h`），`server.py` **什么都不传**。
+1,118-token 的新 prompt 在 5,000 槽热 cache 上 **168.8 s → 28.6 s（25.6 ms/token，5.9×）**。
+续写（reuse > 0）也上 GPU，靠的是「reuse 不值钱就扔掉、整个 prompt 重新 prefill」这条规则
+（`--gpu-prefill-speedup`，默认 6.0，`<= 1` 关）：1,514-token 的第二轮 **70.5 → 35.5 s（2.0×）**。
+要关掉回到旧行为：`--gpu-prefill-min 0`（这个 0 以前是空操作，Track PF 一起修了）。
+
 ✅ **`.pkv` 也不用在重启前清了**（Track H1b 生效）：恢复失败——分配被拒 / 损坏 / 尺寸不符——
 是一条 warning + 冷 prefill，那一轮照常跑完，失败的那份 `.pkv` 被删掉。
 本次启动前仍然顺手清了一次，日志里 `serve: restored 374 tokens from kv disk` 是之后写的。
 
 PID
 ---
-  server.py 启动器 (.venv python.exe)   44620
-  server.py 实际解释器 (Python312)      46980
-  deepmoe serve                         43132
+  server.py 启动器 (.venv python.exe)   46712
+  server.py 实际解释器 (Python312)      40060
+  deepmoe serve                         37892
 
 状态
 ----
@@ -59,6 +66,18 @@ PID
   C:\Users\Asus\code\deepmoe\build\web_ui.out     server.py 的 stdout（就绪横幅）
   C:\Users\Asus\code\deepmoe\build\web_ui.err     server.py 的 stderr
   C:\Users\Asus\code\deepmoe\build\web_serve.log  引擎的 stderr（专家缓存 / IO / 路由日志）
+
+  ✅ **这个文件现在真的有东西了**（Track PF，docs/p3_chat.md §8.1）：以前它只有两行，
+  因为 `core/log.h` 写的是 `FILE* stdout`，而 serve 把 stdout 让给协议之后 fd 1 虽然
+  指向 stderr，那个 `FILE*` 在 pipe 上是**全缓冲**的、`emit` 只在 `>= Warn` 时 flush ——
+  每条 `log_info` 都躺在没人 flush 的 4 KiB 缓冲里，进程被 `Stop-Process` 杀掉时一起没。
+  现在 logger 有进程级 sink（serve 调 `set_log_stream(stderr)`）并且**每行 flush**，
+  开机就有 26 行，而且**每一轮对话都有一行 session 决策**：
+
+      [INF] session: prompt N tokens, history H, common prefix C -> reuse R (cold|extend|rollback|reset|gpu-recompute), S to prefill (gpu_prefill_min 512)
+      [INF] session: S tokens prefilled on the GPU in T s (X ms/token)
+
+  `预填充 … ms/token` 那一行慢的时候，先看这里。
 
 .pkv 前缀 KV 缓存
 -----------------
@@ -80,7 +99,7 @@ PID
 
 停止
 ----
-  Get-Process -Id 44620,46980,43132 | Stop-Process -Force
+  Get-Process -Id 46712,40060,37892 | Stop-Process -Force
 
   （停完确认 `Get-Process deepmoe*` 为空；上一次 deepmoe 要再 Stop-Process 一次才真的退。）
 
@@ -97,3 +116,10 @@ PID
   就绪 12.9 s，auto → 5,000 槽，`read sources 1`，/api/status 200。
   这一次 exe 里多了镜像健康闸（启动 pinned 试读 / 失败摘镜像 / 运行期连续 3 次错误摘源），
   默认路径（不给 --mirror）与之前逐字相同——闸整个在 `if (mirrors_on_)` 里。
+
+2026-09-19 再重启（Track PF 之后，main ee779ce，仍然**不带 --mirror**）：
+  server.py 启动器 46712 / 解释器 40060 / deepmoe serve 37892
+  就绪 13.0 s，auto → 5,000 槽，`read sources 1`，kv disk 开着，/api/status **200**。
+  这一次的新默认是 **GPU prefill 开（512）** —— 命令行一个字没变（不用给
+  `--gpu-prefill-min`），变的是引擎的默认值。`web_serve.log` 从 2 行变成开机 26 行 +
+  每轮一行 session 决策。
