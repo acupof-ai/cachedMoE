@@ -751,6 +751,13 @@ DEEPMOE_TEST(smoke, auto_cache) {
     // assert it when the cap is in force.
     if (const uint32_t cap = runtime::auto_slot_cap(); cap) CHECK(slots <= cap);
 
+    // A session gives the engine a KV store (decode_step needs one); the engram
+    // tables come from the test export so this does not depend on the model dir
+    // carrying them.
+    runtime::SessionConfig sc;
+    sc.engram_tables_dir = std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
+    sc.max_context = 256;
+    REQUIRE_OK(e.begin_session(sc));
     e.reset_context();
     uint32_t tok = 0;                  // BOS; the ids do not matter, the submits do
     for (uint32_t pos = 0; pos < 2; ++pos) {
