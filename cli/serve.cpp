@@ -172,6 +172,7 @@ int cmd_serve(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--model")                cfg.model_dir = value_of(argc, argv, i);
+        else if (a == "--mirror")          cfg.model_mirrors.emplace_back(value_of(argc, argv, i));
         else if (a == "--cache-gb")        cfg.cache.budget_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 30;
         else if (a == "--cache-slots")     cfg.cache.budget_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) * layout::kExpertSlotBytes;
         else if (a == "--max-context")     sc.max_context = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));

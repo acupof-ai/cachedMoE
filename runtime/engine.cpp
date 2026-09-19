@@ -153,11 +153,117 @@ Engine::Engine() {
     cur_ = streams_[0].get();
 }
 
+namespace {
+
+// ';'-separated list, the way PATH is written on this platform. Empty entries
+// are dropped so a trailing ';' is not an error.
+std::vector<std::string> split_semis(const std::string& v) {
+    std::vector<std::string> out;
+    size_t i = 0;
+    while (i <= v.size()) {
+        const size_t j = v.find(';', i);
+        std::string part = v.substr(i, j == std::string::npos ? std::string::npos : j - i);
+        while (!part.empty() && (part.back() == ' ' || part.back() == '"')) part.pop_back();
+        while (!part.empty() && (part.front() == ' ' || part.front() == '"')) part.erase(part.begin());
+        if (!part.empty()) out.push_back(std::move(part));
+        if (j == std::string::npos) break;
+        i = j + 1;
+    }
+    return out;
+}
+
+}  // namespace
+
 Result<void> Engine::open_model_files() {
     // design §5.1 (v0.5): there are no repacked blobs. Every file the runtime
     // reads is an original safetensors shard named by the manifest.
     if (auto r = shards_.open_all(cfg_.model_dir, manifest_, cfg_.io.unbuffered); !r) return r;
     log_info("engine: {} shards open, {}", shards_.size(), human_bytes(shards_.total_bytes()));
+
+    // Track D2 (docs/p4_dual_source.md): the second read source. --mirror wins
+    // over the environment so a bench cell can turn it on or off without
+    // touching the shell it inherited.
+    std::vector<std::string> mirrors = cfg_.model_mirrors;
+    if (mirrors.empty())
+        if (const char* e = std::getenv("DEEPMOE_MODEL_MIRRORS"); e && *e)
+            mirrors = split_semis(e);
+    for (const std::string& dir : mirrors) {
+        if (auto r = shards_.open_mirror(dir, manifest_, cfg_.io.unbuffered); !r) {
+            // A mirror is an optimisation, never a correctness input: if the
+            // drive is unplugged the run reads from the primary and says so.
+            log_warn("engine: mirror '{}' unusable ({}); reading from the primary only",
+                     dir, r.error().message);
+            continue;
+        }
+        const auto& m = shards_.mirror(shards_.mirror_count() - 1);
+        log_info("engine: mirror '{}' holds {} of {} shards, {}",
+                 m.root, m.n_present, shards_.size(), human_bytes(m.bytes));
+    }
+    return {};
+}
+
+// Measures each source's 4 MiB random-read rate and hands the ratio to the
+// router. The probe reads a mirrored shard through its own handle and closes
+// it, so it never touches the handles the IoEngine is about to own.
+Result<void> Engine::configure_io_sources() {
+    if (shards_.mirror_count() == 0) return {};
+
+    // Which shard to probe: one that every source holds, so the measurement is
+    // of the same bytes on each drive.
+    uint32_t probe_idx = UINT32_MAX;
+    for (uint32_t i = 0; i < shards_.size(); ++i) {
+        bool all = true;
+        for (size_t m = 1; m <= shards_.mirror_count(); ++m)
+            all &= shards_.at(i, static_cast<uint32_t>(m)) != nullptr;
+        if (all && shards_.at(i)->size() >= (64ull << 20)) { probe_idx = i; break; }
+    }
+
+    std::vector<std::string> roots{cfg_.model_dir};
+    std::vector<double>      weights{0.0};
+    for (size_t m = 1; m <= shards_.mirror_count(); ++m) {
+        roots.push_back(shards_.mirror(m - 1).root);
+        weights.push_back(0.0);
+    }
+
+    // DEEPMOE_MIRROR_WEIGHTS=4.6;1.0 skips the probe: two seconds of startup is
+    // two seconds, and an A/B that repeats a cell wants the same weights each
+    // time rather than a fresh measurement's noise.
+    bool probed = false;
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_WEIGHTS"); e && *e) {
+        const auto parts = split_semis(e);
+        for (size_t i = 0; i < parts.size() && i < weights.size(); ++i)
+            weights[i] = std::strtod(parts[i].c_str(), nullptr);
+    } else if (probe_idx != UINT32_MAX) {
+        uint32_t ms = 1000;
+        if (const char* e2 = std::getenv("DEEPMOE_MIRROR_PROBE_MS"); e2 && *e2)
+            ms = static_cast<uint32_t>(std::strtoul(e2, nullptr, 10));
+        if (ms) {
+            const std::string name = manifest_.files()[probe_idx].path;
+            for (size_t i = 0; i < roots.size(); ++i) {
+                auto g = storage::IoEngine::probe_source_gbps(
+                    store::ShardSet::join(roots[i], name), ms, 8);
+                if (!g) { log_warn("engine: probe of '{}' failed: {}", roots[i], g.error().message); continue; }
+                weights[i] = *g;
+                log_info("engine: source '{}' probes at {:.2f} GB/s (4 MiB, QD 8, random)",
+                         roots[i], *g);
+            }
+            probed = true;
+        }
+    }
+    for (double& w : weights) if (!(w > 0.0)) w = 1.0;
+    (void)probed;
+
+    io_.set_sources(roots, weights);
+    for (uint32_t i = 0; i < shards_.size(); ++i) {
+        const storage::File* prim = shards_.at(i);
+        if (!prim) continue;
+        for (size_t m = 1; m <= shards_.mirror_count(); ++m) {
+            const storage::File* alt = shards_.at(i, static_cast<uint32_t>(m));
+            if (!alt) continue;
+            if (auto r = io_.add_mirror(prim, static_cast<uint32_t>(m), alt); !r)
+                log_warn("engine: shard {} not mirrored on source {}: {}", i, m, r.error().message);
+        }
+    }
     return {};
 }
 
@@ -214,6 +320,8 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     auto backend = storage::make_default_backend(cfg_.io);
     if (!backend) return std::unexpected(backend.error());
     if (auto r = io_.start(std::move(*backend), cfg_.io, &profiler_); !r) return r;
+    // The router has to be in place before the pinned load's first request.
+    if (auto r = configure_io_sources(); !r) return r;
 
     // Without a GPU the host backing is the honest choice and the only one the
     // storage tests need (design §3.3). init_gpu() re-backs the store.

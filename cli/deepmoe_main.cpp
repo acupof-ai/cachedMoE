@@ -500,6 +500,8 @@ int cmd_run(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--model")            cfg.model_dir = arg_value(argc, argv, i, a);
+        // Track D2: repeatable, so --mirror E:\... --mirror F:\... works.
+        else if (a == "--mirror")      cfg.model_mirrors.emplace_back(arg_value(argc, argv, i, a));
         else if (a == "--prompt-ids")  prompt_ids_file = arg_value(argc, argv, i, a);
         else if (a == "--state")       state_dir = arg_value(argc, argv, i, a);
         else if (a == "--profile")     cfg.profile_jsonl = arg_value(argc, argv, i, a);

@@ -63,7 +63,63 @@ public:
         return {};
     }
 
-    void close() { files_.clear(); }
+    // --- Track D2 (docs/p4_dual_source.md): mirrors -------------------------
+    // A mirror is another directory holding byte-identical copies of some or
+    // all of the same shards -- on another physical drive, which is the whole
+    // point. A shard whose mirror copy is missing, short or long is simply not
+    // mirrored: the run still works, it just reads that shard from the primary.
+    // Nothing here ever writes to the mirror root.
+    struct Mirror {
+        std::string root;
+        std::vector<storage::File> files;   // one entry per manifest file index
+        std::vector<uint8_t>       present; // 0 when that index is not mirrored
+        uint32_t                   n_present = 0;
+        uint64_t                   bytes = 0;
+    };
+
+    Result<void> open_mirror(const std::string& dir, const Manifest& manifest,
+                             bool unbuffered = true) {
+        if (files_.empty())
+            return fail(Err::FailedPrecondition, "open_mirror before open_all");
+        if (mirrors_.size() + 1 >= 4)
+            return fail(Err::OutOfRange, "at most three mirrors");
+        Mirror m;
+        m.root = dir;
+        m.files.resize(manifest.files().size());
+        m.present.assign(manifest.files().size(), 0);
+        for (uint32_t i = 0; i < manifest.files().size(); ++i) {
+            const FileEntry& e = manifest.files()[i];
+            storage::FileFlags flags = storage::FileFlags::Overlapped | storage::FileFlags::Random;
+            if (unbuffered) flags = flags | storage::FileFlags::Unbuffered;
+            auto f = storage::File::open(join(dir, e.path), flags);
+            if (!f) continue;                       // not mirrored: fine
+            if (f->size() != files_[i].size()) continue;   // not the same bytes: skip it
+            if (f->sector_size() > kPageSize) continue;
+            m.bytes += f->size();
+            m.files[i] = *std::move(f);
+            m.present[i] = 1;
+            ++m.n_present;
+        }
+        if (m.n_present == 0)
+            return fail(Err::NotFound,
+                        std::format("mirror '{}' holds none of the {} shards at the right size",
+                                    dir, files_.size()));
+        mirrors_.push_back(std::move(m));
+        return {};
+    }
+
+    size_t mirror_count() const { return mirrors_.size(); }
+    const Mirror& mirror(size_t i) const { return mirrors_[i]; }
+    // Source 0 is the primary; 1..mirror_count() are the mirrors. Null when
+    // that source does not hold the shard.
+    const storage::File* at(uint32_t index, uint32_t source) const {
+        if (source == 0) return at(index);
+        const size_t m = source - 1;
+        if (m >= mirrors_.size() || index >= mirrors_[m].files.size()) return nullptr;
+        return mirrors_[m].present[index] ? &mirrors_[m].files[index] : nullptr;
+    }
+
+    void close() { files_.clear(); mirrors_.clear(); }
 
     size_t size() const { return files_.size(); }
     bool   empty() const { return files_.empty(); }
@@ -96,6 +152,7 @@ public:
 
 private:
     std::vector<storage::File> files_;
+    std::vector<Mirror>        mirrors_;
 };
 
 }  // namespace deepmoe::store

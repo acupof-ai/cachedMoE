@@ -404,3 +404,116 @@ DEEPMOE_TEST(io, background_is_throttled_while_p0_is_recent) {
     CHECK_EQ(std::memcmp(b3.data(), content.data() + (1u << 20), 256 * 1024), 0);
     engine.stop();
 }
+
+// --- Track D2: the second read source (docs/p4_dual_source.md) --------------
+
+// The chooser on its own, with no engine and no drives.
+//
+// The thing to test is NOT the steady-state byte split: plain
+// least-outstanding-bytes is self-balancing, because a slow source drains
+// slowly and so accumulates queue until it stops being chosen, and it too ends
+// up rate-proportional in the limit. What the weights buy is the PER-REQUEST
+// choice, and that is where the two rules differ outright: with D: at 4.6 GB/s
+// and E: at 1.0, a 9 MiB run should still go to D: while D: is carrying up to
+// 3.6 runs, because 4.6 of it drains in the time E: would take to do one.
+// Dropping the divide moves that crossover from 3.6 queued runs to 0 -- every
+// request that finds D: non-empty goes to the USB drive, which is the mutation
+// this case is written against.
+DEEPMOE_TEST(io, source_router_respects_weights) {
+    const double w[2] = {4.6, 1.0};
+    constexpr uint64_t kRun = 9u << 20;      // one expert run
+
+    // Crossover: pick 0 while (o0 + B)/4.6 <= B, i.e. o0 <= 3.6 B.
+    struct Case { double queued_runs; uint32_t want; };
+    const Case cases[] = {
+        {0.0, 0},   // both idle -> the fast drive, not an alternation
+        {1.0, 0},   // one run queued on D: -- LOB would already flip here
+        {3.0, 0},   // still faster to wait behind three runs on D:
+        {4.5, 1},   // now E: really is the sooner finish
+        {8.0, 1},
+    };
+    for (const Case& c : cases) {
+        const uint64_t outstanding[2] = {
+            static_cast<uint64_t>(c.queued_runs * double(kRun)), 0};
+        CHECK_EQ(pick_source(std::span<const double>(w, 2),
+                             std::span<const uint64_t>(outstanding, 2), 0b11, kRun),
+                 c.want);
+    }
+
+    // And the symmetric direction: a queue on the SLOW source is worth much
+    // less than the same queue on the fast one, so one run on E: is already
+    // enough to send the next back to D:.
+    const uint64_t slow_busy[2] = {0, kRun};
+    CHECK_EQ(pick_source(std::span<const double>(w, 2),
+                         std::span<const uint64_t>(slow_busy, 2), 0b11, kRun), 0u);
+
+    // Over a run of requests against drives that drain at their own rates, the
+    // weighted rule leaves the fast drive with the large majority of them.
+    // (Both rules converge to a similar byte split; this is a sanity check on
+    // the loop, not the discriminator above.)
+    uint64_t outstanding[2] = {0, 0};
+    uint32_t picks[2] = {0, 0};
+    constexpr double kDt = 1e-3;
+    for (int step = 0; step < 2000; ++step) {
+        for (uint32_t s = 0; s < 2; ++s) {
+            const uint64_t drained = static_cast<uint64_t>(w[s] * 1e9 * kDt);
+            outstanding[s] = outstanding[s] > drained ? outstanding[s] - drained : 0;
+        }
+        const uint32_t s = pick_source(std::span<const double>(w, 2),
+                                       std::span<const uint64_t>(outstanding, 2), 0b11, kRun);
+        REQUIRE(s < 2);
+        ++picks[s];
+        outstanding[s] += kRun;
+    }
+    CHECK(picks[0] > picks[1] * 2);
+}
+
+// Degenerate inputs the runtime actually produces: one source, or a shard that
+// only the primary holds. Both have to come back as source 0, because that is
+// what makes "no mirror configured" byte-identical to the old behaviour.
+DEEPMOE_TEST(io, source_router_defaults_to_the_primary) {
+    const double w[2] = {4.6, 1.0};
+    const uint64_t zero[2] = {0, 0};
+    CHECK_EQ(pick_source(std::span<const double>(w, 1), std::span<const uint64_t>(zero, 1),
+                         0b1, 1 << 20), 0u);
+    // Only the primary holds this shard.
+    CHECK_EQ(pick_source(std::span<const double>(w, 2), std::span<const uint64_t>(zero, 2),
+                         0b1, 1 << 20), 0u);
+    // Both idle: the faster source wins, it does not alternate.
+    CHECK_EQ(pick_source(std::span<const double>(w, 2), std::span<const uint64_t>(zero, 2),
+                         0b11, 1 << 20), 0u);
+    // Nothing holds it: the caller has to fall back.
+    CHECK_EQ(pick_source(std::span<const double>(w, 2), std::span<const uint64_t>(zero, 2),
+                         0u, 1 << 20), kMaxIoSources);
+    // A primary carrying a full queue hands the next one to the slow drive.
+    const uint64_t busy[2] = {96u << 20, 0};
+    CHECK_EQ(pick_source(std::span<const double>(w, 2), std::span<const uint64_t>(busy, 2),
+                         0b11, 9u << 20), 1u);
+}
+
+// The engine end: with no sources declared, nothing about a request changes and
+// IoStats carries no per-source rows -- the "off by default is off" check.
+DEEPMOE_TEST(io, no_mirror_leaves_the_stats_untouched) {
+    auto scratch = make_scratch("d2_nomirror", 4u << 20, false);
+    REQUIRE(scratch.has_value());
+    const std::vector<std::byte> content = pattern_bytes(4u << 20);
+    IoEngine engine;
+    IoConfig cfg;
+    cfg.chunk_bytes = 64 * 1024;
+    auto backend = std::make_unique<test::FakeBackend>(content, 8);
+    test::FakeBackend* fake = backend.get();
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+    CHECK(!engine.mirrors_enabled());
+    CHECK_EQ(engine.source_count(), 0u);
+    AlignedBuffer b(64 * 1024);
+    IoRequest r;
+    r.priority = IoPriority::BlockingMiss;
+    r.file     = &scratch->file;
+    r.bytes    = 64 * 1024;
+    r.dst      = b.data();
+    REQUIRE_OK(engine.submit(r, [](const IoResult&) {}));
+    fake->release_all();
+    engine.drain();
+    CHECK(engine.stats().sources.empty());
+    engine.stop();
+}

@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "core/types.h"
 
@@ -76,6 +77,11 @@ struct RuntimeConfig {
     // and the deepmoe_manifest.json that tools/manifest.py writes beside them
     // (design §5.1 v0.5 -- there is no repack).
     std::string model_dir;
+    // Track D2 (docs/p4_dual_source.md): further directories holding
+    // byte-identical copies of the same shards, on other physical drives.
+    // Empty (the default) is the single-drive run, unchanged down to the byte.
+    // Filled from --mirror DIR or DEEPMOE_MODEL_MIRRORS (';'-separated).
+    std::vector<std::string> model_mirrors;
     std::string profile_jsonl;    // empty = no JSONL sink
     std::string trace_file;       // ADDITIVE (Track W): per-dispatch GPU trace,
                                   // empty = off. runtime/trace.h has the format.

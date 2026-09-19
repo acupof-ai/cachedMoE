@@ -37,6 +37,7 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <array>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -50,6 +51,7 @@
 #include "core/types.h"
 #include "storage/backend.h"
 #include "storage/file.h"
+#include "storage/source_router.h"
 
 namespace deepmoe::storage {
 
@@ -143,6 +145,12 @@ struct IoStats {
         return disp_refills ? disp_refill_ns / 1e3 / double(disp_refills) : 0.0;
     }
 
+    // --- per-source accounting, Track D2 (docs/p4_dual_source.md) ----------
+    // Empty unless a mirror was configured. Index 0 is always the primary
+    // model directory, so a one-entry vector and an empty one mean the same
+    // thing and the no-mirror run prints nothing extra.
+    std::vector<SourceStats> sources;
+
     double p0_mean_ms() const {
         return p0_requests ? p0_lat_ns_sum / 1e6 / double(p0_requests) : 0.0;
     }
@@ -194,6 +202,30 @@ public:
     IoStats  stats() const;
     void     reset_stats();
 
+    // --- second read source (Track D2, docs/p4_dual_source.md) --------------
+    // Declares the read sources. `roots[0]` is the primary model directory and
+    // must always be present; every further entry is a mirror holding
+    // byte-identical copies of some or all of the same shards. `weights` are
+    // GB/s (measured by probe_source_gbps or DEEPMOE_MIRROR_WEIGHTS) and only
+    // their ratio matters. With fewer than two roots the router stays off and
+    // submit() is byte-for-byte the function it was before.
+    //
+    // Call after start() and before any submit(): the mirror table is written
+    // once and read lock-free on the hot path.
+    void set_sources(const std::vector<std::string>& roots, const std::vector<double>& weights);
+    // Registers `alt` as source `src`'s handle for the shard whose primary
+    // handle is `primary`. Both must be open and the same size.
+    Result<void> add_mirror(const File* primary, uint32_t src, const File* alt);
+    bool     mirrors_enabled() const { return mirrors_on_; }
+    uint32_t source_count() const { return static_cast<uint32_t>(src_roots_.size()); }
+
+    // The startup probe: 4 MiB random reads at queue depth `qd` against
+    // `sample_path` for `ms` milliseconds, returning GB/s. Opens and closes its
+    // own handle, so it must not be pointed at a File already handed to a
+    // backend (storage/backend.h: one IOCP port per handle, for life).
+    static Result<double> probe_source_gbps(const std::string& sample_path,
+                                            uint32_t ms = 1000, uint32_t qd = 8);
+
     const BackendCaps& backend_caps() const { return backend_->caps(); }
     const IoConfig&    config() const { return cfg_; }
 
@@ -221,6 +253,8 @@ private:
         bool      issued_once = false;
         uint32_t  bg_at_issue = 0;       // non-P0 chunks in flight at that moment
         uint32_t  p0_ahead    = 0;       // other P0 requests outstanding at submit
+        uint32_t  source      = 0;       // which read source served it (Track D2)
+        bool      routed      = false;   // charged against src_outstanding_[source]
         Status    status{Err::Ok};
         bool      failed = false;
     };
@@ -345,6 +379,21 @@ private:
     // chunk that reaches the backend: the two ends of the refill gap.
     TimePoint reaped_at_{};
     bool      reap_pending_ = false;
+
+    // --- Track D2: the mirror table and the router's live state ------------
+    // `alts_[primary][s]` is source s's handle for that shard, null when that
+    // source does not hold it. Built at startup, never mutated afterwards, so
+    // the lookup on the submit path needs no lock; only the byte counters do.
+    std::vector<std::string> src_roots_;
+    std::vector<double>      src_weights_;
+    std::unordered_map<const File*, std::array<const File*, kMaxIoSources>> alts_;
+    bool     mirrors_on_    = false;
+    uint32_t route_classes_ = (1u << static_cast<uint8_t>(IoPriority::BlockingMiss)) |
+                              (1u << static_cast<uint8_t>(IoPriority::Backfill));
+    mutable std::mutex src_mutex_;
+    uint64_t src_outstanding_[kMaxIoSources] = {};
+    uint32_t src_inflight_[kMaxIoSources]    = {};
+    SourceStats src_stats_[kMaxIoSources]{};
 
     mutable std::mutex stats_mutex_;
     IoStats            stats_{};

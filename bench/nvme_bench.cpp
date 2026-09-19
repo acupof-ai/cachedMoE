@@ -44,6 +44,11 @@ namespace {
 
 struct Options {
     std::string file;
+    // Track D2 (docs/p4_dual_source.md): a byte-identical copy of --file on
+    // another drive. Given one, every point routes through IoEngine's source
+    // router and the GB/s reported is the AGGREGATE of the two drives.
+    std::string mirror;
+    std::vector<double> weights;
     uint64_t size_bytes = 2ull << 30;
     std::vector<uint32_t> chunk_kb{64, 256, 1024, 2048, 4096, 8192, 18360};  // 18360 KiB ~ one expert
     std::vector<uint32_t> queue_depths{1, 2, 4, 8, 16, 32, 64};
@@ -118,16 +123,25 @@ struct Point {
     double   mean_latency_ms;
     double   max_latency_ms;
     uint32_t iops;
+    std::string per_source;      // "  D: 82.1% 4.28 GB/s | E: 17.9% 0.93 GB/s"
 };
 
 // Opens its own File and its own IoEngine. A Win32 handle is permanently bound
 // to the first completion port it is associated with (storage/backend.h), so
 // every measurement point needs a fresh handle.
 Result<Point> measure(const std::string& path, const char* pattern,
-                      uint32_t chunk_kb, uint32_t qd, uint32_t reads, bool sequential) {
+                      uint32_t chunk_kb, uint32_t qd, uint32_t reads, bool sequential,
+                      const std::string& mirror = {},
+                      const std::vector<double>& weights = {}) {
     auto opened = File::open_read(path, true);
     if (!opened) return std::unexpected(opened.error());
     const File& f = *opened;
+    File mf;
+    if (!mirror.empty()) {
+        auto m = File::open_read(mirror, true);
+        if (!m) return std::unexpected(m.error());
+        mf = *std::move(m);
+    }
 
     const uint64_t req_bytes = align_up(uint64_t(chunk_kb) << 10, kPageSize);
     if (req_bytes > f.size()) return fail(Err::InvalidArgument, "request larger than the file");
@@ -146,6 +160,12 @@ Result<Point> measure(const std::string& path, const char* pattern,
     if (!backend) return std::unexpected(backend.error());
     IoEngine engine;
     if (auto r = engine.start(std::move(*backend), cfg); !r) return std::unexpected(r.error());
+    if (mf.is_open()) {
+        std::vector<double> w = weights;
+        if (w.size() < 2) w = {4.6, 1.0};
+        engine.set_sources({path, mirror}, w);
+        if (auto r = engine.add_mirror(&f, 1, &mf); !r) { engine.stop(); return std::unexpected(r.error()); }
+    }
 
     const uint64_t span = f.size() - req_bytes;
     const uint64_t stride = align_down(std::max<uint64_t>(span / std::max(reads, 1u), kPageSize));
@@ -212,6 +232,12 @@ Result<Point> measure(const std::string& path, const char* pattern,
     p.mean_latency_ms = st.mean_latency_ms();
     p.max_latency_ms  = st.latency_ns_max / 1e6;
     p.iops            = secs > 0 ? static_cast<uint32_t>(reads / secs) : 0;
+    for (size_t i = 0; i < st.sources.size(); ++i) {
+        const auto& e = st.sources[i];
+        p.per_source += std::format("   [{}] {:.1f}% {:.2f} GB/s", i,
+                                    st.bytes_completed ? 100.0 * double(e.bytes) / double(st.bytes_completed) : 0.0,
+                                    secs > 0 ? e.bytes / 1e9 / secs : 0.0);
+    }
     engine.stop();
     return p;
 }
@@ -228,6 +254,8 @@ int main(int argc, char** argv) {
             return argv[++i];
         };
         if (a == "--file")            o.file = next();
+        else if (a == "--mirror")     o.mirror = next();
+        else if (a == "--weights")    { for (uint32_t v : parse_list(next())) o.weights.push_back(v / 100.0); }
         else if (a == "--size-gb")    o.size_bytes = uint64_t(std::atoll(std::string(next()).c_str())) << 30;
         else if (a == "--chunk-kb")   o.chunk_kb = parse_list(next());
         else if (a == "--qd")         o.queue_depths = parse_list(next());
@@ -283,16 +311,18 @@ int main(int argc, char** argv) {
         if (pi == 1 && !o.rand) continue;
         for (uint32_t chunk : o.chunk_kb) {
             for (uint32_t qd : o.queue_depths) {
-                auto p = measure(o.file, patterns[pi], chunk, qd, o.reads_per_point, pi == 0);
+                auto p = measure(o.file, patterns[pi], chunk, qd, o.reads_per_point, pi == 0,
+                                 o.mirror, o.weights);
                 if (!p) {
                     std::puts(std::format("{:<8} {:>8} {:>6}   {}", patterns[pi], chunk, qd,
                                           p.error().str()).c_str());
                     continue;
                 }
                 results.push_back(*p);
-                std::puts(std::format("{:<8} {:>8} {:>6} {:>9.3f} {:>7} {:>9.3f} {:>9.3f}",
+                std::puts(std::format("{:<8} {:>8} {:>6} {:>9.3f} {:>7} {:>9.3f} {:>9.3f}{}",
                                       p->pattern, p->chunk_kb, p->qd, p->gbps, p->iops,
-                                      p->mean_latency_ms, p->max_latency_ms).c_str());
+                                      p->mean_latency_ms, p->max_latency_ms,
+                                      p->per_source).c_str());
             }
         }
     }

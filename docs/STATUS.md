@@ -17,7 +17,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 
 1. [今天的数字](#1-今天的数字)
 2. [优化路径：每一步与它的归因](#2-优化路径每一步与它的归因)
-3. [试过并退掉的（编号，共 57 条）](#3-试过并退掉的编号共-40-条)
+3. [试过并退掉的（编号，共 58 条）](#3-试过并退掉的编号共-58-条)
 4. [为什么 decode 是 NVMe-bound，而不是 kernel 慢](#4-为什么-decode-是-nvme-bound而不是-kernel-慢)
 5. [测试套件](#5-测试套件)
 6. [已知限制与未决风险](#6-已知限制与未决风险)
@@ -42,6 +42,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | **staged fill 关在 bench 上（Track S1）** | 假设：P0 的 miss 填进 path A 要付 **704 µs/chunk** 的锁页（Q2），换成「读进一个 GPU 可读的 pinned 主机环 + 一次 `vkCmdCopyBuffer` 进 path A」能省 5 ms/token 的 stall。`io_dst_bench` 新的 `stage` 档（`--gpu-copy`，端到端墙钟含拷贝，n=5）：QD 8 **4.7633 → 4.7689 GB/s（+0.12%）**、QD 24 **4.7040 → 4.7202（+0.35%）**，而 A 臂噪声底是 **0.69% / 0.40%**——判据 ≥5%，**差一个半数量级，运行时一行没动**。机制：Q2 的 8 条提交线程**已经**把 704 µs 挡在关键路径外——**`patha` 与 `pathb` 在发出时的队列深度一模一样**（6.87/6.87、22.02/22.04）。顺带补齐 Q2 §12.2 欠的那个数：`vkCmdCopyBuffer` path B → path A 18.8 MB = **0.145 ms（129 GB/s）**，8 个 region 一次 submit 反而 **0.201 each（93.5）**——**带宽受限不是提交受限**，「折进 MoE 命令缓冲」买不到东西。并且 **`gpu::Device` 只建一个 compute 队列**，拷贝没有第二条队列可藏：21.3 次 miss × 0.145 = **3.1 ms/token 的队列占用** | §3 的 56；`p4_p0_queue.md` §16–§21；`bench/results/s1/` |
 | **decode 一直在跑 M=6 的 MoE kernel（Track K1a）** | **引擎从来没有创建过 M=1 的 pipeline**：`moe_bridge.cpp` 用 `spec.m = kMoeBatchMax`（=6）建 runner 好让同一个 runner 也能跑 verify 批，decode 只把 `live_columns` 设成 1。于是每个 decode token 用六个累加器去算一列。`MoeRunner` 现在带一套 M=1 特化（gate/up + h 量化 + down 必须一起换，fp8 h 平面的偏移是 M 的函数）：**moe gpu 37.87 → 34.33（−9.3%，六个格子无一交叠）、热步 101.8 → 97.0（−4.7%）**。`fb53514` 的 live-column mask 只是其中的 1.6 ms（microbench 0.6547 → 0.6028，−7.9%），**M=6 的形状是另外的 ~3.2** | `plan_p5.md` §3(h)；`DEEPMOE_MOE_STATIC_M1=0` 是 A 臂 |
 | ✅ 上面两行差 **25%**，**已解释**（Track G） | **不是一件事，是四件。** ① **命令不同**：Track I 跑 `--cache-gb 24`，今天默认 `auto` = 5,100 槽，**51 个 slab 里 17 个在 path B** → 同一 binary 同一 session：`--cache-gb 24` **96.4 ms / moe gpu 33.8**、`--cache-gb 48` 96.6 / 33.8、`auto` **102.1 / 38.4**，**+5.5 ms**（§3 的 30 第一次在引擎上显形）。② **Track T 的 live-column mask**（`fb53514`，Track I 之后唯一动过 MoE kernel 的 commit）：`kernel_bench` 同 session、raw-read 相同，`fb53514^` **0.6035 ms/pair** → HEAD **0.6426**，M=1 **+6.5% = +1.6 ms/token**；同一 commit 把 M=6 压 1.56×，**而 M=6 是 §3 的 41/42 已经退掉的投机批**。③ `vkQueueSubmit2` 的 host 成本：同样 41 次 submit，`submit` **1.6 → 4.2 ms/token = +2.6**。④ 剩下 **+7.2 ms**（attn 36.0 → 39.0、moe 扣掉 kernel 漂移仍多 2.9、engram +0.7、moe host +0.6）**仍然没有解释**，与限制 6.5 是同一条线。合计 **+16.9**，对 81.5 → 96.4（`--cache-gb 24`）/ 102.1（`auto`）。⚠️ **2026-09-19 订正（Track K1a）**：②不是 1.6 而是 **4.8**——mask 只是它的三分之一，另外 ~3.2 是「decode 跑的一直是 M=6 的 kernel」；①因此不是 5.5 而是 **2.90 ms**（同日重测）。K1a 之后 `auto` 是 **97.0 / 34.33**，`--cache-gb 24` 是 **92.7 / 30.97** | `plan_p5.md` §3(g) 8.7 + §3(h)/(i)；`bench/results/p4g/ab_summary.csv` |
+| **第二个读源落地（Track D2）** | 同一份 checkpoint 在一块 USB SSD（E:）上的逐字节副本，`--mirror DIR` / `DEEPMOE_MODEL_MIRRORS` 打开，**默认关**。路由是**加权最小在飞字节**（权重 = 启动时 1 s / 4 MiB / QD 8 的随机读探针），只路由 P0 与 P3。拷贝 **510 GB / 529 s = 964 MB/s**，94 个文件长度全对、5 个抽样 SHA-256 全对。聚合随机读（同一个 6.8 GB shard，4 MiB，QD 16）：D: 单盘 **3.453** → D:+E: **4.555 GB/s（+31%）**，分流 **78 : 22**，**D: 的份额一点没掉**（3.53 vs 3.47）。⚠️ **端到端没测成：这块 U 盘在引擎的负载下掉出总线**，见 §3 的 58 | §3 的 58；`p4_dual_source.md` |
 | **gate 往返的 0.40 ms 花在哪（Track G）** | 热步全驻留、40 个层步、µs/层：**GPU 侧 gap 386.1**（trace）＝ host 侧 fence 之后 **220.9** ＋ 量不到的 **165.2**（fence 唤醒 + submit → GPU 起跑）。host 那 220.9 的分项：**`vkQueueSubmit2` 这一次调用 99.5**、MoE staging 44.7、下一层序言（bind + record_attention，它在同一个空窗里）32.6、`verify` + 读 top-16 **26.0**、录 MoE 9.7、planner 8.1、planner wait 0.35。**top-k 没有 readback**——gate kernel 早就写进 host-coherent 内存了。miss 层完全是另一回事：fence 之后 8,780 µs，其中 `pwait` **8,493 = NVMe** | §3 的 53；`DEEPMOE_GATE_PROBE=1`、`tools/trace_timeline.py --gate` |
 | 热步分项（64 token） | attention 36.0 / MoE GPU 29.4 / MoE host 1.0 / engram 3.9 / tail 5.8 / stall 0.4 / other 5.0 ms | `p2_decode.md` §10 |
 | 热步对设计地板 | 地板 **75.8 ms**，实测 81.5 ms = **+7.5%**；余量只剩 ~7% | `design.md` §13.4；`p2_decode.md` §10 |
@@ -215,7 +216,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 57 条）
+## 3. 试过并退掉的（编号，共 58 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -319,6 +320,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **55** | **「让热工作集迁移到 path A」的三个做法**（Track K1b，`plan_p5.md` §3(i)）——前提是 §3 的 30：MoE 从 path B 读慢。新仪器：`ExpertStoreStats` 的 `hits_path_a / hits_path_b / fills_path_a / fills_path_b`（引擎在建完 slab pool 后把 `a_slabs()` 交给 store） | **先给 path B 定价**（K1a 之后，热步 ABAB 三对）：`auto`（34 A + 17 B）**96.43 ms / moe gpu 33.87**，`--cache-gb 24`（全 path A）**92.67 / 30.97** = **−2.90 ms（−8.6%）**，即每次 path-B 的 expert 读 **≈0.036 ms**。**再看命中怎么分**：4 轮对话上 **path A 命中占 0.7861**，而 path A 的槽只占 0.6667——**LRU 本来就偏 A**，可动的只有 21.4% = **1.85 ms/token 的天花板，对着 240 ms 的 token = 0.8%**。**(i) 按原假设做是负的**：`DEEPMOE_EVICT_PATH=a`（先淘汰 path A，新 expert 就落在 path A）把 fills 从 10,197/5,305 推到 **14,093/1,700**，而 path A 的命中占比只动 **1.5 个点**（命中落在长寿常驻上，不落在刚进来的那批）；`expert_hit` −0.64 ms，`nvme_stall` **+3.94 ms**，四轮 decode **5.083 → 4.808 tok/s（−5.4%，三对）** | **四个做法全部 NO-GO，默认保持单一全局 LRU**。**(i) 的镜像先赢后输**：`DEEPMOE_EVICT_PATH=b`（新 expert 落 path B）在 4 轮对话上 **+7.0%**（5.0942 → 5.4517 tok/s，三对，A 臂 sd 0.06%；`nvme_stall` 141.14 → **134.36**、`expert_hit` +1.79、hit 0.8713 → 0.8760）——机制是**往 path A 写比读贵得多**（Track Q2：4 MiB 同步 `ReadFile` 落 path A **704 µs**、落普通主机内存 **70 µs**），而 decode 每 token 写 21–31 个 expert、只读它们几次。**但它顺带把 path A 冻成了 pin**：`fills path A = 3,400` 正好是 path A 的槽数——冷启动填满一次之后再也不淘汰，全部 churn 挤进 path B 的 1,700 槽。换一个会换话题的脚本（`long_turns.json`，8 轮中英混合，2,617 步）：hit **0.914 → 0.879**、fills **53,957 → 76,102（miss ×1.41）**、`nvme_stall` 96.99 → **130.88**、逐轮 decode **5.894 → 4.684 tok/s（−20.5%）**。它是 §3 的 24 / 35（静态 pin / 逐层配额）同一个形状，先验换成 first-touch 而已。**(ii) 迁移拷贝关掉**：18.8 MB 一次 ≈0.087 ms，要吃掉那 1.85 ms 得每步搬 6–7 个 = 1.15 ms，净 **+0.35%**。**(iii) 抬 path A 关掉**：`auto` 日志 `path A 62.26 GiB after 9.17 GiB pinned`，74 GiB 的 `DEVICE_LOCAL\|HOST_VISIBLE` 堆减 pinned 减 `kPathAOther` 3 GiB 减 `kPathAReserve` 4 GiB = 34 个 slab，而 commit 还剩 **133 GiB**——**不是 commit 在卡是堆在卡**；再要就得动 F4 量过的那两个预留（TTFT 10.6×），而 VGM 是 §3 的 29 已封的条目 |
 | **56** | **staged fill**（Track S1，`p4_p0_queue.md` §16–§21）——45 判过一次「staging NO-GO」，理由是 CPU `memcpy` 0.88 ms；这次换成**不用 memcpy 的形状**：读落进一个 **path B**（`VK_EXT_external_memory_host`）的环（提交 70 µs 而不是 704），再用 **`vkCmdCopyBuffer`** 把它搬进 path A 槽。新仪器：`io_dst_bench --gpu-copy` / `--dst stage`，报的 `GB/s` 是**端到端**（墙钟含每一次拷贝退休），一条独占命令池的拷贝线程，**有未退休拷贝的槽不还给读** | 同一个 D: shard、请求 9,184 KiB、chunk 4 MiB、`patha` 与 `stage` 各 **n=5**（一次混跑 + 两次 ABAB 两对）：QD 8 **4.7633（sd 0.69%）→ 4.7689（+0.12%）**、QD 24 **4.7040（sd 0.40%）→ 4.7202（+0.35%）**；每请求 mean 7.775 → 7.771 ms、21.021 → 20.880，**尾延迟反而变差**（max 10.07–10.46 → 10.5–12.5，拷贝挂在尾上）。拷贝定价：`vkCmdCopyBuffer` path B → path A **18.8 MB = 0.145 ms（129 GB/s）**，8 region 一次 submit **0.201 each（93.5 GB/s）**——**批量更慢 ⇒ 带宽受限，折进已有命令缓冲省不到 submit**；CPU `memcpy` 同机今天是 0.72 ms（26.0 GB/s）。`ctest -LE needs-model` **25/25** | **NO-GO，闸在 bench 就关，运行时一行没动**（`storage/io_engine.*`、`runtime/engine.cpp` 未改，默认状态 = 改动前）。机制：**Q2 的 8 条提交线程已经把 704 µs 从关键路径上拿走了**——证据是 `patha` 与 `pathb` **发出时的队列深度相同**（6.87/6.87、22.02/22.04），锁页的 CPU 时间一个字没少（648–722 µs）但盘看不见它。**K1b 的 6.8 ms/token 因此是提交成本在突发里的残留**（`first-of-burst` 1.27 ms），不是提交成本本身，而本节的 bench 是稳态背靠背，量不到它。要重开需要两件：① **一条真正的 transfer 队列**——`gpu/vulkan/device.h` 今天只建**一个 compute 队列**，每次拷贝都和 decode 抢它（21.3 miss × 0.145 = **3.1 ms/token**，对着 moe gpu 34.33）；② 一个突发形状的 bench。留在树里的是仪器 |
 | **57** | **多路 decode 的三件事**（Track MS，`p4_multistream.md`）——前提是 §4 的时间线：一个 token 是 ~97 ms 计算 + ~100 ms stall，两段不重叠，而两条独立对话之间没有数据依赖。新仪器：`runtime::Stream`（引擎按「进程的」/「序列的」切开）、`Engine::decode_step_multi`、`StepBreakdown` 的 per-step `requests/hits/miss_bytes`、`serve --streams N --ms-sched`、`tools/ms_bench.py` + `bench/ms_abab.py` | **(a) 按相分组的交错（`interleave`）：4.584 → 4.992（+8.9%）**——走到第一个 MoE 的时候这一轮所有 submit 都退休了，**GPU 在整个 stall 里是空的**；被 (b) 取代。**(b) 流水线（`pipeline`，留下来的那个）：4.6474 → 5.4602（+17.5%，三对，sd ≤0.83%）**。**(c) token 级乒乓（D2）：4.4123（−5.1%）**——没有重叠，只把「两个工作集抢一个 LRU」这项成本原样付了。**(d) N≥3：负的**——N=2→3 第一路 hit 0.861 → 0.830、MB/token 626 → 768（+23%），合计 5.199 → 4.807 | **(b) 落地并默认开**（`MsSched::Pipeline`，`--streams` 不给就是单流，单流路径与 main 逐字相同）；**(a)(c)(d) 保留为对照臂不作默认**。**预测 1.6–1.8× 没达到，差在哪是量到的**：盘的聚合速率确实涨了 28%（2.21 → 2.83 GB/s），但同时 hit 掉 1.6 pt、MB/token 涨 13.5%，而 2.83 只到 D: 突发天花板 4.10 的 69%——**剩下的缺口是每次 `wait_layer` 之前只压得进一条 attention 链（~2.1 ms）对着 ~3.4 ms 的 stall**，要盖满就得更多条流，而 (d) 把那条路关了。**下一次开这一条的前提是 MB/token 先降下来**（§7 第 1 项：第二块盘） |
+| **58** | **第二个读源**（Track D2，`p4_dual_source.md`）——§7 第 1 项 (b) 的前半段。这台机器上没有第二块 NVMe，有的是一块 **USB 3.2 Gen2 的外置 SSD（E:，1.0 GB/s）**，所以量的不是「stripe 到 9 GB/s」而是「4.6 + 1.0」。新东西：`storage/source_router.h` 的**加权最小在飞字节** `argmin_s (outstanding[s] + bytes) / weight[s]`、`ShardSet::open_mirror`、`IoEngine::set_sources/add_mirror/probe_source_gbps`、`--mirror DIR` 与 `DEEPMOE_MODEL_MIRRORS`、`IoStats` 的 per-source 行（进 `status.json`）、`nvme_bench --mirror` | **拷贝** 510 GB / 529 s = **964 MB/s**，94 个文件长度全对 + 5 个抽样 SHA-256 全对。**聚合随机读**（同一个 6.8 GB shard，4 MiB）：D: 单盘 3.453（QD 16）→ D:+E: **4.555 GB/s（+31%）**，分流 **78 : 22**，**D: 自己的份额没掉**（3.53 vs 3.47）——慢盘的带宽是**净加**的。E: 单盘 QD 8 只有 0.494、QD 16 才 1.038。CPU `ctest -LE "needs-model;needs-gpu"` **34/34** | **默认关，端到端没测成，而且理由不是「没测到 3%」**。第一次是机器不是我的（另一条 track 的 serve 从 10:22 起常驻，commit 只剩 30/172 GB）；机器空了之后第二次，**E: 自己掉了**：off 臂正常跑完 144 s，第一个 on 臂 `pinned load of 'norm.weight': overlapped read failed`，第二个 on 臂**卡在 `48 shards open` 之后，12 分钟只用 2 秒 CPU / 8 线程 / 73 MB——全在等 I/O**；之后 `ls E:\` 挂住、`nvme_bench` 对 E: 挂住、`Get-Process`/`Get-Counter` 挂住，**`taskkill /F` 报成功但进程还在**。**这块 USB 外置盘在 decode 的负载形状（510 GB 持续写之后、48 个 `NO_BUFFERING\|OVERLAPPED` 句柄上的并发随机读）下会掉出总线**，要物理拔插才回来。**所以默认关的理由比判据更硬：一个会把整台机器拖进不可中断 I/O 等待的读源不能进默认路径。** 代码侧没查出问题（E: 还活着时 `nvme_bench --mirror` 四个 QD 点全跑满，路由/分流/计数全对；`io.` 11/11；CPU ctest 34/34）；`iocp.cpp` 的那条错误现在带 Win32 码 + 长度 + 偏移。harness 已提交：`bench/d2_abab.py`。预测留在 `p4_dual_source.md` §4.1（+14%，砍半 +7%，大概率落进 ±3% 带）。**§7 第 1 项那句「+32–40%」只对第二块真 NVMe 成立——读路径的代码已经就位，它等的是盘** |
 
 ---
 
@@ -602,9 +604,23 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    跑完，最好的可实现形状 `last_use + α × heat` 在 C=5,100 的测试集上只有 **+2.3%**，
    折半后 **+1.2%**，低于 ±3% 的抖动带；top-16 的原始分数只贡献其中 0.06 pt。
    Belady 的 **+40%** 在"未来"里，当前状态的任何函数都够不着它。
-   **所以第 1 项现在只剩 (b)：第二块 NVMe**（stripe 到 9 GB/s，**+32–40%**，
-   无预测、无风险，design §3.1 已预留 stripe）。**它仍然比任何"算得更快"的改动大一个量级**，
-   而且现在是 MB/token 这一侧**唯一**还开着的大杠杆——另一个是容量，已经顶到本机的 5,100 槽。
+   **所以第 1 项现在只剩 (b)：第二块盘。**
+   ⚠️ **2026-09-19 收窄（Track D2，§3 的 58，`p4_dual_source.md`）**：读路径这一侧**已经做完了**——
+   `--mirror DIR` 把 manifest 引用的每个 shard 在第二个根下也开一份，
+   按**加权最小在飞字节**分流（权重 = 启动探针），默认关。
+   **但「stripe 到 9 GB/s，+32–40%」这个预测在本机不成立**：本机没有第二块 NVMe，
+   手上的第二块盘是 **1.0 GB/s 的 USB 外置**，加起来是 **+22% 的带宽**而不是 ×2。
+   实测聚合随机读 **3.453 → 4.555 GB/s（+31%，分流 78 : 22，主盘份额没掉）**，
+   折成 decode 的预测是 **+14%，砍半 +7%**，而且两条打折理由已经点名
+   （只路由 P0/P3；decode 是突发形状）——**很可能落进 ±3% 的带**。
+   **端到端 ABAB 本轮没跑成，而且不是因为没排上机器**：机器空了之后
+   **E: 在引擎的负载形状下掉出了总线**（48 个 `NO_BUFFERING|OVERLAPPED` 句柄上的并发随机读，
+   跟在 510 GB 的持续写后面），把一个 `deepmoe` 留在 `taskkill /F` 都杀不掉的 I/O 等待里。
+   harness 是 `bench/d2_abab.py`，等一块**插得住**的盘。
+   **这一项要重新写成两条**：(b1) **第二块真 NVMe** ——+32–40% 的那句只对它成立，
+   而读路径的代码**已经就位**，插上盘、拷一份、`--mirror` 就行；
+   (b2) **这块 U 盘** —— **不要再试**：带宽是真的（净加 1.0 GB/s），可靠性不是。
+   **它仍然是 MB/token 这一侧唯一还开着的大杠杆**——另一个是容量，已经顶到本机的 5,100 槽。
 2. **把 SSD KV 前缀复用接进 `serve` 的默认路径。**
    已实测 41×（101.6 s → 2.47 s），已实现，只是没默认开。这是当前性价比最高的一项。
 3. ~~**量 verify-only 的 resident-only 路由在 DSpark 上的收益。**~~ **已做，答案是 NO-GO**（§3 的 40，

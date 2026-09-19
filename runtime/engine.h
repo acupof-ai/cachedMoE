@@ -683,6 +683,9 @@ public:
 
 private:
     Result<void> open_model_files();
+    // Track D2: probes each read source and hands the mirror table to the
+    // IoEngine. A no-op when no mirror was given.
+    Result<void> configure_io_sources();
     Result<void> load_pinned();
     Result<void> build_expert_cache();
     Result<void> resolve_weights();

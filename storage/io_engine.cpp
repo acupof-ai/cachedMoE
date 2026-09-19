@@ -1,7 +1,10 @@
 #include "storage/io_engine.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <thread>
 #include <format>
 #include <vector>
 
@@ -42,6 +45,21 @@ std::string IoStats::to_string() const {
             p0_with_bg_n, 100.0 * double(p0_with_bg_n) / n,
             p0_with_bg_n ? double(p0_bg_inflight_sum) / double(p0_with_bg_n) : 0.0,
             p0_chunks_issued ? double(p0_qd_at_issue_sum) / double(p0_chunks_issued) : 0.0);
+    }
+    if (sources.size() > 1) {
+        // Track D2: which drive served what. `inflight` is a live read, so a
+        // status.json taken mid-decode shows both queues rather than a total.
+        for (size_t i = 0; i < sources.size(); ++i) {
+            const SourceStats& e = sources[i];
+            s += std::format(
+                "  src[{}] {}  w {:.2f} GB/s  {} req  {:.1f} GiB ({:.1f}%)  "
+                "mean lat {:.2f} ms  inflight {} req / {:.1f} MiB\n",
+                i, e.root.empty() ? std::string("(primary)") : e.root, e.weight,
+                e.requests, e.bytes / 1073741824.0,
+                bytes_completed ? 100.0 * double(e.bytes) / double(bytes_completed) : 0.0,
+                e.mean_latency_ms(), e.inflight_requests,
+                e.outstanding_bytes / 1048576.0);
+        }
     }
     if (disp_iters) {
         const double tot = double(disp_issue_ns + disp_poll_ns + disp_handle_ns);
@@ -149,6 +167,109 @@ IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
     return t;
 }
 
+
+// --- Track D2: the second read source ---------------------------------------
+
+void IoEngine::set_sources(const std::vector<std::string>& roots,
+                           const std::vector<double>& weights) {
+    src_roots_.assign(roots.begin(),
+                      roots.begin() + std::min<size_t>(roots.size(), kMaxIoSources));
+    src_weights_.assign(src_roots_.size(), 1.0);
+    for (size_t i = 0; i < src_weights_.size() && i < weights.size(); ++i)
+        if (weights[i] > 0.0) src_weights_[i] = weights[i];
+    std::lock_guard lk(src_mutex_);
+    for (uint32_t i = 0; i < kMaxIoSources; ++i) {
+        src_outstanding_[i] = 0;
+        src_inflight_[i]    = 0;
+        src_stats_[i]       = SourceStats{};
+        if (i < src_roots_.size()) {
+            src_stats_[i].root   = src_roots_[i];
+            src_stats_[i].weight = src_weights_[i];
+        }
+    }
+    // One root is the ordinary run. The router only switches on when there is
+    // something to choose between, so "no mirror" costs a bool test per submit
+    // and nothing else.
+    mirrors_on_ = src_roots_.size() > 1;
+    // Which priority classes may be routed. P0 is the whole point; P3 (the
+    // idle backfill) goes too so that a quiet period fills slots from both
+    // drives. P1/P2 stay on the primary: P1 is small and speculative, and P2's
+    // 264 B engram rows are latency-bound, where the slower drive is a loss.
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_CLASSES"); e && *e) {
+        uint32_t m = 0;
+        for (const char* c = e; *c; ++c)
+            if (*c >= '0' && *c <= '3') m |= 1u << uint32_t(*c - '0');
+        if (m) route_classes_ = m;
+    }
+    if (mirrors_on_) {
+        std::string w;
+        for (size_t i = 0; i < src_roots_.size(); ++i)
+            w += std::format("{}{} @ {:.2f} GB/s", i ? ", " : "", src_roots_[i], src_weights_[i]);
+        log_info("IoEngine: {} read sources ({}), routing classes 0x{:x}",
+                 src_roots_.size(), w, route_classes_);
+    }
+}
+
+Result<void> IoEngine::add_mirror(const File* primary, uint32_t src, const File* alt) {
+    if (!primary || !alt) return fail(Err::InvalidArgument, "add_mirror needs two open files");
+    if (src == 0 || src >= kMaxIoSources)
+        return fail(Err::OutOfRange, std::format("mirror source {} out of range", src));
+    if (!alt->is_open()) return fail(Err::InvalidArgument, "mirror file is not open");
+    // Byte-identical or nothing: a mirror whose size differs is a different
+    // checkpoint, and serving half an expert from it would be silent garbage.
+    if (alt->size() != primary->size())
+        return fail(Err::Corrupt,
+                    std::format("mirror '{}' is {} B, the primary '{}' is {} B",
+                                alt->path(), alt->size(), primary->path(), primary->size()));
+    if (alt->unbuffered() != primary->unbuffered())
+        return fail(Err::FailedPrecondition, "mirror and primary disagree on unbuffered");
+    auto& row = alts_[primary];
+    row[0] = primary;
+    row[src] = alt;
+    return {};
+}
+
+Result<double> IoEngine::probe_source_gbps(const std::string& sample_path,
+                                           uint32_t ms, uint32_t qd) {
+    // Deliberately NOT the runtime's handle: a Win32 handle belongs to one
+    // completion port for life (storage/backend.h), and this one is closed
+    // before the engine ever sees the file.
+    auto f = File::open(sample_path,
+                        FileFlags::Unbuffered | FileFlags::Overlapped | FileFlags::Random);
+    if (!f) return std::unexpected(f.error());
+    constexpr uint64_t kBlock = 4ull << 20;
+    if (f->size() < kBlock * 8) return fail(Err::OutOfRange, "probe file is too small");
+    if (qd == 0) qd = 1;
+    if (qd > 32) qd = 32;
+    const uint64_t span = (f->size() - kBlock) & ~(kPageSize - 1ull);
+    std::atomic<uint64_t> moved{0};
+    std::atomic<bool> stop{false};
+    std::vector<std::thread> ts;
+    ts.reserve(qd);
+    for (uint32_t t = 0; t < qd; ++t) {
+        ts.emplace_back([&, t] {
+            AlignedBuffer buf(kBlock, kPageSize);
+            // A cheap deterministic stride per thread: no RNG, no shared state,
+            // and it still lands all over the file rather than in one extent.
+            uint64_t x = 0x9E3779B97F4A7C15ull * (t + 1);
+            while (!stop.load(std::memory_order_relaxed)) {
+                x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+                const uint64_t off = align_down(x % (span ? span : 1), kPageSize);
+                auto r = f->read_at(off, MutBytes(buf.data(), kBlock));
+                if (!r) break;
+                moved.fetch_add(*r, std::memory_order_relaxed);
+            }
+        });
+    }
+    const TimePoint t0 = Clock::now();
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    stop.store(true, std::memory_order_relaxed);
+    for (auto& t : ts) t.join();
+    const double sec = double((Clock::now() - t0).count()) / 1e9;
+    if (sec <= 0.0) return fail(Err::Internal, "probe measured no time");
+    return double(moved.load()) / sec / 1e9;
+}
+
 IoEngine::~IoEngine() { stop(); }
 
 Result<void> IoEngine::start(std::unique_ptr<Backend> backend, const IoConfig& cfg,
@@ -201,12 +322,53 @@ void IoEngine::stop() {
     backend_.reset();
 }
 
-Result<IoRequestId> IoEngine::submit(const IoRequest& req, IoCallback cb) {
+Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
     if (!running_.load(std::memory_order_acquire))
         return fail(Err::FailedPrecondition, "IoEngine is not running");
-    if (!req.file || !req.file->is_open()) return fail(Err::InvalidArgument, "IoRequest has no open file");
+    if (!in_req.file || !in_req.file->is_open()) return fail(Err::InvalidArgument, "IoRequest has no open file");
+
+    // Track D2: pick the drive BEFORE anything else looks at req.file, so the
+    // alignment and EOF checks below are made against the handle that will
+    // actually be read. A request stays on one source for all of its chunks --
+    // splitting a 9 MiB run across two drives would make its latency the max of
+    // the two rather than either one's.
+    IoRequest req = in_req;
+    uint32_t source = 0;
+    bool routed = false;
+    if (mirrors_on_ && (route_classes_ & (1u << static_cast<uint8_t>(req.priority)))) {
+        if (auto it = alts_.find(req.file); it != alts_.end()) {
+            uint32_t mask = 0;
+            for (uint32_t i = 0; i < kMaxIoSources; ++i)
+                if (it->second[i] && it->second[i]->is_open()) mask |= 1u << i;
+            std::lock_guard lk(src_mutex_);
+            const uint32_t pick = pick_source(src_weights_,
+                                              std::span<const uint64_t>(src_outstanding_,
+                                                                        src_weights_.size()),
+                                              mask, req.bytes);
+            if (pick < kMaxIoSources && it->second[pick]) {
+                source = pick;
+                routed = true;
+                req.file = it->second[pick];
+                src_outstanding_[source] += req.bytes;
+                ++src_inflight_[source];
+            }
+        }
+    }
     if (!req.dst)   return fail(Err::InvalidArgument, "IoRequest has no destination");
     if (req.bytes == 0) return fail(Err::InvalidArgument, "IoRequest has zero length");
+
+    // Every failure path below has to give the routed bytes back, or a source
+    // that rejected one malformed request would look busy forever.
+    struct RouteGuard {
+        IoEngine* e; uint32_t src; uint64_t bytes; bool armed;
+        ~RouteGuard() {
+            if (!armed) return;
+            std::lock_guard lk(e->src_mutex_);
+            if (e->src_outstanding_[src] >= bytes) e->src_outstanding_[src] -= bytes;
+            else e->src_outstanding_[src] = 0;
+            if (e->src_inflight_[src]) --e->src_inflight_[src];
+        }
+    } guard{this, source, req.bytes, routed};
 
     const uint32_t a = backend_->caps().alignment;
     if (req.file->unbuffered()) {
@@ -228,6 +390,8 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& req, IoCallback cb) {
 
     auto p = std::make_shared<Pending>();
     p->req       = req;
+    p->source    = source;
+    p->routed    = routed;
     p->cb        = std::move(cb);
     const uint32_t chunk = (req.priority == IoPriority::BlockingMiss)
                                ? tune_.p0_chunk_bytes : bg_chunk_bytes_;
@@ -261,6 +425,7 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& req, IoCallback cb) {
         stats_.per_priority_requests[static_cast<uint8_t>(req.priority)] += 1;
         stats_.per_priority_bytes[static_cast<uint8_t>(req.priority)] += req.bytes;
     }
+    guard.armed = false;   // finish() owns the accounting from here
     cv_.notify_one();
     return id;
 }
@@ -317,6 +482,16 @@ IoStats IoEngine::stats() const {
     std::lock_guard lk(stats_mutex_);
     IoStats s = stats_;
     s.disp_submit_threads = tune_.submit_threads;
+    if (!src_roots_.empty()) {
+        std::lock_guard sl(src_mutex_);
+        s.sources.reserve(src_roots_.size());
+        for (size_t i = 0; i < src_roots_.size(); ++i) {
+            SourceStats e = src_stats_[i];
+            e.outstanding_bytes = src_outstanding_[i];
+            e.inflight_requests = src_inflight_[i];
+            s.sources.push_back(std::move(e));
+        }
+    }
     // Fold in the currently open busy window so a mid-run reader sees a live
     // utilisation figure rather than a stale one.
     if (busy_) s.busy_ns += static_cast<uint64_t>((Clock::now() - busy_since_).count());
@@ -335,6 +510,15 @@ void IoEngine::reset_stats() {
     std::lock_guard lk(stats_mutex_);
     stats_ = IoStats{};
     p0_lat_us_.clear();
+    // The per-source COUNTERS reset; the roots, weights and anything still in
+    // flight do not -- resetting outstanding_bytes mid-run would make the
+    // router think an empty queue was waiting on it.
+    std::lock_guard sl(src_mutex_);
+    for (size_t i = 0; i < src_roots_.size(); ++i) {
+        src_stats_[i].requests = 0;
+        src_stats_[i].bytes = 0;
+        src_stats_[i].lat_ns_sum = 0;
+    }
 }
 
 size_t IoEngine::issue_ready_chunks() {
@@ -572,6 +756,18 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
                                                p->bytes_moved, p->req.bytes, p->required_bytes)};
 
     const bool is_p0 = (p->req.priority == IoPriority::BlockingMiss);
+    if (p->routed) {
+        // Track D2: the source stops carrying these bytes the moment the last
+        // chunk lands, which is also when its latency sample is complete.
+        std::lock_guard lk(src_mutex_);
+        const uint32_t s = p->source;
+        const uint64_t want = p->req.bytes;
+        if (src_outstanding_[s] >= want) src_outstanding_[s] -= want; else src_outstanding_[s] = 0;
+        if (src_inflight_[s]) --src_inflight_[s];
+        ++src_stats_[s].requests;
+        src_stats_[s].bytes      += r.bytes_moved;
+        src_stats_[s].lat_ns_sum += static_cast<uint64_t>(r.latency.count());
+    }
     {
         std::lock_guard lk(stats_mutex_);
         if (r.ok()) ++stats_.requests_completed; else ++stats_.requests_failed;

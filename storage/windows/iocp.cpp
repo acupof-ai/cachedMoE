@@ -185,7 +185,7 @@ private:
                 const DWORD e = ::GetLastError();
                 c.status = (e == ERROR_OPERATION_ABORTED)
                              ? Status{Err::Cancelled, "io cancelled", e}
-                             : Status{Err::Io, "overlapped read failed", e};
+                             : Status{Err::Io, std::format("overlapped read failed (win32 {}, {} B at off {})", e, op->bytes, (uint64_t(op->ov.OffsetHigh) << 32) | op->ov.Offset), e};
             } else if (moved < op->min_bytes) {
                 // A read that straddles EOF is allowed to come back short by up
                 // to one sector (storage/backend.h ChunkRequest::min_bytes);
