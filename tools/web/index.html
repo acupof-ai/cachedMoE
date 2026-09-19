@@ -40,7 +40,19 @@ button.stop{color:var(--bad);border-color:var(--bad)}
   background:var(--card);border:1px solid var(--line);overflow-wrap:anywhere}
 .msg.user{background:var(--user)}
 .who{font-size:11px;color:var(--dim);margin-bottom:4px}
-.body{white-space:pre-wrap}
+.body{white-space:normal;line-height:1.5}
+.body p{margin:0 0 8px}
+.body h1,.body h2,.body h3,.body h4,.body h5,.body h6{margin:12px 0 6px;line-height:1.3;font-weight:600}
+.body h1{font-size:1.35em}.body h2{font-size:1.2em}.body h3{font-size:1.08em}.body h4,.body h5,.body h6{font-size:1em}
+.body ul,.body ol{margin:4px 0 8px;padding-left:22px}
+.body li{margin:2px 0}
+.body blockquote{margin:4px 0 8px;padding-left:9px;border-left:2px solid var(--line);color:var(--dim)}
+.body hr{border:0;border-top:1px solid var(--line);margin:10px 0}
+.body table{border-collapse:collapse;margin:6px 0 10px;font-size:0.95em}
+.body th,.body td{border:1px solid var(--line);padding:3px 8px;text-align:left}
+.body th{background:var(--code)}
+.body pre{white-space:pre-wrap}
+.body a{color:inherit;text-decoration:underline}
 .body pre{background:var(--code);padding:9px 11px;border-radius:7px;overflow-x:auto;
   white-space:pre;margin:7px 0}
 .body code{background:var(--code);padding:1px 4px;border-radius:4px}
@@ -110,6 +122,48 @@ let CFG = null, running = false, abort = null;
 
 // ---------- markdown-lite: fenced code, inline code, line breaks ----------
 function esc(s){ return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+// Inline: code, bold, italic, links. Input is already escaped.
+function inline(t){
+  return t
+    .replace(/`([^`\n]+)`/g, (m,c) => "<code>" + c + "</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<i>$2</i>")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+// Block: headings, lists, tables, quotes, rules, paragraphs. Streaming-safe:
+// it is re-run on the whole text at every token, so a half-typed line just
+// renders as a paragraph until it completes.
+function blocks(text){
+  const lines = esc(text).split("\n");
+  let out = "", para = [], list = null, table = null;
+  const flushP = () => { if (para.length){ out += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
+  const flushL = () => { if (list){ out += "</" + list + ">"; list = null; } };
+  const flushT = () => {
+    if (!table) return;
+    const rows = table.filter(r => !/^\s*\|?\s*:?-{2,}/.test(r));
+    out += "<table>" + rows.map((r, i) => {
+      const cells = r.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(c => inline(c.trim()));
+      const tag = i === 0 ? "th" : "td";
+      return "<tr>" + cells.map(c => "<" + tag + ">" + c + "</" + tag + ">").join("") + "</tr>";
+    }).join("") + "</table>";
+    table = null;
+  };
+  for (const raw of lines){
+    const l = raw.replace(/\s+$/, "");
+    let m;
+    if (/^\s*\|.*\|\s*$/.test(l)){ flushP(); flushL(); (table = table || []).push(l); continue; }
+    flushT();
+    if (!l.trim()){ flushP(); flushL(); continue; }
+    if ((m = l.match(/^(#{1,6})\s+(.*)$/))){ flushP(); flushL(); out += "<h" + m[1].length + ">" + inline(m[2]) + "</h" + m[1].length + ">"; continue; }
+    if (/^\s*([-*_])\s*\1\s*\1[\s\1]*$/.test(l)){ flushP(); flushL(); out += "<hr>"; continue; }
+    if ((m = l.match(/^\s*&gt;\s?(.*)$/))){ flushP(); flushL(); out += "<blockquote>" + inline(m[1]) + "</blockquote>"; continue; }
+    if ((m = l.match(/^\s*[-*+]\s+(.*)$/))){ flushP(); if (list !== "ul"){ flushL(); out += "<ul>"; list = "ul"; } out += "<li>" + inline(m[1]) + "</li>"; continue; }
+    if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))){ flushP(); if (list !== "ol"){ flushL(); out += "<ol>"; list = "ol"; } out += "<li>" + inline(m[1]) + "</li>"; continue; }
+    flushL(); para.push(l);
+  }
+  flushP(); flushL(); flushT();
+  return out;
+}
 function md(s){
   const parts = String(s).split("```");
   let out = "";
@@ -120,7 +174,7 @@ function md(s){
       if (nl >= 0 && !/\s/.test(b.slice(0, nl))) b = b.slice(nl + 1);
       out += "<pre>" + esc(b.replace(/\n$/, "")) + "</pre>";
     } else {
-      out += esc(parts[i]).replace(/`([^`\n]+)`/g, (m,c) => "<code>" + c + "</code>");
+      out += blocks(parts[i]);
     }
   }
   return out;
