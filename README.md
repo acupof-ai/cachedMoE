@@ -23,6 +23,8 @@ ctest --test-dir build --output-on-failure
 .venv\Scripts\python.exe tools\chat.py              # 终端对话；/reset /think /drop /temp /top_p /greedy /max /seed /system /stats
 ```
 
+<p align="center"><img src="docs/img/web_ui.png" width="540" alt="deepMoE 网页对话：966 token 上下文，解码 5.29 tok/s，命中 0.928，盘等待 80 ms/token"></p>
+
 一个 `deepmoe serve` 进程常驻 pinned 集合（9.17 GiB）+ expert cache（`auto` 探出 **5,000 槽 / 87.6 GiB**）+ KV；
 对话由 checkpoint 自己的 `encoding/encoding.py` 渲染，C++ tokenizer 转 id，流式出 token；新一轮复用前缀，`.pkv` 落盘跨进程复用。
 
