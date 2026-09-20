@@ -13,6 +13,14 @@
 
 namespace deepmoe::storage {
 
+namespace {
+// The engine already stamps Clock::now() in half a dozen places; the router's
+// per-source bookkeeping wants the same instant as a plain integer.
+inline int64_t mono_ns() {
+    return std::chrono::duration_cast<Nanos>(Clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
 std::string IoStats::to_string() const {
     std::string s = std::format(
         "io: {} req ({} done, {} failed, {} cancelled), {} chunks, {} / {} bytes, "
@@ -63,6 +71,25 @@ std::string IoStats::to_string() const {
                 // this line.
                 e.dropped ? std::format("  DROPPED after {} errors", e.errors)
                           : (e.errors ? std::format("  {} errors", e.errors) : std::string()));
+            // Track D6. On its own line, because bench/d2_abab.py parses the
+            // head of the one above and an insertion there would silently
+            // change what every past A/B table means.
+            //
+            // The P0 numbers are the ones a decode stall is made of. The `req`
+            // and `mean lat` on the line above mix P0 with P3 backfill, whose
+            // latency is queue-wait for the P0s ahead of it -- which is how D5
+            // read a 149 ms mean as a slow drive (docs/p4_dual_source.md
+            // §10.1). `idle` is how long this source sat with nothing
+            // outstanding before a request arrived: the power-state hypothesis
+            // in one number, measured in both arms.
+            s += std::format(
+                "         P0 {} req  {:.1f} GiB  mean lat {:.2f} ms | "
+                "idle gaps >= {} ms: {} (mean {:.1f}, max {:.1f} ms) | "
+                "keep-alive {} reads, {} done, {} refused\n",
+                e.p0_requests, e.p0_bytes / 1073741824.0, e.p0_mean_latency_ms(),
+                kDefaultKeepAliveMs, e.idle_gaps, e.idle_gap_mean_ms(),
+                e.idle_gap_ns_max / 1e6,
+                e.keepalive_reads, e.keepalive_done, e.keepalive_refused);
         }
     }
     if (disp_iters) {
@@ -200,6 +227,34 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     // something to choose between, so "no mirror" costs a bool test per submit
     // and nothing else.
     mirrors_on_ = src_roots_.size() > 1;
+    // Track D6. Both knobs are read here, once, so a run's status.json and its
+    // log agree about what policy it was under.
+    // Default OFF until an A/B has earned it: the engine is a library, and a
+    // 4 KiB read every 15 ms of idle is a behaviour change that has to pay for
+    // itself. kDefaultKeepAliveMs is the suggested window and, independently,
+    // the floor above which an idle stretch is counted -- that measurement runs
+    // in both arms.
+    int64_t ka_ms = 0;
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_KEEPALIVE_MS"); e && *e) {
+        if (*e == 'o' || *e == 'O') ka_ms = 0;            // "off"
+        else ka_ms = std::strtoll(e, nullptr, 10);
+    }
+    if (ka_ms < 0) ka_ms = 0;
+    ka_idle_ns_.store(mirrors_on_ ? ka_ms * 1000000 : 0, std::memory_order_relaxed);
+    static_split_ = 0.0;
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_STATIC_SPLIT"); e && *e) {
+        const double f = std::strtod(e, nullptr);
+        if (f > 0.0 && f < 1.0) static_split_ = f;
+    }
+    const int64_t now0 = mono_ns();
+    for (uint32_t i = 0; i < kMaxIoSources; ++i) {
+        ka_[i].chunk_id = 0;
+        ka_[i].cursor   = 0;
+        ka_[i].file     = nullptr;
+        static_split_bytes_[i]   = 0;
+        src_last_activity_ns_[i] = now0;
+        src_idle_since_ns_[i]    = now0;
+    }
     // Which priority classes may be routed. P0 is the whole point; P3 (the
     // idle backfill) goes too so that a quiet period fills slots from both
     // drives. P1/P2 stay on the primary: P1 is small and speculative, and P2's
@@ -216,6 +271,15 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
             w += std::format("{}{} @ {:.2f} GB/s", i ? ", " : "", src_roots_[i], src_weights_[i]);
         log_info("IoEngine: {} read sources ({}), routing classes 0x{:x}",
                  src_roots_.size(), w, route_classes_);
+        log_info("IoEngine: mirror keep-alive {} ({} B pokes), P0 split {}",
+                 ka_idle_ns_.load(std::memory_order_relaxed)
+                     ? std::format("every {} ms idle",
+                                   ka_idle_ns_.load(std::memory_order_relaxed) / 1000000)
+                     : std::string("off"),
+                 kKeepAliveBytes,
+                 static_split_ > 0.0
+                     ? std::format("STATIC {:.0f}% to the mirrors", static_split_ * 100.0)
+                     : std::string("weighted least-outstanding-bytes"));
     }
 }
 
@@ -254,6 +318,14 @@ Result<void> IoEngine::add_mirror(const File* primary, uint32_t src, const File*
                                 alt->path(), alt->size(), primary->path(), primary->size()));
     if (alt->unbuffered() != primary->unbuffered())
         return fail(Err::FailedPrecondition, "mirror and primary disagree on unbuffered");
+    // Track D6: the first shard a source registers becomes the one the
+    // keep-alive pokes. No extra handle, no extra open, and a shard is always
+    // large enough for a rotating 4 KiB read.
+    if (!ka_[src].file && alt->size() > kKeepAliveBytes) {
+        std::lock_guard lk(src_mutex_);
+        ka_[src].buf.reset(kKeepAliveBytes, kPageSize);
+        ka_[src].file = alt;
+    }
     auto& row = alts_[primary];
     row[0] = primary;
     row[src] = alt;
@@ -350,6 +422,10 @@ Result<void> IoEngine::start(std::unique_ptr<Backend> backend, const IoConfig& c
 
 void IoEngine::stop() {
     if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+    // Track D6: no new pokes from here on, so the dispatcher's drain is finite.
+    // The one that may already be in flight keeps `has_work` true until it
+    // lands, which is what keeps its destination buffer alive under the DMA.
+    ka_idle_ns_.store(0, std::memory_order_release);
     stopping_.store(true, std::memory_order_release);
     cv_.notify_all();
     sq_cv_.notify_all();
@@ -385,16 +461,39 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
             // candidate. One AND on the hot path, and the request goes to the
             // primary exactly as if the mirror had never held this shard.
             mask = src_health_.live_mask(mask);
-            const uint32_t pick = pick_source(src_weights_,
-                                              std::span<const uint64_t>(src_outstanding_,
-                                                                        src_weights_.size()),
-                                              mask, req.bytes);
+            // Track D6: with DEEPMOE_MIRROR_STATIC_SPLIT the P0 class is routed
+            // open-loop, by cumulative bytes toward a fixed share, instead of by
+            // what each source is still carrying. Everything else -- P3 included
+            // -- keeps the ordinary rule, so the arm changes the decode's own
+            // reads and nothing besides.
+            const bool statik = static_split_ > 0.0 &&
+                                req.priority == IoPriority::BlockingMiss;
+            const uint32_t pick =
+                statik ? pick_static(mask, req.bytes)
+                       : pick_source(src_weights_,
+                                     std::span<const uint64_t>(src_outstanding_,
+                                                               src_weights_.size()),
+                                     mask, req.bytes);
             if (pick < kMaxIoSources && it->second[pick]) {
                 source = pick;
                 routed = true;
                 req.file = it->second[pick];
                 src_outstanding_[source] += req.bytes;
                 ++src_inflight_[source];
+                static_split_bytes_[source] += req.bytes;
+                // How long this source was carrying nothing before this arrived.
+                // Measured always, under both arms: it is the evidence for or
+                // against the power-state story, not a by-product of the fix.
+                if (src_idle_since_ns_[source] != 0) {
+                    const int64_t gap = mono_ns() - src_idle_since_ns_[source];
+                    if (gap >= int64_t(kDefaultKeepAliveMs) * 1000000) {
+                        ++src_stats_[source].idle_gaps;
+                        src_stats_[source].idle_gap_ns_sum += uint64_t(gap);
+                        if (uint64_t(gap) > src_stats_[source].idle_gap_ns_max)
+                            src_stats_[source].idle_gap_ns_max = uint64_t(gap);
+                    }
+                    src_idle_since_ns_[source] = 0;
+                }
             }
         }
     }
@@ -411,6 +510,7 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
             if (e->src_outstanding_[src] >= bytes) e->src_outstanding_[src] -= bytes;
             else e->src_outstanding_[src] = 0;
             if (e->src_inflight_[src]) --e->src_inflight_[src];
+            if (e->src_inflight_[src] == 0) e->src_idle_since_ns_[src] = mono_ns();
         }
     } guard{this, source, req.bytes, routed};
 
@@ -562,6 +662,15 @@ void IoEngine::reset_stats() {
         src_stats_[i].requests = 0;
         src_stats_[i].bytes = 0;
         src_stats_[i].lat_ns_sum = 0;
+        src_stats_[i].p0_requests = 0;
+        src_stats_[i].p0_bytes = 0;
+        src_stats_[i].p0_lat_ns_sum = 0;
+        src_stats_[i].idle_gaps = 0;
+        src_stats_[i].idle_gap_ns_sum = 0;
+        src_stats_[i].idle_gap_ns_max = 0;
+        src_stats_[i].keepalive_reads = 0;
+        src_stats_[i].keepalive_done = 0;
+        src_stats_[i].keepalive_refused = 0;
     }
 }
 
@@ -723,6 +832,10 @@ void IoEngine::submit_worker() {
 }
 
 void IoEngine::handle_completion(const ChunkCompletion& c) {
+    // Track D6: a keep-alive poke is not a request. It owns no Pending, no
+    // queue slot and no bytes, so it is taken off here -- before the
+    // chunk_owner_ lookup that would otherwise log it as an unknown chunk.
+    if (finish_keepalive(c)) return;
     std::shared_ptr<Pending> p;
     uint32_t charged = 0;
     // Whether the freed queue slot has something waiting for it. Only then is
@@ -811,6 +924,17 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
         ++src_stats_[s].requests;
         src_stats_[s].bytes      += r.bytes_moved;
         src_stats_[s].lat_ns_sum += static_cast<uint64_t>(r.latency.count());
+        // Track D6: and the same three again for P0 alone. The decode's stall
+        // is made of P0 latencies only; the mixed figure above is dominated by
+        // the handful of P3 backfills, which wait for every P0 ahead of them.
+        if (is_p0) {
+            ++src_stats_[s].p0_requests;
+            src_stats_[s].p0_bytes      += r.bytes_moved;
+            src_stats_[s].p0_lat_ns_sum += static_cast<uint64_t>(r.latency.count());
+        }
+        const int64_t now = mono_ns();
+        src_last_activity_ns_[s] = now;
+        if (src_inflight_[s] == 0) src_idle_since_ns_[s] = now;
         // Track D4: and whether it is still worth asking. A drive that has
         // stopped answering fails every read after the first, so the budget is
         // consecutive failures -- a success anywhere in between puts it back.
@@ -879,6 +1003,121 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
     idle_cv_.notify_all();
 }
 
+// Track D6. Called once per dispatcher iteration -- which is at most every 2 ms
+// even on a completely idle engine -- so a 15 ms window is served with ~7 checks
+// of slack and the cost of the feature when it is off is one relaxed load.
+void IoEngine::tick_keepalive() {
+    const int64_t idle_ns = ka_idle_ns_.load(std::memory_order_relaxed);
+    if (idle_ns <= 0 || !mirrors_on_) return;
+    const int64_t now = mono_ns();
+    // Source 0 is never poked: it is the drive the run is already hammering.
+    for (uint32_t s = 1; s < kMaxIoSources && s < src_roots_.size(); ++s) {
+        uint64_t cid = 0, off = 0;
+        const File* file = nullptr;
+        void* dst = nullptr;
+        {
+            std::lock_guard lk(src_mutex_);
+            KeepAliveSlot& k = ka_[s];
+            KeepAliveState st;
+            st.has_file         = k.file && k.file->is_open();
+            st.dropped          = src_health_.dropped(s);
+            st.probe_inflight   = k.chunk_id != 0;
+            st.real_inflight    = src_inflight_[s];
+            st.last_activity_ns = src_last_activity_ns_[s];
+            if (!keepalive_due(st, now, idle_ns)) continue;
+            // A rotating offset, 1 MiB apart: the point is to keep the link and
+            // the NAND out of a low-power state, and the same 4 KiB every time
+            // would be answered out of the enclosure's own cache.
+            const uint64_t span = k.file->size() - kKeepAliveBytes;
+            off  = align_down((k.cursor * (1ull << 20)) % (span ? span : 1), kPageSize);
+            cid  = kKeepAliveChunkBase | (uint64_t(s) << 56) | (++k.cursor);
+            k.chunk_id = cid;
+            file = k.file;
+            dst  = k.buf.data();
+            ++src_stats_[s].keepalive_reads;
+        }
+        ChunkRequest cr;
+        cr.chunk_id  = cid;
+        cr.file      = file;
+        cr.file_off  = off;
+        cr.bytes     = kKeepAliveBytes;
+        cr.min_bytes = kKeepAliveBytes;
+        cr.dst       = dst;
+        ka_inflight_.fetch_add(1, std::memory_order_relaxed);
+        if (auto r = backend_->submit(cr); !r) {
+            // The backend's queue is shared with the real work and its depth is
+            // the real work's ceiling, so a full queue is the ordinary answer
+            // here, not a fault: give the slot back and try on a later tick.
+            ka_inflight_.fetch_sub(1, std::memory_order_relaxed);
+            std::lock_guard lk(src_mutex_);
+            ka_[s].chunk_id = 0;
+            --src_stats_[s].keepalive_reads;
+            ++src_stats_[s].keepalive_refused;
+        }
+    }
+}
+
+bool IoEngine::finish_keepalive(const ChunkCompletion& c) {
+    if (c.chunk_id < kKeepAliveChunkBase) return false;
+    const int64_t now = mono_ns();
+    {
+        std::lock_guard lk(src_mutex_);
+        for (uint32_t s = 0; s < kMaxIoSources; ++s) {
+            if (ka_[s].chunk_id != c.chunk_id) continue;
+            ka_[s].chunk_id = 0;
+            if (c.ok()) ++src_stats_[s].keepalive_done;
+            else        ++src_stats_[s].keepalive_refused;
+            // A poke counts as activity for the next poke -- that is the whole
+            // idea -- but NOT for `src_idle_since_ns_`, which measures the gap
+            // the router's real customers see. Letting a poke reset that would
+            // erase the very number this track set out to measure.
+            src_last_activity_ns_[s] = now;
+            break;
+        }
+    }
+    ka_inflight_.fetch_sub(1, std::memory_order_relaxed);
+    return true;
+}
+
+uint32_t IoEngine::keepalive_ms() const {
+    return static_cast<uint32_t>(ka_idle_ns_.load(std::memory_order_relaxed) / 1000000);
+}
+
+uint64_t IoEngine::keepalive_reads(uint32_t src) const {
+    if (src >= kMaxIoSources) return 0;
+    std::lock_guard lk(src_mutex_);
+    return src_stats_[src].keepalive_reads;
+}
+
+// Track D6: the open-loop P0 split. `static_split_` is the share meant for the
+// mirrors as a whole; source 0 keeps the rest. Choosing the candidate whose
+// cumulative bytes are furthest below its target share is smooth weighted
+// round-robin by bytes, so the split converges on the target exactly rather
+// than on whatever the drives happen to earn.
+//
+// Caller holds src_mutex_.
+uint32_t IoEngine::pick_static(uint32_t mask, uint64_t bytes) const {
+    const uint32_t n = static_cast<uint32_t>(src_roots_.size());
+    const uint32_t mirrors = n > 1 ? n - 1 : 1;
+    uint32_t best = kMaxIoSources;
+    double best_score = 0.0;
+    for (uint32_t s = 0; s < n && s < kMaxIoSources; ++s) {
+        if (!(mask & (1u << s))) continue;
+        const double target = (s == 0) ? (1.0 - static_split_)
+                                       : (static_split_ / double(mirrors));
+        if (!(target > 0.0)) continue;
+        const double score = (double(static_split_bytes_[s]) + double(bytes)) / target;
+        if (best == kMaxIoSources || score < best_score) { best = s; best_score = score; }
+    }
+    // Every candidate had a zero target (static_split_ is 1.0, or only the
+    // mirrors are candidates and the share is 0): fall back rather than refuse.
+    if (best == kMaxIoSources && mask) {
+        for (uint32_t s = 0; s < kMaxIoSources; ++s)
+            if (mask & (1u << s)) { best = s; break; }
+    }
+    return best;
+}
+
 void IoEngine::dispatcher() {
     std::vector<ChunkCompletion> comps(std::max<uint32_t>(cfg_.max_inflight_ops, 8));
     for (;;) {
@@ -899,10 +1138,18 @@ void IoEngine::dispatcher() {
             handle_completion(fc);
         }
 
+        tick_keepalive();
+
         size_t got = 0;
         TimePoint t_poll1 = t_issue1, t_handle1 = t_issue1;
         const bool had_inflight = inflight_ops_.load(std::memory_order_relaxed) > 0;
-        if (had_inflight) {
+        // A poke completes through the same port, so the loop has to poll for it
+        // even when no real chunk is outstanding -- otherwise the first poke of
+        // an idle stretch would never be reaped and, with one-in-flight-per-
+        // source, would be the last one ever issued. It is deliberately NOT
+        // counted in `had_inflight`: the dispatcher's phase shares are about
+        // real work, and a poke must not move them.
+        if (had_inflight || ka_inflight_.load(std::memory_order_relaxed) > 0) {
             auto n = backend_->poll(comps, std::chrono::milliseconds(1));
             t_poll1 = Clock::now();
             if (!n) {
@@ -925,13 +1172,15 @@ void IoEngine::dispatcher() {
 
         if (issued == 0 && got == 0) {
             std::unique_lock lk(mutex_);
-            const bool has_work = outstanding_requests_ > 0;
+            const bool has_work = outstanding_requests_ > 0 ||
+                                  ka_inflight_.load(std::memory_order_relaxed) > 0;
             if (!has_work && stopping_.load(std::memory_order_acquire)) break;
             if (!has_work)
                 cv_.wait_for(lk, std::chrono::milliseconds(2));
             else
                 cv_.wait_for(lk, std::chrono::microseconds(50));
-            if (stopping_.load(std::memory_order_acquire) && outstanding_requests_ == 0) break;
+            if (stopping_.load(std::memory_order_acquire) && outstanding_requests_ == 0 &&
+                ka_inflight_.load(std::memory_order_relaxed) == 0) break;
         }
     }
     idle_cv_.notify_all();

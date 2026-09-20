@@ -125,6 +125,47 @@ private:
     uint32_t dropped_ = 0;
 };
 
+// --- Track D6: keeping an idle mirror awake ---------------------------------
+//
+// docs/p4_dual_source.md §10. The D5 hypothesis was that the mirror's 5-6x mean
+// latency is a POWER state: it gets few bytes, so it goes idle between bursts,
+// so every burst pays a USB4/NVMe wake-up (measured standalone at up to
+// 1,093 ms on a first read after a few hundred ms of idle), so the router gives
+// it even less. If that were true, a 4 KiB read every `idle_ms` would break the
+// loop.
+//
+// The scheduler below is the whole policy, pulled out of IoEngine so it can be
+// tested on the CPU with no drive, no backend and no model:
+//
+//   * only a non-primary source is ever poked -- the primary is the drive the
+//     run is already hammering;
+//   * at most ONE keep-alive read per source is outstanding, so a stuck one
+//     cannot fan out into a queue of its own;
+//   * NEVER while a real request to that source is in flight. A real read keeps
+//     the link awake by itself, and a 4 KiB read squeezed in beside a P0 burst
+//     is pure contention on the thing we are trying to make faster. That is the
+//     line `io.keepalive_never_races_a_real_request` mutates.
+inline constexpr uint32_t kDefaultKeepAliveMs = 15;
+
+struct KeepAliveState {
+    bool     has_file       = false;   // this source has an open shard to poke
+    bool     dropped        = false;   // SourceHealth took it out of the router
+    bool     probe_inflight = false;   // our own 4 KiB read is still outstanding
+    uint32_t real_inflight  = 0;       // routed requests submitted and not finished
+    int64_t  last_activity_ns = 0;     // last completion on this source, steady clock
+};
+
+// True when source `s` should be poked right now. `idle_ns <= 0` means the
+// feature is off and the answer is always false, so the default build path is
+// one comparison.
+inline bool keepalive_due(const KeepAliveState& s, int64_t now_ns, int64_t idle_ns) {
+    if (idle_ns <= 0) return false;
+    if (!s.has_file || s.dropped) return false;
+    if (s.probe_inflight) return false;
+    if (s.real_inflight != 0) return false;
+    return (now_ns - s.last_activity_ns) >= idle_ns;
+}
+
 // Per-source accounting, reported through IoStats and so through the serve
 // endpoint's status.json.
 struct SourceStats {
@@ -138,8 +179,30 @@ struct SourceStats {
     uint64_t errors   = 0;         // routed requests that came back failed
     bool     dropped  = false;     // taken out of the router (SourceHealth)
 
+    // --- Track D6 ----------------------------------------------------------
+    // `requests`/`lat_ns_sum` above mix the classes that are routed (P0 and
+    // P3), and P3 backfill latency is queue-dominated -- it waits for every P0
+    // to clear. D5 read src[1]'s 149 ms mean as "the drive is slow" when most
+    // of that mass was backfill sitting in the engine's own queue, so the P0
+    // path now carries its own counters and the two can never be confused
+    // again (docs/p4_dual_source.md §10.1).
+    uint64_t p0_requests = 0, p0_bytes = 0, p0_lat_ns_sum = 0;
+    // How long this source was carrying NOTHING before a request arrived,
+    // counted only for gaps at or above the keep-alive window. This is the
+    // quantity the power-state hypothesis is about, and it is measured whether
+    // or not keep-alive is enabled -- the off arm is the evidence.
+    uint64_t idle_gaps = 0, idle_gap_ns_sum = 0, idle_gap_ns_max = 0;
+    // Keep-alive reads issued / that came back / that the backend refused.
+    uint64_t keepalive_reads = 0, keepalive_done = 0, keepalive_refused = 0;
+
     double mean_latency_ms() const {
         return requests ? lat_ns_sum / 1e6 / static_cast<double>(requests) : 0.0;
+    }
+    double p0_mean_latency_ms() const {
+        return p0_requests ? p0_lat_ns_sum / 1e6 / static_cast<double>(p0_requests) : 0.0;
+    }
+    double idle_gap_mean_ms() const {
+        return idle_gaps ? idle_gap_ns_sum / 1e6 / static_cast<double>(idle_gaps) : 0.0;
     }
 };
 

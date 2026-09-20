@@ -136,6 +136,16 @@ MUTATIONS = [
                     "n = n;")],
      "make the cache back-off plan never decrease", "caught", False),
 
+    # --- D6: the keep-alive must never poke a source that is busy --------
+    # A poke while a real request is in flight buys nothing -- the drive is
+    # awake by definition -- and takes a backend queue slot from the P0 burst
+    # it was supposed to help. docs/p4_dual_source.md 10.2.
+    ("io", [("storage/source_router.h",
+             "    if (s.real_inflight != 0) return false;",
+             "    if (false) return false;")],
+     "let the mirror keep-alive fire while a real request is in flight",
+     "caught", False),
+
     # --- H1b: a .pkv restore is a degradation, never fatal ---------------
     ("kvdisk", [("runtime/session.cpp",
                  "st.cold_fallback = true;\n"

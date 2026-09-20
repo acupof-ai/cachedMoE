@@ -32,6 +32,13 @@ PY = sys.executable
 SRC_RE = re.compile(
     r"src\[(\d+)\]\s+(\S+)\s+w\s+([\d.]+) GB/s\s+(\d+) req\s+([\d.]+) GiB \(([\d.]+)%\)"
     r"\s+mean lat ([\d.]+) ms")
+# Track D6's own line, one per source, right under the src[] line it belongs to.
+# Kept separate on purpose: the line above is what every table in
+# docs/p4_dual_source.md was read from and nothing may be inserted into it.
+D6_RE = re.compile(
+    r"P0 (\d+) req\s+([\d.]+) GiB\s+mean lat ([\d.]+) ms \| "
+    r"idle gaps >= \d+ ms: (\d+) \(mean ([\d.]+), max ([\d.]+) ms\) \| "
+    r"keep-alive (\d+) reads, (\d+) done, (\d+) refused")
 
 
 def load_jsonl(path):
@@ -72,11 +79,18 @@ def cell_stats(out_dir):
     sp = os.path.join(out_dir, "status.json")
     if os.path.exists(sp):
         blob = io.open(sp, encoding="utf-8", errors="replace").read()
-        for m in SRC_RE.finditer(blob.replace("\\n", "\n")):
+        text = blob.replace("\\n", "\n")
+        for m in SRC_RE.finditer(text):
             sources.append({"i": int(m.group(1)), "root": m.group(2),
                             "weight": float(m.group(3)), "req": int(m.group(4)),
                             "gib": float(m.group(5)), "pct": float(m.group(6)),
                             "lat_ms": float(m.group(7))})
+        for d, m in zip(sources, D6_RE.finditer(text)):
+            d.update({"p0_req": int(m.group(1)), "p0_gib": float(m.group(2)),
+                      "p0_lat_ms": float(m.group(3)), "idle_gaps": int(m.group(4)),
+                      "idle_mean_ms": float(m.group(5)), "idle_max_ms": float(m.group(6)),
+                      "ka_reads": int(m.group(7)), "ka_done": int(m.group(8)),
+                      "ka_refused": int(m.group(9))})
     return {"steps": steps,
             "tok_s": (steps * 1e3 / ms) if ms > 0 else 0.0,
             "per_token_ms": per, "hit": hit, "sources": sources}
@@ -94,10 +108,15 @@ def run_cell(args, arm, script, i):
         cmd += ["--max-context", str(args.max_context)]
     for sa in args.serve_arg:
         cmd += [f"--serve-arg={sa}"]
-    if arm == "on":
+    # Track D6: with --arm-env BOTH arms get --mirror and the arms differ only
+    # by the environment below. Without it, "off" is the no-mirror arm -- the
+    # D2..D5 meaning -- and nothing about those tables changes.
+    if args.arm_env or arm == "on":
         cmd += ["--serve-arg=--mirror", f"--serve-arg={args.mirror}"]
         if args.weights:
             cmd += ["--env", f"DEEPMOE_MIRROR_WEIGHTS={args.weights}"]
+    for e in (args.off_env if arm == "off" else args.on_env):
+        cmd += ["--env", e]
     for e in args.env:
         cmd += ["--env", e]
     t0 = time.time()
@@ -129,6 +148,13 @@ def main() -> int:
     ap.add_argument("--max-context", type=int, default=4096)
     ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
     ap.add_argument("--env", action="append", default=[])
+    ap.add_argument("--arm-env", action="store_true",
+                    help="both arms run WITH --mirror; the arms differ only by "
+                         "--off-env/--on-env (Track D6)")
+    ap.add_argument("--off-env", action="append", default=[],
+                    help="env for the off arm only, e.g. DEEPMOE_MIRROR_KEEPALIVE_MS=0")
+    ap.add_argument("--on-env", action="append", default=[],
+                    help="env for the on arm only")
     ap.add_argument("--serve-arg", action="append", default=[],
                     help="extra `deepmoe serve` arg, added to BOTH arms (keep the A/B symmetric); "
                          "e.g. --serve-arg=--no-kv-disk so cell N's .pkv cannot leak into cell N+1")
@@ -141,9 +167,12 @@ def main() -> int:
             for arm in ("off", "on"):
                 results.setdefault((script, arm), []).append(run_cell(args, arm, script, i))
 
-    doc = {"mirror": args.mirror, "pairs": args.pairs, "cells": {}}
-    print("\nscript                arm    tok/s     +-      d%    stall   hit     E: share")
-    print("-" * 82)
+    doc = {"mirror": args.mirror, "pairs": args.pairs,
+           "arm_env": bool(args.arm_env), "off_env": args.off_env,
+           "on_env": args.on_env, "cells": {}}
+    print("\nscript                arm    tok/s     +-      d%    stall   hit     E: share"
+          "   E: P0 req  E: P0 lat  E: idle>=15ms  poke")
+    print("-" * 122)
     for script in args.script:
         base = None
         for arm in ("off", "on"):
@@ -158,11 +187,22 @@ def main() -> int:
             if arm == "off":
                 base = mean
             d = 100.0 * (mean / base - 1.0) if base else 0.0
+            def msrc(key):
+                return statistics.fmean(
+                    [next((s.get(key, 0) for s in c["sources"] if s["i"] == 1), 0)
+                     for c in cells])
             print(f"{os.path.basename(script):<20} {arm:<5} {mean:7.4f} {sd:6.4f} "
-                  f"{d:+6.2f}% {stall:7.1f} {hit:6.4f} {share:9.1f}%")
+                  f"{d:+6.2f}% {stall:7.1f} {hit:6.4f} {share:9.1f}%"
+                  f"  {msrc('p0_req'):9.0f}  {msrc('p0_lat_ms'):8.2f}ms"
+                  f"  {msrc('idle_gaps'):6.0f} gaps"
+                  f"  {msrc('ka_reads'):6.0f}")
             doc["cells"][f"{os.path.basename(script)}|{arm}"] = {
                 "tok_s": t, "mean": mean, "sd": sd, "delta_pct": d,
                 "nvme_stall_ms": stall, "hit": hit, "mirror_share_pct": share,
+                "mirror_p0_req": msrc("p0_req"), "mirror_p0_lat_ms": msrc("p0_lat_ms"),
+                "mirror_idle_gaps": msrc("idle_gaps"),
+                "mirror_idle_max_ms": msrc("idle_max_ms"),
+                "mirror_keepalive_reads": msrc("ka_reads"),
                 "sources": cells[-1]["sources"]}
     with io.open(os.path.join(args.out, "abab.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)

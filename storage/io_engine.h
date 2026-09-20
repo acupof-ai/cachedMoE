@@ -45,6 +45,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/align.h"
 #include "core/config.h"
 #include "core/profiler.h"
 #include "core/status.h"
@@ -233,6 +234,31 @@ public:
     // dropped -- including the no-mirror case, where nothing is declared).
     uint32_t live_source_count() const;
 
+    // --- Track D6: mirror keep-alive (docs/p4_dual_source.md §10) -----------
+    // Declares which open shard on source `src` the keep-alive may poke. Called
+    // by add_mirror with the first shard each source registers, so the runtime
+    // needs no extra handle and no extra open. Sources with no registered file
+    // are simply never poked.
+    //
+    // `DEEPMOE_MIRROR_KEEPALIVE_MS` sets the idle window (default 15 ms; 0 or
+    // `off` disables). A poke is one 4 KiB read at a rotating offset, issued
+    // straight to the backend: it is NOT an IoRequest, so it never enters a
+    // priority queue, never touches `bytes_completed`, `busy_ns`, the latency
+    // sums or the per-source byte split. Its own counters are in SourceStats.
+    uint32_t keepalive_ms() const;
+    // Keep-alive reads issued so far on `src` (tests; also in status.json).
+    uint64_t keepalive_reads(uint32_t src) const;
+
+    // --- Track D6: the static-split arm ------------------------------------
+    // `DEEPMOE_MIRROR_STATIC_SPLIT=f` routes P0 by cumulative bytes toward a
+    // fixed share `f` for the mirrors instead of by outstanding bytes. The
+    // weighted least-outstanding-bytes rule is a closed loop -- a source that
+    // answers slowly keeps its bytes outstanding longer and is therefore
+    // offered less -- so it cannot be pushed above the share the drive earns.
+    // This is the open-loop comparison: it forces the bandwidth-proportional
+    // split and lets the stall say whether that split was worth having.
+    double static_split() const { return static_split_; }
+
     // The startup probe: 4 MiB random reads at queue depth `qd` against
     // `sample_path` for `ms` milliseconds, returning GB/s. Opens and closes its
     // own handle, so it must not be pointed at a File already handed to a
@@ -402,6 +428,33 @@ private:
     // chunk that reaches the backend: the two ends of the refill gap.
     TimePoint reaped_at_{};
     bool      reap_pending_ = false;
+
+    // --- Track D6: the keep-alive slots ------------------------------------
+    // One per source. `file` and `buf` are written once (add_mirror, before any
+    // submit) and read on the dispatcher thread; `chunk_id` and `cursor` are
+    // touched only under src_mutex_.
+    struct KeepAliveSlot {
+        const File* file  = nullptr;
+        AlignedBuffer buf;                 // 4 KiB, sector-aligned, alive for the run
+        uint64_t chunk_id = 0;             // 0 = nothing of ours outstanding
+        uint64_t cursor   = 0;             // rotating offset, so it is never a cache hit
+    };
+    // Keep-alive chunk ids live in their own range so handle_completion can tell
+    // them apart from a real chunk with one comparison and without a map lookup.
+    // next_chunk_id_ counts one per 4 MiB chunk and will not reach 2^62.
+    static constexpr uint64_t kKeepAliveChunkBase = 1ull << 62;
+    static constexpr uint32_t kKeepAliveBytes     = 4096;
+    void tick_keepalive();                       // dispatcher thread only
+    bool finish_keepalive(const ChunkCompletion& c);  // true when it was ours
+    uint32_t pick_static(uint32_t mask, uint64_t bytes) const;  // holds src_mutex_
+    KeepAliveSlot ka_[kMaxIoSources];
+    std::atomic<int64_t> ka_idle_ns_{0};         // 0 = keep-alive off
+    std::atomic<uint32_t> ka_inflight_{0};       // so the dispatcher keeps polling
+    double   static_split_ = 0.0;                // 0 = the ordinary router
+    uint64_t static_split_bytes_[kMaxIoSources] = {};
+    int64_t  src_last_activity_ns_[kMaxIoSources] = {};
+    // When this source went to zero outstanding requests; 0 while it is busy.
+    int64_t  src_idle_since_ns_[kMaxIoSources] = {};
 
     // --- Track D2: the mirror table and the router's live state ------------
     // `alts_[primary][s]` is source s's handle for that shard, null when that

@@ -557,6 +557,107 @@ DEEPMOE_TEST(io, source_health_drops_a_mirror_that_keeps_failing) {
 
 // The engine end: with no sources declared, nothing about a request changes and
 // IoStats carries no per-source rows -- the "off by default is off" check.
+// Track D6: the keep-alive scheduler (storage/source_router.h).
+//
+// The D5 hypothesis was that the mirror's high mean latency is a POWER state --
+// few bytes, so it idles, so every burst pays a wake-up, so it is offered even
+// fewer bytes. The keep-alive is the proposed way out: one 4 KiB read whenever
+// the source has been quiet for `idle_ms`.
+//
+// The dangerous half of that idea is the half this test pins. A poke issued
+// while a real request is in flight buys NOTHING -- the drive is already awake,
+// by definition -- and costs a queue slot in the backend queue that the P0
+// burst is competing for. So "never while a real request is in flight" is not
+// an optimisation, it is the difference between a keep-alive and a regression.
+//
+// The mutation (tests/mutate.py, `keepalive_never_races_a_real_request`):
+//
+//     if (s.real_inflight != 0) return false;   // correct
+//     if (false)               return false;    // mutant: pokes into real work
+//
+// Everything else in this test passes under that mutant; only the third block
+// notices, which is the point of writing it as its own block.
+DEEPMOE_TEST(io, keepalive_never_races_a_real_request) {
+    const int64_t ms = 1000000;
+    const int64_t window = 15 * ms;
+
+    KeepAliveState s;
+    s.has_file = true;
+    s.last_activity_ns = 0;
+
+    // --- the ordinary case: quiet for long enough, so poke ------------------
+    CHECK(!keepalive_due(s, 14 * ms, window));   // not yet
+    CHECK(keepalive_due(s, 15 * ms, window));    // exactly the window
+    CHECK(keepalive_due(s, 900 * ms, window));   // long past it
+
+    // --- off is off ---------------------------------------------------------
+    // `DEEPMOE_MIRROR_KEEPALIVE_MS=0` has to be byte-for-byte the old engine,
+    // so the disabled path answers false however idle the source is.
+    CHECK(!keepalive_due(s, 900 * ms, 0));
+    CHECK(!keepalive_due(s, 900 * ms, -1));
+
+    // --- THE MUTATION TARGET: a real request in flight forbids the poke -----
+    // One outstanding read is enough. The drive is awake; there is nothing to
+    // keep alive and a slot to lose.
+    {
+        KeepAliveState busy = s;
+        busy.real_inflight = 1;
+        CHECK(!keepalive_due(busy, 900 * ms, window));
+        busy.real_inflight = 24;
+        CHECK(!keepalive_due(busy, 3600 * ms, window));
+        // ... and the moment the last one retires it is allowed again.
+        busy.real_inflight = 0;
+        CHECK(keepalive_due(busy, 900 * ms, window));
+    }
+
+    // --- at most one of ours outstanding per source -------------------------
+    // A poke against a drive that has stopped answering must not turn into a
+    // queue of pokes: without this, an enclosure that hangs would collect one
+    // 4 KiB read every 15 ms for the rest of the run.
+    {
+        KeepAliveState mine = s;
+        mine.probe_inflight = true;
+        CHECK(!keepalive_due(mine, 3600 * ms, window));
+    }
+
+    // --- a source with nothing to read, and a dropped one, are never poked --
+    {
+        KeepAliveState nofile = s;
+        nofile.has_file = false;
+        CHECK(!keepalive_due(nofile, 900 * ms, window));
+
+        KeepAliveState gone = s;
+        gone.dropped = true;      // SourceHealth took it out of the router
+        CHECK(!keepalive_due(gone, 900 * ms, window));
+    }
+}
+
+// Track D6: the keep-alive's counters are its own, and the bytes it moves are
+// not the run's bytes. A poke that landed in `bytes_completed` would inflate
+// `eff GB/s` and, worse, show up in the per-source byte split that every A/B
+// table in docs/p4_dual_source.md is read from.
+DEEPMOE_TEST(io, keepalive_is_off_without_a_second_source) {
+    const std::vector<std::byte> content = pattern_bytes(1u << 20);
+    IoEngine engine;
+    IoConfig cfg;
+    REQUIRE_OK(engine.start(std::make_unique<test::FakeBackend>(content, 8), cfg));
+
+    // One root is the ordinary single-drive run: there is no mirror to keep
+    // awake, and the primary -- the drive the decode is already hammering -- is
+    // never poked. `DEEPMOE_MIRROR_KEEPALIVE_MS` cannot change that, which is
+    // what makes the no-mirror path still byte-for-byte what it was.
+    engine.set_sources({"D:/models"}, {4.8});
+    CHECK(!engine.mirrors_enabled());
+    CHECK_EQ(engine.keepalive_ms(), 0u);
+    CHECK_EQ(engine.keepalive_reads(0), 0u);
+    CHECK_EQ(engine.keepalive_reads(1), 0u);
+
+    const IoStats st = engine.stats();
+    CHECK_EQ(st.bytes_completed, uint64_t{0});
+    CHECK_EQ(st.chunks_submitted, uint64_t{0});
+    engine.stop();
+}
+
 DEEPMOE_TEST(io, no_mirror_leaves_the_stats_untouched) {
     auto scratch = make_scratch("d2_nomirror", 4u << 20, false);
     REQUIRE(scratch.has_value());
