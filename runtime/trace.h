@@ -180,7 +180,10 @@ public:
     // How many query slots a token of `layers` layers needs, worst case:
     // every layer's 16 attention dispatches plus 13 ced ones plus 3 MoE and
     // 2 engram, plus a 6-dispatch tail, two stamps each.
-    static uint32_t suggested_pool(uint32_t layers) { return 2 * (layers * 34 + 8) + 64; }
+    // Track BF: 34 was the M = 1 chain's worst layer. A verify batch adds the
+    // union dispatch and M engram rows on layers 1 and 14, and the batched ced
+    // records two more stages, so the pool is sized at 42 a layer.
+    static uint32_t suggested_pool(uint32_t layers) { return 2 * (layers * 42 + 16) + 64; }
 
 private:
     struct Pending {

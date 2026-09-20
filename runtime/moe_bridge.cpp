@@ -103,6 +103,59 @@ Result<void> self_check() {
     return {};
 }
 
+// Track BF: reading x back out of GPU-visible memory.
+//
+// `call.x` points into a device-local, host-visible allocation: on this APU
+// that mapping is UNCACHED WRITE-COMBINING, and an ordinary load from WC memory
+// is not allowed to use the cache hierarchy, so `std::memcpy` walks it at a few
+// hundred MB/s. docs/p2_decode.md §3.3 already knew to do ONE memcpy rather
+// than 5,120 scalar loads; what it did not do is use the instruction the ISA
+// provides for exactly this, `vmovntdqa` (`_mm256_stream_load_si256`), which
+// pulls a whole WC line into a fill buffer instead of issuing an uncached read
+// per access. The M = 1 path pays this once for 20 KB a layer; a verify batch
+// pays it M times, which the Track BF trace found to be 33.3 of the 34.7 ms of
+// host time an M=5 batch spends between its attention fence and its MoE
+// dispatch -- the biggest single item of GPU-idle gap in the batch.
+//
+// DEEPMOE_MOE_WC_READ=0 goes back to plain memcpy (the A/B).
+void wc_read(void* dst, const void* src, size_t bytes) {
+    static const bool on = [] {
+        const char* e = std::getenv("DEEPMOE_MOE_WC_READ");
+        return !(e && *e == '0');
+    }();
+    // Only the SOURCE has to be 32-byte aligned: `vmovntdqa` is the load, and
+    // the store below is an unaligned one into ordinary cached memory.
+    const uintptr_t sa = reinterpret_cast<uintptr_t>(src);
+    if (!on || (sa & 31u) || bytes < 64) {
+        static bool said = false;
+        if (on && !said) {
+            said = true;
+            log_info("moe bridge: x read falls back to memcpy (src {:#x}, {} B)", sa, bytes);
+        }
+        std::memcpy(dst, src, bytes);
+        return;
+    }
+    const auto* s32 = reinterpret_cast<const __m256i*>(src);
+    auto*       d32 = reinterpret_cast<__m256i*>(dst);
+    const size_t n = bytes / 32;
+    for (size_t i = 0; i < n; ++i) _mm256_storeu_si256(d32 + i, _mm256_stream_load_si256(s32 + i));
+    // `vmovntdqa` on WC memory is weakly ordered against everything else.
+    _mm_mfence();
+    const size_t tail = bytes - n * 32;
+    if (tail)
+        std::memcpy(static_cast<std::byte*>(dst) + n * 32,
+                    static_cast<const std::byte*>(src) + n * 32, tail);
+}
+
+// Track BF: the union runner's shape knobs, so one binary can A/B them.
+uint32_t env_u32(const char* name, uint32_t dflt) {
+    const char* e = std::getenv(name);
+    if (!e || !*e) return dflt;
+    char* end = nullptr;
+    const unsigned long v = std::strtoul(e, &end, 10);
+    return (end && end != e) ? static_cast<uint32_t>(v) : dflt;
+}
+
 }  // namespace
 
 void debug_act_quant_to_fp16(const float* x, uint16_t* out, float* scratch, uint32_t n) {
@@ -167,7 +220,22 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     du.slots = kUnionSlotsMax;
     if (cfg.num_experts_per_tok * kMoeBatchMax + 1 < du.slots)
         du.slots = cfg.num_experts_per_tok * kMoeBatchMax + 1;
-    if (auto r = union_runner_.create(device, alloc, shader_dir, spec, du); !r) return r;
+    // Track BF: the union runner's kernel shape -- MEASURED, and the answer is
+    // "the decode champion, unchanged". docs/kernel_p2_moe.md §3.5 says the
+    // winner moves at M >= 4 (`L16 R2 xgf16`, 149.7 GB/s at M=5 against 138.5
+    // for `L16 R2 xglob`), so the obvious change here was to give the union
+    // runner that shape. It LOSES in the engine: a full `bench_spec` A/B on a
+    // warm, all-resident cache is 68.2 -> 72.9 ms/position (+6.9%), and a
+    // per-knob sweep puts every alternative behind `L32 R1 xglob`. See
+    // docs/p4_dspark_runtime.md §8.2 -- the kernel bench's per-M table is for a
+    // SEVEN-slot dispatch, and the union is ~20 slots, which is a different
+    // occupancy/working-set point. The knobs stay as env overrides so the next
+    // person can re-run the sweep instead of re-deriving it.
+    gpu::MoeSpec uspec = spec;
+    uspec.lanes_per_row = env_u32("DEEPMOE_MOE_UNION_L", spec.lanes_per_row);
+    uspec.rows_per_lane = env_u32("DEEPMOE_MOE_UNION_R", spec.rows_per_lane);
+    uspec.x_mode        = env_u32("DEEPMOE_MOE_UNION_XMODE", spec.x_mode);
+    if (auto r = union_runner_.create(device, alloc, shader_dir, uspec, du); !r) return r;
     union_ids_.assign(du.slots, 0);
     union_slot_of_.assign(size_t(cfg.n_routed_experts) + 1, ~0u);
 
@@ -283,7 +351,7 @@ Result<void> GpuMoeBridge::stage_input(const MoeCall& call) {
     // Copy x out of GPU-visible memory BEFORE computing over it: design §3.3's
     // uncached write-combining read, one memcpy instead of 5,120 loads
     // (docs/p2_decode.md §3.3).
-    std::memcpy(xf_.data(), call.x, size_t(dim) * sizeof(float));
+    wc_read(xf_.data(), call.x, size_t(dim) * sizeof(float));
     const TimePoint t1 = Clock::now();
 
     // `act_quant(x, 32, ue8m0)` once for the whole layer, straight into the
@@ -360,7 +428,7 @@ Result<void> GpuMoeBridge::stage_batch(const BatchCall& call) {
         const float* xin = call.x + size_t(m) * dim;
         float*    xf = xf_batch_.data() + size_t(m) * dim;
         uint16_t* xq = xq_batch_.data() + size_t(m) * dim;
-        std::memcpy(xf, xin, size_t(dim) * sizeof(float));
+        wc_read(xf, xin, size_t(dim) * sizeof(float));
         act_quant_to_fp16(xf, xq, xf, dim);
         std::memcpy(runner_.x_fp16() + size_t(m) * dim, xq, size_t(dim) * sizeof(uint16_t));
     }
@@ -502,7 +570,7 @@ Result<void> GpuMoeBridge::stage_batch_union(const BatchCall& call) {
         const float* xin = call.x + size_t(m) * dim;
         float*    xf = xf_batch_.data() + size_t(m) * dim;
         uint16_t* xq = xq_batch_.data() + size_t(m) * dim;
-        std::memcpy(xf, xin, size_t(dim) * sizeof(float));
+        wc_read(xf, xin, size_t(dim) * sizeof(float));
         act_quant_to_fp16(xf, xq, xf, dim);
         std::memcpy(union_runner_.x_fp16() + size_t(m) * dim, xq,
                     size_t(dim) * sizeof(uint16_t));

@@ -244,6 +244,7 @@ powershell -NoProfile -File C:\Users\Asus\code\deepmoe\build\p4_gpu_lock.ps1 rel
    `slots` 放宽到整批的 expert 并集，没有 kernel 改动。见上一节与
    `docs/p4_dspark_runtime.md` §6.1（`gpu_moe.the_verify_batch_runs_its_expert_union_once`）。
 2. **`head` / `engram` 的 M=5**：DSpark 草稿链需要 M=5 的 head；今天 head 是 M=1 循环五次（≈42 ms vs ≈19 ms）。
+   ⚠️ **`engram` 那一半已经量过，而且方向变了**（Track BF，`docs/p4_dspark_runtime.md` §8.5）：批路径的 engram 逐行 gap 是 **12.7 ms/批（M=5）**，插桩显示其中 **13.1 ms 是行的 NVMe 读**，不是 M 次 submit+fence。**给 `EngramRunner` M 份行平面省不到东西**；要省得靠 design §9.5 的草稿预取。`head` 那一半仍然成立：M=5 的 tail 实测 9.0 ms/批，地板 6.1。
 3. **DSpark G1**：接受率需在 ≥5 个正常 prompt × ≥64 token、空闲机上重测（先修 dsref 层 1/14 的 98 GB 未触碰占位）。
 4. ~~**G3 长上下文的批边界**：M>1 verify 与逐 token decode 的 logits 分歧机制未隔离~~ **机制隔离出来了，而且它不是批边界**（Track SP，2026-09-18，`docs/p4_dspark_runtime.md` §7.2）：`Engine::forward_batch` 在 **块 = 1** 上与 M=1 decode 的最差 cos 就已经是 0.9928，逐层 bisect 显示前三层**逐位相同**、L03 差开 **3e-9**、L07 第一次**门控翻转**——放大器是 router 的近似平局，不是 M>1。64 步块 5 的结果：最差 cos 0.9398、top-1 **54/60**，但 teacher-forced PPL **1.8589 vs M=1 的 1.8857（0.986×）**。**§10.2 的不变量因此在这套实现上做不到**，runtime 该对齐哪一侧的问题也就没有意义了——两侧都是同一个模型的不同舍入。
 5. **本 track 自身**：dirty 5 文件未提交、`mgt1_p4.csv` 未生成、`decode.forty_layers` 无回归结论（本次环境阻塞导致）。

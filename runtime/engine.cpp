@@ -1649,6 +1649,17 @@ Result<void> Engine::cmd_wait() {
     return r;
 }
 
+// Track BF: `read_timestamps` is the M = 1 path's, and it also fills a
+// DecodeStepResult. The batch has no such result; all it owes the tracer is the
+// raw tick prefix, after the LAST fence of the batch.
+void Engine::flush_trace_batch() {
+    if (!tracer_.enabled()) return;
+    if (cur_->tsq_.count() == 0 || cur_->tsq_used_ == 0) return;
+    auto raw = cur_->tsq_.read_range(0, cur_->tsq_used_);
+    if (!raw) return;
+    tracer_.token_end(raw->data(), cur_->tsq_used_, 0);
+}
+
 void Engine::read_timestamps(DecodeStepResult& res) {
     res.breakdown.gpu_timed = false;
     if (cur_->tsq_.count() == 0 || cur_->tsq_used_ == 0) return;
@@ -2346,11 +2357,18 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
             if (auto r = cur_->layer_.record_close_batch(cur_->tok_cmd_, prev); !r) return r;
         }
         for (uint32_t m = 0; m < M; ++m) {
+            // Track BF: the row fetch is host I/O; the rest of this loop body is
+            // a submit + fence per row. The trace sees both as one gap.
+            const TimePoint f0 = Clock::now();
             if (auto r = cur_->engram_.fetch(L, cur_->history_, p0 + m, &profiler_); !r) return r;
+            cur_->mq_ms_ += ms_since(f0);
             if (auto r = cmd_open(); !r) return r;
             const DeviceAddress in  = (apply_post ? bb.xout.addr : bb.x.addr) + m * hcstride;
             const DeviceAddress out = bb.x.addr + m * hcstride;
+            const uint32_t tr_eg = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Engram,
+                                                        uint16_t(m), "engram_row");
             if (auto r = cur_->engram_.record(cur_->tok_cmd_, L, in, out); !r) return r;
+            trace::close_dispatch(&tracer_, tr_eg);
             // One row at a time: `EngramRunner` keeps ONE pair of row planes per
             // layer, so row m's dispatch has to consume its rows before row m+1's
             // fetch overwrites them. A batch engram is Track T's (docs/p4_mgt1.md §7).
@@ -2484,12 +2502,20 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         const TimePoint h0 = Clock::now();
         if (auto r = cur_->moe_.stage_batch_union(bc); !r) return r;
         cur_->timings_[L].moe_host_ms = ms_since(h0);
+        // Track BF: the two halves of the union's host cost -- `stage` is the
+        // read of x out of GPU-visible memory plus act_quant, `table` is the
+        // union build, the [M][slots] weight matrix and the pointer rows.
+        cur_->mx_ms_ += cur_->moe_.union_info().stage_ms;
+        cur_->mt_ms_ += cur_->moe_.union_info().table_ms;
     }
     batch_union_ += cur_->moe_.union_info().routed;
     if (auto r = cmd_open(); !r) return r;
     {
         const TimePoint r0 = Clock::now();
+        const uint32_t tr_u = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 4,
+                                                   "moe_union");
         if (auto r = cur_->moe_.record_batch_union(cur_->tok_cmd_); !r) return r;
+        trace::close_dispatch(&tracer_, tr_u);
         cur_->rec_ms_ += ms_since(r0);
     }
     // This buffer is the last reader of the layer's slots; the next layer's
@@ -2527,12 +2553,14 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
                                 max_context()));
 
     const TimePoint t_start = Clock::now();
+    tracer_.token_begin(p0);
     if (cur_->history_.size() < size_t(p0) + M) cur_->history_.resize(size_t(p0) + M, 0);
     for (uint32_t m = 0; m < M; ++m) cur_->history_[p0 + m] = tokens[m];
 
     cur_->timings_.assign(c.num_hidden_layers, LayerTiming{});
     cur_->submits_ = 0;
     cur_->rec_ms_ = cur_->sub_ms_ = cur_->wait_ms_ = cur_->bind_ms_ = 0.0;
+    cur_->mx_ms_ = cur_->mq_ms_ = cur_->mt_ms_ = 0.0;
     cur_->gp_open_ = nullptr;
     batch_union_ = 0;
     batch_miss_bytes_ = 0;
@@ -2593,6 +2621,7 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     if (auto r = cmd_open(); !r) return r;
     if (auto r = cur_->layer_.record_tail_batch(cur_->tok_cmd_, last, bt); !r) return r;
     if (auto r = cmd_flush(0); !r) return r;
+    flush_trace_batch();
     profiler_.note_hot_bytes(uint64_t(c.vocab_size) * c.hidden_size * 2);
 
     for (uint32_t m = 0; m < M; ++m) {

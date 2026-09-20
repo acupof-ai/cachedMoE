@@ -930,3 +930,229 @@ batch: 3 columns: stage 0.04 ms, expert rows 0.00 ms, dispatches 4.83 ms, wall 5
    没有任何剩余价值——它唯一"多"出来的好处是让 kernel 少读几列，而 kernel 无论如何
    都会算满 M 列。
 3. `debug_x()` 保留（校验用），注释里写清 `>= m` 的列是上一次调用留下的。
+
+---
+
+## 8. Track BF（2026-09-21）：一次 verify 前向的钱到底花在哪，以及拿回来的那一笔
+
+§7.3 给了 `forward_batch` 的 ms/位置曲线，但它是一个**黑盒的墙钟数**：
+455 ms/批（M=6）里哪一段是 MoE、哪一段是 attention、哪一段根本不是 GPU 在跑，
+那一节答不了，因为**批路径上一个 per-dispatch 时间戳都没有**——
+Track W 的 `--trace` 只插在 M=1 的 `run_layer` 上。本节先把戳补齐，
+再按归因顺序动手，最后给一个**订正过的 roofline**。
+
+### 8.1 先补仪器：批路径现在也进 `--trace`
+
+`runtime/decode_layer.cpp` 的三个 `step` lambda（`record_attention_batch`、
+`record_ced_batch`、`record_tail_batch`）、`record_close_batch`、
+`Engine::run_layer_batch` 的 engram 逐行 record 与并集 record，全部加上
+`trace::open_dispatch` / `close_dispatch`，用的是 M=1 那一侧同一套
+`(cls, stage)` 空间与 `gpu::mgt_stage_name`。`Engine::forward_batch` 自己
+`tracer_.token_begin(p0)`，并在最后一次 fence 之后调新的
+`Engine::flush_trace_batch()`（`read_timestamps` 的批版本，不填
+`DecodeStepResult`）。query pool 从「每层 34 个 dispatch」放宽到 42
+（并集那一次 + 两个 engram 层各 M 行 + 批 ced 多两个 stage）。
+
+`bench.spec_forward_m_curve` 多三个环境变量，**都只为了让一个 A/B cell 是分钟级的**：
+`DEEPMOE_SPEC_TRACE=FILE` 开 trace，`DEEPMOE_SPEC_MS=5` 只跑这些 M，
+`DEEPMOE_SPEC_MODE`（0 off / 1 verify / 2 两个都跑，默认 2）。
+
+⚠️ **`MODE=1` 单跑 verify 的数不能用**：热身用的那趟不计时顺序 decode 是
+`off` 臂跑的，只跑 verify 的话 cache 没热，P0 从 0 变成 2,000–2,500 MB，
+量到的是盘。**所有对照都必须是两个 mode 一起跑的那一趟**（verify 行 P0 = 0）。
+
+### 8.2 归因表：M=5 verify、l3_64、5,000 槽、全驻留（P0 = 0）
+
+12 个批、970 个 dispatch/批。`busy` = 两个 bottom-of-pipe 戳之差，
+`gap` = 本 dispatch 的 begin 减前一个的 end（barrier + 主机往返）：
+
+| 类 | dispatch/批 | busy ms | gap ms | 合计 | 占比 | **ms/位置** |
+|---|---:|---:|---:|---:|---:|---:|
+| **moe（并集，每层一次）** | 40 | **168.9** | **69.6** | **238.5** | **73%** | **47.7** |
+| attention（§7.14 的链） | 842 | 54.3 | 1.4 | 55.7 | 17% | 11.1 |
+| engram（第 1、14 层，逐行） | 10 | 8.6 | 13.7 | 22.3 | 7% | 4.5 |
+| tail（collapse + head + argmax） | 8 | 9.0 | 0.0 | 9.0 | 3% | 1.8 |
+| ced（压缩器 / 索引器） | 70 | 2.2 | 0.1 | 2.2 | 1% | 0.4 |
+| **合计** | 970 | 243.0 | 84.8 | **327.8** | | **65.6** |
+
+同一个 trace 文件里还有 60 个 M=1 decode step 做对照（GPU span **94.9 ms/step**，
+其中 MoE busy 32.2 + gap 16.6）。两个可以直接引用的比值：
+
+* **每槽代价**：M=1 是 7 槽 / 0.805 ms 一层 = **0.115 ms/槽**；
+  M=5 并集是 20.35 槽 / 4.22 ms 一层 = **0.207 ms/槽**。
+  **并集没有按列重读权重**（那会是 5 倍），但**每槽贵了 1.8 倍**。
+* **attention 链在 M 上几乎是平的**：M=5 整条链 54.3 ms/批 = 1.36 ms/层。
+  `mgt1_gemv.slang` 的 weight-outer / batch-inner 真的成立，
+  **任务单里 (a)「dense 投影被当成 M 个独立 GEMV」这条假设是假的**。
+
+**所以顺序是定死的：MoE 并集 73%，其它四类加起来 27%。**
+
+### 8.3 动手一：把 x 读出 GPU 可见内存的那一段（**赢，−28 ms/批主机时间**）
+
+上表 69.6 ms 的 MoE gap 是纯 GPU 空转：attention 的 fence 落地之后，
+主机要读 gate、做路由决策、过 planner、`stage_batch_union`，才能录 MoE。
+把这段拆开（`LayerTiming::gate_ms` + `UnionInfo::stage_ms/table_ms`，
+本 track 新挂到 bench 上）：
+
+| | ms/批（M=5 verify） |
+|---|---:|
+| gate（plan + 等 NVMe） | **0.6**（全驻留，符合预期） |
+| 并集 + 权重矩阵 + 指针行 | 1.4 |
+| **x 读回 + act_quant** | **33.3** |
+
+**33.3 ms 读 4 MB（40 层 × 5 列 × 20 KB）= 124 MB/s。** 那不是 act_quant，
+是**从写合并（WC）的、设备本地的 host-visible 映射上做普通 load**。
+`p2_decode.md` §3.3 早就知道要「一次 memcpy 而不是 5,120 次标量 load」，
+但没用上 ISA 为这件事准备的指令：**`vmovntdqa`（`_mm256_stream_load_si256`）**，
+它把整条 WC line 拉进 fill buffer，而不是每次访问发一笔 uncached read。
+`runtime/moe_bridge.cpp` 的 `wc_read()`，M=1 的 `stage_input` 和批的
+`stage_batch_union` 共用（`DEEPMOE_MOE_WC_READ=0` 回到 memcpy）。
+
+⚠️ **第一版没生效，原因值得记**：alignment 闸同时要求 **dst** 也 32 字节对齐，
+而 `std::vector<float>` 的 data 不保证，于是每次都 fallback 到 memcpy——
+两轮 ABAB 完全平（33.6 / 34.3 vs 33.7 / 33.1），**差点把这条也记成否定**。
+`vmovntdqa` 只要求 **src** 对齐，store 是 `storeu` 打进普通可缓存内存。
+闸改对之后（ABAB，两轮）：
+
+| | A（memcpy） | B（`vmovntdqa`） |
+|---|---:|---:|
+| x 读回 + act_quant | 33.6 / 34.3 ms | **8.7 / 5.2 ms** |
+| M=5 verify ms/位置 | 66.0 / 68.7 | **62.9 / 66.0** |
+
+**主机时间 −28 ms/批是确定的；墙钟只拿回 ~3 ms/位置**，因为这段主机工作
+有一部分本来就藏在上一层 MoE 的 GPU 时间后面（并集的 record 要到下一层
+的 flush 才提交）。**M=1 的 decode 步没有可测的变化**（93.1 → 96.3，噪声内）——
+那里一层只有 20 KB，影子足够盖住。
+
+**数值零风险**：`wc_read` 是纯拷贝。`suite.spec_forward` 逐位复现了 §7.2 的
+全部三个数——最差 cos **0.9398023**、top-1 **54/60**、教师强制 PPL 比 **0.9858×**。
+
+### 8.4 动手二：并集 runner 换成 `kernel_p2_moe.md` 的「M ≥ 4 最优形状」（**输，回退**）
+
+`kernel_p2_moe.md` §3.5 的逐 M 表说冠军在 M ≥ 4 上换人：
+M=1 是 `L32 R1 xglob`（222.6 GB/s = 上限的 102%），**M=5 是 `L16 R2 xgf16`
+（149.7 GB/s）**。而 `GpuMoeBridge::create` 一直**拿同一个 spec 建两个 runner**，
+并集 runner 因此在跑 M=1 的冠军形状。改成 M ≥ 4 的形状是一行。
+
+**它更慢**：同一趟两 mode 的 A/B，M=5 verify **68.2 → 72.9 ms/位置（+6.9%）**。
+逐旋钮扫（`L32 R1 X4`、`L16 R1 X0`、`L16 R2 X0`、`L32 R2 X0`）也没有一个
+赢过 `L32 R1 xglob`。**原因写清楚**：§3.5 那张表量的是**7 个槽**的 dispatch，
+而并集是 **~20 个槽**——槽轴是 `gid.y`，槽数变 3 倍就是另一个
+occupancy / 工作集点，逐 M 表不能直接搬过来。
+旋钮以 `DEEPMOE_MOE_UNION_L / _R / _XMODE` 留下，默认跟随 decode 的 spec，
+**这样下一个人是重跑这个扫描，而不是重新推导它**。
+
+### 8.5 动手三：engram 逐行的 13.7 ms gap（**不做，已归因**）
+
+§7.1 第 2 条说 engram 逐行跑是「Track T 的活」，trace 也确实显示
+每行 3.3–3.6 ms 的 gap（5 行 × 2 层）。直觉的修法是给 `EngramRunner`
+M 份行平面，M 次 submit+fence 塌成一次。**量了之后这条不值得做**：
+
+```
+engram row fetch (host I/O) 13.1 ms/batch
+```
+
+**12.7 ms 的 gap 里 13.1 ms 是行的 NVMe 读**（24 行 × M 行 × 2 层），不是 fence。
+批平面能省掉的是剩下那一点点。
+**真正的修法是 design §9.5**：草稿 token 一存在，它的 engram 地址就已知，
+行可以在 verify 之前就预取——那是投机循环（M2）的改动，不是 `forward_batch` 的。
+
+### 8.6 M 曲线：before / after
+
+l3_64（128 token 上下文）、5,000 槽、`--warm-cache`、两个 mode 一趟跑完。
+**verify 行是干净的那一列（P0 = 0）**；`off` 行带盘，只作参考。
+
+| mode | M | before ms/位置 | **after ms/位置** | 并集/层 |
+|---|---:|---:|---:|---:|
+| verify | 1 | 102.6 | **96.7** | 6.00 |
+| verify | 2 | 77.4 | **73.1** | 9.90 |
+| verify | 3 | 70.0 | **66.8** | 13.35 |
+| verify | 4 | 67.2 | **65.7** | 16.53 |
+| verify | 5 | 69.8 | **65.9** | 19.35 |
+| verify | 6 | 71.8 | **65.2** | 22.13 |
+| verify | 顺序 decode | 93.1 | 96.3 | 6.00 |
+| off | 1 / 2 / 4 / 6 | 112.3 / 106.7 / 96.7 / 98.3 | **107.6 / 77.6 / 66.1 / 68.3** | — |
+
+三件事：
+
+1. **最好的一格从 M=5 的 69.8 变成 M=6 的 65.2 ms/位置**，而且曲线在 M ≥ 4
+   之后终于**不再翘回去**（before 是 67.2 → 69.8 → 71.8，after 是 65.7 → 65.9 → 65.2）。
+   翘回去的那一段正是 x 读回随 M 线性长的那一段。
+2. **`forward_batch` 在 M=1 上和顺序 decode 打平了**（96.7 vs 96.3）。
+   §7.3 第 2 条「批路径在 M=1 上比 decode step 慢 1.21×」**到此作废**。
+3. ⚠️ **run-to-run 的散布是 ±5%**（同一个二进制的 M=5 verify 在本轮量到
+   60.2 / 62.0 / 62.9 / 65.9 / 66.0）。上表的每一格都只该按「两位有效数字 +
+   同趟对照」读；本节所有结论都有同趟 A/B 或主机计数器兜底。
+
+### 8.7 订正过的 roofline，以及为什么 35 ms/位置今天到不了
+
+本 track 的目标是 ≤ 35 ms/位置。**没到：65.2。** 差额的归因是干净的，
+而且**它先要求订正立目标时用的那个 roofline**：
+
+> 「并集 ~19–22 expert/层 × 18.8 MB ≈ 400 MB → 1.9 ms/层 = 77 ms/批」
+
+那个 1.9 ms 用的是 **222 GB/s**，而 222.6 GB/s 是 `kernel_p2_moe.md` §3.5 的
+**M=1** 读数。**同一张表说这个速率在 M > 1 上拿不到**：M=5 最优变体 149.7
+（上限的 69%）、M=6 135.3（62%），因为 §3.1 量过 dispatch A 在 M 大时
+**是 VALU 发射受限，不是带宽受限**——每列一条与 M 成正比的指令流，
+字节却只读一遍。所以 MoE 并集的地板是
+
+    399 MB/层 × 40 层 ÷ 149.7 GB/s = **107 ms/批 = 21.3 ms/位置**
+
+而不是 77 ms/批。把五段都按各自今天已知的最好速率摆出来（M=5）：
+
+| 段 | 今天（ms/批） | 地板（ms/批） | 差额 | 差额的名字 |
+|---|---:|---:|---:|---|
+| MoE 并集 busy | 168.9 | **107**（149.7 GB/s，§3.5 的 M=5 冠军） | 62 | kernel 在 88–95 GB/s，离它自己的 M=5 冠军还有 1.6× |
+| MoE 并集 gap | 69.6 → **40.7** | ~7（gate 0.6 + 并集 1.4 + x 5.2） | 34 | **每层一次 submit+fence 的往返 ≈ 0.83 ms**（STATUS §7 第 5 项，persistent dispatch） |
+| attention 链 | 54.3 | **25.3**（5,465 MB ÷ 216 GB/s，权重整批读一遍） | 29 | 最大的三格是 `mega_mhc.post.ffn` 16.0、`wkv.gemv` 10.4、`wq_a` 8.0 |
+| engram | 22.3 | ~9 | 13 | **行的 NVMe 读**（§8.5），要靠 §9.5 的草稿预取 |
+| tail（head） | 9.0 | 6.1（1,324 MB ÷ 216） | 3 | 基本到位 |
+
+**把这五条都做完是 ~154 ms/批 = 31 ms/位置**，也就是**目标在原理上够得着，
+但它不是一个 track 的活，是四个互不相干的 kernel / 调度项目**，
+其中最大的一项（MoE 并集 kernel 的 1.6×）**没有现成的方案**——
+§8.4 已经把「搬 `kernel_p2_moe` 的逐 M 冠军过来」这条最便宜的路否掉了。
+
+### 8.8 把投机的账按 after 的数再算一遍
+
+暖 cache、`T_draft` 先算 0（草稿链在 runtime 里仍然一行都没有，§7.6）。
+分母用同一趟的顺序 decode（96.3 ms/token = 10.38 tok/s）：
+
+| 模式 | k | M | ms/批 | E[tokens] | tok/s | 对顺序 decode |
+|---|---:|---:|---:|---:|---:|---:|
+| `chain`（before） | 5 | 6 | 430.7 | 3.82 | 8.87 | **0.83×** |
+| **`chain`（after）** | 5 | 6 | **391.0** | 3.82 | **9.77** | **0.94×（仍然更慢）** |
+| `longest`（before） | 5 | 6 | 430.7 | 4.77 | 11.07 | 1.03× |
+| **`longest`（after）** | 5 | 6 | **391.0** | 4.77 | **12.20** | **1.18×** |
+
+再把草稿的 19–42 ms/周期加回去（`p3_dspark.md` §8，head 还是 M=1 循环五次）：
+`chain` 落到 **8.83–9.31 tok/s（0.85–0.90×）**，`longest` 落到
+**11.02–11.62 tok/s（1.06–1.12×）**。
+
+**结论不变，位置变了**：§7.5 的 `chain` NO-GO 更稳了（0.83× → 0.94×，
+连白送草稿都还是亏），`longest` 从「打平」变成**草稿白送时 1.18×、
+算上草稿 1.06–1.12×**——但它**仍然明确不无损**（§7.4），
+所以它买到的那 6–12% 依旧是拿一个不可控的质量代价换的，方向没变。
+
+⚠️ 这整张表还是 **compute-bound 的最好情形**（§7.3 的那条警告原样有效）：
+真实对话是 NVMe-bound 的，`off` 那一列的 P0 字节（M=5 时 771–2,934 MB）
+才是它在那边的样子。
+
+### 8.9 复现
+
+```bash
+export DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
+export DEEPMOE_L3_64_DIR=C:/Users/Asus/code/deepmoe/traces/l3_64
+# 归因（M=5，两个 mode 一起跑，verify 行 P0 = 0）
+DEEPMOE_SPEC_MS=5 DEEPMOE_SPEC_TRACE=m5.dmtrace ./build/tests/deepmoe_tests.exe bench_spec.
+python tools/trace_timeline.py m5.dmtrace --summary
+# A/B：x 读回
+DEEPMOE_SPEC_MS=5 DEEPMOE_MOE_WC_READ=0 ./build/tests/deepmoe_tests.exe bench_spec.   # A
+DEEPMOE_SPEC_MS=5                        ./build/tests/deepmoe_tests.exe bench_spec.   # B
+# A/B：并集 runner 的 kernel 形状（§8.4，输的那个）
+DEEPMOE_SPEC_MS=5 DEEPMOE_MOE_UNION_L=16 DEEPMOE_MOE_UNION_R=2 DEEPMOE_MOE_UNION_XMODE=4 \
+    ./build/tests/deepmoe_tests.exe bench_spec.
+# 质量闸
+./build/tests/deepmoe_tests.exe spec_forward.
+```

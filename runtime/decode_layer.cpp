@@ -1083,7 +1083,13 @@ Result<void> DecodeLayer::record_attention_batch(gpu::CommandBuffer& cmd, const 
 
     auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
                     uint32_t gy) -> Result<void> {
+        // Track BF: the batched path had no per-dispatch stamps at all, so the
+        // only thing a trace of `forward_batch` could say was "455 ms". Same
+        // hooks the M = 1 chain uses (Track W), same (cls, stage) space.
+        const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer), trace::Cls::Attention,
+                                                 uint16_t(s), gpu::mgt_stage_name(s));
         if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
+        trace::close_dispatch(tracer_, tr);
         return cmd.barrier();
     };
 
@@ -1177,7 +1183,10 @@ Result<void> DecodeLayer::record_ced_batch(gpu::CommandBuffer& cmd, const BatchS
     gpu::MgtRunner& R = *mgt_;
     auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
                     uint32_t gy) -> Result<void> {
+        const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer), trace::Cls::Ced,
+                                                 uint16_t(s), gpu::mgt_stage_name(s));
         if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
+        trace::close_dispatch(tracer_, tr);
         return cmd.barrier();
     };
 
@@ -1310,8 +1319,12 @@ Result<void> DecodeLayer::record_close_batch(gpu::CommandBuffer& cmd, const Batc
                     c.hc_sinkhorn_iters, gpu::kMhcFlagPost | gpu::kMhcFlagSkipSinkhorn,
                     static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
     if (auto r = mgt_->ensure(st.m); !r) return r;
+    const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer), trace::Cls::Attention,
+                                             uint16_t(gpu::MgtStage::MhcClose),
+                                             gpu::mgt_stage_name(gpu::MgtStage::MhcClose));
     if (auto r = mgt_->record(cmd, st.m, gpu::MgtStage::MhcClose, &mp, sizeof mp, n_wg0, st.m); !r)
         return r;
+    trace::close_dispatch(tracer_, tr);
     return cmd.barrier();
 }
 
@@ -1341,7 +1354,10 @@ Result<void> DecodeLayer::record_tail_batch(gpu::CommandBuffer& cmd, const Batch
                     static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
     auto step = [&](S s, const void* push, uint32_t bytes, uint32_t gx,
                     uint32_t gy) -> Result<void> {
+        const uint32_t tr = trace::open_dispatch(tracer_, trace::kNoLayer, trace::Cls::Tail,
+                                                 uint16_t(s), gpu::mgt_stage_name(s));
         if (auto r = R.record(cmd, M, s, push, bytes, gx, gy); !r) return r;
+        trace::close_dispatch(tracer_, tr);
         return cmd.barrier();
     };
     if (auto r = step(S::MhcClose, &mp, sizeof mp, n_wg0, M); !r) return r;
