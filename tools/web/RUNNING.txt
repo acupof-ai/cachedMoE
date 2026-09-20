@@ -3,19 +3,31 @@ deepMoE web UI —— 正在运行的实例
 
 打开： http://127.0.0.1:8080/
 
-镜像（第二个读源）：**关**。Track D4（docs/p4_dual_source.md §8、STATUS §3 的 60）
-是第三次判 NO-GO —— 这一次 E: **通过了为它写的那道验收门**
-（DX §5.1：48 句柄 × QD 24，两条 300 秒臂各 1.04 GB/s、零错误，句柄 158 ms），
-**引擎照样死在同一个 tensor、同一个偏移**：
-`pinned load of 'norm.weight': overlapped read failed (win32 1117, 12288 B at off 1323827200)`，
-摘源时的码是 **win32 433 = ERROR_NO_SUCH_DEVICE**（盘不在总线上了）。
-所以下面的命令**不带 `--mirror`**，和 main 的默认行为逐字相同。
+镜像（第二个读源）：**开，而且是自动找到的**（Track D5，docs/p4_dual_source.md §9）。
+用户把同一块 J.ZAO SSD 换进 **USB4 盒子**之后，Windows 枚举成 **`BusType NVMe`**
+（PCIe 隧道，**没有 UAS、没有 RTL9210**）—— D2/D3/D4 四次杀死引擎的那一层整个不在了。
+**12 个 A/B cell 零错误**，`y_turns` **+9.4%**、`long_turns` **+4.63%**、两条流 **+13.5%**，
+`l3_ppl` **NLL 0.630051 逐位不变**。
 
-ℹ️ `server.py` 现在**有** `--mirror DIR` 透传了（Track D4；之前文档说有、其实没有），
-并且引擎侧有了镜像健康闸：启动时从镜像试读 pinned 权重、失败就摘镜像单盘跑，
-运行期连续 3 次 I/O 错误也动态摘源。**闸能让镜像不再是致命的，但它救不了这块 U 盘**
-（pinned load 的第一个失败请求仍然会被抛出去）。
-**这块 U 盘不要再试** —— 包括在它通过了那道门之后。
+⚠️ **D2–D4 的「这块 U 盘不要再试」要重新读**：坏的一直是**桥**，不是这块 SSD。
+同一块 NAND 在 USB4 盒子里跑完 476 GiB × 12 个 cell，一条 win32 1117 都没有。
+
+ℹ️ **`server.py` 现在自己找第二块盘**（`find_mirrors()`）：另一个盘上**同样路径**、
+且有 `deepmoe_manifest.json` 的那份拷贝。所以下面的命令**没有 `--mirror`**，
+横幅里的 `read sources 2` 是它自己找到的。
+* 关掉：`--no-mirror-auto`
+* 指定别的：`--mirror DIR`（给了就不自动找）
+* **引擎默认仍然是单盘**：`deepmoe serve` 不给 `--mirror` 与 main 逐字相同。
+  自动检测只在网页 UI 这一层，因为它是用户走到机器前时正在跑的那个进程。
+
+ℹ️ **启动比以前慢 ~2 秒**，是故意的：权重探针现在**先热身 1 秒再测 1 秒**。
+一块空闲过的 USB4 盒子第一个读要 ~1 秒，不热身的话 1 秒窗口整个就是那一个读，
+E: 会被测成 **0.03 GB/s**（实际 3.77），加权路由只给它 **0.0%** 的字节 ——
+**第二块盘就白插了**。`DEEPMOE_MIRROR_PROBE_WARMUP_MS=0` 回到旧行为。
+
+ℹ️ 引擎侧的镜像健康闸（Track D4）仍然在：启动时从镜像试读 pinned 权重、失败就摘镜像单盘跑，
+运行期连续 3 次 I/O 错误也动态摘源。**横幅的 `read sources N` 是过闸之后真正在读的源数。**
+盘拔了就是 `read sources 1` + 一条 warning，不是崩溃。
 
 启动命令（已用 Start-Process 脱离本会话，关掉终端也不会停）：
 
@@ -47,18 +59,19 @@ deepMoE web UI —— 正在运行的实例
 
 PID
 ---
-  server.py 启动器 (.venv python.exe)   46712
-  server.py 实际解释器 (Python312)      40060
-  deepmoe serve                         37892
+  server.py 启动器 (.venv python.exe)   13732
+  server.py 实际解释器 (Python312)      28016
+  deepmoe serve                         18368
 
 状态
 ----
-  引擎就绪      12.9 s
+  引擎就绪      15.1 s（比以前的 12.9 s 多 ~2 s = 两个源各 1 s 的探针热身）
   专家缓存      87.6 GiB / 5000 slots（`auto`，没给 --cache-slots）
   max_context   524280（满载 live KV ≈ 1.56 GiB）
-  读源          **1 个**（D: 单盘）——就绪横幅现在直接写着 `read sources 1`
-                （Track D4 给 `ready` 事件加的 `"sources"`：过了健康闸之后**真正在读**的源数，
-                 不是「要来的」源数）；`status.json` 的 io 段没有 src[] 行
+  读源          **2 个** —— 就绪横幅写着 `read sources 2`
+                D: 探到 4.82 GB/s、E: 探到 3.41 GB/s，`status.json` 的 io 段有两行 `src[]`
+                （典型分流 D: 73–77% / E: 23–27%；E: 的 mean lat 是 D: 的 5–6 倍，
+                 所以加权路由自己把它压在带宽比之下 —— 这是对的，见 §9.5）
   /api/status   已验证返回 **200**
 
 日志
@@ -99,7 +112,7 @@ PID
 
 停止
 ----
-  Get-Process -Id 46712,40060,37892 | Stop-Process -Force
+  Get-Process -Id 13732,28016,18368 | Stop-Process -Force
 
   （停完确认 `Get-Process deepmoe*` 为空；上一次 deepmoe 要再 Stop-Process 一次才真的退。）
 
@@ -128,3 +141,11 @@ PID
 2026-09-19 重启（网页对话按会话落盘 + /api/history）：
   server.py 启动器 25888 / 解释器 33280 / deepmoe serve 43652
   会话记录在 %LOCALAPPDATA%\deepmoe\web_chat\<会话名>.json，刷新页面或重启 server.py 都会回放。
+
+
+2026-09-20 重启（Track D5，第二个读源**默认开**，分支 p4/d5-usb4 合进 main）：
+  server.py 启动器 13732 / 解释器 28016 / deepmoe serve 18368
+  就绪 15.1 s，auto -> 5,000 槽，**`read sources 2`**，kv disk 开着，/api/status **200**。
+  命令行**一个字没变**（下面那条，没有 --mirror）—— 变的是 server.py 会自己找 E:，
+  日志里多一行 `web: second read source auto-detected: E:\models\DeepSeek-V4.1-Flash`。
+  这是 D2 以来第一次网页 UI 带着第二块盘跑：decode 的 nvme_stall 从 ~114 ms 降到 ~95 ms。

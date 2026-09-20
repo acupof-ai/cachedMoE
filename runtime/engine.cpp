@@ -348,15 +348,25 @@ Result<void> Engine::configure_io_sources() {
         uint32_t ms = 1000;
         if (const char* e2 = std::getenv("DEEPMOE_MIRROR_PROBE_MS"); e2 && *e2)
             ms = static_cast<uint32_t>(std::strtoul(e2, nullptr, 10));
+        // Track D5: warm up before measuring. A USB4 NVMe enclosure that has
+        // been idle answers its first read in ~1 s; an unwarmed 1 s window
+        // therefore measured E: at 0.03 GB/s against its real 3.77, the router
+        // gave it 0.0% of the bytes and the second source bought nothing
+        // (docs/p4_dual_source.md §9.2). The same 1 s window on a warm drive
+        // reads 3.74 -- so the number was not noisy, it was the wake-up.
+        uint32_t warmup = 1000;
+        if (const char* e3 = std::getenv("DEEPMOE_MIRROR_PROBE_WARMUP_MS"); e3 && *e3)
+            warmup = static_cast<uint32_t>(std::strtoul(e3, nullptr, 10));
         if (ms) {
             const std::string name = manifest_.files()[probe_idx].path;
             for (size_t i = 0; i < roots.size(); ++i) {
                 auto g = storage::IoEngine::probe_source_gbps(
-                    store::ShardSet::join(roots[i], name), ms, 8);
+                    store::ShardSet::join(roots[i], name), ms, 8, warmup);
                 if (!g) { log_warn("engine: probe of '{}' failed: {}", roots[i], g.error().message); continue; }
                 weights[i] = *g;
-                log_info("engine: source '{}' probes at {:.2f} GB/s (4 MiB, QD 8, random)",
-                         roots[i], *g);
+                log_info("engine: source '{}' probes at {:.2f} GB/s "
+                         "(4 MiB, QD 8, random, {} ms after a {} ms warmup)",
+                         roots[i], *g, ms, warmup);
             }
             probed = true;
         }

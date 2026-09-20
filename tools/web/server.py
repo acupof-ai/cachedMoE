@@ -78,6 +78,38 @@ EOS_TEXT = "<\uff5cend\u2581of\u2581sentence\uff5c>"
 STOP_IDS = [1]
 
 
+def find_mirrors(model_dir: str):
+    """Track D5: the same checkpoint on another drive, if one is plugged in.
+
+    The engine default stays OFF -- `deepmoe serve` without `--mirror` is the
+    single-drive path, word for word. This is the web UI's default, and only
+    the web UI's, because it is the one process that is expected to be running
+    when the user walks up to the machine.
+
+    Auto-detection is deliberately narrow: the SAME path on another fixed
+    drive, and only if it holds the manifest. It is safe to be wrong about the
+    drive's health -- not about whether the bytes are there -- because the
+    engine probes the mirror before it trusts it and drops it on a failed
+    probe or on three consecutive I/O errors (docs/p4_e_drive_diag.md \u00a75.2),
+    and the ready banner reports `read sources N`, which is the count AFTER
+    that gate. Being wrong about the bytes is a different thing, so
+    `open_mirror`'s own rule (same name, same byte length, per shard) is met
+    halfway here by insisting on the manifest.
+    """
+    drive, rest = os.path.splitdrive(os.path.abspath(model_dir))
+    if not drive or not rest:
+        return []
+    found = []
+    for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
+        cand_drive = letter + ":"
+        if cand_drive.lower() == drive.lower():
+            continue
+        cand = cand_drive + rest
+        if os.path.isfile(os.path.join(cand, "deepmoe_manifest.json")):
+            found.append(cand)
+    return found
+
+
 def load_encoding():
     """The checkpoint's own prompt renderer, exactly as tools/chat.py imports it."""
     sys.path.insert(0, os.path.join(MODEL, "encoding"))
@@ -111,11 +143,21 @@ class Serve:
             cmd += ["--kv-max-gb", str(args.kv_max_gb)]
         if args.max_parked:
             cmd += ["--max-parked", str(args.max_parked)]
-        # Track D4: the second read source. Repeatable, off unless asked for, and
-        # the engine drops a mirror that fails its health probe rather than
-        # dying on it (docs/p4_e_drive_diag.md §5.2), so a passthrough here
-        # cannot take the web UI down with the drive.
-        for d in args.mirror:
+        # Track D4: the second read source. Repeatable, and the engine drops a
+        # mirror that fails its health probe rather than dying on it
+        # (docs/p4_e_drive_diag.md §5.2), so a passthrough here cannot take the
+        # web UI down with the drive.
+        # Track D5: on for the web UI by default now that a USB4 enclosure holds
+        # up -- y_turns +9.9%, long_turns +8.6%, zero E: errors
+        # (docs/p4_dual_source.md §9). `--no-mirror-auto` is the way back, and
+        # `deepmoe serve` itself is unchanged: its default is still one source.
+        mirrors = list(args.mirror)
+        if not mirrors and not args.no_mirror_auto:
+            mirrors = find_mirrors(MODEL)
+            for d in mirrors:
+                print(f"web: second read source auto-detected: {d} "
+                      f"(--no-mirror-auto turns this off)", flush=True)
+        for d in mirrors:
             cmd += ["--mirror", d]
         self.cmd = cmd
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
@@ -696,7 +738,11 @@ def main():
     ap.add_argument("--max-parked", type=int, default=0)
     ap.add_argument("--mirror", action="append", default=[],
                     help="a second read source holding the same checkpoint "
-                         "(repeatable); passed through to `deepmoe serve`")
+                         "(repeatable); passed through to `deepmoe serve`. "
+                         "Given explicitly, it replaces the auto-detection.")
+    ap.add_argument("--no-mirror-auto", action="store_true",
+                    help="do not look for the same checkpoint on another drive "
+                         "(Track D5); the engine's own default is one source either way")
     ap.add_argument("--system", default="")
     ap.add_argument("--think", action="store_true")
     ap.add_argument("--log", default=os.path.join(REPO, "build", "web_serve.log"))

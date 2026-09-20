@@ -261,7 +261,8 @@ Result<void> IoEngine::add_mirror(const File* primary, uint32_t src, const File*
 }
 
 Result<double> IoEngine::probe_source_gbps(const std::string& sample_path,
-                                           uint32_t ms, uint32_t qd) {
+                                           uint32_t ms, uint32_t qd,
+                                           uint32_t warmup_ms) {
     // Deliberately NOT the runtime's handle: a Win32 handle belongs to one
     // completion port for life (storage/backend.h), and this one is closed
     // before the engine ever sees the file.
@@ -292,13 +293,20 @@ Result<double> IoEngine::probe_source_gbps(const std::string& sample_path,
             }
         });
     }
-    const TimePoint t0 = Clock::now();
+    // The warmup runs on the same threads and is simply not counted: take the
+    // baseline after it, not before. A drive that was asleep spends the whole
+    // warmup on its first read per thread, which is exactly the read that must
+    // not land in the measurement.
+    if (warmup_ms) std::this_thread::sleep_for(std::chrono::milliseconds(warmup_ms));
+    const uint64_t  base = moved.load(std::memory_order_relaxed);
+    const TimePoint t0   = Clock::now();
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    const uint64_t  end  = moved.load(std::memory_order_relaxed);
+    const double    sec  = double((Clock::now() - t0).count()) / 1e9;
     stop.store(true, std::memory_order_relaxed);
     for (auto& t : ts) t.join();
-    const double sec = double((Clock::now() - t0).count()) / 1e9;
     if (sec <= 0.0) return fail(Err::Internal, "probe measured no time");
-    return double(moved.load()) / sec / 1e9;
+    return double(end - base) / sec / 1e9;
 }
 
 IoEngine::~IoEngine() { stop(); }

@@ -237,8 +237,17 @@ public:
     // `sample_path` for `ms` milliseconds, returning GB/s. Opens and closes its
     // own handle, so it must not be pointed at a File already handed to a
     // backend (storage/backend.h: one IOCP port per handle, for life).
+    //
+    // Track D5: `warmup_ms` of reads happen FIRST and are not counted. A USB4
+    // NVMe enclosure that has been idle answers its first read in about a
+    // second -- the whole of a 1 s window -- so an unwarmed probe reported
+    // E: at 0.03 GB/s when the drive does 3.77, the router gave it 0.0% of the
+    // bytes, and the second read source bought nothing. The warmup is not a
+    // tuning knob for accuracy; it is the difference between measuring the
+    // drive and measuring its wake-up.
     static Result<double> probe_source_gbps(const std::string& sample_path,
-                                            uint32_t ms = 1000, uint32_t qd = 8);
+                                            uint32_t ms = 1000, uint32_t qd = 8,
+                                            uint32_t warmup_ms = 0);
 
     const BackendCaps& backend_caps() const { return backend_->caps(); }
     const IoConfig&    config() const { return cfg_; }

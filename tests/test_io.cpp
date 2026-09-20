@@ -581,3 +581,48 @@ DEEPMOE_TEST(io, no_mirror_leaves_the_stats_untouched) {
     CHECK(engine.stats().sources.empty());
     engine.stop();
 }
+
+// Track D5: the startup probe must measure the drive, not its wake-up.
+//
+// A USB4 NVMe enclosure that has been idle answers its first read in about a
+// second. The probe's window was 1 s, so the whole window was that one read:
+// E: reported 0.03 GB/s against a real 3.77, the weighted router handed it
+// 0.0% of the bytes, and the second read source bought nothing at all
+// (docs/p4_dual_source.md §9.2). The fix is a warmup whose bytes are NOT
+// counted -- the baseline is taken after it, not before.
+//
+// The mutation this pins is `base` going away:
+//
+//     const uint64_t base = moved.load();   // correct
+//     const uint64_t base = 0;              // mutant: warmup bytes counted
+//
+// With a warmup three times the measurement window, the mutant reports roughly
+// four times the rate, because it divides ~4 windows of bytes by 1 window of
+// time. A local scratch file has no wake-up, so the two calls below measure the
+// same steady rate and must agree; only the mutant makes them diverge.
+DEEPMOE_TEST(io, probe_does_not_count_its_warmup) {
+    // Eight 4 MiB blocks is probe_source_gbps's own minimum.
+    const uint64_t kBytes = 64u << 20;
+    auto scratch = make_scratch("d5_probe", kBytes, false);
+    REQUIRE(scratch.has_value());
+    {
+        const std::vector<std::byte> content = pattern_bytes(1u << 20);
+        for (uint64_t off = 0; off < kBytes; off += content.size())
+            REQUIRE_OK(scratch->file.write_at(off, ByteSpan(content.data(), content.size())));
+    }
+    scratch->file = File{};  // close before the probe opens its own handle
+
+    // Same file, same steady rate; only the warmup differs.
+    auto cold = IoEngine::probe_source_gbps(scratch->path, 200, 4, 0);
+    REQUIRE_OK(cold);
+    auto warm = IoEngine::probe_source_gbps(scratch->path, 200, 4, 600);
+    REQUIRE_OK(warm);
+    CHECK(*cold > 0.0);
+    CHECK(*warm > 0.0);
+    // Generous: this is a wall-clock measurement on a shared machine. The
+    // mutant lands at ~4x, which is nowhere near inside this band.
+    CHECK(*warm < *cold * 2.5);
+    CHECK(*cold < *warm * 2.5);
+
+    (void)remove_file(scratch->path);
+}

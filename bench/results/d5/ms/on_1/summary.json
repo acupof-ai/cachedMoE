@@ -1,0 +1,87 @@
+{
+ "cmd": [
+  "C:\\Users\\Asus\\code\\deepmoe\\build\\deepmoe.exe",
+  "serve",
+  "--model",
+  "D:\\models\\DeepSeek-V4.1-Flash",
+  "--max-context",
+  "4096",
+  "--engram-tables",
+  "C:\\Users\\Asus\\code\\deepmoe\\tests\\data\\l3",
+  "--profile",
+  "C:\\Users\\Asus\\code\\deepmoe\\bench\\results\\d5\\ms\\on_1\\profile.jsonl",
+  "--streams",
+  "2",
+  "--no-kv-disk",
+  "--warm-cache",
+  "--ms-sched",
+  "pipeline",
+  "--mirror",
+  "E:\\models\\DeepSeek-V4.1-Flash"
+ ],
+ "scripts": [
+  "bench/results/hitrate/y_turns.json",
+  "bench/results/hitrate/long_turns.json"
+ ],
+ "streams": 2,
+ "sched": "pipeline",
+ "turns": 4,
+ "decode_steps": 504,
+ "decode_ms": 81271.5944,
+ "aggregate_tok_s": 6.201428724523706,
+ "wall_s": 141.70933413505554,
+ "per_stream": [
+  {
+   "script": "y_turns.json",
+   "decode_steps": 252,
+   "decode_ms": 81271.5661,
+   "tok_s": 3.1007154419779295,
+   "hit_rate": 0.8658068785,
+   "nvme_mb_per_token": 605.763811904762,
+   "per_token_ms": {
+    "attn": 41.587875575,
+    "moe_gpu": 39.445504025,
+    "moe_host": 1.520458335,
+    "nvme_stall": 115.210274275,
+    "engram": 4.552500715,
+    "tail": 6.1419977,
+    "other": 107.10489105,
+    "fence_wait": 45.105222225000006,
+    "submits": 102.722222325
+   }
+  },
+  {
+   "script": "long_turns.json",
+   "decode_steps": 252,
+   "decode_ms": 81271.5943,
+   "tok_s": 3.1007143660771033,
+   "hit_rate": 0.8996693122499999,
+   "nvme_mb_per_token": 452.9047325396825,
+   "per_token_ms": {
+    "attn": 40.783198125,
+    "moe_gpu": 39.232467400000004,
+    "moe_host": 1.4703301575,
+    "nvme_stall": 94.25077307500001,
+    "engram": 8.371277377499998,
+    "tail": 5.946400315,
+    "other": 131.92068925,
+    "fence_wait": 36.931765475,
+    "submits": 98.70634917499999
+   }
+  }
+ ],
+ "status": {
+  "event": "status",
+  "session": "default",
+  "context": 356,
+  "max_context": 4096,
+  "kv_mb": 16.044032,
+  "kv_capacity": 4096,
+  "kv_slabs": 1,
+  "kv_largest_slab_mb": 16.044032,
+  "store": "expert store: 5000 slots (5000 resident, 0 filling, 0 free, 0 pinned)  lookups 174480 hits 149745 (0.858)  fills 29735/29735 ok  runs 59470/59470  evictions 24735 (+0 guard-blocked)  path A hits 108934 / B 40811 (0.7275 A)  fills A 19287 / B 10448",
+  "planner": "planner: 29080 layers, 174480 requests (149745 hits, 24735 misses, 0.858), 24735 evictions (+0 refused), prefetch 5000 issued / 0 used / 0 wasted, 15870 stalls, 0 joined; backfill 5000 issued / 5000 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped",
+  "io": "io: 130476 req (130476 done, 0 failed, 0 cancelled), 251535 chunks, 569426974064 / 569427091456 bytes, busy 107.547 s, eff 5.29 GB/s, mean lat 15.072 ms, peak QD 24 / 83.9 MiB\n  p0_blocking    49470 req  443684.1 MiB\n  p2_engram      69792 req  281.1 MiB\n  p3_backfill    11214 req  99082.8 MiB\n  P0: 49470 req, 443684.0 MiB, lat mean 3.71 / p50 4.59 / p95 8.82 / max 26.34 ms  (queue wait 0.05 + service 3.66)\n  P0: first-of-burst 15870 at 1.14 ms, behind 33600 at 4.92 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 5.52\n  src[0] D:\\models\\DeepSeek-V4.1-Flash  w 4.82 GB/s  42673 req  376.4 GiB (71.0%)  mean lat 15.10 ms  inflight 0 req / 0.0 MiB\n  src[1] E:\\models\\DeepSeek-V4.1-Flash  w 3.42 GB/s  18011 req  153.6 GiB (29.0%)  mean lat 68.17 ms  inflight 0 req / 0.0 MiB\n  dispatcher: 265005 iters, issue 0.87 s / poll 106.24 s / handle 0.44 s (callbacks 0.20 s, 130476 at 1.6 us mean)\n  dispatcher: Backend::submit 115.44 s over 251535 chunks, mean 458.9 us, max 10.88 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.4% of the non-waiting loop; refill gap 1.6 us mean over 87216 reaps\n",
+  "route": "route     resident-only=off\n"
+ }
+}
