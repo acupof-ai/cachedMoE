@@ -30,7 +30,7 @@ ctest --test-dir build --output-on-failure
 
 | | 今天（5,000 槽，安静机，**两个读源**） |
 |---|---|
-| 对话 decode | **5.2–6.1 tok/s**（hit 0.90–0.94）；每 token ≈ 97 ms 计算 + **65–95 ms** NVMe stall。第二块盘（`--mirror`，Track D5）值 **+9.4% / +4.6%**（两条脚本，ABAB 三对）；单盘是 4.8–5.9 |
+| 对话 decode | **5.2–6.1 tok/s** 平均（hit 0.90–0.94），全命中的步瞬时 **~9–10 tok/s**；每 token ≈ 97 ms 计算 + **65–95 ms** NVMe stall。第二块盘（`--mirror`，Track D5）值 **+9.4% / +4.6%**（两条脚本，ABAB 三对）；单盘是 4.8–5.9 |
 | 两路对话并发 | 聚合 **6.2 tok/s**：调度 +17.5%（Track MS）× 第二个读源 **+13.5%**（Track D5），单路不退化 |
 | 热步（expert 全驻留） | **97.0 ms**（`auto`）/ 92.7 ms（全 path A） |
 | 长 prompt TTFT（GPU prefill，默认开） | 1,118 token **28.6 s（热）/ 39 s（冷）**，≈ 25 ms/token；4,133 token **100 s** |
@@ -41,9 +41,9 @@ ctest --test-dir build --output-on-failure
 | 测试 | `ctest` 46 项（CPU 25 + GPU），`tests/run_all.py` 29/29，`tests/mutate.py` 17 条变异全抓住 |
 
 **为什么是 5 tok/s，以及还能往哪走**——每 token ≈ 97 ms 算力（8.5 GB 稠密权重 @ 216 GB/s 是底）+ 21 个 miss × 18.8 MB ÷ 盘带宽。
-软件侧的杠杆已经**全部实测并记入 STATUS §3（61 条试过/退掉）**：量化 2/3-bit ✗、预取/整层钉住/分层流式 ✗、投机解码 ✗、常驻路由四档 ✗、score-aware 淘汰 ✗（+2.3%）、持久 dispatch ✗、gate 往返 ✗（265 µs 是驱动的）、staged fill ✗；
+软件侧的杠杆已经**全部实测并记入 STATUS §3（63 条试过/退掉）**：量化 2/3-bit ✗、预取/整层钉住/分层流式 ✗、投机解码 ✗、常驻路由四档 ✗、score-aware 淘汰 ✗（+2.3%）、持久 dispatch ✗、gate 往返 ✗（265 µs 是驱动的）、staged fill ✗；
 拿到的：M=1 MoE 特化 −4.7%、IO 提交并行 +3.5%、prefill 分配预留 10.6×、GPU prefill 默认开 5.9×、两路并发 +17.5%。
-**第二个读源已经落地**（`--mirror DIR`，Track D5）：同一份 checkpoint 放在 USB4 盒子里的第二块 SSD 上，加权最小在飞字节分流，**单流 +4.6%–+9.4%、两流 +13.5%，输出逐位不变**（`l3_ppl` NLL 0.630051）。**预测的 +35–40% 没有兑现**，原因量到了：只路由 P0/P3，而 USB4 那一侧在 decode 的突发形状下延迟是内置 NVMe 的 5–6 倍。引擎默认仍是单盘；网页 UI 自动用上第二块盘（`--no-mirror-auto` 关）。**剩下的杠杆**：更多 cache 槽（两条流抢一个 LRU 是 MB/token 涨 13.5% 的来源），或第二台 128 GB 机器按层流水线。
+**第二个读源已经落地**（`--mirror DIR`，Track D5）：同一份 checkpoint 放在 USB4 盒子里的第二块 SSD 上，加权最小在飞字节分流，**单流 +4.6%–+9.4%、两流 +13.5%，输出逐位不变**（`l3_ppl` NLL 0.630051）。**预测的 +35–40% 没有兑现**，原因量到了（Track D6）：USB4 盘的 P0 延迟和内置盘一样（4.5 vs 3.8 ms），不是盘慢；是 decode 每层只有 ~10 块的突发、等最慢的那一块——把分流强推到带宽比 44% 反而慢 2.7%，心跳保活 +0.15%。**盘这条线到此为止**：再多带宽也剩 ~20 ms 的每层延迟底。引擎默认仍是单盘；网页 UI 自动用上第二块盘（`--no-mirror-auto` 关）。**剩下的杠杆**：更多 cache 槽（内存上限），第二台 128 GB 机器按层流水线，以及**批前向内核**（M=5 每位置 75.9 ms，roofline ~30 ms——压下去投机解码才有意义，Track BF 进行中）。
 
 **走到这里的里程碑**：P-1 / P1 测量（内存系统是一个 ~217 GB/s 的共享上限、全局 LRU、不做 lookahead）→ P2 常驻路径 kernel 逐级对齐参考 →
 **第一个 token**（v0.8：134 ms 热步）→ **nothing loaded + 81.5 ms**（Track I）→ **GPU prefill、4K / 17K 长上下文、对话**（Track J / K2 / L / M / P / Q，v0.9）。
