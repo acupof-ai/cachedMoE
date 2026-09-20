@@ -1,0 +1,9 @@
+﻿pair 0
+  off_0: aggregate 5.4553 tok/s  s0=2.728/hit 0.8658/stall 140/MB 606  s1=2.728/hit 0.8997/stall 111/MB 453  (196 s)
+  on_0: aggregate 6.1720 tok/s  s0=3.086/hit 0.8658/stall 116/MB 606  s1=3.086/hit 0.8997/stall 94/MB 453  (172 s)
+pair 1
+  off_1: aggregate 5.4461 tok/s  s0=2.723/hit 0.8658/stall 140/MB 606  s1=2.723/hit 0.8997/stall 111/MB 453  (196 s)
+  on_1: aggregate 6.2014 tok/s  s0=3.101/hit 0.8658/stall 115/MB 606  s1=3.101/hit 0.8997/stall 94/MB 453  (171 s)
+
+mirror off 5.4507 tok/s (sd 0.12%)  ->  on 6.1867 (sd 0.34%)  = +13.50%
+-> C:\Users\Asus\code\deepmoe\bench\results\d5\ms\abab.json

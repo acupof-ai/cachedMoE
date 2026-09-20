@@ -1,0 +1,111 @@
+Track D5 -- the source/probe lines out of each cell's serve.log (*.log is .gitignore'd repo-wide).
+Generated from bench/results/d5/*/*/serve.log.
+
+== bench/results/d5/abab/y_turns_off_0/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/abab/y_turns_off_1/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/abab/y_turns_on_0/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.72 GB/s (4 MiB, QD 8, random)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 0.03 GB/s (4 MiB, QD 8, random)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.72 GB/s, E:\models\DeepSeek-V4.1-Flash @ 0.03 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/probe_w/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.72 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.66 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/abab2/long_turns_off_0/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/abab2/long_turns_off_1/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/abab2/long_turns_off_2/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/abab2/long_turns_on_0/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.82 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.37 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.82 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.37 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/abab2/long_turns_on_1/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.82 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.40 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.82 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.40 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/abab2/long_turns_on_2/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.83 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.41 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.83 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.41 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/abab2/y_turns_off_0/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/abab2/y_turns_off_1/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/abab2/y_turns_off_2/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/abab2/y_turns_on_0/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.82 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.30 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.82 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.30 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/abab2/y_turns_on_1/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.81 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.39 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.81 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.39 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/abab2/y_turns_on_2/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.83 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.21 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.83 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.21 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/ms/off_0/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/ms/off_1/
+   [INF] engine: 48 shards open, 475.25 GiB
+
+== bench/results/d5/ms/on_0/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.83 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.22 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.83 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.22 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+
+== bench/results/d5/ms/on_1/
+   [INF] engine: 48 shards open, 475.25 GiB
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+   [INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.82 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.42 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+   [INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.82 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.42 GB/s), routing classes 0x9
+   [INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+

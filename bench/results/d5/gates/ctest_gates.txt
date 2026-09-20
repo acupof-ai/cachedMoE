@@ -1,0 +1,13 @@
+Test project C:/Users/Asus/code/deepmoe/build
+    Start 23: suite.integration
+1/2 Test #23: suite.integration ................   Passed    1.43 sec
+    Start 31: suite.decode
+2/2 Test #31: suite.decode .....................   Passed  106.80 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+needs-gpu      = 106.80 sec*proc (1 test)
+needs-model    = 108.23 sec*proc (2 tests)
+
+Total Test time (real) = 108.24 sec

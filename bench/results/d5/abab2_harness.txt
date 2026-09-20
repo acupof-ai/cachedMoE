@@ -1,0 +1,21 @@
+﻿  y_turns_off_0: 4.8027 tok/s  stall 113.6 ms  hit 0.8957    (107 s)
+  y_turns_on_0: 5.2449 tok/s  stall 95.1 ms  hit 0.8957  [0]72.3%  [1]27.7%  (99 s)
+  y_turns_off_1: 4.3911 tok/s  stall 114.8 ms  hit 0.8957    (115 s)
+  y_turns_on_1: 5.2293 tok/s  stall 95.4 ms  hit 0.8957  [0]72.2%  [1]27.7%  (101 s)
+  y_turns_off_2: 4.7703 tok/s  stall 113.3 ms  hit 0.8957    (108 s)
+  y_turns_on_2: 5.2361 tok/s  stall 95.7 ms  hit 0.8957  [0]74.0%  [1]26.0%  (100 s)
+  long_turns_off_0: 5.8805 tok/s  stall 72.6 ms  hit 0.9356    (488 s)
+  long_turns_on_0: 6.1431 tok/s  stall 65.1 ms  hit 0.9356  [0]77.1%  [1]22.8%  (458 s)
+  long_turns_off_1: 5.8783 tok/s  stall 72.7 ms  hit 0.9356    (488 s)
+  long_turns_on_1: 6.1446 tok/s  stall 65.1 ms  hit 0.9356  [0]77.1%  [1]22.8%  (457 s)
+  long_turns_off_2: 5.8704 tok/s  stall 72.7 ms  hit 0.9356    (489 s)
+  long_turns_on_2: 6.1586 tok/s  stall 65.1 ms  hit 0.9356  [0]77.1%  [1]22.8%  (456 s)
+
+script                arm    tok/s     +-      d%    stall   hit     E: share
+----------------------------------------------------------------------------------
+y_turns.json         off    4.6547 0.1869  +0.00%   113.9 0.8957       0.0%
+y_turns.json         on     5.2368 0.0064 +12.50%    95.4 0.8957      27.1%
+long_turns.json      off    5.8764 0.0043  +0.00%    72.7 0.9356       0.0%
+long_turns.json      on     6.1488 0.0070  +4.63%    65.1 0.9356      22.8%
+
+-> C:\Users\Asus\code\deepmoe\bench\results\d5\abab2\abab.json
