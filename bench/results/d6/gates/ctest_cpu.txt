@@ -1,0 +1,123 @@
+Test project C:/Users/Asus/code/deepmoe/build
+      Start  1: deepmoe_tests
+ 1/46 Test  #1: deepmoe_tests ....................   Passed  103.19 sec
+      Start  2: suite.align
+ 2/46 Test  #2: suite.align ......................   Passed    0.01 sec
+      Start  3: suite.layout
+ 3/46 Test  #3: suite.layout .....................   Passed    0.01 sec
+      Start  4: suite.types
+ 4/46 Test  #4: suite.types ......................   Passed    0.01 sec
+      Start  5: suite.json
+ 5/46 Test  #5: suite.json .......................   Passed    0.01 sec
+      Start  6: suite.profiler
+ 6/46 Test  #6: suite.profiler ...................   Passed    0.02 sec
+      Start  7: suite.status
+ 7/46 Test  #7: suite.status .....................   Passed    0.01 sec
+      Start  8: suite.bytes
+ 8/46 Test  #8: suite.bytes ......................   Passed    0.01 sec
+      Start  9: suite.dequant
+ 9/46 Test  #9: suite.dequant ....................   Passed    0.01 sec
+      Start 10: suite.gate
+10/46 Test #10: suite.gate .......................   Passed    0.01 sec
+      Start 11: suite.slab
+11/46 Test #11: suite.slab .......................   Passed    0.01 sec
+      Start 12: suite.expert_store
+12/46 Test #12: suite.expert_store ...............   Passed    0.01 sec
+      Start 13: suite.planner
+13/46 Test #13: suite.planner ....................   Passed    0.01 sec
+      Start 14: suite.resident_route
+14/46 Test #14: suite.resident_route .............   Passed    0.01 sec
+      Start 15: suite.io
+15/46 Test #15: suite.io .........................   Passed    1.35 sec
+      Start 16: suite.v41_config
+16/46 Test #16: suite.v41_config .................   Passed    0.01 sec
+      Start 17: suite.manifest
+17/46 Test #17: suite.manifest ...................   Passed    0.01 sec
+      Start 18: suite.block_info
+18/46 Test #18: suite.block_info .................   Passed    0.01 sec
+      Start 19: suite.kvcache
+19/46 Test #19: suite.kvcache ....................   Passed    0.01 sec
+      Start 20: suite.kvstore
+20/46 Test #20: suite.kvstore ....................   Passed    0.02 sec
+      Start 21: suite.trace
+21/46 Test #21: suite.trace ......................   Passed    0.01 sec
+      Start 22: suite.cache_cap
+22/46 Test #22: suite.cache_cap ..................   Passed    0.01 sec
+      Start 23: suite.integration
+23/46 Test #23: suite.integration ................***Skipped   0.01 sec
+      Start 24: suite.multistream
+24/46 Test #24: suite.multistream ................***Skipped   0.01 sec
+      Start 25: suite.gpu
+25/46 Test #25: suite.gpu ........................   Passed   42.61 sec
+      Start 26: suite.gpu_attn
+26/46 Test #26: suite.gpu_attn ...................***Skipped  55.43 sec
+      Start 27: suite.gpu_layer
+27/46 Test #27: suite.gpu_layer ..................***Skipped   0.01 sec
+      Start 28: bench.mgt1_m_curve
+28/46 Test #28: bench.mgt1_m_curve ...............***Skipped   0.01 sec
+      Start 29: bench.mgt1_moe_m_curve
+29/46 Test #29: bench.mgt1_moe_m_curve ...........***Skipped   0.01 sec
+      Start 30: bench.mgt1_moe_union_m_curve
+30/46 Test #30: bench.mgt1_moe_union_m_curve .....***Skipped   0.01 sec
+      Start 31: suite.decode
+31/46 Test #31: suite.decode .....................***Skipped   0.01 sec
+      Start 32: suite.spec_forward
+32/46 Test #32: suite.spec_forward ...............***Skipped   0.01 sec
+      Start 33: bench.spec_forward_m_curve
+33/46 Test #33: bench.spec_forward_m_curve .......***Skipped   0.01 sec
+      Start 34: suite.decode_longctx
+34/46 Test #34: suite.decode_longctx .............***Skipped   1.14 sec
+      Start 35: suite.gpu_moe
+35/46 Test #35: suite.gpu_moe ....................***Skipped   0.01 sec
+      Start 36: suite.speculate
+36/46 Test #36: suite.speculate ..................   Passed    0.07 sec
+      Start 37: suite.gpu_dspark
+37/46 Test #37: suite.gpu_dspark .................***Skipped   0.47 sec
+      Start 38: suite.gpu_prefill
+38/46 Test #38: suite.gpu_prefill ................***Skipped   0.01 sec
+      Start 39: suite.dspark_tree
+39/46 Test #39: suite.dspark_tree ................   Passed    0.42 sec
+      Start 40: suite.tokenizer
+40/46 Test #40: suite.tokenizer ..................***Skipped   0.01 sec
+      Start 41: suite.sampling
+41/46 Test #41: suite.sampling ...................   Passed    1.58 sec
+      Start 42: suite.engram_tables
+42/46 Test #42: suite.engram_tables ..............***Skipped   0.01 sec
+      Start 43: suite.kv_replay
+43/46 Test #43: suite.kv_replay ..................***Skipped   0.01 sec
+      Start 44: suite.kvdisk
+44/46 Test #44: suite.kvdisk .....................   Passed    0.01 sec
+      Start 45: smoke.auto_cache
+45/46 Test #45: smoke.auto_cache .................***Skipped   0.00 sec
+      Start 46: bench.l3_ppl64
+46/46 Test #46: bench.l3_ppl64 ...................   Passed  172.48 sec
+
+100% tests passed, 0 tests failed out of 46
+
+Label Time Summary:
+bench          = 172.50 sec*proc (5 tests)
+needs-gpu      = 272.21 sec*proc (17 tests)
+needs-model    = 332.81 sec*proc (20 tests)
+unit           = 106.77 sec*proc (26 tests)
+
+Total Test time (real) = 379.03 sec
+
+The following tests did not run:
+	 23 - suite.integration (Skipped)
+	 24 - suite.multistream (Skipped)
+	 26 - suite.gpu_attn (Skipped)
+	 27 - suite.gpu_layer (Skipped)
+	 28 - bench.mgt1_m_curve (Skipped)
+	 29 - bench.mgt1_moe_m_curve (Skipped)
+	 30 - bench.mgt1_moe_union_m_curve (Skipped)
+	 31 - suite.decode (Skipped)
+	 32 - suite.spec_forward (Skipped)
+	 33 - bench.spec_forward_m_curve (Skipped)
+	 34 - suite.decode_longctx (Skipped)
+	 35 - suite.gpu_moe (Skipped)
+	 37 - suite.gpu_dspark (Skipped)
+	 38 - suite.gpu_prefill (Skipped)
+	 40 - suite.tokenizer (Skipped)
+	 42 - suite.engram_tables (Skipped)
+	 43 - suite.kv_replay (Skipped)
+	 45 - smoke.auto_cache (Skipped)

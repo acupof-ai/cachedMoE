@@ -1,0 +1,15 @@
+Test project C:/Users/Asus/code/deepmoe/build
+    Start 23: suite.integration
+1/3 Test #23: suite.integration ................   Passed    1.41 sec
+    Start 31: suite.decode
+2/3 Test #31: suite.decode .....................   Passed  108.21 sec
+    Start 34: suite.decode_longctx
+3/3 Test #34: suite.decode_longctx .............   Passed  270.90 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Label Time Summary:
+needs-gpu      = 379.11 sec*proc (2 tests)
+needs-model    = 380.52 sec*proc (3 tests)
+
+Total Test time (real) = 380.52 sec

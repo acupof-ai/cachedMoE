@@ -1,0 +1,14 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 374,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5000 slots (5000 resident, 0 filling, 0 free, 0 pinned)  lookups 89760 hits 77214 (0.860)  fills 12546/12546 ok  runs 25092/25092  evictions 7546 (+0 guard-blocked)  path A hits 64633 / B 12581 (0.8371 A)  fills A 8246 / B 4300",
+ "planner": "planner: 14960 layers, 89760 requests (77214 hits, 12546 misses, 0.860), 7546 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 7693 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped",
+ "io": "io: 62210 req (62210 done, 0 failed, 0 cancelled), 114513 chunks, 245978935544 / 245978976256 bytes, busy 47.795 s, eff 5.15 GB/s, mean lat 26.110 ms, peak QD 24 / 83.9 MiB\n  p0_blocking    25092 req  225043.9 MiB\n  p2_engram      35904 req  144.7 MiB\n  p3_backfill     1214 req  9395.3 MiB\n  P0: 25092 req, 225043.8 MiB, lat mean 3.99 / p50 4.62 / p95 9.66 / max 24.56 ms  (queue wait 0.07 + service 3.92)\n  P0: first-of-burst 7693 at 1.15 ms, behind 17399 at 5.24 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 6.20\n  src[0] D:\\models\\DeepSeek-V4.1-Flash  w 4.81 GB/s  18377 req  163.6 GiB (71.4%)  mean lat 21.79 ms  inflight 0 req / 0.0 MiB\n         P0 18086 req  158.4 GiB  mean lat 3.80 ms | idle gaps >= 15 ms: 309 (mean 54.1, max 8489.6 ms) | keep-alive 0 reads, 0 done, 0 refused\n  src[1] E:\\models\\DeepSeek-V4.1-Flash  w 3.72 GB/s  7929 req  65.4 GiB (28.5%)  mean lat 151.32 ms  inflight 0 req / 0.0 MiB\n         P0 7006 req  61.4 GiB  mean lat 4.47 ms | idle gaps >= 15 ms: 1008 (mean 59.5, max 8485.9 ms) | keep-alive 0 reads, 0 done, 0 refused\n  dispatcher: 120131 iters, issue 0.39 s / poll 47.21 s / handle 0.20 s (callbacks 0.09 s, 62210 at 1.4 us mean)\n  dispatcher: Backend::submit 48.76 s over 114513 chunks, mean 425.8 us, max 9.44 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.4% of the non-waiting loop; refill gap 1.6 us mean over 31334 reaps\n",
+ "route": "route     resident-only=off\n"
+}

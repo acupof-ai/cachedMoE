@@ -1,0 +1,11 @@
+  y_turns_off_0: 5.2686 tok/s  stall 95.0 ms  hit 0.8957  [0]71.4%  [1]28.5%  (99 s)
+  y_turns_on_0: 5.0978 tok/s  stall 100.7 ms  hit 0.8957  [0]56.0%  [1]44.0%  (102 s)
+  y_turns_off_1: 5.2320 tok/s  stall 95.2 ms  hit 0.8957  [0]71.4%  [1]28.5%  (100 s)
+  y_turns_on_1: 5.1209 tok/s  stall 101.1 ms  hit 0.8957  [0]56.0%  [1]44.0%  (101 s)
+
+script                arm    tok/s     +-      d%    stall   hit     E: share   E: P0 req  E: P0 lat  E: idle>=15ms  poke
+--------------------------------------------------------------------------------------------------------------------------
+y_turns.json         off    5.2503 0.0183  +0.00%    95.1 0.8957      28.5%       7006      4.49ms    1010 gaps       0
+y_turns.json         on     5.1094 0.0115  -2.68%   100.9 0.8957      44.0%      12547      3.90ms     828 gaps       0
+
+arms: both --mirror; both KEEPALIVE_MS=0, on adds DEEPMOE_MIRROR_STATIC_SPLIT=0.44

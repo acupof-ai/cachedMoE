@@ -1,0 +1,124 @@
+{
+ "mirror": "E:\\models\\DeepSeek-V4.1-Flash",
+ "pairs": 2,
+ "arm_env": true,
+ "off_env": [
+  "DEEPMOE_MIRROR_KEEPALIVE_MS=0"
+ ],
+ "on_env": [
+  "DEEPMOE_MIRROR_KEEPALIVE_MS=0",
+  "DEEPMOE_MIRROR_STATIC_SPLIT=0.44"
+ ],
+ "cells": {
+  "y_turns.json|off": {
+   "tok_s": [
+    5.268565932448292,
+    5.2320310383093664
+   ],
+   "mean": 5.2502984853788295,
+   "sd": 0.018267447069462595,
+   "delta_pct": 0.0,
+   "nvme_stall_ms": 95.0994962,
+   "hit": 0.89565145525,
+   "mirror_share_pct": 28.5,
+   "mirror_p0_req": 7006.0,
+   "mirror_p0_lat_ms": 4.49,
+   "mirror_idle_gaps": 1009.5,
+   "mirror_idle_max_ms": 8591.7,
+   "mirror_keepalive_reads": 0.0,
+   "sources": [
+    {
+     "i": 0,
+     "root": "D:\\\\models\\\\DeepSeek-V4.1-Flash",
+     "weight": 4.82,
+     "req": 18382,
+     "gib": 163.6,
+     "pct": 71.4,
+     "lat_ms": 21.51,
+     "p0_req": 18086,
+     "p0_gib": 158.4,
+     "p0_lat_ms": 3.8,
+     "idle_gaps": 315,
+     "idle_mean_ms": 54.0,
+     "idle_max_ms": 8698.7,
+     "ka_reads": 0,
+     "ka_done": 0,
+     "ka_refused": 0
+    },
+    {
+     "i": 1,
+     "root": "E:\\\\models\\\\DeepSeek-V4.1-Flash",
+     "weight": 3.77,
+     "req": 7924,
+     "gib": 65.4,
+     "pct": 28.5,
+     "lat_ms": 151.59,
+     "p0_req": 7006,
+     "p0_gib": 61.4,
+     "p0_lat_ms": 4.51,
+     "idle_gaps": 1011,
+     "idle_mean_ms": 59.7,
+     "idle_max_ms": 8697.5,
+     "ka_reads": 0,
+     "ka_done": 0,
+     "ka_refused": 0
+    }
+   ]
+  },
+  "y_turns.json|on": {
+   "tok_s": [
+    5.09782188157179,
+    5.12091944927958
+   ],
+   "mean": 5.109370665425685,
+   "sd": 0.011548783853895017,
+   "delta_pct": -2.6841868199608765,
+   "nvme_stall_ms": 100.9167552375,
+   "hit": 0.89565145525,
+   "mirror_share_pct": 44.0,
+   "mirror_p0_req": 12547.0,
+   "mirror_p0_lat_ms": 3.895,
+   "mirror_idle_gaps": 827.5,
+   "mirror_idle_max_ms": 8572.45,
+   "mirror_keepalive_reads": 0.0,
+   "sources": [
+    {
+     "i": 0,
+     "root": "D:\\\\models\\\\DeepSeek-V4.1-Flash",
+     "weight": 4.82,
+     "req": 12847,
+     "gib": 128.2,
+     "pct": 56.0,
+     "lat_ms": 30.38,
+     "p0_req": 12545,
+     "p0_gib": 123.1,
+     "p0_lat_ms": 4.32,
+     "idle_gaps": 868,
+     "idle_mean_ms": 34.3,
+     "idle_max_ms": 8552.7,
+     "ka_reads": 0,
+     "ka_done": 0,
+     "ka_refused": 0
+    },
+    {
+     "i": 1,
+     "root": "E:\\\\models\\\\DeepSeek-V4.1-Flash",
+     "weight": 3.77,
+     "req": 13459,
+     "gib": 100.7,
+     "pct": 44.0,
+     "lat_ms": 90.38,
+     "p0_req": 12547,
+     "p0_gib": 96.7,
+     "p0_lat_ms": 3.89,
+     "idle_gaps": 825,
+     "idle_mean_ms": 34.8,
+     "idle_max_ms": 8550.5,
+     "ka_reads": 0,
+     "ka_done": 0,
+     "ka_refused": 0
+    }
+   ]
+  }
+ }
+}

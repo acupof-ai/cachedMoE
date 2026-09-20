@@ -1,0 +1,36 @@
+[INF] engine: profiler -> bench/results/d6/abab_static\y_turns_on_0\profile.jsonl
+[INF] engine: deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+[INF] engine: manifest v2 'DeepSeek-V4.1-Flash', 1264 tensors, 475.24 GiB
+[INF] engine: 48 shards open, 475.25 GiB
+[INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' holds 48 of 48 shards, 475.25 GiB
+[INF] IoEngine tuning: bg_cap_busy 1 throttle_engram 0 p0_qd 24 p0_inflight 96 MiB p0_chunk 4 MiB bg_qd 8 bg_inflight 32 MiB submit_threads 8
+[INF] engine: source 'D:\models\DeepSeek-V4.1-Flash' probes at 4.82 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+[INF] engine: source 'E:\models\DeepSeek-V4.1-Flash' probes at 3.77 GB/s (4 MiB, QD 8, random, 1000 ms after a 1000 ms warmup)
+[INF] IoEngine: 2 read sources (D:\models\DeepSeek-V4.1-Flash @ 4.82 GB/s, E:\models\DeepSeek-V4.1-Flash @ 3.77 GB/s), routing classes 0x9
+[INF] IoEngine: mirror keep-alive off (4096 B pokes), P0 split STATIC 44% to the mirrors
+[INF] engine: mirror 'E:\models\DeepSeek-V4.1-Flash' health probe: 8 pinned-sized reads, all served
+[INF] expert store: 1 slots x 18808832 (0.02 GiB) on 'host', table 99072 entries (6 per expert)
+[INF] planner: policy 'lru', cache 1 slots, 48 shards, lookahead d=4 K=12
+[INF] vulkan: AMD Radeon(TM) 8060S Graphics (compute family 1)
+[INF] gpu memory: path A device-local/host-visible (memory type 2)
+[INF] gpu memory: path B external_memory_host (memory type -1)
+[INF] engine: host heap budget 35.36 GiB, 0 B reported in use
+[INF] engine: cache budget auto -> 87.59 GiB (path A 62.26 GiB after 9.17 GiB pinned, path B 27.22 GiB of 50.31 GiB physical free; 142.72 GiB of commit available)
+[INF] engine: auto slot cap 5000 applied: budget-derived 5108 slots (89.48 GiB) -> 5000 slots (87.59 GiB). --cache-slots / --cache-gb bypass this cap and own the risk; DEEPMOE_CACHE_SLOT_CAP changes it
+[INF] pinned weights + expert cache: 103.89 GB wanted, 153.24 GB of commit available
+[INF] pinned weights: 9.85 GB wanted, 153.24 GB of commit available
+[INF] engine: pinned 884 tensors, 9.17 GiB in 2.5s (3.90 GB/s), 10 regions
+[INF] slab pool: path A full after 34 slabs (resource-exhausted: vkAllocateMemory(1880883200 B, type 2) failed (-2)), continuing on path B
+[INF] expert store: 5000 slots x 18808832 (87.59 GiB) on 'path A+B', table 99072 entries (6 per expert)
+[INF] planner: policy 'lru', cache 5000 slots, 48 shards, lookahead d=4 K=12
+[INF] engine: expert cache 5000 slots, 87.59 GiB (34 slabs on path A, 16 on path B)
+[INF] engine: cache probe passed at 5000 slots
+[INF] moe bridge: M6 L32 R1 sg32 dec0 hfp16 xglob hqP fp8 (7 slots: 6 fp4 routed + 1 fp8 shared; union runner 37 slots)
+[INF] engine: routing dump -> bench/results/d6/abab_static\y_turns_on_0\route.bin
+[INF] engine: gpu ready on AMD Radeon(TM) 8060S Graphics
+[INF] engine: stream 0 -- KV store 15.30 MiB in 1 slab(s) (largest 15.30 MiB) for 4096 positions at capacity 4096
+[INF] engine: session -- engram tables from C:\Users\Asus\code\deepmoe\tests\data\l3
+[INF] session: prompt 32 tokens, history 0, common prefix 0 -> reuse 0 (cold), 32 to prefill (gpu_prefill_min 512)
+[INF] session: prompt 130 tokens, history 95, common prefix 95 -> reuse 95 (extend), 35 to prefill (gpu_prefill_min 512)
+[INF] session: prompt 221 tokens, history 193, common prefix 193 -> reuse 193 (extend), 28 to prefill (gpu_prefill_min 512)
+[INF] session: prompt 311 tokens, history 284, common prefix 284 -> reuse 284 (extend), 27 to prefill (gpu_prefill_min 512)
