@@ -59,9 +59,9 @@ E: 会被测成 **0.03 GB/s**（实际 3.77），加权路由只给它 **0.0%** 
 
 PID
 ---
-  server.py 启动器 (.venv python.exe)   13732
-  server.py 实际解释器 (Python312)      28016
-  deepmoe serve                         18368
+  server.py 启动器 (.venv python.exe)   29900
+  server.py 实际解释器 (Python312)      29788
+  deepmoe serve                         18152
 
 状态
 ----
@@ -112,7 +112,7 @@ PID
 
 停止
 ----
-  Get-Process -Id 13732,28016,18368 | Stop-Process -Force
+  Get-Process -Id 29900,29788,18152 | Stop-Process -Force
 
   （停完确认 `Get-Process deepmoe*` 为空；上一次 deepmoe 要再 Stop-Process 一次才真的退。）
 
@@ -149,3 +149,31 @@ PID
   命令行**一个字没变**（下面那条，没有 --mirror）—— 变的是 server.py 会自己找 E:，
   日志里多一行 `web: second read source auto-detected: E:\models\DeepSeek-V4.1-Flash`。
   这是 D2 以来第一次网页 UI 带着第二块盘跑：decode 的 nvme_stall 从 ~114 ms 降到 ~95 ms。
+
+
+2026-09-20 晚重启（Track D6 之后，main 4751e97，命令行和上面那条**一个字没变**）：
+  server.py 启动器 29900 / 解释器 29788 / deepmoe serve 18152
+  就绪 15.1 s，auto -> 5,000 槽，**`read sources 2`**，kv disk 开着，/api/status **200**。
+
+  ℹ️ **D6 把一个误读修正了**（`docs/p4_dual_source.md` §10）：
+  上面「读源」那一栏写着「E: 的 mean lat 是 D: 的 5–6 倍」——**那个平均数混了两个优先级类**。
+  routed 的是 P0（decode 等的那些）和 P3 backfill（空闲回填），而 **E: 扣着 75% 的 backfill**，
+  backfill 被 P0 抢占所以它等 **1.1–1.3 秒**——**D: 的 backfill 一样是 1.1 秒**。
+  **单独看 P0：E: 4.5 ms，D: 3.8 ms，只差 1.19 倍。**
+  所以 `status.json` 的 `src[]` 行现在多了一行：**每源的 P0 计数器 + 空闲间隔**。
+  看盘快不快，**看那一行的 `P0 ... mean lat`**，不要看上面的混合均值。
+
+  ℹ️ **两个新开关，都默认关，都测过且输了**，写在这里只是为了别再试一遍：
+  * `DEEPMOE_MIRROR_KEEPALIVE_MS=15` —— 镜像空闲时发 4 KiB 保活读。
+    3,052 次 poke、零错误、**+0.15%**，分流逐位不变。盘根本没睡：
+    E: 典型空闲只有 **59 ms**，而一整个 cell 最慢的 P0 是 **19.84 ms**。
+  * `DEEPMOE_MIRROR_STATIC_SPLIT=0.44` —— 按带宽比开环压分流。
+    分流真的到了 44.0%，然后 **−2.68%**：stall 95.1 → 100.9。
+    **28.5% 不是路由够不到，是 44% 本来就更差**：一层的突发摊平之后
+    **每层要在两块盘上各爬一次坡**，而 decode 等的是一层里最慢的那个。
+
+  ⚠️ **本轮遇到一次瞬时的 E: 掉线**（1 / 11 个带镜像的引擎进程）：
+  `l3_ppl` 第一次跑的 warm-cache backfill 途中报 `win32 433 / 55`，
+  运行期闸连续 3 次摘源、单盘跑完、**NLL 仍然 0.630051**，立即重跑零错误。
+  **USB4 把 D2–D4 那个码的概率压得很低，但没压到零。**
+  这就是闸存在的理由：盘掉了是一条 warning 加一次降级，不是一次崩溃。
