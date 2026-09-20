@@ -177,3 +177,18 @@ PID
   运行期闸连续 3 次摘源、单盘跑完、**NLL 仍然 0.630051**，立即重跑零错误。
   **USB4 把 D2–D4 那个码的概率压得很低，但没压到零。**
   这就是闸存在的理由：盘掉了是一条 warning 加一次降级，不是一次崩溃。
+
+
+2026-09-21 重启（Track BF 之后，分支 p4/bf-batched-forward，命令行和上面那条**一个字没变**）：
+  server.py 启动器 30376 / 解释器 21720 / deepmoe serve 15324
+  就绪 15.3 s，auto -> 5,000 槽，**`read sources 2`**，kv disk 开着，/api/status **200**。
+
+  ℹ️ **这一轮跑的是 main 的 exe**（`C:\Users\Asus\code\deepmoe\build\deepmoe.exe`），
+  Track BF 的改动在 worktree `C:\Users\Asus\code\deepmoe-bf` 里，**没有合进 main、没有 push**。
+  BF 改的是 `Engine::forward_batch` 这条投机 verify 路径（网页 UI 不走它）加一个
+  `wc_read()`（`vmovntdqa` 读写合并内存，M=1 的 `stage_input` 也用上了，
+  但实测对 decode 步**没有可测变化**，见 `docs/p4_dspark_runtime.md` §8.3）。
+
+  ⚠️ **停止用的 PID 换成上面这三个**（下面那条 `Get-Process -Id 29900,29788,18152` 是上一轮的）：
+
+      Get-Process -Id 30376,21720,15324 | Stop-Process -Force

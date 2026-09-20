@@ -476,6 +476,13 @@ public:
     // and the P0 bytes it missed.
     uint32_t last_batch_union() const { return batch_union_; }
     uint64_t last_batch_miss_bytes() const { return batch_miss_bytes_; }
+    // Track BF: the last batch's host halves -- x read + act_quant, and the
+    // union/table build. Both are GPU-idle time (the gap in front of the MoE
+    // dispatch in a --trace).
+    double   last_batch_stage_ms() const { return cur_->mx_ms_; }
+    double   last_batch_table_ms() const { return cur_->mt_ms_; }
+    // Track BF: the engram row fetch (host I/O), summed over the batch.
+    double   last_batch_engram_fetch_ms() const { return cur_->mq_ms_; }
 
     // The window ring around a verify batch (docs/p3_dspark.md §3.5). Take the
     // snapshot BEFORE `forward_batch` writes the M positions; `restore` undoes
@@ -819,6 +826,9 @@ private:
         return cmd_wait();
     }
     void         read_timestamps(DecodeStepResult& res);
+    // Track BF: the batch path's half of `read_timestamps` -- resolve the
+    // per-dispatch trace after `forward_batch`'s last fence.
+    void         flush_trace_batch();
     // The per-step half of design §7.4's bookkeeping: how many compressed
     // positions each layer may read, and the window half of its top-k list.
     Result<void> prepare_ced(uint32_t position);

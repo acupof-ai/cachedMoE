@@ -478,6 +478,13 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
     cfg.model_dir            = model_dir();
     cfg.cache.budget_bytes   = 0;       // as much as the machine gives
     cfg.cache.slots_per_slab = 100;
+    // Track BF. DEEPMOE_SPEC_TRACE=FILE turns the per-dispatch trace on (the
+    // batched path stamps since Track BF); DEEPMOE_SPEC_MS / DEEPMOE_SPEC_MODE
+    // cut the sweep down to the one cell an A/B needs, because the full
+    // 2 x 6 + 2 sweep is minutes and an attribution run wants one M.
+    if (const char* tf = std::getenv("DEEPMOE_SPEC_TRACE")) cfg.trace_file = tf;
+    const char* m_list = std::getenv("DEEPMOE_SPEC_MS");
+    const uint32_t only_mode = env_u32("DEEPMOE_SPEC_MODE", 2);   // 0 off, 1 verify, 2 both
     if (auto r = engine.init(cfg); !r) {
         std::printf("      SKIP bench_spec: %s\n", r.error().str().c_str());
         return;
@@ -504,7 +511,13 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
                                                     runtime::Engine::ResidentOnly::Verify};
     std::printf("      mode   M  positions  ms/batch  ms/position  union/layer  P0 MB  "
                 "vs M=1/pos\n");
+    auto want_m = [&](uint32_t M) {
+        if (!m_list || !*m_list) return true;
+        const std::string want = std::string(",") + m_list + ",";
+        return want.find("," + std::to_string(M) + ",") != std::string::npos;
+    };
     for (uint32_t mi = 0; mi < 2; ++mi) {
+        if (only_mode < 2 && mi != only_mode) continue;
         engine.set_resident_only(modes[mi]);
         // One untimed sequential pass first. Without it the M = 1 row pays for
         // every expert THIS PROMPT routes to (the static heat fill is a global
@@ -517,6 +530,7 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
         }
         double per_pos_m1 = 0.0;
         for (uint32_t M = 1; M <= 6; ++M) {
+            if (!want_m(M)) continue;
             REQUIRE_OK(engine.reseed_decode_state());
             engine.reset_resident_route_stats();
             std::vector<uint32_t> toks(M);
@@ -524,6 +538,7 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
             const auto t0 = std::chrono::steady_clock::now();
             uint32_t n = 0, batches = 0;
             uint64_t un = 0, bytes = 0;
+            double   h_gate = 0.0, h_moe = 0.0, h_stage = 0.0, h_table = 0.0, h_eg = 0.0;
             for (uint32_t s = 0; s + M <= steps; s += M) {
                 for (uint32_t m = 0; m < M; ++m) toks[m] = st->greedy_tokens()[s + m];
                 auto r = engine.forward_batch(base + s, std::span<const uint32_t>(toks),
@@ -531,6 +546,13 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
                 REQUIRE_OK(r);
                 un += engine.last_batch_union();
                 bytes += engine.last_batch_miss_bytes();
+                for (const runtime::LayerTiming& lt : engine.layer_timings()) {
+                    h_gate += lt.gate_ms;
+                    h_moe  += lt.moe_host_ms;
+                }
+                h_stage += engine.last_batch_stage_ms();
+                h_table += engine.last_batch_table_ms();
+                h_eg    += engine.last_batch_engram_fetch_ms();
                 n += M;
                 ++batches;
             }
@@ -543,6 +565,15 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
                         mode_name[mi], M, n, batches ? ms / double(batches) : 0.0, per_pos,
                         batches ? double(un) / double(batches) / 40.0 : 0.0, double(bytes) / 1e6,
                         per_pos_m1 > 0 ? per_pos / per_pos_m1 : 0.0);
+            // Track BF: the host half of the per-layer round trip, which the
+            // GPU trace sees only as the gap in front of the MoE dispatch.
+            if (batches)
+                std::printf("             host/batch: gate(plan+wait) %.1f ms, "
+                            "moe host %.1f ms (x+quant %.1f, union+table %.1f)\n",
+                            h_gate / batches, h_moe / batches, h_stage / batches,
+                            h_table / batches);
+                std::printf("             engram row fetch (host I/O) %.1f ms/batch\n",
+                            h_eg / batches);
             CHECK(n > 0);
         }
         // The thing the batch has to beat: the same positions as ordinary decode
