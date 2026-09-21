@@ -17,7 +17,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 
 1. [今天的数字](#1-今天的数字)
 2. [优化路径：每一步与它的归因](#2-优化路径每一步与它的归因)
-3. [试过并退掉的（编号，共 58 条）](#3-试过并退掉的编号共-58-条)
+3. [试过并退掉的（编号，共 66 条）](#3-试过并退掉的编号共-66-条)
 4. [为什么 decode 是 NVMe-bound，而不是 kernel 慢](#4-为什么-decode-是-nvme-bound而不是-kernel-慢)
 5. [测试套件](#5-测试套件)
 6. [已知限制与未决风险](#6-已知限制与未决风险)
@@ -225,7 +225,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 63 条）
+## 3. 试过并退掉的（编号，共 66 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -337,6 +337,8 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **63** | **镜像 keep-alive + 开环分流**（Track D6，`p4_dual_source.md` §10）——假说来自 `nvme_bench` 的独立测量：**E: 热的时候每请求延迟等于 D:**（4 MiB QD1 1.39 ms 两边相同，QD4 4.4 vs 3.5，QD8 8.0 vs 6.7），**但空闲几百毫秒之后第一个读要 1,093 ms**；于是「镜像字节少 → 突发之间睡 → 每个突发付一次唤醒 → 149 ms → 路由给更少」，一个和 §9.2 探针同构的自锁环。**落地了 keep-alive**（非主源空闲超 `DEEPMOE_MIRROR_KEEPALIVE_MS` 发一个 4 KiB 轮转读，**直接走 backend**：无 `Pending`、无队列槽、不进 `bytes_completed`/`busy_ns`/延迟和/每源分流，所以所有旧 A/B 表的口径一个字不变；每源最多一个在飞；**永不在该源有真实请求在飞时发**）、**每源 P0 计数器**、**每源空闲间隔计数器**（**两个臂都测**——它是判据不是副产品）、以及开环对照 `DEEPMOE_MIRROR_STATIC_SPLIT` | **假说在 D5 的数据里就已经死了，不需要新跑任何东西**：`P0: ... max 19.84 ms`（六个 on cell 17.66–39.89）——**1 秒的唤醒藏不进一个 max 19.84 ms 的分布**。149 ms 的来源量出来了：**E: 的 7,920 个 routed 请求里 7,006 个是 P0（4.52 ms），914 个是 P3 backfill（反解 1,272 ms）**，后者占延迟质量的 **97.3%**；**D: 的 300 个 backfill 是 1,138 ms**——两块盘一样，**它量的是 P0 抢占，不是盘**。空闲也量了：E: **1,002 次 ≥15 ms，平均 59 ms**（D: 296 次 / 54 ms），那个 8 秒的最大值**两块盘都有**，是脚本两轮之间的 prefill，一轮一次。ABAB 两对、`y_turns`、**两臂都带 `--mirror`**：keep-alive **5.2566 → 5.2643 = +0.15%**（3,052 次 poke，零 refused，零错误，分流逐位不变）；static split **5.2503 → 5.1094 = −2.68%**（分流真的到 44.0%）。变异 `io.keepalive_never_races_a_real_request`（把「真实请求在飞时不发」那一行换成 `if (false)`）⇒ **caught** | **两个都 NO-GO**（±3% 判据）。**默认路径与 D5 逐字相同。** 教训两条：(i) **一个混了两个优先级类的平均数，读出来的是队列不是盘**——`src[]` 那行的 mean lat 误导了 §9.5 一整节，现在每源有了 P0 专属的三个计数器；(ii) **绕开闭环直接按带宽比压分流是负的**——加权最小在飞字节的 28.5% 不是它够不到 43%，是 **44% 本来就更差**：一层 ~9.6 个 chunk 的突发摊平之后**每层要在两块盘上各爬一次坡**（`first-of-burst` 1.15 → 1.27 ms，`io: eff` 5.15 → 4.90 GB/s），而 decode 等的是一层里最慢的那个 expert。**§9.9「手压权重买不到东西」因此加强**：手压 `DEEPMOE_MIRROR_WEIGHTS` 落在同一点（D5 已测），**开环压也是负的** |
 | **64** | **把并集 runner 换成 `kernel_p2_moe.md` §3.5 的「M ≥ 4 冠军」**（Track BF，`p4_dspark_runtime.md` §8.4）——`GpuMoeBridge::create` 一直拿同一个 `MoeSpec` 建 decode runner 和并集 runner，所以并集在跑 M=1 的冠军形状 `L32 R1 xglob`；而 §3.5 说 M=5 的冠军是 `L16 R2 xgf16`（149.7 vs 122 GB/s）。改法是一行 | 同趟两 mode 的 A/B（verify 行 P0 = 0）：M=5 verify **68.2 → 72.9 ms/位置，+6.9%**。逐旋钮扫 `L32 R1 X4` / `L16 R1 X0` / `L16 R2 X0` / `L32 R2 X0`，**没有一个赢过 `L32 R1 xglob`** | **NO-GO，已回退**。原因是口径：§3.5 那张逐 M 表量的是**7 个槽**的 dispatch，并集是 **~20 个槽**，槽轴就是 `gid.y`——槽数三倍就是另一个 occupancy / 工作集点，**逐 M 冠军表不能直接搬到并集上**。旋钮以 `DEEPMOE_MOE_UNION_L / _R / _XMODE` 留下（默认跟随 decode 的 spec），下一个人重跑扫描而不是重推 |
 | **65** | **批 engram（给 `EngramRunner` M 份行平面，把 M 次 submit+fence 塌成一次）**（Track BF，`p4_dspark_runtime.md` §8.5）——`p4_mgt1.md` §7 缺口 2 与 `p4_dspark_runtime.md` §7.1 第 2 条都把它列成待办，trace 也确实显示每行 3.3–3.6 ms 的 gap | 插桩之后：**12.7 ms 的 gap 里 13.1 ms 是行的 NVMe 读**（24 行 × M × 2 层），**不是 fence** | **不做（已归因，不是否定实验）**。批平面能省的只剩零头。真正的修法是 design §9.5 的**草稿预取**：草稿 token 一存在 engram 地址就已知，行可以在 verify 之前取——那是投机循环（M2）的改动，不是 `forward_batch` 的 |
+
+| **66** | **host 写 flag、device 自旋等它**（Track HG，`p4_hostflag_gate.md`）——48 关掉的是 **workgroup↔workgroup** 的握手；这一条换一个机制：一个 command buffer 装下整个 token，每层 gate kernel 之后接一个 **1-workgroup 的自旋 kernel 等 host 写的一个 uint**，依赖方向指向 device 调度域**之外**的 CPU 线程。新探针 `bench/probes/hostflag_probe.cpp` + `gpu/shaders/probe_hostflag.slang`：一个 cmdbuf 里 40 轮（= 40 层），自旋上限**用同一个循环标定成墙钟预算**，且 `rounds × cap` 夹在 **TDR packet 窗口**之下 | **机制成立**：2,500+ 个 command buffer，**零 TDR / 零 device 丢失 / 零 payload 错误**；**前进保证过了**——256 个背景 workgroup 常驻时自旋 workgroup **零超时**，**3998/4000 轮是「自旋之后才看到」**，即它**真的观察到了 kernel 已在跑之后 host 才写下的值**（**48 的失效模式不复现**）。**输在延迟，而且是双峰的**：p50 **3.6 µs**、p99 **5,598 µs**，中间几乎没有东西——host 只要没在自旋启动后的**几微秒**内答上来，这一轮就固定 **~5.5 ms**。1 ms 与 5 ms 两档服务时间**延迟完全一样**（5532 vs 5553）⇒ 不是一段延迟，是一个 **~5.5 ms 的固定刷新周期**。三个「是不是我们的锅」全部排除：host 补 `mfence` + 读回**无变化**；**专职热轮询线程无变化**（1 ms 档 5532.2 vs 5532.4）；按轮次拆开是**第 1 轮永远 ~5.06 ms、第 40 轮 mean 1.1–1.5 ms**。自旋方式 busy vs backoff **±1.5%，在噪声里** | **NO-GO，但关掉的是延迟不是合法性**（`bench/results/p4hg/hostflag_probe.csv`）。按 53 的式子 `40 × (400 − 实测)`：最乐观（空闲、host 0 延迟）**−23 ms/token**、背景 256 WG **−99**、现实（53 的分解表说一层 host 侧最少 95 µs）**−205**——**每一格都是负的，而热步一共才 102 ms**。**要重开它需要的不是代码，是那 5.5 ms 消失**：稳态 3.6 µs 若每层都拿得到，奖金是 **40 × (400 − 3.6) = 15.9 ms/token**，但前提是 host 要在**几微秒**内答完，而 decode 一层最少 95 µs、未命中层 8,780 µs（53）——**差两个数量级**。⚠️ **顺带一个陷阱**：用**原子**读 flag 是 **76/80 轮超时**——原子即使加 0 也是 read-modify-**WRITE**，它把那一行在 device 缓存里弄脏，host 的写从此进不来，回写时还可能把 host 的值盖掉。**要用 `globallycoherent` 的普通读。**⚠️ **48 的那句「自旋等待在这台机器上 NO-GO」要加限定**：只对 **workgroup↔workgroup** 成立 |
 
 ---
 
@@ -609,6 +611,26 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
+   §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
+   换成 **host 写 flag、device 自旋等它**（一个 command buffer 装下整个 token，
+   每层 gate kernel 之后一个 1-workgroup 的自旋 kernel），依赖方向指向 CPU 而不是同伴 workgroup：
+   **合法、安全、正确**——2,500+ 个 command buffer **零 TDR / 零 device 丢失 / 零 payload 错误**，
+   256 个背景 workgroup 常驻时**零超时**，**3998/4000 轮真的观察到了 kernel 已在跑之后 host 才写下的值**。
+   **它输在一个我们改不动的地方**：延迟是**双峰**的，p50 **3.6 µs**、p99 **5,598 µs**，中间几乎没有东西。
+   host 没在自旋启动后的**几微秒**内答上来，这一轮就固定 **~5.5 ms**；
+   **1 ms 和 5 ms 两档服务时间的延迟完全一样（5532 vs 5553）⇒ 那是一个固定的刷新周期，不是一段延迟**。
+   三个「是不是我们的锅」全排除了：host 补 `mfence` + 读回无变化、**专职热轮询线程无变化**、
+   按轮次拆开是第 1 轮永远 ~5.06 ms / 第 40 轮 1.1–1.5 ms。
+   按 §3 的 53 那条式子 `40 × (400 − 实测)`：**−23（最乐观）/ −99（真实背景负载）/ −205（现实）ms/token**，
+   **每一格都是负的，而热步一共 102 ms**。
+   **重开的条件不是写代码，是那 5.5 ms 消失**：稳态 3.6 µs 若每层都拿得到值 **15.9 ms/token**，
+   但 decode 一层 host 侧最少 **95 µs**、未命中层 **8,780 µs**（53）——**差两个数量级**。
+   ⚠️ **留给下一个人的两条**：① 用**原子**读那个 flag 是 **76/80 轮超时**（原子加 0 也是
+   read-modify-**WRITE**，它把 device 缓存里那一行弄脏，host 的写从此进不来，回写还可能盖掉它）——
+   **要用 `globallycoherent` 的普通读**；② device 侧自旋的上限要按 **packet** 夹
+   （`rounds × cap < TDR 窗口`，不是按单个 dispatch），而那个 cap 要**用同一个循环标定出来**，不能猜迭代数。
+
 0f. **2026-09-21：批前向的归因做完了，目标没到，而立目标用的 roofline 要订正（Track BF，`p4_dspark_runtime.md` §8，§3 的 64 / 65）。**
    批路径现在**进 `--trace`**（`record_attention_batch` / `record_ced_batch` / `record_tail_batch` /
    `record_close_batch` / engram 逐行 / 并集，加 `Engine::flush_trace_batch`），这是本 track 最持久的一件东西。
@@ -802,7 +824,16 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 5. ~~**persistent-dispatch decode**~~ **关闭**（§3 的 48 + 49）。两侧同时倒：
    合法性——`residency_probe` 说**两个 workgroup 的握手 1,000 次里第 3 次就超时**，自旋等待在这台机器上不可用（常驻上限 ~406 组，但共存不蕴含前进）；
    收益——「一张 dispatch 图」的退化形**已经是今天的实现**（41 submit，只在 gate 处切开），再融合的天花板是 **0.8 ms/token**。
-   要重开它，先得有一条**不用自旋**的 device 侧 gate。
+   ~~要重开它，先得有一条**不用自旋**的 device 侧 gate。~~
+   **2026-09-21 订正（Track HG，§3 的 66，`p4_hostflag_gate.md`）**：那句话的前提只对
+   **workgroup↔workgroup** 成立。**host 信号的自旋是合法的**——一个 command buffer 装下整个 token、
+   每层 gate 之后一个 1-workgroup 自旋等 host 写的 uint：2,500+ 个 cmdbuf **零 TDR、零 payload 错误**，
+   256 个背景 workgroup 常驻时**零超时**，**3998/4000 轮真的看到了 kernel 已在跑之后 host 才写下的值**。
+   **它输在延迟**：p50 **3.6 µs**，但 host 没在几微秒内答上来就固定 **~5.5 ms**（1 ms 与 5 ms 服务时间
+   延迟完全一样 ⇒ 是刷新周期不是延迟；专职热轮询线程无效）。
+   按 `40 × (400 − 实测)`：**−23 ~ −205 ms/token，每一格都是负的**。
+   **所以第 5 项仍然关闭，但关它的理由换了**：不是"自旋不合法"，是"host→device 的可见性粒度是 5.5 ms"。
+   稳态 3.6 µs 若拿得到值 **15.9 ms/token**，够不着的原因是 decode 一层 host 侧最少 95 µs（§3 的 53）。
 6. **absorbed-K attention（V4.1）**：给定 `wkv` latent、`kv_norm`、只在最后 64 维上的 RoPE、fp8 量化点，哪些矩阵可以折叠。
    代数在 `plan_p5.md` §3(b)，读 `D:\models\DeepSeek-V4.1-Flash\inference\`（只读）。
 7. ~~**prologue/epilogue 融合**（c1–c3）~~ **划掉**（§3 的 49）。层内 barrier 实测：普通层 17 个 dispatch 一共 **18 µs**、源层 26 个一共 **24 µs**——40 层 = 0.8 ms/token，四分之一个抖动带。

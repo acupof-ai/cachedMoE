@@ -135,7 +135,7 @@ add_dependencies(prefill_bench shaders)
 # --- Track W: the P5 feasibility probes (docs/plan_p5.md §5) -----------------
 # A probe is a question that costs minutes and can close a week of kernel work.
 # They are built here, and run by the GPU owner on a quiet machine.
-foreach(_probe residency_probe sharing_probe capacity_probe)
+foreach(_probe residency_probe sharing_probe capacity_probe hostflag_probe)
     add_executable(${_probe} bench/probes/${_probe}.cpp)
     target_link_libraries(${_probe} PRIVATE deepmoe_core)
     add_dependencies(${_probe} shaders)
