@@ -192,3 +192,17 @@ PID
   ⚠️ **停止用的 PID 换成上面这三个**（下面那条 `Get-Process -Id 29900,29788,18152` 是上一轮的）：
 
       Get-Process -Id 30376,21720,15324 | Stop-Process -Force
+
+2026-09-21 晚重启（Track HG 的探针跑完之后，命令行和上面那条**一个字没变**）：
+  server.py 启动器 26720 / 解释器 21368 / deepmoe serve 13748
+  就绪 15.9 s，auto -> 5,000 槽，**`read sources 2`**，kv disk 开着，/api/status **200**。
+
+  ℹ️ **这一轮跑的仍然是 main 的 exe**（`C:\Users\Asus\code\deepmoe\build\deepmoe.exe`）。
+  Track HG 只加了一个探针（`bench/probes/hostflag_probe.cpp` + `gpu/shaders/probe_hostflag.slang`），
+  在 worktree `C:\Users\Asus\code\deepmoe-hg` 的分支 `p4/hg-hostflag-probe` 上，
+  **运行时一行没动、没合进 main、没 push**。停机只是因为探针要独占 GPU。
+  结论写在 `docs/p4_hostflag_gate.md`：**host 写 flag、device 自旋等它 = NO-GO（输在延迟，不是合法性）**。
+
+  ⚠️ **停止用的 PID 换成上面这三个**：
+
+      Get-Process -Id 26720,21368,13748 | Stop-Process -Force
