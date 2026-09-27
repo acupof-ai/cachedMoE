@@ -989,7 +989,15 @@ Result<void> Engine::init_gpu() {
         // on the next submit (docs/p2_decode.md §12.2). bench/heap_capacity's
         // mixed run stopped path B at 26 GiB; 10 GiB of the heap is left for
         // everything else host-heap-backed.
-        constexpr uint64_t kHostHeapMargin = 10ull << 30;
+        //
+        // On RADV (Linux) the same heap is the GTT, and what it bounds is not an
+        // import but where TTM moves the path-A over-commit (path B is never
+        // used there, STATUS §7 0h). The 8-turn chat at 4,450 slots (78 GiB)
+        // peaked at 30.6 of 31.2 GiB GTT with 26 GB of RAM still free, and ran
+        // 5.31 tok/s against auto's 4.90 at 4,100 (hit 0.9045 vs 0.8965), so
+        // there the margin is the ~2 GiB of non-cache GTT plus 3 of slack.
+        const uint64_t kHostHeapMargin =
+            device_.caps().driver_id == VK_DRIVER_ID_MESA_RADV ? (5ull << 30) : (10ull << 30);
         for (const gpu::HeapInfo& h : device_.caps().heaps)
             if (!h.device_local && h.bytes > kHostHeapMargin)
                 b_cache = std::min(b_cache, h.bytes - kHostHeapMargin);

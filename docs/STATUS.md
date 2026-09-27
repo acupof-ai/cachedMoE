@@ -680,6 +680,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **同日试过并退掉的（gate 空档的另外两条路）**：PM QoS 把 C-state 限在 C2（`/dev/cpu_dma_latency` 20 µs）：两对 78.3/75.9 vs 75.8/77.1，噪声内；
    unbound 工作队列（drm_sched 的 worker）绑到中断所在的 CCD1：77.1/76.8 vs 77.4/78.4，−1% 在 ±3% 之下。都已还原。
    用户态队列（`amdgpu.user_queue=1`，绕开内核调度）要改内核参数重启，`userq_ip_mask = 0`，**未做，等用户决定**。
+   **对话端到端（Linux，模型迁到内置 SN740 之后）**：8-turn `long_turns.json`，auto：**4.90 tok/s**，hit 0.8965，每 token 计算 89.8 + stall 141.6 ms，
+   TTFT 均值 16.5 s；Windows `m_auto` 是 5.60 / hit 0.9175 / 99.9 + 100.7。**计算已比 Windows 快，差在 cache 小**：BIOS 切 64 GB 显存后系统只剩 62 GB，
+   path A 的超额由 TTM 挪进 GTT，而 GTT 上限 31.2 GiB（`ttm.pages_limit`）——auto 原来只拿 4,100 槽（71.8 GiB）。
+   `--cache-slots 4450`：**5.31 tok/s（+8.4%，8 轮每轮都更快）**，hit 0.9045，stall 130.8，GTT 峰值 30.6 / 31.2 GiB，**系统内存仍有 26 GB 空闲**。
+   ⇒ auto 在 RADV 上把主机堆（= GTT）的余量从 10 GiB 降到 5 GiB：现在 **4,400 槽 / 77.1 GiB**，GTT 峰值 30.6 GiB；
+   4K 提示走 GPU prefill（`--gpu-prefill-min 256`）正常，TTFT 80.3 s（Windows `ho_4k_on` 97.8 s），GTT 不再上涨。
+   **再往上的唯一障碍是 GTT 上限**：内核参数调大 `ttm.pages_limit`（或 BIOS 少切显存）可以把那 26 GB 空闲内存用上，按 hit 曲线约 +0.02 hit / +10% tok/s——要重启，等用户。
 
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
