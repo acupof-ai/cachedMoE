@@ -1,0 +1,49 @@
+device: AMD Radeon 8060S Graphics (RADV STRIX_HALO)  subgroup 64 (32..64)  timestampPeriod 10.0 ns
+path A device-local|host-visible: 28 expert slots, 526.6 MB of slab
+filled 28 experts (526.6 MB) straight into A device-local|host-visible memory in 0.243 s = 2.17 GB/s NVMe -> GPU
+filled 4 fp8 shared experts (141.7 MB, 11796480 + 11520 B per matrix) in 0.067 s = 2.11 GB/s
+
+== raw-read ceiling before the sweep (design section 7.1 rule 2) ==
+    160 workgroups  226.1 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+    320 workgroups  226.6 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+    640 workgroups  228.5 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+   1280 workgroups  229.5 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+
+== MoE kernels (design section 7.9), 2 sweeps x 3 measurements x 32 iterations ==
+  sweep 1/2 done
+  sweep 2/2 done
+
+== raw-read ceiling after the sweep (design section 7.1 rule 2) ==
+    160 workgroups  227.6 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+    320 workgroups  231.0 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+    640 workgroups  229.0 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+   1280 workgroups  229.4 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+
+variant                              A GB/s   B GB/s  A+B GB/s   %ceil    A ms    B ms  A+B ms  ms/tok
+-------------------------------------------------------------------------------------------------------------
+-- M sweep --
+M1 L32 R1 sg32 dec0 hfp16 xglob        207.1    222.8     211.6      92   0.424   0.197   0.622   0.622
+M6 L16 R2 sg32 dec0 hfp16 xlds         186.2    212.1     194.6      84   0.471   0.207   0.676   0.113
+
+raw-read ceiling 229.5 GB/s before the sweep, 231.0 GB/s after (the spread is thermal drift, not kernel behaviour);
+per-dispatch launch + global barrier 0.54 us (design section 3.4 assumed 5-20)
+
+best variant per verify batch size (fp4 routed experts only):
+  M=1  M1 L32 R1 sg32 dec0 hfp16 xglob    211.6 GB/s =  92% of ceiling   0.622 ms/pair   0.6218 ms/token
+  M=6  M6 L16 R2 sg32 dec0 hfp16 xlds     194.6 GB/s =  84% of ceiling   0.676 ms/pair   0.1127 ms/token
+best M=1 variant M1 L32 R1 sg32 dec0 hfp16 xglob at 211.6 GB/s = 92% of raw read (design section 15 P2 wants >= 80%)
+best M=6 variant M6 L16 R2 sg32 dec0 hfp16 xlds at 194.6 GB/s effective (0.676 ms for six tokens = 0.113 ms/token)
+T_layer(MoE, M=1) = 0.622 ms -> d >= T_io/T_layer = 4.0 / 0.622 = 6.4 layers of lookahead
+
+== partial dispatch (design section 7.9) ==
+  M=1  M1 L32 R1 sg32 dec0 hfp16 xglob  one pair over 7 slots 0.622 ms (A 0.424 + B 0.196 = 0.621)
+        A 3 + 4 slots  0.191 + 0.249 = 0.440 ms (+0.016 vs A whole)
+        B 3 + 4 slots  0.086 + 0.114 = 0.200 ms (+0.004 vs B whole)
+        two A+B pairs      0.278 + 0.364 = 0.642 ms  (+0.020 ms, +3.1%)
+        split A, one B     0.636 ms  (+0.014 ms, +2.3%)
+  M=6  M6 L16 R2 sg32 dec0 hfp16 xgf16/ldsi8  one pair over 7 slots 0.690 ms (A 0.479 + B 0.211 = 0.689)
+        A 3 + 4 slots  0.222 + 0.276 = 0.498 ms (+0.020 vs A whole)
+        B 3 + 4 slots  0.094 + 0.124 = 0.218 ms (+0.007 vs B whole)
+        two A+B pairs      0.317 + 0.400 = 0.717 ms  (+0.027 ms, +3.9%)
+        split A, one B     0.709 ms  (+0.019 ms, +2.8%)
+wrote bench/results/linux/kernel_bench_quick.csv

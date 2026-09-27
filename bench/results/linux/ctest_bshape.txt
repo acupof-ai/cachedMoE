@@ -1,0 +1,24 @@
+Test project /home/chenkailun/projects/cachedMoE/build
+    Start 23: suite.integration
+1/5 Test #23: suite.integration ................   Passed    0.87 sec
+    Start 27: suite.gpu_layer
+2/5 Test #27: suite.gpu_layer ..................   Passed    4.80 sec
+    Start 31: suite.decode
+3/5 Test #31: suite.decode .....................   Passed  274.76 sec
+    Start 32: suite.spec_forward
+4/5 Test #32: suite.spec_forward ...............***Skipped  19.44 sec
+    Start 36: suite.speculate
+5/5 Test #36: suite.speculate ..................   Passed    0.03 sec
+
+100% tests passed out of 5
+
+Label Time Summary:
+needs-gpu      = 299.00 sec*proc (3 tests)
+needs-model    = 299.87 sec*proc (4 tests)
+unit           =   0.03 sec*proc (1 test)
+
+Total Test time (real) = 299.94 sec
+
+The following tests did not run:
+	 32 - suite.spec_forward (Skipped)
+rc=0 maxtemp=75C

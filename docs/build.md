@@ -1,6 +1,8 @@
 # 构建与开发环境
 
-目标平台：Windows 11 + Strix Halo。所有命令在 PowerShell 中执行。
+目标平台：Strix Halo。**2026-09-28 起开发机（同一台 ROG Flow Z13 GZ302）换成了 Omarchy Linux**，
+原生 Linux 构建见下面的 [Linux 原生构建](#linux-原生构建2026-09-28-起的开发机) 一节；
+下面的 Windows 工具链表与 PowerShell 命令是之前的开发机，保留作为 Windows 路径的说明。
 
 ## 工具链
 
@@ -92,11 +94,68 @@ ctest --test-dir build --output-on-failure  # 整体 + 按 suite 各注册一遍
 `tests/data/v41_config.json` 是 ModelScope 上 V4.1-Flash 的真实 `config.json` 原样拷贝，
 `tests/test_model.cpp` 拿它逐字段核对 §2.1 的每一个数字。
 
+## Linux 原生构建（2026-09-28 起的开发机）
+
+同一台机器（ROG Flow Z13 GZ302，Ryzen AI Max+ 395 / Radeon 8060S / 128 GB）重装为 Omarchy（Arch，内核 7.2，Mesa 26.2 RADV）。
+
+| 工具 | 版本 | 来源 |
+|---|---|---|
+| clang / clang++ | 22.1 | pacman `clang` |
+| slangc | 2026.18.2 | pacman `shader-slang`（Omarchy 镜像缺这个包时，从清华 Arch 镜像 `pacman -U` 单包装） |
+| spirv-val、vulkan-headers、vulkaninfo | 1.4.357 | pacman `spirv-tools vulkan-headers vulkan-tools` |
+| CMake / Ninja | 4.x | `uv tool` 装在 `~/.local/bin` |
+| Python venv | 3.14 + torch 2.14 cpu | `uv venv .venv`，`uv pip install numpy safetensors pyarrow ml_dtypes torch` |
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/linux-clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build -j 1 -LE "needs-model|needs-gpu"          # CPU 闸
+export DEEPMOE_MODEL_DIR=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash DEEPMOE_LONGCTX_DIR=$PWD/traces/longctx
+ctest --test-dir build -j 1 -L "needs-model|needs-gpu" -E '^bench\.'   # 模型 + GPU
+```
+
+`cmake/linux-clang-toolchain.cmake` 与 `zig-toolchain.cmake` 同口径：`-march=znver5`（`runtime/moe_bridge.cpp` 的
+`wc_read` 用 AVX2 intrinsic，不给 `-march` 就编不过），slangc / spirv-val 从 PATH 找。Python 用 `.venv/bin/python`。
+
+**权重**：只在外接的 J.ZAO 2 TB NVMe 上（USB4 盒，ASM2464PD，NTFS 用内核 `ntfs3` 挂载），
+`/etc/fstab` 里 `LABEL=deepmoe2 → /mnt/deepmoe2`（`nofail`）。O_DIRECT 顺序读 3.4 GB/s。
+原来 Windows 上的内置 D: 副本随 Windows 一起没了；内置盘是 WD SN740（系统盘，LUKS + btrfs）。
+
+**和 Windows 开发机不同的三件事**（相信 STATUS.md 里任何一个 Windows 数之前先看这里）：
+
+1. **内存切分**：BIOS 把 64 GB 切给了显存（`mem_info_vram_total` 65536 MiB），Linux 看到的系统内存只有 62 GB，
+   GTT 31.7 GiB。Vulkan：heap 1 = 63.5 GiB `DEVICE_LOCAL|HOST_VISIBLE`（path A），heap 0 = 31.7 GiB host。
+   Windows 上 path B 能导入 ~110 GB 主机内存；这里 path B 的上限是这 62 GB 减去系统占用。
+   asus-armoury 没有暴露 APU 内存属性，改切分只能进 BIOS。
+   实际上 RADV 从不拒绝 path A：超出显存堆的部分被 TTM 挪进 GTT，path B 不会被用到。
+   强行启用 path B（`DEEPMOE_PATH_A_CAP=on`）会让热步慢 6 倍（userptr 拖慢每次提交），见 STATUS §7 0h。
+2. **path A 不能 O_DIRECT**：RADV 的 `vkMapMemory`（设备本地可见类型）是 DRM BO 的 `VM_PFNMAP` 映射，
+   `get_user_pages` 拒绝它，io_uring 读直接 `-EFAULT`（os 14）。Windows 允许（代价就是 Track Q2 的 704 µs）。
+   `storage/linux/io_uring.cpp` 现在按 `/proc/self/maps` 识别 `/dev/dri/` 映射，读进主机中转缓冲再 `memcpy`；
+   漏网的 `-EFAULT` 会标记该映射并经中转缓冲重提交。
+3. **提交线程池与 io_uring**：Track Q2 的 `kDefaultSubmitThreads = 8` 让多个线程同时调 `Backend::submit`，
+   而 io_uring 的 SQ 是单生产者——两条线程互相覆盖 SQE、丢一个 chunk、dispatcher 永远等它
+   （症状：`IoEngine::stop()` 挂在 join 上，GPU 0%）。后端现在用 `sq_mutex_` 串行化生产者一侧，
+   poll 改用 `IORING_ENTER_EXT_ARG` 在内核里带超时等待，替掉原来 200 µs 的睡眠轮询。
+
+4. **FP4 解码在 ACO 上要用算术版**：`kE2M1[nib]` 这种常量表下标在 Mesa 的 ACO 里被编成每元素一棵带分支的选择树，
+   MoE 7 槽一对（带 fp8 共享专家）只有 40% 读带宽。`runtime/moe_bridge.cpp` 在 RADV（`DeviceCaps::driver_id == VK_DRIVER_ID_MESA_RADV`）
+   上默认 `decode_mode = 1`：热步 ~117 → ~81 ms，NLL 逐位不变。`prefill_gemm` 反过来是表更快，保持原样。
+5. **NLL 基准**：`l3_ppl --modes off` 在这台 Linux 上是 **0.639409 / top-1 58/64**（attention 的 `fp8_round` 改成精确舍入之后，
+   Mesa 会把原来的 `(a+M)-M` 折叠掉；改之前是 0.623007 / 60/64；dispatch B 走 L16 R2 之前是 0.601884；
+   旧形状 `DEEPMOE_MOE_LB=32 DEEPMOE_MOE_RB=1` 是 0.601884 / 62/64；Windows 是 0.630051 / 61/64，编译器不同）。
+6. **外接模型盘**会掉线：一次在持续读中过热（00:39），一次在 75 °C 时 Thunderbolt 链路直接断开（02:53，重连后先协商成 x1 2.5 GT/s，
+   后来回到 x4 16 GT/s），重连后控制器名会变（`nvme1` → `nvme2`），挂载点要按新分区重挂；`/etc/fstab` 已改只读挂载，掉线后的恢复步骤见项目记忆 `external-nvme-overheats`。
+   实验开关：`DEEPMOE_MOE_L` / `_R` / `_XMODE` / `_DEC`（主 MoE runner 的形状与解码，默认值不变）、
+   `DEEPMOE_MOE_LB` / `_RB` / `_XMODE_B`（dispatch B 单独的形状，RADV 默认 L16 R2）、
+   `DEEPMOE_SHARED_EARLY`（共享专家提前派发，RADV 默认开）、`DEEPMOE_SE_CHECK`（逐层比对 GPU/主机的 act_quant）、
+   `DEEPMOE_PATH_A_CAP`（path A 上限，默认关，NO-GO）。
+7. **CPU 亲和性**：amdgpu 中断落在一个 CCD 上（本机 CPU 29 → CCD1 = 8–15,24–31），引擎线程在另一个 CCD 时热步慢 ~15%。
+   `Engine::init` 默认把线程绑到中断所在的 L3 域；`DEEPMOE_CPU_AFFINITY=off` 关闭，或给一个 cpulist。
+
 ## Linux 交叉编译（CI）
 
-Linux 不是目标平台；交叉编译只是为了让可移植的一半（core/model/cpu/storage/store）
-在没有 Windows 的 CI 上也能编译并跑单元测试，并且保证 `storage/linux/io_uring.cpp`
-不腐烂：
+原来 Linux 只为 CI 交叉编译可移植的一半；现在原生构建覆盖它，这条命令仍然可以单独检查 io_uring 后端能编：
 
 ```bash
 zig c++ -target x86_64-linux-gnu -std=c++23 -I. -c storage/linux/io_uring.cpp -o /tmp/io_uring.o

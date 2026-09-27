@@ -1,0 +1,172 @@
+Test project /home/chenkailun/projects/cachedMoE/build
+    Start 23: suite.integration
+1/7 Test #23: suite.integration ................   Passed    0.87 sec
+    Start 24: suite.multistream
+2/7 Test #24: suite.multistream ................   Passed  296.65 sec
+    Start 27: suite.gpu_layer
+3/7 Test #27: suite.gpu_layer ..................   Passed    4.71 sec
+    Start 31: suite.decode
+4/7 Test #31: suite.decode .....................   Passed  300.79 sec
+    Start 32: suite.spec_forward
+5/7 Test #32: suite.spec_forward ...............   Passed  193.00 sec
+    Start 35: suite.gpu_moe
+6/7 Test #35: suite.gpu_moe ....................***Failed    6.11 sec
+[ RUN ] gpu_moe.matches_the_oracle_across_every_variant
+       x fp16 round-trip: relative L2 error 2.039e-04
+       M1 L32 R1 sg32 dec1 hfp16 xglob baseline: wave32, arithmetic decode, fp16 h  cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L32 R1 sg32 dec1 hfp16 xglob B:L16R2 B alone at 16 lanes, 2 rows                  cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M6 L32 R1 sg32 dec1 hfp16 xglob B:L16R2 M=6, B alone at 16 lanes, 2 rows             cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L16 R1 sg32 dec1 hfp16 xglob 16 lanes per row                             cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L64 R1 sg32 dec1 hfp16 xglob 64 lanes per row over 32-wide subgroups      cos 0.999999961  max|dy| 2.612e-03 (1.37e-04 of |y|max)
+       M1 L64 R1 sg64 dec1 hfp16 xglob wave64                                       cos 0.999999961  max|dy| 2.612e-03 (1.37e-04 of |y|max)
+       M1 L32 R1 sg64 dec1 hfp16 xglob wave64, 32 lanes per row                     cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L32 R1 sg32 dec0 hfp16 xglob constant-table FP4 decode                    cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L32 R1 sg32 dec2 hfp16 xglob select-tree FP4 decode                       cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L32 R1 sg32 dec1 hfp32 xglob fp32 h                                       cos 0.999999971  max|dy| 2.191e-03 (1.15e-04 of |y|max)
+       M1 L32 R2 sg32 dec0 hfp16 xglob 2 weight rows per lane                       cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L16 R4 sg32 dec0 hfp16 xglob 4 weight rows per lane, 16 lanes             cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L64 R2 sg64 dec0 hfp16 xglob 2 rows per lane, wave64, 64 lanes            cos 0.999999961  max|dy| 2.612e-03 (1.37e-04 of |y|max)
+       M6 L32 R1 sg32 dec1 hfp16 xglob M=6, fp16 h                                  cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M6 L32 R1 sg32 dec1 hfp32 xglob M=6, fp32 h                                  cos 0.999999971  max|dy| 2.191e-03 (1.15e-04 of |y|max)
+       M6 L16 R2 sg32 dec0 hfp16 xglob M=6, 2 rows per lane                         cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L32 R1 sg32 dec0 hfp16 xlds x tiled through LDS                          cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M1 L32 R1 sg32 dec0 hfp16 xldsf16 x tiled through LDS, packed fp16 FMA         cos 0.999999846  max|dy| 5.797e-03 (3.04e-04 of |y|max)
+       M1 L32 R1 sg32 dec0 hfp16 xldsi8 x quantised to int8, dot4                    cos 0.999931569  max|dy| 1.024e-01 (5.38e-03 of |y|max)
+       M1 L16 R2 sg32 dec0 hfp16 xlds LDS tile, 16 lanes, 2 rows per lane          cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M6 L16 R2 sg32 dec0 hfp16 xlds M=6, LDS tile                                cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M6 L16 R2 sg32 dec0 hfp16 xldsf16 M=6, LDS tile, packed fp16 FMA               cos 0.999999846  max|dy| 5.797e-03 (3.04e-04 of |y|max)
+       M6 L16 R2 sg32 dec0 hfp16 xldsi8 M=6, LDS tile, int8 dot4                     cos 0.999931569  max|dy| 1.024e-01 (5.38e-03 of |y|max)
+       M6 L32 R1 sg32 dec0 hfp16 xlds M=6, LDS tile, 32 lanes                      cos 0.999999961  max|dy| 2.611e-03 (1.37e-04 of |y|max)
+       M6 L32 R1 sg32 dec0 hfp16 xldsi8 M=6, int8 dot4, 32 lanes                     cos 0.999931569  max|dy| 1.024e-01 (5.38e-03 of |y|max)
+       M1 L32 R1 sg32 dec0 hfp16 xgf16 packed fp16 from global, no LDS              cos 0.999999562  max|dy| 9.043e-03 (4.75e-04 of |y|max)
+       M6 L16 R2 sg32 dec0 hfp16 xgf16 M=6, packed fp16 from global                 cos 0.999999562  max|dy| 9.043e-03 (4.75e-04 of |y|max)
+       M1 L32 R1 sg32 dec0 hfp16 xgi8 int8 dot4 from global, no LDS                cos 0.999931569  max|dy| 1.024e-01 (5.38e-03 of |y|max)
+       M6 L16 R2 sg32 dec0 hfp16 xgi8 M=6, int8 dot4 from global                   cos 0.999931569  max|dy| 1.024e-01 (5.38e-03 of |y|max)
+       M1 L32 R1 sg32 dec0 hfp16 xprei8/glob int8 x from the pre-pass, A only             cos 0.999978930  max|dy| 5.525e-02 (2.90e-03 of |y|max)
+       M1 L16 R2 sg32 dec0 hfp16 xprei8/glob int8 x pre-pass, 16 lanes, 2 rows            cos 0.999978930  max|dy| 5.525e-02 (2.90e-03 of |y|max)
+       M6 L16 R2 sg32 dec0 hfp16 xprei8/glob M=6, int8 x pre-pass                         cos 0.999978930  max|dy| 5.525e-02 (2.90e-03 of |y|max)
+[  ok ] gpu_moe.matches_the_oracle_across_every_variant
+[ RUN ] gpu_moe.the_indirection_list_picks_the_expert
+       (39, 383) selected out of two slots: cos 0.999999935, max|dy| 3.253e-03 (3.66e-04)
+[  ok ] gpu_moe.the_indirection_list_picks_the_expert
+[ RUN ] gpu_moe.the_int8_x_pre_pass_is_expert_dependent
+       ( 0,  0) fp16 x cos 0.999999961  1.371e-04 of |y|max
+       ( 0,  0) int8 x cos 0.999978930  2.902e-03 of |y|max
+       (39,383) fp16 x cos 0.999999935  3.657e-04 of |y|max
+       (39,383) int8 x cos 0.999971573  8.856e-03 of |y|max
+       worst int8-x error over the two goldens: 8.856e-03 (design §12's int8 bar is 5e-3)
+[  ok ] gpu_moe.the_int8_x_pre_pass_is_expert_dependent
+[ RUN ] gpu_moe.route_weights_and_the_slot_reduction
+       0.25 + 0.75 of the same expert: cos 0.999999962, max|dy| 2.711e-03 (1.42e-04)
+[  ok ] gpu_moe.route_weights_and_the_slot_reduction
+[ RUN ] gpu_moe.the_verify_batch_computes_one_answer_per_column
+       reference columns differ by 3.710 of |y|max
+       M6 L32 R1 sg32 dec0 hfp16 xglob  global x                     worst column 3 at 1.594e-04 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xglob  global x, 16 lanes, 2 rows   worst column 3 at 1.594e-04 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xlds   LDS x tile                   worst column 3 at 1.594e-04 of |y|max
+       M6 L32 R1 sg32 dec0 hfp16 xlds   LDS x tile, 32 lanes         worst column 3 at 1.594e-04 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xldsf16 LDS x tile, packed fp16      worst column 2 at 3.039e-04 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xldsi8 LDS x tile, int8 dot4        worst column 1 at 7.048e-03 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xgf16  packed fp16 from global      worst column 4 at 5.127e-04 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xgi8   int8 dot4 from global        worst column 1 at 7.048e-03 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xprei8/glob int8 x from the pre-pass     worst column 5 at 4.306e-03 of |y|max
+       M6 L32 R1 sg32 dec0 hfp16 xprei8/glob int8 x pre-pass, 32 lanes    worst column 5 at 4.306e-03 of |y|max
+[  ok ] gpu_moe.the_verify_batch_computes_one_answer_per_column
+[ RUN ] gpu_moe.the_verify_batch_runs_its_expert_union_once
+       disjoint sets      union 36 of 36 experts | worst column 3 at 1.270e-07 of |y|max
+       overlapping sets   union 21 of 36 experts | worst column 0 at 3.547e-08 of |y|max
+       reordered sets     union  6 of 36 experts | worst column 1 at 7.101e-08 of |y|max
+       zero-weight column: union vs the shared expert alone 3.010e-08 of |y|max (|y|max 7.920)
+[  ok ] gpu_moe.the_verify_batch_runs_its_expert_union_once
+[ RUN ] gpu_moe.the_verify_batch_takes_one_expert_set_per_column
+       batch: 3 columns: stage 0.02 ms, expert rows 0.00 ms, dispatches 2.44 ms, wall 2.97 ms (0.99 ms a column)
+       column pairing 0 (same experts, per-column x+w): runner y[0] vs M=1 0.000e+00 | run_batch's column 0.000e+00
+       column pairing 1 (same experts, per-column x+w): runner y[1] vs M=1 0.000e+00 | run_batch's column 0.000e+00
+       column pairing 2 (same experts, per-column x+w): runner y[2] vs M=1 0.000e+00 | run_batch's column 0.000e+00
+       identical columns          columns spread 0.000e+00, col 0 vs the M=1 run 0.000e+00
+       per-column weights only    columns spread 5.235e+00, col 0 vs the M=1 run 0.000e+00
+       per-column x only          columns spread 2.812e+00, col 0 vs the M=1 run 0.000e+00
+       column 0: run_batch(M=1) vs M=1 0.000e+00 | batch(M=3) vs run_batch(M=1) 0.000e+00
+       column 1: run_batch(M=1) vs M=1 0.000e+00 | batch(M=3) vs run_batch(M=1) 0.000e+00
+       column 2: run_batch(M=1) vs M=1 0.000e+00 | batch(M=3) vs run_batch(M=1) 0.000e+00
+       x column 0 ran on: 0/5120 words differ from the staged x
+       x column 1 ran on: 0/5120 words differ from the staged x
+       x column 2 ran on: 0/5120 words differ from the staged x
+       column 0: max |batch - one| 0.000e+00 (0.00e+00 of |y|max)
+       column 1: max |batch - one| 0.000e+00 (0.00e+00 of |y|max)
+       column 2: max |batch - one| 0.000e+00 (0.00e+00 of |y|max)
+       columns differ by 0.376 of |y|max
+[  ok ] gpu_moe.the_verify_batch_takes_one_expert_set_per_column
+[ RUN ] gpu_moe.the_fp8_shared_expert_runs_in_the_same_dispatches
+       shared expert layer 0: 11796480 B of values + 11520 B of scales per matrix, part address mod 16 = 8
+       M1 L32 R1 sg32 dec0 hfp16 xglob fp8  M=1, global x                            cos 0.999999947  1.367e-04 of |y|max
+       M1 L16 R2 sg32 dec0 hfp16 xglob fp8  M=1, 16 lanes, 2 rows                    cos 0.999999947  1.364e-04 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xlds fp8   M=6, LDS tile (fp8 keeps global x)       cos 0.999999947  1.364e-04 of |y|max
+       M1 L32 R1 sg32 dec0 hfp16 xglob hqB fp8 M=1, h fp8-quantised in dispatch B       cos 1.000000000  2.966e-07 of |y|max
+[  ok ] gpu_moe.the_fp8_shared_expert_runs_in_the_same_dispatches
+[ RUN ] gpu_moe.the_fp8_h_quantisation_matches_the_reference
+       M1 L32 R1 sg32 dec0 hfp16 xglob      no quantisation (design v0.5)                vs y_ref 1.371e-04  vs y_hq 1.359e-02  vs y_hq16 1.232e-02
+       M1 L32 R1 sg32 dec0 hfp16 xglob hqB  fp8 round trip inside dispatch B             vs y_ref 1.229e-02  vs y_hq 2.776e-03  vs y_hq16 3.018e-07
+       M1 L16 R2 sg32 dec0 hfp16 xglob hqB  fp8 round trip inside dispatch B, 32-row groups vs y_ref 1.229e-02  vs y_hq 2.776e-03  vs y_hq16 3.081e-07
+       M1 L16 R2 sg32 dec0 hfp16 xglob hq8  fp8 h written by dispatch A                  vs y_ref 1.385e-02  vs y_hq 1.229e-03  vs y_hq16 2.755e-03
+  FAIL /home/chenkailun/projects/cachedMoE/tests/test_gpu_moe.cpp:1570
+       CHECK failed: vs_hq16.rel_to_scale <= c.tol
+  FAIL /home/chenkailun/projects/cachedMoE/tests/test_gpu_moe.cpp:1578
+       CHECK failed: compare(col0, first_quantised).rel_to_scale <= 1e-4
+       M1 L16 R2 sg32 dec0 hfp16 xlds hq8   fp8 h written by dispatch A, LDS x tile      vs y_ref 1.385e-02  vs y_hq 1.229e-03  vs y_hq16 2.755e-03
+  FAIL /home/chenkailun/projects/cachedMoE/tests/test_gpu_moe.cpp:1570
+       CHECK failed: vs_hq16.rel_to_scale <= c.tol
+  FAIL /home/chenkailun/projects/cachedMoE/tests/test_gpu_moe.cpp:1578
+       CHECK failed: compare(col0, first_quantised).rel_to_scale <= 1e-4
+       M6 L16 R2 sg32 dec0 hfp16 xlds hq8   M=6, fp8 h written by dispatch A             vs y_ref 1.385e-02  vs y_hq 1.229e-03  vs y_hq16 2.755e-03
+  FAIL /home/chenkailun/projects/cachedMoE/tests/test_gpu_moe.cpp:1570
+       CHECK failed: vs_hq16.rel_to_scale <= c.tol
+  FAIL /home/chenkailun/projects/cachedMoE/tests/test_gpu_moe.cpp:1578
+       CHECK failed: compare(col0, first_quantised).rel_to_scale <= 1e-4
+       M6 L16 R2 sg32 dec0 hfp16 xgf16 hq8  M=6, fp8 h, packed fp16 gate/up              vs y_ref 1.191e-02  vs y_hq 3.880e-03  vs y_hq16 2.970e-03
+       M1 L32 R1 sg32 dec0 hfp16 xglob hqP  fp8 h by the third dispatch, L32 R1          vs y_ref 1.229e-02  vs y_hq 2.776e-03  vs y_hq16 5.030e-08
+       M1 L16 R2 sg32 dec0 hfp16 xglob hqP  fp8 h by the third dispatch, L16 R2          vs y_ref 1.229e-02  vs y_hq 2.776e-03  vs y_hq16 5.030e-08
+       M1 L64 R1 sg32 dec0 hfp16 xglob hqP  fp8 h by the third dispatch, 64 lanes        vs y_ref 1.229e-02  vs y_hq 2.776e-03  vs y_hq16 5.030e-08
+       M6 L32 R1 sg32 dec0 hfp16 xglob hqP  M=6, fp8 h by the third dispatch             vs y_ref 1.229e-02  vs y_hq 2.776e-03  vs y_hq16 5.030e-08
+       M6 L16 R2 sg32 dec0 hfp16 xgf16 hqP  M=6, fp8 h by the third dispatch, packed fp16 gate/up vs y_ref 1.206e-02  vs y_hq 3.990e-03  vs y_hq16 3.152e-03
+[FAIL ] gpu_moe.the_fp8_h_quantisation_matches_the_reference (6)
+[ RUN ] gpu_moe.a_partial_dispatch_reduces_to_the_same_y
+       M1 L32 R1 sg32 dec0 hfp16 xglob  3 + 4 slots: 1349/5120 words bit-identical, max|dy| 7.928e-08 of |y|max
+       M1 L32 R1 sg32 dec0 hfp16 xglob  split A + one B: 5120/5120 words bit-identical
+       M6 L16 R2 sg32 dec0 hfp16 xgf16  3 + 4 slots: 30226/30720 words bit-identical, max|dy| 7.927e-08 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xgf16  split A + one B: 30720/30720 words bit-identical
+       M6 L16 R2 sg32 dec0 hfp16 xgf16 hq8 4 + 3 slots: 27944/30720 words bit-identical, max|dy| 3.951e-08 of |y|max
+       M6 L16 R2 sg32 dec0 hfp16 xgf16 hq8 split A + one B: 30720/30720 words bit-identical
+       M1 L32 R1 sg32 dec0 hfp16 xglob hqP 3 + 4 slots: 2335/5120 words bit-identical, max|dy| 7.900e-08 of |y|max
+       M1 L32 R1 sg32 dec0 hfp16 xglob hqP split A + one B: 5120/5120 words bit-identical
+       M1 L32 R1 sg32 dec0 hfp16 xglob  1 + 6 slots: 1249/5120 words bit-identical, max|dy| 4.955e-08 of |y|max
+       M1 L32 R1 sg32 dec0 hfp16 xglob  split A + one B: 5120/5120 words bit-identical
+       M1 L32 R1 sg32 dec0 hfp16 xglob  6 + 1 slots: 1538/5120 words bit-identical, max|dy| 3.964e-08 of |y|max
+       M1 L32 R1 sg32 dec0 hfp16 xglob  split A + one B: 5120/5120 words bit-identical
+[  ok ] gpu_moe.a_partial_dispatch_reduces_to_the_same_y
+[ RUN ] gpu_moe.gateup_split_across_submits_is_bit_identical
+       6 early + 1 late across two submits: 5120/5120 words bit-identical
+       6 early + 1 late across two submits: 5120/5120 words bit-identical
+       5 early + 2 late across two submits: 5120/5120 words bit-identical
+       1 early + 6 late across two submits: 5120/5120 words bit-identical
+       4 early + 3 late across two submits: 5120/5120 words bit-identical
+[  ok ] gpu_moe.gateup_split_across_submits_is_bit_identical
+
+11 case(s) run, 1 failed, 6 assertion failure(s)
+
+    Start 36: suite.speculate
+7/7 Test #36: suite.speculate ..................   Passed    0.03 sec
+
+86% tests passed, 1 tests failed out of 7
+
+Label Time Summary:
+needs-gpu      = 801.26 sec*proc (5 tests)
+needs-model    = 802.13 sec*proc (6 tests)
+unit           =   0.03 sec*proc (1 test)
+
+Total Test time (real) = 802.16 sec
+
+The following tests FAILED:
+	 35 - suite.gpu_moe (Failed)                            needs-gpu needs-model
+Errors while running CTest
+rc=8 maxtemp=75C ctrl=nvme2

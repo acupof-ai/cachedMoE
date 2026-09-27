@@ -611,6 +611,76 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0h. **2026-09-28：开发机换成 Linux（Omarchy，Mesa 26.2 RADV），热步 ~117 → ~79 ms（−33%），数值逐位不变（Track LX，`build.md` 的 Linux 一节）。**
+   同一台 Strix Halo 重装成 Linux 之后，引擎的 MoE 段从 Windows 的 31 ms 变成 **50–53 ms/token**，而 `kernel_bench` 的纯 fp4 一对仍是
+   **0.622 ms = 92% ceiling**（Windows 0.603）。按字节算不通，于是看 ACO 的机器码：**`fp4_decode` 的 DecodeMode 0（`kE2M1[nib]`，
+   Windows 上的 M=1 冠军）在 ACO 里被编成每个元素一棵带 `s_cbranch_execz` 的选择树**（gate/up 一个内核 140 个 execz），
+   带 fp8 共享专家的 7 槽一对因此从 Windows 的 216.9 GB/s 掉到 **92.2 GB/s（40%）**。
+   **DecodeMode 1（直接拼 fp32 位模式，E2M1 值精确）**：moe gpu **50–53 → 31–32 ms**，热步 ABAB 两对 **中位 ~117 → ~81 ms**（80.5 最好，
+   Windows 的历史最好是 81.5），`l3_ppl` off **NLL 0.601884 逐位不变**。**默认开，只在 RADV 上**（`VkPhysicalDeviceDriverProperties.driverID`，
+   `DeviceCaps::driver_id`）；AMD 专有驱动仍是 0；`DEEPMOE_MOE_DEC` 覆盖。
+   **Linux 的 NLL 基准是 0.601884 / top-1 62/64，不是 0.630051 / 61/64**——同一份 `traces/l3_64`，两次逐位相同；差在两个驱动的编译器上
+   （本仓库的尺子对 fp32 参考的噪声底在 Linux 上是 ×1.007，Windows ×1.033）。**以后在这台机器上"逐位复现"指的是 0.601884**（同日 dispatch B 形状改默认后改为 0.623007 / 60/64，attention `fp8_round` 修正后再改为 **0.639409 / 58/64**，见本条下文）。
+   试过并退掉的（同一次）：① MoE 形状 L16 R2 **xgf16**：moe 37 ms 但 **NLL 0.647669 / top-1 56/64**（fp4 槽的 x 打包成 fp16）⇒ NO-GO；
+   ② L16 R2 / L16 R1 xglob：moe 48 ms，只拿到一小截；③ fp8 E4M3 的位运算解码（代替 LDS 表，256 码逐位相同）：`kernel_bench` 无差别 ⇒ 表不是瓶颈，已回退；
+   ④ 同样的算术 FP4 解码放进 `prefill_gemm`：**反而慢 10–50%**（prefill 一个权重复用 TileM 次，表的代价被摊掉），已回退。
+   **然后是 gate 往返，答案是 CCD**：MoE 变快后热步呈双峰（~80 / ~93 ms），差全在 "other"（3 vs 17 ms）。
+   amdgpu 的中断实际投递在 **CPU 29（CCD1）**；`taskset` 绑 CCD1 两对 **78–79.5 ms**、绑 CCD0 **90–100 ms**——
+   等 fence 的线程和中断不在同一个 L3 时，每层多一次跨 CCD 唤醒和缓存行搬运。
+   **已落地并默认开**（Linux）：`Engine::init` 在起 IoEngine 之前把线程绑到 amdgpu 中断所在 CPU 的 L3 域（读 `/proc/interrupts`
+   + `effective_affinity_list` + `index3/shared_cpu_list`），`DEEPMOE_CPU_AFFINITY=off` 关、给 cpulist 则照用。
+   结果：auto 7 轮里 6 轮 **78.0–79.5 ms**（与 taskset 同），off 5 轮在 79–95 之间跳；残余一轮 81–89 未解释。**热步 ~117 → ~79 ms（−33%）**。
+   `DEEPMOE_FENCE_SPIN_US=3000`：两对都 **~95 ms（更差）** ⇒ NO-GO，与 Windows 结论同向。
+   Linux 另外修的（都在 `build.md`）：io_uring 后端 SQ 多线程丢请求（挂死）、path A 的 `-EFAULT`（中转缓冲）、
+   `available_physical_bytes()` 在 Linux 返回 0（自动缓存大小把 path B 算成零）。
+   ⚠️ **`suite.multistream` 在 Linux 上两个用例 GPU 超时**（amdgpu 默认每个 job 2 s，`ring comp_1.2.0 timeout` → device lost），
+   **`RADV_DEBUG=hang`（隐含 syncshaders）下通过**、`zerovram` 与主机内存清零都不影响 ⇒ 是**同步竞争**：两个流的命令之间缺一个屏障/依赖，
+   Windows 驱动在相邻提交之间隐式串行把它盖住了。**只影响可选的多流模式**（`serve --streams N`，默认 1，网页端不开）。
+   **定位到 eager MoE 提交**（多流时每层 MoE 单独一个等驻留时间线的 submit）：`DEEPMOE_MS_EAGER_MOE=0` 三个用例全过、轨迹逐位相同、零超时。
+   **RADV 上默认关掉 eager**（`init_gpu` 按 `driver_id`），`DEEPMOE_MS_EAGER_MOE=1` 打开；`suite.multistream` 默认配置 280 s 通过。
+   **根因没找到**（devcoredump 只有寄存器与环，读不到在跑的 IB），eager 在 RADV 上值多少也没量——那是 `--streams 2` 的吞吐 A/B，要长时间读盘。
+   顺带：`alloc_host_pages` 在 Linux 改用匿名 `mmap`（VirtualAlloc 的对应物：清零、按页对齐），原来的对齐 `operator new` 不清零。
+   ⚠️ **外接模型盘会过热掉线**（空闲 72 °C、临界 95 °C，`unsafe_shutdowns` 552）：长时间读盘的测试前先看 `nvme smart-log /dev/nvme1`。
+   **path A 超额 → 给它设上限？NO-GO，默认关（`DEEPMOE_PATH_A_CAP=on` 开）。** RADV 从不拒绝 path A 的分配：auto 缓存 41 个 slab（71.8 GiB）
+   全落在 63.5 GiB 的显存堆上，开跑 ~9 s 内 TTM 把 ~24 GB 挪到 GTT（`mem_info_vram_used` 59 → 41 G），path B 一个没用。
+   按 `VK_EXT_memory_budget` 的余量（握着 4 GiB 预留时量，49 GiB）截断后 27 片在 A、14 片在 B——**热步 79.3 → 482 ms**：
+   submit 0.2 → 356 ms（每次 `vkQueueSubmit` ~8.7 ms）、moe gpu 32 → 64、engram 2.8 → 8.9。
+   Linux 上 path B 是 amdgpu userptr BO，推测每次提交都要重新校验它的页（未证实）；反过来 TTM 迁出的 GTT 没有可见代价。
+   ⇒ **Linux 上 path B 实际不可用，让 path A 超额是对的**；更大的缓存靠 BIOS 显存切分或 GTT，而不是 path B。
+   结果在 `bench/results/linux/path_a_cap/`。
+   **dispatch B（w2）单独的形状：GO，RADV 默认开，热步 ~79.9 → ~76.7 ms（−3.9%，四对交替）。** 引擎形状在 `kernel_bench` 的新段
+   "fp8 dec1 B" 里拆开看：A（w1+w3）204 GB/s，**B 只有 152 GB/s**（0.807 ms/7 槽一对）。`MoeSpec::lanes_b / rows_b`（0 = 跟 A）让 B 单独取形状：
+   A 保持 L32 R1、B 取 **L16 R2 → 0.757 ms**（L16 R4 0.753，L32 R2/R4 与 L64 都更慢）。引擎里 moe gpu 32.3 → 30.0。
+   数值：**只改了 fp32 归约宽度**——L1 golden 误差逐位相同（1.37e-4 of |y|max，cos 0.999999961，`gpu_moe` 新增 B:L16R2 的 M=1/M=6 用例），
+   但 `l3_ppl` off 从 **0.601884 → 0.623007（top-1 62 → 60/64）**：两个近平局位置翻了。**这个数只跟 B 的 lane 数走**：
+   L16 R4 逐位同 0.623007，L32 R2 逐位同 0.601884；PPL 1.021× off，在工具自己的 1.05× 线内；Windows 生产是 0.630051（×1.054 对 fp32 参考）。
+   ⇒ **Linux 的 NLL 基准改为 0.623007 / top-1 60/64**；`DEEPMOE_MOE_LB=32 DEEPMOE_MOE_RB=1` 回到旧形状（仍是 0.601884）。
+   union runner 不跟（没量过 ~20 槽的情形，`DEEPMOE_MOE_UNION_LB/RB`）。decode / gpu_layer / integration / spec_forward / speculate 全过。
+   **同一次退掉的**：B 走 int8 dot4（`x_mode_b` 3）内核 0.738 ms、热步 −3.7%，但 **NLL 0.622511 / 60/64**，而且它量化 h，
+   L1 误差是 5e-3 级——和纯重排的 L16 在尺子上分不开，但 L1 上分得开，不值得；B 的 LDS / ldsf16 / gi8 都没有收益。
+   开关：`DEEPMOE_MOE_XMODE_B`、`DEEPMOE_MOE_LB`、`DEEPMOE_MOE_RB`（`moe_bridge.cpp`）。
+   **Track SE：共享专家塞进 gate 往返的空档——GO，RADV 默认开，热步 ~77.2 → ~74.3 ms（−3.9%，三对交替，另三对 −2.6%），数值逐位不变。**
+   §3 的 53 在 Windows 上判的是 386 µs/层的 gate 空档（265 µs 是驱动）；Linux 上这段只有 **~114 µs/层（4.56 ms/token）**，
+   而共享专家不依赖路由：x 一出来它就能算。做法：gate 所在的 submit 之后**紧跟一个不带等待的 submit**——
+   GPU 上的 act_quant（新 `moe_xact.slang`，与主机 `act_quant_to_fp16` 逐位相同）+ 共享专家的 dispatch A + h 量化，
+   走 MoeRunner 第三条单元素 slot 列表；主机只等 gate 自己那次的 fence（`cmd_wait(lc.gate_fence)`），
+   路由的六个槽走 Track R1 的拆分形（A 六槽 + B 全七槽，逐位同一次派发）。指针表开两页、按层奇偶轮换
+   （`layer` push constant 选页），让第 L 层的共享行能在第 L−1 层的 MoE 还在队列里时写入；两个 `se_cmd_` 按奇偶轮用。
+   trace：MoE 前的空档 **4.56 → 0.78 ms/token**，但拆开的 A 多花 ~1.7 ms（共享 A 单独 128 µs + 路由 A 387 µs，比一次七槽慢 ~35 µs/层），净 −3 ms。
+   主机侧 act_quant（0.3 ms/token）也一并消失。闸：`l3_ppl` off **0.623007 / 60/64 逐位**，每个 warm pass 的 margin 逐位同，
+   decode / gpu_moe / gpu_layer / integration / spec_forward / speculate / multistream 见下。只在单流时开（多流没量过）；`DEEPMOE_SHARED_EARLY=0/1` 覆盖，
+   `DEEPMOE_SE_CHECK=1` 每层把 GPU 写的 x 与主机 act_quant 逐元素比对。
+   **做的过程中踩到的三个坑，留给下一个人**：① 引擎每流只有一个 `tok_cmd_`，规矩是重录前先等——在 gate 还在跑时重录它直接 GPU 超时；
+   ② **Mesa 的 NIR 会把 `(a + 1.5·2^14) − 1.5·2^14` 折叠成 `a`**：E4M3 次正规区的舍入被吃掉（x = 2.03e-5 → 0x0154，应为 0x0180），
+   `moe_xact` 改成全精确的整数 RNE；**`attn_common.slang` / `prefill_common.slang` 的 `fp8_round` 用的是同一个技巧，RADV 上一样被折叠——已同样改掉**
+   （Windows 驱动不折叠，所以这是让 Linux 回到参考语义、并与 KV 字节 `fp8_encode_rn` 一致的修正）：`gpu_attn` / `gpu_layer` 对 CPU oracle 的 598 行误差
+   只有少数几行在 1e-9（cos）量级上动、有升有降，全部通过；但 `l3_ppl` off **0.623007 → 0.639409（top-1 60 → 58/64）**——
+   与上面 B 形状同一类近平局翻转，这把 64 步尺子分不出好坏。**Linux 的 NLL 基准因此改为 0.639409 / 58/64**（热步不变 74.7 ms）；decode / spec_forward / integration 过；
+   ③ dispatch A 写的是 `swiglu × RouteW[slot]`，共享槽的 1.0 原本由 stage_input 写，提前派发时进程第一层还是 0（l3_ppl 0.646705 暴露）。
+   **同日试过并退掉的（gate 空档的另外两条路）**：PM QoS 把 C-state 限在 C2（`/dev/cpu_dma_latency` 20 µs）：两对 78.3/75.9 vs 75.8/77.1，噪声内；
+   unbound 工作队列（drm_sched 的 worker）绑到中断所在的 CCD1：77.1/76.8 vs 77.4/78.4，−1% 在 ±3% 之下。都已还原。
+   用户态队列（`amdgpu.user_queue=1`，绕开内核调度）要改内核参数重启，`userq_ip_mask = 0`，**未做，等用户决定**。
+
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
    换成 **host 写 flag、device 自旋等它**（一个 command buffer 装下整个 token，

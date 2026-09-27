@@ -1,0 +1,90 @@
+UpdateCTestConfiguration  from :/home/chenkailun/projects/cachedMoE/build/DartConfiguration.tcl
+Test project /home/chenkailun/projects/cachedMoE/build
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 32
+    Start 32: suite.spec_forward
+
+32: Test command: /home/chenkailun/projects/cachedMoE/build/tests/deepmoe_tests "spec_forward."
+32: Working Directory: /home/chenkailun/projects/cachedMoE/build/tests
+32: Test timeout computed to be: 1500
+32: [ RUN ] spec_forward.batch_matches_m1
+32:       warm: 4100 experts resident
+32:       64 teacher-forced positions from 64, blocks of 5, vocab 129280
+32:       position 4 (block row 4): batch 943 vs M=1 4338, cos 0.9985909
+32:       position 11 (block row 1): batch 270 vs M=1 260, cos 0.9946487
+32:       position 14 (block row 4): batch 9675 vs M=1 34035, cos 0.9943683
+32:       position 45 (block row 0): batch 1192 vs M=1 270, cos 0.9976866
+32:       position 47 (block row 2): batch 294 vs M=1 1469, cos 0.9966808
+32:       position 58 (block row 3): batch 37153 vs M=1 3980, cos 0.9954988
+32:       row 0: worst cos 0.9732247, top-1 11/12
+32:       row 1: worst cos 0.9847039, top-1 11/12
+32:       row 2: worst cos 0.9865135, top-1 11/12
+32:       row 3: worst cos 0.9485159, top-1 11/12
+32:       row 4: worst cos 0.9808663, top-1 10/12
+32:       60 positions: worst cos 0.9485159 at 23, max |dlogit| 6.402e+00, top-1 54/60
+32:       teacher-forced over 60 positions: M=1 NLL 0.627674 (PPL 1.8732), batch NLL 0.645471 (PPL 1.9069), ratio 1.0180x
+32:       WARN spec_forward gate: mgt1 vs M=1 are not bitwise -- worst cos 0.9485159 (floor 0.93), top-1 54/60 = 90.0% (floor 50/60 = 83.3%)
+32: [  ok ] spec_forward.batch_matches_m1
+32: [ RUN ] spec_forward.a_rollback_restores_exactly_the_rejected_slots
+32:       rollback: 3/3 rejected slots were written and 3/3 restored; 2/2 accepted slots untouched
+32: [  ok ] spec_forward.a_rollback_restores_exactly_the_rejected_slots
+32: [ RUN ] spec_forward.the_first_layer_the_two_paths_disagree_on
+32:       layer  cos(ffn_norm)   gate ids equal
+32:       L00    1.000000000     yes
+32:       L01    1.000000000     yes
+32:       L02    1.000000000     yes
+32:       L03    1.000000000     yes
+32:       L08    0.999984224     NO
+32:       L09    0.999689052     yes
+32:       L10    0.999311695     yes
+32:       L11    0.999259838     yes
+32:       L12    0.999039174     NO
+32:       L13    0.999144287     yes
+32:       L14    0.999092276     yes
+32:       L15    0.999798681     yes
+32:       L16    0.998904781     NO
+32:       L17    0.998665016     yes
+32:       L18    0.998892452     NO
+32:       L19    0.997079236     yes
+32:       L20    0.993716000     NO
+32:       L21    0.995288073     NO
+32:       L22    0.996353550     NO
+32:       L23    0.996651355     NO
+32:       L24    0.994834565     NO
+32:       L25    0.995254118     yes
+32:       L26    0.995219972     NO
+32:       L27    0.993135704     NO
+32:       L28    0.993751025     yes
+32:       L29    0.994108068     NO
+32:       L30    0.994673568     yes
+32:       L31    0.994461021     NO
+32:       L32    0.994231088     NO
+32:       L33    0.994194217     yes
+32:       L34    0.994731667     NO
+32:       L35    0.994980925     NO
+32:       L36    0.996187219     NO
+32:       L37    0.996228328     NO
+32:       L38    0.993890839     NO
+32:       L39    0.977428551     NO
+32:       M=1 token 16, batch token 16; first layer past cos 0.99999: L8
+32: [  ok ] spec_forward.the_first_layer_the_two_paths_disagree_on
+32: 
+32: 3 case(s) run, 0 failed, 0 assertion failure(s)
+1/1 Test #32: suite.spec_forward ...............   Passed  170.48 sec
+
+The following tests passed:
+	suite.spec_forward
+
+100% tests passed out of 1
+
+Label Time Summary:
+needs-gpu      = 170.48 sec*proc (1 test)
+needs-model    = 170.48 sec*proc (1 test)
+
+Total Test time (real) = 170.48 sec
+rc=0 maxtemp=75C ctrl=nvme2
