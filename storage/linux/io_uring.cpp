@@ -1,11 +1,24 @@
 // io_uring backend, written against the raw kernel interface (no liburing --
-// design's "no third-party deps" rule). Linux is not a target platform for
-// deepMoE; this exists so the portable half of the runtime can be built and
-// unit-tested in CI with a real async backend behind it (design §14).
+// design's "no third-party deps" rule). It began as the CI backend (design §14);
+// since 2026-09-28 the dev machine itself runs Linux, so this is the production
+// read path there.
 //
-// Ownership/threading: one ring, driven exclusively by the IoEngine dispatcher
-// thread. The kernel owns the SQ/CQ shared mappings; this class owns the ring
-// fd and the three mmaps and unmaps them in the destructor.
+// Ownership/threading: one ring. `submit` may be called from several threads at
+// once -- IoEngine's submit pool (Track Q2, kDefaultSubmitThreads = 8) does
+// exactly that -- so the SQ producer side is serialised by `sq_mutex_`; the SQ
+// ring is single-producer and two unserialised writers overwrite each other's
+// SQE, which loses a chunk and leaves the dispatcher waiting for it forever.
+// `poll` runs only on the dispatcher thread. The kernel owns the SQ/CQ shared
+// mappings; this class owns the ring fd and the three mmaps.
+//
+// Device mappings: O_DIRECT pins the destination pages with get_user_pages,
+// which a DRM buffer mapping (VM_PFNMAP -- what vkMapMemory of a DEVICE_LOCAL
+// |HOST_VISIBLE type returns on RADV, i.e. path A) refuses: the read completes
+// with -EFAULT. Windows allows it (that is Track Q2's 704 us probe). So a chunk
+// whose destination lies in a /dev/dri mapping is read into a host bounce
+// buffer and copied on completion. The check is made at submit time from a
+// cached copy of /proc/self/maps; an -EFAULT that still gets through marks the
+// mapping and resubmits the chunk through a bounce buffer.
 #if defined(__linux__)
 
 #include <algorithm>
@@ -14,12 +27,17 @@
 #include <chrono>
 #include <cstring>
 #include <format>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #include <linux/io_uring.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "core/align.h"
@@ -38,10 +56,64 @@ namespace {
 int sys_io_uring_setup(unsigned entries, struct io_uring_params* p) {
     return static_cast<int>(::syscall(__NR_io_uring_setup, entries, p));
 }
-int sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_complete, unsigned flags) {
+int sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_complete, unsigned flags,
+                       const void* arg = nullptr, size_t argsz = 0) {
     return static_cast<int>(::syscall(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
-                                      nullptr, 0));
+                                      arg, argsz));
 }
+
+// Which address ranges are DRM buffer mappings (see the header comment). The
+// cache is refreshed from /proc/self/maps only when an address falls outside
+// every range it knows, which after start-up is essentially never.
+class MappingClassifier {
+public:
+    bool is_device(const void* p) {
+        const auto a = reinterpret_cast<uintptr_t>(p);
+        std::lock_guard lk(mu_);
+        if (const Range* r = find(a)) return r->device;
+        reload();
+        if (const Range* r = find(a)) return r->device;
+        return false;
+    }
+    void mark_device(const void* p) {
+        const auto a = reinterpret_cast<uintptr_t>(p);
+        std::lock_guard lk(mu_);
+        if (Range* r = find(a)) { r->device = true; return; }
+        ranges_.push_back({a & ~uintptr_t(4095), (a & ~uintptr_t(4095)) + 4096, true});
+    }
+
+private:
+    struct Range { uintptr_t lo, hi; bool device; };
+    Range* find(uintptr_t a) {
+        for (Range& r : ranges_) if (a >= r.lo && a < r.hi) return &r;
+        return nullptr;
+    }
+    void reload() {
+        std::vector<Range> forced;
+        for (const Range& r : ranges_) if (r.device) forced.push_back(r);
+        ranges_.clear();
+        std::FILE* f = std::fopen("/proc/self/maps", "r");
+        if (f) {
+            char line[1024];
+            while (std::fgets(line, sizeof line, f)) {
+                unsigned long lo = 0, hi = 0;
+                int path_at = 0;
+                if (std::sscanf(line, "%lx-%lx %*s %*s %*s %*s %n", &lo, &hi, &path_at) < 2) continue;
+                const bool dev = path_at > 0 && std::strncmp(line + path_at, "/dev/dri/", 9) == 0;
+                ranges_.push_back({lo, hi, dev});
+            }
+            std::fclose(f);
+        }
+        for (const Range& r : forced) {
+            bool covered = false;
+            for (Range& x : ranges_)
+                if (r.lo >= x.lo && r.lo < x.hi) { x.device = true; covered = true; }
+            if (!covered) ranges_.push_back(r);
+        }
+    }
+    std::mutex mu_;
+    std::vector<Range> ranges_;
+};
 
 // The ring head/tail words are shared with the kernel; the acquire/release
 // pairing below is the one documented in the io_uring manpages.
@@ -72,6 +144,7 @@ public:
         if (ring_fd_ < 0)
             return fail(Err::Unavailable, "io_uring_setup", static_cast<uint32_t>(errno));
         params_ = p;
+        ext_arg_ = (p.features & IORING_FEAT_EXT_ARG) != 0;
 
         size_t sq_sz = p.sq_off.array + p.sq_entries * sizeof(unsigned);
         size_t cq_sz = p.cq_off.cqes  + p.cq_entries * sizeof(struct io_uring_cqe);
@@ -117,31 +190,24 @@ public:
 
     Result<void> submit(const ChunkRequest& req) override {
         if (!req.file || !req.file->is_open()) return fail(Err::InvalidArgument, "chunk has no open file");
-        if (inflight_ >= caps_.max_queue_depth) return fail(Err::ResourceExhausted, "SQ is full");
-
-        const unsigned tail = *sq_tail_;
-        const unsigned head = load_acquire(sq_head_);
-        if (tail - head >= params_.sq_entries) return fail(Err::ResourceExhausted, "SQ is full");
-
-        const unsigned index = tail & *sq_mask_;
-        struct io_uring_sqe* sqe = &sqes_[index];
-        std::memset(sqe, 0, sizeof *sqe);
-        sqe->opcode    = IORING_OP_READ;
-        sqe->fd        = req.file->native();
-        sqe->off       = req.file_off;
-        sqe->addr      = reinterpret_cast<uint64_t>(req.dst);
-        sqe->len       = req.bytes;
-        sqe->user_data = req.chunk_id;
-        sq_array_[index] = index;
-        store_release(sq_tail_, tail + 1);
-
-        const int r = sys_io_uring_enter(ring_fd_, 1, 0, 0);
-        if (r < 0) return fail(Err::Io, "io_uring_enter(submit)", static_cast<uint32_t>(errno));
-        ++inflight_;
-        // The in-file part of the chunk is what must arrive; a read that
-        // straddles EOF is legally short (storage/backend.h).
-        pending_bytes_[req.chunk_id & (kPendingMask)] =
-            req.min_bytes ? req.min_bytes : req.bytes;
+        Slot slot;
+        slot.fd    = req.file->native();
+        slot.off   = req.file_off;
+        slot.dst   = req.dst;
+        slot.bytes = req.bytes;
+        slot.want  = req.min_bytes ? req.min_bytes : req.bytes;
+        if (maps_.is_device(req.dst)) {
+            slot.bounce = take_bounce(req.bytes);
+            if (!slot.bounce) return fail(Err::ResourceExhausted, "io_uring bounce buffer");
+        }
+        std::lock_guard lk(sq_mutex_);
+        if (inflight_.load(std::memory_order_relaxed) >= caps_.max_queue_depth) {
+            give_bounce(slot.bounce);
+            return fail(Err::ResourceExhausted, "SQ is full");
+        }
+        auto r = push_locked(req.chunk_id, slot);
+        if (!r) { give_bounce(slot.bounce); return r; }
+        inflight_.fetch_add(1, std::memory_order_relaxed);
         return {};
     }
 
@@ -152,40 +218,133 @@ public:
         for (;;) {
             n += drain(out.subspan(n));
             if (n > 0 || timeout.count() == 0) break;
-            if (std::chrono::steady_clock::now() >= deadline) break;
-            // The kernel has no "wait with timeout" on enter(); an IORING_OP_TIMEOUT
-            // SQE would be the production answer. CI only needs correctness.
-            std::this_thread::sleep_for(std::chrono::microseconds(200));
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) break;
+            if (ext_arg_) {
+                // Sleep in the kernel until a CQE lands or the deadline passes,
+                // instead of the old 200 us sleep loop (it added up to 200 us to
+                // every miss the decode waited on).
+                const auto left = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now);
+                struct __kernel_timespec ts {};
+                ts.tv_sec  = left.count() / 1'000'000'000;
+                ts.tv_nsec = left.count() % 1'000'000'000;
+                struct io_uring_getevents_arg arg {};
+                arg.ts = reinterpret_cast<uint64_t>(&ts);
+                (void)sys_io_uring_enter(ring_fd_, 0, 1, IORING_ENTER_GETEVENTS | IORING_ENTER_EXT_ARG,
+                                         &arg, sizeof arg);
+            } else {
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+            }
         }
         return n;
     }
 
-    uint32_t inflight() const override { return inflight_; }
+    uint32_t inflight() const override { return inflight_.load(std::memory_order_relaxed); }
 
     void cancel_all() override { /* the ring is torn down at shutdown; nothing partial survives */ }
 
 private:
     static constexpr uint64_t kPendingMask = 1023;
 
+    struct Slot {
+        int      fd     = -1;
+        uint64_t off    = 0;
+        void*    dst    = nullptr;
+        uint32_t bytes  = 0;
+        uint32_t want   = 0;       // the in-file part that must arrive (backend.h)
+        void*    bounce = nullptr; // host buffer the kernel reads into, or null
+    };
+
+    // Caller holds sq_mutex_. The slot is recorded before the tail is
+    // published, so the completion can never be seen before its record.
+    Result<void> push_locked(uint64_t chunk_id, const Slot& slot) {
+        const unsigned tail = *sq_tail_;
+        const unsigned head = load_acquire(sq_head_);
+        if (tail - head >= params_.sq_entries) return fail(Err::ResourceExhausted, "SQ is full");
+
+        slots_[chunk_id & kPendingMask] = slot;
+        const unsigned index = tail & *sq_mask_;
+        struct io_uring_sqe* sqe = &sqes_[index];
+        std::memset(sqe, 0, sizeof *sqe);
+        sqe->opcode    = IORING_OP_READ;
+        sqe->fd        = slot.fd;
+        sqe->off       = slot.off;
+        sqe->addr      = reinterpret_cast<uint64_t>(slot.bounce ? slot.bounce : slot.dst);
+        sqe->len       = slot.bytes;
+        sqe->user_data = chunk_id;
+        sq_array_[index] = index;
+        store_release(sq_tail_, tail + 1);
+
+        const int r = sys_io_uring_enter(ring_fd_, 1, 0, 0);
+        if (r < 0) return fail(Err::Io, "io_uring_enter(submit)", static_cast<uint32_t>(errno));
+        return {};
+    }
+
+    void* take_bounce(uint32_t bytes) {
+        const size_t want = (static_cast<size_t>(bytes) + (1u << 20) - 1) & ~size_t((1u << 20) - 1);
+        {
+            std::lock_guard lk(bounce_mutex_);
+            for (size_t i = 0; i < bounce_free_.size(); ++i)
+                if (bounce_free_[i].bytes >= want) {
+                    void* p = bounce_free_[i].ptr;
+                    bounce_size_.push_back({p, bounce_free_[i].bytes});
+                    bounce_free_.erase(bounce_free_.begin() + static_cast<long>(i));
+                    return p;
+                }
+        }
+        void* p = std::aligned_alloc(kPageSize, want);
+        if (!p) return nullptr;
+        std::lock_guard lk(bounce_mutex_);
+        bounce_size_.push_back({p, want});
+        return p;
+    }
+    void give_bounce(void* p) {
+        if (!p) return;
+        std::lock_guard lk(bounce_mutex_);
+        for (size_t i = 0; i < bounce_size_.size(); ++i)
+            if (bounce_size_[i].ptr == p) {
+                bounce_free_.push_back(bounce_size_[i]);
+                bounce_size_.erase(bounce_size_.begin() + static_cast<long>(i));
+                return;
+            }
+    }
+
     size_t drain(std::span<ChunkCompletion> out) {
         size_t n = 0;
         unsigned head = *cq_head_;
         const unsigned tail = load_acquire(cq_tail_);
         while (head != tail && n < out.size()) {
-            const struct io_uring_cqe& cqe = cqes_[head & *cq_mask_];
+            const struct io_uring_cqe cqe = cqes_[head & *cq_mask_];
+            ++head;
+            Slot& slot = slots_[cqe.user_data & kPendingMask];
+
+            if (cqe.res == -EFAULT && !slot.bounce) {
+                // A device mapping the classifier did not know about: remember
+                // it and read this chunk again through a bounce buffer.
+                maps_.mark_device(slot.dst);
+                Slot again = slot;
+                again.bounce = take_bounce(again.bytes);
+                if (again.bounce) {
+                    std::lock_guard lk(sq_mutex_);
+                    if (push_locked(cqe.user_data, again)) continue;   // still in flight
+                }
+                give_bounce(again.bounce);
+            }
+
             ChunkCompletion c;
             c.chunk_id = cqe.user_data;
             if (cqe.res < 0) {
                 c.status = Status{Err::Io, "io_uring read failed", static_cast<uint32_t>(-cqe.res)};
             } else {
                 c.bytes_moved = static_cast<uint32_t>(cqe.res);
-                const uint32_t want = pending_bytes_[c.chunk_id & kPendingMask];
-                if (want && c.bytes_moved < want)
-                    c.status = Status{Err::Io, std::format("short read: {} of {}", c.bytes_moved, want)};
+                if (slot.bounce) std::memcpy(slot.dst, slot.bounce, c.bytes_moved);
+                if (slot.want && c.bytes_moved < slot.want)
+                    c.status = Status{Err::Io, std::format("short read: {} of {}", c.bytes_moved, slot.want)};
             }
+            give_bounce(slot.bounce);
+            slot.bounce = nullptr;
             out[n++] = c;
-            ++head;
-            --inflight_;
+            inflight_.fetch_sub(1, std::memory_order_relaxed);
         }
         store_release(cq_head_, head);
         return n;
@@ -198,6 +357,10 @@ private:
         if (ring_fd_ >= 0) ::close(ring_fd_);
         sqe_map_ = cq_map_ = sq_map_ = nullptr;
         ring_fd_ = -1;
+        for (auto& b : bounce_free_) std::free(b.ptr);
+        for (auto& b : bounce_size_) std::free(b.ptr);
+        bounce_free_.clear();
+        bounce_size_.clear();
     }
 
     BackendCaps caps_;
@@ -216,8 +379,16 @@ private:
     struct io_uring_cqe* cqes_ = nullptr;
     struct io_uring_sqe* sqes_ = nullptr;
 
-    uint32_t inflight_ = 0;
-    uint32_t pending_bytes_[kPendingMask + 1] = {};
+    bool ext_arg_ = false;                  // IORING_FEAT_EXT_ARG: poll can wait in the kernel
+    std::atomic<uint32_t> inflight_{0};
+    std::mutex sq_mutex_;                   // serialises the SQ producer side
+    Slot slots_[kPendingMask + 1] = {};
+
+    struct Bounce { void* ptr; size_t bytes; };
+    std::mutex bounce_mutex_;
+    std::vector<Bounce> bounce_free_;       // idle bounce buffers
+    std::vector<Bounce> bounce_size_;       // bounce buffers in flight
+    MappingClassifier maps_;
 };
 
 }  // namespace

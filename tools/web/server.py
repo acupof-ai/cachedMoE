@@ -61,7 +61,7 @@ sys.dont_write_bytecode = True
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-MODEL = os.environ.get("DEEPMOE_MODEL_DIR", r"D:\models\DeepSeek-V4.1-Flash")
+MODEL = os.environ.get("DEEPMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"))
 
 # runtime/decode_layer.h: 65535 workgroups * gpu::kIdxScoreTile (8).
 K_MAX_INDEX_POSITIONS = 65535 * 8          # 524,280
@@ -723,7 +723,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser(description="local web chat UI for `deepmoe serve`")
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--max-context", type=int, default=65536)

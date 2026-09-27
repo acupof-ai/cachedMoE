@@ -1,5 +1,7 @@
 #include "store/pinned.h"
 
+#include <cstdio>
+
 #include <format>
 
 #include "core/align.h"
@@ -31,6 +33,19 @@ uint64_t available_physical_bytes() {
     ms.dwLength = sizeof(ms);
     if (!GlobalMemoryStatusEx(&ms)) return 0;
     return ms.ullAvailPhys;
+#elif defined(__linux__)
+    // MemAvailable is the kernel's own estimate of what can be allocated without
+    // swapping -- the Linux counterpart of ullAvailPhys. Returning 0 here (as this
+    // did until 2026-09-28) made the engine's auto sizing treat path B as having
+    // no memory at all, so the cache was path A only.
+    std::FILE* f = std::fopen("/proc/meminfo", "r");
+    if (!f) return 0;
+    char line[256];
+    unsigned long long kb = 0;
+    while (std::fgets(line, sizeof line, f))
+        if (std::sscanf(line, "MemAvailable: %llu kB", &kb) == 1) break;
+    std::fclose(f);
+    return static_cast<uint64_t>(kb) * 1024;
 #else
     return 0;
 #endif
@@ -181,7 +196,8 @@ Result<void> PinnedStore::load(const Manifest& manifest, const ShardSet& shards,
         if (!r.ok())
             return fail(r.status.code,
                         std::format("pinned load of '{}'{}: {}", plans[i].name,
-                                    plans[i].is_scale ? " (scale)" : "", r.status.message));
+                                    plans[i].is_scale ? " (scale)" : "", r.status.message),
+                        r.status.os_code);
     }
 
     for (const Plan& p : plans) {

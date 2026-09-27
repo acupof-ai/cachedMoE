@@ -146,7 +146,7 @@ def main() -> int:
     ap.add_argument("--pairs", type=int, default=3)
     ap.add_argument("--cache-slots", type=int, default=5100)
     ap.add_argument("--max-context", type=int, default=4096)
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
     ap.add_argument("--env", action="append", default=[])
     ap.add_argument("--arm-env", action="store_true",
                     help="both arms run WITH --mirror; the arms differ only by "

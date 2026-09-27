@@ -85,7 +85,7 @@ import corpus as corpus_mod  # noqa: E402
 import dsref  # noqa: E402
 import oracle  # noqa: E402
 
-DEFAULT_MODEL = r"D:\models\DeepSeek-V4.1-Flash"
+DEFAULT_MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash")
 DEFAULT_TRACES = os.path.join(REPO, "traces", "longctx")
 DEFAULT_DATA = os.path.join(REPO, "tests", "data", "longctx")
 PROBE_LAYERS = (0, 2, 13, 14, 20, 39)

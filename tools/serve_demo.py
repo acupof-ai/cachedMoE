@@ -19,7 +19,7 @@ import threading
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL = os.environ.get("DEEPMOE_MODEL_DIR", r"D:\models\DeepSeek-V4.1-Flash")
+MODEL = os.environ.get("DEEPMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"))
 
 
 class Server:
@@ -109,7 +109,7 @@ def table():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
     ap.add_argument("--cache-gb", type=int, default=16)
     ap.add_argument("--max-parked", type=int, default=1,
                     help="parked sessions kept in memory; with three sessions, 1 means the third "

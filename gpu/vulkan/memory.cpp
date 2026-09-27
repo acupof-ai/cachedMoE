@@ -12,6 +12,11 @@
 // VirtualAlloc memory and on large pages when SeLockMemoryPrivilege allows,
 // and neither is reachable through the C++ allocator. The rest of gpu/ is
 // portable; everything below the guard has an aligned-new fallback.
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <cerrno>
+#include <cstring>
+#endif
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -94,11 +99,26 @@ Result<HostAllocInfo> alloc_host_pages(uint64_t bytes, bool try_large_pages) {
                     std::format("VirtualAlloc({} B) failed", info.bytes), GetLastError());
     info.ptr = p;
     return info;
+#elif defined(__linux__)
+    // Anonymous mmap is VirtualAlloc's counterpart: page aligned, returned to
+    // the OS on free, and ZERO-FILLED. The aligned `operator new` this used
+    // before hands back recycled heap memory with whatever it held, and code
+    // written against VirtualAlloc may rely on fresh pages reading as zero.
+    (void)try_large_pages;
+    void* p = ::mmap(nullptr, static_cast<size_t>(info.bytes), PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED)
+        return fail(Err::ResourceExhausted, std::format("mmap({} B) failed", info.bytes),
+                    static_cast<uint32_t>(errno));
+    info.ptr = p;
+    info.note = "anonymous mmap (large pages are Windows-only here)";
+    return info;
 #else
     (void)try_large_pages;
     void* p = ::operator new(static_cast<size_t>(info.bytes),
                              std::align_val_t{static_cast<size_t>(kPageSize)}, std::nothrow);
     if (!p) return fail(Err::ResourceExhausted, std::format("aligned new({} B) failed", info.bytes));
+    std::memset(p, 0, static_cast<size_t>(info.bytes));
     info.ptr = p;
     info.note = "aligned new (large pages are Windows-only here)";
     return info;
@@ -109,6 +129,8 @@ void free_host_pages(const HostAllocInfo& info) {
     if (!info.ptr) return;
 #if defined(_WIN32)
     VirtualFree(info.ptr, 0, MEM_RELEASE);
+#elif defined(__linux__)
+    ::munmap(info.ptr, static_cast<size_t>(info.bytes));
 #else
     ::operator delete(info.ptr, std::align_val_t{static_cast<size_t>(kPageSize)});
 #endif

@@ -59,6 +59,11 @@
 #include "tests/l2_golden.h"
 #include "tests/test_framework.h"
 
+#if !defined(_WIN32)
+// MSVC/mingw spelling of the 64-bit seek; POSIX has fseeko with a 64-bit off_t.
+#define _fseeki64 fseeko
+#endif
+
 #ifndef DEEPMOE_TEST_DATA_DIR
 #define DEEPMOE_TEST_DATA_DIR "tests/data"
 #endif

@@ -52,7 +52,7 @@ import sys
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_MODEL = r"D:\models\DeepSeek-V4.1-Flash"
+DEFAULT_MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash")
 
 
 def log(msg: str):
@@ -120,7 +120,7 @@ def main() -> int:
     p.add_argument("--state", default=os.path.join("traces", "l3_64"),
                    help="the >= 64-step export (tools/oracle_l3_ppl.py)")
     p.add_argument("--model", default=os.environ.get("DEEPMOE_MODEL_DIR") or DEFAULT_MODEL)
-    p.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
+    p.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
     p.add_argument("--steps", type=int, default=64)
     p.add_argument("--modes", default="off,all,stall1")
     p.add_argument("--free-run", default="",

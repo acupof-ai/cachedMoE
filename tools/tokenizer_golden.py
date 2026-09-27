@@ -40,7 +40,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "tools"))
 sys.dont_write_bytecode = True
 
-MODEL = os.environ.get("DEEPMOE_MODEL_DIR", r"D:\models\DeepSeek-V4.1-Flash")
+MODEL = os.environ.get("DEEPMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"))
 
 
 def fnv64(ids):
@@ -172,7 +172,7 @@ def run_cpp(exe, texts):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
     ap.add_argument("--write-golden", action="store_true")
     ap.add_argument("--quick", action="store_true", help="skip the code point sweep and the corpus")
     ap.add_argument("--fuzz", type=int, default=20000)

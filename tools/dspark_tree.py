@@ -571,7 +571,7 @@ def _lse_f64(B: np.ndarray) -> np.ndarray:
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TRACES = os.path.join(REPO, "traces", "dspark_tree")
-DEFAULT_MODEL = r"D:\models\DeepSeek-V4.1-Flash"
+DEFAULT_MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash")
 KS = (4, 8, 16, 32)
 KV = 32
 

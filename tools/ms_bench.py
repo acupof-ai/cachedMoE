@@ -152,7 +152,7 @@ def main() -> int:
     ap.add_argument("--script", action="append", required=True,
                     help="one chat script per stream; repeat the flag")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
     ap.add_argument("--cache-gb", type=int, default=0)
     ap.add_argument("--cache-slots", type=int, default=0)
     ap.add_argument("--max-context", type=int, default=4096)

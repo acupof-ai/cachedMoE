@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import quant2_common as q2                                   # noqa: E402
 
-MODEL = r"D:\models\DeepSeek-V4.1-Flash"
+MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash")
 DIM, INTER = 5120, 2304
 N_LAYERS, N_EXPERTS = 40, 384
 
