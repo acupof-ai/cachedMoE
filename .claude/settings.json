@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git fetch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh run list:*)",
+      "Bash(cmake -S . -B build:*)",
+      "Bash(cmake --build build:*)",
+      "Bash(ctest --test-dir build:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(./build/nvme_bench.exe:*)",
+      "Bash(./build/kernel_bench.exe:*)",
+      "Bash(./build/attn_bench.exe:*)",
+      "Bash(./build/prefill_bench.exe:*)",
+      "Bash(./build/io_dst_bench.exe:*)",
+      "Bash(curl -s http://127.0.0.1:8080/:*)",
+      "Bash(curl -s http://127.0.0.1:8080/api/:*)",
+      "PowerShell(Get-Process:*)",
+      "PowerShell(Get-Volume:*)",
+      "PowerShell(Get-Disk:*)",
+      "PowerShell(Get-NetAdapter:*)",
+      "PowerShell(Get-WinEvent:*)",
+      "PowerShell(Get-PnpDevice:*)",
+      "PowerShell(Get-CimInstance:*)"
+    ]
+  }
+}
