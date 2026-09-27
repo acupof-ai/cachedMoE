@@ -683,6 +683,66 @@ DEEPMOE_TEST(io, no_mirror_leaves_the_stats_untouched) {
     engine.stop();
 }
 
+// Linux port: the external USB4 drive drops its link about once an hour, and
+// the reads in flight at that moment used to reach the caller as failures --
+// an expert fill that failed, a decode that died -- before SourceHealth had
+// counted enough errors to take the drive out of the router. A read the mirror
+// cannot serve is now re-read from the primary: the caller sees the right
+// bytes, the mirror's error and failover counters say what happened, and a
+// failure on the PRIMARY is still reported (one retry, never a loop).
+DEEPMOE_TEST(io, mirror_error_is_reread_from_the_primary) {
+    auto prim = make_scratch("lx_failover_p", 4u << 20, false);
+    auto mirr = make_scratch("lx_failover_m", 4u << 20, false);
+    REQUIRE(prim.has_value());
+    REQUIRE(mirr.has_value());
+    const std::vector<std::byte> content = pattern_bytes(4u << 20);
+    IoEngine engine;
+    IoConfig cfg;
+    cfg.chunk_bytes = 64 * 1024;
+    auto backend = std::make_unique<test::FakeBackend>(content, 8);
+    test::FakeBackend* fake = backend.get();
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+    // The mirror weighted so heavily that an idle router always picks it.
+    engine.set_sources({"primary", "mirror"}, {0.001, 1000.0});
+    REQUIRE_OK(engine.add_mirror(&prim->file, 1, &mirr->file));
+    REQUIRE(engine.mirrors_enabled());
+    fake->fail_file(&mirr->file);
+
+    constexpr uint32_t kBytes = 256 * 1024;   // four chunks: a multi-chunk run
+    AlignedBuffer b(kBytes);
+    std::memset(b.data(), 0, kBytes);
+    IoRequest r;
+    r.priority = IoPriority::BlockingMiss;
+    r.file     = &prim->file;
+    r.file_off = 64 * 1024;
+    r.bytes    = kBytes;
+    r.dst      = b.data();
+    auto fut = engine.submit_future(r);
+    REQUIRE(fut.has_value());
+    const IoResult res = fut->get();
+    CHECK(res.ok());
+    CHECK_EQ(res.bytes_moved, uint64_t(kBytes));
+    CHECK(std::memcmp(b.data(), content.data() + r.file_off, kBytes) == 0);
+    engine.drain();
+    {
+        const IoStats st = engine.stats();
+        REQUIRE_EQ(st.sources.size(), size_t(2));
+        CHECK_EQ(st.sources[1].errors, uint64_t(1));
+        CHECK_EQ(st.sources[1].failovers, uint64_t(1));
+        CHECK_EQ(st.requests_failed, uint64_t(0));
+        CHECK_EQ(st.requests_completed, uint64_t(1));
+    }
+
+    // Both drives failing is still an error the caller sees -- one retry on
+    // the primary, not a loop between the two.
+    fake->fail_file(&prim->file);
+    auto fut2 = engine.submit_future(r);
+    REQUIRE(fut2.has_value());
+    CHECK(!fut2->get().ok());
+    engine.drain();
+    engine.stop();
+}
+
 // Track D5: the startup probe must measure the drive, not its wake-up.
 //
 // A USB4 NVMe enclosure that has been idle answers its first read in about a

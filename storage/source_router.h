@@ -178,6 +178,7 @@ struct SourceStats {
     uint32_t inflight_requests = 0;
     uint64_t errors   = 0;         // routed requests that came back failed
     bool     dropped  = false;     // taken out of the router (SourceHealth)
+    uint64_t failovers = 0;        // of those errors, re-read from the primary
 
     // --- Track D6 ----------------------------------------------------------
     // `requests`/`lat_ns_sum` above mix the classes that are routed (P0 and

@@ -304,6 +304,7 @@ private:
         uint32_t  p0_ahead    = 0;       // other P0 requests outstanding at submit
         uint32_t  source      = 0;       // which read source served it (Track D2)
         bool      routed      = false;   // charged against src_outstanding_[source]
+        const File* primary   = nullptr; // the caller's file, when routed to a mirror
         Status    status{Err::Ok};
         bool      failed = false;
     };

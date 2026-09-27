@@ -96,6 +96,20 @@ def find_mirrors(model_dir: str):
     `open_mirror`'s own rule (same name, same byte length, per shard) is met
     halfway here by insisting on the manifest.
     """
+    if os.name != "nt":
+        # Linux: no drive letters, so look for the same model directory name
+        # under the usual mount roots (the x box keeps its USB4 copy at
+        # /mnt/deepmoe2/models/<name>). Same manifest rule as below.
+        import glob
+        name = os.path.basename(os.path.normpath(model_dir))
+        own = os.path.realpath(model_dir)
+        found = []
+        for pat in ("/mnt/*/models/", "/mnt/*/", "/media/*/models/", "/run/media/*/*/models/"):
+            for cand in sorted(glob.glob(pat + name)):
+                if os.path.realpath(cand) != own and cand not in found and \
+                        os.path.isfile(os.path.join(cand, "deepmoe_manifest.json")):
+                    found.append(cand)
+        return found
     drive, rest = os.path.splitdrive(os.path.abspath(model_dir))
     if not drive or not rest:
         return []

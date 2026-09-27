@@ -58,7 +58,9 @@ public:
                                  ? content_.size() - req.file_off : 0;
         const uint32_t moved = static_cast<uint32_t>(std::min<uint64_t>(req.bytes, avail));
         const uint32_t need  = req.min_bytes ? req.min_bytes : req.bytes;
-        if (moved < need) {
+        if (req.file && std::find(fail_files_.begin(), fail_files_.end(), req.file) != fail_files_.end()) {
+            c.status = Status{Err::Io, "fake: this file's drive has gone away"};
+        } else if (moved < need) {
             c.status = Status{Err::OutOfRange, "read past end of fake file"};
         } else {
             if (moved) std::memcpy(req.dst, content_.data() + req.file_off, moved);
@@ -86,6 +88,8 @@ public:
 
     // --- test controls ---
     void hold_completions(bool on) { std::lock_guard lk(m_); hold_ = on; }
+    // Every read of `f` completes with an I/O error: a mirror whose link dropped.
+    void fail_file(const storage::File* f) { std::lock_guard lk(m_); fail_files_.push_back(f); }
     void release_all() {
         std::lock_guard lk(m_);
         while (!held_.empty()) { pending_.push_back(held_.front()); held_.pop_front(); }
@@ -101,6 +105,7 @@ private:
     std::deque<storage::ChunkCompletion> pending_, held_;
     std::vector<SubmitRecord> log_;
     bool hold_ = false;
+    std::vector<const storage::File*> fail_files_;
 };
 
 }  // namespace deepmoe::test

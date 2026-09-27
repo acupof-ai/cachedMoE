@@ -69,8 +69,10 @@ std::string IoStats::to_string() const {
                 e.outstanding_bytes / 1048576.0,
                 // Appended, never inserted: bench/d2_abab.py parses the head of
                 // this line.
-                e.dropped ? std::format("  DROPPED after {} errors", e.errors)
-                          : (e.errors ? std::format("  {} errors", e.errors) : std::string()));
+                (e.dropped ? std::format("  DROPPED after {} errors", e.errors)
+                           : (e.errors ? std::format("  {} errors", e.errors) : std::string())) +
+                    (e.failovers ? std::format(", {} re-read from the primary", e.failovers)
+                                 : std::string()));
             // Track D6. On its own line, because bench/d2_abab.py parses the
             // head of the one above and an insertion there would silently
             // change what every past A/B table means.
@@ -536,6 +538,7 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
     p->req       = req;
     p->source    = source;
     p->routed    = routed;
+    p->primary   = (routed && source != 0) ? in_req.file : nullptr;
     p->cb        = std::move(cb);
     const uint32_t chunk = (req.priority == IoPriority::BlockingMiss)
                                ? tune_.p0_chunk_bytes : bg_chunk_bytes_;
@@ -951,6 +954,42 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
                          s, src_stats_[s].root, src_health_.budget(), r.status.message);
             }
         }
+    }
+    // A mirror is an optimisation, never a correctness input -- and that has to
+    // hold mid-run too, not only at the startup gate. The external USB4 drive on
+    // the Linux box drops its link about once an hour (docs/build.md); without
+    // this, the reads in flight at that moment reached the caller as failures
+    // ("an expert read failed") before SourceHealth had even taken the drive out
+    // of the router. Instead the request goes back to the FRONT of its class's
+    // queue against the primary, exactly as if it had been routed there: the
+    // caller sees one slower read, not an error. `queued_at` is kept, so the
+    // latency it reports includes the failed attempt. One retry only: `primary`
+    // is cleared, so a primary failure is reported as it always was.
+    if (p->primary && !r.ok()) {
+        {
+            std::lock_guard lk(src_mutex_);
+            ++src_stats_[p->source].failovers;
+        }
+        p->req.file      = p->primary;
+        p->primary       = nullptr;
+        p->source        = 0;
+        p->routed        = false;
+        p->next_chunk    = 0;
+        p->issued_chunks = 0;
+        p->done_chunks   = 0;
+        p->bytes_moved   = 0;
+        p->failed        = false;
+        p->status        = Status{Err::Ok};
+        {
+            std::lock_guard lk(mutex_);
+            // Fully issued requests leave the queue lazily (issue_ready_chunks
+            // pops them from the front), so this one may still be in it.
+            auto& q = queues_[static_cast<uint8_t>(p->req.priority)];
+            q.erase(std::remove(q.begin(), q.end(), p), q.end());
+            q.push_front(std::move(p));
+        }
+        cv_.notify_one();
+        return;
     }
     {
         std::lock_guard lk(stats_mutex_);

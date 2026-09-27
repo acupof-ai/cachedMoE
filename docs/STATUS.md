@@ -687,6 +687,17 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    ⇒ auto 在 RADV 上把主机堆（= GTT）的余量从 10 GiB 降到 5 GiB：现在 **4,400 槽 / 77.1 GiB**，GTT 峰值 30.6 GiB；
    4K 提示走 GPU prefill（`--gpu-prefill-min 256`）正常，TTFT 80.3 s（Windows `ho_4k_on` 97.8 s），GTT 不再上涨。
    **再往上的唯一障碍是 GTT 上限**：内核参数调大 `ttm.pages_limit`（或 BIOS 少切显存）可以把那 26 GB 空闲内存用上，按 hit 曲线约 +0.02 hit / +10% tok/s——要重启，等用户。
+   **双盘（Track D5 在 Linux 上重跑）：内置 SN740 主 + 外接 USB4（KP 2TB，`/mnt/deepmoe2`）做 `--mirror`——GO，+8.97%。**
+   ABAB 两对，`long_turns.json`，auto（4,400 槽），无权重覆盖（`bench/results/linux/mirror_ab/`，`summ.py` 出表）：
+   off **5.2034 / 5.3338**，on **5.7429 / 5.7397**（均值 5.2686 → 5.7413）；decode 加权 hit 两臂逐位相同 0.924；`nvme_stall` 100.7/95.4 → **81.7/82.1 ms**；
+   聚合读 `eff` 3.31 → **3.96 GB/s**。探针 4.63 : 3.72 GB/s（热身后，两次一致），分流 **76.0 : 23.9%**（与 Windows D5/D6 的 28.5% 同一形状——D6 已证明压到带宽比是负的）。
+   外接盘 `src[1]` 的 mean lat 95.8 ms 是口径问题不是盘：它的 **P0 是 6.43 ms**（主盘 4.33 ms），其余是被 P0 抢占的 P3 backfill（D6 §10.1 同一结论）。
+   四轮 ~37 分钟外接盘没掉（空闲 74°C）。**顺带补上运行中的失效转移**：外接盘约每小时掉一次链路，掉线那一刻在飞的读原来直接以失败返回给调用方
+   （「an expert read failed」），要等 SourceHealth 连错三次才把盘踢出路由；现在 `IoEngine::finish` 把镜像上失败的请求**重排到同一优先级队首、改读主盘**
+   （一次重试，主盘再错照常报错；`queued_at` 不变所以延迟含失败那次；`src[i]` 行追加 `N re-read from the primary`）。
+   单测 `io.mirror_error_is_reread_from_the_primary`（FakeBackend 新增 `fail_file`）；变异（`if (false && …)`）⇒ caught。无错时路径逐字不变。
+   `tools/web/server.py` 的 `find_mirrors` 在 Linux 上按 `/mnt/*/models/<name>` 等挂载点找同名目录（要求有 manifest），所以 web UI 自动带上外接盘；
+   引擎默认仍是单盘，命令行要 `--mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash` 或 `DEEPMOE_MODEL_MIRRORS`。
 
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
