@@ -110,16 +110,18 @@ ctest --test-dir build --output-on-failure  # 整体 + 按 suite 各注册一遍
 cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/linux-clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build -j 1 -LE "needs-model|needs-gpu"          # CPU 闸
-export DEEPMOE_MODEL_DIR=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash DEEPMOE_LONGCTX_DIR=$PWD/traces/longctx
+export DEEPMOE_MODEL_DIR=$HOME/models/DeepSeek-V4.1-Flash DEEPMOE_LONGCTX_DIR=$PWD/traces/longctx
 ctest --test-dir build -j 1 -L "needs-model|needs-gpu" -E '^bench\.'   # 模型 + GPU
 ```
 
 `cmake/linux-clang-toolchain.cmake` 与 `zig-toolchain.cmake` 同口径：`-march=znver5`（`runtime/moe_bridge.cpp` 的
 `wc_read` 用 AVX2 intrinsic，不给 `-march` 就编不过），slangc / spirv-val 从 PATH 找。Python 用 `.venv/bin/python`。
 
-**权重**：只在外接的 J.ZAO 2 TB NVMe 上（USB4 盒，ASM2464PD，NTFS 用内核 `ntfs3` 挂载），
-`/etc/fstab` 里 `LABEL=deepmoe2 → /mnt/deepmoe2`（`nofail`）。O_DIRECT 顺序读 3.4 GB/s。
-原来 Windows 上的内置 D: 副本随 Windows 一起没了；内置盘是 WD SN740（系统盘，LUKS + btrfs）。
+**权重**：主副本在内置 WD SN740 的 `~/models/DeepSeek-V4.1-Flash`（系统盘，LUKS + btrfs；目录已 `chattr +C`，
+即 nodatacow + 不压缩——`/home` 挂着 `compress=zstd:3`，压缩的 extent 走不了 O_DIRECT）。2026-09-28 从外接盘拷来，
+`l3_ppl` off 与外接盘逐位同（0.639409）。`nvme_bench` 4 MiB 随机读最好 **4.87 GB/s**（外接 3.69），engram 4 KiB QD48 0.616 GB/s（外接 0.472）。
+外接的 J.ZAO 2 TB NVMe（USB4 盒，ASM2464PD，NTFS 用内核 `ntfs3` 只读挂载，`/etc/fstab` 里 `LABEL=deepmoe2 → /mnt/deepmoe2`，`nofail`）
+留作第二读源 / 备份：它会过热、USB4 链路大约每 1–1.5 小时断一次。Python 工具的 Linux 默认路径已改到内置盘。
 
 **和 Windows 开发机不同的三件事**（相信 STATUS.md 里任何一个 Windows 数之前先看这里）：
 

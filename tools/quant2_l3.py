@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import quant2_common as q2                                     # noqa: E402
 from quant2_l1 import SCHEMES                                  # noqa: E402
 
-MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash")
+MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))
 
 
 def log(msg: str):

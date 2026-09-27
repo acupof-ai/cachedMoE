@@ -57,7 +57,7 @@ import quant2_common as q2                                     # noqa: E402
 from quant2_l1 import SCHEMES                                  # noqa: E402
 from quant2_l3 import torch_uniform_quantise                   # noqa: E402
 
-MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash")
+MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))
 
 PROMPTS = {
     "en_tech": "The expert cache holds about thirty percent of the routed "
