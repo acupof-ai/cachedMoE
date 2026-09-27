@@ -187,6 +187,41 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     spec.rows_per_lane = bc.rows_per_lane;
     spec.x_mode        = bc.x_mode;
     spec.h_quant       = bc.h_quant;
+    // Experiment knobs, the same shape as the union runner's below, so the
+    // decode shape can be re-swept per driver instead of re-derived.
+    spec.lanes_per_row = env_u32("DEEPMOE_MOE_L", spec.lanes_per_row);
+    spec.rows_per_lane = env_u32("DEEPMOE_MOE_R", spec.rows_per_lane);
+    spec.x_mode        = env_u32("DEEPMOE_MOE_XMODE", spec.x_mode);
+    spec.x_mode_b      = env_u32("DEEPMOE_MOE_XMODE_B", spec.x_mode_b);
+    // The FP4 decode is compiler-specific. On the AMD proprietary driver the
+    // constant table (DecodeMode 0) is the measured M = 1 champion; Mesa's ACO
+    // (RADV) lowers the same `kE2M1[nib]` into a per-element branchy select
+    // tree, which held the whole MoE to 53 ms/token against 30.9 for the
+    // arithmetic decode (DecodeMode 1) -- the E2M1 values are exact either way,
+    // so l3_ppl off stays bit-identical (NLL 0.601884 on this driver). See
+    // docs/build.md, "Linux".
+    if (bc.decode_mode == 0 && device.caps().driver_id == VK_DRIVER_ID_MESA_RADV)
+        spec.decode_mode = 1;
+    spec.decode_mode   = env_u32("DEEPMOE_MOE_DEC", spec.decode_mode);
+    // Dispatch B (w2) gets its own shape on RADV. With A at the decode champion
+    // L32 R1, ACO's B reads w2 at ~152 GB/s; B alone at L16 R2 reads it at ~185
+    // (kernel_bench "fp8 dec1 B": 0.807 -> 0.757 ms per 7-slot pair). Engine
+    // hot step, four alternating pairs: ~79.9 -> ~76.7 ms (-3.9%), moe gpu
+    // 32.3 -> 30.0. Numerically it is a different fp32 reduction width only:
+    // the L1 golden is unchanged (1.37e-4 of |y|max, cos 0.999999961), but
+    // l3_ppl off moves 0.601884 -> 0.623007 (top-1 62 -> 60/64) because two
+    // near-tie positions flip -- PPL 1.021x off, inside the harness's 1.05x
+    // bar; L16 R4 lands on the identical 0.623007 and L32 R2 on the identical
+    // 0.601884, i.e. the number follows the lane count and nothing else.
+    // STATUS §7 0h. DEEPMOE_MOE_LB / DEEPMOE_MOE_RB override (LB=32 RB=1 is
+    // the old shape).
+    if (spec.lanes_b == 0 && spec.rows_b == 0 && spec.lanes_per_row == 32 &&
+        spec.rows_per_lane == 1 && device.caps().driver_id == VK_DRIVER_ID_MESA_RADV) {
+        spec.lanes_b = 16;
+        spec.rows_b  = 2;
+    }
+    spec.lanes_b       = env_u32("DEEPMOE_MOE_LB", spec.lanes_b);
+    spec.rows_b        = env_u32("DEEPMOE_MOE_RB", spec.rows_b);
     // An experiment knob, not a setting: docs/p2_decode.md §8.2 uses it to
     // A/B the h quantisation's placement for bit-reproducibility.
     if (const char* e = std::getenv("DEEPMOE_MOE_HQUANT"); e && *e)
@@ -204,7 +239,7 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     d.slots             = cfg.num_experts_per_tok + 1;
     d.hidden            = cfg.hidden_size;
     d.inter             = cfg.moe_intermediate_size;
-    d.table_layers      = 1;
+    d.table_layers      = 2;   // two pages: Track SE alternates them by layer parity
     d.fp8_slot_count    = 1;
     d.swiglu_limit      = static_cast<float>(cfg.swiglu_limit);
     if (auto r = runner_.create(device, alloc, shader_dir, spec, d); !r) return r;
@@ -217,6 +252,7 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     // plane is ~2.1 MB against 295 KB at seven slots, which is the whole cost of
     // making a verify batch one dispatch instead of six.
     gpu::MoeDims du = d;
+    du.table_layers = 1;
     du.slots = kUnionSlotsMax;
     if (cfg.num_experts_per_tok * kMoeBatchMax + 1 < du.slots)
         du.slots = cfg.num_experts_per_tok * kMoeBatchMax + 1;
@@ -235,6 +271,10 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     uspec.lanes_per_row = env_u32("DEEPMOE_MOE_UNION_L", spec.lanes_per_row);
     uspec.rows_per_lane = env_u32("DEEPMOE_MOE_UNION_R", spec.rows_per_lane);
     uspec.x_mode        = env_u32("DEEPMOE_MOE_UNION_XMODE", spec.x_mode);
+    // Dispatch B's own shape is a 7-slot decode measurement; the union (~20
+    // slots) was never measured with it, so it keeps following A.
+    uspec.lanes_b       = env_u32("DEEPMOE_MOE_UNION_LB", 0);
+    uspec.rows_b        = env_u32("DEEPMOE_MOE_UNION_RB", 0);
     if (auto r = union_runner_.create(device, alloc, shader_dir, uspec, du); !r) return r;
     union_ids_.assign(du.slots, 0);
     union_slot_of_.assign(size_t(cfg.n_routed_experts) + 1, ~0u);
@@ -259,7 +299,39 @@ void GpuMoeBridge::destroy() {
 }
 
 Result<void> GpuMoeBridge::bind_shared(uint32_t layer) {
-    return bind_shared_into(layer, runner_.pointer_table());
+    return bind_shared_into(layer, page_table());
+}
+
+uint32_t GpuMoeBridge::debug_check_x(const MoeCall& call, std::string* first) {
+    const uint32_t dim = call.hidden;
+    std::vector<float> xf(dim), scratch(dim);
+    std::vector<uint16_t> q(dim);
+    wc_read(xf.data(), call.x, size_t(dim) * sizeof(float));
+    act_quant_to_fp16(xf.data(), q.data(), scratch.data(), dim);
+    const uint16_t* g = runner_.x_fp16();
+    uint32_t bad = 0;
+    for (uint32_t i = 0; i < dim; ++i) {
+        if (g[i] == q[i]) continue;
+        if (bad++ == 0 && first)
+            *first = std::format("elem {} x={:.9g} host {:#06x} gpu {:#06x}", i, xf[i], q[i], g[i]);
+    }
+    return bad;
+}
+
+Result<void> GpuMoeBridge::record_shared_early(gpu::CommandBuffer& cmd, uint32_t layer,
+                                               uint64_t x_addr) {
+    if (!store_ || !planner_) return fail(Err::FailedPrecondition, "MoE bridge is not created");
+    set_page(layer & 1u);
+    if (auto r = bind_shared(layer); !r) return r;
+    // The shared slot's id and route weight never change, but dispatch A reads
+    // both (h = swiglu * RouteW[slot]) and this runs BEFORE this layer's
+    // stage_input -- on the process's first layer the weight was still the
+    // zero the runner was created with, which zeroed that layer's shared
+    // expert (found by l3_ppl: 0.646705 against 0.623007).
+    const uint32_t slots = runner_.dims().slots;
+    runner_.ids()[slots - 1] = shared_index_ | gpu::kSlotFp8;
+    runner_.route_weights()[slots - 1] = 1.0f;
+    return runner_.record_shared_early(cmd, x_addr);
 }
 
 Result<void> GpuMoeBridge::bind_shared_into(uint32_t layer, uint64_t* dest_table) {
@@ -310,7 +382,7 @@ Result<void> GpuMoeBridge::stage(const MoeCall& call) {
 Result<void> GpuMoeBridge::stage_rows(const MoeCall& call, std::span<const uint32_t> slots) {
     const TimePoint t0 = Clock::now();
     uint64_t row[kExpertPartCount];
-    uint64_t* table = runner_.pointer_table();
+    uint64_t* table = page_table();
     for (uint32_t s : slots) {
         if (s >= call.topk) return fail(Err::InvalidArgument, "stage_rows: not a routed slot");
         const ExpertKey key{static_cast<uint16_t>(call.layer),
@@ -337,7 +409,7 @@ Result<void> GpuMoeBridge::record_down(gpu::CommandBuffer& cmd) {
     return runner_.record_into(cmd, gpu::MoePhase::DownOnly);
 }
 
-Result<void> GpuMoeBridge::stage_input(const MoeCall& call) {
+Result<void> GpuMoeBridge::stage_input(const MoeCall& call, bool x_on_gpu) {
     if (!store_ || !planner_) return fail(Err::FailedPrecondition, "MoE bridge is not created");
     const uint32_t dim = call.hidden;
     const uint32_t slots = runner_.dims().slots;
@@ -348,23 +420,29 @@ Result<void> GpuMoeBridge::stage_input(const MoeCall& call) {
     timing_ = Timing{};
     const TimePoint t0 = Clock::now();
 
-    // Copy x out of GPU-visible memory BEFORE computing over it: design §3.3's
-    // uncached write-combining read, one memcpy instead of 5,120 loads
-    // (docs/p2_decode.md §3.3).
-    wc_read(xf_.data(), call.x, size_t(dim) * sizeof(float));
+    if (!x_on_gpu) {
+        // Copy x out of GPU-visible memory BEFORE computing over it: design
+        // §3.3's uncached write-combining read, one memcpy instead of 5,120
+        // loads (docs/p2_decode.md §3.3).
+        wc_read(xf_.data(), call.x, size_t(dim) * sizeof(float));
+    }
     const TimePoint t1 = Clock::now();
 
-    // `act_quant(x, 32, ue8m0)` once for the whole layer, straight into the
-    // runner's fp16 input. The scratch is the runner-independent host copy;
-    // quantising in place over it is safe because each block reads its 32
-    // values before writing them.
-    act_quant_to_fp16(xf_.data(), xq_.data(), xf_.data(), dim);
-    std::memcpy(runner_.x_fp16(), xq_.data(), size_t(dim) * sizeof(uint16_t));
+    if (!x_on_gpu) {
+        // `act_quant(x, 32, ue8m0)` once for the whole layer, straight into the
+        // runner's fp16 input. The scratch is the runner-independent host copy;
+        // quantising in place over it is safe because each block reads its 32
+        // values before writing them.
+        act_quant_to_fp16(xf_.data(), xq_.data(), xf_.data(), dim);
+        std::memcpy(runner_.x_fp16(), xq_.data(), size_t(dim) * sizeof(uint16_t));
+    }
     const TimePoint t2 = Clock::now();
 
     // The routed half's table rows are `stage_rows`'s: design §7.1's residency
-    // gate decides when each one may be written.
-    if (auto r = bind_shared(call.layer); !r) return r;
+    // gate decides when each one may be written. With x on the GPU the shared
+    // row is already in this page (record_shared_early).
+    if (!x_on_gpu)
+        if (auto r = bind_shared(call.layer); !r) return r;
 
     uint32_t ids[16];
     uint32_t list[16];
@@ -407,6 +485,7 @@ std::string GpuMoeBridge::BatchTiming::to_string() const {
 
 Result<void> GpuMoeBridge::stage_batch(const BatchCall& call) {
     if (!store_ || !planner_) return fail(Err::FailedPrecondition, "MoE bridge is not created");
+    reset_page();
     if (call.m == 0 || call.m > kMoeBatchMax)
         return fail(Err::InvalidArgument,
                     std::format("a verify batch of {} columns; the interface takes 1..{}",
@@ -668,6 +747,7 @@ Result<void> GpuMoeBridge::run_batch_union(const BatchCall& call) {
 }
 
 Result<void> GpuMoeBridge::run(const MoeCall& call) {
+    reset_page();
     if (auto r = stage(call); !r) return r;
     const Timing staged = timing_;
     const TimePoint t0 = Clock::now();

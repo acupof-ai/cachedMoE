@@ -66,6 +66,13 @@ struct MoeSpec {
         if (x_mode_b != kFollowA) return x_mode_b;
         return x_mode == 6 ? 0u : x_mode;
     }
+    // Dispatch B's own shape (0 = follow A). On RADV the decode shape L32 R1
+    // reads w2 at ~152 GB/s against ~204 for w1+w3, and L16 R2 reads w2 at
+    // ~185 -- but costs A as much as it saves B when both have to agree.
+    uint32_t lanes_b       = 0;
+    uint32_t rows_b        = 0;
+    uint32_t b_lanes() const { return lanes_b ? lanes_b : lanes_per_row; }
+    uint32_t b_rows()  const { return rows_b  ? rows_b  : rows_per_lane; }
     std::string name() const;
 };
 
@@ -208,6 +215,21 @@ public:
     uint32_t*    slot_list_alt();
     Result<void> record_gateup_alt(CommandBuffer& cmd, uint32_t count);
 
+    // Track SE: the shared expert ahead of routing. `record_shared_early`
+    // records moe_xact (x's act_quant from the fp32 ffn_norm output at
+    // `x_src_address` into column 0 of x), then dispatch A and the h
+    // quantisation over the LAST slot only, through a third one-entry slot list
+    // of its own -- so it can be in flight while the host rewrites the other
+    // two lists for the routed slots, and dispatch B over the whole list later
+    // is bit-identical to one shot (the Track R1 split). Needs spec.m's decode
+    // twin or M = 1, x_mode 0..5.
+    Result<void> record_shared_early(CommandBuffer& cmd, uint64_t x_src_address);
+    // Which page of the pointer table the dispatches recorded from now on
+    // index (the `layer` push constant, `(layer * experts_per_layer + expert)
+    // * 6`). Track SE alternates two pages by layer parity so the shared row of
+    // layer L can be written while layer L-1's MoE is still queued.
+    void         set_table_layer(uint32_t layer) { dims_.layer = layer; }
+
     // Device address of `y`, so the caller's next dispatch can read the MoE
     // output through buffer-device-address instead of the host copying it.
     uint64_t y_address() const { return y_.dev_addr; }
@@ -233,7 +255,7 @@ private:
     // The optional third and pre-dispatches: `hquant_` quantises h between A
     // and B when spec.h_quant == 3, `xquant_` quantises x before A when
     // spec.x_mode == 6. Both are tiny and both are absent otherwise.
-    Pipeline       gateup_, down_, hquant_, xquant_;
+    Pipeline       gateup_, down_, hquant_, xquant_, xact_;
     // Track K1a: the same three pipelines specialised on M == 1 (and StaticM
     // == 1), created only when the runner itself is specialised on M > 1 and
     // used whenever `live_columns_ == 1`. The decode path of the engine runs on
@@ -257,8 +279,11 @@ private:
     QueryPool      queries_;
 
     GpuBuffer table_{}, ids_{}, list_{}, routew_{}, x_{}, h_{}, y_{};
-    GpuBuffer list_alt_{};
+    GpuBuffer list_alt_{}, list_sh_{};
 #if defined(DEEPMOE_ENABLE_VULKAN)
+    VkDescriptorSet set_a_sh_ = VK_NULL_HANDLE;
+    VkDescriptorSet set_hq_sh_ = VK_NULL_HANDLE;
+    VkDescriptorSet set_xact_ = VK_NULL_HANDLE;
     VkDescriptorSet set_a_alt_ = VK_NULL_HANDLE;
     VkDescriptorSet set_hq_alt_ = VK_NULL_HANDLE;
     VkDescriptorSet set_a_ = VK_NULL_HANDLE;

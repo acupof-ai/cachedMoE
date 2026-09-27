@@ -49,6 +49,7 @@ struct DeviceCaps {
     std::string device_name;
     uint32_t    api_major = 0, api_minor = 0, api_patch = 0;
     uint32_t    driver_version = 0;
+    uint32_t    driver_id = 0;       // VkDriverId (VK_DRIVER_ID_MESA_RADV = 3, AMD proprietary = 1)
     uint32_t    vendor_id = 0, device_id = 0;
 
     // design §1.1: these two limits are why the slab pool exists.

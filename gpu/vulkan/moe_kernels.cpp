@@ -19,6 +19,8 @@ std::string MoeSpec::name() const {
                                 decode_mode, h_precision ? "fp32" : "fp16",
                                 kXMode[x_mode < 7 ? x_mode : 0]);
     if (b_mode() != x_mode) s += std::format("/{}", kXMode[b_mode() < 7 ? b_mode() : 0]);
+    if (b_lanes() != lanes_per_row || b_rows() != rows_per_lane)
+        s += std::format(" B:L{}R{}", b_lanes(), b_rows());
     if (h_quant)   s += kHQuant[h_quant < 4 ? h_quant : 0];
     if (fp8_slots) s += " fp8";
     return s;
@@ -87,6 +89,7 @@ Result<MoeTiming> MoeRunner::run(uint32_t, MoePhase) { return fail(Err::Unavaila
 Result<void> MoeRunner::record_into(CommandBuffer&, MoePhase) { return fail(Err::Unavailable, "no vulkan"); }
 uint32_t* MoeRunner::slot_list_alt() { return nullptr; }
 Result<void> MoeRunner::record_gateup_alt(CommandBuffer&, uint32_t) { return fail(Err::Unavailable, "no vulkan"); }
+Result<void> MoeRunner::record_shared_early(CommandBuffer&, uint64_t) { return fail(Err::Unavailable, "no vulkan"); }
 
 #else
 
@@ -115,6 +118,11 @@ struct HQuantPush {
 struct XQuantPush {
     uint32_t k;
 };
+struct XActPush {
+    uint64_t src;
+    uint32_t k;
+    uint32_t pad;
+};
 
 }  // namespace
 
@@ -135,6 +143,28 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     const uint32_t rows_per_group = (256 / spec.lanes_per_row) * spec.rows_per_lane;
     if (dims.inter % rows_per_group || dims.hidden % rows_per_group)
         return fail(Err::InvalidArgument, "row count must divide by the workgroup's rows");
+    if (spec.b_lanes() != 16 && spec.b_lanes() != 32 && spec.b_lanes() != 64)
+        return fail(Err::InvalidArgument, "dispatch B's lanes must be 16, 32 or 64");
+    if (spec.b_rows() == 0 || spec.b_rows() > 16 || (spec.b_rows() & (spec.b_rows() - 1)) != 0)
+        return fail(Err::InvalidArgument, "dispatch B's rows per lane must be a power of two, 1..16");
+    const uint32_t rows_per_group_b = (256 / spec.b_lanes()) * spec.b_rows();
+    if (dims.hidden % rows_per_group_b)
+        return fail(Err::InvalidArgument, "hidden must divide by dispatch B's workgroup rows");
+    if ((spec.b_lanes() != spec.lanes_per_row || spec.b_rows() != spec.rows_per_lane) &&
+        (spec.h_quant == 1 || spec.h_quant == 2))
+        return fail(Err::InvalidArgument,
+                    "a separate dispatch-B shape needs h_quant 0 or 3 (1 and 2 tie A to B)");
+    if (spec.b_mode() == 3 && spec.m * spec.b_lanes() > 256)
+        return fail(Err::InvalidArgument,
+                    "the int8 h path stages one (column, block) per thread: M * lanes <= 256");
+    if (spec.b_mode() >= 1 && spec.b_mode() <= 3) {
+        const uint64_t tile = uint64_t(spec.m) * spec.b_lanes() * (spec.b_mode() == 3 ? 32u : 64u);
+        const uint64_t lds  = tile + 1024 + (spec.fp8_slots ? 1024 : 0);
+        const uint64_t cap  = device.caps().max_compute_shared_memory ? device.caps().max_compute_shared_memory : 32768u;
+        if (lds > cap)
+            return fail(Err::InvalidArgument,
+                        std::format("dispatch B's h tile needs {} B of LDS, the device allows {}", lds, cap));
+    }
     if (spec.x_mode > 6 || spec.b_mode() > 5)
         return fail(Err::InvalidArgument,
                     "x_mode must be 0..6 and dispatch B's 0..5 (mode 6 is about x)");
@@ -191,6 +221,9 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
                 spec.x_mode, spec.h_quant, spec.fp8_slots, static_m};
     PipelineSpec ps_b = ps;
     ps_b.extra[3] = spec.b_mode();
+    ps_b.lanes_per_row = spec.b_lanes();
+    ps_b.rows_per_wg   = 256 / spec.b_lanes();
+    ps_b.extra[2]      = spec.b_rows();
 
     PipelineLayoutSpec la;
     la.storage_buffers   = 9;   // + the raw-word aliases of h (§7.9 v0.6) and x (XMode 6)
@@ -209,6 +242,14 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         lh.storage_buffers   = 2;
         lh.push_constant_size = sizeof(HQuantPush);
         if (auto r = hquant_.create(device, shader_dir + "/moe_hquant.spv", lh, ps); !r) {
+            destroy(); return r;
+        }
+    }
+    if (spec.x_mode != 6) {
+        PipelineLayoutSpec lx;
+        lx.storage_buffers    = 1;
+        lx.push_constant_size = sizeof(XActPush);
+        if (auto r = xact_.create(device, shader_dir + "/moe_xact.spv", lx, ps); !r) {
             destroy(); return r;
         }
     }
@@ -235,6 +276,9 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         ps1.extra[6] = 1;               // StaticM
         PipelineSpec ps1_b = ps1;
         ps1_b.extra[3] = spec.b_mode();
+        ps1_b.lanes_per_row = spec.b_lanes();
+        ps1_b.rows_per_wg   = 256 / spec.b_lanes();
+        ps1_b.extra[2]      = spec.b_rows();
         if (auto r = gateup_m1_.create(device, shader_dir + "/moe_gateup.spv", la, ps1); !r) {
             destroy(); return r;
         }
@@ -250,7 +294,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
             }
         }
     }
-    if (auto r = descriptors_.create(device, 8, 64); !r) { destroy(); return r; }
+    if (auto r = descriptors_.create(device, 12, 96); !r) { destroy(); return r; }
 
     const uint64_t h_elem = spec.h_precision ? 4 : 2;
     // h_quant 3 cannot quantise in place (gpu/shaders/moe_hquant.slang), so the
@@ -274,6 +318,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         {&h_,      h_bytes},
         {&y_,      uint64_t(spec.m) * dims.hidden * sizeof(float)},
         {&list_alt_, uint64_t(dims.slots) * sizeof(uint32_t)},
+        {&list_sh_,  uint64_t(dims.slots) * sizeof(uint32_t)},
     };
     for (auto& e : bufs) {
         // `y` alone is device-addressable, so a caller can read the MoE output
@@ -304,6 +349,12 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         auto s2 = descriptors_.allocate(gateup_, alt);
         if (!s2) { destroy(); return std::unexpected(s2.error()); }
         set_a_alt_ = *s2;
+        alt[2] = {2, 0, 0, list_sh_.buffer};
+        auto s3 = descriptors_.allocate(gateup_, alt);
+        if (!s3) { destroy(); return std::unexpected(s3.error()); }
+        set_a_sh_ = *s3;
+        // The shared expert is always the last slot.
+        static_cast<uint32_t*>(list_sh_.host_ptr)[0] = dims.slots - 1;
     }
 
     std::vector<BufferBinding> bb(5);
@@ -327,6 +378,17 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         auto sh2 = descriptors_.allocate(hquant_, bh);
         if (!sh2) { destroy(); return std::unexpected(sh2.error()); }
         set_hq_alt_ = *sh2;
+        bh[0] = {0, 0, 0, list_sh_.buffer};
+        auto sh3 = descriptors_.allocate(hquant_, bh);
+        if (!sh3) { destroy(); return std::unexpected(sh3.error()); }
+        set_hq_sh_ = *sh3;
+    }
+    if (xact_.valid()) {
+        std::vector<BufferBinding> bx(1);
+        bx[0] = {0, 0, 0, x_.buffer};
+        auto sx = descriptors_.allocate(xact_, bx);
+        if (!sx) { destroy(); return std::unexpected(sx.error()); }
+        set_xact_ = *sx;
     }
     if (xquant_.valid()) {
         std::vector<BufferBinding> bx(1);
@@ -357,11 +419,12 @@ void MoeRunner::destroy() {
     down_m1_.destroy();
     hquant_m1_.destroy();
     if (alloc_) {
-        for (GpuBuffer* b : {&table_, &ids_, &list_, &routew_, &x_, &h_, &y_, &list_alt_})
+        for (GpuBuffer* b : {&table_, &ids_, &list_, &routew_, &x_, &h_, &y_, &list_alt_, &list_sh_})
             if (b->valid()) alloc_->free(*b);
     }
-    table_ = ids_ = list_ = routew_ = x_ = h_ = y_ = list_alt_ = GpuBuffer{};
+    table_ = ids_ = list_ = routew_ = x_ = h_ = y_ = list_alt_ = list_sh_ = GpuBuffer{};
     set_a_ = set_b_ = set_hq_ = set_xq_ = set_a_alt_ = set_hq_alt_ = VK_NULL_HANDLE;
+    set_a_sh_ = set_hq_sh_ = set_xact_ = VK_NULL_HANDLE;
     device_ = nullptr;
     alloc_  = nullptr;
     recorded_ = 0;
@@ -375,7 +438,7 @@ Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
     const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter  / rows_per_wg;
-    const uint32_t groups_b = dims_.hidden / rows_per_wg;
+    const uint32_t groups_b = dims_.hidden / ((256 / spec_.b_lanes()) * spec_.b_rows());
 
     GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
                   dims_.inter, dims_.hidden, dims_.swiglu_limit, live_columns_};
@@ -462,7 +525,7 @@ Result<void> MoeRunner::record_into(CommandBuffer& cmd, MoePhase phase) {
     const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter  / rows_per_wg;
-    const uint32_t groups_b = dims_.hidden / rows_per_wg;
+    const uint32_t groups_b = dims_.hidden / ((256 / spec_.b_lanes()) * spec_.b_rows());
     GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
                         dims_.inter, dims_.hidden, dims_.swiglu_limit, live_columns_};
     const DownPush   pb{dims_.layer, dims_.experts_per_layer, dims_.slots, list_count_,
@@ -532,6 +595,41 @@ Result<void> MoeRunner::record_gateup_alt(CommandBuffer& cmd, uint32_t count) {
     if (auto r = cmd.barrier(); !r) return r;
     if (pipe_hq.valid()) {
         if (auto r = cmd.bind(pipe_hq, set_hq_alt_); !r) return r;
+        if (auto r = cmd.push(pipe_hq, &ph, sizeof(ph)); !r) return r;
+        if (auto r = cmd.dispatch(hq_groups); !r) return r;
+        if (auto r = cmd.barrier(); !r) return r;
+    }
+    return {};
+}
+
+Result<void> MoeRunner::record_shared_early(CommandBuffer& cmd, uint64_t x_src_address) {
+    if (!device_ || !gateup_.valid() || !xact_.valid() || !set_a_sh_)
+        return fail(Err::FailedPrecondition, "runner has no shared-early path (x_mode 6?)");
+    if (!x_src_address) return fail(Err::InvalidArgument, "record_shared_early: no x address");
+    const Pipeline& pipe_a  = use_m1() ? gateup_m1_ : gateup_;
+    const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
+    const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
+    const uint32_t groups_a = dims_.inter / rows_per_wg;
+    const XActPush px{x_src_address, dims_.hidden, 0};
+    GateUpPush pa{dims_.layer, dims_.experts_per_layer, dims_.slots,
+                  dims_.inter, dims_.hidden, dims_.swiglu_limit, live_columns_};
+    const HQuantPush ph{dims_.slots, 1, dims_.inter};
+    const uint32_t xa_groups = (dims_.hidden / layout::kFp4ScaleBlock + 255) / 256;
+    const uint32_t hq_groups =
+        (effective_m() * 1 * (dims_.inter / layout::kFp4ScaleBlock) + 255) / 256;
+    // Whatever the caller recorded before may still be reading x (the previous
+    // layer's dispatch A): order against it.
+    if (auto r = cmd.barrier(); !r) return r;
+    if (auto r = cmd.bind(xact_, set_xact_); !r) return r;
+    if (auto r = cmd.push(xact_, &px, sizeof(px)); !r) return r;
+    if (auto r = cmd.dispatch(xa_groups); !r) return r;
+    if (auto r = cmd.barrier(); !r) return r;
+    if (auto r = cmd.bind(pipe_a, set_a_sh_); !r) return r;
+    if (auto r = cmd.push(pipe_a, &pa, sizeof(pa)); !r) return r;
+    if (auto r = cmd.dispatch(groups_a, 1); !r) return r;
+    if (auto r = cmd.barrier(); !r) return r;
+    if (pipe_hq.valid()) {
+        if (auto r = cmd.bind(pipe_hq, set_hq_sh_); !r) return r;
         if (auto r = cmd.push(pipe_hq, &ph, sizeof(ph)); !r) return r;
         if (auto r = cmd.dispatch(hq_groups); !r) return r;
         if (auto r = cmd.barrier(); !r) return r;

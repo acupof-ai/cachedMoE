@@ -99,12 +99,22 @@ float act_scale(float amax) {
 
 // attn_common.slang `fp8_round`: round-to-nearest-even onto E4M3, branch free,
 // for |v| already clamped to 448.
-static const float kE4M3SubMagic = 24576.0f;
 float fp8_round(float v) {
     const float a = abs(v);
+    // Subnormal: a multiple of 2^-9 by an exact round-to-nearest-even written
+    // out in integers. NOT `(a + 1.5*2^14) - 1.5*2^14`: Mesa's NIR folds that
+    // to `a` on RADV (an inexact algebraic rule the SPIR-V does not forbid),
+    // which returned the unrounded value -- found by Track SE's DEEPMOE_SE_CHECK,
+    // docs/STATUS.md §7 0h. a * 512 < 8 is exact, so is its integer part and
+    // the remainder.
+    const float m  = a * 512.0f;
+    const uint  n0 = uint(m);
+    const float f  = m - float(n0);
+    const uint  n  = n0 + (((f > 0.5f) || (f == 0.5f && (n0 & 1u) != 0u)) ? 1u : 0u);
+    const float sub = float(n) * (1.0f / 512.0f);
     const uint  b = asuint(a);
     const uint  r = (b + 0x7FFFFu + ((b >> 20) & 1u)) & 0xFFF00000u;
-    const float mag = (a < kE4M3MinN) ? ((a + kE4M3SubMagic) - kE4M3SubMagic) : asfloat(r);
+    const float mag = (a < kE4M3MinN) ? sub : asfloat(r);
     return asfloat(asuint(mag) | (asuint(v) & 0x80000000u));
 }
 

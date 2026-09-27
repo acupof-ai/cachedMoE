@@ -118,7 +118,23 @@ public:
     //
     // A over early slots in one submit, A over the late ones and B in the
     // next: bit-identical to `stage` + `record` (the deferred schedule).
-    Result<void> stage_input(const MoeCall& call);
+    // `x_on_gpu`: x's act_quant already ran on the GPU (record_shared_early),
+    // so skip the host read + quantisation and the shared row.
+    Result<void> stage_input(const MoeCall& call, bool x_on_gpu = false);
+
+    // --- Track SE: the shared expert ahead of routing ----------------------
+    // Records moe_xact + dispatch A (+ h quantisation) over the shared expert
+    // of `layer`, reading x from the fp32 ffn_norm output at `x_addr`. It needs
+    // no routing, so the engine submits it right behind the gate and it runs
+    // while the host wakes up. Selects table page `layer & 1` for everything
+    // recorded for this layer afterwards (stage_rows, record_gateup,
+    // record_down), and writes the shared row there.
+    Result<void> record_shared_early(gpu::CommandBuffer& cmd, uint32_t layer, uint64_t x_addr);
+    // Debug (DEEPMOE_SE_CHECK): how many of x's fp16 elements the GPU's
+    // act_quant wrote differently from the host's, and the first one.
+    uint32_t debug_check_x(const MoeCall& call, std::string* first);
+    // Back to page 0, which every other caller of the runner assumes.
+    void reset_page() { set_page(0); }
     Result<void> stage_rows(const MoeCall& call, std::span<const uint32_t> slots);
     Result<void> record_gateup(gpu::CommandBuffer& cmd, std::span<const uint32_t> slots);
     Result<void> record_down(gpu::CommandBuffer& cmd);
@@ -287,6 +303,12 @@ public:
 
 private:
     Result<void> bind_shared(uint32_t layer);
+    void         set_page(uint32_t p) { page_ = p; runner_.set_table_layer(p); }
+    uint64_t*    page_table() {
+        return runner_.pointer_table() + size_t(page_) * runner_.dims().experts_per_layer *
+                                             kExpertPartCount;
+    }
+    uint32_t                  page_ = 0;
     Result<void> bind_shared_into(uint32_t layer, uint64_t* table);
 
     store::ExpertStore*       store_   = nullptr;

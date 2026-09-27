@@ -3,8 +3,10 @@
 #include "runtime/engine.h"
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cmath>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -18,8 +20,108 @@
 #include "runtime/engram_tables.h"
 #include "model/layout.h"
 #include "storage/backend.h"
+#if defined(__linux__)
+#include <dirent.h>
+#include <sched.h>
+#include <cstdio>
+#endif
 
 namespace deepmoe::runtime {
+
+// See Engine::ms_eager_moe (Track LX): 0 on RADV, set by init_gpu.
+namespace { std::atomic<int> g_ms_eager_default{1}; std::atomic<int> g_shared_early_default{0}; }
+
+#if defined(__linux__)
+namespace {
+
+// Parses a cpulist ("8-15,24-31") into a cpu_set_t. False if nothing parsed.
+bool parse_cpulist(const std::string& s, cpu_set_t& set) {
+    CPU_ZERO(&set);
+    bool any = false;
+    size_t i = 0;
+    while (i < s.size()) {
+        char* end = nullptr;
+        const long a = std::strtol(s.c_str() + i, &end, 10);
+        if (end == s.c_str() + i) break;
+        long b = a;
+        i = static_cast<size_t>(end - s.c_str());
+        if (i < s.size() && s[i] == '-') {
+            b = std::strtol(s.c_str() + i + 1, &end, 10);
+            i = static_cast<size_t>(end - s.c_str());
+        }
+        for (long c = a; c <= b && c < CPU_SETSIZE; ++c) { CPU_SET(static_cast<int>(c), &set); any = true; }
+        if (i < s.size() && s[i] == ',') ++i; else break;
+    }
+    return any;
+}
+
+std::string read_line(const std::string& path) {
+    std::string out;
+    if (std::FILE* f = std::fopen(path.c_str(), "r")) {
+        char buf[512];
+        if (std::fgets(buf, sizeof buf, f)) out = buf;
+        std::fclose(f);
+    }
+    while (!out.empty() && (out.back() == '\n' || out.back() == ' ')) out.pop_back();
+    return out;
+}
+
+// Track LX (docs/STATUS.md §7 0h): the fence that ends every layer's attention
+// chain is signalled by the amdgpu interrupt, and the host thread it wakes then
+// reads the gate's ids out of host-visible memory. Strix Halo has two CCDs; a
+// waiter on the OTHER CCD than the one the interrupt lands on pays a cross-CCD
+// wake-up and cache-line transfer every layer. Measured on the dev machine
+// (amdgpu IRQ effective on CPU 29 = CCD1): the hot step is 78-79.5 ms pinned to
+// CCD1 against 90-100 ms pinned to CCD0, and an unpinned process lands on
+// either, which is the 81-vs-93 ms bimodality the hot-step runs showed.
+//
+// So pin the calling thread -- before IoEngine starts, so its threads inherit
+// it -- to the L3 domain of the CPU that services the amdgpu interrupt.
+// DEEPMOE_CPU_AFFINITY: unset/"auto" = this; "off" = leave the scheduler alone;
+// anything else is a cpulist used verbatim.
+void pin_to_gpu_irq_ccd() {
+    const char* env = std::getenv("DEEPMOE_CPU_AFFINITY");
+    const std::string mode = env ? env : "auto";
+    if (mode == "off") return;
+    cpu_set_t set;
+    std::string list;
+    if (mode != "auto") {
+        list = mode;
+    } else {
+        // Find the amdgpu interrupt and the CPU it is effectively delivered to.
+        int cpu = -1;
+        if (std::FILE* f = std::fopen("/proc/interrupts", "r")) {
+            char line[4096];
+            while (std::fgets(line, sizeof line, f)) {
+                if (!std::strstr(line, "amdgpu")) continue;
+                const int irq = std::atoi(line);
+                const std::string eff =
+                    read_line(std::format("/proc/irq/{}/effective_affinity_list", irq));
+                if (!eff.empty()) cpu = std::atoi(eff.c_str());
+                break;
+            }
+            std::fclose(f);
+        }
+        if (cpu < 0) {
+            log_info("engine: cpu affinity auto: no amdgpu interrupt found; not pinning");
+            return;
+        }
+        list = read_line(std::format("/sys/devices/system/cpu/cpu{}/cache/index3/shared_cpu_list", cpu));
+        if (list.empty()) return;
+        log_info("engine: cpu affinity auto: amdgpu interrupt on cpu {}, pinning to its L3 domain {}",
+                 cpu, list);
+    }
+    if (!parse_cpulist(list, set)) {
+        log_warn("engine: DEEPMOE_CPU_AFFINITY='{}' is not a cpulist; not pinning", list);
+        return;
+    }
+    if (sched_setaffinity(0, sizeof set, &set) != 0)
+        log_warn("engine: sched_setaffinity({}) failed (errno {}); not pinning", list, errno);
+}
+
+}  // namespace
+#endif
+
 
 // --- H1a: the hard cap on the auto-sized cache (see runtime/engine.h) -------
 uint32_t auto_slot_cap() {
@@ -100,14 +202,24 @@ float bf16_to_f32(uint16_t h) {
 // store::SlabBacking.
 class DualPathBacking final : public store::SlabBacking {
 public:
+    // `a_cap` (0 = none) stops path A before the driver refuses. RADV never
+    // refuses: it over-commits the VRAM heap and TTM migrates the excess to GTT
+    // under the running decode (Linux, 2026-09-28: 41 slabs / 71.8 GiB landed on
+    // a 64 GiB heap, VRAM 59 -> 41 GB and GTT 24 GB within 9 s, path B unused).
     DualPathBacking(std::unique_ptr<store::SlabBacking> a,
-                    std::unique_ptr<store::SlabBacking> b)
-        : a_(std::move(a)), b_(std::move(b)) {}
+                    std::unique_ptr<store::SlabBacking> b, uint64_t a_cap = 0)
+        : a_(std::move(a)), b_(std::move(b)), a_cap_(a_cap) {}
 
     Result<store::SlabMemory> allocate(uint64_t bytes) override {
+        if (a_ && !a_done_ && a_cap_ && a_bytes_ + bytes > a_cap_) {
+            log_info("slab pool: path A capped at {} after {} slabs ({} of heap budget "
+                     "headroom), continuing on path B",
+                     human_bytes(a_bytes_), a_slabs_, human_bytes(a_cap_));
+            a_done_ = true;
+        }
         if (a_ && !a_done_) {
             auto m = a_->allocate(bytes);
-            if (m) { owner_.push_back({m->host_ptr, false}); ++a_slabs_; return m; }
+            if (m) { owner_.push_back({m->host_ptr, false}); ++a_slabs_; a_bytes_ += bytes; return m; }
             log_info("slab pool: path A full after {} slabs ({}), continuing on path B",
                      a_slabs_, m.error().str());
             a_done_ = true;
@@ -136,6 +248,7 @@ public:
 private:
     std::unique_ptr<store::SlabBacking> a_, b_;
     std::vector<std::pair<void*, bool>> owner_;
+    uint64_t a_cap_ = 0, a_bytes_ = 0;
     uint32_t a_slabs_ = 0, b_slabs_ = 0;
     bool     a_done_ = false;
 };
@@ -157,6 +270,36 @@ const char* resident_only_name(Engine::ResidentOnly m) {
 // and on this driver an import past the budget does not fail cleanly -- it
 // returns VK_ERROR_INVALID_EXTERNAL_HANDLE and the device is lost on the next
 // submit -- so a cache that sizes itself has to ask first.
+// VK_EXT_memory_budget headroom (budget - usage) of heap `heap_index`, or 0
+// when the extension is missing. The usage is the whole machine's, not this
+// process's, on RADV.
+uint64_t heap_headroom(const gpu::Device& d, uint32_t heap_index, uint64_t* budget_out,
+                       uint64_t* usage_out) {
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    uint32_t n = 0;
+    vkEnumerateDeviceExtensionProperties(d.physical(), nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> ext(n);
+    vkEnumerateDeviceExtensionProperties(d.physical(), nullptr, &n, ext.data());
+    bool have = false;
+    for (const VkExtensionProperties& e : ext)
+        have |= std::strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0;
+    if (!have) return 0;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    props.pNext = &budget;
+    vkGetPhysicalDeviceMemoryProperties2(d.physical(), &props);
+    if (heap_index >= props.memoryProperties.memoryHeapCount) return 0;
+    if (budget_out) *budget_out = budget.heapBudget[heap_index];
+    if (usage_out) *usage_out = budget.heapUsage[heap_index];
+    return budget.heapBudget[heap_index] > budget.heapUsage[heap_index]
+               ? budget.heapBudget[heap_index] - budget.heapUsage[heap_index] : 0;
+#else
+    (void)d; (void)heap_index; (void)budget_out; (void)usage_out;
+    return 0;
+#endif
+}
+
 uint64_t host_heap_headroom(const gpu::Device& d, uint64_t* budget_out, uint64_t* usage_out) {
 #if defined(DEEPMOE_ENABLE_VULKAN)
     uint32_t n = 0;
@@ -412,6 +555,9 @@ Result<void> Engine::configure_io_sources() {
 Result<void> Engine::init(const RuntimeConfig& cfg) {
     shutdown();
     cfg_ = cfg;
+#if defined(__linux__)
+    pin_to_gpu_irq_ccd();
+#endif
 
     if (!cfg_.profile_jsonl.empty()) {
         if (auto r = profiler_.open_jsonl(cfg_.profile_jsonl); !r) return r;
@@ -584,7 +730,33 @@ Result<void> Engine::build_expert_cache() {
     if (!a) return std::unexpected(a.error());
     std::unique_ptr<store::SlabBacking> b;
     if (auto rb = alloc_b_.make_slab_backing(); rb) b = std::move(*rb);
-    auto dual = std::make_unique<DualPathBacking>(std::move(*a), std::move(b));
+    // Path A cap (DEEPMOE_PATH_A_CAP=on), measured with the prefill reserve
+    // above still held, so the reserve is what the post-cache allocations (KV,
+    // prefill workspace, scratch) get back. DEFAULT OFF, and NO-GO on Linux
+    // (STATUS §7 0h, 2026-09-28): RADV over-commits path A and TTM moves ~24 GB
+    // of it to GTT, which costs nothing measurable (hot step 79.3 ms), while
+    // capping sends 14 slabs to path B -- imported host pages, amdgpu userptr --
+    // and the same step became 482 ms: submit 0.2 -> 356 ms (~8.7 ms per
+    // vkQueueSubmit), moe gpu 32 -> 64 ms, engram 2.8 -> 8.9 ms. The Windows
+    // driver refuses at the heap edge by itself, so it never needed this.
+    uint64_t a_cap = 0;
+    {
+        bool want_cap = false;
+        if (const char* e = std::getenv("DEEPMOE_PATH_A_CAP"))
+            want_cap = std::strcmp(e, "on") == 0 || std::strcmp(e, "1") == 0;
+        if (want_cap && b) {
+            if (auto t = alloc_a_.chosen_memory_type(); t) {
+                uint64_t hb = 0, hu = 0;
+                a_cap = heap_headroom(device_, t->heap_index, &hb, &hu);
+                log_info("engine: path A cap {} (heap budget {}, {} in use incl. the {} reserve)",
+                         human_bytes(a_cap), human_bytes(hb), human_bytes(hu),
+                         human_bytes(kPathAReserve));
+                if (hb == 0) a_cap = 0;          // no VK_EXT_memory_budget: no cap
+                else if (a_cap == 0) a_cap = 1;  // budget exhausted: go straight to path B
+            }
+        }
+    }
+    auto dual = std::make_unique<DualPathBacking>(std::move(*a), std::move(b), a_cap);
     DualPathBacking* raw = dual.get();
 
     if (auto r = store_.init(std::move(dual), cache, layout::kTotalLogicalLayers,
@@ -746,6 +918,10 @@ Result<void> Engine::init_gpu() {
 
     if (auto r = device_.create(); !r) return r;
     if (auto r = device_.caps().check_required(); !r) return r;
+    if (device_.caps().driver_id == VK_DRIVER_ID_MESA_RADV) {
+        g_ms_eager_default.store(0);
+        g_shared_early_default.store(1);
+    }
     if (auto r = cur_->timeline_.create(device_, 0); !r) return r;
     if (auto r = alloc_a_.init(device_, MemoryPath::DeviceLocalHostVisible); !r) return r;
     // Path B is optional: it only widens the expert cache. A machine that
@@ -1131,6 +1307,7 @@ void Engine::shutdown() {
         s.tsq_.destroy();
         s.tok_pool_.destroy();
         s.tok_cmd_ = gpu::CommandBuffer{};
+        for (gpu::CommandBuffer& c2 : s.se_cmd_) c2 = gpu::CommandBuffer{};
         s.tok_open_ = false;
         s.fence_.destroy();
         if (s.ffn_in_buf_.valid() && s.ffn_in_alloc_) s.ffn_in_alloc_->free(s.ffn_in_buf_);
@@ -1228,6 +1405,11 @@ Result<void> Engine::create_stream(Stream& s) {
         auto cb = s.tok_pool_.acquire();
         if (!cb) return std::unexpected(cb.error());
         s.tok_cmd_ = *cb;
+        for (gpu::CommandBuffer& c2 : s.se_cmd_) {
+            auto cb2 = s.tok_pool_.acquire();
+            if (!cb2) return std::unexpected(cb2.error());
+            c2 = *cb2;
+        }
     }
     // 40 layers x (attention + MoE) x 2 stamps, two engram layers, the tail.
     const uint32_t tsq_slots =
@@ -1595,14 +1777,15 @@ void Engine::advance_store_guard(const Stream& me, TimelineValue mine) {
     store_.set_completed_timeline(safe);
 }
 
-Result<void> Engine::cmd_wait() {
+Result<void> Engine::cmd_wait(uint64_t target) {
+    const TimelineValue want = target ? TimelineValue(target) : cur_->fence_value_;
     const TimePoint t0 = Clock::now();
     if (const double spin_us = fence_spin_us(); spin_us > 0.0) {
         const double budget_ms = spin_us / 1000.0;
         for (;;) {
             auto v = cur_->fence_.value();
             if (!v) break;                       // fall through to the blocking wait
-            if (*v >= cur_->fence_value_) {
+            if (*v >= want) {
                 cur_->wait_ms_ += ms_since(t0);
                 cur_->spin_hits_ += 1;
                 if (cur_->inflight_guard_) {
@@ -1622,21 +1805,21 @@ Result<void> Engine::cmd_wait() {
     Result<void> r{};
     bool warned = false;
     for (;;) {
-        r = cur_->fence_.wait(cur_->fence_value_, std::chrono::seconds(15));
+        r = cur_->fence_.wait(want, std::chrono::seconds(15));
         if (r || r.error().code != Err::Cancelled) break;   // done, or a real error
         const double waited = std::chrono::duration<double>(Clock::now() - t0).count();
         if (!warned && waited >= 15.0) {
             warned = true;
             log_warn("engine: still waiting for GPU fence {} after {:.0f} s (token {}, {} submits "
                      "this step) -- the queue is shared; giving it {:.0f} s "
-                     "(DEEPMOE_GPU_WAIT_S)", cur_->fence_value_, waited, cur_->token_, cur_->submits_, budget_s);
+                     "(DEEPMOE_GPU_WAIT_S)", want, waited, cur_->token_, cur_->submits_, budget_s);
         }
         if (waited >= budget_s) {
             r = fail(Err::Cancelled,
                      std::format("the GPU did not signal fence {} within {:.0f} s (token {}, "
                                  "{} submits this step). A queued submission and a wedged device "
                                  "look the same here: raise DEEPMOE_GPU_WAIT_S if the machine is "
-                                 "shared", cur_->fence_value_, waited, cur_->token_, cur_->submits_));
+                                 "shared", want, waited, cur_->token_, cur_->submits_));
             break;
         }
     }
@@ -1914,6 +2097,35 @@ Result<void> Engine::layer_begin(Stream& s, uint32_t L, uint32_t position, bool&
     const TimePoint gp_sub0 = Clock::now();
     if (auto r = cmd_submit(prev_gate); !r) return r;
     const double gp_sub_us = gate_probe_ ? ms_since(gp_sub0) * 1000.0 : 0.0;
+    // Track SE: the shared expert needs x and nothing else, and x exists the
+    // moment the gate does. Submit its act_quant + dispatch A right behind the
+    // gate, WITHOUT making it what layer_gate waits for, so the GPU computes it
+    // while the host is waking up, reading the ids and submitting the routed
+    // half -- the ~90-140 us a layer the per-dispatch trace shows idle in front
+    // of every MoE dispatch on RADV.
+    lc.gate_fence = cur_->fence_value_;
+    if (shared_early_on()) {
+        const uint64_t xa = cur_->layer_.ffn_in_addr();
+        if (xa) {
+            // Record into this layer's own buffer: swap it in for the length of
+            // one cmd_open/cmd_submit so the stamps and the submit bookkeeping
+            // are the ordinary ones.
+            std::swap(cur_->tok_cmd_, cur_->se_cmd_[L & 1u]);
+            struct SwapBack {
+                Stream& st; uint32_t i;
+                ~SwapBack() { std::swap(st.tok_cmd_, st.se_cmd_[i]); }
+            } swap_back{*cur_, L & 1u};
+            if (auto r = cmd_open(); !r) return r;
+            const TimePoint r0 = Clock::now();
+            const uint32_t tr_se = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 0,
+                                                        "moe_shared_early");
+            if (auto r = cur_->moe_.record_shared_early(cur_->tok_cmd_, L, xa); !r) return r;
+            trace::close_dispatch(&tracer_, tr_se);
+            cur_->rec_ms_ += ms_since(r0);
+            if (auto r = cmd_submit(0); !r) return r;
+            lc.shared_early = true;
+        }
+    }
     if (gate_probe_ && cur_->gp_open_) {
         GateSeg* g = static_cast<GateSeg*>(cur_->gp_open_);
         g->next_us += ms_between(cur_->gp_top_, Clock::now()) * 1000.0;
@@ -1944,7 +2156,7 @@ Result<void> Engine::layer_gate(Stream& s, uint32_t L, uint32_t position) {
     (void)position;
     const TimePoint gp_w0 = Clock::now();
     lc.gp_w0 = gp_w0;
-    if (auto r = cmd_wait(); !r) return r;
+    if (auto r = cmd_wait(lc.gate_fence); !r) return r;
     const TimePoint gp_w1 = Clock::now();
     lc.gp_w1 = gp_w1;
     // The indexer wrote every compressed entry of the list sparse_attn just read.
@@ -2051,7 +2263,7 @@ Result<void> Engine::layer_gate(Stream& s, uint32_t L, uint32_t position) {
         t.miss_bytes = lc.plan.miss_bytes;
         t.gate_ms    = ms_since(g0);
         if (overlap_ && (!lc.plan.issued.empty() || !lc.plan.joined.empty())) {
-            if (auto r = cur_->moe_.stage_input(call); !r) return r;
+            if (auto r = cur_->moe_.stage_input(call, lc.shared_early); !r) return r;
             staged = true;
             uint32_t early[16];
             uint32_t n_early = 0;
@@ -2068,7 +2280,12 @@ Result<void> Engine::layer_gate(Stream& s, uint32_t L, uint32_t position) {
                 guard_layer(L, std::span<const uint32_t>(early, n_early), ids);
                 if (auto r = cur_->moe_.stage_rows(call, std::span<const uint32_t>(early, n_early)); !r)
                     return r;
-                early[n_early++] = topk;                        // the shared expert
+                // The shared expert, unless Track SE already sent it.
+                if (!lc.shared_early) early[n_early++] = topk;
+            }
+            if (n_late && n_early == 0) {
+                split = true;             // everything is late; the shared half is out already
+            } else if (n_late) {
                 if (auto r = cmd_open(); !r) return r;
                 const TimePoint r0 = Clock::now();
                 cur_->ts_moe_early_[L].begin = cmd_stamp();
@@ -2152,6 +2369,12 @@ Result<void> Engine::layer_moe(Stream& s, uint32_t L, bool& apply_post) {
         // done by now in all but a pathological case, and this wait proves it
         // before the list is rewritten for the late slots.
         if (auto r = cmd_wait(); !r) return r;
+        if (lc.shared_early && std::getenv("DEEPMOE_SE_CHECK")) {
+            std::string first;
+            const uint32_t bad = cur_->moe_.debug_check_x(call, &first);
+            if (bad) log_warn("SE check (split): layer {} token {}: {} x elements differ; {}", L,
+                              cur_->token_, bad, first);
+        }
         guard_layer(L, std::span<const uint32_t>(late, n_late), ids);
         if (auto r = cur_->moe_.stage_rows(call, std::span<const uint32_t>(late, n_late)); !r) return r;
     } else {
@@ -2159,6 +2382,17 @@ Result<void> Engine::layer_moe(Stream& s, uint32_t L, bool& apply_post) {
         for (uint32_t s = 0; s < topk; ++s) all[s] = s;
         guard_layer(L, std::span<const uint32_t>(all, topk), ids);
         if (staged) {
+            if (auto r = cur_->moe_.stage_rows(call, std::span<const uint32_t>(all, topk)); !r) return r;
+        } else if (lc.shared_early) {
+            static const bool se_check = std::getenv("DEEPMOE_SE_CHECK") != nullptr;
+            if (se_check) {
+                if (auto r = cmd_wait(); !r) return r;
+                std::string first;
+                const uint32_t bad = cur_->moe_.debug_check_x(call, &first);
+                if (bad) log_warn("SE check: layer {} token {}: {} x elements differ; {}", L,
+                                  cur_->token_, bad, first);
+            }
+            if (auto r = cur_->moe_.stage_input(call, true); !r) return r;
             if (auto r = cur_->moe_.stage_rows(call, std::span<const uint32_t>(all, topk)); !r) return r;
         } else if (auto r = cur_->moe_.stage(call); !r) {
             return r;
@@ -2180,6 +2414,21 @@ Result<void> Engine::layer_moe(Stream& s, uint32_t L, bool& apply_post) {
             const uint32_t tr_a = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 1,
                                                        "moe_gateup");
             if (auto r = cur_->moe_.record_gateup(cur_->tok_cmd_, std::span<const uint32_t>(late, n_late)); !r)
+                return r;
+            trace::close_dispatch(&tracer_, tr_a);
+            const uint32_t tr_b = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 2,
+                                                       "moe_down");
+            if (auto r = cur_->moe_.record_down(cur_->tok_cmd_); !r) return r;
+            trace::close_dispatch(&tracer_, tr_b);
+        } else if (lc.shared_early) {
+            // Track SE: the shared expert's A is done; A over the routed six, then B
+            // over all seven -- the Track R1 split, bit-identical to one shot.
+            uint32_t routed[16];
+            for (uint32_t s2 = 0; s2 < topk; ++s2) routed[s2] = s2;
+            const uint32_t n_rt = topk;
+            const uint32_t tr_a = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 1,
+                                                       "moe_gateup");
+            if (auto r = cur_->moe_.record_gateup(cur_->tok_cmd_, std::span<const uint32_t>(routed, n_rt)); !r)
                 return r;
             trace::close_dispatch(&tracer_, tr_a);
             const uint32_t tr_b = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 2,
@@ -2230,12 +2479,39 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
     return layer_moe(s, L, apply_post);
 }
 
-bool Engine::ms_eager_moe() {
-    static const bool v = [] {
-        const char* e = std::getenv("DEEPMOE_MS_EAGER_MOE");
-        return !(e && *e == '0');
+// Track LX: on RADV the eager MoE submit -- a submit that waits on the
+// host-signalled residency timeline, followed by a separate submit for the next
+// layer -- trips the amdgpu job timeout (2 s on this kernel) in
+// suite.multistream's Pipeline/Interleave cases (`ring comp_1.2.0 timeout` ->
+// VK_ERROR_DEVICE_LOST), and passes bit-identically with it off; RADV_DEBUG=hang
+// (syncshaders) also hides it. Root cause not found (docs/STATUS.md §7 0h), so
+// on RADV the default is off; DEEPMOE_MS_EAGER_MOE=1 turns it back on.
+
+// Track SE (docs/STATUS.md §7 0h): the shared expert's act_quant + dispatch A
+// submitted right behind the gate, so it runs in the host round trip. RADV
+// default ON (hot step ~77.2 -> ~74.3 ms over three alternating pairs, every
+// warm pass's margin and l3_ppl's NLL bit-identical); elsewhere off until
+// measured. DEEPMOE_SHARED_EARLY=0/1 overrides.
+bool Engine::shared_early_on() const {
+    static const int env = [] {
+        const char* e = std::getenv("DEEPMOE_SHARED_EARLY");
+        if (!e || !*e) return -1;
+        return *e == '0' ? 0 : 1;
     }();
-    return v;
+    const bool on = env >= 0 ? env != 0 : g_shared_early_default.load() != 0;
+    // One stream only: with two, the other stream's submits interleave with
+    // this one's and nothing here has been measured.
+    return on && streams_.size() == 1;
+}
+
+bool Engine::ms_eager_moe() {
+    static const int env = [] {
+        const char* e = std::getenv("DEEPMOE_MS_EAGER_MOE");
+        if (!e || !*e) return -1;
+        return (*e == '0') ? 0 : 1;
+    }();
+    if (env >= 0) return env != 0;
+    return g_ms_eager_default.load(std::memory_order_relaxed) != 0;
 }
 
 

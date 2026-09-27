@@ -107,6 +107,7 @@ set(DEEPMOE_SHADERS
     gpu/shaders/moe_down.slang
     gpu/shaders/moe_hquant.slang
     gpu/shaders/moe_xquant.slang
+    gpu/shaders/moe_xact.slang
     gpu/shaders/engram.slang
     gpu/shaders/head.slang
     gpu/shaders/sample_topk.slang

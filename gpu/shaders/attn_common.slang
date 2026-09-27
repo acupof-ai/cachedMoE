@@ -205,20 +205,26 @@ uint fp8_encode_rn(float v) {
 //     which is why no exponent arithmetic appears. The caller has already
 //     clamped to +-448, which is exactly representable, so the add can never
 //     reach the 0x7F/0xFF NaN codes.
-//   * |v| < 2^-6 is a subnormal, i.e. a multiple of 2^-9. `(a + M) - M` with
-//     M = 1.5 * 2^14 rounds to that grid with round-to-nearest-even in two
-//     instructions: every number in [2^14, 2^15) has ulp 2^-9, and a is small
-//     enough that a + M stays in that binade. 8 * 2^-9 comes out as 2^-6,
-//     which is the smallest normal and the same answer `fp8_encode_rn` gives
-//     by carrying its mantissa into the exponent field.
-static const float kE4M3SubMagic = 24576.0f;   // 1.5 * 2^14
-
+//   * |v| < 2^-6 is a subnormal, i.e. a multiple of 2^-9, rounded to that grid
+//     with round-to-nearest-even (see the body for why it is integers and not
+//     the `(a + 1.5*2^14) - 1.5*2^14` trick it used to be). 8 * 2^-9 comes out
+//     as 2^-6, the smallest normal, the same answer `fp8_encode_rn` gives.
 float fp8_round(float v) {
     const float a = abs(v);
+    // Subnormal: a multiple of 2^-9 by an exact round-to-nearest-even written
+    // out in integers. NOT `(a + 1.5*2^14) - 1.5*2^14`: Mesa's NIR folds that
+    // to `a` on RADV (an inexact algebraic rule the SPIR-V does not forbid),
+    // which returned the unrounded value -- found by Track SE's DEEPMOE_SE_CHECK,
+    // docs/STATUS.md §7 0h. a * 512 < 8 is exact, so is its integer part and
+    // the remainder.
+    const float m  = a * 512.0f;
+    const uint  n0 = uint(m);
+    const float f  = m - float(n0);
+    const uint  n  = n0 + (((f > 0.5f) || (f == 0.5f && (n0 & 1u) != 0u)) ? 1u : 0u);
+    const float sub = float(n) * (1.0f / 512.0f);
     const uint  b = asuint(a);
     const uint  r = (b + 0x7FFFFu + ((b >> 20) & 1u)) & 0xFFF00000u;
-    const float mag = (a < kE4M3MinN) ? ((a + kE4M3SubMagic) - kE4M3SubMagic)
-                                      : asfloat(r);
+    const float mag = (a < kE4M3MinN) ? sub : asfloat(r);
     return asfloat(asuint(mag) | (asuint(v) & 0x80000000u));
 }
 

@@ -474,6 +474,33 @@ int main(int argc, char** argv) {
             add(gpu::MoeSpec{m, 32, 32, 0, 0, 1, 0, 0, 1}, "fp8 shared", 1);
             add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, 4, 0, 1}, "fp8 shared", 1);
             add(gpu::MoeSpec{m, 16, 32, 0, 0, 2, 4, 2, 1}, "fp8 shared", 1);
+            // The engine's decode shape on RADV (moe_bridge.cpp): L32 R1 xglob,
+            // HQuant 3, arithmetic FP4 decode (DecodeMode 1), next to its
+            // DecodeMode 0 control.
+            for (uint32_t dec : {0u, 1u}) {
+                gpu::MoeSpec sp{m, 32, 32, dec, 0, 1, 0, 3, 1};
+                add(sp, "fp8 shared", 1);
+            }
+            // Dispatch B alone is where that shape loses (152 GB/s against
+            // 204 for A on RADV): its own staging mode, and the 16/2 shape.
+            for (uint32_t xb : {1u, 2u, 3u, 4u, 5u}) {
+                gpu::MoeSpec sp{m, 32, 32, 1, 0, 1, 0, 3, 1};
+                sp.x_mode_b = xb;
+                add(sp, "fp8 dec1 B", 1);
+            }
+            for (uint32_t xb : {0u, 3u, 4u}) {
+                gpu::MoeSpec sp{m, 16, 32, 1, 0, 2, 0, 3, 1};
+                sp.x_mode_b = xb;
+                add(sp, "fp8 dec1 B", 1);
+            }
+            // A stays L32 R1, B gets its own shape (MoeSpec::lanes_b / rows_b).
+            for (auto [lb, rb] : {std::pair{16u, 1u}, {16u, 2u}, {16u, 4u}, {32u, 2u},
+                                  {32u, 4u}, {64u, 1u}, {64u, 2u}}) {
+                gpu::MoeSpec sp{m, 32, 32, 1, 0, 1, 0, 3, 1};
+                sp.lanes_b = lb;
+                sp.rows_b  = rb;
+                add(sp, "fp8 dec1 B", 1);
+            }
         }
     }
 

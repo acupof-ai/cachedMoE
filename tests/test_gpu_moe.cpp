@@ -182,8 +182,14 @@ DEEPMOE_TEST(gpu_moe, matches_the_oracle_across_every_variant) {
     std::printf("       x fp16 round-trip: relative L2 error %.3e\n", std::sqrt(x_rel / xn));
 
     struct Case { gpu::MoeSpec spec; const char* what; double tol = 1e-3; };
+    // Dispatch B with its own shape (MoeSpec::lanes_b / rows_b).
+    auto b_shape = [](gpu::MoeSpec s, uint32_t lb, uint32_t rb) {
+        s.lanes_b = lb; s.rows_b = rb; return s;
+    };
     const Case cases[] = {
         {{1, 32, 32, 1, 0}, "baseline: wave32, arithmetic decode, fp16 h"},
+        {b_shape({1, 32, 32, 1, 0}, 16, 2), "B alone at 16 lanes, 2 rows"},
+        {b_shape({6, 32, 32, 1, 0}, 16, 2), "M=6, B alone at 16 lanes, 2 rows"},
         {{1, 16, 32, 1, 0}, "16 lanes per row"},
         {{1, 64, 32, 1, 0}, "64 lanes per row over 32-wide subgroups"},
         {{1, 64, 64, 1, 0}, "wave64"},

@@ -117,7 +117,8 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_PROPERTIES, &emh};
     VkPhysicalDeviceVulkan11Properties v11{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, &m4};
-    VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &v11};
+    VkPhysicalDeviceDriverProperties drv{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES, &v11};
+    VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &drv};
     vkGetPhysicalDeviceProperties2(pd, &p2);
 
     const VkPhysicalDeviceProperties& p = p2.properties;
@@ -126,6 +127,7 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.api_minor      = VK_API_VERSION_MINOR(p.apiVersion);
     c.api_patch      = VK_API_VERSION_PATCH(p.apiVersion);
     c.driver_version = p.driverVersion;
+    c.driver_id      = static_cast<uint32_t>(drv.driverID);
     c.vendor_id      = p.vendorID;
     c.device_id      = p.deviceID;
     c.max_storage_buffer_range = p.limits.maxStorageBufferRange;

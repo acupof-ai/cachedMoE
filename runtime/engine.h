@@ -273,6 +273,11 @@ struct Stream {
     TimelineValue        fence_value_ = 0;
     gpu::CommandPool     tok_pool_;
     gpu::CommandBuffer   tok_cmd_{};
+    // Track SE: the shared-early submit goes out while `tok_cmd_`'s gate
+    // submit is still executing, so it needs a buffer of its own -- two,
+    // alternating by layer parity: layer L+1 re-records L-1's, which was queued
+    // ahead of gate L, whose fence the host has already waited for.
+    gpu::CommandBuffer   se_cmd_[2]{};
     bool                 tok_open_ = false;
     bool                 tok_first_ = true;
     gpu::QueryPool       tsq_;
@@ -334,6 +339,11 @@ struct Stream {
         bool      split = false;
         bool      staged = false;
         bool      engram = false;
+        // Track SE: the shared expert's dispatch A went out right behind the
+        // gate, and `gate_fence` is the fence value of the gate's own submit
+        // (the one layer_gate waits for).
+        bool      shared_early = false;
+        uint64_t  gate_fence = 0;
         TimePoint g0{}, gp_w0{}, gp_w1{}, gp_p0{};
     };
     LayerCtx             lc_{};
@@ -818,7 +828,10 @@ private:
     Result<void> cmd_open();
     uint32_t     cmd_stamp();                           // ~0u when untimed
     Result<void> cmd_submit(TimelineValue wait_value);  // 0 = no gate
-    Result<void> cmd_wait();
+    // Wait for fence value `target` (0 = the last submit).
+    Result<void> cmd_wait(uint64_t target = 0);
+    // Track SE (docs/STATUS.md §7 0h): DEEPMOE_SHARED_EARLY.
+    bool shared_early_on() const;
     // The wall-clock budget one GPU fence wait gets (DEEPMOE_GPU_WAIT_S, 900 s).
     static double gpu_wait_budget_s();
     Result<void> cmd_flush(TimelineValue wait_value) {
