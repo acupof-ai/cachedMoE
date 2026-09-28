@@ -1,0 +1,33 @@
+file       /home/chenkailun/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors (7.39 GB, unbuffered yes, sector 4096 B)
+device     AMD Radeon 8060S Graphics (RADV STRIX_HALO)
+
+request 17284+1084 KiB per read, 120 reads per point, 2 repeat(s)
+
+dst     route   rep chunk qd  infl      GB/s   mean_ms    p50_ms    p95_ms    max_ms  mirror%  QD@issue  submit_us   copy_ms  note
+------------------------------------------------------------------------------------------------------------------------------------------
+ram     single    0  1024   8     1     3.462     5.432     4.942     6.552    37.202     0.0      5.52        6.2     0.000  pageable host (AlignedBuffer)
+ram     single    0  1024  16     1     3.381     5.562     5.769     6.698     7.659     0.0      8.68       13.9     0.000  pageable host (AlignedBuffer)
+ram     single    0  1024  32     1     3.532     5.325     5.787     6.762     7.723     0.0      9.00       18.6     0.000  pageable host (AlignedBuffer)
+ram     single    0  4096   8     1     3.820     4.921     5.034     6.375     6.752     0.0      2.50       10.2     0.000  pageable host (AlignedBuffer)
+ram     single    0  4096  16     1     3.987     4.717     4.897     6.248     7.206     0.0      2.50        9.2     0.000  pageable host (AlignedBuffer)
+ram     single    0  4096  32     1     4.050     4.642     4.820     6.599    47.801     0.0      2.50       10.2     0.000  pageable host (AlignedBuffer)
+patha   single    0  1024   8     1     3.451     5.449     5.111     8.675     9.717     0.0      5.48        6.3     0.000  memory type 3, mapped
+patha   single    0  1024  16     1     3.178     5.918     5.854     7.801     8.870     0.0      8.68       13.8     0.000  memory type 3, mapped
+patha   single    0  1024  32     1     3.039     6.189     6.101     8.365     9.890     0.0      9.00       16.6     0.000  memory type 3, mapped
+patha   single    0  4096   8     1     3.070     6.124     5.592    11.131    45.461     0.0      2.50       14.0     0.000  memory type 3, mapped
+patha   single    0  4096  16     1     3.032     6.203     5.706    10.864    13.298     0.0      2.50       15.3     0.000  memory type 3, mapped
+patha   single    0  4096  32     1     2.910     6.464     5.835    10.451    11.110     0.0      2.50       11.6     0.000  memory type 3, mapped
+ram     single    1  1024   8     1     3.677     5.115     4.929     6.818     7.680     0.0      5.52        6.2     0.000  pageable host (AlignedBuffer)
+ram     single    1  1024  16     1     3.404     5.524     5.678     6.746    23.870     0.0      8.68       14.7     0.000  pageable host (AlignedBuffer)
+ram     single    1  1024  32     1     3.840     4.896     5.715     6.803    18.765     0.0      9.00       17.0     0.000  pageable host (AlignedBuffer)
+ram     single    1  4096   8     1     3.656     5.142     5.144     6.913     7.274     0.0      2.50       11.1     0.000  pageable host (AlignedBuffer)
+ram     single    1  4096  16     1     3.858     4.873     5.284     6.747     7.246     0.0      2.50       10.9     0.000  pageable host (AlignedBuffer)
+ram     single    1  4096  32     1     4.358     4.315     4.948     6.336     6.835     0.0      2.50       10.2     0.000  pageable host (AlignedBuffer)
+patha   single    1  1024   8     1     3.477     5.409     5.030     8.012     8.955     0.0      5.47        6.5     0.000  memory type 3, mapped
+patha   single    1  1024  16     1     3.020     6.226     5.840     8.169    47.263     0.0      8.68       11.7     0.000  memory type 3, mapped
+patha   single    1  1024  32     1     3.089     6.087     5.857     8.278     9.517     0.0      9.00       15.0     0.000  memory type 3, mapped
+patha   single    1  4096   8     1     3.431     5.480     5.211     8.496    10.332     0.0      2.50       11.0     0.000  memory type 3, mapped
+patha   single    1  4096  16     1     3.282     5.730     5.317     9.393    10.418     0.0      2.50       11.3     0.000  memory type 3, mapped
+patha   single    1  4096  32     1     2.841     6.619     5.431    10.691    50.322     0.0      2.50       10.9     0.000  memory type 3, mapped
+
+wrote bench/results/linux/perf/io_dst_copypool.csv

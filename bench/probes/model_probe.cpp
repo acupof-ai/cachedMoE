@@ -187,6 +187,31 @@ int main(int argc, char** argv) {
     }
     jkv("stream_cold_peak_gbs", jnum(peak));
 
+    // --- access shape: moe_down's row block of every expert vs contiguous ----
+    // Same bytes three ways, cold: (a) W workgroups each read a 36 KB row
+    // block from each of 7 matrices (dispatch B today), (b) W workgroups each
+    // read one contiguous 7 x 36 KB run, (c) 7W workgroups each read one 36 KB
+    // block, expert-major -- what an expert-split dispatch would issue.
+    {
+        const uint32_t seg = 36 * 1024 / 16 / 1024 * 1024;       // uint4s, whole 1024 blocks
+        std::printf("\naccess shape, cold, 7 segments of %u KB per row block:\n", seg * 16 / 1024);
+        for (uint32_t w : {40u, 80u, 160u, 320u}) {
+            const uint32_t stride = w * seg;
+            auto ta = c.time({6, 7, seg, stride}, w, 1, false, true);
+            auto tb = c.time({1, 0, 7 * seg, 0}, w, 1, false, true);
+            auto tc = c.time({1, 0, seg, 0}, 7 * w, 1, false, true);
+            if (!ta || !tb || !tc) continue;
+            const double mb = double(7) * seg * 16 * w / 1e6;
+            std::printf("  W %4u (%6.1f MB): 7 segments each %7.1f us (%3.0f GB/s) | contiguous %7.1f us "
+                        "(%3.0f) | %u workgroups x 1 segment %7.1f us (%3.0f)\n",
+                        w, mb, *ta * 1e6, mb / 1e3 / *ta, *tb * 1e6, mb / 1e3 / *tb, 7 * w, *tc * 1e6,
+                        mb / 1e3 / *tc);
+            js += "  \"shape_w" + std::to_string(w) + "\": {\"segments_us\": " + jnum(*ta * 1e6) +
+                  ", \"contiguous_us\": " + jnum(*tb * 1e6) + ", \"split_us\": " + jnum(*tc * 1e6) +
+                  ", \"mb\": " + jnum(mb) + "},\n";
+        }
+    }
+
     // --- one workgroup: barrier and wave reduction ---------------------------
     {
         const uint32_t n = 4000;

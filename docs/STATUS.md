@@ -44,9 +44,18 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 
 **对话（`tools/hitrate_bench.py` → `perf_report --chat --record`，每 token ms）**
 
-| # | label | code | switches | bg GPU | decode tok/s | ms/tok | compute (attn/moe/tail/engram) | NVMe stall (floor) | other | hit |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 0 | all1-single | `0da928fb96 †` | – | ? | **6.565** | 152.3 | 75.7 (37.2/28.3/6.2/4.1) | 73.4 (52.9 @ 4.8 GB/s) | 3.1 | 0.9438 |
+| # | label | code | switches | bg GPU | disk writes | decode tok/s | ms/tok | compute (attn/moe/tail/engram) | NVMe stall (floor) | ms/miss | other | hit | prefill s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | all1-single | `0da928fb96 †` | – | ? | ? | **6.565** | 152.3 | 75.7 (37.2/28.3/6.2/4.1) | 73.4 (52.9 @ 4.8 GB/s) | 5.29 | 3.1 | 0.9438 | 75.3 |
+| 3 | p0-1MiB-qd8 | `1fe3ccc35e` | IO_P0_CHUNK_MB=1 IO_P0_QD=8 MIRROR_AUTO=0 | 8% | ? | **6.780** | 147.5 | 77.6 (37.5/29.6/6.2/4.2) | 68.4 (53.6 @ 4.8 GB/s) | 4.82 | 1.4 | 0.9430 | 66.6 |
+| 4 | p0sweep-c1q4-3turns | `1fe3ccc35e+9 dirty (d33a5d7c1c2ac41d)` | IO_P0_CHUNK_MB=1 IO_P0_QD=4 MIRROR_AUTO=0 | 1.4% | ? | **7.254** | 137.9 | 77.7 (37.6/29.6/6.3/4.2) | 58.5 (48.2 @ 4.8 GB/s) | 4.68 | 1.4 | 0.9487 | 19.8 |
+| 5 | p0sweep-c1q12-3turns | `1fe3ccc35e+10 dirty (5f0d47c2364080ab)` | IO_P0_CHUNK_MB=1 IO_P0_QD=12 MIRROR_AUTO=0 | 27.4% | ? | **6.931** | 144.3 | 78.7 (38.2/30.1/6.4/4.1) | 63.6 (48.5 @ 4.8 GB/s) | 4.90 | 1.7 | 0.9484 | 21.8 |
+| 6 | p0sweep-c2q8-3turns | `1fe3ccc35e+10 dirty (50b414bd54062281)` | IO_P0_CHUNK_MB=2 IO_P0_QD=8 MIRROR_AUTO=0 | 32.7% | ? | **6.945** | 144.0 | 76.5 (37.1/28.9/6.2/4.2) | 65.6 (48.5 @ 4.8 GB/s) | 5.00 | 1.8 | 0.9484 | 21.9 |
+| 7 | p0sweep-c1q8-3turns | `1fe3ccc35e+10 dirty (878bc7f5aa3f6d57)` | IO_P0_CHUNK_MB=1 IO_P0_QD=8 MIRROR_AUTO=0 | 24.3% | ? | **7.186** | 139.2 | 75.7 (36.4/29.1/6.1/4.1) | 61.5 (48.5 @ 4.8 GB/s) | 4.72 | 1.6 | 0.9484 | 21.9 |
+| 9 | p0sweep-r2-c1q2-3turns | `db9b68bbd4+6 dirty (59abe16d493fdb1d)` | IO_P0_CHUNK_MB=1 IO_P0_QD=2 MIRROR_AUTO=0 | 2% | 25 MB | **6.775** | 147.6 | 70.9 (32.0/28.9/6.1/3.9) | 73.8 (51.9 @ 4.8 GB/s) | 5.38 | 2.5 | 0.9448 | 25.4 |
+| 10 | p0sweep-r2-c1q3-3turns | `db9b68bbd4+6 dirty (c027d8815a710be9)` | IO_P0_CHUNK_MB=1 IO_P0_QD=3 MIRROR_AUTO=0 | 23% | 21 MB | **7.291** | 137.1 | 71.1 (31.9/28.9/6.1/4.2) | 63.8 (52.0 @ 4.8 GB/s) | 4.69 | 1.8 | 0.9447 | 22.4 |
+| 11 | p0sweep-r2-c1q4-3turns | `db9b68bbd4+6 dirty (499a7454c726a24a)` | IO_P0_CHUNK_MB=1 IO_P0_QD=4 MIRROR_AUTO=0 | 23.9% | 29 MB | **7.319** | 136.6 | 71.4 (32.0/29.1/6.1/4.1) | 62.3 (52.0 @ 4.8 GB/s) | 4.53 | 2.6 | 0.9447 | 21.6 |
+| 12 | p0sweep-r2-c1q6-3turns | `db9b68bbd4+6 dirty (7fb9407b56966f75)` | IO_P0_CHUNK_MB=1 IO_P0_QD=6 MIRROR_AUTO=0 | 23.9% | 23 MB | **7.230** | 138.3 | 71.5 (32.0/29.3/6.1/4.0) | 63.8 (52.0 @ 4.8 GB/s) | 4.63 | 2.7 | 0.9447 | 21.4 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -54,8 +63,9 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 |---|---|---|---|---|---|---|---|---|
 | 1 | hot-0da928f | `0da928fb96+3 dirty (7d244e782a1305c4) †` | – | 6% | **78.31** (77.9–79.1) | 56.64 | 2.88 | moe_gateup 3.31, wo_b 3.29, moe_down 2.55, wo_a 2.15 |
 | 2 | hot-0da928f-gamemoderun | `0da928fb96+3 dirty (7d244e782a1305c4) †` | – | 6% | **79.23** (78.5–81.2) | 56.64 | 2.78 | moe_gateup 3.66, wo_b 3.24, moe_down 2.83, wo_a 2.18 |
+| 8 | hot-606565d | `606565dc6f+2 dirty (73e07a223a33085f)` | – | 6% | **73.85** (73.3–74.9) | 43.51 | 3.81 | wo_b.ksplit 8.01, wo_a.ksplit 6.36, moe_gateup 3.14, moe_down 2.55 |
 
-`†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。
+`†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。ms/miss 是 decode 步（hit > 0.8）的 NVMe stall 对该步 miss 数的回归斜率：同配置复跑只动 ~1%，比 tok/s 稳得多，IO 改动看它。disk writes 是运行期间所有 NVMe 的写入量（引擎自己只写几 MB 日志；>500 MB 标 ⚠：有别的程序在写同一块盘，IO 数字不可信）。bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。
 <!-- perf-ledger:end -->
 
 以下是 Windows 时期的历史表，出处各自在右列。
@@ -656,6 +666,23 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    （`perf_report --chat` 可重算）——decode tok/s、compute、tail、other 都在那两行里。
    **按瓶颈的下一项**（`perf_report` 的排序）：NVMe 地板本身（命中率 / 容量）> NVMe stall 超出地板的部分 > `wo_b`/`wo_a` 的 K-split（mgt1 批路径**本来就是** K-split，
    下面第 6 项那句"先让 mgt1 也用 K-split"的前提不成立；`set_attn_ksplit_default` 从没被调用）> MoE gate/up、down 的超出 > barriers。
+   **瓶颈 3：每次 miss 的盘等待。** 新尺子：`perf_report --chat` 对 decode 步（hit > 0.8）做 stall 对该步 miss 数的回归，斜率 = **ms/missed expert**
+   （ledger 的 ms/miss 列）。它比 tok/s 稳得多：预碰页之后四次同配置单盘运行 5.19 / 5.27 / 5.27 / 5.29，前 800 步与全程差 ≤0.03——**IO 改动看它，3 轮对话就够**（`hitrate_bench --max-turns 3`）。
+   单盘理想是 18,808,832 B ÷ 4.8 GB/s = 3.92 ms，实测 5.29，所以每 token ~13.6 次 miss × 1.4 ms 是盘之外的开销。
+   ① **P0 改成 1 MiB chunk × QD 8（Linux 默认，`runtime/engine.cpp`；Windows 保持 Track Q2 的 4 MiB × 24）**：ledger `p0-1MiB-qd8`，斜率 5.29 → **4.82**，prefill 总时 75.3 → **66.6 s**。
+   与 §3 的 44 和 0h 里"`c1q64m128` NO-GO"不矛盾：那两次是 QD 48–64，更深只会更慢（斜率 6.11–6.18）；变好的是**更浅**。
+   ② **中转拷贝不是它**：`io_uring` 后端现在在退出时打出中转拷贝总量（`[INF] io_uring: bounce copies …`）。拷贝池（3 个帮手线程分 256 KiB 片）把拷贝从 0.85 压到 0.45 ms/expert，
+   而每 expert 延迟没有可测变化，**撤掉**。③ **`io_dst_bench` 的 `patha` 行此前在 Linux 上是错的**：它不预碰页，QD 越深轮转的槽越多、首写缺页越多（~2.4 GB/s），
+   于是"patha 随 QD 变慢"是 bench 的假象；现在与引擎一样预碰页（`--verbose` 打出拷贝总量）。修正后 bench 里 path A 反而是 4 MiB × 32 最好——**bench 只有 P0，引擎里 P0 与 engram 的 4 KiB 读、backfill 交错**，
+   两者不一致时以引擎的斜率为准。④ **QD 扫描（ledger 4–7、9–12，各 3 轮）：1 MiB 块下 QD 3–8 是一个平台**——4.69 / 4.53 / 4.63 / 4.72（QD 3 / 4 / 6 / 8），
+   第一轮 QD 4 是 4.68；两轮都是 QD 4 最低，但差距 ≤3%，在抖动线内，**默认保持 QD 8 不动**。明确更差的是 QD 2（5.38）、QD 12（4.90）和 2 MiB 块（5.00）。
+   **瓶颈 4：`wo_b` / `wo_a` 超出地板（热步第 2、4 名）→ K-split 在 RADV 上默认开**（`Engine::init_gpu`，与 L16 R2、shared-early 同一处；`DEEPMOE_ATTN_KSPLIT=0` 关）。
+   0h 里它被两道漂移闸挡住，这次先量**闸本身的噪声**（`bench/results/linux/drift_noise/`，`run.sh` / `summary.json`）：四种只差 fp32 求和顺序的算术——
+   默认、dispatch B 旧形状（LB 32 RB 1，上一版默认）、+K-split、两者都开——外加默认的重跑作对照。**重跑逐位相同**（尺子确定），`SHARED_EARLY=0` 也逐位相同。
+   `suite.decode` index keys **0.9685 / 0.9751 / 0.9493 / 0.9642**，compressed KV 0.9547 / 0.9673 / 0.9560 / 0.9573，window KV 0.9309 / 0.9265 / 0.9054 / 0.9055；
+   `suite.spec_forward` worst cos **0.9415 / 0.9300 / 0.9132 / 0.9441**，top-1 52 / 54 / 53 / 57 of 60。**四个里两个过不了旧线——上一版的默认形状自己就在 spec 的 0.93 之下**。
+   所以旧线是划在"同样正确的算术"的散布**里面**的回归绊线，不是质量线（接线错误落在 cos ~0.2 或 NaN）。新线统一按**四者最小值 − 四者极差**：
+   window 0.87、compressed 0.94、index keys 0.92、spec cos 0.88、top-1 47/60，表格写进两个测试的注释。
 
 0i. **Track ST：chunk 级条带化（`DEEPMOE_MIRROR_STRIPE=1`，默认关）——GO：双盘对话 decode 6.33 → 7.39 tok/s（+16.8%，两对），PR #2 已合入。**
    **机制**：D2 的路由按**整个请求**选盘。一个 expert 是两个 run（17,698,816 B weights + 1,110,016 B scales），

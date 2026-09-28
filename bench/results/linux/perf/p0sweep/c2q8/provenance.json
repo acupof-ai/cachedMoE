@@ -1,0 +1,49 @@
+{
+ "time": "2026-09-28T22:27:34+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "1fe3ccc35e",
+ "dirty": [
+  "bench/io_dst_bench.cpp",
+  "bench/results/perf_ledger.jsonl",
+  "core/config.h",
+  "docs/STATUS.md",
+  "runtime/engine.cpp",
+  "storage/io_engine.cpp",
+  "storage/linux/io_uring.cpp",
+  "tools/hitrate_bench.py",
+  "tools/perf_ledger.py",
+  "tools/perf_report.py"
+ ],
+ "diff_sha": "50b414bd54062281",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "a70c8fdc4e01c383",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 41,
+  "sha": "2d4bb915b63d768b"
+ },
+ "env": {
+  "DEEPMOE_IO_P0_CHUNK_MB": "2",
+  "DEEPMOE_IO_P0_QD": "8",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/linux/perf/p0sweep/c2q8/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 32.7,
+  "gpu_busy_max": 44,
+  "loadavg": [
+   "2.26",
+   "2.14",
+   "1.86"
+  ],
+  "top_cpu": [
+   "steamwebhelper 25.4%",
+   "steamwebhelper 15.1%",
+   "steamwebhelper 8.0%",
+   "chromium 7.5%"
+  ]
+ },
+ "gamemode_lib": true
+}

@@ -1,0 +1,51 @@
+{
+ "base": {
+  "cmp": 0.9546873,
+  "key": 0.9685037,
+  "spec_cos": 0.9414598,
+  "spec_top1": "52/60",
+  "rc": "0"
+ },
+ "base_repeat": {
+  "cmp": 0.9546873,
+  "key": 0.9685037,
+  "spec_cos": 0.9414598,
+  "spec_top1": "52/60",
+  "rc": "0"
+ },
+ "hq2_control": {
+  "cmp": null,
+  "key": null,
+  "spec_cos": null,
+  "spec_top1": null,
+  "rc": "0"
+ },
+ "ksplit": {
+  "cmp": 0.955998,
+  "key": 0.9492848,
+  "spec_cos": 0.9132495,
+  "spec_top1": "53/60",
+  "rc": "8"
+ },
+ "ksplit_oldB": {
+  "cmp": 0.9572521,
+  "key": 0.9641705,
+  "spec_cos": 0.9441259,
+  "spec_top1": "57/60",
+  "rc": "0"
+ },
+ "oldB": {
+  "cmp": 0.9673223,
+  "key": 0.9750995,
+  "spec_cos": 0.9299804,
+  "spec_top1": "54/60",
+  "rc": "8"
+ },
+ "se0": {
+  "cmp": 0.9546873,
+  "key": 0.9685037,
+  "spec_cos": 0.9414598,
+  "spec_top1": "52/60",
+  "rc": "0"
+ }
+}

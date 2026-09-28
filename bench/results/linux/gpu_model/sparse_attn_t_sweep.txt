@@ -1,0 +1,15 @@
+== kv 640 tiles 32 tile-heads 8 pv-tiles 1
+sparse_attn_t.score         48.63       591872       12.2
+sparse_attn_t.pv            67.95       591872        8.7
+== kv 640 tiles 32 tile-heads 8 pv-tiles 4
+sparse_attn_t.score         55.94       591872       10.6
+sparse_attn_t.pv            63.35       591872        9.3
+sparse_attn_t.finish         3.56       524288      147.1
+== kv 640 tiles 32 tile-heads 8 pv-tiles 8
+sparse_attn_t.score         54.47       591872       10.9
+sparse_attn_t.pv            65.78       591872        9.0
+sparse_attn_t.finish         4.39      1048576      239.0
+== kv 640 tiles 32 tile-heads 8 pv-tiles 16
+sparse_attn_t.score         48.31       591872       12.3
+sparse_attn_t.pv            76.05       591872        7.8
+sparse_attn_t.finish         5.95      2097152      352.2

@@ -1,0 +1,67 @@
+{
+ "time": "2026-09-28T23:44:41+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "db9b68bbd4",
+ "dirty": [
+  "bench/probes/model_probe.cpp",
+  "bench/results/linux/gpu_model/constants.json",
+  "bench/results/linux/gpu_model/model_probe.txt",
+  "bench/results/perf_ledger.jsonl",
+  "docs/STATUS.md",
+  "gpu/shaders/probe_model.slang"
+ ],
+ "diff_sha": "c027d8815a710be9",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "244c004f1881912b",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 42,
+  "sha": "4cdee3cce36f5c01"
+ },
+ "env": {
+  "DEEPMOE_IO_P0_CHUNK_MB": "1",
+  "DEEPMOE_IO_P0_QD": "3",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/linux/perf/p0sweep/r2_c1q3/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 23.0,
+  "gpu_busy_max": 35,
+  "loadavg": [
+   "0.83",
+   "0.90",
+   "1.30"
+  ],
+  "top_cpu": [
+   "chromium 6.6%",
+   "kworker/u130:3-kcryptd-253:0-1 6.4%",
+   "kworker/u130:0-kcryptd-253:0-1 6.2%",
+   "claude 3.2%"
+  ]
+ },
+ "disks_start": {
+  "t": 1790610282.3672075,
+  "nvme0n1": [
+   33674151962,
+   34753527
+  ],
+  "nvme1n1": [
+   3653503432,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 132.6,
+  "nvme0n1": {
+   "read_MB": 301601.7,
+   "write_MB": 20.6
+  },
+  "nvme1n1": {
+   "read_MB": 0.0,
+   "write_MB": 0.0
+  }
+ }
+}

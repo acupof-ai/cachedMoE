@@ -13,6 +13,9 @@
 //   3 chase    lane 0 of workgroup 0 follows `n` dependent loads through Chase
 //   4 fma      every thread, `n` rounds of 8 independent fp32 FMA chains
 //   5 wave     `n` dependent WaveActiveSum reductions in every wave
+//   6 segments workgroup g reads `n` segments of per_group uint4s, segment s at
+//              s * base + g * per_group: moe_down's shape (a row block of each
+//              of `n` expert matrices, the matrices `base` apart)
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint4>   Src;
 [[vk::binding(1, 0)]] RWStructuredBuffer<uint4> Sink;    // one uint4 per invocation
@@ -70,6 +73,19 @@ void main(uint3 gid : SV_GroupID, uint lane : SV_GroupIndex) {
             g = g * 0.9999f + 0.5f; h = h * 0.9999f + 0.5f;
         }
         Sink[out] = uint4(asuint(a + b + c + d), asuint(e + f + g + h), 0, 0);
+    } else if (pc.mode == 6u) {
+        uint4 acc = uint4(0, 0, 0, 0);
+        for (uint sgm = 0; sgm < pc.n; ++sgm) {
+            const uint base = sgm * pc.base + gid.x * pc.per_group;
+            for (uint o = 0; o + 1024 <= pc.per_group; o += 1024) {
+                uint4 a = Src[base + o +   0 + lane];
+                uint4 b = Src[base + o + 256 + lane];
+                uint4 c = Src[base + o + 512 + lane];
+                uint4 d = Src[base + o + 768 + lane];
+                acc += (a ^ b) + (c ^ d);
+            }
+        }
+        Sink[out] = acc;
     } else {
         float v = float(lane);
         for (uint i = 0; i < pc.n; ++i) v = WaveActiveSum(v) * 0.001f + float(lane);

@@ -1,0 +1,15 @@
+== kv 160
+sparse_attn.score           23.59       100352        4.3
+sparse_attn.combine         23.55       100352        4.3
+sparse_attn_t.score         21.69       100352        4.6
+sparse_attn_t.pv            23.08       100352        4.3
+== kv 320
+sparse_attn.score           43.21       264192        6.1
+sparse_attn.combine         36.39       264192        7.3
+sparse_attn_t.score         33.80       264192        7.8
+sparse_attn_t.pv            37.68       264192        7.0
+== kv 640
+sparse_attn.score           85.30       591872        6.9
+sparse_attn.combine         63.14       591872        9.4
+sparse_attn_t.score         51.73       591872       11.4
+sparse_attn_t.pv            67.75       591872        8.7

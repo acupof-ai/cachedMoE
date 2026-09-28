@@ -1,0 +1,17 @@
+file       /home/chenkailun/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors (7.39 GB, unbuffered yes, sector 4096 B)
+device     AMD Radeon 8060S Graphics (RADV STRIX_HALO)
+
+request 17284+1084 KiB per read, 120 reads per point, 1 repeat(s)
+
+dst     route   rep chunk qd  infl      GB/s   mean_ms    p50_ms    p95_ms    max_ms  mirror%  QD@issue  submit_us   copy_ms  note
+------------------------------------------------------------------------------------------------------------------------------------------
+ram     single    0  1024   8     1     3.531     5.326     5.062     6.770     7.638     0.0      5.52        6.2     0.000  pageable host (AlignedBuffer)
+ram     single    0  1024  24     1     2.984     6.302     6.105     8.055    47.134     0.0      9.00       16.9     0.000  pageable host (AlignedBuffer)
+ram     single    0  4096   8     1     3.813     4.931     4.991     6.349     6.894     0.0      2.50       10.2     0.000  pageable host (AlignedBuffer)
+ram     single    0  4096  24     1     4.080     4.609     5.145     6.435     7.515     0.0      2.50        9.5     0.000  pageable host (AlignedBuffer)
+patha   single    0  1024   8     1     3.418     5.501     5.092     8.937     9.507     0.0      5.48        6.4     0.000  memory type 3, mapped
+patha   single    0  1024  24     1     2.924     6.430     6.174     9.771    10.111     0.0      9.00       17.6     0.000  memory type 3, mapped
+patha   single    0  4096   8     1     3.086     6.093     5.330    11.644    45.382     0.0      2.50       12.0     0.000  memory type 3, mapped
+patha   single    0  4096  24     1     2.881     6.527     5.784    11.315    12.815     0.0      2.50        9.9     0.000  memory type 3, mapped
+
+wrote bench/results/linux/perf/io_dst_decode.csv
