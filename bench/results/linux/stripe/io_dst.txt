@@ -1,0 +1,32 @@
+file       /home/chenkailun/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors (7.39 GB, unbuffered yes, sector 4096 B)
+mirror     /mnt/deepmoe2/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors
+weights    4.36 : 3.75 GB/s (probed, 2 s warmup)
+
+request 17284+1084 KiB per read, 200 reads per point, 4 repeat(s)
+
+dst     route   rep chunk qd  infl      GB/s   mean_ms    p50_ms    p95_ms    max_ms  mirror%  QD@issue  submit_us   copy_ms  note
+------------------------------------------------------------------------------------------------------------------------------------------
+ram     whole     0  1024   8     1     3.766     4.993     4.733     6.122    11.284     5.9      5.52        7.7     0.000  pageable host (AlignedBuffer)
+ram     stripe    0  1024   8     1     6.355     2.959     2.871     3.598     4.045    44.3      5.52       25.1     0.000  pageable host (AlignedBuffer)
+ram     whole     0  4096   8     1     3.919     4.798     4.850     6.088     6.422     5.9      2.50       16.3     0.000  pageable host (AlignedBuffer)
+ram     stripe    0  4096   8     1     6.426     2.926     2.887     3.553     3.898    44.6      2.50       49.9     0.000  pageable host (AlignedBuffer)
+ram     stripe    1  1024   8     1     6.361     2.956     2.883     3.761     4.367    44.3      5.52       22.8     0.000  pageable host (AlignedBuffer)
+ram     whole     1  1024   8     1     3.815     4.929     4.640     6.379     7.274     5.9      5.52        6.8     0.000  pageable host (AlignedBuffer)
+ram     stripe    1  4096   8     1     6.383     2.946     2.880     3.757     4.325    44.6      2.50       52.4     0.000  pageable host (AlignedBuffer)
+ram     whole     1  4096   8     1     4.016     4.682     4.600     6.320     7.153     5.9      2.50       15.2     0.000  pageable host (AlignedBuffer)
+ram     whole     2  1024   8     1     3.732     5.039     4.824     6.356     6.896     5.9      5.52        6.9     0.000  pageable host (AlignedBuffer)
+ram     stripe    2  1024   8     1     6.331     2.970     2.940     3.534     4.385    44.3      5.52       25.3     0.000  pageable host (AlignedBuffer)
+ram     whole     2  4096   8     1     3.865     4.865     4.885     6.167     6.546     5.9      2.50       16.8     0.000  pageable host (AlignedBuffer)
+ram     stripe    2  4096   8     1     6.349     2.962     2.936     3.545     4.136    44.6      2.50       51.6     0.000  pageable host (AlignedBuffer)
+ram     stripe    3  1024   8     1     6.259     3.005     2.935     3.803     4.933    44.3      5.52       23.3     0.000  pageable host (AlignedBuffer)
+ram     whole     3  1024   8     1     3.792     4.960     4.789     6.238     7.206     5.9      5.52        6.7     0.000  pageable host (AlignedBuffer)
+ram     stripe    3  4096   8     1     6.378     2.947     2.885     3.776     4.401    44.6      2.50       48.0     0.000  pageable host (AlignedBuffer)
+ram     whole     3  4096   8     1     3.983     4.722     4.730     6.138     7.238     5.9      2.50       14.9     0.000  pageable host (AlignedBuffer)
+
+mean over repeats (group latency, ms; ratio vs the first route):
+  ram     chunk  1024 qd   8 whole   mean    4.980  p50    4.746    3.776 GB/s  x1.000  (n=4)
+  ram     chunk  1024 qd   8 stripe  mean    2.973  p50    2.907    6.326 GB/s  x0.597  (n=4)
+  ram     chunk  4096 qd   8 whole   mean    4.767  p50    4.766    3.946 GB/s  x1.000  (n=4)
+  ram     chunk  4096 qd   8 stripe  mean    2.945  p50    2.897    6.384 GB/s  x0.618  (n=4)
+
+wrote bench/results/linux/stripe/io_dst.csv

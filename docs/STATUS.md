@@ -611,7 +611,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
-0i. **Track ST：chunk 级条带化（`DEEPMOE_MIRROR_STRIPE=1`，默认关）——代码与 bench 已落地，`未实测`。**
+0i. **Track ST：chunk 级条带化（`DEEPMOE_MIRROR_STRIPE=1`，默认关）——GO：双盘对话 decode 6.33 → 7.39 tok/s（+16.8%，两对），PR #2 已合入。**
    **机制**：D2 的路由按**整个请求**选盘。一个 expert 是两个 run（17,698,816 B weights + 1,110,016 B scales），
    Linux 账本里有 miss 的层平均只缺 1.16 个 expert，所以 17.7 MB 的 weights run 整块落在一块盘上，另一块盘只分到 scales run
    （`io_dst_bench` 的 `whole` 臂 mirror 份额正好 **5.9% = 1,084 / 18,368 KiB**）。条带化把 P0 的**每个 chunk** 按同一条
@@ -636,6 +636,12 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    `stripe` 的组延迟 **≤ 0.75× `whole`** 才进对话 ABAB（`long_turns.json`，`DEEPMOE_MIRROR_STRIPE=0/1`）；否则 NO-GO。
    4 MiB chunk 下贪心分配是 8 : 8.9 MiB（慢盘反而多），1 MiB 是 10.2 : 8.2（接近 57 : 43），所以两种 chunk 都要看。
    风险：每个请求都依赖两块盘，外接盘每小时一次的掉线会更频繁地打到关键路径上（走主盘重读）。
+   **实测（2026-09-28 晚，x 上，`bench/results/linux/stripe/`）**：微基准过门——`io_dst_bench` 四个 repeat，组延迟 1 MiB chunk **4.980 → 2.973 ms（×0.597）**、
+   4 MiB **4.767 → 2.945 ms（×0.618）**，镜像份额 5.9% → 44.3–44.6%，repeat 间差 <2%（探针 4.36 : 3.75 GB/s）。
+   对话 ABAB 两对（`long_turns.json`，auto 5,500 槽，**两臂都带外接盘**，只差 `DEEPMOE_MIRROR_STRIPE=0/1`）：decode **6.361 / 6.291 → 7.487 / 7.292 tok/s**（+17.7% / +15.9%，均值 **+16.8%**），
+   端到端 5.668 / 5.609 → 6.596 / 6.427（+15.5%），`nvme_stall` 66.8 / 66.8 → **41.9 / 43.8 ms**，hit 两臂逐位同 0.9430，外接盘份额 25% → 45–49%，
+   P0 p50 5.35 → 3.17–3.38 ms。**实测收益大于砍半后的预测（+7.7%），接近未砍半的上限**。外接盘最高 74 °C，四轮未掉线，`src[1]` 零错误。
+   合入时 CPU 闸 25/25、`io.` 19/19（含三个新单测）。**默认仍关**：它只在有镜像时起作用，而外接盘按用户要求只作辅助，是否默认开由用户定。
 0h. **2026-09-28：开发机换成 Linux（Omarchy，Mesa 26.2 RADV），热步 ~117 → ~79 ms（−33%），数值逐位不变（Track LX，`build.md` 的 Linux 一节）。**
    同一台 Strix Halo 重装成 Linux 之后，引擎的 MoE 段从 Windows 的 31 ms 变成 **50–53 ms/token**，而 `kernel_bench` 的纯 fp4 一对仍是
    **0.622 ms = 92% ceiling**（Windows 0.603）。按字节算不通，于是看 ACO 的机器码：**`fp4_decode` 的 DecodeMode 0（`kE2M1[nib]`，
