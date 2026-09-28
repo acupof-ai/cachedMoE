@@ -1,3 +1,4 @@
+#include "core/dispatch_count.h"
 #include "gpu/vulkan/cmdbuf.h"
 
 #include <format>
@@ -199,6 +200,8 @@ Result<void> CommandBuffer::dispatch(uint32_t gx, uint32_t gy, uint32_t gz) {
     if (!cb_) return fail(Err::FailedPrecondition, "command buffer is null");
     if (gx == 0 || gy == 0 || gz == 0) return fail(Err::InvalidArgument, "zero-sized dispatch");
     vkCmdDispatch(cb_, gx, gy, gz);
+    g_dispatch_count.groups += uint64_t(gx) * gy * gz;
+    ++g_dispatch_count.dispatches;
     return {};
 }
 

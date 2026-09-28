@@ -1,0 +1,46 @@
+[INF] vulkan: AMD Radeon 8060S Graphics (RADV STRIX_HALO) (compute family 1)
+[INF] gpu memory: path A device-local/host-visible (memory type 3)
+device: AMD Radeon 8060S Graphics (RADV STRIX_HALO)  api 1.4.354  driver 109060099
+  maxMemoryAllocationSize 4095 MiB   maxBufferSize 4095 MiB   maxStorageBufferRange 4095 MiB
+  maxComputeSharedMemorySize 64 KiB   subgroup 64 (32..64)
+  minImportedHostPointerAlignment 4096 B
+  heap[0] 37.5 GiB host
+  heap[1] 75.0 GiB DEVICE_LOCAL
+  type[3] DEVICE_LOCAL|HOST_VISIBLE|COHERENT (heap 1)
+  type[4] DEVICE_LOCAL|HOST_VISIBLE|COHERENT (heap 1)
+  type[9] DEVICE_LOCAL|HOST_VISIBLE|COHERENT (heap 1)
+  external_memory_host yes   timeline_semaphore yes   buffer_device_address yes
+  integer_dot_product yes   subgroup_size_control yes   cooperative_matrix yes
+  shaderFloat16 yes   shaderInt8 yes   shaderInt16 yes   shaderInt64 yes
+  8bit_storage yes   16bit_storage yes   synchronization2 yes
+  timestampPeriod 10.0 ns   timestampValidBits 64
+
+
+dispatch  one alone 2.48 us; in a chain of 400: 0.33 us each with a barrier, 0.09 without; 640 empty workgroups + barrier 1.15 us
+
+stream, COLD (caches flushed first: a weight read): us for one dispatch reading B bytes over W workgroups (GB/s in brackets)
+      B \ W             1             2             4             8            16            20            40            64            80           128           160           256           320           640          1280          2560
+       64 K     3.8(  17)     2.6(  25)     2.0(  32)             -             -             -             -             -             -             -             -             -             -             -             -             -
+      256 K    11.4(  23)     6.5(  40)     3.9(  67)     3.1(  85)     3.4(  77)             -             -             -             -             -             -             -             -             -             -             -
+     1024 K    42.3(  25)    21.4(  49)    11.6(  90)     7.2( 146)     7.2( 145)     7.1( 139)     6.9(  95)     8.6( 122)             -             -             -             -             -             -             -             -
+     4096 K   144.2(  29)    72.8(  58)    38.2( 110)    21.9( 191)    20.7( 202)    19.2( 204)    28.1( 140)    25.3( 166)    25.0( 157)    24.3( 173)    15.6( 168)    23.1( 181)             -             -             -             -
+    16384 K   525.3(  32)   291.4(  58)   152.7( 110)    90.7( 185)    76.2( 220)    76.0( 220)   100.0( 164)    95.6( 176)    93.5( 168)    89.6( 187)    84.3( 187)    83.2( 202)    75.7( 208)    51.6( 203)             -             -
+    65536 K  2263.3(  30)  1316.2(  51)   647.6( 104)   339.3( 198)   293.3( 229)   291.1( 230)   337.3( 198)   357.6( 188)   395.3( 169)   360.4( 186)   337.6( 194)   320.3( 210)   299.9( 210)   303.1( 208)   307.2( 205)   204.9( 205)
+   262144 K  9568.1(  28)  5236.5(  51)  2605.4( 103)  1306.0( 206)  1155.8( 232)  1178.4( 228)  1253.2( 214)  1342.1( 200)  1306.6( 205)  1309.5( 205)  1327.9( 201)  1247.8( 215)  1240.4( 216)  1221.4( 215)  1189.9( 212)  1210.7( 208)
+
+stream, HOT (the same bytes again: an activation): us for one dispatch reading B bytes over W workgroups (GB/s in brackets)
+      B \ W             1             2             4             8            16            20            40            64            80           128           160           256           320           640          1280          2560
+       64 K     2.5(  26)     2.5(  26)     2.5(  26)             -             -             -             -             -             -             -             -             -             -             -             -             -
+      256 K     4.1(  64)     2.7(  96)     2.5( 104)     2.5( 106)     2.6(  99)             -             -             -             -             -             -             -             -             -             -             -
+     1024 K    13.1(  80)     7.3( 143)     4.3( 242)     2.9( 358)     2.7( 385)     2.8( 355)     2.6( 248)     2.8( 374)             -             -             -             -             -             -             -             -
+     4096 K    48.8(  86)    26.3( 160)    13.9( 302)     7.8( 539)     6.4( 654)     6.1( 646)     6.2( 633)     6.7( 630)     6.5( 609)     7.1( 595)     5.4( 488)     7.8( 537)             -             -             -             -
+    16384 K   215.1(  78)   102.5( 164)    51.5( 326)    27.6( 608)    21.8( 770)    21.8( 768)    21.4( 764)    22.0( 761)    20.8( 756)    22.4( 749)    21.4( 735)    23.0( 729)    22.1( 712)    17.2( 610)             -             -
+    65536 K  1972.8(  34)  1320.0(  51)   655.4( 102)   345.7( 194)   286.9( 234)   254.0( 263)   313.4( 213)   283.1( 237)   274.7( 243)   266.4( 252)   265.5( 247)   271.3( 247)   263.6( 239)   260.4( 242)   309.9( 203)   214.5( 196)
+   262144 K 10207.6(  26)  5197.5(  52)  2569.2( 104)  1321.1( 203)  1166.1( 230)  1215.1( 221)  1244.3( 215)  1212.7( 221)  1191.8( 224)  1271.2( 211)  1236.5( 216)  1233.9( 218)  1230.1( 217)  1214.9( 216)  1185.1( 212)  1203.7( 209)
+
+one workgroup: barrier 22.6 ns, dependent WaveActiveSum 42.4 ns
+
+dependent load latency:  32 KB 38 ns  2 MB 166 ns  24 MB 212 ns  256 MB 356 ns
+
+fp32 FMA: 17.13 TFLOP/s over 2560 workgroups
+-> bench/results/linux/gpu_model/constants.json

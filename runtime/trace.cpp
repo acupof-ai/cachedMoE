@@ -1,7 +1,10 @@
 #include "runtime/trace.h"
 
+#include <algorithm>
 #include <cstring>
 #include <format>
+
+#include "core/dispatch_count.h"
 
 namespace deepmoe::trace {
 namespace {
@@ -118,6 +121,7 @@ Result<void> Tracer::open(const std::string& path) {
     dropped_ = 0;
     pending_.clear();
     names_.clear();
+    geom_.clear();
     uint8_t hdr[32];
     encode_header(header_, hdr);
     if (std::fwrite(hdr, 1, sizeof hdr, sink_) != sizeof hdr) {
@@ -152,6 +156,22 @@ void Tracer::close() {
         (void)std::fwrite(hdr, 1, 4, sink_);
         (void)std::fwrite(name.data(), 1, len, sink_);
     }
+    // Optional after the names (readers that stop at name_count never see
+    // it): "DMGEOM01", u32 count, then per stage u8 cls, u8 0, u16 stage,
+    // u32 workgroups, u32 dispatches of its last traced region.
+    if (!geom_.empty()) {
+        (void)std::fwrite("DMGEOM01", 1, 8, sink_);
+        uint8_t n[4];
+        put_u32(n, static_cast<uint32_t>(geom_.size()));
+        (void)std::fwrite(n, 1, 4, sink_);
+        for (const auto& [key, g] : geom_) {
+            uint8_t e[12] = {uint8_t(key >> 16), 0};
+            put_u16(e + 2, uint16_t(key & 0xffffu));
+            put_u32(e + 4, static_cast<uint32_t>(std::min<uint64_t>(g.first, 0xffffffffu)));
+            put_u32(e + 8, g.second);
+            (void)std::fwrite(e, 1, 12, sink_);
+        }
+    }
     (void)flush_header();
     (void)std::fclose(sink_);
     sink_ = nullptr;
@@ -184,12 +204,15 @@ uint32_t Tracer::open_dispatch(uint16_t layer, uint8_t cls, uint16_t stage, cons
         if (!names_.count(key)) names_.emplace(key, name);
     }
     pending_.push_back(p);
+    g_dispatch_count = {};
     return static_cast<uint32_t>(pending_.size() - 1);
 }
 
 void Tracer::close_dispatch(uint32_t handle) {
     if (!sink_ || handle >= pending_.size()) return;
     Pending& p = pending_[handle];
+    geom_[(uint32_t(p.rec.cls) << 16) | p.rec.stage] = {g_dispatch_count.groups,
+                                                        g_dispatch_count.dispatches};
     p.q_end = stamp_ ? stamp_(stamp_ctx_) : ~0u;
     if (p.q_end == ~0u) {
         p.rec.flags |= kFlagNoEnd;

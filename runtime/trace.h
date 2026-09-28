@@ -207,6 +207,10 @@ private:
     std::vector<Pending>  pending_;
     // (cls << 16 | stage) -> name, written as the file's name table on close.
     std::map<uint32_t, std::string> names_;
+    // (cls << 16 | stage) -> {workgroups, dispatches} of the stage's last traced
+    // region (core/dispatch_count.h), written after the names as the optional
+    // DMGEOM01 block.
+    std::map<uint32_t, std::pair<uint64_t, uint32_t>> geom_;
 };
 
 // The two hooks callers use, so a call site is one line and null-safe.

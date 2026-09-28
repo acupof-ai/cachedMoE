@@ -34,6 +34,8 @@ the C++ side and `--self-test` below fails on this one.
   records, 32 bytes:  u32 token, u32 seq, u16 layer, u16 stage, u8 cls,
                       u8 flags, u16 submit, u64 begin_ns, u64 end_ns
   names:              u8 cls, u16 stage, u8 len, char[len]
+  geometry, optional: "DMGEOM01" u32 count, then u8 cls, u8 0, u16 stage,
+                      u32 workgroups, u32 dispatches (a stage's last traced region)
 """
 from __future__ import annotations
 
@@ -97,6 +99,20 @@ class Trace:
             off += 4
             self.names[(cls, stage)] = blob[off:off + ln].decode("utf-8", "replace")
             off += ln
+        # Optional DMGEOM01 block (runtime/trace.cpp): each stage's workgroups
+        # and dispatches in its last traced region. Older traces have none.
+        self.geom = {}
+        if blob[off:off + 8] == b"DMGEOM01":
+            (n_geom,) = struct.unpack_from("<I", blob, off + 8)
+            off += 12
+            for _ in range(n_geom):
+                cls, _pad, stage, groups, disp = struct.unpack_from("<BBHII", blob, off)
+                self.geom[(cls, stage)] = (groups, disp)
+                off += 12
+
+    def geometry(self, r: Record):
+        """(workgroups, dispatches) of the record's stage, or None for an old trace."""
+        return self.geom.get((r.cls, r.stage))
 
     def name(self, r: Record) -> str:
         return self.names.get((r.cls, r.stage), f"{CLS.get(r.cls, '?')}#{r.stage}")
