@@ -703,7 +703,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    每 token 计算 attn 38.3 + moe_gpu 36.5 ms，与重启前同量级（cwsr 关掉没看到代价）。auto 从 4,400 槽涨到 5,000（Windows 的 kAutoSlotCap 卡住，预算本身 5,299）：
    8-turn 单盘 **5.27 → 5.78 tok/s**（hit 0.924 → 0.937，stall ~98 → 81 ms），双盘 5.74 → 6.13（单次，`bench/results/linux/reboot112/`）。
    `--cache-slots 5500`：6.19 tok/s，hit 0.945，GTT 峰值 107 / 112 GiB，内核无 amdgpu 超时/复位。
-   ⇒ **RADV 的 auto 改为按两个堆之和算：`heaps − pinned − kPathAOther − 4 GiB` = 5,499 槽 / 96.3 GiB，且不套 Windows 的 5,000 槽上限**（`DEEPMOE_CACHE_SLOT_CAP` 显式设置时仍生效）。
+   ⇒ **RADV 的 auto 改为按两个堆之和算：`heaps − pinned − kPathAOther − 4 GiB` = 预算 5,499 槽，但 slab 按 100 槽取整，**实际分配 5,400 槽 / 94.6 GiB**（下面 auto 臂的数都是 5,400；之后余量改 3 GiB 落到 5,500），且不套 Windows 的 5,000 槽上限**（`DEEPMOE_CACHE_SLOT_CAP` 显式设置时仍生效）。
    ABAB 两对、单盘、`long_turns.json`（`reboot112/auto_ab/`）：cap5000 **5.8596 / 5.7898**，auto **6.1217 / 6.0764**——均值 5.8247 → **6.0991 = +4.71%**，两对各 +4.5% / +4.9%；
    hit 0.9369 → 0.9436，stall 79.8 → 71.9 ms，GTT 峰值 98 → 105 GiB。**GO，Linux 单盘对话基线现为 ~6.10 tok/s**（Windows `m_auto` 5.60）。
    **短 prompt 也走 GPU prefill：RADV 上 `gpu_prefill_min` 512 → 16（`cli/serve.cpp`，只在没给 `--gpu-prefill-min` 且驱动是 RADV 时）——GO。**
@@ -726,6 +726,18 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **两道质量闸都被 1e-7 级舍入差推过线**，而收益只有下面这点，所以**不放宽阈值，保持 opt-in**。要默认开，得先让 mgt1 批路径也用 K-split（两条路径同一算术），再重评这两道闸。
    另：`suite.gpu_moe` 在**不带任何本地改动的 HEAD** 上也失败（`L16 R2 … hq8` 几个变体 vs y_hq16 2.76e-3 超 tol），与本改动无关，待查。
    对话端到端的预期：每 token ~164 ms 里省 3.8 ms ≈ +2.3%，砍半 +1.2%，**低于 ±3% 的抖动带，所以没跑对话 ABAB**——判据是 kernel 级的配对测量。
+   **缓存首次填充的缺页（Linux）——GO**：path A（`DEVICE_LOCAL|HOST_VISIBLE`，RADV 上是 GTT）由 TTM 惰性分配，每页第一次 CPU 写时才分配并清零，
+   而运行时对一个槽的第一次写就是它第一次填充时 io_uring 中转缓冲的那次 memcpy。于是**每个进程的前 ~5,400 次 miss 每次 10.0–10.5 ms，之后 5.4 ms**
+   （三个 run 一致，`profile.jsonl` 按累计 miss 分组），8-turn 里约 **27 s**，也就是前 ~150 个 token。`io_dst_bench --copy`（新增 Linux 分支）直接量到：
+   memcpy 进 path A 首次 ~2.4 GB/s，之后 48.5 GB/s——**所以中转拷贝本身不是瓶颈，首次缺页才是**。
+   `SlabPool::prefault()`：分配完 slab 后 16 线程每页写一个字节，**94.6 GiB 用 3.0 s**；`DEEPMOE_PREFAULT=0` 关。复跑：首填每 miss **10.0 → 5.40 ms**（= 稳态 5.45），
+   第 1 轮 TTFT 8.8 → 7.0 s、6.51 → 7.11 tok/s，整轮端到端 4.969 → **5.088 tok/s（+2.4%）**、decode 5.98 → 6.12。一次性收益，机制在每-miss 层面直接量到，没跑 ABAB。
+   同批还关掉了三条存储候选：P0 块大小 / QD / 在飞字节（`c2q48m160` 5.980、`c1q64m128` 5.929 vs 5.980，stall 76–78 vs 75）**NO-GO**；
+   NVMe `max_hw_sectors_kb` 128（IOMMU DMA-FQ 把 MDTS 的 1 MiB 压成 128 KiB）：调到 64 KiB 时 QD 4 不变、QD 16 −7%，引擎是浅队列 ⇒ **为 `iommu=pt` 重启不值得**；
+   udmabuf 零拷贝可行（`/dev/udmabuf` 可用、RADV 有 `VK_EXT_external_memory_dma_buf`），但拷贝本身 48 GB/s，**收益太小，不做**。
+   **逐层命中与任务分区**（`tools/expert_hit_report.py`、`tools/task_partition24.py`，`bench/results/linux/expert_hits/`）：miss 平摊在 40 层（最贵 5 层合计 16.5%）；
+   12 类任务 × 2（`bench/results/hitrate/tasks24.json`）同类两个提问逐层 expert 分布余弦 **0.59**、异类 **0.16**、同轮两半 0.83；按任务预热 / 分区 / 钉住在 LRU 模拟里都不划算（切换代价只有 0.5 pt/256 token），
+   多会话逐 token 交错 −5.1 pt 才是大头。
 
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。

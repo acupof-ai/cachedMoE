@@ -106,6 +106,7 @@ public:
     }
 
 private:
+    void prefault();   // Linux: populate every page now, not on the first fill
     std::unique_ptr<SlabBacking> backing_;
     SlabConfig              cfg_{};
     std::vector<SlabMemory> slabs_;

@@ -1,0 +1,287 @@
+{
+ "source": "state.pt (route_trace.py checkpoint, prompts list)",
+ "kinds": {
+  "0": "en",
+  "1": "en",
+  "2": "code",
+  "3": "en",
+  "4": "zh",
+  "5": "en",
+  "6": "zh",
+  "7": "code",
+  "8": "code",
+  "9": "en",
+  "10": "code",
+  "11": "zh",
+  "12": "code",
+  "13": "zh",
+  "14": "en",
+  "15": "code",
+  "16": "zh",
+  "17": "en",
+  "18": "code",
+  "19": "code",
+  "20": "zh",
+  "21": "zh",
+  "22": "zh",
+  "23": "zh",
+  "24": "code",
+  "25": "en",
+  "26": "code",
+  "27": "zh",
+  "28": "code",
+  "29": "en",
+  "30": "en",
+  "31": "en",
+  "32": "code",
+  "33": "en",
+  "34": "code",
+  "35": "zh",
+  "36": "code",
+  "37": "en",
+  "38": "en",
+  "39": "zh"
+ },
+ "prompts": {
+  "0": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\DeepSeek_V41_Tech_Report.pdf",
+   "n_ids": 1160,
+   "head": "Contents\n1 Introduction 4\n2 Architecture 7\n2.1 Overview . . "
+  },
+  "1": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\evaluation/README.md",
+   "n_ids": 294,
+   "head": "`dsh-minimal.patch` ships next to this document. Treat it as"
+  },
+  "2": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\config.h",
+   "n_ids": 382,
+   "head": "// Runtime options. Everything the design leaves as \"decided"
+  },
+  "3": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\README.md",
+   "n_ids": 1265,
+   "head": "---\nlicense: mit\nlibrary_name: transformers\npipeline_tag: im"
+  },
+  "4": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/architecture.md",
+   "n_ids": 1564,
+   "head": "```\n                    ┌───────────────────────────────────"
+  },
+  "5": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\evaluation/README.md",
+   "n_ids": 486,
+   "head": "Both agents take the same task set, concurrency, and `--no-d"
+  },
+  "6": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/design.md",
+   "n_ids": 621,
+   "head": "- 残差流是 `[hc=4, 5120]`。每个子层前 `hc_mixes`：把 4×5120 展平做 RMS 归一，乘"
+  },
+  "7": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\storage\\file_common.cpp",
+   "n_ids": 236,
+   "head": "// Portable parts of storage/file.h. The open/read/write bod"
+  },
+  "8": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\store\\expert_store.cpp",
+   "n_ids": 352,
+   "head": "#include \"store/expert_store.h\"\n\n#include <algorithm>\n#inclu"
+  },
+  "9": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\README.md",
+   "n_ids": 236,
+   "head": "</div>\n\n### Instruct Model\n\nDeepSeek-V4.1-Flash supports a c"
+  },
+  "10": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\json.h",
+   "n_ids": 1000,
+   "head": "// A small read-only JSON DOM. Written in-tree rather than v"
+  },
+  "11": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/design.md",
+   "n_ids": 1055,
+   "head": "### 1.1 目标硬件（开发机实测）\n\n| 项目 | 规格 | 实测备注 |\n|---|---|---|\n| APU "
+  },
+  "12": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\profiler.cpp",
+   "n_ids": 341,
+   "head": "#include \"core/profiler.h\"\n\n#include <format>\n\nnamespace dee"
+  },
+  "13": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/build.md",
+   "n_ids": 684,
+   "head": "| 选项 | 作用 |\n|---|---|\n| `--out PATH` | 换个输出路径（默认 `<src>/deep"
+  },
+  "14": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\inference/README.md",
+   "n_ids": 535,
+   "head": "# Minimal inference\n\nA readable reference implementation rat"
+  },
+  "15": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\types.h",
+   "n_ids": 107,
+   "head": "// Core value types shared by every module. Mirrors design §"
+  },
+  "16": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/architecture.md",
+   "n_ids": 1501,
+   "head": "| 线程 | 数量 | 归属 | 做什么 | 不能做什么 |\n|---|---|---|---|---|\n| **eng"
+  },
+  "17": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\encoding/README.md",
+   "n_ids": 1131,
+   "head": "# Text-only conversation\nmessages = [\n    {\"role\": \"system\","
+  },
+  "18": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\storage\\io_engine.cpp",
+   "n_ids": 574,
+   "head": "#include \"storage/io_engine.h\"\n\n#include <algorithm>\n#includ"
+  },
+  "19": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\bytes.h",
+   "n_ids": 606,
+   "head": "// Byte-span aliases and little-endian scalar readers used b"
+  },
+  "20": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/build.md",
+   "n_ids": 832,
+   "head": "随后 `spirv-val --target-env vulkan1.3 kernel.spv`。\n\n## 环境自检\n\n"
+  },
+  "21": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/build.md",
+   "n_ids": 113,
+   "head": "```powershell\nuv run python tools/manifest.py --src D:\\model"
+  },
+  "22": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/design.md",
+   "n_ids": 285,
+   "head": "| 项 | 每层 | × 40 |\n|---|---|---|\n| attention fp8（wq_a 6.6 + w"
+  },
+  "23": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\README.md",
+   "n_ids": 1324,
+   "head": "# deepMoE\n\nWindows Strix Halo（Ryzen AI Max+ 395 / Radeon 806"
+  },
+  "24": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\profiler.h",
+   "n_ids": 1157,
+   "head": "// Per-token timeline and online counters. This is the measu"
+  },
+  "25": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\evaluation/README.md",
+   "n_ids": 241,
+   "head": "# Running DeepSWE with `dsh-minimal` and `mini-swe-agent`\n\n#"
+  },
+  "26": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\status.h",
+   "n_ids": 536,
+   "head": "// Error type and Result alias used across every module boun"
+  },
+  "27": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/build.md",
+   "n_ids": 1580,
+   "head": "# 构建与开发环境\n\n目标平台：Windows 11 + Strix Halo。所有命令在 PowerShell 中执行"
+  },
+  "28": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\log.h",
+   "n_ids": 199,
+   "head": "// Minimal leveled logger. Human-readable diagnostics only -"
+  },
+  "29": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\encoding/README.md",
+   "n_ids": 1248,
+   "head": "Tools are defined on the `system` message via the `tools` fi"
+  },
+  "30": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\encoding/README.md",
+   "n_ids": 373,
+   "head": "# DeepSeek-V4.1 text and vision encoding\n\n`encoding.py` is t"
+  },
+  "31": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\README.md",
+   "n_ids": 318,
+   "head": "**Post-training.** The post-training recipe follows the stan"
+  },
+  "32": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\align.h",
+   "n_ids": 927,
+   "head": "// 4 KiB alignment helpers. Everything that touches NVMe is "
+  },
+  "33": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\README.md",
+   "n_ids": 727,
+   "head": "| Benchmark (Metric) | # Shots | DeepSeek-V4-Flash-Base | De"
+  },
+  "34": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\store\\engram_prefetch.cpp",
+   "n_ids": 172,
+   "head": "#include \"store/engram_prefetch.h\"\n\nnamespace deepmoe::store"
+  },
+  "35": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/design.md",
+   "n_ids": 711,
+   "head": "# deepMoE 设计方案\n\n> Windows Strix Halo 专用超大 MoE 本地推理 Runtime\n>"
+  },
+  "36": {
+   "kind": "code",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\core\\json.cpp",
+   "n_ids": 872,
+   "head": "#include \"core/json.h\"\n\n#include <charconv>\n#include <format"
+  },
+  "37": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\DeepSeek_V41_Tech_Report.pdf",
+   "n_ids": 773,
+   "head": "5.1 Post-Training Pipeline . . . . . . . . . . . . . . . . ."
+  },
+  "38": {
+   "kind": "en",
+   "source": "D:\\models\\DeepSeek-V4.1-Flash\\DeepSeek_V41_Tech_Report.pdf",
+   "n_ids": 577,
+   "head": "DeepSeek-V4.1-Flash:\nPushing the Limits of KV Cache Compress"
+  },
+  "39": {
+   "kind": "zh",
+   "source": "C:\\Users\\Asus\\code\\deepmoe\\docs/build.md",
+   "n_ids": 304,
+   "head": "```bash\nzig c++ -target x86_64-linux-gnu -std=c++23 -I. -c s"
+  }
+ }
+}

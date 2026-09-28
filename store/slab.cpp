@@ -1,6 +1,12 @@
 #include "store/slab.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <format>
+#include <thread>
+#include <vector>
 
 #include "core/log.h"
 
@@ -60,9 +66,44 @@ Result<void> SlabPool::init(std::unique_ptr<SlabBacking> backing, const SlabConf
         slabs_.push_back(*m);
     }
     slot_count_ = static_cast<uint32_t>(slabs_.size()) * cfg.slots_per_slab;
+    prefault();
     log_debug("slab pool: {} x {} slots on '{}' ({:.2f} GiB)",
               slabs_.size(), cfg.slots_per_slab, backing_->name(), bytes() / 1073741824.0);
     return {};
+}
+
+// Linux (RADV): a DEVICE_LOCAL|HOST_VISIBLE allocation is populated lazily --
+// TTM allocates and clears the pages on the first CPU touch. The runtime's
+// first touch of a slot is the io_uring bounce copy of its first fill, so the
+// first ~5,400 fills of every process paid it on the decode's critical path:
+// 10.5 ms per miss against 5.4 ms once every slot had been filled once (the
+// 8-turn chat, ~27 s per run; STATUS §7 0h). Touch one byte per page here, from
+// several threads, so the kernel does that work at startup and in parallel.
+// DEEPMOE_PREFAULT=0 turns it off.
+void SlabPool::prefault() {
+#if defined(__linux__)
+    if (const char* e = std::getenv("DEEPMOE_PREFAULT"); e && *e == '0') return;
+    std::vector<std::pair<std::byte*, uint64_t>> spans;
+    for (const SlabMemory& m : slabs_)
+        if (m.host_ptr) spans.emplace_back(static_cast<std::byte*>(m.host_ptr), m.bytes);
+    if (spans.empty()) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned n  = std::min<unsigned>(std::min(hw, 16u), static_cast<unsigned>(spans.size()));
+    std::atomic<size_t> next{0};
+    std::vector<std::thread> pool;
+    for (unsigned t = 0; t < n; ++t)
+        pool.emplace_back([&] {
+            for (size_t i; (i = next.fetch_add(1)) < spans.size();) {
+                volatile std::byte* p = spans[i].first;
+                for (uint64_t off = 0; off < spans[i].second; off += kPageSize) p[off] = std::byte{0};
+            }
+        });
+    for (auto& th : pool) th.join();
+    const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    log_info("slab pool: prefaulted {} slabs ({:.1f} GiB) in {:.1f} s on {} threads",
+             spans.size(), bytes() / 1073741824.0, s, n);
+#endif
 }
 
 void SlabPool::reset() {

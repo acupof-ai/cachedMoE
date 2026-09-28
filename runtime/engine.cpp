@@ -1041,13 +1041,14 @@ Result<void> Engine::init_gpu() {
         // splits ttm.pages_limit 2:1 into a "device-local" 75 GiB and a host
         // 37.5 GiB -- so the cache is bounded by their SUM, not by heap A. The
         // 8-turn chat at 5,500 slots (96.3 GiB) peaked at 107 of 112 GiB GTT and
-        // ran 6.19 tok/s against auto's 5.78 at 5,000; 4 GiB of GTT slack on top
-        // of the pinned tensors and kPathAOther lands auto on that point.
+        // ran 6.19 tok/s against auto's 5.78 at 5,000. The slab pool rounds down
+        // to whole 100-slot slabs, so 4 GiB of slack (5,499 slots of budget)
+        // landed on 5,400; 3 GiB (5,553) lands on the measured 5,500.
         const bool radv = device_.caps().driver_id == VK_DRIVER_ID_MESA_RADV;
         if (radv) {
             uint64_t heaps = 0;
             for (const gpu::HeapInfo& h : device_.caps().heaps) heaps += h.bytes;
-            constexpr uint64_t kGttSlack = 4ull << 30;
+            constexpr uint64_t kGttSlack = 3ull << 30;
             const uint64_t other = pinned + kPathAOther + kGttSlack;
             want = heaps > other ? heaps - other : 0;
         }

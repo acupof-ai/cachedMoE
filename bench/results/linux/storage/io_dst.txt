@@ -1,0 +1,22 @@
+file       /home/chenkailun/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors (7.39 GB, unbuffered yes, sector 4096 B)
+device     AMD Radeon 8060S Graphics (RADV STRIX_HALO)
+
+request 9184 KiB, chunk 4096 KiB, 96 reads per point
+
+dst        qd      GB/s   mean_ms    max_ms   QD@issue  submit_us   copy_ms  note
+--------------------------------------------------------------------------------------------------
+ram          4     4.085     4.593    11.853       2.85        8.1     0.000  pageable host (AlignedBuffer)
+ram          8     4.125     8.977    12.234       6.90       12.2     0.000  pageable host (AlignedBuffer)
+ram         16     3.966    18.408    29.328      14.58       15.1     0.000  pageable host (AlignedBuffer)
+ram         24     3.907    25.601    64.001      21.57       15.6     0.000  pageable host (AlignedBuffer)
+patha        4     4.081     4.592    10.283       2.77        7.2     0.000  memory type 3, mapped
+patha        8     4.054     9.165    25.561       6.73       13.1     0.000  memory type 3, mapped
+patha       16     3.730    19.642    42.667      13.97       17.9     0.000  memory type 3, mapped
+patha       24     3.546    28.396    56.173      19.85       23.5     0.000  memory type 3, mapped
+pathb        4     4.399     4.264     6.810       2.83        6.6     0.000  memory type 5, imported
+pathb        8     4.351     8.517    10.407       6.90       11.8     0.000  memory type 5, imported
+pathb       16     4.147    17.629    27.966      14.58       12.6     0.000  memory type 5, imported
+pathb       24     4.148    24.081    44.074      21.55       13.9     0.000  memory type 5, imported
+
+staging copy of one expert (18.8 MB):
+  staging source: unavailable: pinned is Windows-only here

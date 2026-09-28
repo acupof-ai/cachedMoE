@@ -1,0 +1,29 @@
+{
+ "comment": "Task-partition workload (2026-09-28): 12 task kinds x 2 different prompts, every turn a new topic (reset), fixed seeds. Two prompts per kind so the routing analysis can compare within-kind vs across-kind expert overlap. Order interleaves kinds (A1 B1 ... L1, A2 B2 ... L2) so a kind's second prompt comes after every other kind has run once.",
+ "turns": [
+  {"label": "zh-chat", "user": "周末想在家放松一下，有什么不花钱又不无聊的事情可以做？随便聊聊。", "temperature": 1.0, "top_p": 0.95, "seed": 52001, "max_tokens": 220},
+  {"label": "zh-write", "user": "写一段两百字左右的散文，描写深秋清晨的菜市场。", "reset": true, "seed": 52002, "max_tokens": 220},
+  {"label": "en-write", "user": "Write a short opinion piece (about 180 words) on whether cities should ban cars from their historic centers.", "reset": true, "seed": 52003, "max_tokens": 220},
+  {"label": "code-py", "user": "Write a Python function that parses a log file where each line is 'timestamp level message', and returns a dict counting messages per level. Include type hints.", "reset": true, "seed": 52004, "max_tokens": 220},
+  {"label": "code-cpp", "user": "用 C++20 写一个线程安全的有界队列模板类，支持 push、pop 和带超时的 try_pop，并简要解释关键设计。", "reset": true, "seed": 52005, "max_tokens": 220},
+  {"label": "code-sql", "user": "Given tables orders(id, customer_id, total, created_at) and customers(id, name, country), write a SQL query for the top 5 countries by total revenue in 2025, and explain it briefly.", "reset": true, "seed": 52006, "max_tokens": 220},
+  {"label": "math", "user": "一个等差数列前 10 项和为 120，第 5 项为 11，求首项和公差，并写出详细步骤。", "reset": true, "seed": 52007, "max_tokens": 220},
+  {"label": "translate", "user": "把下面这段话翻译成英文：\"科技的进步让远程办公成为可能，但也模糊了工作与生活的边界。很多人发现自己下班之后仍在回复消息。\"", "reset": true, "seed": 52008, "max_tokens": 220},
+  {"label": "extract-json", "user": "From this text, extract a JSON object with fields name, date, amount, currency: 'On March 3rd 2026, Maria Lopez paid 1,250 euros for the conference registration and hotel.' Output only JSON.", "reset": true, "seed": 52009, "max_tokens": 220},
+  {"label": "science", "user": "Explain in simple terms why the sky is blue during the day but red at sunset.", "reset": true, "seed": 52010, "max_tokens": 220},
+  {"label": "zh-history", "user": "简要介绍一下唐朝安史之乱的起因、经过和影响。", "reset": true, "seed": 52011, "max_tokens": 220},
+  {"label": "story", "user": "Tell a short bedtime story (about 150 words) about a small robot who is afraid of the dark.", "reset": true, "seed": 52012, "max_tokens": 220},
+  {"label": "zh-chat", "user": "最近总是睡不好，晚上躺下脑子停不下来，你有什么建议吗？", "reset": true, "seed": 52013, "max_tokens": 220},
+  {"label": "zh-write", "user": "以\"旧书店\"为题，写一段两百字左右的抒情短文。", "reset": true, "seed": 52014, "max_tokens": 220},
+  {"label": "en-write", "user": "Write a 180-word blog intro about learning to cook as an adult, in a warm and humorous tone.", "reset": true, "seed": 52015, "max_tokens": 220},
+  {"label": "code-py", "user": "Implement an LRU cache class in Python with get and put in O(1), without using functools. Add a short usage example.", "reset": true, "seed": 52016, "max_tokens": 220},
+  {"label": "code-cpp", "user": "Write a C++ function that reads a CSV file into a std::vector of structs using std::ifstream, handling quoted fields with commas. Keep it concise.", "reset": true, "seed": 52017, "max_tokens": 220},
+  {"label": "code-sql", "user": "写一条 SQL：在 employees(id, name, dept_id, salary) 表中找出每个部门工资最高的员工（有并列时都返回），并解释窗口函数的用法。", "reset": true, "seed": 52018, "max_tokens": 220},
+  {"label": "math", "user": "Prove that the square root of 2 is irrational, step by step.", "reset": true, "seed": 52019, "max_tokens": 220},
+  {"label": "translate", "user": "Translate into Chinese: \"The committee postponed its decision, citing the need for further consultation with local residents and environmental experts.\"", "reset": true, "seed": 52020, "max_tokens": 220},
+  {"label": "extract-json", "user": "从下面的文字中提取 JSON（字段：公司、职位、城市、薪资范围），只输出 JSON：\"字节跳动在上海招聘高级后端工程师，月薪三万到五万。\"", "reset": true, "seed": 52021, "max_tokens": 220},
+  {"label": "science", "user": "用通俗的语言解释一下为什么冰会浮在水面上。", "reset": true, "seed": 52022, "max_tokens": 220},
+  {"label": "zh-history", "user": "简要说说明朝郑和下西洋的背景、过程和历史意义。", "reset": true, "seed": 52023, "max_tokens": 220},
+  {"label": "story", "user": "写一个一百五十字左右的童话小故事，主角是一只想学飞的乌龟。", "reset": true, "seed": 52024, "max_tokens": 220}
+ ]
+}

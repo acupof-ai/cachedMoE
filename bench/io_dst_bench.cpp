@@ -478,22 +478,48 @@ Result<Point> measure(const std::string& path, const std::string& kind,
 void measure_copies(gpu::MemoryAllocator* alloc_a, gpu::MemoryAllocator* alloc_b, gpu::Device* dev) {
     const uint64_t n = layout::kExpertBytes;
     auto src = make_pinned(1, n);
-    if (!src) { std::puts(std::format("  staging source: {}", src.error().str()).c_str()); return; }
+    // Linux has no "pinned" destination; the io_uring backend's bounce buffers
+    // are ordinary pageable memory, so that is the honest source there.
+    AlignedBuffer plain;
+    void* s = nullptr;
+    const char* src_name = "pinned";
+    if (src) {
+        s = (*src)->slots[0];
+    } else {
+        plain = AlignedBuffer(size_t(n), 4096);
+        if (!plain.data()) { std::puts("  staging source: AlignedBuffer failed"); return; }
+        std::memset(plain.data(), 0x5a, size_t(n));
+        s = plain.data();
+        src_name = "pageable";
+    }
     if (!alloc_a) { std::puts("  path A allocator unavailable"); return; }
     auto dstv = make_vulkan_v(*alloc_a, MemoryPath::DeviceLocalHostVisible, 1, n);
     if (!dstv) { std::puts(std::format("  path A slab: {}", dstv.error().str()).c_str()); return; }
 
-    void* s = (*src)->slots[0];
     void* d = (*dstv)->slots[0];
-    double best = 1e9;
-    for (int i = 0; i < 5; ++i) {
-        const auto t = Clock::now();
-        std::memcpy(d, s, size_t(n));
-        const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t).count();
-        best = std::min(best, ms);
+    // 4 MiB is the runtime's P0 chunk, i.e. one bounce copy in io_uring's drain().
+    for (uint64_t len : {uint64_t(4) << 20, n}) {
+        double best = 1e9, sum = 0;
+        for (int i = 0; i < 8; ++i) {
+            const auto t = Clock::now();
+            std::memcpy(d, s, size_t(len));
+            const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t).count();
+            best = std::min(best, ms); sum += ms;
+        }
+        std::puts(std::format("  CPU memcpy {} -> path A: {:.1f} MB best {:.2f} ms ({:.1f} GB/s), mean {:.2f} ms",
+                              src_name, len / 1e6, best, len / 1e9 / (best / 1e3), sum / 8).c_str());
     }
-    std::puts(std::format("  CPU memcpy pinned -> path A: {:.2f} ms for {:.1f} MB ({:.1f} GB/s)",
-                          best, n / 1e6, n / 1e9 / (best / 1e3)).c_str());
+    {
+        AlignedBuffer dst2(size_t(n), 4096);
+        double best = 1e9;
+        for (int i = 0; i < 8; ++i) {
+            const auto t = Clock::now();
+            std::memcpy(dst2.data(), s, size_t(n));
+            best = std::min(best, std::chrono::duration<double, std::milli>(Clock::now() - t).count());
+        }
+        std::puts(std::format("  CPU memcpy {} -> pageable (reference): {:.2f} ms ({:.1f} GB/s)",
+                              src_name, best, n / 1e9 / (best / 1e3)).c_str());
+    }
 
 #if defined(DEEPMOE_ENABLE_VULKAN)
     // Track S1: the other half of the staging price. `submit` is a standalone
