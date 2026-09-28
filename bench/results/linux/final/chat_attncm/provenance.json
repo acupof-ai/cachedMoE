@@ -1,0 +1,61 @@
+{
+ "time": "2026-09-29T00:37:13+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "dbe7d16f5b",
+ "dirty": [
+  "bench/results/perf_ledger.jsonl"
+ ],
+ "diff_sha": "df4d517ce3d9a00b",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "c7b6465c58273db7",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 43,
+  "sha": "5c2b410e61a5106d"
+ },
+ "env": {
+  "DEEPMOE_ATTN_CM": "1",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/linux/final/chat_attncm/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 22.9,
+  "gpu_busy_max": 35,
+  "loadavg": [
+   "2.77",
+   "3.46",
+   "3.54"
+  ],
+  "top_cpu": [
+   "steam 275%",
+   "napi/phy0-0 6.5%",
+   "napi/phy0-0 4.8%",
+   "claude 3.1%"
+  ]
+ },
+ "disks_start": {
+  "t": 1790613434.143346,
+  "nvme0n1": [
+   6463846378,
+   203651764
+  ],
+  "nvme1n1": [
+   201040,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 411.6,
+  "nvme0n1": {
+   "read_MB": 901224.7,
+   "write_MB": 34567.0
+  },
+  "nvme1n1": {
+   "read_MB": 0.0,
+   "write_MB": 0.0
+  }
+ }
+}

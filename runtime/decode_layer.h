@@ -257,7 +257,9 @@ bool attn_ksplit_on();
 
 // The M=1 attention as two cooperative-matrix GEMMs (decode_attn_cm.slang)
 // instead of sparse_attn's score + combine, on a device that has them.
-// DEEPMOE_ATTN_CM=0/1 overrides the default (off until measured).
+// Engine::init_gpu turns it on for RADV (149 -> 23.5 us a layer at the chat
+// context's 640 entries; STATUS §7 0k); elsewhere the default is off.
+// DEEPMOE_ATTN_CM=0/1 overrides either way.
 void set_attn_cm_default(bool on);
 bool attn_cm_on();
 

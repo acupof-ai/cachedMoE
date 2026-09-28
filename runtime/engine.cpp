@@ -933,6 +933,7 @@ Result<void> Engine::init_gpu() {
         g_ms_eager_default.store(0);
         g_shared_early_default.store(1);
         set_attn_ksplit_default(true);
+        set_attn_cm_default(true);
     }
     if (auto r = cur_->timeline_.create(device_, 0); !r) return r;
     if (auto r = alloc_a_.init(device_, MemoryPath::DeviceLocalHostVisible); !r) return r;

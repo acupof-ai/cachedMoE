@@ -56,6 +56,8 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 10 | p0sweep-r2-c1q3-3turns | `db9b68bbd4+6 dirty (c027d8815a710be9)` | IO_P0_CHUNK_MB=1 IO_P0_QD=3 MIRROR_AUTO=0 | 23% | 21 MB | **7.291** | 137.1 | 71.1 (31.9/28.9/6.1/4.2) | 63.8 (52.0 @ 4.8 GB/s) | 4.69 | 1.8 | 0.9447 | 22.4 |
 | 11 | p0sweep-r2-c1q4-3turns | `db9b68bbd4+6 dirty (499a7454c726a24a)` | IO_P0_CHUNK_MB=1 IO_P0_QD=4 MIRROR_AUTO=0 | 23.9% | 29 MB | **7.319** | 136.6 | 71.4 (32.0/29.1/6.1/4.1) | 62.3 (52.0 @ 4.8 GB/s) | 4.53 | 2.6 | 0.9447 | 21.6 |
 | 12 | p0sweep-r2-c1q6-3turns | `db9b68bbd4+6 dirty (7fb9407b56966f75)` | IO_P0_CHUNK_MB=1 IO_P0_QD=6 MIRROR_AUTO=0 | 23.9% | 23 MB | **7.230** | 138.3 | 71.5 (32.0/29.3/6.1/4.0) | 63.8 (52.0 @ 4.8 GB/s) | 4.63 | 2.7 | 0.9447 | 21.4 |
+| 15 | final-default-8turns | `dbe7d16f5b` | MIRROR_AUTO=0 | 0% | **16,780 MB ⚠** | **6.850** | 146.0 | 71.2 (34.1/26.6/6.2/4.3) | 72.8 (54.7 @ 4.8 GB/s) | 5.16 | 1.8 | 0.9419 | 73.1 |
+| 16 | final-attncm-8turns | `dbe7d16f5b+1 dirty (df4d517ce3d9a00b)` | ATTN_CM=1 MIRROR_AUTO=0 | 22.9% | **34,567 MB ⚠** | **7.264** | 137.7 | 68.3 (31.1/26.7/6.2/4.2) | 67.2 (52.8 @ 4.8 GB/s) | 4.89 | 2.0 | 0.9439 | 68.3 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -672,7 +674,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **同一招用在 fp8（E4M3 放进 fp16 位 = 值 × 2⁻⁸，`fp8_pair_bits`）**：`gpu_moe` fp8 变体全过、`l3_ppl` 仍 0.621814 / 59/64；bench 一对 0.710 → 0.687，
    但**引擎里 `moe_shared_early` 5.29 → 5.37 ms，看不出来**（那一段三个小 dispatch，不受 ALU 限制；这一轮所有 stage 都慢 1–2%，Tctl 94 °C）。留着（逐位相同、指令更少），不记收益。
 
-0k. **GPU 模型 → decode 注意力改成两次 coopmat GEMM（`decode_attn_cm.slang`，`DEEPMOE_ATTN_CM=1`，默认关）：n_kv 640 时 149 → 23.5 µs/层。**
+0k. **GPU 模型 → decode 注意力改成两次 coopmat GEMM（`decode_attn_cm.slang`，**RADV 默认开**，`DEEPMOE_ATTN_CM=0` 关）：n_kv 640 时 149 → 23.5 µs/层。**
    **怎么找到的**：`tools/gpu_model.py`（`model_probe` 量出的常数 + trace 的 DMGEOM01 几何）把每个 stage 的实测减模型排序，
    `sparse_attn.score/combine` 是**唯一一个实测是模型 9 倍的 stage**（热步 23 µs 对 2.5，每 token 缺口 1.6 ms）；
    `attn_bench --kv` 在对话的真实长度（window 128 + index_topk 512 = 640）上是 **85.5 + 63.8 = 149 µs/层 ≈ 6 ms/token**，tiled 版 49 + 67。
@@ -691,7 +693,14 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    （变体 0.12 / 1.17 / 1.26），coopmat 翻成 −0.21；第二段同一个 step 7 在 ksplit_oldB 变体里也翻过。**这一格是一个硬币**。
    `l3_ppl` off（64 步）：默认 **0.621814 / 59/64**（与 K-split 那次逐位相同），coopmat **0.622784 / 56/64**（+0.16%；等价变体散布 0.602–0.648 / 56–62）。
    逐位置对比：翻转**双向**——coopmat 把默认错的 step 4、12 翻对，把 11、17、20、45、46 翻错，七处两边 margin 全部 < 0.47，全是近平局。
-   **所以默认关**：它没有系统性的精度损失，但默认开就要改 `suite.decode` 的 7/8，那是质量闸的定义，留给用户决定。预计收益：对话 ~5 ms/token（~+3.7% tok/s），热步 ~1.2 ms。
+   它没有系统性的精度损失，但默认开就要改 `suite.decode` 的 7/8——质量闸的定义，**交给用户决定：选了「默认开、改闸」**。
+   **新判据**（`tests/test_decode.cpp` 的 `kNearTie = 0.5`）：teacher-forced 数「参考 token 在**我们**分布里落后我们 top-1 超过 0.5 logit」的硬错，8 步里最多 1 个；
+   精确匹配数照打。0.5 来自上面那七处双向翻转（margin 全 < 0.47）。接线错误差的是几个 logit、整条分布（rho ~0.2），不会落在 0.5 以内。
+   默认开之后：第一段 6/8、硬错 1（step 7 差 0.79；step 6 差 0.10 不计），第二段 7/8、硬错 0——过（`bench/results/linux/attn_cm/decode_default_on.txt`）；
+   旧默认算术下 step 6 差 1.45 是硬错、step 7 对，同样是 1 个。
+   **8 轮对话**（ledger `final-default-8turns` / `final-attncm-8turns`，同一树、只差开关）：compute **71.2 → 68.3 ms**（attn 34.1 → 31.1；
+   对话前几轮上下文短、n_kv < 640，所以不到 5 ms），decode **6.850 → 7.264 tok/s**——其中 stall 72.8 → 67.2 是 IO 噪声（ms/miss 5.16 / 4.89，同配置复跑的散布），
+   可信的是 compute 那 2.9 ms。
 
 0j. **系统测量 + 按瓶颈排序的第一轮：GPU 空闲降频（GameMode）+ `sample_topk` 的 LDS 直方图。对话结果见 §1.0 的 ledger，不在这里重抄。**
    **尺子**：`tools/perf_report.py`——热步（`--capture`，全部 expert 驻留）每个 dispatch stage 的忙时对它要流过的权重字节 ÷ `--bw`（230 GB/s，
