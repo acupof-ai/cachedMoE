@@ -160,6 +160,7 @@ int cmd_serve(int argc, char** argv) {
     if (const char* e = std::getenv("DEEPMOE_MODEL_DIR")) cfg.model_dir = e;
     runtime::SessionConfig sc;
     runtime::SessionOptions so;
+    bool pf_min_set = false;
     runtime::SessionPoolOptions po;
     bool check_topk = false;
     bool engine_reheat = false;
@@ -177,7 +178,7 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--cache-slots")     cfg.cache.budget_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) * layout::kExpertSlotBytes;
         else if (a == "--max-context")     sc.max_context = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--engram-tables")   sc.engram_tables_dir = value_of(argc, argv, i);
-        else if (a == "--gpu-prefill-min") so.gpu_prefill_min = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
+        else if (a == "--gpu-prefill-min") { so.gpu_prefill_min = uint32_t(std::atoi(value_of(argc, argv, i).c_str())); pf_min_set = true; }
         else if (a == "--gpu-prefill-speedup") so.gpu_prefill_speedup = float(std::atof(value_of(argc, argv, i).c_str()));
         else if (a == "--replay")          so.replay = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--no-rollback")     so.rollback = false;
@@ -308,6 +309,15 @@ int cmd_serve(int argc, char** argv) {
         if (!w) log_warn("serve: warm-cache: {}", w.error().str());
         else log_info("serve: warm-cache filled {} slots in {:.1f} s", *w,
                       std::chrono::duration<double>(Clock::now() - w0).count());
+    }
+    // On RADV (Linux, UMA carve-out 512 MB) the GPU prefill wins down to short
+    // chat prompts: 29-64-token first turns went 14-21 s -> 11-16 s TTFT and the
+    // 8-turn chat 4.78 -> 4.95 tok/s end to end (ABAB, STATUS §7 0h). The 512
+    // default is the Windows measurement and stays there.
+    constexpr uint32_t kDriverMesaRadv = 3;   // VK_DRIVER_ID_MESA_RADV
+    if (!pf_min_set && engine.device().caps().driver_id == kDriverMesaRadv) {
+        so.gpu_prefill_min = 16;
+        log_info("serve: RADV: gpu_prefill_min 16 (--gpu-prefill-min overrides)");
     }
     runtime::SessionPool pool(engine, *tok, so, po);
     if (!po.disk.dir.empty()) {

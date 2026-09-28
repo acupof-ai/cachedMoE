@@ -706,6 +706,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    ⇒ **RADV 的 auto 改为按两个堆之和算：`heaps − pinned − kPathAOther − 4 GiB` = 5,499 槽 / 96.3 GiB，且不套 Windows 的 5,000 槽上限**（`DEEPMOE_CACHE_SLOT_CAP` 显式设置时仍生效）。
    ABAB 两对、单盘、`long_turns.json`（`reboot112/auto_ab/`）：cap5000 **5.8596 / 5.7898**，auto **6.1217 / 6.0764**——均值 5.8247 → **6.0991 = +4.71%**，两对各 +4.5% / +4.9%；
    hit 0.9369 → 0.9436，stall 79.8 → 71.9 ms，GTT 峰值 98 → 105 GiB。**GO，Linux 单盘对话基线现为 ~6.10 tok/s**（Windows `m_auto` 5.60）。
+   **短 prompt 也走 GPU prefill：RADV 上 `gpu_prefill_min` 512 → 16（`cli/serve.cpp`，只在没给 `--gpu-prefill-min` 且驱动是 RADV 时）——GO。**
+   8-turn 的新话题首轮是 29–64 token，走 decode 路径逐 token 灌，TTFT 14–21 s（~2–3 tok/s，冷 expert 的 stall），占整轮时间 22%；同话题续问已经复用 KV（extend，18–22 token，~6 s），不受影响。
+   ABAB 两对、单盘（`bench/results/linux/pfmin/`，`summ.py`）：TTFT 合计 默认 **107.3 / 104.8 s** vs 16 **84.6 / 84.0 s（−20%）**，每个冷轮 −3~−5 s；
+   端到端（生成 token / 墙钟）**4.785 / 4.800 → 4.947 / 4.953 tok/s（+3.5%）**。纯 decode tok/s 6.10 → 5.99 两次逐位一样——**是生成内容变了不是代价**：
+   GPU prefill 的 KV 与 decode 路径不逐位同，回答随之不同（每臂 2,359 vs 2,322 token，臂内逐 token 相同）。不加参数的新默认复跑：TTFT 81.7 s，端到端 4.969。
+   `suite.gpu_prefill`：`stages` 110 项 0 失败（worst cos 0.99991）、`forty_layers` 过；longctx 三项因本机无 `traces/longctx` 跳过。
+   Windows 的 512（Track PF：512 以下 expert 流式比 decode 省下的更贵）没动。
 
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
