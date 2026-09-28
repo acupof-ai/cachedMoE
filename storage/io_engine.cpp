@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstdlib>
 #include <thread>
 #include <format>
+#include <span>
 #include <vector>
 
 #include "core/align.h"
@@ -72,7 +74,9 @@ std::string IoStats::to_string() const {
                 (e.dropped ? std::format("  DROPPED after {} errors", e.errors)
                            : (e.errors ? std::format("  {} errors", e.errors) : std::string())) +
                     (e.failovers ? std::format(", {} re-read from the primary", e.failovers)
-                                 : std::string()));
+                                 : std::string()) +
+                    (e.stripe_chunks ? std::format("  stripe {} chunks", e.stripe_chunks)
+                                     : std::string()));
             // Track D6. On its own line, because bench/d2_abab.py parses the
             // head of the one above and an insertion there would silently
             // change what every past A/B table means.
@@ -248,6 +252,10 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
         const double f = std::strtod(e, nullptr);
         if (f > 0.0 && f < 1.0) static_split_ = f;
     }
+    // Track ST. Wins over the static split for P0 when both are set: striping
+    // routes every chunk, so there is no whole request left to split.
+    stripe_ = false;
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_STRIPE"); e && *e == '1') stripe_ = mirrors_on_;
     const int64_t now0 = mono_ns();
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
         ka_[i].chunk_id = 0;
@@ -279,7 +287,8 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
                                    ka_idle_ns_.load(std::memory_order_relaxed) / 1000000)
                      : std::string("off"),
                  kKeepAliveBytes,
-                 static_split_ > 0.0
+                 stripe_ ? std::string("STRIPED per chunk, weighted least-outstanding-bytes")
+                 : static_split_ > 0.0
                      ? std::format("STATIC {:.0f}% to the mirrors", static_split_ * 100.0)
                      : std::string("weighted least-outstanding-bytes"));
     }
@@ -449,9 +458,15 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
     // actually be read. A request stays on one source for all of its chunks --
     // splitting a 9 MiB run across two drives would make its latency the max of
     // the two rather than either one's.
+    //
+    // Track ST: unless striping is on, in which case a P0's chunks are routed
+    // one by one below, once they exist -- deliberately trading "either one's
+    // latency" for "the max of two shares that are each about half as long".
     IoRequest req = in_req;
     uint32_t source = 0;
     bool routed = false;
+    uint32_t stripe_mask = 0;
+    std::array<const File*, kMaxIoSources> stripe_row{};
     if (mirrors_on_ && (route_classes_ & (1u << static_cast<uint8_t>(req.priority)))) {
         if (auto it = alts_.find(req.file); it != alts_.end()) {
             uint32_t mask = 0;
@@ -470,31 +485,24 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
             // reads and nothing besides.
             const bool statik = static_split_ > 0.0 &&
                                 req.priority == IoPriority::BlockingMiss;
-            const uint32_t pick =
-                statik ? pick_static(mask, req.bytes)
-                       : pick_source(src_weights_,
-                                     std::span<const uint64_t>(src_outstanding_,
-                                                               src_weights_.size()),
-                                     mask, req.bytes);
-            if (pick < kMaxIoSources && it->second[pick]) {
-                source = pick;
-                routed = true;
-                req.file = it->second[pick];
-                src_outstanding_[source] += req.bytes;
-                ++src_inflight_[source];
-                static_split_bytes_[source] += req.bytes;
-                // How long this source was carrying nothing before this arrived.
-                // Measured always, under both arms: it is the evidence for or
-                // against the power-state story, not a by-product of the fix.
-                if (src_idle_since_ns_[source] != 0) {
-                    const int64_t gap = mono_ns() - src_idle_since_ns_[source];
-                    if (gap >= int64_t(kDefaultKeepAliveMs) * 1000000) {
-                        ++src_stats_[source].idle_gaps;
-                        src_stats_[source].idle_gap_ns_sum += uint64_t(gap);
-                        if (uint64_t(gap) > src_stats_[source].idle_gap_ns_max)
-                            src_stats_[source].idle_gap_ns_max = uint64_t(gap);
-                    }
-                    src_idle_since_ns_[source] = 0;
+            if (stripe_ && req.priority == IoPriority::BlockingMiss &&
+                std::popcount(mask) > 1) {
+                stripe_mask = mask;
+                stripe_row  = it->second;
+            } else {
+                const uint32_t pick =
+                    statik ? pick_static(mask, req.bytes)
+                           : pick_source(src_weights_,
+                                         std::span<const uint64_t>(src_outstanding_,
+                                                                   src_weights_.size()),
+                                         mask, req.bytes);
+                if (pick < kMaxIoSources && it->second[pick]) {
+                    source = pick;
+                    routed = true;
+                    req.file = it->second[pick];
+                    src_outstanding_[source] += req.bytes;
+                    static_split_bytes_[source] += req.bytes;
+                    note_source_start(source);
                 }
             }
         }
@@ -550,6 +558,34 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
                     std::format("read at {} is entirely past the end of '{}' ({} B)",
                                 req.file_off, req.file->path(), size));
 
+    // Track ST: route each chunk on its own. Greedy by the same ETA rule as a
+    // whole request -- `(outstanding + chunk) / rate` -- so the running charge
+    // includes this request's earlier chunks and the split converges on the
+    // rate ratio. Nothing can fail between here and the enqueue, so the
+    // charges need no guard; finish() (or cancel()) gives back what is left.
+    if (stripe_mask) {
+        std::lock_guard lk(src_mutex_);
+        const auto out = std::span<const uint64_t>(src_outstanding_, src_weights_.size());
+        p->src_file = stripe_row;
+        p->chunk_src.resize(p->chunks.size());
+        for (size_t i = 0; i < p->chunks.size(); ++i) {
+            const uint64_t b = p->chunks[i].bytes;
+            uint32_t s = pick_source(src_weights_, out, stripe_mask, b);
+            if (s >= kMaxIoSources || !stripe_row[s]) s = 0;
+            p->chunk_src[i] = static_cast<uint8_t>(s);
+            src_outstanding_[s] += b;
+            p->src_charged[s]   += b;
+            ++src_stats_[s].stripe_chunks;
+            if (!(p->src_used & (1u << s))) {
+                p->src_used |= 1u << s;
+                note_source_start(s);
+            }
+        }
+        // Any share on a mirror makes the request eligible for the primary
+        // re-read in finish(), exactly like a request routed there whole.
+        if (p->src_used & ~1u) p->primary = in_req.file;
+    }
+
     IoRequestId id;
     if (req.priority == IoPriority::BlockingMiss)
         last_p0_ns_.store(std::chrono::duration_cast<Nanos>(Clock::now().time_since_epoch()).count(),
@@ -601,6 +637,19 @@ Result<void> IoEngine::cancel(IoRequestId id) {
         }
     }
     if (!found) return fail(Err::NotFound, std::format("no queued request {}", id));
+    if (found->src_used) {
+        // Track ST: nothing was issued, so every chunk's charge is still held.
+        std::lock_guard lk(src_mutex_);
+        const int64_t now = mono_ns();
+        for (uint32_t s = 0; s < kMaxIoSources; ++s) {
+            if (!(found->src_used & (1u << s))) continue;
+            const uint64_t left = found->src_charged[s];
+            src_outstanding_[s] -= std::min(left, src_outstanding_[s]);
+            found->src_charged[s] = 0;
+            if (src_inflight_[s]) --src_inflight_[s];
+            if (src_inflight_[s] == 0) src_idle_since_ns_[s] = now;
+        }
+    }
     {
         std::lock_guard lk(stats_mutex_);
         ++stats_.requests_cancelled;
@@ -674,6 +723,7 @@ void IoEngine::reset_stats() {
         src_stats_[i].keepalive_reads = 0;
         src_stats_[i].keepalive_done = 0;
         src_stats_[i].keepalive_refused = 0;
+        src_stats_[i].stripe_chunks = 0;
     }
 }
 
@@ -683,6 +733,7 @@ size_t IoEngine::issue_ready_chunks() {
         std::shared_ptr<Pending> p;
         Chunk ch{};
         uint64_t cid = 0;
+        uint8_t csrc = kNoStripeSource;
         {
             std::lock_guard lk(mutex_);
             // Strict priority: a queued P0 keeps every lower class from issuing
@@ -718,9 +769,11 @@ size_t IoEngine::issue_ready_chunks() {
                     bg >= tune_.bg_cap_busy)
                     break;
             }
-            ch  = p->chunks[p->next_chunk++];
+            const size_t idx = p->next_chunk++;
+            ch  = p->chunks[idx];
             cid = next_chunk_id_++;
-            chunk_owner_.emplace(cid, InflightChunk{p, ch.bytes});
+            if (!p->chunk_src.empty()) csrc = p->chunk_src[idx];
+            chunk_owner_.emplace(cid, InflightChunk{p, ch.bytes, csrc});
             if (is_p0 && !p->issued_once) {
                 p->issued_once   = true;
                 p->first_issue_at = Clock::now();
@@ -738,7 +791,7 @@ size_t IoEngine::issue_ready_chunks() {
 
         ChunkRequest cr;
         cr.chunk_id = cid;
-        cr.file     = p->req.file;
+        cr.file     = (csrc == kNoStripeSource) ? p->req.file : p->src_file[csrc];
         cr.file_off = ch.off;
         cr.bytes    = ch.bytes;
         // Only the part of this chunk that lies inside the file has to arrive.
@@ -841,6 +894,7 @@ void IoEngine::handle_completion(const ChunkCompletion& c) {
     if (finish_keepalive(c)) return;
     std::shared_ptr<Pending> p;
     uint32_t charged = 0;
+    uint8_t  csrc = kNoStripeSource;
     // Whether the freed queue slot has something waiting for it. Only then is
     // the wall time until the next submit a REFILL gap; otherwise it is just
     // the engine being idle between layers.
@@ -854,6 +908,7 @@ void IoEngine::handle_completion(const ChunkCompletion& c) {
         }
         p = it->second.owner;
         charged = it->second.bytes;
+        csrc = it->second.src;
         chunk_owner_.erase(it);
         ++p->done_chunks;
         p->bytes_moved += c.bytes_moved;
@@ -874,6 +929,18 @@ void IoEngine::handle_completion(const ChunkCompletion& c) {
     inflight_ops_.fetch_sub(1, std::memory_order_relaxed);
     inflight_bytes_.fetch_sub(charged, std::memory_order_relaxed);
     inflight_class_[static_cast<uint8_t>(p->req.priority)].fetch_sub(1, std::memory_order_relaxed);
+    if (csrc != kNoStripeSource) {
+        // Track ST: a striped chunk stops counting against its drive the moment
+        // it lands, so the next chunk's pick sees the queue as it really is.
+        std::lock_guard sl(src_mutex_);
+        const uint64_t b = std::min<uint64_t>(charged, p->src_charged[csrc]);
+        src_outstanding_[csrc] -= std::min(b, src_outstanding_[csrc]);
+        p->src_charged[csrc] -= b;
+        p->src_moved[csrc]   += c.bytes_moved;
+        p->src_done_at[csrc]  = Clock::now();
+        if (!c.ok()) p->src_err |= 1u << csrc;
+        src_last_activity_ns_[csrc] = mono_ns();
+    }
     uint64_t closed_window_ns = 0;
     {
         std::lock_guard lk(stats_mutex_);
@@ -938,21 +1005,34 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
         const int64_t now = mono_ns();
         src_last_activity_ns_[s] = now;
         if (src_inflight_[s] == 0) src_idle_since_ns_[s] = now;
-        // Track D4: and whether it is still worth asking. A drive that has
-        // stopped answering fails every read after the first, so the budget is
-        // consecutive failures -- a success anywhere in between puts it back.
-        if (r.ok()) {
-            src_health_.note_success(s);
-        } else {
-            ++src_stats_[s].errors;
-            if (src_health_.note_error(s)) {
-                src_weights_[s]        = 0.0;
-                src_stats_[s].weight   = 0.0;
-                src_stats_[s].dropped  = true;
-                log_warn("IoEngine: source {} '{}' dropped after {} consecutive I/O errors "
-                         "(last: {}); reading from the remaining sources",
-                         s, src_stats_[s].root, src_health_.budget(), r.status.message);
+        note_source_result(s, r.ok(), r.status);
+    } else if (p->src_used) {
+        // Track ST: the same bookkeeping once per source that carried a share.
+        // Chunks abandoned after a failure were charged at submit and never
+        // issued, so whatever charge is left is given back here.
+        std::lock_guard lk(src_mutex_);
+        const int64_t now = mono_ns();
+        for (uint32_t s = 0; s < kMaxIoSources; ++s) {
+            if (!(p->src_used & (1u << s))) continue;
+            src_outstanding_[s] -= std::min(p->src_charged[s], src_outstanding_[s]);
+            p->src_charged[s] = 0;
+            if (src_inflight_[s]) --src_inflight_[s];
+            const uint64_t lat = (p->src_done_at[s] != TimePoint{})
+                ? static_cast<uint64_t>((p->src_done_at[s] - p->queued_at).count())
+                : static_cast<uint64_t>(r.latency.count());
+            ++src_stats_[s].requests;
+            src_stats_[s].bytes      += p->src_moved[s];
+            src_stats_[s].lat_ns_sum += lat;
+            if (is_p0) {
+                ++src_stats_[s].p0_requests;
+                src_stats_[s].p0_bytes      += p->src_moved[s];
+                src_stats_[s].p0_lat_ns_sum += lat;
             }
+            src_last_activity_ns_[s] = now;
+            if (src_inflight_[s] == 0) src_idle_since_ns_[s] = now;
+            // Health is per drive: a short read with no failed chunk is not
+            // any one source's fault, so only a chunk error counts against one.
+            note_source_result(s, !(p->src_err & (1u << s)), r.status);
         }
     }
     // A mirror is an optimisation, never a correctness input -- and that has to
@@ -965,10 +1045,27 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
     // caller sees one slower read, not an error. `queued_at` is kept, so the
     // latency it reports includes the failed attempt. One retry only: `primary`
     // is cleared, so a primary failure is reported as it always was.
-    if (p->primary && !r.ok()) {
+    //
+    // Track ST: a striped request is re-read only when a MIRROR's share
+    // failed; a failure on the primary's own share is reported as it always
+    // was. The retry reads every chunk from the primary, unstriped.
+    const bool striped = !p->chunk_src.empty();
+    if (p->primary && !r.ok() && (!striped || (p->src_err & ~1u))) {
         {
             std::lock_guard lk(src_mutex_);
-            ++src_stats_[p->source].failovers;
+            if (!striped) {
+                ++src_stats_[p->source].failovers;
+            } else {
+                for (uint32_t s = 1; s < kMaxIoSources; ++s)
+                    if (p->src_err & (1u << s)) ++src_stats_[s].failovers;
+            }
+        }
+        p->chunk_src.clear();
+        p->src_used = 0;
+        p->src_err  = 0;
+        for (uint32_t s = 0; s < kMaxIoSources; ++s) {
+            p->src_moved[s]   = 0;
+            p->src_done_at[s] = TimePoint{};
         }
         p->req.file      = p->primary;
         p->primary       = nullptr;
@@ -1093,6 +1190,42 @@ void IoEngine::tick_keepalive() {
             --src_stats_[s].keepalive_reads;
             ++src_stats_[s].keepalive_refused;
         }
+    }
+}
+
+void IoEngine::note_source_start(uint32_t s) {
+    ++src_inflight_[s];
+    // How long this source was carrying nothing before this arrived.
+    // Measured always, under both arms: it is the evidence for or
+    // against the power-state story, not a by-product of the fix.
+    if (src_idle_since_ns_[s] != 0) {
+        const int64_t gap = mono_ns() - src_idle_since_ns_[s];
+        if (gap >= int64_t(kDefaultKeepAliveMs) * 1000000) {
+            ++src_stats_[s].idle_gaps;
+            src_stats_[s].idle_gap_ns_sum += uint64_t(gap);
+            if (uint64_t(gap) > src_stats_[s].idle_gap_ns_max)
+                src_stats_[s].idle_gap_ns_max = uint64_t(gap);
+        }
+        src_idle_since_ns_[s] = 0;
+    }
+}
+
+void IoEngine::note_source_result(uint32_t s, bool ok, const Status& st) {
+    // Track D4: whether this source is still worth asking. A drive that has
+    // stopped answering fails every read after the first, so the budget is
+    // consecutive failures -- a success anywhere in between puts it back.
+    if (ok) {
+        src_health_.note_success(s);
+        return;
+    }
+    ++src_stats_[s].errors;
+    if (src_health_.note_error(s)) {
+        src_weights_[s]        = 0.0;
+        src_stats_[s].weight   = 0.0;
+        src_stats_[s].dropped  = true;
+        log_warn("IoEngine: source {} '{}' dropped after {} consecutive I/O errors "
+                 "(last: {}); reading from the remaining sources",
+                 s, src_stats_[s].root, src_health_.budget(), st.message);
     }
 }
 

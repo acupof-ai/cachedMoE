@@ -31,6 +31,20 @@
 //            the wall clock covers the reads AND the copies -- so it is
 //            directly comparable with the `patha` row.
 //
+// Track ST (chunk-level striping, docs/STATUS.md §7): with --mirror PATH (the
+// same shard on the second drive) and --route, the same reads go through the
+// runtime's own router three ways:
+//   single   primary only, no router (today's single-drive run)
+//   whole    DEEPMOE_MIRROR_* default: each request goes whole to one drive
+//   stripe   DEEPMOE_MIRROR_STRIPE=1: each 4 MiB chunk is routed on its own
+// The decode's shape is one expert fill at a time -- its 17,698,816 B weights
+// run and 1,110,016 B scales run together -- so the verdict run is
+//   io_dst_bench --file A --mirror B --dst ram --req-kb 17284,1084 --inflight 1
+//                --qd 8 --chunk-kb 1024,4096 --route whole,stripe --repeat 4 --reads 200
+// --repeat alternates the route order every repeat (ABAB), and both arms of a
+// repeat read the same offsets. Weights default to a 2 s-warmed probe of both
+// files (Track D5: an unwarmed USB4 drive probes at 1% of its rate).
+//
 // --copy additionally times the three ways a staging fix would move one expert
 // (18.8 MB) into path A memory: a CPU memcpy from pinned host memory, and a
 // vkCmdCopyBuffer from path B (both as a standalone submit and as recorded
@@ -81,13 +95,19 @@ namespace {
 
 struct Options {
     std::string file;
-    uint32_t req_kb   = 9184;        // one manifest run of an expert (8.97 MiB)
-    uint32_t chunk_kb = 4096;        // the runtime's P0 chunk
+    std::vector<uint32_t> req_kb{9184};  // one request per read by default
+    std::vector<uint32_t> chunk_kb{4096};   // the runtime's P0 chunk
     std::vector<uint32_t> qd{4, 8, 16};
     std::vector<std::string> dst{"ram", "pinned", "patha", "pathb"};
     uint32_t reads = 64;
     bool     copy  = false;
     std::string csv;
+    // Track ST
+    std::string mirror;
+    std::vector<std::string> route{"single"};
+    std::vector<double> weights;     // GB/s per source; empty = probe both
+    uint32_t inflight = 0;
+    uint32_t repeat   = 1;
 };
 
 std::vector<uint32_t> parse_u32(std::string_view s) {
@@ -316,9 +336,13 @@ struct CopyRing {
 
 struct Point {
     std::string dst;
+    std::string route;           // Track ST: single | whole | stripe
     uint32_t req_kb = 0, chunk_kb = 0, qd = 0;
+    uint32_t groups_inflight = 0;
     uint64_t bytes = 0;
     double   seconds = 0, gbps = 0, mean_ms = 0, max_ms = 0;
+    double   p50_ms = 0, p95_ms = 0;
+    double   mirror_share = 0;   // fraction of bytes src[1] served
     double   qd_at_issue = 0;
     double   submit_us = 0;      // Backend::submit(), i.e. ReadFile, per chunk
     // Track S1: the staged-fill columns. `copy_ms` is wall time per
@@ -329,60 +353,93 @@ struct Point {
     std::string note;
 };
 
-Result<Point> measure(const std::string& path, const std::string& kind,
+// Track ST: one "read" of the bench is a GROUP of requests submitted together
+// and timed until the last of them lands -- with `--req-kb 17284,1084` that is
+// exactly one expert fill (its weights run and its scales run), whose latency
+// is what a decode layer with one miss waits for. A single size is the old
+// one-request-per-read bench.
+struct Setup {
+    std::string file, mirror;
+    std::string route = "single";
+    std::vector<uint32_t> req_kb;
+    uint32_t chunk_kb = 4096, qd = 8, reads = 64;
+    uint32_t inflight = 0;       // groups in flight; 0 = derived from qd
+    double   w0 = 0, w1 = 0;     // source weights (GB/s)
+    uint64_t seed = 0;
+};
+
+Result<Point> measure(const Setup& s, const std::string& kind,
                       gpu::MemoryAllocator* alloc_a, gpu::MemoryAllocator* alloc_b,
-                      gpu::Device* dev,
-                      uint32_t req_kb, uint32_t chunk_kb, uint32_t qd, uint32_t reads) {
-    auto opened = File::open_read(path, true);
+                      gpu::Device* dev) {
+    auto opened = File::open_read(s.file, true);
     if (!opened) return std::unexpected(opened.error());
     const File& f = *opened;
+    const bool use_mirror = s.route != "single";
+    File mf;
+    if (use_mirror) {
+        if (s.mirror.empty()) return fail(Err::InvalidArgument, "--route whole/stripe needs --mirror");
+        auto m = File::open_read(s.mirror, true);
+        if (!m) return std::unexpected(m.error());
+        mf = *std::move(m);
+    }
 
-    const uint64_t req_bytes = align_up(uint64_t(req_kb) << 10, kPageSize);
-    if (req_bytes > f.size()) return fail(Err::InvalidArgument, "request larger than the file");
+    std::vector<uint64_t> sizes;
+    uint64_t group_bytes = 0;
+    for (uint32_t kb : s.req_kb) {
+        sizes.push_back(align_up(uint64_t(kb) << 10, kPageSize));
+        group_bytes += sizes.back();
+    }
+    for (uint64_t b : sizes)
+        if (b > f.size()) return fail(Err::InvalidArgument, "request larger than the file");
 
     // Exactly the runtime's shape: a P0 request of `req_bytes` split into
     // `chunk_kb` chunks, at most `qd` of them in flight.
     IoConfig cfg;
-    cfg.chunk_bytes        = uint32_t(align_up(uint64_t(chunk_kb) << 10, kPageSize));
-    cfg.max_inflight_ops   = qd;
-    cfg.max_inflight_bytes = std::min<uint64_t>(uint64_t(qd) * cfg.chunk_bytes, 512ull << 20);
+    cfg.chunk_bytes        = uint32_t(align_up(uint64_t(s.chunk_kb) << 10, kPageSize));
+    cfg.max_inflight_ops   = s.qd;
+    cfg.max_inflight_bytes = std::min<uint64_t>(uint64_t(s.qd) * cfg.chunk_bytes, 512ull << 20);
     cfg.completion_threads = 2;
     cfg.unbuffered         = true;
 
-    const uint32_t bufs   = std::max(qd, 1u);
-    const uint64_t stride = align_up(req_bytes, kPageSize);
+    // One group per buffer in flight, throttled the way nvme_bench does, so
+    // the independent variable really is the destination (or the route).
+    const uint32_t depth = s.inflight
+        ? s.inflight
+        : std::max(1u, uint32_t(uint64_t(s.qd) * cfg.chunk_bytes / group_bytes) + 1u);
+    const uint32_t bufs   = std::max({s.qd, depth, 1u});
+    const uint64_t stride = align_up(group_bytes, kPageSize);
     std::unique_ptr<Destination> dst;
     bool staged = false;
 #if defined(DEEPMOE_ENABLE_VULKAN)
     std::unique_ptr<VulkanDestination> stage_sink;
     CopyRing ring;
 #endif
-    if (kind == "ram")         { auto d = make_ram(bufs, req_bytes);    if (!d) return std::unexpected(d.error()); dst = std::move(*d); }
-    else if (kind == "pinned") { auto d = make_pinned(bufs, req_bytes); if (!d) return std::unexpected(d.error()); dst = std::move(*d); }
+    if (kind == "ram")         { auto d = make_ram(bufs, group_bytes);    if (!d) return std::unexpected(d.error()); dst = std::move(*d); }
+    else if (kind == "pinned") { auto d = make_pinned(bufs, group_bytes); if (!d) return std::unexpected(d.error()); dst = std::move(*d); }
     else if (kind == "patha") {
         if (!alloc_a) return fail(Err::Unavailable, "path A allocator is not available");
-        auto d = make_vulkan(*alloc_a, MemoryPath::DeviceLocalHostVisible, bufs, req_bytes);
+        auto d = make_vulkan(*alloc_a, MemoryPath::DeviceLocalHostVisible, bufs, group_bytes);
         if (!d) return std::unexpected(d.error());
         dst = std::move(*d);
     } else if (kind == "pathb") {
         if (!alloc_b) return fail(Err::Unavailable, "path B allocator is not available");
-        auto d = make_vulkan(*alloc_b, MemoryPath::ExternalMemoryHost, bufs, req_bytes);
+        auto d = make_vulkan(*alloc_b, MemoryPath::ExternalMemoryHost, bufs, group_bytes);
         if (!d) return std::unexpected(d.error());
         dst = std::move(*d);
     } else if (kind == "stage") {
 #if defined(DEEPMOE_ENABLE_VULKAN)
         if (!alloc_a || !alloc_b || !dev)
             return fail(Err::Unavailable, "stage needs both allocators and a device");
-        auto sv = make_vulkan_v(*alloc_b, MemoryPath::ExternalMemoryHost, bufs, req_bytes);
+        auto sv = make_vulkan_v(*alloc_b, MemoryPath::ExternalMemoryHost, bufs, group_bytes);
         if (!sv) return std::unexpected(sv.error());
-        auto tv = make_vulkan_v(*alloc_a, MemoryPath::DeviceLocalHostVisible, bufs, req_bytes);
+        auto tv = make_vulkan_v(*alloc_a, MemoryPath::DeviceLocalHostVisible, bufs, group_bytes);
         if (!tv) return std::unexpected(tv.error());
         VkBuffer src_buf = (*sv)->buf.buffer;
         stage_sink = std::move(*tv);
         (*sv)->note = std::format("ring {} x {:.2f} MiB path B -> path A (GPU copy)",
-                                  bufs, double(req_bytes) / 1048576.0);
+                                  bufs, double(group_bytes) / 1048576.0);
         dst = std::unique_ptr<Destination>(std::move(*sv));
-        if (auto r = ring.start(*dev, src_buf, stage_sink->buf.buffer, stride, req_bytes, bufs); !r)
+        if (auto r = ring.start(*dev, src_buf, stage_sink->buf.buffer, stride, group_bytes, bufs); !r)
             return std::unexpected(r.error());
         staged = true;
 #else
@@ -396,49 +453,73 @@ Result<Point> measure(const std::string& path, const std::string& kind,
     if (!backend) return std::unexpected(backend.error());
     IoEngine engine;
     if (auto r = engine.start(std::move(*backend), cfg); !r) return std::unexpected(r.error());
+    if (use_mirror) {
+        // The runtime's own router, fed the weights the runtime would probe.
+        engine.set_sources({s.file, s.mirror}, {s.w0, s.w1});
+        if (auto r = engine.add_mirror(&f, 1, &mf); !r) { engine.stop(); return std::unexpected(r.error()); }
+        engine.set_stripe(s.route == "stripe");
+    }
 
-    const uint64_t span = f.size() - req_bytes;
-    std::mt19937_64 rng(0xC0FFEEull ^ (uint64_t(req_kb) << 32) ^ qd);
+    uint64_t max_size = 0;
+    for (uint64_t b : sizes) max_size = std::max(max_size, b);
+    const uint64_t span = f.size() - max_size;
+    // Seeded by the point and the repeat, NOT by the route: the arms of one
+    // repeat read the same offsets, so the route is the only thing that differs.
+    std::mt19937_64 rng(0xC0FFEEull ^ (group_bytes << 20) ^ (uint64_t(s.qd) << 8) ^ s.seed);
     std::uniform_int_distribution<uint64_t> pick(0, span / kPageSize);
 
     engine.reset_stats();
     std::atomic<uint32_t> failures{0};
     Status first_error{Err::Ok};
+    std::mutex lat_m;
+    std::vector<double> lat_ms;
+    lat_ms.reserve(s.reads);
+    std::atomic<uint32_t> groups_open{0};
+    struct Group { std::atomic<uint32_t> left{0}; TimePoint t0{}; };
 
-    // One request per buffer in flight, throttled to `qd` requests the way
-    // nvme_bench does, so the independent variable really is the destination.
-    const uint32_t req_depth = std::max(1u, qd * cfg.chunk_bytes / uint32_t(req_bytes) + 1u);
     const auto t0 = Clock::now();
-    for (uint32_t i = 0; i < reads; ++i) {
+    for (uint32_t i = 0; i < s.reads; ++i) {
         const uint32_t slot = i % bufs;
-        while (engine.queued_requests() >= req_depth && failures.load() == 0)
+        while (groups_open.load() >= depth && failures.load() == 0)
             std::this_thread::yield();
 #if defined(DEEPMOE_ENABLE_VULKAN)
         // A slot whose copy has not retired is not reusable: the read would
         // overwrite bytes the GPU is still moving.
         if (staged) ring.take(slot);
 #endif
-        IoRequest r;
-        r.priority = IoPriority::BlockingMiss;
-        r.file     = &f;
-        r.file_off = align_down(pick(rng) * kPageSize);
-        r.bytes    = req_bytes;
-        r.dst      = dst->slots[slot];
-        auto id = engine.submit(r, [&, slot](const IoResult& res) {
-            if (!res.ok() && failures.fetch_add(1, std::memory_order_relaxed) == 0)
-                first_error = res.status;
+        auto g = std::make_shared<Group>();
+        g->left.store(uint32_t(sizes.size()));
+        g->t0 = Clock::now();
+        groups_open.fetch_add(1);
+        uint64_t dst_off = 0;
+        for (uint64_t bytes : sizes) {
+            IoRequest r;
+            r.priority = IoPriority::BlockingMiss;
+            r.file     = &f;
+            r.file_off = align_down(pick(rng) * kPageSize);
+            r.bytes    = bytes;
+            r.dst      = static_cast<std::byte*>(dst->slots[slot]) + dst_off;
+            dst_off   += bytes;
+            auto id = engine.submit(r, [&, g, slot](const IoResult& res) {
+                if (!res.ok() && failures.fetch_add(1, std::memory_order_relaxed) == 0)
+                    first_error = res.status;
+                if (g->left.fetch_sub(1) != 1) return;
+                const double ms = std::chrono::duration<double, std::milli>(Clock::now() - g->t0).count();
+                { std::lock_guard<std::mutex> lk(lat_m); lat_ms.push_back(ms); }
+                groups_open.fetch_sub(1);
 #if defined(DEEPMOE_ENABLE_VULKAN)
-            if (staged) ring.completed(slot);
+                if (staged) ring.completed(slot);
 #else
-            (void)slot;
+                (void)slot;
 #endif
-        });
-        if (!id) {
+            });
+            if (!id) {
 #if defined(DEEPMOE_ENABLE_VULKAN)
-            if (staged) ring.stop();
+                if (staged) ring.stop();
 #endif
-            engine.stop();
-            return std::unexpected(id.error());
+                engine.stop();
+                return std::unexpected(id.error());
+            }
         }
     }
     engine.drain();
@@ -452,12 +533,22 @@ Result<Point> measure(const std::string& path, const std::string& kind,
         return fail(Err::Io, std::format("{} request(s) failed: {}", failures.load(), first_error.str()));
 
     Point p;
-    p.dst = kind; p.req_kb = req_kb; p.chunk_kb = chunk_kb; p.qd = qd;
+    p.dst = kind; p.route = s.route; p.req_kb = uint32_t(group_bytes >> 10);
+    p.chunk_kb = s.chunk_kb; p.qd = s.qd; p.groups_inflight = depth;
     p.bytes = st.bytes_completed;
     p.seconds = secs;
     p.gbps = secs > 0 ? p.bytes / 1e9 / secs : 0.0;
-    p.mean_ms = st.mean_latency_ms();
-    p.max_ms  = st.latency_ns_max / 1e6;
+    if (!lat_ms.empty()) {
+        std::sort(lat_ms.begin(), lat_ms.end());
+        double sum = 0;
+        for (double v : lat_ms) sum += v;
+        p.mean_ms = sum / double(lat_ms.size());
+        p.p50_ms  = lat_ms[lat_ms.size() / 2];
+        p.p95_ms  = lat_ms[std::min(lat_ms.size() - 1, size_t(double(lat_ms.size()) * 0.95))];
+        p.max_ms  = lat_ms.back();
+    }
+    if (st.sources.size() > 1 && st.bytes_completed)
+        p.mirror_share = double(st.sources[1].bytes) / double(st.bytes_completed);
     p.qd_at_issue = st.p0_chunks_issued ? double(st.p0_qd_at_issue_sum) / double(st.p0_chunks_issued) : 0.0;
     p.submit_us = st.disp_submit_mean_us();
 #if defined(DEEPMOE_ENABLE_VULKAN)
@@ -577,14 +668,20 @@ int usage() {
     std::puts(
         "io_dst_bench -- Track Q2 E1: does the destination memory cost the drive its speed?\n"
         "  --file PATH     file to read (default: a shard under DEEPMOE_MODEL_DIR)\n"
-        "  --req-kb N      request size in KiB (default 9184 = one expert run)\n"
-        "  --chunk-kb N    chunk size in KiB (default 4096, the runtime's P0 chunk)\n"
+        "  --req-kb LIST   request size(s) in KiB, one group per read (default 9184;\n"
+        "                  17284,1084 = one expert: weights run + scales run)\n"
+        "  --chunk-kb LIST chunk size(s) in KiB (default 4096, the runtime's P0 chunk)\n"
         "  --qd LIST       chunk queue depths (default 4,8,16)\n"
         "  --dst LIST      ram,pinned,patha,pathb,stage (default the first four)\n"
         "  --gpu-copy      shorthand for adding `stage` to --dst\n"
         "  --reads N       requests per point (default 64)\n"
         "  --copy          also time the staging copies of one expert\n"
-        "  --csv FILE      write the table as CSV\n");
+        "  --csv FILE      write the table as CSV\n"
+        "  --mirror PATH   the same file on a second drive (Track ST)\n"
+        "  --route LIST    single,whole,stripe (default single)\n"
+        "  --weights A,B   source GB/s for the router (default: probe both)\n"
+        "  --inflight N    groups in flight (default from --qd); 1 = decode shape\n"
+        "  --repeat N      repeat every point N times, route order alternating\n");
     return 2;
 }
 
@@ -600,8 +697,16 @@ int main(int argc, char** argv) {
             return argv[++i];
         };
         if (a == "--file")           o.file = next();
-        else if (a == "--req-kb")    o.req_kb = uint32_t(std::atoi(std::string(next()).c_str()));
-        else if (a == "--chunk-kb")  o.chunk_kb = uint32_t(std::atoi(std::string(next()).c_str()));
+        else if (a == "--req-kb")    o.req_kb = parse_u32(next());
+        else if (a == "--mirror")    o.mirror = next();
+        else if (a == "--route")     o.route = parse_str(next());
+        else if (a == "--weights") {
+            o.weights.clear();
+            for (const std::string& t : parse_str(next())) o.weights.push_back(std::atof(t.c_str()));
+        }
+        else if (a == "--inflight")  o.inflight = uint32_t(std::atoi(std::string(next()).c_str()));
+        else if (a == "--repeat")    o.repeat = std::max(1, std::atoi(std::string(next()).c_str()));
+        else if (a == "--chunk-kb")  o.chunk_kb = parse_u32(next());
         else if (a == "--qd")        o.qd = parse_u32(next());
         else if (a == "--dst")       o.dst = parse_str(next());
         else if (a == "--reads")     o.reads = uint32_t(std::atoi(std::string(next()).c_str()));
@@ -649,23 +754,94 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::puts(std::format("\nrequest {} KiB, chunk {} KiB, {} reads per point\n",
-                          o.req_kb, o.chunk_kb, o.reads).c_str());
-    std::puts("dst        qd      GB/s   mean_ms    max_ms   QD@issue  submit_us   copy_ms  note");
-    std::puts("--------------------------------------------------------------------------------------------------");
+    // Track ST: the router's weights. Probed the way the runtime probes
+    // (4 MiB random, QD 8) but with a 2 s warmup, so a sleeping USB4 drive is
+    // not measured at its wake-up (docs/p4_dual_source.md §9.2).
+    double w0 = 1.0, w1 = 1.0;
+    const bool routed = std::any_of(o.route.begin(), o.route.end(),
+                                    [](const std::string& r) { return r != "single"; });
+    if (routed) {
+        if (o.mirror.empty()) { std::fputs("--route whole/stripe needs --mirror\n", stderr); return 2; }
+        if (o.weights.size() >= 2) {
+            w0 = o.weights[0]; w1 = o.weights[1];
+        } else {
+            auto a = IoEngine::probe_source_gbps(o.file, 1000, 8, 2000);
+            auto b = IoEngine::probe_source_gbps(o.mirror, 1000, 8, 2000);
+            if (!a || !b) { std::fputs("weight probe failed; pass --weights A,B\n", stderr); return 1; }
+            w0 = *a; w1 = *b;
+        }
+        std::puts(std::format("mirror     {}\nweights    {:.2f} : {:.2f} GB/s{}", o.mirror, w0, w1,
+                              o.weights.size() >= 2 ? " (given)" : " (probed, 2 s warmup)").c_str());
+    }
+
+    std::string sizes;
+    for (uint32_t kb : o.req_kb) sizes += std::format("{}{}", sizes.empty() ? "" : "+", kb);
+    std::puts(std::format("\nrequest {} KiB per read, {} reads per point, {} repeat(s)\n",
+                          sizes, o.reads, o.repeat).c_str());
+    std::puts("dst     route   rep chunk qd  infl      GB/s   mean_ms    p50_ms    p95_ms    max_ms  "
+              "mirror%  QD@issue  submit_us   copy_ms  note");
+    std::puts("----------------------------------------------------------------------------------------"
+              "--------------------------------------------------");
 
     std::vector<Point> results;
-    for (const std::string& k : o.dst) {
-        for (uint32_t qd : o.qd) {
-            auto p = measure(o.file, k, pa, pb, pdev, o.req_kb, o.chunk_kb, qd, o.reads);
-            if (!p) {
-                std::puts(std::format("{:<10} {:>3}   {}", k, qd, p.error().str()).c_str());
-                continue;
+    std::vector<uint32_t> rep_of;
+    for (uint32_t rep = 0; rep < o.repeat; ++rep) {
+        // ABAB: odd repeats walk the routes backwards.
+        std::vector<std::string> routes = o.route;
+        if (rep & 1) std::reverse(routes.begin(), routes.end());
+        for (const std::string& k : o.dst) {
+            for (uint32_t ck : o.chunk_kb) {
+            for (uint32_t qd : o.qd) {
+                for (const std::string& route : routes) {
+                    Setup su;
+                    su.file = o.file; su.mirror = o.mirror; su.route = route;
+                    su.req_kb = o.req_kb; su.chunk_kb = ck; su.qd = qd;
+                    su.reads = o.reads; su.inflight = o.inflight;
+                    su.w0 = w0; su.w1 = w1; su.seed = uint64_t(rep) * 0x9E3779B97F4A7C15ull;
+                    auto p = measure(su, k, pa, pb, pdev);
+                    if (!p) {
+                        std::puts(std::format("{:<7} {:<7} {:>3} {:>5} {:>3}   {}", k, route, rep, ck, qd,
+                                              p.error().str()).c_str());
+                        continue;
+                    }
+                    results.push_back(*p);
+                    rep_of.push_back(rep);
+                    std::puts(std::format("{:<7} {:<7} {:>3} {:>5} {:>3} {:>5} {:>9.3f} {:>9.3f} {:>9.3f} {:>9.3f} "
+                                          "{:>9.3f} {:>7.1f} {:>9.2f} {:>10.1f} {:>9.3f}  {}",
+                                          p->dst, p->route, rep, p->chunk_kb, p->qd, p->groups_inflight, p->gbps,
+                                          p->mean_ms, p->p50_ms, p->p95_ms, p->max_ms,
+                                          100.0 * p->mirror_share, p->qd_at_issue, p->submit_us,
+                                          p->copy_ms, p->note).c_str());
+                }
             }
-            results.push_back(*p);
-            std::puts(std::format("{:<10} {:>3} {:>9.3f} {:>9.3f} {:>9.3f} {:>10.2f} {:>10.1f} {:>9.3f}  {}",
-                                  p->dst, p->qd, p->gbps, p->mean_ms, p->max_ms,
-                                  p->qd_at_issue, p->submit_us, p->copy_ms, p->note).c_str());
+            }
+        }
+    }
+
+    // Track ST: the verdict line. Mean group latency per (dst, qd, route) over
+    // the repeats, and each route against the first one listed.
+    if (o.route.size() > 1) {
+        std::puts("\nmean over repeats (group latency, ms; ratio vs the first route):");
+        for (const std::string& k : o.dst) {
+            for (uint32_t ck : o.chunk_kb) {
+            for (uint32_t qd : o.qd) {
+                double base = 0;
+                for (const std::string& route : o.route) {
+                    double sum = 0, p50 = 0, gb = 0;
+                    uint32_t n = 0;
+                    for (const Point& p : results)
+                        if (p.dst == k && p.chunk_kb == ck && p.qd == qd && p.route == route) {
+                            sum += p.mean_ms; p50 += p.p50_ms; gb += p.gbps; ++n;
+                        }
+                    if (!n) continue;
+                    const double m = sum / n;
+                    if (base == 0) base = m;
+                    std::puts(std::format("  {:<7} chunk {:>5} qd {:>3} {:<7} mean {:>8.3f}  p50 {:>8.3f}  "
+                                          "{:>7.3f} GB/s  x{:.3f}  (n={})",
+                                          k, ck, qd, route, m, p50 / n, gb / n, m / base, n).c_str());
+                }
+            }
+            }
         }
     }
 
@@ -676,14 +852,20 @@ int main(int argc, char** argv) {
 
     if (!o.csv.empty()) {
         if (std::FILE* c = std::fopen(o.csv.c_str(), "wb")) {
+            // Track ST columns are appended, so older readers keep their indices.
             std::fputs("dst,req_kb,chunk_kb,qd,bytes,seconds,gbps,mean_ms,max_ms,qd_at_issue,"
-                       "submit_us,copies,copy_ms,copy_ms_max,note\n", c);
-            for (const Point& p : results)
+                       "submit_us,copies,copy_ms,copy_ms_max,note,"
+                       "route,rep,inflight,p50_ms,p95_ms,mirror_share,w0,w1\n", c);
+            for (size_t i = 0; i < results.size(); ++i) {
+                const Point& p = results[i];
                 std::fputs(std::format("{},{},{},{},{},{:.6f},{:.4f},{:.4f},{:.4f},{:.2f},"
-                                       "{:.1f},{},{:.4f},{:.4f},{}\n",
+                                       "{:.1f},{},{:.4f},{:.4f},{},{},{},{},{:.4f},{:.4f},{:.4f},{:.3f},{:.3f}\n",
                                        p.dst, p.req_kb, p.chunk_kb, p.qd, p.bytes, p.seconds,
                                        p.gbps, p.mean_ms, p.max_ms, p.qd_at_issue,
-                                       p.submit_us, p.copies, p.copy_ms, p.copy_ms_max, p.note).c_str(), c);
+                                       p.submit_us, p.copies, p.copy_ms, p.copy_ms_max, p.note,
+                                       p.route, rep_of[i], p.groups_inflight, p.p50_ms, p.p95_ms,
+                                       p.mirror_share, w0, w1).c_str(), c);
+            }
             std::fclose(c);
             std::puts(std::format("\nwrote {}", o.csv).c_str());
         }

@@ -743,6 +743,194 @@ DEEPMOE_TEST(io, mirror_error_is_reread_from_the_primary) {
     engine.stop();
 }
 
+// Track ST: with striping on, ONE P0 request's chunks are routed one by one,
+// so a single expert run is read from both drives in proportion to their rates
+// instead of from whichever drive won the whole request. The weights are the
+// Linux box's probe (4.87 : 3.69 GB/s); 16 equal chunks on idle drives split
+// greedily by `(outstanding + chunk) / rate`, which lands 9 : 7.
+//
+// Mutation this pins: routing the request whole (the pre-ST behaviour) puts
+// all 16 chunks on one handle, and `per_file[1] == 0`.
+DEEPMOE_TEST(io, stripe_splits_one_p0_across_both_sources_by_weight) {
+    auto prim = make_scratch("st_split_p", 2u << 20, false);
+    auto mirr = make_scratch("st_split_m", 2u << 20, false);
+    REQUIRE(prim.has_value());
+    REQUIRE(mirr.has_value());
+    const std::vector<std::byte> content = pattern_bytes(2u << 20);
+    IoEngine engine;
+    IoConfig cfg;
+    cfg.chunk_bytes = 64 * 1024;
+    auto backend = std::make_unique<test::FakeBackend>(content, 8);
+    test::FakeBackend* fake = backend.get();
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+    engine.set_sources({"primary", "mirror"}, {4.87, 3.69});
+    REQUIRE_OK(engine.add_mirror(&prim->file, 1, &mirr->file));
+    REQUIRE(engine.mirrors_enabled());
+    CHECK(!engine.stripe());           // off unless asked for
+    engine.set_stripe(true);
+    REQUIRE(engine.stripe());
+
+    constexpr uint32_t kBytes = 1u << 20;     // sixteen 64 KiB chunks
+    AlignedBuffer b(kBytes);
+    std::memset(b.data(), 0, kBytes);
+    IoRequest r;
+    r.priority = IoPriority::BlockingMiss;
+    r.file     = &prim->file;
+    r.file_off = 128 * 1024;
+    r.bytes    = kBytes;
+    r.dst      = b.data();
+    auto fut = engine.submit_future(r);
+    REQUIRE(fut.has_value());
+    const IoResult res = fut->get();
+    CHECK(res.ok());
+    CHECK_EQ(res.bytes_moved, uint64_t(kBytes));
+    CHECK(std::memcmp(b.data(), content.data() + r.file_off, kBytes) == 0);
+    engine.drain();
+
+    uint32_t per_file[2] = {0, 0};
+    for (const auto& rec : fake->log()) {
+        if (rec.file == &prim->file) ++per_file[0];
+        else if (rec.file == &mirr->file) ++per_file[1];
+    }
+    CHECK_EQ(per_file[0] + per_file[1], 16u);
+    CHECK_EQ(per_file[0], 9u);
+    CHECK_EQ(per_file[1], 7u);
+
+    const IoStats st = engine.stats();
+    REQUIRE_EQ(st.sources.size(), size_t(2));
+    CHECK_EQ(st.sources[0].stripe_chunks, uint64_t(9));
+    CHECK_EQ(st.sources[1].stripe_chunks, uint64_t(7));
+    CHECK_EQ(st.sources[0].bytes + st.sources[1].bytes, uint64_t(kBytes));
+    CHECK_EQ(st.sources[1].bytes, uint64_t(7 * 64 * 1024));
+    // Both shares count as one request on each drive, and every charge -- per
+    // chunk on the way in, per chunk on the way out -- has been given back.
+    CHECK_EQ(st.sources[0].p0_requests, uint64_t(1));
+    CHECK_EQ(st.sources[1].p0_requests, uint64_t(1));
+    CHECK_EQ(st.sources[0].outstanding_bytes, uint64_t(0));
+    CHECK_EQ(st.sources[1].outstanding_bytes, uint64_t(0));
+    CHECK_EQ(st.sources[0].inflight_requests, 0u);
+    CHECK_EQ(st.sources[1].inflight_requests, 0u);
+    CHECK_EQ(st.requests_completed, uint64_t(1));
+    engine.stop();
+}
+
+// Track ST: striping is a P0 policy. The backfill keeps whole-request routing,
+// and with striping off a P0 does too -- the default is byte-for-byte today's.
+DEEPMOE_TEST(io, stripe_leaves_backfill_and_the_default_whole) {
+    auto prim = make_scratch("st_whole_p", 2u << 20, false);
+    auto mirr = make_scratch("st_whole_m", 2u << 20, false);
+    REQUIRE(prim.has_value());
+    REQUIRE(mirr.has_value());
+    const std::vector<std::byte> content = pattern_bytes(2u << 20);
+    constexpr uint32_t kBytes = 1u << 20;
+    AlignedBuffer b(kBytes);
+
+    auto files_used = [&](bool stripe, IoPriority pr) -> uint32_t {
+        IoEngine engine;
+        IoConfig cfg;
+        cfg.chunk_bytes = 64 * 1024;
+        auto backend = std::make_unique<test::FakeBackend>(content, 8);
+        test::FakeBackend* fake = backend.get();
+        if (!engine.start(std::move(backend), cfg)) return 99;
+        engine.set_sources({"primary", "mirror"}, {4.87, 3.69});
+        if (!engine.add_mirror(&prim->file, 1, &mirr->file)) return 99;
+        engine.set_stripe(stripe);
+        IoRequest r;
+        r.priority = pr;
+        r.file     = &prim->file;
+        r.bytes    = kBytes;
+        r.dst      = b.data();
+        auto fut = engine.submit_future(r);
+        if (!fut || !fut->get().ok()) return 99;
+        engine.drain();
+        bool seen[2] = {false, false};
+        for (const auto& rec : fake->log()) {
+            if (rec.file == &prim->file) seen[0] = true;
+            if (rec.file == &mirr->file) seen[1] = true;
+        }
+        const uint64_t stripe_chunks = engine.stats().sources[0].stripe_chunks +
+                                       engine.stats().sources[1].stripe_chunks;
+        engine.stop();
+        if (stripe_chunks) return 98;
+        return uint32_t(seen[0]) + uint32_t(seen[1]);
+    };
+    CHECK_EQ(files_used(false, IoPriority::BlockingMiss), 1u);
+    CHECK_EQ(files_used(true,  IoPriority::Backfill),     1u);
+}
+
+// Track ST: the USB4 drive's link drops about once an hour. A striped request
+// whose MIRROR share fails is re-read whole from the primary -- the caller gets
+// the right bytes, one failover is counted against the mirror, and no charge is
+// left behind (a leaked charge would make the router shun a drive forever).
+// A failure on the PRIMARY's own share is still an error the caller sees.
+DEEPMOE_TEST(io, striped_mirror_error_is_reread_from_the_primary) {
+    auto prim = make_scratch("st_fail_p", 2u << 20, false);
+    auto mirr = make_scratch("st_fail_m", 2u << 20, false);
+    REQUIRE(prim.has_value());
+    REQUIRE(mirr.has_value());
+    const std::vector<std::byte> content = pattern_bytes(2u << 20);
+    IoEngine engine;
+    IoConfig cfg;
+    cfg.chunk_bytes = 64 * 1024;
+    auto backend = std::make_unique<test::FakeBackend>(content, 8);
+    test::FakeBackend* fake = backend.get();
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+    engine.set_sources({"primary", "mirror"}, {4.87, 3.69});
+    REQUIRE_OK(engine.add_mirror(&prim->file, 1, &mirr->file));
+    engine.set_stripe(true);
+    fake->fail_file(&mirr->file);
+
+    constexpr uint32_t kBytes = 1u << 20;
+    AlignedBuffer b(kBytes);
+    std::memset(b.data(), 0, kBytes);
+    IoRequest r;
+    r.priority = IoPriority::BlockingMiss;
+    r.file     = &prim->file;
+    r.file_off = 64 * 1024;
+    r.bytes    = kBytes;
+    r.dst      = b.data();
+    auto fut = engine.submit_future(r);
+    REQUIRE(fut.has_value());
+    const IoResult res = fut->get();
+    CHECK(res.ok());
+    CHECK_EQ(res.bytes_moved, uint64_t(kBytes));
+    CHECK(std::memcmp(b.data(), content.data() + r.file_off, kBytes) == 0);
+    engine.drain();
+    {
+        const IoStats st = engine.stats();
+        REQUIRE_EQ(st.sources.size(), size_t(2));
+        CHECK_EQ(st.sources[1].errors, uint64_t(1));
+        CHECK_EQ(st.sources[1].failovers, uint64_t(1));
+        CHECK_EQ(st.sources[0].errors, uint64_t(0));
+        CHECK_EQ(st.sources[0].outstanding_bytes, uint64_t(0));
+        CHECK_EQ(st.sources[1].outstanding_bytes, uint64_t(0));
+        CHECK_EQ(st.sources[0].inflight_requests, 0u);
+        CHECK_EQ(st.sources[1].inflight_requests, 0u);
+        CHECK_EQ(st.requests_failed, uint64_t(0));
+        CHECK_EQ(st.requests_completed, uint64_t(1));
+    }
+
+    // Now the primary is the one that is gone and the mirror is healthy: the
+    // primary's share fails, nothing is retried, and the caller is told.
+    engine.set_sources({"primary", "mirror"}, {4.87, 3.69});
+    REQUIRE_OK(engine.add_mirror(&prim->file, 1, &mirr->file));
+    engine.set_stripe(true);
+    fake->clear_failures();
+    fake->fail_file(&prim->file);
+    auto fut2 = engine.submit_future(r);
+    REQUIRE(fut2.has_value());
+    CHECK(!fut2->get().ok());
+    engine.drain();
+    {
+        const IoStats st = engine.stats();
+        CHECK_EQ(st.sources[0].errors, uint64_t(1));
+        CHECK_EQ(st.sources[1].failovers, uint64_t(0));
+        CHECK_EQ(st.sources[0].outstanding_bytes, uint64_t(0));
+        CHECK_EQ(st.sources[1].outstanding_bytes, uint64_t(0));
+    }
+    engine.stop();
+}
+
 // Track D5: the startup probe must measure the drive, not its wake-up.
 //
 // A USB4 NVMe enclosure that has been idle answers its first read in about a

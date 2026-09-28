@@ -179,6 +179,12 @@ struct SourceStats {
     uint64_t errors   = 0;         // routed requests that came back failed
     bool     dropped  = false;     // taken out of the router (SourceHealth)
     uint64_t failovers = 0;        // of those errors, re-read from the primary
+    // Track ST: chunks this source served as one share of a STRIPED P0 request
+    // (DEEPMOE_MIRROR_STRIPE). For a striped request `requests` counts each
+    // source that carried at least one chunk, `bytes` is that source's share
+    // and the latencies run from submit to that source's LAST chunk -- so the
+    // slower drive's tail is visible per source instead of being averaged away.
+    uint64_t stripe_chunks = 0;
 
     // --- Track D6 ----------------------------------------------------------
     // `requests`/`lat_ns_sum` above mix the classes that are routed (P0 and
