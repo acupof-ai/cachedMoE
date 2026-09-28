@@ -1,0 +1,63 @@
+[ RUN ] gpu_prefill.longctx
+    ctx16k: 17010 prompt tokens, reference continuation 77 416 4419 15 24391 19 15 13749 2701
+    kernels: MoE coopmat at n >= 16, dense coopmat at n >= 64 (-1 = never), attention coopmat, 1 head tiles, pv_dv 4, coop tt 8, gate gpu, grouped dense coopmat, max rows a submit 2048
+    GPU prefill of 17010 tokens, replay 128
+    242.0 s: embed 228  engram io 19400 / gpu 8584  mhc 4067  attention 117765  gate 1353  shared 14624  expert io 17578 / gpu 56984  head 7  other 1443 ms; 10825 experts, 203.61 GB, 114904 dispatches, 7874 submits
+    first token 77 (reference 77) MATCH, margin ours 9.7359 ref 9.4843, rho 0.7935, max|dlogit| 1.716
+    handoff vs the reference prefill record, per layer (cosines; topk = the last position's compressed picks in common; gate = its top-6 in common)
+      L00 r0  win 0.999999  window 128/128  gate 6/6
+      L01 r0  win 0.999683  window 128/128  gate 6/6
+      L02 r2  win 0.999115  cmp 0.997436 (8505 rows)  key 0.998414  state empty (both)  window 128/128  topk 469/512  gate 6/6
+      L03 r2  win 0.998810  window 128/128  topk 469/512  gate 6/6
+      L04 r2  win 0.998636  window 128/128  topk 469/512  gate 6/6
+      L05 r2  win 0.997681  window 128/128  topk 469/512  gate 6/6
+      L06 r2  win 0.996266  window 128/128  topk 469/512  gate 6/6
+      L07 r2  win 0.995886  window 128/128  topk 469/512  gate 6/6
+      L08 r2  win 0.996978  cmp 0.992674 (8505 rows)  key 0.994203  state empty (both)  window 128/128  topk 470/512  gate 6/6
+      L09 r2  win 0.994642  window 128/128  topk 470/512  gate 6/6
+      L10 r2  win 0.993107  window 128/128  topk 470/512  gate 5/6
+      L11 r2  win 0.989390  window 128/128  topk 470/512  gate 6/6
+      L12 r2  win 0.988570  window 128/128  topk 470/512  gate 5/6
+      L13 r2  win 0.990104  window 128/128  topk 470/512  gate 5/6
+      L14 r2  win 0.989678  cmp 0.972590 (8505 rows)  key 0.981096  state empty (both)  window 128/128  topk 441/512  gate 5/6
+      L15 r2  win 0.987742  window 128/128  topk 441/512  gate 5/6
+      L16 r2  win 0.987584  window 128/128  topk 441/512  gate 6/6
+      L17 r2  win 0.983491  window 128/128  topk 441/512  gate 4/6
+      L18 r2  win 0.976872  window 128/128  topk 441/512  gate 4/6
+      L19 r2  win 0.983288  window 128/128  topk 441/512  gate 5/6
+      L20 r1  win 0.987875  cmp 0.968032 (17010 rows)  key 0.978454  window 128/128  topk 405/512  gate 6/6
+      L21 r1  win 0.982815  window 128/128  topk 405/512  gate 5/6
+      L22 r1  win 0.981888  window 128/128  topk 405/512  gate 3/6
+      L23 r1  win 0.970786  window 128/128  topk 405/512  gate 5/6
+      L24 r1  win 0.965178  window 128/128  topk 375/512  gate 4/6
+      L25 r1  win 0.965626  window 128/128  topk 375/512  gate 5/6
+      L26 r1  win 0.967705  window 128/128  topk 375/512  gate 4/6
+      L27 r1  win 0.943990  window 128/128  topk 375/512  gate 5/6
+      L28 r1  win 0.946677  window 128/128  topk 390/512  gate 3/6
+      L29 r1  win 0.951647  window 128/128  topk 390/512  gate 5/6
+      L30 r1  win 0.968480  window 128/128  topk 390/512  gate 5/6
+      L31 r1  win 0.939695  window 128/128  topk 390/512  gate 5/6
+      L32 r1  win 0.928492  window 128/128  topk 395/512  gate 5/6
+      L33 r1  win 0.956033  window 128/128  topk 395/512  gate 6/6
+      L34 r1  win 0.936631  window 128/128  topk 395/512  gate 6/6
+      L35 r1  win 0.925570  window 128/128  topk 395/512  gate 5/6
+      L36 r1  win 0.919508  window 128/128  topk 406/512  gate 4/6
+      L37 r1  win 0.914252  window 128/128  topk 406/512  gate 6/6
+      L38 r1  win 0.900248  window 128/128  topk 406/512  gate 5/6
+      L39 r1  win 0.943229  window 128/128  topk 406/512  gate 5/6
+    worst: window KV 0.900248 (L38), compressed KV 0.968032 (L20), index keys 0.978454 (L20), compressor state 1.000000
+    last position's compressed picks at the index sources: 3351 / 4096 in common
+    last position's top-6: 207 / 240 in common over 40 layers
+    decode from OUR state, free-running, 8 steps
+      step 0 pos 17010 in     77 ->    416 (reference    416) match  margin ours 12.5435 ref 11.3840 rho 0.804
+      step 1 pos 17011 in    416 ->   4419 (reference   4419) match  margin ours 11.1702 ref 11.6513 rho 0.917
+      step 2 pos 17012 in   4419 ->     15 (reference     15) match  margin ours 10.1285 ref 10.5937 rho 0.829
+      step 3 pos 17013 in     15 ->  24391 (reference  24391) match  margin ours 9.3246 ref 10.1031 rho 0.648
+      step 4 pos 17014 in  24391 ->     19 (reference     19) match  margin ours 10.1554 ref 11.0629 rho 0.911
+      step 5 pos 17015 in     19 ->     15 (reference     15) match  margin ours 9.3539 ref 9.1209 rho 0.894
+      step 6 pos 17016 in     15 ->  13749 (reference  13749) match  margin ours 11.6285 ref 11.3293 rho 0.855
+      step 7 pos 17017 in  13749 ->   2701 (reference   2701) match  margin ours 1.5415 ref 1.6614 rho 0.880
+    free-running: 8/8 before divergence (8/8 steps agree)
+[  ok ] gpu_prefill.longctx
+
+1 case(s) run, 0 failed, 0 assertion failure(s)

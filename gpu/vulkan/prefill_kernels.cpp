@@ -252,6 +252,15 @@ uint32_t pf_tok_groups(uint32_t n, uint32_t tt) { return (n + 16 * tt - 1) / (16
 
 // A device address `rows` rows into a buffer of `stride`-byte rows.
 uint64_t at(const GpuBuffer& b, uint64_t rows, uint64_t stride) { return b.dev_addr + rows * stride; }
+
+// f(r0, m) over rows [0, n) in equal parts of at most `cap` rows (0 = one part).
+template <class F>
+Result<void> by_rows(uint32_t n, uint32_t cap, F&& f) {
+    const uint32_t parts = cap && n > cap ? (n + cap - 1) / cap : 1, step = (n + parts - 1) / parts;
+    for (uint32_t r0 = 0; r0 < n; r0 += step)
+        if (auto r = f(r0, std::min(step, n - r0)); !r) return r;
+    return {};
+}
 float* fptr(const GpuBuffer& b, uint64_t elems = 0) { return static_cast<float*>(b.host_ptr) + elems; }
 
 }  // namespace
@@ -492,6 +501,14 @@ Result<void> Prefill::op_act_quant(uint64_t x, uint32_t n, uint32_t d, uint64_t 
 Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
                               uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
                               float out_scale, uint32_t rows_per_group, uint64_t row_scale) {
+    if (const uint32_t cap = pcfg_.max_rows_per_submit; cap && n > cap) {
+        // x rows: fp32, or 2-byte values plus an fp32 scale per 32; y rows fp32
+        const uint64_t xb = uint64_t(x_stride) * (xfmt == kPfActF32 ? 4 : 2), sb = x_stride / 32 * 4;
+        return by_rows(n, cap, [&](uint64_t r0, uint32_t m) {
+            return op_gemm(w, xfmt, x + r0 * xb, xs ? xs + r0 * sb : 0, m, x_stride, y + r0 * w.rows * 4,
+                           flags, out_scale, rows_per_group, row_scale ? row_scale + r0 * 4 : 0);
+        });
+    }
     if (n >= pcfg_.coopmat_dense_min_rows && row_scale == 0 &&
         (rows_per_group == 0 || pcfg_.coop_grouped_dense) &&
         out_scale == 1.0f && (flags & ~kPfFlagRound) == 0) {
@@ -1112,11 +1129,14 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         if (!w1 || !w2 || !w3) return fail(Err::NotFound, "shared expert weights");
         PfJob j;
         j.w1 = w1->data; j.s1 = w1->scale; j.w2 = w2->data; j.s2 = w2->scale;
-        j.w3 = w3->data; j.s3 = w3->scale; j.rows_off = shared_off; j.n = rows; j.h_off = 0;
+        j.w3 = w3->data; j.s3 = w3->scale; j.h_off = 0;
         j.fmt = kPfFp8;
-        jobs[kSharedJob] = j;
-        if (auto r = rows >= coop_min ? compute_coop(kSharedJob, kSharedJob + 1)
-                                      : compute(kSharedJob, kSharedJob + 1, rows); !r)
+        if (auto r = by_rows(rows, pcfg_.max_rows_per_submit, [&](uint32_t r0, uint32_t m) {
+                j.rows_off = shared_off + r0; j.n = m;
+                jobs[kSharedJob] = j;
+                return rows >= coop_min ? compute_coop(kSharedJob, kSharedJob + 1)
+                                        : compute(kSharedJob, kSharedJob + 1, m);
+            }); !r)
             return r;
         times_.shared_expert += ms_since(t0);
     }
@@ -1371,8 +1391,10 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         if (!wkv) return std::unexpected(wkv.error());
         PF_TRY(op_gemm(*wkv, kPfActQ, b_.eng_xq.dev_addr, b_.eng_xs.dev_addr, front, 6144,
                        b_.eng_kv.dev_addr, round));
-        PF_TRY(op_engram_gate(b_.h_a.dev_addr, b_.eng_kv.dev_addr, pw("engram.q_weight"),
-                              pw("engram.k_weight"), b_.h_b.dev_addr, front));
+        PF_TRY(by_rows(front, pcfg_.max_rows_per_submit, [&](uint32_t r0, uint32_t m) {
+            return op_engram_gate(at(b_.h_a, r0, hstride), at(b_.eng_kv, r0, uint64_t(kHc + 1) * dim * 4),
+                                  pw("engram.q_weight"), pw("engram.k_weight"), at(b_.h_b, r0, hstride), m);
+        }));
         std::swap(b_.h_a, b_.h_b);
         times_.engram += ms_since(t0);
     }

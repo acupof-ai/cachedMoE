@@ -228,6 +228,10 @@ struct PrefillConfig {
     bool     round = true;
     // The largest prompt the activation buffers are sized for.
     uint32_t max_tokens = 1024;
+    // Rows a submit carries in a pass over every prompt row (dense linears, the
+    // shared expert, the engram gate): Linux amdgpu resets a compute queue after
+    // 2 s, which 17,010 tokens hit in layer 0. 0 = one submit.
+    uint32_t max_rows_per_submit = 2048;
     // An expert (routed or shared) with at least this many tokens runs on
     // cooperative-matrix GEMM (docs/p3_prefill.md §5 option (a)); fewer tokens
     // run on the tiled GEMV job table (b), whose cost has no fixed per-matrix

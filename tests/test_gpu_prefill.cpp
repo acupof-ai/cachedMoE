@@ -226,6 +226,9 @@ void apply_kernel_env(gpu::PrefillConfig& pc) {
     if (const char* e = std::getenv("DEEPMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
     if (const char* e = std::getenv("DEEPMOE_PF_WOA_COOP"))
         pc.coop_grouped_dense = std::string(e) != "0";
+    // DEEPMOE_PF_MAX_ROWS=0: every all-rows pass as one submit (PrefillConfig::max_rows_per_submit).
+    if (const char* e = std::getenv("DEEPMOE_PF_MAX_ROWS"))
+        pc.max_rows_per_submit = static_cast<uint32_t>(std::atoi(e));
     const std::string attn = pc.attn_coop ? std::format("coopmat, {} head tiles", pc.attn_head_tiles) : "legacy";
     std::printf("    kernels: MoE coopmat at n >= %d, dense coopmat at n >= %d (-1 = never), attention %s,"
                 " pv_dv %u, coop tt %u, gate %s, grouped dense %s\n",

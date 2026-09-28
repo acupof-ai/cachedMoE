@@ -1,0 +1,19 @@
+pinned set 9.17 GiB in 4.7 s
+
+N=4096 (/tmp/claude-1000/-home-chenkailun-projects-cachedMoE/47a324ac-9a57-48e4-a56d-ac4530dfef70/scratchpad/ids16k.txt), replay 128 MoE coopmat n>=16 dense coopmat n>=64 pv_dv 4 ht 1 tt 8, load = unlabelled
+  total 80.76 s = 51 tok/s | embed 57  engram io 4607 gpu 2970  mHC 1149  attention 24945  gate+route 371  shared 4499  expert io 29670  expert gpu 12110  head 7  host/other 378 ms
+  9698 experts streamed = 182.41 GB in 29.7 s of waiting (6.15 GB/s against that wait), 287908 engram reads, 73736 dispatches in 2803 submits
+  first token 18804, margin 0.430, logits finite: yes
+  ops by wall time:
+    attn (coop, submit+wait) 14894 ms/180, gpu: attn softmax 7270 ms/180, gpu: attn P.V tiles 3133 ms/180
+    coop 5120x8192 wfp8 xq 2141 ms/180, gpu: attn gather 1976 ms/180, gemm 25600x6144 wfp8 xq 1922 ms/2
+    coop 32768x1280 wfp8 xq 1864 ms/180, coop 8192x4096 wfp8 xf32 1687 ms/180, gpu: attn score tiles 1637 ms/180
+    prefill_attn s2 1063 ms/29, coop 1280x5120 wfp8 xq 1046 ms/40, prefill_elem s7 1032 ms/2
+    prefill_elem s5 778 ms/437, gpu: attn q16 657 ms/180, host: index top-k 651 ms/29
+    prefill_elem s4 635 ms/80, coop 512x5120 wfp8 xq 385 ms/40, coop 384x5120 wbf16 xf32 328 ms/40
+    prefill_elem s2 250 ms/81, gemm 24x20480 wfp32 xf32 242 ms/80, coop 512x5120 wbf16 xf32 140 ms/7
+    prefill_elem s0 130 ms/302, gpu: attn finish 114 ms/180, prefill_elem s1 98 ms/88
+    coop 4096x1280 wfp8 xq 36 ms/29, prefill_elem s3 12 ms/80, host: gate top-6 readback 10 ms/40
+    gate top-6 (gpu) 9 ms/40, host: index score readback 8 ms/29, gemm 32x5120 wbf16 xf32 7 ms/29
+    gemm 129280x5120 wbf16 xf32 7 ms/1, coop 128x512 wbf16 xf32 3 ms/4, prefill_elem s6 1 ms/3
+    host: MoE CSR 1 ms/40, host: candidate blocks 0 ms/29

@@ -654,6 +654,28 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0m. **V4.1 推理形式复核（逐层计算方式 + KV 获取），replay 128 长上下文首次按 token 验证，Linux 长 prompt 丢设备修掉。**
+   **逐层对照**（参考 `inference/model.py`，全部已实现，测试对的是**未改动的** `model.py`——`tools/dsref.py` 的 CPU 壳）：
+   层型 `compress_ratios` = [0,0, 2×18, 1×20]；ratio 0 纯窗口、theta 1e4、无 YaRN，ratio > 0 theta 1.6e5 + YaRN（16 / 65536 / 32 / 1）（`runtime/rope.h`）；
+   mHC 的 attention 用**上一层 FFN** 的 `pre_mix`（第 0 层 one-hot），FFN 用本层 attention 的，收尾用最后一层的；engram 在 1、14 层 block **之前**加在 hc 流上；
+   窗口 KV 每层 128 环（E4M3 + UE8M0/32，含 RoPE 尾；decode 最旧在前，未填 −1）；压缩 KV 与 index key **只在 2/8/14/20 各一平面**
+   （block16 + E4M3 / block32 + E8M0，存解量化后的 bf16，逐位等价），latent 与 key 的 RoPE 取**组首**位置 `pos + 1 − ratio`，
+   非源层读最近源的平面（`KvStoreConfig::for_model` / `Engine::build_ced_plan`），非 index 源复用最近 index 源的 top-k，
+   24–36 打第 20 层的 key、在第 20 层的 2,048 候选块内选（最新块钉住）；`topk = min(512, (pos+1)//ratio)`，越界 −1，其余 + 窗口偏移；
+   gate sqrt∘softplus、bias 只选不加权、归一 +1e-20、×1.5；SwiGLU gate 只截上限、up 双边截 10（共享专家同）。
+   覆盖：`suite.decode` 探针层 0/1/2/13/14/20/39，`decode_longctx` 4K / 17K（indexer tie-aware、候选块、salt 取回 8/8）。
+   **一处照抄参考、看起来是参考 bug 的行为（未改，待决定）**：参考 decode 在 ratio-2 组没满的步（每隔一步）不发布 index key，
+   第 2/8/14 层于是对**上一步第 20 层**的 key cache 打分（`shared_attn.index_k` 从不重置；它的 docstring 假设「每个源先写后读」），prefill 则用自己的 key。
+   我们两条都照抄（`pub_index_k_`）。只在上下文 > 1,024 时生效：17K 时这些步的 top-k 与「用自己的 key」只重叠 8%，
+   L8 压缩注意力质量 0.71 → 0.37，输出 token 不受影响（`p3_longctx.md` §5.3）。偏离参考就失去 L3 对照，所以留给决定。
+   **replay 128**（`serve` 在 prompt > 128 token 时的默认，是**我们自己的近似**，参考里没有）此前只验过首 token：
+   现在 **4K / 17K 从我们自己的预填状态自由生成都是 8/8**（`p3_longctx_decode.md` §4.3，`bench/results/linux/replay128/`）。
+   **修复**：17K 在 Linux 上第 0 层 `VK_ERROR_DEVICE_LOST`——amdgpu 的 2 s job 上限，而 shared expert、engram wkv（8K 时 1.9 s 一个 submit）、engram gate
+   都是一个 submit 覆盖全部行。`PrefillConfig::max_rows_per_submit = 2048`，`by_rows` 按行等分，三处调用。4,133 token **不再逐位相同**，
+   按站点二分：shared / engram 的分块是精确的，变化来自 `op_gemm_coop` 的 `x16` 尺寸判断（按 `n32 + slack` 比 `N + slack` 行的平面，
+   N % 32 ≠ 0 时全行稠密线性退回 tiled），分块后统一走 N % 32 == 0 一直在走的 coopmat；`DEEPMOE_PF_MAX_ROWS=0` 逐字节复现旧输出。
+   顺带：shared expert 在 17K 上共 14.6 s，不分块时 8K 就要 19.6 s（超线性消失）。
+   小差异（不改）：RoPE 角我们在 double 里算，参考是 fp32 `outer(arange, freqs)`；≤ 64K 在 fp32 ulp 以下，524K 时最高频一对约 0.03 rad。
 0l. **ISA 层看 MoE：FP4 解码占了主循环 83% 的指令 → `DecodeMode 3`（位移解码）成为 RADV 默认，MoE 7 槽一对 0.848 → 0.710 ms（−16%），数值逐位不变。**
    **新仪器**：`DEEPMOE_PIPELINE_STATS=<dir>` 让每个 pipeline 带 `VK_KHR_pipeline_executable_properties` 创建，驱动自己的统计（VGPR/SGPR、LDS、
    指令数、VALU/VMEM、每 SIMD wave 数、ACO 的 latency / inverse throughput 估计）一行进 `<dir>/index.tsv`，NIR / ACO IR / 最终汇编进 `<dir>/<pipeline>.txt`

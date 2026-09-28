@@ -219,6 +219,31 @@ plane cos 1.00000 over all rows (the rows our decode steps wrote: 0.98–0.9993)
 p3_prefill.md §9.3 "decode from these states could not be run" is closed: the
 salt comes back from our own prefill at both lengths.
 
+**Production mode (replay 128, what `serve` uses above 128 prompt tokens)**, Linux
+RADV, 2026-09-29, `bench/results/linux/replay128/` (`DEEPMOE_PF_REPLAY=128`):
+
+| | 4K | 17K |
+|---|---|---|
+| prefill | 78.7 s | 242.0 s |
+| first token 77, margin ours / ref | 8.27 / 8.86 | 9.74 / 9.48 |
+| handoff worst window / compressed / index keys | 0.931 / 0.969 / 0.979 | 0.900 / 0.968 / 0.978 |
+| **free-running from OUR state** | **8/8**, margins 1.16–11.68 (ref 1.30–11.66) | **8/8**, margins 1.54–12.54 (ref 1.66–11.65) |
+
+The window KV of the decoder layers is the replay's price (0.93 / 0.90 against
+0.96 / 0.95 in oracle mode, p3_prefill.md §1.1); the tokens are not.
+
+17K first lost the device in layer 0 (`ctx16k_replay128.txt`): Linux amdgpu resets
+a compute queue after 2 s, and a pass over all 17,010 rows -- the shared expert,
+the engram wkv (1.9 s at 8,192 rows, `ops_n8192.txt`) and gate -- was one submit.
+`PrefillConfig::max_rows_per_submit` (2,048) now splits every such pass into
+equal row chunks. That is not bit-identical at 4,133 tokens, and bisecting the
+three sites says why (`bisect_mask{1,2,4}.txt`): the shared expert and engram
+chunks are exact, but `op_gemm_coop` sizes its `x16` check at `n32 + slack`
+against a plane of `N + slack` rows, so at N % 32 != 0 the all-row dense
+linears (wq_a, wkv, the gate) fell back to the tiled GEMV, and the chunks now
+take the coopmat path that N % 32 == 0 prompts always took. With the limit off
+(`DEEPMOE_PF_MAX_ROWS=0`) the old output comes back byte for byte (`ctx4k_replay128_rows0.txt`).
+
 ### 4.4 64 tokens (L3), regression
 
 `decode.forty_layers_against_the_l3_oracle`: from the export state 8/8

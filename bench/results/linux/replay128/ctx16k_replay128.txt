@@ -1,0 +1,7 @@
+radv/amdgpu: The CS has been cancelled because the context is lost. This context is guilty of a hard recovery.
+[ RUN ] gpu_prefill.longctx
+    ctx16k: 17010 prompt tokens, reference continuation 77 416 4419 15 24391 19 15 13749 2701
+    kernels: MoE coopmat at n >= 16, dense coopmat at n >= 64 (-1 = never), attention coopmat, 1 head tiles, pv_dv 4, coop tt 8, gate gpu, grouped dense coopmat
+    GPU prefill of 17010 tokens, replay 128
+  FAIL /home/chenkailun/projects/cachedMoE/tests/test_gpu_prefill.cpp:1028
+       REQUIRE_OK failed: out -> internal: layer 0: vkQueueSubmit2 failed (-4 VK_ERROR_DEVICE_LOST)

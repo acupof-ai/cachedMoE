@@ -1,0 +1,53 @@
+[ RUN ] gpu_prefill.longctx
+    ctx4k: 4133 prompt tokens, reference continuation 77 416 4419 15 24391 19 15 13749 2701
+    kernels: MoE coopmat at n >= 16, dense coopmat at n >= 64 (-1 = never), attention coopmat, 1 head tiles, pv_dv 4, coop tt 8, gate gpu, grouped dense coopmat
+    GPU prefill of 4133 tokens, replay 128
+    82.0 s: embed 57  engram io 4618 / gpu 2694  mhc 1104  attention 23205  gate 269  shared 3855  expert io 34424 / gpu 11474  head 7  other 333 ms; 10599 experts, 199.35 GB, 76332 dispatches, 3221 submits
+    first token 77 (reference 77) MATCH, margin ours 8.2683 ref 8.8644, rho 0.9297, max|dlogit| 0.979
+    handoff vs the reference prefill record, per layer (cosines; topk = the last position's compressed picks in common; gate = its top-6 in common)
+      L00 r0  win 1.000000  window 128/128  gate 6/6
+      L01 r0  win 0.999667  window 128/128  gate 5/6
+      L02 r2  win 0.999034  cmp 0.997489 (2066 rows)  key 0.998440  state kv 0.999474 score 0.999947  window 128/128  topk 495/512  gate 6/6
+      L03 r2  win 0.999011  window 128/128  topk 495/512  gate 6/6
+      L04 r2  win 0.998731  window 128/128  topk 495/512  gate 6/6
+      L05 r2  win 0.997983  window 128/128  topk 495/512  gate 6/6
+      L06 r2  win 0.996450  window 128/128  topk 495/512  gate 6/6
+      L07 r2  win 0.995814  window 128/128  topk 495/512  gate 6/6
+      L08 r2  win 0.996768  cmp 0.992611 (2066 rows)  key 0.993978  state kv 0.999131 score 0.999950  window 128/128  topk 491/512  gate 6/6
+      L09 r2  win 0.992625  window 128/128  topk 491/512  gate 6/6
+      L10 r2  win 0.990021  window 128/128  topk 491/512  gate 6/6
+      L11 r2  win 0.982890  window 128/128  topk 491/512  gate 6/6
+      L12 r2  win 0.981869  window 128/128  topk 491/512  gate 6/6
+      L13 r2  win 0.984883  window 128/128  topk 491/512  gate 6/6
+      L14 r2  win 0.982277  cmp 0.970926 (2066 rows)  key 0.980017  state kv 0.996142 score 0.999787  window 128/128  topk 471/512  gate 6/6
+      L15 r2  win 0.976122  window 128/128  topk 471/512  gate 6/6
+      L16 r2  win 0.972116  window 128/128  topk 471/512  gate 6/6
+      L17 r2  win 0.962559  window 128/128  topk 471/512  gate 5/6
+      L18 r2  win 0.949235  window 128/128  topk 471/512  gate 5/6
+      L19 r2  win 0.964549  window 128/128  topk 471/512  gate 5/6
+      L20 r1  win 0.975568  cmp 0.969408 (4133 rows)  key 0.978509  window 128/128  topk 433/512  gate 6/6
+      L21 r1  win 0.975701  window 128/128  topk 433/512  gate 6/6
+      L22 r1  win 0.979939  window 128/128  topk 433/512  gate 5/6
+      L23 r1  win 0.955815  window 128/128  topk 433/512  gate 5/6
+      L24 r1  win 0.955321  window 128/128  topk 414/512  gate 4/6
+      L25 r1  win 0.953949  window 128/128  topk 414/512  gate 5/6
+      L26 r1  win 0.957994  window 128/128  topk 414/512  gate 5/6
+      L27 r1  win 0.942614  window 128/128  topk 414/512  gate 5/6
+      L28 r1  win 0.956523  window 128/128  topk 422/512  gate 4/6
+      L29 r1  win 0.962689  window 128/128  topk 422/512  gate 6/6
+      L30 r1  win 0.976130  window 128/128  topk 422/512  gate 6/6
+      L31 r1  win 0.943590  window 128/128  topk 422/512  gate 6/6
+      L32 r1  win 0.951034  window 128/128  topk 421/512  gate 5/6
+      L33 r1  win 0.965695  window 128/128  topk 421/512  gate 5/6
+      L34 r1  win 0.944612  window 128/128  topk 421/512  gate 5/6
+      L35 r1  win 0.943601  window 128/128  topk 421/512  gate 6/6
+      L36 r1  win 0.950390  window 128/128  topk 435/512  gate 6/6
+      L37 r1  win 0.936051  window 128/128  topk 435/512  gate 6/6
+      L38 r1  win 0.932252  window 128/128  topk 435/512  gate 6/6
+      L39 r1  win 0.931395  window 128/128  topk 435/512  gate 5/6
+    worst: window KV 0.931395 (L39), compressed KV 0.969408 (L20), index keys 0.978509 (L20), compressor state 0.996142
+    last position's compressed picks at the index sources: 3582 / 4096 in common
+    last position's top-6: 223 / 240 in common over 40 layers
+[  ok ] gpu_prefill.longctx
+
+1 case(s) run, 0 failed, 0 assertion failure(s)
