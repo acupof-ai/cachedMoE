@@ -24,6 +24,11 @@
 #include "store/expert_store.h"
 #include "tests/test_framework.h"
 
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 using namespace deepmoe;
 
 namespace {
@@ -109,6 +114,76 @@ DEEPMOE_TEST(gpu, the_allocator_refuses_what_the_driver_cannot_do) {
         b.free(*good);
         gpu::free_host_pages(*host);
     }
+}
+
+// A process that brings devices up and down -- deepmoe_tests running every
+// suite, a tool that re-inits -- must not carry a Vulkan function pointer from
+// one device to the next. memory.cpp used to cache the
+// vkGetMemoryHostPointerPropertiesEXT pointer in a static keyed on the VkDevice
+// handle; a later device came back with the same handle after the loader had
+// unloaded the ICD, the "hit" returned a pointer into unmapped (or, as it
+// happened, GPU-buffer-mapped) memory, and the all-suites run died with
+// SIGSEGV SEGV_ACCERR in import_host_memory (2026-09-28). Each round here is a
+// full device lifetime with one path B import, and a 32 MiB path A buffer
+// mapped while the previous ICD image is gone, which is how the address got
+// reused in the field.
+DEEPMOE_TEST(gpu, host_import_survives_device_churn) {
+    constexpr int kRounds = 12;
+    int imported = 0;
+#if defined(__linux__)
+    // What made it deterministic: once a device (and with it the instance, and
+    // the loader's reference to the ICD) is gone, park a writable, NON-
+    // executable page over where the ICD's entry point used to be. The next
+    // instance has to load the ICD somewhere else, and a stale pointer that a
+    // repeated VkDevice handle (it repeats within a few rounds on RADV) lets
+    // through now jumps into that page -- SIGSEGV, the field crash, every run.
+    uintptr_t last_fn = 0;
+    std::vector<void*> parked;
+#endif
+    for (int round = 0; round < kRounds; ++round) {
+#if defined(__linux__)
+        if (last_fn) {
+            const long pg = sysconf(_SC_PAGESIZE);
+            void* at = reinterpret_cast<void*>(last_fn & ~uintptr_t(pg - 1));
+            void* p = mmap(at, size_t(pg), PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+            if (p == at) parked.push_back(p);            // else: the ICD is still mapped there
+            else if (p != MAP_FAILED) munmap(p, size_t(pg));
+        }
+#endif
+        gpu::Device dev;
+        if (skip_without_gpu(dev, "device churn")) return;
+        if (!dev.caps().external_memory_host) {
+            std::printf("       no VK_EXT_external_memory_host: nothing to churn\n");
+            return;
+        }
+        gpu::MemoryAllocator a;
+        REQUIRE_OK(a.init(dev, MemoryPath::DeviceLocalHostVisible));
+        auto mapped = a.allocate_slab(32u << 20);
+        REQUIRE_OK(mapped);
+        gpu::MemoryAllocator b;
+        REQUIRE_OK(b.init(dev, MemoryPath::ExternalMemoryHost));
+        auto host = gpu::alloc_host_pages(1u << 20, /*try_large_pages=*/false);
+        REQUIRE_OK(host);
+#if defined(__linux__)
+        last_fn = reinterpret_cast<uintptr_t>(
+            vkGetDeviceProcAddr(dev.handle(), "vkGetMemoryHostPointerPropertiesEXT"));
+#endif
+        auto buf = b.import_host_memory(host->ptr, host->bytes);
+        REQUIRE_OK(buf);
+        ++imported;
+        b.free(*buf);
+        gpu::free_host_pages(*host);
+        a.free(*mapped);
+    }
+#if defined(__linux__)
+    for (void* p : parked) munmap(p, size_t(sysconf(_SC_PAGESIZE)));
+    std::printf("       %d device lifetimes, one host import each, %zu old ICD entry pages parked\n",
+                imported, parked.size());
+#else
+    std::printf("       %d device lifetimes, one host import each\n", imported);
+#endif
+    CHECK_EQ(imported, kRounds);
 }
 
 // design §5.3 / architecture.md §1.3: the interface inversion. The ExpertStore

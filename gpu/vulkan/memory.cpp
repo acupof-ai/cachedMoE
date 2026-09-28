@@ -242,15 +242,18 @@ constexpr VkBufferUsageFlags kSlabUsage =
     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
     VK_BUFFER_USAGE_TRANSFER_SRC_BIT  | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
+// Looked up per call, never cached. It used to be a function-static keyed on
+// the VkDevice HANDLE, and a handle is just an address: a later device in the
+// same process can come back with the same value after the first one (and, on
+// Linux, the ICD library it pointed into) is gone. The cache then "hit" and
+// returned a pointer into code that was no longer mapped -- in the
+// deepmoe_tests all-suites run on RADV the address had been reused by a
+// /dev/dri/renderD128 buffer mapping and the process jumped into GPU memory
+// (SIGSEGV SEGV_ACCERR, 2026-09-28, STATUS §7 0h). Imports are a handful per
+// process; vkGetDeviceProcAddr costs nothing next to them.
 PFN_vkGetMemoryHostPointerPropertiesEXT host_ptr_props_fn(VkDevice d) {
-    static PFN_vkGetMemoryHostPointerPropertiesEXT fn = nullptr;
-    static VkDevice cached = VK_NULL_HANDLE;
-    if (cached != d) {
-        cached = d;
-        fn = reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(
-            vkGetDeviceProcAddr(d, "vkGetMemoryHostPointerPropertiesEXT"));
-    }
-    return fn;
+    return reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(
+        vkGetDeviceProcAddr(d, "vkGetMemoryHostPointerPropertiesEXT"));
 }
 
 }  // namespace

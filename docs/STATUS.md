@@ -764,7 +764,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **`smoke.auto_cache` 也是测试过时**：它断言 `slots <= auto_slot_cap()`（Windows 的 5,000），而 247a31d 起 RADV 上引擎按 GTT 两堆定预算、不加上限（5,500 槽）。
    引擎现在把实际用的上限记在 `Engine::applied_slot_cap()`，测试按它断言；12 s 过。完整 needs-model/needs-gpu 一轮里另有两件还在查：
    `decode_longctx.engine_vs_reference` 在 4K 第 6 步 L20 attn_norm 余弦 0.882 < 0.90（token 全对，L14 gate 集 3/6，路由近平局漂移），
-   以及整个 `deepmoe_tests` 一个进程跑完时在 `speculate.a_misconfigured_cycle_refuses` 段错误（单跑 speculate 过，顺序相关）。
+   以及整个 `deepmoe_tests` 一个进程跑完时的段错误——**已查清并修掉**：`[ RUN ] speculate.a_m` 只是 stdout 缓冲截断处，core 里 RIP `0x7227aa907680`
+   落在一块 `/dev/dri/renderD128` 映射里（SEGV_ACCERR），栈上返回地址在 `import_host_memory`。`gpu/vulkan/memory.cpp` 的 `host_ptr_props_fn` 把
+   `vkGetMemoryHostPointerPropertiesEXT` 缓存在函数 static 里、**以 VkDevice 句柄为键**：销毁实例时 loader 卸载了 RADV，下一个实例把它装到别处，
+   新设备却拿回了同一个句柄值 ⇒ 旧指针"命中"，跳进已被 GPU 映射复用的地址。实测：每轮查到的入口地址低位都是 `…07680`（与 core 的 RIP 一致），
+   第 0→1 轮库搬了家、句柄从第 3 轮起重复。修法：每次调用都 `vkGetDeviceProcAddr`，不缓存。
+   新测试 `gpu.host_import_survives_device_churn`：12 轮设备生命周期，每轮一次 path B 导入；每轮结束在旧入口页上 `MAP_FIXED_NOREPLACE` 一页可写不可执行的匿名页，
+   逼 ICD 装到别处——**旧代码 3/3 次 SIGSEGV（exit 139），修后 3/3 过**。
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
    换成 **host 写 flag、device 自旋等它**（一个 command buffer 装下整个 token，
