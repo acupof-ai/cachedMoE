@@ -1069,6 +1069,7 @@ Result<void> Engine::init_gpu() {
         // DEEPMOE_CACHE_SLOT_CAP applies.
         const char*    cap_env     = std::getenv("DEEPMOE_CACHE_SLOT_CAP");
         const uint32_t slot_cap    = (radv && !(cap_env && *cap_env)) ? 0 : auto_slot_cap();
+        applied_slot_cap_          = slot_cap;
         const uint64_t from_budget = cache_budget_;
         cache_budget_ = cap_auto_budget(cache_budget_, slot_bytes, slot_cap);
         log_info("engine: cache budget auto -> {} (path A {} after {} pinned, path B {} of "

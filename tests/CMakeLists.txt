@@ -44,37 +44,38 @@ endforeach()
 # The integration suite needs the real 510 GB checkpoint. It is registered
 # separately so `ctest -L needs-model` runs only it and `ctest -LE needs-model`
 # skips it outright; without DEEPMOE_MODEL_DIR the cases skip themselves and
-# say so, which ctest reports as "Skipped" rather than a pass.
+# say so, which ctest reports as "Skipped" rather than a pass (exit code 77,
+# see the end of this file).
 add_test(NAME "suite.integration" COMMAND deepmoe_tests "integration.")
 set_tests_properties("suite.integration" PROPERTIES
     LABELS "needs-model"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR")
+    SKIP_RETURN_CODE 77)
 
 # Track MS (docs/p4_multistream.md): two decode streams in one engine, and the
 # claim that they cannot see each other.
 add_test(NAME "suite.multistream" COMMAND deepmoe_tests "multistream.")
 set_tests_properties("suite.multistream" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP multistream")
+    SKIP_RETURN_CODE 77)
 
 # The Vulkan plumbing of design §3.3 / §5.3 / §7.1. Needs a GPU but no weights.
 add_test(NAME "suite.gpu" COMMAND deepmoe_tests "gpu.")
 set_tests_properties("suite.gpu" PROPERTIES
     LABELS "needs-gpu"
-    SKIP_REGULAR_EXPRESSION "SKIP gpu:")
+    SKIP_RETURN_CODE 77)
 
 # The design §7.2-§7.8 attention kernels against the oracle's L2 tensors. Same
 # gate as gpu_moe, plus tests/data/l2 must exist.
 add_test(NAME "suite.gpu_attn" COMMAND deepmoe_tests "gpu_attn.")
 set_tests_properties("suite.gpu_attn" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_attn")
+    SKIP_RETURN_CODE 77)
 
 # One whole decoder layer, chained, against the oracle's block output.
 add_test(NAME "suite.gpu_layer" COMMAND deepmoe_tests "gpu_layer.")
 set_tests_properties("suite.gpu_layer" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_layer")
+    SKIP_RETURN_CODE 77)
 
 # Track T's C(M) curve (docs/p4_mgt1.md §4): the per-layer cost of one verify
 # batch's non-MoE attention chain at M = 1/2/4/6. It is a workbench, not a
@@ -84,14 +85,14 @@ set_tests_properties("suite.gpu_layer" PROPERTIES
 add_test(NAME "bench.mgt1_m_curve" COMMAND deepmoe_tests "mgt1.m_curve")
 set_tests_properties("bench.mgt1_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_layer")
+    SKIP_RETURN_CODE 77)
 
 # Track T / DSpark's MoE(M): one layer's MoE with a different expert set a
 # column, experts resident so it is the kernel's cost (docs/p4_mgt1.md §4).
 add_test(NAME "bench.mgt1_moe_m_curve" COMMAND deepmoe_tests "mgt1.moe_m_curve")
 set_tests_properties("bench.mgt1_moe_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP mgt1.moe_m_curve")
+    SKIP_RETURN_CODE 77)
 
 # Track F1: the same batch as ONE dispatch over the columns' expert union
 # (docs/p4_dspark_runtime.md §2.2 plan C, no new kernel). Per column against the
@@ -99,14 +100,14 @@ set_tests_properties("bench.mgt1_moe_m_curve" PROPERTIES
 add_test(NAME "bench.mgt1_moe_union_m_curve" COMMAND deepmoe_tests "mgt1.moe_union_m_curve")
 set_tests_properties("bench.mgt1_moe_union_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP")
+    SKIP_RETURN_CODE 77)
 
 # The whole decode step -- forty layers, the head and the argmax -- against the
 # oracle's L3 tokens. Needs the ~17.7 GB pinned set and tests/data/l3.
 add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")
 set_tests_properties("suite.decode" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP decode")
+    SKIP_RETURN_CODE 77)
 
 # M1: `Engine::forward_batch` against the M = 1 decode path on the 64-step L3
 # export, plus the ring rollback. Needs the model, a GPU and traces/l3_64.
@@ -117,28 +118,28 @@ set_tests_properties("suite.decode" PROPERTIES
 add_test(NAME "suite.spec_forward" COMMAND deepmoe_tests "spec_forward.")
 set_tests_properties("suite.spec_forward" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP spec_forward")
+    SKIP_RETURN_CODE 77)
 
 # M1: what a verify forward costs in the engine at M = 1..6, against the same
 # positions as sequential decode steps. A bench, not a gate.
 add_test(NAME "bench.spec_forward_m_curve" COMMAND deepmoe_tests "bench_spec.")
 set_tests_properties("bench.spec_forward_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP bench_spec")
+    SKIP_RETURN_CODE 77)
 
 # Long-context decode (4K / 17K) against Track M's exports, tie-aware. The
 # kernel case needs a GPU and traces/longctx; the engine case the model too.
 add_test(NAME "suite.decode_longctx" COMMAND deepmoe_tests "decode_longctx.")
 set_tests_properties("suite.decode_longctx" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP decode_longctx")
+    SKIP_RETURN_CODE 77)
 
 # The design §7.9 kernels on the real checkpoint. Same gate, and it additionally
 # skips itself when there is no usable Vulkan device.
 add_test(NAME "suite.gpu_moe" COMMAND deepmoe_tests "gpu_moe.")
 set_tests_properties("suite.gpu_moe" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_moe")
+    SKIP_RETURN_CODE 77)
 
 # Everything else must keep passing on a machine with no weights at all.
 foreach(_t deepmoe_tests align layout types json profiler status bytes
@@ -162,7 +163,7 @@ set_tests_properties("suite.speculate" PROPERTIES LABELS "unit")
 add_test(NAME "suite.gpu_dspark" COMMAND deepmoe_tests "gpu_dspark.")
 set_tests_properties("suite.gpu_dspark" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_dspark")
+    SKIP_RETURN_CODE 77)
 
 # design §7.12 / §10.1: T_draft and bandwidth of one draft cycle. Registered
 # here rather than in the top-level CMakeLists.txt so the DSpark track touches
@@ -177,7 +178,7 @@ add_dependencies(dspark_bench shaders)
 add_test(NAME "suite.gpu_prefill" COMMAND deepmoe_tests "gpu_prefill.")
 set_tests_properties("suite.gpu_prefill" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP gpu_prefill")
+    SKIP_RETURN_CODE 77)
 
 # Track K2: the CPU half of DSpark tree sampling (cpu/dspark_tree) bit-exact against
 # tools/dspark_tree.py's golden cycles. No model, no GPU.
@@ -190,7 +191,7 @@ set_tests_properties("suite.dspark_tree" PROPERTIES LABELS "unit")
 add_test(NAME "suite.tokenizer" COMMAND deepmoe_tests "tokenizer.")
 set_tests_properties("suite.tokenizer" PROPERTIES
     LABELS "needs-model"
-    SKIP_REGULAR_EXPRESSION "SKIP tokenizer")
+    SKIP_RETURN_CODE 77)
 add_test(NAME "suite.sampling" COMMAND deepmoe_tests "sampling.")
 set_tests_properties("suite.sampling" PROPERTIES LABELS "unit")
 
@@ -199,7 +200,7 @@ set_tests_properties("suite.sampling" PROPERTIES LABELS "unit")
 add_test(NAME "suite.engram_tables" COMMAND deepmoe_tests "engram_tables.")
 set_tests_properties("suite.engram_tables" PROPERTIES
     LABELS "needs-model"
-    SKIP_REGULAR_EXPRESSION "SKIP engram_tables")
+    SKIP_RETURN_CODE 77)
 
 # Track R2: the window ring rebuilt by replay -- rollback, park / restore, the
 # Session's rollback / cancel / named sessions -- on the L3 export and Track M's
@@ -207,7 +208,7 @@ set_tests_properties("suite.engram_tables" PROPERTIES
 add_test(NAME "suite.kv_replay" COMMAND deepmoe_tests "kv_replay.")
 set_tests_properties("suite.kv_replay" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "set DEEPMOE_MODEL_DIR|SKIP kv_replay")
+    SKIP_RETURN_CODE 77)
 add_test(NAME "suite.kvdisk" COMMAND deepmoe_tests "kvdisk.")
 set_tests_properties("suite.kvdisk" PROPERTIES LABELS "unit")
 
@@ -225,7 +226,7 @@ set_tests_properties("suite.cache_cap" PROPERTIES LABELS "unit")
 add_test(NAME "smoke.auto_cache" COMMAND deepmoe_tests "smoke.auto_cache")
 set_tests_properties("smoke.auto_cache" PROPERTIES
     LABELS "needs-model;needs-gpu"
-    SKIP_REGULAR_EXPRESSION "SKIP smoke.auto_cache|set DEEPMOE_MODEL_DIR")
+    SKIP_RETURN_CODE 77)
 
 # Track W: the per-dispatch trace's format and resolver. No GPU, no checkpoint.
 set_tests_properties("suite.trace" PROPERTIES LABELS "unit")
@@ -265,3 +266,18 @@ if(_l3ppl_py)
         TIMEOUT 3600
         SKIP_REGULAR_EXPRESSION "SKIP l3_ppl")
 endif()
+
+# Every suite that runs deepmoe_tests reports a skip by EXIT CODE, never by
+# matching its output: tests/test_framework.h run_all returns 77 when no case
+# failed and at least one printed a DEEPMOE_SKIP_PRINTF notice, and 1 when any
+# case failed. The SKIP_REGULAR_EXPRESSION this replaces won over a failure --
+# one skipping case hid every failing case in the same suite as "Skipped"
+# (verified with a two-line ctest project, 2026-09-28). bench.l3_ppl64 is a
+# Python driver that only prints its SKIP before doing anything, so it keeps
+# its regex.
+get_property(_deepmoe_all_tests DIRECTORY PROPERTY TESTS)
+foreach(_t IN LISTS _deepmoe_all_tests)
+    if(NOT _t STREQUAL "bench.l3_ppl64")
+        set_tests_properties("${_t}" PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+endforeach()

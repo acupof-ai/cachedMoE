@@ -241,13 +241,13 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
     if (skip_without_model("gpu_attn")) return;
     auto set = load_l2(l2_dir());
     if (!set) {
-        std::printf("      SKIP gpu_attn: no L2 data (%s). Run "
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn: no L2 data (%s). Run "
                     "`oracle.py --level l2 --out tests/data/l2`\n", set.error().str().c_str());
         return;
     }
     Rig rig;
     if (!rig.bring_up()) {
-        std::printf("      SKIP gpu_attn: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn: %s\n", rig.why.c_str());
         return;
     }
 
@@ -826,7 +826,7 @@ DEEPMOE_TEST(gpu_attn, sparse_attn_long_context) {
     // 32768 KV entries is 32 MB of compressed rows, 8 MB of scores and 8 MB of
     // P.V partials.
     if (!rig.bring_up(192ull << 20)) {
-        std::printf("      SKIP gpu_attn long context: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn long context: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t n_heads = 64, head_dim = 512, rope_dim = 64, n_win = 128;
@@ -1036,10 +1036,10 @@ DEEPMOE_TEST(gpu_attn, fp8_arith_decode_matches_table) {
 DEEPMOE_TEST(gpu_attn, head_bf16_gemv) {
     if (skip_without_model("gpu_attn head")) return;
     Rig rig;
-    if (!rig.bring_up()) { std::printf("      SKIP gpu_attn: %s\n", rig.why.c_str()); return; }
+    if (!rig.bring_up()) { DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn: %s\n", rig.why.c_str()); return; }
 
     if (auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, {"head.weight"}); !r) {
-        std::printf("      SKIP gpu_attn head: %s\n", r.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn head: %s\n", r.error().str().c_str());
         return;
     }
     const store::PinnedTensor* head = rig.pinned.find("head.weight");
@@ -1107,13 +1107,13 @@ DEEPMOE_TEST(gpu_attn, l2_compressor_indexer) {
     const std::string dir = std::string(DEEPMOE_TEST_DATA_DIR) + "/l2x";
     auto set = load_l2(dir);
     if (!set) {
-        std::printf("      SKIP gpu_attn 7.4: no L2 extra data (%s). Run "
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn 7.4: no L2 extra data (%s). Run "
                     "tools/oracle_l2_extra.py --out tests/data/l2x\n",
                     set.error().str().c_str());
         return;
     }
     Rig rig;
-    if (!rig.bring_up()) { std::printf("      SKIP gpu_attn 7.4: %s\n", rig.why.c_str()); return; }
+    if (!rig.bring_up()) { DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn 7.4: %s\n", rig.why.c_str()); return; }
 
     Dims d;
     d.dim      = static_cast<uint32_t>(set->cfg("dim", 5120));
@@ -1428,7 +1428,7 @@ DEEPMOE_TEST(gpu_attn, l2_compressor_indexer) {
 DEEPMOE_TEST(gpu_attn, indexer_topk_select) {
     if (skip_without_model("gpu_attn topk")) return;
     Rig rig;
-    if (!rig.bring_up()) { std::printf("      SKIP gpu_attn topk: %s\n", rig.why.c_str()); return; }
+    if (!rig.bring_up()) { DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn topk: %s\n", rig.why.c_str()); return; }
 
     constexpr uint32_t kN = 4096, kK = 512, kOffset = 128;
     gpu::GpuScratch& S = rig.scratch;

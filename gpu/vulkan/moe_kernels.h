@@ -143,6 +143,9 @@ public:
     float*    route_weights();// [m][slots]
     uint16_t* x_fp16();       // [m][hidden] activations (design §6)
     float*    y();            // [m][hidden] output of dispatch B
+    // The h allocation as words (fp16 h, or the fp8 value + scale planes under
+    // h_quant 2/3; moe_common.slang hq_value_words). For tests.
+    const uint32_t* h_words() const { return static_cast<const uint32_t*>(h_.host_ptr); }
     void*     h();            // [m][slots][inter], fp16 or fp32 per spec
 
     void set_list_count(uint32_t n);

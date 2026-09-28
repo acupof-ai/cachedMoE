@@ -256,6 +256,28 @@ float fp8_e4m3_round(float v) {
     return sgn * asfloat(r);
 }
 
+// Round `v` onto the fp16 grid (round to nearest even), staying in fp32.
+// Integer arithmetic on purpose: Mesa's NIR folds the narrowing round trip
+// `float(half(v))` -- and `f16tof32(f32tof16(v))` -- back to `v` on RADV, which
+// silently skipped the fp16 step design §6 puts in front of the fp8 h quantiser
+// (suite.gpu_moe's HQuant 2 cases: 8 of 2,304 values landed on the other side
+// of an fp8 tie, 2.8e-3 on y). Covers |v| < 65520; h never gets near it.
+float f16_round(float v) {
+    const float a = abs(v);
+    const float sgn = (v < 0.0f) ? -1.0f : 1.0f;
+    if (a < 6.103515625e-05f) {                 // < 2^-14: fp16 subnormal, quantum 2^-24
+        const float t = a * 16777216.0f;        // exact: a power-of-two scale
+        const uint  n = uint(t);
+        const float f = t - float(n);
+        const uint  q = (f > 0.5f || (f == 0.5f && (n & 1u) != 0u)) ? n + 1u : n;
+        return sgn * float(q) * 5.9604644775390625e-08f;
+    }
+    // Normal: keep 10 mantissa bits, round to nearest even at the 13 dropped.
+    const uint ab = asuint(a);
+    const uint r  = (ab + 0x00000FFFu + ((ab >> 13) & 1u)) & 0xFFFFE000u;
+    return sgn * asfloat(r);
+}
+
 // The byte for a value already on the E4M3 grid and inside +-448.
 uint fp8_e4m3_pack(float v) {
     const float a = abs(v);

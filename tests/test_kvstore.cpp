@@ -65,7 +65,7 @@ void quantise_row(const float* x, uint32_t n, uint32_t block, bool e8m0, uint16_
 
 bool skip_without_gpu(gpu::Device& dev) {
     if (auto r = dev.create(); !r) {
-        std::printf("       SKIP gpu: kvstore needs a Vulkan device (%s)\n", r.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu: kvstore needs a Vulkan device (%s)\n", r.error().str().c_str());
         return true;
     }
     return false;

@@ -46,6 +46,17 @@ struct Context {
     }
 };
 
+// A case that cannot run here (no checkpoint, no GPU, a missing golden) says
+// so through DEEPMOE_SKIP_PRINTF, which also counts it. run_all then exits
+// with kSkipReturnCode when nothing FAILED but something skipped, and ctest
+// maps that code to "Skipped" (SKIP_RETURN_CODE in tests/CMakeLists.txt).
+// This replaced SKIP_REGULAR_EXPRESSION, which matched the output and so
+// turned a suite with one skipping case and one FAILING case into "Skipped":
+// a failure wins now, whatever else the suite printed.
+inline constexpr int kSkipReturnCode = 77;
+inline int& skip_count() { static int n = 0; return n; }
+inline void note_skip() { ++skip_count(); }
+
 inline std::vector<Case>& registry() {
     static std::vector<Case> r;
     return r;
@@ -83,7 +94,13 @@ inline int run_all(int argc, char** argv) {
     }
     if (list_only) return 0;
     std::printf("\n%d case(s) run, %d failed, %d assertion failure(s)\n", ran, failed_cases, total_failures);
-    return failed_cases ? 1 : 0;
+    if (failed_cases) return 1;
+    if (skip_count()) {
+        std::printf("%d skip notice(s): reported to ctest as skipped (exit %d)\n",
+                    skip_count(), kSkipReturnCode);
+        return kSkipReturnCode;
+    }
+    return 0;
 }
 
 // Best-effort stringifier: std::format when the type supports it, the integer
@@ -195,3 +212,6 @@ inline bool close(double a, double b, double rel = 1e-6, double abs_tol = 1e-9) 
                       std::string("CHECK_ERR failed: " #expr " -> ") + _r.error().str()   \
                           + " (wanted " #want ")");                                      \
     } while (0)
+
+// printf that also counts a skip (see kSkipReturnCode above).
+#define DEEPMOE_SKIP_PRINTF(...) (::deepmoe::test::note_skip(), std::printf(__VA_ARGS__))

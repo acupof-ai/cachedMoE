@@ -561,8 +561,9 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                     const float rw = RouteW[m * pc.num_slots + slot];
                     const float h  = swiglu(g, u, pc.swiglu_limit) * rw;
                     // Through fp16 first so HQuant 1 and 2 quantise the same
-                    // number (design §6 keeps h in fp16 either way).
-                    sHq[m * kWgRows + rowInWg * RowsPerLane + r] = live ? float(half(h)) : 0.0f;
+                    // number (design §6 keeps h in fp16 either way). f16_round,
+                    // not float(half(h)): see moe_common.slang.
+                    sHq[m * kWgRows + rowInWg * RowsPerLane + r] = live ? f16_round(h) : 0.0f;
                 }
             } else if (live && sublane == 0) {
                 const float rw = RouteW[m * pc.num_slots + slot];

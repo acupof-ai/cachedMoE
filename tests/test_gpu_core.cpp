@@ -28,14 +28,15 @@ using namespace deepmoe;
 
 namespace {
 
-// A skip is a pass; ctest keys its SKIP_REGULAR_EXPRESSION off "SKIP gpu:".
+// A skip goes through DEEPMOE_SKIP_PRINTF: run_all exits 77 and ctest reports
+// the suite as skipped -- unless a case failed, which always wins.
 bool skip_without_gpu(gpu::Device& dev, const char* what) {
     if (auto r = dev.create(); !r) {
-        std::printf("       SKIP gpu: %s needs a Vulkan device (%s)\n", what, r.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu: %s needs a Vulkan device (%s)\n", what, r.error().str().c_str());
         return true;
     }
     if (auto r = dev.caps().check_required(); !r) {
-        std::printf("       SKIP gpu: %s: %s\n", what, r.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu: %s: %s\n", what, r.error().str().c_str());
         return true;
     }
     return false;
@@ -165,7 +166,7 @@ DEEPMOE_TEST(gpu, a_timeline_wait_gates_a_submission_until_the_host_signals) {
     lspec.push_constant_size = 16;
     auto create = pipe.create(dev, gpu::default_shader_dir() + "/rawread.spv", lspec, {});
     if (!create) {
-        std::printf("       SKIP gpu: timeline gating needs build/shaders/rawread.spv (%s)\n",
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu: timeline gating needs build/shaders/rawread.spv (%s)\n",
                     create.error().str().c_str());
         return;
     }
@@ -245,7 +246,7 @@ DEEPMOE_TEST(gpu, the_raw_read_ceiling_shader_runs) {
     gpu::RawReadKernel raw;
     auto create = raw.create(dev, alloc, gpu::default_shader_dir(), /*groups=*/64);
     if (!create) {
-        std::printf("       SKIP gpu: raw read needs build/shaders/rawread.spv (%s)\n",
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu: raw read needs build/shaders/rawread.spv (%s)\n",
                     create.error().str().c_str());
         return;
     }

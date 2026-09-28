@@ -151,12 +151,12 @@ DEEPMOE_TEST(gpu_layer, decode_layer_vs_oracle) {
     if (skip_without_model("gpu_layer")) return;
     auto set = load_l2(std::string(DEEPMOE_TEST_DATA_DIR) + "/l2");
     if (!set) {
-        std::printf("      SKIP gpu_layer: no L2 data (%s)\n", set.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer: no L2 data (%s)\n", set.error().str().c_str());
         return;
     }
     LayerRig rig;
     if (!rig.bring_up(/*cache_slots=*/8)) {
-        std::printf("      SKIP gpu_layer: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer: %s\n", rig.why.c_str());
         return;
     }
     const TextConfig& c = rig.config.text;
@@ -453,13 +453,13 @@ DEEPMOE_TEST(mgt1, m_curve) {
         if (!mgt1_ctx_wanted(ctx)) continue;
         const std::string sdir = mgt1_state_dir(ctx);
         if (!mgt1_exists(sdir + "/index.json")) {
-            std::printf("      SKIP gpu_layer mgt1_m_curve %s: no state at %s\n", ctx.c_str(),
+            DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1_m_curve %s: no state at %s\n", ctx.c_str(),
                         sdir.c_str());
             continue;
         }
         if (!up) {
             if (!rig.bring_up()) {
-                std::printf("      SKIP gpu_layer mgt1_m_curve: %s\n", rig.why.c_str());
+                DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1_m_curve: %s\n", rig.why.c_str());
                 return;
             }
             up = true;
@@ -567,7 +567,7 @@ DEEPMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
 
     gpu::Device device;
     if (auto r = device.create({}); !r) {
-        std::printf("      SKIP mgt1: %s\n", r.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", r.error().str().c_str());
         return;
     }
     gpu::MemoryAllocator alloc;
@@ -587,13 +587,13 @@ DEEPMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
     store::PinnedStore pinned;
     {
         auto c = V41Config::load(store::ShardSet::join(dir, "config.json"));
-        if (!c) { std::printf("      SKIP mgt1: %s\n", c.error().str().c_str()); return; }
+        if (!c) { DEEPMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", c.error().str().c_str()); return; }
         cfg = std::move(*c);
         auto mf = Manifest::load(store::ShardSet::join(dir, layout::kManifestFile));
-        if (!mf) { std::printf("      SKIP mgt1: %s\n", mf.error().str().c_str()); return; }
+        if (!mf) { DEEPMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", mf.error().str().c_str()); return; }
         manifest = std::move(*mf);
         if (auto r = shards.open_all(dir, manifest, true); !r) {
-            std::printf("      SKIP mgt1: %s\n", r.error().str().c_str());
+            DEEPMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", r.error().str().c_str());
             return;
         }
         IoConfig iocfg;
@@ -609,7 +609,7 @@ DEEPMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
     const uint32_t L = 0;
     auto names = store::pinned_layer_tensors(manifest, L);
     if (auto r = pinned.load(manifest, shards, io, names); !r) {
-        std::printf("      SKIP mgt1: pinned: %s\n", r.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP mgt1: pinned: %s\n", r.error().str().c_str());
         io.stop();
         return;
     }
@@ -704,14 +704,14 @@ DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
         if (!mgt1_ctx_wanted(ctx)) continue;
         const std::string sdir = mgt1_state_dir(ctx);
         if (!mgt1_exists(root + "/" + ctx + "/l2/index.json") || !mgt1_exists(sdir + "/index.json")) {
-            std::printf("      SKIP gpu_layer mgt1 %s: no reference at %s or state at %s "
+            DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1 %s: no reference at %s or state at %s "
                         "(DEEPMOE_MGT1_DIR, DEEPMOE_LONGCTX_DIR)\n", ctx.c_str(),
                         (root + "/" + ctx).c_str(), sdir.c_str());
             continue;
         }
         if (!up) {
             if (!rig.bring_up()) {
-                std::printf("      SKIP gpu_layer mgt1: %s\n", rig.why.c_str());
+                DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1: %s\n", rig.why.c_str());
                 return;
             }
             up = true;

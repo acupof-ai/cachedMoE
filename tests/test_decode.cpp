@@ -202,7 +202,7 @@ struct DecodeRig {
 DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
     if (skip_without_model("decode")) return;
     if (!std::fopen((l3_dir() + "/index.json").c_str(), "rb")) {
-        std::printf("      SKIP decode: no L3 data in %s "
+        DEEPMOE_SKIP_PRINTF("      SKIP decode: no L3 data in %s "
                     "(tools/oracle.py --level l3)\n", l3_dir().c_str());
         return;
     }
@@ -212,7 +212,7 @@ DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
     // on NVMe. A run sized for the whole working set would measure a machine
     // nobody has at 64K context.
     if (!rig.bring_up(8ull << 30)) {
-        std::printf("      SKIP decode: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP decode: %s\n", rig.why.c_str());
         return;
     }
     runtime::Engine& e = rig.engine;
@@ -502,12 +502,12 @@ DEEPMOE_TEST(decode, engram_matches_the_l2_export) {
     if (skip_without_model("decode")) return;
     auto set = load_l2(std::string(DEEPMOE_TEST_DATA_DIR) + "/l2");
     if (!set) {
-        std::printf("      SKIP decode.engram: no L2 data (%s)\n", set.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP decode.engram: no L2 data (%s)\n", set.error().str().c_str());
         return;
     }
     auto tables = runtime::EngramTables::load(l3_dir());
     if (!tables) {
-        std::printf("      SKIP decode.engram: no L3 engram tables (%s)\n",
+        DEEPMOE_SKIP_PRINTF("      SKIP decode.engram: no L3 engram tables (%s)\n",
                     tables.error().str().c_str());
         return;
     }
@@ -518,7 +518,7 @@ DEEPMOE_TEST(decode, engram_matches_the_l2_export) {
     // per-layer RNG seeded `10007 * layer_id`.
     auto state = runtime::DecodeState::load(l3_dir());
     if (!state) {
-        std::printf("      SKIP decode.engram: %s\n", state.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP decode.engram: %s\n", state.error().str().c_str());
         return;
     }
     std::vector<uint32_t> history = state->prompt_ids();
@@ -566,7 +566,7 @@ DEEPMOE_TEST(decode, engram_matches_the_l2_export) {
 
 DEEPMOE_TEST(sampling, frequencies_match_top_p_softmax_on_l3_logits) {
     auto st = runtime::DecodeState::load(l3_dir());
-    if (!st) { std::printf("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
+    if (!st) { DEEPMOE_SKIP_PRINTF("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
     // The (record, top_p) whose nucleus is widest while still provably exact:
     // the informative case (a one-token nucleus would pass trivially). 0.95 is
     // the model README's value; 0.7 reaches into the flatter records.
@@ -658,7 +658,7 @@ DEEPMOE_TEST(sampling, frequencies_match_top_p_softmax_on_l3_logits) {
 // nucleus whenever it says it does, and says it does not when it cannot.
 DEEPMOE_TEST(sampling, topk_nucleus_equals_full_vocabulary_nucleus) {
     auto st = runtime::DecodeState::load(l3_dir());
-    if (!st) { std::printf("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
+    if (!st) { DEEPMOE_SKIP_PRINTF("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
     const uint32_t V = 129280;
     uint32_t exact_cases = 0, fallback_cases = 0;
     for (uint32_t r = 0; r <= st->steps(); ++r) {
@@ -737,7 +737,7 @@ DEEPMOE_TEST(smoke, auto_cache) {
     runtime::Engine e;
     {
         auto r = e.init(cfg);
-        if (!r) { std::printf("      SKIP smoke.auto_cache: %s\n", r.error().str().c_str()); return; }
+        if (!r) { DEEPMOE_SKIP_PRINTF("      SKIP smoke.auto_cache: %s\n", r.error().str().c_str()); return; }
     }
     // Not a SKIP: a refused init_gpu with an auto budget is exactly the failure
     // this case exists to catch. The back-off should have found a size.
@@ -747,9 +747,12 @@ DEEPMOE_TEST(smoke, auto_cache) {
                 e.store().capacity_bytes() / double(1ull << 30));
     CHECK(slots > 0);
     // The cap, observed end to end rather than as arithmetic. With the cap off
-    // (DEEPMOE_CACHE_SLOT_CAP=0) this is the probe's business alone, so only
-    // assert it when the cap is in force.
-    if (const uint32_t cap = runtime::auto_slot_cap(); cap) CHECK(slots <= cap);
+    // (DEEPMOE_CACHE_SLOT_CAP=0, or RADV, where the engine bounds auto by the
+    // GTT heaps instead and applies no cap) this is the probe's business alone,
+    // so only assert it when the cap is in force. It used to read
+    // auto_slot_cap() here, which is the Windows rule: on RADV it failed
+    // "5,500 <= 5,000" against a cap the engine had correctly not applied.
+    if (const uint32_t cap = e.applied_slot_cap(); cap) CHECK(slots <= cap);
 
     // A session gives the engine a KV store (decode_step needs one); the engram
     // tables come from the test export so this does not depend on the model dir

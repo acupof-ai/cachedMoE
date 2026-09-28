@@ -325,13 +325,13 @@ DEEPMOE_TEST(decode_longctx, indexer_vs_reference) {
         const std::string big = longctx_root() + "/" + name;
         const std::string small = small_dir(name);
         if (!exists(big + "/index.json") || !exists(small + "/index.json")) {
-            std::printf("      SKIP decode_longctx %s: no export at %s (DEEPMOE_LONGCTX_DIR)\n",
+            DEEPMOE_SKIP_PRINTF("      SKIP decode_longctx %s: no export at %s (DEEPMOE_LONGCTX_DIR)\n",
                         name.c_str(), big.c_str());
             continue;
         }
         if (!rig_up) {
             if (!rig.bring_up()) {
-                std::printf("      SKIP decode_longctx: no GPU (%s)\n", rig.why.c_str());
+                DEEPMOE_SKIP_PRINTF("      SKIP decode_longctx: no GPU (%s)\n", rig.why.c_str());
                 return;
             }
             rig_up = true;
@@ -554,7 +554,7 @@ DEEPMOE_TEST(decode_longctx, engine_vs_reference) {
         const std::string big = longctx_root() + "/" + name;
         const std::string small = small_dir(name);
         if (!exists(big + "/index.json") || !exists(small + "/index.json")) {
-            std::printf("      SKIP decode_longctx %s: no export at %s\n", name.c_str(), big.c_str());
+            DEEPMOE_SKIP_PRINTF("      SKIP decode_longctx %s: no export at %s\n", name.c_str(), big.c_str());
             continue;
         }
         runtime::Engine e;

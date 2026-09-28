@@ -170,7 +170,7 @@ void run_case(::deepmoe::test::Context& _ctx, runtime::Engine::MsSched sched,
     runtime::Engine e;
     std::string why;
     if (!bring_up(e, 2, why)) {
-        std::printf("SKIP multistream: %s\n", why.c_str());
+        DEEPMOE_SKIP_PRINTF("SKIP multistream: %s\n", why.c_str());
         return;
     }
     e.set_ms_sched(sched);

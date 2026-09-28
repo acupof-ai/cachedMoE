@@ -17,6 +17,7 @@
 
 #include "core/status.h"
 #include "model/manifest.h"
+#include "tests/test_framework.h"
 
 namespace deepmoe::testing {
 
@@ -142,11 +143,11 @@ inline const char* model_dir() {
 #endif
 }
 
-// A skip is a pass, but it must be loud: ctest keys its SKIP_REGULAR_EXPRESSION
-// off the phrase "set DEEPMOE_MODEL_DIR".
+// A skip is not a pass, and it must be loud: DEEPMOE_SKIP_PRINTF counts it and
+// run_all exits 77 (ctest SKIP_RETURN_CODE) unless a case failed.
 inline bool skip_without_model(const char* what) {
     if (model_dir()) return false;
-    std::printf("       SKIP %s: set DEEPMOE_MODEL_DIR to the checkpoint "
+    DEEPMOE_SKIP_PRINTF("       SKIP %s: set DEEPMOE_MODEL_DIR to the checkpoint "
                 "(e.g. D:\\models\\DeepSeek-V4.1-Flash) to run it\n", what);
     return true;
 }

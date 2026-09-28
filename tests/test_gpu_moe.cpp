@@ -18,6 +18,7 @@
 //   * that the expert indirection list of design §7.9 selects the right expert.
 //
 // Gated on DEEPMOE_MODEL_DIR and on a working Vulkan device; a skip is a pass.
+#include <bit>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -164,7 +165,7 @@ DEEPMOE_TEST(gpu_moe, matches_the_oracle_across_every_variant) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/2)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -281,7 +282,7 @@ DEEPMOE_TEST(gpu_moe, the_indirection_list_picks_the_expert) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/2)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey want{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -326,7 +327,7 @@ DEEPMOE_TEST(gpu_moe, the_int8_x_pre_pass_is_expert_dependent) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/2)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const char* files[2] = {"l1_layer0_expert0.bin", "l1_layer39_expert383.bin"};
@@ -370,7 +371,7 @@ DEEPMOE_TEST(gpu_moe, route_weights_and_the_slot_reduction) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -603,7 +604,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_computes_one_answer_per_column) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -776,7 +777,7 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
     constexpr uint32_t kUnion = kTopk;      // per column: its own six experts
     FullRig rig;
     if (!rig.bring_up(/*slots=*/kMaxM * kUnion + 4)) {
-        std::printf("       SKIP mgt1.moe_m_curve: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t layer = 0;
@@ -786,7 +787,7 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
         auto per = store::pinned_layer_tensors(rig.manifest, layer);
         names.insert(names.end(), per.begin(), per.end());
         auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
-        if (!r) { std::printf("       SKIP mgt1.moe_m_curve: pinned: %s\n", r.error().str().c_str()); return; }
+        if (!r) { DEEPMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: pinned: %s\n", r.error().str().c_str()); return; }
     }
 
     runtime::GpuMoeBridge bridge;
@@ -808,7 +809,7 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
     for (uint32_t i = 0; i < kMaxM * kTopk; ++i) {
         const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(ids[i])};
         auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
-        if (!f) { std::printf("       SKIP mgt1.moe_m_curve: fetch: %s\n", f.error().str().c_str()); return; }
+        if (!f) { DEEPMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: fetch: %s\n", f.error().str().c_str()); return; }
     }
     rig.io.drain();
 
@@ -861,7 +862,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
     constexpr uint32_t kM    = 6;
     FullRig rig;
     if (!rig.bring_up(/*slots=*/kM * kTopk + 4)) {
-        std::printf("       SKIP gpu_moe.the_verify_batch_runs_its_expert_union_once: %s\n",
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe.the_verify_batch_runs_its_expert_union_once: %s\n",
                     rig.why.c_str());
         return;
     }
@@ -872,7 +873,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
         auto per = store::pinned_layer_tensors(rig.manifest, layer);
         names.insert(names.end(), per.begin(), per.end());
         auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
-        if (!r) { std::printf("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
+        if (!r) { DEEPMOE_SKIP_PRINTF("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
     }
     runtime::GpuMoeBridge bridge;
     REQUIRE_OK(bridge.create(rig.device, rig.alloc, gpu::default_shader_dir(), rig.store,
@@ -910,7 +911,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
             const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(e)};
             auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
             if (!f) {
-                std::printf("       SKIP: expert %u would not fetch: %s\n", e,
+                DEEPMOE_SKIP_PRINTF("       SKIP: expert %u would not fetch: %s\n", e,
                             f.error().str().c_str());
                 return;
             }
@@ -1008,7 +1009,7 @@ DEEPMOE_TEST(mgt1, moe_union_m_curve) {
     constexpr uint32_t kMaxM = 6;
     FullRig rig;
     if (!rig.bring_up(/*slots=*/kMaxM * kTopk + 4)) {
-        std::printf("       SKIP mgt1.moe_union_m_curve: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP mgt1.moe_union_m_curve: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t layer = 0;
@@ -1018,7 +1019,7 @@ DEEPMOE_TEST(mgt1, moe_union_m_curve) {
         auto per = store::pinned_layer_tensors(rig.manifest, layer);
         names.insert(names.end(), per.begin(), per.end());
         auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
-        if (!r) { std::printf("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
+        if (!r) { DEEPMOE_SKIP_PRINTF("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
     }
     runtime::GpuMoeBridge bridge;
     REQUIRE_OK(bridge.create(rig.device, rig.alloc, gpu::default_shader_dir(), rig.store,
@@ -1044,7 +1045,7 @@ DEEPMOE_TEST(mgt1, moe_union_m_curve) {
         for (uint32_t e : all) {
             const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(e)};
             auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
-            if (!f) { std::printf("       SKIP: fetch: %s\n", f.error().str().c_str()); return; }
+            if (!f) { DEEPMOE_SKIP_PRINTF("       SKIP: fetch: %s\n", f.error().str().c_str()); return; }
         }
         rig.io.drain();
     }
@@ -1167,7 +1168,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
     constexpr uint32_t kTopk = 6;
     BatchRig rig;
     if (!rig.bring_up(/*slots=*/kM * kTopk + 4)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t layer = 0;
@@ -1180,7 +1181,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
         auto per = store::pinned_layer_tensors(rig.manifest, layer);
         names.insert(names.end(), per.begin(), per.end());
         auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
-        if (!r) { std::printf("       SKIP gpu_moe: pinned: %s\n", r.error().str().c_str()); return; }
+        if (!r) { DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: pinned: %s\n", r.error().str().c_str()); return; }
     }
 
     // Three different expert sets, and three different activations, both
@@ -1209,7 +1210,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
     for (uint32_t i = 0; i < kM * kTopk; ++i) {
         const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(ids[i])};
         auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
-        if (!f) { std::printf("       SKIP gpu_moe: fetch: %s\n", f.error().str().c_str()); return; }
+        if (!f) { DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: fetch: %s\n", f.error().str().c_str()); return; }
     }
     rig.io.drain();
     for (uint32_t i = 0; i < kM * kTopk; ++i) {
@@ -1423,7 +1424,7 @@ DEEPMOE_TEST(gpu_moe, the_fp8_shared_expert_runs_in_the_same_dispatches) {
     auto golden = load_tri(data_path("l1_shared_layer0.bin"), "DMS1", /*has_expert=*/false,
                            /*extra_u64=*/6);
     if (!golden) {
-        std::printf("       SKIP gpu_moe: %s (run tools/oracle_shared.py --shared 0)\n",
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s (run tools/oracle_shared.py --shared 0)\n",
                     golden.error().str().c_str());
         return;
     }
@@ -1431,7 +1432,7 @@ DEEPMOE_TEST(gpu_moe, the_fp8_shared_expert_runs_in_the_same_dispatches) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     SharedExpert shared;
@@ -1500,7 +1501,7 @@ DEEPMOE_TEST(gpu_moe, the_fp8_h_quantisation_matches_the_reference) {
 
     auto tri = load_tri(data_path("l1q_layer0_expert0.bin"), "DMQ1", /*has_expert=*/true);
     if (!tri) {
-        std::printf("       SKIP gpu_moe: %s (run tools/oracle_shared.py --expert 0:0)\n",
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s (run tools/oracle_shared.py --expert 0:0)\n",
                     tri.error().str().c_str());
         return;
     }
@@ -1508,7 +1509,7 @@ DEEPMOE_TEST(gpu_moe, the_fp8_h_quantisation_matches_the_reference) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -1602,7 +1603,7 @@ DEEPMOE_TEST(gpu_moe, a_partial_dispatch_reduces_to_the_same_y) {
     constexpr uint32_t kSlots = 7;   // 6 routed + the shared-expert stand-in
     Rig rig;
     if (!rig.bring_up(kSlots)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     for (uint32_t e = 0; e < kSlots; ++e)
@@ -1719,7 +1720,7 @@ DEEPMOE_TEST(gpu_moe, gateup_split_across_submits_is_bit_identical) {
     constexpr uint32_t kSlots = 7;
     Rig rig;
     if (!rig.bring_up(kSlots)) {
-        std::printf("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     for (uint32_t e = 0; e < kSlots; ++e)
@@ -1778,4 +1779,74 @@ DEEPMOE_TEST(gpu_moe, gateup_split_across_submits_is_bit_identical) {
     }
     cmd = gpu::CommandBuffer{};
     pool.destroy();
+}
+
+// HQuant 2 (dispatch A quantises h on its way out) and HQuant 3 (a third
+// dispatch quantises the fp16 h A wrote) are one rule in two places, so their
+// fp8 bytes and UE8M0 scales must agree BIT for bit, not just within a y
+// tolerance. The y-level check above caught the RADV bug that motivated this
+// only indirectly (2.8e-3 against a 1e-3 bar): Mesa's NIR folded the
+// `float(half(h))` round trip in moe_gateup to `h`, so A quantised fp32 h, and
+// 8 of 2,304 values that sit exactly on an fp8 tie after fp16 rounding went to
+// the other neighbour. This comparison names the element and both bytes.
+// Mutation: put `float(half(h))` back in place of `f16_round(h)` in
+// moe_gateup.slang => 8 value words differ (on RADV; a driver that does not
+// fold passes either way).
+DEEPMOE_TEST(gpu_moe, hquant_2_and_3_write_identical_planes) {
+    if (skip_without_model("gpu_moe.hquant_2_and_3_write_identical_planes")) return;
+    auto tri = load_tri(data_path("l1q_layer0_expert0.bin"), "DMQ1", /*has_expert=*/true);
+    if (!tri) {
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", tri.error().str().c_str());
+        return;
+    }
+    const TriGolden& g = *tri;
+    Rig rig;
+    if (!rig.bring_up(/*slots=*/1)) {
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        return;
+    }
+    const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
+    REQUIRE(rig.fill(key));
+
+    constexpr uint32_t kInter = layout::kMoeIntermediate;   // M = 1, one slot
+    constexpr uint32_t kValueWords = kInter / 4, kBlocks = kInter / 32;
+    std::vector<uint32_t> planes[2], h16;
+    for (int v = 0; v < 2; ++v) {
+        const gpu::MoeSpec spec{1, 16, 32, 0, 0, 2, 0, uint32_t(v == 0 ? 2 : 3)};
+        gpu::MoeDims dims;
+        dims.layer = key.layer;
+        dims.slots = 1;
+        gpu::MoeRunner runner;
+        REQUIRE_OK(runner.create(rig.device, rig.alloc, gpu::default_shader_dir(), spec, dims));
+        std::memcpy(runner.pointer_table(), rig.store.pointer_table(), rig.store.pointer_table_bytes());
+        runner.ids()[0] = key.expert;
+        runner.slot_list()[0] = 0;
+        runner.set_list_count(1);
+        runner.route_weights()[0] = 1.0f;
+        for (uint32_t i = 0; i < layout::kHiddenSize; ++i)
+            runner.x_fp16()[i] = cpu::float_to_fp16(g.x[i]);
+        REQUIRE_OK(runner.run(1));
+        // moe_common.slang hq_value_words: mode 2 starts at word 0, mode 3
+        // past the fp16 plane it quantised from.
+        const uint32_t off = (v == 0) ? 0 : kInter / 2;
+        planes[v].assign(runner.h_words() + off, runner.h_words() + off + kValueWords + kBlocks);
+        if (v == 1) h16.assign(runner.h_words(), runner.h_words() + kInter / 2);
+    }
+    uint32_t bad_scales = 0, bad_values = 0;
+    for (uint32_t b = 0; b < kBlocks; ++b)
+        if (planes[0][kValueWords + b] != planes[1][kValueWords + b]) ++bad_scales;
+    for (uint32_t e = 0; e < kInter; ++e) {
+        const uint32_t b2 = (planes[0][e / 4] >> (8 * (e % 4))) & 0xFFu;
+        const uint32_t b3 = (planes[1][e / 4] >> (8 * (e % 4))) & 0xFFu;
+        if (b2 == b3) continue;
+        if (++bad_values <= 8) {
+            const uint16_t hb = uint16_t((h16[e / 2] >> (16 * (e & 1))) & 0xFFFFu);
+            std::printf("       element %4u: fp16 h %.9g, HQuant 2 byte 0x%02x, HQuant 3 byte 0x%02x\n",
+                        e, cpu::fp16_to_float(hb), b2, b3);
+        }
+    }
+    std::printf("       %u blocks: %u scale and %u value mismatches between HQuant 2 and 3\n",
+                kBlocks, bad_scales, bad_values);
+    CHECK_EQ(bad_scales, 0u);
+    CHECK_EQ(bad_values, 0u);
 }

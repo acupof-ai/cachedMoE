@@ -146,10 +146,10 @@ RingCmp ring_vs_export(const runtime::Engine& e, const runtime::DecodeState& st,
 DEEPMOE_TEST(kv_replay, l3_64) {
     if (skip_without_model("kv_replay")) return;
     const std::string l3 = std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
-    if (!exists(l3 + "/index.json")) { std::printf("      SKIP kv_replay: no L3 export\n"); return; }
+    if (!exists(l3 + "/index.json")) { DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: no L3 export\n"); return; }
     runtime::Engine e;
     std::string why;
-    if (!bring_up(e, l3, why)) { std::printf("      SKIP kv_replay: %s\n", why.c_str()); return; }
+    if (!bring_up(e, l3, why)) { DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: %s\n", why.c_str()); return; }
     const runtime::DecodeState* st = e.decode_state();
     const uint32_t base = st->decode_pos();
     const std::vector<uint32_t>& ref = st->greedy_tokens();
@@ -437,12 +437,12 @@ DEEPMOE_TEST(kv_replay, longctx) {
     if (skip_without_model("kv_replay")) return;
     const std::string dir = longctx_root() + "/ctx4k";
     if (!exists(dir + "/index.json")) {
-        std::printf("      SKIP kv_replay: no 4K export at %s (DEEPMOE_LONGCTX_DIR)\n", dir.c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: no 4K export at %s (DEEPMOE_LONGCTX_DIR)\n", dir.c_str());
         return;
     }
     runtime::Engine e;
     std::string why;
-    if (!bring_up(e, dir, why)) { std::printf("      SKIP kv_replay: %s\n", why.c_str()); return; }
+    if (!bring_up(e, dir, why)) { DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: %s\n", why.c_str()); return; }
     const runtime::DecodeState* st = e.decode_state();
     const uint32_t N = st->decode_pos();
     const std::vector<uint32_t>& ref = st->greedy_tokens();

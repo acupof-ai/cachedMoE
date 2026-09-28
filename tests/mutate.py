@@ -298,7 +298,9 @@ def main() -> int:
         rc, _ = run([str(test_binary(build_dir)), suite + "."], root)
         _restore_all()
 
-        got = "caught" if rc != 0 else "survived"
+        # 77 is run_all's "nothing failed, something skipped" (no checkpoint,
+        # no GPU): the mutation was never tested, which is neither answer.
+        got = "skipped" if rc == 77 else ("caught" if rc != 0 else "survived")
         ok_row = (got == "caught") if expect == "caught" else (got == "survived")
         results.append((label, suite, got, f"{time.time() - t0:.0f}s", ok_row))
 

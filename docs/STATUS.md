@@ -748,6 +748,23 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    serve 的 `status` 事件新增 `gate_probe` 字段（开 `DEEPMOE_GATE_PROBE` 时）。
    **局域网（2026-09-28 调查）不能用来加速单流 decode**：本机只有 Wi‑Fi（PHY ~2 Gbps），到 desktop（RTX 4070 Ti SUPER 16 GB、31 GB 内存、千兆有线、盘剩 130 GB）实测 ssh 44 MB/s、RTT 均值 5.4 ms；
    作 expert 读源比 NVMe 慢 40–100 倍；按层切两机流水线要每 token 两跳（~11 ms）且 desktop 放不下一半权重（238 GB > 130 GB 空闲）、可做缓存的内存只有 ~20 GB——**不做**。
+   **`suite.gpu_moe` 在 RADV 上的失败查清并修掉（Mesa NIR 折叠的第二个实例），顺带补了测试框架一个会藏失败的洞。**
+   失败的是 `the_fp8_h_quantisation_matches_the_reference` 里三个 HQuant 2（dispatch A 写出时量化 h）的 L16 R2 变体：对 y_hq16 2.8e-3（判据 1e-3），
+   而同一规则的 HQuant 1 / 3 是 3e-7 / 5e-8。逐字节比 HQuant 2 与 3 写出的平面：72 个 scale 全同，**2,304 个 fp8 字节里 8 个差一格**，
+   而且这 8 个的 fp16 h 除以 scale **正好落在 E4M3 的平局上**（3.625、−19、−68、8.5、−15.5、−3.375、432）——HQuant 3 按 RNE 取偶，HQuant 2 落到另一侧。
+   ⇒ HQuant 2 量化的不是 fp16 h：`moe_gateup` 里 `float(half(h))` 被 NIR 折回 `h`（换成 `f16tof32(f32tof16(h))` 结果逐位不变，一样被折）。
+   修法与 0h 的 `fp8_round` 同：新 `f16_round`（`moe_common.slang`，整数 RNE：正规数 `(ab + 0xFFF + ((ab>>13)&1)) & ~0x1FFF`，次正规数 ×2^24 后整数取偶），
+   HQuant 2 现在与 3 **逐位相同**（y 5.030e-08 两者一样）。**引擎默认 HQuant 3，生产数值不变**；Windows 驱动不折叠，所以这是 RADV 专属。
+   新测试 `gpu_moe.hquant_2_and_3_write_identical_planes`（逐字节比两种写法的平面，失败时打印元素、fp16 h 与两个字节）；变异（改回 `float(half(h))`）⇒ caught（8 个值不同）。
+   shader 里其余 fp16 转换都是写回显存或真 fp16 运算，没有同类的"寄存器里窄化再用"。
+   **测试框架**：ctest 的 `SKIP_REGULAR_EXPRESSION` **压过失败**——两行的 ctest 小工程验证：输出里有一行 SKIP、退出码 1 ⇒ 报 Skipped（加 `FAIL_REGULAR_EXPRESSION` 也一样）。
+   即一个 suite 里只要有一个 case 因缺 golden/缺 GPU 打印 SKIP，其余 case 的失败全被藏成"跳过"。改成退出码：`DEEPMOE_SKIP_PRINTF` 计数（104 处 SKIP 打印机械替换），
+   `run_all` 有失败返回 1、否则有跳过返回 77、否则 0；`tests/CMakeLists.txt` 所有 `deepmoe_tests` 测试改 `SKIP_RETURN_CODE 77`（`bench.l3_ppl64` 是只在开头打印 SKIP 的 Python 驱动，保留正则）；
+   `tests/mutate.py` 把 77 记成 "skipped" 而不是 "caught"。验证：小程序 skip+fail ⇒ 1、只 skip ⇒ 77、只 pass ⇒ 0；无模型时 needs-model suite 仍报 Skipped；CPU 闸 25/25。
+   **`smoke.auto_cache` 也是测试过时**：它断言 `slots <= auto_slot_cap()`（Windows 的 5,000），而 247a31d 起 RADV 上引擎按 GTT 两堆定预算、不加上限（5,500 槽）。
+   引擎现在把实际用的上限记在 `Engine::applied_slot_cap()`，测试按它断言；12 s 过。完整 needs-model/needs-gpu 一轮里另有两件还在查：
+   `decode_longctx.engine_vs_reference` 在 4K 第 6 步 L20 attn_norm 余弦 0.882 < 0.90（token 全对，L14 gate 集 3/6，路由近平局漂移），
+   以及整个 `deepmoe_tests` 一个进程跑完时在 `speculate.a_misconfigured_cycle_refuses` 段错误（单跑 speculate 过，顺序相关）。
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
    换成 **host 写 flag、device 自旋等它**（一个 command buffer 装下整个 token，

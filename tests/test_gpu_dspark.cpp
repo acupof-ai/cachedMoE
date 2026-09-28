@@ -272,7 +272,7 @@ DEEPMOE_TEST(gpu_dspark, golden_per_stage) {
     if (skip_without_model("gpu_dspark")) return;
     auto set = load_l2(ds_dir());
     if (!set) {
-        std::printf("      SKIP gpu_dspark: no DSpark data (%s). Run "
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_dspark: no DSpark data (%s). Run "
                     "`tools/oracle_dspark.py --out tests/data/dspark`\n",
                     set.error().str().c_str());
         return;
@@ -280,13 +280,13 @@ DEEPMOE_TEST(gpu_dspark, golden_per_stage) {
     const L2Step* gp = nullptr;
     for (const L2Step& s : set->steps) if (s.step == "golden_pos64") gp = &s;
     if (!gp) {
-        std::printf("      SKIP gpu_dspark: tests/data/dspark has no golden_pos64 record\n");
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_dspark: tests/data/dspark has no golden_pos64 record\n");
         return;
     }
     const L2Step& g = *gp;
     Rig rig;
     if (!rig.bring_up()) {
-        std::printf("      SKIP gpu_dspark: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_dspark: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t main_pos = static_cast<uint32_t>(set->cfg("golden_pos", 64));
@@ -586,7 +586,7 @@ DEEPMOE_TEST(gpu_dspark, verify_rows_give_exact_acceptance_its_four_numbers) {
     constexpr uint32_t kK = 16;
     VRig rig;
     if (!rig.bring_up(kM)) {
-        std::printf("       SKIP gpu_dspark.verify_rows: %s\n", rig.why.c_str());
+        DEEPMOE_SKIP_PRINTF("       SKIP gpu_dspark.verify_rows: %s\n", rig.why.c_str());
         return;
     }
 

@@ -47,7 +47,7 @@ const text::Tokenizer* shared_tokenizer(std::string& why) {
 DEEPMOE_TEST(tokenizer, golden_ids_and_decode_match_hf) {
     std::string why;
     const text::Tokenizer* tok = shared_tokenizer(why);
-    if (!tok) { std::printf("      SKIP tokenizer: %s\n", why.c_str()); return; }
+    if (!tok) { DEEPMOE_SKIP_PRINTF("      SKIP tokenizer: %s\n", why.c_str()); return; }
     auto doc = json_parse_file(std::string(DEEPMOE_TEST_DATA_DIR) + "/tokenizer/golden.json");
     REQUIRE(doc.has_value());
     const JsonValue* cases = doc->find("cases");
@@ -89,7 +89,7 @@ DEEPMOE_TEST(tokenizer, golden_ids_and_decode_match_hf) {
 DEEPMOE_TEST(tokenizer, special_tokens_and_vocabulary) {
     std::string why;
     const text::Tokenizer* tok = shared_tokenizer(why);
-    if (!tok) { std::printf("      SKIP tokenizer: %s\n", why.c_str()); return; }
+    if (!tok) { DEEPMOE_SKIP_PRINTF("      SKIP tokenizer: %s\n", why.c_str()); return; }
     CHECK_EQ(tok->vocab_size(), 129280u);
     const auto eos = tok->token_id("<\xEF\xBD\x9C" "end\xE2\x96\x81of\xE2\x96\x81sentence\xEF\xBD\x9C>");
     REQUIRE(eos.has_value());
@@ -116,7 +116,7 @@ DEEPMOE_TEST(tokenizer, special_tokens_and_vocabulary) {
 DEEPMOE_TEST(tokenizer, streaming_decode_holds_partial_utf8) {
     std::string why;
     const text::Tokenizer* tok = shared_tokenizer(why);
-    if (!tok) { std::printf("      SKIP tokenizer: %s\n", why.c_str()); return; }
+    if (!tok) { DEEPMOE_SKIP_PRINTF("      SKIP tokenizer: %s\n", why.c_str()); return; }
     // "你好" is two 3-byte characters; byte-level BPE may split them across
     // tokens. Whatever the split, no push may emit a partial character.
     const std::string text = "\xE4\xBD\xA0\xE5\xA5\xBD \xF0\x9F\x98\x80 ok";

@@ -690,6 +690,10 @@ public:
     const Manifest&         manifest() const { return manifest_; }
     Profiler&               profiler()       { return profiler_; }
     store::ExpertStore&     store()          { return store_; }
+    // The slot cap the auto budget actually applied in init_gpu (0 = none):
+    // auto_slot_cap() on Windows, none on RADV unless DEEPMOE_CACHE_SLOT_CAP
+    // is set. Only meaningful after an auto-sized init_gpu.
+    uint32_t                applied_slot_cap() const { return applied_slot_cap_; }
     store::Planner&         planner()        { return planner_; }
     store::PinnedStore&     pinned()         { return pinned_; }
     storage::IoEngine&      io()             { return io_; }
@@ -916,6 +920,7 @@ private:
     DeviceAddress                head_w_ = kNoDeviceAddress;
     const store::PinnedTensor*   embed_  = nullptr;
     uint64_t                     cache_budget_ = 0;
+    uint32_t                     applied_slot_cap_ = 0;
     // H1a: has any queue submission of this process ever succeeded? The first
     // one is the one that discovers an over-sized expert cache -- the driver
     // accepts every allocation and then refuses the submit that has to make

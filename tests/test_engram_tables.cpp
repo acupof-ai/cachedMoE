@@ -48,14 +48,14 @@ DEEPMOE_TEST(engram_tables, numpy_rng_and_normaliser) {
 
 DEEPMOE_TEST(engram_tables, derived_equals_l3_export) {
     const char* dir = std::getenv("DEEPMOE_MODEL_DIR");
-    if (!dir) { std::printf("      SKIP engram_tables: set DEEPMOE_MODEL_DIR\n"); return; }
+    if (!dir) { DEEPMOE_SKIP_PRINTF("      SKIP engram_tables: set DEEPMOE_MODEL_DIR\n"); return; }
     auto cfg = V41Config::load(std::string(dir) + "/config.json");
     REQUIRE_OK(cfg);
     auto derived = runtime::derive_engram_tables(std::string(dir), cfg->text);
     REQUIRE_OK(derived);
     auto exported = runtime::EngramTables::load(std::string(DEEPMOE_TEST_DATA_DIR) + "/l3");
     if (!exported) {
-        std::printf("      SKIP engram_tables: no L3 export (%s)\n", exported.error().str().c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP engram_tables: no L3 export (%s)\n", exported.error().str().c_str());
         return;
     }
     CHECK_EQ(derived->compressed_vocab_size, exported->compressed_vocab_size);
