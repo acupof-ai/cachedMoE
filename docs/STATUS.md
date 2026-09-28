@@ -31,6 +31,19 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 `tools/chat.py` 起对话，流式出 token，新一轮只 prefill 延伸出来的那部分。
 正确性对 fp32 参考在 64 token / 4K / 17K 三个上下文上都是 8/8。
 
+### 1.0 机器记下的测量（ledger）
+
+下面这块表格**不是手写的**：`tools/hitrate_bench.py` 开跑时把 commit、未提交文件、`git diff` 哈希、exe / shader 哈希、
+全部 `DEEPMOE_*` 开关和 GPU DPM 状态写进 `<run>/provenance.json`（`tools/provenance.py`）；
+`tools/perf_report.py --chat RUN --record LABEL`（热步用 `--capture --record`）把运行自己的文件算出的数连同出处追加到
+`bench/results/perf_ledger.jsonl`；`tools/perf_ledger.py --write` 把这块重新渲染出来（`--check` 查它是否过期）。
+**正文只解读这些行，不重抄数字**；引用时写"ledger #N"。
+
+<!-- perf-ledger:begin -->
+<!-- perf-ledger:end -->
+
+以下是 Windows 时期的历史表，出处各自在右列。
+
 | 指标 | 今天 | 出处 |
 |---|---|---|
 | **对话 decode** | **3.4–4.5 tok/s**（hit 0.84–0.90）；每 token ≈ 90–100 ms 计算 + **124–193 ms NVMe stall** | `design.md` §15.1.1 |
@@ -610,6 +623,23 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0j. **系统测量 + 按瓶颈排序的第一轮：GPU 空闲降频（GameMode）+ `sample_topk` 的 LDS 直方图。对话结果见 §1.0 的 ledger，不在这里重抄。**
+   **尺子**：`tools/perf_report.py`——热步（`--capture`，全部 expert 驻留）每个 dispatch stage 的忙时对它要流过的权重字节 ÷ `--bw`（230 GB/s，
+   x 上 `wq_b` 实测 ~229）给出地板，按"超出地板"排序；对话（`--chat RUN`）把每 token 拆成 compute / NVMe stall（对 miss × 18,808,832 B ÷ 盘速的地板）/ other。
+   出处由机器记：`tools/provenance.py`、`--record`、`tools/perf_ledger.py`（§1.0）。
+   **瓶颈 1：GPU 等盘时降频。** 对话里 compute 比热步多出 ~14 ms，热步看不见。把每层 MoE 的忙时按"它之前 GPU 空闲了多久"分桶
+   （`bench/results/linux/perf/idle_ramp.py`，输出 `idle_ramp.txt`）：空闲 ≥2 ms 之后 `moe_down` p50 从 ~263 µs 跳到 ~885 µs、
+   其后的 gate/up 也慢一倍；同样的 trace 在 `power_dpm_force_performance_level=high` 下这一跳消失。这是 RADV 自动 DPM 在等 NVMe 的几毫秒里把 sclk 降到 600 MHz。
+   **修法**：`deepmoe serve` 在每个 generate / reheat 请求期间持有一个 Feral GameMode 请求（`core/gamemode.h`），
+   gamemoded 经 polkit 把 DPM 钉在 high，请求结束或进程死亡时还原——不把笔记本的 GPU 永远钉在高频。系统配置见 `build.md` Linux 第 8 条。
+   第一次试 GameMode 的默认配置会**绑核**，盖掉 CCD 亲和性（`perf/gm_single`：other 涨到 ~11 ms），关掉它的 CPU 动作后回到 ~3 ms。
+   **瓶颈 2：`sample_topk` 每 token ~3.5 ms**（对话的 tail 里，热步不采样所以也看不见）：第 2–3 步的全局直方图改成 workgroup 内 LDS 直方图（`groupshared` + `InterlockedAdd`），
+   `--check-topk` 对 CPU 参考 319 步 0 不一致（`perf/topk_check.log`）。
+   **两件一起量一次**（按用户的"全部优化好一次测量"，不做 ABAB）：ledger 的 `all1-single` 行对照改前的 `bench/results/linux/budget/2_single`
+   （`perf_report --chat` 可重算）——decode tok/s、compute、tail、other 都在那两行里。
+   **按瓶颈的下一项**（`perf_report` 的排序）：NVMe 地板本身（命中率 / 容量）> NVMe stall 超出地板的部分 > `wo_b`/`wo_a` 的 K-split（mgt1 批路径**本来就是** K-split，
+   下面第 6 项那句"先让 mgt1 也用 K-split"的前提不成立；`set_attn_ksplit_default` 从没被调用）> MoE gate/up、down 的超出 > barriers。
 
 0i. **Track ST：chunk 级条带化（`DEEPMOE_MIRROR_STRIPE=1`，默认关）——GO：双盘对话 decode 6.33 → 7.39 tok/s（+16.8%，两对），PR #2 已合入。**
    **机制**：D2 的路由按**整个请求**选盘。一个 expert 是两个 run（17,698,816 B weights + 1,110,016 B scales），

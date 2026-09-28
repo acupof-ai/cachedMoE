@@ -160,6 +160,14 @@ web UI 和 `deepmoe serve` 都会自动探测并带上它（`DEEPMOE_MIRROR_AUTO
    `DEEPMOE_PATH_A_CAP`（path A 上限，默认关，NO-GO）。
 7. **CPU 亲和性**：amdgpu 中断落在一个 CCD 上（本机 CPU 29 → CCD1 = 8–15,24–31），引擎线程在另一个 CCD 时热步慢 ~15%。
    `Engine::init` 默认把线程绑到中断所在的 L3 域；`DEEPMOE_CPU_AFFINITY=off` 关闭，或给一个 cpulist。
+8. **GPU 时钟与 GameMode**：RADV 的自动 DPM 在 GPU 空闲 ≳2 ms（等 NVMe）后把 sclk 降到 600 MHz，紧接着的 MoE dispatch 慢 ~3 倍
+   （`bench/results/linux/perf/idle_ramp.txt`）。`deepmoe serve` 在每个 generate / reheat 请求期间持有一个 Feral GameMode 请求
+   （`core/gamemode.h`，`dlopen("libgamemode.so.0")`，没有就是空操作；`DEEPMOE_GAMEMODE=0` 关掉），
+   请求结束或进程死掉时 gamemoded 把 `power_dpm_force_performance_level` 还原成 `auto`。需要的系统配置（本机已配）：
+   `pacman -S gamemode`，用户在 `gamemode` 组；**`/etc/gamemode.ini`**（GameMode 只从 /etc 读 `[gpu]`）：
+   `[gpu] apply_gpu_optimisations=accept-responsibility`、`gpu_device=1`、`amd_performance_level=high`；
+   **`~/.config/gamemode.ini`** 关掉 GameMode 自己的 CPU 动作——`[cpu] pin_cores=no park_cores=no`、`[general] renice=0 ioprio=off
+   softrealtime=off disable_splitlock=0`——否则它的核心绑定会盖掉第 7 条的 CCD 亲和性（对话每 token 的 other 从 ~3 ms 涨到 ~11 ms）。
 
 ## Linux 交叉编译（CI）
 

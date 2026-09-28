@@ -1,0 +1,19 @@
+{
+ "comment": "first 2 turns of long_turns.json (perf_report chat trace)",
+ "turns": [
+  {
+   "label": "zh essay",
+   "user": "请写一篇三百字左右的短文，谈谈城市里的夜跑为什么越来越流行，以及夜跑时需要注意的安全问题。",
+   "temperature": 1.0,
+   "top_p": 0.95,
+   "seed": 41001,
+   "max_tokens": 400
+  },
+  {
+   "label": "zh follow-up",
+   "user": "把上面的短文压缩成五条要点，每条不超过二十个字。",
+   "seed": 41002,
+   "max_tokens": 200
+  }
+ ]
+}

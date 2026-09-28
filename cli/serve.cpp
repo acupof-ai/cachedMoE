@@ -41,6 +41,7 @@
 #include <filesystem>
 #include <format>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -54,6 +55,7 @@
 #endif
 
 #include "core/config.h"
+#include "core/gamemode.h"
 #include "core/json.h"
 #include "core/json_write.h"
 #include "core/log.h"
@@ -418,6 +420,9 @@ int cmd_serve(int argc, char** argv) {
         if (!doc || !doc->is_object()) { emit_error("bad request: not a JSON object"); continue; }
         const std::string op = doc->string_or("op", "");
         const std::string session = doc->string_or("session", pool.active());
+        // The GPU at full clock for exactly as long as a reply takes (core/gamemode.h).
+        std::optional<GameModeScope> gpu_busy;
+        if (op == "generate" || op == "generate_multi" || op == "reheat") gpu_busy.emplace();
         if (op == "quit") break;
         if (op == "reset") {
             if (!switch_to(session)) continue;

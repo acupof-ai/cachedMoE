@@ -14,6 +14,7 @@ continuation), with `--profile` and `DEEPMOE_ROUTE_DUMP` on. The out directory g
     route.bin       the engine's routing dump (runtime/engine.h), one record per step
     turns.json      chat.py's per-turn stats plus the step layout of each request
     transcript.md   the conversation
+    provenance.json commit, dirty files, exe / shader hashes, DEEPMOE_* env (tools/provenance.py)
 
 `tools/hitrate_sim.py OUT` turns them into the per-128-step curve and replays the
 same routing through tools/cache_sim.py's LRU.
@@ -31,6 +32,7 @@ sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "tools"))
 import chat  # noqa: E402
+import provenance  # noqa: E402
 
 
 class BenchServer(chat.Server):
@@ -63,6 +65,7 @@ class BenchServer(chat.Server):
         self.events = open(os.path.join(out_dir, "events.jsonl"), "w", encoding="utf-8", newline="\n")
         self.t0 = time.time()
         self.log = open(os.path.join(out_dir, "serve.log"), "wb")
+        provenance.write(out_dir, exe=cmd[0], env=env)
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=self.log, bufsize=0, env=env)
         self.cmd = cmd

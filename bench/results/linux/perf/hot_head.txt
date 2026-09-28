@@ -1,0 +1,37 @@
+capturing: /home/chenkailun/projects/cachedMoE/build/deepmoe run --model /home/chenkailun/models/DeepSeek-V4.1-Flash --steps 1 --warm 20 --trace /tmp/tmpjm27xsqf/hot.bin
+== hot step (hot.bin, pass 20 of 21, 821 dispatches, shared-early on)
+   GPU span 75.41 ms = busy 72.58 + barriers 2.83 + host-late 0.00;  weight floor at 230 GB/s: 56.64 ms  -> 18.77 ms above the floor
+   stage                  cls        ms/tok       MB   GB/s  floor  excess  %ceil
+   wo_b                   attention   10.28   1677.7    163   7.29    2.98    71%
+   moe_gateup             moe         15.64   3008.1    192  13.08    2.56    84%
+   moe_down               moe         10.70   1975.9    185   8.59    2.11    80%
+   wo_a                   attention    7.72   1342.2    174   5.84    1.88    76%
+   moe_shared_early       moe          5.17    943.7    183   4.10    1.06    79%
+   sparse_attn.score      attention    0.91      0.0      0   0.00    0.91     0%
+   sparse_attn.combine    attention    0.85      0.0      0   0.00    0.85     0%
+   gate.topk              attention    0.54      0.0      0   0.00    0.54     0%
+   wkv.finish             attention    0.48      0.0      0   0.00    0.48     0%
+   indexer.weights        ced          0.26      2.6     10   0.01    0.25     4%
+   gate.score             attention    0.92    157.4    170   0.68    0.24    74%
+   mega_mhc.final.ffn     attention    0.22      0.0      0   0.00    0.22     0%
+   mega_mhc.final         tail         0.21      0.0      0   0.00    0.21     0%
+   wq_a                   attention    1.35    262.1    195   1.14    0.21    85%
+   (19 more stages: 17.33 ms busy, 1.43 excess)
+   stages that read no weights: 3.83 ms;  barriers: 2.83 ms
+
+== chat (bench/results/linux/stripe/2_stripe1)
+   decode 7.487 tok/s = 133.6 ms/token, end-to-end 6.596 tok/s, hit 0.9430 (13.7 misses/token)
+   compute 89.4 ms (attn 38.8 moe 36.3 tail 10.2 engram 4.1)  NVMe stall 41.9 ms (floor 31.0 at 8.3 GB/s)  other 2.2
+   vs hot step: compute in chat 89.4 vs GPU span 75.4 ms -> 14.0 ms of it is the chat's own (gate waits, cold L2)
+
+== where the time above the floors is (largest first)
+     31.01 ms  NVMe floor itself (fewer misses: cache size / hit)
+     10.84 ms  NVMe stall above its bandwidth floor
+      2.98 ms  kernel wo_b (attention)
+      2.83 ms  barriers + host-late on the hot step
+      2.56 ms  kernel moe_gateup (moe)
+      2.11 ms  kernel moe_down (moe)
+      1.88 ms  kernel wo_a (attention)
+      1.06 ms  kernel moe_shared_early (moe)
+      0.91 ms  kernel sparse_attn.score (attention)
+      0.85 ms  kernel sparse_attn.combine (attention)
