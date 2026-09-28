@@ -1455,6 +1455,9 @@ DEEPMOE_TEST(gpu_moe, the_fp8_shared_expert_runs_in_the_same_dispatches) {
     const Case cases[] = {
         {{1, 32, 32, 0, 0, 1, 0, 0, 1}, "M=1, global x", 1e-3},
         {{1, 16, 32, 0, 0, 2, 0, 0, 1}, "M=1, 16 lanes, 2 rows", 1e-3},
+        {{1, 32, 32, 3, 0, 1, 0, 0, 1}, "M=1, bit-placement decode", 1e-3},
+        {{1, 32, 32, 3, 0, 1, 0, 3, 1, 0, 16, 2}, "M=1, bit-placement, the RADV engine shape", 1e-3},
+        {{6, 32, 32, 3, 0, 1, 0, 0, 1}, "M=6, bit-placement decode", 1e-3},
         {{6, 16, 32, 0, 0, 2, 1, 0, 1}, "M=6, LDS tile (fp8 keeps global x)", 1e-3},
         {{1, 32, 32, 0, 0, 1, 0, 1, 1}, "M=1, h fp8-quantised in dispatch B", 1e-3},
     };

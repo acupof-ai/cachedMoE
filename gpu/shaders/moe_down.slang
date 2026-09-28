@@ -442,6 +442,14 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         if (isFp8) {
                             const uint a = (w < 2) ? w2q[r][2 * w]     : w2r[r][2 * w - 4];
                             const uint b = (w < 2) ? w2q[r][2 * w + 1] : w2r[r][2 * w - 3];
+                            if (DecodeMode == 3) {
+                                // Scaled by 2^-8; `esh` below puts it back.
+                                [unroll] for (uint k = 0; k < 2; ++k) {
+                                    const uint ba = fp8_pair_bits(a, k), bb = fp8_pair_bits(b, k);
+                                    d[r][k]     = f16tof32(ba & 0xFFFFu); d[r][k + 2]     = f16tof32(ba >> 16);
+                                    d[r][4 + k] = f16tof32(bb & 0xFFFFu); d[r][4 + k + 2] = f16tof32(bb >> 16);
+                                }
+                            } else
                             [unroll] for (uint j = 0; j < 4; ++j) {
                                 d[r][j]     = sFp8[(a >> (8 * j)) & 0xFFu];
                                 d[r][4 + j] = sFp8[(b >> (8 * j)) & 0xFFu];
@@ -467,9 +475,10 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             for (uint r = 0; r < RowsPerLane; ++r) p[r][m] += d[r][j] * hv[j];
                     }
                 }
-                // DecodeMode 3's pair path (the generic loop above) leaves the fp4
-                // sums 2^-14 low.
-                const int esh = asI8 ? 1 : (DecodeMode == 3 && !packed && !isFp8) ? -14 : 0;
+                // DecodeMode 3's pair paths (the generic loop above) leave the fp4
+                // sums 2^-14 low and the fp8 ones 2^-8.
+                const int esh = asI8 ? 1 : (DecodeMode == 3 && !packed && !isFp8) ? -14
+                              : (DecodeMode == 3 && isFp8) ? -8 : 0;
                 // `hs[m]` is 1 unless the generic path above left h on its fp8
                 // grid, in which case this is where the block scale lands.
                 const bool folded = (HQuant != 0) && !packed && !asI8;

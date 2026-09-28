@@ -1,0 +1,34 @@
+capturing: /home/chenkailun/projects/cachedMoE/build/deepmoe run --model /home/chenkailun/models/DeepSeek-V4.1-Flash --steps 1 --warm 20 --trace /tmp/tmpr4yrc2d4/hot.bin
+== hot step (hot.bin, median of the last 10 of 21 passes, 1021 dispatches, shared-early on)
+   GPU span 69.61 ms (passes 68.18..72.41) = busy 65.89 + barriers 3.82 + host-late 0.00;  weight floor at 230 GB/s: 56.64 ms  -> 12.97 ms above the floor
+   stage                  cls        ms/tok       MB   GB/s  floor  excess  %ceil
+   moe_gateup             moe         14.33   3008.1    210  13.08    1.25    91%
+   moe_shared_early       moe          5.27    943.7    179   4.10    1.17    78%
+   moe_down               moe          9.49   1975.9    208   8.59    0.90    91%
+   wo_b.ksplit            attention    8.09   1677.7    207   7.29    0.80    90%
+   wo_a.ksplit            attention    6.37   1342.2    211   5.84    0.53    92%
+   gate.topk              attention    0.36      0.0      0   0.00    0.36     0%
+   wkv.finish             attention    0.28      0.0      0   0.00    0.28     0%
+   indexer.weights        ced          0.28      2.6      9   0.01    0.27     4%
+   gate.score             attention    0.95    157.4    166   0.68    0.27    72%
+   wq_b                   attention    7.54   1677.7    222   7.29    0.25    97%
+   attn_cm.score          attention    0.24      0.0      0   0.00    0.24     0%
+   wq_a                   attention    1.38    262.1    190   1.14    0.24    83%
+   mega_mhc.final.ffn     attention    0.23      0.0      0   0.00    0.23     0%
+   mega_mhc.mix           attention    0.57     78.6    139   0.34    0.22    60%
+   (24 more stages: 10.22 ms busy, 1.96 excess)
+   stages that read no weights: 2.46 ms;  barriers: 3.82 ms
+
+== where the time above the floors is (largest first)
+      3.82 ms  barriers + host-late on the hot step
+      1.25 ms  kernel moe_gateup (moe)
+      1.17 ms  kernel moe_shared_early (moe)
+      0.90 ms  kernel moe_down (moe)
+      0.80 ms  kernel wo_b.ksplit (attention)
+      0.53 ms  kernel wo_a.ksplit (attention)
+      0.36 ms  kernel gate.topk (attention)
+      0.28 ms  kernel wkv.finish (attention)
+      0.27 ms  kernel indexer.weights (ced)
+      0.27 ms  kernel gate.score (attention)
+
+recorded as 'hot-dec3-attncm' in /home/chenkailun/projects/cachedMoE/bench/results/perf_ledger.jsonl

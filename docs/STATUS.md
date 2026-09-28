@@ -64,6 +64,8 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 1 | hot-0da928f | `0da928fb96+3 dirty (7d244e782a1305c4) †` | – | 6% | **78.31** (77.9–79.1) | 56.64 | 2.88 | moe_gateup 3.31, wo_b 3.29, moe_down 2.55, wo_a 2.15 |
 | 2 | hot-0da928f-gamemoderun | `0da928fb96+3 dirty (7d244e782a1305c4) †` | – | 6% | **79.23** (78.5–81.2) | 56.64 | 2.78 | moe_gateup 3.66, wo_b 3.24, moe_down 2.83, wo_a 2.18 |
 | 8 | hot-606565d | `606565dc6f+2 dirty (73e07a223a33085f)` | – | 6% | **73.85** (73.3–74.9) | 43.51 | 3.81 | wo_b.ksplit 8.01, wo_a.ksplit 6.36, moe_gateup 3.14, moe_down 2.55 |
+| 13 | hot-dec3 | `2f26b972a3` | – | 5.5% | **71.31** (69.3–73.3) | 56.64 | 3.88 | moe_gateup 1.37, moe_shared_early 1.19, sparse_attn.combine 1.02, moe_down 1.01 |
+| 14 | hot-dec3-attncm | `2f26b972a3+1 dirty (c8e6dd5fc4fb6cc6)` | ATTN_CM=1 | 10.8% | **69.61** (68.2–72.4) | 56.64 | 3.82 | moe_gateup 1.25, moe_shared_early 1.17, moe_down 0.90, wo_b.ksplit 0.80 |
 
 `†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。ms/miss 是 decode 步（hit > 0.8）的 NVMe stall 对该步 miss 数的回归斜率：同配置复跑只动 ~1%，比 tok/s 稳得多，IO 改动看它。disk writes 是运行期间所有 NVMe 的写入量（引擎自己只写几 MB 日志；>500 MB 标 ⚠：有别的程序在写同一块盘，IO 数字不可信）。bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。
 <!-- perf-ledger:end -->
@@ -665,6 +667,10 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **A 191 → 212 GB/s、B 161 → 203、一对 0.848 → 0.710 ms**；M=6 验证批 0.841 → 0.697（`bench/results/linux/moe_dec3/`）。
    闸：`gpu_moe` 12/12（oracle 变体里 dec3 的 cos 0.999999961、max|dy| 与 dec1 同值）；**`l3_ppl` off 0.621814 / 59/64，与 dec1 逐位相同**。
    `runtime/moe_bridge.cpp` 在 RADV 上 `decode_mode = 3`（Windows 驱动仍是常量表 dec0，未测 dec3）；`DEEPMOE_MOE_DEC=1` 退回。
+   **热步**（ledger `hot-dec3`）：span 73.85 → **71.31 ms**，`moe_gateup` 16.2 → 14.45 ms（91% 天花板）、`moe_down` 11.1 → 9.6（89%）——引擎里省 3.3 ms，
+   不是 kernel_bench 那 5.5：bench 的一对里有 fp8 共享专家槽，引擎把它放在 shared-early 里单独跑。开 coopmat 注意力再 −1.7（`hot-dec3-attncm` 69.61 ms，1021 dispatch）。
+   **同一招用在 fp8（E4M3 放进 fp16 位 = 值 × 2⁻⁸，`fp8_pair_bits`）**：`gpu_moe` fp8 变体全过、`l3_ppl` 仍 0.621814 / 59/64；bench 一对 0.710 → 0.687，
+   但**引擎里 `moe_shared_early` 5.29 → 5.37 ms，看不出来**（那一段三个小 dispatch，不受 ALU 限制；这一轮所有 stage 都慢 1–2%，Tctl 94 °C）。留着（逐位相同、指令更少），不记收益。
 
 0k. **GPU 模型 → decode 注意力改成两次 coopmat GEMM（`decode_attn_cm.slang`，`DEEPMOE_ATTN_CM=1`，默认关）：n_kv 640 时 149 → 23.5 µs/层。**
    **怎么找到的**：`tools/gpu_model.py`（`model_probe` 量出的常数 + trace 的 DMGEOM01 几何）把每个 stage 的实测减模型排序，

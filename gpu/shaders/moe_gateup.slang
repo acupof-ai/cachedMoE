@@ -512,6 +512,17 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         const uint b = (w < 2) ? w1q[r][2 * w + 1] : w1r[r][2 * w - 3];
                         const uint c = (w < 2) ? w3q[r][2 * w] : w3r[r][2 * w - 4];
                         const uint e = (w < 2) ? w3q[r][2 * w + 1] : w3r[r][2 * w - 3];
+                        if (DecodeMode == 3) {
+                            // Scaled by 2^-8; `esh` below puts it back.
+                            [unroll] for (uint k = 0; k < 2; ++k) {
+                                const uint ba = fp8_pair_bits(a, k), bb = fp8_pair_bits(b, k);
+                                const uint bc = fp8_pair_bits(c, k), be = fp8_pair_bits(e, k);
+                                d1[r][k]     = f16tof32(ba & 0xFFFFu); d1[r][k + 2]     = f16tof32(ba >> 16);
+                                d1[r][4 + k] = f16tof32(bb & 0xFFFFu); d1[r][4 + k + 2] = f16tof32(bb >> 16);
+                                d3[r][k]     = f16tof32(bc & 0xFFFFu); d3[r][k + 2]     = f16tof32(bc >> 16);
+                                d3[r][4 + k] = f16tof32(be & 0xFFFFu); d3[r][4 + k + 2] = f16tof32(be >> 16);
+                            }
+                        } else
                         [unroll] for (uint j = 0; j < 4; ++j) {
                             d1[r][j]     = sFp8[(a >> (8 * j)) & 0xFFu];
                             d1[r][4 + j] = sFp8[(b >> (8 * j)) & 0xFFu];
@@ -550,10 +561,11 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             }
             // 2*E2M1 is the exact int8, so the int8 path's block exponent is
             // one lower than the fp4 path's.
-            // DecodeMode 3's pair path (the generic loop above, i.e. every XMode
-            // but 4-6) leaves the fp4 sums 2^-14 low.
+            // DecodeMode 3's pair paths (the generic loop above: every XMode but
+            // 4-6 for fp4, every XMode for fp8) leave the sums 2^-14 / 2^-8 low.
             const int esh = ((XMode == 5 || XMode == 6) && !isFp8) ? 1
-                          : (DecodeMode == 3 && XMode != 4 && !isFp8) ? -14 : 0;
+                          : (DecodeMode == 3 && XMode != 4 && !isFp8) ? -14
+                          : (DecodeMode == 3 && isFp8) ? -8 : 0;
             for (uint r = 0; r < RowsPerLane; ++r)
                 for (uint m = 0; m < kLiveM; ++m) {
                     accGate[r][m] += ldexp(p1[r][m], e1[r] - esh);

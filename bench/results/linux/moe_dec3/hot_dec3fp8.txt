@@ -1,0 +1,32 @@
+capturing: /home/chenkailun/projects/cachedMoE/build/deepmoe run --model /home/chenkailun/models/DeepSeek-V4.1-Flash --steps 1 --warm 20 --trace /tmp/tmp8do9p4a3/hot.bin
+== hot step (hot.bin, median of the last 10 of 21 passes, 901 dispatches, shared-early on)
+   GPU span 72.51 ms (passes 71.70..73.89) = busy 68.64 + barriers 3.86 + host-late 0.01;  weight floor at 230 GB/s: 56.64 ms  -> 15.87 ms above the floor
+   stage                  cls        ms/tok       MB   GB/s  floor  excess  %ceil
+   moe_gateup             moe         14.53   3008.1    207  13.08    1.45    90%
+   moe_shared_early       moe          5.37    943.7    176   4.10    1.27    76%
+   moe_down               moe          9.73   1975.9    203   8.59    1.14    88%
+   sparse_attn.combine    attention    1.14      0.0      0   0.00    1.14     0%
+   sparse_attn.score      attention    1.07      0.0      0   0.00    1.07     0%
+   wo_b.ksplit            attention    8.12   1677.7    207   7.29    0.83    90%
+   wo_a.ksplit            attention    6.41   1342.2    209   5.84    0.57    91%
+   gate.topk              attention    0.41      0.0      0   0.00    0.41     0%
+   wq_b                   attention    7.63   1677.7    220   7.29    0.34    96%
+   wkv.finish             attention    0.32      0.0      0   0.00    0.32     0%
+   gate.score             attention    0.99    157.4    158   0.68    0.31    69%
+   indexer.weights        ced          0.31      2.6      9   0.01    0.29     4%
+   mega_mhc.mix           attention    0.62     78.6    127   0.34    0.28    55%
+   mega_mhc.final.ffn     attention    0.27      0.0      0   0.00    0.27     0%
+   (21 more stages: 11.54 ms busy, 2.13 excess)
+   stages that read no weights: 4.37 ms;  barriers: 3.86 ms
+
+== where the time above the floors is (largest first)
+      3.87 ms  barriers + host-late on the hot step
+      1.45 ms  kernel moe_gateup (moe)
+      1.27 ms  kernel moe_shared_early (moe)
+      1.14 ms  kernel moe_down (moe)
+      1.14 ms  kernel sparse_attn.combine (attention)
+      1.07 ms  kernel sparse_attn.score (attention)
+      0.83 ms  kernel wo_b.ksplit (attention)
+      0.57 ms  kernel wo_a.ksplit (attention)
+      0.41 ms  kernel gate.topk (attention)
+      0.34 ms  kernel wq_b (attention)

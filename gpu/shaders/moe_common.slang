@@ -77,6 +77,18 @@ uint fp4_pair_bits(uint pw, uint k) {
     return ((s << 9) & 0x0E000E00u) | ((s << 12) & 0x80008000u);
 }
 
+// DecodeMode 3's fp8 half: E4M3 `s eeee mmm` placed into fp16 bits -- the sign
+// at bit 15, `eeee mmm` at bits 13..7 -- is the value times 2^-8, again for
+// the normal codes and the subnormals alike (biases 7 and 15, and fp16's
+// subnormal exponent -14 is E4M3's -6 minus 8). Bytes k and k+2 of a word sit
+// at the same offset in its two halves: pair 0 is bytes (0, 2), pair 1 bytes
+// (1, 3). The weights never hold E4M3's NaN code (0x7F / 0xFF), which this
+// would turn into 1.98 * 2^-8 instead of a NaN.
+uint fp8_pair_bits(uint w, uint k) {
+    return (k == 0u) ? (((w << 7) & 0x3F803F80u) | ((w << 8) & 0x80008000u))
+                     : (((w >> 1) & 0x3F803F80u) | (w & 0x80008000u));
+}
+
 // The three decode variants design §7.1 rule 5 asks to A/B. DecodeMode 3 uses
 // fp4_pair_bits where the kernel has a pair path and the arithmetic decode
 // everywhere else.

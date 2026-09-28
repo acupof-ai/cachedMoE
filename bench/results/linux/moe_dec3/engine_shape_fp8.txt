@@ -1,0 +1,51 @@
+device: AMD Radeon 8060S Graphics (RADV STRIX_HALO)  subgroup 64 (32..64)  timestampPeriod 10.0 ns
+path A device-local|host-visible: 28 expert slots, 526.6 MB of slab
+filled 28 experts (526.6 MB) straight into A device-local|host-visible memory in 0.130 s = 4.04 GB/s NVMe -> GPU
+filled 4 fp8 shared experts (141.7 MB, 11796480 + 11520 B per matrix) in 0.083 s = 1.71 GB/s
+--only "fp8 engine shape": 6 variants
+
+== raw-read ceiling before the sweep (design section 7.1 rule 2) ==
+    160 workgroups  232.3 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+    320 workgroups  232.0 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+    640 workgroups  230.6 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+   1280 workgroups  228.3 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+
+== MoE kernels (design section 7.9), 2 sweeps x 3 measurements x 32 iterations ==
+  sweep 1/2 done
+  sweep 2/2 done
+
+== raw-read ceiling after the sweep (design section 7.1 rule 2) ==
+    160 workgroups  234.0 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+    320 workgroups  233.7 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+    640 workgroups  225.9 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+   1280 workgroups  227.9 GB/s over 524.3 MB x 8 passes (gpu timestamps)
+
+variant                              A GB/s   B GB/s  A+B GB/s   %ceil    A ms    B ms  A+B ms  ms/tok
+-------------------------------------------------------------------------------------------------------------
+-- fp8 engine shape --
+M1 L32 R1 sg32 dec0 hfp16 xglob B:L16R2 hqP fp8   108.9    110.0     114.1      49   0.908   0.449   1.299   1.299
+M1 L32 R1 sg32 dec1 hfp16 xglob B:L16R2 hqP fp8   193.6    167.9     183.2      78   0.510   0.294   0.809   0.809
+M1 L32 R1 sg32 dec3 hfp16 xglob B:L16R2 hqP fp8   214.8    210.2     215.7      92   0.460   0.235   0.687   0.687
+M6 L32 R1 sg32 dec0 hfp16 xglob B:L16R2 hqP fp8   108.4    100.6     106.8      46   0.911   0.491   1.388   0.231
+M6 L32 R1 sg32 dec1 hfp16 xglob B:L16R2 hqP fp8   199.3    177.5     188.8      81   0.496   0.278   0.785   0.131
+M6 L32 R1 sg32 dec3 hfp16 xglob B:L16R2 hqP fp8   215.3    211.8     212.6      91   0.459   0.233   0.697   0.116
+
+raw-read ceiling 232.3 GB/s before the sweep, 234.0 GB/s after (the spread is thermal drift, not kernel behaviour);
+per-dispatch launch + global barrier 0.56 us (design section 3.4 assumed 5-20)
+
+best variant per verify batch size (fp4 routed experts only):
+best M=1 variant  at 0.0 GB/s = 0% of raw read (design section 15 P2 wants >= 80%)
+best M=6 variant  at 0.0 GB/s effective (0.000 ms for six tokens = 0.000 ms/token)
+
+== partial dispatch (design section 7.9) ==
+  M=1  M1 L32 R1 sg32 dec0 hfp16 xglob  one pair over 7 slots 0.630 ms (A 0.428 + B 0.200 = 0.629)
+        A 3 + 4 slots  0.192 + 0.250 = 0.442 ms (+0.014 vs A whole)
+        B 3 + 4 slots  0.088 + 0.117 = 0.205 ms (+0.005 vs B whole)
+        two A+B pairs      0.281 + 0.367 = 0.648 ms  (+0.018 ms, +2.8%)
+        split A, one B     0.642 ms  (+0.012 ms, +1.9%)
+  M=6  M6 L16 R2 sg32 dec0 hfp16 xgf16/ldsi8  one pair over 7 slots 0.709 ms (A 0.491 + B 0.220 = 0.710)
+        A 3 + 4 slots  0.229 + 0.281 = 0.510 ms (+0.019 vs A whole)
+        B 3 + 4 slots  0.099 + 0.130 = 0.229 ms (+0.010 vs B whole)
+        two A+B pairs      0.326 + 0.411 = 0.737 ms  (+0.028 ms, +4.0%)
+        split A, one B     0.729 ms  (+0.020 ms, +2.8%)
+wrote bench/results/linux/moe_dec3/engine_shape_fp8.csv
