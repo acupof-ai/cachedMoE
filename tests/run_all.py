@@ -123,6 +123,8 @@ def main() -> int:
     for label, cmd in (
         ("tools/trace_timeline.py", [PY, str(ROOT / "tools" / "trace_timeline.py"), "--self-test"]),
         ("tests/mutate.py --list", [PY, str(ROOT / "tests" / "mutate.py"), "--list"]),
+        # STATUS 1.0's measured table is rendered from the ledger, never typed.
+        ("tools/perf_ledger.py --check", [PY, str(ROOT / "tools" / "perf_ledger.py"), "--check"]),
     ):
         t0 = time.time()
         rc, out = run(cmd)
