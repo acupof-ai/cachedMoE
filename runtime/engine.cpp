@@ -1036,6 +1036,21 @@ Result<void> Engine::init_gpu() {
         constexpr uint64_t kPathBAutoCeiling = 30ull << 30;
         b_cache = std::min(b_cache, kPathBAutoCeiling);
         uint64_t want = a_cache + b_cache;
+        // RADV with the UMA carve-out at its 512 MB minimum (the x box since
+        // 2026-09-28, STATUS §7 0h): both Vulkan heaps are the GTT -- RADV
+        // splits ttm.pages_limit 2:1 into a "device-local" 75 GiB and a host
+        // 37.5 GiB -- so the cache is bounded by their SUM, not by heap A. The
+        // 8-turn chat at 5,500 slots (96.3 GiB) peaked at 107 of 112 GiB GTT and
+        // ran 6.19 tok/s against auto's 5.78 at 5,000; 4 GiB of GTT slack on top
+        // of the pinned tensors and kPathAOther lands auto on that point.
+        const bool radv = device_.caps().driver_id == VK_DRIVER_ID_MESA_RADV;
+        if (radv) {
+            uint64_t heaps = 0;
+            for (const gpu::HeapInfo& h : device_.caps().heaps) heaps += h.bytes;
+            constexpr uint64_t kGttSlack = 4ull << 30;
+            const uint64_t other = pinned + kPathAOther + kGttSlack;
+            want = heaps > other ? heaps - other : 0;
+        }
         if (avail_commit) {
             const uint64_t commit_cap =
                 avail_commit > pinned + kCommitMargin ? avail_commit - pinned - kCommitMargin : 0;
@@ -1048,14 +1063,21 @@ Result<void> Engine::init_gpu() {
         // above 5,000 slots. Cap it with the MEASURED number and log both, so a
         // startup log always says whether the cap bit (engine.h, kAutoSlotCap).
         const uint64_t slot_bytes  = layout::kExpertSlotBytes;
-        const uint32_t slot_cap    = auto_slot_cap();
+        // kAutoSlotCap is the Windows driver losing the device above 5,000
+        // slots; RADV ran 5,500 clean, so there only an explicit
+        // DEEPMOE_CACHE_SLOT_CAP applies.
+        const char*    cap_env     = std::getenv("DEEPMOE_CACHE_SLOT_CAP");
+        const uint32_t slot_cap    = (radv && !(cap_env && *cap_env)) ? 0 : auto_slot_cap();
         const uint64_t from_budget = cache_budget_;
         cache_budget_ = cap_auto_budget(cache_budget_, slot_bytes, slot_cap);
         log_info("engine: cache budget auto -> {} (path A {} after {} pinned, path B {} of "
                  "{} physical free; {} of commit available)",
                  human_bytes(cache_budget_), human_bytes(a_cache), human_bytes(pinned),
                  human_bytes(b_cache), human_bytes(avail_phys), human_bytes(avail));
-        if (slot_cap == 0) {
+        if (slot_cap == 0 && radv) {
+            log_info("engine: RADV: no auto slot cap, budget from the GTT heaps -> {} slots ({})",
+                     budget_slots(from_budget, slot_bytes), human_bytes(from_budget));
+        } else if (slot_cap == 0) {
             log_warn("engine: auto slot cap DISABLED (DEEPMOE_CACHE_SLOT_CAP=0); the budget-derived "
                      "{} slots ({}) are what this run will try to allocate -- above 5,000 slots "
                      "this machine has lost the device on the first submit (STATUS §3 row 59)",

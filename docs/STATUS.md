@@ -698,6 +698,14 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    单测 `io.mirror_error_is_reread_from_the_primary`（FakeBackend 新增 `fail_file`）；变异（`if (false && …)`）⇒ caught。无错时路径逐字不变。
    `tools/web/server.py` 的 `find_mirrors` 在 Linux 上按 `/mnt/*/models/<name>` 等挂载点找同名目录（要求有 manifest），所以 web UI 自动带上外接盘；
    引擎默认仍是单盘，命令行要 `--mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash` 或 `DEEPMOE_MODEL_MIRRORS`。
+   **重启：UMA carve-out 64 GB → 512 MB + `ttm.pages_limit=29360128`（112 GiB GTT），另带 `amdgpu.cwsr_enable=0 gpu_recovery=1 dcdebugmask=0x600`（`/etc/limine-entry-tool.d/z13.conf`）。**
+   系统内存 62 → 124 GB；RADV 把 GTT 按 2:1 报成两个堆：「device-local」75 GiB + host 37.5 GiB。`l3_ppl` off **0.639409 / 58/64 逐位不变**；
+   每 token 计算 attn 38.3 + moe_gpu 36.5 ms，与重启前同量级（cwsr 关掉没看到代价）。auto 从 4,400 槽涨到 5,000（Windows 的 kAutoSlotCap 卡住，预算本身 5,299）：
+   8-turn 单盘 **5.27 → 5.78 tok/s**（hit 0.924 → 0.937，stall ~98 → 81 ms），双盘 5.74 → 6.13（单次，`bench/results/linux/reboot112/`）。
+   `--cache-slots 5500`：6.19 tok/s，hit 0.945，GTT 峰值 107 / 112 GiB，内核无 amdgpu 超时/复位。
+   ⇒ **RADV 的 auto 改为按两个堆之和算：`heaps − pinned − kPathAOther − 4 GiB` = 5,499 槽 / 96.3 GiB，且不套 Windows 的 5,000 槽上限**（`DEEPMOE_CACHE_SLOT_CAP` 显式设置时仍生效）。
+   ABAB 两对、单盘、`long_turns.json`（`reboot112/auto_ab/`）：cap5000 **5.8596 / 5.7898**，auto **6.1217 / 6.0764**——均值 5.8247 → **6.0991 = +4.71%**，两对各 +4.5% / +4.9%；
+   hit 0.9369 → 0.9436，stall 79.8 → 71.9 ms，GTT 峰值 98 → 105 GiB。**GO，Linux 单盘对话基线现为 ~6.10 tok/s**（Windows `m_auto` 5.60）。
 
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。

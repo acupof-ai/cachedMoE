@@ -131,6 +131,10 @@ web UI 自动探测并带上它。外接盘中途掉线时，在飞的读自动�
    GTT 31.7 GiB。Vulkan：heap 1 = 63.5 GiB `DEVICE_LOCAL|HOST_VISIBLE`（path A），heap 0 = 31.7 GiB host。
    Windows 上 path B 能导入 ~110 GB 主机内存；这里 path B 的上限是这 62 GB 减去系统占用。
    asus-armoury 没有暴露 APU 内存属性，改切分只能进 BIOS。
+   **2026-09-28 起已改**：`echo 0 > /sys/class/drm/card1/device/uma/carveout`（512 MB，重启生效，不用进 BIOS）+
+   内核参数 `ttm.pages_limit=29360128 ttm.page_pool_size=29360128`（112 GiB GTT，`/etc/limine-entry-tool.d/z13.conf`，`sudo limine-update`）。
+   现在系统内存 124 GB，Vulkan heap 1 = 75 GiB「device-local」+ heap 0 = 37.5 GiB host，两个都是 GTT；
+   auto 缓存按两堆之和算，5,499 槽 / 96.3 GiB，GTT 峰值 ~105 GiB。上面三行是改之前的状态。
    实际上 RADV 从不拒绝 path A：超出显存堆的部分被 TTM 挪进 GTT，path B 不会被用到。
    强行启用 path B（`DEEPMOE_PATH_A_CAP=on`）会让热步慢 6 倍（userptr 拖慢每次提交），见 STATUS §7 0h。
 2. **path A 不能 O_DIRECT**：RADV 的 `vkMapMemory`（设备本地可见类型）是 DRM BO 的 `VM_PFNMAP` 映射，
