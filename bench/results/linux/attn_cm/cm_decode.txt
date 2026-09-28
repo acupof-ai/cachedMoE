@@ -1,0 +1,128 @@
+[ RUN ] decode.forty_layers_against_the_l3_oracle
+    prompt 64 tokens, decode from position 64, reference 9 tokens
+    (a) one decode step at position 64, probed against L2
+      L0  ffn_norm cos 0.9999334  moe_out cos 0.9997782  gate 6/6
+      L1  ffn_norm cos 0.9998987  moe_out cos 0.9991440  gate 6/6
+      L2  ffn_norm cos 0.9997035  moe_out cos 0.9992988  gate 6/6
+      L13 ffn_norm cos 0.9973783  moe_out cos 0.9974802  gate 6/6
+      L14 ffn_norm cos 0.9979066  moe_out cos 0.9971477  gate 6/6
+      L20 ffn_norm cos 0.9988180  moe_out cos 0.9976416  gate 6/6
+      L39 ffn_norm cos 0.9962810  moe_out cos 0.9997592  gate 6/6
+      7 layers probed: worst ffn_norm cos 0.9962810, worst moe_out cos 0.9971477, 7/7 layers routed to all six of the reference's experts
+      1142.6 ms  attn  30.1  moe  49.0  stall 1033.6  engram 10.3  other 19.6 | experts 0/240 hit, 4514.1 MB from NVMe
+      top1 223 vs 223 MATCH, rho=0.962454 max|dlogit|=5.878e-01 mean=1.875e-01 margin ref 7.1360 ours 7.0220
+    (b) 8 steps teacher-forced on the reference's tokens
+      step 0  in   3006  top1 223 vs 223 MATCH, rho=0.962454 max|dlogit|=5.878e-01 mean=1.875e-01 margin ref 7.1360 ours 7.0220
+        71.3 ms  attn  31.7  moe  24.7  stall   0.1  engram  3.6  other 11.2 | experts 240/240 hit, 0.0 MB from NVMe
+        ours, not loaded: cmp_kv worst cos 0.9998952 (L20) over 38 layers, top-k 40/40 layers identical
+      step 1  in    223  top1 18 vs 18 MATCH, rho=0.982875 max|dlogit|=5.226e-01 mean=1.668e-01 margin ref 6.3644 ours 6.2806
+      1062.6 ms  attn  32.8  moe  49.6  stall 953.9  engram 13.1  other 13.2 | experts 20/240 hit, 4137.9 MB from NVMe
+        ours, not loaded: cmp_kv worst cos 0.9991290 (L20) over 38 layers, top-k 40/40 layers identical
+      step 2  in     18  top1 16 vs 16 MATCH, rho=0.957372 max|dlogit|=7.284e-01 mean=2.081e-01 margin ref 6.4543 ours 6.2260
+      1038.4 ms  attn  32.0  moe  48.6  stall 931.1  engram 13.3  other 13.4 | experts 36/240 hit, 3837.0 MB from NVMe
+        ours, not loaded: cmp_kv worst cos 0.9989848 (L20) over 38 layers, top-k 40/40 layers identical
+      step 3  in     16  top1 18 vs 18 MATCH, rho=0.838370 max|dlogit|=1.742e+00 mean=7.850e-01 margin ref 6.8347 ours 6.5564
+       954.2 ms  attn  32.8  moe  48.0  stall 846.9  engram 14.6  other 11.8 | experts 48/240 hit, 3611.3 MB from NVMe
+        ours, not loaded: cmp_kv worst cos 0.9989834 (L20) over 38 layers, top-k 40/40 layers identical
+      step 4  in     18  top1 201 vs 201 MATCH, rho=0.965980 max|dlogit|=4.067e-01 mean=1.525e-01 margin ref 0.5145 ours 0.5896
+       969.9 ms  attn  32.3  moe  48.0  stall 873.5  engram  4.3  other 11.7 | experts 41/240 hit, 3743.0 MB from NVMe
+        ours, not loaded: cmp_kv worst cos 0.9989017 (L20) over 38 layers, top-k 40/40 layers identical
+      step 5  in    201  top1 1 vs 1 MATCH, rho=0.939057 max|dlogit|=6.945e-01 mean=2.520e-01 margin ref 1.8560 ours 2.0257
+       777.3 ms  attn  34.7  moe  46.6  stall 674.9  engram 12.2  other  8.8 | experts 88/240 hit, 2858.9 MB from NVMe
+        ours, not loaded: cmp_kv worst cos 0.9987922 (L20) over 38 layers, top-k 40/40 layers identical
+      step 6  in      1  top1 1 vs 201 DIFFER, rho=0.595009 max|dlogit|=2.618e+00 mean=9.317e-01 margin ref 0.9485 ours 0.1018
+        DIVERGED at a reference margin of 0.9485
+      1078.7 ms  attn  32.1  moe  46.6  stall 973.8  engram 11.7  other 14.5 | experts 28/240 hit, 3987.5 MB from NVMe
+        ours, not loaded: cmp_kv worst cos 0.9986377 (L20) over 38 layers, top-k 40/40 layers identical
+      step 7  in    201  top1 45324 vs 61 DIFFER, rho=0.829716 max|dlogit|=2.751e+00 mean=5.977e-01 margin ref 1.9522 ours 0.2091
+        DIVERGED at a reference margin of 1.9522
+       937.4 ms  attn  33.4  moe  48.5  stall 831.1  engram 13.2  other 11.1 | experts 52/240 hit, 3536.1 MB from NVMe
+        ours, not loaded: cmp_kv worst cos 0.9984263 (L20) over 38 layers, top-k 40/40 layers identical
+      teacher-forced: 6/8 tokens match (design 12 L3 asks for 8)
+  FAIL /home/chenkailun/projects/cachedMoE/tests/test_decode.cpp:321
+       CHECK failed: forced_match * 8 >= st->steps() * 7
+    (c) 8 steps free-running
+      step 0  in   3006 ->    223 (reference    223) match margin 7.0220
+      step 1  in    223 ->     18 (reference     18) match margin 6.2806
+      step 2  in     18 ->     16 (reference     16) match margin 6.2260
+      step 3  in     16 ->     18 (reference     18) match margin 6.5564
+      step 4  in     18 ->    201 (reference    201) match margin 0.5896
+      step 5  in    201 ->      1 (reference      1) match margin 2.0257
+      step 6  in      1 ->      1 (reference    201) DIFFER margin 0.1018
+      step 7  in      1 ->      0 (reference     61) DIFFER margin 3.7823
+      free-running: 6/8 tokens match before divergence (design 12 L3 asks for 8)
+model     deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+weights   48 shards, 475.25 GiB (direct read, no repack)
+io        io_uring
+          io: 8976 req (8976 done, 0 failed, 0 cancelled), 63200 chunks, 67507566048 / 67507585024 bytes, busy 18.822 s, eff 3.59 GB/s, mean lat 438.759 ms, peak QD 8 / 32.0 MiB
+  p0_blocking     6130 req  54978.4 MiB
+  p2_engram       1632 req  6.5 MiB
+  p3_backfill     1214 req  9395.3 MiB
+  P0: 6130 req, 54978.4 MiB, lat mean 12.46 / p50 12.08 / p95 25.02 / max 93.58 ms  (queue wait 8.77 + service 3.68)
+  P0: first-of-burst 632 at 1.37 ms, behind 5498 at 13.73 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 6.69
+  dispatcher: 60852 iters, issue 0.06 s / poll 18.71 s / handle 0.03 s (callbacks 0.01 s, 8976 at 0.8 us mean)
+  dispatcher: Backend::submit 0.20 s over 63200 chunks, mean 3.2 us, max 0.92 ms  <- synchronous, on the only issuing thread
+  dispatcher: handle is 0.1% of the non-waiting loop; refill gap 0.4 us mean over 55088 reaps
+pinned    884 tensors, 9.17 GiB in 10 regions
+store     expert store: 400 slots (400 resident, 0 filling, 0 free, 0 pinned)  lookups 4080 hits 1015 (0.249)  fills 3065/3065 ok  runs 6130/6130  evictions 2665 (+0 guard-blocked)  path A hits 1015 / B 0 (1.0000 A)  fills A 3065 / B 0
+planner   planner: 680 layers, 4080 requests (1015 hits, 3065 misses, 0.249), 2665 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 632 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped
+gpu       AMD Radeon 8060S Graphics (RADV STRIX_HALO)
+LOADED    the state the prompt left behind, from /home/chenkailun/projects/cachedMoE/tests/data/l3: the window KV, the compressed KV cache, the indexer key cache and the compressor's carried group, after 64 prompt tokens. Every per-step tensor is ours (design 7.4)
+    (d) slow prefill: 64 prompt tokens through the decode path
+      64 tokens, next token 3006 (reference 3006) MATCH, margin 3.5462
+      prefill logits: top1 3006 vs 3006 MATCH, rho=0.952289 max|dlogit|=1.594e+00 mean=3.359e-01 margin ref 4.0429 ours 3.5462
+      L39 window KV by prompt position:  p0 0.710610  p1 0.779960  p16 0.963502  p32 0.974562  p63 0.986943
+      our prefill state vs the oracle's: window KV worst cos 0.9099621 (L18, 40 layers), compressed KV 0.9592380 (L14, 4 sources), index keys 0.9620505 (L20, 4 sources)
+    (e) 8 steps teacher-forced, from our own prefill
+      step 0  in   3006  top1 223 vs 223 MATCH, rho=0.889652 max|dlogit|=1.998e+00 mean=1.031e+00 margin ref 7.1360 ours 5.8756
+        ours, not loaded: cmp_kv worst cos 0.9592380 (L14) over 38 layers, top-k 40/40 layers identical
+      step 1  in    223  top1 18 vs 18 MATCH, rho=0.956319 max|dlogit|=1.321e+00 mean=7.831e-01 margin ref 6.3644 ours 6.3586
+        ours, not loaded: cmp_kv worst cos 0.9595204 (L20) over 38 layers, top-k 40/40 layers identical
+      step 2  in     18  top1 16 vs 16 MATCH, rho=0.720009 max|dlogit|=1.694e+00 mean=4.846e-01 margin ref 6.4543 ours 6.0558
+        ours, not loaded: cmp_kv worst cos 0.9598811 (L20) over 38 layers, top-k 40/40 layers identical
+      step 3  in     16  top1 18 vs 18 MATCH, rho=0.793361 max|dlogit|=2.953e+00 mean=1.163e+00 margin ref 6.8347 ours 6.1809
+        ours, not loaded: cmp_kv worst cos 0.9599289 (L20) over 38 layers, top-k 40/40 layers identical
+      step 4  in     18  top1 201 vs 201 MATCH, rho=0.780449 max|dlogit|=2.324e+00 mean=6.802e-01 margin ref 0.5145 ours 0.6912
+        ours, not loaded: cmp_kv worst cos 0.9603429 (L20) over 38 layers, top-k 40/40 layers identical
+      step 5  in    201  top1 1 vs 1 MATCH, rho=0.784936 max|dlogit|=1.441e+00 mean=4.629e-01 margin ref 1.8560 ours 1.2169
+        ours, not loaded: cmp_kv worst cos 0.9602765 (L20) over 38 layers, top-k 40/40 layers identical
+      step 6  in      1  top1 201 vs 201 MATCH, rho=0.427518 max|dlogit|=6.206e+00 mean=2.372e+00 margin ref 0.9485 ours 2.1389
+        ours, not loaded: cmp_kv worst cos 0.9604574 (L20) over 38 layers, top-k 40/40 layers identical
+      step 7  in    201  top1 1 vs 61 DIFFER, rho=0.622894 max|dlogit|=4.245e+00 mean=9.786e-01 margin ref 1.9522 ours 0.1102
+        ours, not loaded: cmp_kv worst cos 0.9607412 (L20) over 38 layers, top-k 40/40 layers identical
+      teacher-forced on our own prefill: 7/8
+    (f) 8 steps free-running, from our own prefill
+      step 0  in   3006 ->    223 (reference    223) match margin 5.8756
+      step 1  in    223 ->     18 (reference     18) match margin 6.3586
+      step 2  in     18 ->     16 (reference     16) match margin 6.0558
+      step 3  in     16 ->     18 (reference     18) match margin 6.1809
+      step 4  in     18 ->    201 (reference    201) match margin 0.6912
+      step 5  in    201 ->      1 (reference      1) match margin 1.2169
+      step 6  in      1 ->    201 (reference    201) match margin 2.1389
+      step 7  in    201 ->      1 (reference     61) DIFFER margin 0.1102
+      free-running on our own prefill: 7/8 before divergence
+model     deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+weights   48 shards, 475.25 GiB (direct read, no repack)
+io        io_uring
+          io: 67954 req (67954 done, 0 failed, 0 cancelled), 505987 chunks, 492212739184 / 492212830208 bytes, busy 120.228 s, eff 4.09 GB/s, mean lat 65.145 ms, peak QD 8 / 32.0 MiB
+  p0_blocking    51284 req  459953.4 MiB
+  p2_engram      15456 req  62.1 MiB
+  p3_backfill     1214 req  9395.3 MiB
+  P0: 51284 req, 459953.3 MiB, lat mean 10.78 / p50 9.47 / p95 23.06 / max 93.58 ms  (queue wait 7.16 + service 3.63)
+  P0: first-of-burst 6358 at 1.27 ms, behind 44926 at 12.13 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 6.63
+  dispatcher: 501423 iters, issue 0.52 s / poll 119.40 s / handle 0.21 s (callbacks 0.06 s, 67954 at 0.8 us mean)
+  dispatcher: Backend::submit 1.46 s over 505987 chunks, mean 2.9 us, max 0.92 ms  <- synchronous, on the only issuing thread
+  dispatcher: handle is 0.2% of the non-waiting loop; refill gap 0.3 us mean over 446128 reaps
+pinned    884 tensors, 9.17 GiB in 10 regions
+store     expert store: 400 slots (400 resident, 0 filling, 0 free, 0 pinned)  lookups 38640 hits 12998 (0.336)  fills 25642/25642 ok  runs 51284/51284  evictions 25242 (+0 guard-blocked)  path A hits 12998 / B 0 (1.0000 A)  fills A 25642 / B 0
+planner   planner: 6440 layers, 38640 requests (12998 hits, 25642 misses, 0.336), 25242 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 6358 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped
+gpu       AMD Radeon 8060S Graphics (RADV STRIX_HALO)
+LOADED    none -- the prompt state came from slow_prefill and every decode-step tensor from design 7.4's kernels
+[FAIL ] decode.forty_layers_against_the_l3_oracle (1)
+[ RUN ] decode.engram_matches_the_l2_export
+      hash: layer 1 rows [14177801 25083019 ...], layer 14 [9194385 20265146 ...], 0 of 24 coincide
+      layer 1: the engram moved the stream by relL2 5.901e-01 (cos 0.807345) -- that is what the kernel has to reproduce
+      layer 14: the engram moved the stream by relL2 2.257e-01 (cos 0.974202) -- that is what the kernel has to reproduce
+[  ok ] decode.engram_matches_the_l2_export
+
+2 case(s) run, 1 failed, 1 assertion failure(s)

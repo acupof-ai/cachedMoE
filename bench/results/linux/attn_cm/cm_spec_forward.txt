@@ -1,0 +1,69 @@
+[ RUN ] spec_forward.batch_matches_m1
+      warm: 5500 experts resident
+      64 teacher-forced positions from 64, blocks of 5, vocab 129280
+      position 17 (block row 2): batch 6461 vs M=1 16429, cos 0.9931516
+      position 20 (block row 0): batch 14 vs M=1 29, cos 0.9977784
+      position 33 (block row 3): batch 57476 vs M=1 2303, cos 0.9915113
+      position 45 (block row 0): batch 270 vs M=1 1192, cos 0.9967656
+      position 46 (block row 1): batch 10436 vs M=1 1482, cos 0.9976997
+      position 47 (block row 2): batch 1469 vs M=1 294, cos 0.9918445
+      position 57 (block row 2): batch 12334 vs M=1 5218, cos 0.9969244
+      position 58 (block row 3): batch 37153 vs M=1 3980, cos 0.9956084
+      row 0: worst cos 0.9752412, top-1 10/12
+      row 1: worst cos 0.9899772, top-1 11/12
+      row 2: worst cos 0.9889155, top-1 9/12
+      row 3: worst cos 0.9316165, top-1 10/12
+      row 4: worst cos 0.9804392, top-1 12/12
+      60 positions: worst cos 0.9316165 at 28, max |dlogit| 8.147e+00, top-1 52/60
+      teacher-forced over 60 positions: M=1 NLL 0.634577 (PPL 1.8862), batch NLL 0.632794 (PPL 1.8829), ratio 0.9982x
+      WARN spec_forward gate: mgt1 vs M=1 are not bitwise -- worst cos 0.9316165 (floor 0.88), top-1 52/60 = 86.7% (floor 47/60 = 78.3%)
+[  ok ] spec_forward.batch_matches_m1
+[ RUN ] spec_forward.a_rollback_restores_exactly_the_rejected_slots
+      rollback: 3/3 rejected slots were written and 3/3 restored; 2/2 accepted slots untouched
+[  ok ] spec_forward.a_rollback_restores_exactly_the_rejected_slots
+[ RUN ] spec_forward.the_first_layer_the_two_paths_disagree_on
+      layer  cos(ffn_norm)   gate ids equal
+      L00    1.000000000     yes
+      L01    1.000000000     yes
+      L02    1.000000000     yes
+      L03    0.999999800     yes
+      L04    0.999879688     yes
+      L05    0.999654374     yes
+      L06    0.999632267     yes
+      L07    0.999550177     yes
+      L08    0.999344637     yes
+      L09    0.999069722     NO
+      L10    0.998796270     yes
+      L11    0.998885706     NO
+      L12    0.998804958     yes
+      L13    0.998851120     yes
+      L14    0.998820953     yes
+      L15    0.999734424     yes
+      L16    0.998661195     NO
+      L17    0.990445191     NO
+      L18    0.994056712     NO
+      L19    0.998491343     NO
+      L20    0.997775023     yes
+      L21    0.998173265     yes
+      L22    0.998274238     NO
+      L23    0.998720463     NO
+      L24    0.998313413     NO
+      L25    0.998251181     NO
+      L26    0.995796171     NO
+      L27    0.996770875     NO
+      L28    0.997032559     NO
+      L29    0.997297592     NO
+      L30    0.995958869     yes
+      L31    0.995262617     NO
+      L32    0.995181154     NO
+      L33    0.996046792     NO
+      L34    0.994478254     NO
+      L35    0.994114676     NO
+      L36    0.995515962     NO
+      L37    0.995001552     NO
+      L38    0.993101711     NO
+      L39    0.981020544     NO
+      M=1 token 16, batch token 16; first layer past cos 0.99999: L4
+[  ok ] spec_forward.the_first_layer_the_two_paths_disagree_on
+
+3 case(s) run, 0 failed, 0 assertion failure(s)

@@ -1,0 +1,350 @@
+[ RUN ] decode_longctx.indexer_vs_reference
+    ctx4k: N = 4133, 8 steps
+      step 0 L2  keys L2  T  2067: scores 2067/2067 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 509/512 as sets (509 above, 8 tied at the threshold)
+      step 0 L14 keys L14 T  2067: scores 2067/2067 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (507 above, 5 tied at the threshold)
+      step 0 L20 keys L20 T  4134: scores 4134/4134 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (506 above, 8 tied at the threshold)
+      step 1 L2  keys L20 T  2067: scores 2067/2067 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (511 above, 1 tied at the threshold)
+      step 1 L14 keys L20 T  2067: scores 2067/2067 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (510 above, 3 tied at the threshold)
+      step 1 L20 keys L20 T  4135: scores 4135/4135 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (510 above, 3 tied at the threshold)
+      step 2 L2  keys L2  T  2068: scores 2068/2068 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 509/512 as sets (504 above, 13 tied at the threshold)
+      step 2 L14 keys L14 T  2068: scores 2068/2068 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (508 above, 7 tied at the threshold)
+      step 2 L20 keys L20 T  4136: scores 4136/4136 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (509 above, 7 tied at the threshold)
+      step 3 L2  keys L20 T  2068: scores 2068/2068 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (510 above, 6 tied at the threshold)
+      step 3 L14 keys L20 T  2068: scores 2068/2068 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (505 above, 8 tied at the threshold)
+      step 3 L20 keys L20 T  4137: scores 4137/4137 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (509 above, 9 tied at the threshold)
+      step 4 L2  keys L2  T  2069: scores 2069/2069 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (504 above, 9 tied at the threshold)
+      step 4 L14 keys L14 T  2069: scores 2069/2069 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (508 above, 5 tied at the threshold)
+      step 4 L20 keys L20 T  4138: scores 4138/4138 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (507 above, 5 tied at the threshold)
+      step 5 L2  keys L20 T  2069: scores 2069/2069 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (511 above, 6 tied at the threshold)
+      step 5 L14 keys L20 T  2069: scores 2069/2069 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (511 above, 5 tied at the threshold)
+      step 5 L20 keys L20 T  4139: scores 4139/4139 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 509/512 as sets (505 above, 12 tied at the threshold)
+      step 6 L2  keys L2  T  2070: scores 2070/2070 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 509/512 as sets (506 above, 13 tied at the threshold)
+      step 6 L14 keys L14 T  2070: scores 2070/2070 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (511 above, 1 tied at the threshold)
+      step 6 L20 keys L20 T  4140: scores 4140/4140 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 509/512 as sets (506 above, 9 tied at the threshold)
+      step 7 L2  keys L20 T  2070: scores 2070/2070 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (511 above, 1 tied at the threshold)
+      step 7 L14 keys L20 T  2070: scores 2070/2070 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (510 above, 8 tied at the threshold)
+      step 7 L20 keys L20 T  4141: scores 4141/4141 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (506 above, 7 tied at the threshold)
+    ctx4k: 24 (layer, step) pairs -- reference tie-consistent 24, kernel tie-aware equal 24, identical as sets 5, with a tie at the threshold 21; candidate blocks 0/0 steps tie-aware equal, reference picks inside them 0/0
+    ctx16k: N = 17010, 8 steps
+      step 0 L2  keys L20 T  8505: scores 8505/8505 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (508 above, 4 tied at the threshold)
+      step 0 L14 keys L20 T  8505: scores 8505/8505 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (497 above, 15 tied at the threshold)
+      step 0 L20 candidate blocks: 2048 of 2127 kept, 2042 above / 9 tied at the 2048th block score, kernel tie-aware EQUAL (0 missing, 0 below)
+      step 0 L20 keys L20 T 17011: scores 17011/17011 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (510 above, 5 tied at the threshold)
+      step 0 layers 24-36: 2048 reference picks, 0 outside the candidate blocks, 0 in blocks tied at the threshold (0 of them in a tied block the kernel dropped)
+      step 1 L2  keys L2  T  8506: scores 8506/8506 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 509/512 as sets (502 above, 14 tied at the threshold)
+      step 1 L14 keys L14 T  8506: scores 8506/8506 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (510 above, 4 tied at the threshold)
+      step 1 L20 candidate blocks: 2048 of 2127 kept, 2043 above / 6 tied at the 2048th block score, kernel tie-aware EQUAL (0 missing, 0 below)
+      step 1 L20 keys L20 T 17012: scores 17012/17012 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (511 above, 2 tied at the threshold)
+      step 1 layers 24-36: 2048 reference picks, 0 outside the candidate blocks, 1 in blocks tied at the threshold (1 of them in a tied block the kernel dropped)
+      step 2 L2  keys L20 T  8506: scores 8506/8506 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 509/512 as sets (506 above, 19 tied at the threshold)
+      step 2 L14 keys L20 T  8506: scores 8506/8506 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (509 above, 7 tied at the threshold)
+      step 2 L20 candidate blocks: 2048 of 2127 kept, 2043 above / 9 tied at the 2048th block score, kernel tie-aware EQUAL (0 missing, 0 below)
+      step 2 L20 keys L20 T 17013: scores 17013/17013 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (510 above, 2 tied at the threshold)
+      step 2 layers 24-36: 2048 reference picks, 0 outside the candidate blocks, 0 in blocks tied at the threshold (0 of them in a tied block the kernel dropped)
+      step 3 L2  keys L2  T  8507: scores 8507/8507 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (483 above, 29 tied at the threshold)
+      step 3 L14 keys L14 T  8507: scores 8507/8507 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (511 above, 1 tied at the threshold)
+      step 3 L20 candidate blocks: 2048 of 2127 kept, 2043 above / 8 tied at the 2048th block score, kernel tie-aware EQUAL (0 missing, 0 below)
+      step 3 L20 keys L20 T 17014: scores 17014/17014 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (511 above, 13 tied at the threshold)
+      step 3 layers 24-36: 2048 reference picks, 0 outside the candidate blocks, 0 in blocks tied at the threshold (0 of them in a tied block the kernel dropped)
+      step 4 L2  keys L20 T  8507: scores 8507/8507 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (499 above, 13 tied at the threshold)
+      step 4 L14 keys L20 T  8507: scores 8507/8507 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (504 above, 10 tied at the threshold)
+      step 4 L20 candidate blocks: 2048 of 2127 kept, 2046 above / 6 tied at the 2048th block score, kernel tie-aware EQUAL (0 missing, 0 below)
+      step 4 L20 keys L20 T 17015: scores 17015/17015 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (511 above, 5 tied at the threshold)
+      step 4 layers 24-36: 2048 reference picks, 0 outside the candidate blocks, 0 in blocks tied at the threshold (0 of them in a tied block the kernel dropped)
+      step 5 L2  keys L2  T  8508: scores 8508/8508 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 506/512 as sets (504 above, 28 tied at the threshold)
+      step 5 L14 keys L14 T  8508: scores 8508/8508 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (511 above, 1 tied at the threshold)
+      step 5 L20 candidate blocks: 2048 of 2127 kept, 2046 above / 6 tied at the 2048th block score, kernel tie-aware EQUAL (0 missing, 0 below)
+      step 5 L20 keys L20 T 17016: scores 17016/17016 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (507 above, 8 tied at the threshold)
+      step 5 layers 24-36: 2048 reference picks, 0 outside the candidate blocks, 0 in blocks tied at the threshold (0 of them in a tied block the kernel dropped)
+      step 6 L2  keys L20 T  8508: scores 8508/8508 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (509 above, 6 tied at the threshold)
+      step 6 L14 keys L20 T  8508: scores 8508/8508 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 511/512 as sets (511 above, 15 tied at the threshold)
+      step 6 L20 candidate blocks: 2048 of 2128 kept, 2047 above / 4 tied at the 2048th block score, kernel tie-aware EQUAL (0 missing, 0 below)
+      step 6 L20 keys L20 T 17017: scores 17017/17017 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (510 above, 10 tied at the threshold)
+      step 6 layers 24-36: 2048 reference picks, 0 outside the candidate blocks, 0 in blocks tied at the threshold (0 of them in a tied block the kernel dropped)
+      step 7 L2  keys L2  T  8509: scores 8509/8509 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 508/512 as sets (491 above, 26 tied at the threshold)
+      step 7 L14 keys L14 T  8509: scores 8509/8509 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 512/512 as sets (509 above, 3 tied at the threshold)
+      step 7 L20 candidate blocks: 2048 of 2128 kept, 2041 above / 8 tied at the 2048th block score, kernel tie-aware EQUAL (0 missing, 0 below)
+      step 7 L20 keys L20 T 17018: scores 17018/17018 bit-equal to the host; ref tie-consistent; kernel tie-aware EQUAL, 510/512 as sets (509 above, 8 tied at the threshold)
+      step 7 layers 24-36: 2048 reference picks, 0 outside the candidate blocks, 0 in blocks tied at the threshold (0 of them in a tied block the kernel dropped)
+    ctx16k: 24 (layer, step) pairs -- reference tie-consistent 24, kernel tie-aware equal 24, identical as sets 9, with a tie at the threshold 22; candidate blocks 8/8 steps tie-aware equal, reference picks inside them 8/8
+[  ok ] decode_longctx.indexer_vs_reference
+[ RUN ] decode_longctx.engine_vs_reference
+    ctx4k: N = 4133, KV store 16.4 MB
+    ctx4k free-running: 8/8 before divergence
+      ours      416 4419 15 24391 19 15 13749 2701
+      reference 416 4419 15 24391 19 15 13749 2701
+      TF step 0 pos 4133:     77 ->    416 (reference    416) match margin 10.838 (ref 10.781)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 93.1%, worst L36 458/512, worst missed pick 4.62e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 496 L8 484 L14 496 L20 469 L24 465 L28 483 L32 463 L36 458
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99931 attn_out 0.99987 ffn_norm 0.99974 moe_out 0.99979 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99986 wq_a 0.99986 q 0.99983 kv 0.99916 idx_q 0.99526 idx_w 0.99997 attn_out 0.99975 ffn_norm 0.99964 moe_out 0.99918 win_kv 0.99999 cmp_kv[2067] 1.00000 newest 0.99890 gate 6/6
+        L13 attn_norm 0.99137 wq_a 0.99537 q 0.99746 kv 0.99472 attn_out 0.99871 ffn_norm 0.99332 moe_out 0.99517 win_kv 0.99996 cmp_kv[2067] 1.00000 newest 0.99753 gate 6/6
+        L14 attn_norm 0.99566 wq_a 0.99751 q 0.99814 kv 0.99639 idx_q 0.98880 idx_w 0.99968 attn_out 0.99959 ffn_norm 0.99734 moe_out 0.99687 win_kv 0.99997 cmp_kv[2067] 1.00000 newest 0.99021 gate 6/6
+        L20 attn_norm 0.95895 wq_a 0.98397 q 0.99013 kv 0.96686 idx_q 0.97526 idx_w 0.99785 attn_out 0.99540 ffn_norm 0.98502 moe_out 0.98304 win_kv 0.99976 cmp_kv[4134] 0.99999 newest 0.96024 gate 6/6
+        L39 attn_norm 0.99784 wq_a 0.99788 q 0.99879 kv 0.99701 attn_out 0.99853 ffn_norm 0.99799 moe_out 0.99918 win_kv 0.99998 cmp_kv[4134] 0.99999 newest 0.96024 gate 6/6
+        worst over the probe layers: attn_norm 0.95895(L20) attn_out 0.99540(L20) cmp_kv 0.99999(L20) ffn_norm 0.98502(L20) idx_q 0.97526(L20) idx_w 0.99785(L20) kv 0.96686(L20) moe_out 0.98304(L20) q 0.99013(L20) win_kv 0.99976(L20) wq_a 0.98397(L20); gate top-6 sets 6/6
+        ASSERTED attn_norm=0.95895 q=0.99013 kv=0.96686 attn_out=0.99540 ffn_norm=0.98502
+        wall 2289.1 ms, attention 33.6 ms (the 8 index layers 8.4), moe gpu 65.7, stall 908.8
+      TF step 1 pos 4134:    416 ->   4419 (reference   4419) match margin 11.112 (ref 11.661)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 90.6%, worst L14 441/512, worst missed pick 1.08e+00 below our threshold
+        top-k in common with the reference, per index layer: L2 490 L8 487 L14 441 L20 471 L24 451 L28 445 L32 461 L36 466
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99993 attn_out 0.99980 ffn_norm 0.99960 moe_out 0.99935 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99977 wq_a 0.99978 q 0.99975 kv 0.99922 idx_q 0.99624 idx_w 0.99996 attn_out 0.99933 ffn_norm 0.99948 moe_out 0.99904 win_kv 0.99999 cmp_kv[2067] 1.00000 newest 0.99890 gate 6/6
+        L13 attn_norm 0.98712 wq_a 0.99165 q 0.99664 kv 0.99198 attn_out 0.99673 ffn_norm 0.99244 moe_out 0.96640 win_kv 0.99990 cmp_kv[2067] 1.00000 newest 0.99753 gate 5/6
+        L14 attn_norm 0.98752 wq_a 0.98797 q 0.99304 kv 0.98948 idx_q 0.98243 idx_w 0.99865 attn_out 0.98966 ffn_norm 0.98102 moe_out 0.97920 win_kv 0.99989 cmp_kv[2067] 1.00000 newest 0.99021 gate 6/6
+        L20 attn_norm 0.99270 wq_a 0.99093 q 0.99304 kv 0.99324 idx_q 0.98321 idx_w 0.99824 attn_out 0.98858 ffn_norm 0.98616 moe_out 0.97299 win_kv 0.99971 cmp_kv[4135] 0.99999 newest 0.99043 gate 6/6
+        L39 attn_norm 0.99097 wq_a 0.99012 q 0.99478 kv 0.98849 attn_out 0.99420 ffn_norm 0.99007 moe_out 0.99834 win_kv 0.99988 cmp_kv[4135] 0.99999 newest 0.99043 gate 6/6
+        worst over the probe layers: attn_norm 0.98712(L13) attn_out 0.98858(L20) cmp_kv 0.99999(L20) ffn_norm 0.98102(L14) idx_q 0.98243(L14) idx_w 0.99824(L20) kv 0.98849(L39) moe_out 0.96640(L13) q 0.99304(L14) win_kv 0.99971(L20) wq_a 0.98797(L14); gate top-6 sets 5/6
+        ASSERTED attn_norm=0.98712 q=0.99304 kv=0.98849 attn_out=0.98858 ffn_norm=0.98102
+        wall 2282.0 ms, attention 34.3 ms (the 8 index layers 8.2), moe gpu 63.6, stall 895.1
+      TF step 2 pos 4135:   4419 ->     15 (reference     15) match margin 9.370 (ref 9.513)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 95.6%, worst L28 481/512, worst missed pick 2.22e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 500 L8 497 L14 497 L20 482 L24 484 L28 481 L32 482 L36 491
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99997 kv 0.99998 attn_out 0.99990 ffn_norm 0.99983 moe_out 0.99957 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99981 wq_a 0.99979 q 0.99980 kv 0.99940 idx_q 0.99696 idx_w 0.99998 attn_out 0.99974 ffn_norm 0.99974 moe_out 0.95396 win_kv 0.99998 cmp_kv[2068] 1.00000 newest 0.99831 gate 5/6
+        L13 attn_norm 0.99580 wq_a 0.99730 q 0.99856 kv 0.99698 attn_out 0.99756 ffn_norm 0.99660 moe_out 0.98649 win_kv 0.99987 cmp_kv[2068] 1.00000 newest 0.99420 gate 5/6
+        L14 attn_norm 0.99234 wq_a 0.99616 q 0.99758 kv 0.99449 idx_q 0.98931 idx_w 0.99978 attn_out 0.99909 ffn_norm 0.99621 moe_out 0.99628 win_kv 0.99985 cmp_kv[2068] 0.99999 newest 0.98956 gate 6/6
+        L20 attn_norm 0.99826 wq_a 0.99864 q 0.99888 kv 0.99803 idx_q 0.99339 idx_w 0.99989 attn_out 0.99848 ffn_norm 0.99764 moe_out 0.99549 win_kv 0.99969 cmp_kv[4136] 0.99999 newest 0.99357 gate 6/6
+        L39 attn_norm 0.99854 wq_a 0.99842 q 0.99906 kv 0.99774 attn_out 0.99874 ffn_norm 0.99813 moe_out 0.99980 win_kv 0.99987 cmp_kv[4136] 0.99999 newest 0.99357 gate 6/6
+        worst over the probe layers: attn_norm 0.99234(L14) attn_out 0.99756(L13) cmp_kv 0.99999(L20) ffn_norm 0.99621(L14) idx_q 0.98931(L14) idx_w 0.99978(L14) kv 0.99449(L14) moe_out 0.95396(L2) q 0.99758(L14) win_kv 0.99969(L20) wq_a 0.99616(L14); gate top-6 sets 4/6
+        ASSERTED attn_norm=0.99234 q=0.99758 kv=0.99449 attn_out=0.99756 ffn_norm=0.99621
+        wall 2102.0 ms, attention 33.1 ms (the 8 index layers 8.3), moe gpu 67.3, stall 711.0
+      TF step 3 pos 4136:     15 ->  24391 (reference  24391) match margin 8.894 (ref 8.832)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 87.9%, worst L32 395/512, worst missed pick 5.55e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 502 L8 471 L14 447 L20 478 L24 445 L28 405 L32 395 L36 457
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99998 attn_out 0.99997 ffn_norm 0.99987 moe_out 0.99979 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99979 wq_a 0.99974 q 0.99975 kv 0.99957 idx_q 0.99581 idx_w 0.99997 attn_out 0.99948 ffn_norm 0.99935 moe_out 0.99870 win_kv 0.99998 cmp_kv[2068] 1.00000 newest 0.99831 gate 6/6
+        L13 attn_norm 0.99008 wq_a 0.99436 q 0.99749 kv 0.99339 attn_out 0.99713 ffn_norm 0.99335 moe_out 0.97644 win_kv 0.99982 cmp_kv[2068] 1.00000 newest 0.99420 gate 5/6
+        L14 attn_norm 0.98988 wq_a 0.99247 q 0.99569 kv 0.99133 idx_q 0.98628 idx_w 0.99889 attn_out 0.99673 ffn_norm 0.99079 moe_out 0.99347 win_kv 0.99978 cmp_kv[2068] 0.99999 newest 0.98956 gate 6/6
+        L20 attn_norm 0.99374 wq_a 0.99480 q 0.99616 kv 0.99478 idx_q 0.98767 idx_w 0.99899 attn_out 0.99734 ffn_norm 0.99343 moe_out 0.99028 win_kv 0.99965 cmp_kv[4137] 0.99999 newest 0.99019 gate 6/6
+        L39 attn_norm 0.99098 wq_a 0.99274 q 0.99659 kv 0.99245 attn_out 0.99464 ffn_norm 0.99204 moe_out 0.99916 win_kv 0.99981 cmp_kv[4137] 0.99999 newest 0.99019 gate 6/6
+        worst over the probe layers: attn_norm 0.98988(L14) attn_out 0.99464(L39) cmp_kv 0.99999(L20) ffn_norm 0.99079(L14) idx_q 0.98628(L14) idx_w 0.99889(L14) kv 0.99133(L14) moe_out 0.97644(L13) q 0.99569(L14) win_kv 0.99965(L20) wq_a 0.99247(L14); gate top-6 sets 5/6
+        ASSERTED attn_norm=0.98988 q=0.99569 kv=0.99133 attn_out=0.99464 ffn_norm=0.99079
+        wall 2194.5 ms, attention 33.2 ms (the 8 index layers 8.4), moe gpu 68.5, stall 790.6
+      TF step 4 pos 4137:  24391 ->     19 (reference     19) match margin 10.741 (ref 10.768)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 91.4%, worst L24 429/512, worst missed pick 5.91e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 501 L8 495 L14 492 L20 474 L24 429 L28 438 L32 450 L36 464
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99998 kv 0.99998 attn_out 0.99998 ffn_norm 0.99993 moe_out 0.99978 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99977 wq_a 0.99976 q 0.99978 kv 0.99940 idx_q 0.99548 idx_w 0.99996 attn_out 0.99963 ffn_norm 0.99937 moe_out 0.99877 win_kv 0.99997 cmp_kv[2069] 1.00000 newest 0.99700 gate 6/6
+        L13 attn_norm 0.99731 wq_a 0.99803 q 0.99893 kv 0.99829 attn_out 0.99771 ffn_norm 0.99735 moe_out 0.99695 win_kv 0.99980 cmp_kv[2069] 0.99999 newest 0.99149 gate 6/6
+        L14 attn_norm 0.99853 wq_a 0.99810 q 0.99862 kv 0.99771 idx_q 0.99083 idx_w 0.99983 attn_out 0.99913 ffn_norm 0.99773 moe_out 0.99580 win_kv 0.99976 cmp_kv[2069] 0.99998 newest 0.98762 gate 6/6
+        L20 attn_norm 0.99138 wq_a 0.99254 q 0.99544 kv 0.99254 idx_q 0.98466 idx_w 0.99904 attn_out 0.99510 ffn_norm 0.98296 moe_out 0.96661 win_kv 0.99959 cmp_kv[4138] 0.99998 newest 0.98654 gate 6/6
+        L39 attn_norm 0.99402 wq_a 0.99067 q 0.99495 kv 0.98704 attn_out 0.99293 ffn_norm 0.98961 moe_out 0.99848 win_kv 0.99971 cmp_kv[4138] 0.99998 newest 0.98654 gate 5/6
+        worst over the probe layers: attn_norm 0.99138(L20) attn_out 0.99293(L39) cmp_kv 0.99998(L20) ffn_norm 0.98296(L20) idx_q 0.98466(L20) idx_w 0.99904(L20) kv 0.98704(L39) moe_out 0.96661(L20) q 0.99495(L39) win_kv 0.99959(L20) wq_a 0.99067(L39); gate top-6 sets 5/6
+        ASSERTED attn_norm=0.99138 q=0.99495 kv=0.98704 attn_out=0.99293 ffn_norm=0.98296
+        wall 2260.6 ms, attention 34.0 ms (the 8 index layers 8.3), moe gpu 67.9, stall 872.9
+      TF step 5 pos 4138:     19 ->     15 (reference     15) match margin 8.531 (ref 8.405)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 92.0%, worst L8 457/512, worst missed pick 2.69e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 494 L8 457 L14 461 L20 480 L24 466 L28 463 L32 469 L36 480
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99998 kv 0.99991 attn_out 0.99998 ffn_norm 0.99990 moe_out 0.99977 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99981 wq_a 0.99972 q 0.99979 kv 0.99940 idx_q 0.99645 idx_w 0.99998 attn_out 0.99852 ffn_norm 0.99909 moe_out 0.99795 win_kv 0.99997 cmp_kv[2069] 1.00000 newest 0.99700 gate 6/6
+        L13 attn_norm 0.97939 wq_a 0.98749 q 0.99461 kv 0.98956 attn_out 0.99563 ffn_norm 0.98399 moe_out 0.95870 win_kv 0.99972 cmp_kv[2069] 0.99999 newest 0.99149 gate 5/6
+        L14 attn_norm 0.98300 wq_a 0.98879 q 0.99368 kv 0.98469 idx_q 0.98473 idx_w 0.99874 attn_out 0.97629 ffn_norm 0.96785 moe_out 0.96161 win_kv 0.99963 cmp_kv[2069] 0.99998 newest 0.98762 gate 6/6
+        L20 attn_norm 0.98947 wq_a 0.99304 q 0.99572 kv 0.99144 idx_q 0.98514 idx_w 0.99966 attn_out 0.99721 ffn_norm 0.98784 moe_out 0.98415 win_kv 0.99953 cmp_kv[4139] 0.99998 newest 0.98772 gate 6/6
+        L39 attn_norm 0.99398 wq_a 0.99563 q 0.99789 kv 0.99562 attn_out 0.99605 ffn_norm 0.99246 moe_out 0.99944 win_kv 0.99967 cmp_kv[4139] 0.99998 newest 0.98772 gate 6/6
+        worst over the probe layers: attn_norm 0.97939(L13) attn_out 0.97629(L14) cmp_kv 0.99998(L20) ffn_norm 0.96785(L14) idx_q 0.98473(L14) idx_w 0.99874(L14) kv 0.98469(L14) moe_out 0.95870(L13) q 0.99368(L14) win_kv 0.99953(L20) wq_a 0.98749(L13); gate top-6 sets 5/6
+        ASSERTED attn_norm=0.97939 q=0.99368 kv=0.98469 attn_out=0.97629 ffn_norm=0.96785
+        wall 2076.9 ms, attention 33.7 ms (the 8 index layers 8.3), moe gpu 66.2, stall 692.2
+      TF step 6 pos 4139:     15 ->  13749 (reference  13749) match margin 10.099 (ref 9.646)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 90.0%, worst L32 440/512, worst missed pick 4.66e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 495 L8 458 L14 476 L20 453 L24 466 L28 457 L32 440 L36 442
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99998 kv 0.99999 attn_out 0.99999 ffn_norm 0.99992 moe_out 0.99986 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99978 wq_a 0.99974 q 0.99975 kv 0.99950 idx_q 0.99520 idx_w 0.99998 attn_out 0.99947 ffn_norm 0.99933 moe_out 0.95424 win_kv 0.99996 cmp_kv[2070] 1.00000 newest 0.99667 gate 5/6
+        L13 attn_norm 0.97473 wq_a 0.98385 q 0.99177 kv 0.98128 attn_out 0.99111 ffn_norm 0.97914 moe_out 0.96921 win_kv 0.99957 cmp_kv[2070] 0.99998 newest 0.97958 gate 6/6
+        L14 attn_norm 0.99667 wq_a 0.98512 q 0.99060 kv 0.98328 idx_q 0.97672 idx_w 0.99590 attn_out 0.99326 ffn_norm 0.97266 moe_out 0.93088 win_kv 0.99951 cmp_kv[2070] 0.99997 newest 0.97834 gate 5/6
+        L20 attn_norm 0.92649 wq_a 0.96561 q 0.98041 kv 0.95947 idx_q 0.95681 idx_w 0.98686 attn_out 0.98773 ffn_norm 0.96395 moe_out 0.93807 win_kv 0.99923 cmp_kv[4140] 0.99996 newest 0.93967 gate 5/6
+        L39 attn_norm 0.98047 wq_a 0.98696 q 0.99443 kv 0.98346 attn_out 0.99333 ffn_norm 0.98329 moe_out 0.99498 win_kv 0.99954 cmp_kv[4140] 0.99996 newest 0.93967 gate 5/6
+        worst over the probe layers: attn_norm 0.92649(L20) attn_out 0.98773(L20) cmp_kv 0.99996(L20) ffn_norm 0.96395(L20) idx_q 0.95681(L20) idx_w 0.98686(L20) kv 0.95947(L20) moe_out 0.93088(L14) q 0.98041(L20) win_kv 0.99923(L20) wq_a 0.96561(L20); gate top-6 sets 2/6
+        ASSERTED attn_norm=0.92649 q=0.98041 kv=0.95947 attn_out=0.98773 ffn_norm=0.96395
+        wall 2205.2 ms, attention 34.4 ms (the 8 index layers 8.4), moe gpu 66.7, stall 820.3
+      TF step 7 pos 4140:  13749 ->   2701 (reference   2701) match margin 1.182 (ref 1.303)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 92.3%, worst L24 434/512, worst missed pick 1.10e+00 below our threshold
+        top-k in common with the reference, per index layer: L2 496 L8 487 L14 474 L20 457 L24 434 L28 468 L32 481 L36 483
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99991 attn_out 0.99997 ffn_norm 0.99993 moe_out 0.99969 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99982 wq_a 0.99978 q 0.99983 kv 0.99915 idx_q 0.99674 idx_w 0.99998 attn_out 0.99967 ffn_norm 0.99970 moe_out 0.99956 win_kv 0.99996 cmp_kv[2070] 1.00000 newest 0.99667 gate 6/6
+        L13 attn_norm 0.99293 wq_a 0.99552 q 0.99783 kv 0.99598 attn_out 0.99693 ffn_norm 0.99460 moe_out 0.99433 win_kv 0.99954 cmp_kv[2070] 0.99998 newest 0.97958 gate 6/6
+        L14 attn_norm 0.99541 wq_a 0.99656 q 0.99778 kv 0.99631 idx_q 0.98871 idx_w 0.99980 attn_out 0.95552 ffn_norm 0.95003 moe_out 0.92716 win_kv 0.99948 cmp_kv[2070] 0.99997 newest 0.97834 gate 6/6
+        L20 attn_norm 0.96756 wq_a 0.97085 q 0.98142 kv 0.97288 idx_q 0.96616 idx_w 0.99736 attn_out 0.98075 ffn_norm 0.93785 moe_out 0.84405 win_kv 0.99902 cmp_kv[4141] 0.99996 newest 0.97905 gate 5/6
+        L39 attn_norm 0.98891 wq_a 0.99376 q 0.99686 kv 0.99314 attn_out 0.99595 ffn_norm 0.99004 moe_out 0.99964 win_kv 0.99949 cmp_kv[4141] 0.99996 newest 0.97905 gate 6/6
+        worst over the probe layers: attn_norm 0.96756(L20) attn_out 0.95552(L14) cmp_kv 0.99996(L20) ffn_norm 0.93785(L20) idx_q 0.96616(L20) idx_w 0.99736(L20) kv 0.97288(L20) moe_out 0.84405(L20) q 0.98142(L20) win_kv 0.99902(L20) wq_a 0.97085(L20); gate top-6 sets 5/6
+        ASSERTED attn_norm=0.96756 q=0.98142 kv=0.97288 attn_out=0.95552 ffn_norm=0.93785
+        wall 2357.9 ms, attention 33.6 ms (the 8 index layers 8.3), moe gpu 67.1, stall 965.0
+    ctx4k teacher-forced: 8/8 (salt tokens 7/7)
+    (e) control: steps 0-1 again with the reference's compressed KV and top-k LOADED
+      TF step 0 pos 4133:     77 ->    416 (reference    416) match margin 11.009 (ref 10.781)
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99931 attn_out 0.99987 ffn_norm 0.99974 moe_out 0.99979 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99986 wq_a 0.99986 q 0.99983 kv 0.99916 idx_q 0.03202 idx_w 0.14037 attn_out 0.99994 ffn_norm 0.99975 moe_out 0.99932 win_kv 0.99999 cmp_kv[2067] 1.00000 newest 1.00000 gate 6/6
+        L13 attn_norm 0.99879 wq_a 0.99918 q 0.99937 kv 0.99871 attn_out 0.99967 ffn_norm 0.99883 moe_out 0.99858 win_kv 0.99999 cmp_kv[2067] 1.00000 newest 1.00000 gate 6/6
+        L14 attn_norm 0.99887 wq_a 0.99916 q 0.99921 kv 0.99848 idx_q -0.02228 idx_w 0.06957 attn_out 0.99986 ffn_norm 0.99908 moe_out 0.99838 win_kv 0.99999 cmp_kv[2067] 1.00000 newest 1.00000 gate 6/6
+        L20 attn_norm 0.99154 wq_a 0.99652 q 0.99731 kv 0.99345 idx_q 0.01489 idx_w 0.16920 attn_out 0.99822 ffn_norm 0.99382 moe_out 0.99083 win_kv 0.99995 cmp_kv[4134] 1.00000 newest 1.00000 gate 6/6
+        L39 attn_norm 0.99815 wq_a 0.99795 q 0.99885 kv 0.99741 attn_out 0.99890 ffn_norm 0.99821 moe_out 0.99907 win_kv 0.99998 cmp_kv[4134] 1.00000 newest 1.00000 gate 6/6
+        worst over the probe layers: attn_norm 0.99154(L20) attn_out 0.99822(L20) cmp_kv 1.00000(L2) ffn_norm 0.99382(L20) idx_q -0.02228(L14) idx_w 0.06957(L14) kv 0.99345(L20) moe_out 0.99083(L20) q 0.99731(L20) win_kv 0.99995(L20) wq_a 0.99652(L20); gate top-6 sets 6/6
+        wall 2298.7 ms, attention 32.2 ms (the 8 index layers 5.8), moe gpu 64.5, stall 908.9
+      TF step 1 pos 4134:    416 ->   4419 (reference   4419) match margin 11.772 (ref 11.661)
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99993 attn_out 0.99980 ffn_norm 0.99960 moe_out 0.99935 win_kv 0.99999 gate 6/6
+        L2  attn_norm 0.99977 wq_a 0.99978 q 0.99975 kv 0.99922 idx_q 0.02884 idx_w 0.19418 attn_out 0.99983 ffn_norm 0.99973 moe_out 0.99928 win_kv 0.99999 cmp_kv[2067] 1.00000 newest 1.00000 gate 6/6
+        L13 attn_norm 0.99843 wq_a 0.99867 q 0.99930 kv 0.99848 attn_out 0.99934 ffn_norm 0.99876 moe_out 0.99794 win_kv 0.99998 cmp_kv[2067] 1.00000 newest 1.00000 gate 6/6
+        L14 attn_norm 0.99883 wq_a 0.99840 q 0.99885 kv 0.99797 idx_q -0.02284 idx_w 0.07524 attn_out 0.99960 ffn_norm 0.99865 moe_out 0.99784 win_kv 0.99997 cmp_kv[2067] 1.00000 newest 1.00000 gate 6/6
+        L20 attn_norm 0.99872 wq_a 0.99802 q 0.99837 kv 0.99833 idx_q -0.01115 idx_w 0.08752 attn_out 0.99836 ffn_norm 0.99752 moe_out 0.99278 win_kv 0.99994 cmp_kv[4135] 1.00000 newest 1.00000 gate 6/6
+        L39 attn_norm 0.99569 wq_a 0.99570 q 0.99786 kv 0.99472 attn_out 0.99790 ffn_norm 0.99456 moe_out 0.99692 win_kv 0.99994 cmp_kv[4135] 1.00000 newest 1.00000 gate 5/6
+        worst over the probe layers: attn_norm 0.99569(L39) attn_out 0.99790(L39) cmp_kv 1.00000(L2) ffn_norm 0.99456(L39) idx_q -0.02284(L14) idx_w 0.07524(L14) kv 0.99472(L39) moe_out 0.99278(L20) q 0.99786(L39) win_kv 0.99994(L39) wq_a 0.99570(L39); gate top-6 sets 5/6
+        wall 2240.0 ms, attention 30.8 ms (the 8 index layers 5.8), moe gpu 66.5, stall 848.5
+    ctx4k KV read per step: window 2.70 MB + compressed 5.60 MB + index keys 1.83 MB = 10.1 MB in the model's formats (bf16 store: 29.5 MB)
+model     deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+weights   48 shards, 475.25 GiB (direct read, no repack)
+io        io_uring
+          io: 9434 req (9434 done, 0 failed, 0 cancelled), 66735 chunks, 70912449952 / 70912466944 bytes, busy 19.874 s, eff 3.57 GB/s, mean lat 409.113 ms, peak QD 8 / 32.0 MiB
+  p0_blocking     6492 req  58225.1 MiB
+  p2_engram       1728 req  7.0 MiB
+  p3_backfill     1214 req  9395.3 MiB
+  P0: 6492 req, 58225.1 MiB, lat mean 12.14 / p50 11.36 / p95 24.98 / max 75.03 ms  (queue wait 8.37 + service 3.77)
+  P0: first-of-burst 718 at 1.98 ms, behind 5774 at 13.40 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 6.67
+  dispatcher: 64892 iters, issue 0.07 s / poll 19.71 s / handle 0.03 s (callbacks 0.01 s, 9434 at 0.8 us mean)
+  dispatcher: Backend::submit 0.23 s over 66735 chunks, mean 3.4 us, max 0.89 ms  <- synchronous, on the only issuing thread
+  dispatcher: handle is 0.1% of the non-waiting loop; refill gap 0.4 us mean over 58018 reaps
+pinned    884 tensors, 9.17 GiB in 10 regions
+store     expert store: 400 slots (400 resident, 0 filling, 0 free, 0 pinned)  lookups 4320 hits 1074 (0.249)  fills 3246/3246 ok  runs 6492/6492  evictions 2846 (+0 guard-blocked)  path A hits 1074 / B 0 (1.0000 A)  fills A 3246 / B 0
+planner   planner: 720 layers, 4320 requests (1074 hits, 3246 misses, 0.249), 2846 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 718 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped
+gpu       AMD Radeon 8060S Graphics (RADV STRIX_HALO)
+LOADED    the state the prompt left behind, from /home/chenkailun/projects/cachedMoE/traces/longctx/ctx4k: the window KV, the compressed KV cache, the indexer key cache and the compressor's carried group, after 4133 prompt tokens. Every per-step tensor is ours (design 7.4)
+    ctx16k: N = 17010, KV store 57.6 MB
+    ctx16k free-running: 8/8 before divergence
+      ours      416 4419 15 24391 19 15 13749 2701
+      reference 416 4419 15 24391 19 15 13749 2701
+      TF step 0 pos 17010:     77 ->    416 (reference    416) match margin 11.577 (ref 11.384)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 89.2%, worst L14 387/512, worst missed pick 4.65e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 497 L8 469 L14 387 L20 475 L24 454 L28 450 L32 463 L36 459
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99996 attn_out 0.99999 ffn_norm 0.99993 moe_out 0.99947 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99980 wq_a 0.99981 q 0.99979 kv 0.99934 idx_q 0.99551 idx_w 0.99997 attn_out 0.99923 ffn_norm 0.99896 moe_out 0.98976 win_kv 0.99999 cmp_kv[8505] 1.00000 newest 1.00000 gate 5/6
+        L13 attn_norm 0.94462 wq_a 0.96713 q 0.98599 kv 0.96505 attn_out 0.98680 ffn_norm 0.96202 moe_out 0.94966 win_kv 0.99972 cmp_kv[8505] 1.00000 newest 1.00000 gate 4/6
+        L14 attn_norm 0.97090 wq_a 0.96900 q 0.98214 kv 0.96902 idx_q 0.96474 idx_w 0.99803 attn_out 0.98324 ffn_norm 0.95811 moe_out 0.95835 win_kv 0.99975 cmp_kv[8505] 1.00000 newest 1.00000 gate 6/6
+        L20 attn_norm 0.98387 wq_a 0.99078 q 0.99437 kv 0.98610 idx_q 0.98075 idx_w 0.99924 attn_out 0.99715 ffn_norm 0.98203 moe_out 0.98009 win_kv 0.99989 cmp_kv[17011] 1.00000 newest 0.98621 gate 6/6
+        L39 attn_norm 0.99672 wq_a 0.99645 q 0.99816 kv 0.99671 attn_out 0.99803 ffn_norm 0.99650 moe_out 0.99711 win_kv 0.99998 cmp_kv[17011] 1.00000 newest 0.98621 gate 5/6
+        worst over the probe layers: attn_norm 0.94462(L13) attn_out 0.98324(L14) cmp_kv 1.00000(L20) ffn_norm 0.95811(L14) idx_q 0.96474(L14) idx_w 0.99803(L14) kv 0.96505(L13) moe_out 0.94966(L13) q 0.98214(L14) win_kv 0.99972(L13) wq_a 0.96713(L13); gate top-6 sets 3/6
+        ASSERTED attn_norm=0.94462 q=0.98214 kv=0.96505 attn_out=0.98324 ffn_norm=0.95811
+        wall 1076.9 ms, attention 37.0 ms (the 8 index layers 11.7), moe gpu 67.7, stall 848.7
+      TF step 1 pos 17011:    416 ->   4419 (reference   4419) match margin 11.523 (ref 11.651)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 81.7%, worst L28 343/512, worst missed pick 2.33e+00 below our threshold
+        top-k in common with the reference, per index layer: L2 485 L8 472 L14 429 L20 452 L24 387 L28 343 L32 376 L36 404
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99993 attn_out 0.99998 ffn_norm 0.99991 moe_out 0.99974 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99986 wq_a 0.99981 q 0.99977 kv 0.99945 idx_q 0.99562 idx_w 0.99999 attn_out 0.99957 ffn_norm 0.99967 moe_out 0.99914 win_kv 0.99999 cmp_kv[8506] 1.00000 newest 0.99847 gate 6/6
+        L13 attn_norm 0.82218 wq_a 0.86539 q 0.91139 kv 0.84561 attn_out 0.90186 ffn_norm 0.83068 moe_out 0.85266 win_kv 0.99858 cmp_kv[8506] 1.00000 newest 0.98578 gate 5/6
+        L14 attn_norm 0.85032 wq_a 0.90227 q 0.93862 kv 0.89472 idx_q 0.90273 idx_w 0.98788 attn_out 0.97692 ffn_norm 0.92113 moe_out 0.91811 win_kv 0.99901 cmp_kv[8506] 0.99998 newest 0.84848 gate 5/6
+        L20 attn_norm 0.96644 wq_a 0.95737 q 0.97112 kv 0.94955 idx_q 0.95799 idx_w 0.99670 attn_out 0.98336 ffn_norm 0.97110 moe_out 0.96112 win_kv 0.99951 cmp_kv[17012] 1.00000 newest 0.98317 gate 4/6
+        L39 attn_norm 0.99318 wq_a 0.99238 q 0.99597 kv 0.99099 attn_out 0.99543 ffn_norm 0.99081 moe_out 0.99584 win_kv 0.99992 cmp_kv[17012] 1.00000 newest 0.98317 gate 5/6
+        worst over the probe layers: attn_norm 0.82218(L13) attn_out 0.90186(L13) cmp_kv 0.99998(L14) ffn_norm 0.83068(L13) idx_q 0.90273(L14) idx_w 0.98788(L14) kv 0.84561(L13) moe_out 0.85266(L13) q 0.91139(L13) win_kv 0.99858(L13) wq_a 0.86539(L13); gate top-6 sets 2/6
+        ASSERTED attn_norm=0.82218 q=0.91139 kv=0.84561 attn_out=0.90186 ffn_norm=0.83068
+        wall 1086.2 ms, attention 37.3 ms (the 8 index layers 11.8), moe gpu 65.7, stall 858.2
+      TF step 2 pos 17012:   4419 ->     15 (reference     15) match margin 10.613 (ref 10.594)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 90.4%, worst L14 437/512, worst missed pick 3.11e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 488 L8 457 L14 437 L20 479 L24 449 L28 454 L32 466 L36 471
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99997 kv 0.99997 attn_out 0.99998 ffn_norm 0.99992 moe_out 0.99973 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99987 wq_a 0.99984 q 0.99979 kv 0.99947 idx_q 0.99601 idx_w 0.99998 attn_out 0.99930 ffn_norm 0.99973 moe_out 0.99929 win_kv 0.99999 cmp_kv[8506] 1.00000 newest 0.99847 gate 6/6
+        L13 attn_norm 0.98174 wq_a 0.98847 q 0.99509 kv 0.98895 attn_out 0.98926 ffn_norm 0.98497 moe_out 0.98378 win_kv 0.99850 cmp_kv[8506] 1.00000 newest 0.98578 gate 6/6
+        L14 attn_norm 0.98599 wq_a 0.99199 q 0.99523 kv 0.99274 idx_q 0.98504 idx_w 0.99954 attn_out 0.99221 ffn_norm 0.98617 moe_out 0.98486 win_kv 0.99895 cmp_kv[8506] 0.99998 newest 0.84848 gate 5/6
+        L20 attn_norm 0.97634 wq_a 0.98539 q 0.99173 kv 0.98307 idx_q 0.98245 idx_w 0.99879 attn_out 0.99200 ffn_norm 0.98173 moe_out 0.95355 win_kv 0.99938 cmp_kv[17013] 1.00000 newest 0.97852 gate 5/6
+        L39 attn_norm 0.99494 wq_a 0.99598 q 0.99779 kv 0.99596 attn_out 0.99629 ffn_norm 0.99447 moe_out 0.99872 win_kv 0.99989 cmp_kv[17013] 1.00000 newest 0.97852 gate 6/6
+        worst over the probe layers: attn_norm 0.97634(L20) attn_out 0.98926(L13) cmp_kv 0.99998(L14) ffn_norm 0.98173(L20) idx_q 0.98245(L20) idx_w 0.99879(L20) kv 0.98307(L20) moe_out 0.95355(L20) q 0.99173(L20) win_kv 0.99850(L13) wq_a 0.98539(L20); gate top-6 sets 4/6
+        ASSERTED attn_norm=0.97634 q=0.99173 kv=0.98307 attn_out=0.98926 ffn_norm=0.98173
+        wall 1095.4 ms, attention 36.6 ms (the 8 index layers 11.7), moe gpu 66.7, stall 865.8
+      TF step 3 pos 17013:     15 ->  24391 (reference  24391) match margin 10.531 (ref 10.103)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 90.6%, worst L20 450/512, worst missed pick 9.15e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 479 L8 473 L14 465 L20 450 L24 453 L28 453 L32 455 L36 481
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99999 attn_out 0.99999 ffn_norm 0.99992 moe_out 0.99985 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99970 wq_a 0.99972 q 0.99972 kv 0.99947 idx_q 0.99632 idx_w 0.99997 attn_out 0.99934 ffn_norm 0.99943 moe_out 0.99881 win_kv 0.99998 cmp_kv[8507] 1.00000 newest 0.99901 gate 6/6
+        L13 attn_norm 0.98759 wq_a 0.99169 q 0.99597 kv 0.99114 attn_out 0.99286 ffn_norm 0.98973 moe_out 0.93028 win_kv 0.99842 cmp_kv[8507] 1.00000 newest 0.99006 gate 5/6
+        L14 attn_norm 0.98081 wq_a 0.98134 q 0.98851 kv 0.97936 idx_q 0.97596 idx_w 0.99635 attn_out 0.99333 ffn_norm 0.97700 moe_out 0.96606 win_kv 0.99879 cmp_kv[8507] 0.99998 newest 0.98460 gate 6/6
+        L20 attn_norm 0.96151 wq_a 0.97429 q 0.98407 kv 0.97110 idx_q 0.96754 idx_w 0.99648 attn_out 0.98769 ffn_norm 0.96505 moe_out 0.95543 win_kv 0.99913 cmp_kv[17014] 1.00000 newest 0.96988 gate 6/6
+        L39 attn_norm 0.99062 wq_a 0.99416 q 0.99688 kv 0.99292 attn_out 0.99449 ffn_norm 0.99122 moe_out 0.99884 win_kv 0.99984 cmp_kv[17014] 1.00000 newest 0.96988 gate 6/6
+        worst over the probe layers: attn_norm 0.96151(L20) attn_out 0.98769(L20) cmp_kv 0.99998(L14) ffn_norm 0.96505(L20) idx_q 0.96754(L20) idx_w 0.99635(L14) kv 0.97110(L20) moe_out 0.93028(L13) q 0.98407(L20) win_kv 0.99842(L13) wq_a 0.97429(L20); gate top-6 sets 5/6
+        ASSERTED attn_norm=0.96151 q=0.98407 kv=0.97110 attn_out=0.98769 ffn_norm=0.96505
+        wall 927.2 ms, attention 37.2 ms (the 8 index layers 11.9), moe gpu 64.4, stall 703.6
+      TF step 4 pos 17014:  24391 ->     19 (reference     19) match margin 11.101 (ref 11.063)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 88.5%, worst L14 382/512, worst missed pick 4.01e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 481 L8 449 L14 382 L20 465 L24 455 L28 458 L32 474 L36 460
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99998 kv 0.99998 attn_out 0.99999 ffn_norm 0.99993 moe_out 0.99972 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99986 wq_a 0.99981 q 0.99980 kv 0.99896 idx_q 0.99583 idx_w 0.99994 attn_out 0.99920 ffn_norm 0.99925 moe_out 0.99848 win_kv 0.99997 cmp_kv[8507] 1.00000 newest 0.99901 gate 6/6
+        L13 attn_norm 0.98060 wq_a 0.98542 q 0.99354 kv 0.98591 attn_out 0.99163 ffn_norm 0.98461 moe_out 0.94770 win_kv 0.99831 cmp_kv[8507] 1.00000 newest 0.99006 gate 5/6
+        L14 attn_norm 0.97503 wq_a 0.98008 q 0.98788 kv 0.97907 idx_q 0.97433 idx_w 0.99848 attn_out 0.98695 ffn_norm 0.97231 moe_out 0.96170 win_kv 0.99863 cmp_kv[8507] 0.99998 newest 0.98460 gate 6/6
+        L20 attn_norm 0.98832 wq_a 0.99172 q 0.99485 kv 0.98906 idx_q 0.98511 idx_w 0.99935 attn_out 0.99199 ffn_norm 0.98247 moe_out 0.97344 win_kv 0.99905 cmp_kv[17015] 0.99999 newest 0.98403 gate 6/6
+        L39 attn_norm 0.99609 wq_a 0.99539 q 0.99778 kv 0.99205 attn_out 0.99591 ffn_norm 0.99391 moe_out 0.99907 win_kv 0.99978 cmp_kv[17015] 0.99999 newest 0.98403 gate 6/6
+        worst over the probe layers: attn_norm 0.97503(L14) attn_out 0.98695(L14) cmp_kv 0.99998(L14) ffn_norm 0.97231(L14) idx_q 0.97433(L14) idx_w 0.99848(L14) kv 0.97907(L14) moe_out 0.94770(L13) q 0.98788(L14) win_kv 0.99831(L13) wq_a 0.98008(L14); gate top-6 sets 5/6
+        ASSERTED attn_norm=0.97503 q=0.98788 kv=0.97907 attn_out=0.98695 ffn_norm=0.97231
+        wall 782.8 ms, attention 36.7 ms (the 8 index layers 11.7), moe gpu 63.6, stall 565.1
+      TF step 5 pos 17015:     19 ->     15 (reference     15) match margin 8.837 (ref 9.121)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 91.5%, worst L32 452/512, worst missed pick 4.18e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 478 L8 478 L14 481 L20 466 L24 472 L28 463 L32 452 L36 459
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99997 kv 0.99986 attn_out 0.99998 ffn_norm 0.99990 moe_out 0.99986 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99986 wq_a 0.99981 q 0.99983 kv 0.99941 idx_q 0.99608 idx_w 0.99999 attn_out 0.99924 ffn_norm 0.99939 moe_out 0.98653 win_kv 0.99997 cmp_kv[8508] 1.00000 newest 0.99799 gate 5/6
+        L13 attn_norm 0.99079 wq_a 0.99463 q 0.99746 kv 0.99506 attn_out 0.99452 ffn_norm 0.99163 moe_out 0.99370 win_kv 0.99827 cmp_kv[8508] 1.00000 newest 0.99021 gate 6/6
+        L14 attn_norm 0.99160 wq_a 0.99626 q 0.99760 kv 0.99476 idx_q 0.98817 idx_w 0.99938 attn_out 0.99820 ffn_norm 0.99441 moe_out 0.94154 win_kv 0.99859 cmp_kv[8508] 0.99998 newest 0.98713 gate 5/6
+        L20 attn_norm 0.98436 wq_a 0.98919 q 0.99366 kv 0.98888 idx_q 0.98251 idx_w 0.99934 attn_out 0.99178 ffn_norm 0.98254 moe_out 0.97633 win_kv 0.99896 cmp_kv[17016] 0.99999 newest 0.98389 gate 6/6
+        L39 attn_norm 0.99215 wq_a 0.99409 q 0.99736 kv 0.99451 attn_out 0.99566 ffn_norm 0.99072 moe_out 0.99861 win_kv 0.99975 cmp_kv[17016] 0.99999 newest 0.98389 gate 6/6
+        worst over the probe layers: attn_norm 0.98436(L20) attn_out 0.99178(L20) cmp_kv 0.99998(L14) ffn_norm 0.98254(L20) idx_q 0.98251(L20) idx_w 0.99934(L20) kv 0.98888(L20) moe_out 0.94154(L14) q 0.99366(L20) win_kv 0.99827(L13) wq_a 0.98919(L20); gate top-6 sets 4/6
+        ASSERTED attn_norm=0.98436 q=0.99366 kv=0.98888 attn_out=0.99178 ffn_norm=0.98254
+        wall 730.8 ms, attention 37.3 ms (the 8 index layers 11.8), moe gpu 66.2, stall 505.9
+      TF step 6 pos 17016:     15 ->  13749 (reference  13749) match margin 11.187 (ref 11.329)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 88.0%, worst L14 373/512, worst missed pick 3.20e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 489 L8 454 L14 373 L20 453 L24 461 L28 472 L32 440 L36 461
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99998 attn_out 0.99999 ffn_norm 0.99988 moe_out 0.99979 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99986 wq_a 0.99983 q 0.99982 kv 0.99966 idx_q 0.99602 idx_w 0.99999 attn_out 0.99846 ffn_norm 0.99831 moe_out 0.97325 win_kv 0.99997 cmp_kv[8508] 1.00000 newest 0.99799 gate 5/6
+        L13 attn_norm 0.97376 wq_a 0.98106 q 0.99224 kv 0.98380 attn_out 0.99261 ffn_norm 0.98270 moe_out 0.98154 win_kv 0.99814 cmp_kv[8508] 1.00000 newest 0.99021 gate 6/6
+        L14 attn_norm 0.98366 wq_a 0.98073 q 0.98773 kv 0.98476 idx_q 0.97795 idx_w 0.99664 attn_out 0.98526 ffn_norm 0.96285 moe_out 0.90309 win_kv 0.99847 cmp_kv[8508] 0.99998 newest 0.98713 gate 5/6
+        L20 attn_norm 0.97105 wq_a 0.97814 q 0.99008 kv 0.97748 idx_q 0.97317 idx_w 0.99767 attn_out 0.99023 ffn_norm 0.97292 moe_out 0.96024 win_kv 0.99878 cmp_kv[17017] 0.99999 newest 0.97321 gate 6/6
+        L39 attn_norm 0.99117 wq_a 0.99400 q 0.99756 kv 0.99213 attn_out 0.99587 ffn_norm 0.99002 moe_out 0.99862 win_kv 0.99969 cmp_kv[17017] 0.99999 newest 0.97321 gate 6/6
+        worst over the probe layers: attn_norm 0.97105(L20) attn_out 0.98526(L14) cmp_kv 0.99998(L14) ffn_norm 0.96285(L14) idx_q 0.97317(L20) idx_w 0.99664(L14) kv 0.97748(L20) moe_out 0.90309(L14) q 0.98773(L14) win_kv 0.99814(L13) wq_a 0.97814(L20); gate top-6 sets 4/6
+        ASSERTED attn_norm=0.97105 q=0.98773 kv=0.97748 attn_out=0.98526 ffn_norm=0.96285
+        wall 723.2 ms, attention 36.9 ms (the 8 index layers 11.7), moe gpu 65.4, stall 504.9
+      TF step 7 pos 17017:  13749 ->   2701 (reference   2701) match margin 1.732 (ref 1.661)
+        top-k: 8 index layers, our kernel tie-aware exact on its own scores 8/8, equal to the reference as sets 0/8, mean overlap 91.5%, worst L24 433/512, worst missed pick 6.28e-01 below our threshold
+        top-k in common with the reference, per index layer: L2 486 L8 487 L14 484 L20 462 L24 433 L28 470 L32 465 L36 461
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99993 attn_out 0.99997 ffn_norm 0.99990 moe_out 0.99965 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99985 wq_a 0.99977 q 0.99977 kv 0.99898 idx_q 0.99641 idx_w 0.99996 attn_out 0.99937 ffn_norm 0.99962 moe_out 0.99966 win_kv 0.99996 cmp_kv[8509] 1.00000 newest 0.99847 gate 6/6
+        L13 attn_norm 0.98614 wq_a 0.99211 q 0.99633 kv 0.99348 attn_out 0.99530 ffn_norm 0.98998 moe_out 0.99209 win_kv 0.99809 cmp_kv[8509] 1.00000 newest 0.99131 gate 6/6
+        L14 attn_norm 0.99067 wq_a 0.99517 q 0.99742 kv 0.99387 idx_q 0.98816 idx_w 0.99954 attn_out 0.99835 ffn_norm 0.99374 moe_out 0.99196 win_kv 0.99842 cmp_kv[8509] 0.99998 newest 0.99002 gate 6/6
+        L20 attn_norm 0.98267 wq_a 0.98855 q 0.99322 kv 0.98456 idx_q 0.98150 idx_w 0.99893 attn_out 0.99379 ffn_norm 0.97913 moe_out 0.87832 win_kv 0.99865 cmp_kv[17018] 0.99999 newest 0.98235 gate 4/6
+        L39 attn_norm 0.99255 wq_a 0.99527 q 0.99778 kv 0.99474 attn_out 0.99699 ffn_norm 0.99317 moe_out 0.99955 win_kv 0.99966 cmp_kv[17018] 0.99999 newest 0.98235 gate 6/6
+        worst over the probe layers: attn_norm 0.98267(L20) attn_out 0.99379(L20) cmp_kv 0.99998(L14) ffn_norm 0.97913(L20) idx_q 0.98150(L20) idx_w 0.99893(L20) kv 0.98456(L20) moe_out 0.87832(L20) q 0.99322(L20) win_kv 0.99809(L13) wq_a 0.98855(L20); gate top-6 sets 5/6
+        ASSERTED attn_norm=0.98267 q=0.99322 kv=0.98456 attn_out=0.99379 ffn_norm=0.97913
+        wall 969.9 ms, attention 36.8 ms (the 8 index layers 11.8), moe gpu 64.4, stall 744.1
+    ctx16k teacher-forced: 8/8 (salt tokens 7/7)
+    (e) control: steps 0-1 again with the reference's compressed KV and top-k LOADED
+      TF step 0 pos 17010:     77 ->    416 (reference    416) match margin 11.487 (ref 11.384)
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99996 attn_out 0.99999 ffn_norm 0.99993 moe_out 0.99947 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99980 wq_a 0.99981 q 0.99979 kv 0.99934 idx_q 0.04164 idx_w 0.16839 attn_out 0.99990 ffn_norm 0.99967 moe_out 0.99933 win_kv 0.99999 cmp_kv[8505] 1.00000 newest 1.00000 gate 6/6
+        L13 attn_norm 0.99858 wq_a 0.99869 q 0.99917 kv 0.99844 attn_out 0.99934 ffn_norm 0.99852 moe_out 0.99819 win_kv 0.99999 cmp_kv[8505] 1.00000 newest 1.00000 gate 6/6
+        L14 attn_norm 0.99884 wq_a 0.99877 q 0.99901 kv 0.99784 idx_q -0.02105 idx_w 0.11573 attn_out 0.99947 ffn_norm 0.99854 moe_out 0.99781 win_kv 0.99998 cmp_kv[8505] 1.00000 newest 1.00000 gate 6/6
+        L20 attn_norm 0.99824 wq_a 0.99851 q 0.99880 kv 0.99734 idx_q 0.00292 idx_w 0.16535 attn_out 0.99924 ffn_norm 0.99774 moe_out 0.99568 win_kv 0.99998 cmp_kv[17011] 1.00000 newest 1.00000 gate 6/6
+        L39 attn_norm 0.99790 wq_a 0.99797 q 0.99882 kv 0.99763 attn_out 0.99891 ffn_norm 0.99804 moe_out 0.99772 win_kv 0.99998 cmp_kv[17011] 1.00000 newest 1.00000 gate 5/6
+        worst over the probe layers: attn_norm 0.99790(L39) attn_out 0.99891(L39) cmp_kv 1.00000(L13) ffn_norm 0.99774(L20) idx_q -0.02105(L14) idx_w 0.11573(L14) kv 0.99734(L20) moe_out 0.99568(L20) q 0.99880(L20) win_kv 0.99998(L20) wq_a 0.99797(L39); gate top-6 sets 5/6
+        wall 1134.0 ms, attention 31.4 ms (the 8 index layers 5.8), moe gpu 64.9, stall 865.4
+      TF step 1 pos 17011:    416 ->   4419 (reference   4419) match margin 11.455 (ref 11.651)
+        L0  attn_norm 1.00000 wq_a 1.00000 q 0.99999 kv 0.99993 attn_out 0.99998 ffn_norm 0.99991 moe_out 0.99974 win_kv 1.00000 gate 6/6
+        L2  attn_norm 0.99986 wq_a 0.99981 q 0.99977 kv 0.99945 idx_q 0.04056 idx_w 0.21845 attn_out 0.99992 ffn_norm 0.99981 moe_out 0.99939 win_kv 0.99999 cmp_kv[8506] 1.00000 newest 1.00000 gate 6/6
+        L13 attn_norm 0.97279 wq_a 0.98740 q 0.99238 kv 0.98104 attn_out 0.99452 ffn_norm 0.98099 moe_out 0.97476 win_kv 0.99985 cmp_kv[8506] 1.00000 newest 1.00000 gate 5/6
+        L14 attn_norm 0.99180 wq_a 0.98827 q 0.99227 kv 0.98353 idx_q -0.04050 idx_w 0.13448 attn_out 0.99766 ffn_norm 0.98917 moe_out 0.99080 win_kv 0.99987 cmp_kv[8506] 1.00000 newest 1.00000 gate 6/6
+        L20 attn_norm 0.98185 wq_a 0.97756 q 0.98438 kv 0.97170 idx_q -0.02356 idx_w 0.02301 attn_out 0.98734 ffn_norm 0.98711 moe_out 0.98566 win_kv 0.99977 cmp_kv[17012] 1.00000 newest 1.00000 gate 6/6
+        L39 attn_norm 0.99710 wq_a 0.99632 q 0.99782 kv 0.99547 attn_out 0.99837 ffn_norm 0.99703 moe_out 0.99928 win_kv 0.99995 cmp_kv[17012] 1.00000 newest 1.00000 gate 6/6
+        worst over the probe layers: attn_norm 0.97279(L13) attn_out 0.98734(L20) cmp_kv 1.00000(L2) ffn_norm 0.98099(L13) idx_q -0.04050(L14) idx_w 0.02301(L20) kv 0.97170(L20) moe_out 0.97476(L13) q 0.98438(L20) win_kv 0.99977(L20) wq_a 0.97756(L20); gate top-6 sets 5/6
+        wall 1170.7 ms, attention 31.1 ms (the 8 index layers 5.8), moe gpu 66.5, stall 910.0
+    ctx16k KV read per step: window 2.70 MB + compressed 5.60 MB + index keys 7.52 MB = 15.8 MB in the model's formats (bf16 store: 50.9 MB)
+model     deepseek_v41 (bfloat16): 40 layers, hidden 5120 x hc 4, 384 routed experts top-6 (fp4), 64 heads x 512 (kv 1), vocab 129280, ctx 1048576, engram layers 2, dspark 3x5
+weights   48 shards, 475.25 GiB (direct read, no repack)
+io        io_uring
+          io: 8822 req (8822 done, 0 failed, 0 cancelled), 60921 chunks, 65156948200 / 65156964352 bytes, busy 17.991 s, eff 3.62 GB/s, mean lat 430.773 ms, peak QD 8 / 32.0 MiB
+  p0_blocking     5880 req  52736.2 MiB
+  p2_engram       1728 req  7.0 MiB
+  p3_backfill     1214 req  9395.3 MiB
+  P0: 5880 req, 52736.2 MiB, lat mean 11.13 / p50 9.76 / p95 23.96 / max 66.91 ms  (queue wait 7.49 + service 3.64)
+  P0: first-of-burst 720 at 1.34 ms, behind 5160 at 12.50 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 6.63
+  dispatcher: 58556 iters, issue 0.06 s / poll 17.88 s / handle 0.03 s (callbacks 0.01 s, 8822 at 0.8 us mean)
+  dispatcher: Backend::submit 0.23 s over 60921 chunks, mean 3.8 us, max 0.71 ms  <- synchronous, on the only issuing thread
+  dispatcher: handle is 0.1% of the non-waiting loop; refill gap 0.3 us mean over 52166 reaps
+pinned    884 tensors, 9.17 GiB in 10 regions
+store     expert store: 400 slots (400 resident, 0 filling, 0 free, 0 pinned)  lookups 4320 hits 1380 (0.319)  fills 2940/2940 ok  runs 5880/5880  evictions 2540 (+0 guard-blocked)  path A hits 1380 / B 0 (1.0000 A)  fills A 2940 / B 0
+planner   planner: 720 layers, 4320 requests (1380 hits, 2940 misses, 0.319), 2540 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 720 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped
+gpu       AMD Radeon 8060S Graphics (RADV STRIX_HALO)
+LOADED    the state the prompt left behind, from /home/chenkailun/projects/cachedMoE/traces/longctx/ctx16k: the window KV, the compressed KV cache, the indexer key cache and the compressor's carried group, after 17010 prompt tokens. Every per-step tensor is ours (design 7.4)
+[  ok ] decode_longctx.engine_vs_reference
+
+2 case(s) run, 0 failed, 0 assertion failure(s)
