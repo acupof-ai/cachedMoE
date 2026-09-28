@@ -197,11 +197,16 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     // constant table (DecodeMode 0) is the measured M = 1 champion; Mesa's ACO
     // (RADV) lowers the same `kE2M1[nib]` into a per-element branchy select
     // tree, which held the whole MoE to 53 ms/token against 30.9 for the
-    // arithmetic decode (DecodeMode 1) -- the E2M1 values are exact either way,
-    // so l3_ppl off stays bit-identical (NLL 0.601884 on this driver). See
-    // docs/build.md, "Linux".
+    // arithmetic decode (DecodeMode 1). DecodeMode 3 places the nibble straight
+    // into fp16 bits (moe_common.slang fp4_pair_bits): the driver's own
+    // statistics put DecodeMode 1's gate/up loop at 840 instructions a block,
+    // 700 of them decode (bench/results/linux/isa/), and kernel_bench's engine
+    // shape goes 0.848 -> 0.710 ms per 7-slot pair (A 191 -> 212 GB/s, B 161
+    // -> 203). Every product and partial sum is the old one times 2^-14, which
+    // the block ldexp undoes exactly, so l3_ppl off is bit-identical (NLL
+    // 0.621814, 59/64, both ways). See docs/build.md, "Linux".
     if (bc.decode_mode == 0 && device.caps().driver_id == VK_DRIVER_ID_MESA_RADV)
-        spec.decode_mode = 1;
+        spec.decode_mode = 3;
     spec.decode_mode   = env_u32("DEEPMOE_MOE_DEC", spec.decode_mode);
     // Dispatch B (w2) gets its own shape on RADV. With A at the decode champion
     // L32 R1, ACO's B reads w2 at ~152 GB/s; B alone at L16 R2 reads it at ~185

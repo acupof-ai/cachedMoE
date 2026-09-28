@@ -650,6 +650,22 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0l. **ISA 层看 MoE：FP4 解码占了主循环 83% 的指令 → `DecodeMode 3`（位移解码）成为 RADV 默认，MoE 7 槽一对 0.848 → 0.710 ms（−16%），数值逐位不变。**
+   **新仪器**：`DEEPMOE_PIPELINE_STATS=<dir>` 让每个 pipeline 带 `VK_KHR_pipeline_executable_properties` 创建，驱动自己的统计（VGPR/SGPR、LDS、
+   指令数、VALU/VMEM、每 SIMD wave 数、ACO 的 latency / inverse throughput 估计）一行进 `<dir>/index.tsv`，NIR / ACO IR / 最终汇编进 `<dir>/<pipeline>.txt`
+   （`gpu/vulkan/pipeline.cpp`；不设就什么都不变）。引擎跑一步就拿到全部 65 个 pipeline：`bench/results/linux/isa/`。**所有 kernel 都是满占用（16 wave/SIMD）、零 spill**——
+   瓶颈不在寄存器。**MoE gate/up 的主循环**（一次一个块：gate、up 两行 × 32 个 FP4）沿 FP4 路径 **840 条指令，其中 FMA 只有 64 条（`v_fma_mix_f32`），~700 条是解码**：
+   `DecodeMode 1` 对每个元素按指数是否为 0 分支、拼 fp32 位模式，~11 条 VALU 一个元素。按 16 wave/SIMD 摊，VALU 占用 ~68%——和 `kernel_p2_moe.md` 的「61% VALU」一致：
+   **M=1 不是纯访存瓶颈，解码指令在吃带宽**（此前从没做过 ISA / 占用率分析，见 MoE 历史：只看过一次 `dec0` 的 select tree）。
+   **做法**（`moe_common.slang` 的 `fp4_pair_bits`）：E2M1 的 nibble `s e1 e0 m` 原样放进 fp16 位模式（符号到 bit 15、`e1 e0 m` 到 bit 11..9）**就是值 × 2⁻¹⁴**，
+   正规码与次正规码都成立（E2M1 偏置 1、fp16 偏置 15，差的 14 正好也是 fp16 次正规的指数）；一个字的第 k 与 k+4 个 nibble 在两个半字的同一位置，
+   所以一对元素是两次移位两次掩码，经 `f16tof32` 由 ACO 折进 `v_fma_mix_f32` 的 op_sel（每元素仍一条 FMA）；2¹⁴ 并进块的 `ldexp`。
+   每个乘积和部分和恰是原来的 2⁻¹⁴ 倍，ldexp 精确乘回，所以**逐位相同**。驱动统计（`isa` → `isa_dec3`）：gate/up VALU **988 → 498**、
+   down（L16 R2）**1089 → 541**，ACO inverse throughput 6464 → 3524。`kernel_bench --only "fp8 engine shape"`（引擎的 A L32 R1 + B L16 R2 + fp8 共享专家）：
+   **A 191 → 212 GB/s、B 161 → 203、一对 0.848 → 0.710 ms**；M=6 验证批 0.841 → 0.697（`bench/results/linux/moe_dec3/`）。
+   闸：`gpu_moe` 12/12（oracle 变体里 dec3 的 cos 0.999999961、max|dy| 与 dec1 同值）；**`l3_ppl` off 0.621814 / 59/64，与 dec1 逐位相同**。
+   `runtime/moe_bridge.cpp` 在 RADV 上 `decode_mode = 3`（Windows 驱动仍是常量表 dec0，未测 dec3）；`DEEPMOE_MOE_DEC=1` 退回。
+
 0k. **GPU 模型 → decode 注意力改成两次 coopmat GEMM（`decode_attn_cm.slang`，`DEEPMOE_ATTN_CM=1`，默认关）：n_kv 640 时 149 → 23.5 µs/层。**
    **怎么找到的**：`tools/gpu_model.py`（`model_probe` 量出的常数 + trace 的 DMGEOM01 几何）把每个 stage 的实测减模型排序，
    `sparse_attn.score/combine` 是**唯一一个实测是模型 9 倍的 stage**（热步 23 µs 对 2.5，每 token 缺口 1.6 ms）；

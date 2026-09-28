@@ -477,9 +477,13 @@ int main(int argc, char** argv) {
             // The engine's decode shape on RADV (moe_bridge.cpp): L32 R1 xglob,
             // HQuant 3, arithmetic FP4 decode (DecodeMode 1), next to its
             // DecodeMode 0 control.
-            for (uint32_t dec : {0u, 1u}) {
+            for (uint32_t dec : {0u, 1u, 3u}) {
                 gpu::MoeSpec sp{m, 32, 32, dec, 0, 1, 0, 3, 1};
                 add(sp, "fp8 shared", 1);
+                // ... and with B at the engine's own RADV shape.
+                sp.lanes_b = 16;
+                sp.rows_b = 2;
+                add(sp, "fp8 engine shape", 1);
             }
             // Dispatch B alone is where that shape loses (152 GB/s against
             // 204 for A on RADV): its own staging mode, and the 16/2 shape.

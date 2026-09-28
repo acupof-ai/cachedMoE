@@ -446,6 +446,13 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                                 d[r][j]     = sFp8[(a >> (8 * j)) & 0xFFu];
                                 d[r][4 + j] = sFp8[(b >> (8 * j)) & 0xFFu];
                             }
+                        } else if (DecodeMode == 3) {
+                            // Scaled by 2^-14; `esh` below puts it back.
+                            [unroll] for (uint k = 0; k < 4; ++k) {
+                                const uint b = fp4_pair_bits(w2q[r][w], k);
+                                d[r][k]     = f16tof32(b & 0xFFFFu);
+                                d[r][k + 4] = f16tof32(b >> 16);
+                            }
                         } else {
                             const uint pw = w2q[r][w];
                             [unroll] for (uint j = 0; j < 8; ++j)
@@ -460,7 +467,9 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             for (uint r = 0; r < RowsPerLane; ++r) p[r][m] += d[r][j] * hv[j];
                     }
                 }
-                const int esh = asI8 ? 1 : 0;
+                // DecodeMode 3's pair path (the generic loop above) leaves the fp4
+                // sums 2^-14 low.
+                const int esh = asI8 ? 1 : (DecodeMode == 3 && !packed && !isFp8) ? -14 : 0;
                 // `hs[m]` is 1 unless the generic path above left h on its fp8
                 // grid, in which case this is where the block scale lands.
                 const bool folded = (HQuant != 0) && !packed && !asI8;

@@ -23,7 +23,7 @@
 [vk::constant_id(1)] const uint LanesPerRow  = 32;   // A/B over {16, 32, 64} (rule 3)
 [vk::constant_id(2)] const uint RowsPerWgUnused = 8; // reserved: rows_per_wg is WG/LanesPerRow here
 [vk::constant_id(3)] const uint SubgroupSize = 32;   // applied via VK_EXT_subgroup_size_control
-[vk::constant_id(4)] const uint DecodeMode   = 1;    // 0 = const table, 1 = arithmetic, 2 = select tree
+[vk::constant_id(4)] const uint DecodeMode   = 1;    // 0 = const table, 1 = arithmetic, 2 = select tree, 3 = bit placement (fp4_pair_bits)
 [vk::constant_id(5)] const uint HPrecision   = 0;    // 0 = fp16 h, 1 = fp32 h
 // Weight rows per lane: the dual of M. M reads the weights once and uses them
 // for M activation columns; RowsPerLane reads the activation once and uses it
@@ -57,11 +57,33 @@ float16_t2 fp4_pair_h2(uint pw, uint j) {
     return float16_t2(kE2M1H[n & 0xFu], kE2M1H[(n >> 4) & 0xFu]);
 }
 
-// The three decode variants design §7.1 rule 5 asks to A/B.
+// DecodeMode 3. An E2M1 nibble `s e1 e0 m` placed straight into an fp16 bit
+// pattern -- the sign at bit 15, `e1 e0 m` at bits 11..9 -- IS the E2M1 value
+// times 2^-14, for the normal codes (2^(e-15)(1.m) = 2^(e-1)(1.m) * 2^-14) and
+// the subnormal pair alike (0.m * 2^-14): E2M1's bias of 1 and fp16's of 15
+// differ by exactly the 14 that fp16's subnormal exponent also has. So a decode
+// is two shifts and two masks, with no case on the exponent, and the 2^14 goes
+// into the block's ldexp, which is exact. (±0.5 lands on fp16 subnormals; RADV
+// keeps fp16 denormals, and the kernel tests against cpu/ would see them flush.)
+//
+// Nibbles k and k+4 of a word sit at the same offset in its two 16-bit halves,
+// so one word gives elements (k, k+4) as (low, high) half. The caller consumes
+// them through f16tof32, which ACO folds into v_fma_mix_f32's op_sel -- one FMA
+// an element, as before, but ~2 instructions of decode instead of ~11
+// (bench/results/linux/isa/: the DecodeMode 1 loop is 840 instructions a
+// 64-element block, 700 of them decode).
+uint fp4_pair_bits(uint pw, uint k) {
+    const uint s = pw >> (4 * k);
+    return ((s << 9) & 0x0E000E00u) | ((s << 12) & 0x80008000u);
+}
+
+// The three decode variants design §7.1 rule 5 asks to A/B. DecodeMode 3 uses
+// fp4_pair_bits where the kernel has a pair path and the arithmetic decode
+// everywhere else.
 float fp4_decode(uint nib) {
     if (DecodeMode == 0) {
         return kE2M1[nib & 15];
-    } else if (DecodeMode == 1) {
+    } else if (DecodeMode == 1 || DecodeMode == 3) {
         // Build the fp32 bit pattern directly: e2m1 exponent 0 is the
         // subnormal pair {0, 0.5}, otherwise (1 + m/2) * 2^(e-1).
         uint e    = (nib >> 1) & 3;

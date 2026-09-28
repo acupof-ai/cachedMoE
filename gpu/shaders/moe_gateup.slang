@@ -518,6 +518,16 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                             d3[r][j]     = sFp8[(c >> (8 * j)) & 0xFFu];
                             d3[r][4 + j] = sFp8[(e >> (8 * j)) & 0xFFu];
                         }
+                    } else if (DecodeMode == 3) {
+                        // Scaled by 2^-14; `esh` below puts it back.
+                        [unroll] for (uint k = 0; k < 4; ++k) {
+                            const uint b1 = fp4_pair_bits(w1q[r][w], k);
+                            const uint b3 = fp4_pair_bits(w3q[r][w], k);
+                            d1[r][k]     = f16tof32(b1 & 0xFFFFu);
+                            d1[r][k + 4] = f16tof32(b1 >> 16);
+                            d3[r][k]     = f16tof32(b3 & 0xFFFFu);
+                            d3[r][k + 4] = f16tof32(b3 >> 16);
+                        }
                     } else {
                         const uint pw1 = w1q[r][w];
                         const uint pw3 = w3q[r][w];
@@ -540,7 +550,10 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             }
             // 2*E2M1 is the exact int8, so the int8 path's block exponent is
             // one lower than the fp4 path's.
-            const int esh = ((XMode == 5 || XMode == 6) && !isFp8) ? 1 : 0;
+            // DecodeMode 3's pair path (the generic loop above, i.e. every XMode
+            // but 4-6) leaves the fp4 sums 2^-14 low.
+            const int esh = ((XMode == 5 || XMode == 6) && !isFp8) ? 1
+                          : (DecodeMode == 3 && XMode != 4 && !isFp8) ? -14 : 0;
             for (uint r = 0; r < RowsPerLane; ++r)
                 for (uint m = 0; m < kLiveM; ++m) {
                     accGate[r][m] += ldexp(p1[r][m], e1[r] - esh);

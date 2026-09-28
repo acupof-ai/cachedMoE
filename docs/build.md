@@ -149,7 +149,10 @@ web UI 和 `deepmoe serve` 都会自动探测并带上它（`DEEPMOE_MIRROR_AUTO
 4. **FP4 解码在 ACO 上要用算术版**：`kE2M1[nib]` 这种常量表下标在 Mesa 的 ACO 里被编成每元素一棵带分支的选择树，
    MoE 7 槽一对（带 fp8 共享专家）只有 40% 读带宽。`runtime/moe_bridge.cpp` 在 RADV（`DeviceCaps::driver_id == VK_DRIVER_ID_MESA_RADV`）
    上默认 `decode_mode = 1`：热步 ~117 → ~81 ms，NLL 逐位不变。`prefill_gemm` 反过来是表更快，保持原样。
-5. **NLL 基准**：`l3_ppl --modes off` 在这台 Linux 上是 **0.639409 / top-1 58/64**（attention 的 `fp8_round` 改成精确舍入之后，
+   **2026-09-29 起 RADV 默认 `decode_mode = 3`**（`moe_common.slang` 的 `fp4_pair_bits`：nibble 直接移进 fp16 位模式 = 值 × 2⁻¹⁴，
+   2¹⁴ 并进块的 ldexp）：MoE 7 槽一对 0.848 → 0.710 ms，NLL 仍逐位不变。`DEEPMOE_MOE_DEC=1` 退回。
+5. **NLL 基准**：`l3_ppl --modes off` 在这台 Linux 上是 **0.621814 / top-1 59/64**（2026-09-28 起 `wo_a`/`wo_b` K-split 在 RADV 默认开；
+   `decode_mode` 3 与 1 逐位相同。K-split 之前是 0.639409 / 58/64——attention 的 `fp8_round` 改成精确舍入之后，
    Mesa 会把原来的 `(a+M)-M` 折叠掉；改之前是 0.623007 / 60/64；dispatch B 走 L16 R2 之前是 0.601884；
    旧形状 `DEEPMOE_MOE_LB=32 DEEPMOE_MOE_RB=1` 是 0.601884 / 62/64；Windows 是 0.630051 / 61/64，编译器不同）。
 6. **外接模型盘**会掉线：一次在持续读中过热（00:39），一次在 75 °C 时 Thunderbolt 链路直接断开（02:53，重连后先协商成 x1 2.5 GT/s，

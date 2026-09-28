@@ -1,6 +1,8 @@
 #include "gpu/vulkan/pipeline.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <format>
 
 namespace deepmoe::gpu {
@@ -42,6 +44,84 @@ Result<void> Pipeline::create(Device&, const std::string& spv_path,
 }
 
 #else
+
+namespace {
+
+// DEEPMOE_PIPELINE_STATS: the driver's own account of one pipeline -- its
+// statistics as one line of `<dir>/index.tsv`, and statistics plus every
+// internal representation (NIR, ACO IR, ISA on RADV) in `<dir>/<name>.txt`.
+// `tag` is the .spv's base name and the specialisation constants, which is
+// what tells two pipelines of one shader apart.
+void write_pipeline_stats(VkDevice d, VkPipeline pipe, const std::string& tag) {
+    const char* dir = std::getenv("DEEPMOE_PIPELINE_STATS");
+    if (!dir || !*dir) return;
+    auto props = reinterpret_cast<PFN_vkGetPipelineExecutablePropertiesKHR>(
+        vkGetDeviceProcAddr(d, "vkGetPipelineExecutablePropertiesKHR"));
+    auto stats = reinterpret_cast<PFN_vkGetPipelineExecutableStatisticsKHR>(
+        vkGetDeviceProcAddr(d, "vkGetPipelineExecutableStatisticsKHR"));
+    auto irs = reinterpret_cast<PFN_vkGetPipelineExecutableInternalRepresentationsKHR>(
+        vkGetDeviceProcAddr(d, "vkGetPipelineExecutableInternalRepresentationsKHR"));
+    if (!props || !stats || !irs) return;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+
+    VkPipelineInfoKHR pi{VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR};
+    pi.pipeline = pipe;
+    uint32_t ne = 0;
+    props(d, &pi, &ne, nullptr);
+    std::vector<VkPipelineExecutablePropertiesKHR> ex(ne, {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
+    props(d, &pi, &ne, ex.data());
+
+    std::string line = tag, body;
+    for (uint32_t e = 0; e < ne; ++e) {
+        VkPipelineExecutableInfoKHR ei{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};
+        ei.pipeline = pipe;
+        ei.executableIndex = e;
+        body += std::format("== executable {}: {} ({}), subgroup {}\n", e, ex[e].name,
+                            ex[e].description, ex[e].subgroupSize);
+        uint32_t ns = 0;
+        stats(d, &ei, &ns, nullptr);
+        std::vector<VkPipelineExecutableStatisticKHR> st(ns, {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR});
+        stats(d, &ei, &ns, st.data());
+        for (const auto& x : st) {
+            std::string v;
+            switch (x.format) {
+                case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR: v = x.value.b32 ? "1" : "0"; break;
+                case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:  v = std::to_string(x.value.i64); break;
+                case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR: v = std::to_string(x.value.u64); break;
+                default: v = std::format("{:g}", x.value.f64); break;
+            }
+            body += std::format("  {:<28s} {}\n", x.name, v);
+            line += std::format("\t{}={}", x.name, v);
+        }
+        uint32_t nr = 0;
+        irs(d, &ei, &nr, nullptr);
+        std::vector<VkPipelineExecutableInternalRepresentationKHR> rep(
+            nr, {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR});
+        irs(d, &ei, &nr, rep.data());
+        std::vector<std::vector<char>> text(nr);
+        for (uint32_t i = 0; i < nr; ++i) {
+            text[i].resize(rep[i].dataSize + 1, 0);
+            rep[i].pData = text[i].data();
+        }
+        irs(d, &ei, &nr, rep.data());
+        for (uint32_t i = 0; i < nr; ++i)
+            body += std::format("\n== {} ({})\n{}\n", rep[i].name, rep[i].description,
+                                rep[i].isText ? text[i].data() : "(binary)");
+    }
+    std::string fname = tag;
+    for (char& ch : fname) if (ch == ' ' || ch == '/' || ch == '\\') ch = '_';
+    if (std::FILE* f = std::fopen((std::filesystem::path(dir) / (fname + ".txt")).string().c_str(), "w")) {
+        std::fputs(body.c_str(), f);
+        std::fclose(f);
+    }
+    if (std::FILE* f = std::fopen((std::filesystem::path(dir) / "index.tsv").string().c_str(), "a")) {
+        std::fprintf(f, "%s\n", line.c_str());
+        std::fclose(f);
+    }
+}
+
+}  // namespace
 
 Pipeline::Pipeline(Pipeline&& o) noexcept
     : device_(o.device_), name_(std::move(o.name_)), valid_(o.valid_),
@@ -151,12 +231,22 @@ Result<void> Pipeline::create(Device& device, const std::string& spv_path,
     VkComputePipelineCreateInfo cpci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     cpci.stage  = stage;
     cpci.layout = layout_;
+    if (device.caps().pipeline_stats)
+        cpci.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR |
+                      VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR;
     const VkResult r = vkCreateComputePipelines(device.handle(), VK_NULL_HANDLE, 1, &cpci,
                                                 nullptr, &pipeline_);
     if (r != VK_SUCCESS) {
         destroy();
         return fail(Err::Internal, std::format("vkCreateComputePipelines failed for '{}' ({})",
                                                spv_path, static_cast<int>(r)));
+    }
+    if (device.caps().pipeline_stats) {
+        std::string tag = std::filesystem::path(spv_path).stem().string();
+        tag += std::format(" m{} l{} r{} s{}", spec.m, spec.lanes_per_row, spec.rows_per_wg,
+                           spec.subgroup_size);
+        for (uint32_t v : spec.extra) tag += std::format(" {}", v);
+        write_pipeline_stats(device.handle(), pipeline_, tag);
     }
     valid_ = true;
     return {};

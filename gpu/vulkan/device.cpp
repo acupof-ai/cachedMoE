@@ -1,5 +1,7 @@
 #include "gpu/vulkan/device.h"
 
+#include <cstdlib>
+
 #include <algorithm>
 #include <cstring>
 #include <format>
@@ -194,6 +196,10 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.external_memory_host  = has_ext(ex, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     c.subgroup_size_control = has_ext(ex, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
     c.cooperative_matrix    = has_ext(ex, "VK_KHR_cooperative_matrix");
+    {
+        const char* dir = std::getenv("DEEPMOE_PIPELINE_STATS");
+        c.pipeline_stats = dir && *dir && has_ext(ex, "VK_KHR_pipeline_executable_properties");
+    }
     if (!c.timeline_semaphore)    c.timeline_semaphore    = has_ext(ex, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
     if (!c.buffer_device_address) c.buffer_device_address = has_ext(ex, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
     if (!c.integer_dot_product)   c.integer_dot_product   = has_ext(ex, "VK_KHR_shader_integer_dot_product");
@@ -295,6 +301,7 @@ Result<void> Device::create(const DeviceOptions& opts) {
     if (caps_.external_memory_host)  exts.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (caps_.subgroup_size_control) exts.push_back(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
     if (caps_.cooperative_matrix)    exts.push_back("VK_KHR_cooperative_matrix");
+    if (caps_.pipeline_stats)        exts.push_back("VK_KHR_pipeline_executable_properties");
 
     // Everything promoted into a VkPhysicalDeviceVulkanNNFeatures struct has to
     // be requested *there* and nowhere else: mixing the promoted struct with the
@@ -314,7 +321,12 @@ Result<void> Device::create(const DeviceOptions& opts) {
     v13.computeFullSubgroups = caps_.subgroup_size_control ? VK_TRUE : VK_FALSE;
     v13.shaderIntegerDotProduct = caps_.integer_dot_product ? VK_TRUE : VK_FALSE;
     v13.synchronization2     = caps_.synchronization2 ? VK_TRUE : VK_FALSE;
-    VkPhysicalDeviceFeatures2 feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v13};
+    VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pexf{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR, &v13};
+    pexf.pipelineExecutableInfo = VK_TRUE;
+    VkPhysicalDeviceFeatures2 feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                                   caps_.pipeline_stats ? static_cast<void*>(&pexf)
+                                                        : static_cast<void*>(&v13)};
     // SPIR-V PhysicalStorageBuffer64 addressing (the expert pointer table of
     // design §5.3) needs Int64; `half` in a storage buffer needs Int16.
     feat.features.shaderInt64 = caps_.shader_int64 ? VK_TRUE : VK_FALSE;
