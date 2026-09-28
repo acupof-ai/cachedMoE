@@ -259,6 +259,27 @@ public:
     // split and lets the stall say whether that split was worth having.
     double static_split() const { return static_split_; }
 
+    // --- Track ST: chunk-level striping (DEEPMOE_MIRROR_STRIPE=1) -----------
+    // The router above sends a WHOLE request to one source. An expert is two
+    // runs, and the 17.7 MB weights run is five 4 MiB chunks, so a layer with
+    // one miss -- the common case, 1.16 experts per miss-layer on the Linux
+    // budget -- reads almost all of its bytes from one drive while the other
+    // idles, and the decode waits on that one drive's latency.
+    //
+    // Striped, every CHUNK of a P0 request is routed on its own by the same
+    // weighted least-outstanding-bytes rule, so one request's chunks land on
+    // both drives in proportion to their rates and it completes when the
+    // slower share does. Charges are taken per chunk and released per chunk.
+    // Only P0 is striped: P3 backfill is throughput work, where whole-request
+    // routing already keeps both drives busy. A striped request that fails on
+    // a mirror is re-read whole from the primary, as an unstriped one is.
+    //
+    // Default OFF until an A/B has earned it. set_sources() reads it from the
+    // environment; the setter is for the bench and the tests, is a no-op
+    // without a mirror, and so goes AFTER set_sources and before any submit.
+    bool stripe() const { return stripe_; }
+    void set_stripe(bool on) { stripe_ = on && mirrors_on_; }
+
     // The startup probe: 4 MiB random reads at queue depth `qd` against
     // `sample_path` for `ms` milliseconds, returning GB/s. Opens and closes its
     // own handle, so it must not be pointed at a File already handed to a
@@ -305,15 +326,29 @@ private:
         uint32_t  source      = 0;       // which read source served it (Track D2)
         bool      routed      = false;   // charged against src_outstanding_[source]
         const File* primary   = nullptr; // the caller's file, when routed to a mirror
+        // Track ST: a striped request routes each chunk on its own. Empty
+        // `chunk_src` means unstriped (every chunk reads `req.file`). The
+        // per-source arrays are written by submit() before the request is
+        // queued and afterwards only on the dispatcher thread, under src_mutex_.
+        std::vector<uint8_t> chunk_src;
+        std::array<const File*, kMaxIoSources> src_file{};
+        uint64_t  src_charged[kMaxIoSources] = {};  // still in src_outstanding_
+        uint64_t  src_moved[kMaxIoSources]   = {};
+        TimePoint src_done_at[kMaxIoSources]{};     // that source's last chunk
+        uint32_t  src_used = 0;                     // bit s: carried a chunk
+        uint32_t  src_err  = 0;                     // bit s: a chunk failed there
         Status    status{Err::Ok};
         bool      failed = false;
     };
+
+    static constexpr uint8_t kNoStripeSource = 0xFF;
 
     // What an in-flight chunk is charged against, so the accounting unwinds
     // correctly even when a chunk fails with zero bytes moved.
     struct InflightChunk {
         std::shared_ptr<Pending> owner;
         uint32_t bytes = 0;
+        uint8_t  src   = kNoStripeSource;   // Track ST: the source of a striped chunk
     };
 
     // One chunk that policy has already committed to: its queue slot, its
@@ -448,6 +483,13 @@ private:
     void tick_keepalive();                       // dispatcher thread only
     bool finish_keepalive(const ChunkCompletion& c);  // true when it was ours
     uint32_t pick_static(uint32_t mask, uint64_t bytes) const;  // holds src_mutex_
+    // A request starts on source `s`: one more in flight, and the idle gap it
+    // ends is measured. Caller holds src_mutex_.
+    void note_source_start(uint32_t s);
+    // Folds one finished read's outcome into SourceHealth, dropping the source
+    // once its budget of consecutive errors is spent. Caller holds src_mutex_.
+    void note_source_result(uint32_t s, bool ok, const Status& st);
+    bool     stripe_ = false;                    // Track ST
     KeepAliveSlot ka_[kMaxIoSources];
     std::atomic<int64_t> ka_idle_ns_{0};         // 0 = keep-alive off
     std::atomic<uint32_t> ka_inflight_{0};       // so the dispatcher keeps polling

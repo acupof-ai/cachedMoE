@@ -26,6 +26,7 @@ struct SubmitRecord {
     uint64_t chunk_id;
     uint64_t file_off;
     uint32_t bytes;
+    const storage::File* file = nullptr;   // which handle, so a test can see the drive
 };
 
 class FakeBackend final : public storage::Backend {
@@ -47,7 +48,7 @@ public:
         std::lock_guard lk(m_);
         if (pending_.size() + held_.size() >= caps_.max_queue_depth)
             return fail(Err::ResourceExhausted, "fake queue full");
-        log_.push_back(SubmitRecord{req.chunk_id, req.file_off, req.bytes});
+        log_.push_back(SubmitRecord{req.chunk_id, req.file_off, req.bytes, req.file});
 
         storage::ChunkCompletion c;
         c.chunk_id = req.chunk_id;
@@ -90,6 +91,7 @@ public:
     void hold_completions(bool on) { std::lock_guard lk(m_); hold_ = on; }
     // Every read of `f` completes with an I/O error: a mirror whose link dropped.
     void fail_file(const storage::File* f) { std::lock_guard lk(m_); fail_files_.push_back(f); }
+    void clear_failures() { std::lock_guard lk(m_); fail_files_.clear(); }
     void release_all() {
         std::lock_guard lk(m_);
         while (!held_.empty()) { pending_.push_back(held_.front()); held_.pop_front(); }

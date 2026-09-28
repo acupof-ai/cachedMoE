@@ -611,6 +611,31 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0i. **Track ST：chunk 级条带化（`DEEPMOE_MIRROR_STRIPE=1`，默认关）——代码与 bench 已落地，`未实测`。**
+   **机制**：D2 的路由按**整个请求**选盘。一个 expert 是两个 run（17,698,816 B weights + 1,110,016 B scales），
+   Linux 账本里有 miss 的层平均只缺 1.16 个 expert，所以 17.7 MB 的 weights run 整块落在一块盘上，另一块盘只分到 scales run
+   （`io_dst_bench` 的 `whole` 臂 mirror 份额正好 **5.9% = 1,084 / 18,368 KiB**）。条带化把 P0 的**每个 chunk** 按同一条
+   `(outstanding + chunk) / rate` 规则单独路由，一个 run 按速率比分到两块盘，完成时间是较慢那一份。
+   **上限**（0h 账本）：单盘 stall 74.0 ms，双盘理想带宽地板 257.6 MB ÷ 8.56 GB/s = **30.1 ms**；
+   预测 mirror 的 66.4 → ~40 ms，**砍半后 ~55 ms ≈ 6.75 tok/s（相对 mirror +7.7%）**，置信度 M-L。
+   与 D6 的 static split（−2.68%）不同：那是把**整个 expert** 开环压给慢盘，这里是两块盘同时完成同一个请求。
+   **实现**（`storage/io_engine.cpp`）：只条带 P0（P3 backfill 仍按整请求）；每 chunk 入账、每 chunk 出账，失败后没发出去的 chunk 的余额在 `finish` 归还；
+   镜像那一份失败 ⇒ 整个请求回到主盘重读（与 D2 的 failover 同一条路），主盘那一份失败照常报错；
+   `src[i]` 行追加 `stripe N chunks`，条带请求的每源延迟是「提交 → 该盘最后一个 chunk」。
+   单测 `io.stripe_splits_one_p0_across_both_sources_by_weight`（4.87 : 3.69 下 16 个 chunk 分成 9 : 7）、
+   `io.stripe_leaves_backfill_and_the_default_whole`、`io.striped_mirror_error_is_reread_from_the_primary`；
+   变异三条（关掉条带 / 不归还余额 / 条带不 failover）全部 caught。
+   **判据（先 bench，分钟级）**：`io_dst_bench` 新增 `--mirror`、`--route single,whole,stripe`、`--req-kb 17284,1084`（一次读 = 一个 expert 的两个 run 成组计时）、
+   `--inflight 1`（decode 形状）、`--chunk-kb` 列表、`--repeat`（ABAB，同一 repeat 的两臂读同样的偏移），权重默认用 2 s 热身后的探针。
+   ```
+   io_dst_bench --file ~/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors \
+       --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors \
+       --dst ram --req-kb 17284,1084 --inflight 1 --qd 8 --chunk-kb 1024,4096 \
+       --route whole,stripe --repeat 4 --reads 200 --csv bench/results/linux/stripe/io_dst.csv
+   ```
+   `stripe` 的组延迟 **≤ 0.75× `whole`** 才进对话 ABAB（`long_turns.json`，`DEEPMOE_MIRROR_STRIPE=0/1`）；否则 NO-GO。
+   4 MiB chunk 下贪心分配是 8 : 8.9 MiB（慢盘反而多），1 MiB 是 10.2 : 8.2（接近 57 : 43），所以两种 chunk 都要看。
+   风险：每个请求都依赖两块盘，外接盘每小时一次的掉线会更频繁地打到关键路径上（走主盘重读）。
 0h. **2026-09-28：开发机换成 Linux（Omarchy，Mesa 26.2 RADV），热步 ~117 → ~79 ms（−33%），数值逐位不变（Track LX，`build.md` 的 Linux 一节）。**
    同一台 Strix Halo 重装成 Linux 之后，引擎的 MoE 段从 Windows 的 31 ms 变成 **50–53 ms/token**，而 `kernel_bench` 的纯 fp4 一对仍是
    **0.622 ms = 92% ceiling**（Windows 0.603）。按字节算不通，于是看 ACO 的机器码：**`fp4_decode` 的 DecodeMode 0（`kE2M1[nib]`，
