@@ -75,6 +75,19 @@ def hot_bytes_flops(name: str, n_kv: int) -> tuple[float, float]:
         return n_kv * kv_row + HEADS * HEAD_DIM * 2 + HEADS * n_kv * 4, 2.0 * HEADS * n_kv * HEAD_DIM
     if name == "sparse_attn.combine":
         return n_kv * kv_row + HEADS * n_kv * 4 + HEADS * HEAD_DIM * 4, 2.0 * HEADS * n_kv * HEAD_DIM
+    # decode_attn_cm: G and P are fp16 planes, S and O fp32; the two GEMMs are
+    # fp16 tiles, counted at the fp32 rate (an upper bound on their time).
+    g16, e = n_kv * HEAD_DIM * 2, (n_kv + 15) // 16 * 16
+    if name == "attn_cm.gather":
+        return n_kv * kv_row + HEADS * HEAD_DIM * 2 + g16 + HEADS * HEAD_DIM * 2, 0.0
+    if name == "attn_cm.score":
+        return g16 + HEADS * HEAD_DIM * 2 + HEADS * e * 4, 2.0 * HEADS * e * HEAD_DIM
+    if name == "attn_cm.softmax":
+        return HEADS * e * (4 + 2), 0.0
+    if name == "attn_cm.pv":
+        return g16 + HEADS * e * 2 + 4 * HEADS * HEAD_DIM * 4, 2.0 * HEADS * e * HEAD_DIM
+    if name == "attn_cm.finish":
+        return 5 * HEADS * HEAD_DIM * 4, 0.0
     return 0.0, 0.0
 
 

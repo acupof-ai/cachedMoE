@@ -84,6 +84,9 @@ struct DecodeScratch {
     gpu::GpuScratch::View kv_raw, kv_partials, kv;
     gpu::GpuScratch::View score, o, woa, wob;
     gpu::GpuScratch::View kpart;   // K-split partial plane for wo_a / wo_b (STATUS §7 item 6)
+    // decode_attn_cm's planes: fp16 gathered KV [1024][head_dim], fp16 q, fp16
+    // p [heads][1024] and fp32 1/denominator [heads].
+    gpu::GpuScratch::View cm_g, cm_q, cm_p, cm_inv, cm_part;
     gpu::GpuScratch::View gate_scores, gate_ids, gate_weights, layer_done;
     gpu::GpuScratch::View moe_x, moe_y;
     // design §7.4's compressor and indexer. Per-step working buffers only: the
@@ -251,6 +254,12 @@ void write_batch_window_lists(BatchScratch& b, uint32_t window, uint32_t p0, uin
 // to sit inside the spread of equally-right arithmetic (STATUS §7 0j).
 void set_attn_ksplit_default(bool on);
 bool attn_ksplit_on();
+
+// The M=1 attention as two cooperative-matrix GEMMs (decode_attn_cm.slang)
+// instead of sparse_attn's score + combine, on a device that has them.
+// DEEPMOE_ATTN_CM=0/1 overrides the default (off until measured).
+void set_attn_cm_default(bool on);
+bool attn_cm_on();
 
 class DecodeLayer {
 public:

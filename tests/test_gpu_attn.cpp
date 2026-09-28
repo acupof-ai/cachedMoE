@@ -304,8 +304,13 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
     Buf bTileMax = take(S, uint64_t(d.n_heads) * kTiles * 4);
     Buf bPartO   = take(S, uint64_t(kTiles) * d.n_heads * d.head_dim * 4);
     Buf bPartD   = take(S, uint64_t(kTiles) * d.n_heads * 4);
+    // decode_attn_cm's planes (gpu::slot::kAttnCm*).
+    Buf bCmG    = take(S, 1024ull * d.head_dim * 2), bCmQ = take(S, uint64_t(qrows) * 2);
+    Buf bCmP    = take(S, uint64_t(d.n_heads) * 1024 * 2), bCmInv = take(S, uint64_t(d.n_heads) * 4);
+    Buf bCmPart = take(S, gpu::kAttnCmPartBytes);
     REQUIRE(bDone.v.valid());
     REQUIRE(bPartD.v.valid());
+    REQUIRE(bCmPart.v.valid());
 
     // DEEPMOE_SKIP_P3 leaves out every P3 stage (docs/p2_attention.md §13), so
     // this case can be pointed at an older shader directory through
@@ -626,6 +631,47 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
                     CHECK(ok(nm, agree(bO2.read(qrows), g.f("attn_out_irope")), 0.99999, 1e-2));
                     report_ulp(nm, bO2.read(qrows), bO.read(qrows));
                 }
+            }
+
+            // And as two cooperative-matrix GEMMs (decode_attn_cm.slang), at
+            // the unsplit geometry, the runtime's, and both K dimensions split.
+            // The score sum is re-associated (fp16 tiles, fp32 accumulate), so
+            // a p that sits on a bf16 rounding boundary can land one ulp away
+            // from the untiled kernel's: the oracle is the check, the ulp
+            // report shows how far from the untiled kernel it went.
+            if (rig.runner.has_attn_cm()) {
+                uint64_t* t = rig.runner.slots(gpu::AttnStage::AttnCmGather);
+                std::memcpy(t, rig.runner.slots(gpu::AttnStage::AttnScore), 32 * 8);
+                t[gpu::slot::kAttnO] = bO2.a();
+                t[gpu::slot::kAttnCmG] = bCmG.a();
+                t[gpu::slot::kAttnCmQ] = bCmQ.a();
+                t[gpu::slot::kAttnCmP] = bCmP.a();
+                t[gpu::slot::kAttnCmInv] = bCmInv.a();
+                t[gpu::slot::kAttnCmPart] = bCmPart.a();
+                const gpu::AttnStage cm[] = {gpu::AttnStage::AttnCmGather, gpu::AttnStage::AttnCmScore,
+                                             gpu::AttnStage::AttnCmSoftmax, gpu::AttnStage::AttnCmPv,
+                                             gpu::AttnStage::AttnCmFinish};
+                for (gpu::AttnStage st : cm)
+                    if (st != gpu::AttnStage::AttnCmGather)
+                        std::memcpy(rig.runner.slots(st), t, 32 * 8);
+                const gpu::AttnCmPush base = rig.runner.attn_cm_push(
+                    static_cast<uint32_t>(idx.size()), d.window, d.head_dim, d.rope_dim, d.n_heads,
+                    1024, 1.0f / std::sqrt(static_cast<float>(d.head_dim)));
+                for (auto [ss, pv] : {std::pair{1u, 1u}, std::pair{base.s_split, base.pv_split},
+                                      std::pair{4u, 8u}}) {
+                    bO2.zero();
+                    gpu::AttnCmPush cp = base;
+                    cp.s_split = ss;
+                    cp.pv_split = pv;
+                    for (gpu::AttnStage st : cm)
+                        REQUIRE_OK(rig.runner.dispatch_now(st, &cp, sizeof cp,
+                                                           gpu::AttnRunner::attn_cm_groups(st, cp)));
+                    const std::string nm = std::format("  coopmat, split {}/{}", ss, pv);
+                    CHECK(ok(nm.c_str(), agree(bO2.read(qrows), g.f("attn_out_irope")), 0.99999, 1e-2));
+                    report_ulp(nm.c_str(), bO2.read(qrows), bO.read(qrows));
+                }
+            } else {
+                std::printf("      coopmat attention: no pipelines on this device, not checked\n");
             }
         }
 

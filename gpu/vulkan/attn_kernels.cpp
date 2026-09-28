@@ -4,6 +4,7 @@
 #include <format>
 
 #include "core/align.h"
+#include "core/log.h"
 
 namespace deepmoe::gpu {
 
@@ -51,6 +52,11 @@ const char* attn_stage_name(AttnStage s) {
         case AttnStage::AttnScoreT:  return "sparse_attn_t.score";
         case AttnStage::AttnPvT:     return "sparse_attn_t.pv";
         case AttnStage::AttnFinishT: return "sparse_attn_t.finish";
+        case AttnStage::AttnCmGather:  return "attn_cm.gather";
+        case AttnStage::AttnCmScore:   return "attn_cm.score";
+        case AttnStage::AttnCmSoftmax: return "attn_cm.softmax";
+        case AttnStage::AttnCmPv:      return "attn_cm.pv";
+        case AttnStage::AttnCmFinish:  return "attn_cm.finish";
         case AttnStage::Count:       break;
     }
     return "?";
@@ -184,7 +190,18 @@ constexpr StageDef kStages[] = {
     {AttnStage::IdxBlockKeys,   "indexer",  6, 1, 1, 1},
     {AttnStage::IdxBlockSelect, "indexer",  7, 1, 1, 1},
     {AttnStage::IdxApplyCand,   "indexer",  8, 1, 1, 1},
+    {AttnStage::AttnCmGather,  "decode_attn_cm", 0, 1, 1, 1},
+    {AttnStage::AttnCmScore,   "decode_attn_cm", 1, 1, 1, 1},
+    {AttnStage::AttnCmSoftmax, "decode_attn_cm", 2, 1, 1, 1},
+    {AttnStage::AttnCmPv,      "decode_attn_cm", 3, 1, 1, 1},
+    {AttnStage::AttnCmFinish,  "decode_attn_cm", 4, 1, 1, 1},
 };
+
+bool is_attn_cm(AttnStage s) {
+    return s == AttnStage::AttnCmGather || s == AttnStage::AttnCmScore ||
+           s == AttnStage::AttnCmSoftmax || s == AttnStage::AttnCmPv ||
+           s == AttnStage::AttnCmFinish;
+}
 static_assert(sizeof(kStages) / sizeof(kStages[0]) ==
               static_cast<size_t>(AttnStage::Count));
 }  // namespace
@@ -256,6 +273,9 @@ Result<void> AttnRunner::create(Device& device, MemoryAllocator& alloc,
         spec.pv_heads_per_wg < 1 || spec.pv_heads_per_wg > 8)
         return fail(Err::InvalidArgument,
                     "tile_heads_per_wg and pv_heads_per_wg must be 1..8 (design §7.5)");
+    if (!(spec.cm_s_split == 1 || spec.cm_s_split == 2 || spec.cm_s_split == 4) ||
+        spec.cm_pv_split < 1 || spec.cm_pv_split > 8)
+        return fail(Err::InvalidArgument, "cm_s_split must be 1, 2 or 4 and cm_pv_split 1..8");
     // A K-split factor is the combine's loop bound and the divisor of the slice
     // width; anything that is not a power of two either fails to divide K/32 or
     // leaves a ragged last slice gemv_ksplit.slang does not test for.
@@ -286,8 +306,19 @@ Result<void> AttnRunner::create(Device& device, MemoryAllocator& alloc,
     std::memset(table_.host_ptr, 0, static_cast<size_t>(table_.bytes));
 
     if (auto r = descriptors_.create(device, n, n); !r) { destroy(); return r; }
+    // The cooperative-matrix attention is optional: without the extension, or
+    // if the driver rejects the pipeline, the decode path keeps sparse_attn.
+    has_attn_cm_ = device.caps().cooperative_matrix;
     for (const StageDef& d : kStages) {
-        if (auto r = make(d, shader_dir + "/" + d.spv + ".spv"); !r) {
+        if (is_attn_cm(d.stage)) {
+            if (!has_attn_cm_) continue;
+            if (auto r = make(d, shader_dir + "/" + d.spv + ".spv"); !r) {
+                log_warn("attention: {} unavailable ({}); decode keeps sparse_attn",
+                         attn_stage_name(d.stage), r.error().message);
+                has_attn_cm_ = false;
+                continue;
+            }
+        } else if (auto r = make(d, shader_dir + "/" + d.spv + ".spv"); !r) {
             destroy();
             return fail(r.error().code,
                         std::format("{}: {}", attn_stage_name(d.stage), r.error().message));
@@ -309,6 +340,7 @@ void AttnRunner::destroy() {
     for (Pipeline& p : pipes_) p.destroy();
     if (alloc_ && table_.valid()) alloc_->free(table_);
     table_ = GpuBuffer{};
+    has_attn_cm_ = false;
     for (VkDescriptorSet& s : sets_) s = VK_NULL_HANDLE;
     device_ = nullptr;
     alloc_ = nullptr;

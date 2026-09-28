@@ -102,6 +102,7 @@ set(DEEPMOE_SHADERS
     gpu/shaders/wo_b.slang
     gpu/shaders/gemv_ksplit.slang
     gpu/shaders/sparse_attn_t.slang
+    gpu/shaders/decode_attn_cm.slang
     gpu/shaders/gate.slang
     gpu/shaders/moe_gateup.slang
     gpu/shaders/moe_down.slang

@@ -22,6 +22,16 @@ bool attn_ksplit_on() {
     return env >= 0 ? env != 0 : g_attn_ksplit_default.load() != 0;
 }
 
+namespace { std::atomic<int> g_attn_cm_default{0}; }
+void set_attn_cm_default(bool on) { g_attn_cm_default.store(on ? 1 : 0); }
+bool attn_cm_on() {
+    static const int env = [] {
+        const char* e = std::getenv("DEEPMOE_ATTN_CM");
+        return (e && *e) ? (std::atoi(e) != 0 ? 1 : 0) : -1;
+    }();
+    return env >= 0 ? env != 0 : g_attn_cm_default.load() != 0;
+}
+
 Result<LayerWeights> LayerWeights::from_pinned(const store::PinnedStore& p, uint32_t layer) {
     const std::string pre = std::format("layers.{}", layer);
     LayerWeights w;
@@ -117,6 +127,11 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
         {&wob,          uint64_t(dim) * 4},
         // 16 slices is gemv_ksplit's ceiling (attn_bench sizes it the same way).
         {&kpart,        uint64_t(16) * std::max<uint64_t>(orows, dim) * 4},
+        {&cm_g,         uint64_t(score_stride) * cfg.head_dim * 2},
+        {&cm_q,         uint64_t(qrows) * 2},
+        {&cm_p,         uint64_t(cfg.num_attention_heads) * score_stride * 2},
+        {&cm_inv,       uint64_t(cfg.num_attention_heads) * 4},
+        {&cm_part,      gpu::kAttnCmPartBytes},
         {&gate_scores,  uint64_t(cfg.n_routed_experts) * 4},
         {&gate_ids,     64},
         {&gate_weights, 64},
@@ -292,6 +307,17 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     at[gpu::slot::kAttnScore]    = b.score.addr;
     at[gpu::slot::kAttnO]        = b.o.addr;
     std::memcpy(runner_->slots(gpu::AttnStage::AttnCombine), at, gpu::kAttnStageStride);
+    if (runner_->has_attn_cm()) {
+        at[gpu::slot::kAttnCmG]   = b.cm_g.addr;
+        at[gpu::slot::kAttnCmQ]   = b.cm_q.addr;
+        at[gpu::slot::kAttnCmP]   = b.cm_p.addr;
+        at[gpu::slot::kAttnCmInv] = b.cm_inv.addr;
+        at[gpu::slot::kAttnCmPart] = b.cm_part.addr;
+        for (gpu::AttnStage s : {gpu::AttnStage::AttnCmGather, gpu::AttnStage::AttnCmScore,
+                                 gpu::AttnStage::AttnCmSoftmax, gpu::AttnStage::AttnCmPv,
+                                 gpu::AttnStage::AttnCmFinish})
+            std::memcpy(runner_->slots(s), at, gpu::kAttnStageStride);
+    }
 
     uint64_t* wa = runner_->slots(gpu::AttnStage::WoA);
     wa[gpu::slot::kWoaW] = w.wo_a;
@@ -516,13 +542,25 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     if (auto r = record_ced(cmd, st); !r) return r;
 
     // 5. Sparse attention over the window plus the compressed picks.
-    gpu::AttnPush ap{st.kv.n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim,
-                     kAttnScoreStride,
-                     1.0f / std::sqrt(static_cast<float>(c.head_dim))};
-    if (auto r = step(gpu::AttnStage::AttnScore, &ap, sizeof ap, c.num_attention_heads); !r)
-        return r;
-    if (auto r = step(gpu::AttnStage::AttnCombine, &ap, sizeof ap, c.num_attention_heads); !r)
-        return r;
+    if (attn_cm_on() && runner_->has_attn_cm()) {
+        const uint32_t n_kv = st.kv.n_kv;
+        const gpu::AttnCmPush cp = runner_->attn_cm_push(
+            n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim, c.num_attention_heads,
+            kAttnScoreStride, 1.0f / std::sqrt(static_cast<float>(c.head_dim)));
+        for (gpu::AttnStage s : {gpu::AttnStage::AttnCmGather, gpu::AttnStage::AttnCmScore,
+                                 gpu::AttnStage::AttnCmSoftmax, gpu::AttnStage::AttnCmPv,
+                                 gpu::AttnStage::AttnCmFinish})
+            if (auto r = step(s, &cp, sizeof cp, gpu::AttnRunner::attn_cm_groups(s, cp)); !r)
+                return r;
+    } else {
+        gpu::AttnPush ap{st.kv.n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim,
+                         kAttnScoreStride,
+                         1.0f / std::sqrt(static_cast<float>(c.head_dim))};
+        if (auto r = step(gpu::AttnStage::AttnScore, &ap, sizeof ap, c.num_attention_heads); !r)
+            return r;
+        if (auto r = step(gpu::AttnStage::AttnCombine, &ap, sizeof ap, c.num_attention_heads); !r)
+            return r;
+    }
 
     // 6-7. Output projection.
     if (attn_ksplit_on()) {

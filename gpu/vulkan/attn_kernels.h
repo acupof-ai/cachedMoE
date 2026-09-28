@@ -112,6 +112,16 @@ enum class AttnStage : uint32_t {
     IdxBlockKeys,  // §2.1: one radix key per block, the newest block pinned
     IdxBlockSelect,// §2.1: the candidate_topk_blocks best blocks -> keep flags
     IdxApplyCand,  // §2.1: -inf outside the kept blocks
+    // --- §7.5 as two cooperative-matrix GEMMs (decode_attn_cm.slang) ---------
+    // FIVE dispatches, replacing AttnScore + AttnCombine: the 64 heads are the
+    // rows of a matrix, so each KV element is loaded and converted once for all
+    // of them. Created only on a device with VK_KHR_cooperative_matrix
+    // (`AttnRunner::has_attn_cm`).
+    AttnCmGather,  // KV rows by index -> fp16 G, q -> fp16 Q
+    AttnCmScore,   // S = Q G^T, 16x16 tiles
+    AttnCmSoftmax, // max, p = bf16(exp(s - max)) -> fp16 P, 1 / denominator
+    AttnCmPv,      // O = P G, raw sums
+    AttnCmFinish,  // O *= 1 / denominator, inverse RoPE
     Count,
 };
 
@@ -154,6 +164,10 @@ struct AttnSpec {
     // cannot share a KV read across heads the way the scores can (see
     // sparse_attn_t.slang), so grouping only costs it workgroups.
     uint32_t pv_heads_per_wg = 1;
+    // decode_attn_cm's K splits (AttnCmPush). s_split 1, 2 or 4 slices of
+    // head_dim for the score GEMM; pv_split 1..8 slices of the list for P.V.
+    uint32_t cm_s_split = 1;
+    uint32_t cm_pv_split = 4;   // attn_bench --kv 640: pv 18.5 us at 1, 10.9 at 2, 8.0 at 4, 7.3-7.9 at 6-8 (+0.5-0.9 finish)
     // Rows per lane for the *KSplit stages only, because the K-split changes
     // the trade: the slice is narrower, so the LDS a workgroup holds is
     // smaller, so it can afford to retire more rows against one staged
@@ -239,6 +253,15 @@ struct AttnTPush {
     uint32_t n_heads, n_tiles, tile_len, part_stride;
     uint32_t pv_tiles, pv_tile_len;
 };
+// decode_attn_cm.slang, all five stages. `e` is n_kv rounded up to 16: the row
+// count of the gathered G and the P row stride.
+// `s_split` / `pv_split` slice the two GEMMs' K dimension over more waves; the
+// slices go to kAttnCmPart and the next stage adds them (AttnSpec::cm_*).
+struct AttnCmPush {
+    uint32_t n_kv, e, n_win, head_dim, rope_dim, n_heads, score_stride;
+    float    softmax_scale;
+    uint32_t s_split = 1, pv_split = 1;
+};
 struct GatePush { uint32_t n_experts, k, topk, record; float gate_temp, route_scale; };
 struct HeadPush { uint32_t rows, k, row_base; };
 // §7.4. `complete` is `(start_pos + 1) % ratio == 0`: at ratio 1 it is always
@@ -284,6 +307,12 @@ enum : uint32_t { kAttnQ = 0, kAttnWinVal = 1, kAttnWinScale = 2, kAttnCmpKv = 3
 // [n_heads][n_tiles] maxima, [n_tiles][n_heads][head_dim] fp32 output partials
 // and [n_tiles][n_heads] denominator partials.
 enum : uint32_t { kAttnTileMax = 9, kAttnPartO = 10, kAttnPartD = 11 };
+// decode_attn_cm: the same nine, plus fp16 G [e][head_dim], fp16 Q
+// [n_heads][head_dim], fp16 P [n_heads][e] and fp32 1/denominator [n_heads].
+// kAttnCmPart holds the split partials: [s_split][n_heads][score_stride] or
+// [pv_split][n_heads][head_dim] fp32, 1 MB at the AttnSpec limits.
+enum : uint32_t { kAttnCmG = 12, kAttnCmQ = 13, kAttnCmP = 14, kAttnCmInv = 15,
+                  kAttnCmPart = 16 };
 // wo_a: W, S, O, Y
 enum : uint32_t { kWoaW = 0, kWoaS = 1, kWoaO = 2, kWoaY = 3 };
 // gate
@@ -305,6 +334,9 @@ enum : uint32_t { kIdxW = 0, kIdxS = 1, kIdxQr = 2, kIdxQNormW = 3, kIdxRope = 4
                   // §2.1: [n_blocks] uint32 block keys and keep flags
                   kIdxBlkKey = 21, kIdxCand = 22 };
 }  // namespace slot
+
+// The size kAttnCmPart must have at AttnSpec's split limits.
+inline constexpr uint64_t kAttnCmPartBytes = 1ull << 20;
 
 // Positions the §7.4 indexer's score stage covers in one workgroup, and the
 // head count its wave reduction assumes. `AttnRunner::create` rejects a spec
@@ -435,6 +467,30 @@ public:
         return (pairs + 255) / 256;
     }
 
+    // Whether the AttnCm* pipelines exist (the device has cooperative matrices
+    // and the shader compiled for it).
+    bool has_attn_cm() const { return has_attn_cm_; }
+    // Workgroups for each AttnCm* stage over a list of `n_kv` entries: 16 rows
+    // a gather workgroup, eight 16x16 tiles (one a wave) a matrix workgroup,
+    // one head a softmax workgroup, one thread a pair in the finish.
+    static uint32_t attn_cm_e(uint32_t n_kv) { return (n_kv + 15) & ~15u; }
+    // The push for all five stages, with this spec's split factors.
+    AttnCmPush attn_cm_push(uint32_t n_kv, uint32_t n_win, uint32_t head_dim, uint32_t rope_dim,
+                            uint32_t n_heads, uint32_t score_stride, float scale) const {
+        return {n_kv, attn_cm_e(n_kv), n_win, head_dim, rope_dim, n_heads, score_stride, scale,
+                spec_.cm_s_split, spec_.cm_pv_split};
+    }
+    static uint32_t attn_cm_groups(AttnStage s, const AttnCmPush& p) {
+        switch (s) {
+            case AttnStage::AttnCmGather:  return (p.e + p.n_heads + 15) / 16;
+            case AttnStage::AttnCmScore:   return ((p.n_heads / 16) * (p.e / 16) * p.s_split + 7) / 8;
+            case AttnStage::AttnCmSoftmax: return p.n_heads;
+            case AttnStage::AttnCmPv:
+                return ((p.n_heads / 16) * (p.head_dim / 16) * p.pv_split + 7) / 8;
+            default:                       return attn_finish_groups(p.n_heads, p.head_dim);
+        }
+    }
+
 private:
     Result<void> make(const StageDef& d, const std::string& spv);
 
@@ -445,6 +501,7 @@ private:
     DescriptorPool   descriptors_;
     CommandPool      pool_;
     GpuBuffer        table_{};
+    bool             has_attn_cm_ = false;
 #if defined(DEEPMOE_ENABLE_VULKAN)
     VkDescriptorSet  sets_[static_cast<uint32_t>(AttnStage::Count)]{};
 #endif

@@ -650,6 +650,27 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0k. **GPU 模型 → decode 注意力改成两次 coopmat GEMM（`decode_attn_cm.slang`，`DEEPMOE_ATTN_CM=1`，默认关）：n_kv 640 时 149 → 23.5 µs/层。**
+   **怎么找到的**：`tools/gpu_model.py`（`model_probe` 量出的常数 + trace 的 DMGEOM01 几何）把每个 stage 的实测减模型排序，
+   `sparse_attn.score/combine` 是**唯一一个实测是模型 9 倍的 stage**（热步 23 µs 对 2.5，每 token 缺口 1.6 ms）；
+   `attn_bench --kv` 在对话的真实长度（window 128 + index_topk 512 = 640）上是 **85.5 + 63.8 = 149 µs/层 ≈ 6 ms/token**，tiled 版 49 + 67。
+   原因不是字节（KV 0.6 MB）也不是 FLOP（2 × 42 M），是**每个 head 各走一遍**：64 个 workgroup 各自把同一行 KV 解码、做 16 维标量点积再 `WaveActiveSum`，
+   一个 wave 串行走 80 行，每行一次依赖加载 + 一次 wave 归约。这与 §3 的 50（「读一次再发布」不赚——重复**读**是免费的）不矛盾：这里省的是重复的**解码和串行链**。
+   **做法**：64 个 head 是矩阵的行——`S = Q·Gᵀ`、`O = P·G`，G 是按 index 表收集好的 KV 行（fp16），fp16 tile、fp32 累加，五个 dispatch：
+   gather / score / softmax / pv / finish。参考实现的每一条都保留（max 只取 KV 分数、−1e30 下限、p 在最终 max 之后取 bf16、sink 进分母、逆 RoPE）；
+   E4M3 × UE8M0 与 bf16 在 fp16 里都是精确的，p 存成 p × 2¹⁴ 让 2⁻²⁸ 以上都精确。P·V 按列表切 4 片（部分和进 `kAttnCmPart`，finish 相加）：
+   pv 18.5 → **8.0 µs**（2 片 10.9、6–8 片 7.3–7.9 + finish 多 0.5–0.9）；score 切 2 片 6.9 → 5.9 但 softmax 3.4 → 4.5，不切。
+   `attn_bench --kv 640`：gather 3.1 / score 6.9 / softmax 3.4 / pv 8.0 / finish 2.1 = **23.5 µs**（`bench/results/linux/attn_cm/`）。
+   **数值**：`suite.gpu_attn` 在 7 层 oracle 数据上与参考的 cos **和经典 kernel 逐位相同到 9 位**（0.999997368 …），对经典 kernel relL2 **5e-8 – 1.7e-7**，
+   与已合入的 tiled 版（3e-8 – 7e-8）同量级；三种切片（1/1、1/4、4/8）都过。整机闸（`DEEPMOE_ATTN_CM=1`）：
+   `suite.spec_forward` worst cos **0.9316**、top-1 52/60（等价变体 0.913–0.944 / 52–57）；`suite.decode_longctx` 最差 attn_norm **0.822**（变体 0.838–0.933，线 0.74）；
+   `suite.decode` 三个漂移量 window 0.910 / compressed 0.959 / index keys 0.962（线 0.87 / 0.94 / 0.92）——都在散布里。
+   **没过的一格**：`suite.decode` 第一段 teacher-forced **6/8**（要 7/8）。step 6 在**所有**等价变体里都错；step 7 在默认算术下我们只以 **margin 0.0019** 蒙对
+   （变体 0.12 / 1.17 / 1.26），coopmat 翻成 −0.21；第二段同一个 step 7 在 ksplit_oldB 变体里也翻过。**这一格是一个硬币**。
+   `l3_ppl` off（64 步）：默认 **0.621814 / 59/64**（与 K-split 那次逐位相同），coopmat **0.622784 / 56/64**（+0.16%；等价变体散布 0.602–0.648 / 56–62）。
+   逐位置对比：翻转**双向**——coopmat 把默认错的 step 4、12 翻对，把 11、17、20、45、46 翻错，七处两边 margin 全部 < 0.47，全是近平局。
+   **所以默认关**：它没有系统性的精度损失，但默认开就要改 `suite.decode` 的 7/8，那是质量闸的定义，留给用户决定。预计收益：对话 ~5 ms/token（~+3.7% tok/s），热步 ~1.2 ms。
+
 0j. **系统测量 + 按瓶颈排序的第一轮：GPU 空闲降频（GameMode）+ `sample_topk` 的 LDS 直方图。对话结果见 §1.0 的 ledger，不在这里重抄。**
    **尺子**：`tools/perf_report.py`——热步（`--capture`，全部 expert 驻留）每个 dispatch stage 的忙时对它要流过的权重字节 ÷ `--bw`（230 GB/s，
    x 上 `wq_b` 实测 ~229）给出地板，按"超出地板"排序；对话（`--chat RUN`）把每 token 拆成 compute / NVMe stall（对 miss × 18,808,832 B ÷ 盘速的地板）/ other。

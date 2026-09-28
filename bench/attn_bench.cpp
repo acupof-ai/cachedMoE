@@ -68,6 +68,7 @@ struct Opts {
     uint32_t    theads = 8;   // heads per workgroup for sparse_attn_t.score
     uint32_t    pvtiles = 1;  // KV tiles for sparse_attn_t.pv; 0 = --tiles
     uint32_t    pvheads = 1;  // heads per workgroup for sparse_attn_t.pv
+    uint32_t    cm_s = 0, cm_pv = 0;  // decode_attn_cm splits; 0 = the AttnSpec default
     // Synthetic KV length for the §7.5 rows. 0 = the L3 decode geometry, i.e.
     // the 128-slot window plus the 65 compressed positions a 64-token prefill
     // at ratio 1 leaves. Anything else fills the compressed half with random
@@ -95,7 +96,7 @@ uint64_t bf16_bytes(uint64_t rows, uint64_t k) { return rows * k * 2; }
 // `grp` says which total a row belongs to: the §7.14 per-layer path, the head,
 // the two §7.4 kernels that run on some layers only, or the P3 replacements,
 // which are timed alongside the kernels they replace so the A/B is one run.
-enum Grp : int { kLayer = 0, kHead, kCmp, kIdx, kP3 };
+enum Grp : int { kLayer = 0, kHead, kCmp, kIdx, kP3, kCm };
 struct Row {
     const char* name;
     double      ms;
@@ -144,6 +145,8 @@ int main(int argc, char** argv) {
     o.theads = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--tile-heads", "8").c_str()));
     o.pvtiles = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--pv-tiles", "1").c_str()));
     o.pvheads = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--pv-heads", "1").c_str()));
+    o.cm_s  = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--cm-s-split", "0").c_str()));
+    o.cm_pv = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--cm-pv-split", "0").c_str()));
     o.kv     = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--kv", "0").c_str()));
     o.subgroup = static_cast<uint32_t>(std::atoi(arg_after(argc, argv, "--subgroup", "32").c_str()));
     if (o.model.empty()) {
@@ -223,6 +226,8 @@ int main(int argc, char** argv) {
     spec.heads_per_wg  = o.heads;
     spec.tile_heads_per_wg = o.theads;
     spec.pv_heads_per_wg = o.pvheads;
+    if (o.cm_s)  spec.cm_s_split = o.cm_s;
+    if (o.cm_pv) spec.cm_pv_split = o.cm_pv;
     spec.rows_per_lane_ksplit = o.ks_rows;
     spec.fp8_arith_decode = o.arith;
     // Stage names -> AttnSpec's sweep bitmasks.
@@ -521,6 +526,95 @@ int main(int argc, char** argv) {
                        att_slots, &tp, sizeof tp,
                        gpu::AttnRunner::attn_finish_groups(d.n_heads, d.head_dim), kP3));
 
+    // --- decode_attn_cm: the same attention as two coopmat GEMMs ----------
+    // Timed on the same data as the two rows above, then checked against the
+    // classic kernel on varied data (random fp8 window, random bf16
+    // compressed rows, -1 holes): cosine and relative L2 over all 64 heads.
+    auto CmG = take(uint64_t(1024) * d.head_dim * 2), CmQ = take(uint64_t(d.qrows()) * 2);
+    auto CmS = take(uint64_t(d.n_heads) * 1024 * 4), CmP = take(uint64_t(d.n_heads) * 1024 * 2);
+    auto CmInv = take(uint64_t(d.n_heads) * 4), CmPart = take(gpu::kAttnCmPartBytes);
+    double cm_us = 0;
+    if (runner.has_attn_cm() && n_kv <= 1024 && CmPart.valid()) {
+        const gpu::AttnCmPush cp = runner.attn_cm_push(n_kv, d.window, d.head_dim, d.rope_dim,
+                                                       d.n_heads, 1024,
+                                                       1.0f / std::sqrt(float(d.head_dim)));
+        auto cm_slots = [&](gpu::AttnRunner& r, uint32_t L) {
+            uint64_t* s = r.slots(gpu::AttnStage::AttnCmGather);
+            s[gpu::slot::kAttnQ] = Q.addr; s[gpu::slot::kAttnWinVal] = WinV.addr;
+            s[gpu::slot::kAttnWinScale] = WinS.addr; s[gpu::slot::kAttnCmpKv] = Cmp.addr;
+            s[gpu::slot::kAttnTopIdx] = Top.addr;
+            s[gpu::slot::kAttnSink] = addr(L, "attn.attn_sink");
+            s[gpu::slot::kAttnRope] = Rope.addr; s[gpu::slot::kAttnScore] = CmS.addr;
+            s[gpu::slot::kAttnO] = O.addr;
+            s[gpu::slot::kAttnCmG] = CmG.addr; s[gpu::slot::kAttnCmQ] = CmQ.addr;
+            s[gpu::slot::kAttnCmP] = CmP.addr; s[gpu::slot::kAttnCmInv] = CmInv.addr;
+            s[gpu::slot::kAttnCmPart] = CmPart.addr;
+            for (gpu::AttnStage t : {gpu::AttnStage::AttnCmScore, gpu::AttnStage::AttnCmSoftmax,
+                                     gpu::AttnStage::AttnCmPv, gpu::AttnStage::AttnCmFinish})
+                std::memcpy(r.slots(t), s, gpu::kAttnStageStride);
+        };
+        const gpu::AttnStage cm_stages[] = {
+            gpu::AttnStage::AttnCmGather, gpu::AttnStage::AttnCmScore,
+            gpu::AttnStage::AttnCmSoftmax, gpu::AttnStage::AttnCmPv, gpu::AttnStage::AttnCmFinish};
+        for (gpu::AttnStage t : cm_stages) {
+            rows.push_back(run(gpu::attn_stage_name(t), t, kv_unique, cm_slots, &cp, sizeof cp,
+                               gpu::AttnRunner::attn_cm_groups(t, cp),
+                               kCm));
+            cm_us += rows.back().ms * 1e3;
+        }
+
+        // The check. Layer 0's sink; every buffer rewritten, then both kernels
+        // run once each from the same inputs.
+        uint32_t lcg = 12345u;
+        auto rnd = [&] { lcg = lcg * 1664525u + 1013904223u; return lcg >> 8; };
+        auto u01 = [&] { return float(rnd() & 0xFFFFu) / 65536.0f; };
+        for (uint64_t i = 0; i < uint64_t(d.window) * d.head_dim; ++i) {
+            uint32_t b = rnd() & 0xFFu;
+            if ((b & 0x7Fu) == 0x7Fu) b &= 0xFEu;               // no E4M3 NaN
+            static_cast<uint8_t*>(WinV.host)[i] = uint8_t(b);
+        }
+        for (uint64_t i = 0; i < uint64_t(d.window) * (d.head_dim / 32); ++i)
+            static_cast<uint8_t*>(WinS.host)[i] = uint8_t(118 + rnd() % 6);
+        for (uint64_t i = 0; i < uint64_t(n_cmp) * d.head_dim; ++i) {
+            const float v = (u01() - 0.5f) * 4.0f;
+            uint32_t bits; std::memcpy(&bits, &v, 4);
+            static_cast<uint16_t*>(Cmp.host)[i] = uint16_t(bits >> 16);
+        }
+        for (uint32_t i = 0; i < d.qrows(); ++i) {
+            const float v = (u01() - 0.5f) * 3.0f;
+            uint32_t bits; std::memcpy(&bits, &v, 4);
+            static_cast<uint16_t*>(Q.host)[i] = uint16_t(bits >> 16);
+        }
+        for (uint32_t i = 0; i < n_kv; ++i)
+            static_cast<int32_t*>(Top.host)[i] = (i % 37 == 5) ? -1 : int32_t(i);
+        at_slots(*runners[0], 0);
+        cm_slots(*runners[0], 0);
+        std::vector<float> ref(d.qrows()), got(d.qrows());
+        bool ok = runners[0]->dispatch_now(gpu::AttnStage::AttnScore, &ap, sizeof ap, at_groups) &&
+                  runners[0]->dispatch_now(gpu::AttnStage::AttnCombine, &ap, sizeof ap, at_groups);
+        std::memcpy(ref.data(), O.host, ref.size() * 4);
+        for (gpu::AttnStage t : cm_stages)
+            ok = ok && runners[0]->dispatch_now(
+                           t, &cp, sizeof cp,
+                           gpu::AttnRunner::attn_cm_groups(t, cp));
+        std::memcpy(got.data(), O.host, got.size() * 4);
+        double dot = 0, rr = 0, gg = 0, dd = 0, mx = 0;
+        for (size_t i = 0; i < ref.size(); ++i) {
+            dot += double(ref[i]) * got[i]; rr += double(ref[i]) * ref[i];
+            gg += double(got[i]) * got[i];
+            const double e = double(got[i]) - ref[i];
+            dd += e * e; mx = std::max(mx, std::fabs(e));
+        }
+        std::printf("attn_cm (s_split %u, pv_split %u) vs sparse_attn (n_kv %u, 1 in 37 entries "
+                    "-1): %s cosine %.9f rel L2 %.3e max|d| %.3e (|ref| rms %.3e)\n", cp.s_split,
+                    cp.pv_split, n_kv, ok ? "ok" : "DISPATCH FAILED",
+                    dot / std::sqrt(rr * gg + 1e-300), std::sqrt(dd / (rr + 1e-300)), mx,
+                    std::sqrt(rr / double(ref.size())));
+    } else {
+        std::printf("attn_cm: not measured (%s)\n",
+                    !runner.has_attn_cm() ? "no cooperative-matrix pipelines" : "n_kv > 1024");
+    }
+
     // --- wo_a / wo_b ----------------------------------------------------
     gpu::WoaPush wa{d.orows(), d.ocols(), d.ocols() / 32, d.o_lora};
     rows.push_back(run("wo_a", gpu::AttnStage::WoA, fp8_bytes(d.orows(), d.ocols()),
@@ -736,6 +830,7 @@ int main(int argc, char** argv) {
     for (const Row& r : rows) {
         std::printf("%-22s %10.2f %12llu %10.1f\n", r.name, r.ms * 1e3,
                     static_cast<unsigned long long>(r.bytes), r.gbps());
+        if (r.grp == kCm) continue;
         if (r.grp == kP3)                                      p3_us   += r.ms * 1e3;
         else if (std::strcmp(r.name, "head") == 0)              head_us += r.ms * 1e3;
         else if (std::strncmp(r.name, "compressor.", 11) == 0)  cmp_us  += r.ms * 1e3;
@@ -752,6 +847,14 @@ int main(int argc, char** argv) {
     std::printf("%-22s %10.2f %12.0f %10.1f   (P3 stages in place of the seven they "
                 "replace)\n", "  (one layer, P3)", p3_layer, layer_bytes,
                 p3_layer > 0 ? layer_bytes / (p3_layer * 1e-6) / 1e9 : 0.0);
+    if (cm_us > 0) {
+        double classic = 0;
+        for (const Row& r : rows)
+            if (!std::strcmp(r.name, "sparse_attn.score") || !std::strcmp(r.name, "sparse_attn.combine"))
+                classic += r.ms * 1e3;
+        std::printf("%-22s %10.2f   (5 dispatches, in place of sparse_attn's %.2f)\n",
+                    "  (attn_cm)", cm_us, classic);
+    }
     std::printf("%-22s %10.2f   (4 of 40 layers)\n", "  (compressor, 7.4)", cmp_us);
     std::printf("%-22s %10.2f   (8 of 40 layers)\n", "  (indexer, 7.4)", idx_us);
     std::printf("  40 layers + head: %.2f ms/token classic, %.2f ms/token P3, "
