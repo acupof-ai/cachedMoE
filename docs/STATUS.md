@@ -713,6 +713,19 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    GPU prefill 的 KV 与 decode 路径不逐位同，回答随之不同（每臂 2,359 vs 2,322 token，臂内逐 token 相同）。不加参数的新默认复跑：TTFT 81.7 s，端到端 4.969。
    `suite.gpu_prefill`：`stages` 110 项 0 失败（worst cos 0.99991）、`forty_layers` 过；longctx 三项因本机无 `traces/longctx` 跳过。
    Windows 的 512（Track PF：512 以下 expert 流式比 decode 省下的更贵）没动。
+   **§7 第 6 项的一半：Track J 的 K-split `wo_a` / `wo_b` 接进 M=1 decode 路径——attention −3.8 ms/token，但**默认关**（`DEEPMOE_ATTN_KSPLIT=1` 开）。**
+   `attn_bench` 在 RADV 上：经典 `wo_a` 194.5 µs（173 GB/s）/ `wo_b` 251.8 µs（167 GB/s），K-split（4 / 8 片）157.4（213）/ 199.2（211）；
+   `wq_b` 本来就是 226 GB/s（~实际上限），所以只接这两个（旧的 `wip/track-t-ksplit-decode` 连 tiled attention 一起改、从没编译过，没用）。
+   `DecodeLayer` 加一块 K-split 部分和平面 `kpart`（16 × max(orows, dim) fp32），`bind` 两套 slot 都绑，`record_attention` 按 `attn_ksplit_on()` 选；
+   `DEEPMOE_ATTN_KSPLIT=0/1` 控制，默认关。热步 trace ABAB 两对（`bench/results/linux/ksplit/`）：
+   attention busy **32.4 / 32.8 → 28.6 / 29.1 ms/token（−3.8 ms，−11.6%）**，MoE 不变（这组 run 的 token 都带盘等待，整步 span 不可比）。
+   数值：`suite.gpu_attn` 里 K-split 对它替换的 kernel **relL2 ~1e-7、cos 1.000000000**，对 oracle 的误差与经典逐位同量级；
+   `l3_ppl` off **0.639409 → 0.621814，top-1 58 → 59/64**（近平局翻转；默认关所以 Linux 基准仍是 0.639409）。
+   `suite.decode` 的 64 步预填漂移（最差层 index-key cos）0.9685 → **0.9493**，掉到 0.95 的线下——这个量对 1e-7 级扰动混沌放大，
+   `suite.spec_forward`（mgt1 批 vs M=1，60 位置最差 cos）0.9415 → **0.9132**，掉到 0.93 的地板下（top-1 52 → 53/60 反而更好）。
+   **两道质量闸都被 1e-7 级舍入差推过线**，而收益只有下面这点，所以**不放宽阈值，保持 opt-in**。要默认开，得先让 mgt1 批路径也用 K-split（两条路径同一算术），再重评这两道闸。
+   另：`suite.gpu_moe` 在**不带任何本地改动的 HEAD** 上也失败（`L16 R2 … hq8` 几个变体 vs y_hq16 2.76e-3 超 tol），与本改动无关，待查。
+   对话端到端的预期：每 token ~164 ms 里省 3.8 ms ≈ +2.3%，砍半 +1.2%，**低于 ±3% 的抖动带，所以没跑对话 ABAB**——判据是 kernel 级的配对测量。
 
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。

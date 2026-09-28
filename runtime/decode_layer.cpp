@@ -1,6 +1,8 @@
 #include "runtime/decode_layer.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -9,6 +11,16 @@
 #include "runtime/rope.h"
 
 namespace deepmoe::runtime {
+
+namespace { std::atomic<int> g_attn_ksplit_default{0}; }
+void set_attn_ksplit_default(bool on) { g_attn_ksplit_default.store(on ? 1 : 0); }
+bool attn_ksplit_on() {
+    static const int env = [] {
+        const char* e = std::getenv("DEEPMOE_ATTN_KSPLIT");
+        return (e && *e) ? (std::atoi(e) != 0 ? 1 : 0) : -1;
+    }();
+    return env >= 0 ? env != 0 : g_attn_ksplit_default.load() != 0;
+}
 
 Result<LayerWeights> LayerWeights::from_pinned(const store::PinnedStore& p, uint32_t layer) {
     const std::string pre = std::format("layers.{}", layer);
@@ -103,6 +115,8 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
         {&o,            uint64_t(qrows) * 4},
         {&woa,          uint64_t(orows) * 4},
         {&wob,          uint64_t(dim) * 4},
+        // 16 slices is gemv_ksplit's ceiling (attn_bench sizes it the same way).
+        {&kpart,        uint64_t(16) * std::max<uint64_t>(orows, dim) * 4},
         {&gate_scores,  uint64_t(cfg.n_routed_experts) * 4},
         {&gate_ids,     64},
         {&gate_weights, 64},
@@ -290,6 +304,20 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     wb[gpu::slot::kGemvS] = w.wo_b_scale;
     wb[gpu::slot::kGemvX] = b.woa.addr;
     wb[gpu::slot::kGemvY] = b.wob.addr;
+
+    // The K-split pair of each, bound whether or not it is used this step.
+    auto bind_ks = [&](gpu::AttnStage sp, gpu::AttnStage cb, uint64_t wt, uint64_t sc,
+                       uint64_t x, uint64_t y) {
+        uint64_t* s = runner_->slots(sp);
+        s[gpu::slot::kKspW] = wt; s[gpu::slot::kKspS] = sc;
+        s[gpu::slot::kKspX] = x;  s[gpu::slot::kKspY] = y;
+        s[gpu::slot::kKspPart] = b.kpart.addr;
+        std::memcpy(runner_->slots(cb), s, gpu::kAttnStageStride);
+    };
+    bind_ks(gpu::AttnStage::WoAKSplit, gpu::AttnStage::WoAKCombine, w.wo_a, w.wo_a_scale,
+            b.o.addr, b.woa.addr);
+    bind_ks(gpu::AttnStage::WoBKSplit, gpu::AttnStage::WoBKCombine, w.wo_b, w.wo_b_scale,
+            b.woa.addr, b.wob.addr);
 
     uint64_t* g = runner_->slots(gpu::AttnStage::GateScore);
     g[gpu::slot::kGateW]         = w.gate_w;
@@ -497,12 +525,27 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
         return r;
 
     // 6-7. Output projection.
-    gpu::WoaPush wa{orows, ocols, ocols / 32, c.o_lora_rank};
-    if (auto r = step(gpu::AttnStage::WoA, &wa, sizeof wa,
-                      runner_->gemv_groups(gpu::AttnStage::WoA, orows)); !r) return r;
-    gpu::GemvPush wb{dim, orows, orows / 32, 0};
-    if (auto r = step(gpu::AttnStage::WoB, &wb, sizeof wb,
-                      runner_->gemv_groups(gpu::AttnStage::WoB, dim)); !r) return r;
+    if (attn_ksplit_on()) {
+        // Split over K into fp32 partials, then one combine adds them (Track J,
+        // docs/p2_attention.md §13). wo_a keeps its block-diagonal groups.
+        gpu::KSplitPush ka{orows, ocols, ocols / 32, c.o_lora_rank, orows, 0};
+        if (auto r = step(gpu::AttnStage::WoAKSplit, &ka, sizeof ka,
+                          runner_->ksplit_groups(gpu::AttnStage::WoAKSplit, orows)); !r) return r;
+        if (auto r = step(gpu::AttnStage::WoAKCombine, &ka, sizeof ka,
+                          gpu::AttnRunner::combine_groups(orows)); !r) return r;
+        gpu::KSplitPush kb{dim, orows, orows / 32, 0, dim, 0};
+        if (auto r = step(gpu::AttnStage::WoBKSplit, &kb, sizeof kb,
+                          runner_->ksplit_groups(gpu::AttnStage::WoBKSplit, dim)); !r) return r;
+        if (auto r = step(gpu::AttnStage::WoBKCombine, &kb, sizeof kb,
+                          gpu::AttnRunner::combine_groups(dim)); !r) return r;
+    } else {
+        gpu::WoaPush wa{orows, ocols, ocols / 32, c.o_lora_rank};
+        if (auto r = step(gpu::AttnStage::WoA, &wa, sizeof wa,
+                          runner_->gemv_groups(gpu::AttnStage::WoA, orows)); !r) return r;
+        gpu::GemvPush wb{dim, orows, orows / 32, 0};
+        if (auto r = step(gpu::AttnStage::WoB, &wb, sizeof wb,
+                          runner_->gemv_groups(gpu::AttnStage::WoB, dim)); !r) return r;
+    }
 
     // 8. mega-mHC, FFN half: hc_post folds the attention output into the
     //    stream and the mixes for the FFN come out of the same dispatch.

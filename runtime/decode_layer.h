@@ -83,6 +83,7 @@ struct DecodeScratch {
     gpu::GpuScratch::View qr, q, rope;
     gpu::GpuScratch::View kv_raw, kv_partials, kv;
     gpu::GpuScratch::View score, o, woa, wob;
+    gpu::GpuScratch::View kpart;   // K-split partial plane for wo_a / wo_b (STATUS §7 item 6)
     gpu::GpuScratch::View gate_scores, gate_ids, gate_weights, layer_done;
     gpu::GpuScratch::View moe_x, moe_y;
     // design §7.4's compressor and indexer. Per-step working buffers only: the
@@ -241,6 +242,15 @@ struct BatchStep {
 // m sees ring slot s iff the position it holds after the batch's writes is in
 // [0, p0 + m], and overflow row j - 1 iff j > m and that row held a position.
 void write_batch_window_lists(BatchScratch& b, uint32_t window, uint32_t p0, uint32_t m);
+
+// Track J's K-split wo_a / wo_b on the M=1 decode path (STATUS §7 item 6).
+// DEEPMOE_ATTN_KSPLIT=0/1 overrides; the default is OFF everywhere. On RADV it
+// saves 3.8 ms/token of attention (wo_a 194 -> 157 us, wo_b 252 -> 199 us), but
+// its ~1e-7 rounding difference pushes two chaotic 60/64-step gates under their
+// floors (suite.decode worst index-key cos 0.9493 < 0.95, suite.spec_forward
+// worst cos 0.9132 < 0.93) for ~+2% end to end, so it stays opt-in (STATUS §7 0h).
+void set_attn_ksplit_default(bool on);
+bool attn_ksplit_on();
 
 class DecodeLayer {
 public:
