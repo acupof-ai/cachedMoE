@@ -14,6 +14,8 @@ around it interprets the rows; it does not restate them.
     python tools/perf_ledger.py            # print the table
     python tools/perf_ledger.py --write    # replace the block in docs/STATUS.md
     python tools/perf_ledger.py --check    # exit 1 if the block is stale (for a gate)
+    python tools/perf_ledger.py --refresh  # recompute every chat row from its run directory
+                                           # (after perf_report gains a metric; provenance kept)
 """
 from __future__ import annotations
 
@@ -51,6 +53,18 @@ def switches(p: dict) -> str:
     return s or "–"
 
 
+def fmt(v, nd: int = 2) -> str:
+    return "–" if v is None else f"{v:.{nd}f}"
+
+
+def foreign_writes(p: dict) -> str:
+    d = p.get("disks_during_run")
+    if not d:
+        return "?"
+    w = sum(v["write_MB"] for k, v in d.items() if isinstance(v, dict))
+    return f"**{w:,.0f} MB ⚠**" if w > 500 else f"{w:,.0f} MB"
+
+
 def bg(p: dict) -> str:
     i = p.get("idle") or {}
     return "?" if i.get("gpu_busy_mean") is None else f"{i['gpu_busy_mean']:g}%"
@@ -63,19 +77,20 @@ def render(rows: list[dict]) -> str:
     chat = [r for r in rows if "chat" in r]
     if chat:
         out += ["**对话（`tools/hitrate_bench.py` → `perf_report --chat --record`，每 token ms）**", "",
-                "| # | label | code | switches | bg GPU | decode tok/s | ms/tok | compute (attn/moe/tail/engram) "
-                "| NVMe stall (floor) | other | hit |",
-                "|---|---|---|---|---|---|---|---|---|---|---|"]
+                "| # | label | code | switches | bg GPU | disk writes | decode tok/s | ms/tok | compute (attn/moe/tail/engram) "
+                "| NVMe stall (floor) | ms/miss | other | hit | prefill s |",
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows):
             if "chat" not in r:
                 continue
             c, p = r["chat"], r.get("provenance", {})
             comp = c["attn"] + c["moe_gpu"] + c["tail"] + c["engram"]
             out.append(
-                f"| {i} | {r['label']} | {code(p)} | {switches(p)} | {bg(p)} | **{c['tok_s']:.3f}** | "
+                f"| {i} | {r['label']} | {code(p)} | {switches(p)} | {bg(p)} | {foreign_writes(p)} | **{c['tok_s']:.3f}** | "
                 f"{c['per_tok']:.1f} | {comp:.1f} ({c['attn']:.1f}/{c['moe_gpu']:.1f}/"
                 f"{c['tail']:.1f}/{c['engram']:.1f}) | {c['stall']:.1f} ({c['io_floor']:.1f} @ "
-                f"{r['disk_gbs']} GB/s) | {c['other']:.1f} | {c['hit']:.4f} |")
+                f"{r['disk_gbs']} GB/s) | {fmt(c.get('stall_per_miss'))} | {c['other']:.1f} | {c['hit']:.4f} | "
+                f"{fmt(c.get('prefill_s'), 1)} |")
         out.append("")
     hot = [r for r in rows if "hot" in r]
     if hot:
@@ -93,6 +108,8 @@ def render(rows: list[dict]) -> str:
                        f"{h['floor']:.2f} | {h['barriers']:.2f} | {top} |")
         out.append("")
     out += ["`†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。"
+            "ms/miss 是 decode 步（hit > 0.8）的 NVMe stall 对该步 miss 数的回归斜率：同配置复跑只动 ~1%，比 tok/s 稳得多，IO 改动看它。"
+            "disk writes 是运行期间所有 NVMe 的写入量（引擎自己只写几 MB 日志；>500 MB 标 ⚠：有别的程序在写同一块盘，IO 数字不可信）。"
             "bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。"
             "`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。",
             END]
@@ -107,7 +124,19 @@ def main() -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--write", action="store_true")
     g.add_argument("--check", action="store_true")
+    g.add_argument("--refresh", action="store_true")
     a = ap.parse_args()
+    if a.refresh:
+        sys.path.insert(0, str(ROOT / "tools"))
+        import perf_report
+        rows = load(a.ledger)
+        for r in rows:
+            if "chat" in r:
+                c = perf_report.chat_budget(ROOT / r["chat_dir"], r["disk_gbs"])
+                r["chat"] = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in c.items()}
+        a.ledger.write_text("".join(json.dumps(r, separators=(",", ":")) + "\n" for r in rows),
+                            encoding="utf-8")
+        return 0
     table = render(load(a.ledger))
     if not (a.write or a.check):
         print(table)

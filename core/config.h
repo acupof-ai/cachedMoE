@@ -45,6 +45,10 @@ struct IoConfig {
     bool     unbuffered         = true;   // FILE_FLAG_NO_BUFFERING / O_DIRECT
     // When a P0 arrives, stop issuing new chunks from P1..P3 until it drains.
     bool     preempt_on_blocking = true;
+    // P0 (blocking miss) only; 0 = chunk_bytes / max_inflight_ops. The
+    // DEEPMOE_IO_P0_CHUNK_MB / _QD environment knobs override these.
+    uint32_t p0_chunk_bytes     = 0;
+    uint32_t p0_qd              = 0;
 };
 
 struct CacheConfig {

@@ -9,7 +9,7 @@
 // own them all:
 //   Stage 0  rows / (256 / LanesPerRow) workgroups: the GEMV, plus a partial
 //            sum of squares per workgroup.
-//   Stage 1  one workgroup, one 32-element block per thread: finish the norm,
+//   Stage 1  one workgroup, one adjacent pair per thread: finish the norm,
 //            rotate the last `rope_dim` dims, then `act_quant` the WHOLE
 //            512-wide vector -- RoPE tail included, which is what
 //            `Attention._window_kv` does -- and store the E4M3 bytes and the
@@ -23,6 +23,8 @@
 // The LDS budget for the staged activation: wkv's K is the model dim = 5120, and a
 // workgroup never stages more (fp8_gemv.slang).
 #define DEEPMOE_GEMV_MAX_K 5120
+// 512 KV dims / 32 = 16 fp8 blocks; finish_body's per-block amax lives in LDS.
+#define DEEPMOE_WKV_MAX_BLOCKS 16
 
 #include "fp8_gemv.slang"
 
@@ -73,49 +75,59 @@ void stage_gemv(uint gid, uint tid) {
 // Everything after the RMS statistic: the norm, the RoPE tail, the fp8 block
 // quantisation and the ring write. Split out of `stage_finish` so the K-split
 // combine (stage 2) can reach it with an `rs` it computed itself instead of one
-// stage 0 left in scratch. Only the first `rows / 32` threads do any work, so
-// it must be called after every collective this dispatch performs.
+// stage 0 left in scratch.
+//
+// Every thread takes one adjacent PAIR of the 512 dims -- a RoPE pair is never
+// split -- and a 32-wide block's amax is an LDS atomic max over its sixteen
+// threads (non-negative fp32 bits order like the floats). The first version
+// gave each of 16 threads a whole block in series and measured 13 us a layer;
+// the arithmetic per element is unchanged, and max does not care about order,
+// so the bytes are the same. Every thread of the workgroup must call this: it
+// has a barrier.
+groupshared uint gBlockAmax[DEEPMOE_WKV_MAX_BLOCKS];
+
 void finish_body(uint tid, float rs) {
     const uint blocks = pc.rows / kBlockK;          // 16
-    if (tid >= blocks) return;
-    const uint d0 = tid * kBlockK;
+    const uint d = tid * 2;
+    const bool live = d < pc.rows;
     const uint rope_lo = pc.rows - pc.rope_dim;
+    if (tid < blocks) gBlockAmax[tid] = 0u;
 
-    float v[32];
-    [unroll] for (uint i = 0; i < 32; ++i) {
-        const uint d = d0 + i;
+    float v0 = 0.0f, v1 = 0.0f;
+    if (live) {
         // kv_norm is an RMSNorm, so its result is bf16 before RoPE touches it.
-        v[i] = bf16_round(load_f32(Ptr[kKvRaw] + (uint64_t)d * 4) * rs
-                          * bf16_decode(load_u16(Ptr[kNormW] + (uint64_t)d * 2)));
-    }
-    // RoPE over the tail; a pair never straddles a 32-element block because
-    // rope_lo and kBlockK are both even multiples of 2.
-    [unroll] for (uint i = 0; i < 32; i += 2) {
-        const uint d = d0 + i;
+        v0 = bf16_round(load_f32(Ptr[kKvRaw] + (uint64_t)d * 4) * rs
+                        * bf16_decode(load_u16(Ptr[kNormW] + (uint64_t)d * 2)));
+        v1 = bf16_round(load_f32(Ptr[kKvRaw] + (uint64_t)(d + 1) * 4) * rs
+                        * bf16_decode(load_u16(Ptr[kNormW] + (uint64_t)(d + 1) * 2)));
         if (d >= rope_lo) {
             const uint j = (d - rope_lo) >> 1;
             const float c = load_f32(Ptr[kRope] + (uint64_t)j * 8);
             const float s = load_f32(Ptr[kRope] + (uint64_t)j * 8 + 4);
-            rope_pair(c, s, v[i], v[i + 1], false);
+            rope_pair(c, s, v0, v1, false);
             // apply_rotary_emb writes back into the bf16 tensor it was handed.
-            v[i] = bf16_round(v[i]);
-            v[i + 1] = bf16_round(v[i + 1]);
+            v0 = bf16_round(v0);
+            v1 = bf16_round(v1);
         }
     }
+    GroupMemoryBarrierWithGroupSync();            // gBlockAmax cleared
+    const uint blk = d / kBlockK;
+    if (live) InterlockedMax(gBlockAmax[blk], asuint(max(abs(v0), abs(v1))));
+    GroupMemoryBarrierWithGroupSync();
+    if (!live) return;
 
-    float amax = 0.0f;
-    [unroll] for (uint i = 0; i < 32; ++i) amax = max(amax, abs(v[i]));
-    const float sc = act_scale(amax);
+    const float sc = act_scale(asfloat(gBlockAmax[blk]));
     const float inv = 1.0f / sc;
-    const uint64_t val = Ptr[kKvVal] + (uint64_t)pc.slot * pc.rows + d0;
-    [unroll] for (uint i = 0; i < 32; ++i) {
-        const uint b = fp8_encode_rn(clamp(v[i] * inv, -kFp8MaxF, kFp8MaxF));
-        *(uint8_t*)(val + i) = (uint8_t)b;
-        *(float*)(Ptr[kKv] + (uint64_t)(d0 + i) * 4) = fp8_decode(b) * sc;
-    }
+    const uint64_t val = Ptr[kKvVal] + (uint64_t)pc.slot * pc.rows + d;
+    const uint b0 = fp8_encode_rn(clamp(v0 * inv, -kFp8MaxF, kFp8MaxF));
+    const uint b1 = fp8_encode_rn(clamp(v1 * inv, -kFp8MaxF, kFp8MaxF));
+    *(uint16_t*)val = (uint16_t)(b0 | (b1 << 8));
+    *(float*)(Ptr[kKv] + (uint64_t)d * 4) = fp8_decode(b0) * sc;
+    *(float*)(Ptr[kKv] + (uint64_t)(d + 1) * 4) = fp8_decode(b1) * sc;
     // UE8M0 byte: a power-of-two fp32's exponent field is already the code.
-    *(uint8_t*)(Ptr[kKvScale] + (uint64_t)pc.slot * blocks + tid) =
-        (uint8_t)((asuint(sc) >> 23) & 0xFFu);
+    if ((d % kBlockK) == 0)
+        *(uint8_t*)(Ptr[kKvScale] + (uint64_t)pc.slot * blocks + blk) =
+            (uint8_t)((asuint(sc) >> 23) & 0xFFu);
 }
 
 void stage_finish(uint tid) {

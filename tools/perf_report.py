@@ -171,11 +171,29 @@ def chat_budget(run_dir: Path, disk_gbs: float) -> dict:
     wall = sum(x["total_ms"] for x in T) / 1000
     gen = sum(x["generated"] for x in T)
     misses = (1 - hit) * TOPK * 40
+    # NVMe stall against the step's own miss count, over the decode steps
+    # (hit > 0.8; the cold first steps of a session are prefill-like). The slope
+    # is ms per missed expert: across same-config runs it moves by ~1% where
+    # tok/s moves by ~3%, so it is the number to compare for any I/O change.
+    slope = icpt = None
+    pf = run_dir / "profile.jsonl"
+    if pf.exists():
+        pts = [(r["expert_misses"], r["nvme_stall_ms"]) for r in map(json.loads, open(pf))
+               if r.get("hit_rate", 0) > 0.8]
+        if len(pts) > 10:
+            mx = sum(x for x, _ in pts) / len(pts)
+            my = sum(y for _, y in pts) / len(pts)
+            sxx = sum((x - mx) ** 2 for x, _ in pts)
+            if sxx:
+                slope = sum((x - mx) * (y - my) for x, y in pts) / sxx
+                icpt = my - slope * mx
+    prefill_s = sum(x.get("prefill_ms", 0) for x in T) / 1000
     return {"per_tok": dms / steps, "tok_s": 1000 * steps / dms, "e2e": gen / wall, "hit": hit,
             "misses": misses, "stall": avg("nvme_stall"), "attn": avg("attn"),
             "moe_gpu": avg("moe_gpu"), "tail": avg("tail"), "engram": avg("engram"),
             "other": avg("other"), "moe_host": avg("moe_host"),
-            "io_floor": misses * EXPERT_SLOT / (disk_gbs * 1e9) * 1e3}
+            "io_floor": misses * EXPERT_SLOT / (disk_gbs * 1e9) * 1e3,
+            "stall_per_miss": slope, "stall_icpt": icpt, "prefill_s": prefill_s}
 
 
 def main() -> int:
@@ -239,6 +257,10 @@ def main() -> int:
         print(f"   compute {compute:.1f} ms (attn {c['attn']:.1f} moe {c['moe_gpu']:.1f} "
               f"tail {c['tail']:.1f} engram {c['engram']:.1f})  NVMe stall {c['stall']:.1f} ms "
               f"(floor {c['io_floor']:.1f} at {a.disk_gbs} GB/s)  other {c['other']:.1f}")
+        if c["stall_per_miss"] is not None:
+            print(f"   stall per missed expert {c['stall_per_miss']:.2f} ms (+{c['stall_icpt']:.2f} ms/step);"
+                  f"  one expert at {a.disk_gbs} GB/s: {EXPERT_SLOT / a.disk_gbs / 1e6:.2f} ms;"
+                  f"  prefill total {c['prefill_s']:.1f} s")
         if "hot" in out:
             h = out["hot"]
             print(f"   vs hot step: compute in chat {compute:.1f} vs GPU span {h['span']:.1f} ms "
@@ -264,7 +286,7 @@ def main() -> int:
                "bw": a.bw, "disk_gbs": a.disk_gbs}
         if "chat" in out:
             rec["chat_dir"] = str(a.chat)
-            rec["chat"] = {k: round(v, 4) for k, v in out["chat"].items()}
+            rec["chat"] = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in out["chat"].items()}
             t = json.loads((a.chat / "turns.json").read_text())
             rec["run_cmd"], rec["run_env"] = t.get("cmd"), t.get("env")
             pf = a.chat / "provenance.json"

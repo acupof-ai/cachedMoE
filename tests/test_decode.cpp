@@ -447,11 +447,23 @@ DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
         // own arithmetic, each attending over the KV the previous ones wrote,
         // so the error compounds with the position in a way a single decode
         // step's 0.999 does not predict. The per-position line above is what
-        // says it is compounding rather than uniform. The bar is set at the
-        // measured level so a regression fails; the level itself is reported.
-        CHECK(worst_win > 0.90);
-        CHECK(worst_cmp > 0.95);
-        CHECK(worst_key > 0.95);
+        // says it is compounding rather than uniform.
+        //
+        // The bars are a regression tripwire, and they were first set AT the
+        // measured level -- which turned out to be inside the spread of
+        // arithmetic that is equally right. Four variants that differ only in
+        // fp32 summation order (bench/results/linux/drift_noise; a re-run of
+        // the default is bit-identical, so the spread is the arithmetic, not
+        // the ruler):                      window    compressed  index keys
+        //   default (RADV, before K-split) 0.9309    0.9547      0.9685
+        //   dispatch B at LB 32 RB 1       0.9265    0.9673      0.9751
+        //   + attention K-split            0.9054    0.9560      0.9493
+        //   both                           0.9055    0.9573      0.9642
+        // Each bar is now the lowest of the four minus their range. A wiring
+        // error does not land near any of them (it lands at cos ~0.2 or NaN).
+        CHECK(worst_win > 0.87);
+        CHECK(worst_cmp > 0.94);
+        CHECK(worst_key > 0.92);
     }
 
     // --- (e) eight steps on top of our own prefill --------------------------

@@ -45,8 +45,8 @@
 // the same targets is 0.597555.)
 //
 // This test therefore does NOT fail on that gate. It prints the two numbers as
-// a WARN and enforces a regression floor instead: cos >= 0.93 and top-1
-// >= 50/60. DEEPMOE_SPEC_STRICT=1 asserts the original, unreachable bar.
+// a WARN and enforces a regression floor instead: cos >= 0.88 and top-1
+// >= 47/60 (the spread of equally-right arithmetic, below). DEEPMOE_SPEC_STRICT=1 asserts the original, unreachable bar.
 //
 // The consequence is not this test's to draw but it is worth writing down here:
 // design §10.2's speculation invariant -- temperature 0, spec on and spec off
@@ -269,17 +269,22 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
     }
     // The default verdict is a WARN, not a failure: the specified gate is known
     // not to hold (STATUS.md 3, 41/42), so what this test enforces instead is a
-    // REGRESSION FLOOR around the numbers that were actually measured --
-    // worst cos 0.9398 and top-1 54/60. A wiring error -- a wrong buffer, a
+    // REGRESSION FLOOR around the numbers that were actually measured (below). A wiring error -- a wrong buffer, a
     // missed hc_post, the MoE output read from the wrong place -- does not land
     // at cos 0.94; it lands at cos 0.2 or at a NaN, and it does not agree with
     // the M = 1 path on 5 tokens out of 6. Below either floor this FAILS.
     const double top1_frac = counted ? double(top1_same) / double(counted) : 0.0;
+    // The floors were first set around the one measurement (0.9398 -> 0.93,
+    // 54/60 -> 50/60). Arithmetic that is equally right moves them further
+    // than that (bench/results/linux/drift_noise, four fp32 summation orders,
+    // the default's re-run bit-identical): worst cos 0.9415 / 0.9300 / 0.9132
+    // / 0.9441, top-1 52 / 54 / 53 / 57 of 60 -- two of the four failed the
+    // old floor. Each floor is now the lowest of the four minus their range.
     std::printf("      WARN spec_forward gate: mgt1 vs M=1 are not bitwise -- worst cos %.7f "
-                "(floor 0.93), top-1 %u/%u = %.1f%% (floor 50/60 = 83.3%%)\n",
+                "(floor 0.88), top-1 %u/%u = %.1f%% (floor 47/60 = 78.3%%)\n",
                 worst_cos, top1_same, counted, 100.0 * top1_frac);
-    CHECK(worst_cos >= 0.93);
-    CHECK(top1_frac >= 50.0 / 60.0);
+    CHECK(worst_cos >= 0.88);
+    CHECK(top1_frac >= 47.0 / 60.0);
     if (nll_n) {
         const double ratio = std::exp(nll_batch / double(nll_n)) / std::exp(nll_m1 / double(nll_n));
         CHECK(ratio <= 1.05);

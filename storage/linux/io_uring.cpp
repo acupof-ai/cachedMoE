@@ -19,6 +19,11 @@
 // buffer and copied on completion. The check is made at submit time from a
 // cached copy of /proc/self/maps; an -EFAULT that still gets through marks the
 // mapping and resubmits the chunk through a bounce buffer.
+//
+// The copies out of the bounce buffers run on the polling thread; their total
+// is logged at teardown. A pool of helper threads for them was tried and
+// measured nothing (docs/STATUS.md 0j): once the slabs are pre-faulted a copy
+// is ~22 GB/s and overlaps the reads still in flight.
 #if defined(__linux__)
 
 #include <algorithm>
@@ -41,6 +46,7 @@
 #include <unistd.h>
 
 #include "core/align.h"
+#include "core/log.h"
 #include "storage/backend.h"
 
 #ifndef __NR_io_uring_setup
@@ -337,7 +343,14 @@ private:
                 c.status = Status{Err::Io, "io_uring read failed", static_cast<uint32_t>(-cqe.res)};
             } else {
                 c.bytes_moved = static_cast<uint32_t>(cqe.res);
-                if (slot.bounce) std::memcpy(slot.dst, slot.bounce, c.bytes_moved);
+                if (slot.bounce) {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    std::memcpy(slot.dst, slot.bounce, c.bytes_moved);
+                    copy_ns_ += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                          std::chrono::steady_clock::now() - t0).count());
+                    copy_bytes_ += c.bytes_moved;
+                    ++copies_;
+                }
                 if (slot.want && c.bytes_moved < slot.want)
                     c.status = Status{Err::Io, std::format("short read: {} of {}", c.bytes_moved, slot.want)};
             }
@@ -351,6 +364,10 @@ private:
     }
 
     void teardown() {
+        if (copies_)
+            log_info("io_uring: bounce copies {:.1f} MiB in {:.3f} s on the polling thread "
+                     "({:.1f} GB/s, {} chunks)", copy_bytes_ / 1048576.0, copy_ns_ / 1e9,
+                     copy_ns_ ? copy_bytes_ / double(copy_ns_) : 0.0, copies_);
         if (sqe_map_ && sqe_map_ != MAP_FAILED) ::munmap(sqe_map_, sqe_map_size_);
         if (cq_map_size_ && cq_map_ && cq_map_ != MAP_FAILED) ::munmap(cq_map_, cq_map_size_);
         if (sq_map_ && sq_map_ != MAP_FAILED) ::munmap(sq_map_, sq_map_size_);
@@ -389,6 +406,8 @@ private:
     std::vector<Bounce> bounce_free_;       // idle bounce buffers
     std::vector<Bounce> bounce_size_;       // bounce buffers in flight
     MappingClassifier maps_;
+
+    uint64_t copy_ns_ = 0, copy_bytes_ = 0, copies_ = 0;   // poll thread only
 };
 
 }  // namespace

@@ -758,9 +758,26 @@ DEEPMOE_TEST(decode_longctx, engine_vs_reference) {
                 // same shape moved l3_ppl 0.601884 -> 0.623007 by flipping ties.
                 // 808e030 (before any RADV numerics change) measured 0.942. A
                 // real kernel bug lands far below either.
+                // 0.85 -> 0.74 (STATUS §7 0j): measured as a spread, not one more
+                // case. Four fp32 summation orders -- default / dispatch B at
+                // LB 32 RB 1 / + attention K-split / both -- all free-run 8/8 on
+                // both contexts, and their worst asserted cosine per quantity is
+                //   attn_norm 0.8817 / 0.9326 / 0.8377 / 0.8454
+                //   kv        0.9302 / 0.9600 / 0.8610 / 0.8678
+                //   ffn_norm  0.9350 / 0.9377 / 0.8543 / 0.8593
+                // (bench/results/linux/drift_noise/lc_*.log, the ASSERTED lines).
+                // The bar is the lowest minus the range, the rule suite.decode
+                // and suite.spec_forward use; one routing flip drags one step's
+                // stream that far, a broken kernel drags every step to ~0.2.
                 if (!loaded) {
+                    // One machine-readable line per asserted step, for the
+                    // spread measurement (bench/results/linux/drift_noise).
+                    std::string chk;
                     for (const char* nm : {"attn_norm", "q", "kv", "attn_out", "ffn_norm"})
-                        if (cosines.count(nm)) CHECK(cosines[nm].worst > 0.85);
+                        if (cosines.count(nm)) chk += std::format(" {}={:.5f}", nm, cosines[nm].worst);
+                    std::printf("        ASSERTED%s\n", chk.c_str());
+                    for (const char* nm : {"attn_norm", "q", "kv", "attn_out", "ffn_norm"})
+                        if (cosines.count(nm)) CHECK(cosines[nm].worst > 0.74);
                     if (cosines.count("win_kv")) CHECK(cosines["win_kv"].worst > 0.99);
                     if (cosines.count("cmp_kv")) CHECK(cosines["cmp_kv"].worst > 0.999);
                 }

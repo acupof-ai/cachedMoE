@@ -221,6 +221,16 @@ Result<std::unique_ptr<VulkanDestination>> make_vulkan_v(gpu::MemoryAllocator& a
         return fail(Err::Internal, "allocation is not sector-aligned");
     for (uint32_t i = 0; i < count; ++i)
         d->slots.push_back(static_cast<std::byte*>(d->buf.host_ptr) + uint64_t(i) * stride);
+#if defined(__linux__)
+    // RADV's path A is TTM-lazy: a page is allocated and cleared on its first
+    // CPU write, at ~2.4 GB/s (STATUS 0h). The runtime pre-faults its slabs
+    // (SlabPool::prefault), so the bench does too -- otherwise every row pays
+    // first-touch faults on the slots it has not cycled through yet, and more
+    // slots (a deeper --qd) look slower for a reason the engine never sees.
+    if (path == MemoryPath::DeviceLocalHostVisible)
+        for (uint64_t o = 0; o < stride * count; o += kPageSize)
+            static_cast<volatile std::byte*>(d->buf.host_ptr)[o] = std::byte{0};
+#endif
     d->note = std::format("memory type {}{}", d->buf.memory_type,
                           d->buf.imported ? ", imported" : ", mapped");
     return d;
@@ -681,7 +691,8 @@ int usage() {
         "  --route LIST    single,whole,stripe (default single)\n"
         "  --weights A,B   source GB/s for the router (default: probe both)\n"
         "  --inflight N    groups in flight (default from --qd); 1 = decode shape\n"
-        "  --repeat N      repeat every point N times, route order alternating\n");
+        "  --repeat N      repeat every point N times, route order alternating\n"
+        "  --verbose       info-level log (the backend's bounce-copy totals, among others)\n");
     return 2;
 }
 
@@ -696,6 +707,7 @@ int main(int argc, char** argv) {
             if (i + 1 >= argc) { std::fputs("missing value\n", stderr); std::exit(2); }
             return argv[++i];
         };
+        if (a == "--verbose")        { set_log_level(LogLevel::Info); continue; }
         if (a == "--file")           o.file = next();
         else if (a == "--req-kb")    o.req_kb = parse_u32(next());
         else if (a == "--mirror")    o.mirror = next();

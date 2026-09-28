@@ -48,6 +48,46 @@ def _read(p: str) -> str | None:
         return None
 
 
+def disk_snapshot() -> dict:
+    """Sectors read / written so far on every whole disk (/proc/diskstats)."""
+    out = {"t": time.time()}
+    try:
+        for line in Path("/proc/diskstats").read_text().splitlines():
+            f = line.split()
+            name = f[2]
+            if (name.startswith("nvme") and "p" not in name[4:]) or \
+               (name.startswith("sd") and name[2:].isalpha()):
+                out[name] = [int(f[5]), int(f[9])]
+    except OSError:
+        pass
+    return out
+
+
+def disk_delta(a: dict, b: dict) -> dict:
+    """MB read / written per disk between two snapshots."""
+    d = {"seconds": round(b["t"] - a["t"], 1)}
+    for k, v in a.items():
+        if k != "t" and k in b:
+            d[k] = {"read_MB": round((b[k][0] - v[0]) * 512 / 1e6, 1),
+                    "write_MB": round((b[k][1] - v[1]) * 512 / 1e6, 1)}
+    return d
+
+
+def finish(run_dir: str | os.PathLike) -> dict | None:
+    """At the end of a run: add what the disks did while it ran. Writes by
+    anything else on the model's drive (a Steam download, a backup) show up
+    here -- the engine itself writes only its few-MB logs."""
+    pf = Path(run_dir, "provenance.json")
+    if not pf.exists():
+        return None
+    p = json.loads(pf.read_text())
+    if "disks_start" not in p:
+        return None
+    p["disks_during_run"] = disk_delta(p["disks_start"], disk_snapshot())
+    pf.write_text(json.dumps(p, indent=1) + "\n")
+    return p["disks_during_run"]
+
+
 def idle_check(seconds: float = 1.0) -> dict:
     """How quiet the machine was when the run started: GPU busy % sampled for
     `seconds`, the load average, and the busiest other processes. A browser at
@@ -108,6 +148,7 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
             str(x) for x in Path("/sys/class/drm").glob("card*/device/power_dpm_force_performance_level")))
             if v), None)
         out["idle"] = idle_check()
+        out["disks_start"] = disk_snapshot()
         out["gamemode_lib"] = any(Path(d, "libgamemode.so.0").exists()
                                   for d in ("/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"))
     return out

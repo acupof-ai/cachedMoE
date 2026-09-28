@@ -602,6 +602,17 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     // IoConfig defaults (IoEngine::tuning_from_env).
     cfg_.io.max_inflight_ops   = std::max(cfg_.io.max_inflight_ops, 24u);
     cfg_.io.max_inflight_bytes = std::max(cfg_.io.max_inflight_bytes, 96u << 20);
+#if defined(__linux__)
+    // Linux reads path A through a host bounce buffer (storage/linux/io_uring.cpp)
+    // and copies each chunk on the one thread that reaps completions. With 24
+    // chunks of 4 MiB in flight a miss's chunks land together and the copies
+    // queue up behind the last read; 1 MiB x 8 lets them overlap the reads.
+    // io_dst_bench, one expert at a time (bench/results/linux/perf/io_dst_sweep):
+    // 6.6 -> 5.5 ms; 8-turn chat (perf ledger p0-1MiB-qd8): stall 5.29 -> 4.82
+    // ms per miss, prefill 75.3 -> 66.6 s. Windows keeps Track Q2's shape.
+    if (!cfg_.io.p0_chunk_bytes) cfg_.io.p0_chunk_bytes = 1u << 20;
+    if (!cfg_.io.p0_qd)          cfg_.io.p0_qd = 8;
+#endif
     // DEEPMOE_IO_P0_QD / _INFLIGHT_MB / _CHUNK_MB raise the ceilings the
     // BACKEND is built with; IoEngine still holds P1-P3 to the shipped ones.
     storage::IoEngine::widen_for_env(cfg_.io);
@@ -921,6 +932,7 @@ Result<void> Engine::init_gpu() {
     if (device_.caps().driver_id == VK_DRIVER_ID_MESA_RADV) {
         g_ms_eager_default.store(0);
         g_shared_early_default.store(1);
+        set_attn_ksplit_default(true);
     }
     if (auto r = cur_->timeline_.create(device_, 0); !r) return r;
     if (auto r = alloc_a_.init(device_, MemoryPath::DeviceLocalHostVisible); !r) return r;

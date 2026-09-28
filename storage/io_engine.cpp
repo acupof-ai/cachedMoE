@@ -157,9 +157,9 @@ void IoEngine::widen_for_env(IoConfig& cfg) {
 
 IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
     Tuning t;
-    t.p0_qd             = cfg.max_inflight_ops;
+    t.p0_qd             = cfg.p0_qd ? cfg.p0_qd : cfg.max_inflight_ops;
     t.p0_inflight_bytes = cfg.max_inflight_bytes;
-    t.p0_chunk_bytes    = cfg.chunk_bytes;
+    t.p0_chunk_bytes    = cfg.p0_chunk_bytes ? cfg.p0_chunk_bytes : cfg.chunk_bytes;
     auto u32 = [](const char* name, uint32_t& dst) {
         if (const char* e = std::getenv(name); e && *e) {
             char* end = nullptr;

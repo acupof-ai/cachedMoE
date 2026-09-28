@@ -207,6 +207,9 @@ def main() -> int:
     ap.add_argument("--max-context", type=int, default=4096)
     ap.add_argument("--serve-arg", action="append", default=[])
     ap.add_argument("--env", action="append", default=[])
+    ap.add_argument("--max-turns", type=int, default=0,
+                    help="only the script's first N turns (long_turns' first 3 = ~1,000 decode steps, "
+                         "enough for perf_report's stall-per-miss to within ~1%%)")
     ap.add_argument("--repeat", type=int, default=1, help="run the script this many times back to back")
     ap.add_argument("--auto-tune", type=int, default=0,
                     help="run N fresh-server rounds; each round generates a heat file from its route dump")
@@ -252,6 +255,8 @@ def main() -> int:
     cargs = argparse.Namespace(think=False, temp=1.0, top_p=0.95, max_tokens=256, seed=None, system="")
     with open(args.script, encoding="utf-8") as f:
         script = json.load(f)
+    if args.max_turns:
+        script = dict(script, turns=script["turns"][:args.max_turns])
     if args.auto_tune > 0:
         server.close()
         server.events.close()
@@ -281,6 +286,7 @@ def main() -> int:
     doc["status"] = status
     with open(os.path.join(args.out, "turns.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
+    provenance.finish(args.out)
     if args.write_heat:
         print(f"wrote {write_heat_from_route(os.path.join(args.out, 'route.bin'), args.write_heat, args.heat_recent)} heat rows")
     return 0
