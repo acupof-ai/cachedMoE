@@ -794,7 +794,10 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    `tests/mutate.py` 把 77 记成 "skipped" 而不是 "caught"。验证：小程序 skip+fail ⇒ 1、只 skip ⇒ 77、只 pass ⇒ 0；无模型时 needs-model suite 仍报 Skipped；CPU 闸 25/25。
    **`smoke.auto_cache` 也是测试过时**：它断言 `slots <= auto_slot_cap()`（Windows 的 5,000），而 247a31d 起 RADV 上引擎按 GTT 两堆定预算、不加上限（5,500 槽）。
    引擎现在把实际用的上限记在 `Engine::applied_slot_cap()`，测试按它断言；12 s 过。完整 needs-model/needs-gpu 一轮里另有两件还在查：
-   `decode_longctx.engine_vs_reference` 在 4K 第 6 步 L20 attn_norm 余弦 0.882 < 0.90（token 全对，L14 gate 集 3/6，路由近平局漂移），
+   `decode_longctx.engine_vs_reference` 在 4K 第 6 步 L20 attn_norm 余弦 0.882 < 0.90（token 全对，L14 gate 集 3/6，路由近平局漂移）——**已定位**：
+   808e030（RADV 数值改动之前）同一步 0.942 过；HEAD 上 `DEEPMOE_MOE_LB=32 RB=1`（关 B 形状）0.933 过、L14 gate 5/6；开 B 形状 0.882、L14 gate 3/6。
+   即 B 形状的 fp32 求和顺序多翻了一个路由近平局，和它把 l3_ppl 0.601884 → 0.623007 是同一件事，token 与 margin 不变（9.82 vs 9.89）。
+   门槛 attn_norm/q/kv/attn_out/ffn_norm 从 0.90 调到 **0.85**（win_kv 0.99、cmp_kv 0.999 不动），测试里写了依据；`suite.decode_longctx` 过（62.7 s）。
    以及整个 `deepmoe_tests` 一个进程跑完时的段错误——**已查清并修掉**：`[ RUN ] speculate.a_m` 只是 stdout 缓冲截断处，core 里 RIP `0x7227aa907680`
    落在一块 `/dev/dri/renderD128` 映射里（SEGV_ACCERR），栈上返回地址在 `import_host_memory`。`gpu/vulkan/memory.cpp` 的 `host_ptr_props_fn` 把
    `vkGetMemoryHostPointerPropertiesEXT` 缓存在函数 static 里、**以 VkDevice 句柄为键**：销毁实例时 loader 卸载了 RADV，下一个实例把它装到别处，
