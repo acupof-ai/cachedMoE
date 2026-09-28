@@ -739,6 +739,15 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    12 类任务 × 2（`bench/results/hitrate/tasks24.json`）同类两个提问逐层 expert 分布余弦 **0.59**、异类 **0.16**、同轮两半 0.83；按任务预热 / 分区 / 钉住在 LRU 模拟里都不划算（切换代价只有 0.5 pt/256 token），
    多会话逐 token 交错 −5.1 pt 才是大头。
 
+   **每 token 时间账本（`bench/results/linux/budget/`，`budget.py`；8 轮 `long_turns`，auto 5,500 槽，`DEEPMOE_GATE_PROBE=1`，各一遍）**：
+   单盘 decode **5.986 tok/s = 167.1 ms**：attn 38.2 + moe_gpu 36.5 + tail 9.6 + engram 4.1（≈88 ms 计算，密集权重 8.52 GB 在 216 GB/s 的下限是 39.5 ms）+ **nvme_stall 74.0**
+   （下限 13.7 miss × 18.8 MB ÷ 4.8 GB/s = 53.6 ms）。gate 探针：有 miss 的层-步 29,802 / 100,760，**planner 等待 6.86 ms/层**，而 gate 之后主机侧其余只有 ~90 µs/层（ids 17 + plan 6–84 + stage 7–10 + next 55–68 µs）
+   ⇒ **主机开销不是瓶颈，剩下的是「gate 出结果 → 发读 → 读完」这条串行链本身**，每个有 miss 的层平均 1.16 个 expert、单个 18.8 MB 读在 QD≈5 下 ~6.9 ms（≈2.7 GB/s）。
+   P0 的 p95 173 ms / behind-of-burst 44 ms 来自 prefill 的成批 miss，不是 decode。
+   双盘（serve 现在在 Linux 上自动找 `/mnt/*/models/<name>` 当辅助读源，`DEEPMOE_MIRROR_AUTO=0` 关）：stall 74.0 → **66.4 ms**，decode **6.269 tok/s（+4.7%，单对，仅作附加）**，端到端 5.009 → 5.594，TTFT 78 → 47 s。
+   serve 的 `status` 事件新增 `gate_probe` 字段（开 `DEEPMOE_GATE_PROBE` 时）。
+   **局域网（2026-09-28 调查）不能用来加速单流 decode**：本机只有 Wi‑Fi（PHY ~2 Gbps），到 desktop（RTX 4070 Ti SUPER 16 GB、31 GB 内存、千兆有线、盘剩 130 GB）实测 ssh 44 MB/s、RTT 均值 5.4 ms；
+   作 expert 读源比 NVMe 慢 40–100 倍；按层切两机流水线要每 token 两跳（~11 ms）且 desktop 放不下一半权重（238 GB > 130 GB 空闲）、可做缓存的内存只有 ~20 GB——**不做**。
 0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
    §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
    换成 **host 写 flag、device 自旋等它**（一个 command buffer 装下整个 token，

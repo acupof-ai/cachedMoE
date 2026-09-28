@@ -38,6 +38,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
 #include <format>
 #include <mutex>
 #include <string>
@@ -210,6 +211,42 @@ int cmd_serve(int argc, char** argv) {
         std::fputs("serve needs --model DIR (or DEEPMOE_MODEL_DIR)\n", stderr);
         return 2;
     }
+#if defined(__linux__)
+    // The second read source as a helper, on by default for serve on Linux: the
+    // same model directory name under /mnt/*/ or /mnt/*/models/ with the
+    // manifest in it (the x box keeps its USB4 copy at /mnt/deepmoe2/models/).
+    // +9% on the 8-turn chat (STATUS §7 0h). It stays a helper: the engine
+    // probes it before trusting it, re-reads any failed mirror read from the
+    // primary, and drops it after three consecutive errors. --mirror or
+    // DEEPMOE_MODEL_MIRRORS choose explicitly; DEEPMOE_MIRROR_AUTO=0 turns the
+    // search off (single-drive benchmarks).
+    if (cfg.model_mirrors.empty() && !std::getenv("DEEPMOE_MODEL_MIRRORS")) {
+        const char* a = std::getenv("DEEPMOE_MIRROR_AUTO");
+        if (!(a && *a == '0')) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path own = fs::weakly_canonical(cfg.model_dir, ec);
+            const std::string name = fs::path(cfg.model_dir).lexically_normal().filename().empty()
+                                         ? fs::path(cfg.model_dir).lexically_normal().parent_path().filename().string()
+                                         : fs::path(cfg.model_dir).lexically_normal().filename().string();
+            for (const auto& mnt : fs::directory_iterator("/mnt", ec)) {
+                for (const fs::path cand : {mnt.path() / "models" / name, mnt.path() / name}) {
+                    std::error_code e2;
+                    if (!fs::exists(cand / "deepmoe_manifest.json", e2)) continue;
+                    if (fs::weakly_canonical(cand, e2) == own) continue;
+                    cfg.model_mirrors.push_back(cand.string());
+                    // stderr, not log_info: stdout is still the NDJSON protocol
+                    // channel here -- the logger is re-pointed further down.
+                    std::fprintf(stderr, "[INF] serve: mirror auto-detected: %s "
+                                         "(DEEPMOE_MIRROR_AUTO=0 turns this off)\n",
+                                 cand.string().c_str());
+                    break;
+                }
+                if (!cfg.model_mirrors.empty()) break;
+            }
+        }
+    }
+#endif
     // Track R2's disk prefix cache, ON by default (docs/p4_kv_ux.md §8): a fresh
     // process that comes back to the same conversation rebuilt its whole prompt
     // every time -- 4,133 tokens at ~24 ms each, 101.6 s -- and the parked
@@ -419,14 +456,15 @@ int cmd_serve(int argc, char** argv) {
         if (op == "status") {
             emit(std::format("{{\"event\":\"status\",\"session\":{},\"context\":{},\"max_context\":{},"
                              "\"kv_mb\":{},\"kv_capacity\":{},\"kv_slabs\":{},\"kv_largest_slab_mb\":{},"
-                             "\"store\":{},\"planner\":{},\"io\":{},\"route\":{}}}",
+                             "\"store\":{},\"planner\":{},\"io\":{},\"route\":{},\"gate_probe\":{}}}",
                              json_quote(pool.active()), engine.context_length(), engine.max_context(),
                              json_number(engine.kv().bytes() / 1e6), engine.kv().capacity(),
                              engine.kv().slabs(), json_number(engine.kv().largest_slab() / 1e6),
                              json_quote(engine.store().stats().to_string()),
                              json_quote(engine.planner().stats().to_string()),
                              json_quote(engine.io().stats().to_string()),
-                             json_quote(engine.resident_route_report())));
+                             json_quote(engine.resident_route_report()),
+                             json_quote(engine.gate_probe_on() ? engine.gate_probe_report() : std::string())));
             continue;
         }
         // Track R1 round 2 (docs/p4_hitrate.md §7): the same pass the turn

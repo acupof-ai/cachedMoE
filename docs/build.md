@@ -123,7 +123,7 @@ ctest --test-dir build -j 1 -L "needs-model|needs-gpu" -E '^bench\.'   # 模型 
 外接的 J.ZAO 2 TB NVMe（USB4 盒，ASM2464PD，NTFS 用内核 `ntfs3` 只读挂载，`/etc/fstab` 里 `LABEL=deepmoe2 → /mnt/deepmoe2`，`nofail`）
 留作第二读源 / 备份：它会过热、USB4 链路大约每 1–1.5 小时断一次。Python 工具的 Linux 默认路径已改到内置盘。
 两块盘一起读（`--mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash`，或 `DEEPMOE_MODEL_MIRRORS`）对话 **+9%**（5.27 → 5.74 tok/s，STATUS §7 0h）；
-web UI 自动探测并带上它。外接盘中途掉线时，在飞的读自动改读内置盘，连错三次后整块盘退出路由，对话不中断。
+web UI 和 `deepmoe serve` 都会自动探测并带上它（`DEEPMOE_MIRROR_AUTO=0` 关掉，单盘基准用）。外接盘中途掉线时，在飞的读自动改读内置盘，连错三次后整块盘退出路由，对话不中断。
 
 **和 Windows 开发机不同的三件事**（相信 STATUS.md 里任何一个 Windows 数之前先看这里）：
 
