@@ -109,39 +109,55 @@ def capture(model_dir: str, warm: int, out: Path, extra_env: dict[str, str]) -> 
         raise SystemExit(f"deepmoe run failed ({r.returncode})")
 
 
-def hot_step(trace_path: Path, man: dict[str, int], bw: float) -> dict:
+def hot_step(trace_path: Path, man: dict[str, int], bw: float, last: int = 10) -> dict:
+    """Median over the trace's last `last` passes (the first ones warm the cache).
+
+    One pass moves by a few % with the chip's temperature and clock; each
+    stage's median over ten passes of the same token does not, and the spread
+    of the span over those passes is reported so a reader can see it.
+    """
     t = Trace(trace_path.read_bytes())
     tok = t.tokens()[0]
     passes = t.passes(tok)
-    recs = sorted(passes[-1], key=lambda r: r.seq)
-    timed = [r for r in recs if r.timed]
-    has_se = any(t.name(r) == "moe_shared_early" for r in timed)
-    agg = defaultdict(lambda: {"busy": 0, "n": 0, "bytes": 0, "cls": ""})
-    for r in timed:
-        name = t.name(r)
-        a = agg[name]
-        a["busy"] += r.busy_ns
-        a["n"] += 1
-        a["cls"] = {0: "attention", 1: "ced", 2: "moe", 3: "engram", 4: "tail"}.get(r.cls, "other")
-        layer = r.layer if r.layer != 0xFFFF else -1
-        a["bytes"] += stage_bytes(man, name, layer, has_se)
-    busy = sum(r.busy_ns for r in timed)
-    span = timed[-1].end_ns - timed[0].begin_ns if timed else 0
-    gaps = 0
-    for prev, cur in zip(timed, timed[1:]):
-        if cur.begin_ns > prev.end_ns:
-            gaps += cur.begin_ns - prev.end_ns
+    use = passes[-min(last, max(1, len(passes) - 1)):]
+    per_stage = defaultdict(list)
+    meta = {}
+    spans, busys, gapss = [], [], []
+    has_se = False
+    for p in use:
+        timed = [r for r in sorted(p, key=lambda r: r.seq) if r.timed]
+        has_se = has_se or any(t.name(r) == "moe_shared_early" for r in timed)
+        acc = defaultdict(int)
+        for r in timed:
+            name = t.name(r)
+            acc[name] += r.busy_ns
+            if name not in meta:
+                meta[name] = {"n": 0, "bytes": 0, "cls": {0: "attention", 1: "ced", 2: "moe", 3: "engram",
+                                                          4: "tail"}.get(r.cls, "other"), "seen": id(p)}
+            if meta[name]["seen"] == id(p):
+                meta[name]["n"] += 1
+                layer = r.layer if r.layer != 0xFFFF else -1
+                meta[name]["bytes"] += stage_bytes(man, name, layer, has_se)
+        for name, v in acc.items():
+            per_stage[name].append(v)
+        spans.append(timed[-1].end_ns - timed[0].begin_ns if timed else 0)
+        busys.append(sum(r.busy_ns for r in timed))
+        gapss.append(sum(max(0, c.begin_ns - q.end_ns) for q, c in zip(timed, timed[1:])))
+    med = lambda xs: sorted(xs)[len(xs) // 2]
     rows = []
-    for name, a in agg.items():
-        ms = a["busy"] / 1e6
-        floor = a["bytes"] / (bw * 1e9) * 1e3
-        rows.append({"stage": name, "cls": a["cls"], "n": a["n"], "ms": ms,
-                     "mb": a["bytes"] / 1e6, "floor": floor, "excess": ms - floor,
-                     "gbs": (a["bytes"] / 1e9) / (ms / 1e3) if ms > 0 and a["bytes"] else 0.0})
+    for name, vs in per_stage.items():
+        m = meta[name]
+        ms = med(vs) / 1e6
+        floor = m["bytes"] / (bw * 1e9) * 1e3
+        rows.append({"stage": name, "cls": m["cls"], "n": m["n"], "ms": ms,
+                     "mb": m["bytes"] / 1e6, "floor": floor, "excess": ms - floor,
+                     "gbs": (m["bytes"] / 1e9) / (ms / 1e3) if ms > 0 and m["bytes"] else 0.0})
     rows.sort(key=lambda x: -x["excess"])
+    span, busy, gaps = med(spans), med(busys), med(gapss)
     return {"rows": rows, "busy": busy / 1e6, "span": span / 1e6, "gaps": gaps / 1e6,
-            "host": max(0.0, (span - busy - gaps) / 1e6), "passes": len(passes),
-            "dispatches": len(timed), "has_se": has_se}
+            "host": max(0.0, (span - busy - gaps) / 1e6), "passes": len(passes), "used": len(use),
+            "span_min": min(spans) / 1e6, "span_max": max(spans) / 1e6,
+            "dispatches": sum(m["n"] for m in meta.values()), "has_se": has_se}
 
 
 def chat_budget(run_dir: Path, disk_gbs: float) -> dict:
@@ -196,9 +212,9 @@ def main() -> int:
         h = hot_step(trace, man, a.bw)
         out["hot"] = h
         floor = sum(r["floor"] for r in h["rows"])
-        print(f"== hot step ({trace.name}, pass {h['passes'] - 1} of {h['passes']}, "
+        print(f"== hot step ({trace.name}, median of the last {h['used']} of {h['passes']} passes, "
               f"{h['dispatches']} dispatches, shared-early {'on' if h['has_se'] else 'off'})")
-        print(f"   GPU span {h['span']:.2f} ms = busy {h['busy']:.2f} + barriers {h['gaps']:.2f}"
+        print(f"   GPU span {h['span']:.2f} ms (passes {h['span_min']:.2f}..{h['span_max']:.2f}) = busy {h['busy']:.2f} + barriers {h['gaps']:.2f}"
               f" + host-late {h['host']:.2f};  weight floor at {a.bw:.0f} GB/s: {floor:.2f} ms"
               f"  -> {h['span'] - floor:.2f} ms above the floor")
         print(f"   {'stage':22s} {'cls':9s} {'ms/tok':>7s} {'MB':>8s} {'GB/s':>6s} "
@@ -249,6 +265,8 @@ def main() -> int:
         if "chat" in out:
             rec["chat_dir"] = str(a.chat)
             rec["chat"] = {k: round(v, 4) for k, v in out["chat"].items()}
+            t = json.loads((a.chat / "turns.json").read_text())
+            rec["run_cmd"], rec["run_env"] = t.get("cmd"), t.get("env")
             pf = a.chat / "provenance.json"
             if pf.exists():
                 rec["provenance"] = json.loads(pf.read_text())
@@ -260,6 +278,8 @@ def main() -> int:
             h = out["hot"]
             rec["trace"] = str(trace)
             rec["hot"] = {"span": round(h["span"], 3), "busy": round(h["busy"], 3),
+                          "span_range": [round(h["span_min"], 3), round(h["span_max"], 3)],
+                          "passes_used": h["used"],
                           "barriers": round(h["gaps"], 3), "host_late": round(h["host"], 3),
                           "floor": round(sum(r["floor"] for r in h["rows"]), 3),
                           "stages": [{k: (round(r[k], 3) if isinstance(r[k], float) else r[k])

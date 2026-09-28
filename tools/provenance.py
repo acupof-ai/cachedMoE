@@ -48,6 +48,37 @@ def _read(p: str) -> str | None:
         return None
 
 
+def idle_check(seconds: float = 1.0) -> dict:
+    """How quiet the machine was when the run started: GPU busy % sampled for
+    `seconds`, the load average, and the busiest other processes. A browser at
+    a few % GPU shares the same LPDDR5X and moves every kernel by a few %."""
+    busy = []
+    nodes = sorted(Path("/sys/class/drm").glob("card*/device/gpu_busy_percent"))
+    t_end = time.time() + seconds
+    while nodes and time.time() < t_end:
+        v = _read(str(nodes[0]))
+        if v is not None:
+            busy.append(int(v))
+        time.sleep(0.05)
+    top = []
+    try:
+        ps = subprocess.run(["ps", "-eo", "pcpu,comm", "--sort=-pcpu", "--no-headers"],
+                            capture_output=True, text=True).stdout.splitlines()
+        me = {"ps", "python", "python3"}
+        for line in ps:
+            pc, _, comm = line.strip().partition(" ")
+            if comm.strip() in me:
+                continue
+            if float(pc) < 2.0 or len(top) >= 4:
+                break
+            top.append(f"{comm.strip()} {pc}%")
+    except (OSError, ValueError):
+        pass
+    return {"gpu_busy_mean": round(sum(busy) / len(busy), 1) if busy else None,
+            "gpu_busy_max": max(busy) if busy else None,
+            "loadavg": (_read("/proc/loadavg") or "").split()[:3], "top_cpu": top}
+
+
 def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = None,
             shader_dir: str | os.PathLike | None = None) -> dict:
     """`env` is the environment the engine runs with (default: this process's)."""
@@ -76,6 +107,7 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
         out["gpu_dpm"] = next((v for v in (_read(p) for p in sorted(
             str(x) for x in Path("/sys/class/drm").glob("card*/device/power_dpm_force_performance_level")))
             if v), None)
+        out["idle"] = idle_check()
         out["gamemode_lib"] = any(Path(d, "libgamemode.so.0").exists()
                                   for d in ("/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"))
     return out

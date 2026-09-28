@@ -1,0 +1,34 @@
+capturing: /home/chenkailun/projects/cachedMoE/build/deepmoe run --model /home/chenkailun/models/DeepSeek-V4.1-Flash --steps 1 --warm 20 --trace /tmp/tmpc57hisyc/hot.bin
+== hot step (hot.bin, pass 20 of 21, 821 dispatches, shared-early on)
+   GPU span 78.91 ms = busy 75.92 + barriers 2.99 + host-late 0.00;  weight floor at 230 GB/s: 56.64 ms  -> 22.27 ms above the floor
+   stage                  cls        ms/tok       MB   GB/s  floor  excess  %ceil
+   moe_gateup             moe         16.50   3008.1    182  13.08    3.42    79%
+   wo_b                   attention   10.62   1677.7    158   7.29    3.33    69%
+   moe_down               moe         11.34   1975.9    174   8.59    2.75    76%
+   wo_a                   attention    7.89   1342.2    170   5.84    2.06    74%
+   moe_shared_early       moe          5.33    943.7    177   4.10    1.23    77%
+   sparse_attn.score      attention    0.95      0.0      0   0.00    0.95     0%
+   sparse_attn.combine    attention    0.93      0.0      0   0.00    0.93     0%
+   gate.topk              attention    0.59      0.0      0   0.00    0.59     0%
+   wkv.finish             attention    0.53      0.0      0   0.00    0.53     0%
+   wq_b                   attention    7.66   1677.7    219   7.29    0.36    95%
+   gate.score             attention    0.97    157.4    163   0.68    0.28    71%
+   indexer.weights        ced          0.29      2.6      9   0.01    0.27     4%
+   mega_mhc.mix           attention    0.59     78.6    133   0.34    0.25    58%
+   mega_mhc.mix.ffn       attention    0.59     78.6    134   0.34    0.25    58%
+   (19 more stages: 11.14 ms busy, 2.08 excess)
+   stages that read no weights: 4.32 ms;  barriers: 2.99 ms
+
+== where the time above the floors is (largest first)
+      3.42 ms  kernel moe_gateup (moe)
+      3.33 ms  kernel wo_b (attention)
+      2.99 ms  barriers + host-late on the hot step
+      2.75 ms  kernel moe_down (moe)
+      2.06 ms  kernel wo_a (attention)
+      1.23 ms  kernel moe_shared_early (moe)
+      0.95 ms  kernel sparse_attn.score (attention)
+      0.93 ms  kernel sparse_attn.combine (attention)
+      0.59 ms  kernel gate.topk (attention)
+      0.53 ms  kernel wkv.finish (attention)
+
+recorded as 'hot-0da928f' in /home/chenkailun/projects/cachedMoE/bench/results/perf_ledger.jsonl
