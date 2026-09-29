@@ -59,6 +59,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 15 | final-default-8turns | `dbe7d16f5b` | MIRROR_AUTO=0 | 0% | **16,780 MB ⚠** | **6.850** | 146.0 | 71.2 (34.1/26.6/6.2/4.3) | 72.8 (54.7 @ 4.8 GB/s) | 5.16 | 1.8 | 0.9419 | 73.1 |
 | 16 | final-attncm-8turns | `dbe7d16f5b+1 dirty (df4d517ce3d9a00b)` | ATTN_CM=1 MIRROR_AUTO=0 | 22.9% | **34,567 MB ⚠** | **7.264** | 137.7 | 68.3 (31.1/26.7/6.2/4.2) | 67.2 (52.8 @ 4.8 GB/s) | 4.89 | 2.0 | 0.9439 | 68.3 |
 | 20 | chat-waves-8turns | `63846356e8+11 dirty (bc8cd112c5787809)` | MIRROR_AUTO=0 | 12.1% | 41 MB | **7.572** | 132.1 | 62.5 (28.4/26.0/6.1/2.1) | 66.3 (52.8 @ 4.8 GB/s) | 4.79 | 3.1 | 0.9439 | 66.3 |
+| 21 | chat-submit1-8turns | `dd243387d1+3 dirty (6028abec961ea2e7)` | MIRROR_AUTO=0 | 0% | 47 MB | **7.696** | 129.9 | 62.5 (28.4/26.1/6.1/1.9) | 64.3 (52.8 @ 4.8 GB/s) | 4.62 | 2.8 | 0.9439 | 66.0 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -657,6 +658,16 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0p. **IO：Linux 上 IoEngine 改在 dispatcher 一条线程上提交（提交线程 8 → 1）。对话（ledger #21，同一 8 轮脚本）7.572 → 7.696 tok/s，ms/miss 4.79 → 4.62，stall 66.3 → 64.3 ms，hit 0.9439 不变；IO 至此贴着盘的忙时带宽。**
+   **为什么**：提交线程池是给 Windows 同步 `ReadFile` 进 path A（704 µs/chunk）做的（Track Q2）。Linux 的 io_uring 提交 ~7 µs，而读完成的 task work 跑在**提交它的那条线程**上，
+   所以有池时每个 chunk 完成都要先唤醒一条睡着的提交线程，dispatcher 才能收割。`io_dst_bench` 单 expert（1 MiB × QD 8）p50：读进 RAM 5.17 / 5.05 → **4.75 / 4.73 ms**，
+   读进 path A 5.17 / 5.14 → **4.63 / 4.64 ms**（ABAB，`bench/results/linux/iopath/submit_threads_ab.txt`）——与 8 线程 `preadv` 的 Python 探针（背靠背 4.74）持平。
+   `kDefaultSubmitThreads` 按平台取值（Windows 8，其余 1），`DEEPMOE_IO_SUBMIT_THREADS` 照旧可改。0n 的「IO 到了硬件的底」早了一步：它拿 Python 探针（本来就是线程直读）当底，没量引擎自己的路径。
+   **下面还有什么（量过，都不做）**：模型在 **dm-crypt（LUKS）上的 btrfs**，读时 ~14 个 `kcryptd` 线程解密、`btrfs-endio` 校验。但 `/sys/block/{nvme0n1,dm-0}/stat` 的差值说
+   dm-crypt 每个 126 KiB bio 只加 **18 µs**（1,436 vs 1,418 µs，~1%），AES-XTS 单核 12.6 GB/s（`iopath/dmcrypt_latency.txt`）——`no_read_workqueue` 之类不值得动根分区。
+   盘在这种突发随机 1 MiB 读下的忙时带宽就是 **~4.0 GB/s**（probe 期间 io_ticks 3.97 GB/s），引擎 4.62 ms/miss = 4.08 GB/s。SN740 无 DRAM，HMB 已按盘的要求给了 64 MiB（驱动上限 128），NVMe `max_hw_sectors_kb` 128 是硬件的。
+   剩下只有更少的 miss（容量受 GTT 上限、策略已关，§3 的 47）和第二块盘（stripe，0i）。prefill 同理：一个新话题 29–64 token 的 prompt 要读 1,230–2,783 个 expert（命中只有 ~45%），全是盘时间。
 
 0o. **decode 的 index key 改成「每个源层用自己的」（2026-09-29 用户决定「各自用」「但是得复用」），跨层复用一处不动；4K / 17K oracle 按同一规则重导。≤ 1,024 上下文逐位不变。**
    **改了什么**：0m 记的那处参考行为——ratio-2 组没满的步，第 2/8/14 层对**上一步第 20 层**的 key 打分——没了：每个 kv 源（2/8/14/20）**每一步都对自己的 key cache 打分**，与 prefill 一致。

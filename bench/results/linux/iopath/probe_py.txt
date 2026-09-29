@@ -1,0 +1,4 @@
+one routed expert (2 extents, 18.8 MB) as 1024 KiB x QD 8, O_DIRECT, 40 trials a gap, sleeping through the gap
+ gap ms  median ms   p90 ms   GB/s
+    0.0       4.74     6.05   3.97
+    3.0       4.39     5.17   4.28

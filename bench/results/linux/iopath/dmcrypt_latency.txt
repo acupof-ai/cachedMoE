@@ -1,0 +1,7 @@
+/home/chenkailun/models/DeepSeek-V4.1-Flash: one routed expert (2 extents, 18.8 MB) as 1024 KiB x QD 8, O_DIRECT, 400 trials a gap, sleeping through the gap
+ gap ms  median ms   p90 ms   GB/s
+    0.0       4.51     5.67   4.17
+    3.0       4.47     5.79   4.21
+nvme0n1  reads  116411   15.05 GB   126.2 KiB/read   1418.5 us/read  busy 3788 ms -> 3.97 GB/s
+dm-0     reads  116412   15.05 GB   126.2 KiB/read   1436.2 us/read  busy 3803 ms -> 3.96 GB/s
+(/sys/block/<dev>/stat deltas over the probe run above; dm-0 = dm-crypt /dev/mapper/root over nvme0n1p2; HMB 64 MiB as the drive asks, cap 128)

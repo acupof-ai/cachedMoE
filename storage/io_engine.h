@@ -380,7 +380,17 @@ public:
     // (mean depth 3.80 of 8). Submitting from several threads decouples the
     // issue rate from that cost. Measured on the 4-turn chat: 1 -> 8 threads
     // with the deeper P0 queue below is +4.4% tok/s. docs/p4_p0_queue.md §9.
+    // Linux is the opposite case: an io_uring submit is ~7 us, and a read's
+    // completion runs as task work on the thread that SUBMITTED it, so with a
+    // pool every chunk has to wake a sleeping submitter before the dispatcher
+    // can reap it. One expert through the engine's path (io_dst_bench, 1 MiB
+    // x QD 8): 5.17 / 5.05 -> 4.75 / 4.73 ms p50 on one thread (ABAB,
+    // bench/results/linux/iopath/submit_threads_ab.txt).
+#if defined(_WIN32)
     static constexpr uint32_t kDefaultSubmitThreads = 8;
+#else
+    static constexpr uint32_t kDefaultSubmitThreads = 1;
+#endif
     static constexpr std::chrono::milliseconds kBackgroundQuiet{100};
 
     // Track Q1 knobs (docs/p4_p0_queue.md). All default to today's behaviour,

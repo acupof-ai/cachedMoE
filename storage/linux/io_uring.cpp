@@ -4,8 +4,9 @@
 // read path there.
 //
 // Ownership/threading: one ring. `submit` may be called from several threads at
-// once -- IoEngine's submit pool (Track Q2, kDefaultSubmitThreads = 8) does
-// exactly that -- so the SQ producer side is serialised by `sq_mutex_`; the SQ
+// once -- IoEngine's submit pool does exactly that when DEEPMOE_IO_SUBMIT_THREADS
+// > 1 (on Linux the default is the dispatcher alone, io_engine.h says why) --
+// so the SQ producer side is serialised by `sq_mutex_`; the SQ
 // ring is single-producer and two unserialised writers overwrite each other's
 // SQE, which loses a chunk and leaves the dispatcher waiting for it forever.
 // `poll` runs only on the dispatcher thread. The kernel owns the SQ/CQ shared
