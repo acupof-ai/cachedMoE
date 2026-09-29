@@ -73,8 +73,8 @@ MUTATIONS = [
              "std::max<uint64_t>(ch.bytes, fsize > ch.off ? fsize - ch.off : 0));")],
      "let min_bytes run past the end of the file", "caught", False),
     ("io", [("storage/io_engine.cpp",
-             "bg >= kBackgroundOpsWhileBusy)",
-             "bg > kBackgroundOpsWhileBusy)")],
+             "bg >= tune_.bg_cap_busy)",
+             "bg > tune_.bg_cap_busy)")],
      "loosen the background-op throttle by one", "caught", False),
 
     # --- store/: the planner's global LRU (design §9.3) ------------------
