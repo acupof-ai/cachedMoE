@@ -190,6 +190,9 @@ public:
         cqes_    = reinterpret_cast<struct io_uring_cqe*>(cq + p.cq_off.cqes);
         sqes_    = static_cast<struct io_uring_sqe*>(sqe_map_);
         caps_.max_queue_depth = p.sq_entries;
+        slots_.assign(p.sq_entries, Slot{});
+        free_slots_.resize(p.sq_entries);
+        for (uint32_t i = 0; i < p.sq_entries; ++i) free_slots_[i] = p.sq_entries - 1 - i;   // hand out 0 first
         return {};
     }
 
@@ -251,9 +254,15 @@ public:
     void cancel_all() override { /* the ring is torn down at shutdown; nothing partial survives */ }
 
 private:
-    static constexpr uint64_t kPendingMask = 1023;
-
+    // One pending record per in-flight chunk, handed out from a free list and
+    // named in the SQE's user_data by its INDEX. It used to be a table of 1,024
+    // indexed by chunk id & 1023: a 1 MiB expert chunk queued behind a flood
+    // of 4 KiB engram reads outlived 1,024 newer chunk ids, the newer chunk
+    // took its record, and both landed wrong -- a prefill that lost bit
+    // exactness only when an expert stream and an engram stream overlapped
+    // (STATUS §6 18, §3 78, §7 0aw).
     struct Slot {
+        uint64_t chunk_id = 0;
         int      fd     = -1;
         uint64_t off    = 0;
         void*    dst    = nullptr;
@@ -263,14 +272,24 @@ private:
         void*    bounce = nullptr; // host buffer the kernel reads into, or null
     };
 
-    // Caller holds sq_mutex_. The slot is recorded before the tail is
-    // published, so the completion can never be seen before its record.
+    // Caller holds sq_mutex_. A new chunk takes a free record; a chunk read
+    // again (bounce retry, short-read continuation) keeps the one it has. The
+    // record is written before the tail is published, so the completion can
+    // never be seen before it.
     Result<void> push_locked(uint64_t chunk_id, const Slot& slot) {
+        if (free_slots_.empty()) return fail(Err::ResourceExhausted, "SQ is full");
+        const uint32_t idx = free_slots_.back();
+        auto r = submit_locked(idx, chunk_id, slot);
+        if (r) free_slots_.pop_back();
+        return r;
+    }
+    Result<void> submit_locked(uint32_t idx, uint64_t chunk_id, const Slot& slot) {
         const unsigned tail = *sq_tail_;
         const unsigned head = load_acquire(sq_head_);
         if (tail - head >= params_.sq_entries) return fail(Err::ResourceExhausted, "SQ is full");
 
-        slots_[chunk_id & kPendingMask] = slot;
+        slots_[idx] = slot;
+        slots_[idx].chunk_id = chunk_id;
         const unsigned index = tail & *sq_mask_;
         struct io_uring_sqe* sqe = &sqes_[index];
         std::memset(sqe, 0, sizeof *sqe);
@@ -279,7 +298,7 @@ private:
         sqe->off       = slot.off;
         sqe->addr      = reinterpret_cast<uint64_t>(slot.bounce ? slot.bounce : slot.dst);
         sqe->len       = slot.bytes;
-        sqe->user_data = chunk_id;
+        sqe->user_data = idx;
         sq_array_[index] = index;
         store_release(sq_tail_, tail + 1);
 
@@ -324,7 +343,8 @@ private:
         while (head != tail && n < out.size()) {
             const struct io_uring_cqe cqe = cqes_[head & *cq_mask_];
             ++head;
-            Slot& slot = slots_[cqe.user_data & kPendingMask];
+            const uint32_t idx = static_cast<uint32_t>(cqe.user_data);
+            Slot& slot = slots_[idx];
 
             if (cqe.res == -EFAULT && !slot.bounce) {
                 // A device mapping the classifier did not know about: remember
@@ -334,13 +354,13 @@ private:
                 again.bounce = take_bounce(again.bytes);
                 if (again.bounce) {
                     std::lock_guard lk(sq_mutex_);
-                    if (push_locked(cqe.user_data, again)) continue;   // still in flight
+                    if (submit_locked(idx, slot.chunk_id, again)) continue;   // still in flight
                 }
                 give_bounce(again.bounce);
             }
 
             ChunkCompletion c;
-            c.chunk_id = cqe.user_data;
+            c.chunk_id = slot.chunk_id;
             if (cqe.res < 0) {
                 c.status = Status{Err::Io, "io_uring read failed", static_cast<uint32_t>(-cqe.res)};
             } else {
@@ -367,7 +387,7 @@ private:
                     again.bounce = slot.bounce;
                     slot.bounce = nullptr;
                     std::lock_guard lk(sq_mutex_);
-                    if (push_locked(cqe.user_data, again)) { ++short_reads_; continue; }   // still in flight
+                    if (submit_locked(idx, slot.chunk_id, again)) { ++short_reads_; continue; }   // still in flight
                     give_bounce(again.bounce);
                     c.status = Status{Err::Io, "io_uring: could not continue a short read"};
                 }
@@ -377,6 +397,10 @@ private:
             }
             give_bounce(slot.bounce);
             slot.bounce = nullptr;
+            {
+                std::lock_guard lk(sq_mutex_);
+                free_slots_.push_back(idx);
+            }
             out[n++] = c;
             inflight_.fetch_sub(1, std::memory_order_relaxed);
         }
@@ -421,7 +445,8 @@ private:
     bool ext_arg_ = false;                  // IORING_FEAT_EXT_ARG: poll can wait in the kernel
     std::atomic<uint32_t> inflight_{0};
     std::mutex sq_mutex_;                   // serialises the SQ producer side
-    Slot slots_[kPendingMask + 1] = {};
+    std::vector<Slot>     slots_;        // one record per ring entry
+    std::vector<uint32_t> free_slots_;   // records not in flight (under sq_mutex_)
     uint64_t short_reads_ = 0;   // chunks continued after a short completion
 
     struct Bounce { void* ptr; size_t bytes; };

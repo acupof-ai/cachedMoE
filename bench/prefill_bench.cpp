@@ -823,8 +823,10 @@ int run_prefill(const Options& o) {
                 const storage::IoStats st = rig.io.stats();
                 std::string src;
                 for (const auto& e : st.sources)
-                    src += std::format(" [{} err {} failover {} readmit {}{}]", e.root, e.errors, e.failovers,
-                                       e.readmits, e.dropped ? " DROPPED" : "");
+                    src += std::format(" [{} {:.1f} GB @ {:.2f} weight, {} req {:.2f} ms mean, err {} failover {} readmit {}{}]",
+                                       e.root, e.bytes / 1e9, e.weight, e.requests,
+                                       e.requests ? e.lat_ns_sum / 1e6 / double(e.requests) : 0.0, e.errors,
+                                       e.failovers, e.readmits, e.dropped ? " DROPPED" : "");
                 std::printf("  io: %llu requests, %llu failed%s\n", (unsigned long long)st.requests_submitted,
                             (unsigned long long)st.requests_failed, src.c_str());
             }
