@@ -49,7 +49,9 @@ persistent dispatch and some 60 others — are listed with their measurements in
 - **Decode** is one command buffer per layer, cut only where the host reads the MoE gate;
   attention runs as two cooperative-matrix GEMMs over the 64 heads.
 - **Prefill** runs on the GPU as batched GEMMs; for long prompts layers 21–39 replay only the
-  final 128 rows, the ones decode reads.
+  final 128 rows, the ones decode reads. A layer over 1,024 rows or more starts reading its
+  routed experts before its gate has run (nearly all 384 are used at that size), so the drive
+  works through the attention instead of waiting for it.
 - **Sessions.** The chat server keeps named sessions, reuses the common prefix across turns and
   can park a context's KV on disk.
 
