@@ -18,9 +18,10 @@
 //          scores, the denominator with the sink, P.V per wave into LDS, and
 //          wave 0 adds the eight partials and divides. bf16 out.
 // Stage 2  the indexer's scores [B][G]: sum_h bf16(relu(bf16(q[h].k[t])) w[h]),
-//          one workgroup per (8-key tile, query), heads on the lanes of a wave;
-//          then the prefill branch's completion mask, `-inf` where key t is not
-//          yet complete for this query: t >= (pos + 1) / ratio.
+//          one workgroup per (256-key block, query), heads on the lanes of a
+//          wave, head_dim 128; then the prefill branch's completion mask,
+//          `-inf` where key t is not yet complete for this query:
+//          t >= (pos + 1) / ratio.
 //
 // Stages 3-5 are the same attention with the two dot-product passes moved onto
 // cooperative-matrix tiles (prefill_coopmat.slang stages 3 and 4,
@@ -173,28 +174,49 @@ void s_combine(uint3 gid, uint tid) {
 // --- stage 2 ------------------------------------------------------------------
 // kQ [B][32][128] post-fp4 values, kKv = keys [G][128], kW = weights [B][32]
 // (already bf16 and scaled), kScore = out [B][G].
+// One workgroup per (256-key block, query). The query's heads live in
+// registers, a head per lane, and the keys pass through gPool 32 at a time,
+// four to a wave; every lane reads the same key word, a broadcast, where one
+// key per wave with q in LDS had all 32 lanes on one bank. Per (head, key) the
+// dot product still runs d = 0..127 in order and the heads are still summed by
+// one WaveActiveSum, so the scores are bit for bit the old kernel's; keys past
+// the completion mask are written -inf without being scored (STATUS §7 0w).
+static const uint kIdxHd = 128, kIdxBlock = 256, kIdxSub = 32;
 void s_index_score(uint3 gid, uint tid) {
-    const uint b = gid.y, t0 = gid.x * 8;
-    const uint nh = pc.n_heads, hd = pc.head_dim;
-    for (uint i = tid; i < nh * hd; i += kWg)
-        gPool[i] = load_f32(Ptr[kQ] + (((uint64_t)b * nh) * hd + i) * 4);
-    for (uint i = tid; i < 8 * hd; i += kWg) {
-        const uint t = t0 + i / hd;
-        gPool[nh * hd + i] = (t < pc.g) ? load_f32(Ptr[kKv] + ((uint64_t)t * hd + i % hd) * 4) : 0.0f;
-    }
-    GroupMemoryBarrierWithGroupSync();
+    const uint b = gid.y, t_blk = gid.x * kIdxBlock;
+    const uint nh = pc.n_heads, wave = tid / 32, hh = tid % 32;
+    const uint t_end = min(t_blk + kIdxBlock, pc.g);
+    const uint t_live = min(t_end, max(min((pc.pos0 + b + 1) / pc.ratio, pc.g), t_blk));
+    const uint64_t srow = Ptr[kScore] + (uint64_t)b * pc.g * 4;
+    for (uint t = t_live + tid; t < t_end; t += kWg) store_f32(srow + (uint64_t)t * 4, asfloat(0xFF800000u));
+    if (t_live == t_blk) return;                  // the same for the whole workgroup
 
-    const uint p = tid / 32, hh = tid % 32;
-    float dot = 0.0f;
-    for (uint d = 0; d < hd; ++d) dot += gPool[hh * hd + d] * gPool[nh * hd + p * hd + d];
     const float w = (hh < nh) ? load_f32(Ptr[kW] + ((uint64_t)b * nh + hh) * 4) : 0.0f;
-    const float contrib = bf16_round(max(bf16_round(dot), 0.0f) * w);
-    const float s = bf16_round(WaveActiveSum(contrib));
-    const uint t = t0 + p;
-    if (hh == 0 && t < pc.g) {
-        const uint visible = (pc.pos0 + b + 1) / pc.ratio;
-        store_f32(Ptr[kScore] + ((uint64_t)b * pc.g + t) * 4,
-                  (t < visible) ? s : asfloat(0xFF800000u));
+    float q[kIdxHd];
+    const uint64_t qrow = Ptr[kQ] + ((uint64_t)b * nh + hh) * kIdxHd * 4;
+    [unroll] for (uint i = 0; i < kIdxHd / 4; ++i) {
+        const uint4 a = (hh < nh) ? load16(qrow + (uint64_t)i * 16) : uint4(0, 0, 0, 0);
+        [unroll] for (uint j = 0; j < 4; ++j) q[i * 4 + j] = asfloat(a[j]);
+    }
+    for (uint s0 = t_blk; s0 < t_live; s0 += kIdxSub) {
+        GroupMemoryBarrierWithGroupSync();        // the last sub-block is read
+        for (uint i = tid; i < kIdxSub * kIdxHd / 4; i += kWg) {
+            const uint t = s0 + i / (kIdxHd / 4);
+            const uint4 a = (t < t_live) ? load16(Ptr[kKv] + (uint64_t)t * kIdxHd * 4 + (uint64_t)(i % (kIdxHd / 4)) * 16)
+                                         : uint4(0, 0, 0, 0);
+            [unroll] for (uint j = 0; j < 4; ++j) gPool[i * 4 + j] = asfloat(a[j]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+        const uint k0 = wave * 4;
+        float dot[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        [unroll] for (uint d = 0; d < kIdxHd; ++d)
+            [unroll] for (uint j = 0; j < 4; ++j) dot[j] += q[d] * gPool[(k0 + j) * kIdxHd + d];
+        [unroll] for (uint j = 0; j < 4; ++j) {
+            const float contrib = bf16_round(max(bf16_round(dot[j]), 0.0f) * w);
+            const float sc = bf16_round(WaveActiveSum(contrib));
+            const uint t = s0 + k0 + j;
+            if (hh == 0 && t < t_live) store_f32(srow + (uint64_t)t * 4, sc);
+        }
     }
 }
 

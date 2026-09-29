@@ -670,6 +670,23 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0w. **indexer 打分（`prefill_attn` stage 2）重写，结果逐位不变：17,010 token 的 prefill 147.5 → 128.8 s（−12.7%），4,133 token 65.0 → 63.8 s（`prefill_bench`）；这个 op 17.6 s → 0.48 s / 1.09 s → 0.03 s，从 0.21 升到 3.9 TFLOP/s。**
+   **旧 kernel 慢在哪**：一个 workgroup 只算 1 个 query × 8 个 key，却要把这个 query 的整份 q（32 head × 128，16 KB）和 8 个 key 搬进 LDS，搬完才算 256 个点积。而且 32 个 lane 按 head 读 `gPool[h*128 + d]`，地址相隔 128 个 float，全落在同一个 bank 上，是 32 路冲突。17K 的时候，光是这样的 workgroup 就有 900 万个。
+   **新写法**：一个 workgroup 负责（256 个 key，1 个 query）。
+   - 每个 lane 管一个 head，q 在寄存器里。
+   - key 每次 32 个进 `gPool`，每个 wave 取 4 个，4 条点积链交错执行；所有 lane 读同一个 key 字，是广播，没有 bank 冲突。
+   - 每个（head, key）的点积仍按 d = 0..127 顺序累加，head 之间仍是同一个 `WaveActiveSum`，所以结果和旧 kernel 逐位相同。
+   - 完成掩码之外的 key 直接写 -inf，不再计算，平均省一半。成本模型的 FLOP 也改成只算看得见的 key。
+   - 要求 head_dim 为 128、head 不超过 32（V4.1 是 32 × 128），不满足就报 Unimplemented。
+   **验证**：
+   - 4K / 17K 首 token 的 margin 与改前逐位相同（8.268 / 9.736）。
+   - `suite.gpu_prefill` 通过（index_score 的掩码逐项比对、数值对 oracle、longctx 4K）。
+   - `l3_ppl` off 0.622784。
+   - 新增一条变异：可见范围错一位。`gpu_prefill` 抓到了。
+   **现在的模型快照**（`prefill_model/model.txt`）：4K 63.8 s = 串行段 18.4 s + routed expert 45.4 s；17K 128.8 s = 串行段 81.6 s + 47.1 s。剩下按关键路径能赢的：
+   - 17K：注意力 33.1 s，串行段里让盘读 expert 28.5，dense linear 20.3，elem 9.0，host 5.2。
+   - 4K：串行段里让盘读 expert 21.1 s，注意力 7.5，dense linear 5.3。
+
 0v. **engram 行读有了自己的队列深度（Linux 上 128，`IoConfig::engram_qd`，`DEEPMOE_IO_ENGRAM_QD` 可改）：17,010 token 的 prefill 159.8 → 147.5 s（−7.7%），4,133 token 68.1 → 65.0 s（`prefill_bench`）；engram 读 18.9 → 4.8 s / 4.5 → 1.1 s，已经贴着模型给它的下限。对话 decode 不变（ledger engram-qd128-8turns：7.622 tok/s，对照 #28 的 7.608；每 token engram 1.88 → 1.81 ms，命中率逐位相同）。**
    **模型怎么找到它的**：0u 的表里，17K 的 engram 读是 120 万次 4 KiB 读用了 19 s，只有 63K IOPS。临时插桩后发现，发请求只花 0.19 s，缺页也不是原因（预先 touch 一遍暂存区，时间不变），而引擎里 Engram 类的在飞数平均是 **7.9**。
    原因在 `IoEngine::tuning_from_env`：P1–P3 的队列深度被无条件钳在 IoConfig 默认的 8（Track Q2 的本意是「P0 加深了，别让 backfill 也跟着加深」），Engram 属于 P2，也被一起钳住了。serve 把 `max_inflight_ops` 提到 24，Engram 也拿不到。

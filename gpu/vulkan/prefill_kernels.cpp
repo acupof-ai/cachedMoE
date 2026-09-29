@@ -842,10 +842,15 @@ Result<void> Prefill::op_index_score(uint64_t q, uint64_t keys, uint32_t g, uint
     PfAttnPush p;
     p.b = b; p.n_heads = cfg_->index_n_heads; p.head_dim = cfg_->index_head_dim; p.g = g;
     p.ratio = ratio; p.pos0 = pos0;
+    if (p.head_dim != 128 || p.n_heads > 32)   // prefill_attn.slang stage 2: a head a lane, q in registers
+        return fail(Err::Unimplemented, "indexer scores need head_dim 128 and at most 32 heads");
+    // the keys each query can see are the ones that need a score
+    double seen = 0;
+    for (uint32_t j = 0; j < b; ++j) seen += std::min<uint32_t>(g, (pos0 + j + 1) / std::max<uint32_t>(ratio, 1));
     const double hd = double(p.n_heads) * p.head_dim;
-    cost_ = {2.0 * b * g * hd, b * hd * 4 + double(g) * p.head_dim * 4 + double(b) * p.n_heads * 4 +
-                                   double(b) * g * 4};
-    return flush_one(*k, &p, sizeof(p), (g + 7) / 8, b);
+    cost_ = {2.0 * seen * hd, b * hd * 4 + double(g) * p.head_dim * 4 + double(b) * p.n_heads * 4 +
+                                  double(b) * g * 4};
+    return flush_one(*k, &p, sizeof(p), (g + 255) / 256, b);
 }
 
 #endif  // DEEPMOE_ENABLE_VULKAN
