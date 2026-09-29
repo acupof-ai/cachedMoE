@@ -807,6 +807,15 @@ int run_prefill(const Options& o) {
                                                  pc.attn_head_tiles, pc.coop_tok_tiles) + rig.mirror_label;
             std::printf("\nN=%u (%s), %s, load = %s\n", n, source.c_str(), mode.c_str(), o.load.c_str());
             auto out = pf.run(prompt);
+            {   // the engine's failure counters: a re-read or an error explains a slow or odd run
+                const storage::IoStats st = rig.io.stats();
+                std::string src;
+                for (const auto& e : st.sources)
+                    src += std::format(" [{} err {} failover {} readmit {}{}]", e.root, e.errors, e.failovers,
+                                       e.readmits, e.dropped ? " DROPPED" : "");
+                std::printf("  io: %llu requests, %llu failed%s\n", (unsigned long long)st.requests_submitted,
+                            (unsigned long long)st.requests_failed, src.c_str());
+            }
             if (!out) { std::fprintf(stderr, "prefill: %s\n", out.error().str().c_str()); return 1; }
             const gpu::PrefillTimes& t = pf.times();
             bool finite = true;
@@ -888,6 +897,17 @@ int run_prefill(const Options& o) {
                 if (f) {
                     for (const auto& l : out->layers) std::fwrite(l.win_kv.data(), sizeof(float), l.win_kv.size(), f);
                     std::fwrite(out->logits.data(), sizeof(float), out->logits.size(), f);
+                    std::fclose(f);
+                }
+                // and every kv source's compressed rows, all positions: where a
+                // run that is not bit for bit first went its own way
+                f = std::fopen((d + "/cmp_cache.f32").c_str(), "wb");
+                if (f) {
+                    for (const auto& l : out->layers) {
+                        const uint32_t n = l.n_cmp;
+                        std::fwrite(&n, sizeof n, 1, f);
+                        std::fwrite(l.cmp_cache.data(), sizeof(float), l.cmp_cache.size(), f);
+                    }
                     std::fclose(f);
                 }
             }

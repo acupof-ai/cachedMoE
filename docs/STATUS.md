@@ -285,7 +285,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 77 条）
+## 3. 试过并退掉的（编号，共 78 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -410,6 +410,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **75** | **LDS GEMM 几何按「轮次」选**（80 个 workgroup 一轮；`coopgeo` n=288：w1 wm4wn2 0.403 → wm2wn2 0.323 ms，w2 0.280 → 0.253——在 256 → 288 这种越过 80 个 workgroup 的地方单次派发翻倍） | 在位（17K）：moe gemm gate/up 5.83 → **6.18 s**，down 2.63 → 2.74；`prefill_ahead/rounds_*.out`、`stage_model/coopgeo_smalln.csv` | **NO-GO，撤回**：单次派发的微基准量的是一个 dispatch 的尾巴，在位时同一 command buffer 里相邻 expert 的 GEMM 互相填尾，宽 tile 的 LDS 效率又赢回来。教训记下：小派发成流时不能拿单派发的 coopgeo 定几何 |
 | **76** | **routed expert 链的派发顺序**（compute_coop 每个 dispatch 后一个全屏障，每个 expert 11 个；在位 gate/up 只有 18.7 TFLOP/s，`coopgeo` 里 8 个同样大小的独立派发连着跑是 25.5——猜是尾巴暴露） | 双盘。(a) **8 个 expert 一组、按阶段记录**（8 个 decode、一屏障、8 个 GEMM……w16 分 8 区，x16/gu/h16/dout 按组内行偏移）：4K expert gpu 6.4 → **8.8 s**（gate/up 1.94 → 3.08），17K 14.0 → 15.6；(b) **逐 expert 顺序、只让 decode 与相邻 GEMM 并行**（w16 两区交替，每 expert 6 个屏障）：4K **9.4 s**，17K 16.9。都逐位不变。`prefill_ahead/group8_*.out`、`overlap_*.out`、`stage_model/coopgeo_group8.csv` | **NO-GO，两版都撤回**：这条链靠相邻派发的 L2 局部性（gather → GEMM 读 x16、up → SwiGLU 读 gu、stage → down 读 h16，每份几 MB），打散顺序或让 decode 的 23.6 MB 写流并行进来都把它冲掉，比省下的尾巴贵得多。在位 18.7 对微基准 25.5 的差不在屏障——下一步要量得先做带 decode 的微基准 |
 | **77** | **o 的 rope 直接写成 fp16、wo_a 的 GEMM 跳过 x16 staging**（2026-09-30，0am 的另一半）——先按 [n][32768] 写，tiles 17K 1,500 → 2,296 ms（64 KB 行距，行落同一通道）；改成按组连续 [8][n32][4096]（与 x16 同布局）仍 1,500 → 2,215、4K 385 → 572，x16 省的 336 抵不上。staging pass 不只是转 fp16：它把这一组 4 MB 的 x 留在 MALL 里，8 个 row block 各读一遍都命中；rope 一次写完 32 MB 后组 0 早被挤出去，tiles 从 DRAM 重读。q 那半保留（attention 的 q16 stage 是每个 query 各读一次，没有这种复用）。`prefill_ahead/rope16_*.jsonl`。 | NO-GO |
+| **78** | **engram 行读提前发（第一个 engram 层的行在第 0 层之前发，下一个 engram 层的行在上一个消费完就发；行号只取决于 prompt）**（2026-09-30）——17K 的 engram io 4.63 → 1.75 s、`prefill_bench` 50.30 → **47.86 s**，4K 1.18 → 0.50 s、31.8 → 30.1；margins 都对上过一次。但反复跑 4K **不再逐位**：17 次里 6 次 margin 不是 8.598（8.306 / 8.227 / 7.962 / 7.808 / 8.374 ×5 / 9.111），提前发之前同一天 9 次全对、撤回后 4 次全对。定位到的：staged 行本身的哈希每次一样（不是读错行）；引擎 0 error 0 failover；首次分歧在第 1 层的输出（第 2 层 cmp_cache 有 472/2,066 行不同，成 6 段各约 128 个 query 的连续区间——即第 1 层 KV 里孤立的几个位置错了、其 128 窗口内的 query 全跟着错），且 8.374 重复出现 5 次（像是两种结果的竞争，不像随机踩内存）；把暂存页先 `MADV_POPULATE_WRITE` 填好没用（8 次 3 次错）。另见到一次 `short read: 4096 of 8192`（btrfs O_DIRECT 8 KiB 读只回一页）。没找到根因——DMA 与 GPU 计算并发时的什么竞争；见 §6 18。`prefill_ahead/engdbg/run*.out`、`engahead_*.jsonl`。 | NO-GO（撤回；根因未定位） |
 
 ---
 
@@ -679,10 +680,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
     `ls` 和单句柄 `nvme_bench` 都不算健康检查（D2 §7.3 已经付过这个学费）。
     **E: 现在是掉线状态，需要物理拔插。**
 17. **17K 的 prompt 在默认 5,500 槽的 cache 下会丢设备**（Linux，2026-09-29，§7 0t）：prefill 的缓冲区是按 prompt 长度分配的，加上 96 GiB 的 expert cache 就超出了 GTT，内核报 "Not enough memory for command submission"。**已修（§7 0ah，2026-09-30）**：cache 预算先扣掉 prefill 在 min(`--max-context`, 16K) 个 token 下的工作区（17K 自动 5,046 槽，正常跑完），更长的 prompt 在 prefill 前按 heap 余量拒绝而不是丢设备。仍然开着的一半：网页 UI 的 65,536 上下文只预留到 16K，16K 以上的 prompt 会被拒绝——真正的解法是 prefill 按块分配工作区（KV 平面全长，激活只留一块），没做。
+18. **prefill 在并发 4 KiB DMA 流下不再逐位**（2026-09-30，§3 78）：把 engram 层的 120 万次 4 KiB 行读提前到别的层计算期间去落地，4K 的结果 17 次里 6 次不同，错的是第 1 层 KV 里孤立的几个位置（第 2 层 cmp_cache 成段错），staged 行本身没错、IO 引擎没有错误。撤回提前发之后又逐位了。根因没找到：怀疑某个 host→GPU 缓冲的写入与 GPU 读之间靠的是时序而不是同步（DMA 抢内存带宽把它拖出来了），或是 amdgpu/IOMMU 层的问题。serve 的 decode 一直有并发 backfill DMA（1 MiB 读）而 `suite.decode` 逐位，所以可能只有高 IOPS 的小读会触发。要重开这条路（17K −2.4 s）先要定位它：`prefill_bench --handoff-dir` 现在会把每层的 `cmp_cache` 转储出来，`bench/results/linux/prefill_ahead/engdbg/` 里有好坏各几份。
 
 ---
 
 ## 7. Next, in order
+
+0ao. **engram 行读的错误路径修好、错误带上原因：读失败（`short read: 4096 of 8192`）时早退不再让在飞的读落进已释放的暂存页（2026-09-30 02:10 的 `prefill_bench` segfault 就是它：§3 74 那次镜像读错之后崩在 libc 里），暂存区改成成员 `EngramAhead`，`drop()` 先等完再放；expert / engram 读失败的报错带上引擎的 status；`prefill_bench` 每跑一次打印引擎的 requests / failed / 每个源的 err / failover，并把每层 `cmp_cache` 一起转储进 `--handoff-dir`。engram 行读提前发的那一版量了、撤了：§3 78、§6 18。**
 
 0an. **dense 权重的 fp16 解码留在 4 个槽里、一层解码一次而不是每个 query block 一次：17K 三个大 GEMM 的 decode 1,244 → 76 ms（wq_b 414 → 27、wo_b 432 → 26、wo_a 398 → 23），`prefill_bench` 51.63 → 50.30 s；4K 355 → 76 ms，32.5 → 31.8；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。**
    **为什么以前每块都解**：`b_.w16` 只有一份、`w16_src_` 只记一个权重，而一个 query block（512 行）里 wq_b → (indexer wq_b) → wo_a → wo_b 轮着来，17K 一层 34 块，每个权重解 34 次（700 次 × 84 MB = 88 GB 一个权重）。现在 `w16` 是 `kW16Slots = 4` 个等大的槽（`w16_slot`：命中用命中的，否则最久没用的），槽 0 仍是 MoE 的 transit（shared expert、routed jobs 写它就作废）和切片 engram GEMM 的。多占 3 × 84 MB = 252 MB GTT（≈ 13 个 expert 槽）。

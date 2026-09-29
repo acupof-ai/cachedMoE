@@ -301,6 +301,7 @@ Result<GpuBuffer> Prefill::scratch(uint64_t bytes) {
 void Prefill::destroy() {
     for (auto& f : ahead_.futs) if (f.valid()) f.wait();   // nothing lands in a freed transit
     ahead_ = {};
+    engram_ahead_.drop();
     if (alloc_)
         for (GpuBuffer& b : owned_) if (b.valid()) alloc_->free(b);
     owned_.clear();
@@ -1027,31 +1028,29 @@ namespace deepmoe::gpu {
 
 #if defined(DEEPMOE_ENABLE_VULKAN)
 
-Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out) {
-    (void)out;
+Result<void> Prefill::engram_issue(uint32_t L, std::span<const uint32_t> prompt) {
+    engram_ahead_.drop();
+    EngramAhead& a = engram_ahead_;
     const uint32_t n = static_cast<uint32_t>(prompt.size());
     const uint32_t cols = layout::kEngramRowsPerToken;
-    std::vector<uint64_t> rows(size_t(n) * cols);
+    a.rows.resize(size_t(n) * cols);
     for (uint32_t p = 0; p < n; ++p)
         if (auto r = engram_->hash_rows(L, prompt, p,
-                                        std::span<uint64_t>(rows.data() + size_t(p) * cols, cols));
+                                        std::span<uint64_t>(a.rows.data() + size_t(p) * cols, cols));
             !r)
             return r;
-    std::vector<uint64_t> uniq(rows);
-    std::sort(uniq.begin(), uniq.end());
-    uniq.erase(std::unique(uniq.begin(), uniq.end()), uniq.end());
+    a.uniq = a.rows;
+    std::sort(a.uniq.begin(), a.uniq.end());
+    a.uniq.erase(std::unique(a.uniq.begin(), a.uniq.end()), a.uniq.end());
     const uint64_t per = 2 * kPageSize;
-    auto stage = alloc_host_pages(uniq.size() * 2 * per, false);
+    auto stage = alloc_host_pages(a.uniq.size() * 2 * per, false);
     if (!stage) return std::unexpected(stage.error());
-    struct Guard { HostAllocInfo i; ~Guard() { free_host_pages(i); } } guard{*stage};
-    auto* base = static_cast<std::byte*>(stage->ptr);
-    std::vector<std::future<storage::IoResult>> futs;
-    std::vector<uint32_t> skew(uniq.size() * 2);
-    futs.reserve(uniq.size() * 2);
-    double read_bytes = 0;
-    const auto t0 = Clk::now();
-    for (size_t u = 0; u < uniq.size(); ++u) {
-        auto plan = manifest_->engram_row(L, uniq[u]);
+    a.stage = *stage;
+    auto* base = static_cast<std::byte*>(a.stage.ptr);
+    a.skew.resize(a.uniq.size() * 2);
+    a.futs.reserve(a.uniq.size() * 2);
+    for (size_t u = 0; u < a.uniq.size(); ++u) {
+        auto plan = manifest_->engram_row(L, a.uniq[u]);
         if (!plan) return std::unexpected(plan.error());
         const AlignedRead rd[2] = {plan->value, plan->scale};
         for (uint32_t j = 0; j < 2; ++j) {
@@ -1066,31 +1065,47 @@ Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, 
             req.dst = base + (u * 2 + j) * per;
             auto fut = io_->submit_future(req);
             if (!fut) return std::unexpected(fut.error());
-            futs.push_back(std::move(*fut));
-            skew[u * 2 + j] = rd[j].skew;
-            read_bytes += double(rd[j].aligned_bytes);
+            a.futs.push_back(std::move(*fut));
+            a.skew[u * 2 + j] = rd[j].skew;
+            a.bytes += double(rd[j].aligned_bytes);
         }
     }
-    for (auto& f : futs)
-        if (!f.get().ok()) return fail(Err::Io, "engram row read failed");
+    a.L = L;
+    return {};
+}
+
+Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out) {
+    (void)out;
+    if (engram_ahead_.L != L)
+        if (auto r = engram_issue(L, prompt); !r) return r;
+    EngramAhead& a = engram_ahead_;
+    const uint32_t n = static_cast<uint32_t>(prompt.size());
+    const uint32_t cols = layout::kEngramRowsPerToken;
+    const uint64_t per = 2 * kPageSize;
+    const auto* base = static_cast<const std::byte*>(a.stage.ptr);
+    const auto t0 = Clk::now();
+    for (auto& f : a.futs)
+        if (const auto res = f.get(); !res.ok())
+            return fail(Err::Io, "engram row read failed: " + res.status.str());
     const double io_ms = ms_since(t0);
     times_.engram_io += io_ms;
-    times_.engram_reads += futs.size();
-    add_op("io: engram rows", io_ms, {0, read_bytes, double(futs.size())});
+    times_.engram_reads += a.futs.size();
+    add_op("io: engram rows", io_ms, {0, a.bytes, double(a.futs.size())});
     // ParallelEngramEmbedding: value.float() * scale per 32, then .to(bf16)
     std::vector<float> x(size_t(n) * cols * 256);
     for (uint32_t p = 0; p < n; ++p)
         for (uint32_t c = 0; c < cols; ++c) {
             const size_t u = static_cast<size_t>(
-                std::lower_bound(uniq.begin(), uniq.end(), rows[size_t(p) * cols + c]) - uniq.begin());
-            const auto* v = reinterpret_cast<const uint8_t*>(base + u * 2 * per + skew[u * 2]);
-            const auto* s = reinterpret_cast<const uint8_t*>(base + (u * 2 + 1) * per + skew[u * 2 + 1]);
+                std::lower_bound(a.uniq.begin(), a.uniq.end(), a.rows[size_t(p) * cols + c]) - a.uniq.begin());
+            const auto* v = reinterpret_cast<const uint8_t*>(base + u * 2 * per + a.skew[u * 2]);
+            const auto* s = reinterpret_cast<const uint8_t*>(base + (u * 2 + 1) * per + a.skew[u * 2 + 1]);
             float* dst = x.data() + (size_t(p) * cols + c) * 256;
             for (uint32_t i = 0; i < 256; ++i)
                 dst[i] = cpu::bf16_to_float(cpu::float_to_bf16(
                     cpu::fp8_e4m3_to_float(v[i]) * cpu::e8m0_to_float(s[i / 32])));
         }
     std::memcpy(b_.eng_x.host_ptr, x.data(), x.size() * sizeof(float));
+    a.drop();
     return {};
 }
 
@@ -1479,14 +1494,16 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         }
         if (ahead_reads)
             add_op("io: experts ahead", ms_since(tw), {0, ahead_bytes, double(ahead_reads)});
-        for (auto& f : bt.futs) read_ok &= f.get().ok();
+        std::string why;
+        for (auto& f : bt.futs)
+            if (const auto res = f.get(); !res.ok()) { read_ok = false; why = res.status.str(); }
         if (!read_ok) {
             if (expert_sink && expert_sink->release)
                 for (uint32_t i = 0; i < bt.count; ++i) {
                     const uint32_t e = used[bt.first + i];
                     if (dest[e].kind != PfExpertSink::Kind::Drop) expert_sink->release(L, e, dest[e], false);
                 }
-            return fail(Err::Io, "expert read failed");
+            return fail(Err::Io, "expert read failed: " + why);
         }
         const double io_ms = ms_since(tw);
         times_.expert_io += io_ms;

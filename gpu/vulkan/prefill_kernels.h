@@ -543,6 +543,28 @@ private:
     Result<void> run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq, uint64_t xs,
                          uint64_t y, std::vector<uint32_t>& ids, std::vector<float>& wts,
                          bool shared = true, bool routed = true);
+    // An engram layer's row reads: issued by engram_issue, waited for and
+    // converted by engram_rows. Kept as a member so that an error path (a
+    // short read, STATUS §7 0ao) can never free the staging pages under
+    // reads still in flight -- that was the segfault of 2026-09-30 02:10.
+    // Issuing them ahead of their layer (the rows depend on the prompt
+    // alone) was measured and reverted: STATUS §3 78.
+    struct EngramAhead {
+        uint32_t L = ~0u;
+        std::vector<uint64_t> rows, uniq;
+        std::vector<uint32_t> skew;
+        std::vector<std::future<storage::IoResult>> futs;
+        HostAllocInfo stage;
+        double bytes = 0;
+        void drop() {   // nothing lands in freed pages
+            for (auto& f : futs) if (f.valid()) f.wait();
+            if (stage.ptr) free_host_pages(stage);
+            L = ~0u; rows.clear(); uniq.clear(); skew.clear(); futs.clear(); stage = {}; bytes = 0;
+        }
+        ~EngramAhead() { drop(); }
+    };
+    EngramAhead engram_ahead_;
+    Result<void> engram_issue(uint32_t L, std::span<const uint32_t> prompt);
     Result<void> engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out);
     Result<void> read_ahead(uint32_t L);
     std::byte* transit_host(uint32_t slot) const {
