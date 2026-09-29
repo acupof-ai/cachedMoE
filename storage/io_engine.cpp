@@ -5,10 +5,17 @@
 #include <bit>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <thread>
 #include <format>
 #include <span>
 #include <vector>
+
+#if defined(__linux__)
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#endif
 
 #include "core/align.h"
 #include "core/log.h"
@@ -20,6 +27,36 @@ namespace {
 // per-source bookkeeping wants the same instant as a plain integer.
 inline int64_t mono_ns() {
     return std::chrono::duration_cast<Nanos>(Clock::now().time_since_epoch()).count();
+}
+
+// The NVMe temperature sensor of the drive holding `root`: its block device
+// (st_dev) -> /sys/dev/block/M:m -> up the sysfs path to the controller, whose
+// hwmon*/temp1_input is in millidegrees. Empty when there is none: a btrfs or
+// dm-crypt volume names no single drive, which only ever happens to the primary
+// here -- the one source that is never rested anyway.
+std::string nvme_temp_input(const std::string& root) {
+#if defined(__linux__)
+    namespace fs = std::filesystem;
+    struct stat st {};
+    if (::stat(root.c_str(), &st) != 0) return {};
+    std::error_code ec;
+    fs::path p = fs::canonical(std::format("/sys/dev/block/{}:{}", major(st.st_dev),
+                                           minor(st.st_dev)), ec);
+    for (; !ec && p != "/sys/devices" && p != p.parent_path(); p = p.parent_path())
+        for (const auto& e : fs::directory_iterator(p, ec))
+            if (e.path().filename().string().starts_with("hwmon") &&
+                fs::exists(e.path() / "temp1_input"))
+                return (e.path() / "temp1_input").string();
+#else
+    (void)root;
+#endif
+    return {};
+}
+
+int read_temp_c(const std::string& path) {
+    std::ifstream f(path);
+    long milli = 0;
+    return (f >> milli) ? static_cast<int>(milli / 1000) : -1;
 }
 }  // namespace
 
@@ -91,11 +128,14 @@ std::string IoStats::to_string() const {
             s += std::format(
                 "         P0 {} req  {:.1f} GiB  mean lat {:.2f} ms | "
                 "idle gaps >= {} ms: {} (mean {:.1f}, max {:.1f} ms) | "
-                "keep-alive {} reads, {} done, {} refused\n",
+                "keep-alive {} reads, {} done, {} refused{}\n",
                 e.p0_requests, e.p0_bytes / 1073741824.0, e.p0_mean_latency_ms(),
                 kDefaultKeepAliveMs, e.idle_gaps, e.idle_gap_mean_ms(),
                 e.idle_gap_ns_max / 1e6,
-                e.keepalive_reads, e.keepalive_done, e.keepalive_refused);
+                e.keepalive_reads, e.keepalive_done, e.keepalive_refused,
+                e.temp_c < 0 ? std::string()
+                             : std::format(" | {} C (max {}), rested {}x{}", e.temp_c, e.temp_max_c,
+                                           e.rests, e.resting ? ", RESTING" : ""));
         }
     }
     if (disp_iters) {
@@ -209,6 +249,7 @@ IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
 
 void IoEngine::set_sources(const std::vector<std::string>& roots,
                            const std::vector<double>& weights) {
+    stop_thermal();
     src_roots_.assign(roots.begin(),
                       roots.begin() + std::min<size_t>(roots.size(), kMaxIoSources));
     src_weights_.assign(src_roots_.size(), 1.0);
@@ -292,6 +333,66 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
                      ? std::format("STATIC {:.0f}% to the mirrors", static_split_ * 100.0)
                      : std::string("weighted least-outstanding-bytes"));
     }
+    // ThermalGate (source_router.h). Only mirrors are watched, and only when
+    // their drive has a sensor.
+    int hot = kDefaultMirrorHotC;
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_HOT_C"); e && *e) hot = std::atoi(e);
+    thermal_ = ThermalGate{hot, hot - kMirrorCoolDropC, 0};
+    bool watch = false;
+    for (uint32_t i = 0; i < kMaxIoSources; ++i) {
+        temp_path_[i].clear();
+        if (i == 0 || i >= src_roots_.size() || !mirrors_on_ || hot <= 0) continue;
+        temp_path_[i] = nvme_temp_input(src_roots_[i]);
+        if (temp_path_[i].empty()) continue;
+        src_stats_[i].temp_c = src_stats_[i].temp_max_c = read_temp_c(temp_path_[i]);
+        watch = true;
+        log_info("IoEngine: mirror '{}' at {} C ({}); rests at >= {} C until <= {} C",
+                 src_roots_[i], src_stats_[i].temp_c, temp_path_[i], thermal_.hot_c, thermal_.cool_c);
+    }
+    if (watch) {
+        thermal_stop_ = false;
+        thermal_thread_ = std::thread([this] { thermal_watch(); });
+    }
+}
+
+void IoEngine::thermal_watch() {
+    std::unique_lock lk(thermal_mutex_);
+    while (!thermal_cv_.wait_for(lk, std::chrono::seconds(1), [this] { return thermal_stop_; })) {
+        for (uint32_t s = 1; s < kMaxIoSources; ++s) {
+            if (temp_path_[s].empty()) continue;
+            const int t = read_temp_c(temp_path_[s]);
+            if (t < 0) continue;              // the drive is off the bus: SourceHealth's case
+            bool changed = false, resting = false;
+            {
+                std::lock_guard sl(src_mutex_);
+                changed = thermal_.update(s, t);
+                resting = (thermal_.resting >> s) & 1u;
+                SourceStats& st = src_stats_[s];
+                st.temp_c     = t;
+                st.temp_max_c = std::max(st.temp_max_c, t);
+                st.resting    = resting;
+                if (changed && resting) ++st.rests;
+            }
+            if (changed)
+                log_warn("io: mirror '{}' at {} C: {}", src_roots_[s], t,
+                         resting ? "resting it, reads go to the primary"
+                                 : "cooled down, back in the router");
+        }
+    }
+}
+
+void IoEngine::stop_thermal() {
+    {
+        std::lock_guard lk(thermal_mutex_);
+        thermal_stop_ = true;
+    }
+    thermal_cv_.notify_all();
+    if (thermal_thread_.joinable()) thermal_thread_.join();
+}
+
+bool IoEngine::source_resting(uint32_t src) const {
+    std::lock_guard lk(src_mutex_);
+    return src < kMaxIoSources && ((thermal_.resting >> src) & 1u);
 }
 
 void IoEngine::drop_source(uint32_t src) {
@@ -432,6 +533,7 @@ Result<void> IoEngine::start(std::unique_ptr<Backend> backend, const IoConfig& c
 }
 
 void IoEngine::stop() {
+    stop_thermal();
     if (!running_.exchange(false, std::memory_order_acq_rel)) return;
     // Track D6: no new pokes from here on, so the dispatcher's drain is finite.
     // The one that may already be in flight keeps `has_work` true until it
@@ -476,8 +578,10 @@ Result<IoRequestId> IoEngine::submit(const IoRequest& in_req, IoCallback cb) {
             // Track D4: a source that has been dropped -- by the runtime's
             // startup health probe or by a run of I/O errors -- is simply not a
             // candidate. One AND on the hot path, and the request goes to the
-            // primary exactly as if the mirror had never held this shard.
-            mask = src_health_.live_mask(mask);
+            // primary exactly as if the mirror had never held this shard. A
+            // mirror resting because it runs hot is the same AND, undone when
+            // it cools (ThermalGate).
+            mask = thermal_.live_mask(src_health_.live_mask(mask));
             // Track D6: with DEEPMOE_MIRROR_STATIC_SPLIT the P0 class is routed
             // open-loop, by cumulative bytes toward a fixed share, instead of by
             // what each source is still carrying. Everything else -- P3 included
@@ -724,6 +828,8 @@ void IoEngine::reset_stats() {
         src_stats_[i].keepalive_done = 0;
         src_stats_[i].keepalive_refused = 0;
         src_stats_[i].stripe_chunks = 0;
+        src_stats_[i].rests = 0;
+        src_stats_[i].temp_max_c = src_stats_[i].temp_c;
     }
 }
 

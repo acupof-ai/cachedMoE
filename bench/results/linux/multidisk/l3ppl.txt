@@ -1,0 +1,11 @@
+[12:28:30] state /home/chenkailun/projects/cachedMoE/traces/l3_64: 64 prompt tokens, 64 exported steps, running 64; reference NLL 0.5975552797317505
+[12:28:30] off     run --model /home/chenkailun/models/DeepSeek-V4.1-Flash --state /home/chenkailun/projects/cachedMoE/traces/l3_64 --steps 64 --warm-cache --resident-only off --teacher-force
+[12:29:23] off     NLL 0.622784 PPL 1.8641 top1 56/64 3.648 tok/s (53 s)
+
+gate  reference NLL 0.597555 (PPL 1.8177)  vs  off NLL 0.622784 (PPL 1.8641)   delta +0.025229 (1.0255x)
+      the engine is FP4 on a GPU and the reference fp32 on a CPU, so this is the harness's noise floor: every ratio below is only readable to the extent it is small.
+
+| mode | NLL | PPL | xoff | top-1 | tok/s | cache hit | served | mass lost | shared-only | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| off | 0.622784 | 1.8641 | 1.000x | 56/64 | 3.65 | 0.8210 | - | - | - | baseline |
+[12:29:23] wrote bench/results/linux/multidisk/l3ppl.json

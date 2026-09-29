@@ -146,6 +146,15 @@ MUTATIONS = [
      "let the mirror keep-alive fire while a real request is in flight",
      "caught", False),
 
+    # --- a hot mirror rests until it has COOLED, not until it is under hot_c
+    # Without the gap a drive sitting at the threshold flaps in and out of the
+    # router every second (STATUS 0q).
+    ("io", [("storage/source_router.h",
+             "else if (was && temp_c <= cool_c) resting &= ~bit;",
+             "else if (was && temp_c < hot_c) resting &= ~bit;")],
+     "let a resting mirror back in as soon as it dips under hot_c",
+     "caught", False),
+
     # --- H1b: a .pkv restore is a degradation, never fatal ---------------
     ("kvdisk", [("runtime/session.cpp",
                  "st.cold_fallback = true;\n"

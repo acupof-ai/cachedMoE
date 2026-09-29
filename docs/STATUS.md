@@ -60,6 +60,10 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 16 | final-attncm-8turns | `dbe7d16f5b+1 dirty (df4d517ce3d9a00b)` | ATTN_CM=1 MIRROR_AUTO=0 | 22.9% | **34,567 MB ⚠** | **7.264** | 137.7 | 68.3 (31.1/26.7/6.2/4.2) | 67.2 (52.8 @ 4.8 GB/s) | 4.89 | 2.0 | 0.9439 | 68.3 |
 | 20 | chat-waves-8turns | `63846356e8+11 dirty (bc8cd112c5787809)` | MIRROR_AUTO=0 | 12.1% | 41 MB | **7.572** | 132.1 | 62.5 (28.4/26.0/6.1/2.1) | 66.3 (52.8 @ 4.8 GB/s) | 4.79 | 3.1 | 0.9439 | 66.3 |
 | 21 | chat-submit1-8turns | `dd243387d1+3 dirty (6028abec961ea2e7)` | MIRROR_AUTO=0 | 0% | 47 MB | **7.696** | 129.9 | 62.5 (28.4/26.1/6.1/1.9) | 64.3 (52.8 @ 4.8 GB/s) | 4.62 | 2.8 | 0.9439 | 66.0 |
+| 22 | chat-stripe-8turns | `7b27eb741f` | MIRROR_AUTO=1 MIRROR_STRIPE=1 | 0% | 62 MB | **9.291** | 107.6 | 62.7 (28.5/26.1/6.1/1.9) | 41.7 (53.1 @ 4.8 GB/s) | 2.92 | 2.9 | 0.9436 | 42.2 |
+| 23 | chat-ab-threads8-8turns | `7b27eb741f+1 dirty (df850332d68331e4)` | IO_SUBMIT_THREADS=8 MIRROR_AUTO=0 | 0% | 44 MB | **7.562** | 132.2 | 62.5 (28.4/26.0/6.1/2.0) | 66.5 (52.8 @ 4.8 GB/s) | 4.76 | 2.9 | 0.9439 | 66.2 |
+| 24 | chat-ab-threads1-8turns | `7b27eb741f+17 dirty (5b9a4dab88b490d5)` | IO_SUBMIT_THREADS=1 MIRROR_AUTO=0 | 23% | 48 MB | **7.683** | 130.2 | 62.5 (28.4/26.0/6.1/1.9) | 64.4 (52.8 @ 4.8 GB/s) | 4.66 | 2.9 | 0.9439 | 66.0 |
+| 25 | chat-stripe-hot70-8turns | `7b27eb741f+17 dirty (d020a9239219f127)` | MIRROR_AUTO=1 MIRROR_HOT_C=70 MIRROR_STRIPE=1 | 0% | 34 MB | **7.631** | 131.0 | 62.5 (28.4/26.0/6.1/2.0) | 65.3 (52.8 @ 4.8 GB/s) | 4.67 | 2.9 | 0.9439 | 66.6 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -659,18 +663,32 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0q. **双盘（外接 USB4 盘作第二读源，按 chunk 条带化）：对话 9.291 tok/s（ledger #22，同一 8 轮脚本；单盘 #24 7.682，+21%），stall 64.4 → 41.7 ms，prefill 66 → 42 s，端到端 6.26 → 7.90 tok/s（+26%）。加了温控：外接盘到 80 °C 就歇，降到 72 °C 再回来。**
+   **数字**（`bench/results/linux/multidisk/`，`DEEPMOE_MIRROR_AUTO=1 DEEPMOE_MIRROR_STRIPE=1`）：ms/miss 4.66 → **2.92**，hit 0.9436 不变，探针 4.59 : 3.73 GB/s。外接盘空闲 63–67 °C，
+   整场最高 **74 °C**（告警线 90），未掉线、`src[1]` 零错误。与 0i（2026-09-28，+16.8%）同一机制，这次在 0p 之后的 IO 路径上量。
+   **温控**（`ThermalGate`，`storage/source_router.h`）：`set_sources` 从镜像根目录的 `st_dev` 顺着 `/sys/dev/block/M:m` 找到盘控制器的 `hwmon*/temp1_input`；
+   一条单独的线程每秒读一次（NVMe 的 hwmon 读是一条 admin 命令，不能放在 dispatcher 上），`>= hot_c` 就把该源从候选掩码里拿掉，`<= hot_c − 8` 才放回——
+   和 SourceHealth 的 drop 是同一个 AND，只是可逆。主盘永不歇。`DEEPMOE_MIRROR_HOT_C`（默认 80，0 = 关）；`status` 的每源 P0 行尾追加「当前 °C（max）、歇过几次、RESTING」。
+   单测 `io.thermal_gate_rests_a_hot_mirror_with_hysteresis`，变异一条（去掉回差）。**端到端验证**（#25，阈值临时 70 °C）：启动预热时升到 70 °C 被歇，P0 一次都没再去外接盘，
+   整场单盘 7.631 tok/s；它停在 64 °C 没降到 62——**回来的阈值必须高于空闲温度**，默认 80 / 72 满足（空闲 63–67）。
+   **已有的另两道**：读到一半外接盘掉链路 ⇒ 该请求改从主盘重读（调用方只看到一次慢读，D4/ST）；连续 3 次出错 ⇒ 本进程内踢出（SourceHealth）。
+   **还缺**：踢出之后不会再接回来（USB4 链路约每 1–1.5 小时断一次，重挂后设备改名、旧 fd 失效），长跑的网页引擎掉一次就单盘到重启——要接回得重开 48 个分片并替换 IoEngine 的镜像表，下一步候选。
+   **默认**：serve 在 Linux 上已自动发现镜像，但条带化仍默认关（0i：外接盘只作辅助，默认与否由用户定）。
+
 0p. **IO：Linux 上 IoEngine 改在 dispatcher 一条线程上提交（提交线程 8 → 1）。对话（ledger #21，同一 8 轮脚本）7.572 → 7.696 tok/s，ms/miss 4.79 → 4.62，stall 66.3 → 64.3 ms，hit 0.9439 不变；IO 至此贴着盘的忙时带宽。**
    **为什么**：提交线程池是给 Windows 同步 `ReadFile` 进 path A（704 µs/chunk）做的（Track Q2）。Linux 的 io_uring 提交 ~7 µs，而读完成的 task work 跑在**提交它的那条线程**上，
    所以有池时每个 chunk 完成都要先唤醒一条睡着的提交线程，dispatcher 才能收割。`io_dst_bench` 单 expert（1 MiB × QD 8）p50：读进 RAM 5.17 / 5.05 → **4.75 / 4.73 ms**，
    读进 path A 5.17 / 5.14 → **4.63 / 4.64 ms**（ABAB，`bench/results/linux/iopath/submit_threads_ab.txt`）——与 8 线程 `preadv` 的 Python 探针（背靠背 4.74）持平。
    `kDefaultSubmitThreads` 按平台取值（Windows 8，其余 1），`DEEPMOE_IO_SUBMIT_THREADS` 照旧可改。0n 的「IO 到了硬件的底」早了一步：它拿 Python 探针（本来就是线程直读）当底，没量引擎自己的路径。
-   **下面还有什么（量过，都不做）**：模型在 **dm-crypt（LUKS）上的 btrfs**，读时 ~14 个 `kcryptd` 线程解密、`btrfs-endio` 校验。但 `/sys/block/{nvme0n1,dm-0}/stat` 的差值说
-   dm-crypt 每个 126 KiB bio 只加 **18 µs**（1,436 vs 1,418 µs，~1%），AES-XTS 单核 12.6 GB/s（`iopath/dmcrypt_latency.txt`）——`no_read_workqueue` 之类不值得动根分区。
-   盘在这种突发随机 1 MiB 读下的忙时带宽就是 **~4.0 GB/s**（probe 期间 io_ticks 3.97 GB/s），引擎 4.62 ms/miss = 4.08 GB/s。SN740 无 DRAM，HMB 已按盘的要求给了 64 MiB（驱动上限 128），NVMe `max_hw_sectors_kb` 128 是硬件的。
+   **同一个二进制只切这一个开关**（codex review 要求；#23 / #24，exe `b323add3` 两臂相同）：8 → 1 线程 7.562 → **7.682** tok/s，stall 66.5 → 64.4 ms，ms/miss 4.76 → **4.66**——
+   与 #20 → #21 的差一致，所以是这一处改动的。tok/s 的 +1.6% 在 ±3% 抖动线内，靠的是 ms/miss（复跑只动 ~1%）与单 expert 的 ABAB。
+   **下面还有什么（量过，都不做）**：模型在 **dm-crypt（LUKS）上的 btrfs**，读时 ~14 个 `kcryptd` 线程解密、`btrfs-endio` 校验。`/sys/block/{nvme0n1,dm-0}/stat` 的平均读时间
+   dm-0 比 nvme0n1 只多 **18 µs / 126 KiB bio**（1,436 vs 1,418 µs，~1%；这是两个设备的累计统计之差，并发下不等于单个读的延迟），AES-XTS 单核 12.6 GB/s（`iopath/dmcrypt_latency.txt`）——`no_read_workqueue` 之类不值得动根分区。
+   盘在这种突发随机 1 MiB 读下的忙时带宽就是 **~4.0 GB/s**（probe 期间 io_ticks 3.97 GB/s；所以 perf_report 的「4.8 GB/s 地板」是标称值，现在标成 nominal），引擎 4.62 ms/miss = 4.08 GB/s。SN740 无 DRAM，HMB 已按盘的要求给了 64 MiB（驱动上限 128），NVMe `max_hw_sectors_kb` 128 是硬件的。
    剩下只有更少的 miss 和第二块盘（stripe，0i）。**容量**：`hitrate_sim curve`（本次对话的 trace）5,500 → 5,700 / 6,000 / 6,500 槽，模拟 hit 0.9315 → 0.9342 / 0.9377 / 0.9431，
-   即 miss −4% / −9% / −17%（≈ −2.5 / −5.6 / −10 ms/token，折半 1–4%），代价 +3.5 / +8.8 / +17.5 GiB；而满载时 GTT 107 / 112 GiB、系统只剩 ~7 GiB——**要不要拿内存余量换它，留给用户**（`iopath/capacity_curve.json`）。策略已关（§3 的 47）。
+   即 miss −4% / −9% / −17%（≈ −2.5 / −5.6 / −10 ms/token，折半 1–4%），代价 +3.5 / +8.8 / +17.5 GiB。**模拟器没校准**：5,500 槽时它说 0.9315、实测 0.9411，逐步只有 1,332 / 2,350 步对得上，所以这些差只是指示性的；而满载时 GTT 107 / 112 GiB、系统只剩 ~7 GiB——**要不要拿内存余量换它，留给用户**（`iopath/capacity_curve.json`）。策略已关（§3 的 47）。
    **prefill**（引擎日志现在逐项记账，`bench/results/linux/prefill/prefill_breakdown.txt`）：新话题 35 token 7.8 s = expert IO 6.53 s（1,619 个 expert，4.66 GB/s，连续流比 decode 的突发快）
-   + expert GPU 0.56 + attention 0.34 + 其余 0.25。transit 已经双缓冲（读下一批时算这一批）；不重叠的是层间依赖（下一层的路由要等这一层算完），上限约端到端 1%，不做。
+   + expert GPU 0.56 + attention 0.34 + 其余 0.34（日志现在把 `Prefill::run` 以外的建立 / KV 播种 / 拆除单列为 `setup`，各项加起来等于墙钟）。transit 已经双缓冲（读下一批时算这一批）；不重叠的是层间依赖（下一层的路由要等这一层算完），上限约端到端 1%，不做。
    **计算侧**（`attn_bench` 单测，分波后 trace 的逐 stage 不可读）：wq_b 226、wo_a / wo_b ksplit 212 / 211、head 234 GB/s，大 kernel 都在带宽的 91–98%；热步多出的 ~9 ms 摊在 ~1,100 个 dispatch 上，逐个融合各值 0.1–0.5%。
 
 0o. **decode 的 index key 改成「每个源层用自己的」（2026-09-29 用户决定「各自用」「但是得复用」），跨层复用一处不动；4K / 17K oracle 按同一规则重导。≤ 1,024 上下文逐位不变。**
@@ -695,7 +713,8 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    ③ **mega_mhc 的 stage 2（RMSNorm 出 u）从来不依赖 stage 1（mix）**，mix 与 Sinkhorn 只给**下一个**子层用。Sinkhorn 拆成独立的 stage 3（一个 workgroup，`MhcSinkhorn` / `MhcSinkhornB`），
    attention 半边的 mix 进投影 wave 0、Sinkhorn 进 wave 1；FFN 半边 mix 与 gate.score 同波、Sinkhorn 与 gate.topk 同波。M = 1 路径不再需要 `kMhcFlagSkipSinkhorn`（尾部 collapse 只派 stage 0 / 2；标志留给 mgt1）。
    不开 trace 的热步 65.7 → 64.9 ms；trace 下 66.69 → 65.78。两项合计 dispatch 1021 → 1101，barrier 2.77 → 2.57 ms。
-   闸：`l3_ppl` off **0.622784 / 56/64 逐位相同**（`opt/l3ppl_waves.txt`），`suite.decode`、`suite.gpu_attn` 过，热步 margin 7.0220 不变，CPU 25/25 + 30/30。
+   闸：`l3_ppl` off **0.622784 / 56/64**，64 步逐步的 token 与 margin（4 位小数）和改动前**完全相同**（`opt/l3ppl_waves_logs` 对 `l3ppl_engram_async_logs`，md5 一致；更细的 logits 没有逐位比），`suite.decode`、`suite.gpu_attn` 过，热步 margin 7.0220 不变，CPU 25/25 + 30/30。
+   **口径（codex review）**：7.264 那行是 #16，与 #20 的条件不同（#16 期间别的程序写了 34.6 GB 盘、后台 GPU 22.9%，#20 为 41 MB / 12.1%），所以对话的 +4.2% 只是指示性的；受控的数字是热步。
    **仪器注意**：RADV 上 trace 的 end 戳（COMPUTE_SHADER 阶段）把同一波里的戳串行化——波里第一个 dispatch 的 ms 吞掉整个波，后面的显示 0.3 µs。**span 是对的，波内逐 stage 的 ms 不可读**（`perf_report` 表里 `mega_mhc.mix` 1.40 ms 的"超出"就是这个）。
    **试过退掉**：gate.topk 改成一次扫描数名次（逐位相同）8.1 → **23.9 µs**（384 次依赖 LDS 读），展开成两次 16 B 读 × 8 之后 16.0 µs，仍输给 16 轮 wave 归约 → 退回。
    gate 的 host-coherent 进度计数器（主机早已改用 fence，没人读）只值 0.5 µs/层，不动。`wo_b.kcombine` 并进 `mega_mhc.post.ffn`（0.13 ms/token）要给 mhc 加一个分支，不做。
@@ -719,7 +738,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    覆盖：`suite.decode` 探针层 0/1/2/13/14/20/39，`decode_longctx` 4K / 17K（indexer tie-aware、候选块、salt 取回 8/8）。
    **一处照抄参考、看起来是参考 bug 的行为（2026-09-29 用户决定改掉：各层用自己的 key，见 0o）**：参考 decode 在 ratio-2 组没满的步（每隔一步）不发布 index key，
    第 2/8/14 层于是对**上一步第 20 层**的 key cache 打分（`shared_attn.index_k` 从不重置；它的 docstring 假设「每个源先写后读」），prefill 则用自己的 key。
-   我们两条都照抄（`pub_index_k_`）。只在上下文 > 1,024 时生效：17K 时这些步的 top-k 与「用自己的 key」只重叠 8%，
+   （以下是 0o 之前的做法，已废。）我们两条都照抄（`pub_index_k_`）。只在上下文 > 1,024 时生效：17K 时这些步的 top-k 与「用自己的 key」只重叠 8%，
    L8 压缩注意力质量 0.71 → 0.37，输出 token 不受影响（`p3_longctx.md` §5.3）。偏离参考就失去 L3 对照，所以留给决定。
    **replay 128**（`serve` 在 prompt > 128 token 时的默认，是**我们自己的近似**，参考里没有）此前只验过首 token：
    现在 **4K / 17K 从我们自己的预填状态自由生成都是 8/8**（`p3_longctx_decode.md` §4.3，`bench/results/linux/replay128/`）。

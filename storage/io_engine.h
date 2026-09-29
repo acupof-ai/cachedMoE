@@ -233,6 +233,12 @@ public:
     // dropped ones, and always at least 1 (the primary, which is never
     // dropped -- including the no-mirror case, where nothing is declared).
     uint32_t live_source_count() const;
+    // Resting a hot mirror (ThermalGate, source_router.h): set_sources finds
+    // each mirror's NVMe temperature sensor, and a watcher thread reads it once
+    // a second -- off the dispatcher, since an NVMe hwmon read is an admin
+    // command -- and takes the mirror out of the router while it is at or above
+    // DEEPMOE_MIRROR_HOT_C (default 80; 0 = off) until it cools by 8 C.
+    bool source_resting(uint32_t src) const;
 
     // --- Track D6: mirror keep-alive (docs/p4_dual_source.md §10) -----------
     // Declares which open shard on source `src` the keep-alive may poke. Called
@@ -380,12 +386,9 @@ public:
     // (mean depth 3.80 of 8). Submitting from several threads decouples the
     // issue rate from that cost. Measured on the 4-turn chat: 1 -> 8 threads
     // with the deeper P0 queue below is +4.4% tok/s. docs/p4_p0_queue.md §9.
-    // Linux is the opposite case: an io_uring submit is ~7 us, and a read's
-    // completion runs as task work on the thread that SUBMITTED it, so with a
-    // pool every chunk has to wake a sleeping submitter before the dispatcher
-    // can reap it. One expert through the engine's path (io_dst_bench, 1 MiB
-    // x QD 8): 5.17 / 5.05 -> 4.75 / 4.73 ms p50 on one thread (ABAB,
-    // bench/results/linux/iopath/submit_threads_ab.txt).
+    // Not on Linux: an io_uring submit is ~7 us, and a read completes as task
+    // work on the thread that submitted it, so a pool makes every chunk wake a
+    // sleeping submitter before the dispatcher can reap it (STATUS §7 0p).
 #if defined(_WIN32)
     static constexpr uint32_t kDefaultSubmitThreads = 8;
 #else
@@ -521,6 +524,14 @@ private:
                               (1u << static_cast<uint8_t>(IoPriority::Backfill));
     mutable std::mutex src_mutex_;
     SourceHealth src_health_;
+    ThermalGate  thermal_;                        // under src_mutex_
+    std::array<std::string, kMaxIoSources> temp_path_{};  // hwmon temp1_input, or empty
+    void thermal_watch();                         // the watcher thread's body
+    void stop_thermal();
+    std::thread             thermal_thread_;
+    std::mutex              thermal_mutex_;
+    std::condition_variable thermal_cv_;
+    bool                    thermal_stop_ = false;
     uint64_t src_outstanding_[kMaxIoSources] = {};
     uint32_t src_inflight_[kMaxIoSources]    = {};
     SourceStats src_stats_[kMaxIoSources]{};

@@ -555,6 +555,26 @@ DEEPMOE_TEST(io, source_health_drops_a_mirror_that_keeps_failing) {
     CHECK_EQ(g.live_mask(0b11), 0b01u);
 }
 
+// A hot mirror rests at hot_c and comes back only at cool_c: in between it
+// stays whatever it was, so a drive sitting at the threshold does not flap in
+// and out of the router every second. The primary never rests.
+DEEPMOE_TEST(io, thermal_gate_rests_a_hot_mirror_with_hysteresis) {
+    ThermalGate t{80, 72, 0};
+    CHECK(!t.update(1, 74));
+    CHECK_EQ(t.live_mask(0b11), 0b11u);
+    CHECK(t.update(1, 80));                 // reaches hot_c: rests, reported once
+    CHECK(!t.update(1, 85));
+    CHECK_EQ(t.live_mask(0b11), 0b01u);
+    CHECK(!t.update(1, 76));                // cooler, not yet cool: still resting
+    CHECK_EQ(t.live_mask(0b11), 0b01u);
+    CHECK(t.update(1, 72));                 // back: reported once
+    CHECK_EQ(t.live_mask(0b11), 0b11u);
+    CHECK(!t.update(1, 79));                // under hot_c again: stays in
+    CHECK_EQ(t.live_mask(0b11), 0b11u);
+    CHECK(!t.update(0, 99));                // the primary is never rested
+    CHECK_EQ(t.live_mask(0b11), 0b11u);
+}
+
 // The engine end: with no sources declared, nothing about a request changes and
 // IoStats carries no per-source rows -- the "off by default is off" check.
 // Track D6: the keep-alive scheduler (storage/source_router.h).

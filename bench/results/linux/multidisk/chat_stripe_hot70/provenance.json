@@ -1,0 +1,78 @@
+{
+ "time": "2026-09-29T12:20:07+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "7b27eb741f",
+ "dirty": [
+  "CLAUDE.md",
+  "bench/results/linux/iopath/chat.sh",
+  "bench/results/linux/ownkeys/regen.sh",
+  "bench/results/linux/prefill/short_turns.json",
+  "bench/results/perf_ledger.jsonl",
+  "docs/STATUS.md",
+  "docs/p2_attention.md",
+  "runtime/decode_layer.cpp",
+  "runtime/engine.cpp",
+  "storage/io_engine.cpp",
+  "storage/io_engine.h",
+  "storage/source_router.h",
+  "tests/mutate.py",
+  "tests/test_io.cpp",
+  "tools/hitrate_bench.py",
+  "tools/oracle_longctx.py",
+  "tools/perf_report.py"
+ ],
+ "diff_sha": "d020a9239219f127",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "af0179c367fd7b2f",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 43,
+  "sha": "9fce4a0987eb0cc2"
+ },
+ "env": {
+  "DEEPMOE_MIRROR_AUTO": "1",
+  "DEEPMOE_MIRROR_HOT_C": "70",
+  "DEEPMOE_MIRROR_STRIPE": "1",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/linux/multidisk/chat_stripe_hot70/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 0.0,
+  "gpu_busy_max": 0,
+  "loadavg": [
+   "3.78",
+   "1.76",
+   "1.12"
+  ],
+  "top_cpu": [
+   "steam 16.6%",
+   "kworker/u130:16-kcryptd-253:0-1 4.3%",
+   "kworker/u130:6-btrfs-endio 4.2%",
+   "kworker/u130:15-btrfs-endio 4.1%"
+  ]
+ },
+ "disks_start": {
+  "t": 1790655608.625901,
+  "nvme0n1": [
+   40097950322,
+   328338422
+  ],
+  "nvme1n1": [
+   776959744,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 397.9,
+  "nvme0n1": {
+   "read_MB": 906635.6,
+   "write_MB": 34.2
+  },
+  "nvme1n1": {
+   "read_MB": 11948.2,
+   "write_MB": 0.0
+  }
+ }
+}

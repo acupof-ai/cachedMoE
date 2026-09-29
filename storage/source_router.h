@@ -125,6 +125,35 @@ private:
     uint32_t dropped_ = 0;
 };
 
+// --- resting a mirror that runs hot ------------------------------------------
+//
+// The USB4 enclosure idles at ~63 C, reaches ~74 C over an 8-turn striped chat,
+// and has fallen off the bus when hot (its warning threshold is 90 C). A mirror
+// at or above `hot_c` gets no new reads until it is back at or below `cool_c`.
+// The router already chooses by candidate mask, so resting is the same one AND
+// as a drop, only it comes back. Source 0 is never rested: it is the copy the
+// run cannot do without.
+inline constexpr int kDefaultMirrorHotC = 80;
+inline constexpr int kMirrorCoolDropC   = 8;
+
+struct ThermalGate {
+    int      hot_c   = kDefaultMirrorHotC;
+    int      cool_c  = kDefaultMirrorHotC - kMirrorCoolDropC;
+    uint32_t resting = 0;              // bit s: source s is cooling off
+
+    // Folds one reading in; true when source s changed state, so the caller
+    // logs each transition once.
+    bool update(uint32_t s, int temp_c) {
+        if (s == 0 || s >= kMaxIoSources) return false;
+        const uint32_t bit = 1u << s;
+        const bool was = (resting & bit) != 0;
+        if (!was && temp_c >= hot_c) resting |= bit;
+        else if (was && temp_c <= cool_c) resting &= ~bit;
+        return was != ((resting & bit) != 0);
+    }
+    uint32_t live_mask(uint32_t candidates) const { return candidates & ~resting; }
+};
+
 // --- Track D6: keeping an idle mirror awake ---------------------------------
 //
 // docs/p4_dual_source.md §10. The D5 hypothesis was that the mirror's 5-6x mean
@@ -201,6 +230,11 @@ struct SourceStats {
     uint64_t idle_gaps = 0, idle_gap_ns_sum = 0, idle_gap_ns_max = 0;
     // Keep-alive reads issued / that came back / that the backend refused.
     uint64_t keepalive_reads = 0, keepalive_done = 0, keepalive_refused = 0;
+    // ThermalGate: the drive's last and highest reading (-1 = no sensor), how
+    // often it was rested and whether it is resting now.
+    int32_t  temp_c = -1, temp_max_c = -1;
+    uint32_t rests = 0;
+    bool     resting = false;
 
     double mean_latency_ms() const {
         return requests ? lat_ns_sum / 1e6 / static_cast<double>(requests) : 0.0;
