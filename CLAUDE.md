@@ -22,8 +22,10 @@ anything — its §7 "不做" list exists so closed questions stay closed.
 - **Never route ModelScope through the proxy.** Clear `HTTP_PROXY`/`HTTPS_PROXY` for downloads.
 - **No attribution lines** in commits or PR bodies.
 - **Experiments answer in minutes, not hours.** Smallest N first; kill a run whose verdict is
-  already decided. Pair A/B alternating (ABAB), ±3% jitter floor, and **halve every predicted
-  gain** before believing it.
+  already decided. **One run per configuration, keep the best, and record it** (the owner,
+  2026-09-29: no repeated A/B). An effect near the ±3% jitter floor is judged on the
+  machine-recorded per-op numbers, not by repeating whole runs. **Halve every predicted gain**
+  before believing it.
 - Worktrees: one per track under `C:\Users\Asus\code\deepmoe-<track>`; merge → verify → push →
   **delete the worktree and branch**.
 

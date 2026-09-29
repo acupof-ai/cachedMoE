@@ -154,6 +154,7 @@ struct Rig {
         manifest = std::move(*mf);
         if (auto r = shards.open_all(dir, manifest, true); !r) return r;
         IoConfig cfg;
+        storage::IoEngine::runtime_shape(cfg);   // serve's queue depths, so the IO is serve's
         auto be = storage::make_default_backend(cfg);
         if (!be) return std::unexpected(be.error());
         if (auto r = io.start(std::move(*be), cfg); !r) return r;

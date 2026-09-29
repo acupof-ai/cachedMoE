@@ -68,6 +68,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 27 | chat-readmit-8turns | `d8f5644785` | MIRROR_AUTO=1 | **396** | 0% | 57 MB | **9.269** | 107.9 | 63.0 (28.4/26.4/6.1/2.1) | 41.8 (52.8 @ 4.8 GB/s) | 2.94 | 2.7 | 0.9439 | 43.1 |
 | 28 | clean-single-8turns | `c7f999e81d+4 dirty (68bd3e597964ed5b)` | MIRROR_AUTO=0 | 0 | 0% | 40 MB | **7.608** | 131.4 | 62.5 (28.4/26.2/6.1/1.9) | 65.8 (54.1 @ 4.8 GB/s) | 4.63 | 2.8 | 0.9425 | 71.0 |
 | 29 | clean-stripe-8turns | `c7f999e81d+4 dirty (e9f35544343159fc)` | MIRROR_AUTO=1 | 0 | 0% | 33 MB | **9.203** | 108.7 | 62.9 (28.5/26.3/6.1/2.0) | 42.4 (54.1 @ 4.8 GB/s) | 2.90 | 3.0 | 0.9425 | 46.2 |
+| 30 | engram-qd128-8turns | `4e72a577c5+6 dirty (e89b1509ab9f7d13)` | MIRROR_AUTO=0 | 0 | 0% | 30 MB | **7.622** | 131.2 | 61.8 (28.3/25.5/6.1/1.8) | 66.1 (54.1 @ 4.8 GB/s) | 4.62 | 3.0 | 0.9425 | 70.3 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -669,6 +670,19 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0v. **engram 行读有了自己的队列深度（Linux 上 128，`IoConfig::engram_qd`，`DEEPMOE_IO_ENGRAM_QD` 可改）：17,010 token 的 prefill 159.8 → 147.5 s（−7.7%），4,133 token 68.1 → 65.0 s（`prefill_bench`）；engram 读 18.9 → 4.8 s / 4.5 → 1.1 s，已经贴着模型给它的下限。对话 decode 不变（ledger engram-qd128-8turns：7.622 tok/s，对照 #28 的 7.608；每 token engram 1.88 → 1.81 ms，命中率逐位相同）。**
+   **模型怎么找到它的**：0u 的表里，17K 的 engram 读是 120 万次 4 KiB 读用了 19 s，只有 63K IOPS。临时插桩后发现，发请求只花 0.19 s，缺页也不是原因（预先 touch 一遍暂存区，时间不变），而引擎里 Engram 类的在飞数平均是 **7.9**。
+   原因在 `IoEngine::tuning_from_env`：P1–P3 的队列深度被无条件钳在 IoConfig 默认的 8（Track Q2 的本意是「P0 加深了，别让 backfill 也跟着加深」），Engram 属于 P2，也被一起钳住了。serve 把 `max_inflight_ops` 提到 24，Engram 也拿不到。
+   `nvme_bench` 只读地测在 engram 的 101 GB 文件上：QD 8 → 49K，24 → 119K，64 → 190K，128 → 245K。
+   **改法**：
+   - `IoConfig::engram_qd` 单独给 Engram 类。Linux 的 `runtime_shape` 设为 128，`widen_for_env` 把环形队列放大到装得下它（P0 保持显式的 8，后台类仍然是 8）。
+   - serve 的 IO 形状抽成了 `IoEngine::runtime_shape`，引擎和 `prefill_bench` 共用。此前 bench 用的是默认 IoConfig（4 MiB × QD 8），和 serve 不是一回事。
+   - 4K 上 8 / 64 / 128 各跑了一次（`bench/results/linux/engram_qd/`，128 的那份就是 `prefill_model/` 现在的快照）：engram 读 4.52 / 1.37 / 1.19 s，按「只留最好的」取 128。
+   **现在的模型快照**（`prefill_model/model.txt`，本提交的二进制）：4K 65.0 s，串行段 19.6 s + routed expert 45.4 s；17K 147.5 s，串行段 100.1 s。按关键路径能赢的依次是：
+   - 17K：注意力 34.6 s，串行段里让盘读 expert 28.8，dense linear 20.2，indexer 17.7，elem 8.7，host 5.4。
+   - 4K：串行段里让盘读 expert 22.2 s，注意力 7.5，dense linear 5.3。
+   **顺带**：`nvme_bench` 的 `--file` 指向一个已经存在、又不是它自己建的文件时，永远只读。以前文件比 `--size-gb` 小就会被覆盖成测试文件，现在直接拒绝（用 1 MiB 的文件验证过，内容逐字节不变），所以它可以安全地指向 checkpoint 分片。
+
 0u. **prefill 的完整成本模型（`tools/prefill_model.py`，用户 2026-09-29「有完整的建模分析吗」）：每个 op 在派发时按真实形状记下自己的 FLOP、最少访存字节和磁盘请求数，对照实测的硬件天花板算出下限，再按关键路径给每个杠杆定价。结论：4K 是盘在限速（下限 43.8 s，实测 68.1 s），17K 是计算在限速（实测 159.8 s，GPU 下限只有 7.8 s，盘 47.8 s）。**
    **怎么记**：`PrefillTimes::per_op` 的每一项从 `(ms, calls)` 变成 `{ms, flop, bytes, reads, calls}`。每个 op 在派发处按形状算自己的开销（`pf_gemm_cost`、注意力六个阶段、indexer、11 个 elem stage、MoE 的 shared / routed 批、expert 与 engram 的盘读），经 `flush_one` / `mark()` / `add_op` 记账，不靠手算。`prefill_bench --ops-json` 每跑一次写一行 JSON，`tools/prefill_model.py` 读它。
    这里的「字节」是 op 至少要搬的量：每个输入读一次、每个输出写一次，融合后能留在片上的中间结果不计。所以注意力整块（`attn (coop, submit+wait)`）按融合后的算：q、索引表、窗口 KV 各读一次，o 写一次；它下面的六个阶段各按自己的输入输出算。
@@ -676,7 +690,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    - 矩阵单元：新加的 `probe_mma.slang`，tile 全在寄存器里，每个 wave 8 路 fp16 16×16×16 乘加。**52.8 TFLOP/s**（2.9 GHz 理论值 59.4）。所有 FLOP 都按矩阵单元计价，今天跑在 FMA 上的（indexer、tiled GEMM）也一样，所以下限是「改写这个 op 能到的地方」，不是「现有 kernel 能到的地方」。fp32 FMA 18.3 TFLOP/s，只作参考。
    - DRAM：最好的冷流 236 GB/s。
    - 一次派发（launch + drain）：2.4 µs。
-   - 盘：顺序带宽取 prefill 连续流的 4.66 GB/s。4 KiB 随机读的 IOPS 用 `nvme_bench` 实测：QD 8 为 93K、32 为 225K、64 为 276K、128 为 **291K**（`prefill_model/nvme_rand4k.csv`）。
+   - 盘：顺序带宽取 prefill 连续流的 4.66 GB/s。4 KiB 随机读的 IOPS 用 `nvme_bench` 只读地测在一层 engram 的 101 GB 文件上：QD 8 为 49K、24 为 119K、64 为 190K、128 为 **245K**（`prefill_model/nvme_rand4k_span101g.csv`；同一块盘在 4 GB 的测试文件上是 93K / 276K / 291K，跨度大了，无 DRAM 盘的 64 MiB HMB 映射缓存就罩不住了）。
    **总账**（`bench/results/linux/prefill_model/model.txt`，本提交的二进制，replay 128）：
 
    | | 4,133 token | 17,010 token |

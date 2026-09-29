@@ -49,6 +49,9 @@ struct IoConfig {
     // DEEPMOE_IO_P0_CHUNK_MB / _QD environment knobs override these.
     uint32_t p0_chunk_bytes     = 0;
     uint32_t p0_qd              = 0;
+    // P2 (engram rows, 4 KiB random reads) only; 0 = the background classes'
+    // depth. DEEPMOE_IO_ENGRAM_QD overrides it.
+    uint32_t engram_qd          = 0;
 };
 
 struct CacheConfig {

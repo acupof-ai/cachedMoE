@@ -188,6 +188,16 @@ MUTATIONS = [
              "")],
      "reopen a file without pointing its handle at the new one",
      "caught", False),
+    ("io", [("storage/io_engine.cpp",
+             ": cls == IoPriority::Engram ? tune_.engram_qd : tune_.bg_qd;",
+             ": tune_.bg_qd;")],
+     "engram rows back at the background classes' depth",
+     "caught", False),
+    ("io", [("storage/io_engine.cpp",
+             "        cfg.max_inflight_ops = t.engram_qd;\n",
+             "")],
+     "leave the ring too small for the engram depth",
+     "caught", False),
 
     # --- H1b: a .pkv restore is a degradation, never fatal ---------------
     ("kvdisk", [("runtime/session.cpp",

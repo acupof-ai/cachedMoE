@@ -22,9 +22,10 @@ bench/probes/model_probe.cpp's (bench/results/linux/gpu_model/constants.json):
   t0     one dispatch alone (launch + drain)
   disk   one internal NVMe's continuous expert stream (--disk-gbs; the
          prefill's 4.66 GB/s, docs/STATUS.md §7)
-  iops   the same drive's best 4 KiB random-read rate through the IoEngine
-         (build/nvme_bench --chunk-kb 4 --pattern rand, --iops-csv): what the
-         engram rows, one 4 KiB page per value or scale row, are bound by
+  iops   the same drive's best 4 KiB random-read rate through the IoEngine,
+         read-only across one engram layer's 101 GB file (build/nvme_bench
+         --file <it> --chunk-kb 4 --pattern rand, --iops-csv): what the engram
+         rows, one 4 KiB page per value or scale row, are bound by
 
 "excess" = measured - floor: what the op itself wastes. An "io: " row's ms is
 the wait the compute did NOT hide, so its excess can be negative (the read
@@ -64,7 +65,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONSTANTS = ROOT / "bench" / "results" / "linux" / "gpu_model" / "constants.json"
-IOPS_CSV = ROOT / "bench" / "results" / "linux" / "prefill_model" / "nvme_rand4k.csv"
+IOPS_CSV = ROOT / "bench" / "results" / "linux" / "prefill_model" / "nvme_rand4k_span101g.csv"
 
 
 def ceilings(path: Path, disk_gbs: float, iops_csv: Path) -> dict:

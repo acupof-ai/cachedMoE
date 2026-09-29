@@ -193,15 +193,55 @@ std::vector<IoEngine::Chunk> IoEngine::plan_chunks(uint64_t off, uint64_t bytes,
 
 std::string IoEngine::Tuning::to_string() const {
     return std::format("bg_cap_busy {} throttle_engram {} p0_qd {} p0_inflight {} MiB "
-                       "p0_chunk {} MiB bg_qd {} bg_inflight {} MiB",
+                       "p0_chunk {} MiB bg_qd {} bg_inflight {} MiB engram_qd {}",
                        bg_cap_busy, throttle_engram ? 1 : 0, p0_qd,
                        p0_inflight_bytes >> 20, p0_chunk_bytes >> 20,
-                       bg_qd, bg_inflight_bytes >> 20) +
+                       bg_qd, bg_inflight_bytes >> 20, engram_qd) +
            std::format(" submit_threads {}", submit_threads);
+}
+
+void IoEngine::runtime_shape(IoConfig& cfg) {
+    // Track Q2 (docs/p4_p0_queue.md §9). Q1 tried a deeper P0 queue and got
+    // nothing, because the engine could not FILL the queue it already had: on
+    // one thread, the synchronous ReadFile into path A memory costs ~700 us per
+    // 4 MiB chunk, so a layer's burst of ~10 chunks took ~7 ms just to reach
+    // the drive. With IoEngine::kDefaultSubmitThreads threads doing the
+    // submitting, depth becomes worth having -- 24 chunks / 96 MiB is what a
+    // layer's whole burst needs, and the pair is +4.4% tok/s on the 4-turn
+    // chat where either alone is +2.4-2.9%. Only P0 gets this; P1-P3 keep the
+    // IoConfig defaults (IoEngine::tuning_from_env).
+    cfg.max_inflight_ops   = std::max(cfg.max_inflight_ops, 24u);
+    cfg.max_inflight_bytes = std::max(cfg.max_inflight_bytes, 96u << 20);
+#if defined(__linux__)
+    // Linux reads path A through a host bounce buffer (storage/linux/io_uring.cpp)
+    // and copies each chunk on the one thread that reaps completions. With 24
+    // chunks of 4 MiB in flight a miss's chunks land together and the copies
+    // queue up behind the last read; 1 MiB x 8 lets them overlap the reads.
+    // io_dst_bench, one expert at a time (bench/results/linux/perf/io_dst_sweep):
+    // 6.6 -> 5.5 ms; 8-turn chat (perf ledger p0-1MiB-qd8): stall 5.29 -> 4.82
+    // ms per miss, prefill 75.3 -> 66.6 s. Windows keeps Track Q2's shape.
+    if (!cfg.p0_chunk_bytes) cfg.p0_chunk_bytes = 1u << 20;
+    if (!cfg.p0_qd)          cfg.p0_qd = 8;
+    // Engram rows: 4 KiB reads scattered over each engram layer's 98 GB
+    // table. nvme_bench over that file (read-only): 49K reads/s at QD 8 (the
+    // background depth they had), 119K at 24, 190K at 64, 245K at 128; a
+    // 4K-token prefill's 291K reads took 4.5 / 1.35 / 1.13 s at 8 / 64 / 128
+    // (STATUS §7 0v).
+    if (!cfg.engram_qd)      cfg.engram_qd = 128;
+#endif
+    // DEEPMOE_IO_P0_QD / _INFLIGHT_MB / _CHUNK_MB raise the ceilings the
+    // BACKEND is built with; IoEngine still holds P1-P3 to the shipped ones.
+    widen_for_env(cfg);
 }
 
 void IoEngine::widen_for_env(IoConfig& cfg) {
     const Tuning t = tuning_from_env(cfg);
+    // The ring has to hold the engram class's depth too; P0 keeps the depth
+    // it had rather than inherit the wider ring.
+    if (t.engram_qd > cfg.max_inflight_ops) {
+        if (!cfg.p0_qd) cfg.p0_qd = cfg.max_inflight_ops;
+        cfg.max_inflight_ops = t.engram_qd;
+    }
     if (t.p0_qd > cfg.max_inflight_ops)                 cfg.max_inflight_ops = t.p0_qd;
     if (t.p0_inflight_bytes > cfg.max_inflight_bytes)   cfg.max_inflight_bytes = t.p0_inflight_bytes;
     if (t.p0_chunk_bytes > cfg.chunk_bytes)             cfg.chunk_bytes = t.p0_chunk_bytes;
@@ -250,6 +290,8 @@ IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
     if (t.bg_qd > d.max_inflight_ops)               t.bg_qd = d.max_inflight_ops;
     if (t.bg_inflight_bytes > d.max_inflight_bytes) t.bg_inflight_bytes = d.max_inflight_bytes;
     u32("DEEPMOE_IO_BG_QD", t.bg_qd);
+    t.engram_qd = cfg.engram_qd ? cfg.engram_qd : t.bg_qd;
+    u32("DEEPMOE_IO_ENGRAM_QD", t.engram_qd);
     u32("DEEPMOE_IO_SUBMIT_THREADS", t.submit_threads);
     if (t.submit_threads == 0) t.submit_threads = 1;
     if (t.submit_threads > 16) t.submit_threads = 16;
@@ -590,6 +632,8 @@ Result<void> IoEngine::start(std::unique_ptr<Backend> backend, const IoConfig& c
         bg_chunk_bytes_ = IoConfig{}.chunk_bytes;
     if (tune_.p0_qd > backend_->caps().max_queue_depth)
         tune_.p0_qd = backend_->caps().max_queue_depth;
+    if (tune_.engram_qd > backend_->caps().max_queue_depth)
+        tune_.engram_qd = backend_->caps().max_queue_depth;
     if (tune_.p0_chunk_bytes > backend_->caps().max_chunk_bytes)
         tune_.p0_chunk_bytes = backend_->caps().max_chunk_bytes;
     p0_lat_us_.reserve(1 << 16);
@@ -932,7 +976,8 @@ size_t IoEngine::issue_ready_chunks() {
             // property of the class being issued, so a P0 burst can run the
             // drive deeper than the background classes are allowed to.
             const bool is_p0 = (cls == IoPriority::BlockingMiss);
-            const uint32_t qd_cap = is_p0 ? tune_.p0_qd : tune_.bg_qd;
+            const uint32_t qd_cap = is_p0 ? tune_.p0_qd
+                                  : cls == IoPriority::Engram ? tune_.engram_qd : tune_.bg_qd;
             const uint64_t byte_cap = is_p0 ? tune_.p0_inflight_bytes : tune_.bg_inflight_bytes;
             if (inflight_ops_.load(std::memory_order_relaxed) >= qd_cap) break;
             if (inflight_bytes_.load(std::memory_order_relaxed) >= byte_cap) break;

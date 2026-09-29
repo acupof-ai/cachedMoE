@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <mutex>
 #include <numeric>
@@ -297,7 +298,14 @@ int main(int argc, char** argv) {
         created = true;
     }
 
+    // A --file that already exists is only ever read: it may be a checkpoint shard.
+    const bool theirs = !created && std::filesystem::exists(o.file);
     auto probe = File::open_read(o.file, true);
+    if (theirs && (!probe || probe->size() < o.size_bytes)) {
+        std::fprintf(stderr, "%s: %s; not writing a file this run did not create\n", o.file.c_str(),
+                     probe ? "smaller than --size-gb" : probe.error().str().c_str());
+        return 1;
+    }
     if (!probe || probe->size() < o.size_bytes) {
         if (probe) probe->close();
         if (auto r = create_test_file(o.file, o.size_bytes); !r) {

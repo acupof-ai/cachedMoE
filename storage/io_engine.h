@@ -423,6 +423,8 @@ public:
     //                            queue is a P0 (default = cfg.max_inflight_ops)
     //   DEEPMOE_IO_P0_INFLIGHT_MB in-flight byte ceiling for the same case
     //   DEEPMOE_IO_P0_CHUNK_MB   chunk size for P0 requests (default = cfg)
+    //   DEEPMOE_IO_ENGRAM_QD     queue depth of the engram class (default =
+    //                            cfg.engram_qd, else the background depth)
     //   DEEPMOE_IO_SUBMIT_THREADS  how many threads call Backend::submit.
     //                            1 (the default before Track Q2) means the
     //                            dispatcher does it inline; N > 1 starts N
@@ -439,6 +441,9 @@ public:
         // backfill as well".
         uint32_t bg_qd            = 0;
         uint64_t bg_inflight_bytes = 0;
+        // Engram rows are 4 KiB reads scattered over a 98 GB table: the drive
+        // answers them at the depth it is given (IoConfig::engram_qd).
+        uint32_t engram_qd        = 0;
         uint32_t submit_threads   = kDefaultSubmitThreads;
         std::string to_string() const;
     };
@@ -448,6 +453,10 @@ public:
     // a raised P0 depth has to be reflected there before the backend is made.
     // Call this on the IoConfig once, before make_default_backend().
     static void widen_for_env(IoConfig& cfg);
+    // The whole shape `deepmoe serve` runs with -- Track Q2's queue depth, the
+    // Linux P0 chunking, then widen_for_env -- for the engine and for the
+    // benches that stand in for it (prefill_bench). Before make_default_backend().
+    static void runtime_shape(IoConfig& cfg);
     // Chunks of each class in flight right now (tests, the bench).
     uint32_t inflight_chunks(IoPriority p) const {
         return inflight_class_[static_cast<uint8_t>(p)].load(std::memory_order_relaxed);

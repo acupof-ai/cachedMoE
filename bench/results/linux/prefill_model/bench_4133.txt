@@ -1,12 +1,12 @@
-pinned set 9.17 GiB in 4.7 s
+pinned set 9.17 GiB in 4.8 s
 
 N=4133 (bench/results/linux/prefill4k/ids4133.txt), replay 128 MoE coopmat n>=16 dense coopmat n>=64 pv_dv 4 ht 1 tt 8, load = unlabelled
-  total 68.12 s = 61 tok/s | embed 58  engram io 4510 gpu 1944  mHC 1177  attention 14043  gate+route 180  shared 574  expert io 37480  expert gpu 7760  head 7  host/other 386 ms
-  10599 experts streamed = 199.35 GB in 37.5 s of waiting (5.32 GB/s against that wait), 291138 engram reads, 76776 dispatches in 3265 submits
+  total 64.96 s = 64 tok/s | embed 57  engram io 1192 gpu 1991  mHC 1173  attention 13957  gate+route 178  shared 579  expert io 37785  expert gpu 7615  head 7  host/other 425 ms
+  10599 experts streamed = 199.35 GB in 37.8 s of waiting (5.28 GB/s against that wait), 291138 engram reads, 76776 dispatches in 3265 submits
   first token 77, margin 8.268, logits finite: yes
   ops by wall time:
-    io: experts 37480 ms/349, moe routed (gpu) 7760 ms/349, attn (coop, submit+wait) 7625 ms/200
-    io: engram rows 4510 ms/2, gpu: attn P.V tiles 2934 ms/200, gpu: attn gather 2040 ms/200
-    gemm 25600x6144 wfp8 xq 1814 ms/6, gpu: attn score tiles 1614 ms/200, coop 8192x4096 wfp8 xf32 1312 ms/180
-    prefill_attn s2 1085 ms/32, coop 32768x1280 wfp8 xq 975 ms/180, prefill_elem s5 797 ms/480
-    coop 5120x8192 wfp8 xq 782 ms/180, gpu: attn q16 669 ms/200
+    io: experts 37785 ms/349, moe routed (gpu) 7615 ms/349, attn (coop, submit+wait) 7582 ms/200
+    gpu: attn P.V tiles 2925 ms/200, gpu: attn gather 1991 ms/200, gemm 25600x6144 wfp8 xq 1861 ms/6
+    gpu: attn score tiles 1618 ms/200, coop 8192x4096 wfp8 xf32 1287 ms/180, io: engram rows 1192 ms/2
+    prefill_attn s2 1086 ms/32, coop 32768x1280 wfp8 xq 990 ms/180, prefill_elem s5 794 ms/480
+    coop 5120x8192 wfp8 xq 772 ms/180, gpu: attn q16 675 ms/200

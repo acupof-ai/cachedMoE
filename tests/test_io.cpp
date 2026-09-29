@@ -406,6 +406,61 @@ DEEPMOE_TEST(io, background_is_throttled_while_p0_is_recent) {
     engine.stop();
 }
 
+// STATUS §7 0v: the engram class runs at its own depth (IoConfig::engram_qd),
+// not the background classes' 8, and the backfill keeps 8.
+DEEPMOE_TEST(io, engram_rows_run_at_their_own_depth) {
+    const size_t kFileBytes = 1u << 20;
+    auto content = pattern_bytes(kFileBytes);
+    auto scratch = make_scratch("engramqd", kFileBytes, false);
+    REQUIRE_OK(scratch);
+    IoConfig cfg;
+    cfg.chunk_bytes        = 4096;
+    cfg.max_inflight_ops   = 16;
+    cfg.max_inflight_bytes = 1u << 20;
+    cfg.engram_qd          = 12;
+    IoEngine engine;
+    auto backend = std::make_unique<test::FakeBackend>(content, 64);
+    test::FakeBackend* fake = backend.get();
+    fake->hold_completions(true);
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+    CHECK_EQ(engine.tuning().engram_qd, 12u);
+    CHECK_EQ(engine.tuning().bg_qd, 8u);
+
+    AlignedBuffer dst(32 * 4096);
+    auto burst = [&](IoPriority cls, uint64_t first) {
+        for (uint32_t i = 0; i < 16; ++i) {
+            IoRequest r;
+            r.priority = cls;
+            r.file     = &scratch->file;
+            r.file_off = (first + i) * 4096;
+            r.bytes    = 4096;
+            r.dst      = dst.data() + (first + i) * 4096;
+            REQUIRE_OK(engine.submit(r, [](const IoResult&) {}));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    };
+    burst(IoPriority::Engram, 0);
+    CHECK_EQ(engine.inflight_chunks(IoPriority::Engram), 12u);
+    fake->release_all();   // also stops holding
+    engine.drain();
+    fake->hold_completions(true);
+    burst(IoPriority::Backfill, 16);
+    CHECK_EQ(engine.inflight_chunks(IoPriority::Backfill), 8u);
+    fake->release_all();
+    engine.drain();
+    CHECK_EQ(std::memcmp(dst.data(), content.data(), 32 * 4096), 0);
+    engine.stop();
+
+#if defined(__linux__)
+    // serve's shape: the ring grows to the engram depth, P0 keeps its 8
+    IoConfig rs;
+    IoEngine::runtime_shape(rs);
+    CHECK_EQ(rs.engram_qd, 128u);
+    CHECK(rs.max_inflight_ops >= 128u);
+    CHECK_EQ(rs.p0_qd, 8u);
+#endif
+}
+
 // --- Track D2: the second read source (docs/p4_dual_source.md) --------------
 
 // The chooser on its own, with no engine and no drives.
