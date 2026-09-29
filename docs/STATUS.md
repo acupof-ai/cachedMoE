@@ -70,6 +70,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 29 | clean-stripe-8turns | `c7f999e81d+4 dirty (e9f35544343159fc)` | MIRROR_AUTO=1 | 0 | 0% | 33 MB | **9.203** | 108.7 | 62.9 (28.5/26.3/6.1/2.0) | 42.4 (54.1 @ 4.8 GB/s) | 2.90 | 3.0 | 0.9425 | 46.2 |
 | 30 | engram-qd128-8turns | `4e72a577c5+6 dirty (e89b1509ab9f7d13)` | MIRROR_AUTO=0 | 0 | 0% | 30 MB | **7.622** | 131.2 | 61.8 (28.3/25.5/6.1/1.8) | 66.1 (54.1 @ 4.8 GB/s) | 4.62 | 3.0 | 0.9425 | 70.3 |
 | 31 | default-dual-8turns | `4b72b5ee71+3 dirty (b97c1018a7970283)` | – | 0 | 0% | 41 MB | **9.294** | 107.6 | 62.4 (28.5/25.9/6.1/1.9) | 41.9 (54.7 @ 4.8 GB/s) | 2.87 | 3.1 | 0.9418 | 44.6 |
+| 32 | gttsized-dual-8turns | `435ae6bf6d` | – | 0 | 0% | 35 MB | **9.166** | 109.1 | 62.4 (28.5/26.0/6.1/1.9) | 43.6 (56.0 @ 4.8 GB/s) | 2.90 | 2.8 | 0.9405 | 45.6 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -681,7 +682,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    - RADV 的预算：「其它」降回 1 GiB（KV、decode scratch、logits），再减 `workspace_bytes` 在 min(`--max-context`, 16,384) 个 token 下的值，启动日志把四项都打出来（`GTT 112.50 GiB less pinned 9.17 GiB, 4.00 GiB fixed, 10.93 GiB prefill workspace at 16384 tokens`）。上限 16K 是因为网页 UI 的 65,536 会预留 38 GiB、剩 3,300 槽——量过一次（`gtt_sized/serve17k_auto_dual` 第一版）。
    - `gpu_prefill` 开始前用 `VK_EXT_memory_budget` 把两个 heap 的余量加起来和工作区比，不够就带着数字拒绝（`GPU prefill of N tokens needs X of workspace, Y left ... a shorter prompt, or --cache-slots lower`），而不是把设备弄丢。
    - `serve` 把 `--max-context` 传给引擎的 `RuntimeConfig::max_context`（之前引擎那格一直是 design §1.2 的 65,536，和 serve 实际接受的无关）。
-   **代价**：默认 4,096 上下文的自动槽数 5,500 → 5,300（工作区 5.3 GiB 里有 2.4 GiB 是 transit 和 w16 这些不随 token 走的固定项）。ledger 的双盘对话基准要重跑一格才知道少这 200 槽值几个百分点；上一次 5,500 vs 5,000 是 6.19 vs 5.78 tok/s（§7 0h 附近），按比例约 −3%。
+   **代价**：默认 4,096 上下文的自动槽数 5,500 → 5,400（工作区 4.1 GiB，其中 1.2 GB 是 transit、其余是 w16 等不随 token 走的固定项）。ledger 重跑了一格（`gttsized-dual-8turns`，`gtt_sized/chat_default`）：**9.166 tok/s，hit 0.9405**，对 #31 的 9.294 / 0.9418 是 −1.4%，在 ±3% 抖动带内；按机器记的 per-op 看，stall 41.9 → 43.6 ms、每 miss 2.87 → 2.90 ms，方向和少 100 槽一致。头条数字不改。
    **顺带量了 transit 64**（§3 69）：在噪声里，退回 32。
    **验证**：serve 17K 自动预算 5,046 槽 prefill 55.6 s；4K 自动预算 36.1 s；4,096 上下文启动日志 5,370 槽（slab 取整 5,300）；CPU 闸、`run_all`、`suite.decode`（见提交）。数值路径没动。
 
