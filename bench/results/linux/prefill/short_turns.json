@@ -1,5 +1,5 @@
 {
- "comment": "long_turns.json with max_tokens 8: the same eight prompts (six cold, two follow-ups), for the prefill's own bill",
+ "comment": "long_turns.json's eight user requests with max_tokens 8 (six cold, two follow-ups on a shortened history, so not the same cache state), for the prefill's own bill",
  "turns": [
   {
    "label": "zh essay",

@@ -302,7 +302,10 @@ So: stage 0 over `dim/256` workgroups does `hc_post`, `hc_pre` and the two
 partial sums of squares; stage 1 over 24 workgroups does one 20480-wide dot
 product each; stage 2 back over `dim/256` does the RMSNorm, with Sinkhorn
 riding along on workgroup 0. At the 0.66 µs per dispatch kernel_p1.md §3.4
-measured, the extra dispatches are 1.3 µs a layer.
+measured, the extra dispatches are 1.3 µs a layer. **Since 2026-09-29 (STATUS §7
+0n) it is four:** the RMSNorm never needed stage 1's mixes -- they and the
+Sinkhorn feed the NEXT sublayer -- so Sinkhorn is its own one-workgroup stage 3
+and both run in a later dispatch wave, off the critical path.
 
 A layer runs mega_mhc **three** times — attention half, FFN half, and the
 `hc_post` that closes the block — with different weights and buffers each time.

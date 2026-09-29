@@ -212,7 +212,9 @@ def main() -> int:
                     help="memory ceiling for the floors, GB/s (x: wq_b streams at ~229)")
     ap.add_argument("--chat", type=Path, help="a tools/hitrate_bench.py run directory")
     ap.add_argument("--disk-gbs", type=float, default=4.8,
-                    help="aggregate disk rate for the stall floor (one SN740: 4.8; +mirror: ~8.5)")
+                    help="aggregate disk rate for the stall floor: the NOMINAL sequential rate "
+                         "(one SN740: 4.8; +mirror: ~8.3). Decode's bursts of random 1 MiB reads "
+                         "measure ~4.0 on the SN740 (STATUS 0p), so the floor is a lower bound")
     ap.add_argument("--top", type=int, default=14)
     ap.add_argument("--json", type=Path, help="also write the numbers here")
     ap.add_argument("--record", metavar="LABEL",
@@ -260,7 +262,7 @@ def main() -> int:
               f"{c['e2e']:.3f} tok/s, hit {c['hit']:.4f} ({c['misses']:.1f} misses/token)")
         print(f"   compute {compute:.1f} ms (attn {c['attn']:.1f} moe {c['moe_gpu']:.1f} "
               f"tail {c['tail']:.1f} engram {c['engram']:.1f})  NVMe stall {c['stall']:.1f} ms "
-              f"(floor {c['io_floor']:.1f} at {a.disk_gbs} GB/s)  other {c['other']:.1f}")
+              f"(nominal floor {c['io_floor']:.1f} at {a.disk_gbs} GB/s)  other {c['other']:.1f}")
         if c["stall_per_miss"] is not None:
             print(f"   stall per missed expert {c['stall_per_miss']:.2f} ms (+{c['stall_icpt']:.2f} ms/step);"
                   f"  one expert at {a.disk_gbs} GB/s: {EXPERT_SLOT / a.disk_gbs / 1e6:.2f} ms;"

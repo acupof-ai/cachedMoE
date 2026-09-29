@@ -1,0 +1,11 @@
+
+== chat (bench/results/linux/iopath/ab_threads8)
+   decode 7.562 tok/s = 132.2 ms/token, end-to-end 6.173 tok/s, hit 0.9439 (13.5 misses/token)
+   compute 62.5 ms (attn 28.4 moe 26.0 tail 6.1 engram 2.0)  NVMe stall 66.5 ms (nominal floor 52.8 at 4.8 GB/s)  other 2.9
+   stall per missed expert 4.76 ms (+2.31 ms/step);  one expert at 4.8 GB/s: 3.92 ms;  prefill total 66.2 s
+
+== where the time above the floors is (largest first)
+     52.78 ms  NVMe floor itself (fewer misses: cache size / hit)
+     13.68 ms  NVMe stall above its bandwidth floor
+
+recorded as 'chat-ab-threads8-8turns' in /home/chenkailun/projects/cachedMoE/bench/results/perf_ledger.jsonl

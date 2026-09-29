@@ -3413,12 +3413,16 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
         }
         res.sample_ms = ms_since(s0);
     }
+    // `setup` is the part of the wall clock outside Prefill::run: the runner and
+    // buffers, the KV seeding, the teardown -- so the terms add up to the total.
     log_info("engine: GPU prefill of {} tokens in {:.1f} s: embed {:.0f}  engram io {:.0f} / gpu {:.0f}  "
              "mhc {:.0f}  attention {:.0f}  gate {:.0f}  shared {:.0f}  expert io {:.0f} / gpu {:.0f}  "
-             "head {:.0f}  other {:.0f} ms; {} experts / {}, {} dispatches, {} submits; first token {}",
+             "head {:.0f}  other {:.0f}  setup {:.0f} ms; {} experts / {}, {} dispatches, {} submits; "
+             "first token {}",
              prompt.size(), res.wall_ms / 1e3, tm.embed, tm.engram_io, tm.engram, tm.mhc, tm.attention,
-             tm.gate, tm.shared_expert, tm.expert_io, tm.expert_gpu, tm.head, tm.host, tm.experts_read,
-             human_bytes(tm.expert_bytes), tm.dispatches, tm.submits, res.token);
+             tm.gate, tm.shared_expert, tm.expert_io, tm.expert_gpu, tm.head, tm.host,
+             res.wall_ms - tm.total, tm.experts_read, human_bytes(tm.expert_bytes), tm.dispatches,
+             tm.submits, res.token);
     return res;
 }
 

@@ -182,8 +182,8 @@ Result<void> DecodeLayer::create(gpu::Device& device, gpu::AttnRunner& runner,
 
 namespace {
 
-// The three mega_mhc stages share one address table, so it is written once and
-// copied. The only per-half differences are the hc_fn / base / scale triple,
+// The four mega_mhc stages share one address table, so it is written once and
+// copied (MhcClose is one stage for all four roles: nothing to copy). The only per-half differences are the hc_fn / base / scale triple,
 // the norm weight and which of the two mix buffers is the output.
 void bind_mhc(gpu::AttnRunner& runner, gpu::AttnStage post, gpu::AttnStage mix,
               gpu::AttnStage final_, gpu::AttnStage sinkhorn, const DecodeScratch& b,
@@ -212,7 +212,7 @@ void bind_mhc(gpu::AttnRunner& runner, gpu::AttnStage post, gpu::AttnStage mix,
     s[gpu::slot::kMixOut]  = mix_out.addr;
     s[gpu::slot::kU]       = u_addr;
     for (gpu::AttnStage t : {mix, final_, sinkhorn})
-        std::memcpy(runner.slots(t), s, gpu::kAttnStageStride);
+        if (t != post) std::memcpy(runner.slots(t), s, gpu::kAttnStageStride);
 }
 
 }  // namespace
@@ -672,8 +672,8 @@ Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& s
                           st.position / ratio, static_cast<float>(c.rms_norm_eps)};
     // The key and the cache write only when this layer's own group just
     // completed: a ratio-2 source at an incomplete position publishes nothing
-    // and the Engine has already pointed `kv.idx_key` at whatever was published
-    // last (docs/p2_attention.md §9.3 item 5).
+    // and scores the keys it already has (`kv.idx_key` is always its kv
+    // source's own; STATUS §7 0o).
     const bool publish = st.run_compressor && st.cmp_complete;
 
     if (st.run_compressor) {

@@ -895,7 +895,7 @@ def cmd_run(args) -> int:
         log(f"prefill -> {rec['file']} ({rec['bytes'] / 1e6:.1f} MB), small "
             f"{srec['bytes'] / 1e3:.0f} KB, next token {tok}")
         blob_dec = {"next_step": 0, "kv_state": blob_pre["kv_state"], "produced": [tok],
-                    "index_k": shared.index_k, "publisher": _last_publisher(margs),
+                    "index_k": shared.index_k,
                     "l3_steps": list(writer.steps), "small_steps": [srec],
                     "l2_full": [], "l2_small": [], "attn_prefill": probe.records,
                     "attn_decode": [], "index": [], "index_checks": (shim.checks if shim else []),
@@ -923,7 +923,6 @@ def cmd_run(args) -> int:
     writer = oracle.L3Writer(tdir)
     writer.steps = blob["l3_steps"]
     shared.index_k = blob["index_k"]
-    publisher = blob["publisher"]
     probe.records = []
     if blob["next_step"] < steps:
         run_log["phases"].append({"phase": "decode", "start": now(),
@@ -969,20 +968,15 @@ def cmd_run(args) -> int:
                                                        pre_mix, hsh, pos)
             probe.ctx = None
             ref_idx = l3cap.idx[0, -1].clone()
-            # which layer's key cache did this layer's indexer score against?
-            published = bool(is_idx and attn.indexer.owns_k and
-                             shared.index_k is attn.indexer.k_cache)
-            used_src = None
+            # whose key cache this layer's indexer scored: its kv source's, fixed
+            used_src = max(x for x in margs.kv_source_layers if x <= L) if is_idx else None
             if is_idx:
-                used_src = L if published else publisher
                 irec = index_replay(ref, block, cap, pos, shared.index_k, ref_idx, margs)
                 irec.update(step=s, layer=L, pos=pos, ratio=attn.compress_ratio,
-                            keys_from_layer=used_src, published=published)
+                            keys_from_layer=used_src)
                 blob["index"].append(irec)
                 if irec["replay_match"] != irec["k"]:
                     log(f"    ! L{L:02d} index replay {irec['replay_match']}/{irec['k']}")
-            if published:
-                publisher = L
 
             kv_state[L] = oracle._l2_save_attn_state(block)
             step_t.update(oracle._l3_kv_tensors(l3cap, L, W))
@@ -1051,7 +1045,7 @@ def cmd_run(args) -> int:
             f"margin {margin:.3f} ({dt:.1f}s, {rec['bytes'] / 1e6:.1f} MB, small "
             f"{srec['bytes'] / 1e3:.0f} KB)")
         blob.update(next_step=s + 1, kv_state=kv_state, produced=produced,
-                    index_k=shared.index_k, publisher=publisher,
+                    index_k=shared.index_k,
                     l3_steps=list(writer.steps), l2_full=list(l2_full.steps),
                     l2_small=list(l2_small.steps))
         blob["small_steps"].append(srec)
@@ -1136,14 +1130,6 @@ def cmd_run(args) -> int:
     log(f"done: {path}; tokens {produced} -> {text!r}")
     store.close()
     return 0
-
-
-def _last_publisher(margs) -> int:
-    """The last layer in a forward pass whose indexer owns (and therefore always,
-    at ratio 1, publishes) index keys. model.py's shared_attn is never reset, so
-    this layer's keys are what the next pass's non-publishing indexers read."""
-    owners = [L for L in margs.index_source_layers if L in margs.kv_source_layers]
-    return max(owners)
 
 
 def _write_small(ddir: str, name: str, tensors: dict) -> dict:

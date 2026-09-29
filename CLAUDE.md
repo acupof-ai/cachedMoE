@@ -46,7 +46,9 @@ ctest --test-dir build -j 1                                # full, needs the che
 - `lld-link: failed to write output 'deepmoe.exe': Permission denied` means an engine is running.
 - Per-worktree `ZIG_GLOBAL_CACHE_DIR`, or concurrent builds race.
 - Quality gate for anything touching numerics: `tools/l3_ppl.py` in mode `off` must reproduce
-  **NLL 0.630051** on `traces/l3_64`, plus `suite.decode` 8/8 + 8/8.
+  the platform's current NLL on `traces/l3_64` bit for bit — **0.630051** on the Windows zig build,
+  **0.622784** on Linux RADV (2026-09-29; the latest STATUS §7 entry that moved it says why) —
+  plus `suite.decode` 8/8 + 8/8.
 
 ## Web chat UI
 

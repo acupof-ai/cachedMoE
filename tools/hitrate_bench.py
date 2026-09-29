@@ -220,6 +220,10 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
+    # A rerun into the same directory would leave the last run's turns.json in
+    # place if this one dies early, and perf_report would record it as new.
+    if os.path.exists(os.path.join(args.out, "turns.json")):
+        sys.exit(f"{args.out} already holds a run (turns.json); give a fresh --out")
     os.makedirs(args.out, exist_ok=True)
     enc = chat.load_encoding()
     server = BenchServer(args, args.out)
