@@ -55,10 +55,9 @@ class BenchServer(chat.Server):
             cmd += ["--no-kv-disk"]
         env = dict(os.environ)
         env["DEEPMOE_ROUTE_DUMP"] = os.path.join(out_dir, "route.bin")
-        # Benchmarks report the single-drive number: serve's Linux mirror
-        # auto-detection is off here unless asked for (--env
-        # DEEPMOE_MIRROR_AUTO=1, or an explicit --mirror / DEEPMOE_MODEL_MIRRORS).
-        env.setdefault("DEEPMOE_MIRROR_AUTO", "0")
+        # The bench runs what serve runs: a second copy of the model found under
+        # /mnt is read striped (the owner, 2026-09-29: the headline number is the
+        # two-drive one). --env DEEPMOE_MIRROR_AUTO=0 is the single-drive cell.
         if args.shader_dir:
             env["DEEPMOE_SHADER_DIR"] = args.shader_dir
         for kv in args.env:

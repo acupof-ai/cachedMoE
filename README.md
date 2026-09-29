@@ -12,12 +12,14 @@ C++20, Vulkan compute, shaders in [Slang](https://shader-slang.org).
 
 ## Performance
 
-Linux (Arch, kernel 7.2, Mesa 26.2 RADV), one internal NVMe (4.8 GB/s), 5,500-slot expert cache.
+Linux (Arch, kernel 7.2, Mesa 26.2 RADV), an internal NVMe (4.8 GB/s) plus a copy of the model
+on a USB4 drive (3.7 GB/s) that `serve` finds under `/mnt` and reads striped per chunk, 5,500-slot
+expert cache.
 
 | | |
 |---|---|
-| **Chat decode** (8-turn script, cold start) | **7.61 tok/s** — per token 62.5 ms GPU compute + 66 ms waiting on NVMe; expert cache hit rate 0.943 |
-| … with a copy on a second drive | **9.20 tok/s** — found under `/mnt` and read striped per chunk across both drives (USB4, 3.7 GB/s); 42 ms waiting |
+| **Chat decode** (8-turn script, cold start) | **9.20 tok/s** — per token 63 ms GPU compute + 42 ms waiting on the drives; expert cache hit rate 0.943 |
+| … internal drive alone | **7.61 tok/s** — 66 ms waiting |
 | Decode step, all experts resident | **66.0 ms** (the weight-read floor is 56.6 ms) |
 | GPU prefill | 4,133 tokens in 54 s · 17,010 tokens in 97 s (cache at 4,400 slots) — 4K waits on the drive, 17K on attention |
 | Context | up to 524,280 tokens |
