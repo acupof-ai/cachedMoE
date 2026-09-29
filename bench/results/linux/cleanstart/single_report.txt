@@ -1,0 +1,11 @@
+
+== chat (bench/results/linux/cleanstart/single)
+   decode 7.608 tok/s = 131.4 ms/token, end-to-end 6.120 tok/s, hit 0.9425 (13.8 misses/token)
+   compute 62.5 ms (attn 28.4 moe 26.2 tail 6.1 engram 1.9)  NVMe stall 65.8 ms (nominal floor 54.1 at 4.8 GB/s)  other 2.8
+   stall per missed expert 4.63 ms (+1.91 ms/step);  one expert at 4.8 GB/s: 3.92 ms;  prefill total 71.0 s
+
+== where the time above the floors is (largest first)
+     54.07 ms  NVMe floor itself (fewer misses: cache size / hit)
+     11.68 ms  NVMe stall above its bandwidth floor
+
+recorded as 'clean-single-8turns' in /home/chenkailun/projects/cachedMoE/bench/results/perf_ledger.jsonl

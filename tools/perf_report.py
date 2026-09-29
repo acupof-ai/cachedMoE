@@ -192,12 +192,20 @@ def chat_budget(run_dir: Path, disk_gbs: float) -> dict:
                 slope = sum((x - mx) * (y - my) for x, y in pts) / sxx
                 icpt = my - slope * mx
     prefill_s = sum(x.get("prefill_ms", 0) for x in T) / 1000
+    # Tokens serve restored from its disk prefix cache at startup: the previous
+    # run's last context, replayed into the expert cache before turn 1. 0 is a
+    # clean start (hitrate_bench passes --no-kv-disk since STATUS 0s).
+    log = run_dir / "serve.log"
+    m = re.search(r"restored (\d+) tokens from kv disk", log.read_text(errors="replace")) \
+        if log.exists() else None
+    kv_restored = int(m.group(1)) if m else (0 if log.exists() else None)
     return {"per_tok": dms / steps, "tok_s": 1000 * steps / dms, "e2e": gen / wall, "hit": hit,
             "misses": misses, "stall": avg("nvme_stall"), "attn": avg("attn"),
             "moe_gpu": avg("moe_gpu"), "tail": avg("tail"), "engram": avg("engram"),
             "other": avg("other"), "moe_host": avg("moe_host"),
             "io_floor": misses * EXPERT_SLOT / (disk_gbs * 1e9) * 1e3,
-            "stall_per_miss": slope, "stall_icpt": icpt, "prefill_s": prefill_s}
+            "stall_per_miss": slope, "stall_icpt": icpt, "prefill_s": prefill_s,
+            "kv_restored": kv_restored}
 
 
 def main() -> int:

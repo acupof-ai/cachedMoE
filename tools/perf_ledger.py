@@ -53,6 +53,14 @@ def switches(p: dict) -> str:
     return s or "–"
 
 
+def start_kv(c: dict) -> str:
+    # Tokens serve restored from its disk prefix cache before turn 1 -- the
+    # previous run's last context, replayed into the expert cache. 0 is a clean
+    # start; rows before STATUS 0s mostly are not.
+    n = c.get("kv_restored")
+    return "?" if n is None else ("0" if n == 0 else f"**{n}**")
+
+
 def fmt(v, nd: int = 2) -> str:
     return "–" if v is None else f"{v:.{nd}f}"
 
@@ -77,16 +85,16 @@ def render(rows: list[dict]) -> str:
     chat = [r for r in rows if "chat" in r]
     if chat:
         out += ["**对话（`tools/hitrate_bench.py` → `perf_report --chat --record`，每 token ms）**", "",
-                "| # | label | code | switches | bg GPU | disk writes | decode tok/s | ms/tok | compute (attn/moe/tail/engram) "
+                "| # | label | code | switches | start KV | bg GPU | disk writes | decode tok/s | ms/tok | compute (attn/moe/tail/engram) "
                 "| NVMe stall (floor) | ms/miss | other | hit | prefill s |",
-                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows):
             if "chat" not in r:
                 continue
             c, p = r["chat"], r.get("provenance", {})
             comp = c["attn"] + c["moe_gpu"] + c["tail"] + c["engram"]
             out.append(
-                f"| {i} | {r['label']} | {code(p)} | {switches(p)} | {bg(p)} | {foreign_writes(p)} | **{c['tok_s']:.3f}** | "
+                f"| {i} | {r['label']} | {code(p)} | {switches(p)} | {start_kv(c)} | {bg(p)} | {foreign_writes(p)} | **{c['tok_s']:.3f}** | "
                 f"{c['per_tok']:.1f} | {comp:.1f} ({c['attn']:.1f}/{c['moe_gpu']:.1f}/"
                 f"{c['tail']:.1f}/{c['engram']:.1f}) | {c['stall']:.1f} ({c['io_floor']:.1f} @ "
                 f"{r['disk_gbs']} GB/s) | {fmt(c.get('stall_per_miss'))} | {c['other']:.1f} | {c['hit']:.4f} | "
@@ -109,6 +117,7 @@ def render(rows: list[dict]) -> str:
         out.append("")
     out += ["`†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。"
             "ms/miss 是 decode 步（hit > 0.8）的 NVMe stall 对该步 miss 数的回归斜率：同配置复跑只动 ~1%，比 tok/s 稳得多，IO 改动看它。"
+            "start KV 是 serve 启动时从盘上 KV 缓存恢复并重放进 expert cache 的 token 数（上一次运行的最后一段上下文；0 = 干净起步，STATUS §7 0s 之前的行大多不是）。"
             "disk writes 是运行期间所有 NVMe 的写入量（引擎自己只写几 MB 日志；>500 MB 标 ⚠：有别的程序在写同一块盘，IO 数字不可信）。"
             "bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。"
             "`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。",

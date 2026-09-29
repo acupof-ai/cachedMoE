@@ -44,28 +44,30 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 
 **对话（`tools/hitrate_bench.py` → `perf_report --chat --record`，每 token ms）**
 
-| # | label | code | switches | bg GPU | disk writes | decode tok/s | ms/tok | compute (attn/moe/tail/engram) | NVMe stall (floor) | ms/miss | other | hit | prefill s |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 0 | all1-single | `0da928fb96 †` | – | ? | ? | **6.565** | 152.3 | 75.7 (37.2/28.3/6.2/4.1) | 73.4 (52.9 @ 4.8 GB/s) | 5.29 | 3.1 | 0.9438 | 75.3 |
-| 3 | p0-1MiB-qd8 | `1fe3ccc35e` | IO_P0_CHUNK_MB=1 IO_P0_QD=8 MIRROR_AUTO=0 | 8% | ? | **6.780** | 147.5 | 77.6 (37.5/29.6/6.2/4.2) | 68.4 (53.6 @ 4.8 GB/s) | 4.82 | 1.4 | 0.9430 | 66.6 |
-| 4 | p0sweep-c1q4-3turns | `1fe3ccc35e+9 dirty (d33a5d7c1c2ac41d)` | IO_P0_CHUNK_MB=1 IO_P0_QD=4 MIRROR_AUTO=0 | 1.4% | ? | **7.254** | 137.9 | 77.7 (37.6/29.6/6.3/4.2) | 58.5 (48.2 @ 4.8 GB/s) | 4.68 | 1.4 | 0.9487 | 19.8 |
-| 5 | p0sweep-c1q12-3turns | `1fe3ccc35e+10 dirty (5f0d47c2364080ab)` | IO_P0_CHUNK_MB=1 IO_P0_QD=12 MIRROR_AUTO=0 | 27.4% | ? | **6.931** | 144.3 | 78.7 (38.2/30.1/6.4/4.1) | 63.6 (48.5 @ 4.8 GB/s) | 4.90 | 1.7 | 0.9484 | 21.8 |
-| 6 | p0sweep-c2q8-3turns | `1fe3ccc35e+10 dirty (50b414bd54062281)` | IO_P0_CHUNK_MB=2 IO_P0_QD=8 MIRROR_AUTO=0 | 32.7% | ? | **6.945** | 144.0 | 76.5 (37.1/28.9/6.2/4.2) | 65.6 (48.5 @ 4.8 GB/s) | 5.00 | 1.8 | 0.9484 | 21.9 |
-| 7 | p0sweep-c1q8-3turns | `1fe3ccc35e+10 dirty (878bc7f5aa3f6d57)` | IO_P0_CHUNK_MB=1 IO_P0_QD=8 MIRROR_AUTO=0 | 24.3% | ? | **7.186** | 139.2 | 75.7 (36.4/29.1/6.1/4.1) | 61.5 (48.5 @ 4.8 GB/s) | 4.72 | 1.6 | 0.9484 | 21.9 |
-| 9 | p0sweep-r2-c1q2-3turns | `db9b68bbd4+6 dirty (59abe16d493fdb1d)` | IO_P0_CHUNK_MB=1 IO_P0_QD=2 MIRROR_AUTO=0 | 2% | 25 MB | **6.775** | 147.6 | 70.9 (32.0/28.9/6.1/3.9) | 73.8 (51.9 @ 4.8 GB/s) | 5.38 | 2.5 | 0.9448 | 25.4 |
-| 10 | p0sweep-r2-c1q3-3turns | `db9b68bbd4+6 dirty (c027d8815a710be9)` | IO_P0_CHUNK_MB=1 IO_P0_QD=3 MIRROR_AUTO=0 | 23% | 21 MB | **7.291** | 137.1 | 71.1 (31.9/28.9/6.1/4.2) | 63.8 (52.0 @ 4.8 GB/s) | 4.69 | 1.8 | 0.9447 | 22.4 |
-| 11 | p0sweep-r2-c1q4-3turns | `db9b68bbd4+6 dirty (499a7454c726a24a)` | IO_P0_CHUNK_MB=1 IO_P0_QD=4 MIRROR_AUTO=0 | 23.9% | 29 MB | **7.319** | 136.6 | 71.4 (32.0/29.1/6.1/4.1) | 62.3 (52.0 @ 4.8 GB/s) | 4.53 | 2.6 | 0.9447 | 21.6 |
-| 12 | p0sweep-r2-c1q6-3turns | `db9b68bbd4+6 dirty (7fb9407b56966f75)` | IO_P0_CHUNK_MB=1 IO_P0_QD=6 MIRROR_AUTO=0 | 23.9% | 23 MB | **7.230** | 138.3 | 71.5 (32.0/29.3/6.1/4.0) | 63.8 (52.0 @ 4.8 GB/s) | 4.63 | 2.7 | 0.9447 | 21.4 |
-| 15 | final-default-8turns | `dbe7d16f5b` | MIRROR_AUTO=0 | 0% | **16,780 MB ⚠** | **6.850** | 146.0 | 71.2 (34.1/26.6/6.2/4.3) | 72.8 (54.7 @ 4.8 GB/s) | 5.16 | 1.8 | 0.9419 | 73.1 |
-| 16 | final-attncm-8turns | `dbe7d16f5b+1 dirty (df4d517ce3d9a00b)` | ATTN_CM=1 MIRROR_AUTO=0 | 22.9% | **34,567 MB ⚠** | **7.264** | 137.7 | 68.3 (31.1/26.7/6.2/4.2) | 67.2 (52.8 @ 4.8 GB/s) | 4.89 | 2.0 | 0.9439 | 68.3 |
-| 20 | chat-waves-8turns | `63846356e8+11 dirty (bc8cd112c5787809)` | MIRROR_AUTO=0 | 12.1% | 41 MB | **7.572** | 132.1 | 62.5 (28.4/26.0/6.1/2.1) | 66.3 (52.8 @ 4.8 GB/s) | 4.79 | 3.1 | 0.9439 | 66.3 |
-| 21 | chat-submit1-8turns | `dd243387d1+3 dirty (6028abec961ea2e7)` | MIRROR_AUTO=0 | 0% | 47 MB | **7.696** | 129.9 | 62.5 (28.4/26.1/6.1/1.9) | 64.3 (52.8 @ 4.8 GB/s) | 4.62 | 2.8 | 0.9439 | 66.0 |
-| 22 | chat-stripe-8turns | `7b27eb741f` | MIRROR_AUTO=1 MIRROR_STRIPE=1 | 0% | 62 MB | **9.291** | 107.6 | 62.7 (28.5/26.1/6.1/1.9) | 41.7 (53.1 @ 4.8 GB/s) | 2.92 | 2.9 | 0.9436 | 42.2 |
-| 23 | chat-ab-threads8-8turns | `7b27eb741f+1 dirty (df850332d68331e4)` | IO_SUBMIT_THREADS=8 MIRROR_AUTO=0 | 0% | 44 MB | **7.562** | 132.2 | 62.5 (28.4/26.0/6.1/2.0) | 66.5 (52.8 @ 4.8 GB/s) | 4.76 | 2.9 | 0.9439 | 66.2 |
-| 24 | chat-ab-threads1-8turns | `7b27eb741f+17 dirty (5b9a4dab88b490d5)` | IO_SUBMIT_THREADS=1 MIRROR_AUTO=0 | 23% | 48 MB | **7.683** | 130.2 | 62.5 (28.4/26.0/6.1/1.9) | 64.4 (52.8 @ 4.8 GB/s) | 4.66 | 2.9 | 0.9439 | 66.0 |
-| 25 | chat-stripe-hot70-8turns | `7b27eb741f+17 dirty (d020a9239219f127)` | MIRROR_AUTO=1 MIRROR_HOT_C=70 MIRROR_STRIPE=1 | 0% | 34 MB | **7.631** | 131.0 | 62.5 (28.4/26.0/6.1/2.0) | 65.3 (52.8 @ 4.8 GB/s) | 4.67 | 2.9 | 0.9439 | 66.6 |
-| 26 | chat-default-stripe-8turns | `130ff40829` | MIRROR_AUTO=1 | 0% | 45 MB | **9.302** | 107.5 | 62.8 (28.5/26.3/6.1/1.9) | 41.7 (52.8 @ 4.8 GB/s) | 2.90 | 2.6 | 0.9439 | 43.2 |
-| 27 | chat-readmit-8turns | `d8f5644785` | MIRROR_AUTO=1 | 0% | 57 MB | **9.269** | 107.9 | 63.0 (28.4/26.4/6.1/2.1) | 41.8 (52.8 @ 4.8 GB/s) | 2.94 | 2.7 | 0.9439 | 43.1 |
+| # | label | code | switches | start KV | bg GPU | disk writes | decode tok/s | ms/tok | compute (attn/moe/tail/engram) | NVMe stall (floor) | ms/miss | other | hit | prefill s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | all1-single | `0da928fb96 †` | – | **365** | ? | ? | **6.565** | 152.3 | 75.7 (37.2/28.3/6.2/4.1) | 73.4 (52.9 @ 4.8 GB/s) | 5.29 | 3.1 | 0.9438 | 75.3 |
+| 3 | p0-1MiB-qd8 | `1fe3ccc35e` | IO_P0_CHUNK_MB=1 IO_P0_QD=8 MIRROR_AUTO=0 | **396** | 8% | ? | **6.780** | 147.5 | 77.6 (37.5/29.6/6.2/4.2) | 68.4 (53.6 @ 4.8 GB/s) | 4.82 | 1.4 | 0.9430 | 66.6 |
+| 4 | p0sweep-c1q4-3turns | `1fe3ccc35e+9 dirty (d33a5d7c1c2ac41d)` | IO_P0_CHUNK_MB=1 IO_P0_QD=4 MIRROR_AUTO=0 | **396** | 1.4% | ? | **7.254** | 137.9 | 77.7 (37.6/29.6/6.3/4.2) | 58.5 (48.2 @ 4.8 GB/s) | 4.68 | 1.4 | 0.9487 | 19.8 |
+| 5 | p0sweep-c1q12-3turns | `1fe3ccc35e+10 dirty (5f0d47c2364080ab)` | IO_P0_CHUNK_MB=1 IO_P0_QD=12 MIRROR_AUTO=0 | **373** | 27.4% | ? | **6.931** | 144.3 | 78.7 (38.2/30.1/6.4/4.1) | 63.6 (48.5 @ 4.8 GB/s) | 4.90 | 1.7 | 0.9484 | 21.8 |
+| 6 | p0sweep-c2q8-3turns | `1fe3ccc35e+10 dirty (50b414bd54062281)` | IO_P0_CHUNK_MB=2 IO_P0_QD=8 MIRROR_AUTO=0 | **373** | 32.7% | ? | **6.945** | 144.0 | 76.5 (37.1/28.9/6.2/4.2) | 65.6 (48.5 @ 4.8 GB/s) | 5.00 | 1.8 | 0.9484 | 21.9 |
+| 7 | p0sweep-c1q8-3turns | `1fe3ccc35e+10 dirty (878bc7f5aa3f6d57)` | IO_P0_CHUNK_MB=1 IO_P0_QD=8 MIRROR_AUTO=0 | **373** | 24.3% | ? | **7.186** | 139.2 | 75.7 (36.4/29.1/6.1/4.1) | 61.5 (48.5 @ 4.8 GB/s) | 4.72 | 1.6 | 0.9484 | 21.9 |
+| 9 | p0sweep-r2-c1q2-3turns | `db9b68bbd4+6 dirty (59abe16d493fdb1d)` | IO_P0_CHUNK_MB=1 IO_P0_QD=2 MIRROR_AUTO=0 | **373** | 2% | 25 MB | **6.775** | 147.6 | 70.9 (32.0/28.9/6.1/3.9) | 73.8 (51.9 @ 4.8 GB/s) | 5.38 | 2.5 | 0.9448 | 25.4 |
+| 10 | p0sweep-r2-c1q3-3turns | `db9b68bbd4+6 dirty (c027d8815a710be9)` | IO_P0_CHUNK_MB=1 IO_P0_QD=3 MIRROR_AUTO=0 | **234** | 23% | 21 MB | **7.291** | 137.1 | 71.1 (31.9/28.9/6.1/4.2) | 63.8 (52.0 @ 4.8 GB/s) | 4.69 | 1.8 | 0.9447 | 22.4 |
+| 11 | p0sweep-r2-c1q4-3turns | `db9b68bbd4+6 dirty (499a7454c726a24a)` | IO_P0_CHUNK_MB=1 IO_P0_QD=4 MIRROR_AUTO=0 | **234** | 23.9% | 29 MB | **7.319** | 136.6 | 71.4 (32.0/29.1/6.1/4.1) | 62.3 (52.0 @ 4.8 GB/s) | 4.53 | 2.6 | 0.9447 | 21.6 |
+| 12 | p0sweep-r2-c1q6-3turns | `db9b68bbd4+6 dirty (7fb9407b56966f75)` | IO_P0_CHUNK_MB=1 IO_P0_QD=6 MIRROR_AUTO=0 | **234** | 23.9% | 23 MB | **7.230** | 138.3 | 71.5 (32.0/29.3/6.1/4.0) | 63.8 (52.0 @ 4.8 GB/s) | 4.63 | 2.7 | 0.9447 | 21.4 |
+| 15 | final-default-8turns | `dbe7d16f5b` | MIRROR_AUTO=0 | **234** | 0% | **16,780 MB ⚠** | **6.850** | 146.0 | 71.2 (34.1/26.6/6.2/4.3) | 72.8 (54.7 @ 4.8 GB/s) | 5.16 | 1.8 | 0.9419 | 73.1 |
+| 16 | final-attncm-8turns | `dbe7d16f5b+1 dirty (df4d517ce3d9a00b)` | ATTN_CM=1 MIRROR_AUTO=0 | **386** | 22.9% | **34,567 MB ⚠** | **7.264** | 137.7 | 68.3 (31.1/26.7/6.2/4.2) | 67.2 (52.8 @ 4.8 GB/s) | 4.89 | 2.0 | 0.9439 | 68.3 |
+| 20 | chat-waves-8turns | `63846356e8+11 dirty (bc8cd112c5787809)` | MIRROR_AUTO=0 | **396** | 12.1% | 41 MB | **7.572** | 132.1 | 62.5 (28.4/26.0/6.1/2.1) | 66.3 (52.8 @ 4.8 GB/s) | 4.79 | 3.1 | 0.9439 | 66.3 |
+| 21 | chat-submit1-8turns | `dd243387d1+3 dirty (6028abec961ea2e7)` | MIRROR_AUTO=0 | **396** | 0% | 47 MB | **7.696** | 129.9 | 62.5 (28.4/26.1/6.1/1.9) | 64.3 (52.8 @ 4.8 GB/s) | 4.62 | 2.8 | 0.9439 | 66.0 |
+| 22 | chat-stripe-8turns | `7b27eb741f` | MIRROR_AUTO=1 MIRROR_STRIPE=1 | **54** | 0% | 62 MB | **9.291** | 107.6 | 62.7 (28.5/26.1/6.1/1.9) | 41.7 (53.1 @ 4.8 GB/s) | 2.92 | 2.9 | 0.9436 | 42.2 |
+| 23 | chat-ab-threads8-8turns | `7b27eb741f+1 dirty (df850332d68331e4)` | IO_SUBMIT_THREADS=8 MIRROR_AUTO=0 | **396** | 0% | 44 MB | **7.562** | 132.2 | 62.5 (28.4/26.0/6.1/2.0) | 66.5 (52.8 @ 4.8 GB/s) | 4.76 | 2.9 | 0.9439 | 66.2 |
+| 24 | chat-ab-threads1-8turns | `7b27eb741f+17 dirty (5b9a4dab88b490d5)` | IO_SUBMIT_THREADS=1 MIRROR_AUTO=0 | **396** | 23% | 48 MB | **7.683** | 130.2 | 62.5 (28.4/26.0/6.1/1.9) | 64.4 (52.8 @ 4.8 GB/s) | 4.66 | 2.9 | 0.9439 | 66.0 |
+| 25 | chat-stripe-hot70-8turns | `7b27eb741f+17 dirty (d020a9239219f127)` | MIRROR_AUTO=1 MIRROR_HOT_C=70 MIRROR_STRIPE=1 | **396** | 0% | 34 MB | **7.631** | 131.0 | 62.5 (28.4/26.0/6.1/2.0) | 65.3 (52.8 @ 4.8 GB/s) | 4.67 | 2.9 | 0.9439 | 66.6 |
+| 26 | chat-default-stripe-8turns | `130ff40829` | MIRROR_AUTO=1 | **396** | 0% | 45 MB | **9.302** | 107.5 | 62.8 (28.5/26.3/6.1/1.9) | 41.7 (52.8 @ 4.8 GB/s) | 2.90 | 2.6 | 0.9439 | 43.2 |
+| 27 | chat-readmit-8turns | `d8f5644785` | MIRROR_AUTO=1 | **396** | 0% | 57 MB | **9.269** | 107.9 | 63.0 (28.4/26.4/6.1/2.1) | 41.8 (52.8 @ 4.8 GB/s) | 2.94 | 2.7 | 0.9439 | 43.1 |
+| 28 | clean-single-8turns | `c7f999e81d+4 dirty (68bd3e597964ed5b)` | MIRROR_AUTO=0 | 0 | 0% | 40 MB | **7.608** | 131.4 | 62.5 (28.4/26.2/6.1/1.9) | 65.8 (54.1 @ 4.8 GB/s) | 4.63 | 2.8 | 0.9425 | 71.0 |
+| 29 | clean-stripe-8turns | `c7f999e81d+4 dirty (e9f35544343159fc)` | MIRROR_AUTO=1 | 0 | 0% | 33 MB | **9.203** | 108.7 | 62.9 (28.5/26.3/6.1/2.0) | 42.4 (54.1 @ 4.8 GB/s) | 2.90 | 3.0 | 0.9425 | 46.2 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -80,7 +82,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 18 | hot-engram-async | `7c2e524d30+4 dirty (7a1c4080a91846e9) †` | – | 0% | **67.36** (67.2–69.2) | 56.64 | 2.77 | moe_gateup 1.09, moe_shared_early 1.04, wo_b.ksplit 0.73, moe_down 0.72 |
 | 19 | hot-waves | `63846356e8+10 dirty (780bfad3ed58984e)` | – | 0% | **66.01** (65.9–66.2) | 56.64 | 2.57 | mega_mhc.mix 1.40, moe_shared_early 1.06, moe_gateup 1.02, wo_b.ksplit 0.74 |
 
-`†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。ms/miss 是 decode 步（hit > 0.8）的 NVMe stall 对该步 miss 数的回归斜率：同配置复跑只动 ~1%，比 tok/s 稳得多，IO 改动看它。disk writes 是运行期间所有 NVMe 的写入量（引擎自己只写几 MB 日志；>500 MB 标 ⚠：有别的程序在写同一块盘，IO 数字不可信）。bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。
+`†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。ms/miss 是 decode 步（hit > 0.8）的 NVMe stall 对该步 miss 数的回归斜率：同配置复跑只动 ~1%，比 tok/s 稳得多，IO 改动看它。start KV 是 serve 启动时从盘上 KV 缓存恢复并重放进 expert cache 的 token 数（上一次运行的最后一段上下文；0 = 干净起步，STATUS §7 0s 之前的行大多不是）。disk writes 是运行期间所有 NVMe 的写入量（引擎自己只写几 MB 日志；>500 MB 标 ⚠：有别的程序在写同一块盘，IO 数字不可信）。bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。
 <!-- perf-ledger:end -->
 
 以下是 Windows 时期的历史表，出处各自在右列。
@@ -665,6 +667,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0s. **测量卫生：Linux 上的对话基准一直是「热启动」——serve 启动时从盘上 KV 缓存恢复上一次运行的最后一段上下文，并把它重放进 expert cache。现在 `hitrate_bench` 默认带 `--no-kv-disk`，ledger 多了一列 `start KV`。干净起步的基线：单盘 7.608 tok/s（ledger #28），双盘 9.203（#29）。**
+   **怎么发现的**：看 §7 第 2 项（KV 前缀复用）时发现 `serve` 早已默认开着 `.pkv`（Track R2），而 `hitrate_bench` 没传 `--no-kv-disk`。Windows 时期的 A/B 脚本都显式传了（`d2_abab.py`：「免得第 N 格的 .pkv 漏进第 N+1 格」），换到 Linux 后丢了。
+   结果是 Linux 上此前 41 次基准运行里 39 次启动都恢复了 `default` 会话（另有 1 次因上下文超长被拒，1 次盘上还没有 `.pkv`）：多数是 396 token（上一次 `long_turns` 的最后一轮），也有 365 / 234 / 162 / 54，取决于上一次跑的是哪份脚本，并各重放了至多 128 个位置。另外，每次退出都会把自己的会话写回 `~/.cache/deepmoe/kv/`，盖掉用户用 `tools/chat.py` 留下的 `default` 会话。
+   **影响有多大**（同一个二进制，#28 对照 #24）：只有**第 1 轮**不同，命中率 0.9515 → 0.9394；第 2–8 轮的命中率和步数逐位相同。整体 7.683 → **7.608 tok/s（−1.0%）**，hit 0.9439 → 0.9425，prefill 合计 66.0 → 71.0 s，**ms/miss 4.66 → 4.63 不变**。双盘同样少约 1%：#26 9.302 → #29 **9.203**，ms/miss 2.90 → 2.90。
+   **结论不受影响**：每组 A/B 的两臂起点相同（都恢复 396，只有 #22 恢复了 54，它反而比同组少占了一点便宜），IO 改动看的 ms/miss 也不受这项影响。但 README 和 §1 的绝对值偏高约 1%，已换成干净起步的 #28 / #29。
+   **现在的做法**：`hitrate_bench` 除非 `--serve-arg --kv-dir` 指定了目录，否则一律 `--no-kv-disk`；`perf_report --record` 从 `serve.log` 读出启动时恢复的 token 数，记进 `chat.kv_restored`，ledger 表的 `start KV` 列显示它。已有的 20 行是按各自的 `serve.log` 回填的，文件逐行核对过，除了新字段没有别的差异。
+
 0r. **条带化随镜像默认开（用户 2026-09-29「可以开的」），掉线的镜像等盘回来后自动接回：发现第二读源就按 chunk 条带化，`DEEPMOE_MIRROR_STRIPE=0` 关。只设 `DEEPMOE_MIRROR_AUTO=1` 的默认路径（ledger #26）9.302 tok/s，与显式打开的 #22（9.291）一致；主数字照旧按单盘报（#24 7.682）。**
    `IoEngine::set_sources` 里 `stripe_ = mirrors_on_`，环境变量只剩「关」这一个方向；`serve`（Linux 自动发现镜像）和网页 UI（`find_mirrors` 传 `--mirror`）都走这条路径，不用改。
    单测 `io.stripe_is_the_default_and_leaves_backfill_whole`：有镜像时默认开，没有镜像时永远关（`set_stripe(true)` 也不行）；新增一条变异（默认改回关），能被抓到，io 6/6。
@@ -1208,8 +1217,10 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **(b1) 仍然一个字不改**，而 DX §4.1 的 **USB4/雷电盒子**（把 UAS 桥那一层整个拿掉）
    是 (b1) 之外唯一还没试过的形状。
    **它仍然是 MB/token 这一侧唯一还开着的大杠杆**——另一个是容量，已经顶到本机的 5,100 槽。
-2. **把 SSD KV 前缀复用接进 `serve` 的默认路径。**
-   已实测 41×（101.6 s → 2.47 s），已实现，只是没默认开。这是当前性价比最高的一项。
+2. ~~**把 SSD KV 前缀复用接进 `serve` 的默认路径。**~~ **Linux 上已关闭（2026-09-29，见 0s）**：`serve` 早就默认开着它（Track R2，`p4_kv_ux.md` §8）。
+   Linux 上 55 个 slab 全在 path A（5,500 槽）的状态下，启动恢复 40 次里成功 39 次；唯一一次被拒是上下文长度（4,197 > `--max-context` 4,096），按 H1b 降级为冷启动。
+   下面的 ② 只剩 Windows 还开着。
+   （原文）已实测 41×（101.6 s → 2.47 s），已实现，只是没默认开。这是当前性价比最高的一项。
    ⚠️ **2026-09-19 发现一个先决条件（Track D3，§3 的 59）**：在**默认 cache 大小**下
    `.pkv` 恢复**会失败，而且失败是致命的不是降级的**——path A 被 expert cache 占满之后
    （`slab pool: path A full after 34 slabs`），KV 盘恢复拿不到显存：

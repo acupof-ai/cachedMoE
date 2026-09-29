@@ -1,0 +1,11 @@
+
+== chat (bench/results/linux/multidisk/clean_stripe)
+   decode 9.203 tok/s = 108.7 ms/token, end-to-end 7.730 tok/s, hit 0.9425 (13.8 misses/token)
+   compute 62.9 ms (attn 28.5 moe 26.3 tail 6.1 engram 2.0)  NVMe stall 42.4 ms (nominal floor 54.1 at 4.8 GB/s)  other 3.0
+   stall per missed expert 2.90 ms (+2.41 ms/step);  one expert at 4.8 GB/s: 3.92 ms;  prefill total 46.2 s
+
+== where the time above the floors is (largest first)
+     54.07 ms  NVMe floor itself (fewer misses: cache size / hit)
+    -11.65 ms  NVMe stall above its bandwidth floor
+
+recorded as 'clean-stripe-8turns' in /home/chenkailun/projects/cachedMoE/bench/results/perf_ledger.jsonl

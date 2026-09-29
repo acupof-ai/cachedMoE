@@ -47,6 +47,12 @@ class BenchServer(chat.Server):
         elif args.cache_gb:
             cmd += ["--cache-gb", str(args.cache_gb)]
         cmd += args.serve_arg
+        # Every run starts empty. serve's disk prefix cache would restore the
+        # last run's final context at startup and replay it into the expert
+        # cache -- a warm start that depends on what ran before -- and write
+        # this run's over the user's own session at exit (STATUS 0s).
+        if not any(a.startswith("--kv-dir") for a in args.serve_arg):
+            cmd += ["--no-kv-disk"]
         env = dict(os.environ)
         env["DEEPMOE_ROUTE_DUMP"] = os.path.join(out_dir, "route.bin")
         # Benchmarks report the single-drive number: serve's Linux mirror
