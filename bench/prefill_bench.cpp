@@ -795,6 +795,7 @@ int run_prefill(const Options& o) {
             pc.tile = o.tiles.empty() ? 8 : o.tiles[0];
             pc.transit_slots = o.transit;
             pc.transit_segments = o.ring;
+            if (const char* e = env("DEEPMOE_PF_ENGRAM_AHEAD")) pc.engram_ahead = std::atoi(e) != 0;   // §7 0ax
             pc.coopmat_min_rows = cmin;
             pc.coopmat_dense_min_rows = cden;
             if (const char* e = env("DEEPMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";

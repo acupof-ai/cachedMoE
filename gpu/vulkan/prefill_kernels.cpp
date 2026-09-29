@@ -1198,6 +1198,15 @@ Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, 
         }
     std::memcpy(b_.eng_x.host_ptr, x.data(), x.size() * sizeof(float));
     a.drop();
+    if (engram_next_) return engram_issue_next(L, prompt);
+    return {};
+}
+
+// The rows of the first engram layer after `after`.
+Result<void> Prefill::engram_issue_next(uint32_t after, std::span<const uint32_t> prompt) {
+    for (uint32_t L = after + 1; L < cfg_->num_hidden_layers; ++L)
+        if (cfg_->is_engram_layer(L)) return engram_issue(L, prompt);
+    return {};
     return {};
 }
 
@@ -1742,9 +1751,16 @@ Result<PrefillHandoff> Prefill::run(std::span<const uint32_t> prompt) {
     for (SourceState& s : sources_) { s.n = 0; s.valid = false; }
     topk_shared_.clear();
     cand_.clear();
+    // the first engram layer's rows go out now, the next one's when a layer's
+    // are consumed: they depend on the prompt alone, and land while the
+    // layers before compute (§7 0ax)
+    engram_next_ = pcfg_.engram_ahead;
+    if (engram_next_)
+        if (auto r = engram_issue_next(~0u, prompt); !r) return std::unexpected(r.error());
     for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
         if (auto r = run_layer(L, prompt, out); !r)
             return fail(r.error().code, std::format("layer {}: {}", L, r.error().message));
+    engram_next_ = false;
 
     // --- collapse + norm + head on the last position ---------------------------
     {

@@ -263,6 +263,11 @@ struct PrefillConfig {
     // the drives whatever the depth, so blind bytes past the pre-MoE phase
     // are lost (4,133 tokens 29.7 -> 33.1 s at a fixed six), and stays at two.
     uint32_t transit_segments = 2; // 2..kPfTransitSegmentsMax
+    // An engram layer's row reads (1.2 M x 4 KiB at 17K) go out before layer
+    // 0 and, for the next engram layer, as soon as the previous one's rows are
+    // consumed, so they land under the layers before (§7 0ax; 17,010 tokens
+    // engram io 4.6 -> 1.7 s). The rows depend on the prompt alone.
+    bool engram_ahead = true;
     // The IO engine's P0 queue while the prefill runs (IoEngine::set_p0_depth):
     // 24 chunks / 96 MiB against the decode's 8 -- a layer's read-ahead is
     // hundreds of chunks, a decode miss is 18.
@@ -583,8 +588,9 @@ private:
     // converted by engram_rows. Kept as a member so that an error path (a
     // short read, STATUS §7 0ao) can never free the staging pages under
     // reads still in flight -- that was the segfault of 2026-09-30 02:10.
-    // Issuing them ahead of their layer (the rows depend on the prompt
-    // alone) was measured and reverted: STATUS §3 78.
+    // Issued ahead of their layer (the rows depend on the prompt alone) when
+    // PrefillConfig::engram_ahead: STATUS §3 78 lost bit exactness to the
+    // io_uring record collision of §7 0aw, §7 0ax reopened it.
     struct EngramAhead {
         uint32_t L = ~0u;
         std::vector<uint64_t> rows, uniq;
@@ -603,6 +609,8 @@ private:
     EngramAhead engram_ahead_;
     Result<void> engram_issue(uint32_t L, std::span<const uint32_t> prompt);
     Result<void> engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out);
+    Result<void> engram_issue_next(uint32_t after, std::span<const uint32_t> prompt);
+    bool engram_next_ = false;   // run() is in progress: engram_rows issues the next engram layer's
     Result<void> read_ahead(uint32_t L);
     std::byte* transit_host(uint32_t slot) const {
         return static_cast<std::byte*>(b_.transit[slot / pcfg_.transit_slots].host_ptr) +
