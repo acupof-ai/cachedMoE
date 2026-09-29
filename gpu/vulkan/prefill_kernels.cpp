@@ -315,26 +315,17 @@ void Prefill::destroy() {
     alloc_ = nullptr;
 }
 
-Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunner& runner,
-                             const Manifest& manifest, const store::ShardSet& shards,
-                             storage::IoEngine& io, const store::PinnedStore& pinned,
-                             const TextConfig& cfg, const runtime::EngramTables* engram,
-                             const PrefillConfig& pcfg) {
-    destroy();
-    device_ = &device; alloc_ = &alloc; runner_ = &runner; manifest_ = &manifest;
-    shards_ = &shards; io_ = &io; pinned_ = &pinned; cfg_ = &cfg; engram_ = engram;
-    pcfg_ = pcfg;
-    w16_src_ = 0;
-    if (pcfg_.tile == 0 || pcfg_.tile > 32) return fail(Err::InvalidArgument, "tile must be 1..32");
-    const uint64_t N = pcfg_.max_tokens, B = std::min(pcfg_.query_block, pcfg_.max_tokens);
+// The workspace for `pcfg.max_tokens` tokens: every buffer and its size, the
+// engine's memory budget reads the sum before any prompt exists.
+std::vector<Prefill::Want> Prefill::plan(const TextConfig& cfg, const PrefillConfig& pcfg) {
+    const uint64_t N = pcfg.max_tokens, B = std::min(pcfg.query_block, pcfg.max_tokens);
     const uint64_t dim = cfg.hidden_size, inter = cfg.moe_intermediate_size;
     const uint64_t hd = cfg.head_dim, win = cfg.sliding_window;
     const uint64_t n_idx = win + cfg.index_topk;
     const uint64_t k6 = cfg.num_experts_per_tok;
-    struct Want { GpuBuffer* b; uint64_t bytes; };
-    const Want wants[] = {
+    return std::vector<Want>{
         {&b_.h_a, N * kHc * dim * 4}, {&b_.h_b, N * kHc * dim * 4},
-        {&b_.h_in_copy, pcfg_.probe_layers ? N * kHc * dim * 4 : 4096},
+        {&b_.h_in_copy, pcfg.probe_layers ? N * kHc * dim * 4 : 4096},
         {&b_.x, N * dim * 4}, {&b_.rs, N * 4}, {&b_.mix_raw, N * kMix * 4},
         {&b_.mix_a, N * kMix * 4}, {&b_.mix_f, N * kMix * 4}, {&b_.mix_prev, N * kMix * 4},
         {&b_.xq, N * dim * 2}, {&b_.xs, N * (dim / 32) * 4},
@@ -383,7 +374,7 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         {&b_.jobs, (uint64_t(cfg.n_routed_experts) + 2) * 64},
         {&b_.eng_x, N * 6144 * 4}, {&b_.eng_xq, N * 6144 * 2}, {&b_.eng_xs, N * 192 * 4},
         {&b_.eng_kv, (N + kPfRowSlack) * (kHc + 1) * dim * 4},
-        {&b_.transit, uint64_t(2) * pcfg_.transit_slots * layout::kExpertSlotBytes},
+        {&b_.transit, uint64_t(2) * pcfg.transit_slots * layout::kExpertSlotBytes},
         {&b_.rope_win, (N + 8) * cfg.qk_rope_head_dim * 4},
         {&b_.rope_cmp, (N + 8) * cfg.qk_rope_head_dim * 4},
         {&b_.logits, uint64_t(cfg.vocab_size) * 4}, {&b_.nrm, dim * 4},
@@ -392,6 +383,27 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         {&b_.p16, B * cfg.num_attention_heads * ((n_idx + 15) / 16 * 16) * 2},
         {&b_.inv, B * cfg.num_attention_heads * 4},
     };
+}
+
+uint64_t Prefill::workspace_bytes(const TextConfig& cfg, const PrefillConfig& pcfg) {
+    uint64_t total = 0;
+    for (const Want& w : plan(cfg, pcfg)) total += w.bytes;
+    return total;
+}
+
+Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunner& runner,
+                             const Manifest& manifest, const store::ShardSet& shards,
+                             storage::IoEngine& io, const store::PinnedStore& pinned,
+                             const TextConfig& cfg, const runtime::EngramTables* engram,
+                             const PrefillConfig& pcfg) {
+    destroy();
+    device_ = &device; alloc_ = &alloc; runner_ = &runner; manifest_ = &manifest;
+    shards_ = &shards; io_ = &io; pinned_ = &pinned; cfg_ = &cfg; engram_ = engram;
+    pcfg_ = pcfg;
+    w16_src_ = 0;
+    if (pcfg_.tile == 0 || pcfg_.tile > 32) return fail(Err::InvalidArgument, "tile must be 1..32");
+    const std::vector<Want> wants = plan(cfg, pcfg);
+    const uint64_t N = pcfg_.max_tokens, hd = cfg.head_dim;
     for (const Want& w : wants) {
         auto b = scratch(w.bytes);
         if (!b) return fail(b.error().code, std::format("prefill buffers ({} B): {}", w.bytes,

@@ -234,7 +234,8 @@ struct PrefillConfig {
     uint32_t query_block = 512;
     uint32_t tile = 8;
     // Routed-expert transit slots per half of the read-ahead (two halves:
-    // one computing, one filling).
+    // one computing, one filling). 64 was measured once the workspace was
+    // priced into the cache budget (STATUS §3 69): within noise, for 1.2 GB.
     uint32_t transit_slots = 32;
     // A layer whose FFN runs over at least this many rows starts reading its
     // routed experts before its gate has picked any (docs/STATUS.md §7 0aa): at
@@ -421,6 +422,8 @@ public:
     std::function<void(const PrefillProbe&)> probe;
     PfExpertSink* expert_sink = nullptr;   // Track R1; borrowed
     const PrefillTimes& times() const { return times_; }
+    // bytes of workspace `create` would allocate for pcfg.max_tokens tokens
+    uint64_t workspace_bytes(const TextConfig& cfg, const PrefillConfig& pcfg);
     const PrefillConfig& config() const { return pcfg_; }
     PrefillConfig&       config() { return pcfg_; }   // tests flip kernel switches between ops
 
@@ -546,6 +549,8 @@ private:
     QueryPool                 qp_;
     bool                      qp_ok_ = false;
     std::vector<std::pair<std::string, PfCost>> marks_;
+    struct Want { GpuBuffer* b; uint64_t bytes; };
+    std::vector<Want> plan(const TextConfig& cfg, const PrefillConfig& pcfg);
     uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
     uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
     // read_ahead's reads for the layer it was called for: transit slot of each

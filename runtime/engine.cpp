@@ -952,12 +952,11 @@ Result<void> Engine::init_gpu() {
         // What else lives on path A and is allocated AFTER the cache: the KV
         // store (16 MB at a 4,096-position context, but KvStoreConfig grows it
         // with --max-context, and the parked-session pool holds up to `max_parked`
-        // of them), the GPU prefill's workspace, the decode scratch, the logits
-        // buffer and every pipeline's runner. 1 GiB was the P2 figure for a
-        // 4K-context decode-only run; 3 GiB is what a long context plus a GPU
-        // prefill needs, and it is the difference between "the cache took the
-        // heap" and a prefill that cannot allocate (docs/p4_hitrate.md).
-        constexpr uint64_t kPathAOther   = 3ull << 30;
+        // of them), the decode scratch, the logits buffer and every pipeline's
+        // runner: 1 GiB, the P2 figure for a 4K-context decode-only run. The
+        // GPU prefill's workspace, which was the other 2 GiB of the old 3, is
+        // priced by the prefill itself below (RADV) -- it grows with the prompt.
+        constexpr uint64_t kPathAOther   = 1ull << 30;
         const uint64_t avail_commit = store::available_commit_bytes();
         const uint64_t avail_phys   = store::available_physical_bytes();
         std::vector<std::string> pnames = store::pinned_global_tensors(manifest_);
@@ -1040,8 +1039,22 @@ Result<void> Engine::init_gpu() {
             uint64_t heaps = 0;
             for (const gpu::HeapInfo& h : device_.caps().heaps) heaps += h.bytes;
             constexpr uint64_t kGttSlack = 3ull << 30;
-            const uint64_t other = pinned + kPathAOther + kGttSlack;
+            // The GPU prefill's workspace grows with the prompt (0.6 MB a
+            // token: 10 GiB at 17K), and a submission that needs more GTT than
+            // is left loses the device (STATUS §6 17). Hold the room the
+            // longest prompt this engine admits would take, priced by the
+            // prefill itself, up to kPrefillReserveTokens -- past that a prompt
+            // has to fit what the cache leaves, and gpu_prefill refuses it
+            // cleanly instead (a 65K reservation would be a third of the GTT).
+            constexpr uint32_t kPrefillReserveTokens = 16384;
+            gpu::PrefillConfig pc;
+            pc.max_tokens = std::min(cfg_.max_context, kPrefillReserveTokens);
+            const uint64_t prefill_ws = gpu::Prefill{}.workspace_bytes(model_cfg_.text, pc);
+            const uint64_t other = pinned + kPathAOther + kGttSlack + prefill_ws;
             want = heaps > other ? heaps - other : 0;
+            log_info("engine: RADV: GTT {} less pinned {}, {} fixed, {} prefill workspace at {} tokens",
+                     human_bytes(heaps), human_bytes(pinned), human_bytes(kPathAOther + kGttSlack),
+                     human_bytes(prefill_ws), pc.max_tokens);
         }
         if (avail_commit) {
             const uint64_t commit_cap =
@@ -3298,6 +3311,18 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     if (const char* e = std::getenv("DEEPMOE_PF_READ_AHEAD"); e && *e == '0') pc.read_ahead_min_rows = 0;
     pc.replay     = replay;
     gpu::Prefill pf;
+    {
+        // The workspace has to fit what the GPU heaps have left, or the
+        // submission loses the device (STATUS §6 17): refuse with the numbers.
+        const uint64_t need = pf.workspace_bytes(c, pc);
+        uint64_t room = 0;
+        for (uint32_t i = 0; i < device_.caps().heaps.size(); ++i) room += heap_headroom(device_, i, nullptr, nullptr);
+        if (room && need > room)
+            return fail(Err::ResourceExhausted,
+                        std::format("GPU prefill of {} tokens needs {} of workspace, {} left on the GPU "
+                                    "heaps beside the {}-slot cache: a shorter prompt, or --cache-slots lower",
+                                    prompt.size(), human_bytes(need), human_bytes(room), store_.slot_count()));
+    }
     if (auto r = pf.create(device_, alloc_a_, runner, manifest_, shards_, io_, pinned_, c,
                            &cur_->engram_.tables(), pc); !r)
         return std::unexpected(r.error());

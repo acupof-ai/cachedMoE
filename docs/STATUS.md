@@ -283,7 +283,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 68 条）
+## 3. 试过并退掉的（编号，共 69 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -399,6 +399,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **66** | **host 写 flag、device 自旋等它**（Track HG，`p4_hostflag_gate.md`）——48 关掉的是 **workgroup↔workgroup** 的握手；这一条换一个机制：一个 command buffer 装下整个 token，每层 gate kernel 之后接一个 **1-workgroup 的自旋 kernel 等 host 写的一个 uint**，依赖方向指向 device 调度域**之外**的 CPU 线程。新探针 `bench/probes/hostflag_probe.cpp` + `gpu/shaders/probe_hostflag.slang`：一个 cmdbuf 里 40 轮（= 40 层），自旋上限**用同一个循环标定成墙钟预算**，且 `rounds × cap` 夹在 **TDR packet 窗口**之下 | **机制成立**：2,500+ 个 command buffer，**零 TDR / 零 device 丢失 / 零 payload 错误**；**前进保证过了**——256 个背景 workgroup 常驻时自旋 workgroup **零超时**，**3998/4000 轮是「自旋之后才看到」**，即它**真的观察到了 kernel 已在跑之后 host 才写下的值**（**48 的失效模式不复现**）。**输在延迟，而且是双峰的**：p50 **3.6 µs**、p99 **5,598 µs**，中间几乎没有东西——host 只要没在自旋启动后的**几微秒**内答上来，这一轮就固定 **~5.5 ms**。1 ms 与 5 ms 两档服务时间**延迟完全一样**（5532 vs 5553）⇒ 不是一段延迟，是一个 **~5.5 ms 的固定刷新周期**。三个「是不是我们的锅」全部排除：host 补 `mfence` + 读回**无变化**；**专职热轮询线程无变化**（1 ms 档 5532.2 vs 5532.4）；按轮次拆开是**第 1 轮永远 ~5.06 ms、第 40 轮 mean 1.1–1.5 ms**。自旋方式 busy vs backoff **±1.5%，在噪声里** | **NO-GO，但关掉的是延迟不是合法性**（`bench/results/p4hg/hostflag_probe.csv`）。按 53 的式子 `40 × (400 − 实测)`：最乐观（空闲、host 0 延迟）**−23 ms/token**、背景 256 WG **−99**、现实（53 的分解表说一层 host 侧最少 95 µs）**−205**——**每一格都是负的，而热步一共才 102 ms**。**要重开它需要的不是代码，是那 5.5 ms 消失**：稳态 3.6 µs 若每层都拿得到，奖金是 **40 × (400 − 3.6) = 15.9 ms/token**，但前提是 host 要在**几微秒**内答完，而 decode 一层最少 95 µs、未命中层 8,780 µs（53）——**差两个数量级**。⚠️ **顺带一个陷阱**：用**原子**读 flag 是 **76/80 轮超时**——原子即使加 0 也是 read-modify-**WRITE**，它把那一行在 device 缓存里弄脏，host 的写从此进不来，回写时还可能把 host 的值盖掉。**要用 `globallycoherent` 的普通读。**⚠️ **48 的那句「自旋等待在这台机器上 NO-GO」要加限定**：只对 **workgroup↔workgroup** 成立 |
 | **67** | **dense GEMM 用 128 token 的块（`prefill_gemm_lds` wn=4，wm=2 / 4）**（2026-09-29，0ad 之后）——0ad 的注意力 tile 乘法取 128 行的块赢了 64 行的，顺手把三个大 dense GEMM（32768×1280、8192×4096、5120×8192）也换成 128 token 宽的块看 LDS 复用是不是不够 | 4K 单盘：dense linears 3.3 → **3.46 s**（wm=2）/ **3.85 s**（wm=4），`moe routed (gpu)` 7.1 → 7.37 / 7.85 s，总 50.7 → 51.4 / 51.7 s（`bench/results/linux/attn_lds/bench4k_single_wm2.txt`） | **NO-GO，`pf_lds_geo` 不动**：块越大每个 workgroup 的寄存器越多、常驻 wave 越少，dense 这种 token 块数本来就够多的场景占用率的损失大过 LDS 复用的收益；batched 的注意力只是因为一次派发本来就有 b × 块数个 workgroup 才不吃这个亏。要再往上得从 kernel 内部（double buffer、每 wave 的 tile 数）来，先建 GEMM 的 kernel 模型（0ae 之后的下一步） |
 | **68** | **LDS GEMM 的 K 切片 64 → 128**（0af 的杠杆 2 之后，`coopgeo` 微基准 n=1024，`bench/results/linux/stage_model/coopgeo_bk64.csv` / `coopgeo_bk128.csv`）——同一深度的预取，每片两倍的 MMA 去遮下一片的全局读 | w1 0.844 → 0.753 ms（+12%），wq_b 3.59 → 3.64（持平），wo_b 3.51 → 3.63（wm2wn2 3.18 → 4.25，更慢）；LDS 与暂存寄存器翻倍 | **NO-GO**：预取深度不是 GEMM 那一半的主因（0ag 的 shader stats：256 VGPR 顶满、每 SIMD 4 个 wave、每片 85 条寄存器搬运）。`LDS_BK` 留作编译常数，128 的那份构建删了 |
+| **69** | **transit 32 → 64 作默认**（0ah 把 prefill 工作区计进 cache 预算之后，加大 transit 不再有丢设备的风险；0aa 的模型预测 4K −6%，对半 −3%） | 单盘 4K 48.7 → 48.43 s，17K 69.75 → 70.35；双盘 32.0 → 32.41、54.6 → 54.39；serve 自动槽数 17K 55.6 → 55.5 s。`bench/results/linux/gtt_sized/transit64_*` | **NO-GO**：全部在 ±1% 噪声里，多占 1.2 GB（4,096 上下文下少 ~65 槽）。0aa 的盲读已经把串行段里的盘用起来了，transit 再大只是把同一批 expert 早读几毫秒；串行段剩下的 expert 读要靠跨层流水，不靠 transit |
 
 ---
 
@@ -667,11 +668,22 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
     所以 SSD 本身**排最后但未证伪**。USB4 盒子到货后**必须跑 `p4_e_drive_diag.md` §5.1 的验收门**，
     `ls` 和单句柄 `nvme_bench` 都不算健康检查（D2 §7.3 已经付过这个学费）。
     **E: 现在是掉线状态，需要物理拔插。**
-17. **17K 的 prompt 在默认 5,500 槽的 cache 下会丢设备**（Linux，2026-09-29，§7 0t）：prefill 的缓冲区是按 prompt 长度分配的，加上 96 GiB 的 expert cache 就超出了 GTT，内核报 "Not enough memory for command submission"。4,400 槽下正常。网页 UI 允许 524K 的上下文，所以这是一个真实的健壮性缺口：长 prompt 应该先按 GTT 余量收缩 prefill 的分块或 cache，而不是让引擎死掉。**未修**。
+17. **17K 的 prompt 在默认 5,500 槽的 cache 下会丢设备**（Linux，2026-09-29，§7 0t）：prefill 的缓冲区是按 prompt 长度分配的，加上 96 GiB 的 expert cache 就超出了 GTT，内核报 "Not enough memory for command submission"。**已修（§7 0ah，2026-09-30）**：cache 预算先扣掉 prefill 在 min(`--max-context`, 16K) 个 token 下的工作区（17K 自动 5,046 槽，正常跑完），更长的 prompt 在 prefill 前按 heap 余量拒绝而不是丢设备。仍然开着的一半：网页 UI 的 65,536 上下文只预留到 16K，16K 以上的 prompt 会被拒绝——真正的解法是 prefill 按块分配工作区（KV 平面全长，激活只留一块），没做。
 
 ---
 
 ## 7. Next, in order
+
+0ah. **§6 第 17 条修了：cache 预算按 prefill 自己报的工作区定，长 prompt 不再丢设备。17K prompt 在自动预算下 5,046 槽、prefill 55.6 s（之前 5,500 槽直接 "Not enough memory for command submission"）；默认 4,096 上下文 5,500 → 5,300 槽。**
+   **问题**：引擎的自动预算是 GTT 总量减去 pinned、3 GiB「其它」、3 GiB slack，其中「其它」里给 prefill 的 2 GiB 是 P2 时代 4K 上下文的猜测；prefill 的工作区按 prompt 长度分配（`Prefill::create` 的那张表），每 token 约 0.6 MB，17K 就是 10 GiB。两边互不知情，cache 把 GTT 吃满之后 prefill 的提交就把设备弄丢。
+   **改法**：
+   - 那张表抽成 `Prefill::plan(cfg, pcfg)`，`create` 照它分配，`workspace_bytes(cfg, pcfg)` 给出总数——同一份算术，不会漂。
+   - RADV 的预算：「其它」降回 1 GiB（KV、decode scratch、logits），再减 `workspace_bytes` 在 min(`--max-context`, 16,384) 个 token 下的值，启动日志把四项都打出来（`GTT 112.50 GiB less pinned 9.17 GiB, 4.00 GiB fixed, 10.93 GiB prefill workspace at 16384 tokens`）。上限 16K 是因为网页 UI 的 65,536 会预留 38 GiB、剩 3,300 槽——量过一次（`gtt_sized/serve17k_auto_dual` 第一版）。
+   - `gpu_prefill` 开始前用 `VK_EXT_memory_budget` 把两个 heap 的余量加起来和工作区比，不够就带着数字拒绝（`GPU prefill of N tokens needs X of workspace, Y left ... a shorter prompt, or --cache-slots lower`），而不是把设备弄丢。
+   - `serve` 把 `--max-context` 传给引擎的 `RuntimeConfig::max_context`（之前引擎那格一直是 design §1.2 的 65,536，和 serve 实际接受的无关）。
+   **代价**：默认 4,096 上下文的自动槽数 5,500 → 5,300（工作区 5.3 GiB 里有 2.4 GiB 是 transit 和 w16 这些不随 token 走的固定项）。ledger 的双盘对话基准要重跑一格才知道少这 200 槽值几个百分点；上一次 5,500 vs 5,000 是 6.19 vs 5.78 tok/s（§7 0h 附近），按比例约 −3%。
+   **顺带量了 transit 64**（§3 69）：在噪声里，退回 32。
+   **验证**：serve 17K 自动预算 5,046 槽 prefill 55.6 s；4K 自动预算 36.1 s；4,096 上下文启动日志 5,370 槽（slab 取整 5,300）；CPU 闸、`run_all`、`suite.decode`（见提交）。数值路径没动。
 
 0ag. **按 0af 的模型系统改了一轮：`prefill_bench` 17,010 token 80.4 → 69.75 s（−13%），4,133 token 50.7 → 48.7 s；逐位不变（margins 8.598 / 10.108）。四步各自的账，和模型哪条猜对、哪条猜错。**
    **1. 舍入并进 GEMM 的写出，去掉 copy（模型杠杆 2，猜对）**：`prefill_gemm_lds` / `prefill_coopmat` stage 0 在累加器上逐元素 `bf16_round`（`GetLength()` / 下标）再直接写 y（`y_stride` = R，切片用 `y_row0`），`prefill_elem` s10 不再派发；y 的每个平面多 `kPfRowSlack` 行给最后一个 token 块的整 tile 写。dense linears 12.2 → 8.85 s（copy 3.07 s 没了）。同一趟里 **LDS 按几何定尺寸（杠杆 1，猜错）**：spec constant 进 `groupshared` 数组长度，128 行块 36.9 → 27.6 KB，tile 速率没动（32768×1280 1,248 → 1,104，8192×4096 1,454 → 1,470，5120×8192 1,483 → 1,417 ms）。`RADV_DEBUG=shaderstats` 说为什么：**VGPR 256、每 SIMD 4 个 wave**，占用率被寄存器顶着，LDS 之前就不是限制。留着（少占 LDS 无害）。

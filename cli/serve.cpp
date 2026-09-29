@@ -308,6 +308,7 @@ int cmd_serve(int argc, char** argv) {
     const TimePoint t0 = Clock::now();
     auto tok = text::Tokenizer::load(cfg.model_dir + "/tokenizer.json");
     if (!tok) { emit_error("tokenizer: " + tok.error().str()); return 1; }
+    cfg.max_context = sc.max_context;   // what this server admits: the cache budget prices its prefill
     runtime::Engine engine;
     if (auto r = engine.init(cfg); !r) { emit_error("init: " + r.error().str()); return 1; }
     if (auto r = engine.init_gpu(); !r) { emit_error("gpu init: " + r.error().str()); return 1; }
