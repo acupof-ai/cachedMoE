@@ -33,6 +33,14 @@
 //      dispatch write the same y row.
 //   3  weight decode to fp16, [R][K] -> [R][K] half: the transit buffer option
 //      (a) needs. One thread per (row, 32-element block).
+//   4  narrow dense GEMM, fp32 W and x, R <= 24 rows (mHC's hc_*_fn, 24 x
+//      20480): the workgroup owns kNarrowT tokens and every row -- wave w the
+//      rows w, w + 8, w + 16, lane l the blocks l, l + 32, ... as in stage 0 --
+//      and stages each 32-block slice of the tokens' x in LDS once for all 24
+//      rows. Stage 0 read every x block once per row, 24 times through L2, and
+//      ran the 24 x 20480 GEMM at twice its DRAM floor (STATUS §7 0at). Every
+//      (row, token) sum is stage 0's: same blocks a lane, same order, same
+//      WaveActiveSum.
 //
 // Rounding: `kFlagRound` rounds every written value onto bf16, which is what
 // the reference holds after every Linear (prefill_common.slang). Stage 1 also
@@ -318,10 +326,83 @@ void stage_decode(uint3 gid, uint tid) {
         *(uint16_t*)(o + (uint64_t)i * 2) = (uint16_t)f32tof16(ldexp(w[i], e));
 }
 
+// --- stage 4 ------------------------------------------------------------------
+static const uint kNarrowT    = 4;     // tokens a workgroup: 16 KB of LDS a slice (8: 316 ms at 4K, 4: 137, 2: 135)
+static const uint kNarrowRows = 3;     // rows a wave: 24 / 8
+// [token][float4 part 0..7][block 0..31]: lane l reads part i of block l, so
+// a wave's reads are 32 consecutive float4s (no bank conflict).
+groupshared float4 gX[kNarrowT * 8 * 32];
+
+void stage_narrow(uint3 gid, uint tid) {
+    const uint lane = tid % LanesPerRow;
+    const uint wave = tid / LanesPerRow;
+    const uint t0   = pc.tile_base + gid.y * kNarrowT;
+    const uint blocks = pc.k / kBlockK;
+    float acc[kNarrowRows * kNarrowT];
+    [unroll] for (uint i = 0; i < kNarrowRows * kNarrowT; ++i) acc[i] = 0.0f;
+    // The next slice is loaded into registers while this one is multiplied
+    // (prefill_gemm_lds's pipeline): 8 float4 a thread, 32 KB a slice.
+    static const uint kPer = kNarrowT * 8 * 32 / kWg;
+    float4 nx[kPer];
+    [unroll] for (uint i = 0; i < kPer; ++i) {
+        const uint f = tid + i * kWg, j = f / 256, q = f % 256;
+        const uint m = t0 + j;
+        const uint mm = (m < pc.n) ? m : 0u;
+        nx[i] = load_f32x4(Ptr[kX] + ((uint64_t)mm * pc.x_stride + (uint64_t)q * 4) * 4);
+    }
+    for (uint c = 0; c < blocks; c += LanesPerRow) {
+        if (c != 0) GroupMemoryBarrierWithGroupSync();   // the last slice's reads are done
+        [unroll] for (uint i = 0; i < kPer; ++i) {
+            const uint f = tid + i * kWg, j = f / 256, q = f % 256;
+            gX[j * 256 + (q % 8) * 32 + q / 8] = nx[i];
+        }
+        GroupMemoryBarrierWithGroupSync();
+        if (c + LanesPerRow < blocks) {
+            [unroll] for (uint i = 0; i < kPer; ++i) {
+                const uint f = tid + i * kWg, j = f / 256, q = f % 256;
+                const uint m = t0 + j;
+                const uint mm = (m < pc.n) ? m : 0u;
+                nx[i] = load_f32x4(Ptr[kX] + ((uint64_t)mm * pc.x_stride + (uint64_t)(c + LanesPerRow) * 32 +
+                                              (uint64_t)q * 4) * 4);
+            }
+        }
+        const uint blk = c + lane;
+        [unroll] for (uint r = 0; r < kNarrowRows; ++r) {
+            const uint row = pc.row_base + wave + r * 8;
+            const uint rr = (row < pc.row_base + pc.rows) ? row : pc.row_base;   // dead row: read row 0, dropped
+            float w[32];
+            int e;
+            load_wblock(WFmt, Ptr[kW], Ptr[kS], rr, pc.k, pc.scale_cols, blk, w, e);
+            [unroll] for (uint j = 0; j < kNarrowT; ++j) {
+                float p = 0.0f;
+                [unroll] for (uint i = 0; i < 8; ++i) {
+                    const float4 a = gX[j * 256 + i * 32 + lane];
+                    [unroll] for (uint jj = 0; jj < 4; ++jj) p += w[i * 4 + jj] * a[jj];
+                }
+                acc[r * kNarrowT + j] += ldexp(p, e);
+            }
+        }
+    }
+    [unroll] for (uint r = 0; r < kNarrowRows; ++r) {
+        const uint row = pc.row_base + wave + r * 8;
+        [unroll] for (uint j = 0; j < kNarrowT; ++j) {
+            const float s = WaveActiveSum(acc[r * kNarrowT + j]);
+            const uint m = t0 + j;
+            if (lane != 0 || m >= pc.n || row >= pc.row_base + pc.rows) continue;
+            float v = (((pc.flags & kFlagRoundPre) != 0u) ? bf16_round(s) : s) * pc.out_scale;
+            if ((pc.flags & kFlagRowScale) != 0u) v *= load_f32(Ptr[kRowScale] + (uint64_t)m * 4);
+            const uint64_t ya = Ptr[kY] + ((uint64_t)m * pc.y_stride + (row - pc.row_base)) * 4;
+            if ((pc.flags & kFlagAccumulate) != 0u) v += load_f32(ya);
+            store_f32(ya, maybe_round(v, pc.flags));
+        }
+    }
+}
+
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-    if (Stage == 0)      stage_dense(gid, tid);
+    if (Stage == 4)      stage_narrow(gid, tid);
+    else if (Stage == 0) stage_dense(gid, tid);
     else if (Stage == 1) stage_gateup(gid, tid);
     else if (Stage == 2) stage_down(gid, tid);
     else                 stage_decode(gid, tid);

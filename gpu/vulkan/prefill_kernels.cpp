@@ -562,7 +562,11 @@ Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint
         if (!used) return std::unexpected(used.error());
         if (*used) return {};
     }
-    auto k = runner_->kernel({"prefill_gemm", 0, w.fmt, xfmt, pcfg_.tile});
+    // stage 4: <= 24 fp32 rows over fp32 x (mHC's 24 x 20480 mixers), the x
+    // slice staged in LDS for all rows (STATUS §7 0at)
+    const bool narrow = w.fmt == kPfFp32 && xfmt == kPfActF32 && w.rows <= 24 && w.k % 1024 == 0 &&
+                        rows_per_group == 0 && (flags & (kPfFlagGather | kPfFlagScatter)) == 0;
+    auto k = runner_->kernel({"prefill_gemm", narrow ? 4u : 0u, w.fmt, xfmt, pcfg_.tile});
     if (!k) return std::unexpected(k.error());
     uint64_t* s = runner_->slots(*k);
     s[kPgW] = w.data; s[kPgS] = w.scale; s[kPgX] = x; s[kPgXS] = xs; s[kPgY] = y;
@@ -575,8 +579,8 @@ Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint
     tag_ = std::format("gemm {}x{} w{} x{}", w.rows, w.k, kFmt[std::min<uint32_t>(w.fmt, 3)],
                        xfmt ? "q" : "f32");
     cost_ = pf_gemm_cost(w, xfmt, n, x_stride);
-    return flush_one(*k, &p, sizeof(p), PrefillRunner::gemm_gx(w.rows),
-                     PrefillRunner::gemm_gy(n, pcfg_.tile));
+    return flush_one(*k, &p, sizeof(p), narrow ? 1 : PrefillRunner::gemm_gx(w.rows),
+                     narrow ? (n + 3) / 4 : PrefillRunner::gemm_gy(n, pcfg_.tile));
 }
 
 std::pair<uint64_t, bool> Prefill::w16_slot(uint64_t src) {
