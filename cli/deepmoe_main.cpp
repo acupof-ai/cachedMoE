@@ -70,7 +70,7 @@ int usage(int code = 2) {
         "  deepmoe serve --model DIR [--cache-gb N | --cache-slots N] [--max-context N]\n"
         "                [--engram-tables DIR] [--gpu-prefill-min N] [--replay N]\n"
         "                [--no-rollback] [--max-parked N] [--park-budget-mb N]\n"
-        "                [--kv-dir DIR] [--kv-max-gb N]\n"
+        "                [--kv-dir DIR] [--kv-max-gb N] [--engram-scales-resident]\n"
         "                [--cache-slots N]  (5711 slots ~ 100 GiB, design P1/P2)\n"
         "                [--check-topk] [--profile FILE.jsonl]\n"
         "      A long-running engine behind line-delimited JSON on stdin/stdout:\n"

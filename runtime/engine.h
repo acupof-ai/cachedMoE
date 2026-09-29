@@ -856,6 +856,9 @@ private:
     Profiler      profiler_;
 
     store::ShardSet     shards_;    // the 48 original safetensors shards (design §5.1 v0.5)
+    // RuntimeConfig::engram_scales_resident: the engram scale planes, loaded
+    // before the cache budget is measured so the budget already pays for them
+    std::shared_ptr<const EngramTables::ScalePlanes> engram_scales_;
     storage::IoEngine   io_;
     store::ExpertStore  store_;
     store::Planner      planner_;

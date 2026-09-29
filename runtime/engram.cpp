@@ -1,4 +1,5 @@
 #include "runtime/engram.h"
+#include <future>
 
 #include <cstdio>
 #include <cstring>
@@ -96,6 +97,35 @@ Result<EngramTables> EngramTables::load(const std::string& dir) {
         t.layers.push_back(lt);
     }
     return t;
+}
+
+Result<std::shared_ptr<const EngramTables::ScalePlanes>> EngramTables::load_scales(
+    const Manifest& m, const store::ShardSet& shards, std::span<const int64_t> layers) {
+    auto planes = std::make_shared<ScalePlanes>();
+    for (const int64_t L : layers) {
+        const EngramEntry* e = m.engram_for_layer(static_cast<uint32_t>(L));
+        if (!e) return fail(Err::NotFound, std::format("no engram table for layer {}", L));
+        auto f = shards.require(e->scale.file);
+        if (!f) return std::unexpected(f.error());
+        const uint64_t bytes = e->rows * layout::kEngramScaleRowBytes;
+        std::vector<std::byte> plane(bytes);
+        // sector-aligned pieces (the shards are open unbuffered)
+        constexpr uint64_t kPiece = 8ull << 20;
+        AlignedBuffer buf(kPiece + 2 * kPageSize, kPageSize);
+        for (uint64_t done = 0; done < bytes;) {
+            const uint64_t off = e->scale.offset + done;
+            const uint64_t a0 = off & ~(kPageSize - 1);
+            const uint64_t want = std::min(kPiece, bytes - done);
+            const uint64_t a1 = (off + want + kPageSize - 1) & ~(kPageSize - 1);
+            auto n = (*f)->read_at(a0, MutBytes(buf.data(), a1 - a0));
+            if (!n) return fail(n.error().code, std::format("engram layer {} scale plane: {}", L, n.error().message));
+            if (*n < (off - a0) + want) return fail(Err::Io, std::format("engram layer {} scale plane: short read", L));
+            std::memcpy(plane.data() + done, buf.data() + (off - a0), want);
+            done += want;
+        }
+        planes->by_layer.emplace(static_cast<uint32_t>(L), std::move(plane));
+    }
+    return std::shared_ptr<const ScalePlanes>(std::move(planes));
 }
 
 Result<void> EngramTables::hash_rows(uint32_t layer, std::span<const uint32_t> history,
@@ -212,7 +242,7 @@ void EngramRunner::destroy() {
     cmd_ = gpu::CommandBuffer{};
     device_ = nullptr;
     for (Planes& p : planes_)
-        for (auto& [f, skew] : p.pending) f.wait();   // reads still landing in `staging_`
+        for (auto& [f, skew] : p.pending) if (f.valid()) f.wait();   // reads still landing in `staging_`
     planes_.clear();
     if (staging_.ptr) gpu::free_host_pages(staging_);
     staging_ = gpu::HostAllocInfo{};
@@ -261,6 +291,13 @@ Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> histo
         auto plan = manifest_->engram_row(layer, rows[r]);
         if (!plan) return std::unexpected(plan.error());
         for (const AlignedRead& a : {plan->value, plan->scale}) {
+            if (const std::byte* sc = &a == &plan->scale ? tables_.scale_row(layer, rows[r]) : nullptr) {
+                // resident: the 8 bytes go straight into the staging slot,
+                // behind an empty future (no shared state to allocate)
+                std::memcpy(base + pl->pending.size() * kStagingPerRead, sc, layout::kEngramScaleRowBytes);
+                pl->pending.emplace_back(std::future<storage::IoResult>{}, 0u);
+                continue;
+            }
             if (a.aligned_bytes > kStagingPerRead)
                 return fail(Err::Internal,
                             std::format("engram row {} needs {} B of staging, have {}",
@@ -295,8 +332,10 @@ Result<void> EngramRunner::land(Planes& pl) {
     Status failed{Err::Ok};   // the first failed read; the rest still have to land
     for (size_t i = 0; i < pl.pending.size(); ++i) {
         auto& [f, skew] = pl.pending[i];
-        const storage::IoResult res = f.get();
-        if (!res.ok() && failed.code == Err::Ok) failed = res.status;
+        if (f.valid()) {   // a resident scale row has no read behind it
+            const storage::IoResult res = f.get();
+            if (!res.ok() && failed.code == Err::Ok) failed = res.status;
+        }
         const std::byte* src = base + i * kStagingPerRead + skew;
         const size_t row = i / 2;
         if (i % 2)

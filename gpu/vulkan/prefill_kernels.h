@@ -353,6 +353,9 @@ struct PrefillTimes {
     // MoE's GPU batches; "io: " disk reads (bytes and reads are the disk's,
     // ms the exposed wait); "host: " CPU steps.
     std::map<std::string, Op> per_op;
+    // One JSON line: the run, its buckets, every op by wall time -- what
+    // prefill_bench --ops-json writes and tools/prefill_model.py reads.
+    std::string json(uint32_t n, std::string_view mode, std::string_view load) const;
 };
 
 // The analytic work of one op call (PrefillTimes::Op): disk requests too.
@@ -557,10 +560,11 @@ private:
         std::vector<std::future<storage::IoResult>> futs;
         HostAllocInfo stage;
         double bytes = 0;
+        uint64_t reads = 0;   // issued to the drive (resident scale rows are not)
         void drop() {   // nothing lands in freed pages
             for (auto& f : futs) if (f.valid()) f.wait();
             if (stage.ptr) free_host_pages(stage);
-            L = ~0u; rows.clear(); uniq.clear(); skew.clear(); futs.clear(); stage = {}; bytes = 0;
+            L = ~0u; rows.clear(); uniq.clear(); skew.clear(); futs.clear(); stage = {}; bytes = 0; reads = 0;
         }
         ~EngramAhead() { drop(); }
     };

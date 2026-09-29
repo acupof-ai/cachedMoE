@@ -1039,6 +1039,26 @@ void Prefill::topk_rows(uint32_t b, uint32_t pos0, uint32_t kv_pos0, uint32_t n_
 
 namespace deepmoe::gpu {
 
+std::string PrefillTimes::json(uint32_t n, std::string_view mode, std::string_view load) const {
+    std::vector<std::pair<std::string, Op>> ops(per_op.begin(), per_op.end());
+    std::sort(ops.begin(), ops.end(), [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
+    std::string js = std::format(
+        "{{\"n\":{},\"mode\":\"{}\",\"load\":\"{}\",\"total_ms\":{:.3f},"
+        "\"expert_bytes\":{},\"experts_read\":{},\"dispatches\":{},\"submits\":{},"
+        "\"buckets\":{{\"embed\":{:.3f},\"engram_io\":{:.3f},\"engram\":{:.3f},"
+        "\"mhc\":{:.3f},\"attention\":{:.3f},\"gate\":{:.3f},\"shared_expert\":{:.3f},"
+        "\"expert_io\":{:.3f},\"expert_gpu\":{:.3f},\"head\":{:.3f},\"host\":{:.3f}}},"
+        "\"ops\":[",
+        n, mode, load, total, expert_bytes, experts_read, dispatches, submits, embed, engram_io, engram, mhc,
+        attention, gate, shared_expert, expert_io, expert_gpu, head, host);
+    for (size_t i = 0; i < ops.size(); ++i)
+        js += std::format("{}{{\"op\":\"{}\",\"ms\":{:.3f},\"calls\":{},\"flop\":{:.6g},"
+                          "\"bytes\":{:.6g},\"reads\":{:.0f}}}", i ? "," : "", ops[i].first,
+                          ops[i].second.ms, ops[i].second.calls, ops[i].second.flop,
+                          ops[i].second.bytes, ops[i].second.reads);
+    return js + "]}\n";
+}
+
 #if defined(DEEPMOE_ENABLE_VULKAN)
 
 Result<void> Prefill::engram_issue(uint32_t L, std::span<const uint32_t> prompt) {
@@ -1068,6 +1088,13 @@ Result<void> Prefill::engram_issue(uint32_t L, std::span<const uint32_t> prompt)
         const AlignedRead rd[2] = {plan->value, plan->scale};
         for (uint32_t j = 0; j < 2; ++j) {
             if (rd[j].aligned_bytes > per) return fail(Err::Internal, "engram read too large");
+            a.skew[u * 2 + j] = rd[j].skew;
+            if (const std::byte* sc = j ? engram_->scale_row(L, a.uniq[u]) : nullptr) {
+                // resident plane (§7 0as): the 8 bytes are copied, no read, no future
+                std::memcpy(base + (u * 2 + j) * per, sc, layout::kEngramScaleRowBytes);
+                a.skew[u * 2 + j] = 0;
+                continue;
+            }
             auto f = shards_->require(rd[j].file);
             if (!f) return std::unexpected(f.error());
             storage::IoRequest req;
@@ -1079,8 +1106,8 @@ Result<void> Prefill::engram_issue(uint32_t L, std::span<const uint32_t> prompt)
             auto fut = io_->submit_future(req);
             if (!fut) return std::unexpected(fut.error());
             a.futs.push_back(std::move(*fut));
-            a.skew[u * 2 + j] = rd[j].skew;
             a.bytes += double(rd[j].aligned_bytes);
+            ++a.reads;
         }
     }
     a.L = L;
@@ -1102,8 +1129,8 @@ Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, 
             return fail(Err::Io, "engram row read failed: " + res.status.str());
     const double io_ms = ms_since(t0);
     times_.engram_io += io_ms;
-    times_.engram_reads += a.futs.size();
-    add_op("io: engram rows", io_ms, {0, a.bytes, double(a.futs.size())});
+    times_.engram_reads += a.reads;
+    add_op("io: engram rows", io_ms, {0, a.bytes, double(a.reads)});
     // ParallelEngramEmbedding: value.float() * scale per 32, then .to(bf16)
     std::vector<float> x(size_t(n) * cols * 256);
     for (uint32_t p = 0; p < n; ++p)

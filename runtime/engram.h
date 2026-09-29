@@ -34,6 +34,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <span>
 #include <string>
@@ -74,6 +75,20 @@ struct EngramTables {
 
     bool valid() const { return !token_map.empty() && !layers.empty(); }
     const LayerTable* for_layer(uint32_t layer) const;
+    // The scale planes held in host memory (RuntimeConfig::engram_scales_resident),
+    // one per engram layer, shared by every session's copy of the tables; a
+    // row's scale then comes from here and only its 256 values are read.
+    struct ScalePlanes { std::map<uint32_t, std::vector<std::byte>> by_layer; };
+    std::shared_ptr<const ScalePlanes> scales;
+    const std::byte* scale_row(uint32_t layer, uint64_t row) const {
+        if (!scales) return nullptr;
+        const auto it = scales->by_layer.find(layer);
+        return it == scales->by_layer.end() ? nullptr : it->second.data() + row * layout::kEngramScaleRowBytes;
+    }
+    // Reads the planes of `layers` (manifest ids) through the shards: 3.07 GB
+    // a layer, sequential.
+    static Result<std::shared_ptr<const ScalePlanes>> load_scales(const Manifest& m, const store::ShardSet& shards,
+                                                                  std::span<const int64_t> layers);
 
     // Reads `<dir>/index.json`'s "engram" object and the token map beside it.
     // The directory is the oracle's L3 export.

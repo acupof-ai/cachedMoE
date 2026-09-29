@@ -89,6 +89,10 @@ struct RuntimeConfig {
     // Empty (the default) is the single-drive run, unchanged down to the byte.
     // Filled from --mirror DIR or DEEPMOE_MODEL_MIRRORS (';'-separated).
     std::vector<std::string> model_mirrors;
+    // Hold every engram layer's scale plane (8 B a row, 3.07 GB a layer) in
+    // host memory, so a row is one 4 KiB read instead of two (STATUS §7 0as).
+    // Off by default: the cache budget shrinks by what it takes.
+    bool        engram_scales_resident = false;
     std::string profile_jsonl;    // empty = no JSONL sink
     std::string trace_file;       // ADDITIVE (Track W): per-dispatch GPU trace,
                                   // empty = off. runtime/trace.h has the format.

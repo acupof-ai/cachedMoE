@@ -743,6 +743,16 @@ int run_prefill(const Options& o) {
     const TextConfig& c = cfgj->text;
     auto tables = runtime::EngramTables::load(o.l3);
     if (!tables) { std::fprintf(stderr, "engram tables (%s): %s\n", o.l3.c_str(), tables.error().str().c_str()); return 1; }
+    if (env("DEEPMOE_PF_ENGRAM_SCALES")) {  // §7 0as: scale planes resident, one read a row
+        std::vector<int64_t> layers;
+        for (const auto& e : rig.manifest.engram()) layers.push_back(e.layer);
+        const auto t0 = std::chrono::steady_clock::now();
+        auto planes = runtime::EngramTables::load_scales(rig.manifest, rig.shards, layers);
+        if (!planes) { std::fprintf(stderr, "engram scales: %s\n", planes.error().str().c_str()); return 1; }
+        tables->scales = *std::move(planes);
+        std::printf("engram scale planes resident (%zu layers) in %.1f s\n", layers.size(),
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    }
     {
         std::vector<std::string> names = store::pinned_global_tensors(rig.manifest);
         for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
@@ -843,25 +853,8 @@ int run_prefill(const Options& o) {
                                 ops[i].second.ms, ops[i].second.calls);
                 std::printf("\n");
                 if (!o.ops_json.empty()) {
-                    // what tools/prefill_model.py reads: the run, its buckets, every op
-                    std::string js = std::format(
-                        "{{\"n\":{},\"mode\":\"{}\",\"load\":\"{}\",\"total_ms\":{:.3f},"
-                        "\"expert_bytes\":{},\"experts_read\":{},\"dispatches\":{},\"submits\":{},"
-                        "\"buckets\":{{\"embed\":{:.3f},\"engram_io\":{:.3f},\"engram\":{:.3f},"
-                        "\"mhc\":{:.3f},\"attention\":{:.3f},\"gate\":{:.3f},\"shared_expert\":{:.3f},"
-                        "\"expert_io\":{:.3f},\"expert_gpu\":{:.3f},\"head\":{:.3f},\"host\":{:.3f}}},"
-                        "\"ops\":[",
-                        n, mode, o.load, t.total, t.expert_bytes, t.experts_read, t.dispatches, t.submits,
-                        t.embed, t.engram_io, t.engram, t.mhc, t.attention, t.gate, t.shared_expert,
-                        t.expert_io, t.expert_gpu, t.head, t.host);
-                    for (size_t i = 0; i < ops.size(); ++i)
-                        js += std::format("{}{{\"op\":\"{}\",\"ms\":{:.3f},\"calls\":{},\"flop\":{:.6g},"
-                                          "\"bytes\":{:.6g},\"reads\":{:.0f}}}", i ? "," : "", ops[i].first,
-                                          ops[i].second.ms, ops[i].second.calls, ops[i].second.flop,
-                                          ops[i].second.bytes, ops[i].second.reads);
-                    js += "]}\n";
-                    if (FILE* f = std::fopen(o.ops_json.c_str(), "ab")) {
-                        std::fputs(js.c_str(), f);
+                    if (FILE* f = std::fopen(o.ops_json.c_str(), "ab")) {   // what tools/prefill_model.py reads
+                        std::fputs(t.json(n, mode, o.load).c_str(), f);
                         std::fclose(f);
                     }
                 }

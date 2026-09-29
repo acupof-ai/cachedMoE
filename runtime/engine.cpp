@@ -927,6 +927,18 @@ Result<void> Engine::init_gpu() {
     // the cache twice and refuses (docs/p4_hitrate.md §2).
     planner_.stop_backfill();
     store_.reset();
+    if (cfg_.engram_scales_resident && !engram_scales_) {
+        std::vector<int64_t> layers;
+        for (const EngramEntry& e : manifest_.engram()) layers.push_back(e.layer);
+        const auto t0 = std::chrono::steady_clock::now();
+        auto planes = EngramTables::load_scales(manifest_, shards_, layers);
+        if (!planes) return std::unexpected(planes.error());
+        engram_scales_ = *std::move(planes);
+        uint64_t bytes = 0;
+        for (const auto& [L, v] : engram_scales_->by_layer) bytes += v.size();
+        log_info("engram scale planes resident: {} layers, {} in {:.1f} s", layers.size(), human_bytes(bytes),
+                 std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    }
     cache_budget_ = cfg_.cache.budget_bytes;
     if (cache_budget_ == 0) {
         // "As much as the machine will give". On Windows that is the commit
@@ -1291,6 +1303,7 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
 
     auto tables = EngramTables::load(dir);
     if (!tables) return std::unexpected(tables.error());
+    tables->scales = engram_scales_;
     if (auto r = cur_->engram_.create(device_, alloc_a_, cur_->dec_, manifest_, shards_, io_, pinned_, c,
                                 *std::move(tables)); !r)
         return r;
@@ -3181,6 +3194,7 @@ Result<void> Engine::begin_session_on(uint32_t stream, const SessionConfig& sc) 
                                 sc.engram_tables_dir.empty() ? cfg_.model_dir + "/tokenizer.json"
                                                              : sc.engram_tables_dir,
                                 tables.error().message));
+    tables->scales = engram_scales_;
     if (auto r = s.engram_.create(device_, alloc_a_, s.dec_, manifest_, shards_, io_, pinned_, c,
                                   *std::move(tables)); !r)
         return r;
@@ -3431,6 +3445,12 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
              tm.gate, tm.shared_expert, tm.expert_io, tm.expert_gpu, tm.head, tm.host,
              res.wall_ms - tm.total, tm.experts_read, human_bytes(tm.expert_bytes), tm.dispatches,
              tm.submits, res.token);
+    // DEEPMOE_PF_OPS_JSON=FILE appends the per-op profile prefill_bench --ops-json writes
+    if (const char* f = std::getenv("DEEPMOE_PF_OPS_JSON"))
+        if (FILE* fp = std::fopen(f, "ab")) {
+            std::fputs(tm.json(static_cast<uint32_t>(prompt.size()), "serve", "").c_str(), fp);
+            std::fclose(fp);
+        }
     return res;
 }
 
