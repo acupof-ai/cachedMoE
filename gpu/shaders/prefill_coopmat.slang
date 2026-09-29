@@ -76,6 +76,9 @@ struct CoopPush {
     uint x_col0;     // stage 0: first x column of the multiply (a group's offset)
     uint y_stride;   // stage 0: elements between y rows (0 = R)
     uint y_row0;     // stage 0: first y element of output row 0 (a group's offset); stage 2: first output row
+    uint rope_pos0;  // stage 2, rope_dim != 0: RoPE (kFlagInverse: conjugate; kFlagRound: onto bf16)
+    uint rope_hd;    //   over the last rope_dim of every rope_hd-wide head, position rope_pos0 + m,
+    uint rope_dim;   //   the table at Idx -- the attention output's inverse rotation folded in (STATUS §7 0au)
 };
 [[vk::push_constant]] CoopPush pc;
 
@@ -278,6 +281,21 @@ void stage_stage_f32(uint3 gid, uint tid) {
     const uint4 a = *(uint4*)xa, b = *(uint4*)(xa + 16);
     float v[kChunk];
     [unroll] for (uint i = 0; i < 4; ++i) { v[i] = asfloat(a[i]); v[4 + i] = asfloat(b[i]); }
+    if (pc.rope_dim != 0u) {   // prefill_elem s_rope's mode 0, pair by pair, before the fp16 store
+        const uint e0 = pc.x_col0 + col, lo = pc.rope_hd - pc.rope_dim;
+        const uint64_t tab = Ptr[kIdx] + (uint64_t)(pc.rope_pos0 + m) * pc.rope_dim * 4;
+        const bool inverse = (pc.flags & kFlagInverse) != 0u;
+        [unroll] for (uint i = 0; i < kChunk; i += 2) {
+            const uint rel = (e0 + i) % pc.rope_hd;
+            if (rel < lo) continue;
+            const uint j = (rel - lo) >> 1;
+            const float c = load_f32(tab + (uint64_t)j * 8);
+            const float sn = load_f32(tab + (uint64_t)j * 8 + 4);
+            rope_pair(c, sn, v[i], v[i + 1], inverse);
+            v[i] = maybe_round(v[i], pc.flags);
+            v[i + 1] = maybe_round(v[i + 1], pc.flags);
+        }
+    }
     // y_row0: the first output row (a group's slice of a [groups][n][K] plane)
     *(uint4*)(Ptr[kX] + ((uint64_t)(pc.y_row0 + m) * pc.k + col) * 2) = f16x8(v);
 }

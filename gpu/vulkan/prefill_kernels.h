@@ -105,6 +105,15 @@ struct PfJob {
 struct PfCoopPush {
     uint32_t n = 0, k = 0, idx_off = 0, flags = 0, row0 = 0, x_off = 0;
     uint32_t x_stride = 0, x_col0 = 0, y_stride = 0, y_row0 = 0;   // stage 0: 0 = K, 0, R, 0
+    uint32_t rope_pos0 = 0, rope_hd = 0, rope_dim = 0;             // stage 2: RoPE folded into the staging
+};
+// A RoPE applied to a GEMM's fp32 input as it is staged to fp16 (the attention
+// output's inverse rotation before wo_a, STATUS §7 0au): one pass less over
+// the widest activation of the layer.
+struct PfStageRope {
+    bool     cmp_theta = false;   // the compressed table (op_rope's compressed_theta)
+    uint32_t pos0 = 0, head_dim = 0, rope_dim = 0;
+    bool     inverse = false, round = false;
 };
 enum : uint32_t { kPcW = 0, kPcX = 1, kPcY = 2, kPcQ = 3, kPcQS = 4, kPcIdx = 5 };
 
@@ -453,9 +462,12 @@ public:
     // --- drives with golden inputs, and what `run` is built from -----------
     Result<PfWeight> weight(const std::string& name, uint32_t fmt) const;
     Result<void> op_act_quant(uint64_t x, uint32_t n, uint32_t d, uint64_t q16, uint64_t sc);
+    // `rope`: applied to x as it is staged (the cooperative path); any other
+    // path runs op_rope over x in place first.
     Result<void> op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs, uint32_t n,
                          uint32_t x_stride, uint64_t y, uint32_t flags, float out_scale = 1.0f,
-                         uint32_t rows_per_group = 0, uint64_t row_scale = 0);
+                         uint32_t rows_per_group = 0, uint64_t row_scale = 0,
+                         const PfStageRope* rope = nullptr);
     // op_gemm's option (a) branch: decode W to fp16 (skipped when the transit
     // already holds it), stage x as fp16, cooperative-matrix GEMM into a padded
     // plane, copy (and round) into y. One submit. False = not applicable.
@@ -465,7 +477,7 @@ public:
     // rows. Only the fp32-activation staging supports it.
     Result<bool> op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
                               uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
-                              uint32_t rows_per_group = 0);
+                              uint32_t rows_per_group = 0, const PfStageRope* rope = nullptr);
     Result<void> op_rmsnorm(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint64_t w);
     Result<void> op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff, uint32_t coeff_stride,
                                  uint64_t norm_w, uint64_t out, uint64_t rs);

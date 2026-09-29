@@ -688,6 +688,10 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0au. **注意力输出 o 的逆 RoPE 折进 wo_a 的 x16 staging（`prefill_coopmat` stage 2 顺手转；`PfStageRope`）：少一遍对本层最宽激活的读写。17K `rope m0 inv` 570 → 0 ms（`gemm 8192x4096 x16` 418 → 437，coop op 2,077 → 2,096），4K 150 → 2；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7，CPU 闸 25/25）。总数 17K 48.24 → 48.20、4K 29.59 → 29.51——这一趟 GPU 侧所有 op 都慢了 1–3%（moe gemm +176、decode +75），按 op 的账是 −0.52 / −0.15 s。**
+   **为什么可以**：o 的 rope 是原地的（fp32 读 8 B/元素写回），紧接着 staging 又读一遍 fp32 写 fp16。rope 的对只在每个 head 的最后 64 个元素、相邻两个，staging 每线程正好 8 个连续元素、不跨 head，所以 `rope_pair` + `maybe_round` 原样搬进 stage 2，再 `f16x8`——每个元素经过的运算和顺序一样。§3 77 那次是把 staging 删了、tiles 慢 700 ms；这次 staging 还在（x 还留在 MALL 里），删的是 rope 那一遍。走不到 coop 路径的块（尾巴 < coop 门槛）退回原来的 `op_rope`。
+   **顺手的仪器**：rope 现在按用途记（`rope m0 f16` 是 q、`m0 inv` 是 o、`m1` 窗口 KV、`m2` iq、`m3` cache）——之前 `prefill_elem s5` 一个数把 q 和 o 混在一起。q 的那一遍（17K 560 ms，143 GB/s，7/8 是纯拷贝）留着：它的来源是 wq_b 的 LDS GEMM，输出 tile 里相邻元素不在同一 lane，折不进去。`prefill_ahead/ropetag_4133.jsonl`、`orope_*`。
+
 0at. **mHC 的两个 24 × 20480 混合系数 GEMM（`hc_attn_fn` / `hc_ffn_fn`，fp32 权重、fp32 输入）走新的 `prefill_gemm` stage 4：17K 1,104 → 521 ms（mHC 桶 2,406 → 1,835，`prefill_bench` 50.23 → 48.24 s），4K 267 → 137（686 → 574）；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7，CPU 闸 25/25）。**
    **为什么慢**：stage 0 一个 workgroup 管 8 行 × 8 个 token，24 行是 3 个 workgroup，每个 x 块被 24 行各读一遍——全走 L2（2.7 TB 一趟，2.5 TB/s），是这个 GEMM DRAM 下限（111 GB，0.47 s）的两倍多。**stage 4**：workgroup 管 4 个 token 的全部 24 行（wave w 管行 w、w+8、w+16，lane 还是管块 l、l+32…），每 32 块一片把 4 个 token 的 x 放进 LDS（16 KB，`[token][float4 分量][块]` 存，一个 wave 读连续 32 个 float4 不撞 bank），下一片先读进寄存器再乘这一片。每个 (行, token) 的和还是原来那个 lane 集合、原来的顺序、原来的 `WaveActiveSum`，所以逐位。
    **量过的几何**（4K）：8 token/wg 32 KB 一片 **316 ms**（比 stage 0 还慢——一个 CU 只放得下一个 workgroup，20 片的屏障串起来全是延迟），4 token **137**，2 token 135（权重的 L2 流量翻倍换不来什么）。取 4。`prefill_ahead/narrow*_4133.jsonl`、`narrow_17010`。

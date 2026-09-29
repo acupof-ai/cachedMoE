@@ -546,21 +546,31 @@ Result<void> Prefill::op_act_quant(uint64_t x, uint32_t n, uint32_t d, uint64_t 
 
 Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
                               uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
-                              float out_scale, uint32_t rows_per_group, uint64_t row_scale) {
+                              float out_scale, uint32_t rows_per_group, uint64_t row_scale,
+                              const PfStageRope* rope) {
     if (const uint32_t cap = pcfg_.max_rows_per_submit; cap && n > cap) {
         // x rows: fp32, or 2-byte values plus an fp32 scale per 32; y rows fp32
         const uint64_t xb = uint64_t(x_stride) * (xfmt == kPfActF32 ? 4 : 2), sb = x_stride / 32 * 4;
         return by_rows(n, cap, [&](uint64_t r0, uint32_t m) {
+            PfStageRope rr;
+            if (rope) { rr = *rope; rr.pos0 += static_cast<uint32_t>(r0); }
             return op_gemm(w, xfmt, x + r0 * xb, xs ? xs + r0 * sb : 0, m, x_stride, y + r0 * w.rows * 4,
-                           flags, out_scale, rows_per_group, row_scale ? row_scale + r0 * 4 : 0);
+                           flags, out_scale, rows_per_group, row_scale ? row_scale + r0 * 4 : 0,
+                           rope ? &rr : nullptr);
         });
     }
     if (n >= pcfg_.coopmat_dense_min_rows && row_scale == 0 &&
         (rows_per_group == 0 || pcfg_.coop_grouped_dense) &&
         out_scale == 1.0f && (flags & ~kPfFlagRound) == 0) {
-        auto used = op_gemm_coop(w, xfmt, x, xs, n, x_stride, y, flags, rows_per_group);
+        auto used = op_gemm_coop(w, xfmt, x, xs, n, x_stride, y, flags, rows_per_group, rope);
         if (!used) return std::unexpected(used.error());
         if (*used) return {};
+    }
+    if (rope) {   // not staged: rotate x in place first
+        if (xfmt != kPfActF32) return fail(Err::InvalidArgument, "gemm: a RoPE on x needs fp32 x");
+        if (auto r = op_rope(x, x, n, x_stride, rope->head_dim, 0, 32, rope->cmp_theta, rope->pos0, 1,
+                             rope->inverse); !r)
+            return r;
     }
     // stage 4: <= 24 fp32 rows over fp32 x (mHC's 24 x 20480 mixers), the x
     // slice staged in LDS for all rows (STATUS §7 0at)
@@ -596,9 +606,10 @@ std::pair<uint64_t, bool> Prefill::w16_slot(uint64_t src) {
 
 Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
                                    uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
-                                   uint32_t rows_per_group) {
+                                   uint32_t rows_per_group, const PfStageRope* rope) {
     const uint32_t R = w.rows, K = w.k, n32 = (n + 31) / 32 * 32;
     if (R == 0 || R % 16 || K % 32 || w.fmt == kPfFp32) return false;
+    if (rope && (xfmt != kPfActF32 || K % 8 || rope->head_dim % 8)) return false;   // stage 2 chunks of 8
     const uint32_t rpg = rows_per_group ? rows_per_group : R;
     const uint32_t groups = R / rpg;
     if (rpg % 16 || groups * rpg != R) return false;
@@ -636,6 +647,7 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     s[kPgW] = w.data; s[kPgS] = w.scale; s[kPgY] = w16;
     s = runner_->slots(*kx);
     s[kPcQ] = x; s[kPcQS] = xs; s[kPcX] = b_.x16.dev_addr;
+    if (rope) s[kPcIdx] = rope->cmp_theta ? b_.rope_cmp.dev_addr : b_.rope_win.dev_addr;
     s = runner_->slots(*km);
     s[kPcW] = w16; s[kPcX] = b_.x16.dev_addr; s[kPcY] = y;
     // y is written by the GEMM, rounded onto bf16 there under kPfFlagRound;
@@ -669,6 +681,10 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
         PfCoopPush px; px.n = n; px.k = K; px.idx_off = 0; px.flags = 0;
         px.x_stride = uint32_t(uint64_t(groups) * K); px.x_col0 = g * K;
         if (fused) px.y_row0 = g * n32;   // its slice of x16 [groups][n32][K]
+        if (rope) {
+            px.rope_pos0 = rope->pos0; px.rope_hd = rope->head_dim; px.rope_dim = rope->rope_dim;
+            px.flags = (rope->inverse ? kPfFlagInverse : 0u) | (rope->round ? kPfFlagRound : 0u);
+        }
         if (auto r = rec(*kx, &px, sizeof(px), PrefillRunner::stage_groups(n, K)); !r)
             return std::unexpected(r.error());
         mark(shape + " x16", {0, double(n) * K * (xe + 2)});
@@ -772,6 +788,8 @@ Result<void> Prefill::op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, ui
     p.flags = (pcfg_.round ? kPfFlagRound : 0u) | (inverse ? kPfFlagInverse : 0u) |
               (out_f16 ? kPfFlagOutF16 : 0u);
     cost_ = {0, double(n) * d * (out_f16 ? 6 : 8)};
+    // one op a use: q (m0 f16), o (m0 inv), the window KV (m1), iq (m2), cache (m3)
+    tag_ = std::format("rope m{}{}{}", mode, inverse ? " inv" : "", out_f16 ? " f16" : "");
     return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * (d / (mode == 0 ? 4 : block))));
 }
 
@@ -1984,9 +2002,10 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         PF_TRY(op_attention(q16 ? b_.q16.dev_addr : b_.q.dev_addr, b_.kv.dev_addr, A,
                             ratio ? sources_[cmp_src_].cache.dev_addr : 0, b_.idx.dev_addr, n_idx,
                             pw("attn.attn_sink"), b_.o.dev_addr, nb, q16));
-        PF_TRY(op_rope(b_.o.dev_addr, b_.o.dev_addr, nb, qdim, hd, 0, 32, cmp_theta, qpos, 1, true));
+        // the inverse RoPE on o is applied as wo_a's staging reads it (§7 0au)
+        const PfStageRope orope{cmp_theta, qpos, hd, cfg_->qk_rope_head_dim, true, pcfg_.round};
         PF_TRY(op_gemm(*woa, kPfActF32, b_.o.dev_addr, 0, nb, qdim, b_.woa.dev_addr, round, 1.0f,
-                       c.o_lora_rank));
+                       c.o_lora_rank, 0, &orope));
         const uint32_t orows = c.o_groups * c.o_lora_rank;
         PF_TRY(op_act_quant(b_.woa.dev_addr, nb, orows, b_.woaq.dev_addr, b_.woas.dev_addr));
         PF_TRY(op_gemm(*wob, kPfActQ, b_.woaq.dev_addr, b_.woas.dev_addr, nb, orows,
