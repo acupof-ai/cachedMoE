@@ -710,6 +710,7 @@ Result<void> Prefill::op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff,
     s[0] = h; s[1] = out; s[2] = norm_w; s[3] = coeff; s[4] = rs;
     PfElemPush p; p.n = n; p.d = cfg_->hidden_size; p.a0 = coeff_stride; p.a1 = kHc;
     p.eps = static_cast<float>(cfg_->rms_norm_eps);
+    if (p.d % 128) return fail(Err::InvalidArgument, "mhc_pre_norm takes 128 elements a plane at a time");
     // one wave (32 lanes) per row, not one thread: prefill_elem.slang stage 2
     cost_ = {0, double(n) * (p.d * (kHc + 1) + coeff_stride) * 4};
     return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * 32));

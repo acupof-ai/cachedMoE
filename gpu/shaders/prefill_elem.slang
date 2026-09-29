@@ -140,25 +140,42 @@ void s_mhc_pre_norm(uint3 gid, uint tid) {
         pre[j] = (j < hc) ? load_f32(Ptr[kA3] + ((uint64_t)row * pc.a0 + j) * 4) : 0.0f;
     float sq_all = 0.0f, sq_u = 0.0f;
     const uint64_t y = Ptr[kOut] + (uint64_t)row * d * 4;
-    for (uint e = lane; e < d; e += 32) {
-        float u = 0.0f;
-        [unroll] for (uint j = 0; j < kMaxHc; ++j) {
-            if (j >= hc) continue;
-            const float v = load_f32(h + ((uint64_t)j * d + e) * 4);
-            sq_all += v * v;
-            u += pre[j] * v;
+    // 128 elements of a plane at a time: one float4 a lane (four scalar loads
+    // a lane ran the stage at 99 GB/s, STATUS §7 0ar), then lane i takes back
+    // the elements i, i + 32, i + 64, i + 96 it summed before -- element
+    // 32 m + i sits in lane 8 m + i / 4, component i % 4 -- so every lane's
+    // partial sums are the same numbers in the same order and the two
+    // WaveActiveSums are bit for bit. The host keeps d a multiple of 128.
+    for (uint c = 0; c < d; c += 128) {
+        float4 v[kMaxHc];
+        [unroll] for (uint j = 0; j < kMaxHc; ++j)
+            v[j] = (j < hc) ? load_f32x4(h + ((uint64_t)j * d + c + lane * 4) * 4) : float4(0.0f);
+        [unroll] for (uint m = 0; m < 4; ++m) {
+            const uint src = 8 * m + (lane >> 2), comp = lane & 3u;
+            float u = 0.0f;
+            [unroll] for (uint j = 0; j < kMaxHc; ++j) {
+                if (j >= hc) continue;
+                const float4 t = WaveShuffle(v[j], src);
+                const float x = comp == 0 ? t.x : comp == 1 ? t.y : comp == 2 ? t.z : t.w;
+                sq_all += x * x;
+                u += pre[j] * x;
+            }
+            u = bf16_round(u);           // hc_pre ends in `.to(x.dtype)`
+            sq_u += u * u;
+            store_f32(y + (uint64_t)(c + 32 * m + lane) * 4, u);
         }
-        u = bf16_round(u);           // hc_pre ends in `.to(x.dtype)`
-        sq_u += u * u;
-        store_f32(y + (uint64_t)e * 4, u);
     }
     sq_all = WaveActiveSum(sq_all);
     sq_u = WaveActiveSum(sq_u);
     if (lane == 0) store_f32(Ptr[kA4] + (uint64_t)row * 4, rsqrt(sq_all / float(hc * d) + pc.eps));
     const float rs = rsqrt(sq_u / float(d) + pc.eps);
-    for (uint e = lane; e < d; e += 32) {
-        const float w = bf16_decode(load_u16(Ptr[kA2] + (uint64_t)e * 2));
-        store_f32(y + (uint64_t)e * 4, bf16_round((load_f32(y + (uint64_t)e * 4) * rs) * w));
+    for (uint e0 = lane * 4; e0 < d; e0 += 128) {   // elementwise: four a lane
+        const uint2 wb = *(uint2*)(Ptr[kA2] + (uint64_t)e0 * 2);
+        const float4 w = float4(bf16_decode(wb.x & 0xFFFFu), bf16_decode(wb.x >> 16),
+                                bf16_decode(wb.y & 0xFFFFu), bf16_decode(wb.y >> 16));
+        float4 u4 = load_f32x4(y + (uint64_t)e0 * 4);
+        [unroll] for (uint i = 0; i < 4; ++i) u4[i] = bf16_round((u4[i] * rs) * w[i]);
+        store_f32x4(y + (uint64_t)e0 * 4, u4);
     }
 }
 
