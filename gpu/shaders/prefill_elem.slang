@@ -259,7 +259,9 @@ void s_mhc_post(uint3 gid, uint tid) {
 // [positions][rope_dim/2][2], kA3 = packed bytes (fp8 [n][d] or fp4 [n][d/2]),
 // kA4 = scale bytes [n][d/block]; either may be 0.
 // a0 = head_dim, a1 = mode (0 none, 1 fp8/UE8M0-32, 2 fp4/UE8M0-32,
-// 3 fp4/E4M3-16), a2 = rope_dim, a3 = block (32 or 16).
+// 3 fp4/E4M3-16), a2 = rope_dim, a3 = block (32 or 16). Mode 0 under
+// kFlagOutF16 writes kOut as fp16 [n][d]: the same f32tof16 the attention's
+// q16 stage applied to the f32 plane, so bit for bit.
 float idx_fp4_scale(float amax) {
     const float v = max(amax, 6.0f * 5.877472e-39f) * (1.0f / 6.0f);
     const uint  b = asuint(v);
@@ -290,7 +292,11 @@ void s_rope(uint3 gid, uint tid) {
             v[i] = maybe_round(v[i], pc.flags);
             v[i + 1] = maybe_round(v[i + 1], pc.flags);
         }
-        store_f32x4(Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 4, v);
+        if ((pc.flags & kFlagOutF16) != 0u)
+            *(uint2*)(Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 2) =
+                uint2(f32tof16(v[0]) | (f32tof16(v[1]) << 16), f32tof16(v[2]) | (f32tof16(v[3]) << 16));
+        else
+            store_f32x4(Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 4, v);
         return;
     }
     const uint blk_sz = pc.a3;

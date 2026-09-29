@@ -727,9 +727,10 @@ Result<void> Prefill::op_mhc_post(uint64_t h, uint64_t a, uint64_t coeff, uint64
 
 Result<void> Prefill::op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint32_t head_dim,
                               uint32_t mode, uint32_t block, bool compressed_theta, uint32_t pos0,
-                              uint32_t pos_step, bool inverse) {
+                              uint32_t pos_step, bool inverse, bool out_f16) {
     auto k = runner_->kernel({"prefill_elem", 5});
     if (!k) return std::unexpected(k.error());
+    if (out_f16 && mode) return fail(Err::InvalidArgument, "rope: fp16 output is the unquantised path's");
     if (uint64_t(pos0) + uint64_t(n ? n - 1 : 0) * pos_step >= rope_positions_)
         return fail(Err::OutOfRange, "rope position past the table");
     uint64_t* s = runner_->slots(*k);
@@ -737,8 +738,9 @@ Result<void> Prefill::op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, ui
     s[3] = 0; s[4] = 0;
     PfElemPush p; p.n = n; p.d = d; p.a0 = head_dim; p.a1 = mode; p.a2 = cfg_->qk_rope_head_dim;
     p.a3 = block; p.pos0 = pos0; p.pos_step = pos_step;
-    p.flags = (pcfg_.round ? kPfFlagRound : 0u) | (inverse ? kPfFlagInverse : 0u);
-    cost_ = {0, double(n) * d * 8};
+    p.flags = (pcfg_.round ? kPfFlagRound : 0u) | (inverse ? kPfFlagInverse : 0u) |
+              (out_f16 ? kPfFlagOutF16 : 0u);
+    cost_ = {0, double(n) * d * (out_f16 ? 6 : 8)};
     return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * (d / (mode == 0 ? 4 : block))));
 }
 
@@ -792,16 +794,25 @@ Result<void> Prefill::op_copy(uint64_t src, uint64_t dst, uint64_t bytes) {
 
 // docs/p4_prefill_speed.md §3: the band attention as two cooperative-matrix
 // tile multiplies around a gather and a softmax, one submit.
-Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
-                                   uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o,
-                                   uint32_t b) {
-    if (!pcfg_.attn_coop) return op_attention_legacy(q, kv, n_win, cmp, idx, n_idx, sink, o, b);
+bool Prefill::attn_coop_ok(uint32_t b, uint32_t n_idx) const {
     const uint32_t H = cfg_->num_attention_heads, D = cfg_->head_dim;
     const uint32_t E = (n_idx + 15) / 16 * 16;
     const uint32_t ht = std::max<uint32_t>(1, std::min<uint32_t>(4, pcfg_.attn_head_tiles));
-    if (H % (16 * ht) || D % 16 || uint64_t(b) * E * D * 2 > b_.g16.bytes ||
-        uint64_t(b) * H * E * 4 > b_.score.bytes || uint64_t(b) * H * D * 2 > b_.q16.bytes)
+    return pcfg_.attn_coop && H % (16 * ht) == 0 && D % 16 == 0 &&
+           uint64_t(b) * E * D * 2 <= b_.g16.bytes && uint64_t(b) * H * E * 4 <= b_.score.bytes &&
+           uint64_t(b) * H * D * 2 <= b_.q16.bytes;
+}
+
+Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
+                                   uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o,
+                                   uint32_t b, bool q16) {
+    if (!attn_coop_ok(b, n_idx)) {
+        if (q16) return fail(Err::InvalidArgument, "attention: q16 needs the coopmat path");
         return op_attention_legacy(q, kv, n_win, cmp, idx, n_idx, sink, o, b);
+    }
+    const uint32_t H = cfg_->num_attention_heads, D = cfg_->head_dim;
+    const uint32_t E = (n_idx + 15) / 16 * 16;
+    const uint32_t ht = std::max<uint32_t>(1, std::min<uint32_t>(4, pcfg_.attn_head_tiles));
     auto kq = runner_->kernel({"prefill_coopmat", 2, 0, 0, 8, 3, 0});
     auto kg = runner_->kernel({"prefill_attn", 3});
     // The two tile multiplies are prefill_gemm_lds GEMMs, one workgroup grid
@@ -867,8 +878,10 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     const double kv_rows = double(n_win) * D * 4, tile = 2.0 * bh * E * D;
     const auto t0 = Clk::now();
     if (auto r = cmd_open(); !r) return r;
-    if (auto r = rec(*kq, &pq, sizeof(pq), PrefillRunner::stage_groups(b, H * D)); !r) return r;
-    mark("attn q16", {0, bhd * 6});
+    if (!q16) {   // else q is b_.q16 already (op_rope out_f16, STATUS §7 0am)
+        if (auto r = rec(*kq, &pq, sizeof(pq), PrefillRunner::stage_groups(b, H * D)); !r) return r;
+        mark("attn q16", {0, bhd * 6});
+    }
     if (auto r = rec(*kg, &p, sizeof(p), groups_for(uint64_t(b) * E * (D / 8))); !r) return r;
     mark("attn gather", {0, g16 + lists + kv_rows});
     // the LDS GEMMs: row block fastest, then the query (prefill_gemm_lds.slang)
@@ -1788,7 +1801,14 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         const uint32_t qpos = apos0 + b0;
         PF_TRY(op_gemm(*wqb, kPfActQ, at(b_.qrq, b0, uint64_t(ql) * 2),
                        at(b_.qrs, b0, uint64_t(ql / 32) * 4), nb, ql, b_.q.dev_addr, round));
-        PF_TRY(op_rope(b_.q.dev_addr, b_.q.dev_addr, nb, qdim, hd, 0, 32, cmp_theta, qpos, 1, false));
+        // q leaves its rope as fp16, straight into the plane the attention's
+        // q16 stage would have written: that pass and half the rope's write
+        // fewer (STATUS §7 0am), where the attention runs its coopmat path
+        // (the legacy one takes fp32). o stays fp32: wo_a's x16 stage is
+        // what leaves x in the MALL for the tiles (§3 77).
+        const bool q16 = attn_coop_ok(nb, n_idx);
+        PF_TRY(op_rope(b_.q.dev_addr, q16 ? b_.q16.dev_addr : b_.q.dev_addr, nb, qdim, hd, 0, 32,
+                       cmp_theta, qpos, 1, false, q16));
         idx_host.assign(size_t(nb) * n_idx, -1);
         if (c.is_index_source(L) && ratio) {
             auto iqb = W("attn.indexer.wq_b.weight", kPfFp8);
@@ -1887,9 +1907,9 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
             pv.topk_first = probe_idx_.data();
             pv.n_idx = n_idx;
         }
-        PF_TRY(op_attention(b_.q.dev_addr, b_.kv.dev_addr, A,
+        PF_TRY(op_attention(q16 ? b_.q16.dev_addr : b_.q.dev_addr, b_.kv.dev_addr, A,
                             ratio ? sources_[cmp_src_].cache.dev_addr : 0, b_.idx.dev_addr, n_idx,
-                            pw("attn.attn_sink"), b_.o.dev_addr, nb));
+                            pw("attn.attn_sink"), b_.o.dev_addr, nb, q16));
         PF_TRY(op_rope(b_.o.dev_addr, b_.o.dev_addr, nb, qdim, hd, 0, 32, cmp_theta, qpos, 1, true));
         PF_TRY(op_gemm(*woa, kPfActF32, b_.o.dev_addr, 0, nb, qdim, b_.woa.dev_addr, round, 1.0f,
                        c.o_lora_rank));

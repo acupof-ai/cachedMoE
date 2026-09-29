@@ -27,6 +27,7 @@
 #include <map>
 #include <span>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -56,6 +57,7 @@ inline constexpr uint32_t kPfFlagInverse    = 32u;
 inline constexpr uint32_t kPfFlagRoundPre   = 64u;
 inline constexpr uint32_t kPfFlagFromJob    = 128u;
 inline constexpr uint32_t kPfFlagBatched    = 256u;   // prefill_gemm_lds: gid.x is a batch index
+inline constexpr uint32_t kPfFlagOutF16     = 512u;   // rope: write fp16
 // prefill_common.slang kWgRowX: a split 1-D dispatch's workgroups per gid.y row.
 inline constexpr uint32_t kPfWgRowX = 16384u;
 
@@ -470,15 +472,24 @@ public:
                               uint64_t wts);
     Result<void> op_mhc_post(uint64_t h, uint64_t a, uint64_t coeff, uint64_t out, uint32_t n);
     // mode: 0 RoPE only, 1 fp8/UE8M0-32, 2 FP4/UE8M0-32, 3 FP4/E4M3-16
+    // out_f16 (mode 0 only): y is fp16 [n][d] -- the plane the attention's
+    // q16 stage would have staged the f32 result to, so that pass and half
+    // the rope's write go away (STATUS §7 0am). Not for o and wo_a's x16
+    // stage: that pass leaves x in the MALL for the tiles (§3 77).
     Result<void> op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint32_t head_dim,
                          uint32_t mode, uint32_t block, bool compressed_theta, uint32_t pos0,
-                         uint32_t pos_step, bool inverse);
+                         uint32_t pos_step, bool inverse, bool out_f16 = false);
     Result<void> op_cmp_pool(uint64_t kv, uint64_t score, uint64_t out, uint32_t groups,
                              uint32_t ratio);
     Result<void> op_engram_gate(uint64_t h, uint64_t kv, uint64_t qw, uint64_t kw, uint64_t out,
                                 uint32_t n);
+    // q: fp32 [b][H*D], or with q16 the fp16 plane b_.q16 already holds
+    // (op_rope out_f16) and the q16 stage is skipped. attn_coop_ok says
+    // whether the coopmat path -- the only one that takes q16 -- will run.
+    bool attn_coop_ok(uint32_t b, uint32_t n_idx) const;
     Result<void> op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
-                              uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b);
+                              uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b,
+                              bool q16 = false);
     Result<void> op_index_score(uint64_t q, uint64_t keys, uint32_t g, uint64_t w, uint64_t score,
                                 uint32_t b, uint32_t ratio, uint32_t pos0);
     // design §2.1's first level (`select_candidate_blocks`) for queries at

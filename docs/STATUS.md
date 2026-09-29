@@ -285,7 +285,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 70 条）
+## 3. 试过并退掉的（编号，共 77 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -409,6 +409,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **74** | **engram 行读（P2）也分到两盘**（`DEEPMOE_MIRROR_CLASSES=023`；17K 的 120 万次 4 KiB 读 4.7 s 在主盘的 IOPS 下限上） | 双盘 17K：engram io 4.66 → **4.60 s**（没变）；4K 那次在第 14 层 **"engram row read failed"**——镜像盘（USB4、ntfs3）答不了这种随机 4 KiB 流，直接读错；`prefill_ahead/p2stripe_*.out` | **NO-GO**：P2 留在主盘（io_engine.cpp 里原来的理由再加一条：镜像盘会读错） |
 | **75** | **LDS GEMM 几何按「轮次」选**（80 个 workgroup 一轮；`coopgeo` n=288：w1 wm4wn2 0.403 → wm2wn2 0.323 ms，w2 0.280 → 0.253——在 256 → 288 这种越过 80 个 workgroup 的地方单次派发翻倍） | 在位（17K）：moe gemm gate/up 5.83 → **6.18 s**，down 2.63 → 2.74；`prefill_ahead/rounds_*.out`、`stage_model/coopgeo_smalln.csv` | **NO-GO，撤回**：单次派发的微基准量的是一个 dispatch 的尾巴，在位时同一 command buffer 里相邻 expert 的 GEMM 互相填尾，宽 tile 的 LDS 效率又赢回来。教训记下：小派发成流时不能拿单派发的 coopgeo 定几何 |
 | **76** | **routed expert 链的派发顺序**（compute_coop 每个 dispatch 后一个全屏障，每个 expert 11 个；在位 gate/up 只有 18.7 TFLOP/s，`coopgeo` 里 8 个同样大小的独立派发连着跑是 25.5——猜是尾巴暴露） | 双盘。(a) **8 个 expert 一组、按阶段记录**（8 个 decode、一屏障、8 个 GEMM……w16 分 8 区，x16/gu/h16/dout 按组内行偏移）：4K expert gpu 6.4 → **8.8 s**（gate/up 1.94 → 3.08），17K 14.0 → 15.6；(b) **逐 expert 顺序、只让 decode 与相邻 GEMM 并行**（w16 两区交替，每 expert 6 个屏障）：4K **9.4 s**，17K 16.9。都逐位不变。`prefill_ahead/group8_*.out`、`overlap_*.out`、`stage_model/coopgeo_group8.csv` | **NO-GO，两版都撤回**：这条链靠相邻派发的 L2 局部性（gather → GEMM 读 x16、up → SwiGLU 读 gu、stage → down 读 h16，每份几 MB），打散顺序或让 decode 的 23.6 MB 写流并行进来都把它冲掉，比省下的尾巴贵得多。在位 18.7 对微基准 25.5 的差不在屏障——下一步要量得先做带 decode 的微基准 |
+| **77** | **o 的 rope 直接写成 fp16、wo_a 的 GEMM 跳过 x16 staging**（2026-09-30，0am 的另一半）——先按 [n][32768] 写，tiles 17K 1,500 → 2,296 ms（64 KB 行距，行落同一通道）；改成按组连续 [8][n32][4096]（与 x16 同布局）仍 1,500 → 2,215、4K 385 → 572，x16 省的 336 抵不上。staging pass 不只是转 fp16：它把这一组 4 MB 的 x 留在 MALL 里，8 个 row block 各读一遍都命中；rope 一次写完 32 MB 后组 0 早被挤出去，tiles 从 DRAM 重读。q 那半保留（attention 的 q16 stage 是每个 query 各读一次，没有这种复用）。`prefill_ahead/rope16_*.jsonl`。 | NO-GO |
 
 ---
 
@@ -682,6 +683,10 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0am. **q 的 rope 直接写成 fp16 到 attention 的 q16 平面，q16 stage 删掉：17K attention 5,675 → 5,295 ms（q16 374 → 0）、rope（s5）1,169 → 1,031；4K attention 1,526 → 1,445；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。o 的同一招是 NO-GO（§3 77）。**
+   **改法**：`op_rope` 加 `out_f16`（只对不量化的 mode 0）：同一个 f32tof16，只是由 rope 写而不是 q16 stage 写，所以逐位同；`op_attention` 加 `q16`，`attn_coop_ok` 把「会不会走 coopmat 路」拎成一个谓词，rope 与 attention 按同一个谓词选平面（legacy 路仍收 f32）。
+   **数**：17K 少读写 72 GB（q16 stage 的 4 + 2 字节/元素 + rope 少写的 2 字节），墙钟 52.15 → 51.63 s（盘 4.42/3.72 GB/s）。`prefill_ahead/q16_*.out/.jsonl`。
 
 0al. **attention 的 softmax（`prefill_attn` s4）改成每 lane 4 个连续条目：17K 673 → 441 ms，4K 167 → 115；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。**
    **改法**：一个 wave 还是一行 (query, head)，每 lane 读一个 float4 的 S、写 8 字节的 P（原来一次 32 个条目、每 lane 一个 4 字节读一个 2 字节写）；分母仍按条目顺序求和——lane j 的四个依次来，`WaveReadLaneAt` 的次数不变——所以 P 和 1/den 逐位同一线程版。index 列表长度 g 可以不是 4 的倍数（n_idx = min(A, 128) + min(512, G)），它的四个条目仍是标量读（64 个 head 读同一份，L1 命中）。
