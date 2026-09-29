@@ -1129,11 +1129,18 @@ Result<void> Prefill::read_ahead(uint32_t L) {
     ahead_.layer = L;
     ahead_.slot.assign(E, ~0u);
     const size_t n = std::min<size_t>(order.size(), size_t(2) * pcfg_.transit_slots);
+    ahead_.range.assign(n, {0, 0});
     for (uint32_t i = 0; i < n; ++i) {
         auto* dst = static_cast<std::byte*>(b_.transit.host_ptr) + uint64_t(i) * layout::kExpertSlotBytes;
-        if (auto r = read_expert(L, order[i].second, *order[i].first, dst, IoPriority::Lookahead,
+        ahead_.range[i].first = static_cast<uint32_t>(ahead_.futs.size());
+        // P0, not Lookahead: the IO engine routes and stripes only P0 (and P3)
+        // across the drives and gives the background classes a shallower
+        // queue, and nothing else is queued when a layer starts -- P1 put the
+        // whole read-ahead on the primary drive alone (STATUS §7 0ai).
+        if (auto r = read_expert(L, order[i].second, *order[i].first, dst, IoPriority::BlockingMiss,
                                  ahead_.futs, ahead_.bytes); !r)
             return r;
+        ahead_.range[i].second = static_cast<uint32_t>(ahead_.futs.size());
         ahead_.slot[order[i].second] = i;
     }
     return {};
@@ -1367,17 +1374,10 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
 
     // --- routed experts, expert-major, in shard order ---------------------------
     if (!routed) return {};
-    // What read_ahead put in the transit for this layer. All of it lands (or
-    // fails, and is read again below) before any slot is reused.
+    // What read_ahead put in the transit for this layer: its slots are taken
+    // now, each slot's reads are waited for by the batch that computes it.
     std::vector<uint32_t> ahead(E, ~0u);
-    if (ahead_.layer == L) {
-        const auto tw = Clk::now();
-        bool ok = true;
-        for (auto& f : ahead_.futs) ok &= f.get().ok();
-        add_op("io: experts ahead", ms_since(tw), {0, ahead_.bytes, double(ahead_.futs.size())});
-        if (ok) ahead.swap(ahead_.slot);
-        ahead_ = {};
-    }
+    if (ahead_.layer == L) ahead = ahead_.slot;
     std::vector<uint32_t> used;
     for (uint32_t e = 0; e < E; ++e) if (count[e]) used.push_back(e);
     std::vector<const ExpertEntry*> ents(E, nullptr);
@@ -1409,7 +1409,21 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
     };
     std::vector<uint32_t> slot(E, 0);   // each used expert's transit slot
     auto transit_dev = [&](uint32_t e) { return b_.transit.dev_addr + uint64_t(slot[e]) * layout::kExpertSlotBytes; };
+    // A read-ahead slot's reads, waited for at most once: by the batch that
+    // computes it, or before a half is refilled (the gate may not have picked it).
+    std::vector<bool> landed(ahead_.range.size(), false);
+    auto land = [&](uint32_t s) -> bool {
+        bool ok = true;
+        if (s < landed.size() && !landed[s]) {
+            landed[s] = true;
+            const auto [f0, f1] = ahead_.range[s];
+            for (uint32_t f = f0; f < f1; ++f) ok &= ahead_.futs[f].get().ok();
+        }
+        return ok;
+    };
     auto issue = [&](Batch& bt) -> Result<void> {
+        if (bt.count && ahead[used[bt.first]] == ~0u)   // refilling half bt.half of the transit
+            for (uint32_t s = bt.half * K; s < (bt.half + 1) * K; ++s) (void)land(s);
         for (uint32_t i = 0; i < bt.count; ++i) {
             const uint32_t e = used[bt.first + i];
             if (expert_sink && expert_sink->reserve) {
@@ -1428,6 +1442,17 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
     auto run_batch = [&](Batch& bt) -> Result<void> {
         const auto tw = Clk::now();
         bool read_ok = true;
+        double ahead_bytes = 0;
+        uint32_t ahead_reads = 0;
+        for (uint32_t i = 0; i < bt.count; ++i) {
+            const uint32_t e = used[bt.first + i];
+            if (ahead[e] == ~0u) continue;
+            read_ok &= land(ahead[e]);
+            ahead_reads += ahead_.range[ahead[e]].second - ahead_.range[ahead[e]].first;
+            for (const Run& r : ents[e]->runs) ahead_bytes += double(r.aligned_bytes);
+        }
+        if (ahead_reads)
+            add_op("io: experts ahead", ms_since(tw), {0, ahead_bytes, double(ahead_reads)});
         for (auto& f : bt.futs) read_ok &= f.get().ok();
         if (!read_ok) {
             if (expert_sink && expert_sink->release)
@@ -1516,6 +1541,10 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
     }
     if (!batches.empty())
         if (auto r = run_batch(batches.back()); !r) return r;
+    // read-ahead slots the gate did not pick: let their reads land before the
+    // next layer's read_ahead reuses the transit
+    for (auto& f : ahead_.futs) if (f.valid()) f.wait();
+    ahead_ = {};
     return {};
 }
 

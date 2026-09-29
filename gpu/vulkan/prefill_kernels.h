@@ -554,10 +554,13 @@ private:
     uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
     uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
     // read_ahead's reads for the layer it was called for: transit slot of each
-    // expert (~0u = not read ahead); run_moe waits for them and takes the slots
+    // expert (~0u = not read ahead) and, per slot, its futures' range in
+    // `futs`; run_moe waits for a slot's reads only when its batch computes,
+    // so the later ones keep landing while the GPU works (STATUS §7 0ai).
     struct Ahead {
         uint32_t layer = ~0u;
         std::vector<uint32_t> slot;
+        std::vector<std::pair<uint32_t, uint32_t>> range;   // per transit slot: [first, last) in futs
         std::vector<std::future<storage::IoResult>> futs;
         double bytes = 0;
     } ahead_;

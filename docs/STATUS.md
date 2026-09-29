@@ -284,7 +284,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 69 条）
+## 3. 试过并退掉的（编号，共 70 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -401,6 +401,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **67** | **dense GEMM 用 128 token 的块（`prefill_gemm_lds` wn=4，wm=2 / 4）**（2026-09-29，0ad 之后）——0ad 的注意力 tile 乘法取 128 行的块赢了 64 行的，顺手把三个大 dense GEMM（32768×1280、8192×4096、5120×8192）也换成 128 token 宽的块看 LDS 复用是不是不够 | 4K 单盘：dense linears 3.3 → **3.46 s**（wm=2）/ **3.85 s**（wm=4），`moe routed (gpu)` 7.1 → 7.37 / 7.85 s，总 50.7 → 51.4 / 51.7 s（`bench/results/linux/attn_lds/bench4k_single_wm2.txt`） | **NO-GO，`pf_lds_geo` 不动**：块越大每个 workgroup 的寄存器越多、常驻 wave 越少，dense 这种 token 块数本来就够多的场景占用率的损失大过 LDS 复用的收益；batched 的注意力只是因为一次派发本来就有 b × 块数个 workgroup 才不吃这个亏。要再往上得从 kernel 内部（double buffer、每 wave 的 tile 数）来，先建 GEMM 的 kernel 模型（0ae 之后的下一步） |
 | **68** | **LDS GEMM 的 K 切片 64 → 128**（0af 的杠杆 2 之后，`coopgeo` 微基准 n=1024，`bench/results/linux/stage_model/coopgeo_bk64.csv` / `coopgeo_bk128.csv`）——同一深度的预取，每片两倍的 MMA 去遮下一片的全局读 | w1 0.844 → 0.753 ms（+12%），wq_b 3.59 → 3.64（持平），wo_b 3.51 → 3.63（wm2wn2 3.18 → 4.25，更慢）；LDS 与暂存寄存器翻倍 | **NO-GO**：预取深度不是 GEMM 那一半的主因（0ag 的 shader stats：256 VGPR 顶满、每 SIMD 4 个 wave、每片 85 条寄存器搬运）。`LDS_BK` 留作编译常数，128 的那份构建删了 |
 | **69** | **transit 32 → 64 作默认**（0ah 把 prefill 工作区计进 cache 预算之后，加大 transit 不再有丢设备的风险；0aa 的模型预测 4K −6%，对半 −3%） | 单盘 4K 48.7 → 48.43 s，17K 69.75 → 70.35；双盘 32.0 → 32.41、54.6 → 54.39；serve 自动槽数 17K 55.6 → 55.5 s。`bench/results/linux/gtt_sized/transit64_*` | **NO-GO**：全部在 ±1% 噪声里，多占 1.2 GB（4,096 上下文下少 ~65 槽）。0aa 的盲读已经把串行段里的盘用起来了，transit 再大只是把同一批 expert 早读几毫秒；串行段剩下的 expert 读要靠跨层流水，不靠 transit |
+| **70** | **整层盲读进大 transit**（0ai 的上界实验：`--transit 112`，每层先读 224 个 expert 而不是 64 个；192 会超过 4 GiB 的单次分配上限）——串行段的盘还闲着一半以上，多读就是把 routed 段的读挪进串行段 | 双盘。全等 P1 版：4K 32.0 → **39.4 s**，17K 54.6 → 52.8；按批懒等 P1 版：4K 39.6（ahead 17.4 + experts 26.2 s），17K 52.4；懒等 **P0** 版（分流 + 条带化都开）：4K **38.2**（ahead 7.5 + experts 24.7），17K **54.6**。三版里 4K 的 204 GB 都只有 4.7–6.4 GB/s，transit 32 是 11.5。`gtt_sized/transit112_*`、`lazy*`、`p0_*` | **NO-GO，先别加 transit**：和请求类别、分流无关（P0 版一样慢），4 GB 一次的突发把落地路径打满——嫌疑是 Linux path A 读要过中转缓冲 + 单线程 memcpy（TODO：udmabuf 零拷贝可行）。17K 最多 −2.2 s，不值 3 GB。串行段吃掉 expert 读这条杠杆的钥匙在 storage 的 path A 落地路径，不在 prefill |
 
 ---
 
@@ -674,6 +675,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0ai. **read-ahead 两处小改，数字在噪声内（双盘 4K 32.0 → 31.7 s，17K 54.6 → 54.0），逐位不变；同时把「把更多 expert 读挪进串行段」这条杠杆量到了它真正的墙上（§3 70）。**
+   **改了什么**：
+   - 盲读按 **P0** 发而不是 P1：`IoEngine` 只给 P0 / P3 做两盘分流和条带化，P1 一直只走主盘、还是后台档的队列深度，且排队的 P0 抢在它前面——0aa 的盲读从来只用了一块盘。层开头没有别的请求在排队，P0 就是对的类。
+   - run_moe 不再在 routed 段开头等齐所有盲读：每个 transit 槽的读只在轮到它算的那批前等（`Ahead::range`），一个半区要被重填时先等它里面没被 gate 选中的槽（`land`）。**第一版漏了后一条**，`gpu_prefill.read_ahead` 抓到了（有 / 无盲读 logits 不同）：没选中的槽还在落盘时就被下一批的读复用——prefill_bench 的 margin 逐位相同都没露出来，是 sink 的 Fill 拷贝把它放大了。
+   **量到的墙**（§3 70）：transit 112（每层先读 224 个）在 P1、P0、懒等各版本下 4K 都是 38–40 s（对 32 s），17K 52.4–54.6。读的总时长 4K 从 17.7 s 涨到 32 s：204 GB 只有 6.4 GB/s，而 transit 32 时 11.5。和优先级、分流无关（P0 版一样慢）——剩下的嫌疑是 Linux 上 path A 的读要走中转缓冲 + 单线程 memcpy（TODO 里记过：`io_dst_bench` 深 QD 慢 5–10%，udmabuf 零拷贝可行），4 GB 的突发把这条单线程通道顶满。**这条杠杆的钥匙在 storage 的 path A 落地路径（udmabuf / 多线程中转），不在 prefill。** serve 侧让盲读直接落 cache 槽（`admit_streamed` 临时 stamp）也要等它。
+   **验证**：`gpu_prefill` 8/8（含 `read_ahead`）、首 token margin 8.598 / 10.108 逐位不变。
 
 0ah. **§6 第 17 条修了：cache 预算按 prefill 自己报的工作区定，长 prompt 不再丢设备。17K prompt 在自动预算下 5,046 槽、prefill 55.6 s（之前 5,500 槽直接 "Not enough memory for command submission"）；默认 4,096 上下文 5,500 → 5,300 槽。**
    **问题**：引擎的自动预算是 GTT 总量减去 pinned、3 GiB「其它」、3 GiB slack，其中「其它」里给 prefill 的 2 GiB 是 P2 时代 4K 上下文的猜测；prefill 的工作区按 prompt 长度分配（`Prefill::create` 的那张表），每 token 约 0.6 MB，17K 就是 10 GiB。两边互不知情，cache 把 GTT 吃满之后 prefill 的提交就把设备弄丢。
