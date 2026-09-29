@@ -68,6 +68,7 @@ import ctypes
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -301,14 +302,24 @@ def _memstatus() -> _MemStatus:
     return m
 
 
+def _meminfo_gb(*keys: str) -> float:
+    """Linux: the sum of /proc/meminfo fields, in GiB."""
+    with open("/proc/meminfo", encoding="ascii") as f:
+        kb = {ln.split(":")[0]: int(ln.split()[1]) for ln in f}
+    return sum(kb[k] for k in keys) / 2**20
+
+
 def avail_gb() -> float:
-    return _memstatus().ullAvailPhys / 2**30
+    return _memstatus().ullAvailPhys / 2**30 if os.name == "nt" else _meminfo_gb("MemAvailable")
 
 
 def commit_avail_gb() -> float:
     """Commit limit minus commit charge (ullAvailPageFile is exactly that). The limit
-    is shared with Track I's expert cache, which sizes itself from it."""
-    return _memstatus().ullAvailPageFile / 2**30
+    is shared with Track I's expert cache, which sizes itself from it. Linux
+    overcommits, so there it is what could still be backed: available + swap."""
+    if os.name == "nt":
+        return _memstatus().ullAvailPageFile / 2**30
+    return _meminfo_gb("MemAvailable", "SwapFree")
 
 
 COMMIT_HEADROOM_GB = 20.0
@@ -322,12 +333,17 @@ def other_processes() -> tuple[list[str], list[str]]:
     ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -match "
           "'^(python|deepmoe|bench|vulkaninfo)' } | ForEach-Object { [string]$_.ProcessId + "
           "[char]9 + $_.Name + [char]9 + $_.CommandLine }")
+    cmd = (["powershell", "-NoProfile", "-Command", ps] if os.name == "nt"
+           else ["ps", "-eo", "pid=,comm=,args="])
     try:
-        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True,
-                           timeout=60)
+        r = subprocess.run(cmd, capture_output=True, timeout=60)
         lines = r.stdout.decode("utf-8", errors="replace").splitlines()
     except Exception as exc:                          # noqa: BLE001
         return [], [f"(process scan failed: {exc})"]
+    if os.name != "nt":
+        lines = ["\t".join(ln.split(None, 2)) for ln in lines
+                 if ln.split(None, 2)[1:2] and
+                 ln.split(None, 2)[1].startswith(("python", "deepmoe", "bench", "vulkaninfo"))]
     me = os.getpid()
     heavy, gpu = [], []
     for ln in lines:
@@ -739,6 +755,11 @@ def cmd_run(args) -> int:
     os.makedirs(ddir, exist_ok=True)
     ckpt_pre = os.path.join(tdir, "ckpt_prefill.pt")
     ckpt_dec = os.path.join(tdir, "ckpt_decode.pt")
+    # The decode checkpoint as the prefill left it: delete ckpt_decode.pt and
+    # the next run re-decodes from here instead of re-running the prefill.
+    ckpt_start = os.path.join(tdir, "ckpt_decode_start.pt")
+    if not os.path.exists(ckpt_dec) and os.path.exists(ckpt_start):
+        shutil.copyfile(ckpt_start, ckpt_dec)
 
     est = estimate(N, steps)
     log(f"{args.name}: N={N}, {steps} steps; estimate {est}")
@@ -881,6 +902,7 @@ def cmd_run(args) -> int:
                     "prefill_timings": blob_pre["timings"], "run_log": run_log}
         del h, pre_mix, blob_pre, logits
         _save(blob_dec, ckpt_dec)
+        shutil.copyfile(ckpt_dec, ckpt_start)
         if os.path.exists(ckpt_pre):
             os.remove(ckpt_pre)
 
@@ -936,6 +958,13 @@ def cmd_run(args) -> int:
                           "score": attn.compressor.score_state[0].float().clone()}
             probe.ctx = {"rows": [0], "pos0": pos, "offset": W, "ratio": attn.compress_ratio,
                          "win": W, "prefill": False, "layer": L, "step": s}
+            # The engine's rule, not model.py's (docs/p3_longctx.md §5.3): a kv
+            # source scores its OWN index keys on every step, as in prefill.
+            # model.py's shared_attn keeps whatever was published last, so on
+            # a step that does not complete a ratio-2 group layers 2, 8 and 14
+            # would score layer 20's ratio-1 keys from the step before.
+            if is_idx and attn.indexer.owns_k:
+                shared.index_k = attn.indexer.k_cache
             h, pre_mix, extra, gcap = run_layer_decode(store, margs, layout_e, L, block, h,
                                                        pre_mix, hsh, pos)
             probe.ctx = None
@@ -1200,9 +1229,9 @@ def tie_analysis(tdir: str, ddir: str, N: int, steps: int, cfg: dict,
     out = []
     for s in range(steps):
         pos = N + s
-        # the caches as they stand AFTER step s: sources publish before scoring,
-        # and a non-publishing indexer reads layer 20's cache of the previous
-        # pass, which lacks only row `pos` -- never inside [:T] for ratio 2
+        # the caches as they stand AFTER step s: sources publish before scoring;
+        # `keys_from` names the cache each indexer scored (its kv source's own
+        # since the engine's rule, layer 20's of the previous pass before it)
         st = small[1 + s]
         for L in caches:
             k = st.get(f"L{L:02d}.index_k_row_new")

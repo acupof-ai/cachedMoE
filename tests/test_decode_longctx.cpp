@@ -769,6 +769,15 @@ DEEPMOE_TEST(decode_longctx, engine_vs_reference) {
                 // The bar is the lowest minus the range, the rule suite.decode
                 // and suite.spec_forward use; one routing flip drags one step's
                 // stream that far, a broken kernel drags every step to ~0.2.
+                // 0.74 -> 0.55 (STATUS §7 0o): the same four orders against the
+                // own-keys oracles (every ratio-2 source scores its own index
+                // keys on every step; regenerated on Linux) give
+                //   attn_norm 0.6966 / 0.8243 / 0.8198 / 0.7955
+                //   kv        0.7173 / 0.8794 / 0.8466 / 0.8577
+                // (default K-split first; bench/results/linux/ownkeys/variants).
+                // The low is ONE step, 17K step 3, which the summation order
+                // alone moves 0.70 / 0.94 / 0.82 / 0.89, while the indexer
+                // scores stay bit-equal to the reference's on every step.
                 if (!loaded) {
                     // One machine-readable line per asserted step, for the
                     // spread measurement (bench/results/linux/drift_noise).
@@ -777,7 +786,7 @@ DEEPMOE_TEST(decode_longctx, engine_vs_reference) {
                         if (cosines.count(nm)) chk += std::format(" {}={:.5f}", nm, cosines[nm].worst);
                     std::printf("        ASSERTED%s\n", chk.c_str());
                     for (const char* nm : {"attn_norm", "q", "kv", "attn_out", "ffn_norm"})
-                        if (cosines.count(nm)) CHECK(cosines[nm].worst > 0.74);
+                        if (cosines.count(nm)) CHECK(cosines[nm].worst > 0.55);
                     if (cosines.count("win_kv")) CHECK(cosines["win_kv"].worst > 0.99);
                     if (cosines.count("cmp_kv")) CHECK(cosines["cmp_kv"].worst > 0.999);
                 }

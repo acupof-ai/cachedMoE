@@ -609,7 +609,10 @@ Five things the L2 data made visible and which `compressor.slang` and
    publishes nothing and scores against whatever key cache was published last —
    layer 20's, not its own. §1.2 already recorded that for the oracle; the
    kernel side of it is that the host, not the shader, decides which cache
-   address goes in the slot.
+   address goes in the slot. **Changed 2026-09-29** (STATUS §7 0o, the user's
+   call): decode now scores the kv source's OWN keys on every step, as prefill
+   does, so the slot is a fixed per-layer address and the "published last"
+   state is gone.
 
 ### 9.4 Two tensors the oracle did not export, and one it cannot
 

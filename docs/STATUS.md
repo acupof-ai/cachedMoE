@@ -658,6 +658,20 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0o. **decode 的 index key 改成「每个源层用自己的」（2026-09-29 用户决定「各自用」「但是得复用」），跨层复用一处不动；4K / 17K oracle 按同一规则重导。≤ 1,024 上下文逐位不变。**
+   **改了什么**：0m 记的那处参考行为——ratio-2 组没满的步，第 2/8/14 层对**上一步第 20 层**的 key 打分——没了：每个 kv 源（2/8/14/20）**每一步都对自己的 key cache 打分**，与 prefill 一致。
+   复用照旧：非源层读最近 kv 源的压缩 KV、最近 index 源的 top-k，24–36 打第 20 层的 key。
+   **实现是删除**：`Engine::pub_index_k_` / `batch_snap_pub_`（动态的「最后发布者」及其回滚快照）删掉，key 的来源 = `CedPlan::cmp_src`，启动时定死；
+   批路径 `mgt1_idx.slang` 的 `key_sel` 与 `kKCachePub` slot 删掉，`BatchStep` 的 own / pub / key_sel 三个字段并成一个 `idx_key`。
+   **oracle**：`tools/oracle_longctx.py` 在 `run_layer_decode` 之前加一个垫片（`owns_k` 的层把 `shared.index_k` 指回自己的 `k_cache`），`model.py` 不动。
+   Linux CPU 上 4K 10 min、17K 14.6 min（估计 34），贪心 token 与旧导出相同（`kestrel-4471-amber"`）；旧导出在 `traces/longctx/refkeys/`。新 prefill 导出与 Windows 那份不逐位相同（CPU BLAS 不同）。
+   **闸**：`l3_ppl` off **0.622784 逐位不变**（n_cmp ≤ 512，规则不生效；`bench/results/linux/ownkeys/l3ppl.txt`）。
+   `decode_longctx.indexer_vs_reference`：**每一步**（含未满步）第 2/14/20 层的打分与参考逐位相等、top-k tie-aware 相等。`engine_vs_reference`：两种长度 TF 8/8、salt 7/7、自由生成 8/8。
+   **一步低于 0.74 线**：17K 第 3 步第 20 层 attn_norm 0.697（第 14 层 gate 5/6 → 第 20 层 4/6）。四种只改 fp32 求和顺序的变体下这一步是 **0.70 / 0.82 / 0.94 / 0.89**
+   （默认 K-split / 关 K-split / dispatch B LB 32 RB 1 / 两者），是路由近似平局的混沌，不是规则错。按原规则（最低 − 极差）线 **0.74 → 0.55**（`bench/results/linux/ownkeys/variants/`）。
+   replay 128（对话默认）从我们自己的预填状态自由生成 **4K / 17K 都 8/8**（`p3_longctx_decode.md` §4.5）；全部 suite 一遍 39 过 + `gpu_prefill` 跳过（它的 longctx 用例要环境变量，即上面的 replay；`ownkeys/ctest_suites.txt`，批路径由 multistream、spec_forward、kv_replay 覆盖）。
+   新 oracle 整体比旧的远一些（各变体最差 attn_norm 0.70–0.82，旧 0.84–0.93）：连规则无关的 4K step 0 loaded 通道，第 14 层 attn_norm 也从 0.985 变成 0.924——参考自己换了 CPU 数值就挪这么多。
+
 0n. **全面优化第二轮：IO 侧三条探针都到了盘的底，计算侧把互不依赖的 dispatch 分波（wave）+ mega_mhc 的 Sinkhorn 拆出关键路径。对话（ledger #20，同一 8 轮脚本）7.264 → 7.572 tok/s，compute 68.3 → 62.5 ms；热步（#19）67.36 → 66.01 ms（trace）；数值逐位不变。**
    **计算侧**。① **异步 engram**（`6384635`，#18）：两层 engram 的 96 个行读在第 0 层发出、到层再落地，engram 4.2 → 2.1 ms/token。
    ② **投影分波**（`DecodeLayer::record_attention` / `record_ced(wave)`）：以前每个 dispatch 后都跟一个 barrier（~2.4 µs 空窗），可 wq_a、wkv、compressor 的两次投影、indexer 的头权重**只读 u**；
@@ -688,7 +702,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    24–36 打第 20 层的 key、在第 20 层的 2,048 候选块内选（最新块钉住）；`topk = min(512, (pos+1)//ratio)`，越界 −1，其余 + 窗口偏移；
    gate sqrt∘softplus、bias 只选不加权、归一 +1e-20、×1.5；SwiGLU gate 只截上限、up 双边截 10（共享专家同）。
    覆盖：`suite.decode` 探针层 0/1/2/13/14/20/39，`decode_longctx` 4K / 17K（indexer tie-aware、候选块、salt 取回 8/8）。
-   **一处照抄参考、看起来是参考 bug 的行为（未改，待决定）**：参考 decode 在 ratio-2 组没满的步（每隔一步）不发布 index key，
+   **一处照抄参考、看起来是参考 bug 的行为（2026-09-29 用户决定改掉：各层用自己的 key，见 0o）**：参考 decode 在 ratio-2 组没满的步（每隔一步）不发布 index key，
    第 2/8/14 层于是对**上一步第 20 层**的 key cache 打分（`shared_attn.index_k` 从不重置；它的 docstring 假设「每个源先写后读」），prefill 则用自己的 key。
    我们两条都照抄（`pub_index_k_`）。只在上下文 > 1,024 时生效：17K 时这些步的 top-k 与「用自己的 key」只重叠 8%，
    L8 压缩注意力质量 0.71 → 0.37，输出 token 不受影响（`p3_longctx.md` §5.3）。偏离参考就失去 L3 对照，所以留给决定。

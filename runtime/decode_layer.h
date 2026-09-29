@@ -229,11 +229,8 @@ struct BatchStep {
     uint32_t list = 0;            // which BatchScratch list this layer reads
     bool     run_compressor = false;
     bool     run_indexer = false;
-    // The index-key caches: this layer's own (a kv source) and the one a query
-    // whose group did not complete here scores against (docs/p3_dspark.md §4.8).
-    DeviceAddress idx_key_own = kNoDeviceAddress;
-    DeviceAddress idx_key_pub = kNoDeviceAddress;
-    uint32_t key_sel = 0;         // bit m: query m scores `idx_key_own`
+    // The index-key cache: its kv source's, written there and scored here.
+    DeviceAddress idx_key = kNoDeviceAddress;
 
     uint32_t n_cmp(uint32_t mm) const {
         return compress_ratio ? (p0 + mm + 1) / compress_ratio : 0u;

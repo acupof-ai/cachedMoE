@@ -1125,7 +1125,7 @@ Result<void> DecodeLayer::bind_batch(const LayerWeights& w, const BatchStep& st)
             p[gpu::mslot::kIKNormW]    = w.idx_k_norm;
             p[gpu::mslot::kILatent]    = b.latent.addr;
             p[gpu::mslot::kIKRaw]      = b.idx_k_raw.addr;
-            p[gpu::mslot::kIKCache]    = st.idx_key_own;
+            p[gpu::mslot::kIKCache]    = st.idx_key;
             p[gpu::mslot::kIKFp4]      = b.idx_k_fp4.addr;
             p[gpu::mslot::kIKScale]    = b.idx_k_scale.addr;
             p[gpu::mslot::kIWProjW]    = w.idx_wproj;
@@ -1133,7 +1133,6 @@ Result<void> DecodeLayer::bind_batch(const LayerWeights& w, const BatchStep& st)
             p[gpu::mslot::kIWeights]   = b.idx_w.addr;
             p[gpu::mslot::kIScore]     = b.idx_score.addr;
             p[gpu::mslot::kIOut]       = b.list_addr(st.list);
-            p[gpu::mslot::kIKCachePub] = st.idx_key_pub;
             p[gpu::mslot::kIBlkKey]    = b.idx_blk_key.addr;
             p[gpu::mslot::kICand]      = b.idx_cand.addr;
         };
@@ -1308,7 +1307,7 @@ Result<void> DecodeLayer::record_ced_batch(gpu::CommandBuffer& cmd, const BatchS
         ip.rope_dim = c.qk_rope_head_dim; ip.p0 = st.p0; ip.ratio = ratio;
         ip.topk = c.index_topk; ip.offset = c.sliding_window + M - 1;
         ip.score_stride = b.score_stride; ip.list_stride = b.list_stride;
-        ip.key_sel = st.key_sel; ip.blk_stride = b.blk_stride;
+        ip.blk_stride = b.blk_stride;
         ip.norm_eps = static_cast<float>(c.rms_norm_eps);
         ip.wscale = 1.0f / std::sqrt(static_cast<float>(c.index_head_dim)) /
                     std::sqrt(static_cast<float>(c.index_n_heads));

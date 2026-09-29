@@ -17128,30 +17128,28 @@
  },
  "run_log": {
   "env_start": {
-   "available_gib": 50.5,
-   "commit_available_gib": 131.8,
-   "gpu_processes": [
-    "20372 deepmoe_tests.exe C:/Users/Asus/AppData/Local/Temp/claude/C--Users-Asus-code-deepmoe/804244d5-fd79-4f6a-b9b4-390553380415/scratchpad/verif"
-   ],
+   "available_gib": 114.2,
+   "commit_available_gib": 300.4,
+   "gpu_processes": [],
    "waited_s": 0
   },
-  "started": "2026-09-14 14:51:50",
+  "started": "2026-09-29 10:24:02",
   "phases": [
    {
     "phase": "prefill",
-    "start": "2026-09-14 14:51:51",
+    "start": "2026-09-29 10:24:02",
     "from_layer": 0,
-    "end": "2026-09-14 15:18:10",
-    "seconds": 1579
+    "end": "2026-09-29 10:37:06",
+    "seconds": 784
    },
    {
     "phase": "decode",
-    "start": "2026-09-14 15:18:15",
+    "start": "2026-09-29 10:37:08",
     "from_step": 0,
-    "end": "2026-09-14 15:21:49"
+    "end": "2026-09-29 10:38:36"
    }
   ],
-  "finished": "2026-09-14 15:21:49"
+  "finished": "2026-09-29 10:38:36"
  },
  "steps": [
   {

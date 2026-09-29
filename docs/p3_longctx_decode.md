@@ -140,7 +140,8 @@ is not done: the masked positions are still scored, as in the reference.
 ### 4.1 Kernels on the reference's inputs (`indexer_vs_reference`)
 
 Probe index layers 2, 14 and 20, all 8 steps of both exports (keys from layer
-20's cache on the incomplete ratio-2 steps, as the reference does):
+20's cache on the incomplete ratio-2 steps, as the reference does; own keys
+since 2026-09-29, §4.5):
 
 | | 4K | 17K |
 |---|---|---|
@@ -249,6 +250,26 @@ take the coopmat path that N % 32 == 0 prompts always took. With the limit off
 `decode.forty_layers_against_the_l3_oracle`: from the export state 8/8
 teacher-forced and 8/8 free-running; from the slow prefill 7/8 and 6/8 — the
 same as before this track.
+
+### 4.5 Own index keys (2026-09-29)
+
+§4.1–4.3 ran under the reference's rule (layers 2/8/14 score layer 20's keys on
+a step that does not complete their ratio-2 group). Since STATUS §7 0o every kv
+source scores its **own** keys on every step, as prefill does, and both exports
+were re-made with that rule (`tools/oracle_longctx.py`'s shim; the old ones are
+in `traces/longctx/refkeys/`). Linux RADV, `bench/results/linux/ownkeys/`:
+
+| | 4K | 17K |
+|---|---|---|
+| `indexer_vs_reference`: scores bit-equal, kernel top-k tie-aware equal | 24/24 | 24/24 |
+| `engine_vs_reference`: teacher-forced / salt / free-running | 8/8 / 7/7 / 8/8 | 8/8 / 7/7 / 8/8 |
+| worst `attn_norm`, four fp32 summation orders | 0.796–0.868 (step 4) | 0.697–0.939 (step 3) |
+| replay 128: prefill | 80.0 s | 230.1 s |
+| replay 128: free-running from OUR state | **8/8**, margins 1.26–11.75 (ref 1.39–12.39) | **8/8**, margins 1.88–13.57 (ref 1.40–12.14) |
+
+The one step under the old 0.74 bar (17K step 3, 0.697 at L20 after L14's gate
+went 5/6) moves to 0.82 / 0.94 / 0.89 under the other three summation orders,
+so the bar is re-measured by the same rule, lowest minus range: 0.55.
 
 ---
 

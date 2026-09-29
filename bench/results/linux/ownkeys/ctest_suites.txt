@@ -1,0 +1,94 @@
+Test project /home/chenkailun/projects/cachedMoE/build
+      Start  1: suite.align
+ 1/40 Test  #1: suite.align ......................   Passed    0.00 sec
+      Start  2: suite.layout
+ 2/40 Test  #2: suite.layout .....................   Passed    0.00 sec
+      Start  3: suite.types
+ 3/40 Test  #3: suite.types ......................   Passed    0.00 sec
+      Start  4: suite.json
+ 4/40 Test  #4: suite.json .......................   Passed    0.00 sec
+      Start  5: suite.profiler
+ 5/40 Test  #5: suite.profiler ...................   Passed    0.00 sec
+      Start  6: suite.status
+ 6/40 Test  #6: suite.status .....................   Passed    0.00 sec
+      Start  7: suite.bytes
+ 7/40 Test  #7: suite.bytes ......................   Passed    0.00 sec
+      Start  8: suite.dequant
+ 8/40 Test  #8: suite.dequant ....................   Passed    0.00 sec
+      Start  9: suite.gate
+ 9/40 Test  #9: suite.gate .......................   Passed    0.00 sec
+      Start 10: suite.slab
+10/40 Test #10: suite.slab .......................   Passed    0.01 sec
+      Start 11: suite.expert_store
+11/40 Test #11: suite.expert_store ...............   Passed    0.04 sec
+      Start 12: suite.planner
+12/40 Test #12: suite.planner ....................   Passed    0.01 sec
+      Start 13: suite.resident_route
+13/40 Test #13: suite.resident_route .............   Passed    0.00 sec
+      Start 14: suite.io
+14/40 Test #14: suite.io .........................   Passed    1.28 sec
+      Start 15: suite.v41_config
+15/40 Test #15: suite.v41_config .................   Passed    0.00 sec
+      Start 16: suite.manifest
+16/40 Test #16: suite.manifest ...................   Passed    0.00 sec
+      Start 17: suite.block_info
+17/40 Test #17: suite.block_info .................   Passed    0.00 sec
+      Start 18: suite.kvcache
+18/40 Test #18: suite.kvcache ....................   Passed    0.00 sec
+      Start 19: suite.kvstore
+19/40 Test #19: suite.kvstore ....................   Passed    0.01 sec
+      Start 20: suite.trace
+20/40 Test #20: suite.trace ......................   Passed    0.00 sec
+      Start 21: suite.cache_cap
+21/40 Test #21: suite.cache_cap ..................   Passed    0.00 sec
+      Start 22: suite.integration
+22/40 Test #22: suite.integration ................   Passed    0.84 sec
+      Start 23: suite.multistream
+23/40 Test #23: suite.multistream ................   Passed  149.72 sec
+      Start 24: suite.gpu
+24/40 Test #24: suite.gpu ........................   Passed    2.44 sec
+      Start 25: suite.gpu_attn
+25/40 Test #25: suite.gpu_attn ...................   Passed    2.99 sec
+      Start 26: suite.gpu_layer
+26/40 Test #26: suite.gpu_layer ..................   Passed    2.31 sec
+      Start 27: suite.decode
+27/40 Test #27: suite.decode .....................   Passed  136.38 sec
+      Start 28: suite.spec_forward
+28/40 Test #28: suite.spec_forward ...............   Passed  128.42 sec
+      Start 29: suite.decode_longctx
+29/40 Test #29: suite.decode_longctx .............   Passed  108.85 sec
+      Start 30: suite.gpu_moe
+30/40 Test #30: suite.gpu_moe ....................   Passed    5.25 sec
+      Start 31: suite.speculate
+31/40 Test #31: suite.speculate ..................   Passed    0.03 sec
+      Start 32: suite.gpu_dspark
+32/40 Test #32: suite.gpu_dspark .................   Passed    2.00 sec
+      Start 33: suite.gpu_prefill
+33/40 Test #33: suite.gpu_prefill ................***Skipped  50.55 sec
+      Start 34: suite.dspark_tree
+34/40 Test #34: suite.dspark_tree ................   Passed    0.33 sec
+      Start 35: suite.tokenizer
+35/40 Test #35: suite.tokenizer ..................   Passed    0.18 sec
+      Start 36: suite.sampling
+36/40 Test #36: suite.sampling ...................   Passed    1.18 sec
+      Start 37: suite.engram_tables
+37/40 Test #37: suite.engram_tables ..............   Passed    0.16 sec
+      Start 38: suite.kv_replay
+38/40 Test #38: suite.kv_replay ..................   Passed  930.13 sec
+      Start 39: suite.kvdisk
+39/40 Test #39: suite.kvdisk .....................   Passed    0.00 sec
+      Start 40: smoke.auto_cache
+40/40 Test #40: smoke.auto_cache .................   Passed   11.86 sec
+
+100% tests passed out of 40
+
+Label Time Summary:
+needs-gpu      = 1530.89 sec*proc (12 tests)
+needs-model    = 1529.64 sec*proc (14 tests)
+unit           =   2.91 sec*proc (25 tests)
+
+Total Test time (real) = 1535.00 sec
+
+The following tests did not run:
+	 33 - suite.gpu_prefill (Skipped)
+ctest --test-dir build -j 1 --timeout 3000 -E '^(deepmoe_tests|bench\..*)$'  340.59s user 354.62s system 45% cpu 25:35.06 total

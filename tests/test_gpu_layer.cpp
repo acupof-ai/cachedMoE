@@ -421,13 +421,6 @@ CedSrc ced_src(const TextConfig& c, uint32_t L) {
     return s;
 }
 
-uint32_t last_kv_source(const TextConfig& c) {
-    uint32_t last = 0;
-    for (uint32_t l = 0; l < c.num_hidden_layers; ++l)
-        if (c.is_kv_source(l)) last = l;
-    return last;
-}
-
 }  // namespace
 
 // Track T's C(M) curve. Its own suite name so `ctest -R suite.gpu_layer` (which
@@ -470,7 +463,6 @@ DEEPMOE_TEST(mgt1, m_curve) {
         const TextConfig& c = rig.config.text;
         const uint32_t W = c.sliding_window;
         const uint32_t p0 = st->prefill_len();
-        const uint32_t last_src = last_kv_source(c);
 
         for (uint32_t L : {2u, 20u}) {
             auto names = store::pinned_layer_tensors(rig.manifest, L);
@@ -500,10 +492,7 @@ DEEPMOE_TEST(mgt1, m_curve) {
                     bs.run_compressor = c.is_kv_source(L);
                     bs.run_indexer = c.is_index_source(L);
                     bs.kv.cmp_kv = rig.kv.layer(src.cmp)->cmp_kv;
-                    bs.idx_key_own = view->idx_key;
-                    bs.idx_key_pub = rig.kv.layer(last_src)->idx_key;
-                    for (uint32_t m = 0; m < M; ++m)
-                        if (bs.run_compressor && ((p0 + m + 1) % ratio) == 0) bs.key_sel |= 1u << m;
+                    bs.idx_key = rig.kv.layer(src.cmp)->idx_key;
                     for (uint32_t m = 0; m < M; ++m) {
                         const uint32_t pos = p0 + m;
                         const uint32_t n_cmp = (pos + 1) / ratio;
@@ -726,7 +715,6 @@ DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
         const uint32_t p0 = st->prefill_len();
         const uint32_t W = c.sliding_window;
         const uint32_t qrows = c.num_attention_heads * c.head_dim;
-        const uint32_t last_src = last_kv_source(c);
         std::printf("    context %s: prefill %u tokens, batch at %u\n", ctx.c_str(), p0, p0);
 
         const char* lenv = std::getenv("DEEPMOE_MGT1_LAYERS");
@@ -789,11 +777,10 @@ DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
                         ls.run_indexer = c.is_index_source(L);
                         ls.cmp_complete = ((pos + 1) % ratio) == 0;
                         ls.idx_key_write = view->idx_key;
-                        const uint32_t pub = (ls.run_compressor && ls.cmp_complete) ? L : last_src;
                         ls.kv.cmp_kv = rig.kv.layer(src.cmp)->cmp_kv;
                         ls.kv.top_idx = rig.kv.layer(src.idx)->top_idx;
                         ls.kv.top_idx_host = rig.kv.layer(src.idx)->top_idx_host;
-                        ls.kv.idx_key = rig.kv.layer(pub)->idx_key;
+                        ls.kv.idx_key = rig.kv.layer(src.cmp)->idx_key;
                     }
                     std::memcpy(sb.x.host, xin.data() + uint64_t(m) * hcdim, uint64_t(hcdim) * 4);
                     std::memset(sb.mix_a.host, 0, 128);
@@ -859,10 +846,7 @@ DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
                     bs.run_compressor = c.is_kv_source(L);
                     bs.run_indexer = c.is_index_source(L);
                     bs.kv.cmp_kv = rig.kv.layer(src.cmp)->cmp_kv;
-                    bs.idx_key_own = bv->idx_key;
-                    bs.idx_key_pub = rig.kv.layer(last_src)->idx_key;
-                    for (uint32_t m = 0; m < M; ++m)
-                        if (bs.run_compressor && ((p0 + m + 1) % ratio) == 0) bs.key_sel |= 1u << m;
+                    bs.idx_key = rig.kv.layer(src.cmp)->idx_key;
                 }
                 std::memcpy(bb.x.host, xin.data(), uint64_t(M) * hcdim * 4);
                 std::memset(bb.mix_a.host, 0, uint64_t(M) * 128);

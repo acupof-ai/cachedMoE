@@ -200,7 +200,8 @@ are identical to `tests/data/l3`'s and are not duplicated.
    N − 128.
 2. **Teacher-force** `greedy_tokens[s]` at `N + s` with `produce_ced` on. The engine must
    reproduce `pub_index_k_` switching: at pos where `(pos+1) % 2 != 0`, layers 2/8/14 score
-   `layer 20's cache[:T]`. Ground truth per (layer, step):
+   `layer 20's cache[:T]`. (Until 2026-09-29; since then every kv source scores its own keys
+   and the exports are re-made with that rule, §5.3.) Ground truth per (layer, step):
    `traces/longctx/<name>/stats_raw.json → index[].keys_from_layer`, and in L2 `index_keys_from_layer`.
    For 4K that means steps 1, 3, 5, 7; for 17K, steps 0, 2, 4, 6.
 3. **Pooling** (closes design §12's "ratio-2 pooling unverified"): `tests/data/longctx/ctx4k/l3s_step00.bin`
@@ -291,7 +292,11 @@ Layer 20's key j is a *token* (ratio 1), but layer 2's cache row j is the *group
 2j, 2j+1. A stale selection therefore points at the first half of the context with unrelated
 content. The layer falls back on its window: L19's window mass rises from 0.52 to 0.71 at
 4K and from 0.53 to 0.70 at 17K. The output tokens are unaffected here: the late retrieval
-layers (§5.4) carry the salt. It is still the reference's behaviour, and the engine has to
+layers (§5.4) carry the salt. **2026-09-29, the user's decision (STATUS §7 0o): the engine
+scores each source's own keys on every step**, and `tools/oracle_longctx.py` re-exports the
+4K / 17K oracles with the same rule (a three-line shim; `model.py` itself is untouched, and
+the old exports are in `traces/longctx/refkeys/`). Before that decision: it was the
+reference's behaviour, and the engine had to
 copy it to agree with L3.
 
 ### 5.4 Attention mass, sinks, distance

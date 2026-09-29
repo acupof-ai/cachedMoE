@@ -298,7 +298,6 @@ struct Stream {
     // timeline is; the cache's LRU clock is the process-wide `Engine::clock_`,
     // so eviction still ranks every stream's accesses on one axis.
     TokenIndex           token_ = 0;
-    uint32_t             pub_index_k_ = 0;
     bool                 prefill_loaded_ = false;
     bool                 sample_step_ = false;
     // --- per-step scratch (reset at the top of a step) ---
@@ -904,7 +903,6 @@ private:
     uint64_t             batch_miss_bytes_ = 0;
     KvStore::RingSnapshot batch_snap_{};
     uint32_t             batch_snap_p0_ = 0, batch_snap_m_ = 0;
-    uint32_t             batch_snap_pub_ = 0;
     size_t               batch_snap_hist_ = 0;
 
     KvCache        kv_;
@@ -928,19 +926,15 @@ private:
     bool                         any_submit_ok_ = false;
 
     // design §7.4's routing of caches between layers, which is model.py's
-    // `shared_attn` written down. Fixed at bring-up except `pub_index_k_`.
+    // `shared_attn` written down, fixed at bring-up.
     struct CedPlan {
-        uint32_t cmp_src = 0;        // whose compressed-KV plane this layer reads
+        uint32_t cmp_src = 0;        // whose compressed KV and index keys this layer reads
         uint32_t idx_src = 0;        // whose top-k list this layer reads
         uint32_t ratio   = 0;
         bool     is_kv_source    = false;
         bool     is_index_source = false;
     };
     std::vector<CedPlan> ced_;
-    // Which layer's index-key cache was published last. NOT a static mapping:
-    // a ratio-2 source whose group is incomplete publishes nothing, so at an
-    // even position layers 2, 8 and 14 score against layer 20's keys and at an
-    // odd one against their own (docs/p2_attention.md §9.3 item 5).
     bool       produce_ced_ = false;
     SessionConfig session_cfg_{};
 

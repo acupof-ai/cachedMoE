@@ -210,7 +210,7 @@ struct MgtCmpPush {
 // mgt1_idx.slang
 struct MgtIdxPush {
     uint32_t n_heads = 0, head_dim = 0, rope_dim = 0, k = 0, p0 = 0, ratio = 1, topk = 0;
-    uint32_t offset = 0, score_stride = 0, list_stride = 0, key_sel = 0, blk_stride = 0;
+    uint32_t offset = 0, score_stride = 0, list_stride = 0, blk_stride = 0;
     float    norm_eps = 0.0f, wscale = 0.0f;
 };
 // mgt1_head.slang
@@ -239,7 +239,7 @@ enum : uint32_t { kAQ = 0, kAWinVal = 1, kAWinScale = 2, kACmpKv = 3, kATopIdx =
 enum : uint32_t { kIQRaw = 0, kIQ = 1, kIQFp4 = 2, kIQScale = 3, kIRope = 4, kIWk = 5,
                   kIKNormW = 6, kILatent = 7, kIKRaw = 8, kIKCache = 9, kIKFp4 = 10,
                   kIKScale = 11, kIWProjW = 12, kIX = 13, kIWeights = 14, kIScore = 15,
-                  kIOut = 16, kIKCachePub = 17, kIBlkKey = 18, kICand = 19 };
+                  kIOut = 16, kIBlkKey = 17, kICand = 18 };
 // mgt1_head
 enum : uint32_t { kHW = 0, kHX = 1, kHLogits = 2, kHSample = 3, kHTopOut = 4, kHHist = 5 };
 // mgt1_engram: dslot's engram indices

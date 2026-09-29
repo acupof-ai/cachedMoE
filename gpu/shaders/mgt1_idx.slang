@@ -6,13 +6,10 @@
 // ------------------------
 // Query m at position P = p0 + m sees n_pos(m) = (P + 1) / ratio compressed
 // positions, keeps min(index_topk, n_pos(m)) of them, and scores them against
-// the key cache it would have seen had the batch been decoded one token at a
-// time (docs/p3_dspark.md §4.8, the reference's `_dm_emulate_decode`): its own
-// source layer's cache when its position completes a group there, otherwise
-// whatever was published before -- the host passes both addresses and one bit
-// per query (`key_sel`, 1 = own). Rows of the own cache written by LATER
-// queries of the batch are beyond n_pos(m), so they are never scored. That is
-// the whole causal mask of the compressed half; the window half is the host's.
+// its source layer's key cache, as a decode one token at a time does. Rows of
+// that cache written by LATER queries of the batch are beyond n_pos(m), so
+// they are never scored. That is the whole causal mask of the compressed half;
+// the window half is the host's.
 //
 // Stages (`Stage`; the numbering continues indexer.slang's where it can):
 //   1  RoPE + FP4 block-32/UE8M0 on q, gid = (0, m)
@@ -30,7 +27,7 @@
 static const uint kQRaw = 0, kQ = 1, kQFp4 = 2, kQScale = 3, kRope = 4;
 static const uint kWk = 5, kKNormW = 6, kLatent = 7, kKRaw = 8, kKCache = 9;
 static const uint kKFp4 = 10, kKScale = 11, kWProjW = 12, kX = 13, kWeights = 14;
-static const uint kScore = 15, kOut = 16, kKCachePub = 17, kBlkKey = 18, kCand = 19;
+static const uint kScore = 15, kOut = 16, kBlkKey = 17, kCand = 18;
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
 
@@ -45,7 +42,6 @@ struct Mgt1IdxPush {
     uint  offset;         // 5: where the compressed half starts (window + M - 1)
     uint  score_stride;   // floats between query rows of kScore
     uint  list_stride;    // int32 entries between query rows of kOut
-    uint  key_sel;        // bit m: query m scores its own source's cache
     uint  blk_stride;     // 6-8: entries between query rows of kBlkKey / kCand
     float norm_eps;
     float wscale;
@@ -184,7 +180,7 @@ void stage_score(uint gid, uint m, uint tid) {
     const uint hd = pc.head_dim, nh = pc.n_heads;
     const uint np = n_pos(m);
     const uint64_t q = Ptr[kQ] + (uint64_t)m * nh * hd * 2;
-    const uint64_t kc = (((pc.key_sel >> m) & 1u) != 0u) ? Ptr[kKCache] : Ptr[kKCachePub];
+    const uint64_t kc = Ptr[kKCache];
     for (uint i = tid; i < nh * hd; i += kWg)
         gPool[i] = bf16_decode(load_u16(q + (uint64_t)i * 2));
     const uint t0 = gid * kKTile;

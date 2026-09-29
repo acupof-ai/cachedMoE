@@ -1212,10 +1212,6 @@ void Engine::build_ced_plan() {
         p.cmp_src = cmp_src;
         p.idx_src = idx_src;
     }
-    // A full prefill pass ends with the last kv_source layer having published
-    // -- layer 20 at ratio 1, which completes at every position -- so that is
-    // what the first decode step's ratio-2 indexers score against.
-    cur_->pub_index_k_ = cmp_src;
 }
 
 // How many compressed positions each layer may read this step, and the window
@@ -1301,7 +1297,6 @@ Result<void> Engine::load_decode_state(const std::string& dir) {
     // PRE-RoPE latent).
     produce_ced_    = state_->has_prefill_ced();
     cur_->prefill_loaded_ = true;
-    cur_->pub_index_k_    = ced_.empty() ? 0 : ced_.back().cmp_src;
 
     auto tables = EngramTables::load(dir);
     if (!tables) return std::unexpected(tables.error());
@@ -1326,7 +1321,6 @@ Result<void> Engine::reseed_decode_state() {
     if (auto r = state_->seed_prefill(cur_->kvs_); !r) return r;
     cur_->prefill_loaded_ = true;
     cur_->history_     = state_->prompt_ids();
-    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 
@@ -1464,7 +1458,6 @@ Result<void> Engine::create_stream(Stream& s) {
                  r.error().str());
     s.timings_.assign(c.num_hidden_layers, LayerTiming{});
     s.route_ids_.assign(size_t(c.num_hidden_layers) * c.num_experts_per_tok, 0);
-    s.pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 
@@ -1524,7 +1517,6 @@ Result<DecodeStepResult> Engine::slow_prefill(std::span<const uint32_t> prompt) 
     // an empty key cache and a compressor state of -inf.
     cur_->kvs_.clear();
     cur_->history_.assign(prompt.begin(), prompt.end());
-    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     // `cur_->token_` is deliberately NOT reset. It is the cache's LRU clock, not a
     // position: winding it back makes everything already resident look newer
     // than what the next layer fetches, and the policy then evicts the slot it
@@ -2062,22 +2054,20 @@ Result<void> Engine::layer_begin(Stream& s, uint32_t L, uint32_t position, bool&
         st.run_indexer    = p.is_index_source;
         st.cmp_complete   = ((position + 1) % st.compress_ratio) == 0;
         st.idx_key_write  = view->idx_key;
-        // Publish before reading, exactly as `Indexer.forward` does: a source
-        // that completes here is what this layer's own scoring will use.
-        if (st.run_compressor && st.cmp_complete) cur_->pub_index_k_ = L;
-        // The three caches this layer READS may each belong to a different
-        // layer: the compressed KV to the last kv_source at or above it, the
-        // top-k list to the last index_source, and the index keys to whichever
-        // source published last -- which is not the same thing.
+        // The caches this layer READS may belong to other layers: the compressed
+        // KV and the index keys to the last kv_source at or below it, the
+        // top-k list to the last index_source. The keys are the source's own
+        // on every step, as in prefill -- NOT the reference decode's, which
+        // scores a ratio-2 layer whose group is incomplete against whatever
+        // was published last, i.e. layer 20's ratio-1 keys from the step
+        // before (docs/p3_longctx.md §5.3; STATUS §7 0o).
         auto cmp = cur_->kvs_.layer(p.cmp_src);
         if (!cmp) return std::unexpected(cmp.error());
         auto idx = cur_->kvs_.layer(p.idx_src);
         if (!idx) return std::unexpected(idx.error());
-        auto key = cur_->kvs_.layer(cur_->pub_index_k_);
-        if (!key) return std::unexpected(key.error());
         st.kv.cmp_kv  = cmp->cmp_kv;
         st.kv.top_idx = idx->top_idx;
-        st.kv.idx_key = key->idx_key;
+        st.kv.idx_key = cmp->idx_key;
     }
 
     // The residency gate the open buffer's first dispatch -- the previous
@@ -2572,15 +2562,11 @@ bool Engine::ms_eager_moe() {
 // command-buffer discipline; what it does not share is every kernel, because
 // the M > 1 kernels are a separate family (gpu/shaders/mgt1_*.slang).
 //
-// Three things here are weaker than the M = 1 path and are so on purpose:
+// Two things here are weaker than the M = 1 path and are so on purpose:
 //   * no MOE_OVERLAP split -- the union's dispatch A cannot start on the
 //     resident half without a second union table;
 //   * the engram runs ROW BY ROW (`EngramRunner` holds one row plane per LAYER,
-//     not per position), which costs M submits on layers 1 and 14;
-//   * `idx_key_pub` is one value for the whole batch instead of one per
-//     position. It only matters on an index SOURCE layer whose ratio-2 group
-//     does not complete inside the batch, and `key_sel` already carries the
-//     per-query half of that choice.
+//     not per position), which costs M submits on layers 1 and 14.
 Result<void> Engine::init_batch(uint32_t m_cap) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     // Track MS: the M > 1 runner, its 128 MB scratch and its tail buffers are
@@ -2657,16 +2643,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         auto cmp = cur_->kvs_.layer(p.cmp_src);
         if (!cmp) return std::unexpected(cmp.error());
         st.kv.cmp_kv = cmp->cmp_kv;
-        auto key = cur_->kvs_.layer(cur_->pub_index_k_);
-        if (!key) return std::unexpected(key.error());
-        st.idx_key_own = view->idx_key;
-        st.idx_key_pub = key->idx_key;
-        for (uint32_t m = 0; m < M; ++m)
-            if (st.run_compressor && ((p0 + m + 1) % st.compress_ratio) == 0) st.key_sel |= 1u << m;
-        // Publish before the layers below read: a source that completes anywhere
-        // inside the batch is what they score against, which is the batch's
-        // coarsening of the M = 1 rule (docs/p2_attention.md §9.3 item 5).
-        if (st.key_sel) cur_->pub_index_k_ = L;
+        st.idx_key   = cmp->idx_key;      // the source's own keys, as at M = 1
     }
 
     // The engram writes into the residual stream BEFORE the block (design §2.1),
@@ -2978,7 +2955,6 @@ Result<void> Engine::snapshot_batch_ring(uint32_t p0, uint32_t m) {
     batch_snap_      = std::move(*s);
     batch_snap_p0_   = p0;
     batch_snap_m_    = m;
-    batch_snap_pub_  = cur_->pub_index_k_;
     batch_snap_hist_ = cur_->history_.size();
     return {};
 }
@@ -2988,10 +2964,7 @@ Result<void> Engine::restore_batch_ring(uint32_t p0, uint32_t accepted, uint32_t
         return fail(Err::FailedPrecondition,
                     std::format("no ring snapshot for p0 {} m {} (have p0 {} m {})", p0, m,
                                 batch_snap_p0_, batch_snap_m_));
-    if (accepted + 1 >= m) {              // nothing was rejected
-        cur_->pub_index_k_ = batch_snap_pub_;
-        return {};
-    }
+    if (accepted + 1 >= m) return {};     // nothing was rejected
     // Positions p0 + accepted + 1 .. p0 + m - 1: the accepted drafts stay, and
     // so does the correction's own slot -- the next cycle's row 0 rewrites it
     // with the corrected token (docs/p3_dspark.md §3.5).
@@ -3013,7 +2986,6 @@ Result<void> Engine::restore_batch_ring(uint32_t p0, uint32_t accepted, uint32_t
             std::memcpy(sub.scale.data() + dst * srow, batch_snap_.scale.data() + src * srow, srow);
         }
     if (auto r = cur_->kvs_.restore_ring(sub); !r) return r;
-    cur_->pub_index_k_ = batch_snap_pub_;
     if (cur_->history_.size() > size_t(p0) + accepted + 2) cur_->history_.resize(size_t(p0) + accepted + 2);
     cur_->layer_.invalidate_candidates();
     return {};
@@ -3224,7 +3196,6 @@ Result<void> Engine::begin_session_on(uint32_t stream, const SessionConfig& sc) 
     s.kvs_.clear();
     s.history_.clear();
     s.prefill_loaded_ = false;
-    s.pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     log_info("engine: stream {} -- KV store {} in {} slab(s) (largest {}) for {} positions at "
              "capacity {}", stream, human_bytes(s.kvs_.bytes()), s.kvs_.slabs(),
              human_bytes(s.kvs_.largest_slab()), s.kvs_.config().max_context, s.kvs_.capacity());
@@ -3268,7 +3239,6 @@ Result<void> Engine::set_context_tokens(std::span<const uint32_t> tokens) {
         return fail(Err::ResourceExhausted,
                     std::format("{} tokens against a {}-position context", tokens.size(), max_context()));
     cur_->history_.assign(tokens.begin(), tokens.end());
-    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     return {};
 }
 
@@ -3276,7 +3246,6 @@ void Engine::reset_context() {
     cur_->kvs_.clear();
     cur_->history_.clear();
     cur_->prefill_loaded_ = false;
-    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     // `cur_->token_` stays: it is the expert cache's LRU clock (see slow_prefill).
 }
 
@@ -3331,8 +3300,6 @@ Result<void> Engine::seed_from_prefill(const gpu::PrefillHandoff& h) {
                 return r;
     }
     cur_->history_.assign(h.prompt.begin(), h.prompt.end());
-    // At start_pos == 0 every source publishes, so the last one did.
-    cur_->pub_index_k_ = ced_.empty() ? 0 : ced_.back().cmp_src;
     produce_ced_ = true;
     cur_->prefill_loaded_ = false;
     return {};
