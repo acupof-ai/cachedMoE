@@ -686,6 +686,9 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0ap. **engram 行读的队列深度 128 → 512，io_uring 后端把短读续读：4K engram io 1,176 → 958 ms（256：1,032，1,024：981），17K 4,634 → 3,808，`prefill_bench` 17K 50.30 → 50.01 s；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。**
+   **短读**：队列深过 128 之后，btrfs 的 O_DIRECT 会把 8 KiB 的读只答一页（`short read: 4096 of 8192`，QD 512 第一次就撞上、QD 128 也见过两次），以前整个 prefill 就此失败。后端现在把没读完的部分在同一个 chunk 里从停下的地方接着读（只要按页对齐地前进了），`bytes_moved` 累计；`teardown` 打印续了多少次。`prefill_ahead/engqd*_4133.out`、`engqd512_17010.out`。
+
 0ao. **engram 行读的错误路径修好、错误带上原因：读失败（`short read: 4096 of 8192`）时早退不再让在飞的读落进已释放的暂存页（2026-09-30 02:10 的 `prefill_bench` segfault 就是它：§3 74 那次镜像读错之后崩在 libc 里），暂存区改成成员 `EngramAhead`，`drop()` 先等完再放；expert / engram 读失败的报错带上引擎的 status；`prefill_bench` 每跑一次打印引擎的 requests / failed / 每个源的 err / failover，并把每层 `cmp_cache` 一起转储进 `--handoff-dir`。engram 行读提前发的那一版量了、撤了：§3 78、§6 18。**
 
 0an. **dense 权重的 fp16 解码留在 4 个槽里、一层解码一次而不是每个 query block 一次：17K 三个大 GEMM 的 decode 1,244 → 76 ms（wq_b 414 → 27、wo_b 432 → 26、wo_a 398 → 23），`prefill_bench` 51.63 → 50.30 s；4K 355 → 76 ms，32.5 → 31.8；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。**

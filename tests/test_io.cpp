@@ -455,8 +455,8 @@ DEEPMOE_TEST(io, engram_rows_run_at_their_own_depth) {
     // serve's shape: the ring grows to the engram depth, P0 keeps its 8
     IoConfig rs;
     IoEngine::runtime_shape(rs);
-    CHECK_EQ(rs.engram_qd, 128u);
-    CHECK(rs.max_inflight_ops >= 128u);
+    CHECK_EQ(rs.engram_qd, 512u);
+    CHECK(rs.max_inflight_ops >= 512u);
     CHECK_EQ(rs.p0_qd, 8u);
 #endif
 }

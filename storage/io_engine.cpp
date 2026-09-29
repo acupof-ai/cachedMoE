@@ -226,8 +226,10 @@ void IoEngine::runtime_shape(IoConfig& cfg) {
     // table. nvme_bench over that file (read-only): 49K reads/s at QD 8 (the
     // background depth they had), 119K at 24, 190K at 64, 245K at 128; a
     // 4K-token prefill's 291K reads took 4.5 / 1.35 / 1.13 s at 8 / 64 / 128
-    // (STATUS §7 0v).
-    if (!cfg.engram_qd)      cfg.engram_qd = 128;
+    // (STATUS §7 0v), then 1.03 / 0.96 / 0.98 at 256 / 512 / 1024 (§7 0ap).
+    // Past 128 the drive starts answering 8 KiB reads one page at a time;
+    // the io_uring backend continues those (its short-read path).
+    if (!cfg.engram_qd)      cfg.engram_qd = 512;
 #endif
     // DEEPMOE_IO_P0_QD / _INFLIGHT_MB / _CHUNK_MB raise the ceilings the
     // BACKEND is built with; IoEngine still holds P1-P3 to the shipped ones.

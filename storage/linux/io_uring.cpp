@@ -259,6 +259,7 @@ private:
         void*    dst    = nullptr;
         uint32_t bytes  = 0;
         uint32_t want   = 0;       // the in-file part that must arrive (backend.h)
+        uint32_t moved  = 0;       // bytes an earlier, short, completion of this chunk brought
         void*    bounce = nullptr; // host buffer the kernel reads into, or null
     };
 
@@ -343,17 +344,36 @@ private:
             if (cqe.res < 0) {
                 c.status = Status{Err::Io, "io_uring read failed", static_cast<uint32_t>(-cqe.res)};
             } else {
-                c.bytes_moved = static_cast<uint32_t>(cqe.res);
+                const uint32_t got = static_cast<uint32_t>(cqe.res);
                 if (slot.bounce) {
                     const auto t0 = std::chrono::steady_clock::now();
-                    std::memcpy(slot.dst, slot.bounce, c.bytes_moved);
+                    std::memcpy(slot.dst, slot.bounce, got);
                     copy_ns_ += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                           std::chrono::steady_clock::now() - t0).count());
-                    copy_bytes_ += c.bytes_moved;
+                    copy_bytes_ += got;
                     ++copies_;
                 }
-                if (slot.want && c.bytes_moved < slot.want)
-                    c.status = Status{Err::Io, std::format("short read: {} of {}", c.bytes_moved, slot.want)};
+                // A short read that is not the end of the file (btrfs O_DIRECT
+                // answered an 8 KiB read with one page under a deep engram
+                // queue, STATUS §7 0ap) goes on from where it stopped, in the
+                // same chunk, as long as it made page-aligned progress.
+                if (got && got < slot.want && got % kPageSize == 0) {
+                    Slot again = slot;
+                    again.off   += got;
+                    again.dst    = static_cast<std::byte*>(slot.dst) + got;
+                    again.bytes -= got;
+                    again.want  -= got;
+                    again.moved += got;
+                    again.bounce = slot.bounce;
+                    slot.bounce = nullptr;
+                    std::lock_guard lk(sq_mutex_);
+                    if (push_locked(cqe.user_data, again)) { ++short_reads_; continue; }   // still in flight
+                    give_bounce(again.bounce);
+                    c.status = Status{Err::Io, "io_uring: could not continue a short read"};
+                }
+                c.bytes_moved = slot.moved + got;
+                if (c.ok() && slot.want && got < slot.want)
+                    c.status = Status{Err::Io, std::format("short read: {} of {}", got, slot.want)};
             }
             give_bounce(slot.bounce);
             slot.bounce = nullptr;
@@ -365,6 +385,7 @@ private:
     }
 
     void teardown() {
+        if (short_reads_) log_info("io_uring: {} short reads continued", short_reads_);
         if (copies_)
             log_info("io_uring: bounce copies {:.1f} MiB in {:.3f} s on the polling thread "
                      "({:.1f} GB/s, {} chunks)", copy_bytes_ / 1048576.0, copy_ns_ / 1e9,
@@ -401,6 +422,7 @@ private:
     std::atomic<uint32_t> inflight_{0};
     std::mutex sq_mutex_;                   // serialises the SQ producer side
     Slot slots_[kPendingMask + 1] = {};
+    uint64_t short_reads_ = 0;   // chunks continued after a short completion
 
     struct Bounce { void* ptr; size_t bytes; };
     std::mutex bounce_mutex_;
