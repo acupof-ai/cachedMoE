@@ -722,7 +722,7 @@ Result<void> Prefill::op_mhc_post(uint64_t h, uint64_t a, uint64_t coeff, uint64
     PfElemPush p; p.n = n; p.d = cfg_->hidden_size; p.a1 = kHc;
     p.flags = pcfg_.round ? kPfFlagRound : 0u;
     cost_ = {0, double(n) * (p.d * (2 * kHc + 1) + kMix) * 4};
-    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * (cfg_->hidden_size / 16)));
+    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * (cfg_->hidden_size / 4)));
 }
 
 Result<void> Prefill::op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, uint32_t head_dim,
@@ -1326,7 +1326,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             mark("moe gemm gate/up", gemm_cost);
             PfElemPush ps; ps.n = n; ps.d = inter; ps.a0 = np; ps.a1 = jb.h_off; ps.a2 = jb.rows_off;
             ps.f1 = static_cast<float>(c.swiglu_limit); ps.flags = round;
-            if (auto r = rec(*ksw, &ps, sizeof(ps), groups_for(uint64_t(n) * (inter / 16))); !r) return r;
+            if (auto r = rec(*ksw, &ps, sizeof(ps), groups_for(uint64_t(n) * (inter / 4))); !r) return r;
             mark("moe swiglu", {0, double(n) * inter * 12});
             PfElemPush pq; pq.n = n; pq.d = inter; pq.row_off = jb.h_off;
             if (auto r = rec(*kq, &pq, sizeof(pq), groups_for(uint64_t(n) * (inter / 32))); !r) return r;
@@ -1341,7 +1341,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             if (auto r = rec(dn->first, &pn, sizeof(pn), dnx, dny); !r) return r;
             mark("moe gemm down", gemm_cost);
             PfElemPush pc2; pc2.n = n; pc2.d = dim; pc2.a2 = jb.rows_off; pc2.flags = round;
-            if (auto r = rec(*ksc, &pc2, sizeof(pc2), groups_for(uint64_t(n) * (dim / 16))); !r) return r;
+            if (auto r = rec(*ksc, &pc2, sizeof(pc2), groups_for(uint64_t(n) * (dim / 4))); !r) return r;
             mark("moe scatter", {0, double(n) * dim * 12});
         }
         return cmd_close();

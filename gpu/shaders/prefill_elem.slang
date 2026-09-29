@@ -88,9 +88,13 @@ void s_act_quant(uint3 gid, uint tid) {
     const float s = act_scale(amax);
     const float inv = 1.0f / s;
     const uint64_t q = Ptr[kOut] + ((uint64_t)row * pc.d + (uint64_t)blk * 32) * 2;
-    [unroll] for (uint i = 0; i < 32; ++i)
-        *(uint16_t*)(q + (uint64_t)i * 2) =
-            (uint16_t)f32tof16(fp8_round(clamp(v[i] * inv, -kFp8MaxF, kFp8MaxF)));
+    [unroll] for (uint i = 0; i < 32; i += 8) {   // 16-byte stores, not 32 two-byte ones
+        uint4 o;
+        [unroll] for (uint z = 0; z < 4; ++z)
+            o[z] = f32tof16(fp8_round(clamp(v[i + 2 * z] * inv, -kFp8MaxF, kFp8MaxF))) |
+                   (f32tof16(fp8_round(clamp(v[i + 2 * z + 1] * inv, -kFp8MaxF, kFp8MaxF))) << 16);
+        *(uint4*)(q + (uint64_t)i * 2) = o;
+    }
     store_f32(Ptr[kA2] + ((uint64_t)row * blocks + blk) * 4, s);
 }
 
@@ -221,37 +225,32 @@ void s_sinkhorn(uint3 gid, uint tid) {
 // at 8). One thread per (row, 16 elements). a1 = hc. comb[i][j] contracts
 // against residual[i]: comb's FIRST index (design §7.7).
 void s_mhc_post(uint3 gid, uint tid) {
-    const uint chunks = pc.d / 16;
+    // Four elements a thread (one float4 of each of the nine planes): with 16
+    // the kernel ran at 90 GB/s, with 8 at 150, with 4 at 208 (STATUS §7 0ak).
+    const uint chunks = pc.d / 4;
     const uint idx = thread_index(gid, tid);
-    const uint row = idx / chunks, c0 = (idx % chunks) * 16;
+    const uint row = idx / chunks, e = (idx % chunks) * 4;
     if (row >= pc.n) return;
     const uint hc = pc.a1, d = pc.d;
     const uint64_t cf = Ptr[kA3] + (uint64_t)row * 24 * 4;
-    float post[kMaxHc];
-    float comb[kMaxHc][kMaxHc];
-    [unroll] for (uint j = 0; j < kMaxHc; ++j) {
-        post[j] = load_f32(cf + (uint64_t)(kMaxHc + j) * 4);
-        [unroll] for (uint i = 0; i < kMaxHc; ++i)
-            comb[i][j] = load_f32(cf + (uint64_t)(2 * kMaxHc + i * kMaxHc + j) * 4);
-    }
+    const float4 post = load_f32x4(cf + kMaxHc * 4);
+    float4 comb[kMaxHc];   // comb[i] = row i of the coefficient matrix
+    [unroll] for (uint i = 0; i < kMaxHc; ++i) comb[i] = load_f32x4(cf + (uint64_t)(2 * kMaxHc + i * kMaxHc) * 4);
     const uint64_t h = Ptr[kIn] + (uint64_t)row * hc * d * 4;
     const uint64_t o = Ptr[kOut] + (uint64_t)row * hc * d * 4;
-    [unroll] for (uint q = 0; q < 16; q += 4) {
-        const uint e = c0 + q;
-        // The sublayer output enters as the bf16 tensor the reference hands
-        // hc_post (`ffn_out.to(residual.dtype)`); a no-op for wo_b's rounded one.
-        const float4 a = load_f32x4(Ptr[kA2] + ((uint64_t)row * d + e) * 4);
-        float4 r[kMaxHc];
-        [unroll] for (uint i = 0; i < kMaxHc; ++i) r[i] = load_f32x4(h + ((uint64_t)i * d + e) * 4);
-        [unroll] for (uint j = 0; j < kMaxHc; ++j) {
-            float4 y;
-            [unroll] for (uint z = 0; z < 4; ++z) {
-                float s = 0.0f;
-                [unroll] for (uint i = 0; i < kMaxHc; ++i) s += comb[i][j] * r[i][z];
-                y[z] = maybe_round(post[j] * maybe_round(a[z], pc.flags) + s, pc.flags);
-            }
-            store_f32x4(o + ((uint64_t)j * d + e) * 4, y);
+    // The sublayer output enters as the bf16 tensor the reference hands
+    // hc_post (`ffn_out.to(residual.dtype)`); a no-op for wo_b's rounded one.
+    const float4 a = load_f32x4(Ptr[kA2] + ((uint64_t)row * d + e) * 4);
+    float4 r[kMaxHc];
+    [unroll] for (uint i = 0; i < kMaxHc; ++i) r[i] = load_f32x4(h + ((uint64_t)i * d + e) * 4);
+    [unroll] for (uint j = 0; j < kMaxHc; ++j) {
+        float4 y;
+        [unroll] for (uint z = 0; z < 4; ++z) {
+            float s = 0.0f;
+            [unroll] for (uint i = 0; i < kMaxHc; ++i) s += comb[i][j] * r[i][z];
+            y[z] = maybe_round(post[j] * maybe_round(a[z], pc.flags) + s, pc.flags);
         }
+        store_f32x4(o + ((uint64_t)j * d + e) * 4, y);
     }
 }
 
@@ -423,21 +422,17 @@ void s_engram_gate(uint3 gid, uint tid) {
 // f1 = swiglu_limit. `Expert.forward`: bf16 gate and up widened, clamp, SiLU,
 // times the route weight, `.to(dtype)`.
 void s_swiglu(uint3 gid, uint tid) {
-    const uint chunks = pc.d / 16;
+    const uint chunks = pc.d / 4;   // four elements a thread, as s_mhc_post
     const uint idx = thread_index(gid, tid);
-    const uint row = idx / chunks, c0 = (idx % chunks) * 16;
+    const uint row = idx / chunks, c0 = (idx % chunks) * 4;
     if (row >= pc.n) return;
     const float rw = load_f32(Ptr[kA2] + (uint64_t)(pc.a2 + row) * 4);
-    const uint64_t gi = Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4;
-    const uint64_t ui = Ptr[kIn] + ((uint64_t)(pc.a0 + row) * pc.d + c0) * 4;
-    const uint64_t ho = Ptr[kOut] + ((uint64_t)(pc.a1 + row) * pc.d + c0) * 4;
-    [unroll] for (uint q = 0; q < 16; q += 4) {
-        const float4 g = load_f32x4(gi + (uint64_t)q * 4), u = load_f32x4(ui + (uint64_t)q * 4);
-        float4 y;
-        [unroll] for (uint z = 0; z < 4; ++z)
-            y[z] = maybe_round(swiglu(maybe_round(g[z], pc.flags), maybe_round(u[z], pc.flags), pc.f1) * rw, pc.flags);
-        store_f32x4(ho + (uint64_t)q * 4, y);
-    }
+    const float4 g = load_f32x4(Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4);
+    const float4 u = load_f32x4(Ptr[kIn] + ((uint64_t)(pc.a0 + row) * pc.d + c0) * 4);
+    float4 y;
+    [unroll] for (uint z = 0; z < 4; ++z)
+        y[z] = maybe_round(swiglu(maybe_round(g[z], pc.flags), maybe_round(u[z], pc.flags), pc.f1) * rw, pc.flags);
+    store_f32x4(Ptr[kOut] + ((uint64_t)(pc.a1 + row) * pc.d + c0) * 4, y);
 }
 
 // --- 9: scatter_add ---------------------------------------------------------------
@@ -445,19 +440,16 @@ void s_swiglu(uint3 gid, uint tid) {
 // kA2 = the token list, rows at [a2, a2 + n). Tokens are distinct within one
 // expert, so no two threads of a dispatch write the same element.
 void s_scatter_add(uint3 gid, uint tid) {
-    const uint chunks = pc.d / 16;
+    const uint chunks = pc.d / 4;   // four elements a thread, as s_mhc_post
     const uint idx = thread_index(gid, tid);
-    const uint row = idx / chunks, c0 = (idx % chunks) * 16;
+    const uint row = idx / chunks, c0 = (idx % chunks) * 4;
     if (row >= pc.n) return;
     const uint t = load_u32(Ptr[kA2] + (uint64_t)(pc.a2 + row) * 4);
-    const uint64_t src = Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4;
     const uint64_t dst = Ptr[kOut] + ((uint64_t)t * pc.d + c0) * 4;
-    [unroll] for (uint q = 0; q < 16; q += 4) {
-        const float4 s = load_f32x4(src + (uint64_t)q * 4), y = load_f32x4(dst + (uint64_t)q * 4);
-        float4 o;
-        [unroll] for (uint z = 0; z < 4; ++z) o[z] = y[z] + maybe_round(s[z], pc.flags);
-        store_f32x4(dst + (uint64_t)q * 4, o);
-    }
+    const float4 s = load_f32x4(Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4), y = load_f32x4(dst);
+    float4 o;
+    [unroll] for (uint z = 0; z < 4; ++z) o[z] = y[z] + maybe_round(s[z], pc.flags);
+    store_f32x4(dst, o);
 }
 
 // --- 10: copy_round -----------------------------------------------------------------

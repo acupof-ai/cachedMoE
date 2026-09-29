@@ -656,6 +656,59 @@ int run_coopgeo(const Options& o) {
     return 0;
 }
 
+// --- section `elem`: prefill_elem s4 (mhc_post) in isolation --------------------
+// DEEPMOE_PF_ELEM_SPV=name[,name...] selects the .spv variants (default the
+// production one), DEEPMOE_PF_ELEM_CHUNK=c1[,c2...] their elements per thread.
+int run_elem(const Options& o) {
+    Rig rig;
+    if (auto r = rig.up(o.model_dir); !r) {
+        std::fprintf(stderr, "bring-up: %s\n", r.error().str().c_str());
+        return 1;
+    }
+    const uint32_t d = 5120, hc = 4;
+    std::vector<std::string> spvs{"prefill_elem"};
+    std::vector<uint32_t> chunks{4};
+    auto list_s = [](const char* e, std::vector<std::string>& out) {
+        if (!e) return; out.clear(); std::string s = e; size_t p = 0;
+        while (p <= s.size()) { size_t q = s.find(',', p); if (q == std::string::npos) q = s.size(); out.push_back(s.substr(p, q - p)); p = q + 1; }
+    };
+    list_s(env("DEEPMOE_PF_ELEM_SPV"), spvs);
+    if (const char* e = env("DEEPMOE_PF_ELEM_CHUNK")) { std::vector<std::string> cs; list_s(e, cs); chunks.clear(); for (const std::string& c : cs) chunks.push_back(static_cast<uint32_t>(std::atoi(c.c_str()))); }
+    for (uint32_t n : o.ns) {
+        gpu::GpuBuffer h = must_alloc(rig.alloc, uint64_t(n) * hc * d * 4), out = must_alloc(rig.alloc, uint64_t(n) * hc * d * 4);
+        gpu::GpuBuffer a = must_alloc(rig.alloc, uint64_t(n) * d * 4), cf = must_alloc(rig.alloc, uint64_t(n) * 24 * 4);
+        std::mt19937 gen(3); std::normal_distribution<float> dist(0.0f, 1.0f);
+        for (gpu::GpuBuffer* b : {&h, &a, &cf}) { float* f = static_cast<float*>(b->host_ptr); for (uint64_t i = 0; i < b->bytes / 4; ++i) f[i] = dist(gen); }
+        std::vector<float> ref;
+        for (size_t vi = 0; vi < spvs.size(); ++vi) {
+            const uint32_t chunk = chunks[std::min(vi, chunks.size() - 1)];
+            auto k = rig.runner.kernel({spvs[vi], 4, 0, 0, 8});
+            if (!k) { std::fprintf(stderr, "%s\n", k.error().str().c_str()); return 1; }
+            uint64_t* sl = rig.runner.slots(*k);
+            sl[0] = h.dev_addr; sl[1] = out.dev_addr; sl[2] = a.dev_addr; sl[3] = cf.dev_addr;
+            double best = 1e30;
+            for (uint32_t rep = 0; rep < o.reps; ++rep) {
+                auto ms = rig.timed([&](gpu::CommandBuffer& c) -> Result<void> {
+                    gpu::PfElemPush p; p.n = n; p.d = d; p.a1 = hc; p.flags = gpu::kPfFlagRound;
+                    const uint32_t groups = static_cast<uint32_t>((uint64_t(n) * (d / chunk) + 255) / 256);
+                    return rig.runner.record(c, *k, &p, sizeof(p), groups, 1);
+                });
+                if (!ms) { std::fprintf(stderr, "%s\n", ms.error().str().c_str()); return 1; }
+                best = std::min(best, *ms);
+            }
+            const float* y = static_cast<const float*>(out.host_ptr);
+            size_t diff = 0;
+            if (ref.empty()) ref.assign(y, y + uint64_t(n) * hc * d);
+            else for (size_t i = 0; i < ref.size(); ++i) diff += (std::memcmp(&ref[i], &y[i], 4) != 0);
+            const double bytes = double(n) * (d * (2 * hc + 1) + 24) * 4;
+            std::printf("  elem s4  n=%5u %-18s chunk %2u  %8.3f ms  %6.1f GB/s  %s\n", n, spvs[vi].c_str(), chunk, best,
+                        bytes / (best / 1e3) / 1e9, diff ? std::format("DIFF {}", diff).c_str() : "same");
+        }
+        for (gpu::GpuBuffer* b : {&h, &out, &a, &cf}) rig.alloc.free(*b);
+    }
+    return 0;
+}
+
 // --- section `prefill`: a whole prefill, per stage -----------------------------------
 
 std::vector<uint32_t> read_ids(const std::string& path) {
@@ -892,6 +945,7 @@ int main(int argc, char** argv) {
     if (o.section == "gemm") return run_gemm(o);
     if (o.section == "prefill") return run_prefill(o);
     if (o.section == "coopgeo") return run_coopgeo(o);
+    if (o.section == "elem") return run_elem(o);
     std::fprintf(stderr, "unknown section '%s'\n", o.section.c_str());
     return 2;
 }
