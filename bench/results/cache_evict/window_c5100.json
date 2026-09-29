@@ -1,0 +1,188 @@
+[
+ {
+  "policy": "belady",
+  "params": {},
+  "capacity": 5100,
+  "hit": 0.9583655729527841,
+  "tok_s": 8.275451201348886
+ },
+ {
+  "policy": "score-ext",
+  "params": {
+   "alpha": 3200,
+   "decay": 0.9,
+   "w_near": 2.0,
+   "near_k": 16
+  },
+  "capacity": 5100,
+  "hit": 0.9120040877404285,
+  "tok_s": 6.012670482569432
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 300,
+   "alpha": 2000
+  },
+  "capacity": 5100,
+  "hit": 0.9089915082058956,
+  "tok_s": 5.907703987763162
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 100,
+   "alpha": 2000
+  },
+  "capacity": 5100,
+  "hit": 0.9087559460807572,
+  "tok_s": 5.899650638612079
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 1000,
+   "alpha": 500
+  },
+  "capacity": 5100,
+  "hit": 0.9085678309427352,
+  "tok_s": 5.893235148290476
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 300,
+   "alpha": 500
+  },
+  "capacity": 5100,
+  "hit": 0.9085606834799324,
+  "tok_s": 5.892991665906871
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 100,
+   "alpha": 500
+  },
+  "capacity": 5100,
+  "hit": 0.9079815869192306,
+  "tok_s": 5.873331040174753
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 30,
+   "alpha": 2000
+  },
+  "capacity": 5100,
+  "hit": 0.9079385500687372,
+  "tok_s": 5.871875152672835
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 30,
+   "alpha": 500
+  },
+  "capacity": 5100,
+  "hit": 0.9075639926031364,
+  "tok_s": 5.859234712137909
+ },
+ {
+  "policy": "lru",
+  "params": {},
+  "capacity": 5100,
+  "hit": 0.9072990802584036,
+  "tok_s": 5.85032734603447
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 30,
+   "alpha": 8000
+  },
+  "capacity": 5100,
+  "hit": 0.9071536978235215,
+  "tok_s": 5.845450532637095
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 100,
+   "alpha": 8000
+  },
+  "capacity": 5100,
+  "hit": 0.906782029757777,
+  "tok_s": 5.833019914086412
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 1000,
+   "alpha": 2000
+  },
+  "capacity": 5100,
+  "hit": 0.9063048225604341,
+  "tok_s": 5.8171367960047435
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 300,
+   "alpha": 8000
+  },
+  "capacity": 5100,
+  "hit": 0.9008791379247417,
+  "tok_s": 5.642450972496672
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 30,
+   "alpha": 32000
+  },
+  "capacity": 5100,
+  "hit": 0.8955853011667092,
+  "tok_s": 5.481834421288651
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 100,
+   "alpha": 32000
+  },
+  "capacity": 5100,
+  "hit": 0.8811871175347032,
+  "tok_s": 5.087921634347815
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 1000,
+   "alpha": 8000
+  },
+  "capacity": 5100,
+  "hit": 0.8666619523826904,
+  "tok_s": 4.744020142011921
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 300,
+   "alpha": 32000
+  },
+  "capacity": 5100,
+  "hit": 0.8392604048809568,
+  "tok_s": 4.20751561103325
+ },
+ {
+  "policy": "win-ext",
+  "params": {
+   "W": 1000,
+   "alpha": 32000
+  },
+  "capacity": 5100,
+  "hit": 0.7769927734588854,
+  "tok_s": 3.3472977256635894
+ }
+]

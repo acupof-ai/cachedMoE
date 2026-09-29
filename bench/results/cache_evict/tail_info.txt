@@ -1,0 +1,6 @@
+evictions 604,479, sampled 15111; among the 400 oldest cached keys, 40.6% are needed within 100 tokens
+LRU victim needed again after median 156 tokens; the key Belady would drop: 12843 (INF = never) ; victim never reused 2%
+  AUC at eviction, age (LRU)      : 0.509
+  AUC at eviction, count last 30  : 0.509
+  AUC at eviction, count last 300 : 0.607
+  AUC at eviction, lifetime count : 0.636

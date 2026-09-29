@@ -1,0 +1,4 @@
+2317 steps (92680 rows); engine's own hit over the run 0.9402
+lru        C=5500 hit 0.9274  miss/token 17.43
+score-ext  C=5500 hit 0.9254  miss/token 17.90
+belady     C=5500 hit 0.9577  miss/token 10.15
