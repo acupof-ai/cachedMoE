@@ -140,7 +140,7 @@ Result<uint32_t> PrefillRunner::kernel(const PfKernel& k) {
     ps.lanes_per_row = 32;
     ps.rows_per_wg   = 8;
     ps.subgroup_size = 32;
-    ps.extra = {k.stage, k.wfmt, k.xfmt, k.tile, k.extra0, k.extra1, k.extra2, k.extra3};
+    ps.extra = {k.stage, k.wfmt, k.xfmt, k.tile, k.extra0, k.extra1, k.extra2, k.extra3, k.extra4};
     PipelineLayoutSpec la;
     la.storage_buffers    = 1;
     la.push_constant_size = kPfPushBytes;
@@ -776,7 +776,24 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
         return op_attention_legacy(q, kv, n_win, cmp, idx, n_idx, sink, o, b);
     auto kq = runner_->kernel({"prefill_coopmat", 2, 0, 0, 8, 3, 0});
     auto kg = runner_->kernel({"prefill_attn", 3});
-    auto ks = runner_->kernel({"prefill_coopmat", 3, 0, 0, 8, E, D, ht});
+    // The two tile multiplies are prefill_gemm_lds GEMMs, one workgroup grid
+    // per query (kFlagBatched): scores S[h][e] = sum_d Q[h][d] G[e][d] with G
+    // as the weight (R = E, K = D) and Q the 64 "tokens"; P.V O[h][d] =
+    // sum_e P[h][e] G[e][d] with G as a weight stored [K][R] (LdsWt). Both
+    // accumulate their contraction in 16-wide steps in order, as the
+    // prefill_coopmat stages do, so the planes are bit for bit the same.
+    // Geometry: 64 heads = one 2 x 32-token block a workgroup; the widest row
+    // block the rows divide by (b x blocks workgroups keep the GPU full, so
+    // pf_lds_geo's occupancy rule does not apply).
+    auto geo = [&](uint32_t rows, uint32_t k) {
+        LdsGeo g;
+        if (pcfg_.lds_gemm && k % 64 == 0 && rows % 64 == 0) { g.wn = 2; g.wm = rows % 128 ? 2 : 4; }
+        return g;
+    };
+    const LdsGeo ls = geo(E, D), lp = geo(D, E);
+    const bool lds = ls.wm && lp.wm && ls.pad(H) == H && lp.pad(H) == H;
+    auto ks = lds ? runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, E, D, ls.wm, ls.wn, 0})
+                  : runner_->kernel({"prefill_coopmat", 3, 0, 0, 8, E, D, ht});
     auto km = runner_->kernel({"prefill_attn", 4});
     // P.V holds `dv` 16-dim output tiles instead of `ht` head tiles: the
     // contraction is over the entries, so dim tiles are what make the gathered
@@ -785,7 +802,8 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     dv = dv <= 1 ? 1u : dv >= 8 ? 8u : dv >= 4 ? 4u : 2u;
     while (dv > 1 && D % (16 * dv)) dv >>= 1;
     const uint32_t pv_ht = dv > 1 ? 1u : ht;
-    auto kp = runner_->kernel({"prefill_coopmat", 4, 0, 0, 8, E, D, pv_ht, dv});
+    auto kp = lds ? runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, D, E, lp.wm, lp.wn, 1})
+                  : runner_->kernel({"prefill_coopmat", 4, 0, 0, 8, E, D, pv_ht, dv});
     auto kf = runner_->kernel({"prefill_attn", 5});
     for (auto* k : {&kq, &kg, &ks, &km, &kp, &kf})
         if (!*k) return std::unexpected(k->error());
@@ -798,10 +816,11 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     }
     runner_->slots(*km)[6] = b_.p16.dev_addr;
     runner_->slots(*kf)[6] = o;
+    // the LDS GEMMs take G as their weight; the coopmat stages take it as x
     s = runner_->slots(*ks);
-    s[kPcW] = b_.q16.dev_addr; s[kPcX] = b_.g16.dev_addr; s[kPcY] = b_.score.dev_addr;
+    s[lds ? kPcX : kPcW] = b_.q16.dev_addr; s[lds ? kPcW : kPcX] = b_.g16.dev_addr; s[kPcY] = b_.score.dev_addr;
     s = runner_->slots(*kp);
-    s[kPcW] = b_.p16.dev_addr; s[kPcX] = b_.g16.dev_addr; s[kPcY] = o;
+    s[lds ? kPcX : kPcW] = b_.p16.dev_addr; s[lds ? kPcW : kPcX] = b_.g16.dev_addr; s[kPcY] = o;
 
     PfAttnPush p;
     p.b = b; p.n_idx = E; p.g = n_idx; p.n_heads = H; p.head_dim = D; p.n_win = n_win;
@@ -809,7 +828,9 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     p.flags = pcfg_.round ? kPfFlagRound : 0u;
     PfCoopPush pq; pq.n = b; pq.k = H * D;
     PfCoopPush pc; pc.n = b; pc.k = H;
-    const uint32_t gy = H / (16 * ht);
+    if (lds) pc.flags = kPfFlagBatched;
+    const uint32_t gy = lds ? E / (32 * ls.wm) : H / (16 * ht);
+    const uint32_t gp = lds ? D / (32 * lp.wm) : H / (16 * pv_ht);
     // Each stage's own traffic, with the fp16 planes G [b][E][D], S / P
     // [b][H][E] between them; the whole block's is the fused op's: q, the
     // index lists and the window KV read once, o written once (the compressed
@@ -826,7 +847,7 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     mark("attn score tiles", {tile, bhd * 2 + g16 + bh * E * 4});
     if (auto r = rec(*km, &p, sizeof(p), groups_for(uint64_t(b) * H * 32)); !r) return r;
     mark("attn softmax", {0, bh * E * 6 + lists + bh * 4});
-    if (auto r = rec(*kp, &pc, sizeof(pc), b, H / (16 * pv_ht)); !r) return r;
+    if (auto r = rec(*kp, &pc, sizeof(pc), b, gp); !r) return r;
     mark("attn P.V tiles", {tile, bh * E * 2 + g16 + bhd * 4});
     if (auto r = rec(*kf, &p, sizeof(p), groups_for(uint64_t(b) * H * (D / 16))); !r) return r;
     mark("attn finish", {0, bhd * 8 + bh * 4});

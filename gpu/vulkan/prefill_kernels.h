@@ -55,6 +55,7 @@ inline constexpr uint32_t kPfFlagRowScale   = 16u;
 inline constexpr uint32_t kPfFlagInverse    = 32u;
 inline constexpr uint32_t kPfFlagRoundPre   = 64u;
 inline constexpr uint32_t kPfFlagFromJob    = 128u;
+inline constexpr uint32_t kPfFlagBatched    = 256u;   // prefill_gemm_lds: gid.x is a batch index
 // prefill_common.slang kWgRowX: a split 1-D dispatch's workgroups per gid.y row.
 inline constexpr uint32_t kPfWgRowX = 16384u;
 
@@ -70,7 +71,8 @@ struct PfKernel {
     uint32_t extra1 = 0;    // prefill_coopmat: CmCols
     uint32_t extra2 = 0;    // prefill_coopmat: CmTokTiles (0 = 2)
     uint32_t extra3 = 0;    // prefill_coopmat: CmRowTilesPerWg (0 = 1)
-    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1, extra2, extra3); }
+    uint32_t extra4 = 0;    // prefill_gemm_lds: LdsWt (W stored [K][R])
+    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1, extra2, extra3, extra4); }
     bool operator<(const PfKernel& o) const { return key() < o.key(); }
 };
 

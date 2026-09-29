@@ -1,0 +1,55 @@
+{
+ "time": "2026-09-29T22:22:25+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "4390498832",
+ "dirty": [
+  "bench/results/linux/prefill_model/model.json",
+  "bench/results/linux/prefill_model/model.txt",
+  "bench/results/linux/prefill_model/ops.jsonl",
+  "gpu/shaders/prefill_common.slang",
+  "gpu/shaders/prefill_gemm_lds.slang",
+  "gpu/vulkan/prefill_kernels.cpp",
+  "gpu/vulkan/prefill_kernels.h",
+  "tests/mutate.py"
+ ],
+ "diff_sha": "e4d13aefd210f76a",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "9ec4db6098fd33f7",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 45,
+  "sha": "877aea4f699e82b4"
+ },
+ "env": {
+  "DEEPMOE_ROUTE_DUMP": "bench/results/linux/attn_lds/serve17k_dual/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 19.7,
+  "gpu_busy_max": 31,
+  "loadavg": [
+   "1.71",
+   "1.60",
+   "1.26"
+  ],
+  "top_cpu": [
+   "steam 10.0%",
+   "kworker/u130:1-kcryptd-253:0-1 4.4%",
+   "kworker/u130:10-kcryptd-253:0-1 4.4%",
+   "kworker/u130:9-btrfs-endio 4.0%"
+  ]
+ },
+ "disks_start": {
+  "t": 1790691746.2773936,
+  "nvme0n1": [
+   98039210786,
+   361695830
+  ],
+  "nvme1n1": [
+   1706635488,
+   0
+  ]
+ },
+ "gamemode_lib": true
+}

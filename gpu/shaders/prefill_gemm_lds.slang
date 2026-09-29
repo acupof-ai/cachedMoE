@@ -18,6 +18,13 @@
 // Push constants are prefill_coopmat's (CoopPush); gid.x is the token block
 // from x_off, gid.y the row block from row0. R must be a multiple of BM, the
 // token count (padded by the host) of BN, and K of 64.
+//
+// LdsWt: W is stored [K][R] (the band attention's P.V, whose "weight" is the
+// gathered KV G [E][D] contracted over E). A slice of it is then 64 k-rows of
+// BM contiguous elements, copied as such, and the A tiles are read from LDS
+// column-major. kFlagBatched: gid.x is the batch index instead of the token
+// block, with one problem's W, X and Y per batch entry back to back (the
+// attention: one query's G, Q or P, and S or O).
 
 #include "prefill_common.slang"
 
@@ -25,6 +32,7 @@
 [vk::constant_id(9)]  const uint LdsCols = 5120;   // K
 [vk::constant_id(10)] const uint LdsWm = 2;        // 16-row tiles per wave
 [vk::constant_id(11)] const uint LdsWn = 2;        // 16-token tiles per wave
+[vk::constant_id(12)] const uint LdsWt = 0;        // W stored [K][R]
 
 typealias TileA = linalg.CoopMat<half,  MemoryScope.Subgroup, 16, 16, linalg.CoopMatMatrixUse.MatrixA>;
 typealias TileB = linalg.CoopMat<half,  MemoryScope.Subgroup, 16, 16, linalg.CoopMatMatrixUse.MatrixB>;
@@ -33,6 +41,7 @@ typealias TileC = linalg.CoopMat<float, MemoryScope.Subgroup, 16, 16, linalg.Coo
 static const uint kW = 0, kX = 1, kY = 2;
 static const uint kBk = 64;               // K slice, in halfs
 static const uint kRowQ = kBk / 8 + 1;    // uint4 per LDS row: 8 of data + 1 of padding
+static const uint kRowQT = 128 / 8 + 1;   // LdsWt: uint4 per k-row of As (BM <= 128 elements)
 static const uint kMaxW = 4;              // LdsWm, LdsWn <= 4
 static const uint kThreads = 128;
 
@@ -55,17 +64,24 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint R = LdsRows, K = LdsCols;
     const uint xs = (pc.x_stride == 0u) ? K : pc.x_stride;
     const uint ys = (pc.y_stride == 0u) ? R : pc.y_stride;
+    const bool batched = (pc.flags & kFlagBatched) != 0u;
     const uint r_base = pc.row0 + gid.y * bm;
-    const uint m_base = pc.x_off + gid.x * bn;
-    uint4* W = (uint4*)Ptr[kW];
-    uint4* X = (uint4*)Ptr[kX];
-    float* Y = (float*)Ptr[kY];
+    const uint m_base = pc.x_off + (batched ? 0u : gid.x * bn);
+    const uint64_t batch = batched ? gid.x : 0u;
+    uint4* W = (uint4*)(Ptr[kW] + batch * R * K * 2);
+    uint4* X = (uint4*)(Ptr[kX] + batch * bn * xs * 2);
+    float* Y = (float*)(Ptr[kY] + batch * bn * ys * 4);
 
-    // This thread's share of a slice: A is bm rows x 8 uint4, B bn rows x 8.
+    // This thread's share of a slice: A is bm rows x 8 uint4 (LdsWt: 64
+    // k-rows x bm / 8), B bn rows x 8.
     const uint a_per = bm * 8 / kThreads, b_per = bn * 8 / kThreads;
+    const uint aq = bm / 8;                    // LdsWt: uint4 per k-row of the slice
     uint4 ra[8], rb[8];
     [ForceUnroll] for (uint i = 0; i < 8; ++i) {
-        if (i < a_per) { const uint q = tid + i * kThreads; ra[i] = W[((r_base + q / 8) * K) / 8 + q % 8]; }
+        if (i < a_per) {
+            const uint q = tid + i * kThreads;
+            ra[i] = LdsWt ? W[((q / aq) * R + r_base) / 8 + q % aq] : W[((r_base + q / 8) * K) / 8 + q % 8];
+        }
         if (i < b_per) { const uint q = tid + i * kThreads; rb[i] = X[((m_base + q / 8) * xs + pc.x_col0) / 8 + q % 8]; }
     }
 
@@ -79,15 +95,16 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
         GroupMemoryBarrierWithGroupSync();     // the last slice's reads are done
         [ForceUnroll] for (uint i = 0; i < 8; ++i) {
             const uint q = tid + i * kThreads;
-            if (i < a_per) As[(q / 8) * kRowQ + q % 8] = ra[i];
+            if (i < a_per) { if (LdsWt) As[(q / aq) * kRowQT + q % aq] = ra[i]; else As[(q / 8) * kRowQ + q % 8] = ra[i]; }
             if (i < b_per) Bs[(q / 8) * kRowQ + q % 8] = rb[i];
         }
         GroupMemoryBarrierWithGroupSync();
         if (k0 + kBk < K) {
-            const uint kq = (k0 + kBk) / 8;
+            const uint kq = (k0 + kBk) / 8, k1 = k0 + kBk;
             [ForceUnroll] for (uint i = 0; i < 8; ++i) {
                 const uint q = tid + i * kThreads;
-                if (i < a_per) ra[i] = W[((r_base + q / 8) * K) / 8 + kq + q % 8];
+                if (i < a_per)
+                    ra[i] = LdsWt ? W[((k1 + q / aq) * R + r_base) / 8 + q % aq] : W[((r_base + q / 8) * K) / 8 + kq + q % 8];
                 if (i < b_per) rb[i] = X[((m_base + q / 8) * xs + pc.x_col0) / 8 + kq + q % 8];
             }
         }
@@ -97,7 +114,8 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 if (j < wn) b[j] = TileB.Load<linalg.CoopMatMatrixLayout.ColumnMajor>(Bs, (w_m + 16 * j) * kRowQ + 2 * kk, kRowQ);
             [ForceUnroll] for (uint i = 0; i < kMaxW; ++i) {
                 if (i >= wm) continue;
-                TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(As, (w_r + 16 * i) * kRowQ + 2 * kk, kRowQ);
+                TileA a = LdsWt ? TileA.Load<linalg.CoopMatMatrixLayout.ColumnMajor>(As, (16 * kk) * kRowQT + (w_r + 16 * i) / 8, kRowQT)
+                                : TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(As, (w_r + 16 * i) * kRowQ + 2 * kk, kRowQ);
                 [ForceUnroll] for (uint j = 0; j < kMaxW; ++j)
                     if (j < wn)
                         c[i * kMaxW + j] = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b[j], c[i * kMaxW + j]);

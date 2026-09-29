@@ -59,6 +59,8 @@ static const uint kFlagRowScale   = 16u;  // multiply row m's result by XS[m]
 static const uint kFlagInverse    = 32u;  // RoPE: conjugate
 static const uint kFlagRoundPre   = 64u;  // GEMM: round before out_scale too
 static const uint kFlagFromJob    = 128u; // weight decode: addresses from the job table
+static const uint kFlagBatched    = 256u; // prefill_gemm_lds: gid.x is a batch index, one
+                                          // whole [R][K] x [n][K] -> [n][R] problem each
 
 // --- addressing -------------------------------------------------------------
 uint4 load16(uint64_t a)    { return *(uint4*)a; }

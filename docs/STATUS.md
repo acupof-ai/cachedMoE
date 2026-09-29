@@ -671,6 +671,22 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0ad. **注意力的两个 tile 阶段（score、P.V）改走 `prefill_gemm_lds`：`prefill_bench` 17,010 token 97.7 → 85.8 s（−12%），4,133 token 54.6 → 51.5 s；双盘 81.7 → 70.0 s、38.2 → 35.2 s；serve 双盘 4,133 token 34.9 s、17,010 token 69.4 s（4,400 槽）。结果逐位不变。**
+   **问题**：两份快照里 17K 的第一位。`prefill_coopmat` stage 3 / 4 一个 wave 一个 workgroup，每个 (query, 16 head) 各走一遍 G（每个 query 640 × 512 的 fp16 gathered KV），P.V 还要按 dim tile 再走 8 遍：score 1.9 TFLOP/s、P.V 1.1，是它们 DRAM 下限的 5.5 / 10 倍。
+   **改法**：把它们写成 stage 0 那种 GEMM，交给 0t 的 LDS kernel：
+   - score：S[h][e] = Σ_d Q[h][d] G[e][d]，G 就是"权重"（R = E, K = D），Q 的 64 个 head 是 64 个"token"，Y 的行宽是 E。形状本来就吻合。
+   - P.V：O[h][d] = Σ_e P[h][e] G[e][d]，缩并维 e 是 G 的行，不是连续维。加一个 specialization constant `LdsWt`（W 按 [K][R] 存）：一个 K 切片是 64 个 k 行、每行 BM 个连续元素，照这个形状拷进 LDS，A tile 从 LDS 按 column-major 读。G 不用转置、不用多写一份平面。
+   - 一个 query 一个 workgroup 网格：`kFlagBatched`——gid.x 是 batch 下标，W / X / Y 各按一个问题的大小往后走。不加 push 字段。
+   - 几何：64 个 head 正好一个 2 × 32 的 token 块；行块取能整除的最宽（E、D 都能被 128 整除 → 每 wave 4 个行 tile）。batched 的场景一次派发有 b × 块数个 workgroup，`pf_lds_geo` 那条占用率规则不适用。64 行一块试过一档：注意力 2.87 s 对 128 行的 2.62 s（4K），取 128。
+   - 缩并仍按 16 宽、顺序累加，和 stage 3 / 4 一样，所以两个平面逐位相同。E 不是 64 的倍数（短 prompt）时退回原来的 stage 3 / 4；`DEEPMOE_PF_LDS=0` 同样退回。
+   **结果**（17K）：score 7.2 → 2.1 s（6.3 TFLOP/s，下限的 1.8 倍），P.V 12.0 → 4.8 s（4 倍）；注意力这一组 21.8 → 9.8 s。
+   **中途踩的坑**：第一版 W / X 槽位照 stage 3 的顺序填（Q 在 W 槽），score 算错、P.V 把 64 × 640 的 P 当 640 × 512 读，VM fault 丢设备。二分开关定位，一行修好。
+   **验证**：
+   - 首 token margin 逐位相同：8.598 / 10.108，oracle longctx 4K 8.4880。
+   - `gpu_prefill` 六个用例、`suite.decode`、`l3_ppl` off 0.622784、CPU 闸 25/25、`run_all` 30/30。
+   - 两条变异：`LdsWt` 的 A tile 按 row-major 读；batched 的 X 平面不随 batch 走。都被 `gpu_prefill` 抓到。
+   **现在的快照**（单盘 / 双盘）：4K 51.5 / 35.2 s，17K 85.8 / 70.0 s。17K 剩下的：串行段里让盘读 expert 26.7 s（双盘 10.8，要更大的 transit）、dense linear 10.1、注意力 9.3（P.V 还有 3.6 s）、host index top-k 5.0、elem 4.7。
+
 0ac. **淘汰策略重新模拟（用户 2026-09-29「之前可能做的不够好 你可以模拟分析下」）：E1 的结论站得住，而且比它说的更肯定。这个杠杆关闭。**
    **先复现**：同一个模拟器（`cache_evict_study.py`）、同一条 27,399 token 的 trace、C=5,100：LRU 0.9073、E1 最优 `score-ext` 0.9120、Belady 0.9584，与 §3 的 47 逐位一致。
    **E1 可能没做够的地方**：它的 heat 按 expert 自己被碰的次数几何衰减，不按时间开窗；一个 2,000 token 前很热、最近没用的 expert 和一个刚热起来的分数一样。先量信息：对所有访问，"接下来 100 个 token 内会不会再用"这个问题，只看最近一次使用（LRU 的依据）AUC 0.77，看最近 50–300 个 token 里用过几次 0.83–0.85。差 8 个点，看起来有东西。

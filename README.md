@@ -21,12 +21,12 @@ expert cache.
 | **Chat decode** (8-turn script, cold start) | **9.20 tok/s** — per token 63 ms GPU compute + 42 ms waiting on the drives; expert cache hit rate 0.943 |
 | … internal drive alone | **7.61 tok/s** — 66 ms waiting |
 | Decode step, all experts resident | **66.0 ms** (the weight-read floor is 56.6 ms) |
-| GPU prefill | 4,133 tokens in 54 s · 17,010 tokens in 97 s (cache at 4,400 slots) — 4K waits on the drive, 17K on attention |
+| GPU prefill | 4,133 tokens in 35 s · 17,010 tokens in 69 s (both drives, cache at 4,400 slots; about 16 s more on the internal drive alone) — 4K waits on the drives, 17K on the GPU |
 | Context | up to 524,280 tokens |
 | Quality | 64-step teacher-forced NLL 0.623 against 0.598 for the fp32 reference; needle retrieval at 4K and 17K tokens 8/8 |
 
 Every number above is machine-recorded with its commit in [docs/STATUS.md](docs/STATUS.md) §1
-(ledger rows 19, 28 and 29), §7 0t–0aa (prefill, with its per-op cost model) and
+(ledger rows 19, 28 and 29), §7 0t–0ad (prefill, with its per-op cost model) and
 [docs/p3_longctx_decode.md](docs/p3_longctx_decode.md) §4.3.
 
 **Where the time goes.** Each token routes to 6 of 384 experts in each of 40 layers. About 13.5 of
