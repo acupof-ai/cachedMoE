@@ -1,0 +1,5 @@
+manifest       median 4.47 ms  mean 4.87
+weights_first  median 4.50 ms  mean 4.75
+merged_tails   median 4.41 ms  mean 4.62
+scales_only    median 0.63 ms  mean 0.63
+weights_only   median 4.16 ms  mean 4.46

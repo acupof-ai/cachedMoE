@@ -1,0 +1,6 @@
+one expert (18.8 MB) as 1 MiB x QD 8, O_DIRECT, 40 trials a gap, spinning through the gap, a 4 KiB poke every 5 ms
+ gap ms  median ms   p90 ms   GB/s
+    3.0       4.59     5.58   4.09
+   10.0       4.51     6.24   4.17
+   30.0       4.67     5.73   4.03
+  100.0       5.18     6.43   3.63
