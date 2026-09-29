@@ -670,6 +670,29 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0z. **rmsnorm（`prefill_elem` stage 1）和 engram_gate（stage 7）从每行一个线程改成每行一个 wave：17,010 token 的 prefill 105.6 → 101.2 s（−4.2%），4,133 token 59.1 → 58.6 s（`prefill_bench`）。结果不逐位相同，但对参考更近了。**
+   **问题**：两个 stage 都是一个线程串行走完自己的一整行（rmsnorm：512 / 1024 / 128 维；engram_gate：每个 (row, stream) 4096 维，同时算三个和）。一条 wave 的读指令落在 32 个不同的行上。行数越多越糟：s1 每次调用 4K 0.91 ms、17K 21.7 ms，行数多 4.1 倍，时间多 24 倍。模型给的数：17K s1 1.91 s，是它下限的 87 倍；s7 2.11 s，55 倍。
+   **改法**：和 stage 2（mhc_pre_norm，Track F3）一样，每行（engram_gate 是每个 (row, stream) 平面）一个 wave。32 个 lane 读连续元素，平方和与点积各用一次 `WaveActiveSum`；输出那一遍逐元素计算，与原来相同。host 的 grid 乘 32。文件头的说明改成：沿行归约的 stage（1、2、7）一律一行一个 wave。
+   **结果**：
+   - 17K：s1 1.91 → 0.043 s（118 GB/s）；s7 2.11 → 0.081 s（112 GB/s）。
+   - 4K：s1 80 → 19 ms；s7 129 → 20 ms。
+   **为什么不逐位相同，又为什么更好**：求和从串行加 d 项变成 32 路部分和再做树形归约，这样更接近参考（torch）的归约。margin 变了：4K 8.796 → 8.598，17K 10.503 → 10.108。对参考逐级比对：
+   - L1 engram_out relL2 1.03e-5 → 4.28e-7。
+   - L14 engram_out relL2 6.82e-5 → 7.60e-6。
+   - L0 qr |dnorm|/norm 8.2e-5 → 4.8e-8，L0 q 1.1e-4 → 4.3e-6。
+   **末端**：
+   - forty_layers 首 token：rho 0.954 → 0.951，max|dlogit| 0.84 → 1.01；自由生成仍是 6/8，在同一个接近平票的第 6 步分叉。
+   - longctx 4K：首 token 77，margin 8.97 → 8.49（参考 8.35），rho 0.931 → 0.949，max|dlogit| 1.50 → 0.66，8 步全对。
+   - ctx16k（17,010 token）：首 token 77，rho 0.848 → 0.859，8 步全对。
+   **闸**：
+   - `suite.gpu_prefill`、`suite.decode` 通过。
+   - `l3_ppl` off 0.622784。
+   - CPU 闸 25/25，`run_all.py` 30/30。
+   - 新增两条变异：rmsnorm 只用一个 lane 的部分平方和；engram_gate 的 key 平方和不做 wave 归约。都被 `gpu_prefill` 抓到。
+   **现在的快照**：4K 58.6 s = 串行段 13.5 s + routed expert 45.1 s；17K 101.2 s = 串行段 54.3 s + 47.0 s。剩下按关键路径能赢的：
+   - 17K：串行段里让盘读 expert 30.8 s；注意力 20.9 s（P.V tiles 11.8 s，是它下限的 10 倍；score tiles 6.6 s，5.5 倍）；dense linear 10.2 s；host index top-k 5.0 s；elem 4.7 s（s5 rope 3.0 s，3.8 倍；s4 mhc_post 2.4 s，4.4 倍）。
+   - 4K：串行段里让盘读 expert 16.1 s，注意力 5.4 s，dense linear 2.7 s。
+
 0y. **engram 的 GEMM（25600 × 6144）改走 cooperative-matrix 路径，按行切成 4 片：17,010 token 的 prefill 112.1 → 105.6 s（−5.8%），4,133 token 60.5 → 59.1 s（`prefill_bench`）。这一条结果不逐位相同，验证见下。**
    **问题**：其它 n ≥ 64 的 dense linear 都先把权重解码成 fp16 放进 `b_.w16`，再走 LDS tile GEMM。engram 这个权重的 fp16 副本有 315 MB，`b_.w16` 按最大的 dense 权重分配，只有 84 MB，放不下，于是一直退回 tiled 路径。模型给的数：17K 7.4 s，1.45 TFLOP/s，是它下限的 36 倍；4K 1.85 s。
    **改法**：不分组、又放不下 `b_.w16` 的权重，切成若干等份，每份是整数个 128 行块。每一片依次解码（`prefill_gemm` stage 3 本来就有 `row_base`）、做 GEMM、拷进 y 里自己那几列：`copy_round`（`prefill_elem` stage 10）的 `a0` / `a1` 是 y 的行宽和这一片的起始列，都为 0 时和原来一样。切片以后 `b_.w16` 里留的不是完整权重，所以 `w16_src_` 清零。

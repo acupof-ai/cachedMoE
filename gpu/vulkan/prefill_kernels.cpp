@@ -657,7 +657,7 @@ Result<void> Prefill::op_rmsnorm(uint64_t x, uint64_t y, uint32_t n, uint32_t d,
     s[0] = x; s[1] = y; s[2] = w;
     PfElemPush p; p.n = n; p.d = d; p.eps = static_cast<float>(cfg_->rms_norm_eps);
     cost_ = {0, double(n) * d * 8};
-    return flush_one(*k, &p, sizeof(p), groups_for(n));
+    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * 32));   // a wave per row
 }
 
 Result<void> Prefill::op_mhc_pre_norm(uint64_t h, uint32_t n, uint64_t coeff,
@@ -747,7 +747,7 @@ Result<void> Prefill::op_engram_gate(uint64_t h, uint64_t kv, uint64_t qw, uint6
     PfElemPush p; p.n = n; p.d = cfg_->hidden_size; p.a1 = kHc;
     p.eps = static_cast<float>(cfg_->rms_norm_eps); p.f1 = 1e-6f;
     cost_ = {0, double(n) * p.d * (3 * kHc + 1) * 4};
-    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * kHc));
+    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * kHc * 32));   // a wave per plane
 }
 
 // docs/p4_prefill_speed.md §3: the band attention as two cooperative-matrix

@@ -29,11 +29,12 @@
 //                          top-k of (score + bias) and the normalised weights,
 //                          [n][topk] ids + weights (cpu/gate.cpp on the GPU)
 //
-// Every stage is one thread per row or per (row, block): no stage here needs a
-// reduction across rows, so there are no barriers and no LDS beyond registers.
-// Row-major loops over 5120 or 20480 elements are serial inside a thread; they
-// are the lightest arithmetic in the layer and the bench says whether that
-// ever matters (docs/p3_prefill.md §10).
+// No stage here needs a reduction across rows, so there are no barriers and no
+// LDS. The stages that reduce along a row (1, 2, 7) run a wave per row: the
+// lanes read 32 consecutive elements and the sums are WaveActiveSums (a thread
+// per row walked its row alone, every wave load touching 32 rows; at 17K rows
+// that was 55-87x these stages' DRAM floor, docs/STATUS.md §7 0z). The rest are
+// a thread per row or per (row, block).
 
 #include "prefill_common.slang"
 
@@ -94,16 +95,17 @@ void s_act_quant(uint3 gid, uint tid) {
 // --- 1: rmsnorm ---------------------------------------------------------------
 // kIn [n][d] f32, kOut [n][d], kA2 = bf16 weight [d]. `(w * (x * rsqrt(var +
 // eps))).to(bf16)`; the input is taken as given (already bf16 where the
-// reference's is).
+// reference's is). A wave per row.
 void s_rmsnorm(uint3 gid, uint tid) {
-    const uint row = thread_index(gid, tid);
+    const uint idx = thread_index(gid, tid);
+    const uint row = idx >> 5, lane = idx & 31u;
     if (row >= pc.n) return;
     const uint64_t x = Ptr[kIn] + (uint64_t)row * pc.d * 4;
     float sq = 0.0f;
-    for (uint e = 0; e < pc.d; ++e) { const float v = load_f32(x + (uint64_t)e * 4); sq += v * v; }
-    const float rs = rsqrt(sq / float(pc.d) + pc.eps);
+    for (uint e = lane; e < pc.d; e += 32) { const float v = load_f32(x + (uint64_t)e * 4); sq += v * v; }
+    const float rs = rsqrt(WaveActiveSum(sq) / float(pc.d) + pc.eps);
     const uint64_t y = Ptr[kOut] + (uint64_t)row * pc.d * 4;
-    for (uint e = 0; e < pc.d; ++e) {
+    for (uint e = lane; e < pc.d; e += 32) {
         const float w = bf16_decode(load_u16(Ptr[kA2] + (uint64_t)e * 2));
         store_f32(y + (uint64_t)e * 4, bf16_round((load_f32(x + (uint64_t)e * 4) * rs) * w));
     }
@@ -361,16 +363,18 @@ void s_cmp_pool(uint3 gid, uint tid) {
 // kIn = stream [n][hc][d], kOut = stream' [n][hc][d], kA2 = wkv out [n][(hc+1) d]
 // (hc keys then the value, bf16-valued), kA3 = q_weight [hc][d] bf16,
 // kA4 = k_weight [hc][d] bf16. a1 = hc, eps = norm_eps, f1 = 1e-6 (the sqrt clamp).
+// A wave per (row, stream).
 void s_engram_gate(uint3 gid, uint tid) {
     const uint hc = pc.a1, d = pc.d;
     const uint idx = thread_index(gid, tid);
-    const uint row = idx / hc, c = idx % hc;
+    const uint plane = idx >> 5, lane = idx & 31u;
+    const uint row = plane / hc, c = plane % hc;
     if (row >= pc.n) return;
     const uint64_t h = Ptr[kIn] + ((uint64_t)row * hc + c) * d * 4;
     const uint64_t key = Ptr[kA2] + ((uint64_t)row * (hc + 1) * d + (uint64_t)c * d) * 4;
     const uint64_t val = Ptr[kA2] + ((uint64_t)row * (hc + 1) * d + (uint64_t)hc * d) * 4;
     float sh = 0.0f, sk = 0.0f, dot = 0.0f;
-    for (uint e = 0; e < d; ++e) {
+    for (uint e = lane; e < d; e += 32) {
         const float hv = load_f32(h + (uint64_t)e * 4);
         const float kv = load_f32(key + (uint64_t)e * 4);
         const float w = bf16_decode(load_u16(Ptr[kA3] + ((uint64_t)c * d + e) * 2)) *
@@ -378,11 +382,12 @@ void s_engram_gate(uint3 gid, uint tid) {
         sh += hv * hv; sk += kv * kv;
         dot += (hv * w) * kv;
     }
+    sh = WaveActiveSum(sh); sk = WaveActiveSum(sk); dot = WaveActiveSum(dot);
     const float rstd = rsqrt(sh / float(d) + pc.eps) * rsqrt(sk / float(d) + pc.eps);
     const float dt = dot * rstd * (1.0f / sqrt(float(d)));
     const float g = 1.0f / (1.0f + exp(-(sqrt(max(abs(dt), pc.f1)) * sign(dt))));
     const uint64_t o = Ptr[kOut] + ((uint64_t)row * hc + c) * d * 4;
-    for (uint e = 0; e < d; ++e)
+    for (uint e = lane; e < d; e += 32)
         store_f32(o + (uint64_t)e * 4,
                   bf16_round(load_f32(h + (uint64_t)e * 4) + g * load_f32(val + (uint64_t)e * 4)));
 }
