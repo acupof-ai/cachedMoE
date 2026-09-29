@@ -174,6 +174,10 @@ public:
         const uint64_t t = rows * (k / 32);
         return static_cast<uint32_t>((t + 255) / 256);
     }
+    // prefill_coopmat stages 1 and 2: a 32-thread workgroup, 8 elements a thread.
+    static uint32_t stage_groups(uint64_t rows, uint32_t k) {
+        return static_cast<uint32_t>((rows * (k / 8) + 31) / 32);
+    }
 
 private:
     Device*          device_ = nullptr;

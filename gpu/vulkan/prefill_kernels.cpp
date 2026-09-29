@@ -242,8 +242,6 @@ constexpr uint32_t kMix = 24;
 constexpr uint32_t kSharedJob = 0;     // job 0 is the shared expert; routed experts start at 1
 
 uint32_t groups_for(uint64_t threads) { return static_cast<uint32_t>((threads + 255) / 256); }
-// prefill_coopmat.slang runs 32 threads a workgroup (one wave).
-uint32_t groups_for32(uint64_t threads) { return static_cast<uint32_t>((threads + 31) / 32); }
 
 // prefill_coopmat stage 0's CmTokTiles, clamped to what the shader unrolls,
 // and the workgroup count for `n` tokens at that geometry. kPfRowSlack rows of
@@ -615,7 +613,7 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     for (uint32_t g = 0; g < groups; ++g) {
         PfCoopPush px; px.n = n; px.k = K; px.idx_off = 0; px.flags = 0;
         px.x_stride = uint32_t(uint64_t(groups) * K); px.x_col0 = g * K;
-        if (auto r = rec(*kx, &px, sizeof(px), groups_for32(uint64_t(n) * (K / 32))); !r)
+        if (auto r = rec(*kx, &px, sizeof(px), PrefillRunner::stage_groups(n, K)); !r)
             return std::unexpected(r.error());
         PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64; pg.row0 = g * rpg;
         const uint32_t gx = lg.wm ? lg.pad(n32) / lg.tok() : pf_tok_groups(n32, tt);
@@ -791,9 +789,9 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     const double kv_rows = double(n_win) * D * 4, tile = 2.0 * bh * E * D;
     const auto t0 = Clk::now();
     if (auto r = cmd_open(); !r) return r;
-    if (auto r = rec(*kq, &pq, sizeof(pq), groups_for32(uint64_t(b) * (H * D / 32))); !r) return r;
+    if (auto r = rec(*kq, &pq, sizeof(pq), PrefillRunner::stage_groups(b, H * D)); !r) return r;
     mark("attn q16", {0, bhd * 6});
-    if (auto r = rec(*kg, &p, sizeof(p), groups_for(uint64_t(b) * E)); !r) return r;
+    if (auto r = rec(*kg, &p, sizeof(p), groups_for(uint64_t(b) * E * (D / 8))); !r) return r;
     mark("attn gather", {0, g16 + lists + kv_rows});
     if (auto r = rec(*ks, &pc, sizeof(pc), b, gy); !r) return r;
     mark("attn score tiles", {tile, bhd * 2 + g16 + bh * E * 4});
@@ -1172,7 +1170,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             pd.rows = inter; pd.k = dim; pd.scale_cols = dim / 32; pd.idx_off = 0;
             if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
             PfCoopPush px; px.n = n32; px.k = dim; px.idx_off = jb.rows_off; px.flags = kPfFlagGather;
-            if (auto r = rec(*kx1, &px, sizeof(px), groups_for32(uint64_t(n32) * (dim / 32))); !r) return r;
+            if (auto r = rec(*kx1, &px, sizeof(px), PrefillRunner::stage_groups(n32, dim)); !r) return r;
             PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64;
             if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
             pd.idx_off = 1;
@@ -1185,7 +1183,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             PfElemPush pq; pq.n = n; pq.d = inter; pq.row_off = jb.h_off;
             if (auto r = rec(*kq, &pq, sizeof(pq), groups_for(uint64_t(n) * (inter / 32))); !r) return r;
             PfCoopPush ph; ph.n = n32; ph.k = inter; ph.idx_off = jb.h_off; ph.flags = 0;
-            if (auto r = rec(*kx2, &ph, sizeof(ph), groups_for32(uint64_t(n32) * (inter / 32))); !r) return r;
+            if (auto r = rec(*kx2, &ph, sizeof(ph), PrefillRunner::stage_groups(n32, inter)); !r) return r;
             pd.idx_off = 2; pd.rows = dim; pd.k = inter; pd.scale_cols = inter / 32;
             if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(dim, inter)); !r) return r;
             PfCoopPush pn; pn.n = n32; pn.idx_off = 0; pn.flags = 64;

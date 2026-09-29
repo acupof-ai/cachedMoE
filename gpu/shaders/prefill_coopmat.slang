@@ -238,36 +238,41 @@ void stage_attn_pv(uint3 gid, uint tid) {
     }
 }
 
+// Stages 1 and 2 give a thread 8 consecutive elements of a row -- one or two
+// 16-byte loads and one 16-byte store -- so a wave moves 512 contiguous bytes
+// an instruction; a thread with a whole 32-element block and 2-byte stores had
+// every instruction touch 32 cache lines (STATUS §7 0x). The arithmetic of
+// each element is the same, so the plane is too.
+static const uint kChunk = 8;
+
 void stage_stage_x(uint3 gid, uint tid) {
-    const uint blocks = pc.k / kBlockK;
+    const uint chunks = pc.k / kChunk;
     const uint idx = gid_linear(gid) * 32 + tid;
-    const uint m = idx / blocks, blk = idx % blocks;
+    const uint m = idx / chunks, col = (idx % chunks) * kChunk;
     if (m >= pc.n) return;
     const uint src = ((pc.flags & kFlagGather) != 0u)
                          ? load_u32(Ptr[kIdx] + (uint64_t)(pc.idx_off + m) * 4) : (pc.idx_off + m);
-    const float s = load_f32(Ptr[kQS] + ((uint64_t)src * blocks + blk) * 4);
-    const uint64_t qa = Ptr[kQ] + ((uint64_t)src * pc.k + (uint64_t)blk * 32) * 2;
-    const uint64_t xa = Ptr[kX] + ((uint64_t)m * pc.k + (uint64_t)blk * 32) * 2;
-    [unroll] for (uint i = 0; i < 32; ++i) {
-        const float v = f16tof32(load_u16(qa + (uint64_t)i * 2)) * s;
-        *(uint16_t*)(xa + (uint64_t)i * 2) = (uint16_t)f32tof16(v);
-    }
+    const float s = load_f32(Ptr[kQS] + ((uint64_t)src * (pc.k / kBlockK) + col / kBlockK) * 4);
+    const uint4 q = *(uint4*)(Ptr[kQ] + ((uint64_t)src * pc.k + col) * 2);
+    float v[kChunk];
+    [unroll] for (uint i = 0; i < kChunk; ++i) v[i] = f16tof32((q[i / 2] >> (16 * (i % 2))) & 0xFFFFu) * s;
+    *(uint4*)(Ptr[kX] + ((uint64_t)m * pc.k + col) * 2) = f16x8(v);
 }
 
 // pc.x_stride (0 = pc.k) is the SOURCE row stride and pc.x_col0 the source
 // column offset, so one group of a grouped linear (wo_a: 8 groups of 4,096
 // columns over one 32,768-wide row) stages its own slice of a wider plane.
 void stage_stage_f32(uint3 gid, uint tid) {
-    const uint blocks = pc.k / kBlockK;
+    const uint chunks = pc.k / kChunk;
     const uint idx = gid_linear(gid) * 32 + tid;
-    const uint m = idx / blocks, blk = idx % blocks;
+    const uint m = idx / chunks, col = (idx % chunks) * kChunk;
     if (m >= pc.n) return;
     const uint xs = (pc.x_stride == 0u) ? pc.k : pc.x_stride;
-    const uint64_t xa = Ptr[kQ] +
-        ((uint64_t)(pc.idx_off + m) * xs + (uint64_t)pc.x_col0 + (uint64_t)blk * 32) * 4;
-    const uint64_t ya = Ptr[kX] + ((uint64_t)m * pc.k + (uint64_t)blk * 32) * 2;
-    [unroll] for (uint i = 0; i < 32; ++i)
-        *(uint16_t*)(ya + (uint64_t)i * 2) = (uint16_t)f32tof16(load_f32(xa + (uint64_t)i * 4));
+    const uint64_t xa = Ptr[kQ] + ((uint64_t)(pc.idx_off + m) * xs + (uint64_t)pc.x_col0 + col) * 4;
+    const uint4 a = *(uint4*)xa, b = *(uint4*)(xa + 16);
+    float v[kChunk];
+    [unroll] for (uint i = 0; i < 4; ++i) { v[i] = asfloat(a[i]); v[4 + i] = asfloat(b[i]); }
+    *(uint4*)(Ptr[kX] + ((uint64_t)m * pc.k + col) * 2) = f16x8(v);
 }
 
 [shader("compute")]

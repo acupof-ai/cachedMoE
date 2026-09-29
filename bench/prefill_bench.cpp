@@ -416,7 +416,7 @@ int run_gemm(const Options& o) {
                     });
                     auto b = rig.timed([&](gpu::CommandBuffer& c) {
                         return rig.runner.record(c, *kx, &px, sizeof(px),
-                                                 static_cast<uint32_t>((uint64_t(nc) * (K / 32) + 31) / 32));
+                                                 gpu::PrefillRunner::stage_groups(nc, K));
                     });
                     auto m = rig.timed([&](gpu::CommandBuffer& c) {
                         return rig.runner.record(c, *km, &pm, sizeof(pm), nc / 32, mode ? R / 16 : 1);

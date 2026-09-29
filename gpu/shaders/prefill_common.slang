@@ -62,6 +62,13 @@ static const uint kFlagFromJob    = 128u; // weight decode: addresses from the j
 
 // --- addressing -------------------------------------------------------------
 uint4 load16(uint64_t a)    { return *(uint4*)a; }
+// Eight fp32 values as eight fp16 in one uint4, element i at byte 2i: the
+// layout eight 2-byte stores would have left.
+uint4 f16x8(float v[8]) {
+    uint4 o;
+    [unroll] for (uint w = 0; w < 4; ++w) o[w] = f32tof16(v[2 * w]) | (f32tof16(v[2 * w + 1]) << 16);
+    return o;
+}
 uint  load_u8(uint64_t a)   { return (uint)(*(uint8_t*)a); }
 uint  load_u16(uint64_t a)  { return (uint)(*(uint16_t*)a); }
 uint  load_u32(uint64_t a)  { return *(uint*)a; }

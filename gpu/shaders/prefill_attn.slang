@@ -28,7 +28,7 @@
 // docs/p4_prefill_speed.md §3):
 //
 // Stage 3  gather: G[b][t] = the KV row idx[b][t] names, as fp16 (zeros for
-//          -1). One thread per (query, entry). pc.n_idx = E, the entry stride
+//          -1). One thread per 8 dims of a (query, entry). pc.n_idx = E, the entry stride
 //          of G / S / P (a multiple of 16); pc.g = the index list's own stride
 //          (<= E): entries past it are -1.
 // Stage 4  softmax: from the tile scores S[b][h][t] (q.k, fp32 sums of fp16
@@ -222,28 +222,25 @@ void s_index_score(uint3 gid, uint tid) {
 
 // --- stage 3: gather ------------------------------------------------------------
 // kIdx [B][g] int32, kKv [n_win][hd] f32, kCmp [..][hd] f32, kO = G16 [B][E][hd].
+// A thread per 8 dims of a (query, entry) row: 32 bytes in, one 16-byte store
+// out, a wave covering a quarter of a row contiguously. A thread per row with
+// 2-byte stores was 10.5 s of a 17K prefill (STATUS §7 0x).
 void s_gather(uint3 gid, uint tid) {
+    const uint hd = pc.head_dim, chunks = hd / 8;
     const uint i = gid_linear(gid) * kWg + tid;
-    const uint b = i / pc.n_idx, t = i % pc.n_idx;
+    const uint row = i / chunks, d0 = (i % chunks) * 8;
+    const uint b = row / pc.n_idx, t = row % pc.n_idx;
     if (b >= pc.b) return;
     const int idx = (t < pc.g) ? load_i32(Ptr[kIdx] + ((uint64_t)b * pc.g + t) * 4) : -1;
-    const uint hd = pc.head_dim;
-    const uint64_t dst = Ptr[kO] + ((uint64_t)b * pc.n_idx + t) * hd * 2;
-    if (idx < 0) {
-        for (uint e = 0; e < hd; e += 16)
-            [unroll] for (uint q = 0; q < 16; ++q) *(uint16_t*)(dst + (uint64_t)(e + q) * 2) = 0;
-        return;
-    }
-    const uint64_t src = (uint(idx) < pc.n_win)
+    const uint64_t dst = Ptr[kO] + ((uint64_t)row * hd + d0) * 2;
+    if (idx < 0) { *(uint4*)dst = uint4(0, 0, 0, 0); return; }
+    const uint64_t src = ((uint(idx) < pc.n_win)
         ? Ptr[kKv]  + (uint64_t)uint(idx) * hd * 4
-        : Ptr[kCmp] + (uint64_t)(uint(idx) - pc.n_win) * hd * 4;
-    for (uint e = 0; e < hd; e += 16) {
-        [unroll] for (uint w = 0; w < 4; ++w) {
-            const uint4 a = load16(src + (uint64_t)(e + w * 4) * 4);
-            [unroll] for (uint j = 0; j < 4; ++j)
-                *(uint16_t*)(dst + (uint64_t)(e + w * 4 + j) * 2) = (uint16_t)f32tof16(asfloat(a[j]));
-        }
-    }
+        : Ptr[kCmp] + (uint64_t)(uint(idx) - pc.n_win) * hd * 4) + (uint64_t)d0 * 4;
+    const uint4 a = load16(src), c = load16(src + 16);
+    float v[8];
+    [unroll] for (uint j = 0; j < 4; ++j) { v[j] = asfloat(a[j]); v[4 + j] = asfloat(c[j]); }
+    *(uint4*)dst = f16x8(v);
 }
 
 // --- stage 4: softmax -----------------------------------------------------------

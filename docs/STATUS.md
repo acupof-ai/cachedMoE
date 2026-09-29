@@ -670,6 +670,23 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0x. **注意力的 gather 和两个 fp32/fp8→fp16 转换 stage 改成每个线程 8 个连续元素、16 字节读写，结果逐位不变：17,010 token 的 prefill 128.8 → 112.1 s（−13%），4,133 token 63.8 → 60.5 s（`prefill_bench`）。**
+   **问题**：三个 kernel 都是一个线程负责一整块（gather：一整行 512 维；`prefill_coopmat` stage 1 / 2：一个 32 元素块），然后逐个元素做 2 字节写入。一条 wave 指令的读和写分散在 32 条缓存行上。
+   模型给的数：17K 的 gather 10.5 s（22 GB/s，自己下限的 10.7 倍），q16 2.7 s（9.5 倍）。
+   **改法**：每个线程负责 8 个连续元素：一次或两次 16 字节读，按原来的公式逐个换算，再打包成一个 uint4 做一次 16 字节写（`f16x8`，放在 `prefill_common.slang`，元素 i 仍在第 2i 字节）。一条 wave 指令连续覆盖 512 字节。grid 的算法收进了 `PrefillRunner::stage_groups`，五个派发点共用，`groups_for32` 删掉。
+   **17K 的结果**：
+   - gather 10.5 → 1.02 s，227 GB/s，到了下限。
+   - q16 2.7 → 0.36 s。
+   - dense linear 和 MoE 的激活转换一起变快：wo_a（`coop 8192x4096`）1.29 → 0.78 s（4K），routed expert GPU 18.6 → 16.5 s（17K）。
+   **验证**：
+   - 首 token 的 margin 逐位相同（8.268 / 9.736）。
+   - `suite.gpu_prefill` 通过。
+   - `l3_ppl` off 0.622784。
+   - 新增一条变异：`f16x8` 每个字的高低半字对调。`gpu_prefill` 抓到了。
+   **现在的快照**：4K 60.5 s = 串行段 15.1 s + routed expert 45.4 s；17K 112.1 s = 串行段 65.2 s + 46.9 s。剩下按关键路径能赢的：
+   - 17K：串行段里让盘读 expert 30.4 s，注意力 20.8（P.V tiles 11.8 s，是它下限的 10 倍；score tiles 6.6 s，5.5 倍），dense linear 16.7，elem 8.7，host 5.3。
+   - 4K：串行段里让盘读 expert 17.7 s，注意力 5.1，dense linear 4.4。
+
 0w. **indexer 打分（`prefill_attn` stage 2）重写，结果逐位不变：17,010 token 的 prefill 147.5 → 128.8 s（−12.7%），4,133 token 65.0 → 63.8 s（`prefill_bench`）；这个 op 17.6 s → 0.48 s / 1.09 s → 0.03 s，从 0.21 升到 3.9 TFLOP/s。**
    **旧 kernel 慢在哪**：一个 workgroup 只算 1 个 query × 8 个 key，却要把这个 query 的整份 q（32 head × 128，16 KB）和 8 个 key 搬进 LDS，搬完才算 256 个点积。而且 32 个 lane 按 head 读 `gPool[h*128 + d]`，地址相隔 128 个 float，全落在同一个 bank 上，是 32 路冲突。17K 的时候，光是这样的 workgroup 就有 900 万个。
    **新写法**：一个 workgroup 负责（256 个 key，1 个 query）。
