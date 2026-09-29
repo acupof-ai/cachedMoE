@@ -283,7 +283,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 66 条）
+## 3. 试过并退掉的（编号，共 67 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -397,6 +397,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **65** | **批 engram（给 `EngramRunner` M 份行平面，把 M 次 submit+fence 塌成一次）**（Track BF，`p4_dspark_runtime.md` §8.5）——`p4_mgt1.md` §7 缺口 2 与 `p4_dspark_runtime.md` §7.1 第 2 条都把它列成待办，trace 也确实显示每行 3.3–3.6 ms 的 gap | 插桩之后：**12.7 ms 的 gap 里 13.1 ms 是行的 NVMe 读**（24 行 × M × 2 层），**不是 fence** | **不做（已归因，不是否定实验）**。批平面能省的只剩零头。真正的修法是 design §9.5 的**草稿预取**：草稿 token 一存在 engram 地址就已知，行可以在 verify 之前取——那是投机循环（M2）的改动，不是 `forward_batch` 的 |
 
 | **66** | **host 写 flag、device 自旋等它**（Track HG，`p4_hostflag_gate.md`）——48 关掉的是 **workgroup↔workgroup** 的握手；这一条换一个机制：一个 command buffer 装下整个 token，每层 gate kernel 之后接一个 **1-workgroup 的自旋 kernel 等 host 写的一个 uint**，依赖方向指向 device 调度域**之外**的 CPU 线程。新探针 `bench/probes/hostflag_probe.cpp` + `gpu/shaders/probe_hostflag.slang`：一个 cmdbuf 里 40 轮（= 40 层），自旋上限**用同一个循环标定成墙钟预算**，且 `rounds × cap` 夹在 **TDR packet 窗口**之下 | **机制成立**：2,500+ 个 command buffer，**零 TDR / 零 device 丢失 / 零 payload 错误**；**前进保证过了**——256 个背景 workgroup 常驻时自旋 workgroup **零超时**，**3998/4000 轮是「自旋之后才看到」**，即它**真的观察到了 kernel 已在跑之后 host 才写下的值**（**48 的失效模式不复现**）。**输在延迟，而且是双峰的**：p50 **3.6 µs**、p99 **5,598 µs**，中间几乎没有东西——host 只要没在自旋启动后的**几微秒**内答上来，这一轮就固定 **~5.5 ms**。1 ms 与 5 ms 两档服务时间**延迟完全一样**（5532 vs 5553）⇒ 不是一段延迟，是一个 **~5.5 ms 的固定刷新周期**。三个「是不是我们的锅」全部排除：host 补 `mfence` + 读回**无变化**；**专职热轮询线程无变化**（1 ms 档 5532.2 vs 5532.4）；按轮次拆开是**第 1 轮永远 ~5.06 ms、第 40 轮 mean 1.1–1.5 ms**。自旋方式 busy vs backoff **±1.5%，在噪声里** | **NO-GO，但关掉的是延迟不是合法性**（`bench/results/p4hg/hostflag_probe.csv`）。按 53 的式子 `40 × (400 − 实测)`：最乐观（空闲、host 0 延迟）**−23 ms/token**、背景 256 WG **−99**、现实（53 的分解表说一层 host 侧最少 95 µs）**−205**——**每一格都是负的，而热步一共才 102 ms**。**要重开它需要的不是代码，是那 5.5 ms 消失**：稳态 3.6 µs 若每层都拿得到，奖金是 **40 × (400 − 3.6) = 15.9 ms/token**，但前提是 host 要在**几微秒**内答完，而 decode 一层最少 95 µs、未命中层 8,780 µs（53）——**差两个数量级**。⚠️ **顺带一个陷阱**：用**原子**读 flag 是 **76/80 轮超时**——原子即使加 0 也是 read-modify-**WRITE**，它把那一行在 device 缓存里弄脏，host 的写从此进不来，回写时还可能把 host 的值盖掉。**要用 `globallycoherent` 的普通读。**⚠️ **48 的那句「自旋等待在这台机器上 NO-GO」要加限定**：只对 **workgroup↔workgroup** 成立 |
+| **67** | **dense GEMM 用 128 token 的块（`prefill_gemm_lds` wn=4，wm=2 / 4）**（2026-09-29，0ad 之后）——0ad 的注意力 tile 乘法取 128 行的块赢了 64 行的，顺手把三个大 dense GEMM（32768×1280、8192×4096、5120×8192）也换成 128 token 宽的块看 LDS 复用是不是不够 | 4K 单盘：dense linears 3.3 → **3.46 s**（wm=2）/ **3.85 s**（wm=4），`moe routed (gpu)` 7.1 → 7.37 / 7.85 s，总 50.7 → 51.4 / 51.7 s（`bench/results/linux/attn_lds/bench4k_single_wm2.txt`） | **NO-GO，`pf_lds_geo` 不动**：块越大每个 workgroup 的寄存器越多、常驻 wave 越少，dense 这种 token 块数本来就够多的场景占用率的损失大过 LDS 复用的收益；batched 的注意力只是因为一次派发本来就有 b × 块数个 workgroup 才不吃这个亏。要再往上得从 kernel 内部（double buffer、每 wave 的 tile 数）来，先建 GEMM 的 kernel 模型（0ae 之后的下一步） |
 
 ---
 
@@ -670,6 +671,16 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0ae. **indexer 的 top-k 上 GPU（`prefill_topk.slang`）：`prefill_bench` 17,010 token 85.8 → 80.4 s（−6%），4,133 token 51.5 → 50.7 s；双盘 70.0 → 64.7 s、35.2 → 34.85 s；serve 双盘 4,133 token 34.4 s、17,010 token 63.8 s（4,400 槽）。结果逐位不变。**
+   **问题**：0ad 快照里 17K 串行段上 `host: index top-k` 4.94 s / 107 次调用（模型第四位，全是 host 时间）：每层每个 query 从 GPU 读回 index 分数，host 做 nth_element 再传回 KV 行号；4K 是 0.64 s。
+   **改法**：一个 query 一个 workgroup（256 线程）：分数取顺序保持的 32 位键（−0 归一到 +0），4 趟 256 桶的 radix select（桶的后缀扫描倒着做）找出第 k 大的键和它之上的个数，然后按位置顺序压紧（`scan_wg`：WavePrefixSum + LDS 里的 wave 总数），并列在第 k 个分数上的只取位置最靠前的 r 个，跟 `gpu::Prefill::topk_rows` 的 nth_element 一模一样；可见位置 ≤ k 时走恒等路径。候选块 mask（`[b][nblocks]` 字节，第 20 层 host 算一次）作为第三个槽传进去。分数留在 GPU 上，只有第 20 层为了算候选块才读回一次。
+   **结果**（17K）：host top-k 4.94 s → `prefill_topk s0` 34 ms；`host: index score readback` 82 → 0.5 ms。4K 0.64 s → 4.7 ms。
+   **验证**：
+   - 首 token margin 逐位相同：8.598 / 10.108，oracle longctx 4K 8.4880。
+   - 新用例 `gpu_prefill.topk`：五种形状（恒等路径、并列分数、mask、window、ratio）对 `topk_rows` 逐个位置比，0 差异；`gpu_prefill` 七个用例、`suite.decode`、`l3_ppl` off 0.622784、CPU 闸 25/25、`run_all` 30/30。
+   - 两条变异：并列的第 k 个分数全取而不是取前 r 个；window 把 query 自己的位置扔掉。都被 `gpu_prefill.topk` 抓到。
+   **现在的快照**（单盘 / 双盘）：4K 50.7 / 34.85 s，17K 80.4 / 64.7 s；serve 双盘 34.4 / 63.8 s。17K 剩下的（模型，单盘）：串行段里让盘读 expert 26.3 s（双盘 10.5，要更大的 transit），dense linear 10.0，注意力 9.1，elem 4.7，routed GEMM 4.4。dense、routed、注意力三组都是几个 dispatch 合成的 op（decode、x16、tile、copy 各一次），模型只看到 op 的总和——下一步先给每个 dispatch 打时间戳、按 kernel 建模，再动 GEMM。
 
 0ad. **注意力的两个 tile 阶段（score、P.V）改走 `prefill_gemm_lds`：`prefill_bench` 17,010 token 97.7 → 85.8 s（−12%），4,133 token 54.6 → 51.5 s；双盘 81.7 → 70.0 s、38.2 → 35.2 s；serve 双盘 4,133 token 34.9 s、17,010 token 69.4 s（4,400 槽）。结果逐位不变。**
    **问题**：两份快照里 17K 的第一位。`prefill_coopmat` stage 3 / 4 一个 wave 一个 workgroup，每个 (query, 16 head) 各走一遍 G（每个 query 640 × 512 的 fp16 gathered KV），P.V 还要按 dim tile 再走 8 遍：score 1.9 TFLOP/s、P.V 1.1，是它们 DRAM 下限的 5.5 / 10 倍。

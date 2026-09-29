@@ -31,6 +31,7 @@
 #include <filesystem>
 #include <format>
 #include <limits>
+#include <random>
 #include <set>
 #include <span>
 #include <string>
@@ -945,6 +946,92 @@ DEEPMOE_TEST(gpu_prefill, forty_layers) {
     std::printf("    free-running: %u/%u before divergence\n", matched, ds->steps());
     CHECK(forced * 8 >= ds->steps() * 7);
     std::filesystem::remove_all(tmp);
+}
+
+// gpu_prefill.topk
+// ----------------
+// prefill_topk.slang against Prefill::topk_rows, bit for bit, on rows built to
+// hit every branch: queries that see fewer positions than k (the identity),
+// more (the radix select), scores quantised so ties are common (the position
+// tie-break), a block mask with -inf blocks (and fewer live positions than k),
+// and a row of over 4,096 positions (several scan chunks).
+DEEPMOE_TEST(gpu_prefill, topk) {
+    gpu::Device dev;
+    if (auto r = dev.create(); !r) {
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill.topk: %s\n", r.error().str().c_str());
+        return;
+    }
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(dev, MemoryPath::DeviceLocalHostVisible));
+    gpu::PrefillRunner runner;
+    REQUIRE_OK(runner.create(dev, alloc, gpu::default_shader_dir()));
+    auto k = runner.kernel({"prefill_topk", 0});
+    REQUIRE_OK(k);
+    std::mt19937 rng(7);
+    struct Case { uint32_t b, g, window, pos0, kv_pos0, n_kv_rows, ratio, k, block, levels; bool mask; };
+    const Case cases[] = {
+        {64, 32, 128, 0, 0, 64, 2, 512, 8, 1000, false},        // every query sees < k: the identity
+        {48, 2066, 128, 4000, 0, 4133, 2, 512, 8, 1000, false}, // the select, few ties
+        {48, 2066, 128, 4000, 0, 4133, 2, 512, 8, 7, false},    // seven distinct scores: ties everywhere
+        {48, 2066, 128, 4000, 0, 4133, 2, 512, 8, 50, true},    // a block mask; some rows keep < k
+        {8, 9000, 128, 17000, 0, 17010, 1, 512, 8, 300, true},  // > 4,096 positions a row
+    };
+    for (const Case& c : cases) {
+        const uint32_t nw = std::min(c.n_kv_rows, c.window), n_idx = nw + c.k;
+        const uint32_t nblocks = (c.g + c.block - 1) / c.block;
+        std::vector<float> scores(size_t(c.b) * c.g);
+        std::uniform_int_distribution<int> lv(0, int(c.levels) - 1);
+        for (float& v : scores) v = (float(lv(rng)) - 2.0f) * 0.37f;   // negatives, zeros and positives
+        std::vector<uint8_t> mask(size_t(c.b) * nblocks, 1);
+        std::vector<std::vector<uint8_t>> keep(c.b);
+        if (c.mask) {
+            std::uniform_int_distribution<int> coin(0, 9);
+            for (uint32_t j = 0; j < c.b; ++j) {
+                if (j % 5 == 0) continue;                       // an identity row
+                keep[j].assign(nblocks - (j % 3), 0);           // a list shorter than the blocks
+                for (uint32_t blk = 0; blk < keep[j].size(); ++blk) keep[j][blk] = coin(rng) < (j % 2 ? 1 : 6);
+                for (uint32_t blk = 0; blk < nblocks; ++blk)
+                    mask[size_t(j) * nblocks + blk] = blk < keep[j].size() ? keep[j][blk] : 0;
+            }
+        }
+        // the host reference, on scores masked the way run_layer masks them
+        std::vector<float> ref_scores(scores);
+        if (c.mask)
+            for (uint32_t j = 0; j < c.b; ++j) {
+                if (keep[j].empty()) continue;
+                for (uint32_t i = 0; i < c.g; ++i)
+                    if (i / c.block >= keep[j].size() || !keep[j][i / c.block])
+                        ref_scores[size_t(j) * c.g + i] = -std::numeric_limits<float>::infinity();
+            }
+        std::vector<int32_t> ref(size_t(c.b) * n_idx, 7);
+        gpu::Prefill::topk_rows(c.b, c.pos0, c.kv_pos0, c.n_kv_rows, c.window, c.ratio, c.g, c.k,
+                                ref_scores.data(), ref.data(), n_idx);
+        auto bs = alloc.allocate(scores.size() * 4, true, true);
+        auto bo = alloc.allocate(ref.size() * 4, true, true);
+        auto bm = alloc.allocate(mask.size(), true, true);
+        REQUIRE_OK(bs); REQUIRE_OK(bo); REQUIRE_OK(bm);
+        std::memcpy(bs->host_ptr, scores.data(), scores.size() * 4);
+        std::memcpy(bm->host_ptr, mask.data(), mask.size());
+        std::memset(bo->host_ptr, 0x55, ref.size() * 4);
+        uint64_t* s = runner.slots(*k);
+        s[0] = bs->dev_addr; s[1] = bo->dev_addr; s[2] = bm->dev_addr;
+        gpu::PfTopkPush p;
+        p.b = c.b; p.g = c.g; p.n_idx = n_idx; p.window = c.window; p.pos0 = c.pos0; p.kv_pos0 = c.kv_pos0;
+        p.n_kv_rows = c.n_kv_rows; p.ratio = c.ratio; p.block = c.block; p.nblocks = nblocks;
+        p.flags = c.mask ? 1u : 0u;
+        REQUIRE_OK(runner.dispatch_now(*k, &p, sizeof(p), c.b));
+        const int32_t* got = static_cast<const int32_t*>(bo->host_ptr);
+        size_t diff = 0, first = ref.size();
+        for (size_t i = 0; i < ref.size(); ++i)
+            if (got[i] != ref[i]) { if (!diff) first = i; ++diff; }
+        std::printf("    b %u g %u levels %u%s: %zu of %zu entries differ", c.b, c.g, c.levels,
+                    c.mask ? " masked" : "", diff, ref.size());
+        if (diff) std::printf(" (first at row %zu col %zu: %d vs %d)", first / n_idx, first % n_idx,
+                              got[first], ref[first]);
+        std::printf("\n");
+        CHECK_EQ(diff, size_t(0));
+        alloc.free(*bs); alloc.free(*bo); alloc.free(*bm);
+    }
 }
 
 // gpu_prefill.read_ahead

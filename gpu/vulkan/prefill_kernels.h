@@ -209,6 +209,11 @@ struct PfElemPush {
     float    eps = 0.0f, f1 = 0.0f;
     uint32_t pos0 = 0, pos_step = 1, row_off = 0;
 };
+struct PfTopkPush {
+    uint32_t b = 0, g = 0, n_idx = 0, window = 0, pos0 = 0, kv_pos0 = 0, n_kv_rows = 0, ratio = 1;
+    uint32_t block = 0, nblocks = 0, flags = 0, pad = 0;   // flags & 1: a block mask
+};
+
 struct PfAttnPush {
     uint32_t b = 0, n_idx = 0, n_heads = 0, head_dim = 0, n_win = 0, g = 0;
     float    scale = 1.0f;
@@ -274,6 +279,10 @@ struct PrefillConfig {
     // of reading all n x 384 gate scores back and sorting them on the host.
     // false = the host path, which is the correctness reference.
     bool     gate_topk_gpu = true;
+    // The indexer's top-k rows on the GPU (prefill_topk.slang) instead of a
+    // partial_sort per query on the host after reading the scores back. Same
+    // rows bit for bit; false = the host path, which is the reference.
+    bool     index_topk_gpu = true;
     // 16-token tiles per workgroup of the cooperative-matrix GEMM
     // (prefill_coopmat stage 0's CmTokTiles, 1..8). The weight tile is loaded
     // once per workgroup and reused by every token tile it holds, so the WEIGHT
@@ -512,6 +521,9 @@ private:
                          bool shared = true, bool routed = true);
     Result<void> engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out);
     Result<void> read_ahead(uint32_t L);
+    Result<void> op_topk_rows(uint32_t b, uint32_t pos0, uint32_t kv_pos0, uint32_t n_kv_rows,
+                              uint32_t window, uint32_t ratio, uint32_t g, uint32_t n_idx,
+                              uint64_t scores, uint64_t out, uint64_t mask, uint32_t nblocks);
     Result<void> op_copy(uint64_t src, uint64_t dst, uint64_t bytes);
     Result<void> read_expert(uint32_t L, uint32_t e, const ExpertEntry& ent, std::byte* dst,
                              IoPriority pri, std::vector<std::future<storage::IoResult>>& futs,
@@ -555,7 +567,7 @@ private:
         GpuBuffer h_a, h_b, h_in_copy, x, rs, mix_raw, mix_a, mix_f, mix_prev, xq, xs;
         GpuBuffer kv_raw, kv_norm, kv;
         GpuBuffer ckv, cscore, latent_pre, latent, key_raw, key_norm;
-        GpuBuffer qr_raw, qr, qrq, qrs, q, iq, iw, iscore, idx, score, o, woa, woaq, woas, attn;
+        GpuBuffer qr_raw, qr, qrq, qrs, q, iq, iw, iscore, idx, cmask, score, o, woa, woaq, woas, attn;
         GpuBuffer fx, fxq, fxs, gate, gids, gwts, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
         GpuBuffer x16, h16, gu, dout, w16;          // the cooperative-matrix MoE
         GpuBuffer eng_x, eng_xq, eng_xs, eng_kv;

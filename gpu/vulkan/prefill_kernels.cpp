@@ -348,6 +348,8 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         {&b_.iq, B * cfg.index_n_heads * cfg.index_head_dim * 4},
         {&b_.iw, B * cfg.index_n_heads * 4}, {&b_.iscore, B * N * 4},
         {&b_.idx, B * n_idx * 4},
+        // a query block's candidate-block mask, a byte per block of this prompt
+        {&b_.cmask, cfg.candidate_block_size ? B * ((N + cfg.candidate_block_size - 1) / cfg.candidate_block_size) : 0},
         {&b_.score, B * cfg.num_attention_heads * ((n_idx + 15) / 16 * 16) * 4},
         {&b_.o, B * cfg.num_attention_heads * hd * 4},
         {&b_.woa, B * cfg.o_groups * cfg.o_lora_rank * 4},
@@ -750,6 +752,21 @@ Result<void> Prefill::op_engram_gate(uint64_t h, uint64_t kv, uint64_t qw, uint6
     p.eps = static_cast<float>(cfg_->rms_norm_eps); p.f1 = 1e-6f;
     cost_ = {0, double(n) * p.d * (3 * kHc + 1) * 4};
     return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * kHc * 32));   // a wave per plane
+}
+
+Result<void> Prefill::op_topk_rows(uint32_t b, uint32_t pos0, uint32_t kv_pos0, uint32_t n_kv_rows,
+                                   uint32_t window, uint32_t ratio, uint32_t g, uint32_t n_idx,
+                                   uint64_t scores, uint64_t out, uint64_t mask, uint32_t nblocks) {
+    auto k = runner_->kernel({"prefill_topk", 0});
+    if (!k) return std::unexpected(k.error());
+    uint64_t* s = runner_->slots(*k);
+    s[0] = scores; s[1] = out; s[2] = mask;
+    PfTopkPush p;
+    p.b = b; p.g = g; p.n_idx = n_idx; p.window = window; p.pos0 = pos0; p.kv_pos0 = kv_pos0;
+    p.n_kv_rows = n_kv_rows; p.ratio = ratio; p.block = cfg_->candidate_block_size; p.nblocks = nblocks;
+    p.flags = mask ? 1u : 0u;
+    cost_ = {0, double(b) * g * 4 * 5 + double(b) * n_idx * 4};   // four histogram passes and the select
+    return flush_one(*k, &p, sizeof(p), b);
 }
 
 Result<void> Prefill::op_copy(uint64_t src, uint64_t dst, uint64_t bytes) {
@@ -1736,22 +1753,44 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
                            static_cast<float>(1.0 / std::sqrt(double(ihd)) / std::sqrt(double(ih)))));
             PF_TRY(op_index_score(b_.iq.dev_addr, sources_[key_src_].keys.dev_addr, G,
                                   b_.iw.dev_addr, b_.iscore.dev_addr, nb, ratio, qpos));
-            auto th = Clk::now();
-            scores_host.resize(size_t(nb) * G);
-            std::memcpy(scores_host.data(), b_.iscore.host_ptr, scores_host.size() * sizeof(float));
-            host_op("host: index score readback", th);
             // design §2.1's two-level top-k: layer 20 picks candidate blocks,
             // the later index layers score only inside them. The identity for
             // every query that can reach <= topk_blocks blocks (§1).
-            if (c.candidate_block_size && c.candidate_topk_blocks) {
+            const bool blocks = c.candidate_block_size && c.candidate_topk_blocks;
+            const bool pick = blocks && L == c.candidate_source_layer_id;
+            const bool masked = blocks && L > c.candidate_source_layer_id && cand_.size() == A;
+            const uint32_t bsz = c.candidate_block_size;
+            auto th = Clk::now();
+            if (!pcfg_.index_topk_gpu || pick) {
+                scores_host.resize(size_t(nb) * G);
+                std::memcpy(scores_host.data(), b_.iscore.host_ptr, scores_host.size() * sizeof(float));
+                host_op("host: index score readback", th);
+            }
+            if (pick) {
                 th = Clk::now();
-                if (L == c.candidate_source_layer_id) {
-                    if (b0 == 0) cand_.assign(A, {});
-                    auto kb = candidate_blocks(nb, qpos, ratio, G, scores_host.data(),
-                                               c.candidate_topk_blocks, c.candidate_block_size);
-                    for (uint32_t j = 0; j < nb; ++j) cand_[b0 + j] = std::move(kb[j]);
-                } else if (L > c.candidate_source_layer_id && cand_.size() == A) {
-                    const uint32_t bsz = c.candidate_block_size;
+                if (b0 == 0) cand_.assign(A, {});
+                auto kb = candidate_blocks(nb, qpos, ratio, G, scores_host.data(),
+                                           c.candidate_topk_blocks, bsz);
+                for (uint32_t j = 0; j < nb; ++j) cand_[b0 + j] = std::move(kb[j]);
+                host_op("host: candidate blocks", th);
+            }
+            if (pcfg_.index_topk_gpu) {
+                // the block's mask: a row's blocks past its list are out, an empty list keeps all
+                const uint32_t W = masked ? (G + bsz - 1) / bsz : 0;
+                if (masked) {
+                    auto* m = static_cast<uint8_t*>(b_.cmask.host_ptr);
+                    for (uint32_t j = 0; j < nb; ++j) {
+                        const std::vector<uint8_t>& keep = cand_[b0 + j];
+                        for (uint32_t blk = 0; blk < W; ++blk)
+                            m[size_t(j) * W + blk] = keep.empty() ? 1 : blk < keep.size() ? keep[blk] : 0;
+                    }
+                }
+                PF_TRY(op_topk_rows(nb, qpos, apos0, A, win, ratio, G, n_idx, b_.iscore.dev_addr,
+                                    b_.idx.dev_addr, masked ? b_.cmask.dev_addr : 0, W));
+                std::memcpy(idx_host.data(), b_.idx.host_ptr, idx_host.size() * sizeof(int32_t));
+            } else {
+                if (masked) {
+                    th = Clk::now();
                     for (uint32_t j = 0; j < nb; ++j) {
                         const std::vector<uint8_t>& keep = cand_[b0 + j];
                         if (keep.empty()) continue;
@@ -1760,13 +1799,14 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
                             if (i / bsz >= keep.size() || !keep[i / bsz])
                                 sr[i] = -std::numeric_limits<float>::infinity();
                     }
+                    host_op("host: candidate blocks", th);
                 }
-                host_op("host: candidate blocks", th);
+                th = Clk::now();
+                topk_rows(nb, qpos, apos0, A, win, ratio, G, c.index_topk, scores_host.data(),
+                          idx_host.data(), n_idx);
+                host_op("host: index top-k", th);
+                std::memcpy(b_.idx.host_ptr, idx_host.data(), idx_host.size() * sizeof(int32_t));
             }
-            th = Clk::now();
-            topk_rows(nb, qpos, apos0, A, win, ratio, G, c.index_topk, scores_host.data(),
-                      idx_host.data(), n_idx);
-            host_op("host: index top-k", th);
             for (uint32_t j = 0; j < nb; ++j)
                 std::memcpy(topk_shared_.data() + size_t(b0 + j) * k,
                             idx_host.data() + size_t(j) * n_idx + nw, size_t(k) * sizeof(int32_t));
@@ -1781,8 +1821,8 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
                     std::memcpy(idx_host.data() + size_t(j) * n_idx + nw,
                                 topk_shared_.data() + size_t(b0 + j) * k, size_t(k) * sizeof(int32_t));
             }
+            std::memcpy(b_.idx.host_ptr, idx_host.data(), idx_host.size() * sizeof(int32_t));
         }
-        std::memcpy(b_.idx.host_ptr, idx_host.data(), idx_host.size() * sizeof(int32_t));
         if (b0 + nb == A) {
             // in the reference's numbering: window = absolute positions,
             // compressed = row + N (identical to ours in oracle mode)
