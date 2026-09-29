@@ -426,7 +426,11 @@ private:
         v.addr = moe_out_addr();
         return v;
     }
-    Result<void> record_ced(gpu::CommandBuffer& cmd, const LayerStep& s);
+    // One traced dispatch of the M = 1 chain, no barrier after it.
+    Result<void> record(gpu::CommandBuffer& cmd, const LayerStep& s, trace::Cls cls,
+                        gpu::AttnStage stage, const void* push, uint32_t bytes, uint32_t groups);
+    // The compressor's and the indexer's part of record_attention's wave `wave`.
+    Result<void> record_ced(gpu::CommandBuffer& cmd, const LayerStep& s, uint32_t wave);
 
     gpu::Device*      device_ = nullptr;
     gpu::AttnRunner*  runner_ = nullptr;

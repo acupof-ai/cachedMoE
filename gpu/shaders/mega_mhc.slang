@@ -25,16 +25,19 @@
 //    transcribed from `hc_split_sinkhorn_kernel` and must not gain a trailing
 //    row normalise.
 // 3. The 1.97 MB of hc_fn cannot go through one workgroup, and the two RMS
-//    statistics are whole-vector reductions, so this is three dispatches of
-//    one pipeline rather than the single dispatch design §7.2 assumed. At the
-//    0.66 us per dispatch kernel_p1.md §3.4 measured that is 1.3 us a layer.
+//    statistics are whole-vector reductions, so this is four dispatches of
+//    one pipeline rather than the single dispatch design §7.2 assumed.
 //
 // Stage 0  dim/256 workgroups: hc_post, hc_pre, and the two partial sums of
 //          squares. Writes x' and the un-normalised u.
 // Stage 1  mix_rows workgroups, one per row of hc_fn: one 20480-wide dot
 //          product against x', scaled by the first RMS statistic.
-// Stage 2  dim/256 workgroups again: the RMSNorm of u, with Sinkhorn riding
-//          along on workgroup 0.
+// Stage 2  dim/256 workgroups again: the RMSNorm of u, the sublayer's input.
+// Stage 3  one workgroup: Sinkhorn over stage 1's mixes.
+//
+// Only stage 0 is on the sublayer's critical path to its input: stage 2 needs
+// nothing from stage 1, and the mixes stages 1 and 3 make are for the NEXT
+// sublayer, so the decode chain runs them under the sublayer's first GEMVs.
 
 #include "attn_common.slang"
 
@@ -55,9 +58,6 @@ struct MhcPush {
     uint  n_wg0;        // workgroups stage 0 used, = dim / 256
     uint  sinkhorn_iters;
     // bit 0: apply hc_post (0 = x' is x, which is the very first sublayer)
-    // bit 1: skip Sinkhorn -- the final collapse before the head (§7.11) wants
-    //        hc_pre + RMSNorm and nothing else, and its caller does not
-    //        dispatch stage 1 at all, so MixRaw would be stale.
     uint  flags;
     float norm_eps;     // 1e-20
     float hc_eps;       // 1e-6
@@ -132,7 +132,7 @@ void stage_mix(uint row, uint tid) {
 
 // `hc_split_sinkhorn_kernel`, transcribed. The loop ends on a column
 // normalise; see the header.
-void sinkhorn(uint tid) {
+void stage_sinkhorn(uint tid) {
     if (tid != 0) return;
     const uint64_t mr = Ptr[kMixRaw], bs = Ptr[kHcBase], sc = Ptr[kHcScale], out = Ptr[kMixOut];
     const float s0 = load_f32(sc), s1 = load_f32(sc + 4), s2 = load_f32(sc + 8);
@@ -188,8 +188,7 @@ void sinkhorn(uint tid) {
 
 // Stage 2 runs over the same dim/256 grid as stage 0 -- one element per thread,
 // not 20 per thread in a single workgroup, which is what made it the slowest
-// dispatch in the layer. Sinkhorn rides along on workgroup 0's first lane: it
-// needs only MixRaw, which stage 1 has already published.
+// dispatch in the layer.
 void stage_final(uint gid, uint tid) {
     const float rs = rsqrt(scratch_sum(256, tid) / float(pc.dim) + pc.norm_eps);
     const uint d = gid * kWg + tid;
@@ -201,7 +200,6 @@ void stage_final(uint gid, uint tid) {
         *(float*)(Ptr[kU] + (uint64_t)d * 4) =
             bf16_round(w * load_f32(Ptr[kUtmp] + (uint64_t)d * 4) * rs);
     }
-    if (gid == 0 && (pc.flags & 2u) == 0u) sinkhorn(tid);
 }
 
 [shader("compute")]
@@ -209,5 +207,6 @@ void stage_final(uint gid, uint tid) {
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     if (Stage == 0)      stage_post(gid.x, tid);
     else if (Stage == 1) stage_mix(gid.x, tid);
-    else                 stage_final(gid.x, tid);
+    else if (Stage == 2) stage_final(gid.x, tid);
+    else                 stage_sinkhorn(tid);
 }

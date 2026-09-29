@@ -416,8 +416,9 @@ int main(int argc, char** argv) {
         s[gpu::slot::kXout] = Xout.addr;   s[gpu::slot::kUtmp] = Utmp.addr;
         s[gpu::slot::kScratch] = Scr.addr; s[gpu::slot::kMixRaw] = MixR.addr;
         s[gpu::slot::kMixOut] = MixO.addr; s[gpu::slot::kU] = U.addr;
-        std::memcpy(runner.slots(gpu::AttnStage::MhcMix), s, gpu::kAttnStageStride);
-        std::memcpy(runner.slots(gpu::AttnStage::MhcFinal), s, gpu::kAttnStageStride);
+        for (gpu::AttnStage t : {gpu::AttnStage::MhcMix, gpu::AttnStage::MhcFinal,
+                                 gpu::AttnStage::MhcSinkhorn})
+            std::memcpy(runner.slots(t), s, gpu::kAttnStageStride);
     };
     const uint64_t hcfn_bytes = uint64_t((2 + d.hc) * d.hc) * hcdim * 4;
     rows.push_back(run("mega_mhc.post", gpu::AttnStage::MhcPost, uint64_t(hcdim) * 4 * 2,
@@ -426,6 +427,8 @@ int main(int argc, char** argv) {
                        mhc_slots, &mp, sizeof mp, mp.mix_rows));
     rows.push_back(run("mega_mhc.final", gpu::AttnStage::MhcFinal, uint64_t(d.dim) * 4 * 2,
                        mhc_slots, &mp, sizeof mp, mp.n_wg0));
+    rows.push_back(run("mega_mhc.sinkhorn", gpu::AttnStage::MhcSinkhorn, 0,
+                       mhc_slots, &mp, sizeof mp, 1));
 
     // --- wq_a -----------------------------------------------------------
     gpu::GemvPush qa{d.q_lora, d.dim, d.dim / 32, 0};

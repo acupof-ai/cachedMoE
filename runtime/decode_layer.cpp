@@ -186,7 +186,7 @@ namespace {
 // copied. The only per-half differences are the hc_fn / base / scale triple,
 // the norm weight and which of the two mix buffers is the output.
 void bind_mhc(gpu::AttnRunner& runner, gpu::AttnStage post, gpu::AttnStage mix,
-              gpu::AttnStage final_, const DecodeScratch& b,
+              gpu::AttnStage final_, gpu::AttnStage sinkhorn, const DecodeScratch& b,
               uint64_t hc_fn, uint64_t hc_base, uint64_t hc_scale, uint64_t norm_w,
               const gpu::GpuScratch::View& mix_in, const gpu::GpuScratch::View& mix_out,
               const gpu::GpuScratch::View& a_in,
@@ -211,8 +211,8 @@ void bind_mhc(gpu::AttnRunner& runner, gpu::AttnStage post, gpu::AttnStage mix,
     s[gpu::slot::kMixRaw]  = b.mix_raw.addr;
     s[gpu::slot::kMixOut]  = mix_out.addr;
     s[gpu::slot::kU]       = u_addr;
-    std::memcpy(runner.slots(mix), s, gpu::kAttnStageStride);
-    std::memcpy(runner.slots(final_), s, gpu::kAttnStageStride);
+    for (gpu::AttnStage t : {mix, final_, sinkhorn})
+        std::memcpy(runner.slots(t), s, gpu::kAttnStageStride);
 }
 
 }  // namespace
@@ -244,7 +244,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     // adds each layer's attention output to the stream twice and drops its MoE
     // output entirely, which decodes to the input token over and over.
     bind_mhc(*runner_, gpu::AttnStage::MhcPost, gpu::AttnStage::MhcMix,
-             gpu::AttnStage::MhcFinal, b,
+             gpu::AttnStage::MhcFinal, gpu::AttnStage::MhcSinkhorn, b,
              w.hc_attn_fn, w.hc_attn_base, w.hc_attn_scale, w.attn_norm,
              b.mix_a, b.mix_b, moe_view(), b.x, b.xout, b.u.addr);
     // FFN half: reads the stream the attention half wrote, folds in wo_b's
@@ -252,7 +252,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     // reads all hc copies of its own element before writing any -- but keeping
     // the two apart makes a layer-at-a-time validator able to look at both.
     bind_mhc(*runner_, gpu::AttnStage::MhcPostB, gpu::AttnStage::MhcMixB,
-             gpu::AttnStage::MhcFinalB, b,
+             gpu::AttnStage::MhcFinalB, gpu::AttnStage::MhcSinkhornB, b,
              w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
              b.mix_b, b.mix_a, b.wob, b.xout, b.x, ffn_in_addr());
     // Closing hc_post: the MoE output into the stream. In the token loop this
@@ -265,7 +265,7 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
     // here would hand that close this layer's hc_ffn weights.
     if (st.bind_close)
         bind_mhc(*runner_, gpu::AttnStage::MhcClose, gpu::AttnStage::MhcClose,
-                 gpu::AttnStage::MhcClose, b,
+                 gpu::AttnStage::MhcClose, gpu::AttnStage::MhcClose, b,
                  w.hc_ffn_fn, w.hc_ffn_base, w.hc_ffn_scale, w.ffn_norm,
                  b.mix_a, b.mix_b, moe_view(), b.x, b.xout, b.u.addr);
 
@@ -496,50 +496,61 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
                                     std::min(c.index_topk, st.n_cmp), n_kv));
     }
 
+    // Each dispatch reads what the one before it wrote, so a barrier follows
+    // it -- except inside the projection waves below, whose dispatches read
+    // only what earlier waves wrote: `put` leaves the barrier to the wave.
+    auto put = [&](gpu::AttnStage s, const void* push, uint32_t bytes, uint32_t groups) {
+        return record(cmd, st, trace::Cls::Attention, s, push, bytes, groups);
+    };
     auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
                     uint32_t groups) -> Result<void> {
-        const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer),
-                                                 trace::Cls::Attention, uint16_t(s),
-                                                 gpu::attn_stage_name(s));
-        if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
-        trace::close_dispatch(tracer_, tr);
+        if (auto r = put(s, push, bytes, groups); !r) return r;
         return cmd.barrier();
     };
 
-    // 1. mega-mHC, attention half. hc_post is applied here for every layer but
-    //    the first sublayer of a sequence, where there is no sublayer output
-    //    to fold in yet (design §7.7).
+    // 1. mega-mHC, attention half: hc_post and the RMSNorm that makes u. hc_post
+    //    is applied here for every layer but the first sublayer of a sequence,
+    //    where there is no sublayer output to fold in yet (design §7.7). The
+    //    mixes for the FFN half ride in the projection waves below.
     gpu::MhcPush mp{dim, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
                     c.hc_sinkhorn_iters,
                     st.apply_hc_post ? gpu::kMhcFlagPost : 0u,
                     static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
     if (auto r = step(gpu::AttnStage::MhcPost, &mp, sizeof mp, n_wg0); !r) return r;
-    if (auto r = step(gpu::AttnStage::MhcMix, &mp, sizeof mp, mp.mix_rows); !r) return r;
     if (auto r = step(gpu::AttnStage::MhcFinal, &mp, sizeof mp, n_wg0); !r) return r;
 
-    // 2-3. Q path.
+    // 2-4. The projections, in three waves with one barrier each. Wave 0
+    //      reads only the normed stream u: wq_a, wkv, and on the layers that
+    //      have them (design §7.4) the compressor's projections and the
+    //      indexer's head weights -- and the FFN half's mixes, from the stream.
+    //      Wave 1 reads only wave 0's outputs: wq_b, the ring write, Sinkhorn,
+    //      the compressor's pooling, the indexer's wq_b. Wave
+    //      2 only wave 1's: the index key, the indexer's q finish and the
+    //      compressed-cache write. The small single-workgroup dispatches go
+    //      first in a wave and run under wq_a and wq_b, instead of each after
+    //      its own barrier. Then the indexer's scoring chain (wave 3).
     gpu::GemvPush qa{c.q_lora_rank, dim, dim / 32, 0};
-    if (auto r = step(gpu::AttnStage::WqA, &qa, sizeof qa,
-                      runner_->gemv_groups(gpu::AttnStage::WqA, c.q_lora_rank)); !r) return r;
     gpu::WqbPush qb{qrows, c.q_lora_rank, c.q_lora_rank / 32, c.head_dim,
                     c.qk_rope_head_dim, static_cast<float>(c.rms_norm_eps)};
-    if (auto r = step(gpu::AttnStage::WqB, &qb, sizeof qb,
-                      runner_->gemv_groups(gpu::AttnStage::WqB, qrows)); !r) return r;
-
-    // 4. KV path and the ring write.
     const uint32_t kvg = runner_->gemv_groups(gpu::AttnStage::WkvGemv, c.head_dim);
     gpu::WkvPush kp{c.head_dim, dim, dim / 32, c.qk_rope_head_dim,
                     st.position % c.sliding_window, kvg,
                     static_cast<float>(c.rms_norm_eps)};
-    if (auto r = step(gpu::AttnStage::WkvGemv, &kp, sizeof kp, kvg); !r) return r;
-    if (auto r = step(gpu::AttnStage::WkvFinish, &kp, sizeof kp, 1); !r) return r;
-
-    // 4b. design §7.4: the compressor and the indexer, on the four and eight
-    //     layers that have them. `Attention.forward` runs them between the
-    //     window-KV write and sparse_attn, and the order matters: the indexer
-    //     needs the compressor's PRE-RoPE latent, which is why the cache write
-    //     that rotates it comes last.
-    if (auto r = record_ced(cmd, st); !r) return r;
+    if (auto r = record_ced(cmd, st, 0); !r) return r;
+    if (auto r = put(gpu::AttnStage::MhcMix, &mp, sizeof mp, mp.mix_rows); !r) return r;
+    if (auto r = put(gpu::AttnStage::WkvGemv, &kp, sizeof kp, kvg); !r) return r;
+    if (auto r = put(gpu::AttnStage::WqA, &qa, sizeof qa,
+                     runner_->gemv_groups(gpu::AttnStage::WqA, c.q_lora_rank)); !r) return r;
+    if (auto r = cmd.barrier(); !r) return r;
+    if (auto r = record_ced(cmd, st, 1); !r) return r;
+    if (auto r = put(gpu::AttnStage::MhcSinkhorn, &mp, sizeof mp, 1); !r) return r;
+    if (auto r = put(gpu::AttnStage::WkvFinish, &kp, sizeof kp, 1); !r) return r;
+    if (auto r = put(gpu::AttnStage::WqB, &qb, sizeof qb,
+                     runner_->gemv_groups(gpu::AttnStage::WqB, qrows)); !r) return r;
+    if (auto r = cmd.barrier(); !r) return r;
+    if (auto r = record_ced(cmd, st, 2); !r) return r;
+    if (auto r = cmd.barrier(); !r) return r;
+    if (auto r = record_ced(cmd, st, 3); !r) return r;
 
     // 5. Sparse attention over the window plus the compressed picks.
     if (attn_cm_on() && runner_->has_attn_cm()) {
@@ -586,21 +597,23 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     }
 
     // 8. mega-mHC, FFN half: hc_post folds the attention output into the
-    //    stream and the mixes for the FFN come out of the same dispatch.
+    //    stream, then the FFN input.
     gpu::MhcPush fp = mp;
     fp.flags = gpu::kMhcFlagPost;
     if (auto r = step(gpu::AttnStage::MhcPostB, &fp, sizeof fp, n_wg0); !r) return r;
-    if (auto r = step(gpu::AttnStage::MhcMixB, &fp, sizeof fp, mp.mix_rows); !r) return r;
     if (auto r = step(gpu::AttnStage::MhcFinalB, &fp, sizeof fp, n_wg0); !r) return r;
 
-    // 9. Gate. Its output lands in host-coherent memory so the planner can read
-    //    ids[] without a fence (design §7.8).
+    // 9. Gate, with the next layer's mixes beside it. Its output lands in
+    //    host-coherent memory so the planner can read ids[] without a fence
+    //    (design §7.8).
     gpu::GatePush gp{c.n_routed_experts, dim, c.num_experts_per_tok, 16, 1.0f,
                      static_cast<float>(c.routed_scaling_factor)};
-    if (auto r = step(gpu::AttnStage::GateScore, &gp, sizeof gp,
-                      runner_->gemv_groups(gpu::AttnStage::GateScore, c.n_routed_experts)); !r)
+    if (auto r = put(gpu::AttnStage::GateScore, &gp, sizeof gp,
+                     runner_->gemv_groups(gpu::AttnStage::GateScore, c.n_routed_experts)); !r)
         return r;
-    return step(gpu::AttnStage::GateTopK, &gp, sizeof gp, 1);
+    if (auto r = step(gpu::AttnStage::MhcMixB, &fp, sizeof fp, mp.mix_rows); !r) return r;
+    if (auto r = put(gpu::AttnStage::GateTopK, &gp, sizeof gp, 1); !r) return r;
+    return step(gpu::AttnStage::MhcSinkhornB, &fp, sizeof fp, 1);
 }
 
 // A decode step needs at most three distinct tables -- window-only layers at
@@ -624,118 +637,124 @@ const std::vector<float>& DecodeLayer::rope_cached(const RopeConfig& rc, uint32_
     return e.table;
 }
 
-Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& st) {
+Result<void> DecodeLayer::record(gpu::CommandBuffer& cmd, const LayerStep& st, trace::Cls cls,
+                                 gpu::AttnStage s, const void* push, uint32_t bytes,
+                                 uint32_t groups) {
+    const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer), cls, uint16_t(s),
+                                             gpu::attn_stage_name(s));
+    if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
+    trace::close_dispatch(tracer_, tr);
+    return {};
+}
+
+// design §7.4: the compressor and the indexer, on the four and eight layers
+// that have them, one of record_attention's waves at a time. `Attention.forward`
+// runs them between the window-KV write and sparse_attn. The indexer needs the
+// compressor's PRE-RoPE latent, and the cache write reads that latent without
+// changing it, so the key and the cache write share wave 2.
+Result<void> DecodeLayer::record_ced(gpu::CommandBuffer& cmd, const LayerStep& st,
+                                     uint32_t wave) {
     if (!st.run_compressor && !st.run_indexer) return {};
     const TextConfig& c = *cfg_;
     const uint32_t ratio = st.compress_ratio ? st.compress_ratio : 1u;
 
-    auto step = [&](gpu::AttnStage s, const void* push, uint32_t bytes,
-                    uint32_t groups) -> Result<void> {
-        const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer), trace::Cls::Ced,
-                                                 uint16_t(s), gpu::attn_stage_name(s));
-        if (auto r = runner_->record(cmd, s, push, bytes, groups); !r) return r;
-        trace::close_dispatch(tracer_, tr);
-        return cmd.barrier();
+    // Waves 0-2 leave the barrier to record_attention; wave 3, the scoring
+    // chain, is serial.
+    auto put = [&](uint32_t w, gpu::AttnStage s, const auto& push,
+                   uint32_t groups) -> Result<void> {
+        if (w != wave) return {};
+        if (auto r = record(cmd, st, trace::Cls::Ced, s, &push, sizeof push, groups); !r) return r;
+        return w == 3 ? cmd.barrier() : Result<void>{};
     };
 
     const gpu::CmpPush cp{c.head_dim, c.hidden_size, ratio, st.position % ratio,
                           st.cmp_complete ? 1u : 0u, c.qk_rope_head_dim,
                           st.position / ratio, static_cast<float>(c.rms_norm_eps)};
+    // The key and the cache write only when this layer's own group just
+    // completed: a ratio-2 source at an incomplete position publishes nothing
+    // and the Engine has already pointed `kv.idx_key` at whatever was published
+    // last (docs/p2_attention.md §9.3 item 5).
+    const bool publish = st.run_compressor && st.cmp_complete;
 
     if (st.run_compressor) {
         const uint32_t gw = runner_->gemv_groups(gpu::AttnStage::CmpKvGemv, c.head_dim);
-        if (auto r = step(gpu::AttnStage::CmpKvGemv, &cp, sizeof cp, gw); !r) return r;
+        if (auto r = put(0, gpu::AttnStage::CmpKvGemv, cp, gw); !r) return r;
         // No gate at ratio 1: `self.norm(self.wkv(x))` is a plain bf16 Linear
         // and there is nothing to pool (model.py, Compressor.forward).
         if (ratio > 1)
-            if (auto r = step(gpu::AttnStage::CmpGateGemv, &cp, sizeof cp, gw); !r) return r;
+            if (auto r = put(0, gpu::AttnStage::CmpGateGemv, cp, gw); !r) return r;
         // Runs on EVERY step, complete or not: the state write is what carries
         // an incomplete group forward, and only the pooling is conditional.
-        if (auto r = step(gpu::AttnStage::CmpNorm, &cp, sizeof cp, 1); !r) return r;
+        if (auto r = put(1, gpu::AttnStage::CmpNorm, cp, 1); !r) return r;
+        if (publish)
+            if (auto r = put(2, gpu::AttnStage::CmpStore, cp, 1); !r) return r;
+    }
+    if (!st.run_indexer) return {};
+
+    const uint32_t irows = c.index_n_heads * c.index_head_dim;
+    const float wscale = 1.0f / std::sqrt(static_cast<float>(c.index_head_dim)) /
+                         std::sqrt(static_cast<float>(c.index_n_heads));
+    gpu::IdxPush ip{irows, c.q_lora_rank, c.q_lora_rank / 32, c.index_n_heads,
+                    c.index_head_dim, c.qk_rope_head_dim, 0, 0, c.sliding_window,
+                    st.position / ratio, static_cast<float>(c.rms_norm_eps), wscale};
+    gpu::IdxPush iw = ip;
+    iw.rows = c.index_n_heads;
+    iw.k    = c.hidden_size;
+    if (auto r = put(0, gpu::AttnStage::IdxWeights, iw, 1); !r) return r;
+    if (auto r = put(1, gpu::AttnStage::IdxQGemv, ip,
+                     runner_->gemv_groups(gpu::AttnStage::IdxQGemv, irows)); !r)
+        return r;
+    if (auto r = put(2, gpu::AttnStage::IdxQFinish, ip, 1); !r) return r;
+    if (publish) {
+        gpu::IdxPush ik = ip;
+        ik.k = c.head_dim;
+        if (auto r = put(2, gpu::AttnStage::IdxKey, ik, 1); !r) return r;
+    }
+    if (wave != 3) return {};
+
+    gpu::IdxPush is = ip;
+    is.n_pos = st.n_cmp;
+    is.topk  = std::min(c.index_topk, st.n_cmp);
+    if (st.n_cmp > kMaxIndexPositions)
+        return fail(Err::ResourceExhausted,
+                    std::format("layer {} scores {} compressed positions; one indexer "
+                                "dispatch covers {}", st.layer, st.n_cmp,
+                                kMaxIndexPositions));
+    const uint32_t sg = (st.n_cmp + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile;
+    if (!sg) return {};
+    if (auto r = put(3, gpu::AttnStage::IdxScore, is, sg); !r) return r;
+
+    // design §2.1. The source keeps the candidate_topk_blocks best blocks of
+    // its own scores; a consumer masks its scores to them before its own
+    // top-k. A consumer needs the SAME step's mask, which the shared scratch
+    // holds from the source's dispatch on.
+    gpu::IdxPush cb = is;
+    cb.k    = c.candidate_block_size;
+    cb.topk = c.candidate_topk_blocks;
+    if (candidate_source(st)) {
+        const uint32_t nb = (st.n_cmp + cb.k - 1) / cb.k;
+        if (auto r = put(3, gpu::AttnStage::IdxBlockKeys, cb, (nb + 255) / 256); !r) return r;
+        if (auto r = put(3, gpu::AttnStage::IdxBlockSelect, cb, 1); !r) return r;
+        cand_position_ = st.position;
+        cand_n_cmp_    = st.n_cmp;
+    } else if (candidate_consumer(st)) {
+        if (cand_position_ != st.position || cand_n_cmp_ != st.n_cmp)
+            return fail(Err::FailedPrecondition,
+                        std::format("layer {} needs design 2.1's candidate blocks for "
+                                    "position {} over {} positions, but layer {} last "
+                                    "built them for position {} over {}", st.layer,
+                                    st.position, st.n_cmp, c.candidate_source_layer_id,
+                                    cand_position_, cand_n_cmp_));
+        if (auto r = put(3, gpu::AttnStage::IdxApplyCand, cb, 1); !r) return r;
     }
 
-    if (st.run_indexer) {
-        const uint32_t irows = c.index_n_heads * c.index_head_dim;
-        const float wscale = 1.0f / std::sqrt(static_cast<float>(c.index_head_dim)) /
-                             std::sqrt(static_cast<float>(c.index_n_heads));
-        gpu::IdxPush ip{irows, c.q_lora_rank, c.q_lora_rank / 32, c.index_n_heads,
-                        c.index_head_dim, c.qk_rope_head_dim, 0, 0, c.sliding_window,
-                        st.position / ratio, static_cast<float>(c.rms_norm_eps), wscale};
-
-        // The key, and only when this layer's own group just completed: a
-        // ratio-2 source at an incomplete position publishes nothing and the
-        // Engine has already pointed `kv.idx_key` at whatever was published
-        // last (docs/p2_attention.md §9.3 item 5).
-        if (st.run_compressor && st.cmp_complete) {
-            gpu::IdxPush ik = ip;
-            ik.k = c.head_dim;
-            if (auto r = step(gpu::AttnStage::IdxKey, &ik, sizeof ik, 1); !r) return r;
-        }
-        if (auto r = step(gpu::AttnStage::IdxQGemv, &ip, sizeof ip,
-                          runner_->gemv_groups(gpu::AttnStage::IdxQGemv, irows)); !r)
-            return r;
-        if (auto r = step(gpu::AttnStage::IdxQFinish, &ip, sizeof ip, 1); !r) return r;
-        gpu::IdxPush iw = ip;
-        iw.rows = c.index_n_heads;
-        iw.k    = c.hidden_size;
-        if (auto r = step(gpu::AttnStage::IdxWeights, &iw, sizeof iw, 1); !r) return r;
-
-        gpu::IdxPush is = ip;
-        is.n_pos = st.n_cmp;
-        is.topk  = std::min(c.index_topk, st.n_cmp);
-        if (st.n_cmp > kMaxIndexPositions)
-            return fail(Err::ResourceExhausted,
-                        std::format("layer {} scores {} compressed positions; one indexer "
-                                    "dispatch covers {}", st.layer, st.n_cmp,
-                                    kMaxIndexPositions));
-        const uint32_t sg = (st.n_cmp + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile;
-        if (sg) {
-            if (auto r = step(gpu::AttnStage::IdxScore, &is, sizeof is, sg); !r) return r;
-
-            // design §2.1. The source keeps the candidate_topk_blocks best
-            // blocks of its own scores; a consumer masks its scores to them
-            // before its own top-k. A consumer needs the SAME step's mask,
-            // which the shared scratch holds from the source's dispatch on.
-            gpu::IdxPush cb = is;
-            cb.k    = c.candidate_block_size;
-            cb.topk = c.candidate_topk_blocks;
-            if (candidate_source(st)) {
-                const uint32_t nb = (st.n_cmp + cb.k - 1) / cb.k;
-                if (auto r = step(gpu::AttnStage::IdxBlockKeys, &cb, sizeof cb,
-                                  (nb + 255) / 256); !r)
-                    return r;
-                if (auto r = step(gpu::AttnStage::IdxBlockSelect, &cb, sizeof cb, 1); !r)
-                    return r;
-                cand_position_ = st.position;
-                cand_n_cmp_    = st.n_cmp;
-            } else if (candidate_consumer(st)) {
-                if (cand_position_ != st.position || cand_n_cmp_ != st.n_cmp)
-                    return fail(Err::FailedPrecondition,
-                                std::format("layer {} needs design 2.1's candidate blocks for "
-                                            "position {} over {} positions, but layer {} last "
-                                            "built them for position {} over {}", st.layer,
-                                            st.position, st.n_cmp,
-                                            c.candidate_source_layer_id, cand_position_,
-                                            cand_n_cmp_));
-                if (auto r = step(gpu::AttnStage::IdxApplyCand, &cb, sizeof cb, 1); !r)
-                    return r;
-            }
-
-            // Poison the compressed half so `verify_after_attention` can tell a
-            // list the kernel wrote from one it did not.
-            if (st.kv.top_idx_host) {
-                auto* out = reinterpret_cast<int32_t*>(st.kv.top_idx_host);
-                std::fill(out + c.sliding_window, out + c.sliding_window + is.topk, -1);
-            }
-            if (auto r = step(gpu::AttnStage::IdxTopK, &is, sizeof is, 1); !r) return r;
-        }
+    // Poison the compressed half so `verify_after_attention` can tell a list
+    // the kernel wrote from one it did not.
+    if (st.kv.top_idx_host) {
+        auto* out = reinterpret_cast<int32_t*>(st.kv.top_idx_host);
+        std::fill(out + c.sliding_window, out + c.sliding_window + is.topk, -1);
     }
-
-    // The cache write last, because it rotates and quantises the latent the
-    // indexer had to see unrotated.
-    if (st.run_compressor && st.cmp_complete)
-        if (auto r = step(gpu::AttnStage::CmpStore, &cp, sizeof cp, 1); !r) return r;
-    return {};
+    return put(3, gpu::AttnStage::IdxTopK, is, 1);
 }
 
 Result<void> DecodeLayer::submit(gpu::CommandBuffer& cmd) {
@@ -822,17 +841,14 @@ Result<void> DecodeLayer::record_close(gpu::CommandBuffer& cmd, const LayerStep&
     const uint32_t n_wg0 = (c.hidden_size + 255) / 256;
     // Only hc_post is wanted here: the mixes this would compute belong to the
     // next layer's attention half, which recomputes them from the stream it
-    // reads. Stage 1 is not dispatched and the Sinkhorn is skipped, so MixRaw
-    // is never read. `bind` has already pointed MhcClose at the right buffers.
+    // reads, so only stage 0 is dispatched. `bind` has already pointed MhcClose
+    // at the right buffers.
     gpu::MhcPush mp{c.hidden_size, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
-                    c.hc_sinkhorn_iters, gpu::kMhcFlagPost | gpu::kMhcFlagSkipSinkhorn,
+                    c.hc_sinkhorn_iters, gpu::kMhcFlagPost,
                     static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
-    const uint32_t tr = trace::open_dispatch(tracer_, uint16_t(st.layer), trace::Cls::Attention,
-                                            uint16_t(gpu::AttnStage::MhcClose),
-                                            gpu::attn_stage_name(gpu::AttnStage::MhcClose));
-    if (auto r = runner_->record(cmd, gpu::AttnStage::MhcClose, &mp, sizeof mp, n_wg0); !r)
+    if (auto r = record(cmd, st, trace::Cls::Attention, gpu::AttnStage::MhcClose, &mp, sizeof mp,
+                        n_wg0); !r)
         return r;
-    trace::close_dispatch(tracer_, tr);
     return cmd.barrier();
 }
 

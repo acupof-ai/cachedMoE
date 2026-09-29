@@ -1,0 +1,35 @@
+== constants (constants.json): t0 2.04 us, cold 30 GB/s a workgroup up to 235, hot 85 up to 770, fp32 18.1 TFLOP/s
+== hot step (hot2.bin, median of 10 passes): kernels 64.57 ms measured vs 58.08 modelled; + 2.77 ms between dispatches (submit boundaries and barriers) = span 67.36
+   stage                       W  d calls  MB/call  meas us   model  bound     x gap ms/tok
+   moe_gateup               1730  2    40    75.20    354.2   324.7   DRAM   1.1       1.18
+   moe_shared_early          290  3    40    23.59    128.6   106.7   DRAM   1.2       0.87
+   moe_down                  160  1    40    49.40    232.8   212.6   DRAM   1.1       0.81
+   wo_b.ksplit              5120  1    40    41.94    200.6   180.8   DRAM   1.1       0.79
+   wo_a.ksplit              4096  1    40    33.55    158.3   145.1   DRAM   1.1       0.53
+   gate.topk                   1  1    40     0.00      8.5     2.0 launch   4.1       0.26
+   wq_b                     2048  1    40    41.94    186.0   180.8   DRAM   1.0       0.21
+   gate.score                 48  1    40     3.94     23.5    18.8   DRAM   1.2       0.19
+   wkv.finish                  1  1    40     0.00      6.4     2.0 launch   3.1       0.17
+   wq_a                       80  1    40     6.55     34.0    30.0   DRAM   1.1       0.16
+   mega_mhc.post              20  1    40     0.00      6.0     2.0 launch   3.0       0.16
+   indexer.weights             1  1     8     0.33     32.8    13.0   DRAM   2.5       0.16
+   head.argmax                 1  1     1     0.00    147.4     2.0 launch  72.1       0.15
+   mega_mhc.final.ffn         20  1    40     0.00      5.5     2.0 launch   2.7       0.14
+   mega_mhc.final             20  1    41     0.00      5.2     2.0 launch   2.6       0.13
+   engram_gemv+gate         3204  2     2   157.29    739.5   674.6   DRAM   1.1       0.13
+   indexer.score               9  1     8     0.00     17.2     2.0 launch   8.4       0.12
+   mega_mhc.mix               24  1    40     1.97     13.4    10.4   DRAM   1.3       0.12
+   attn_cm.score               7  1    40     0.00      5.5     2.8    FMA   2.0       0.11
+   mega_mhc.mix.ffn           24  1    40     1.97     12.8    10.4   DRAM   1.2       0.09
+   indexer.q_finish            1  1     8     0.00      9.1     2.0 launch   4.5       0.06
+   indexer.wq_b              256  1     8     5.24     30.2    24.4   DRAM   1.2       0.05
+   wkv.gemv                   64  1    40     2.62     14.4    13.2   DRAM   1.1       0.05
+   head                    16160  1     1  1323.83   5674.3  5645.3   DRAM   1.0       0.03
+   compressor.wkv             64  1     4     5.24     30.3    24.4   DRAM   1.2       0.02
+   compressor.wgate           64  1     3     5.24     30.2    24.4   DRAM   1.2       0.02
+   indexer.key                 1  1     1     0.13     19.6     6.4   DRAM   3.1       0.01
+   mega_mhc.close             20  1     3     0.00      5.4     2.0 launch   2.6       0.01
+   compressor.store            1  1     1     0.00      3.8     2.0 launch   1.9       0.00
+   attn_cm.pv                 64  1    40     0.00      3.0     3.0  cache   1.0      -0.00
+   (8 more: -0.22 ms gap)
+   gap by what bounds the model: DRAM 5.42 ms, launch 1.07 ms, FMA 0.11 ms, cache -0.10 ms

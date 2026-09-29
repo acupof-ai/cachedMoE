@@ -58,6 +58,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 12 | p0sweep-r2-c1q6-3turns | `db9b68bbd4+6 dirty (7fb9407b56966f75)` | IO_P0_CHUNK_MB=1 IO_P0_QD=6 MIRROR_AUTO=0 | 23.9% | 23 MB | **7.230** | 138.3 | 71.5 (32.0/29.3/6.1/4.0) | 63.8 (52.0 @ 4.8 GB/s) | 4.63 | 2.7 | 0.9447 | 21.4 |
 | 15 | final-default-8turns | `dbe7d16f5b` | MIRROR_AUTO=0 | 0% | **16,780 MB ⚠** | **6.850** | 146.0 | 71.2 (34.1/26.6/6.2/4.3) | 72.8 (54.7 @ 4.8 GB/s) | 5.16 | 1.8 | 0.9419 | 73.1 |
 | 16 | final-attncm-8turns | `dbe7d16f5b+1 dirty (df4d517ce3d9a00b)` | ATTN_CM=1 MIRROR_AUTO=0 | 22.9% | **34,567 MB ⚠** | **7.264** | 137.7 | 68.3 (31.1/26.7/6.2/4.2) | 67.2 (52.8 @ 4.8 GB/s) | 4.89 | 2.0 | 0.9439 | 68.3 |
+| 20 | chat-waves-8turns | `63846356e8+11 dirty (bc8cd112c5787809)` | MIRROR_AUTO=0 | 12.1% | 41 MB | **7.572** | 132.1 | 62.5 (28.4/26.0/6.1/2.1) | 66.3 (52.8 @ 4.8 GB/s) | 4.79 | 3.1 | 0.9439 | 66.3 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -68,6 +69,9 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 8 | hot-606565d | `606565dc6f+2 dirty (73e07a223a33085f)` | – | 6% | **73.85** (73.3–74.9) | 43.51 | 3.81 | wo_b.ksplit 8.01, wo_a.ksplit 6.36, moe_gateup 3.14, moe_down 2.55 |
 | 13 | hot-dec3 | `2f26b972a3` | – | 5.5% | **71.31** (69.3–73.3) | 56.64 | 3.88 | moe_gateup 1.37, moe_shared_early 1.19, sparse_attn.combine 1.02, moe_down 1.01 |
 | 14 | hot-dec3-attncm | `2f26b972a3+1 dirty (c8e6dd5fc4fb6cc6)` | ATTN_CM=1 | 10.8% | **69.61** (68.2–72.4) | 56.64 | 3.82 | moe_gateup 1.25, moe_shared_early 1.17, moe_down 0.90, wo_b.ksplit 0.80 |
+| 17 | hot-0991cd5 | `7c2e524d30 †` | – | 30.8% | **68.17** (67.9–87.9) | 56.64 | 3.85 | moe_shared_early 1.06, moe_gateup 0.98, wo_b.ksplit 0.73, moe_down 0.68 |
+| 18 | hot-engram-async | `7c2e524d30+4 dirty (7a1c4080a91846e9) †` | – | 0% | **67.36** (67.2–69.2) | 56.64 | 2.77 | moe_gateup 1.09, moe_shared_early 1.04, wo_b.ksplit 0.73, moe_down 0.72 |
+| 19 | hot-waves | `63846356e8+10 dirty (780bfad3ed58984e)` | – | 0% | **66.01** (65.9–66.2) | 56.64 | 2.57 | mega_mhc.mix 1.40, moe_shared_early 1.06, moe_gateup 1.02, wo_b.ksplit 0.74 |
 
 `†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。ms/miss 是 decode 步（hit > 0.8）的 NVMe stall 对该步 miss 数的回归斜率：同配置复跑只动 ~1%，比 tok/s 稳得多，IO 改动看它。disk writes 是运行期间所有 NVMe 的写入量（引擎自己只写几 MB 日志；>500 MB 标 ⚠：有别的程序在写同一块盘，IO 数字不可信）。bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。
 <!-- perf-ledger:end -->
@@ -653,6 +657,26 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0n. **全面优化第二轮：IO 侧三条探针都到了盘的底，计算侧把互不依赖的 dispatch 分波（wave）+ mega_mhc 的 Sinkhorn 拆出关键路径。对话（ledger #20，同一 8 轮脚本）7.264 → 7.572 tok/s，compute 68.3 → 62.5 ms；热步（#19）67.36 → 66.01 ms（trace）；数值逐位不变。**
+   **计算侧**。① **异步 engram**（`6384635`，#18）：两层 engram 的 96 个行读在第 0 层发出、到层再落地，engram 4.2 → 2.1 ms/token。
+   ② **投影分波**（`DecodeLayer::record_attention` / `record_ced(wave)`）：以前每个 dispatch 后都跟一个 barrier（~2.4 µs 空窗），可 wq_a、wkv、compressor 的两次投影、indexer 的头权重**只读 u**；
+   wq_b、窗口 KV 写、压缩池化、indexer.wq_b **只读前一波的输出**；index key、indexer 的 q finish、压缩 cache 写**只读再前一波**（cache 写读 latent 但不改它）。于是三波，每波一个 barrier，
+   小的单 workgroup kernel 在 wq_a / wq_b 底下跑，之后才是 indexer 的打分链（wave 3，串行）。按 trace 的模型：各组取 max 能省 1.82 ms，按字节 ÷ 225 GB/s 的带宽下限是 1.17 ms；实测 trace 下 −0.67 ms——又是一半。
+   ③ **mega_mhc 的 stage 2（RMSNorm 出 u）从来不依赖 stage 1（mix）**，mix 与 Sinkhorn 只给**下一个**子层用。Sinkhorn 拆成独立的 stage 3（一个 workgroup，`MhcSinkhorn` / `MhcSinkhornB`），
+   attention 半边的 mix 进投影 wave 0、Sinkhorn 进 wave 1；FFN 半边 mix 与 gate.score 同波、Sinkhorn 与 gate.topk 同波。M = 1 路径不再需要 `kMhcFlagSkipSinkhorn`（尾部 collapse 只派 stage 0 / 2；标志留给 mgt1）。
+   不开 trace 的热步 65.7 → 64.9 ms；trace 下 66.69 → 65.78。两项合计 dispatch 1021 → 1101，barrier 2.77 → 2.57 ms。
+   闸：`l3_ppl` off **0.622784 / 56/64 逐位相同**（`opt/l3ppl_waves.txt`），`suite.decode`、`suite.gpu_attn` 过，热步 margin 7.0220 不变，CPU 25/25 + 30/30。
+   **仪器注意**：RADV 上 trace 的 end 戳（COMPUTE_SHADER 阶段）把同一波里的戳串行化——波里第一个 dispatch 的 ms 吞掉整个波，后面的显示 0.3 µs。**span 是对的，波内逐 stage 的 ms 不可读**（`perf_report` 表里 `mega_mhc.mix` 1.40 ms 的"超出"就是这个）。
+   **试过退掉**：gate.topk 改成一次扫描数名次（逐位相同）8.1 → **23.9 µs**（384 次依赖 LDS 读），展开成两次 16 B 读 × 8 之后 16.0 µs，仍输给 16 轮 wave 归约 → 退回。
+   gate 的 host-coherent 进度计数器（主机早已改用 fence，没人读）只值 0.5 µs/层，不动。`wo_b.kcombine` 并进 `mega_mhc.post.ffn`（0.13 ms/token）要给 mhc 加一个分支，不做。
+   **IO 侧**（`bench/probes/idle_gap_probe.py`，O_DIRECT、8 线程 × 1 MiB，不碰 GPU；结果在 `bench/results/linux/opt/`）。① **盘闲置的唤醒代价**：一个 expert（18.8 MB）在空闲 ≤10 ms 之后 4.44–4.55 ms，
+   30 ms 之后 5.83、100 ms 之后 6.50；对话里突发之前的空闲 0–3 ms 32.9%、3–10 ms 44.1%、10–30 ms 20.0%、≥30 ms 3.0%（`chat_attncm/route.bin`，每步 10.1 次突发）。
+   模型算下来每步 1.20 ms；spin + 每 5 ms 一个 4 KiB poke 能压到 0.17——杠杆 ~1 ms/步 = 0.7%，折半 0.4%，低于抖动线，**不做**。② **读的切法**：3 ms 空闲后 512 KiB × 16 4.61、**1 MiB × 8 4.43**、1 MiB × 16 4.39、2 MiB × 8 4.66、4 MiB × 4 5.44、4 MiB × 8 5.91 ms——默认就在最优处。
+   ③ **真实布局**：expert 是两段 extent（scales 1.1 MB + weights 17.7 MB，在 shard 的两处）。`expert_read_order_probe`：manifest 顺序 4.47、先 weights 4.50、尾块合并 4.41、scales 单独 0.63、weights 单独 4.16 ms——
+   突发带宽 4.2–4.3 GB/s 就是这块盘，顺序与尾块都在噪声里。引擎里 stall ≈ 盘忙（2,301 个 decode 步：71.25 vs 70.61 ms/步），所以 ms/miss（#20 4.79）比探针多的 ≤0.3 ms 里只有 ~0.1 是唤醒。**IO 这边到了硬件的底**。
+   **下一步候选（按量）**：fence 之后主机先录下一层的 attention（61 µs/层）才提交这一层的 MoE——热步只露出 5–9 µs（shared-early 盖住了其余），但 miss 层要在 IO 落地之后再付 ~55 µs；
+   要在等 gate fence 时预录，attention 的地址表得双缓冲（`bind` 会改正在跑的那层读的 slot）。估计对话 ~0.9 ms/token，折半 0.3%。shared-early 79% 天花板，但它被主机往返盖住，单独提速无收益。
 
 0m. **V4.1 推理形式复核（逐层计算方式 + KV 获取），replay 128 长上下文首次按 token 验证，Linux 长 prompt 丢设备修掉。**
    **逐层对照**（参考 `inference/model.py`，全部已实现，测试对的是**未改动的** `model.py`——`tools/dsref.py` 的 CPU 壳）：

@@ -47,7 +47,7 @@ namespace deepmoe::gpu {
 enum class AttnStage : uint32_t {
     MhcPost = 0,   // §7.7 + §7.2: hc_post, hc_pre and the two RMS partials
     MhcMix,        // §7.2: the 24 hc_fn dot products
-    MhcFinal,      // §7.2: Sinkhorn, and the RMSNorm of the sublayer input
+    MhcFinal,      // §7.2: the RMSNorm of the sublayer input
     MhcPostB,      // the same three, for the FFN half of the layer
     MhcMixB,
     MhcFinalB,
@@ -122,6 +122,9 @@ enum class AttnStage : uint32_t {
     AttnCmSoftmax, // max, p = bf16(exp(s - max)) -> fp16 P, 1 / denominator
     AttnCmPv,      // O = P G, raw sums
     AttnCmFinish,  // O *= 1 / denominator, inverse RoPE
+    // --- mega_mhc stage 3, off the sublayer's critical path ------------------
+    MhcSinkhorn,   // §7.2: Sinkhorn over MhcMix's mixes, for the next sublayer
+    MhcSinkhornB,  // the same, for the FFN half
     Count,
 };
 
@@ -206,7 +209,7 @@ struct MhcPush {
     float    norm_eps, hc_eps;
 };
 inline constexpr uint32_t kMhcFlagPost = 1u;          // apply hc_post
-inline constexpr uint32_t kMhcFlagSkipSinkhorn = 2u;  // final collapse before the head
+inline constexpr uint32_t kMhcFlagSkipSinkhorn = 2u;  // mgt1_mhc: the final collapse before the head
 
 struct GemvPush { uint32_t rows, k, scale_cols, row_base; };
 struct WqbPush  { uint32_t rows, k, scale_cols, head_dim, rope_dim; float norm_eps; };

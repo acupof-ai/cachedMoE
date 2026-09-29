@@ -3026,8 +3026,8 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
 
     // `h = layer.hc_pre(h, pre_mix); logits = head(norm(h))`. mega_mhc stage 0
     // with the post bit does the last layer's hc_post AND the collapse, stage 2
-    // does the RMSNorm; Sinkhorn is skipped because stage 1 is not dispatched
-    // and there is no next sublayer to hand mixes to (gpu/shaders/head.slang).
+    // does the RMSNorm; there is no next sublayer to make mixes for
+    // (gpu/shaders/head.slang).
     // The norm weight is the model's own `norm.weight`, not the layer's, so
     // MhcClose's slice is repointed and copied into MhcFinal's -- one slice per
     // stage is why the copy exists at all.
@@ -3046,7 +3046,7 @@ Result<DecodeStepResult> Engine::collapse_and_sample(uint32_t position) {
 
     gpu::MhcPush mp{c.hidden_size, c.hc_mult, (2 + c.hc_mult) * c.hc_mult, n_wg0,
                     c.hc_sinkhorn_iters,
-                    gpu::kMhcFlagPost | gpu::kMhcFlagSkipSinkhorn,
+                    gpu::kMhcFlagPost,
                     static_cast<float>(c.rms_norm_eps), static_cast<float>(c.hc_eps)};
     gpu::HeadPush hp{c.vocab_size, c.hidden_size, 0};
 

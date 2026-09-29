@@ -57,6 +57,8 @@ const char* attn_stage_name(AttnStage s) {
         case AttnStage::AttnCmSoftmax: return "attn_cm.softmax";
         case AttnStage::AttnCmPv:      return "attn_cm.pv";
         case AttnStage::AttnCmFinish:  return "attn_cm.finish";
+        case AttnStage::MhcSinkhorn:   return "mega_mhc.sinkhorn";
+        case AttnStage::MhcSinkhornB:  return "mega_mhc.sinkhorn.ffn";
         case AttnStage::Count:       break;
     }
     return "?";
@@ -195,6 +197,8 @@ constexpr StageDef kStages[] = {
     {AttnStage::AttnCmSoftmax, "decode_attn_cm", 2, 1, 1, 1},
     {AttnStage::AttnCmPv,      "decode_attn_cm", 3, 1, 1, 1},
     {AttnStage::AttnCmFinish,  "decode_attn_cm", 4, 1, 1, 1},
+    {AttnStage::MhcSinkhorn,   "mega_mhc",       3, 1, 1, 1},
+    {AttnStage::MhcSinkhornB,  "mega_mhc",       3, 1, 1, 1},
 };
 
 bool is_attn_cm(AttnStage s) {

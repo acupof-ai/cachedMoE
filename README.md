@@ -16,18 +16,18 @@ Linux (Arch, kernel 7.2, Mesa 26.2 RADV), one internal NVMe (4.8 GB/s), 5,500-sl
 
 | | |
 |---|---|
-| **Chat decode** (8-turn script) | **7.26 tok/s** — per token 68 ms GPU compute + 67 ms waiting on NVMe; expert cache hit rate 0.944 |
-| Decode step, all experts resident | **69.6 ms** (the weight-read floor is 56.6 ms) |
+| **Chat decode** (8-turn script) | **7.57 tok/s** — per token 62.5 ms GPU compute + 66 ms waiting on NVMe; expert cache hit rate 0.944 |
+| Decode step, all experts resident | **66.0 ms** (the weight-read floor is 56.6 ms) |
 | GPU prefill | 4,133 tokens in 79 s · 17,010 tokens in 242 s |
 | Context | up to 524,280 tokens |
 | Quality | 64-step teacher-forced NLL 0.623 against 0.598 for the fp32 reference; needle retrieval at 4K and 17K tokens 8/8 |
 
 Every number above is machine-recorded with its commit in [docs/STATUS.md](docs/STATUS.md) §1
-(ledger rows 14 and 16) and [docs/p3_longctx_decode.md](docs/p3_longctx_decode.md) §4.3.
+(ledger rows 19 and 20) and [docs/p3_longctx_decode.md](docs/p3_longctx_decode.md) §4.3.
 
 **Where the time goes.** Each token routes to 6 of 384 experts in each of 40 layers. About 13.5 of
 those 240 lookups miss the cache and cost one ~19 MB read each, so half of every token is disk.
-The other half is compute, ~23% above its memory-bandwidth floor. The things that did
+The other half is compute, ~17% above its memory-bandwidth floor. The things that did
 *not* help — 2/3-bit re-quantisation, prefetching, speculative decoding, resident-only routing,
 persistent dispatch and some 60 others — are listed with their measurements in STATUS §3.
 

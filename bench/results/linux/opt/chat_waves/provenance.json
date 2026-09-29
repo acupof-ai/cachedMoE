@@ -1,0 +1,70 @@
+{
+ "time": "2026-09-29T09:54:29+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "63846356e8",
+ "dirty": [
+  "bench/attn_bench.cpp",
+  "bench/results/perf_ledger.jsonl",
+  "gpu/shaders/mega_mhc.slang",
+  "gpu/vulkan/attn_kernels.cpp",
+  "gpu/vulkan/attn_kernels.h",
+  "runtime/decode_layer.cpp",
+  "runtime/decode_layer.h",
+  "runtime/engine.cpp",
+  "tests/test_gpu_attn.cpp",
+  "tools/perf_report.py",
+  "tools/trace_timeline.py"
+ ],
+ "diff_sha": "bc8cd112c5787809",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "1e2033efb9c682fa",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 43,
+  "sha": "c571901909957782"
+ },
+ "env": {
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/linux/opt/chat_waves/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 12.1,
+  "gpu_busy_max": 19,
+  "loadavg": [
+   "1.01",
+   "0.85",
+   "0.79"
+  ],
+  "top_cpu": [
+   "steam 20.3%",
+   "kworker/u130:6-btrfs-endio 5.9%",
+   "kworker/u130:7-kcryptd-253:0-1 4.7%",
+   "kworker/u130:0-events_unbound 4.0%"
+  ]
+ },
+ "disks_start": {
+  "t": 1790646870.2321327,
+  "nvme0n1": [
+   16067597914,
+   309144702
+  ],
+  "nvme1n1": [
+   201040,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 395.7,
+  "nvme0n1": {
+   "read_MB": 902150.8,
+   "write_MB": 41.4
+  },
+  "nvme1n1": {
+   "read_MB": 0.0,
+   "write_MB": 0.0
+  }
+ }
+}

@@ -361,14 +361,16 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             s[gpu::slot::kMixRaw] = bMixR.a();
             s[gpu::slot::kMixOut] = bMixO.a();
             s[gpu::slot::kU] = bU.a();
-            std::memcpy(rig.runner.slots(gpu::AttnStage::MhcMix), s, 32 * 8);
-            std::memcpy(rig.runner.slots(gpu::AttnStage::MhcFinal), s, 32 * 8);
+            for (gpu::AttnStage t : {gpu::AttnStage::MhcMix, gpu::AttnStage::MhcFinal,
+                                     gpu::AttnStage::MhcSinkhorn})
+                std::memcpy(rig.runner.slots(t), s, 32 * 8);
 
             gpu::MhcPush mp{d.dim, d.hc, (2 + d.hc) * d.hc, d.dim / 256, 20, 0,
                             d.norm_eps, 1e-6f};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcPost, &mp, sizeof mp, mp.n_wg0));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcMix, &mp, sizeof mp, mp.mix_rows));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcFinal, &mp, sizeof mp, mp.n_wg0));
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcSinkhorn, &mp, sizeof mp, 1));
 
             const std::vector<float> mix = bMixO.read(8 + d.hc * d.hc);
             CHECK(ok("mhc attn_pre", agree(mix.data(), g.f("attn_pre").data(), d.hc), 0.999999, 1e-4));
@@ -757,14 +759,16 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
             s[gpu::slot::kHcBase] = rig.addr(p + ".hc_ffn_base");
             s[gpu::slot::kHcScale] = rig.addr(p + ".hc_ffn_scale");
             s[gpu::slot::kNormW] = rig.addr(p + ".ffn_norm.weight");
-            std::memcpy(rig.runner.slots(gpu::AttnStage::MhcMix), s, 32 * 8);
-            std::memcpy(rig.runner.slots(gpu::AttnStage::MhcFinal), s, 32 * 8);
+            for (gpu::AttnStage t : {gpu::AttnStage::MhcMix, gpu::AttnStage::MhcFinal,
+                                     gpu::AttnStage::MhcSinkhorn})
+                std::memcpy(rig.runner.slots(t), s, 32 * 8);
 
             gpu::MhcPush mp{d.dim, d.hc, (2 + d.hc) * d.hc, d.dim / 256, 20,
                             gpu::kMhcFlagPost, d.norm_eps, 1e-6f};
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcPost, &mp, sizeof mp, mp.n_wg0));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcMix, &mp, sizeof mp, mp.mix_rows));
             REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcFinal, &mp, sizeof mp, mp.n_wg0));
+            REQUIRE_OK(rig.runner.dispatch_now(gpu::AttnStage::MhcSinkhorn, &mp, sizeof mp, 1));
 
             CHECK(ok("hc_post -> stream", agree(bXout.read(hcdim), g.f("attn_block_out")), 0.99999, 5e-3));
             const std::vector<float> mix = bMixO.read(8 + d.hc * d.hc);
