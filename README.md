@@ -26,7 +26,7 @@ expert cache.
 | Quality | 64-step teacher-forced NLL 0.623 against 0.598 for the fp32 reference; needle retrieval at 4K and 17K tokens 8/8 |
 
 Every number above is machine-recorded with its commit in [docs/STATUS.md](docs/STATUS.md) §1
-(ledger rows 19, 28 and 29), §7 0t–0am (prefill, with its per-op cost model) and
+(ledger rows 19, 28 and 29), §7 0t–0an (prefill, with its per-op cost model) and
 [docs/p3_longctx_decode.md](docs/p3_longctx_decode.md) §4.3.
 
 **Where the time goes.** Each token routes to 6 of 384 experts in each of 40 layers. About 13.5 of

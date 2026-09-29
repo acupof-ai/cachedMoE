@@ -20,6 +20,7 @@
 // and the activations to whoever allocated them.
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -578,7 +579,18 @@ private:
     std::vector<std::pair<std::string, PfCost>> marks_;
     struct Want { GpuBuffer* b; uint64_t bytes; };
     std::vector<Want> plan(const TextConfig& cfg, const PrefillConfig& pcfg);
-    uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
+    // b_.w16 is kW16Slots equal slots of fp16 weight decodes: a dense weight
+    // decoded once a layer instead of once a query block (STATUS §7 0an), the
+    // slot chosen least recently used. Slot 0 is also the MoE's transit (the
+    // shared expert's decode, the routed experts' jobs) and the sliced
+    // engram GEMM's, which invalidate it.
+    static constexpr uint32_t kW16Slots = 4;
+    std::array<uint64_t, kW16Slots> w16_src_{};    // weight each slot holds (0 = nothing)
+    std::array<uint64_t, kW16Slots> w16_used_{};   // when it was last used
+    uint64_t                  w16_clock_ = 0;
+    uint64_t                  w16_slot_bytes_ = 0;
+    // The slot for w's decode and whether it still has to be decoded.
+    std::pair<uint64_t, bool> w16_slot(uint64_t src);
     uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
     // read_ahead's reads for the layer it was called for: transit slot of each
     // expert (~0u = not read ahead) and, per slot, its futures' range in

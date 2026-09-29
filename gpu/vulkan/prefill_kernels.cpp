@@ -369,8 +369,8 @@ std::vector<Prefill::Want> Prefill::plan(const TextConfig& cfg, const PrefillCon
         {&b_.dout, std::max({(N + kPfRowSlack) * dim,
                              (B + kPfRowSlack) * cfg.num_attention_heads * hd,
                              (N + kPfRowSlack) * cfg.q_lora_rank}) * 4},
-        {&b_.w16, std::max({dim * inter, uint64_t(cfg.num_attention_heads) * hd * cfg.q_lora_rank,
-                            dim * cfg.o_groups * cfg.o_lora_rank}) * 2},
+        {&b_.w16, kW16Slots * std::max({dim * inter, uint64_t(cfg.num_attention_heads) * hd * cfg.q_lora_rank,
+                                        dim * cfg.o_groups * cfg.o_lora_rank}) * 2},
         {&b_.jobs, (uint64_t(cfg.n_routed_experts) + 2) * 64},
         {&b_.eng_x, N * 6144 * 4}, {&b_.eng_xq, N * 6144 * 2}, {&b_.eng_xs, N * 192 * 4},
         {&b_.eng_kv, (N + kPfRowSlack) * (kHc + 1) * dim * 4},
@@ -401,7 +401,7 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
     device_ = &device; alloc_ = &alloc; runner_ = &runner; manifest_ = &manifest;
     shards_ = &shards; io_ = &io; pinned_ = &pinned; cfg_ = &cfg; engram_ = engram;
     pcfg_ = pcfg;
-    w16_src_ = 0;
+    w16_src_.fill(0);
     if (pcfg_.tile == 0 || pcfg_.tile > 32) return fail(Err::InvalidArgument, "tile must be 1..32");
     const std::vector<Want> wants = plan(cfg, pcfg);
     const uint64_t N = pcfg_.max_tokens, hd = cfg.head_dim;
@@ -411,6 +411,8 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
                                                         b.error().message));
         *w.b = *b;
     }
+    w16_slot_bytes_ = b_.w16.bytes / kW16Slots;
+    w16_used_.fill(0);
     sources_.assign(cfg.num_hidden_layers, SourceState{});
     for (uint32_t L = 0; L < cfg.num_hidden_layers; ++L) {
         if (!cfg.is_kv_source(L)) continue;
@@ -575,6 +577,17 @@ Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint
                      PrefillRunner::gemm_gy(n, pcfg_.tile));
 }
 
+std::pair<uint64_t, bool> Prefill::w16_slot(uint64_t src) {
+    uint32_t i = 0;   // src 0 (a sliced decode) takes slot 0 and leaves it empty
+    if (src) {
+        i = uint32_t(std::min_element(w16_used_.begin(), w16_used_.end()) - w16_used_.begin());
+        for (uint32_t j = 0; j < kW16Slots; ++j) if (w16_src_[j] == src) i = j;
+    }
+    const bool undecoded = w16_src_[i] != src || !src;
+    w16_src_[i] = src; w16_used_[i] = src ? ++w16_clock_ : 0;
+    return {b_.w16.dev_addr + i * w16_slot_bytes_, undecoded};
+}
+
 Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
                                    uint32_t n, uint32_t x_stride, uint64_t y, uint32_t flags,
                                    uint32_t rows_per_group) {
@@ -592,11 +605,12 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     // decoded and multiplied into its own columns of y.
     uint32_t S = R;
     if (groups == 1)
-        for (uint32_t m = 2; uint64_t(S) * K * 2 > b_.w16.bytes && m <= 64; ++m)
+        for (uint32_t m = 2; uint64_t(S) * K * 2 > w16_slot_bytes_ && m <= 64; ++m)
             if (R % m == 0 && (R / m) % 128 == 0) S = R / m;
     const uint32_t slices = R / S, rows = slices > 1 ? S : R;
-    if (uint64_t(S) * K * 2 > b_.w16.bytes || (uint64_t(n32) + kPfRowSlack) * K * 2 > b_.x16.bytes)
+    if (uint64_t(S) * K * 2 > w16_slot_bytes_ || (uint64_t(n32) + kPfRowSlack) * K * 2 > b_.x16.bytes)
         return false;
+    const auto [w16, undecoded] = w16_slot(slices > 1 ? 0 : w.data);
     const auto t0 = Clk::now();
     auto kd = runner_->kernel({"prefill_gemm", 3, w.fmt, 0, 8});
     auto kx = runner_->kernel({"prefill_coopmat", xfmt ? 1u : 2u, 0, 0, 8, 3, 0});
@@ -608,11 +622,11 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     for (auto* k : {&kd, &kx, &km})
         if (!*k) return std::unexpected(k->error());
     uint64_t* s = runner_->slots(*kd);
-    s[kPgW] = w.data; s[kPgS] = w.scale; s[kPgY] = b_.w16.dev_addr;
+    s[kPgW] = w.data; s[kPgS] = w.scale; s[kPgY] = w16;
     s = runner_->slots(*kx);
     s[kPcQ] = x; s[kPcQS] = xs; s[kPcX] = b_.x16.dev_addr;
     s = runner_->slots(*km);
-    s[kPcW] = b_.w16.dev_addr; s[kPcX] = b_.x16.dev_addr; s[kPcY] = y;
+    s[kPcW] = w16; s[kPcX] = b_.x16.dev_addr; s[kPcY] = y;
     // y is written by the GEMM, rounded onto bf16 there under kPfFlagRound;
     // a slice lands in its own columns of y's R-wide rows.
     const uint32_t gflags = 64 | (flags & kPfFlagRound);
@@ -636,7 +650,7 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     };
     const uint32_t gx = lg.wm ? lg.pad(n32) / lg.tok() : pf_tok_groups(n32, tt);
     const uint32_t gy = mrows / (lg.wm ? 32 * lg.wm : 16);
-    if (slices == 1 && w16_src_ != w.data)
+    if (slices == 1 && undecoded)
         if (auto r = decode(0); !r) return std::unexpected(r.error());
     // pc.n = n real rows: the padded columns of x16 hold stale values whose
     // products only reach the padded rows of dout, which nobody copies
@@ -658,7 +672,6 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
         mark(shape + " tiles", {2.0 * S * K * n32, double(S) * K * 2 + double(n32) * K * 2 + double(n32) * S * 4});
     }
     if (auto r = cmd_close(); !r) return std::unexpected(r.error());
-    w16_src_ = slices > 1 ? 0 : w.data;
     static const char* const kFmt[] = {"fp8", "bf16", "fp32", "fp4"};
     add_op(std::format("coop {}x{} w{} x{}", R, K, kFmt[std::min<uint32_t>(w.fmt, 3)], xfmt ? "q" : "f32"),
            ms_since(t0), pf_gemm_cost(w, xfmt, n, x_stride));
@@ -1262,7 +1275,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
     auto ksw  = runner_->kernel({"prefill_elem", 8});
     auto ksc  = runner_->kernel({"prefill_elem", 9});
     const uint32_t coop_min = pcfg_.coopmat_min_rows;
-    w16_src_ = 0;   // the expert decodes below overwrite the dense transit
+    w16_src_[0] = 0; w16_used_[0] = 0;   // the expert decodes below overwrite slot 0 of the dense transit
     {
         for (auto* k : {&kdec, &kx1, &kx2, &kgu, &kdn, &ksw, &ksc})
             if (!*k) return std::unexpected(k->error());

@@ -684,6 +684,10 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0an. **dense 权重的 fp16 解码留在 4 个槽里、一层解码一次而不是每个 query block 一次：17K 三个大 GEMM 的 decode 1,244 → 76 ms（wq_b 414 → 27、wo_b 432 → 26、wo_a 398 → 23），`prefill_bench` 51.63 → 50.30 s；4K 355 → 76 ms，32.5 → 31.8；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。**
+   **为什么以前每块都解**：`b_.w16` 只有一份、`w16_src_` 只记一个权重，而一个 query block（512 行）里 wq_b → (indexer wq_b) → wo_a → wo_b 轮着来，17K 一层 34 块，每个权重解 34 次（700 次 × 84 MB = 88 GB 一个权重）。现在 `w16` 是 `kW16Slots = 4` 个等大的槽（`w16_slot`：命中用命中的，否则最久没用的），槽 0 仍是 MoE 的 transit（shared expert、routed jobs 写它就作废）和切片 engram GEMM 的。多占 3 × 84 MB = 252 MB GTT（≈ 13 个 expert 槽）。
+   **数**：`prefill_ahead/w16x4_*.out/.jsonl`。剩下的 dense 一侧：wo_a 的 tiles 15.5 TFLOP/s（8 组 × 1,024 行，小派发）、wo_b 19.5、wq_b 25.5。
+
 0am. **q 的 rope 直接写成 fp16 到 attention 的 q16 平面，q16 stage 删掉：17K attention 5,675 → 5,295 ms（q16 374 → 0）、rope（s5）1,169 → 1,031；4K attention 1,526 → 1,445；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。o 的同一招是 NO-GO（§3 77）。**
    **改法**：`op_rope` 加 `out_f16`（只对不量化的 mode 0）：同一个 f32tof16，只是由 rope 写而不是 q16 stage 写，所以逐位同；`op_attention` 加 `q16`，`attn_coop_ok` 把「会不会走 coopmat 路」拎成一个谓词，rope 与 attention 按同一个谓词选平面（legacy 路仍收 f32）。
    **数**：17K 少读写 72 GB（q16 stage 的 4 + 2 字节/元素 + rope 少写的 2 字节），墙钟 52.15 → 51.63 s（盘 4.42/3.72 GB/s）。`prefill_ahead/q16_*.out/.jsonl`。
