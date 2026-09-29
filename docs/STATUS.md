@@ -683,6 +683,11 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0al. **attention 的 softmax（`prefill_attn` s4）改成每 lane 4 个连续条目：17K 673 → 441 ms，4K 167 → 115；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。**
+   **改法**：一个 wave 还是一行 (query, head)，每 lane 读一个 float4 的 S、写 8 字节的 P（原来一次 32 个条目、每 lane 一个 4 字节读一个 2 字节写）；分母仍按条目顺序求和——lane j 的四个依次来，`WaveReadLaneAt` 的次数不变——所以 P 和 1/den 逐位同一线程版。index 列表长度 g 可以不是 4 的倍数（n_idx = min(A, 128) + min(512, G)），它的四个条目仍是标量读（64 个 head 读同一份，L1 命中）。
+   **数**：17K 78.4 GB 的流量从 116 GB/s 到 178；剩下的差距是两遍读（先 max 再 exp）和 8 字节写。4K 总墙钟这两次 31.0 / 33.2 s，差在 expert io（17.2 → 19.6 s，外接盘），GPU 侧按 per-op 记。`prefill_ahead/smx4_*.out/.jsonl`。
+   **还没动的**：attn finish（471 ms，16 个标量读写一线程）、q16（374）、gather（1,049，231 GB 的 fp16 拷贝，已是 220 GB/s）。
+
 0ak. **四个逐元素 kernel 改成每线程 4 个元素：17K 的 GPU 侧 −1.45 s（mhc_post 1,440 → 642 ms，swiglu 593 → 286，scatter 936 → 624，act_quant 386 → 357），4K −0.37 s；逐位不变。同一轮里 GEMM 派发顺序的两个改法、几何按轮次选、engram 行分两盘都量成 NO-GO（§3 74–76）。**
    **怎么找到的**：0af 的模型早就把 `prefill_elem s4` 标成 DRAM 2.7 倍下限（88 GB/s 对 236），0ag 把它向量化到 16 字节读写后还是 90。新加的 `prefill_bench --section elem` 单独跑 s4（n=4,096 / 17,010）：每线程 16 个元素 90 GB/s，8 个 137–155，**4 个 207–209**，32 个 73——不是访存模式，是每线程在飞的读太多（16 个元素 × 9 个平面 = 36 个 16 B 读）压住了并行度。s8 swiglu、s9 scatter_add 同一个形状，一起改；act_quant 的 32 个 2 字节写改成 4 个 16 字节写。mhc_pre_norm（s2，99 GB/s）也试了按 lane 取 4 个连续元素，但它的 WaveActiveSum 每 lane 的部分和顺序会变、不再逐位，撤回。
    **顺带**：rope（s5）不量化的那条路（q 和 o 的 rope，行宽 12,288）也改成每线程 4 个元素：17K 1,280 → 1,087 ms；量化的三条路还是每线程一个 32 块（块内 amax 要归约），没动。

@@ -245,7 +245,12 @@ void s_gather(uint3 gid, uint tid) {
 
 // --- stage 4: softmax -----------------------------------------------------------
 // kScore = S [B][H][E] f32 (q.k), kIdx [B][g], kSink [H] f32, kO = P16
-// [B][H][E], kW = inv [B][H] f32.
+// [B][H][E], kW = inv [B][H] f32. A wave is a row; a lane takes four
+// consecutive entries (one float4 of S, one 8-byte store of P), and the
+// denominator is still summed in entry order -- lane j's four in turn -- so
+// P and inv are bit for bit the one-entry-a-lane version's (STATUS §7 0al).
+// E is a multiple of 16, the index list's length g anything: its four
+// entries are scalar loads (the same 64 x 4 bytes for every head, L1 hits).
 void s_softmax(uint3 gid, uint tid) {
     const uint i = gid_linear(gid) * kWg + tid;
     const uint row = i / 32, lane = i % 32;     // SubgroupSize is 32: a wave is a row
@@ -256,17 +261,26 @@ void s_softmax(uint3 gid, uint tid) {
     const uint64_t irow = Ptr[kIdx] + (uint64_t)b * pc.g * 4;
     const uint64_t prow = Ptr[kO] + ((uint64_t)b * pc.n_heads + h) * E * 2;
     float mx = -3.0e38f;
-    for (uint t = lane; t < pc.g; t += 32)
-        if (load_i32(irow + (uint64_t)t * 4) >= 0) mx = max(mx, load_f32(srow + (uint64_t)t * 4) * pc.scale);
+    for (uint t0 = lane * 4; t0 < pc.g; t0 += 128) {
+        const float4 s = load_f32x4(srow + (uint64_t)t0 * 4);
+        [unroll] for (uint k = 0; k < 4; ++k)
+            if (t0 + k < pc.g && load_i32(irow + (uint64_t)(t0 + k) * 4) >= 0) mx = max(mx, s[k] * pc.scale);
+    }
     mx = max(WaveActiveMax(mx), -1.0e30f);
     float den = 0.0f;
-    for (uint t0 = 0; t0 < E; t0 += 32) {
-        const uint t = t0 + lane;
-        float p = 0.0f;
-        if (t < pc.g && load_i32(irow + (uint64_t)t * 4) >= 0)
-            p = bf16_round(exp(load_f32(srow + (uint64_t)t * 4) * pc.scale - mx));
-        if (t < E) *(uint16_t*)(prow + (uint64_t)t * 2) = (uint16_t)f32tof16(p);
-        [unroll] for (uint j = 0; j < 32; ++j) den += WaveReadLaneAt(p, j);
+    for (uint t0 = 0; t0 < E; t0 += 128) {
+        const uint t = t0 + lane * 4;
+        float p[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        if (t < E) {
+            const float4 s = load_f32x4(srow + (uint64_t)t * 4);
+            [unroll] for (uint k = 0; k < 4; ++k)
+                if (t + k < pc.g && load_i32(irow + (uint64_t)(t + k) * 4) >= 0)
+                    p[k] = bf16_round(exp(s[k] * pc.scale - mx));
+            *(uint2*)(prow + (uint64_t)t * 2) =
+                uint2(f32tof16(p[0]) | (f32tof16(p[1]) << 16), f32tof16(p[2]) | (f32tof16(p[3]) << 16));
+        }
+        [unroll] for (uint j = 0; j < 32; ++j)
+            [unroll] for (uint k = 0; k < 4; ++k) den += WaveReadLaneAt(p[k], j);
     }
     if (lane != 0) return;
     den += exp(load_f32(Ptr[kSink] + (uint64_t)h * 4) - mx);
