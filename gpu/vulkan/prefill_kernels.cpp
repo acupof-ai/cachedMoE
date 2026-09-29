@@ -338,26 +338,29 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         {&b_.x, N * dim * 4}, {&b_.rs, N * 4}, {&b_.mix_raw, N * kMix * 4},
         {&b_.mix_a, N * kMix * 4}, {&b_.mix_f, N * kMix * 4}, {&b_.mix_prev, N * kMix * 4},
         {&b_.xq, N * dim * 2}, {&b_.xs, N * (dim / 32) * 4},
-        {&b_.kv_raw, N * hd * 4}, {&b_.kv_norm, N * hd * 4}, {&b_.kv, N * hd * 4},
-        {&b_.ckv, N * hd * 4}, {&b_.cscore, N * hd * 4}, {&b_.latent_pre, N * hd * 4},
-        {&b_.latent, N * hd * 4}, {&b_.key_raw, N * cfg.index_head_dim * 4},
+        // kPfRowSlack rows on every plane a cooperative-matrix GEMM writes: its
+        // last token block stores whole 16-row tiles past n
+        {&b_.kv_raw, (N + kPfRowSlack) * hd * 4}, {&b_.kv_norm, N * hd * 4}, {&b_.kv, N * hd * 4},
+        {&b_.ckv, (N + kPfRowSlack) * hd * 4}, {&b_.cscore, (N + kPfRowSlack) * hd * 4},
+        {&b_.latent_pre, (N + kPfRowSlack) * hd * 4},
+        {&b_.latent, N * hd * 4}, {&b_.key_raw, (N + kPfRowSlack) * cfg.index_head_dim * 4},
         {&b_.key_norm, N * cfg.index_head_dim * 4},
-        {&b_.qr_raw, N * cfg.q_lora_rank * 4}, {&b_.qr, N * cfg.q_lora_rank * 4},
+        {&b_.qr_raw, (N + kPfRowSlack) * cfg.q_lora_rank * 4}, {&b_.qr, N * cfg.q_lora_rank * 4},
         {&b_.qrq, N * cfg.q_lora_rank * 2}, {&b_.qrs, N * (cfg.q_lora_rank / 32) * 4},
-        {&b_.q, B * cfg.num_attention_heads * hd * 4},
-        {&b_.iq, B * cfg.index_n_heads * cfg.index_head_dim * 4},
+        {&b_.q, (B + kPfRowSlack) * cfg.num_attention_heads * hd * 4},
+        {&b_.iq, (B + kPfRowSlack) * cfg.index_n_heads * cfg.index_head_dim * 4},
         {&b_.iw, B * cfg.index_n_heads * 4}, {&b_.iscore, B * N * 4},
         {&b_.idx, B * n_idx * 4},
         // a query block's candidate-block mask, a byte per block of this prompt
         {&b_.cmask, cfg.candidate_block_size ? B * ((N + cfg.candidate_block_size - 1) / cfg.candidate_block_size) : 0},
         {&b_.score, B * cfg.num_attention_heads * ((n_idx + 15) / 16 * 16) * 4},
         {&b_.o, B * cfg.num_attention_heads * hd * 4},
-        {&b_.woa, B * cfg.o_groups * cfg.o_lora_rank * 4},
+        {&b_.woa, (B + kPfRowSlack) * cfg.o_groups * cfg.o_lora_rank * 4},
         {&b_.woaq, B * cfg.o_groups * cfg.o_lora_rank * 2},
         {&b_.woas, B * (cfg.o_groups * cfg.o_lora_rank / 32) * 4},
-        {&b_.attn, N * dim * 4},
+        {&b_.attn, (N + kPfRowSlack) * dim * 4},
         {&b_.fx, N * dim * 4}, {&b_.fxq, N * dim * 2}, {&b_.fxs, N * (dim / 32) * 4},
-        {&b_.gate, N * cfg.n_routed_experts * 4},
+        {&b_.gate, (N + kPfRowSlack) * cfg.n_routed_experts * 4},
         {&b_.gids, N * k6 * 4}, {&b_.gwts, N * k6 * 4},
         {&b_.y, N * dim * 4},
         {&b_.hplane, (N * (k6 + 1) + kPfRowSlack) * inter * 4},
@@ -379,7 +382,7 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
                             dim * cfg.o_groups * cfg.o_lora_rank}) * 2},
         {&b_.jobs, (uint64_t(cfg.n_routed_experts) + 2) * 64},
         {&b_.eng_x, N * 6144 * 4}, {&b_.eng_xq, N * 6144 * 2}, {&b_.eng_xs, N * 192 * 4},
-        {&b_.eng_kv, N * (kHc + 1) * dim * 4},
+        {&b_.eng_kv, (N + kPfRowSlack) * (kHc + 1) * dim * 4},
         {&b_.transit, uint64_t(2) * pcfg_.transit_slots * layout::kExpertSlotBytes},
         {&b_.rope_win, (N + 8) * cfg.qk_rope_head_dim * 4},
         {&b_.rope_cmp, (N + 8) * cfg.qk_rope_head_dim * 4},
@@ -405,7 +408,7 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         sources_[L].cache = *c;
         sources_[L].keys = *k;
     }
-    qp_ok_ = static_cast<bool>(qp_.create(device, 64));
+    qp_ok_ = static_cast<bool>(qp_.create(device, 1024));   // a routed batch marks every dispatch
     return build_rope(static_cast<uint32_t>(N + 8));
 }
 
@@ -491,9 +494,9 @@ Result<void> Prefill::rec(uint32_t kernel, const void* push, uint32_t bytes, uin
     return cmd_.barrier();
 }
 
-void Prefill::mark(const char* name, PfCost cost) {
+void Prefill::mark(std::string name, PfCost cost) {
     if (!qp_ok_ || marks_.size() + 2 > qp_.count()) return;
-    marks_.emplace_back(name, cost);
+    marks_.emplace_back(std::move(name), cost);
     (void)cmd_.write_timestamp(qp_, static_cast<uint32_t>(marks_.size()), true);
 }
 
@@ -573,15 +576,13 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     if (groups > 1 && xfmt != kPfActF32) return false;
     // An ungrouped weight whose fp16 copy does not fit b_.w16 (the engram's
     // 25600 x 6144) goes through in equal slices of whole 128-row blocks, each
-    // decoded, multiplied and copied into its own columns of y.
+    // decoded and multiplied into its own columns of y.
     uint32_t S = R;
     if (groups == 1)
         for (uint32_t m = 2; uint64_t(S) * K * 2 > b_.w16.bytes && m <= 64; ++m)
             if (R % m == 0 && (R / m) % 128 == 0) S = R / m;
     const uint32_t slices = R / S, rows = slices > 1 ? S : R;
-    if (uint64_t(S) * K * 2 > b_.w16.bytes ||
-        (uint64_t(n32) + kPfRowSlack) * K * 2 > b_.x16.bytes ||
-        (uint64_t(n32) + kPfRowSlack) * S * 4 > b_.dout.bytes)
+    if (uint64_t(S) * K * 2 > b_.w16.bytes || (uint64_t(n32) + kPfRowSlack) * K * 2 > b_.x16.bytes)
         return false;
     const auto t0 = Clk::now();
     auto kd = runner_->kernel({"prefill_gemm", 3, w.fmt, 0, 8});
@@ -591,33 +592,34 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     const LdsGeo lg = pf_lds_geo(pcfg_, mrows, K, n32);
     auto km = lg.wm ? runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, rows, K, lg.wm, lg.wn})
                     : runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, rows, K, tt});
-    auto kc = runner_->kernel({"prefill_elem", 10});
-    for (auto* k : {&kd, &kx, &km, &kc})
+    for (auto* k : {&kd, &kx, &km})
         if (!*k) return std::unexpected(k->error());
     uint64_t* s = runner_->slots(*kd);
     s[kPgW] = w.data; s[kPgS] = w.scale; s[kPgY] = b_.w16.dev_addr;
     s = runner_->slots(*kx);
     s[kPcQ] = x; s[kPcQS] = xs; s[kPcX] = b_.x16.dev_addr;
     s = runner_->slots(*km);
-    s[kPcW] = b_.w16.dev_addr; s[kPcX] = b_.x16.dev_addr; s[kPcY] = b_.dout.dev_addr;
-    s = runner_->slots(*kc);
-    s[0] = b_.dout.dev_addr; s[1] = y;
-    if (!cmd_valid_) {
-        auto cb = runner_->pool().acquire();
-        if (!cb) return std::unexpected(cb.error());
-        cmd_ = *cb;
-        cmd_valid_ = true;
-    }
+    s[kPcW] = b_.w16.dev_addr; s[kPcX] = b_.x16.dev_addr; s[kPcY] = y;
+    // y is written by the GEMM, rounded onto bf16 there under kPfFlagRound;
+    // a slice lands in its own columns of y's R-wide rows.
+    const uint32_t gflags = 64 | (flags & kPfFlagRound);
+    // Each dispatch is timestamped under its own name (the model prices the
+    // decode, the x staging and the tiles apart): the op's own time is the
+    // submit and wait around them.
+    const std::string shape = std::format("gemm {}x{}", R, K);
+    const double xe = xfmt == kPfActF32 ? 4.0 : 2.0 + 4.0 / 32;
     auto rec = [&](uint32_t k, const void* p, uint32_t bytes, uint32_t gx, uint32_t gy = 1) -> Result<void> {
         if (auto r = runner_->record(cmd_, k, p, bytes, gx, gy); !r) return r;
         ++times_.dispatches;
         return cmd_.barrier();
     };
-    if (auto r = cmd_.begin(); !r) return std::unexpected(r.error());
+    if (auto r = cmd_open(); !r) return std::unexpected(r.error());
     auto decode = [&](uint32_t r0) -> Result<void> {
         PfGemmPush pd;
         pd.rows = rows; pd.k = K; pd.scale_cols = (K + 31) / 32; pd.row_base = r0;
-        return rec(*kd, &pd, sizeof(pd), PrefillRunner::per_block_groups(rows, K));
+        if (auto r = rec(*kd, &pd, sizeof(pd), PrefillRunner::per_block_groups(rows, K)); !r) return r;
+        mark(shape + " decode", {0, double(w.bytes) * rows / R + double(rows) * K * 2});
+        return {};
     };
     const uint32_t gx = lg.wm ? lg.pad(n32) / lg.tok() : pf_tok_groups(n32, tt);
     const uint32_t gy = mrows / (lg.wm ? 32 * lg.wm : 16);
@@ -630,23 +632,19 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
         px.x_stride = uint32_t(uint64_t(groups) * K); px.x_col0 = g * K;
         if (auto r = rec(*kx, &px, sizeof(px), PrefillRunner::stage_groups(n, K)); !r)
             return std::unexpected(r.error());
+        mark(shape + " x16", {0, double(n) * K * (xe + 2)});
         if (slices > 1) break;
-        PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64; pg.row0 = g * rpg;
+        PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = gflags; pg.row0 = g * rpg; pg.y_stride = R;
         if (auto r = rec(*km, &pg, sizeof(pg), gx, gy); !r) return std::unexpected(r.error());
+        mark(shape + " tiles", {2.0 * rpg * K * n32, double(rpg) * K * 2 + double(n32) * K * 2 + double(n32) * rpg * 4});
     }
-    for (uint32_t r0 = 0; r0 < R; r0 += S) {
-        if (slices > 1) {
-            if (auto r = decode(r0); !r) return std::unexpected(r.error());
-            PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64;
-            if (auto r = rec(*km, &pg, sizeof(pg), gx, gy); !r) return std::unexpected(r.error());
-        }
-        PfElemPush pc; pc.n = n; pc.d = S; pc.a0 = R; pc.a1 = r0; pc.flags = flags & kPfFlagRound;
-        if (auto r = rec(*kc, &pc, sizeof(pc), groups_for(uint64_t(n) * (S / 16))); !r)
-            return std::unexpected(r.error());
+    for (uint32_t r0 = 0; slices > 1 && r0 < R; r0 += S) {
+        if (auto r = decode(r0); !r) return std::unexpected(r.error());
+        PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = gflags; pg.y_stride = R; pg.y_row0 = r0;
+        if (auto r = rec(*km, &pg, sizeof(pg), gx, gy); !r) return std::unexpected(r.error());
+        mark(shape + " tiles", {2.0 * S * K * n32, double(S) * K * 2 + double(n32) * K * 2 + double(n32) * S * 4});
     }
-    if (auto r = cmd_.end(); !r) return std::unexpected(r.error());
-    ++times_.submits;
-    if (auto r = submit_and_wait(*device_, cmd_); !r) return std::unexpected(r.error());
+    if (auto r = cmd_close(); !r) return std::unexpected(r.error());
     w16_src_ = slices > 1 ? 0 : w.data;
     static const char* const kFmt[] = {"fp8", "bf16", "fp32", "fp4"};
     add_op(std::format("coop {}x{} w{} x{}", R, K, kFmt[std::min<uint32_t>(w.fmt, 3)], xfmt ? "q" : "f32"),
@@ -860,11 +858,12 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     mark("attn q16", {0, bhd * 6});
     if (auto r = rec(*kg, &p, sizeof(p), groups_for(uint64_t(b) * E * (D / 8))); !r) return r;
     mark("attn gather", {0, g16 + lists + kv_rows});
-    if (auto r = rec(*ks, &pc, sizeof(pc), b, gy); !r) return r;
+    // the LDS GEMMs: row block fastest, then the query (prefill_gemm_lds.slang)
+    if (auto r = rec(*ks, &pc, sizeof(pc), lds ? gy : b, lds ? b : gy); !r) return r;
     mark("attn score tiles", {tile, bhd * 2 + g16 + bh * E * 4});
     if (auto r = rec(*km, &p, sizeof(p), groups_for(uint64_t(b) * H * 32)); !r) return r;
     mark("attn softmax", {0, bh * E * 6 + lists + bh * 4});
-    if (auto r = rec(*kp, &pc, sizeof(pc), b, gp); !r) return r;
+    if (auto r = rec(*kp, &pc, sizeof(pc), lds ? gp : b, lds ? b : gp); !r) return r;
     mark("attn P.V tiles", {tile, bh * E * 2 + g16 + bhd * 4});
     if (auto r = rec(*kf, &p, sizeof(p), groups_for(uint64_t(b) * H * (D / 16))); !r) return r;
     mark("attn finish", {0, bhd * 8 + bh * 4});
@@ -1179,13 +1178,9 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
     // Dispatch A for jobs [j0, j1), the h quantisation over `hrows`, dispatch B
     // for the same jobs: one command buffer, one submit.
     auto compute = [&](uint32_t j0, uint32_t j1, uint32_t hrows) -> Result<void> {
-        if (!cmd_valid_) {
-            auto cb = runner_->pool().acquire();
-            if (!cb) return std::unexpected(cb.error());
-            cmd_ = *cb;
-            cmd_valid_ = true;
-        }
-        if (auto r = cmd_.begin(); !r) return r;
+        if (auto r = cmd_open(); !r) return r;
+        // the small experts' three steps, timestamped as three stages
+        const double wfp4 = double(inter) * dim * (0.5 + 1.0 / 32);
         for (uint32_t j = j0; j < j1; ++j) {
             PfGemmPush p;
             p.rows = inter; p.k = dim; p.scale_cols = dim / 32; p.n = jobs[j].n; p.x_stride = dim;
@@ -1197,11 +1192,13 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             ++times_.dispatches;
         }
         if (auto r = cmd_.barrier(); !r) return r;
+        mark("moe tiled gate/up", {4.0 * inter * dim * hrows, 2 * wfp4 * (j1 - j0) + double(hrows) * (dim * 2.125 + inter * 4)});
         PfElemPush pq; pq.n = hrows; pq.d = inter;
         if (auto r = runner_->record(cmd_, *kq, &pq, sizeof(pq),
                                      groups_for(uint64_t(hrows) * (inter / 32))); !r)
             return r;
         if (auto r = cmd_.barrier(); !r) return r;
+        mark("moe tiled quant", {0, double(hrows) * inter * (4 + 2.125)});
         for (uint32_t j = j0; j < j1; ++j) {
             PfGemmPush p;
             p.rows = dim; p.k = inter; p.scale_cols = inter / 32; p.n = jobs[j].n;
@@ -1214,9 +1211,8 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             ++times_.dispatches;
         }
         times_.dispatches += 1;
-        if (auto r = cmd_.end(); !r) return r;
-        ++times_.submits;
-        return submit_and_wait(*device_, cmd_);
+        mark("moe tiled down", {2.0 * inter * dim * hrows, wfp4 * (j1 - j0) + double(hrows) * (inter * 2.125 + dim * 8)});
+        return cmd_close();
     };
 
     // docs/p3_prefill.md §5 option (a), the measured winner: every matrix of
@@ -1253,18 +1249,16 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         s[0] = b_.dout.dev_addr; s[1] = y; s[2] = b_.csr_idx.dev_addr;
     }
     auto compute_coop = [&](uint32_t j0, uint32_t j1) -> Result<void> {
-        if (!cmd_valid_) {
-            auto cb = runner_->pool().acquire();
-            if (!cb) return std::unexpected(cb.error());
-            cmd_ = *cb;
-            cmd_valid_ = true;
-        }
-        if (auto r = cmd_.begin(); !r) return r;
+        if (auto r = cmd_open(); !r) return r;
+        // every dispatch timestamped under its stage's name: the model prices
+        // the three decodes, the two stagings, the three GEMMs and the
+        // elementwise steps of an expert apart
         auto rec = [&](uint32_t k, const void* p, uint32_t bytes, uint32_t gx, uint32_t gy = 1) -> Result<void> {
             if (auto r = runner_->record(cmd_, k, p, bytes, gx, gy); !r) return r;
             ++times_.dispatches;
             return cmd_.barrier();
         };
+        const double wdec = double(inter) * dim * (0.5 + 1.0 / 32 + 2);   // fp4 + scales read, fp16 written
         // prefill_gemm_lds when the shape tiles, with its geometry picked per
         // expert (the token count varies); stage 0 otherwise.
         auto gemm = [&](uint32_t R, uint32_t K, uint32_t n32, uint64_t x, uint64_t y,
@@ -1292,35 +1286,45 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             const uint32_t np = gu->second.wm ? gu->second.pad(n32) : n32;
             const auto [gux, guy] = groups(gu->second, n32, inter);
             const auto [dnx, dny] = groups(dn->second, n32, dim);
+            const PfCost gemm_cost{2.0 * inter * dim * n32, double(inter) * dim * 2 + double(n32) * (dim + inter) * 2 + double(n32) * inter * 4};
             PfGemmPush pd;
             pd.job = j; pd.flags = kPfFlagFromJob;
             pd.rows = inter; pd.k = dim; pd.scale_cols = dim / 32; pd.idx_off = 0;
             if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
+            mark("moe decode", {0, wdec});
             PfCoopPush px; px.n = n32; px.k = dim; px.idx_off = jb.rows_off; px.flags = kPfFlagGather;
             if (auto r = rec(*kx1, &px, sizeof(px), PrefillRunner::stage_groups(n32, dim)); !r) return r;
+            mark("moe x16", {0, double(n32) * dim * (2 + 4.0 / 32 + 2)});
             PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64;
             if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
+            mark("moe gemm gate/up", gemm_cost);
             pd.idx_off = 1;
             if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
+            mark("moe decode", {0, wdec});
             pg.idx_off = np;
             if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
+            mark("moe gemm gate/up", gemm_cost);
             PfElemPush ps; ps.n = n; ps.d = inter; ps.a0 = np; ps.a1 = jb.h_off; ps.a2 = jb.rows_off;
             ps.f1 = static_cast<float>(c.swiglu_limit); ps.flags = round;
             if (auto r = rec(*ksw, &ps, sizeof(ps), groups_for(uint64_t(n) * (inter / 16))); !r) return r;
+            mark("moe swiglu", {0, double(n) * inter * 12});
             PfElemPush pq; pq.n = n; pq.d = inter; pq.row_off = jb.h_off;
             if (auto r = rec(*kq, &pq, sizeof(pq), groups_for(uint64_t(n) * (inter / 32))); !r) return r;
+            mark("moe quant", {0, double(n) * inter * (4 + 2 + 4.0 / 32)});
             PfCoopPush ph; ph.n = n32; ph.k = inter; ph.idx_off = jb.h_off; ph.flags = 0;
             if (auto r = rec(*kx2, &ph, sizeof(ph), PrefillRunner::stage_groups(n32, inter)); !r) return r;
+            mark("moe x16", {0, double(n32) * inter * (2 + 4.0 / 32 + 2)});
             pd.idx_off = 2; pd.rows = dim; pd.k = inter; pd.scale_cols = inter / 32;
             if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(dim, inter)); !r) return r;
+            mark("moe decode", {0, wdec});
             PfCoopPush pn; pn.n = n32; pn.idx_off = 0; pn.flags = 64;
             if (auto r = rec(dn->first, &pn, sizeof(pn), dnx, dny); !r) return r;
+            mark("moe gemm down", gemm_cost);
             PfElemPush pc2; pc2.n = n; pc2.d = dim; pc2.a2 = jb.rows_off; pc2.flags = round;
             if (auto r = rec(*ksc, &pc2, sizeof(pc2), groups_for(uint64_t(n) * (dim / 16))); !r) return r;
+            mark("moe scatter", {0, double(n) * dim * 12});
         }
-        if (auto r = cmd_.end(); !r) return r;
-        ++times_.submits;
-        return submit_and_wait(*device_, cmd_);
+        return cmd_close();
     };
 
     // --- the shared expert (job 0): fp8, every row ------------------------------

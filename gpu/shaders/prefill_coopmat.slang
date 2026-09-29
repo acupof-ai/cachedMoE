@@ -60,6 +60,8 @@ typealias TileC = linalg.CoopMat<float, MemoryScope.Subgroup, 16, 16, linalg.Coo
 static const uint kW = 0, kX = 1, kY = 2, kQ = 3, kQS = 4, kIdx = 5;
 static const uint kFlagRowTiles = 64u;
 
+void round_tile(inout TileC c) { for (uint e = 0; e < c.GetLength(); ++e) c[e] = bf16_round(c[e]); }
+
 [[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
 
 struct CoopPush {
@@ -116,6 +118,10 @@ void stage_gemm(uint3 gid, uint tid) {
             if (tt > 5) { TileB b = TileB.Load<linalg.CoopMatMatrixLayout.ColumnMajor>(X, (m0 + 80) * xs + pc.x_col0 + k, xs); c5 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b, c5); }
             if (tt > 6) { TileB b = TileB.Load<linalg.CoopMatMatrixLayout.ColumnMajor>(X, (m0 + 96) * xs + pc.x_col0 + k, xs); c6 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b, c6); }
             if (tt > 7) { TileB b = TileB.Load<linalg.CoopMatMatrixLayout.ColumnMajor>(X, (m0 + 112) * xs + pc.x_col0 + k, xs); c7 = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b, c7); }
+        }
+        if ((pc.flags & kFlagRound) != 0u) {   // y rounded onto bf16 as it is written
+            round_tile(c0); round_tile(c1); round_tile(c2); round_tile(c3);
+            round_tile(c4); round_tile(c5); round_tile(c6); round_tile(c7);
         }
         c0.Store<linalg.CoopMatMatrixLayout.ColumnMajor>(Y, (yo + 0) * ys + pc.y_row0 + r, ys);
         if (tt > 1) c1.Store<linalg.CoopMatMatrixLayout.ColumnMajor>(Y, (yo + 16) * ys + pc.y_row0 + r, ys);

@@ -236,17 +236,21 @@ void s_mhc_post(uint3 gid, uint tid) {
     }
     const uint64_t h = Ptr[kIn] + (uint64_t)row * hc * d * 4;
     const uint64_t o = Ptr[kOut] + (uint64_t)row * hc * d * 4;
-    [unroll] for (uint q = 0; q < 16; ++q) {
+    [unroll] for (uint q = 0; q < 16; q += 4) {
         const uint e = c0 + q;
         // The sublayer output enters as the bf16 tensor the reference hands
         // hc_post (`ffn_out.to(residual.dtype)`); a no-op for wo_b's rounded one.
-        const float a = maybe_round(load_f32(Ptr[kA2] + ((uint64_t)row * d + e) * 4), pc.flags);
-        float r[kMaxHc];
-        [unroll] for (uint i = 0; i < kMaxHc; ++i) r[i] = load_f32(h + ((uint64_t)i * d + e) * 4);
+        const float4 a = load_f32x4(Ptr[kA2] + ((uint64_t)row * d + e) * 4);
+        float4 r[kMaxHc];
+        [unroll] for (uint i = 0; i < kMaxHc; ++i) r[i] = load_f32x4(h + ((uint64_t)i * d + e) * 4);
         [unroll] for (uint j = 0; j < kMaxHc; ++j) {
-            float s = 0.0f;
-            [unroll] for (uint i = 0; i < kMaxHc; ++i) s += comb[i][j] * r[i];
-            store_f32(o + ((uint64_t)j * d + e) * 4, maybe_round(post[j] * a + s, pc.flags));
+            float4 y;
+            [unroll] for (uint z = 0; z < 4; ++z) {
+                float s = 0.0f;
+                [unroll] for (uint i = 0; i < kMaxHc; ++i) s += comb[i][j] * r[i][z];
+                y[z] = maybe_round(post[j] * maybe_round(a[z], pc.flags) + s, pc.flags);
+            }
+            store_f32x4(o + ((uint64_t)j * d + e) * 4, y);
         }
     }
 }
@@ -276,8 +280,10 @@ void s_rope(uint3 gid, uint tid) {
     const bool inverse = (pc.flags & kFlagInverse) != 0u;
 
     float v[32];
-    [unroll] for (uint i = 0; i < 32; ++i)
-        v[i] = (i < blk_sz) ? load_f32(Ptr[kIn] + ((uint64_t)row * pc.d + e0 + i) * 4) : 0.0f;
+    [unroll] for (uint i = 0; i < 32; i += 4) {
+        const float4 a = (i < blk_sz) ? load_f32x4(Ptr[kIn] + ((uint64_t)row * pc.d + e0 + i) * 4) : float4(0.0f);
+        [unroll] for (uint z = 0; z < 4; ++z) v[i + z] = a[z];
+    }
     const uint64_t tab = Ptr[kA2] + (uint64_t)pos * pc.a2 * 4;   // rope_dim/2 pairs x 2 floats
     [unroll] for (uint i = 0; i < 32; i += 2) {
         if (i >= blk_sz) continue;
@@ -292,7 +298,8 @@ void s_rope(uint3 gid, uint tid) {
     }
     const uint64_t out = Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 4;
     if (pc.a1 == 0) {
-        [unroll] for (uint i = 0; i < 32; ++i) if (i < blk_sz) store_f32(out + (uint64_t)i * 4, v[i]);
+        [unroll] for (uint i = 0; i < 32; i += 4)
+            if (i < blk_sz) store_f32x4(out + (uint64_t)i * 4, float4(v[i], v[i + 1], v[i + 2], v[i + 3]));
         return;
     }
     float amax = 0.0f;
@@ -301,11 +308,22 @@ void s_rope(uint3 gid, uint tid) {
         // act_quant(kv, 32, "ue8m0", inplace=True): the window KV.
         const float sc = act_scale(amax);
         const float inv = 1.0f / sc;
-        [unroll] for (uint i = 0; i < 32; ++i) {
-            const float q = fp8_round(clamp(v[i] * inv, -kFp8MaxF, kFp8MaxF));
-            store_f32(out + (uint64_t)i * 4, q * sc);
-            if (Ptr[kA3] != 0)
-                *(uint8_t*)(Ptr[kA3] + (uint64_t)row * pc.d + e0 + i) = (uint8_t)fp8_pack(q);
+        uint bytes[8];
+        [unroll] for (uint i = 0; i < 32; i += 4) {
+            float4 y;
+            uint packed = 0u;
+            [unroll] for (uint z = 0; z < 4; ++z) {
+                const float q = fp8_round(clamp(v[i + z] * inv, -kFp8MaxF, kFp8MaxF));
+                y[z] = q * sc;
+                packed |= fp8_pack(q) << (8 * z);
+            }
+            store_f32x4(out + (uint64_t)i * 4, y);
+            bytes[i / 4] = packed;
+        }
+        if (Ptr[kA3] != 0) {
+            const uint64_t pk = Ptr[kA3] + (uint64_t)row * pc.d + e0;
+            store16(pk, uint4(bytes[0], bytes[1], bytes[2], bytes[3]));
+            store16(pk + 16, uint4(bytes[4], bytes[5], bytes[6], bytes[7]));
         }
         if (Ptr[kA4] != 0)
             *(uint8_t*)(Ptr[kA4] + (uint64_t)row * bpr + blk) = (uint8_t)((asuint(sc) >> 23) & 0xFFu);
@@ -317,19 +335,23 @@ void s_rope(uint3 gid, uint tid) {
     if (pc.a1 == 2) sc = idx_fp4_scale(amax);
     else            sc = fp8_round(clamp(max(amax, 6.0f * 0.001953125f) / 6.0f, 0.0f, kFp8MaxF));
     const float inv = 1.0f / sc;
-    uint packed[16];
-    [unroll] for (uint z = 0; z < 16; ++z) packed[z] = 0u;
-    [unroll] for (uint i = 0; i < 32; ++i) {
+    uint packed[4];   // a nibble an element, 8 elements a uint
+    [unroll] for (uint z = 0; z < 4; ++z) packed[z] = 0u;
+    [unroll] for (uint i = 0; i < 32; i += 4) {
         if (i >= blk_sz) continue;
-        const float q = fp4_round(clamp(v[i] * inv, -6.0f, 6.0f));
-        store_f32(out + (uint64_t)i * 4, q * sc);
-        const uint code = fp4_code(q);
-        if ((i & 1u) == 0u) packed[i >> 1] = code; else packed[i >> 1] |= code << 4;
+        float4 y;
+        [unroll] for (uint z = 0; z < 4; ++z) {
+            const float q = fp4_round(clamp(v[i + z] * inv, -6.0f, 6.0f));
+            y[z] = q * sc;
+            packed[i / 8] |= fp4_code(q) << (4 * ((i + z) % 8));
+        }
+        store_f32x4(out + (uint64_t)i * 4, y);
     }
-    if (Ptr[kA3] != 0)
-        [unroll] for (uint i = 0; i < 16; ++i)
-            if (i < blk_sz / 2)
-                *(uint8_t*)(Ptr[kA3] + ((uint64_t)row * pc.d + e0) / 2 + i) = (uint8_t)packed[i];
+    if (Ptr[kA3] != 0) {
+        const uint64_t pk = Ptr[kA3] + ((uint64_t)row * pc.d + e0) / 2;
+        if (blk_sz == 32) store16(pk, uint4(packed[0], packed[1], packed[2], packed[3]));
+        else { *(uint*)pk = packed[0]; *(uint*)(pk + 4) = packed[1]; }
+    }
     if (Ptr[kA4] != 0) {
         const uint code = (pc.a1 == 2) ? ((asuint(sc) >> 23) & 0xFFu) : fp8_pack(sc);
         *(uint8_t*)(Ptr[kA4] + (uint64_t)row * bpr + blk) = (uint8_t)code;
@@ -409,10 +431,12 @@ void s_swiglu(uint3 gid, uint tid) {
     const uint64_t gi = Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4;
     const uint64_t ui = Ptr[kIn] + ((uint64_t)(pc.a0 + row) * pc.d + c0) * 4;
     const uint64_t ho = Ptr[kOut] + ((uint64_t)(pc.a1 + row) * pc.d + c0) * 4;
-    [unroll] for (uint q = 0; q < 16; ++q) {
-        const float g = maybe_round(load_f32(gi + (uint64_t)q * 4), pc.flags);
-        const float u = maybe_round(load_f32(ui + (uint64_t)q * 4), pc.flags);
-        store_f32(ho + (uint64_t)q * 4, maybe_round(swiglu(g, u, pc.f1) * rw, pc.flags));
+    [unroll] for (uint q = 0; q < 16; q += 4) {
+        const float4 g = load_f32x4(gi + (uint64_t)q * 4), u = load_f32x4(ui + (uint64_t)q * 4);
+        float4 y;
+        [unroll] for (uint z = 0; z < 4; ++z)
+            y[z] = maybe_round(swiglu(maybe_round(g[z], pc.flags), maybe_round(u[z], pc.flags), pc.f1) * rw, pc.flags);
+        store_f32x4(ho + (uint64_t)q * 4, y);
     }
 }
 
@@ -428,9 +452,12 @@ void s_scatter_add(uint3 gid, uint tid) {
     const uint t = load_u32(Ptr[kA2] + (uint64_t)(pc.a2 + row) * 4);
     const uint64_t src = Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4;
     const uint64_t dst = Ptr[kOut] + ((uint64_t)t * pc.d + c0) * 4;
-    [unroll] for (uint q = 0; q < 16; ++q)
-        store_f32(dst + (uint64_t)q * 4,
-                  load_f32(dst + (uint64_t)q * 4) + maybe_round(load_f32(src + (uint64_t)q * 4), pc.flags));
+    [unroll] for (uint q = 0; q < 16; q += 4) {
+        const float4 s = load_f32x4(src + (uint64_t)q * 4), y = load_f32x4(dst + (uint64_t)q * 4);
+        float4 o;
+        [unroll] for (uint z = 0; z < 4; ++z) o[z] = y[z] + maybe_round(s[z], pc.flags);
+        store_f32x4(dst + (uint64_t)q * 4, o);
+    }
 }
 
 // --- 10: copy_round -----------------------------------------------------------------

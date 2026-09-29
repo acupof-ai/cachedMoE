@@ -1,0 +1,11 @@
+pinned set 9.17 GiB in 4.7 s
+N=4133 (bench/results/linux/prefill4k/ids4133.txt), replay 128 MoE coopmat n>=16 dense coopmat n>=64 pv_dv 4 ht 1 tt 8, load = unlabelled
+  total 50.24 s = 82 tok/s | embed 57  engram io 1125 gpu 165  mHC 1187  attention 5906  gate+route 118  shared 523  expert io 33091  expert gpu 7702  head 6  host/other 365 ms
+  10634 experts streamed = 200.01 GB in 33.1 s of waiting (6.04 GB/s against that wait), 291138 engram reads, 76037 dispatches in 3299 submits
+  first token 77, margin 8.598, logits finite: yes
+  ops by wall time:
+    io: experts 33091 ms/350, moe routed (gpu) 7702 ms/350, attn (coop, submit+wait) 2680 ms/200
+    gpu: moe gemm gate/up 2126 ms/10402, gpu: moe decode 2005 ms/15603, gpu: attn P.V tiles 1287 ms/200
+    io: engram rows 1125 ms/2, gpu: moe gemm down 930 ms/5201, gpu: moe tiled gate/up 895 ms/348
+    prefill_elem s5 787 ms/480, coop 8192x4096 wfp8 xf32 676 ms/180, prefill_elem s4 649 ms/80
+    gpu: attn score tiles 639 ms/200, coop 5120x8192 wfp8 xq 586 ms/180

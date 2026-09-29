@@ -283,7 +283,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 67 条）
+## 3. 试过并退掉的（编号，共 68 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -398,6 +398,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 | **66** | **host 写 flag、device 自旋等它**（Track HG，`p4_hostflag_gate.md`）——48 关掉的是 **workgroup↔workgroup** 的握手；这一条换一个机制：一个 command buffer 装下整个 token，每层 gate kernel 之后接一个 **1-workgroup 的自旋 kernel 等 host 写的一个 uint**，依赖方向指向 device 调度域**之外**的 CPU 线程。新探针 `bench/probes/hostflag_probe.cpp` + `gpu/shaders/probe_hostflag.slang`：一个 cmdbuf 里 40 轮（= 40 层），自旋上限**用同一个循环标定成墙钟预算**，且 `rounds × cap` 夹在 **TDR packet 窗口**之下 | **机制成立**：2,500+ 个 command buffer，**零 TDR / 零 device 丢失 / 零 payload 错误**；**前进保证过了**——256 个背景 workgroup 常驻时自旋 workgroup **零超时**，**3998/4000 轮是「自旋之后才看到」**，即它**真的观察到了 kernel 已在跑之后 host 才写下的值**（**48 的失效模式不复现**）。**输在延迟，而且是双峰的**：p50 **3.6 µs**、p99 **5,598 µs**，中间几乎没有东西——host 只要没在自旋启动后的**几微秒**内答上来，这一轮就固定 **~5.5 ms**。1 ms 与 5 ms 两档服务时间**延迟完全一样**（5532 vs 5553）⇒ 不是一段延迟，是一个 **~5.5 ms 的固定刷新周期**。三个「是不是我们的锅」全部排除：host 补 `mfence` + 读回**无变化**；**专职热轮询线程无变化**（1 ms 档 5532.2 vs 5532.4）；按轮次拆开是**第 1 轮永远 ~5.06 ms、第 40 轮 mean 1.1–1.5 ms**。自旋方式 busy vs backoff **±1.5%，在噪声里** | **NO-GO，但关掉的是延迟不是合法性**（`bench/results/p4hg/hostflag_probe.csv`）。按 53 的式子 `40 × (400 − 实测)`：最乐观（空闲、host 0 延迟）**−23 ms/token**、背景 256 WG **−99**、现实（53 的分解表说一层 host 侧最少 95 µs）**−205**——**每一格都是负的，而热步一共才 102 ms**。**要重开它需要的不是代码，是那 5.5 ms 消失**：稳态 3.6 µs 若每层都拿得到，奖金是 **40 × (400 − 3.6) = 15.9 ms/token**，但前提是 host 要在**几微秒**内答完，而 decode 一层最少 95 µs、未命中层 8,780 µs（53）——**差两个数量级**。⚠️ **顺带一个陷阱**：用**原子**读 flag 是 **76/80 轮超时**——原子即使加 0 也是 read-modify-**WRITE**，它把那一行在 device 缓存里弄脏，host 的写从此进不来，回写时还可能把 host 的值盖掉。**要用 `globallycoherent` 的普通读。**⚠️ **48 的那句「自旋等待在这台机器上 NO-GO」要加限定**：只对 **workgroup↔workgroup** 成立 |
 | **67** | **dense GEMM 用 128 token 的块（`prefill_gemm_lds` wn=4，wm=2 / 4）**（2026-09-29，0ad 之后）——0ad 的注意力 tile 乘法取 128 行的块赢了 64 行的，顺手把三个大 dense GEMM（32768×1280、8192×4096、5120×8192）也换成 128 token 宽的块看 LDS 复用是不是不够 | 4K 单盘：dense linears 3.3 → **3.46 s**（wm=2）/ **3.85 s**（wm=4），`moe routed (gpu)` 7.1 → 7.37 / 7.85 s，总 50.7 → 51.4 / 51.7 s（`bench/results/linux/attn_lds/bench4k_single_wm2.txt`） | **NO-GO，`pf_lds_geo` 不动**：块越大每个 workgroup 的寄存器越多、常驻 wave 越少，dense 这种 token 块数本来就够多的场景占用率的损失大过 LDS 复用的收益；batched 的注意力只是因为一次派发本来就有 b × 块数个 workgroup 才不吃这个亏。要再往上得从 kernel 内部（double buffer、每 wave 的 tile 数）来，先建 GEMM 的 kernel 模型（0ae 之后的下一步） |
+| **68** | **LDS GEMM 的 K 切片 64 → 128**（0af 的杠杆 2 之后，`coopgeo` 微基准 n=1024，`bench/results/linux/stage_model/coopgeo_bk64.csv` / `coopgeo_bk128.csv`）——同一深度的预取，每片两倍的 MMA 去遮下一片的全局读 | w1 0.844 → 0.753 ms（+12%），wq_b 3.59 → 3.64（持平），wo_b 3.51 → 3.63（wm2wn2 3.18 → 4.25，更慢）；LDS 与暂存寄存器翻倍 | **NO-GO**：预取深度不是 GEMM 那一半的主因（0ag 的 shader stats：256 VGPR 顶满、每 SIMD 4 个 wave、每片 85 条寄存器搬运）。`LDS_BK` 留作编译常数，128 的那份构建删了 |
 
 ---
 
@@ -671,6 +672,33 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0ag. **按 0af 的模型系统改了一轮：`prefill_bench` 17,010 token 80.4 → 69.75 s（−13%），4,133 token 50.7 → 48.7 s；逐位不变（margins 8.598 / 10.108）。四步各自的账，和模型哪条猜对、哪条猜错。**
+   **1. 舍入并进 GEMM 的写出，去掉 copy（模型杠杆 2，猜对）**：`prefill_gemm_lds` / `prefill_coopmat` stage 0 在累加器上逐元素 `bf16_round`（`GetLength()` / 下标）再直接写 y（`y_stride` = R，切片用 `y_row0`），`prefill_elem` s10 不再派发；y 的每个平面多 `kPfRowSlack` 行给最后一个 token 块的整 tile 写。dense linears 12.2 → 8.85 s（copy 3.07 s 没了）。同一趟里 **LDS 按几何定尺寸（杠杆 1，猜错）**：spec constant 进 `groupshared` 数组长度，128 行块 36.9 → 27.6 KB，tile 速率没动（32768×1280 1,248 → 1,104，8192×4096 1,454 → 1,470，5120×8192 1,483 → 1,417 ms）。`RADV_DEBUG=shaderstats` 说为什么：**VGPR 256、每 SIMD 4 个 wave**，占用率被寄存器顶着，LDS 之前就不是限制。留着（少占 LDS 无害）。
+   **2. P.V 的 G 转置着写进 LDS（杠杆 3，猜错两次）**：每线程两个 k 行拼 8 个 dword、A tile 走 row-major：4,751 → 4,693 ms；再按 lane 旋转写的顺序破 16 路 bank 冲突：4,698。**都不是**。`coopgeo` 加了 `DEEPMOE_PF_LDS_WT=1`（W 按 [K][R] 存的变体，`coopgeo_wt.csv`）：微基准里 [K][R] 只比 [R][K] 慢 6–17%——kernel 本身没问题。在位诊断（4K，只看时序）：`LdsWt=0` 读 G（结果错）P.V 653 ms = score 的 641；64 行块 1,469。所以是**读 G 的 DRAM 模式**：batched 派发 gid.x 是 query、gid.y 是行块，x 最快 → 同时在飞的 workgroup 全在同一个行块，读每个 1 KB 的 G 行里**同一个 256 B 的列**，落在同一组通道上，34 个切片一直如此；score 的列偏移每片都变，只是瞬时的。**改法**：batched 的网格换成行块最快（gid.x 行块、gid.y query，`prefill_gemm_lds.slang` + `op_attention` 的 `rec` 参数对调）：**P.V 4,700 → 1,317 ms（10.1 TFLOP/s，DRAM 下限的 1.1 倍），score 2,310 → 1,821**；注意力这组 9.9 → 5.9 s。4K：P.V 1,292 → 360。
+   **3. elementwise 一族 16 字节向量化（杠杆 4，猜对）**：rope s5、mhc_post s4、swiglu s8、scatter s9 改 `load_f32x4 / store_f32x4`，rope 的 fp8 / fp4 打包字节改整 uint4 写：scatter 2,323 → 918 ms（63 → 160 GB/s），swiglu 1,410 → 574，rope 2,929 → 1,335，mhc_post 2,379 → 1,443。17K 77.8 → 74.5 s。
+   **4. K 切片 128**（§3 68）：w1 +12%、wq_b 持平、wo_b 更慢。不采用。
+   **kernel 模型现在的实测项**（`bench/results/linux/stage_model/lds_gemm_w1_wm4wn2_loop.s`，w1 wm4wn2 主循环每片每 wave）：32 条 `v_wmma_f32_16x16x16_f16`、96 条 `ds_load_b64`（编译器没合成 b128：每个 tile 4 条）、12 `ds_store_b128`、12 `global_load_b128`、**85 条寄存器搬运**（36 v_swap + 35 v_dual_mov + 14 v_mov，ACO 在 256 VGPR 下的代价）、35 `s_waitcnt`、2 个 barrier。MMA 部分 ≈ 1,150 周期，其余 ≈ 400 条 VALU/LDS 指令——GEMM 停在峰值一半的钱在这里，不在占用率或预取。要再往上得让每个 tile 的 LDS 读变 b128、把寄存器搬运压下去（换 tile 分配或降到 wm4wn2 以下的寄存器压力），是 kernel 内部的活，排在 transit 之后。
+   **验证**：首 token margin 8.598 / 10.108 逐位不变；`gpu_prefill.stages` 加了两个检查——wkv 输出每个值低 16 位为 0（GEMM 自己舍入了），以及同一层注意力 LDS 开 / 关两遍逐位相同（E 64 / 128 走 LDS，96 退回 stage 3 / 4；0ad 的「逐位」之前只靠 margin 保证）；三条新变异都被抓到：GEMM 写出不舍入、scatter 覆盖不累加、`LdsWt` 的 k 行对写反（第一次报 BAD 是变异表里的模式过时了，不是没抓到——`tail -1` 只看汇总行会把 BAD 当漏网）。`suite.decode` + `decode_longctx`、`l3_ppl` off 0.622784、CPU 闸 25/25、`run_all`。
+   **现在的快照**（单盘 / 双盘）：4K 48.7 / 32.0 s，17K 69.75 / 54.6 s（`prefill_model/`、`ops_mirror.jsonl`）；serve 双盘 4,133 token **32.4 s**、17,010 token **54.2 s**（4,400 槽，`stage_model/serve*_dual`）。17K 模型剩下：串行段盘读 expert 26.0（双盘 12.2），dense 6.4，注意力 5.4，routed GEMM 3.9，elementwise 2.0。
+
+0af. **建模（用户 2026-09-29「可以先建模然后系统的优化吧」）：每个 dispatch 打 GPU 时间戳，把三组合成 op 拆到 kernel 一级。这一条只量不改；结果和它排出的杠杆在下面，改法从 0ag 起。**
+   **为什么要拆**：0ae 的模型里 17K 串行段是 dense linear 12.2 s、routed GEMM 16.6 s、注意力 9.6 s，但每个 op 是四五个 dispatch 的总和（decode → x16 → tile → copy；routed 是 decode / x16 / GEMM / swiglu / quant / decode / GEMM / scatter 十一步）。op 一级的 excess 说不出该改哪个 kernel。`coopgeo` 微基准说 LDS GEMM 单独跑 24–28 TFLOP/s，op 里只有 7–11。
+   **怎么量**：`cmd_open / mark / cmd_close` 本来只给注意力的六个阶段用；`op_gemm_coop`、`compute_coop` 和小 expert 的 `compute` 每个 dispatch 后都 `mark`（query pool 64 → 1,024；一个 routed batch 约 160 个 dispatch），`prefill_model.py` 把 `gpu:` 行挂在它们所属 op 下面。时间戳本身不要钱：4K 50.70 s、17K 80.29 s 与 0ae 快照一样。快照 `bench/results/linux/stage_model/`（`model_17010.txt` 是下面的数字）。
+   **17K 拆开之后**（ms；速率对天花板 mma 52.8 TFLOP/s、DRAM 236 GB/s）：
+   - routed 16,639：gate/up GEMM 6,707（17.6 TFLOP/s）、down 2,845（20.7）、**decode 2,983（214 GB/s，贴着 DRAM）**、scatter 2,323（**63 GB/s**）、swiglu 1,410（**47 GB/s**）、x16 399、quant 144。
+   - dense 12,213：tile 4,940（15.8–23.1 TFLOP/s）、**copy 3,070（41–46 GB/s）**、decode 1,314（DRAM）、x16 434。copy 是把 GEMM 的 fp32 输出从 dout 搬到 y 顺便舍入到 bf16——一个纯搬运阶段比它服务的 GEMM 慢的一半还多。
+   - 注意力 9,643：**P.V 4,763（2.8 TFLOP/s）**、score 2,093（6.3）、gather 996（DRAM）、softmax 633、finish 468、q16 360。同一个 LDS kernel，P.V 比 score 慢 2.3 倍。
+   - elementwise 6,580：rope s5 2,929（**62 GB/s**）、mhc_post s4 2,379（**53**）、mhc_pre s2 712（101）、mHC 的 `gemm 24x20480` 1,053（55）。
+   - 4K 另有小 expert 的 tiled 路径 1.27 s（gate/up 872 ms 1.3 TFLOP/s，down 398）——4K 一半的 expert job 不到 16 行走它；17K 没有。
+   **kernel 一级的解释**（每个 64 宽 K 切片、一个 128 × 64 的块）：MMA 32 次/wave ≈ 2,300 周期；LDS 读写 ≈ 500；全局读 24 KB ≈ 700 周期——稳态是 MMA 限制的。但下一片的全局读要 1–2 µs（3–6K 周期）才回来，只有一片深的预取，靠的就是别的 workgroup 顶上。`groupshared` 按最大几何（128 × 128）声明 36.9 KB，`maxComputeSharedMemorySize` 65,536 → **每个 CU 只放得下一个 workgroup**（4 个 wave，每 SIMD 一个），没有别人顶上。这就是微基准 24–28、op 里 16–23 和天花板 52.8 之间那一半。P.V 再慢一档是 `LdsWt` 的 A tile 从 LDS 按 column-major 读：每 lane 8 次 2 字节读、行距 68 dword → 4 路 bank 冲突，row-major 是一次 16 字节。
+   **模型排出的杠杆**（17K，预测都按对半打）：
+   1. LDS 按几何定尺寸（spec constant 进数组长度）：64 行块 18 KB → 3 个/CU，128 行 28 KB → 2 个；作用在 tile 4.9 + gate/up 6.7 + down 2.8 + P.V 4.8 + score 2.1 + shared 2.0 = 23 s 上，MMA 下限 5.7。
+   2. 舍入并进 GEMM 的写出（累加器上逐元素 bf16，然后直接写 y）：去掉 dense 的 copy 3.1 s；逐位相同（先舍入再写 = 先写再舍入）。
+   3. P.V 的 G 转置着写进 LDS（每线程 2 个 k 行拼成 8 个 dword），A tile 走 row-major：4.8 → 接近 score 的 2.1。
+   4. elementwise 一族（copy 之外还有 scatter、swiglu、rope、mhc_post、`gemm 24x20480`，共 10 s，DRAM 下限 2.7）：都是一个线程 16 个标量、lane 之间隔 64 字节的老样子，改 16 字节向量、lane 连续（a2858f6 对 gather/q16/x16 做过的）。
+   5. decode 3.0 + 1.3 s 贴着 DRAM：只能靠不写 fp16（在 GEMM 拷进 LDS 时解 fp4），之前 §3 那条「prefill 算术 FP4 更慢」是在没有 LDS 的 kernel 上试的。排最后。
+   **事后**（0ag）：2 和 4 兑现（−3.1、−3.3 s）；1 和 3 的机制猜错——占用率被 VGPR 而不是 LDS 顶着，P.V 慢的是 DRAM 通道而不是 LDS 布局，换成行块最快的网格后 P.V −3.4 s。模型算出的「哪里慢」对，「为什么慢」有一半要靠 shader stats、ISA 和在位诊断才定得下来。
 
 0ae. **indexer 的 top-k 上 GPU（`prefill_topk.slang`）：`prefill_bench` 17,010 token 85.8 → 80.4 s（−6%），4,133 token 51.5 → 50.7 s；双盘 70.0 → 64.7 s、35.2 → 34.85 s；serve 双盘 4,133 token 34.4 s、17,010 token 63.8 s（4,400 槽）。结果逐位不变。**
    **问题**：0ad 快照里 17K 串行段上 `host: index top-k` 4.94 s / 107 次调用（模型第四位，全是 host 时间）：每层每个 query 从 GPU 读回 index 分数，host 做 nth_element 再传回 KV 行号；4K 是 0.64 s。

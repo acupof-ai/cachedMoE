@@ -1,0 +1,4 @@
+  total 49.26 s = 84 tok/s | embed 56  engram io 1123 gpu 161  mHC 940  attention 5499  gate+route 74  shared 389  expert io 33731  expert gpu 6809  head 7  host/other 468 ms
+  first token 77, margin 8.598, logits finite: yes
+    gpu: moe decode 1910 ms/15603, gpu: moe gemm gate/up 1878 ms/10402, gpu: attn P.V tiles 1469 ms/200
+    gpu: attn score tiles 643 ms/200, coop 8192x4096 wfp8 xf32 632 ms/180, coop 5120x8192 wfp8 xq 573 ms/180

@@ -422,6 +422,7 @@ public:
     PfExpertSink* expert_sink = nullptr;   // Track R1; borrowed
     const PrefillTimes& times() const { return times_; }
     const PrefillConfig& config() const { return pcfg_; }
+    PrefillConfig&       config() { return pcfg_; }   // tests flip kernel switches between ops
 
     // Writes `h` as an L3-format directory `Engine::load_decode_state` reads
     // (docs/p3_prefill.md §8.2): our prefill record, plus the reference's step
@@ -506,7 +507,7 @@ private:
     // submits, waits, and adds every step to times_.per_op as "gpu: <name>".
     Result<void> cmd_open();
     Result<void> rec(uint32_t kernel, const void* push, uint32_t bytes, uint32_t gx, uint32_t gy = 1);
-    void mark(const char* name, PfCost cost = {});
+    void mark(std::string name, PfCost cost = {});
     Result<void> cmd_close();
     void add_op(const std::string& key, double ms, PfCost cost = {}) {
         auto& op = times_.per_op[key];
@@ -544,7 +545,7 @@ private:
     bool                      cmd_valid_ = false;
     QueryPool                 qp_;
     bool                      qp_ok_ = false;
-    std::vector<std::pair<const char*, PfCost>> marks_;
+    std::vector<std::pair<std::string, PfCost>> marks_;
     uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
     uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
     // read_ahead's reads for the layer it was called for: transit slot of each

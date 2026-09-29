@@ -120,6 +120,15 @@ struct Tally {
         if (!pass) ++failed;
         return pass;
     }
+    // every value representable in bf16: the GEMM rounded its y as it wrote it
+    bool bf16(const char* what, uint32_t L, const std::vector<float>& v) {
+        ++checked;
+        size_t off = 0;
+        for (float f : v) { uint32_t u; std::memcpy(&u, &f, 4); off += (u & 0xFFFFu) != 0; }
+        std::printf("      L%-2u %-26s %zu / %zu not bf16%s\n", L, what, off, v.size(), off ? "   <-- FAIL" : "");
+        if (off) ++failed;
+        return off == 0;
+    }
     bool sketch(const char* what, uint32_t L, const SketchAgreement& s, double tol = 2e-2) {
         ++checked;
         const bool pass = s.norm <= tol && s.proj <= tol;
@@ -295,7 +304,7 @@ DEEPMOE_TEST(gpu_prefill, stages) {
     GBuf qrq = take(P, kN * 1280 * 2ull), qrs = take(P, kN * 40 * 4ull);
     GBuf q = take(P, kN * 32768 * 4ull), iq = take(P, kN * 4096 * 4ull), iw = take(P, kN * 32 * 4ull);
     GBuf isc = take(P, kN * kN * 4ull), idx = take(P, kN * 640 * 4ull), gkv = take(P, kN * kHd * 4ull);
-    GBuf gcmp = take(P, kN * kHd * 4ull), gkeys = take(P, kN * 128 * 4ull), o = take(P, kN * 32768 * 4ull);
+    GBuf gcmp = take(P, kN * kHd * 4ull), gkeys = take(P, kN * 128 * 4ull), o = take(P, kN * 32768 * 4ull), o2 = take(P, kN * 32768 * 4ull);
     GBuf woa = take(P, kN * 8192 * 4ull), woaq = take(P, kN * 8192 * 2ull), woas = take(P, kN * 256 * 4ull);
     GBuf wob = take(P, kN * kDim * 4ull), gate = take(P, kN * 384 * 4ull), y = take(P, kN * kDim * 4ull);
     GBuf exq = take(P, kN * 6144 * 2ull), exs = take(P, kN * 192 * 4ull), ekv = take(P, kN * 25600 * 4ull);
@@ -396,6 +405,7 @@ DEEPMOE_TEST(gpu_prefill, stages) {
             REQUIRE_OK(wkv);
             REQUIRE_OK(P.op_gemm(*wkv, gpu::kPfActQ, xq.a(), xs.a(), kN, kDim, kvraw.a(), round));
             tally.check("wkv_out (rows)", L, agree(pick(kvraw.read(kN * kHd), kHd, {0, kN - 1}), g.f("wkv_out")));
+            tally.bf16("wkv_out rounded", L, kvraw.read(kN * kHd));
             REQUIRE_OK(P.op_rmsnorm(kvraw.a(), kvn.a(), kN, kHd, addr(L, "attn.kv_norm.weight")));
             REQUIRE_OK(P.op_rope(kvn.a(), kv.a(), kN, kHd, kHd, 1, 32, ratio > 0, 0, 1, false));
             tally.check("kv (fp8, all 64)", L, agree(kv.read(kN * kHd), g.f("kv")));
@@ -515,6 +525,20 @@ DEEPMOE_TEST(gpu_prefill, stages) {
             if (g.find("cmp_cache")) gcmp.set(g.f("cmp_cache"));
             REQUIRE_OK(P.op_attention(q.a(), gkv.a(), kN, g.find("cmp_cache") ? gcmp.a() : 0, idx.a(), n_idx,
                                       addr(L, "attn.attn_sink"), o.a(), kN));
+            {
+                // the LDS GEMM score / P.V planes are bit for bit the coopmat
+                // stages' (STATUS §7 0ad): the same attention with them off
+                const bool was = P.config().lds_gemm;
+                P.config().lds_gemm = false;
+                REQUIRE_OK(P.op_attention(q.a(), gkv.a(), kN, g.find("cmp_cache") ? gcmp.a() : 0, idx.a(), n_idx,
+                                          addr(L, "attn.attn_sink"), o2.a(), kN));
+                P.config().lds_gemm = was;
+                const std::vector<float> a = o.read(kN * 32768ull), b = o2.read(kN * 32768ull);
+                uint32_t diff = 0;
+                for (size_t i = 0; i < a.size(); ++i) diff += std::memcmp(&a[i], &b[i], 4) != 0;
+                std::printf("      L%-2u attn LDS vs coopmat          %u / %zu entries differ (E %u)\n", L, diff, a.size(), (n_idx + 15) / 16 * 16);
+                CHECK_EQ(diff, 0u);
+            }
             REQUIRE_OK(P.op_rope(o.a(), o.a(), kN, 32768, kHd, 0, 32, ratio > 0, 0, 1, true));
             tally.check("attn_out inv-RoPE (31, 63)", L,
                         agree(pick(o.read(kN * 32768ull), 32768, {31, 63}), g.f("attn_out_irope")));

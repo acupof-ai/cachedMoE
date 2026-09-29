@@ -161,10 +161,20 @@ def report(run: dict, k: dict, top: int) -> dict:
               f"{r['bytes'] / 1e9:8.2f} {r['tflops']:7.2f} {r['gbs']:6.1f} {r['floor_ms']:9.1f} "
               f"{x:6.1f} {r['excess_ms']:9.1f} {r['bound']}")
 
+    # the "gpu: " stage rows under the composite op whose submit they ran in
+    def stage_prefix(op: str) -> str | None:
+        if op.startswith("attn (coop"):
+            return "gpu: attn "
+        if op.startswith("coop "):
+            return "gpu: gemm " + op.split()[1] + " "
+        if op == "moe routed (gpu)":
+            return "gpu: moe "
+        return None
     for r in top_rows[:top]:
         line(r)
-        if r["op"].startswith("attn (coop"):
-            for st in sorted(stages, key=lambda s: -s["excess_ms"]):
+        pre = stage_prefix(r["op"])
+        if pre:
+            for st in sorted((s for s in stages if s["op"].startswith(pre)), key=lambda s: -s["excess_ms"]):
                 line(st, "  ")
     rest = top_rows[top:]
     if rest:

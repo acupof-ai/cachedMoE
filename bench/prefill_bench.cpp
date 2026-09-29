@@ -518,10 +518,14 @@ int run_coopgeo(const Options& o) {
     csv.open(o.csv);
     struct Shape { const char* name; uint32_t R, K; };
     const Shape shapes[] = {{"w1", 2304, 5120}, {"w2", 5120, 2304}, {"wq_b", 32768, 1280},
-                            {"wo_b", 5120, 8192}, {"wo_a.g", 1024, 4096}, {"eng.wkv", 25600, 6144}};
+                            {"wo_b", 5120, 8192}, {"wo_a.g", 1024, 4096}, {"eng.wkv", 25600, 6144},
+                            {"pv", 512, 2176}};   // the band attention's P.V: G [E][D] contracted over E
+    // DEEPMOE_PF_LDS_WT=1 adds every LDS variant a second time reading W stored
+    // [K][R] (LdsWt, the P.V's layout) from a transposed copy: same products.
+    const bool wt_too = env("DEEPMOE_PF_LDS_WT") != nullptr;
     // lds: prefill_gemm_lds.slang with tt = its 16-token tiles per wave (LdsWn)
     // and rt = its 16-row tiles per wave (LdsWm); a workgroup is 2 x 2 waves.
-    struct Geo { uint32_t tt, rt, tb, rb; bool lds = false; };
+    struct Geo { uint32_t tt, rt, tb, rb; bool lds = false; bool wt = false; };
     std::vector<Geo> geos;
     for (uint32_t tt : {1u, 2u, 4u})
         for (uint32_t rt : {1u, 4u, 16u})
@@ -564,6 +568,7 @@ int run_coopgeo(const Options& o) {
         const uint32_t nmax = *std::max_element(o.ns.begin(), o.ns.end());
         const uint32_t npad = (nmax + 127) / 128 * 128;
         gpu::GpuBuffer W = must_alloc(rig.alloc, uint64_t(R) * K * 2);
+        gpu::GpuBuffer Wt = must_alloc(rig.alloc, wt_too ? uint64_t(R) * K * 2 : 16);
         gpu::GpuBuffer X = must_alloc(rig.alloc, uint64_t(npad) * K * 2);
         gpu::GpuBuffer Y = must_alloc(rig.alloc, uint64_t(npad) * R * 4);
         {
@@ -572,6 +577,12 @@ int run_coopgeo(const Options& o) {
             for (auto& v : x) v = cpu::float_to_fp16(dist(gen));
             std::memcpy(W.host_ptr, w.data(), w.size() * 2);
             std::memcpy(X.host_ptr, x.data(), x.size() * 2);
+            if (wt_too) {
+                std::vector<uint16_t> t(size_t(R) * K);
+                for (uint32_t r = 0; r < R; ++r)
+                    for (uint32_t k = 0; k < K; ++k) t[size_t(k) * R + r] = w[size_t(r) * K + k];
+                std::memcpy(Wt.host_ptr, t.data(), t.size() * 2);
+            }
         }
         for (uint32_t n : o.ns) {
             // Round robin: every rep visits every variant, starting one further
@@ -579,7 +590,11 @@ int run_coopgeo(const Options& o) {
             // on different variants in different reps; the best rep is kept.
             struct Var { Geo g; uint32_t kh, tok, ntok, tb, rtile, rb, dispatches = 0; double best = 1e30; size_t diff = 0; };
             std::vector<Var> vars;
-            for (const Geo& g : geos) {
+            std::vector<Geo> run = geos;
+            if (wt_too)
+                for (const Geo& g : geos)
+                    if (g.lds) { Geo t = g; t.wt = true; run.push_back(t); }
+            for (const Geo& g : run) {
                 Var v;
                 v.g = g;
                 v.tok = (g.lds ? 32 : 16) * g.tt;
@@ -589,7 +604,7 @@ int run_coopgeo(const Options& o) {
                 v.rtile = (g.lds ? 32 : 16) * g.rt;
                 if (g.lds && (R % v.rtile || K % 64)) continue;
                 v.rb = g.rb ? std::max(v.rtile, g.rb / v.rtile * v.rtile) : (R + v.rtile - 1) / v.rtile * v.rtile;
-                auto k = g.lds ? rig.runner.kernel({"prefill_gemm_lds", 0, 0, 0, 8, R, K, g.rt, g.tt})
+                auto k = g.lds ? rig.runner.kernel({"prefill_gemm_lds", 0, 0, 0, 8, R, K, g.rt, g.tt, g.wt ? 1u : 0u})
                                : rig.runner.kernel({"prefill_coopmat", 0, 0, 0, 8, R, K, g.tt, g.rt});
                 if (!k) { std::fprintf(stderr, "%s\n", k.error().str().c_str()); return 1; }
                 v.kh = *k;
@@ -600,7 +615,7 @@ int run_coopgeo(const Options& o) {
                 for (size_t vi = 0; vi < vars.size(); ++vi) {
                     Var& v = vars[(vi + rep) % vars.size()];
                     uint64_t* sl = rig.runner.slots(v.kh);
-                    sl[gpu::kPcW] = W.dev_addr; sl[gpu::kPcX] = X.dev_addr; sl[gpu::kPcY] = Y.dev_addr;
+                    sl[gpu::kPcW] = v.g.wt ? Wt.dev_addr : W.dev_addr; sl[gpu::kPcX] = X.dev_addr; sl[gpu::kPcY] = Y.dev_addr;
                     v.dispatches = 0;
                     auto ms = rig.timed([&](gpu::CommandBuffer& c) -> Result<void> {
                         for (uint32_t x0 = 0; x0 < v.ntok; x0 += v.tb)
@@ -624,7 +639,7 @@ int run_coopgeo(const Options& o) {
                 }
             for (const Var& v : vars) {
                 const double tps = double(n) * R * K / (v.best / 1e3) / 1e12;
-                const std::string name = v.g.lds ? std::format("lds wm{} wn{}", v.g.rt, v.g.tt)
+                const std::string name = v.g.lds ? std::format("lds wm{} wn{}{}", v.g.rt, v.g.tt, v.g.wt ? " wt" : "")
                                                  : std::format("tt{} rt{} tb{} rb{}", v.g.tt, v.g.rt, v.g.tb, v.g.rb);
                 std::printf("  %-8s n=%5u %-22s %9.3f ms  %6.2f T flop/s  %5u dispatches  %s\n", sh.name, n,
                             name.c_str(), v.best, tps, v.dispatches, v.diff ? std::format("DIFF {}", v.diff).c_str() : "same");

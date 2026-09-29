@@ -64,6 +64,12 @@ static const uint kFlagBatched    = 256u; // prefill_gemm_lds: gid.x is a batch 
 
 // --- addressing -------------------------------------------------------------
 uint4 load16(uint64_t a)    { return *(uint4*)a; }
+void  store16(uint64_t a, uint4 v) { *(uint4*)a = v; }
+// Four fp32 at a, and back: the elementwise stages read and write 16-byte
+// vectors (four scalar accesses a lane were a quarter of the DRAM rate,
+// STATUS §7 0af).
+float4 load_f32x4(uint64_t a) { return asfloat(*(uint4*)a); }
+void  store_f32x4(uint64_t a, float4 v) { *(uint4*)a = asuint(v); }
 // Eight fp32 values as eight fp16 in one uint4, element i at byte 2i: the
 // layout eight 2-byte stores would have left.
 uint4 f16x8(float v[8]) {
