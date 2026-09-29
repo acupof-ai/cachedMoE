@@ -1556,6 +1556,12 @@ Result<PrefillHandoff> Prefill::run(std::span<const uint32_t> prompt) {
                     std::format("{} prompt tokens; the buffers hold 1..{}", N, pcfg_.max_tokens));
     times_ = PrefillTimes{};
     const auto t_all = Clk::now();
+    // The P0 queue at the prefill's depth until this returns (PrefillConfig::p0_qd).
+    struct P0Depth {
+        storage::IoEngine* io;
+        ~P0Depth() { if (io) io->set_p0_depth(0, 0); }
+    } p0_depth{io_};
+    if (io_) io_->set_p0_depth(pcfg_.p0_qd, pcfg_.p0_inflight_bytes);
     PrefillHandoff out;
     out.prompt.assign(prompt.begin(), prompt.end());
     out.layers.assign(c.num_hidden_layers, {});

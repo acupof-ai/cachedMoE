@@ -448,6 +448,13 @@ public:
         std::string to_string() const;
     };
     const Tuning& tuning() const { return tune_; }
+    // The P0 queue's depth for a phase that streams whole layers. The tuned
+    // depth (8 on Linux) is the decode's shape -- one expert's 18 chunks at a
+    // time, where deeper costs the miss 3-9% (bench/results/linux/prefill_ahead/
+    // decode_shape_qd.csv) -- and leaves the prefill's read-ahead at 7.2 GB/s
+    // of the two drives' 8.0; at 24 chunks / 96 MiB they run at 7.8 (STATUS §7
+    // 0aj). 0 restores the tuned values. Clamped to the backend's ring.
+    void set_p0_depth(uint32_t qd, uint64_t inflight_bytes);
 
     // The backend's queue depth is fixed at construction from the IoConfig, so
     // a raised P0 depth has to be reflected there before the backend is made.
@@ -464,6 +471,8 @@ public:
 private:
     static Tuning tuning_from_env(const IoConfig& cfg);
     Tuning tune_{};
+    uint32_t p0_qd_tuned_ = 0;             // set_p0_depth(0, 0) restores these
+    uint64_t p0_inflight_tuned_ = 0;
     uint32_t bg_chunk_bytes_ = 0;         // chunk size for P1-P3
     std::vector<uint32_t> p0_lat_us_;     // one sample per completed P0, for p50/p95
     uint32_t p0_outstanding_ = 0;         // P0 requests submitted but not finished

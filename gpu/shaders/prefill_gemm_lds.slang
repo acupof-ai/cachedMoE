@@ -35,6 +35,10 @@
 
 #include "prefill_common.slang"
 
+// Every tile read out of LDS is four ds_load_b64 (STATUS §3 71): Mesa lowers
+// shared loads to 64 bits at most ("for performance reasons"), so 128-bit
+// reads cannot be had from a Vulkan shader, by hand or by the compiler.
+//
 // LDS_BK: the K slice in halfs. 128 was measured (STATUS §3 68): +12% on
 // w1, nothing on wq_b, slower on wo_b, at twice the LDS and staging registers.
 #ifndef LDS_BK

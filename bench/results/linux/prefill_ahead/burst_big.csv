@@ -1,0 +1,3 @@
+dst,req_kb,chunk_kb,qd,bytes,seconds,gbps,mean_ms,max_ms,qd_at_issue,submit_us,copies,copy_ms,copy_ms_max,note,route,rep,inflight,p50_ms,p95_ms,mirror_share,w0,w1
+ram,17284,1024,24,5309644800,0.663307,8.0048,321.8232,536.0420,22.92,24.2,0,0.0000,0.0000,pageable host (AlignedBuffer),stripe,0,240,341.7903,531.0547,0.4659,4.345,3.775
+patha,17284,1024,24,5309644800,0.664318,7.9926,321.4145,530.9195,22.89,10.3,0,0.0000,0.0000,memory type 3, mapped,stripe,0,240,338.9644,529.2864,0.4665,4.345,3.775

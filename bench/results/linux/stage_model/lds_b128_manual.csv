@@ -1,0 +1,7 @@
+section,kernel,variant,n,rows,k,weight_bytes,ms,rows_per_s,eff_gbps,rel_l2,cos,load
+coopgeo,w1,lds wm4 wn2,1024,2304,5120,23592960,0.8591,1191928.0,14.061,0,0,"unlabelled"
+coopgeo,w1,lds wm2 wn2,1024,2304,5120,23592960,0.9003,1137385.3,13.417,0,0,"unlabelled"
+coopgeo,wq_b,lds wm4 wn2,1024,32768,1280,83886080,3.8805,263881.3,11.068,0,0,"unlabelled"
+coopgeo,wq_b,lds wm2 wn2,1024,32768,1280,83886080,4.3727,234182.0,9.822,0,0,"unlabelled"
+coopgeo,wo_b,lds wm4 wn2,1024,5120,8192,83886080,4.2161,242879.0,10.187,0,0,"unlabelled"
+coopgeo,wo_b,lds wm2 wn2,1024,5120,8192,83886080,4.0155,255009.3,10.696,0,0,"unlabelled"

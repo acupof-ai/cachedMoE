@@ -1,0 +1,80 @@
+iotrace t=194 L=0 serial 194 ms landed 1.28 GB (6.59 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=1136 L=0 routed 942 ms landed 5.89 GB (6.25 GB/s) submitted P0 2.95 P1 0.00 P2 0.00 P3 0.00
+iotrace t=2140 L=1 serial 199 ms landed 1.47 GB (7.39 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=2916 L=1 routed 776 ms landed 5.69 GB (7.34 GB/s) submitted P0 2.95 P1 0.00 P2 0.00 P3 0.00
+iotrace t=3189 L=2 serial 264 ms landed 1.88 GB (7.12 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=3849 L=2 routed 660 ms landed 5.10 GB (7.73 GB/s) submitted P0 2.76 P1 0.00 P2 0.00 P3 0.00
+iotrace t=4119 L=3 serial 260 ms landed 1.88 GB (7.22 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=4769 L=3 routed 650 ms landed 5.10 GB (7.84 GB/s) submitted P0 2.76 P1 0.00 P2 0.00 P3 0.00
+iotrace t=5021 L=4 serial 241 ms landed 1.52 GB (6.30 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=5802 L=4 routed 782 ms landed 5.49 GB (7.03 GB/s) submitted P0 2.80 P1 0.00 P2 0.00 P3 0.00
+iotrace t=6041 L=5 serial 230 ms landed 1.55 GB (6.73 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=6751 L=5 routed 710 ms landed 5.56 GB (7.84 GB/s) submitted P0 2.90 P1 0.00 P2 0.00 P3 0.00
+iotrace t=7014 L=6 serial 253 ms landed 1.79 GB (7.08 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=7710 L=6 routed 696 ms landed 5.11 GB (7.34 GB/s) submitted P0 2.69 P1 0.00 P2 0.00 P3 0.00
+iotrace t=7966 L=7 serial 247 ms landed 1.75 GB (7.08 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=8633 L=7 routed 667 ms landed 5.01 GB (7.51 GB/s) submitted P0 2.54 P1 0.00 P2 0.00 P3 0.00
+iotrace t=8898 L=8 serial 257 ms landed 1.79 GB (6.97 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=9555 L=8 routed 657 ms landed 5.10 GB (7.76 GB/s) submitted P0 2.67 P1 0.00 P2 0.00 P3 0.00
+iotrace t=9794 L=9 serial 230 ms landed 1.53 GB (6.64 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=10480 L=9 routed 686 ms landed 5.34 GB (7.78 GB/s) submitted P0 2.65 P1 0.00 P2 0.00 P3 0.00
+iotrace t=10748 L=10 serial 258 ms landed 2.00 GB (7.72 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=11396 L=10 routed 648 ms landed 5.00 GB (7.72 GB/s) submitted P0 2.78 P1 0.00 P2 0.00 P3 0.00
+iotrace t=11657 L=11 serial 252 ms landed 1.81 GB (7.17 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=12329 L=11 routed 673 ms landed 5.21 GB (7.74 GB/s) submitted P0 2.80 P1 0.00 P2 0.00 P3 0.00
+iotrace t=12574 L=12 serial 235 ms landed 1.36 GB (5.77 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=13296 L=12 routed 722 ms landed 5.68 GB (7.86 GB/s) submitted P0 2.82 P1 0.00 P2 0.00 P3 0.00
+iotrace t=13557 L=13 serial 251 ms landed 1.75 GB (6.98 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=14241 L=13 routed 684 ms landed 5.34 GB (7.80 GB/s) submitted P0 2.88 P1 0.00 P2 0.00 P3 0.00
+iotrace t=15336 L=14 serial 283 ms landed 1.96 GB (6.92 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=15986 L=14 routed 651 ms landed 4.98 GB (7.66 GB/s) submitted P0 2.73 P1 0.00 P2 0.00 P3 0.00
+iotrace t=16231 L=15 serial 236 ms landed 1.63 GB (6.91 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=16939 L=15 routed 708 ms landed 5.48 GB (7.74 GB/s) submitted P0 2.90 P1 0.00 P2 0.00 P3 0.00
+iotrace t=17196 L=16 serial 248 ms landed 1.74 GB (7.00 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=17924 L=16 routed 728 ms landed 5.32 GB (7.30 GB/s) submitted P0 2.84 P1 0.00 P2 0.00 P3 0.00
+iotrace t=18185 L=17 serial 251 ms landed 1.78 GB (7.07 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=18865 L=17 routed 681 ms landed 5.30 GB (7.78 GB/s) submitted P0 2.86 P1 0.00 P2 0.00 P3 0.00
+iotrace t=19134 L=18 serial 260 ms landed 1.86 GB (7.17 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=19796 L=18 routed 662 ms landed 5.08 GB (7.68 GB/s) submitted P0 2.73 P1 0.00 P2 0.00 P3 0.00
+iotrace t=20050 L=19 serial 245 ms landed 1.72 GB (7.03 GB/s) ahead 4.21 GB submitted P0 4.21 P1 0.00 P2 0.00 P3 0.00
+iotrace t=20756 L=19 routed 705 ms landed 5.48 GB (7.77 GB/s) submitted P0 2.99 P1 0.00 P2 0.00 P3 0.00
+iotrace t=20797 L=20 serial 747 ms landed 5.48 GB (7.34 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=21211 L=20 routed 414 ms landed 3.20 GB (7.72 GB/s) submitted P0 3.20 P1 0.00 P2 0.00 P3 0.00
+iotrace t=21225 L=21 serial 427 ms landed 3.20 GB (7.48 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=21710 L=21 routed 485 ms landed 2.95 GB (6.09 GB/s) submitted P0 2.95 P1 0.00 P2 0.00 P3 0.00
+iotrace t=21727 L=22 serial 502 ms landed 2.95 GB (5.88 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=22137 L=22 routed 410 ms landed 3.18 GB (7.75 GB/s) submitted P0 3.18 P1 0.00 P2 0.00 P3 0.00
+iotrace t=22150 L=23 serial 424 ms landed 3.18 GB (7.50 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=22850 L=23 routed 699 ms landed 3.87 GB (5.54 GB/s) submitted P0 3.87 P1 0.00 P2 0.00 P3 0.00
+iotrace t=22866 L=24 serial 716 ms landed 3.87 GB (5.41 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=23366 L=24 routed 500 ms landed 2.97 GB (5.94 GB/s) submitted P0 2.97 P1 0.00 P2 0.00 P3 0.00
+iotrace t=23382 L=25 serial 516 ms landed 2.97 GB (5.76 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=23694 L=25 routed 312 ms landed 2.45 GB (7.85 GB/s) submitted P0 2.45 P1 0.00 P2 0.00 P3 0.00
+iotrace t=23707 L=26 serial 325 ms landed 2.45 GB (7.53 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=24028 L=26 routed 321 ms landed 2.50 GB (7.78 GB/s) submitted P0 2.50 P1 0.00 P2 0.00 P3 0.00
+iotrace t=24044 L=27 serial 337 ms landed 2.50 GB (7.41 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=24598 L=27 routed 554 ms landed 3.35 GB (6.04 GB/s) submitted P0 3.35 P1 0.00 P2 0.00 P3 0.00
+iotrace t=24613 L=28 serial 569 ms landed 3.35 GB (5.89 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=25001 L=28 routed 388 ms landed 2.93 GB (7.56 GB/s) submitted P0 2.93 P1 0.00 P2 0.00 P3 0.00
+iotrace t=25019 L=29 serial 406 ms landed 2.93 GB (7.22 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=25558 L=29 routed 539 ms landed 2.92 GB (5.41 GB/s) submitted P0 2.92 P1 0.00 P2 0.00 P3 0.00
+iotrace t=25573 L=30 serial 554 ms landed 2.92 GB (5.27 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=26045 L=30 routed 472 ms landed 2.97 GB (6.29 GB/s) submitted P0 2.97 P1 0.00 P2 0.00 P3 0.00
+iotrace t=26059 L=31 serial 486 ms landed 2.97 GB (6.11 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=26474 L=31 routed 415 ms landed 3.16 GB (7.61 GB/s) submitted P0 3.16 P1 0.00 P2 0.00 P3 0.00
+iotrace t=26491 L=32 serial 432 ms landed 3.16 GB (7.32 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=26954 L=32 routed 463 ms landed 3.37 GB (7.27 GB/s) submitted P0 3.37 P1 0.00 P2 0.00 P3 0.00
+iotrace t=26970 L=33 serial 479 ms landed 3.37 GB (7.03 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=27520 L=33 routed 550 ms landed 3.08 GB (5.61 GB/s) submitted P0 3.08 P1 0.00 P2 0.00 P3 0.00
+iotrace t=27532 L=34 serial 562 ms landed 3.08 GB (5.49 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=27994 L=34 routed 462 ms landed 3.40 GB (7.36 GB/s) submitted P0 3.40 P1 0.00 P2 0.00 P3 0.00
+iotrace t=28011 L=35 serial 479 ms landed 3.40 GB (7.11 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=28464 L=35 routed 453 ms landed 3.29 GB (7.26 GB/s) submitted P0 3.29 P1 0.00 P2 0.00 P3 0.00
+iotrace t=28479 L=36 serial 468 ms landed 3.29 GB (7.03 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=28947 L=36 routed 468 ms landed 3.40 GB (7.28 GB/s) submitted P0 3.40 P1 0.00 P2 0.00 P3 0.00
+iotrace t=28964 L=37 serial 485 ms landed 3.40 GB (7.02 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=29520 L=37 routed 556 ms landed 3.52 GB (6.33 GB/s) submitted P0 3.52 P1 0.00 P2 0.00 P3 0.00
+iotrace t=29535 L=38 serial 571 ms landed 3.52 GB (6.16 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=30020 L=38 routed 485 ms landed 3.50 GB (7.21 GB/s) submitted P0 3.50 P1 0.00 P2 0.00 P3 0.00
+iotrace t=30036 L=39 serial 501 ms landed 3.50 GB (6.98 GB/s) ahead 0.00 GB submitted P0 0.00 P1 0.00 P2 0.00 P3 0.00
+iotrace t=30612 L=39 routed 576 ms landed 3.44 GB (5.98 GB/s) submitted P0 3.44 P1 0.00 P2 0.00 P3 0.00

@@ -234,9 +234,17 @@ struct PrefillConfig {
     uint32_t query_block = 512;
     uint32_t tile = 8;
     // Routed-expert transit slots per half of the read-ahead (two halves:
-    // one computing, one filling). 64 was measured once the workspace was
-    // priced into the cache budget (STATUS §3 69): within noise, for 1.2 GB.
-    uint32_t transit_slots = 32;
+    // one computing, one filling), 2.4 GB at 64. With the P0 queue at the
+    // prefill's depth (p0_qd) the read-ahead of 128 experts covers a 4K
+    // prompt's serial phase and both drives run at their rate the whole
+    // layer: 4,133 tokens 31.7 -> 29.8 s, 17,010 54.0 -> 52.6; 112 (4.2 GB)
+    // is the same at 4K and about 0.7 s better at 17K (STATUS §7 0aj).
+    uint32_t transit_slots = 64;
+    // The IO engine's P0 queue while the prefill runs (IoEngine::set_p0_depth):
+    // 24 chunks / 96 MiB against the decode's 8 -- a layer's read-ahead is
+    // hundreds of chunks, a decode miss is 18.
+    uint32_t p0_qd = 24;
+    uint64_t p0_inflight_bytes = 96u << 20;
     // A layer whose FFN runs over at least this many rows starts reading its
     // routed experts before its gate has picked any (docs/STATUS.md §7 0aa): at
     // 4,133 rows a layer uses 329-381 of its 384, and the drive is otherwise

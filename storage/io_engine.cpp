@@ -636,6 +636,8 @@ Result<void> IoEngine::start(std::unique_ptr<Backend> backend, const IoConfig& c
         tune_.engram_qd = backend_->caps().max_queue_depth;
     if (tune_.p0_chunk_bytes > backend_->caps().max_chunk_bytes)
         tune_.p0_chunk_bytes = backend_->caps().max_chunk_bytes;
+    p0_qd_tuned_       = tune_.p0_qd;
+    p0_inflight_tuned_ = tune_.p0_inflight_bytes;
     p0_lat_us_.reserve(1 << 16);
     stopping_.store(false, std::memory_order_release);
     running_.store(true, std::memory_order_release);
@@ -951,6 +953,17 @@ void IoEngine::reset_stats() {
         src_stats_[i].rests = 0;
         src_stats_[i].temp_max_c = src_stats_[i].temp_c;
     }
+}
+
+void IoEngine::set_p0_depth(uint32_t qd, uint64_t inflight_bytes) {
+    {
+        std::lock_guard lk(mutex_);
+        tune_.p0_qd = qd ? qd : p0_qd_tuned_;
+        if (backend_ && tune_.p0_qd > backend_->caps().max_queue_depth)
+            tune_.p0_qd = backend_->caps().max_queue_depth;
+        tune_.p0_inflight_bytes = inflight_bytes ? inflight_bytes : p0_inflight_tuned_;
+    }
+    cv_.notify_one();   // a deeper queue has room now
 }
 
 size_t IoEngine::issue_ready_chunks() {
