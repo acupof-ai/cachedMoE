@@ -183,7 +183,8 @@ Result<void> EngramRunner::create(gpu::Device& device, gpu::MemoryAllocator& all
         pl.layer   = lt.layer;
         pl.off_val = place(val_bytes);
         pl.off_sc  = place(sc_bytes);
-        planes_.push_back(pl);
+        pl.staging = planes_.size() * kReadsPerToken * kStagingPerRead;
+        planes_.push_back(std::move(pl));
     }
     off_kv_  = place(kv_bytes);
 
@@ -200,7 +201,7 @@ Result<void> EngramRunner::create(gpu::Device& device, gpu::MemoryAllocator& all
     // payload has to be gathered out of the sector-aligned reads, and gathering
     // it means READING the destination, which on a write-combining device
     // mapping is the one thing design §3.3 says never to do.
-    auto st = gpu::alloc_host_pages(uint64_t(kReadsPerToken) * kStagingPerRead, false);
+    auto st = gpu::alloc_host_pages(planes_.size() * kReadsPerToken * kStagingPerRead, false);
     if (!st) { destroy(); return std::unexpected(st.error()); }
     staging_ = *st;
     return {};
@@ -210,6 +211,8 @@ void EngramRunner::destroy() {
     pool_.destroy();
     cmd_ = gpu::CommandBuffer{};
     device_ = nullptr;
+    for (Planes& p : planes_)
+        for (auto& [f, skew] : p.pending) f.wait();   // reads still landing in `staging_`
     planes_.clear();
     if (staging_.ptr) gpu::free_host_pages(staging_);
     staging_ = gpu::HostAllocInfo{};
@@ -244,104 +247,81 @@ bool EngramRunner::fetched(uint32_t layer, uint64_t position) const {
     return false;
 }
 
-Result<void> EngramRunner::fetch_rows(uint32_t layer, const uint64_t* rows, const Planes& dst) {
-    auto* base = static_cast<std::byte*>(staging_.ptr);
-    std::vector<std::future<storage::IoResult>> pending;
-    struct Landing { uint32_t slot; uint32_t skew; bool is_scale; uint32_t row; };
-    std::vector<Landing> landings;
-    pending.reserve(kReadsPerToken);
-    landings.reserve(kReadsPerToken);
-
-    uint64_t submitted = 0;
+Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> history,
+                                 uint64_t position) {
+    if (!runner_) return fail(Err::FailedPrecondition, "engram runner is not created");
+    Planes* pl = planes_for(layer);
+    if (!pl) return fail(Err::InvalidArgument, std::format("layer {} has no engram", layer));
+    if (auto r = land(*pl); !r) return r;   // the landing zone must be free
+    uint64_t rows[layout::kEngramRowsPerToken];
+    if (auto r = tables_.hash_rows(layer, history, position, rows); !r) return r;
+    auto* base = static_cast<std::byte*>(staging_.ptr) + pl->staging;
+    pl->fetched_position = ~0ull;
     for (uint32_t r = 0; r < layout::kEngramRowsPerToken; ++r) {
         auto plan = manifest_->engram_row(layer, rows[r]);
         if (!plan) return std::unexpected(plan.error());
-        const AlignedRead reads[2] = {plan->value, plan->scale};
-        for (uint32_t j = 0; j < 2; ++j) {
-            const AlignedRead& a = reads[j];
+        for (const AlignedRead& a : {plan->value, plan->scale}) {
             if (a.aligned_bytes > kStagingPerRead)
                 return fail(Err::Internal,
                             std::format("engram row {} needs {} B of staging, have {}",
                                         rows[r], a.aligned_bytes, kStagingPerRead));
             auto file = shards_->require(a.file);
             if (!file) return std::unexpected(file.error());
-            const uint32_t slot = r * 2 + j;
             storage::IoRequest req;
             req.priority = IoPriority::Engram;       // design §9.6 P2
             req.file     = *file;
             req.file_off = a.aligned_off;
             req.bytes    = a.aligned_bytes;
-            req.dst      = base + uint64_t(slot) * kStagingPerRead;
+            req.dst      = base + pl->pending.size() * kStagingPerRead;
             auto f = io_->submit_future(req);
             if (!f) return std::unexpected(f.error());
-            pending.push_back(std::move(*f));
-            landings.push_back({slot, a.skew, j == 1, r});
-            submitted += a.aligned_bytes;
+            pl->pending.emplace_back(std::move(*f), a.skew);
+            bytes_read_ += a.aligned_bytes;
         }
     }
-    for (size_t i = 0; i < pending.size(); ++i) {
-        const storage::IoResult res = pending[i].get();
-        if (!res.ok())
-            return fail(res.status.code,
-                        std::format("engram layer {} row {}{}: {}", layer,
-                                    rows[landings[i].row],
-                                    landings[i].is_scale ? " (scale)" : "",
-                                    res.status.message));
-    }
-
-    // Gathered into ordinary host memory first and written to the mapping in
-    // one memcpy per plane: 24 scattered writes of 256 and 8 bytes each would
-    // be the write-combining pattern docs/p2_decode.md §3.3 warns about.
-    std::vector<std::byte> vals_h(size_t(layout::kEngramRowsPerToken) * layout::kEngramValueRowBytes);
-    std::vector<std::byte> scs_h(size_t(layout::kEngramRowsPerToken) * layout::kEngramScaleRowBytes);
-    auto* vals = vals_h.data();
-    auto* scs  = scs_h.data();
-    for (const Landing& l : landings) {
-        const std::byte* src = base + uint64_t(l.slot) * kStagingPerRead + l.skew;
-        if (l.is_scale)
-            std::memcpy(scs + uint64_t(l.row) * layout::kEngramScaleRowBytes, src,
-                        layout::kEngramScaleRowBytes);
-        else
-            std::memcpy(vals + uint64_t(l.row) * layout::kEngramValueRowBytes, src,
-                        layout::kEngramValueRowBytes);
-    }
-    std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + dst.off_val, vals_h.data(), vals_h.size());
-    std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + dst.off_sc, scs_h.data(), scs_h.size());
     rows_fetched_ += layout::kEngramRowsPerToken;
-    bytes_read_   += submitted;
+    pl->fetched_position = position;
     return {};
 }
 
-Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> history,
-                                 uint64_t position, Profiler* profiler) {
-    if (!runner_) return fail(Err::FailedPrecondition, "engram runner is not created");
-    uint64_t rows[layout::kEngramRowsPerToken];
-    if (auto r = tables_.hash_rows(layer, history, position, rows); !r) return r;
-    const uint64_t before = bytes_read_;
-    {
-        // The fetch is 48 four-KiB reads. It is charged to the NVMe stall
-        // bucket of design 13.1 rather than to AttnMisc -- the dispatches
-        // are the AttnMisc half.
-        ScopedPhaseIf phase(profiler, Phase::NvmeStall);
-        Planes* pl = planes_for(layer);
-        if (!pl) return fail(Err::InvalidArgument, std::format("layer {} has no engram", layer));
-        pl->fetched_position = ~0ull;
-        if (auto r = fetch_rows(layer, rows, *pl); !r) return r;
-        pl->fetched_position = position;
+Result<void> EngramRunner::land(Planes& pl) {
+    if (pl.pending.empty()) return {};
+    const auto* base = static_cast<const std::byte*>(staging_.ptr) + pl.staging;
+    // Gathered into ordinary host memory first and written to the mapping in
+    // one memcpy per plane: 24 scattered writes of 256 and 8 bytes each would
+    // be the write-combining pattern docs/p2_decode.md §3.3 warns about.
+    std::vector<std::byte> vals(size_t(layout::kEngramRowsPerToken) * layout::kEngramValueRowBytes);
+    std::vector<std::byte> scs(size_t(layout::kEngramRowsPerToken) * layout::kEngramScaleRowBytes);
+    Status failed{Err::Ok};   // the first failed read; the rest still have to land
+    for (size_t i = 0; i < pl.pending.size(); ++i) {
+        auto& [f, skew] = pl.pending[i];
+        const storage::IoResult res = f.get();
+        if (!res.ok() && failed.code == Err::Ok) failed = res.status;
+        const std::byte* src = base + i * kStagingPerRead + skew;
+        const size_t row = i / 2;
+        if (i % 2)
+            std::memcpy(scs.data() + row * layout::kEngramScaleRowBytes, src, layout::kEngramScaleRowBytes);
+        else
+            std::memcpy(vals.data() + row * layout::kEngramValueRowBytes, src, layout::kEngramValueRowBytes);
     }
-    // The bytes themselves are counted by IoEngine::finish, like every other
-    // read; noting them here as well counted every engram byte twice.
-    (void)before;
+    pl.pending.clear();
+    if (failed.code != Err::Ok) {
+        pl.fetched_position = ~0ull;
+        return fail(failed.code, std::format("engram layer {}: {}", pl.layer, failed.message));
+    }
+    std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + pl.off_val, vals.data(), vals.size());
+    std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + pl.off_sc, scs.data(), scs.size());
     return {};
 }
 
 Result<void> EngramRunner::record(gpu::CommandBuffer& cmd, uint32_t layer, DeviceAddress x_in,
                                   DeviceAddress x_out) {
     if (!runner_) return fail(Err::FailedPrecondition, "engram runner is not created");
-    const Planes* pl = planes_for(layer);
+    Planes* pl = planes_for(layer);
     if (!pl || pl->fetched_position == ~0ull)
         return fail(Err::FailedPrecondition,
                     std::format("engram layer {} recorded before its rows were fetched", layer));
+    if (auto r = land(*pl); !r) return r;
     auto bound = bind_layer(layer);
     if (!bound) return std::unexpected(bound.error());
 
@@ -378,7 +358,11 @@ Result<void> EngramRunner::record(gpu::CommandBuffer& cmd, uint32_t layer, Devic
 Result<void> EngramRunner::run(uint32_t layer, std::span<const uint32_t> history,
                                uint64_t position, DeviceAddress x_in, DeviceAddress x_out,
                                Profiler* profiler) {
-    if (auto r = fetch(layer, history, position, profiler); !r) return r;
+    {
+        ScopedPhaseIf phase(profiler, Phase::NvmeStall);   // the reads, landed here, not in `record`
+        if (auto r = fetch(layer, history, position); !r) return r;
+        if (auto r = land(*planes_for(layer)); !r) return r;
+    }
     ScopedPhaseIf phase(profiler, Phase::AttnMisc);
     if (auto r = cmd_.begin(); !r) return r;
     if (auto r = record(cmd_, layer, x_in, x_out); !r) return r;

@@ -2099,7 +2099,7 @@ Result<void> Engine::layer_begin(Stream& s, uint32_t L, uint32_t position, bool&
     if (engram) {
         if (!cur_->engram_.fetched(L, position)) {
             const TimePoint f0 = Clock::now();
-            if (auto r = cur_->engram_.fetch(L, cur_->history_, position, &profiler_); !r) return r;
+            if (auto r = cur_->engram_.fetch(L, cur_->history_, position); !r) return r;
             cur_->engram_host_ms_[L] += ms_since(f0);
         }
         if (auto r = cmd_open(); !r) return r;
@@ -2118,7 +2118,9 @@ Result<void> Engine::layer_begin(Stream& s, uint32_t L, uint32_t position, bool&
         // EngramRunner::record, which Track W does not own.
         const uint32_t tr_eg = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Engram, 0,
                                                     "engram_gemv+gate");
+        const TimePoint f0 = Clock::now();   // `record` waits for the rows to land
         if (auto r = cur_->engram_.record(cur_->tok_cmd_, L, in, b.x.addr); !r) return r;
+        cur_->engram_host_ms_[L] += ms_since(f0);
         trace::close_dispatch(&tracer_, tr_eg);
         cur_->ts_engram_[L].end = cmd_stamp();
         apply_post = false;
@@ -2184,7 +2186,7 @@ Result<void> Engine::layer_begin(Stream& s, uint32_t L, uint32_t position, bool&
         for (uint32_t E = 1; E < c.num_hidden_layers; ++E) {
             if (!cur_->engram_.has_layer(E)) continue;
             const TimePoint f0 = Clock::now();
-            if (auto r = cur_->engram_.fetch(E, cur_->history_, position, &profiler_); !r) return r;
+            if (auto r = cur_->engram_.fetch(E, cur_->history_, position); !r) return r;
             cur_->engram_host_ms_[E] += ms_since(f0);
         }
     }
@@ -2681,7 +2683,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
             // Track BF: the row fetch is host I/O; the rest of this loop body is
             // a submit + fence per row. The trace sees both as one gap.
             const TimePoint f0 = Clock::now();
-            if (auto r = cur_->engram_.fetch(L, cur_->history_, p0 + m, &profiler_); !r) return r;
+            if (auto r = cur_->engram_.fetch(L, cur_->history_, p0 + m); !r) return r;
             cur_->mq_ms_ += ms_since(f0);
             if (auto r = cmd_open(); !r) return r;
             const DeviceAddress in  = (apply_post ? bb.xout.addr : bb.x.addr) + m * hcstride;

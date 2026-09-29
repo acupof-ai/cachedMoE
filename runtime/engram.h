@@ -113,14 +113,12 @@ public:
     Result<void> run(uint32_t layer, std::span<const uint32_t> history, uint64_t position,
                      DeviceAddress x_in, DeviceAddress x_out, Profiler* profiler = nullptr);
 
-    // `run` in its two halves, for a caller that owns the command buffer: the
-    // 48-read row fetch, which is host work and can overlap whatever the GPU
-    // is doing, and the two dispatches recorded into `cmd` (barrier after
-    // each). The rows staged by `fetch` are the ones the next `record` of the
-    // same layer consumes.
-    Result<void> fetch(uint32_t layer, std::span<const uint32_t> history, uint64_t position,
-                       Profiler* profiler = nullptr);
-    // Whether `layer`'s staged rows are the ones for `position`.
+    // `run` in its two halves, for a caller that owns the command buffer:
+    // `fetch` issues the 48 row reads and returns, so they overlap whatever the
+    // GPU and the host do next; `record` waits for them, stages the rows and
+    // records the two dispatches into `cmd` (barrier after each).
+    Result<void> fetch(uint32_t layer, std::span<const uint32_t> history, uint64_t position);
+    // Whether `layer`'s rows for `position` have been fetched (or are in flight).
     bool fetched(uint32_t layer, uint64_t position) const;
     Result<void> record(gpu::CommandBuffer& cmd, uint32_t layer, DeviceAddress x_in,
                         DeviceAddress x_out);
@@ -152,11 +150,15 @@ private:
         uint32_t layer = 0xFFFFFFFFu;
         uint64_t off_val = 0, off_sc = 0;
         uint64_t fetched_position = ~0ull;   // what the staged rows are for
+        uint64_t staging = 0;                // this layer's landing zone in `staging_`
+        // `fetch`'s reads not yet landed, one per (row, value | scale), with
+        // the payload's skew inside its aligned read
+        std::vector<std::pair<std::future<storage::IoResult>, uint32_t>> pending;
     };
     std::vector<Planes>   planes_;
     Planes*               planes_for(uint32_t layer);
-    Result<void>          fetch_rows(uint32_t layer, const uint64_t* rows, const Planes& dst);
-    gpu::HostAllocInfo    staging_{};    // 4 KiB-aligned landing zone for the I/O
+    Result<void>          land(Planes& pl);
+    gpu::HostAllocInfo    staging_{};    // 4 KiB-aligned, one landing zone per engram layer
     uint64_t              rows_fetched_ = 0, bytes_read_ = 0;
     // `run`'s own command buffer, acquired once: DecodeRunner::dispatch_now
     // allocates one per call and never frees it.
