@@ -100,6 +100,10 @@ struct RuntimeConfig {
 
     MemoryPath  memory_path = MemoryPath::Auto;
     PrefillMode prefill     = PrefillMode::BoundedReplay;
+    // The GPU prefill's expert transit: segments of 64 slots (1.2 GB of pinned
+    // host pages each). More than 2 lets a long prompt's read-ahead take the
+    // whole layer while the drives would idle under its attention (§7 0av).
+    uint32_t    prefill_transit_segments = 2;
 
     IoConfig          io;
     CacheConfig       cache;

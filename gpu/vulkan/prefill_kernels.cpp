@@ -324,7 +324,7 @@ std::vector<Prefill::Want> Prefill::plan(const TextConfig& cfg, const PrefillCon
     const uint64_t hd = cfg.head_dim, win = cfg.sliding_window;
     const uint64_t n_idx = win + cfg.index_topk;
     const uint64_t k6 = cfg.num_experts_per_tok;
-    return std::vector<Want>{
+    std::vector<Want> w{
         {&b_.h_a, N * kHc * dim * 4}, {&b_.h_b, N * kHc * dim * 4},
         {&b_.h_in_copy, pcfg.probe_layers ? N * kHc * dim * 4 : 4096},
         {&b_.x, N * dim * 4}, {&b_.rs, N * 4}, {&b_.mix_raw, N * kMix * 4},
@@ -376,8 +376,6 @@ std::vector<Prefill::Want> Prefill::plan(const TextConfig& cfg, const PrefillCon
         {&b_.jobs, (uint64_t(cfg.n_routed_experts) + 2) * 64},
         {&b_.eng_x, N * 6144 * 4}, {&b_.eng_xq, N * 6144 * 2}, {&b_.eng_xs, N * 192 * 4},
         {&b_.eng_kv, (N + kPfRowSlack) * (kHc + 1) * dim * 4},
-        {&b_.transit[0], uint64_t(pcfg.transit_slots) * layout::kExpertSlotBytes},
-        {&b_.transit[1], uint64_t(pcfg.transit_slots) * layout::kExpertSlotBytes},
         {&b_.rope_win, (N + 8) * cfg.qk_rope_head_dim * 4},
         {&b_.rope_cmp, (N + 8) * cfg.qk_rope_head_dim * 4},
         {&b_.logits, uint64_t(cfg.vocab_size) * 4}, {&b_.nrm, dim * 4},
@@ -386,6 +384,9 @@ std::vector<Prefill::Want> Prefill::plan(const TextConfig& cfg, const PrefillCon
         {&b_.p16, B * cfg.num_attention_heads * ((n_idx + 15) / 16 * 16) * 2},
         {&b_.inv, B * cfg.num_attention_heads * 4},
     };
+    for (uint32_t t = 0; t < std::min(std::max(pcfg.transit_segments, 2u), kPfTransitSegmentsMax); ++t)
+        w.push_back({&b_.transit[t], uint64_t(pcfg.transit_slots) * layout::kExpertSlotBytes});
+    return w;
 }
 
 uint64_t Prefill::workspace_bytes(const TextConfig& cfg, const PrefillConfig& pcfg) {
@@ -1061,6 +1062,27 @@ void Prefill::topk_rows(uint32_t b, uint32_t pos0, uint32_t kv_pos0, uint32_t n_
 
 namespace deepmoe::gpu {
 
+// Bytes every NVMe namespace has delivered since boot (/proc/diskstats field
+// 6, 512-byte sectors): sampled at the layer's phase boundaries.
+static uint64_t disk_bytes_read() {
+#if defined(__linux__)
+    uint64_t sectors = 0;
+    if (FILE* f = std::fopen("/proc/diskstats", "r")) {
+        char line[512];
+        while (std::fgets(line, sizeof line, f)) {
+            unsigned maj, min; char name[64]; unsigned long long rd, rdm, sec;
+            if (std::sscanf(line, "%u %u %63s %llu %llu %llu", &maj, &min, name, &rd, &rdm, &sec) == 6 &&
+                std::strncmp(name, "nvme", 4) == 0 && std::strchr(name, 'p') == nullptr)
+                sectors += sec;
+        }
+        std::fclose(f);
+    }
+    return sectors * 512;
+#else
+    return 0;
+#endif
+}
+
 std::string PrefillTimes::json(uint32_t n, std::string_view mode, std::string_view load) const {
     std::vector<std::pair<std::string, Op>> ops(per_op.begin(), per_op.end());
     std::sort(ops.begin(), ops.end(), [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
@@ -1078,6 +1100,14 @@ std::string PrefillTimes::json(uint32_t n, std::string_view mode, std::string_vi
                           "\"bytes\":{:.6g},\"reads\":{:.0f}}}", i ? "," : "", ops[i].first,
                           ops[i].second.ms, ops[i].second.calls, ops[i].second.flop,
                           ops[i].second.bytes, ops[i].second.reads);
+    js += "],\"layers\":[";
+    for (size_t L = 0; L < layers.size(); ++L) {
+        const LayerIo& l = layers[L];
+        js += std::format("{}{{\"L\":{},\"pre_ms\":{:.1f},\"pre_gb\":{:.3f},\"moe_ms\":{:.1f},\"moe_gb\":{:.3f},"
+                          "\"post_ms\":{:.1f},\"post_gb\":{:.3f},\"ahead_n\":{},\"ahead_used\":{},\"ahead_wait_ms\":{:.1f}}}",
+                          L ? "," : "", L, l.pre_ms, l.pre_bytes / 1e9, l.moe_ms, l.moe_bytes / 1e9, l.post_ms,
+                          l.post_bytes / 1e9, l.ahead_n, l.ahead_used, l.ahead_wait_ms);
+    }
     return js + "]}\n";
 }
 
@@ -1232,7 +1262,9 @@ Result<void> Prefill::read_ahead(uint32_t L) {
     ahead_ = {};
     ahead_.layer = L;
     ahead_.slot.assign(E, ~0u);
-    const size_t n = std::min<size_t>(order.size(), size_t(2) * pcfg_.transit_slots);
+    const uint32_t segs = std::clamp(ahead_segments_, 2u, std::clamp(pcfg_.transit_segments, 2u, kPfTransitSegmentsMax));
+    const size_t n = std::min<size_t>(order.size(), size_t(segs) * pcfg_.transit_slots);
+    if (times_.layers.size() > L) times_.layers[L].ahead_n = static_cast<uint32_t>(n);
     ahead_.range.assign(n, {0, 0});
     for (uint32_t i = 0; i < n; ++i) {
         std::byte* dst = transit_host(i);
@@ -1496,6 +1528,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         std::stable_partition(used.begin(), used.end(), [&](uint32_t e) { return ahead[e] != ~0u; }) -
         used.begin());
     const uint32_t K = pcfg_.transit_slots;
+    const uint32_t R = std::clamp(pcfg_.transit_segments, 2u, kPfTransitSegmentsMax);   // ring segments
     // Track R1: the last row (and its top-6 rank) routed to each expert -- its
     // LRU age in the decode cache it may be handed to.
     std::vector<uint32_t> last_t(E, 0), last_s(E, 0);
@@ -1507,7 +1540,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
                 last_s[ids[size_t(t) * k6 + s]] = s;
             }
     struct Batch {
-        uint32_t first = 0, count = 0, half = 0;
+        uint32_t first = 0, count = 0, seg = 0;   // its transit segment
         double read_bytes = 0;
         std::vector<std::future<storage::IoResult>> futs;
     };
@@ -1525,8 +1558,8 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         return ok;
     };
     auto issue = [&](Batch& bt) -> Result<void> {
-        if (bt.count && ahead[used[bt.first]] == ~0u)   // refilling half bt.half of the transit
-            for (uint32_t s = bt.half * K; s < (bt.half + 1) * K; ++s) (void)land(s);
+        if (bt.count && ahead[used[bt.first]] == ~0u)   // refilling segment bt.seg of the transit
+            for (uint32_t s = bt.seg * K; s < (bt.seg + 1) * K; ++s) (void)land(s);
         for (uint32_t i = 0; i < bt.count; ++i) {
             const uint32_t e = used[bt.first + i];
             if (expert_sink && expert_sink->reserve) {
@@ -1554,8 +1587,10 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             ahead_reads += ahead_.range[ahead[e]].second - ahead_.range[ahead[e]].first;
             for (const Run& r : ents[e]->runs) ahead_bytes += double(r.aligned_bytes);
         }
-        if (ahead_reads)
+        if (ahead_reads) {
             add_op("io: experts ahead", ms_since(tw), {0, ahead_bytes, double(ahead_reads)});
+            if (times_.layers.size() > L) times_.layers[L].ahead_wait_ms += ms_since(tw);
+        }
         std::string why;
         for (auto& f : bt.futs)
             if (const auto res = f.get(); !res.ok()) { read_ok = false; why = res.status.str(); }
@@ -1621,18 +1656,20 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             }
         return {};
     };
-    // The read-ahead experts are the first batches, one per transit half they
-    // sit in; the rest go K at a time into alternating halves.
+    // The read-ahead experts are the first batches, one per transit segment
+    // they sit in; the rest go K at a time round the ring. A segment is
+    // refilled R batches after it was filled, and batch i is issued once batch
+    // i - 2 has computed, so R >= 2 keeps a batch's reads off a computing one.
     std::vector<Batch> batches;
     for (uint32_t i = 0; i < used.size();) {
         Batch bt;
         bt.first = i;
         if (i < n_ahead) {
-            bt.half = ahead[used[i]] / K;
-            for (; i < n_ahead && ahead[used[i]] / K == bt.half; ++i) slot[used[i]] = ahead[used[i]];
+            bt.seg = ahead[used[i]] / K;
+            for (; i < n_ahead && ahead[used[i]] / K == bt.seg; ++i) slot[used[i]] = ahead[used[i]];
         } else {
-            bt.half = batches.empty() ? 0 : 1 - batches.back().half;
-            for (; i < used.size() && i - bt.first < K; ++i) slot[used[i]] = bt.half * K + (i - bt.first);
+            bt.seg = batches.empty() ? 0 : (batches.back().seg + 1) % R;
+            for (; i < used.size() && i - bt.first < K; ++i) slot[used[i]] = bt.seg * K + (i - bt.first);
         }
         bt.count = i - bt.first;
         batches.push_back(std::move(bt));
@@ -1649,6 +1686,15 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
     // read-ahead slots the gate did not pick: let their reads land before the
     // next layer's read_ahead reuses the transit
     for (auto& f : ahead_.futs) if (f.valid()) f.wait();
+    if (!ahead_.range.empty()) {
+        // the read-ahead's depth for the next layer: a segment deeper while
+        // the gate picked >= 90% of what was read blind, a segment shallower otherwise
+        const double waited = times_.layers.size() > L ? times_.layers[L].ahead_wait_ms : 0.0;
+        if (times_.layers.size() > L) times_.layers[L].ahead_used = n_ahead;
+        const bool used_enough = 10 * uint64_t(n_ahead) >= 9 * ahead_.range.size();
+        if (used_enough && waited < 50.0) ahead_segments_ = std::min(ahead_segments_ + 1, R);
+        else if (!used_enough || waited > 100.0) ahead_segments_ = std::max(ahead_segments_ - 1, 2u);
+    }
     ahead_ = {};
     return {};
 }
@@ -1738,6 +1784,14 @@ Result<PrefillHandoff> Prefill::run(std::span<const uint32_t> prompt) {
 #define PF_TRY(expr) do { if (auto _r = (expr); !_r) return std::unexpected(_r.error()); } while (0)
 
 Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, PrefillHandoff& out) {
+    if (times_.layers.size() <= L) times_.layers.resize(L + 1);
+    PrefillTimes::LayerIo& lio = times_.layers[L];
+    auto t_phase = Clk::now();
+    uint64_t b_phase = disk_bytes_read();
+    auto phase = [&](double& ms, uint64_t& bytes) {
+        ms = ms_since(t_phase); t_phase = Clk::now();
+        const uint64_t b = disk_bytes_read(); bytes = b - b_phase; b_phase = b;
+    };
     const TextConfig& c = *cfg_;
     const uint32_t N = static_cast<uint32_t>(prompt.size());
     const uint32_t R = std::min(N, pcfg_.replay);
@@ -2089,8 +2143,10 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
     times_.gate += ms_since(t0);
     std::memset(b_.y.host_ptr, 0, size_t(A) * dim * sizeof(float));
     moe_pos0_ = apos0;
+    phase(lio.pre_ms, lio.pre_bytes);
     PF_TRY(run_moe(L, A, b_.fx.dev_addr, b_.fxq.dev_addr, b_.fxs.dev_addr, b_.y.dev_addr,
                    probe_ids_, probe_wts_));
+    phase(lio.moe_ms, lio.moe_bytes);
 
     t0 = Clk::now();
     PF_TRY(op_mhc_post(b_.h_b.dev_addr, b_.y.dev_addr, b_.mix_f.dev_addr, b_.h_a.dev_addr, A));
@@ -2113,6 +2169,7 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         probe(pv);
     }
     std::swap(b_.mix_prev, b_.mix_f);
+    phase(lio.post_ms, lio.post_bytes);
     return {};
 }
 

@@ -71,6 +71,7 @@ int usage(int code = 2) {
         "                [--engram-tables DIR] [--gpu-prefill-min N] [--replay N]\n"
         "                [--no-rollback] [--max-parked N] [--park-budget-mb N]\n"
         "                [--kv-dir DIR] [--kv-max-gb N] [--engram-scales-resident]\n"
+        "                [--transit-ring N]  (segments of 64 expert slots, 1.2 GB each; 2)\n"
         "                [--cache-slots N]  (5711 slots ~ 100 GiB, design P1/P2)\n"
         "                [--check-topk] [--profile FILE.jsonl]\n"
         "      A long-running engine behind line-delimited JSON on stdin/stdout:\n"

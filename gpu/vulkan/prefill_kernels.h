@@ -240,6 +240,8 @@ struct PfWeight {
     uint64_t bytes = 0;         // data + scale, for the bandwidth accounting
 };
 
+inline constexpr uint32_t kPfTransitSegmentsMax = 8;   // 512 slots, 9.6 GB of transit
+
 struct PrefillConfig {
     // Decoder rows (design §11.2's bounded replay). >= the prompt length is the
     // oracle mode, which is exactly `inference/model.py`.
@@ -252,7 +254,15 @@ struct PrefillConfig {
     // prompt's serial phase and both drives run at their rate the whole
     // layer: 4,133 tokens 31.7 -> 29.8 s, 17,010 54.0 -> 52.6; 112 (4.2 GB)
     // is the same at 4K and about 0.7 s better at 17K (STATUS §7 0aj).
-    uint32_t transit_slots = 64;   // <= 228: a half is one allocation of at most 4 GiB
+    uint32_t transit_slots = 64;   // <= 228: a segment is one allocation of at most 4 GiB
+    // Segments of transit_slots in the ring (2 = the two halves above). With
+    // more, the read-ahead can take the whole layer while the drives would
+    // otherwise idle under the attention (STATUS §7 0av): it deepens by a
+    // segment a layer while the blind reads had landed unwaited-for and the
+    // gate used >= 90% of them, and shrinks otherwise -- a 4K prompt waits on
+    // the drives whatever the depth, so blind bytes past the pre-MoE phase
+    // are lost (4,133 tokens 29.7 -> 33.1 s at a fixed six), and stays at two.
+    uint32_t transit_segments = 2; // 2..kPfTransitSegmentsMax
     // The IO engine's P0 queue while the prefill runs (IoEngine::set_p0_depth):
     // 24 chunks / 96 MiB against the decode's 8 -- a layer's read-ahead is
     // hundreds of chunks, a decode miss is 18.
@@ -362,6 +372,16 @@ struct PrefillTimes {
     // MoE's GPU batches; "io: " disk reads (bytes and reads are the disk's,
     // ms the exposed wait); "host: " CPU steps.
     std::map<std::string, Op> per_op;
+    // One layer's wall time before, in and after the MoE, and the bytes the
+    // NVMe drives delivered in each (/proc/diskstats; 0 elsewhere): where the
+    // drives sit idle while the GPU works, and the other way round (§7 0av).
+    struct LayerIo {
+        double pre_ms = 0, moe_ms = 0, post_ms = 0;
+        uint64_t pre_bytes = 0, moe_bytes = 0, post_bytes = 0;
+        uint32_t ahead_n = 0, ahead_used = 0;   // experts read blind, and how many the gate then picked
+        double   ahead_wait_ms = 0;             // waited on those reads (0 = they had landed)
+    };
+    std::vector<LayerIo> layers;
     // One JSON line: the run, its buckets, every op by wall time -- what
     // prefill_bench --ops-json writes and tools/prefill_model.py reads.
     std::string json(uint32_t n, std::string_view mode, std::string_view load) const;
@@ -642,6 +662,7 @@ private:
         std::vector<std::future<storage::IoResult>> futs;
         double bytes = 0;
     } ahead_;
+    uint32_t ahead_segments_ = 2;   // the read-ahead's depth, in transit segments (PrefillConfig::transit_segments)
     // A host-side step's wall time into times_.per_op.
     void host_op(const char* name, std::chrono::steady_clock::time_point t0) {
         add_op(name, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
@@ -658,7 +679,7 @@ private:
         GpuBuffer fx, fxq, fxs, gate, gids, gwts, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
         GpuBuffer x16, h16, gu, dout, w16;          // the cooperative-matrix MoE
         GpuBuffer eng_x, eng_xq, eng_xs, eng_kv;
-        GpuBuffer transit[2], rope_win, rope_cmp, logits, nrm;   // one allocation per transit half
+        GpuBuffer transit[kPfTransitSegmentsMax], rope_win, rope_cmp, logits, nrm;   // one allocation a segment
         GpuBuffer q16, g16, p16, inv;               // the cooperative-matrix attention
     } b_{};
     struct SourceState { GpuBuffer cache, keys; uint32_t n = 0; bool valid = false; };

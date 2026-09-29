@@ -34,7 +34,7 @@
 //   prefill_bench --model-dir D:\models\DeepSeek-V4.1-Flash --csv bench/results/prefill_p3.csv
 //                 [--reps 5] [--load "shared: tracks I/J/K on the GPU"]
 //   prefill_bench --section prefill --n 64,512,4096 --ids ids.txt [--replay 128,0]
-//                 [--coop-min -1,16,0] [--coop-dense -1,64] [--transit 32] [--handoff-dir dir]
+//                 [--coop-min -1,16,0] [--coop-dense -1,64] [--transit 32] [--ring 2] [--handoff-dir dir]
 //                 [--ops-json ops.jsonl]   (every op's time, FLOPs and bytes: tools/prefill_model.py)
 #include <algorithm>
 #include <chrono>
@@ -87,6 +87,7 @@ struct Options {
     std::string l3 = "tests/data/l3";      // engram tables and the 64-token prompt
     std::vector<uint32_t> replays = {128};  // 0 = oracle mode
     uint32_t    transit = 32;
+    uint32_t    ring = 2;                  // transit segments (PrefillConfig::transit_segments)
     std::vector<uint32_t> coop_min = {16};    // section prefill: PrefillConfig::coopmat_min_rows (-1 = never)
     std::vector<uint32_t> coop_dense = {64};  // PrefillConfig::coopmat_dense_min_rows (-1 = never)
     std::string handoff_dir;
@@ -793,6 +794,7 @@ int run_prefill(const Options& o) {
             pc.replay = replay ? replay : n;
             pc.tile = o.tiles.empty() ? 8 : o.tiles[0];
             pc.transit_slots = o.transit;
+            pc.transit_segments = o.ring;
             pc.coopmat_min_rows = cmin;
             pc.coopmat_dense_min_rows = cden;
             if (const char* e = env("DEEPMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
@@ -847,6 +849,17 @@ int run_prefill(const Options& o) {
                           [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
                 // DEEPMOE_PF_ALLOPS=1 prints the whole profile, not just the top 14.
                 const size_t show = env("DEEPMOE_PF_ALLOPS") ? ops.size() : std::min<size_t>(ops.size(), 14);
+                {   // the drives against the GPU, phase by phase (§7 0av)
+                    double pre = 0, moe = 0, post = 0; uint64_t bpre = 0, bmoe = 0, bpost = 0;
+                    for (const auto& l : t.layers) {
+                        pre += l.pre_ms; moe += l.moe_ms; post += l.post_ms;
+                        bpre += l.pre_bytes; bmoe += l.moe_bytes; bpost += l.post_bytes;
+                    }
+                    std::printf("  drives: before the MoE %.1f s %.1f GB (%.1f GB/s) | in it %.1f s %.1f GB (%.1f GB/s) | "
+                                "after %.1f s %.1f GB (%.1f GB/s)\n",
+                                pre / 1e3, bpre / 1e9, bpre / 1e6 / std::max(pre, 1.0), moe / 1e3, bmoe / 1e9,
+                                bmoe / 1e6 / std::max(moe, 1.0), post / 1e3, bpost / 1e9, bpost / 1e6 / std::max(post, 1.0));
+                }
                 std::printf("  ops by wall time:");
                 for (size_t i = 0; i < show; ++i)
                     std::printf("%s %s %.0f ms/%u", i % 3 ? "," : "\n   ", ops[i].first.c_str(),
@@ -947,6 +960,7 @@ int main(int argc, char** argv) {
         else if (a == "--coop-min") o.coop_min = list(next());
         else if (a == "--coop-dense") o.coop_dense = list(next());
         else if (a == "--transit") o.transit = static_cast<uint32_t>(std::atoi(next().c_str()));
+        else if (a == "--ring")    o.ring = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (a == "--handoff-dir") o.handoff_dir = next();
         else if (a == "--ops-json") o.ops_json = next();
         else if (a == "--only")    o.only = next();

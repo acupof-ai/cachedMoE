@@ -1061,6 +1061,7 @@ Result<void> Engine::init_gpu() {
             constexpr uint32_t kPrefillReserveTokens = 16384;
             gpu::PrefillConfig pc;
             pc.max_tokens = std::min(cfg_.max_context, kPrefillReserveTokens);
+            pc.transit_segments = cfg_.prefill_transit_segments;
             const uint64_t prefill_ws = gpu::Prefill{}.workspace_bytes(model_cfg_.text, pc);
             const uint64_t other = pinned + kPathAOther + kGttSlack + prefill_ws;
             want = heaps > other ? heaps - other : 0;
@@ -3321,6 +3322,7 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     if (auto r = runner.create(device_, alloc_a_, gpu::default_shader_dir()); !r) return std::unexpected(r.error());
     gpu::PrefillConfig pc;
     pc.max_tokens = static_cast<uint32_t>(prompt.size());
+    pc.transit_segments = cfg_.prefill_transit_segments;
     if (const char* e = std::getenv("DEEPMOE_PF_LDS"); e && *e == '0') pc.lds_gemm = false;
     if (const char* e = std::getenv("DEEPMOE_PF_READ_AHEAD"); e && *e == '0') pc.read_ahead_min_rows = 0;
     pc.replay     = replay;
