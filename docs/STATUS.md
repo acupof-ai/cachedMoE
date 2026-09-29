@@ -667,7 +667,11 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **下面还有什么（量过，都不做）**：模型在 **dm-crypt（LUKS）上的 btrfs**，读时 ~14 个 `kcryptd` 线程解密、`btrfs-endio` 校验。但 `/sys/block/{nvme0n1,dm-0}/stat` 的差值说
    dm-crypt 每个 126 KiB bio 只加 **18 µs**（1,436 vs 1,418 µs，~1%），AES-XTS 单核 12.6 GB/s（`iopath/dmcrypt_latency.txt`）——`no_read_workqueue` 之类不值得动根分区。
    盘在这种突发随机 1 MiB 读下的忙时带宽就是 **~4.0 GB/s**（probe 期间 io_ticks 3.97 GB/s），引擎 4.62 ms/miss = 4.08 GB/s。SN740 无 DRAM，HMB 已按盘的要求给了 64 MiB（驱动上限 128），NVMe `max_hw_sectors_kb` 128 是硬件的。
-   剩下只有更少的 miss（容量受 GTT 上限、策略已关，§3 的 47）和第二块盘（stripe，0i）。prefill 同理：一个新话题 29–64 token 的 prompt 要读 1,230–2,783 个 expert（命中只有 ~45%），全是盘时间。
+   剩下只有更少的 miss 和第二块盘（stripe，0i）。**容量**：`hitrate_sim curve`（本次对话的 trace）5,500 → 5,700 / 6,000 / 6,500 槽，模拟 hit 0.9315 → 0.9342 / 0.9377 / 0.9431，
+   即 miss −4% / −9% / −17%（≈ −2.5 / −5.6 / −10 ms/token，折半 1–4%），代价 +3.5 / +8.8 / +17.5 GiB；而满载时 GTT 107 / 112 GiB、系统只剩 ~7 GiB——**要不要拿内存余量换它，留给用户**（`iopath/capacity_curve.json`）。策略已关（§3 的 47）。
+   **prefill**（引擎日志现在逐项记账，`bench/results/linux/prefill/prefill_breakdown.txt`）：新话题 35 token 7.8 s = expert IO 6.53 s（1,619 个 expert，4.66 GB/s，连续流比 decode 的突发快）
+   + expert GPU 0.56 + attention 0.34 + 其余 0.25。transit 已经双缓冲（读下一批时算这一批）；不重叠的是层间依赖（下一层的路由要等这一层算完），上限约端到端 1%，不做。
+   **计算侧**（`attn_bench` 单测，分波后 trace 的逐 stage 不可读）：wq_b 226、wo_a / wo_b ksplit 212 / 211、head 234 GB/s，大 kernel 都在带宽的 91–98%；热步多出的 ~9 ms 摊在 ~1,100 个 dispatch 上，逐个融合各值 0.1–0.5%。
 
 0o. **decode 的 index key 改成「每个源层用自己的」（2026-09-29 用户决定「各自用」「但是得复用」），跨层复用一处不动；4K / 17K oracle 按同一规则重导。≤ 1,024 上下文逐位不变。**
    **改了什么**：0m 记的那处参考行为——ratio-2 组没满的步，第 2/8/14 层对**上一步第 20 层**的 key 打分——没了：每个 kv 源（2/8/14/20）**每一步都对自己的 key cache 打分**，与 prefill 一致。

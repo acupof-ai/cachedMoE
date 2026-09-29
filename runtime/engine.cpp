@@ -3413,9 +3413,12 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
         }
         res.sample_ms = ms_since(s0);
     }
-    log_info("engine: GPU prefill of {} tokens in {:.1f} s (expert io {:.1f} s, {} experts / {}), "
-             "first token {}", prompt.size(), res.wall_ms / 1e3, tm.expert_io / 1e3, tm.experts_read,
-             human_bytes(tm.expert_bytes), res.token);
+    log_info("engine: GPU prefill of {} tokens in {:.1f} s: embed {:.0f}  engram io {:.0f} / gpu {:.0f}  "
+             "mhc {:.0f}  attention {:.0f}  gate {:.0f}  shared {:.0f}  expert io {:.0f} / gpu {:.0f}  "
+             "head {:.0f}  other {:.0f} ms; {} experts / {}, {} dispatches, {} submits; first token {}",
+             prompt.size(), res.wall_ms / 1e3, tm.embed, tm.engram_io, tm.engram, tm.mhc, tm.attention,
+             tm.gate, tm.shared_expert, tm.expert_io, tm.expert_gpu, tm.head, tm.host, tm.experts_read,
+             human_bytes(tm.expert_bytes), tm.dispatches, tm.submits, res.token);
     return res;
 }
 
