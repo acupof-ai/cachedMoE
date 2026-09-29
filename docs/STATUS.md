@@ -670,6 +670,27 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0y. **engram 的 GEMM（25600 × 6144）改走 cooperative-matrix 路径，按行切成 4 片：17,010 token 的 prefill 112.1 → 105.6 s（−5.8%），4,133 token 60.5 → 59.1 s（`prefill_bench`）。这一条结果不逐位相同，验证见下。**
+   **问题**：其它 n ≥ 64 的 dense linear 都先把权重解码成 fp16 放进 `b_.w16`，再走 LDS tile GEMM。engram 这个权重的 fp16 副本有 315 MB，`b_.w16` 按最大的 dense 权重分配，只有 84 MB，放不下，于是一直退回 tiled 路径。模型给的数：17K 7.4 s，1.45 TFLOP/s，是它下限的 36 倍；4K 1.85 s。
+   **改法**：不分组、又放不下 `b_.w16` 的权重，切成若干等份，每份是整数个 128 行块。每一片依次解码（`prefill_gemm` stage 3 本来就有 `row_base`）、做 GEMM、拷进 y 里自己那几列：`copy_round`（`prefill_elem` stage 10）的 `a0` / `a1` 是 y 的行宽和这一片的起始列，都为 0 时和原来一样。切片以后 `b_.w16` 里留的不是完整权重，所以 `w16_src_` 清零。
+   **结果**：
+   - engram GEMM：17K 7.38 → 0.76 s（14.2 TFLOP/s）；4K 1.85 → 0.21 s。
+   - 17K 的 dense linear 这一组可省的时间 16.7 → 10.0 s。
+   **为什么不逐位相同**：coop 和 tiled 两条路径的乘积都是精确的，差别只在 fp32 的求和顺序。engram 的输出早于后面所有层，所以 margin 会动：4K 8.268 → 8.796，17K 9.736 → 10.503。
+   **对参考的验证**（切片前后用同一个开关对比）：
+   - engram_out 这一级的一致性不变，L14 relL2 6.774e-5 → 6.817e-5。
+   - forty_layers 首 token：rho 0.941 → 0.954，max|dlogit| 1.254 → 0.839。自由生成 8/8 → 6/8，在第 6 步分叉；那一步是接近平票，rho 约 0.5。
+   - longctx 4K：首 token 77，margin 8.04 → 8.97（参考 8.35），rho 0.934 → 0.931，8 步全对。
+   - longctx ctx16k（17,010 token，oracle 模式）：首 token 77 与参考一致，margin 10.14（参考 9.24），rho 0.848，8 步全对。
+   **闸**：
+   - `suite.gpu_prefill`、`suite.decode` 通过。
+   - `l3_ppl` off 0.622784。
+   - CPU 闸 25/25，`run_all.py` 30/30。
+   - 新增一条变异：每一片都拷进第一片的列。`gpu_prefill` 抓到了。
+   **现在的快照**：4K 59.1 s = 串行段 13.6 s + routed expert 45.5 s；17K 105.6 s = 串行段 58.6 s + 47.0 s。剩下按关键路径能赢的：
+   - 17K：串行段里让盘读 expert 30.5 s；注意力 21.4 s（P.V tiles 11.8 s，是它下限的 10 倍；score tiles 7.2 s，6 倍）；dense linear 10.0 s；elem 8.5 s（`s7` engram_gate 2.1 s，是下限的 55 倍；`s1` rmsnorm 1.9 s，87 倍：两个都是一行一个线程）；host 的 index top-k 5.1 s。
+   - 4K：串行段里让盘读 expert 16.4 s，注意力 5.1 s，dense linear 2.8 s。
+
 0x. **注意力的 gather 和两个 fp32/fp8→fp16 转换 stage 改成每个线程 8 个连续元素、16 字节读写，结果逐位不变：17,010 token 的 prefill 128.8 → 112.1 s（−13%），4,133 token 63.8 → 60.5 s（`prefill_bench`）。**
    **问题**：三个 kernel 都是一个线程负责一整块（gather：一整行 512 维；`prefill_coopmat` stage 1 / 2：一个 32 元素块），然后逐个元素做 2 字节写入。一条 wave 指令的读和写分散在 32 条缓存行上。
    模型给的数：17K 的 gather 10.5 s（22 GB/s，自己下限的 10.7 倍），q16 2.7 s（9.5 倍）。

@@ -22,7 +22,9 @@
 //   8  swiglu              the cooperative-matrix MoE's SwiGLU x route weight
 //   9  scatter_add         y[idx] += expert rows
 //  10  copy_round          [n][d] -> [n][d], bf16-rounded under kFlagRound (a
-//                          cooperative-matrix GEMM's padded output into y)
+//                          cooperative-matrix GEMM's padded output into y);
+//                          a0 / a1 = y's row width and first column, for a
+//                          GEMM done in row slices (0 / 0 = d / 0)
 //  11  gate_topk           raw gate scores [n][E] -> sqrtsoftplus, noaux_tc
 //                          top-k of (score + bias) and the normalised weights,
 //                          [n][topk] ids + weights (cpu/gate.cpp on the GPU)
@@ -433,7 +435,8 @@ void s_copy_round(uint3 gid, uint tid) {
     const uint row = idx / chunks, c0 = (idx % chunks) * 16;
     if (row >= pc.n) return;
     const uint64_t src = Ptr[kIn] + ((uint64_t)row * pc.d + c0) * 4;
-    const uint64_t dst = Ptr[kOut] + ((uint64_t)row * pc.d + c0) * 4;
+    const uint ys = (pc.a0 == 0u) ? pc.d : pc.a0;     // a row slice: y's width and the slice's column
+    const uint64_t dst = Ptr[kOut] + ((uint64_t)row * ys + pc.a1 + c0) * 4;
     [unroll] for (uint q = 0; q < 16; ++q)
         store_f32(dst + (uint64_t)q * 4, maybe_round(load_f32(src + (uint64_t)q * 4), pc.flags));
 }

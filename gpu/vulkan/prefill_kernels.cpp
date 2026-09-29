@@ -567,17 +567,26 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     // and group g multiplies its own K columns (prefill_gemm.slang line 160).
     if (x_stride != uint64_t(groups) * K) return false;
     if (groups > 1 && xfmt != kPfActF32) return false;
-    if (uint64_t(R) * K * 2 > b_.w16.bytes ||
+    // An ungrouped weight whose fp16 copy does not fit b_.w16 (the engram's
+    // 25600 x 6144) goes through in equal slices of whole 128-row blocks, each
+    // decoded, multiplied and copied into its own columns of y.
+    uint32_t S = R;
+    if (groups == 1)
+        for (uint32_t m = 2; uint64_t(S) * K * 2 > b_.w16.bytes && m <= 64; ++m)
+            if (R % m == 0 && (R / m) % 128 == 0) S = R / m;
+    const uint32_t slices = R / S, rows = slices > 1 ? S : R;
+    if (uint64_t(S) * K * 2 > b_.w16.bytes ||
         (uint64_t(n32) + kPfRowSlack) * K * 2 > b_.x16.bytes ||
-        (uint64_t(n32) + kPfRowSlack) * R * 4 > b_.dout.bytes)
+        (uint64_t(n32) + kPfRowSlack) * S * 4 > b_.dout.bytes)
         return false;
     const auto t0 = Clk::now();
     auto kd = runner_->kernel({"prefill_gemm", 3, w.fmt, 0, 8});
     auto kx = runner_->kernel({"prefill_coopmat", xfmt ? 1u : 2u, 0, 0, 8, 3, 0});
     const uint32_t tt = pf_tok_tiles(pcfg_.coop_tok_tiles);
-    const LdsGeo lg = pf_lds_geo(pcfg_, rpg, K, n32);
-    auto km = lg.wm ? runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, R, K, lg.wm, lg.wn})
-                    : runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, R, K, tt});
+    const uint32_t mrows = slices > 1 ? S : rpg;   // the rows one GEMM dispatch covers
+    const LdsGeo lg = pf_lds_geo(pcfg_, mrows, K, n32);
+    auto km = lg.wm ? runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, rows, K, lg.wm, lg.wn})
+                    : runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, rows, K, tt});
     auto kc = runner_->kernel({"prefill_elem", 10});
     for (auto* k : {&kd, &kx, &km, &kc})
         if (!*k) return std::unexpected(k->error());
@@ -601,13 +610,15 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
         return cmd_.barrier();
     };
     if (auto r = cmd_.begin(); !r) return std::unexpected(r.error());
-    const bool decode = w16_src_ != w.data;
-    if (decode) {
+    auto decode = [&](uint32_t r0) -> Result<void> {
         PfGemmPush pd;
-        pd.rows = R; pd.k = K; pd.scale_cols = (K + 31) / 32;
-        if (auto r = rec(*kd, &pd, sizeof(pd), PrefillRunner::per_block_groups(R, K)); !r)
-            return std::unexpected(r.error());
-    }
+        pd.rows = rows; pd.k = K; pd.scale_cols = (K + 31) / 32; pd.row_base = r0;
+        return rec(*kd, &pd, sizeof(pd), PrefillRunner::per_block_groups(rows, K));
+    };
+    const uint32_t gx = lg.wm ? lg.pad(n32) / lg.tok() : pf_tok_groups(n32, tt);
+    const uint32_t gy = mrows / (lg.wm ? 32 * lg.wm : 16);
+    if (slices == 1 && w16_src_ != w.data)
+        if (auto r = decode(0); !r) return std::unexpected(r.error());
     // pc.n = n real rows: the padded columns of x16 hold stale values whose
     // products only reach the padded rows of dout, which nobody copies
     for (uint32_t g = 0; g < groups; ++g) {
@@ -615,18 +626,24 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
         px.x_stride = uint32_t(uint64_t(groups) * K); px.x_col0 = g * K;
         if (auto r = rec(*kx, &px, sizeof(px), PrefillRunner::stage_groups(n, K)); !r)
             return std::unexpected(r.error());
+        if (slices > 1) break;
         PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64; pg.row0 = g * rpg;
-        const uint32_t gx = lg.wm ? lg.pad(n32) / lg.tok() : pf_tok_groups(n32, tt);
-        if (auto r = rec(*km, &pg, sizeof(pg), gx, rpg / (lg.wm ? 32 * lg.wm : 16)); !r)
+        if (auto r = rec(*km, &pg, sizeof(pg), gx, gy); !r) return std::unexpected(r.error());
+    }
+    for (uint32_t r0 = 0; r0 < R; r0 += S) {
+        if (slices > 1) {
+            if (auto r = decode(r0); !r) return std::unexpected(r.error());
+            PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64;
+            if (auto r = rec(*km, &pg, sizeof(pg), gx, gy); !r) return std::unexpected(r.error());
+        }
+        PfElemPush pc; pc.n = n; pc.d = S; pc.a0 = R; pc.a1 = r0; pc.flags = flags & kPfFlagRound;
+        if (auto r = rec(*kc, &pc, sizeof(pc), groups_for(uint64_t(n) * (S / 16))); !r)
             return std::unexpected(r.error());
     }
-    PfElemPush pc; pc.n = n; pc.d = R; pc.flags = flags & kPfFlagRound;
-    if (auto r = rec(*kc, &pc, sizeof(pc), groups_for(uint64_t(n) * (R / 16))); !r)
-        return std::unexpected(r.error());
     if (auto r = cmd_.end(); !r) return std::unexpected(r.error());
     ++times_.submits;
     if (auto r = submit_and_wait(*device_, cmd_); !r) return std::unexpected(r.error());
-    w16_src_ = w.data;
+    w16_src_ = slices > 1 ? 0 : w.data;
     static const char* const kFmt[] = {"fp8", "bf16", "fp32", "fp4"};
     add_op(std::format("coop {}x{} w{} x{}", R, K, kFmt[std::min<uint32_t>(w.fmt, 3)], xfmt ? "q" : "f32"),
            ms_since(t0), pf_gemm_cost(w, xfmt, n, x_stride));
