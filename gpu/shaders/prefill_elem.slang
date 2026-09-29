@@ -267,16 +267,38 @@ float idx_fp4_scale(float amax) {
     return ldexp(1.0f, e);
 }
 void s_rope(uint3 gid, uint tid) {
+    const uint idx = thread_index(gid, tid);
+    const uint hd = pc.a0;
+    const uint lo = hd - pc.a2;
+    const bool inverse = (pc.flags & kFlagInverse) != 0u;
+    if (pc.a1 == 0) {
+        // No quantisation: four elements (two pairs) a thread, the host
+        // dispatches n x d / 4 -- a block of 32 a thread ran at 138 GB/s, four
+        // elements at the elementwise kernels' 208 (STATUS §7 0ak).
+        const uint row = idx / (pc.d / 4), e0 = (idx % (pc.d / 4)) * 4;
+        if (row >= pc.n) return;
+        const uint pos = pc.pos0 + (pc.row_off + row) * pc.pos_step;
+        const uint64_t tab = Ptr[kA2] + (uint64_t)pos * pc.a2 * 4;
+        float4 v = load_f32x4(Ptr[kIn] + ((uint64_t)row * pc.d + e0) * 4);
+        [unroll] for (uint i = 0; i < 4; i += 2) {
+            const uint rel = (e0 + i) % hd;
+            if (rel < lo) continue;
+            const uint j = (rel - lo) >> 1;
+            const float c = load_f32(tab + (uint64_t)j * 8);
+            const float s = load_f32(tab + (uint64_t)j * 8 + 4);
+            rope_pair(c, s, v[i], v[i + 1], inverse);
+            v[i] = maybe_round(v[i], pc.flags);
+            v[i + 1] = maybe_round(v[i + 1], pc.flags);
+        }
+        store_f32x4(Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 4, v);
+        return;
+    }
     const uint blk_sz = pc.a3;
     const uint bpr = pc.d / blk_sz;
-    const uint idx = thread_index(gid, tid);
     const uint row = idx / bpr, blk = idx % bpr;
     if (row >= pc.n) return;
     const uint e0 = blk * blk_sz;
-    const uint hd = pc.a0;
-    const uint lo = hd - pc.a2;
     const uint pos = pc.pos0 + (pc.row_off + row) * pc.pos_step;
-    const bool inverse = (pc.flags & kFlagInverse) != 0u;
 
     float v[32];
     [unroll] for (uint i = 0; i < 32; i += 4) {

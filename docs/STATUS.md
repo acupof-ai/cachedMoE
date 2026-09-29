@@ -685,6 +685,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 0ak. **四个逐元素 kernel 改成每线程 4 个元素：17K 的 GPU 侧 −1.45 s（mhc_post 1,440 → 642 ms，swiglu 593 → 286，scatter 936 → 624，act_quant 386 → 357），4K −0.37 s；逐位不变。同一轮里 GEMM 派发顺序的两个改法、几何按轮次选、engram 行分两盘都量成 NO-GO（§3 74–76）。**
    **怎么找到的**：0af 的模型早就把 `prefill_elem s4` 标成 DRAM 2.7 倍下限（88 GB/s 对 236），0ag 把它向量化到 16 字节读写后还是 90。新加的 `prefill_bench --section elem` 单独跑 s4（n=4,096 / 17,010）：每线程 16 个元素 90 GB/s，8 个 137–155，**4 个 207–209**，32 个 73——不是访存模式，是每线程在飞的读太多（16 个元素 × 9 个平面 = 36 个 16 B 读）压住了并行度。s8 swiglu、s9 scatter_add 同一个形状，一起改；act_quant 的 32 个 2 字节写改成 4 个 16 字节写。mhc_pre_norm（s2，99 GB/s）也试了按 lane 取 4 个连续元素，但它的 WaveActiveSum 每 lane 的部分和顺序会变、不再逐位，撤回。
+   **顺带**：rope（s5）不量化的那条路（q 和 o 的 rope，行宽 12,288）也改成每线程 4 个元素：17K 1,280 → 1,087 ms；量化的三条路还是每线程一个 32 块（块内 amax 要归约），没动。
    **验证**：`gpu_prefill` 7/7，margins 8.598 / 10.108，CPU 闸 25/25；`prefill_ahead/elem4_*.out`。总墙钟在盘的噪声里（外接盘这天 74 °C，4K 的 expert io 15.9–17.2 s 之间晃），按 per-op 记。
    **这一轮的教训**（§3 74–76）：routed expert 链每个 dispatch 后的全屏障不是损失所在——链靠相邻 producer/consumer 的 L2 局部性，成组或让 decode 并行进来都慢 40–50%；单派发的 `coopgeo` 数字不能拿来定成流的小派发的几何；镜像盘答不了 4 KiB 随机流。
 
