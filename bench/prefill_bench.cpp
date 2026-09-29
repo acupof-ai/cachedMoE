@@ -159,6 +159,7 @@ struct Rig {
         if (!be) return std::unexpected(be.error());
         if (auto r = io.start(std::move(*be), cfg); !r) return r;
         io_started = true;
+        if (auto r = open_mirrors(dir, cfg); !r) return r;
         auto backing = alloc.make_slab_backing();
         if (!backing) return std::unexpected(backing.error());
         store::PinnedConfig pc;
@@ -169,6 +170,56 @@ struct Rig {
         auto cb = runner.pool().acquire();
         if (!cb) return std::unexpected(cb.error());
         cmd = *cb;
+        return {};
+    }
+    // serve's second read source (runtime/engine.cpp configure_io_sources
+    // without the health and thermal gates: a bench is minutes long and watched):
+    // DEEPMOE_MODEL_MIRRORS=dir[;dir], weights probed unless
+    // DEEPMOE_MIRROR_WEIGHTS=4.6;3.7 gives them, striping at its default.
+    std::string mirror_label;
+    Result<void> open_mirrors(const std::string& dir, const IoConfig& cfg) {
+        const char* e = std::getenv("DEEPMOE_MODEL_MIRRORS");
+        if (!e || !*e) return {};
+        std::vector<std::string> roots{dir};
+        for (std::string_view rest = e; !rest.empty();) {
+            const size_t semi = rest.find(';');
+            const std::string_view part = rest.substr(0, semi);
+            rest = semi == std::string_view::npos ? std::string_view{} : rest.substr(semi + 1);
+            if (part.empty()) continue;
+            if (auto r = shards.open_mirror(std::string(part), manifest, cfg.unbuffered); !r) return r;
+            roots.emplace_back(part);
+        }
+        std::vector<double> weights(roots.size(), 0.0);
+        if (const char* w = std::getenv("DEEPMOE_MIRROR_WEIGHTS"); w && *w) {
+            size_t i = 0;
+            for (std::string_view rest = w; !rest.empty() && i < weights.size(); ++i) {
+                const size_t semi = rest.find(';');
+                weights[i] = std::strtod(std::string(rest.substr(0, semi)).c_str(), nullptr);
+                rest = semi == std::string_view::npos ? std::string_view{} : rest.substr(semi + 1);
+            }
+        } else {
+            uint32_t idx = UINT32_MAX;
+            for (uint32_t i = 0; i < shards.size() && idx == UINT32_MAX; ++i) {
+                bool all = shards.at(i)->size() >= (64ull << 20);
+                for (size_t m = 1; m <= shards.mirror_count(); ++m) all &= shards.at(i, uint32_t(m)) != nullptr;
+                if (all) idx = i;
+            }
+            if (idx == UINT32_MAX) return fail(Err::NotFound, "no shard every source holds");
+            for (size_t i = 0; i < roots.size(); ++i) {
+                auto g = storage::IoEngine::probe_source_gbps(
+                    store::ShardSet::join(roots[i], manifest.files()[idx].path), 1000, 8, 1000);
+                if (!g) return std::unexpected(g.error());
+                weights[i] = *g;
+            }
+        }
+        io.set_sources(roots, weights);
+        for (uint32_t i = 0; i < shards.size(); ++i)
+            for (size_t m = 1; m <= shards.mirror_count(); ++m)
+                if (const storage::File* alt = shards.at(i, uint32_t(m)))
+                    if (auto r = io.add_mirror(shards.at(i), uint32_t(m), alt); !r) return r;
+        mirror_label = std::format(" mirror x{}", roots.size() - 1);
+        for (size_t i = 0; i < roots.size(); ++i) mirror_label += std::format(" {:.2f}", weights[i]);
+        mirror_label += io.stripe() ? " GB/s striped" : " GB/s routed";
         return {};
     }
     // Dispatches `fn` between two timestamps and waits. Returns GPU ms.
@@ -685,7 +736,7 @@ int run_prefill(const Options& o) {
             const std::string mode = (pc.replay >= n ? std::string("oracle mode") : std::format("replay {}", pc.replay)) +
                                      " " + moe + " " + dense +
                                      std::format(" pv_dv {} ht {} tt {}", pc.attn_pv_dim_tiles,
-                                                 pc.attn_head_tiles, pc.coop_tok_tiles);
+                                                 pc.attn_head_tiles, pc.coop_tok_tiles) + rig.mirror_label;
             std::printf("\nN=%u (%s), %s, load = %s\n", n, source.c_str(), mode.c_str(), o.load.c_str());
             auto out = pf.run(prompt);
             if (!out) { std::fprintf(stderr, "prefill: %s\n", out.error().str().c_str()); return 1; }

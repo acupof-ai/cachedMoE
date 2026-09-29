@@ -670,6 +670,15 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0ab. **双盘快照：同一个二进制、外接盘作第二读源并条带化（`prefill_bench` 新支持 `DEEPMOE_MODEL_MIRRORS`，主盘 4.60 + 外接 3.72 GB/s），4,133 token 54.6 → 38.2 s（−30%），17,010 token 97.7 → 81.7 s（−16%），逐位不变。主数字仍按单盘报；这一份是并排的第二份快照（`prefill_model/ops_mirror.jsonl`、`model_mirror.txt`）。**
+   **为什么补这一份**：用户问模型为什么不按双盘看。单盘快照只换天花板（`--disk-gbs 8.4`）算出来 4K 盘下限 42.5 → 25 s、能省 17.5 s；实测 16.4 s，routed 段盘需要 21.2 s 对模型的 20.9。模型在这个维度上是准的。
+   **双盘下的排序变了**：
+   - 4K 38.2 s = 串行段 13.8 s + routed 24.4 s（盘需 21.2，GPU 需 7.2）。第一位仍是串行段里让盘读 expert（14.1 s），但 routed 段里 GPU 也开始露出来（3.2 s），再往后是注意力 5.7 s。
+   - 17K 81.7 s = 54.8 s + 26.9 s。第一位变成注意力 21.1 s，串行段盘读 expert 降到 11.1 s（盘快了，这段本来就短），dense 10.2，routed GPU 5.3。
+   - 两个长度下 routed 段都变成盘和 GPU 都没跑满（4K 盘 21 / GPU 7 / 段 24；17K 22 / 16 / 27），把 expert 读跨层流水到串行段里，理论上限 4K ≈ max(盘 25, GPU 21) 秒。
+   **bench 的镜像支持**：`Rig::open_mirrors` 复刻 serve 的 `configure_io_sources`，去掉健康闸和温控（bench 几分钟，有人看着）：`DEEPMOE_MODEL_MIRRORS=dir[;dir]`，权重探测或 `DEEPMOE_MIRROR_WEIGHTS`，条带化按 IoEngine 的默认。mode 字符串带上 `mirror x1 4.60 3.72 GB/s striped`，所以快照自己说明是哪一份。
+   **盘**：跑前外接盘掉线了一次（USB4 链路通但 NVMe 没枚举，`echo 1 > /sys/bus/pci/rescan` 回来，systemd 按 fstab 只读重挂）；56°C 起跑，两次后 75°C，没掉。
+
 0aa. **routed expert 在 gate 之前就开始读：层一开始按 shard 顺序把 transit 装得下的 2 × 32 个 expert 读进去，gate 之后照原来的规则分派，已经读进来的就地计算。`prefill_bench` 4,133 token 58.6 → 54.5 s（−7.0%），17,010 token 101.2 → 97.7 s（−3.5%）；serve 4,133 token 58.2 → 54.0 s（−7.2%，同一个二进制用 `DEEPMOE_PF_READ_AHEAD=0` 对照），17,010 token 97.1 s。结果逐位不变。**
    **为什么可以不猜**：模型排第一的杠杆是"串行段里盘闲着"：一层的 expert 要等 gate 算完才知道。先加了一个探针量每层用到多少 expert（replay 128 模式，4K）：
    - 第 0–19 层每层有 4,133 行，384 个 expert 里要用 329–381 个；算完第一个 1,024 行的 query 块时已经知道约 300 个。
