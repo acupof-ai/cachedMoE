@@ -163,8 +163,8 @@ class Serve:
         # web UI down with the drive.
         # Track D5: on for the web UI by default now that a USB4 enclosure holds
         # up -- y_turns +9.9%, long_turns +8.6%, zero E: errors
-        # (docs/p4_dual_source.md §9). `--no-mirror-auto` is the way back, and
-        # `deepmoe serve` itself is unchanged: its default is still one source.
+        # (docs/p4_dual_source.md §9); striped per chunk since STATUS §7 0r.
+        # `--no-mirror-auto` is the way back.
         mirrors = list(args.mirror)
         if not mirrors and not args.no_mirror_auto:
             mirrors = find_mirrors(MODEL)

@@ -64,6 +64,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 23 | chat-ab-threads8-8turns | `7b27eb741f+1 dirty (df850332d68331e4)` | IO_SUBMIT_THREADS=8 MIRROR_AUTO=0 | 0% | 44 MB | **7.562** | 132.2 | 62.5 (28.4/26.0/6.1/2.0) | 66.5 (52.8 @ 4.8 GB/s) | 4.76 | 2.9 | 0.9439 | 66.2 |
 | 24 | chat-ab-threads1-8turns | `7b27eb741f+17 dirty (5b9a4dab88b490d5)` | IO_SUBMIT_THREADS=1 MIRROR_AUTO=0 | 23% | 48 MB | **7.683** | 130.2 | 62.5 (28.4/26.0/6.1/1.9) | 64.4 (52.8 @ 4.8 GB/s) | 4.66 | 2.9 | 0.9439 | 66.0 |
 | 25 | chat-stripe-hot70-8turns | `7b27eb741f+17 dirty (d020a9239219f127)` | MIRROR_AUTO=1 MIRROR_HOT_C=70 MIRROR_STRIPE=1 | 0% | 34 MB | **7.631** | 131.0 | 62.5 (28.4/26.0/6.1/2.0) | 65.3 (52.8 @ 4.8 GB/s) | 4.67 | 2.9 | 0.9439 | 66.6 |
+| 26 | chat-default-stripe-8turns | `130ff40829` | MIRROR_AUTO=1 | 0% | 45 MB | **9.302** | 107.5 | 62.8 (28.5/26.3/6.1/1.9) | 41.7 (52.8 @ 4.8 GB/s) | 2.90 | 2.6 | 0.9439 | 43.2 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -663,6 +664,11 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0r. **条带化随镜像默认开（用户 2026-09-29「可以开的」）：发现第二读源就按 chunk 条带化，`DEEPMOE_MIRROR_STRIPE=0` 关。只设 `DEEPMOE_MIRROR_AUTO=1` 的默认路径（ledger #26）9.302 tok/s，与显式打开的 #22（9.291）一致；主数字照旧按单盘报（#24 7.682）。**
+   `IoEngine::set_sources` 里 `stripe_ = mirrors_on_`，环境变量只剩「关」这一个方向；`serve`（Linux 自动发现镜像）和网页 UI（`find_mirrors` 传 `--mirror`）都走这条路径，不用改。
+   单测 `io.stripe_is_the_default_and_leaves_backfill_whole`：有镜像时默认开，没有镜像时永远关（`set_stripe(true)` 也不行）；新增一条变异（默认改回关），能被抓到，io 6/6。
+   #26 的外接盘整场最高 74 °C（空闲 63–67），温控没触发，零错误；stall 41.7 ms，ms/miss 2.90，prefill 43.2 s。
+
 0q. **双盘（外接 USB4 盘作第二读源，按 chunk 条带化）：对话 9.291 tok/s（ledger #22，同一 8 轮脚本；单盘 #24 7.682，+21%），stall 64.4 → 41.7 ms，prefill 66 → 42 s，端到端 6.26 → 7.90 tok/s（+26%）。加了温控：外接盘到 80 °C 就歇，降到 72 °C 再回来。**
    **数字**（`bench/results/linux/multidisk/`，`DEEPMOE_MIRROR_AUTO=1 DEEPMOE_MIRROR_STRIPE=1`）：ms/miss 4.66 → **2.92**，hit 0.9436 不变，探针 4.59 : 3.73 GB/s。外接盘空闲 63–67 °C，
    整场最高 **74 °C**（告警线 90），未掉线、`src[1]` 零错误。与 0i（2026-09-28，+16.8%）同一机制，这次在 0p 之后的 IO 路径上量。
@@ -673,7 +679,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    整场单盘 7.631 tok/s；它停在 64 °C 没降到 62——**回来的阈值必须高于空闲温度**，默认 80 / 72 满足（空闲 63–67）。
    **已有的另两道**：读到一半外接盘掉链路 ⇒ 该请求改从主盘重读（调用方只看到一次慢读，D4/ST）；连续 3 次出错 ⇒ 本进程内踢出（SourceHealth）。
    **还缺**：踢出之后不会再接回来（USB4 链路约每 1–1.5 小时断一次，重挂后设备改名、旧 fd 失效），长跑的网页引擎掉一次就单盘到重启——要接回得重开 48 个分片并替换 IoEngine 的镜像表，下一步候选。
-   **默认**：serve 在 Linux 上已自动发现镜像，但条带化仍默认关（0i：外接盘只作辅助，默认与否由用户定）。
+   **默认**：见 0r——条带化自 2026-09-29 起随镜像默认开。
 
 0p. **IO：Linux 上 IoEngine 改在 dispatcher 一条线程上提交（提交线程 8 → 1）。对话（ledger #21，同一 8 轮脚本）7.572 → 7.696 tok/s，ms/miss 4.79 → 4.62，stall 66.3 → 64.3 ms，hit 0.9439 不变；IO 至此贴着盘的忙时带宽。**
    **为什么**：提交线程池是给 Windows 同步 `ReadFile` 进 path A（704 µs/chunk）做的（Track Q2）。Linux 的 io_uring 提交 ~7 µs，而读完成的 task work 跑在**提交它的那条线程**上，

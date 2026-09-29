@@ -265,7 +265,7 @@ public:
     // split and lets the stall say whether that split was worth having.
     double static_split() const { return static_split_; }
 
-    // --- Track ST: chunk-level striping (DEEPMOE_MIRROR_STRIPE=1) -----------
+    // --- Track ST: chunk-level striping (off: DEEPMOE_MIRROR_STRIPE=0) -------
     // The router above sends a WHOLE request to one source. An expert is two
     // runs, and the 17.7 MB weights run is five 4 MiB chunks, so a layer with
     // one miss -- the common case, 1.16 experts per miss-layer on the Linux
@@ -280,9 +280,11 @@ public:
     // routing already keeps both drives busy. A striped request that fails on
     // a mirror is re-read whole from the primary, as an unstriped one is.
     //
-    // Default OFF until an A/B has earned it. set_sources() reads it from the
-    // environment; the setter is for the bench and the tests, is a no-op
-    // without a mirror, and so goes AFTER set_sources and before any submit.
+    // Default ON with a mirror: the 8-turn chat decodes 9.29 tok/s striped
+    // against 7.68 on the primary alone (STATUS §7 0q). set_sources() reads
+    // the override from the environment; the setter is for the bench and the
+    // tests, is a no-op without a mirror, and so goes AFTER set_sources and
+    // before any submit.
     bool stripe() const { return stripe_; }
     void set_stripe(bool on) { stripe_ = on && mirrors_on_; }
 

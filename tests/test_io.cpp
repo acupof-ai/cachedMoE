@@ -3,6 +3,7 @@
 // platform backend (IOCP on Windows, io_uring on Linux).
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <thread>
@@ -726,6 +727,7 @@ DEEPMOE_TEST(io, mirror_error_is_reread_from_the_primary) {
     engine.set_sources({"primary", "mirror"}, {0.001, 1000.0});
     REQUIRE_OK(engine.add_mirror(&prim->file, 1, &mirr->file));
     REQUIRE(engine.mirrors_enabled());
+    engine.set_stripe(false);   // the whole-request path; striped is below
     fake->fail_file(&mirr->file);
 
     constexpr uint32_t kBytes = 256 * 1024;   // four chunks: a multi-chunk run
@@ -786,7 +788,6 @@ DEEPMOE_TEST(io, stripe_splits_one_p0_across_both_sources_by_weight) {
     engine.set_sources({"primary", "mirror"}, {4.87, 3.69});
     REQUIRE_OK(engine.add_mirror(&prim->file, 1, &mirr->file));
     REQUIRE(engine.mirrors_enabled());
-    CHECK(!engine.stripe());           // off unless asked for
     engine.set_stripe(true);
     REQUIRE(engine.stripe());
 
@@ -834,9 +835,10 @@ DEEPMOE_TEST(io, stripe_splits_one_p0_across_both_sources_by_weight) {
     engine.stop();
 }
 
-// Track ST: striping is a P0 policy. The backfill keeps whole-request routing,
-// and with striping off a P0 does too -- the default is byte-for-byte today's.
-DEEPMOE_TEST(io, stripe_leaves_backfill_and_the_default_whole) {
+// Track ST: striping is the default with a mirror and never without one, and
+// it is a P0 policy -- the backfill keeps whole-request routing, and with
+// striping off (DEEPMOE_MIRROR_STRIPE=0) a P0 does too.
+DEEPMOE_TEST(io, stripe_is_the_default_and_leaves_backfill_whole) {
     auto prim = make_scratch("st_whole_p", 2u << 20, false);
     auto mirr = make_scratch("st_whole_m", 2u << 20, false);
     REQUIRE(prim.has_value());
@@ -844,6 +846,17 @@ DEEPMOE_TEST(io, stripe_leaves_backfill_and_the_default_whole) {
     const std::vector<std::byte> content = pattern_bytes(2u << 20);
     constexpr uint32_t kBytes = 1u << 20;
     AlignedBuffer b(kBytes);
+    const char* env = std::getenv("DEEPMOE_MIRROR_STRIPE");
+    const bool stripe_off_env = env && *env == '0';
+    {
+        IoEngine engine;
+        REQUIRE_OK(engine.start(std::make_unique<test::FakeBackend>(content, 8), IoConfig{}));
+        engine.set_sources({"primary"}, {4.87});
+        CHECK(!engine.stripe());
+        engine.set_stripe(true);
+        CHECK(!engine.stripe());
+        engine.stop();
+    }
 
     auto files_used = [&](bool stripe, IoPriority pr) -> uint32_t {
         IoEngine engine;
@@ -854,6 +867,7 @@ DEEPMOE_TEST(io, stripe_leaves_backfill_and_the_default_whole) {
         if (!engine.start(std::move(backend), cfg)) return 99;
         engine.set_sources({"primary", "mirror"}, {4.87, 3.69});
         if (!engine.add_mirror(&prim->file, 1, &mirr->file)) return 99;
+        if (!engine.stripe() && !stripe_off_env) return 97;
         engine.set_stripe(stripe);
         IoRequest r;
         r.priority = pr;

@@ -217,9 +217,10 @@ int cmd_serve(int argc, char** argv) {
     // The second read source as a helper, on by default for serve on Linux: the
     // same model directory name under /mnt/*/ or /mnt/*/models/ with the
     // manifest in it (the x box keeps its USB4 copy at /mnt/deepmoe2/models/).
-    // +9% on the 8-turn chat (STATUS §7 0h). It stays a helper: the engine
-    // probes it before trusting it, re-reads any failed mirror read from the
-    // primary, and drops it after three consecutive errors. --mirror or
+    // Striped per chunk, +21% on the 8-turn chat (STATUS §7 0q, 0r). It stays
+    // a helper: the engine probes it before trusting it, re-reads any failed
+    // mirror read from the primary, drops it after three consecutive errors
+    // and rests it while its drive is hot. --mirror or
     // DEEPMOE_MODEL_MIRRORS choose explicitly; DEEPMOE_MIRROR_AUTO=0 turns the
     // search off (single-drive benchmarks).
     if (cfg.model_mirrors.empty() && !std::getenv("DEEPMOE_MODEL_MIRRORS")) {

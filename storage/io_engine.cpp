@@ -293,10 +293,11 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
         const double f = std::strtod(e, nullptr);
         if (f > 0.0 && f < 1.0) static_split_ = f;
     }
-    // Track ST. Wins over the static split for P0 when both are set: striping
-    // routes every chunk, so there is no whole request left to split.
-    stripe_ = false;
-    if (const char* e = std::getenv("DEEPMOE_MIRROR_STRIPE"); e && *e == '1') stripe_ = mirrors_on_;
+    // Track ST: on whenever there is a mirror; DEEPMOE_MIRROR_STRIPE=0 routes
+    // whole requests again. Wins over the static split for P0 when both are
+    // set: striping routes every chunk, so there is no whole request to split.
+    stripe_ = mirrors_on_;
+    if (const char* e = std::getenv("DEEPMOE_MIRROR_STRIPE"); e && *e == '0') stripe_ = false;
     const int64_t now0 = mono_ns();
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
         ka_[i].chunk_id = 0;

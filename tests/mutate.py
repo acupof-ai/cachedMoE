@@ -155,6 +155,13 @@ MUTATIONS = [
      "let a resting mirror back in as soon as it dips under hot_c",
      "caught", False),
 
+    # --- striping is the default whenever a mirror is attached (STATUS 0r)
+    ("io", [("storage/io_engine.cpp",
+             "    stripe_ = mirrors_on_;\n",
+             "    stripe_ = false;\n")],
+     "route whole requests unless DEEPMOE_MIRROR_STRIPE asks for chunks",
+     "caught", False),
+
     # --- H1b: a .pkv restore is a degradation, never fatal ---------------
     ("kvdisk", [("runtime/session.cpp",
                  "st.cold_fallback = true;\n"

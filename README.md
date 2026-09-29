@@ -17,13 +17,14 @@ Linux (Arch, kernel 7.2, Mesa 26.2 RADV), one internal NVMe (4.8 GB/s), 5,500-sl
 | | |
 |---|---|
 | **Chat decode** (8-turn script) | **7.70 tok/s** — per token 62.5 ms GPU compute + 64 ms waiting on NVMe; expert cache hit rate 0.944 |
+| … with a copy on a second drive | **9.30 tok/s** — found under `/mnt` and read striped per chunk across both drives (USB4, 3.7 GB/s); 42 ms waiting |
 | Decode step, all experts resident | **66.0 ms** (the weight-read floor is 56.6 ms) |
 | GPU prefill | 4,133 tokens in 79 s · 17,010 tokens in 242 s |
 | Context | up to 524,280 tokens |
 | Quality | 64-step teacher-forced NLL 0.623 against 0.598 for the fp32 reference; needle retrieval at 4K and 17K tokens 8/8 |
 
 Every number above is machine-recorded with its commit in [docs/STATUS.md](docs/STATUS.md) §1
-(ledger rows 19 and 21) and [docs/p3_longctx_decode.md](docs/p3_longctx_decode.md) §4.3.
+(ledger rows 19, 21 and 26) and [docs/p3_longctx_decode.md](docs/p3_longctx_decode.md) §4.3.
 
 **Where the time goes.** Each token routes to 6 of 384 experts in each of 40 layers. About 13.5 of
 those 240 lookups miss the cache and cost one ~19 MB read each, so half of every token is disk.

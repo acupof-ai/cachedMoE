@@ -35,8 +35,8 @@
 // same shard on the second drive) and --route, the same reads go through the
 // runtime's own router three ways:
 //   single   primary only, no router (today's single-drive run)
-//   whole    DEEPMOE_MIRROR_* default: each request goes whole to one drive
-//   stripe   DEEPMOE_MIRROR_STRIPE=1: each 4 MiB chunk is routed on its own
+//   whole    DEEPMOE_MIRROR_STRIPE=0: each request goes whole to one drive
+//   stripe   the runtime's default with a mirror: each chunk is routed on its own
 // The decode's shape is one expert fill at a time -- its 17,698,816 B weights
 // run and 1,110,016 B scales run together -- so the verdict run is
 //   io_dst_bench --file A --mirror B --dst ram --req-kb 17284,1084 --inflight 1
