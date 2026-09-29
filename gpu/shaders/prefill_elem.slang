@@ -28,6 +28,8 @@
 //  11  gate_topk           raw gate scores [n][E] -> sqrtsoftplus, noaux_tc
 //                          top-k of (score + bias) and the normalised weights,
 //                          [n][topk] ids + weights (cpu/gate.cpp on the GPU)
+//  12  copy                kIn -> kOut, n 16-byte words (an expert read ahead
+//                          into the transit, into the cache slot it is given)
 //
 // No stage here needs a reduction across rows, so there are no barriers and no
 // LDS. The stages that reduce along a row (1, 2, 7) run a wave per row: the
@@ -511,10 +513,18 @@ void s_gate_topk(uint3 gid, uint tid) {
         store_f32(wts + (uint64_t)r * 4, load_f32(wts + (uint64_t)r * 4) * inv);
 }
 
+// --- 12: copy ---------------------------------------------------------------------
+void s_copy(uint3 gid, uint tid) {
+    const uint i = thread_index(gid, tid);
+    if (i >= pc.n) return;
+    *(uint4*)(Ptr[kOut] + (uint64_t)i * 16) = *(uint4*)(Ptr[kIn] + (uint64_t)i * 16);
+}
+
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-    if (Stage == 11)     s_gate_topk(gid, tid);
+    if (Stage == 12)     s_copy(gid, tid);
+    else if (Stage == 11) s_gate_topk(gid, tid);
     else if (Stage == 10) s_copy_round(gid, tid);
     else if (Stage == 8) s_swiglu(gid, tid);
     else if (Stage == 9) s_scatter_add(gid, tid);

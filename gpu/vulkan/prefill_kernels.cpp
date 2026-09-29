@@ -299,6 +299,8 @@ Result<GpuBuffer> Prefill::scratch(uint64_t bytes) {
 }
 
 void Prefill::destroy() {
+    for (auto& f : ahead_.futs) if (f.valid()) f.wait();   // nothing lands in a freed transit
+    ahead_ = {};
     if (alloc_)
         for (GpuBuffer& b : owned_) if (b.valid()) alloc_->free(b);
     owned_.clear();
@@ -750,6 +752,16 @@ Result<void> Prefill::op_engram_gate(uint64_t h, uint64_t kv, uint64_t qw, uint6
     return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * kHc * 32));   // a wave per plane
 }
 
+Result<void> Prefill::op_copy(uint64_t src, uint64_t dst, uint64_t bytes) {
+    auto k = runner_->kernel({"prefill_elem", 12});
+    if (!k) return std::unexpected(k.error());
+    uint64_t* s = runner_->slots(*k);
+    s[0] = src; s[1] = dst;
+    PfElemPush p; p.n = static_cast<uint32_t>(bytes / 16);
+    cost_ = {0, 2.0 * double(bytes)};
+    return flush_one(*k, &p, sizeof(p), groups_for(p.n));
+}
+
 // docs/p4_prefill_speed.md §3: the band attention as two cooperative-matrix
 // tile multiplies around a gather and a softmax, one submit.
 Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
@@ -1018,6 +1030,66 @@ Result<void> Prefill::op_moe(uint32_t L, uint32_t rows, uint64_t x, std::vector<
     return run_moe(L, rows, x, b_.fxq.dev_addr, b_.fxs.dev_addr, y, ids, wts, shared, routed);
 }
 
+namespace {
+// The order the drive reads a layer's experts in: by shard file, then offset.
+bool shard_order(const ExpertEntry* a, const ExpertEntry* b) {
+    const Run& ra = a->runs.front();
+    const Run& rb = b->runs.front();
+    return ra.file != rb.file ? ra.file < rb.file : ra.aligned_off < rb.aligned_off;
+}
+}  // namespace
+
+// An expert's runs into `dst`, its slot base.
+Result<void> Prefill::read_expert(uint32_t L, uint32_t e, const ExpertEntry& ent, std::byte* dst,
+                                  IoPriority pri, std::vector<std::future<storage::IoResult>>& futs,
+                                  double& bytes) {
+    for (const Run& r : ent.runs) {
+        auto f = shards_->require(r.file);
+        if (!f) return std::unexpected(f.error());
+        storage::IoRequest req;
+        req.key = {static_cast<uint16_t>(L), static_cast<uint16_t>(e)};
+        req.priority = pri;
+        req.file = *f;
+        req.file_off = r.aligned_off;
+        req.bytes = r.aligned_bytes;
+        req.dst = dst + r.slot_offset;
+        auto fut = io_->submit_future(req);
+        if (!fut) return std::unexpected(fut.error());
+        futs.push_back(std::move(*fut));
+        times_.expert_bytes += r.aligned_bytes;
+        bytes += double(r.aligned_bytes);
+    }
+    ++times_.experts_read;
+    return {};
+}
+
+// Layer L's first 2 x transit_slots routed experts in shard order, into the
+// transit before its gate has run (PrefillConfig::read_ahead_min_rows); the
+// ones the decode cache holds are skipped. run_moe takes them.
+Result<void> Prefill::read_ahead(uint32_t L) {
+    const uint32_t E = cfg_->n_routed_experts;
+    std::vector<std::pair<const ExpertEntry*, uint32_t>> order;
+    for (uint32_t e = 0; e < E; ++e) {
+        if (expert_sink && expert_sink->cached && expert_sink->cached(L, e)) continue;
+        auto ent = manifest_->require_expert({static_cast<uint16_t>(L), static_cast<uint16_t>(e)});
+        if (!ent) return std::unexpected(ent.error());
+        order.push_back({*ent, e});
+    }
+    std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return shard_order(a.first, b.first); });
+    ahead_ = {};
+    ahead_.layer = L;
+    ahead_.slot.assign(E, ~0u);
+    const size_t n = std::min<size_t>(order.size(), size_t(2) * pcfg_.transit_slots);
+    for (uint32_t i = 0; i < n; ++i) {
+        auto* dst = static_cast<std::byte*>(b_.transit.host_ptr) + uint64_t(i) * layout::kExpertSlotBytes;
+        if (auto r = read_expert(L, order[i].second, *order[i].first, dst, IoPriority::Lookahead,
+                                 ahead_.futs, ahead_.bytes); !r)
+            return r;
+        ahead_.slot[order[i].second] = i;
+    }
+    return {};
+}
+
 Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq, uint64_t xs,
                               uint64_t y, std::vector<uint32_t>& ids, std::vector<float>& wts,
                               bool shared, bool routed) {
@@ -1241,6 +1313,17 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
 
     // --- routed experts, expert-major, in shard order ---------------------------
     if (!routed) return {};
+    // What read_ahead put in the transit for this layer. All of it lands (or
+    // fails, and is read again below) before any slot is reused.
+    std::vector<uint32_t> ahead(E, ~0u);
+    if (ahead_.layer == L) {
+        const auto tw = Clk::now();
+        bool ok = true;
+        for (auto& f : ahead_.futs) ok &= f.get().ok();
+        add_op("io: experts ahead", ms_since(tw), {0, ahead_.bytes, double(ahead_.futs.size())});
+        if (ok) ahead.swap(ahead_.slot);
+        ahead_ = {};
+    }
     std::vector<uint32_t> used;
     for (uint32_t e = 0; e < E; ++e) if (count[e]) used.push_back(e);
     std::vector<const ExpertEntry*> ents(E, nullptr);
@@ -1249,11 +1332,11 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         if (!ent) return std::unexpected(ent.error());
         ents[e] = *ent;
     }
-    std::sort(used.begin(), used.end(), [&](uint32_t a, uint32_t b) {
-        const Run& ra = ents[a]->runs.front();
-        const Run& rb = ents[b]->runs.front();
-        return ra.file != rb.file ? ra.file < rb.file : ra.aligned_off < rb.aligned_off;
-    });
+    std::sort(used.begin(), used.end(), [&](uint32_t a, uint32_t b) { return shard_order(ents[a], ents[b]); });
+    // the read-ahead ones first: read_ahead gave slots in shard order too
+    const uint32_t n_ahead = static_cast<uint32_t>(
+        std::stable_partition(used.begin(), used.end(), [&](uint32_t e) { return ahead[e] != ~0u; }) -
+        used.begin());
     const uint32_t K = pcfg_.transit_slots;
     // Track R1: the last row (and its top-6 rank) routed to each expert -- its
     // LRU age in the decode cache it may be handed to.
@@ -1270,39 +1353,22 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         double read_bytes = 0;
         std::vector<std::future<storage::IoResult>> futs;
     };
+    std::vector<uint32_t> slot(E, 0);   // each used expert's transit slot
+    auto transit_dev = [&](uint32_t e) { return b_.transit.dev_addr + uint64_t(slot[e]) * layout::kExpertSlotBytes; };
     auto issue = [&](Batch& bt) -> Result<void> {
         for (uint32_t i = 0; i < bt.count; ++i) {
             const uint32_t e = used[bt.first + i];
-            const uint64_t slot = uint64_t(bt.half) * K + i;
             if (expert_sink && expert_sink->reserve) {
                 dest[e] = expert_sink->reserve(L, e, moe_pos0_ + last_t[e], last_s[e]);
                 if (dest[e].kind == PfExpertSink::Kind::Resident) continue;   // no read
             }
-            const bool into_cache = expert_sink && dest[e].kind == PfExpertSink::Kind::Fill;
-            for (const Run& r : ents[e]->runs) {
-                auto f = shards_->require(r.file);
-                if (!f) return std::unexpected(f.error());
-                storage::IoRequest req;
-                req.key = {static_cast<uint16_t>(L), static_cast<uint16_t>(e)};
-                req.priority = IoPriority::BlockingMiss;
-                req.file = *f;
-                req.file_off = r.aligned_off;
-                req.bytes = r.aligned_bytes;
-                req.dst = into_cache
-                    ? static_cast<std::byte*>(dest[e].host) + r.slot_offset
-                    : static_cast<std::byte*>(b_.transit.host_ptr) +
-                          slot * layout::kExpertSlotBytes + r.slot_offset;
-                auto fut = io_->submit_future(req);
-                if (!fut) return std::unexpected(fut.error());
-                bt.futs.push_back(std::move(*fut));
-                times_.expert_bytes += r.aligned_bytes;
-                bt.read_bytes += double(r.aligned_bytes);
-            }
+            if (ahead[e] != ~0u) continue;   // in its transit slot already
+            std::byte* dst = expert_sink && dest[e].kind == PfExpertSink::Kind::Fill
+                ? static_cast<std::byte*>(dest[e].host)
+                : static_cast<std::byte*>(b_.transit.host_ptr) + uint64_t(slot[e]) * layout::kExpertSlotBytes;
+            if (auto r = read_expert(L, e, *ents[e], dst, IoPriority::BlockingMiss, bt.futs, bt.read_bytes); !r)
+                return r;
         }
-        times_.experts_read += bt.count;
-        if (expert_sink)
-            for (uint32_t i = 0; i < bt.count; ++i)
-                if (dest[used[bt.first + i]].kind == PfExpertSink::Kind::Resident) --times_.experts_read;
         return {};
     };
     auto run_batch = [&](Batch& bt) -> Result<void> {
@@ -1320,6 +1386,13 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         const double io_ms = ms_since(tw);
         times_.expert_io += io_ms;
         add_op("io: experts", io_ms, {0, bt.read_bytes, double(bt.futs.size())});
+        // a Fill the read-ahead brought in moves from the transit into its
+        // cache slot on the GPU instead of coming off the drive again
+        for (uint32_t i = 0; i < bt.count; ++i) {
+            const uint32_t e = used[bt.first + i];
+            if (ahead[e] != ~0u && expert_sink && dest[e].kind == PfExpertSink::Kind::Fill)
+                if (auto r = op_copy(transit_dev(e), dest[e].dev, layout::kExpertSlotBytes); !r) return r;
+        }
         const auto tg = Clk::now();
         // Small experts first (tiled job table, one quantisation over their h
         // rows), then the large ones (cooperative matrix, one expert at a time).
@@ -1332,8 +1405,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             const uint32_t i = order[o];
             const uint32_t e = used[bt.first + i];
             const uint64_t base = (expert_sink && dest[e].kind != PfExpertSink::Kind::Drop)
-                ? dest[e].dev
-                : b_.transit.dev_addr + (uint64_t(bt.half) * K + i) * layout::kExpertSlotBytes;
+                ? dest[e].dev : transit_dev(e);
             PfJob j;
             j.w1 = base + ents[e]->offset_of(ExpertPart::W1Weight);
             j.s1 = base + ents[e]->offset_of(ExpertPart::W1Scale);
@@ -1365,12 +1437,20 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             }
         return {};
     };
+    // The read-ahead experts are the first batches, one per transit half they
+    // sit in; the rest go K at a time into alternating halves.
     std::vector<Batch> batches;
-    for (uint32_t i = 0; i < used.size(); i += K) {
+    for (uint32_t i = 0; i < used.size();) {
         Batch bt;
         bt.first = i;
-        bt.count = std::min<uint32_t>(K, static_cast<uint32_t>(used.size()) - i);
-        bt.half = static_cast<uint32_t>(batches.size() % 2);
+        if (i < n_ahead) {
+            bt.half = ahead[used[i]] / K;
+            for (; i < n_ahead && ahead[used[i]] / K == bt.half; ++i) slot[used[i]] = ahead[used[i]];
+        } else {
+            bt.half = batches.empty() ? 0 : 1 - batches.back().half;
+            for (; i < used.size() && i - bt.first < K; ++i) slot[used[i]] = bt.half * K + (i - bt.first);
+        }
+        bt.count = i - bt.first;
         batches.push_back(std::move(bt));
     }
     // Batch i+1's reads go out before batch i computes: the drive fills one half
@@ -1511,6 +1591,10 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
         pv.block_in = fptr(b_.h_in_copy);
         pv.engram_out = c.is_engram_layer(L) ? fptr(b_.h_a) : nullptr;
     }
+
+    // the routed experts' reads start here, with the drive otherwise idle until
+    // the gate (after the engram's rows, which the next op waits for)
+    if (pcfg_.read_ahead_min_rows && A >= pcfg_.read_ahead_min_rows) PF_TRY(read_ahead(L));
 
     // --- mHC, attention half ----------------------------------------------------------
     auto t0 = Clk::now();

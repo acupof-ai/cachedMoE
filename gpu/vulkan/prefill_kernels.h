@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <map>
 #include <span>
 #include <memory>
@@ -228,6 +229,13 @@ struct PrefillConfig {
     // Routed-expert transit slots per half of the read-ahead (two halves:
     // one computing, one filling).
     uint32_t transit_slots = 32;
+    // A layer whose FFN runs over at least this many rows starts reading its
+    // routed experts before its gate has picked any (docs/STATUS.md §7 0aa): at
+    // 4,133 rows a layer uses 329-381 of its 384, and the drive is otherwise
+    // idle until the gate. The first 2 x transit_slots in shard order go into
+    // the transit; the gate then decides as before, and a picked expert that
+    // was read ahead is computed from where it already is. 0 = off.
+    uint32_t read_ahead_min_rows = 1024;
     // Round onto bf16 wherever the reference holds a bf16 tensor.
     bool     round = true;
     // The largest prompt the activation buffers are sized for.
@@ -377,6 +385,9 @@ struct PfExpertSink {
     std::function<Dest(uint32_t layer, uint32_t expert, uint32_t last_pos, uint32_t last_slot)> reserve;
     // After the batch that computed from `d` has run (`ok`), or its read failed.
     std::function<void(uint32_t layer, uint32_t expert, const Dest& d, bool ok)> release;
+    // Whether the cache holds the expert already: the read-ahead skips it.
+    // Null = never.
+    std::function<bool(uint32_t layer, uint32_t expert)> cached;
 };
 
 class Prefill {
@@ -498,6 +509,11 @@ private:
                          uint64_t y, std::vector<uint32_t>& ids, std::vector<float>& wts,
                          bool shared = true, bool routed = true);
     Result<void> engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out);
+    Result<void> read_ahead(uint32_t L);
+    Result<void> op_copy(uint64_t src, uint64_t dst, uint64_t bytes);
+    Result<void> read_expert(uint32_t L, uint32_t e, const ExpertEntry& ent, std::byte* dst,
+                             IoPriority pri, std::vector<std::future<storage::IoResult>>& futs,
+                             double& bytes);
 
     Device*                   device_ = nullptr;
     MemoryAllocator*          alloc_  = nullptr;
@@ -517,6 +533,14 @@ private:
     std::vector<std::pair<const char*, PfCost>> marks_;
     uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
     uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
+    // read_ahead's reads for the layer it was called for: transit slot of each
+    // expert (~0u = not read ahead); run_moe waits for them and takes the slots
+    struct Ahead {
+        uint32_t layer = ~0u;
+        std::vector<uint32_t> slot;
+        std::vector<std::future<storage::IoResult>> futs;
+        double bytes = 0;
+    } ahead_;
     // A host-side step's wall time into times_.per_op.
     void host_op(const char* name, std::chrono::steady_clock::time_point t0) {
         add_op(name, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());

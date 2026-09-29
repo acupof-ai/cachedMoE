@@ -3295,6 +3295,7 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     gpu::PrefillConfig pc;
     pc.max_tokens = static_cast<uint32_t>(prompt.size());
     if (const char* e = std::getenv("DEEPMOE_PF_LDS"); e && *e == '0') pc.lds_gemm = false;
+    if (const char* e = std::getenv("DEEPMOE_PF_READ_AHEAD"); e && *e == '0') pc.read_ahead_min_rows = 0;
     pc.replay     = replay;
     gpu::Prefill pf;
     if (auto r = pf.create(device_, alloc_a_, runner, manifest_, shards_, io_, pinned_, c,
@@ -3343,6 +3344,9 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
         // Batch i+1's reservations are made before batch i computes, so only
         // the guards below the oldest reservation still waiting may retire.
         store_.set_completed_timeline(open_guards.empty() ? guard_clock_ : *open_guards.begin() - 1);
+    };
+    sink.cached = [&](uint32_t layer, uint32_t expert) {
+        return handoff_ && store_.resident({static_cast<uint16_t>(layer), static_cast<uint16_t>(expert)});
     };
     pf.expert_sink = &sink;
     const store::PlannerStats ps0 = planner_.stats();

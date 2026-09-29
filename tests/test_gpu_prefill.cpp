@@ -947,6 +947,110 @@ DEEPMOE_TEST(gpu_prefill, forty_layers) {
     std::filesystem::remove_all(tmp);
 }
 
+// gpu_prefill.read_ahead
+// ----------------------
+// Reading a layer's routed experts before its gate (PrefillConfig::
+// read_ahead_min_rows) changes where an expert's bytes sit, never what they
+// are. The 64-token prompt with the read-ahead at every layer, through a sink
+// that hands out four "cache" slots as Fill while they are free (a read-ahead
+// expert moves into one by prefill_elem's copy stage) and calls every fifth
+// expert cached (the read-ahead skips it), against the same prompt with no
+// read-ahead and no sink: the logits bit for bit.
+DEEPMOE_TEST(gpu_prefill, read_ahead) {
+    if (skip_without_model("gpu_prefill")) return;
+    if (!std::fopen((l3_dir() + "/index.json").c_str(), "rb")) {
+        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: needs tests/data/prefill and tests/data/l3\n");
+        return;
+    }
+    const std::vector<uint32_t> prompt = prompt_ids(pf_dir());
+    REQUIRE(prompt.size() == kN);
+    runtime::Engine engine;
+    {
+        RuntimeConfig cfg;
+        cfg.model_dir = model_dir();
+        cfg.cache.budget_bytes = 8ull << 30;
+        cfg.cache.slots_per_slab = 100;
+        if (auto r = engine.init(cfg); !r) {
+            DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            return;
+        }
+        if (auto r = engine.init_gpu(); !r) {
+            DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            return;
+        }
+    }
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(engine.device(), MemoryPath::DeviceLocalHostVisible));
+    store::ShardSet shards;
+    REQUIRE_OK(shards.open_all(model_dir(), engine.manifest(), true));
+    auto tables = runtime::EngramTables::load(l3_dir());
+    REQUIRE_OK(tables);
+    gpu::PrefillRunner runner;
+    REQUIRE_OK(runner.create(engine.device(), alloc, gpu::default_shader_dir()));
+
+    struct Run { std::vector<float> logits; gpu::PrefillTimes times; };
+    auto run = [&](bool ahead, gpu::PfExpertSink* sink) -> Result<Run> {
+        gpu::PrefillConfig pc;
+        pc.max_tokens = kN;
+        pc.transit_slots = 16;
+        apply_kernel_env(pc);
+        pc.read_ahead_min_rows = ahead ? 1 : 0;
+        gpu::Prefill prefill;
+        if (auto r = prefill.create(engine.device(), alloc, runner, engine.manifest(), shards, engine.io(),
+                                    engine.pinned(), engine.model().text, &*tables, pc); !r)
+            return std::unexpected(r.error());
+        prefill.expert_sink = sink;
+        auto out = prefill.run(prompt);
+        if (!out) return std::unexpected(out.error());
+        return Run{std::move(out->logits), prefill.times()};
+    };
+
+    std::vector<gpu::GpuBuffer> slots;
+    for (int i = 0; i < 4; ++i) {
+        auto b = alloc.allocate(layout::kExpertSlotBytes, /*host_visible=*/true, /*device_address=*/true);
+        REQUIRE_OK(b);
+        slots.push_back(*b);
+    }
+    std::vector<bool> busy(slots.size(), false);
+    uint32_t fills = 0;
+    gpu::PfExpertSink sink;
+    sink.cached = [](uint32_t, uint32_t e) { return e % 5 == 0; };
+    sink.reserve = [&](uint32_t, uint32_t, uint32_t, uint32_t) {
+        gpu::PfExpertSink::Dest d;
+        for (uint32_t i = 0; i < slots.size(); ++i)
+            if (!busy[i]) {
+                busy[i] = true;
+                d.kind = gpu::PfExpertSink::Kind::Fill;
+                d.host = slots[i].host_ptr;
+                d.dev = slots[i].dev_addr;
+                d.cookie = i;
+                ++fills;
+                break;
+            }
+        return d;
+    };
+    sink.release = [&](uint32_t, uint32_t, const gpu::PfExpertSink::Dest& d, bool) { busy[d.cookie] = false; };
+
+    auto base = run(false, nullptr);
+    REQUIRE_OK(base);
+    auto with = run(true, &sink);
+    for (auto& b : slots) alloc.free(b);
+    REQUIRE_OK(with);
+    auto calls = [](const gpu::PrefillTimes& t, const char* op) {
+        auto it = t.per_op.find(op);
+        return it == t.per_op.end() ? 0u : it->second.calls;
+    };
+    const uint32_t copies = calls(with->times, "prefill_elem s12");
+    const auto ahead = with->times.per_op.find("io: experts ahead");
+    std::printf("    %u experts read without, %u with the read-ahead (%.2f GB ahead); %u Fill slots handed "
+                "out, %u read-ahead experts copied into one\n", base->times.experts_read,
+                with->times.experts_read, ahead == with->times.per_op.end() ? 0.0 : ahead->second.bytes / 1e9,
+                fills, copies);
+    CHECK(copies > 0);
+    CHECK(base->logits.size() == with->logits.size());
+    CHECK(std::memcmp(base->logits.data(), with->logits.data(), base->logits.size() * sizeof(float)) == 0);
+}
+
 // gpu_prefill.longctx
 // -------------------
 // DEEPMOE_PF_LONGCTX=traces/longctx/ctx4k (or ctx16k): a Track M export

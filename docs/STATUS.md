@@ -670,6 +670,34 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0aa. **routed expert 在 gate 之前就开始读：层一开始按 shard 顺序把 transit 装得下的 2 × 32 个 expert 读进去，gate 之后照原来的规则分派，已经读进来的就地计算。`prefill_bench` 4,133 token 58.6 → 54.5 s（−7.0%），17,010 token 101.2 → 97.7 s（−3.5%）；serve 4,133 token 58.2 → 54.0 s（−7.2%，同一个二进制用 `DEEPMOE_PF_READ_AHEAD=0` 对照），17,010 token 97.1 s。结果逐位不变。**
+   **为什么可以不猜**：模型排第一的杠杆是"串行段里盘闲着"：一层的 expert 要等 gate 算完才知道。先加了一个探针量每层用到多少 expert（replay 128 模式，4K）：
+   - 第 0–19 层每层有 4,133 行，384 个 expert 里要用 329–381 个；算完第一个 1,024 行的 query 块时已经知道约 300 个。
+   - 第 20 层以后每层只有最后 128 行，只用 130–206 个，串行段也只有十几毫秒，没什么可叠。
+   既然前 20 层几乎每个 expert 都要用，就不用等 gate 了：层一开始（engram 的行读完之后）直接按 shard 顺序盲读，命中率约 92%。这和 §3 里否掉的几条预测式预取（#23、#35、#51）不是一回事：那些是 decode，一次一个 token，读错一个就要跟必须读的抢盘；这里读错的只占用串行段里本来闲着的盘。
+   **改法**（`Prefill::read_ahead`，`PrefillConfig::read_ahead_min_rows` = 1024，0 = 关）：
+   - 这一层 FFN 的行数 ≥ 1024 时，把前 2 × `transit_slots` 个 expert 以 P1（Lookahead）读进 transit。transit 在串行段本来就空着，不多占内存。serve 里 cache 已经有的跳过（`PfExpertSink::cached`）。
+   - `run_moe` 先等这些读完（`io: experts ahead`），然后照旧按精确的 stamp `reserve`：
+     - 读进来又被选中的排成最前面的批次（每个 transit 半区一批）；其余的照旧按 K 个一批、两个半区交替读。
+     - Drop：直接从 transit 算。
+     - Fill：用 `prefill_elem` 新加的 stage 12（按设备地址拷 16 字节块）从 transit 搬进 cache slot，不再从盘读一遍。
+     - Resident：白读了。
+     cache 的 admission 和原来完全一样。
+   - 读 expert 的代码收成 `read_expert`，排序收成 `shard_order`，`issue` 和 `read_ahead` 共用。
+   **结果**：
+   - 4K：20 层 × 64 = 1,280 个 expert（24 GB）全在串行段里读完，等它们只花了 0.9 ms。多读了 57 个没用上的（有用率 95.5%）。
+   - serve 4K 前后两次：生成的 31 个 token 相同，解码命中率相同（0.802083333），handoff 统计相同（kept 9,540 / dropped 993）。serve 里大部分 expert 走 Fill，拷贝这条路被大量走到。
+   - transit 的大小决定能叠多少（4K，`--transit`，一次一档）：32 → 54.5 s；64 → 51.2 s（−12.7%，等预读 0.52 s）；96 → 51.4 s（等预读 4.5 s，串行段已经盖不住）。默认留在 32：64 要让 transit 从 1.2 GB 涨到 2.4 GB，而 Linux 默认 5,500 槽时 17K 已经会丢设备（§6 第 17 条）。等那一条修好（按 GTT 余量给 prefill 定尺寸），再把 transit 也放进同一个预算里。
+   **验证**：
+   - 首 token 的 margin 逐位相同（8.598 / 10.108；oracle 模式的 longctx 4K 每层都预读，8.4880）。
+   - 新测试 `gpu_prefill.read_ahead`：64 个 token，每层都预读；一个假 sink 把 4 个"cache slot"作为 Fill 发出去，并把每第 5 个 expert 报告为已缓存。和不预读、不带 sink 的结果比，logits 逐位相同，其间有 160 次拷贝。
+   - 新增两条变异：拷贝方向反了；预读的 expert 用了相邻的 transit slot。`gpu_prefill` 都抓到了。
+   - CPU 闸 25/25，`run_all.py` 30/30。
+   **模型**：`tools/prefill_model.py` 把 `io: experts ahead` 算进 routed 段；routed 段的盘下限只算 gate 之后的读，"串行段里让盘读 expert"仍按全部的读来算。
+   **现在的快照**：4K 54.6 s = 串行段 13.9 s（其中盘预读了 5.2 s）+ routed expert 40.6 s；17K 97.7 s = 54.7 s + 42.9 s。剩下按关键路径能赢的：
+   - 17K：串行段里让盘读 expert 26.9 s（要更大的 transit）；注意力 21.3 s（P.V tiles 12.0 s，是它下限的 10 倍；score tiles 6.9 s，5.8 倍）；dense linear 10.2 s；host index top-k 4.9 s。
+   - 4K：串行段里让盘读 expert 11.6 s，注意力 5.6 s，dense linear 2.8 s。
+
 0z. **rmsnorm（`prefill_elem` stage 1）和 engram_gate（stage 7）从每行一个线程改成每行一个 wave：17,010 token 的 prefill 105.6 → 101.2 s（−4.2%），4,133 token 59.1 → 58.6 s（`prefill_bench`）。结果不逐位相同，但对参考更近了。**
    **问题**：两个 stage 都是一个线程串行走完自己的一整行（rmsnorm：512 / 1024 / 128 维；engram_gate：每个 (row, stream) 4096 维，同时算三个和）。一条 wave 的读指令落在 32 个不同的行上。行数越多越糟：s1 每次调用 4K 0.91 ms、17K 21.7 ms，行数多 4.1 倍，时间多 24 倍。模型给的数：17K s1 1.91 s，是它下限的 87 倍；s7 2.11 s，55 倍。
    **改法**：和 stage 2（mhc_pre_norm，Track F3）一样，每行（engram_gate 是每个 (row, stream) 平面）一个 wave。32 个 lane 读连续元素，平方和与点积各用一次 `WaveActiveSum`；输出那一遍逐元素计算，与原来相同。host 的 grid 乘 32。文件头的说明改成：沿行归约的 stage（1、2、7）一律一行一个 wave。

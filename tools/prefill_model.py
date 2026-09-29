@@ -36,10 +36,12 @@ layer (gpu/vulkan/prefill_kernels.cpp run_layer / run_moe):
 
   serial  everything but the routed experts -- attention, the dense linears,
           the elementwise ops, the indexer, the engram, the shared expert, the
-          host steps. The drive has nothing to read: a layer's experts are not
-          known until its gate has run.
-  moe     the routed experts, their reads double-buffered against their GPU
-          work, so the phase is max(drive, GPU) plus the first batch's fill.
+          host steps. A layer's experts are not known until its gate has run;
+          the drive reads what the transit holds of them in shard order
+          meanwhile ("io: experts ahead", PrefillConfig::read_ahead_min_rows).
+  moe     the routed experts, the rest of their reads double-buffered against
+          their GPU work, so the phase is max(drive, GPU) plus the first
+          batch's fill (and whatever of the read-ahead is still in flight).
 
     prefill ~ serial + moe,   moe >= max(disk floor, routed GPU)
 
@@ -176,22 +178,26 @@ def report(run: dict, k: dict, top: int) -> dict:
         f"{name} {v[0]:.0f} / {v[1]:.0f} / {v[2]:.0f}" for name, v in sorted(by.items(), key=lambda kv: -kv[1][2])))
 
     # the critical path: the serial phase, then the routed experts' phase
-    moe_rows = [r for r in top_rows if r["op"] in ("io: experts", "moe routed (gpu)")]
+    moe_ops = ("io: experts", "io: experts ahead", "moe routed (gpu)")
+    moe_rows = [r for r in top_rows if r["op"] in moe_ops]
     moe_ms = sum(r["ms"] for r in moe_rows)
-    need = sum(r["floor_ms"] for r in moe_rows if r["cls"] == "io")
+    need = sum(r["floor_ms"] for r in moe_rows if r["op"] == "io: experts")   # after the gate
+    ahead = sum(r["floor_ms"] for r in moe_rows if r["op"] == "io: experts ahead")
     moe_gpu = sum(r["ms"] for r in moe_rows if r["cls"] == "gpu")
     serial = total - moe_ms
-    wins = {name: v[2] for name, v in by.items() if name not in ("io: experts", "moe routed (gpu)")}
+    wins = {name: v[2] for name, v in by.items() if name not in moe_ops}
     wins["moe routed (gpu)"] = max(0.0, min(by["moe routed (gpu)"][2], moe_ms - need))
-    wins["expert reads during the serial phase"] = max(0.0, total - max(need, serial + moe_gpu))
-    print(f"   critical path: serial {serial / 1e3:.1f} s (the drive idle) + routed experts {moe_ms / 1e3:.1f} s "
-          f"(the drive needs {need / 1e3:.1f}, their GPU work {moe_gpu / 1e3:.1f})")
+    wins["expert reads during the serial phase"] = max(0.0, total - max(need + ahead, serial + moe_gpu))
+    print(f"   critical path: serial {serial / 1e3:.1f} s (the drive reads {ahead / 1e3:.1f} s of experts ahead) "
+          f"+ routed experts {moe_ms / 1e3:.1f} s (the drive needs {need / 1e3:.1f}, their GPU work "
+          f"{moe_gpu / 1e3:.1f})")
     print("   what each fix wins on that path (s): " + ", ".join(
         f"{name} {v / 1e3:.1f}" for name, v in sorted(wins.items(), key=lambda kv: -kv[1]) if v >= 50))
     return {"n": run["n"], "mode": run["mode"], "total_ms": total, "covered_ms": covered,
             "gpu_floor_ms": gpu_floor, "disk_floor_ms": disk_floor, "rows": top_rows, "stages": stages,
             "groups": {name: {"ms": v[0], "floor_ms": v[1], "excess_ms": v[2]} for name, v in by.items()},
-            "serial_ms": serial, "moe_ms": moe_ms, "moe_disk_ms": need, "moe_gpu_ms": moe_gpu, "wins_ms": wins}
+            "serial_ms": serial, "moe_ms": moe_ms, "moe_disk_ms": need, "ahead_disk_ms": ahead, "moe_gpu_ms": moe_gpu,
+            "wins_ms": wins}
 
 
 def main() -> int:
