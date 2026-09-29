@@ -75,7 +75,8 @@ struct PfKernel {
     uint32_t extra2 = 0;    // prefill_coopmat: CmTokTiles (0 = 2)
     uint32_t extra3 = 0;    // prefill_coopmat: CmRowTilesPerWg (0 = 1)
     uint32_t extra4 = 0;    // prefill_gemm_lds: LdsWt (W stored [K][R])
-    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1, extra2, extra3, extra4); }
+    uint32_t extra5 = 0;    // prefill_gemm_lds: LdsGroupRows (grouped weight: rows a group, x [groups][n][K])
+    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1, extra2, extra3, extra4, extra5); }
     bool operator<(const PfKernel& o) const { return key() < o.key(); }
 };
 

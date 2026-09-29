@@ -686,6 +686,9 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0aq. **wo_a 的分组 GEMM 并成一个派发（8 组 × 1,024 行 → 一次 8,192 行，x16 按 [组][n32][K] 分片、row block 自己算属于哪一组）：17K tiles 1,597 → 1,384 ms、整个 op 2,146 → 2,021；4K 409 → 375；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。今天的 serve 快照（双盘、4,900 槽）：4K 30.07 → 29.95 s，17K 54.8 → 51.25 s（0ak–0aq 全部合起来）。**
+   **为什么**：每组一个派发只有 8 × 8 = 64 个 workgroup，不够 GPU 的 80 个位子（wo_a tiles 15.5 TFLOP/s，wq_b 25.5）。并成一个派发 512 个 workgroup。x16 的 staging 因为要写 8 片不同区域慢了 50 ms（342 → 392），净 −125 ms。§3 77 那次是 rope 直接写 fp16 平面、staging 整个没了，tiles 反而慢 700 ms；这次 staging 还在、只是分片，tiles 快了——所以 77 里慢的不是布局，是 staging 留在 MALL 里的那份 x。`prefill_ahead/fused_*.out/.jsonl`、`serve4133_0ap/`、`serve17010_0ap/`。
+
 0ap. **engram 行读的队列深度 128 → 512，io_uring 后端把短读续读：4K engram io 1,176 → 958 ms（256：1,032，1,024：981），17K 4,634 → 3,808，`prefill_bench` 17K 50.30 → 50.01 s；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。**
    **短读**：队列深过 128 之后，btrfs 的 O_DIRECT 会把 8 KiB 的读只答一页（`short read: 4096 of 8192`，QD 512 第一次就撞上、QD 128 也见过两次），以前整个 prefill 就此失败。后端现在把没读完的部分在同一个 chunk 里从停下的地方接着读（只要按页对齐地前进了），`bytes_moved` 累计；`teardown` 打印续了多少次。`prefill_ahead/engqd*_4133.out`、`engqd512_17010.out`。
 

@@ -50,6 +50,7 @@
 [vk::constant_id(10)] const uint LdsWm = 2;        // 16-row tiles per wave
 [vk::constant_id(11)] const uint LdsWn = 2;        // 16-token tiles per wave
 [vk::constant_id(12)] const uint LdsWt = 0;        // W stored [K][R]
+[vk::constant_id(13)] const uint LdsGroupRows = 0; // grouped weight: rows a group, X [groups][n][K]
 
 typealias TileA = linalg.CoopMat<half,  MemoryScope.Subgroup, 16, 16, linalg.CoopMatMatrixUse.MatrixA>;
 typealias TileB = linalg.CoopMat<half,  MemoryScope.Subgroup, 16, 16, linalg.CoopMatMatrixUse.MatrixB>;
@@ -92,6 +93,9 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     uint4* W = (uint4*)(Ptr[kW] + batch * R * K * 2);
     uint4* X = (uint4*)(Ptr[kX] + batch * bn * xs * 2);
     float* Y = (float*)(Ptr[kY] + batch * bn * ys * 4);
+    // A grouped weight's row block multiplies its own group's slice of X,
+    // staged [groups][n][K] (one dispatch over every group, STATUS §7 0aq).
+    const uint xc = pc.x_col0 + (LdsGroupRows ? (r_base / LdsGroupRows) * pc.n * K : 0u);
 
     // This thread's share of a slice: A is bm rows x 8 uint4 (LdsWt: pairs
     // of k-rows, 2i and 2i + 1, of the same 8 columns), B bn rows x 8.
@@ -104,7 +108,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             ra[i] = LdsWt ? W[((2 * (qp / aq) + i % 2) * R + r_base) / 8 + qp % aq]
                           : W[((r_base + q / kQ) * K) / 8 + q % kQ];
         }
-        if (i < b_per) { const uint q = tid + i * kThreads; rb[i] = X[((m_base + q / kQ) * xs + pc.x_col0) / 8 + q % kQ]; }
+        if (i < b_per) { const uint q = tid + i * kThreads; rb[i] = X[((m_base + q / kQ) * xs + xc) / 8 + q % kQ]; }
     }
 
     const uint wave = tid / 32;
@@ -140,7 +144,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 if (i < a_per)
                     ra[i] = LdsWt ? W[((k1 + 2 * (qp / aq) + i % 2) * R + r_base) / 8 + qp % aq]
                                   : W[((r_base + q / kQ) * K) / 8 + kq + q % kQ];
-                if (i < b_per) rb[i] = X[((m_base + q / kQ) * xs + pc.x_col0) / 8 + kq + q % kQ];
+                if (i < b_per) rb[i] = X[((m_base + q / kQ) * xs + xc) / 8 + kq + q % kQ];
             }
         }
         [ForceUnroll] for (uint kk = 0; kk < kBk / 16; ++kk) {

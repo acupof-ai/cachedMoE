@@ -75,7 +75,7 @@ struct CoopPush {
     uint x_stride;   // stage 0: elements between x rows (0 = K)
     uint x_col0;     // stage 0: first x column of the multiply (a group's offset)
     uint y_stride;   // stage 0: elements between y rows (0 = R)
-    uint y_row0;     // stage 0: first y element of output row 0 (a group's offset)
+    uint y_row0;     // stage 0: first y element of output row 0 (a group's offset); stage 2: first output row
 };
 [[vk::push_constant]] CoopPush pc;
 
@@ -278,7 +278,8 @@ void stage_stage_f32(uint3 gid, uint tid) {
     const uint4 a = *(uint4*)xa, b = *(uint4*)(xa + 16);
     float v[kChunk];
     [unroll] for (uint i = 0; i < 4; ++i) { v[i] = asfloat(a[i]); v[4 + i] = asfloat(b[i]); }
-    *(uint4*)(Ptr[kX] + ((uint64_t)m * pc.k + col) * 2) = f16x8(v);
+    // y_row0: the first output row (a group's slice of a [groups][n][K] plane)
+    *(uint4*)(Ptr[kX] + ((uint64_t)(pc.y_row0 + m) * pc.k + col) * 2) = f16x8(v);
 }
 
 [shader("compute")]

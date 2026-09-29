@@ -140,7 +140,7 @@ Result<uint32_t> PrefillRunner::kernel(const PfKernel& k) {
     ps.lanes_per_row = 32;
     ps.rows_per_wg   = 8;
     ps.subgroup_size = 32;
-    ps.extra = {k.stage, k.wfmt, k.xfmt, k.tile, k.extra0, k.extra1, k.extra2, k.extra3, k.extra4};
+    ps.extra = {k.stage, k.wfmt, k.xfmt, k.tile, k.extra0, k.extra1, k.extra2, k.extra3, k.extra4, k.extra5};
     PipelineLayoutSpec la;
     la.storage_buffers    = 1;
     la.push_constant_size = kPfPushBytes;
@@ -363,8 +363,9 @@ std::vector<Prefill::Want> Prefill::plan(const TextConfig& cfg, const PrefillCon
         // 16 * CmTokTiles tokens, so the last one of a dispatch reads and
         // writes up to that many rows past n (their products only reach rows
         // nobody copies, but the memory has to exist).
+        // wo_a's x16 is staged [groups][n32][K] for one dispatch over every group
         {&b_.x16, std::max((N + kPfRowSlack) * dim,
-                           (B + kPfRowSlack) * cfg.o_groups * cfg.o_lora_rank) * 2},
+                           (B + kPfRowSlack) * uint64_t(cfg.num_attention_heads) * hd) * 2},
         {&b_.h16, (N + kPfRowSlack) * inter * 2},
         {&b_.gu, 2 * (N + kPfRowSlack) * inter * 4},
         {&b_.dout, std::max({(N + kPfRowSlack) * dim,
@@ -618,7 +619,12 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     const uint32_t tt = pf_tok_tiles(pcfg_.coop_tok_tiles);
     const uint32_t mrows = slices > 1 ? S : rpg;   // the rows one GEMM dispatch covers
     const LdsGeo lg = pf_lds_geo(pcfg_, mrows, K, n32);
-    auto km = lg.wm ? runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, rows, K, lg.wm, lg.wn})
+    // A grouped weight is one LDS dispatch over all its rows (STATUS §7 0aq):
+    // eight dispatches of 64 workgroups each left the 80 slots of the GPU
+    // under-filled. Its x is staged as [groups][n32][K], and the row block
+    // finds its group's slice from its rows (LdsGroupRows).
+    const bool fused = lg.wm && groups > 1 && uint64_t(groups) * n32 * K * 2 <= b_.x16.bytes;
+    auto km = lg.wm ? runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, rows, K, lg.wm, lg.wn, 0, fused ? rpg : 0u})
                     : runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, rows, K, tt});
     for (auto* k : {&kd, &kx, &km})
         if (!*k) return std::unexpected(k->error());
@@ -658,13 +664,19 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     for (uint32_t g = 0; g < groups; ++g) {
         PfCoopPush px; px.n = n; px.k = K; px.idx_off = 0; px.flags = 0;
         px.x_stride = uint32_t(uint64_t(groups) * K); px.x_col0 = g * K;
+        if (fused) px.y_row0 = g * n32;   // its slice of x16 [groups][n32][K]
         if (auto r = rec(*kx, &px, sizeof(px), PrefillRunner::stage_groups(n, K)); !r)
             return std::unexpected(r.error());
         mark(shape + " x16", {0, double(n) * K * (xe + 2)});
-        if (slices > 1) break;
+        if (slices > 1 || fused) continue;
         PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = gflags; pg.row0 = g * rpg; pg.y_stride = R;
         if (auto r = rec(*km, &pg, sizeof(pg), gx, gy); !r) return std::unexpected(r.error());
         mark(shape + " tiles", {2.0 * rpg * K * n32, double(rpg) * K * 2 + double(n32) * K * 2 + double(n32) * rpg * 4});
+    }
+    if (fused) {
+        PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = gflags; pg.row0 = 0; pg.y_stride = R;
+        if (auto r = rec(*km, &pg, sizeof(pg), gx, R / (32 * lg.wm)); !r) return std::unexpected(r.error());
+        mark(shape + " tiles", {2.0 * R * K * n32, double(R) * K * 2 + double(n32) * K * 2 * groups + double(n32) * R * 4});
     }
     for (uint32_t r0 = 0; slices > 1 && r0 < R; r0 += S) {
         if (auto r = decode(r0); !r) return std::unexpected(r.error());
