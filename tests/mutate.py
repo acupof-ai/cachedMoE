@@ -162,6 +162,33 @@ MUTATIONS = [
      "route whole requests unless DEEPMOE_MIRROR_STRIPE asks for chunks",
      "caught", False),
 
+    # --- a readmitted mirror starts from a whole error budget, on fresh handles
+    ("io", [("storage/source_router.h",
+             "{ dropped_ &= ~(1u << s); consecutive_[s] = 0; }",
+             "{ dropped_ &= ~(1u << s); }")],
+     "readmit a mirror with its old consecutive-error count",
+     "caught", False),
+    ("io", [("storage/io_engine.cpp",
+             "        if (auto r = f->reopen(); !r) return r;\n",
+             "")],
+     "readmit a mirror without reopening its handles",
+     "caught", False),
+    ("io", [("storage/io_engine.cpp",
+             "std::memcmp(mine.data(), want.data(), kPageSize) != 0)",
+             "false)")],
+     "readmit a mirror without comparing its bytes with the primary's",
+     "caught", False),
+    ("io", [("storage/io_engine.cpp",
+             "        if (src_inflight_[src])\n",
+             "        if (false)\n")],
+     "readmit a mirror while reads from before the drop are still out",
+     "caught", False),
+    ("io", [("storage/linux/file_posix.cpp",
+             "    else if (::dup3(fd, handle_, O_CLOEXEC) < 0) r = errno_err(\"dup3\");\n",
+             "")],
+     "reopen a file without pointing its handle at the new one",
+     "caught", False),
+
     # --- H1b: a .pkv restore is a degradation, never fatal ---------------
     ("kvdisk", [("runtime/session.cpp",
                  "st.cold_fallback = true;\n"

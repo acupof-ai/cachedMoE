@@ -65,6 +65,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 24 | chat-ab-threads1-8turns | `7b27eb741f+17 dirty (5b9a4dab88b490d5)` | IO_SUBMIT_THREADS=1 MIRROR_AUTO=0 | 23% | 48 MB | **7.683** | 130.2 | 62.5 (28.4/26.0/6.1/1.9) | 64.4 (52.8 @ 4.8 GB/s) | 4.66 | 2.9 | 0.9439 | 66.0 |
 | 25 | chat-stripe-hot70-8turns | `7b27eb741f+17 dirty (d020a9239219f127)` | MIRROR_AUTO=1 MIRROR_HOT_C=70 MIRROR_STRIPE=1 | 0% | 34 MB | **7.631** | 131.0 | 62.5 (28.4/26.0/6.1/2.0) | 65.3 (52.8 @ 4.8 GB/s) | 4.67 | 2.9 | 0.9439 | 66.6 |
 | 26 | chat-default-stripe-8turns | `130ff40829` | MIRROR_AUTO=1 | 0% | 45 MB | **9.302** | 107.5 | 62.8 (28.5/26.3/6.1/1.9) | 41.7 (52.8 @ 4.8 GB/s) | 2.90 | 2.6 | 0.9439 | 43.2 |
+| 27 | chat-readmit-8turns | `d8f5644785` | MIRROR_AUTO=1 | 0% | 57 MB | **9.269** | 107.9 | 63.0 (28.4/26.4/6.1/2.1) | 41.8 (52.8 @ 4.8 GB/s) | 2.94 | 2.7 | 0.9439 | 43.1 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -664,10 +665,29 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
-0r. **条带化随镜像默认开（用户 2026-09-29「可以开的」）：发现第二读源就按 chunk 条带化，`DEEPMOE_MIRROR_STRIPE=0` 关。只设 `DEEPMOE_MIRROR_AUTO=1` 的默认路径（ledger #26）9.302 tok/s，与显式打开的 #22（9.291）一致；主数字照旧按单盘报（#24 7.682）。**
+0r. **条带化随镜像默认开（用户 2026-09-29「可以开的」），掉线的镜像等盘回来后自动接回：发现第二读源就按 chunk 条带化，`DEEPMOE_MIRROR_STRIPE=0` 关。只设 `DEEPMOE_MIRROR_AUTO=1` 的默认路径（ledger #26）9.302 tok/s，与显式打开的 #22（9.291）一致；主数字照旧按单盘报（#24 7.682）。**
    `IoEngine::set_sources` 里 `stripe_ = mirrors_on_`，环境变量只剩「关」这一个方向；`serve`（Linux 自动发现镜像）和网页 UI（`find_mirrors` 传 `--mirror`）都走这条路径，不用改。
    单测 `io.stripe_is_the_default_and_leaves_backfill_whole`：有镜像时默认开，没有镜像时永远关（`set_stripe(true)` 也不行）；新增一条变异（默认改回关），能被抓到，io 6/6。
    #26 的外接盘整场最高 74 °C（空闲 63–67），温控没触发，零错误；stall 41.7 ms，ms/miss 2.90，prefill 43.2 s。
+   （#26 记在 `130ff40829` 上：那是 amend 之前的提交，和 `989a606` 的代码只差注释。）
+   **掉盘后接回**：USB4 链路大约每 1–1.5 小时断一次，systemd 按 fstab 几秒后把盘重新挂上，但设备名变了，断开前打开的 fd 会一直读出 EIO。以前被 SourceHealth 踢出的镜像要等到进程重启才回来，长跑的网页引擎掉一次，就单盘跑到重启。
+   现在这样接回：`File::reopen` 按原来的打开方式（`F_GETFL`，含 `O_DIRECT`）重新打开同一路径并核对长度，再 `dup3` 到**同一个 fd 号**上。所有 `File*`、IoEngine 的镜像表和 keep-alive 槽都不用改，已经在飞的读还拿着旧文件，失败了就照旧从主盘重读。
+   `IoEngine::readmit_source`：给这个源的每个分片句柄 reopen，再从文件中部同步读 4 KiB，并与主盘同一页逐字节比对。全部一致才清掉 drop 位，并把连续错误计数清零。
+   掉盘前发出的读还有没回来的，就先不接回：NVMe 超时 30 s，比首次重试的 10 s 长，这些旧读的失败不能算在新一轮的错误额度上。温控用的同一条每秒一次的线程（改名 `mirror_watch`，有镜像就起）负责调度：掉盘 10 s 后试第一次，此后每次失败、以及每次接回后又掉，间隔都翻倍，上限 10 min，一块反复出错的盘不会来回进出。接回后传感器路径也重新找（盘换了名）。
+   drop 不再把权重清零：`pick_source`、`pick_static`、条带化都先按候选掩码过滤，权重清零本来就是多余的。`status` 的每源行追加 `readmitted Nx`。Windows 上不做（`File::reopen` 返回 Unimplemented：Win32 句柄一辈子绑在一个完成端口上）。
+   单测：
+   - `io.file_reopen_keeps_the_handle_and_reads_the_new_file`：同一路径换成新 inode 后，句柄的值不变，读出新内容；长度不对就拒绝，句柄照旧。
+   - `io.dropped_mirror_is_readmitted_when_it_answers_again`：探测页和主盘不同就留在外面；接回后第一次出错只是 failover，不会再被踢；接回后读确实走镜像；旧读还在飞时不接回；文件没了就留在外面。
+   - `io.stripe_is_the_default_and_leaves_backfill_whole`：现在真的按默认状态路由一次，16 个 chunk 分到两块盘上。
+   新增五条变异：不清零错误计数、不 reopen、不和主盘比对、不等旧读、`reopen` 不 `dup3`。全部能被抓到，io 这一组 11/11。
+   **codex 审查**（只读）提了四条，处理如下：
+   1. 长度相同但内容不同的文件会被接回 → 已改，加了主盘比对。
+   2. 旧读的失败会算到新的错误额度上 → 已改，加了在飞检查。
+   3. 挂起的盘会让 `stop()` 等到内核超时 → 不改，写进注释：dispatcher 自己发到那块盘上的读也一样要等。
+   4. 测试没测到要害 → 补了上面的 reopen 测试和默认路由那一次。它说"`reopen` 换成空操作测试也能过"不对：文件被删的那个用例会抓到，变异也证实了。
+   另外三处它看过、没发现问题：去掉权重清零后的路由、退避的算法与锁顺序、Windows 桩。
+   **GPU 上**：接回版本的 8 轮对话（ledger #27，`d8f5644785` 是 codex 修正之前的提交；修正只动了 `readmit_source`，不在热路径上）9.269 tok/s，stall 41.8 ms，ms/miss 2.94。和 #26 的 9.302 / 41.7 / 2.90 相差在抖动内，说明常驻的监视线程和 `add_mirror` 加的锁都没有代价。外接盘最高 74 °C，没有休息，没有掉盘。
+   **真实掉盘后的接回还没在实机上碰到过**，要等下一次断链时看日志里的 `answers again`。
 
 0q. **双盘（外接 USB4 盘作第二读源，按 chunk 条带化）：对话 9.291 tok/s（ledger #22，同一 8 轮脚本；单盘 #24 7.682，+21%），stall 64.4 → 41.7 ms，prefill 66 → 42 s，端到端 6.26 → 7.90 tok/s（+26%）。加了温控：外接盘到 80 °C 就歇，降到 72 °C 再回来。**
    **数字**（`bench/results/linux/multidisk/`，`DEEPMOE_MIRROR_AUTO=1 DEEPMOE_MIRROR_STRIPE=1`）：ms/miss 4.66 → **2.92**，hit 0.9436 不变，探针 4.59 : 3.73 GB/s。外接盘空闲 63–67 °C，
@@ -678,7 +698,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    单测 `io.thermal_gate_rests_a_hot_mirror_with_hysteresis`，变异一条（去掉回差）。**端到端验证**（#25，阈值临时 70 °C）：启动预热时升到 70 °C 被歇，P0 一次都没再去外接盘，
    整场单盘 7.631 tok/s；它停在 64 °C 没降到 62——**回来的阈值必须高于空闲温度**，默认 80 / 72 满足（空闲 63–67）。
    **已有的另两道**：读到一半外接盘掉链路 ⇒ 该请求改从主盘重读（调用方只看到一次慢读，D4/ST）；连续 3 次出错 ⇒ 本进程内踢出（SourceHealth）。
-   **还缺**：踢出之后不会再接回来（USB4 链路约每 1–1.5 小时断一次，重挂后设备改名、旧 fd 失效），长跑的网页引擎掉一次就单盘到重启——要接回得重开 48 个分片并替换 IoEngine 的镜像表，下一步候选。
+   **掉盘后接回**：见 0r。
    **默认**：见 0r——条带化自 2026-09-29 起随镜像默认开。
 
 0p. **IO：Linux 上 IoEngine 改在 dispatcher 一条线程上提交（提交线程 8 → 1）。对话（ledger #21，同一 8 轮脚本）7.572 → 7.696 tok/s，ms/miss 4.79 → 4.62，stall 66.3 → 64.3 ms，hit 0.9439 不变；IO 至此贴着盘的忙时带宽。**

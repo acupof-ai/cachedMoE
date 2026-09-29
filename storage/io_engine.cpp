@@ -5,6 +5,7 @@
 #include <bit>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -58,6 +59,16 @@ int read_temp_c(const std::string& path) {
     long milli = 0;
     return (f >> milli) ? static_cast<int>(milli / 1000) : -1;
 }
+
+// readmit_source's cadence: the first try this long after a drop, then twice
+// the interval per failed try or repeated drop, up to the cap.
+constexpr int64_t kReadmitFirstNs = 10'000'000'000;
+constexpr int64_t kReadmitMaxNs   = 600'000'000'000;
+#if defined(_WIN32)
+constexpr bool kCanReopen = false;   // File::reopen
+#else
+constexpr bool kCanReopen = true;
+#endif
 }  // namespace
 
 std::string IoStats::to_string() const {
@@ -112,6 +123,7 @@ std::string IoStats::to_string() const {
                            : (e.errors ? std::format("  {} errors", e.errors) : std::string())) +
                     (e.failovers ? std::format(", {} re-read from the primary", e.failovers)
                                  : std::string()) +
+                    (e.readmits ? std::format(", readmitted {}x", e.readmits) : std::string()) +
                     (e.stripe_chunks ? std::format("  stripe {} chunks", e.stripe_chunks)
                                      : std::string()));
             // Track D6. On its own line, because bench/d2_abab.py parses the
@@ -249,7 +261,7 @@ IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
 
 void IoEngine::set_sources(const std::vector<std::string>& roots,
                            const std::vector<double>& weights) {
-    stop_thermal();
+    stop_mirror_watch();
     src_roots_.assign(roots.begin(),
                       roots.begin() + std::min<size_t>(roots.size(), kMaxIoSources));
     src_weights_.assign(src_roots_.size(), 1.0);
@@ -335,11 +347,11 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
                      : std::string("weighted least-outstanding-bytes"));
     }
     // ThermalGate (source_router.h). Only mirrors are watched, and only when
-    // their drive has a sensor.
+    // their drive has a sensor; the same thread readmits a dropped mirror.
     int hot = kDefaultMirrorHotC;
     if (const char* e = std::getenv("DEEPMOE_MIRROR_HOT_C"); e && *e) hot = std::atoi(e);
     thermal_ = ThermalGate{hot, hot - kMirrorCoolDropC, 0};
-    bool watch = false;
+    bool watch = mirrors_on_ && kCanReopen;
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
         temp_path_[i].clear();
         if (i == 0 || i >= src_roots_.size() || !mirrors_on_ || hot <= 0) continue;
@@ -351,15 +363,38 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
                  src_roots_[i], src_stats_[i].temp_c, temp_path_[i], thermal_.hot_c, thermal_.cool_c);
     }
     if (watch) {
-        thermal_stop_ = false;
-        thermal_thread_ = std::thread([this] { thermal_watch(); });
+        watch_stop_ = false;
+        watch_thread_ = std::thread([this] { mirror_watch(); });
     }
 }
 
-void IoEngine::thermal_watch() {
-    std::unique_lock lk(thermal_mutex_);
-    while (!thermal_cv_.wait_for(lk, std::chrono::seconds(1), [this] { return thermal_stop_; })) {
-        for (uint32_t s = 1; s < kMaxIoSources; ++s) {
+void IoEngine::mirror_watch() {
+    // Per mirror: when to try readmit_source next (0 = not dropped) and the
+    // interval after that, which only grows.
+    std::array<int64_t, kMaxIoSources> retry_at{}, backoff{};
+    std::unique_lock lk(watch_mutex_);
+    while (!watch_cv_.wait_for(lk, std::chrono::seconds(1), [this] { return watch_stop_; })) {
+        const int64_t now = mono_ns();
+        for (uint32_t s = 1; s < src_roots_.size(); ++s) {
+            if (kCanReopen && source_dropped(s)) {
+                if (retry_at[s] && now < retry_at[s]) continue;
+                if (retry_at[s]) {
+                    const auto r = readmit_source(s);
+                    if (r) {
+                        retry_at[s] = 0;
+                        // The drive came back under a new name, so a new sensor too.
+                        if (thermal_.hot_c > 0) temp_path_[s] = nvme_temp_input(src_roots_[s]);
+                        continue;
+                    }
+                    log_info("io: mirror '{}' still unusable ({}); next try in {} s",
+                             src_roots_[s], r.error().message,
+                             std::min(backoff[s] * 2, kReadmitMaxNs) / 1'000'000'000);
+                }
+                backoff[s]  = backoff[s] ? std::min(backoff[s] * 2, kReadmitMaxNs) : kReadmitFirstNs;
+                retry_at[s] = now + backoff[s];
+                continue;
+            }
+            retry_at[s] = 0;
             if (temp_path_[s].empty()) continue;
             const int t = read_temp_c(temp_path_[s]);
             if (t < 0) continue;              // the drive is off the bus: SourceHealth's case
@@ -382,13 +417,54 @@ void IoEngine::thermal_watch() {
     }
 }
 
-void IoEngine::stop_thermal() {
+void IoEngine::stop_mirror_watch() {
     {
-        std::lock_guard lk(thermal_mutex_);
-        thermal_stop_ = true;
+        std::lock_guard lk(watch_mutex_);
+        watch_stop_ = true;
     }
-    thermal_cv_.notify_all();
-    if (thermal_thread_.joinable()) thermal_thread_.join();
+    watch_cv_.notify_all();
+    if (watch_thread_.joinable()) watch_thread_.join();
+}
+
+Result<void> IoEngine::readmit_source(uint32_t src) {
+    std::vector<std::pair<const File*, const File*>> shards;   // (primary, mirror)
+    {
+        std::lock_guard lk(src_mutex_);
+        if (src == 0 || src >= src_roots_.size() || !src_health_.dropped(src))
+            return fail(Err::FailedPrecondition, "not a dropped mirror");
+        // A read issued before the drop can still come back failed (the NVMe
+        // timeout is 30 s), and it must not spend the new admission's budget.
+        // Nothing new is routed to a dropped source, so this only falls.
+        if (src_inflight_[src])
+            return fail(Err::FailedPrecondition,
+                        std::format("{} reads from before the drop still out", src_inflight_[src]));
+        for (const auto& [primary, row] : alts_)
+            if (row[src]) shards.emplace_back(primary, row[src]);
+    }
+    if (shards.empty()) return fail(Err::NotFound, "no shard is mirrored there");
+    AlignedBuffer mine(kPageSize), want(kPageSize);
+    for (const auto& [primary, f] : shards) {
+        if (auto r = f->reopen(); !r) return r;
+        // Mid-file, so the drive has to seek to answer, and compared with the
+        // primary's same page, so a same-sized file of other bytes stays out.
+        const uint64_t off = f->size() / 2 / kPageSize * kPageSize;
+        auto n = f->read_at(off, MutBytes(mine.data(), kPageSize));
+        if (!n) return std::unexpected(n.error());
+        auto m = primary->read_at(off, MutBytes(want.data(), kPageSize));
+        if (!m) return std::unexpected(m.error());
+        if (*n != kPageSize || *m != kPageSize ||
+            std::memcmp(mine.data(), want.data(), kPageSize) != 0)
+            return fail(Err::Corrupt, std::format("'{}' does not hold the primary's bytes", f->path()));
+    }
+    {
+        std::lock_guard lk(src_mutex_);
+        src_health_.readmit(src);
+        src_stats_[src].dropped = false;
+        ++src_stats_[src].readmits;
+    }
+    log_warn("io: mirror '{}' answers again: {} shards reopened, back in the router",
+             src_roots_[src], shards.size());
+    return {};
 }
 
 bool IoEngine::source_resting(uint32_t src) const {
@@ -400,8 +476,6 @@ void IoEngine::drop_source(uint32_t src) {
     std::lock_guard lk(src_mutex_);
     if (src == 0 || src >= kMaxIoSources || src_health_.dropped(src)) return;
     src_health_.drop(src);
-    if (src < src_weights_.size()) src_weights_[src] = 0.0;
-    src_stats_[src].weight  = 0.0;
     src_stats_[src].dropped = true;
 }
 
@@ -439,6 +513,7 @@ Result<void> IoEngine::add_mirror(const File* primary, uint32_t src, const File*
         ka_[src].buf.reset(kKeepAliveBytes, kPageSize);
         ka_[src].file = alt;
     }
+    std::lock_guard lk(src_mutex_);
     auto& row = alts_[primary];
     row[0] = primary;
     row[src] = alt;
@@ -534,7 +609,7 @@ Result<void> IoEngine::start(std::unique_ptr<Backend> backend, const IoConfig& c
 }
 
 void IoEngine::stop() {
-    stop_thermal();
+    stop_mirror_watch();
     if (!running_.exchange(false, std::memory_order_acq_rel)) return;
     // Track D6: no new pokes from here on, so the dispatcher's drain is finite.
     // The one that may already be in flight keeps `has_work` true until it
@@ -1327,9 +1402,7 @@ void IoEngine::note_source_result(uint32_t s, bool ok, const Status& st) {
     }
     ++src_stats_[s].errors;
     if (src_health_.note_error(s)) {
-        src_weights_[s]        = 0.0;
-        src_stats_[s].weight   = 0.0;
-        src_stats_[s].dropped  = true;
+        src_stats_[s].dropped = true;
         log_warn("IoEngine: source {} '{}' dropped after {} consecutive I/O errors "
                  "(last: {}); reading from the remaining sources",
                  s, src_stats_[s].root, src_health_.budget(), st.message);

@@ -765,6 +765,130 @@ DEEPMOE_TEST(io, mirror_error_is_reread_from_the_primary) {
     engine.stop();
 }
 
+// File::reopen keeps the handle's value and points it at whatever the path
+// names now -- a new inode, the way a remounted drive's file is one -- and
+// refuses, leaving the handle as it was, when that is not the same length.
+DEEPMOE_TEST(io, file_reopen_keeps_the_handle_and_reads_the_new_file) {
+#if !defined(_WIN32)
+    constexpr uint64_t kBytes = 64 * 1024;
+    auto a = make_scratch("reopen", kBytes, false);
+    REQUIRE(a.has_value());
+    AlignedBuffer page(kPageSize);
+    auto fill = [&](File& f, uint8_t v) {
+        std::memset(page.data(), v, kPageSize);
+        return f.write_at(0, ByteSpan(page.data(), kPageSize));
+    };
+    auto replace = [&](uint64_t bytes, uint8_t v) -> bool {
+        if (!remove_file(a->path)) return false;
+        auto f = File::open(a->path, FileFlags::Create | FileFlags::Write);
+        return f && f->set_size(bytes) && fill(*f, v);
+    };
+    auto first_byte = [&]() -> int {
+        auto n = a->file.read_at(0, MutBytes(page.data(), kPageSize));
+        return n ? std::to_integer<int>(page.data()[0]) : -1;
+    };
+    REQUIRE_OK(fill(a->file, 0x11));
+    const auto handle = a->file.native();
+
+    REQUIRE(replace(kBytes, 0x22));
+    CHECK_EQ(first_byte(), 0x11);                 // still the old, unlinked file
+    REQUIRE_OK(a->file.reopen());
+    CHECK_EQ(a->file.native(), handle);
+    CHECK_EQ(first_byte(), 0x22);
+
+    REQUIRE(replace(2 * kBytes, 0x33));
+    CHECK_ERR(a->file.reopen(), Err::Corrupt);
+    CHECK_EQ(first_byte(), 0x22);
+#endif
+}
+
+// The USB4 box drops off the bus about once an hour and systemd remounts it
+// seconds later, but the handles opened before the drop read EIO forever. A
+// dropped mirror comes back through readmit_source: each of its handles is
+// re-pointed at a fresh open of its path -- the same handle value, so the
+// mirror table needs no change -- and it gets its whole error budget back. A
+// mirror whose file is gone stays out. (File::reopen is POSIX-only.)
+DEEPMOE_TEST(io, dropped_mirror_is_readmitted_when_it_answers_again) {
+#if !defined(_WIN32)
+    auto prim = make_scratch("readmit_p", 2u << 20, false);
+    auto mirr = make_scratch("readmit_m", 2u << 20, false);
+    REQUIRE(prim.has_value());
+    REQUIRE(mirr.has_value());
+    const std::vector<std::byte> content = pattern_bytes(2u << 20);
+    IoEngine engine;
+    IoConfig cfg;
+    cfg.chunk_bytes = 64 * 1024;
+    auto backend = std::make_unique<test::FakeBackend>(content, 8);
+    test::FakeBackend* fake = backend.get();
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+    engine.set_sources({"primary", "mirror"}, {0.001, 1000.0});   // idle, it picks the mirror
+    REQUIRE_OK(engine.add_mirror(&prim->file, 1, &mirr->file));
+    engine.set_stripe(false);
+
+    AlignedBuffer b(64 * 1024);
+    IoRequest r;
+    r.priority = IoPriority::BlockingMiss;
+    r.file     = &prim->file;
+    r.bytes    = 64 * 1024;
+    r.dst      = b.data();
+    auto read_once = [&] {
+        auto fut = engine.submit_future(r);
+        const bool ok = fut && fut->get().ok();
+        engine.drain();
+        return ok;
+    };
+
+    CHECK_ERR(engine.readmit_source(1), Err::FailedPrecondition);   // not dropped
+    fake->fail_file(&mirr->file);
+    for (int i = 0; i < 3; ++i) CHECK(read_once());   // each one re-read from the primary
+    REQUIRE(engine.source_dropped(1));
+
+    // A mirror whose probe page is not the primary's stays out.
+    AlignedBuffer page(kPageSize);
+    std::memset(page.data(), 0x5a, kPageSize);
+    REQUIRE_OK(mirr->file.write_at(1u << 20, ByteSpan(page.data(), kPageSize)));
+    CHECK_ERR(engine.readmit_source(1), Err::Corrupt);
+    std::memset(page.data(), 0, kPageSize);
+    REQUIRE_OK(mirr->file.write_at(1u << 20, ByteSpan(page.data(), kPageSize)));
+
+    // The file answers again (readmit_source reads it directly, not through
+    // the fake): same handle value, back in the router, and with its whole
+    // budget -- the first error after it is a failover, not a drop.
+    const auto handle = mirr->file.native();
+    REQUIRE_OK(engine.readmit_source(1));
+    CHECK_EQ(mirr->file.native(), handle);
+    CHECK(!engine.source_dropped(1));
+    CHECK(!engine.stats().sources[1].dropped);
+    CHECK_EQ(engine.stats().sources[1].readmits, 1u);
+    CHECK(read_once());
+    CHECK(!engine.source_dropped(1));
+    fake->clear_failures();
+    CHECK(read_once());
+    CHECK(fake->log().back().file == &mirr->file);
+
+    // A read from before a drop can still come back failed later; while one
+    // is out the mirror stays dropped, so it cannot spend the new budget.
+    fake->hold_completions(true);
+    auto held = engine.submit_future(r);
+    REQUIRE(held.has_value());
+    engine.drop_source(1);
+    CHECK_ERR(engine.readmit_source(1), Err::FailedPrecondition);
+    fake->release_all();
+    CHECK(held->get().ok());
+    engine.drain();
+    REQUIRE_OK(engine.readmit_source(1));
+
+    // A mirror whose file is gone stays out.
+    fake->fail_file(&mirr->file);
+    for (int i = 0; i < 3; ++i) CHECK(read_once());
+    REQUIRE(engine.source_dropped(1));
+    REQUIRE_OK(remove_file(mirr->path));
+    CHECK_ERR(engine.readmit_source(1), Err::Io);
+    CHECK(engine.source_dropped(1));
+    engine.stop();
+#endif
+}
+
 // Track ST: with striping on, ONE P0 request's chunks are routed one by one,
 // so a single expert run is read from both drives in proportion to their rates
 // instead of from whichever drive won the whole request. The weights are the
@@ -858,38 +982,48 @@ DEEPMOE_TEST(io, stripe_is_the_default_and_leaves_backfill_whole) {
         engine.stop();
     }
 
-    auto files_used = [&](bool stripe, IoPriority pr) -> uint32_t {
+    // Which drives one 1 MiB request (sixteen chunks) read from, and how many
+    // of its chunks were routed one by one. `stripe` < 0 leaves the default.
+    struct Use { uint32_t files = 99; uint64_t stripe_chunks = 0; };
+    auto use = [&](int stripe, IoPriority pr) -> Use {
         IoEngine engine;
         IoConfig cfg;
         cfg.chunk_bytes = 64 * 1024;
         auto backend = std::make_unique<test::FakeBackend>(content, 8);
         test::FakeBackend* fake = backend.get();
-        if (!engine.start(std::move(backend), cfg)) return 99;
+        if (!engine.start(std::move(backend), cfg)) return {};
         engine.set_sources({"primary", "mirror"}, {4.87, 3.69});
-        if (!engine.add_mirror(&prim->file, 1, &mirr->file)) return 99;
-        if (!engine.stripe() && !stripe_off_env) return 97;
-        engine.set_stripe(stripe);
+        if (!engine.add_mirror(&prim->file, 1, &mirr->file)) return {};
+        if (stripe >= 0) engine.set_stripe(stripe != 0);
         IoRequest r;
         r.priority = pr;
         r.file     = &prim->file;
         r.bytes    = kBytes;
         r.dst      = b.data();
         auto fut = engine.submit_future(r);
-        if (!fut || !fut->get().ok()) return 99;
+        if (!fut || !fut->get().ok()) return {};
         engine.drain();
         bool seen[2] = {false, false};
         for (const auto& rec : fake->log()) {
             if (rec.file == &prim->file) seen[0] = true;
             if (rec.file == &mirr->file) seen[1] = true;
         }
-        const uint64_t stripe_chunks = engine.stats().sources[0].stripe_chunks +
-                                       engine.stats().sources[1].stripe_chunks;
+        const IoStats st = engine.stats();
         engine.stop();
-        if (stripe_chunks) return 98;
-        return uint32_t(seen[0]) + uint32_t(seen[1]);
+        return {uint32_t(seen[0]) + uint32_t(seen[1]),
+                st.sources[0].stripe_chunks + st.sources[1].stripe_chunks};
     };
-    CHECK_EQ(files_used(false, IoPriority::BlockingMiss), 1u);
-    CHECK_EQ(files_used(true,  IoPriority::Backfill),     1u);
+    if (!stripe_off_env) {
+        const Use d = use(-1, IoPriority::BlockingMiss);
+        CHECK_EQ(d.files, 2u);
+        CHECK_EQ(d.stripe_chunks, uint64_t(16));
+    }
+    const Use off = use(0, IoPriority::BlockingMiss);
+    CHECK_EQ(off.files, 1u);
+    CHECK_EQ(off.stripe_chunks, uint64_t(0));
+    const Use backfill = use(1, IoPriority::Backfill);
+    CHECK_EQ(backfill.files, 1u);
+    CHECK_EQ(backfill.stripe_chunks, uint64_t(0));
 }
 
 // Track ST: the USB4 drive's link drops about once an hour. A striped request

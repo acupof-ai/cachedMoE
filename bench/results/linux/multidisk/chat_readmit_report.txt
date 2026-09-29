@@ -1,0 +1,11 @@
+
+== chat (bench/results/linux/multidisk/chat_readmit)
+   decode 9.269 tok/s = 107.9 ms/token, end-to-end 7.863 tok/s, hit 0.9439 (13.5 misses/token)
+   compute 63.0 ms (attn 28.4 moe 26.4 tail 6.1 engram 2.1)  NVMe stall 41.8 ms (nominal floor 52.8 at 4.8 GB/s)  other 2.7
+   stall per missed expert 2.94 ms (+2.08 ms/step);  one expert at 4.8 GB/s: 3.92 ms;  prefill total 43.1 s
+
+== where the time above the floors is (largest first)
+     52.78 ms  NVMe floor itself (fewer misses: cache size / hit)
+    -10.95 ms  NVMe stall above its bandwidth floor
+
+recorded as 'chat-readmit-8turns' in /home/chenkailun/projects/cachedMoE/bench/results/perf_ledger.jsonl

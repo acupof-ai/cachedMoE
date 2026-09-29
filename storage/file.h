@@ -90,6 +90,16 @@ public:
     // Re-reads the OS size after external growth.
     Result<void> refresh_size();
 
+    // Points this file's handle at a fresh open of path(), with the same
+    // access mode, keeping the handle's VALUE -- so every File* and every read
+    // already queued against it stay valid. For a mirror whose drive fell off
+    // the bus and came back: the old open file reads EIO forever, however
+    // healthy the remounted drive is. Fails, leaving the handle as it was, when
+    // the path does not open or is no longer size() bytes. const because the
+    // object does not change, only what its handle refers to. Unimplemented on
+    // Windows, where a handle is bound to one completion port for life.
+    Result<void> reopen() const;
+
 private:
     void swap(File& o) noexcept {
         std::swap(handle_, o.handle_); std::swap(path_, o.path_);

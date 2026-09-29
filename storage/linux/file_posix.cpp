@@ -100,6 +100,26 @@ Result<void> File::refresh_size() {
     return {};
 }
 
+Result<void> File::reopen() const {
+    if (!open_) return fail(Err::FailedPrecondition, "file is not open");
+    const int mode = ::fcntl(handle_, F_GETFL);
+    if (mode < 0) return errno_err("fcntl(F_GETFL)");
+    int oflags = (mode & O_ACCMODE) | O_CLOEXEC;
+#if defined(O_DIRECT)
+    oflags |= mode & O_DIRECT;
+#endif
+    const int fd = ::open(path_.c_str(), oflags);
+    if (fd < 0) return errno_err(std::format("open('{}')", path_));
+    struct stat st {};
+    Result<void> r;
+    if (::fstat(fd, &st) != 0) r = errno_err("fstat");
+    else if (static_cast<uint64_t>(st.st_size) != size_)
+        r = fail(Err::Corrupt, std::format("'{}' is no longer {} B", path_, size_));
+    else if (::dup3(fd, handle_, O_CLOEXEC) < 0) r = errno_err("dup3");
+    ::close(fd);
+    return r;
+}
+
 Result<size_t> File::read_at(uint64_t offset, MutBytes dst) const {
     if (!open_) return fail(Err::FailedPrecondition, "file is not open");
     if (unbuffered_ && (!is_aligned(offset, sector_size_) || !is_aligned(dst.data(), sector_size_) ||

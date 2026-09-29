@@ -71,7 +71,8 @@ inline uint32_t pick_source(std::span<const double> weights,
 // is to stop using it, not to fail the run.
 //
 // The router already chooses by candidate mask, so "drop it" is one AND on the
-// submit path and nothing else.
+// submit path and nothing else -- and taking it back, once the drive answers
+// again (IoEngine::readmit_source), is clearing one bit.
 //
 // CONSECUTIVE, not cumulative. One bad read is a retry; a drive that has fallen
 // off the bus fails every read after it. A cumulative counter would eventually
@@ -102,6 +103,11 @@ public:
     }
     // The startup gate (a failed health probe) uses the same switch.
     void drop(uint32_t s) { if (s > 0 && s < kMaxIoSources) dropped_ |= 1u << s; }
+    // Back in, with the full budget: the drive answers again (IoEngine's
+    // readmit_source), so its old failures say nothing about the next read.
+    void readmit(uint32_t s) {
+        if (s > 0 && s < kMaxIoSources) { dropped_ &= ~(1u << s); consecutive_[s] = 0; }
+    }
 
     bool dropped(uint32_t s) const {
         return s < kMaxIoSources && (dropped_ & (1u << s)) != 0;
@@ -207,6 +213,7 @@ struct SourceStats {
     uint32_t inflight_requests = 0;
     uint64_t errors   = 0;         // routed requests that came back failed
     bool     dropped  = false;     // taken out of the router (SourceHealth)
+    uint32_t readmits = 0;         // times it answered again and came back
     uint64_t failovers = 0;        // of those errors, re-read from the primary
     // Track ST: chunks this source served as one share of a STRIPED P0 request
     // (DEEPMOE_MIRROR_STRIPE). For a striped request `requests` counts each

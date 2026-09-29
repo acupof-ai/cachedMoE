@@ -221,8 +221,8 @@ public:
     uint32_t source_count() const { return static_cast<uint32_t>(src_roots_.size()); }
 
     // --- mirror health (Track D4, docs/p4_e_drive_diag.md §5.2) -------------
-    // Takes a source out of the router for the rest of the run: its weight goes
-    // to zero and the submit path stops offering it. Source 0 is ignored -- the
+    // Takes a source out of the router: the submit path stops offering it
+    // until readmit_source brings it back. Source 0 is ignored -- the
     // primary is the correctness source and has nothing to fall back to. Used
     // by the runtime's startup health probe; the engine itself calls it after
     // `DEEPMOE_MIRROR_ERROR_BUDGET` (default 3) CONSECUTIVE failed reads from
@@ -239,6 +239,22 @@ public:
     // command -- and takes the mirror out of the router while it is at or above
     // DEEPMOE_MIRROR_HOT_C (default 80; 0 = off) until it cools by 8 C.
     bool source_resting(uint32_t src) const;
+    // A dropped mirror back in the router once its drive answers again. The
+    // USB4 box falls off the bus every hour or so and systemd remounts it a few
+    // seconds later, but the handles opened before the drop read EIO forever.
+    // So every shard handle on `src` is re-pointed at a fresh open of its path
+    // (File::reopen: the same handle value, so the mirror table and any queued
+    // chunk stay valid), and a 4 KiB page read through each must equal the
+    // primary's. Not while reads from before the drop are still out: their
+    // failures would spend the new admission's error budget. The same
+    // watcher thread tries it 10 s after a drop, and again at twice the
+    // interval each time -- per failed try and per readmitted source that is
+    // dropped again -- so a drive that keeps failing does not flap. Fails,
+    // leaving `src` dropped, while the drive does not answer. The reads are
+    // synchronous, so on a drive that hangs rather than fails, stop() waits
+    // out the kernel's NVMe timeout -- as it does for the dispatcher's own
+    // reads there. Not on Windows (File::reopen).
+    Result<void> readmit_source(uint32_t src);
 
     // --- Track D6: mirror keep-alive (docs/p4_dual_source.md §10) -----------
     // Declares which open shard on source `src` the keep-alive may poke. Called
@@ -518,6 +534,8 @@ private:
     // `alts_[primary][s]` is source s's handle for that shard, null when that
     // source does not hold it. Built at startup, never mutated afterwards, so
     // the lookup on the submit path needs no lock; only the byte counters do.
+    // add_mirror writes it under src_mutex_ all the same, because the watcher
+    // thread (readmit_source) is already running by then.
     std::vector<std::string> src_roots_;
     std::vector<double>      src_weights_;
     std::unordered_map<const File*, std::array<const File*, kMaxIoSources>> alts_;
@@ -528,12 +546,12 @@ private:
     SourceHealth src_health_;
     ThermalGate  thermal_;                        // under src_mutex_
     std::array<std::string, kMaxIoSources> temp_path_{};  // hwmon temp1_input, or empty
-    void thermal_watch();                         // the watcher thread's body
-    void stop_thermal();
-    std::thread             thermal_thread_;
-    std::mutex              thermal_mutex_;
-    std::condition_variable thermal_cv_;
-    bool                    thermal_stop_ = false;
+    void mirror_watch();                          // the watcher thread's body
+    void stop_mirror_watch();
+    std::thread             watch_thread_;
+    std::mutex              watch_mutex_;
+    std::condition_variable watch_cv_;
+    bool                    watch_stop_ = false;
     uint64_t src_outstanding_[kMaxIoSources] = {};
     uint32_t src_inflight_[kMaxIoSources]    = {};
     SourceStats src_stats_[kMaxIoSources]{};

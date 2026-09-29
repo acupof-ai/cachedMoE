@@ -121,6 +121,10 @@ Result<void> File::refresh_size() {
     return {};
 }
 
+Result<void> File::reopen() const {
+    return fail(Err::Unimplemented, "a Win32 handle is bound to one completion port for life");
+}
+
 Result<size_t> File::read_at(uint64_t offset, MutBytes dst) const {
     if (!open_) return fail(Err::FailedPrecondition, "file is not open");
     if (unbuffered_ && (!is_aligned(offset, sector_size_) || !is_aligned(dst.data(), sector_size_) ||
