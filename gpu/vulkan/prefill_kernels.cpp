@@ -374,7 +374,8 @@ std::vector<Prefill::Want> Prefill::plan(const TextConfig& cfg, const PrefillCon
         {&b_.jobs, (uint64_t(cfg.n_routed_experts) + 2) * 64},
         {&b_.eng_x, N * 6144 * 4}, {&b_.eng_xq, N * 6144 * 2}, {&b_.eng_xs, N * 192 * 4},
         {&b_.eng_kv, (N + kPfRowSlack) * (kHc + 1) * dim * 4},
-        {&b_.transit, uint64_t(2) * pcfg.transit_slots * layout::kExpertSlotBytes},
+        {&b_.transit[0], uint64_t(pcfg.transit_slots) * layout::kExpertSlotBytes},
+        {&b_.transit[1], uint64_t(pcfg.transit_slots) * layout::kExpertSlotBytes},
         {&b_.rope_win, (N + 8) * cfg.qk_rope_head_dim * 4},
         {&b_.rope_cmp, (N + 8) * cfg.qk_rope_head_dim * 4},
         {&b_.logits, uint64_t(cfg.vocab_size) * 4}, {&b_.nrm, dim * 4},
@@ -1131,7 +1132,7 @@ Result<void> Prefill::read_ahead(uint32_t L) {
     const size_t n = std::min<size_t>(order.size(), size_t(2) * pcfg_.transit_slots);
     ahead_.range.assign(n, {0, 0});
     for (uint32_t i = 0; i < n; ++i) {
-        auto* dst = static_cast<std::byte*>(b_.transit.host_ptr) + uint64_t(i) * layout::kExpertSlotBytes;
+        std::byte* dst = transit_host(i);
         ahead_.range[i].first = static_cast<uint32_t>(ahead_.futs.size());
         // P0, not Lookahead: the IO engine routes and stripes only P0 (and P3)
         // across the drives and gives the background classes a shallower
@@ -1408,7 +1409,6 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         std::vector<std::future<storage::IoResult>> futs;
     };
     std::vector<uint32_t> slot(E, 0);   // each used expert's transit slot
-    auto transit_dev = [&](uint32_t e) { return b_.transit.dev_addr + uint64_t(slot[e]) * layout::kExpertSlotBytes; };
     // A read-ahead slot's reads, waited for at most once: by the batch that
     // computes it, or before a half is refilled (the gate may not have picked it).
     std::vector<bool> landed(ahead_.range.size(), false);
@@ -1433,7 +1433,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             if (ahead[e] != ~0u) continue;   // in its transit slot already
             std::byte* dst = expert_sink && dest[e].kind == PfExpertSink::Kind::Fill
                 ? static_cast<std::byte*>(dest[e].host)
-                : static_cast<std::byte*>(b_.transit.host_ptr) + uint64_t(slot[e]) * layout::kExpertSlotBytes;
+                : transit_host(slot[e]);
             if (auto r = read_expert(L, e, *ents[e], dst, IoPriority::BlockingMiss, bt.futs, bt.read_bytes); !r)
                 return r;
         }
@@ -1470,7 +1470,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         for (uint32_t i = 0; i < bt.count; ++i) {
             const uint32_t e = used[bt.first + i];
             if (ahead[e] != ~0u && expert_sink && dest[e].kind == PfExpertSink::Kind::Fill)
-                if (auto r = op_copy(transit_dev(e), dest[e].dev, layout::kExpertSlotBytes); !r) return r;
+                if (auto r = op_copy(transit_dev(slot[e]), dest[e].dev, layout::kExpertSlotBytes); !r) return r;
         }
         const auto tg = Clk::now();
         // Small experts first (tiled job table, one quantisation over their h
@@ -1484,7 +1484,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             const uint32_t i = order[o];
             const uint32_t e = used[bt.first + i];
             const uint64_t base = (expert_sink && dest[e].kind != PfExpertSink::Kind::Drop)
-                ? dest[e].dev : transit_dev(e);
+                ? dest[e].dev : transit_dev(slot[e]);
             PfJob j;
             j.w1 = base + ents[e]->offset_of(ExpertPart::W1Weight);
             j.s1 = base + ents[e]->offset_of(ExpertPart::W1Scale);

@@ -239,7 +239,7 @@ struct PrefillConfig {
     // prompt's serial phase and both drives run at their rate the whole
     // layer: 4,133 tokens 31.7 -> 29.8 s, 17,010 54.0 -> 52.6; 112 (4.2 GB)
     // is the same at 4K and about 0.7 s better at 17K (STATUS §7 0aj).
-    uint32_t transit_slots = 64;
+    uint32_t transit_slots = 64;   // <= 228: a half is one allocation of at most 4 GiB
     // The IO engine's P0 queue while the prefill runs (IoEngine::set_p0_depth):
     // 24 chunks / 96 MiB against the decode's 8 -- a layer's read-ahead is
     // hundreds of chunks, a decode miss is 18.
@@ -533,6 +533,14 @@ private:
                          bool shared = true, bool routed = true);
     Result<void> engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out);
     Result<void> read_ahead(uint32_t L);
+    std::byte* transit_host(uint32_t slot) const {
+        return static_cast<std::byte*>(b_.transit[slot / pcfg_.transit_slots].host_ptr) +
+               uint64_t(slot % pcfg_.transit_slots) * layout::kExpertSlotBytes;
+    }
+    uint64_t transit_dev(uint32_t slot) const {
+        return b_.transit[slot / pcfg_.transit_slots].dev_addr +
+               uint64_t(slot % pcfg_.transit_slots) * layout::kExpertSlotBytes;
+    }
     Result<void> op_topk_rows(uint32_t b, uint32_t pos0, uint32_t kv_pos0, uint32_t n_kv_rows,
                               uint32_t window, uint32_t ratio, uint32_t g, uint32_t n_idx,
                               uint64_t scores, uint64_t out, uint64_t mask, uint32_t nblocks);
@@ -588,7 +596,7 @@ private:
         GpuBuffer fx, fxq, fxs, gate, gids, gwts, y, hplane, hq, hs, csr_idx, csr_rw, jobs;
         GpuBuffer x16, h16, gu, dout, w16;          // the cooperative-matrix MoE
         GpuBuffer eng_x, eng_xq, eng_xs, eng_kv;
-        GpuBuffer transit, rope_win, rope_cmp, logits, nrm;
+        GpuBuffer transit[2], rope_win, rope_cmp, logits, nrm;   // one allocation per transit half
         GpuBuffer q16, g16, p16, inv;               // the cooperative-matrix attention
     } b_{};
     struct SourceState { GpuBuffer cache, keys; uint32_t n = 0; bool valid = false; };
