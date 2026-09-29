@@ -1,0 +1,18 @@
+N=4133 (bench/results/linux/prefill4k/ids4133.txt), replay 128 MoE coopmat n>=16 dense coopmat n>=64 pv_dv 4 ht 1 tt 8, load = unlabelled
+  total 68.19 s = 61 tok/s | embed 58  engram io 4464 gpu 2064  mHC 1167  attention 14098  gate+route 190  shared 574  expert io 37437  expert gpu 7792  head 7  host/other 337 ms
+  10599 experts streamed = 199.35 GB in 37.4 s of waiting (5.33 GB/s against that wait), 291138 engram reads, 76776 dispatches in 3265 submits
+  first token 77, margin 8.268, logits finite: yes
+  ops by wall time:
+    attn (coop, submit+wait) 7731 ms/200, gpu: attn P.V tiles 2929 ms/200, gpu: attn gather 2105 ms/200
+    gemm 25600x6144 wfp8 xq 1851 ms/6, gpu: attn score tiles 1655 ms/200, coop 8192x4096 wfp8 xf32 1287 ms/180
+    prefill_attn s2 1087 ms/32, coop 32768x1280 wfp8 xq 978 ms/180, prefill_elem s5 796 ms/480
+    coop 5120x8192 wfp8 xq 779 ms/180, gpu: attn q16 673 ms/200, host: index top-k 647 ms/32
+    prefill_elem s4 642 ms/80, gemm 24x20480 wfp32 xf32 260 ms/162, prefill_elem s2 251 ms/81
+    prefill_elem s7 206 ms/6, coop 1280x5120 wfp8 xq 158 ms/80, gpu: attn softmax 146 ms/200
+    coop 384x5120 wbf16 xf32 142 ms/80, prefill_elem s0 127 ms/322, coop 512x5120 wfp8 xq 125 ms/80
+    gpu: attn finish 103 ms/200, prefill_elem s1 90 ms/88, gemm 5120x8192 wfp8 xq 85 ms/20
+    gemm 32768x1280 wfp8 xq 54 ms/20, coop 512x5120 wbf16 xf32 50 ms/21, gemm 8192x4096 wfp8 xf32 35 ms/20
+    coop 4096x1280 wfp8 xq 29 ms/29, host: gate top-6 readback 17 ms/40, prefill_elem s3 13 ms/80
+    gate top-6 (gpu) 8 ms/40, gemm 32x5120 wbf16 xf32 7 ms/32, host: index score readback 7 ms/32
+    gemm 129280x5120 wbf16 xf32 6 ms/1, coop 128x512 wbf16 xf32 2 ms/9, gemm 4096x1280 wfp8 xq 2 ms/3
+    prefill_elem s6 1 ms/3, host: MoE CSR 1 ms/40, host: candidate blocks 0 ms/32

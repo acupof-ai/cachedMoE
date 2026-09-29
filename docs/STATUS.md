@@ -614,6 +614,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    在对话里比 decode 还贵。**≥ 5× 的目标低于这台机器的算术地板**：73.5 TFLOP ÷ 本趟最好的
    2.1 TFLOP/s = 35 s，而 5 ms/token 只有 20.7 s——**要 3.56 TFLOP/s 持续**。
    唯一能动速率的是重写 `prefill_coopmat` stage 0（多 wave + LDS + 双缓冲），**未做**（§2.5）。
+   **2026-09-29 更新**：LDS 版本做了（§7 0t），4K 68 s（`prefill_bench`）/ 17K 160 s。完整的成本模型见 §7 0u：4K 被盘卡住（下限 43.8 s），17K 被串行段的计算卡住（注意力、indexer、engram 行读、engram GEMM 依次排前）。
    **另外它已经有一个 41× 的复用手段（SSD KV）没接进 `serve` 的默认路径。**
 5. ~~**`Engine::generate` 的 `speculative` 是 `unimplemented`**，缺三个 kernel 能力~~ **verify 那一半做完了，draft 那一半没有**（Track SP，`p4_dspark_runtime.md` §7）：
    `Engine::forward_batch(p0, tokens[M<=6])` + `snapshot_batch_ring` / `restore_batch_ring` 已经是 `SpecModel` 的三个方法，
@@ -662,10 +663,70 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
     所以 SSD 本身**排最后但未证伪**。USB4 盒子到货后**必须跑 `p4_e_drive_diag.md` §5.1 的验收门**，
     `ls` 和单句柄 `nvme_bench` 都不算健康检查（D2 §7.3 已经付过这个学费）。
     **E: 现在是掉线状态，需要物理拔插。**
+17. **17K 的 prompt 在默认 5,500 槽的 cache 下会丢设备**（Linux，2026-09-29，§7 0t）：prefill 的缓冲区是按 prompt 长度分配的，加上 96 GiB 的 expert cache 就超出了 GTT，内核报 "Not enough memory for command submission"。4,400 槽下正常。网页 UI 允许 524K 的上下文，所以这是一个真实的健壮性缺口：长 prompt 应该先按 GTT 余量收缩 prefill 的分块或 cache，而不是让引擎死掉。**未修**。
 
 ---
 
 ## 7. Next, in order
+
+0u. **prefill 的完整成本模型（`tools/prefill_model.py`，用户 2026-09-29「有完整的建模分析吗」）：每个 op 在派发时按真实形状记下自己的 FLOP、最少访存字节和磁盘请求数，对照实测的硬件天花板算出下限，再按关键路径给每个杠杆定价。结论：4K 是盘在限速（下限 43.8 s，实测 68.1 s），17K 是计算在限速（实测 159.8 s，GPU 下限只有 7.8 s，盘 47.8 s）。**
+   **怎么记**：`PrefillTimes::per_op` 的每一项从 `(ms, calls)` 变成 `{ms, flop, bytes, reads, calls}`。每个 op 在派发处按形状算自己的开销（`pf_gemm_cost`、注意力六个阶段、indexer、11 个 elem stage、MoE 的 shared / routed 批、expert 与 engram 的盘读），经 `flush_one` / `mark()` / `add_op` 记账，不靠手算。`prefill_bench --ops-json` 每跑一次写一行 JSON，`tools/prefill_model.py` 读它。
+   这里的「字节」是 op 至少要搬的量：每个输入读一次、每个输出写一次，融合后能留在片上的中间结果不计。所以注意力整块（`attn (coop, submit+wait)`）按融合后的算：q、索引表、窗口 KV 各读一次，o 写一次；它下面的六个阶段各按自己的输入输出算。
+   **天花板全是本机实测**（`model_probe --json`，`bench/results/linux/gpu_model/constants.json`）：
+   - 矩阵单元：新加的 `probe_mma.slang`，tile 全在寄存器里，每个 wave 8 路 fp16 16×16×16 乘加。**52.8 TFLOP/s**（2.9 GHz 理论值 59.4）。所有 FLOP 都按矩阵单元计价，今天跑在 FMA 上的（indexer、tiled GEMM）也一样，所以下限是「改写这个 op 能到的地方」，不是「现有 kernel 能到的地方」。fp32 FMA 18.3 TFLOP/s，只作参考。
+   - DRAM：最好的冷流 236 GB/s。
+   - 一次派发（launch + drain）：2.4 µs。
+   - 盘：顺序带宽取 prefill 连续流的 4.66 GB/s。4 KiB 随机读的 IOPS 用 `nvme_bench` 实测：QD 8 为 93K、32 为 225K、64 为 276K、128 为 **291K**（`prefill_model/nvme_rand4k.csv`）。
+   **总账**（`bench/results/linux/prefill_model/model.txt`，本提交的二进制，replay 128）：
+
+   | | 4,133 token | 17,010 token |
+   |---|---|---|
+   | 实测 | 68.1 s | 159.8 s |
+   | GPU 上的量 | 74.0 TFLOP / 430 GB | 300.7 TFLOP / 1,127 GB |
+   | GPU 下限（逐 op 相加） | 2.2 s | 7.8 s |
+   | 盘上的量 / 下限 | 200.6 GB / 43.8 s | 208.7 GB / 47.8 s |
+   | 关键路径：串行段（盘闲着） | 22.9 s | 112.5 s |
+   | 关键路径：routed expert 段（盘 ∥ GPU） | 45.2 s（盘要 42.8，GPU 7.8） | 47.3 s（盘要 43.7，GPU 18.6） |
+
+   74.0 TFLOP 和 §2.5 当年手算的 73.5 TFLOP 对得上。
+   **关键路径为什么要单独算**：一层的 routed expert 要等 gate 跑完才知道读哪些，所以每层分两段。
+   - **串行段**：注意力、dense linear、elem、indexer、engram、shared expert、host。这一段盘没东西可读，每省 1 s 就是 1 s。
+   - **routed expert 段**：读和算双缓冲，耗时 = max(盘, GPU) + 第一批的填充。
+   所以 routed expert 的 GPU 超额看着有 6.8 s（4K）/ 15.9 s（17K），但真正能赢的只有这一段超出盘下限的部分：**2.5 s / 3.6 s**。另外还有一个逐 op 表看不到的杠杆：串行段里盘一直闲着。
+   **按关键路径定价的收益**（op 到达下限时整趟能省多少，s，4K / 17K）：
+
+   | 杠杆 | 4K | 17K | 说明 |
+   |---|---|---|---|
+   | band attention | 7.5 | **32.5** | 融合后的下限 0.13 / 0.50 s，实测是它的 61× / 66×。六个阶段各自也离自己的下限 5–11×（P.V 23.5 GB/s、gather 22、score 44、q16 25）。G 平面 [b][640][512] fp16 在 17K 是每层 11 GB：写一次、读两次 |
+   | 串行段里让盘读 expert | **25.3** | 28.6 | 前提是在 gate 之前就知道这层要哪些 expert |
+   | dense linear | 5.3 | 20.6 | 其中 engram 的 25600×6144 超出 w16 中转、仍走 tiled，1.8 / 7.4 s，是它下限的 37×；其余 coop linear 在整趟里只有 4.4–9.4 TFLOP/s，同形状的微基准有 24 TFLOP/s，差在 fp8→fp16 解码、激活转换和每个 op 一次 submit+wait |
+   | indexer 打分（`prefill_attn` s2） | 1.1 | **17.6** | 0.21 TFLOP/s，下限的 250×：标量 FMA，一个 workgroup 管 8 个 key × 1 个 query |
+   | engram 行读 | 3.5 | 14.8 | 120 万次 4 KiB 读只跑到 63K IOPS，低于 QD 8 的 93K。Engram 这一类用的是后台队列深度。而且行号只取决于 token id，可以在 prefill 一开始就发出去 |
+   | elem | 1.6 | 8.8 | 17K 的 rmsnorm（s1）是下限的 91×，engram_gate（s7）55×：都是一个线程走一整行，跟当初的 softmax 同病 |
+   | host index top-k | 0.7 | 5.1 | 在 CPU 上 |
+   | routed expert GPU | 2.5 | 3.6 | 见上 |
+   | shared expert | 0.5 | 1.8 | 它在第一批 expert 读发出之前算，也在串行段里 |
+
+   按「折半」来读，17K 最值钱的依次是：注意力、indexer、engram 行读、engram GEMM、elem；4K 最值钱的是把盘的空闲利用起来，其次是注意力。
+   **顺带修的**：`nvme_bench` 的随机读让第 i 和第 i+qd 个请求共用一块目标缓冲区，而请求是乱序完成的，前一个还在飞时后一个就可能写进同一块。btrfs 对 O_DIRECT 读要在用户缓冲区上验数据校验和，于是 EIO（内核日志 `csum failed`，全落在这个测试文件自己的 inode 上）。现在改成空闲缓冲池、由完成回调归还，队列深度也由它来卡。测试文件也改成缓冲写。引擎里每个读都有自己的目标地址，不受影响；开机以来没有别的 btrfs 错误。
+
+0t. **prefill 的 GEMM 改成四个 wave 共享 LDS 的 tile（`prefill_gemm_lds.slang`），注意力的 softmax 改成一个 wave 一行：4,133 token 的 serve prefill 78.8 → 66.2 s（−16%），17,010 token 223.8 → 156.6 s（−30%，cache 4,400 槽），输出逐位不变。`DEEPMOE_PF_LDS=0` 退回 stage 0。**
+   **GEMM**：一个 workgroup 由 2×2 个 wave 组成，负责 (32·wm 行) × (32·wn token) 的块。每 64 宽的 K 切片，W 行和 X 行各拷进 LDS 一次（16 字节一次 load，每行留 1 个 uint4 的 padding），同时把下一片预取进寄存器。每个输出 tile 仍按 k = 0, 16, 32… 的顺序累加，所以 Y 和 stage 0 逐位相同。
+   几何按 `coopgeo` 扫描选（`prefill4k/coopgeo_lds.csv`）：token 不多于 32 时 wn = 1，否则 2；行数能被 128 整除、并且还剩 ≥ 32 个 workgroup 时 wm = 4，否则 2。
+   w1（2304×5120）在 n = 4096 时 41.4 → 4.0 ms（2.3 → 24 TFLOP/s），wo_b（5120×8192）325 → 26 ms。
+   dense linear（n ≥ 64）和 expert（n ≥ 16 且形状能铺满）都走它，形状铺不满就回 stage 0。对话里的 decode 和短 prefill 走的是 tiled 路径，不受影响。
+   **softmax**（`prefill_attn` stage 4）：以前一个线程走一整行 E 个 entry，4K 里要 6.7 s。现在一个 wave 管一个 (query, head)：max 用 `WaveActiveMax`，求和仍按 entry 顺序逐个折进来，所以 P 和 inv 都和原来逐位相同。6.7 → 0.15 s。
+   **分项**（serve / prefill_bench 的桶）：
+   - 4K：attention 22.4 → 13.5 s，shared expert 2.3 → 0.54 s，expert GPU 11.7 → 7.2 s。
+   - 17K：attention 108.0 → 73.1 s，expert GPU 52.7 → 17.2 s。
+   17K 算得快了以后，expert IO 露出来的部分变多了，这就是 0u 模型里「routed expert 段被盘卡住」的来源。
+   **验证**：
+   - 4K 和 17K 的 `route.bin` 与改动前逐位相同。
+   - `suite.gpu_prefill`：stages 110/110，forty_layers 8/8，longctx 4K 首 token 77 + 8/8 步，复跑逐字节相同。
+   - `suite.decode`、`decode_longctx`、`integration` 都过。
+   - `l3_ppl` off 的 NLL 0.622784（Linux 基线）。
+   （`bench/results/linux/prefill4k/`：`base` / `lds` / `lds_softmax` 是同一台机器上的三次 4K serve，78.8 / 71.3 / 66.2 s；`p17k_4400_before` / `p17k_4400` 是 17K 的前后两次。）
+   **17K 在默认 5,500 槽时会丢设备**（`p17k_new`：内核报 "Not enough memory for command submission"）。17K prefill 的缓冲区加上 96 GiB 的 expert cache 超出了 GTT，这是改动之前就有的问题，所以 17K 是在 4,400 槽下量的。见 §6 的 17。
 
 0s. **测量卫生：Linux 上的对话基准一直是「热启动」——serve 启动时从盘上 KV 缓存恢复上一次运行的最后一段上下文，并把它重放进 expert cache。现在 `hitrate_bench` 默认带 `--no-kv-disk`，ledger 多了一列 `start KV`。干净起步的基线：单盘 7.608 tok/s（ledger #28），双盘 9.203（#29）。**
    **怎么发现的**：看 §7 第 2 项（KV 前缀复用）时发现 `serve` 早已默认开着 `.pkv`（Track R2），而 `hitrate_bench` 没传 `--no-kv-disk`。Windows 时期的 A/B 脚本都显式传了（`d2_abab.py`：「免得第 N 格的 .pkv 漏进第 N+1 格」），换到 Linux 后丢了。

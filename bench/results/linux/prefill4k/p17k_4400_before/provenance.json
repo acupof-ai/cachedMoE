@@ -1,0 +1,55 @@
+{
+ "time": "2026-09-29T15:33:20+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "f784183caf",
+ "dirty": [
+  "bench/prefill_bench.cpp",
+  "cmake/deepmoe_options.cmake",
+  "gpu/shaders/prefill_attn.slang",
+  "gpu/vulkan/prefill_kernels.cpp",
+  "gpu/vulkan/prefill_kernels.h",
+  "runtime/engine.cpp"
+ ],
+ "diff_sha": "a5d7f2c5dfe0fdf7",
+ "exe": "/tmp/claude-1000/-home-chenkailun-projects-cachedMoE/47a324ac-9a57-48e4-a56d-ac4530dfef70/scratchpad/wt_before/build/deepmoe",
+ "exe_sha": "aad3f6ae6f5b2260",
+ "shaders": {
+  "dir": "/tmp/claude-1000/-home-chenkailun-projects-cachedMoE/47a324ac-9a57-48e4-a56d-ac4530dfef70/scratchpad/wt_before/build/shaders",
+  "count": 43,
+  "sha": "9fce4a0987eb0cc2"
+ },
+ "env": {
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/linux/prefill4k/p17k_4400_before/route.bin",
+  "DEEPMOE_SHADER_DIR": "/tmp/claude-1000/-home-chenkailun-projects-cachedMoE/47a324ac-9a57-48e4-a56d-ac4530dfef70/scratchpad/wt_before/build/shaders"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 0.0,
+  "gpu_busy_max": 0,
+  "loadavg": [
+   "3.08",
+   "1.68",
+   "1.17"
+  ],
+  "top_cpu": [
+   "codex 24.7%",
+   "omarchy-agent-u 18.0%",
+   "steam 13.6%",
+   "omarchy-agent-u 5.0%"
+  ]
+ },
+ "disks_start": {
+  "t": 1790667201.240598,
+  "nvme0n1": [
+   55274018434,
+   331201910
+  ],
+  "nvme1n1": [
+   3171247568,
+   0
+  ]
+ },
+ "gamemode_lib": true
+}

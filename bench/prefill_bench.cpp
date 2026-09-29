@@ -35,6 +35,7 @@
 //                 [--reps 5] [--load "shared: tracks I/J/K on the GPU"]
 //   prefill_bench --section prefill --n 64,512,4096 --ids ids.txt [--replay 128,0]
 //                 [--coop-min -1,16,0] [--coop-dense -1,64] [--transit 32] [--handoff-dir dir]
+//                 [--ops-json ops.jsonl]   (every op's time, FLOPs and bytes: tools/prefill_model.py)
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -89,6 +90,7 @@ struct Options {
     std::vector<uint32_t> coop_min = {16};    // section prefill: PrefillConfig::coopmat_min_rows (-1 = never)
     std::vector<uint32_t> coop_dense = {64};  // PrefillConfig::coopmat_dense_min_rows (-1 = never)
     std::string handoff_dir;
+    std::string ops_json;                  // section prefill: per-op profile, one JSON line a run
     std::string only;                      // section coopgeo: shape names to run
     // PrefillConfig::attn_pv_dim_tiles, swept in ONE process so the A/B sees
     // the same machine (docs/p4_prefill_speed.md §3.1).
@@ -465,7 +467,9 @@ int run_coopgeo(const Options& o) {
     struct Shape { const char* name; uint32_t R, K; };
     const Shape shapes[] = {{"w1", 2304, 5120}, {"w2", 5120, 2304}, {"wq_b", 32768, 1280},
                             {"wo_b", 5120, 8192}, {"wo_a.g", 1024, 4096}, {"eng.wkv", 25600, 6144}};
-    struct Geo { uint32_t tt, rt, tb, rb; };
+    // lds: prefill_gemm_lds.slang with tt = its 16-token tiles per wave (LdsWn)
+    // and rt = its 16-row tiles per wave (LdsWm); a workgroup is 2 x 2 waves.
+    struct Geo { uint32_t tt, rt, tb, rb; bool lds = false; };
     std::vector<Geo> geos;
     for (uint32_t tt : {1u, 2u, 4u})
         for (uint32_t rt : {1u, 4u, 16u})
@@ -483,6 +487,20 @@ int run_coopgeo(const Options& o) {
             Geo x{};
             if (std::sscanf(s.substr(p, q - p).c_str(), "%u,%u,%u,%u", &x.tt, &x.rt, &x.tb, &x.rb) == 4)
                 geos.push_back(x);
+            p = q + 1;
+        }
+    }
+    {
+        // "wm,wn;..." -- DEEPMOE_PF_LDS_GEO= (empty) runs none.
+        const char* l = env("DEEPMOE_PF_LDS_GEO");
+        std::string s = l ? l : "1,1;2,2;2,4;4,2;4,4";
+        size_t p = 0;
+        while (p < s.size()) {
+            size_t q = s.find(';', p);
+            if (q == std::string::npos) q = s.size();
+            uint32_t wm = 0, wn = 0;
+            if (std::sscanf(s.substr(p, q - p).c_str(), "%u,%u", &wm, &wn) == 2 && wm && wn && wm <= 4 && wn <= 4)
+                geos.push_back({wn, wm, 0, 0, true});
             p = q + 1;
         }
     }
@@ -512,13 +530,15 @@ int run_coopgeo(const Options& o) {
             for (const Geo& g : geos) {
                 Var v;
                 v.g = g;
-                v.tok = 16 * g.tt;
+                v.tok = (g.lds ? 32 : 16) * g.tt;
                 v.ntok = (n + v.tok - 1) / v.tok * v.tok;
                 if (v.ntok > npad) continue;
                 v.tb = g.tb ? std::max(v.tok, g.tb / v.tok * v.tok) : v.ntok;
-                v.rtile = 16 * g.rt;
+                v.rtile = (g.lds ? 32 : 16) * g.rt;
+                if (g.lds && (R % v.rtile || K % 64)) continue;
                 v.rb = g.rb ? std::max(v.rtile, g.rb / v.rtile * v.rtile) : (R + v.rtile - 1) / v.rtile * v.rtile;
-                auto k = rig.runner.kernel({"prefill_coopmat", 0, 0, 0, 8, R, K, g.tt, g.rt});
+                auto k = g.lds ? rig.runner.kernel({"prefill_gemm_lds", 0, 0, 0, 8, R, K, g.rt, g.tt})
+                               : rig.runner.kernel({"prefill_coopmat", 0, 0, 0, 8, R, K, g.tt, g.rt});
                 if (!k) { std::fprintf(stderr, "%s\n", k.error().str().c_str()); return 1; }
                 v.kh = *k;
                 vars.push_back(v);
@@ -552,7 +572,8 @@ int run_coopgeo(const Options& o) {
                 }
             for (const Var& v : vars) {
                 const double tps = double(n) * R * K / (v.best / 1e3) / 1e12;
-                const std::string name = std::format("tt{} rt{} tb{} rb{}", v.g.tt, v.g.rt, v.g.tb, v.g.rb);
+                const std::string name = v.g.lds ? std::format("lds wm{} wn{}", v.g.rt, v.g.tt)
+                                                 : std::format("tt{} rt{} tb{} rb{}", v.g.tt, v.g.rt, v.g.tb, v.g.rb);
                 std::printf("  %-8s n=%5u %-22s %9.3f ms  %6.2f T flop/s  %5u dispatches  %s\n", sh.name, n,
                             name.c_str(), v.best, tps, v.dispatches, v.diff ? std::format("DIFF {}", v.diff).c_str() : "same");
                 if (csv.f)
@@ -650,6 +671,7 @@ int run_prefill(const Options& o) {
             if (dv) pc.attn_pv_dim_tiles = dv;
             if (ctt) pc.coop_tok_tiles = ctt;
             if (const char* e = env("DEEPMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
+            if (const char* e = env("DEEPMOE_PF_LDS")) pc.lds_gemm = *e != '0';
             gpu::Prefill pf;
             if (auto r = pf.create(rig.device, rig.alloc, rig.runner, rig.manifest, rig.shards, rig.io,
                                    rig.pinned, c, &*tables, pc); !r) {
@@ -681,24 +703,45 @@ int run_prefill(const Options& o) {
             std::printf("  first token %u, margin %.3f, logits finite: %s\n", out->first_token,
                         out->top1 - out->top2, finite ? "yes" : "NO");
             {
-                // single-dispatch ops by wall time (the batched MoE submits are not in here)
-                std::vector<std::pair<std::string, std::pair<double, uint32_t>>> ops(t.per_op.begin(),
-                                                                                   t.per_op.end());
+                std::vector<std::pair<std::string, gpu::PrefillTimes::Op>> ops(t.per_op.begin(), t.per_op.end());
                 std::sort(ops.begin(), ops.end(),
-                          [](const auto& a, const auto& b) { return a.second.first > b.second.first; });
+                          [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
                 // DEEPMOE_PF_ALLOPS=1 prints the whole profile, not just the top 14.
                 const size_t show = env("DEEPMOE_PF_ALLOPS") ? ops.size() : std::min<size_t>(ops.size(), 14);
                 std::printf("  ops by wall time:");
                 for (size_t i = 0; i < show; ++i)
                     std::printf("%s %s %.0f ms/%u", i % 3 ? "," : "\n   ", ops[i].first.c_str(),
-                                ops[i].second.first, ops[i].second.second);
+                                ops[i].second.ms, ops[i].second.calls);
                 std::printf("\n");
+                if (!o.ops_json.empty()) {
+                    // what tools/prefill_model.py reads: the run, its buckets, every op
+                    std::string js = std::format(
+                        "{{\"n\":{},\"mode\":\"{}\",\"load\":\"{}\",\"total_ms\":{:.3f},"
+                        "\"expert_bytes\":{},\"experts_read\":{},\"dispatches\":{},\"submits\":{},"
+                        "\"buckets\":{{\"embed\":{:.3f},\"engram_io\":{:.3f},\"engram\":{:.3f},"
+                        "\"mhc\":{:.3f},\"attention\":{:.3f},\"gate\":{:.3f},\"shared_expert\":{:.3f},"
+                        "\"expert_io\":{:.3f},\"expert_gpu\":{:.3f},\"head\":{:.3f},\"host\":{:.3f}}},"
+                        "\"ops\":[",
+                        n, mode, o.load, t.total, t.expert_bytes, t.experts_read, t.dispatches, t.submits,
+                        t.embed, t.engram_io, t.engram, t.mhc, t.attention, t.gate, t.shared_expert,
+                        t.expert_io, t.expert_gpu, t.head, t.host);
+                    for (size_t i = 0; i < ops.size(); ++i)
+                        js += std::format("{}{{\"op\":\"{}\",\"ms\":{:.3f},\"calls\":{},\"flop\":{:.6g},"
+                                          "\"bytes\":{:.6g},\"reads\":{:.0f}}}", i ? "," : "", ops[i].first,
+                                          ops[i].second.ms, ops[i].second.calls, ops[i].second.flop,
+                                          ops[i].second.bytes, ops[i].second.reads);
+                    js += "]}\n";
+                    if (FILE* f = std::fopen(o.ops_json.c_str(), "ab")) {
+                        std::fputs(js.c_str(), f);
+                        std::fclose(f);
+                    }
+                }
                 if (csv.f) {
                     // one row per op, so the whole profile survives the run
                     const std::string vv = std::format("N={} {}", n, mode);
                     for (const auto& [nm, v2] : ops)
                         std::fprintf(csv.f, "op,%s,%s,%u,%u,0,0,%.1f,0,0,0,0,\"%s\"\n", vv.c_str(),
-                                     nm.c_str(), n, v2.second, v2.first, o.load.c_str());
+                                     nm.c_str(), n, v2.calls, v2.ms, o.load.c_str());
                     std::fflush(csv.f);
                 }
             }
@@ -772,6 +815,7 @@ int main(int argc, char** argv) {
         else if (a == "--coop-dense") o.coop_dense = list(next());
         else if (a == "--transit") o.transit = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (a == "--handoff-dir") o.handoff_dir = next();
+        else if (a == "--ops-json") o.ops_json = next();
         else if (a == "--only")    o.only = next();
         else if (a == "--attn-dv") o.attn_dv = list(next());
         else if (a == "--coop-tt") o.coop_tt = list(next());

@@ -266,6 +266,11 @@ struct PrefillConfig {
     // traffic of a GEMM is ceil(n / (16 * this)) passes over the matrix: at
     // n = 512 and the old value of 2 that was 16 passes over wq_b's 84 MB.
     uint32_t coop_tok_tiles = 8;
+    // The cooperative-matrix GEMM on prefill_gemm_lds.slang -- four waves
+    // sharing LDS tiles, 128 rows x 64 tokens a workgroup (64 x 64 when the
+    // rows only divide by 64) -- instead of prefill_coopmat stage 0, whenever
+    // the shape tiles. Bit for bit the same result. DEEPMOE_PF_LDS=0 = stage 0.
+    bool     lds_gemm = true;
     // wo_a (and any grouped linear) on cooperative matrix instead of the
     // tiled GEMV. false = the pre-F3 path, which is the reference.
     bool     coop_grouped_dense = true;
@@ -300,12 +305,22 @@ struct PrefillTimes {
     double shared_expert = 0, expert_io = 0, expert_gpu = 0, host = 0, head = 0, total = 0;
     uint64_t expert_bytes = 0, engram_reads = 0;
     uint32_t experts_read = 0, dispatches = 0, submits = 0;
-    // Of per_op: entries measured by GPU timestamps inside a multi-dispatch
-    // submit carry a "gpu: " prefix (GPU time only, no submit or wait).
-    // Wall time of every single-dispatch op (submit + wait), by kernel shape:
-    // "gemm RxK w<fmt> x<fmt>" or "<shader> s<stage>". ms and calls.
-    std::map<std::string, std::pair<double, uint32_t>> per_op;
+    // One per_op entry: milliseconds, calls, and the analytic work of those
+    // calls from the shapes at dispatch -- FLOPs and the bytes the op must
+    // move at least (each input read once, each output written once;
+    // intermediates a fused kernel would keep on chip count nothing).
+    // tools/prefill_model.py scores them against model_probe's ceilings.
+    struct Op { double ms = 0, flop = 0, bytes = 0, reads = 0; uint32_t calls = 0; };
+    // Keys: "gemm RxK w<fmt> x<fmt>" / "coop ..." / "<shader> s<stage>" are the
+    // wall time of one submit (submit + wait); "gpu: " entries are GPU
+    // timestamps between the steps of a multi-dispatch submit; "moe ..." the
+    // MoE's GPU batches; "io: " disk reads (bytes and reads are the disk's,
+    // ms the exposed wait); "host: " CPU steps.
+    std::map<std::string, Op> per_op;
 };
+
+// The analytic work of one op call (PrefillTimes::Op): disk requests too.
+struct PfCost { double flop = 0, bytes = 0, reads = 0; };
 
 // Host views of one layer's buffers, valid only inside the probe callback.
 // Rows are this layer's rows; `row0` is the absolute position of row 0.
@@ -465,8 +480,12 @@ private:
     // submits, waits, and adds every step to times_.per_op as "gpu: <name>".
     Result<void> cmd_open();
     Result<void> rec(uint32_t kernel, const void* push, uint32_t bytes, uint32_t gx, uint32_t gy = 1);
-    void mark(const char* name);
+    void mark(const char* name, PfCost cost = {});
     Result<void> cmd_close();
+    void add_op(const std::string& key, double ms, PfCost cost = {}) {
+        auto& op = times_.per_op[key];
+        op.ms += ms; op.flop += cost.flop; op.bytes += cost.bytes; op.reads += cost.reads; ++op.calls;
+    }
     Result<void> op_attention_legacy(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
                                      uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b);
     Result<void> build_rope(uint32_t positions);
@@ -491,16 +510,15 @@ private:
     bool                      cmd_valid_ = false;
     QueryPool                 qp_;
     bool                      qp_ok_ = false;
-    std::vector<const char*>  marks_;
+    std::vector<std::pair<const char*, PfCost>> marks_;
     uint64_t                  w16_src_ = 0;   // weight whose fp16 decode b_.w16 holds
     uint32_t                  moe_pos0_ = 0;  // absolute position of run_moe's row 0 (Track R1)
     // A host-side step's wall time into times_.per_op.
     void host_op(const char* name, std::chrono::steady_clock::time_point t0) {
-        auto& slot = times_.per_op[name];
-        slot.first += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        ++slot.second;
+        add_op(name, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     }
     std::string               tag_;   // per_op key of the next flush_one, "" = the kernel spec
+    PfCost                    cost_;  // the next flush_one's work
 
     std::vector<GpuBuffer> owned_;
     struct Bufs {

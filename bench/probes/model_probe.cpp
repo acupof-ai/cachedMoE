@@ -13,6 +13,8 @@
 //   wave       one dependent WaveActiveSum
 //   chase      one dependent global load, at four working-set sizes
 //   fma        fp32 FMA throughput over the whole GPU
+//   mma        fp16 cooperative-matrix throughput (probe_mma.slang, Wave32):
+//              the ceiling of every prefill tile multiply (tools/prefill_model.py)
 //
 // Output: a table on stdout and, with --json, the constants as JSON (what
 // tools/gpu_model.py reads). One GPU job at a time (CLAUDE.md).
@@ -264,6 +266,28 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --- fp16 cooperative matrix ----------------------------------------------
+    gpu::Pipeline mma;
+    gpu::PipelineSpec wave32;
+    wave32.subgroup_size = 32;
+    if (auto r = mma.create(g.device, g.shader_dir + "/probe_mma.spv", lspec, wave32); !r) {
+        std::fprintf(stderr, "probe: %s\n", r.error().str().c_str());
+    } else {
+        Ctx cm{g, mma, desc, c.binds, c.reps};
+        double best = 0;
+        std::printf("\nfp16 coopmat 16x16x16 (8 waves a workgroup, 8 accumulators a wave):");
+        for (uint32_t w : {40u, 80u, 160u, 320u, 640u, 1280u, 2560u}) {
+            const uint32_t n = 4000;
+            auto t = cm.time({0, n, 1000, 1000}, w, 1, false);
+            if (!t) continue;
+            const double tflops = double(w) * 8 * 8 * n * 16 * 16 * 16 * 2 / *t / 1e12;
+            best = std::max(best, tflops);
+            std::printf("  W %u %.1f", w, tflops);
+        }
+        std::printf(" TFLOP/s\n");
+        jkv("mma_f16_tflops", jnum(best));
+    }
+
     jkv("device", "\"" + g.device.caps().device_name + "\"", true);
     js += "}\n";
     if (!json_path.empty()) {
@@ -277,6 +301,7 @@ int main(int argc, char** argv) {
     g.alloc.free(*sink);
     g.alloc.free(*chase);
     desc.destroy();
+    mma.destroy();
     pipe.destroy();
     return 0;
 }

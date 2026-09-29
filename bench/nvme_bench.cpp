@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <mutex>
 #include <numeric>
 #include <random>
 #include <string>
@@ -88,8 +89,9 @@ int usage() {
 // Lays down a real, non-sparse file so the measurement is of the drive.
 Result<void> create_test_file(const std::string& path, uint64_t bytes) {
     std::puts(std::format("creating {} ({:.2f} GB) ...", path, bytes / 1e9).c_str());
-    auto f = File::open(path, FileFlags::Create | FileFlags::Write | FileFlags::Overlapped
-                            | FileFlags::Unbuffered | FileFlags::Sequential);
+    // Buffered: on btrfs (Linux x, compress=zstd) an O_DIRECT write left 4 KiB
+    // blocks whose checksum did not match, and every read of them failed EIO.
+    auto f = File::open(path, FileFlags::Create | FileFlags::Write | FileFlags::Sequential);
     if (!f) return std::unexpected(f.error());
     if (auto r = f->set_size(bytes); !r) return std::unexpected(r.error());
 
@@ -170,12 +172,32 @@ Result<Point> measure(const std::string& path, const char* pattern,
     const uint64_t span = f.size() - req_bytes;
     const uint64_t stride = align_down(std::max<uint64_t>(span / std::max(reads, 1u), kPageSize));
 
-    // One destination buffer per outstanding request, so nothing aliases.
+    // One destination buffer per outstanding request, taken from a free list
+    // and handed back by the completion. Requests finish out of order, so
+    // buffer i % qd can still be in flight when request i + qd wants it, and
+    // two O_DIRECT reads landing in one buffer fail btrfs's data checksum
+    // (EIO). The free list is also what holds the queue depth at `qd`.
     const uint32_t bufs = std::max(qd, 1u);
     std::vector<AlignedBuffer> dst(bufs);
     for (auto& b : dst)
         if (!b.reset(static_cast<size_t>(req_bytes), kPageSize))
             return fail(Err::ResourceExhausted, "cannot allocate the read buffers");
+    std::mutex free_mu;
+    std::vector<uint32_t> free_bufs(bufs);
+    std::iota(free_bufs.begin(), free_bufs.end(), 0u);
+    auto take = [&]() -> uint32_t {
+        for (;;) {
+            {
+                std::lock_guard lk(free_mu);
+                if (!free_bufs.empty()) {
+                    const uint32_t b = free_bufs.back();
+                    free_bufs.pop_back();
+                    return b;
+                }
+            }
+            std::this_thread::yield();
+        }
+    };
 
     std::mt19937_64 rng(0xC0FFEEull ^ (uint64_t(chunk_kb) << 32) ^ qd);
     std::uniform_int_distribution<uint64_t> pick(0, span / kPageSize);
@@ -193,22 +215,19 @@ Result<Point> measure(const std::string& path, const char* pattern,
         r.file_off = sequential ? align_down((uint64_t(i) * stride) % (span + 1))
                                 : align_down(pick(rng) * kPageSize);
         r.bytes    = req_bytes;
-        r.dst      = dst[i % bufs].data();
+        // Waiting for a free buffer throttles to the target queue depth: it is
+        // what makes QD the independent variable rather than "everything at
+        // once" (a buffer is free once its request completed, not merely once
+        // the dispatcher picked it up).
+        const uint32_t slot = take();
+        r.dst = dst[slot].data();
 
-        // Throttle to the target queue depth: this is what makes QD the
-        // independent variable rather than "everything at once".
-        //
-        // Throttling on inflight_chunks() would leak -- a request is not in
-        // flight until the dispatcher picks it up, so the loop would race ahead
-        // and queue far more than `qd`. queued_requests() counts everything
-        // submitted and not yet completed, which is the depth we mean.
-        while (engine.queued_requests() >= qd && failures.load() == 0)
-            std::this_thread::yield();
-
-        auto id = engine.submit(r, [&](const IoResult& res) {
+        auto id = engine.submit(r, [&, slot](const IoResult& res) {
             if (!res.ok() && failures.fetch_add(1, std::memory_order_relaxed) == 0)
                 first_error = res.status;
             done.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard lk(free_mu);
+            free_bufs.push_back(slot);
         });
         if (!id) { engine.stop(); return std::unexpected(id.error()); }
     }

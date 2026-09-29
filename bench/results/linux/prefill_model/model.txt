@@ -1,0 +1,74 @@
+== N=4133 replay 128 MoE coopmat n>=16 dense coopmat n>=64 pv_dv 4 ht 1 tt 8: prefill 68.1 s; ops cover 67.6 s (37 rows, 76776 dispatches in 3265 submits)
+   ceilings: matrix 52.8 TFLOP/s (fp32 FMA 18.3), DRAM 236 GB/s, launch 2.4 us, disk 4.66 GB/s and 291K 4 KiB reads/s
+   work: 74.0 TFLOP and 430 GB on the GPU, 200.6 GB from disk
+   floor: GPU 2.18 s (matrix 1.40 s, DRAM 1.83 s, summed per op), disk 43.78 s -> overlapped, the prefill cannot be under 43.78 s; measured 68.1 s = 2x
+   op                                  calls        ms     GFLOP       GB TFLOP/s   GB/s  floor ms      x excess ms bound
+   attn (coop, submit+wait)              200    7624.9    6594.1    24.07    0.86    3.2     125.4   60.8    7499.5 mma
+     gpu: attn P.V tiles                 200    2934.2    3297.0    69.13    1.12   23.6     293.5   10.0    2640.8 dram
+     gpu: attn gather                    200    2039.5       0.0    53.25    0.00   26.1     226.0    9.0    1813.5 dram
+     gpu: attn score tiles               200    1614.0    3297.0    69.98    2.04   43.4     297.1    5.4    1316.9 dram
+     gpu: attn q16                       200     669.2       0.0    16.75    0.00   25.0      71.1    9.4     598.1 dram
+     gpu: attn softmax                   200     145.6       0.0    19.54    0.00  134.2      83.0    1.8      62.6 dram
+     gpu: attn finish                    200     103.0       0.0    22.36    0.00  217.0      94.9    1.1       8.1 dram
+   moe routed (gpu)                      349    7759.7   36190.7   215.39    4.66   27.8     915.3    8.5    6844.5 dram
+   io: engram rows                         2    4509.7       0.0     1.23    0.00    0.3    1001.4    4.5    3508.3 iops
+   gemm 25600x6144 wfp8 xq                 6    1813.8    2600.3     1.90    1.43    1.0      49.3   36.8    1764.5 mma
+   coop 8192x4096 wfp8 xf32              180    1312.1    5669.4    19.89    4.32   15.2     107.8   12.2    1204.2 mma
+   prefill_attn s2                        32    1084.6     231.5     0.37    0.21    0.3       4.5  242.9    1080.2 mma
+   coop 32768x1280 wfp8 xq               180     975.4    7086.7    18.86    7.27   19.3     134.7    7.2     840.7 mma
+   host: index top-k                      32     664.9       0.0     0.00    0.00    0.0       0.0    inf     664.9 host
+   coop 5120x8192 wfp8 xq                180     781.6    7086.7    10.76    9.07   13.8     134.7    5.8     646.9 mma
+   prefill_elem s5                       480     797.2       0.0    45.51    0.00   57.1     194.4    4.1     602.8 dram
+   prefill_elem s4                        80     646.9       0.0    31.43    0.00   48.6     133.6    4.8     513.3 dram
+   moe shared (gpu)                       40     573.9    6031.8     4.09   10.51    7.1     114.4    5.0     459.5 mma
+   gemm 24x20480 wfp32 xf32              162     267.7     171.5    14.63    0.64   54.6      62.5    4.3     205.2 dram
+   prefill_elem s2                        81     248.8       0.0    17.88    0.00   71.9      76.1    3.3     172.7 dram
+   coop 1280x5120 wfp8 xq                 80     163.4    1117.0     1.89    6.84   11.6      21.4    7.6     142.0 mma
+   coop 384x5120 wbf16 xf32               80     141.0     335.1     2.19    2.38   15.5       9.5   14.8     131.5 dram
+   coop 512x5120 wfp8 xq                  80     128.2     446.8     1.31    3.49   10.2       8.7   14.8     119.5 mma
+   prefill_elem s7                         6     123.8       0.0     2.20    0.00   17.8       9.4   13.2     114.4 dram
+   prefill_elem s0                       322     131.3       0.0    10.73    0.00   81.7      46.3    2.8      85.0 dram
+   prefill_elem s1                        88      90.2       0.0     1.27    0.00   14.1       5.6   16.0      84.5 dram
+   gemm 5120x8192 wfp8 xq                 20      87.7      62.1     0.87    0.71    9.9       3.7   23.5      84.0 dram
+   gemm 32768x1280 wfp8 xq                20      55.6      62.1     0.94    1.12   16.9       4.0   13.8      51.6 dram
+   (15 more rows: 37651 ms, -5147 ms excess)
+   by group (ms / floor / excess): band attention 7625 / 125 / 7500; moe routed (gpu) 7760 / 915 / 6844; dense linears 5863 / 553 / 5310; io: engram rows 4510 / 1001 / 3508; elementwise 2057 / 467 / 1590; indexer scores 1085 / 4 / 1080; host 681 / 0 / 681; moe shared (gpu) 574 / 114 / 460; io: experts 37480 / 42780 / -5300
+   critical path: serial 22.9 s (the drive idle) + routed experts 45.2 s (the drive needs 42.8, their GPU work 7.8)
+   what each fix wins on that path (s): expert reads during the serial phase 25.3, band attention 7.5, dense linears 5.3, io: engram rows 3.5, moe routed (gpu) 2.5, elementwise 1.6, indexer scores 1.1, host 0.7, moe shared (gpu) 0.5
+== N=17010 replay 128 MoE coopmat n>=16 dense coopmat n>=64 pv_dv 4 ht 1 tt 8: prefill 159.8 s; ops cover 157.9 s (33 rows, 114904 dispatches in 7874 submits)
+   ceilings: matrix 52.8 TFLOP/s (fp32 FMA 18.3), DRAM 236 GB/s, launch 2.4 us, disk 4.66 GB/s and 291K 4 KiB reads/s
+   work: 300.7 TFLOP and 1127 GB on the GPU, 208.7 GB from disk
+   floor: GPU 7.84 s (matrix 5.70 s, DRAM 4.79 s, summed per op), disk 47.82 s -> overlapped, the prefill cannot be under 47.82 s; measured 159.8 s = 3x
+   op                                  calls        ms     GFLOP       GB TFLOP/s   GB/s  floor ms      x excess ms bound
+   attn (coop, submit+wait)              700   33024.7   26469.7   114.35    0.80    3.5     503.2   65.6   32521.5 mma
+     gpu: attn P.V tiles                 700   11811.8   13234.9   277.57    1.12   23.5    1178.4   10.0   10633.4 dram
+     gpu: attn gather                    700   10485.0       0.0   231.30    0.00   22.1     981.9   10.7    9503.0 dram
+     gpu: attn score tiles               700    6418.0   13234.9   280.96    2.06   43.8    1192.8    5.4    5225.3 dram
+     gpu: attn q16                       700    2716.6       0.0    67.39    0.00   24.8     286.1    9.5    2430.5 dram
+     gpu: attn softmax                   700     617.5       0.0    78.44    0.00  127.0     333.0    1.9     284.4 dram
+     gpu: attn finish                    700     422.2       0.0    89.94    0.00  213.0     381.8    1.1      40.4 dram
+   prefill_attn s2                       107   17644.4    3644.6     3.12    0.21    0.2      69.3  254.6   17575.1 mma
+   moe routed (gpu)                      355   18640.4  145561.0   268.10    7.81   14.4    2758.6    6.8   15881.8 mma
+   io: engram rows                         2   18923.8       0.0     5.07    0.00    0.3    4125.6    4.6   14798.1 iops
+   gemm 25600x6144 wfp8 xq                18    7553.1   10701.8     6.76    1.42    0.9     202.8   37.2    7350.3 mma
+   host: index top-k                     107    5114.4       0.0     0.00    0.00    0.0       0.0    inf    5114.4 host
+   coop 8192x4096 wfp8 xf32              700    5198.3   23002.2    79.67    4.42   15.3     437.5   11.9    4760.8 mma
+   coop 32768x1280 wfp8 xq               700    3919.9   28752.8    75.25    7.34   19.2     546.4    7.2    3373.5 mma
+   coop 5120x8192 wfp8 xq                700    3072.0   28752.8    42.38    9.36   13.8     546.4    5.6    2525.6 mma
+   prefill_elem s5                      1555    3048.4       0.0   183.02    0.00   60.0     780.8    3.9    2267.6 dram
+   prefill_elem s7                        18    2124.5       0.0     9.06    0.00    4.3      38.5   55.2    2086.0 dram
+   prefill_elem s1                        88    1999.0       0.0     5.13    0.00    2.6      22.0   90.9    1977.0 dram
+   prefill_elem s4                        80    2386.3       0.0   126.42    0.00   53.0     536.9    4.4    1849.4 dram
+   moe shared (gpu)                       40    2305.6   24260.2    12.17   10.52    5.3     459.7    5.0    1845.9 mma
+   gemm 24x20480 wfp32 xf32              408    1054.2     690.5    58.41    0.65   55.4     249.0    4.2     805.2 dram
+   coop 1280x5120 wfp8 xq                200     634.0    4492.6     6.80    7.09   10.7      85.6    7.4     548.4 mma
+   coop 384x5120 wbf16 xf32              200     551.5    1347.8     8.33    2.44   15.1      35.9   15.4     515.6 dram
+   coop 512x5120 wfp8 xq                 200     426.5    1797.0     4.96    4.21   11.6      34.5   12.4     392.0 mma
+   prefill_elem s2                        81     686.8       0.0    71.99    0.00  104.8     305.8    2.2     380.9 dram
+   prefill_elem s0                       822     419.9       0.0    43.19    0.00  102.9     185.4    2.3     234.5 dram
+   coop 512x5120 wbf16 xf32               63     193.5     624.3     3.01    3.23   15.6      12.9   15.0     180.6 dram
+   coop 4096x1280 wfp8 xq                107     120.7     541.8     1.55    4.49   12.8      10.5   11.5     110.2 mma
+   (11 more rows: 28899 ms, -14809 ms excess)
+   by group (ms / floor / excess): band attention 33025 / 503 / 32522; dense linears 22774 / 2173 / 20601; indexer scores 17644 / 69 / 17575; moe routed (gpu) 18640 / 2759 / 15882; io: engram rows 18924 / 4126 / 14798; elementwise 10693 / 1874 / 8820; host 5298 / 0 / 5298; moe shared (gpu) 2306 / 460 / 1846; io: experts 28637 / 43692 / -15055
+   critical path: serial 112.5 s (the drive idle) + routed experts 47.3 s (the drive needs 43.7, their GPU work 18.6)
+   what each fix wins on that path (s): band attention 32.5, expert reads during the serial phase 28.6, dense linears 20.6, indexer scores 17.6, io: engram rows 14.8, elementwise 8.8, host 5.3, moe routed (gpu) 3.6, moe shared (gpu) 1.8

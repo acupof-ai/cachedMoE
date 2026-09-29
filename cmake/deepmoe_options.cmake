@@ -126,13 +126,15 @@ set(DEEPMOE_SHADERS
     gpu/shaders/mgt1_engram.slang
     gpu/shaders/prefill_gemm.slang
     gpu/shaders/prefill_coopmat.slang
+    gpu/shaders/prefill_gemm_lds.slang
     gpu/shaders/prefill_elem.slang
     gpu/shaders/prefill_attn.slang
     # Track W: the P5 feasibility probes (bench/probes, docs/plan_p5.md §5).
     gpu/shaders/probe_stream.slang
     gpu/shaders/probe_resident.slang
     gpu/shaders/probe_hostflag.slang
-    gpu/shaders/probe_model.slang)
+    gpu/shaders/probe_model.slang
+    gpu/shaders/probe_mma.slang)
 
 function(deepmoe_report)
     message(STATUS "deepmoe: tests=${DEEPMOE_BUILD_TESTS} vulkan=${DEEPMOE_ENABLE_VULKAN} "

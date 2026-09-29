@@ -34,7 +34,12 @@
 //          products), per (query, head): s = S * scale, the row max over the
 //          valid entries clamped at -1e30, p = bf16(exp(s - mx)) written as
 //          fp16 into P [b][h][t] (0 for -1), and 1 / (sum p + exp(sink - mx))
-//          into kW [b][h]. One thread per (query, head).
+//          into kW [b][h]. One wave per (query, head): the lanes read 32
+//          consecutive entries at a time (one thread a row walked E-strided
+//          rows and was 6.7 of a 4K prefill's 19 s of attention, STATUS §7
+//          0t); the max is order-free, and the sum still adds p in entry order
+//          (each lane folds in the other lanes' p one by one), so P and inv
+//          are bit for bit the one-thread version's.
 // Stage 5  finish: O[b][h][d] = bf16(O * inv[b][h]) in place, sixteen dims a
 //          thread.
 //
@@ -224,24 +229,27 @@ void s_gather(uint3 gid, uint tid) {
 // [B][H][E], kW = inv [B][H] f32.
 void s_softmax(uint3 gid, uint tid) {
     const uint i = gid_linear(gid) * kWg + tid;
-    const uint b = i / pc.n_heads, h = i % pc.n_heads;
+    const uint row = i / 32, lane = i % 32;     // SubgroupSize is 32: a wave is a row
+    const uint b = row / pc.n_heads, h = row % pc.n_heads;
     if (b >= pc.b) return;
     const uint E = pc.n_idx;
     const uint64_t srow = Ptr[kScore] + ((uint64_t)b * pc.n_heads + h) * E * 4;
     const uint64_t irow = Ptr[kIdx] + (uint64_t)b * pc.g * 4;
     const uint64_t prow = Ptr[kO] + ((uint64_t)b * pc.n_heads + h) * E * 2;
     float mx = -3.0e38f;
-    for (uint t = 0; t < pc.g; ++t)
+    for (uint t = lane; t < pc.g; t += 32)
         if (load_i32(irow + (uint64_t)t * 4) >= 0) mx = max(mx, load_f32(srow + (uint64_t)t * 4) * pc.scale);
-    mx = max(mx, -1.0e30f);
+    mx = max(WaveActiveMax(mx), -1.0e30f);
     float den = 0.0f;
-    for (uint t = 0; t < E; ++t) {
+    for (uint t0 = 0; t0 < E; t0 += 32) {
+        const uint t = t0 + lane;
         float p = 0.0f;
         if (t < pc.g && load_i32(irow + (uint64_t)t * 4) >= 0)
             p = bf16_round(exp(load_f32(srow + (uint64_t)t * 4) * pc.scale - mx));
-        den += p;
-        *(uint16_t*)(prow + (uint64_t)t * 2) = (uint16_t)f32tof16(p);
+        if (t < E) *(uint16_t*)(prow + (uint64_t)t * 2) = (uint16_t)f32tof16(p);
+        [unroll] for (uint j = 0; j < 32; ++j) den += WaveReadLaneAt(p, j);
     }
+    if (lane != 0) return;
     den += exp(load_f32(Ptr[kSink] + (uint64_t)h * 4) - mx);
     store_f32(Ptr[kW] + ((uint64_t)b * pc.n_heads + h) * 4, 1.0f / den);
 }
