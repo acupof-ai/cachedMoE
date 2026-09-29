@@ -285,7 +285,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 78 条）
+## 3. 试过并退掉的（编号，共 79 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -411,6 +411,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **76** | **routed expert 链的派发顺序**（compute_coop 每个 dispatch 后一个全屏障，每个 expert 11 个；在位 gate/up 只有 18.7 TFLOP/s，`coopgeo` 里 8 个同样大小的独立派发连着跑是 25.5——猜是尾巴暴露） | 双盘。(a) **8 个 expert 一组、按阶段记录**（8 个 decode、一屏障、8 个 GEMM……w16 分 8 区，x16/gu/h16/dout 按组内行偏移）：4K expert gpu 6.4 → **8.8 s**（gate/up 1.94 → 3.08），17K 14.0 → 15.6；(b) **逐 expert 顺序、只让 decode 与相邻 GEMM 并行**（w16 两区交替，每 expert 6 个屏障）：4K **9.4 s**，17K 16.9。都逐位不变。`prefill_ahead/group8_*.out`、`overlap_*.out`、`stage_model/coopgeo_group8.csv` | **NO-GO，两版都撤回**：这条链靠相邻派发的 L2 局部性（gather → GEMM 读 x16、up → SwiGLU 读 gu、stage → down 读 h16，每份几 MB），打散顺序或让 decode 的 23.6 MB 写流并行进来都把它冲掉，比省下的尾巴贵得多。在位 18.7 对微基准 25.5 的差不在屏障——下一步要量得先做带 decode 的微基准 |
 | **77** | **o 的 rope 直接写成 fp16、wo_a 的 GEMM 跳过 x16 staging**（2026-09-30，0am 的另一半）——先按 [n][32768] 写，tiles 17K 1,500 → 2,296 ms（64 KB 行距，行落同一通道）；改成按组连续 [8][n32][4096]（与 x16 同布局）仍 1,500 → 2,215、4K 385 → 572，x16 省的 336 抵不上。staging pass 不只是转 fp16：它把这一组 4 MB 的 x 留在 MALL 里，8 个 row block 各读一遍都命中；rope 一次写完 32 MB 后组 0 早被挤出去，tiles 从 DRAM 重读。q 那半保留（attention 的 q16 stage 是每个 query 各读一次，没有这种复用）。`prefill_ahead/rope16_*.jsonl`。 | NO-GO |
 | **78** | **engram 行读提前发（第一个 engram 层的行在第 0 层之前发，下一个 engram 层的行在上一个消费完就发；行号只取决于 prompt）**（2026-09-30）——17K 的 engram io 4.63 → 1.75 s、`prefill_bench` 50.30 → **47.86 s**，4K 1.18 → 0.50 s、31.8 → 30.1；margins 都对上过一次。但反复跑 4K **不再逐位**：17 次里 6 次 margin 不是 8.598（8.306 / 8.227 / 7.962 / 7.808 / 8.374 ×5 / 9.111），提前发之前同一天 9 次全对、撤回后 4 次全对。定位到的：staged 行本身的哈希每次一样（不是读错行）；引擎 0 error 0 failover；首次分歧在第 1 层的输出（第 2 层 cmp_cache 有 472/2,066 行不同，成 6 段各约 128 个 query 的连续区间——即第 1 层 KV 里孤立的几个位置错了、其 128 窗口内的 query 全跟着错），且 8.374 重复出现 5 次（像是两种结果的竞争，不像随机踩内存）；把暂存页先 `MADV_POPULATE_WRITE` 填好没用（8 次 3 次错）。另见到一次 `short read: 4096 of 8192`（btrfs O_DIRECT 8 KiB 读只回一页）。没找到根因——DMA 与 GPU 计算并发时的什么竞争；见 §6 18。`prefill_ahead/engdbg/run*.out`、`engahead_*.jsonl`。 | NO-GO（撤回；根因未定位） |
+| **79** | **transit 的批次变细**（2026-09-30）：(a) 预读的 expert 按 32 个一批算而不是等整个半区——transit 64 时 4K 29.84 / 30.64 s、17K 49.67（默认 50.0，都在抖动里）；transit 192 + 32 一批 17K **48.91**（比 §3 72 的 50.98 再好 2 s，整层盲读时 GPU 不用等 192 个全落地），但 4K **35.49**（整半区一批是 32.35，默认 29.8–30.6）——4K 每层只用 ~250 个 expert、串行段只有 0.25 s，384 个盲读把该读的挤到后面。(b) miss 的批次也改成 32、transit 走 32 槽一格的环：4K 32.38、17K **54.10**（expert io 11.8 → 15.3 s）——每批在飞的读只剩 0.6 GB，盘喂不饱。两条都撤回；transit 192 仍是 17K 的选项（`--transit 192`，多占 4.8 GB GTT）。`prefill_ahead/sub32_*`、`ring32_*`、`t192_4133`、`t128_4133`。 | NO-GO |
 
 ---
 
@@ -688,6 +689,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 0aq. **wo_a 的分组 GEMM 并成一个派发（8 组 × 1,024 行 → 一次 8,192 行，x16 按 [组][n32][K] 分片、row block 自己算属于哪一组）：17K tiles 1,597 → 1,384 ms、整个 op 2,146 → 2,021；4K 409 → 375；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。今天的 serve 快照（双盘、4,900 槽）：4K 30.07 → 29.95 s，17K 54.8 → 51.25 s（0ak–0aq 全部合起来）。**
    **为什么**：每组一个派发只有 8 × 8 = 64 个 workgroup，不够 GPU 的 80 个位子（wo_a tiles 15.5 TFLOP/s，wq_b 25.5）。并成一个派发 512 个 workgroup。x16 的 staging 因为要写 8 片不同区域慢了 50 ms（342 → 392），净 −125 ms。§3 77 那次是 rope 直接写 fp16 平面、staging 整个没了，tiles 反而慢 700 ms；这次 staging 还在、只是分片，tiles 快了——所以 77 里慢的不是布局，是 staging 留在 MALL 里的那份 x。`prefill_ahead/fused_*.out/.jsonl`、`serve4133_0ap/`、`serve17010_0ap/`。
+   **现在的快照**（双盘，`prefill_bench`）：4K 29.8–30.6 s，17K 50.0 s（`--transit 192` 48.9）；serve 4K 29.95、17K 51.25。17K 的 50 s 里：routed expert 段 GPU 13.9 s 与盘等 11.8 s 交叠、attention 5.3、dense GEMM 5.1、engram 行读 3.8–4.3（IOPS 墙）、mHC 2.5、rope 1.1。**下一批杠杆按大小**：(1) engram 的 scale 行（每层 3 GB，两层 6 GB）常驻内存能把 120 万次读砍一半（17K −1.9 s、4K −0.5 s），代价是 serve 的 cache 少 ~320 槽（约 −0.5 点 hit）——要 owner 定；(2) serve 里盲读直接落 cache 槽（transit 192 的 −1.1～2 s 不占 GTT）；(3) mhc_pre_norm 99 GB/s：float4 读 + 用 `WaveReadLaneAt` 把元素换回原来每 lane 的集合，归约顺序不变（约 −0.35 s）；(4) routed expert 的 fp4 在 LDS loader 里现场解码、删掉 decode pass（2.97 s）——按指令数估：每片每 lane 64 个元素 ≈ 512 条 VALU，与同一片 32 条 WMMA 的 ~512 周期相当，在同一条 VALU 管线上，GEMM 会慢约一倍，比省下的多，**不做**；(5) 融合 gather 到两个 tile GEMM 里（读 f32 KV 行、省一写两读的 fp16 G，≤ −0.3 s）。
 
 0ap. **engram 行读的队列深度 128 → 512，io_uring 后端把短读续读：4K engram io 1,176 → 958 ms（256：1,032，1,024：981），17K 4,634 → 3,808，`prefill_bench` 17K 50.30 → 50.01 s；逐位不变（margins 8.598 / 10.108，`gpu_prefill` 7/7）。**
    **短读**：队列深过 128 之后，btrfs 的 O_DIRECT 会把 8 KiB 的读只答一页（`short read: 4096 of 8192`，QD 512 第一次就撞上、QD 128 也见过两次），以前整个 prefill 就此失败。后端现在把没读完的部分在同一个 chunk 里从停下的地方接着读（只要按页对齐地前进了），`bytes_moved` 累计；`teardown` 打印续了多少次。`prefill_ahead/engqd*_4133.out`、`engqd512_17010.out`。
