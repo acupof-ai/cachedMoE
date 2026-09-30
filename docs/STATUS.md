@@ -18,7 +18,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 1. [Today's numbers](#1-todays-numbers)
 2. [优化路径：每一步与它的归因](#2-优化路径每一步与它的归因)
 3. [Tried and reverted (numbered, 88 entries)](#3-tried-and-reverted-numbered-88-entries)
-4. [为什么 decode 是 NVMe-bound，而不是 kernel 慢](#4-为什么-decode-是-nvme-bound而不是-kernel-慢)
+4. [Why decode is NVMe-bound rather than kernel-slow](#4-why-decode-is-nvme-bound-rather-than-kernel-slow)
 5. [测试套件](#5-测试套件)
 6. [已知限制与未决风险](#6-已知限制与未决风险)
 7. [Next, in order](#7-next-in-order)
@@ -426,14 +426,14 @@ for the same phenomenon here see 23, 25, 30), so **halve** any byte-count-based 
 
 ---
 
-## 4. 为什么 decode 是 NVMe-bound，而不是 kernel 慢
+## 4. Why decode is NVMe-bound rather than kernel-slow
 
-> **Track Q1/Q2 的订正（`p4_p0_queue.md` §4、§10）**：本节那句「没有 CPU 开销、没有共享显存写入的代价、没有排队，就是盘」在**一次 miss 的量级**上成立，在 **decode 的聚合速率**上不成立。排队这一条是实测排除的（0.0%）；**CPU 开销这一条是错的**——往 path A 内存发一个 4 MiB 的 `ReadFile` 要 704 µs 的锁页，过去全压在 dispatcher 一条线程上，一个 token ≈ 87 ms，占 105 ms stall 的绝大部分。并行提交之后引擎的 busy 窗口是 **4.10 GB/s = D: 天花板 4.60 的 89%**，那时才轮到「就是盘」。
+> **Track Q1/Q2 correction (`p4_p0_queue.md` §4, §10)**: This section's claim that “there is no CPU overhead, no cost for writing shared graphics memory, and no queueing; it is just the drive” holds for **the scale of a single miss**, but not for **decode's aggregate rate**. Queueing was ruled out by measurement (0.0%); **the CPU-overhead claim was wrong**—issuing a 4 MiB `ReadFile` into path A memory costs 704 µs in page locking. Previously, all of that ran on the single dispatcher thread, ≈ 87 ms per token, accounting for most of the 105 ms stall. After parallel submission, the engine's busy-window rate is **4.10 GB/s = 89% of D:'s 4.60 ceiling**; only then does “it is just the drive” apply.
 
-这是这个项目最容易搞错的一件事，所以单独一节。
+This is the easiest thing to get wrong in this project, so it gets its own section.
 
-**热步（expert 全驻留）是 81.5 ms = 12.3 tok/s；对话里的真实 token 是 215–290 ms = 3.4–4.5 tok/s。**
-差的那 130–190 ms 全是 NVMe stall。四种 cache 容量下有效读带宽**恒定在 8.3–9.2 GB/s**，于是：
+**The hot step (all experts resident) takes 81.5 ms = 12.3 tok/s; a real token in conversation takes 215–290 ms = 3.4–4.5 tok/s.**
+The difference of 130–190 ms is entirely NVMe stall. Effective read bandwidth **stays at 8.3–9.2 GB/s** across four cache capacities, so:
 
 ```
 tok/s  ≈  NVMe_eff (8.3–9.2 GB/s)  /  MB per token
@@ -443,35 +443,35 @@ tok/s  ≈  NVMe_eff (8.3–9.2 GB/s)  /  MB per token
 - hit 0.8370 → MB/token 2,269 → 3.65 tok/s
 - hit 0.9431 → stall 46–71 ms → 6.05 tok/s
 
-**推论 1：每一个"算得更快"的改动都要先除以它在 token 里的占比。**
-MoE live-column mask 在 microbench 上是 1.7×（30 ms/token），端到端**测不出来**（§3 的 20），
-因为它是 274 ms 里的 2%。
+**Implication 1: Scale every “faster compute” change by its share of total token time.**
+The MoE live-column mask reaches 1.7× in microbench (30 ms/token), but its end-to-end effect **cannot be measured** (§3 20),
+because it accounts for 2% of 274 ms.
 
-**推论 2：容量、顺序（heat）、投机解码是同一件事的三种做法**——都是在降 MB/token。
-其中容量是唯一一个被证明有效的（§2.4：每翻倍 +0.093 hit）；顺序（§3 的 22、23）无效；
-投机解码（§3 的 33、34）在 MoE 并集上把收益吃回去了。
+**Implication 2: Capacity, ordering (heat), and speculative decoding are three ways to do the same thing**—lower MB/token.
+Capacity is the only one proven effective (§2.4: +0.093 hit per doubling); ordering (§3 22, 23) did not work;
+the MoE union consumed the gains from speculative decoding (§3 33, 34).
 
-**推论 3：热步那 7% 的余量（81.5 vs 地板 75.8）不值得先做。**
-它是每 token 的 5.7 ms，对着 130–190 ms 的 stall。
-但**一旦 hit 上到 0.95+，stall 降到 ~40 ms，热步就重新变成主项**——那时候 §7 的第 3、4 项才有意义。
+**Implication 3: The hot step's remaining 7% (81.5 versus a floor of 75.8) is not the first priority.**
+It amounts to 5.7 ms per token against 130–190 ms of stall.
+But **once hit reaches 0.95+ and stall falls to ~40 ms, the hot step becomes the main cost again**—only then do items 3 and 4 in §7 matter.
 
-~~**没量过的那一块**：每次 expert miss 花 20–31 ms，而 8.3–9.2 GB/s 下 18.8 MB 的真实盘时间是 ~2 ms，
-这 10× 的差没有解释。~~ **已解释，就是盘本身**（`bench/nvme_bench`，`p4_hitrate.md` §10）：
-18.8 MB 的**随机**读 QD=4 是 **5.19 GB/s / 13.6 ms 每请求**、QD=1 是 4.47 GB/s / 4.05 ms，
-一层 6 个 expert 全 miss 就是 **21.7 ms**——和 20–31 ms 对得上。
-那个"~2 ms"是拿 decode 跨多个并发 fill 的聚合带宽去除单个请求算的，口径错了。
-**没有 CPU 开销、没有共享显存写入的代价、没有排队，就是盘。**
-顺带否掉三件看起来可行的事：离线重打包（checkpoint 已经是量化格式，而且 17.7 MB 的请求已经跑在 5.2 GB/s，
-说明没有按请求的固定开销可省）、减少对齐浪费（18.8 MB 里 3 KB，0.02%）、提高 QD（1→4 只有 +16%）。
-**结论**：decode 的每 token 时间 = `MB/token ÷ 5.2 GB/s`。**只有少读字节这一条路。**
+~~**The unmeasured part**: each expert miss takes 20–31 ms, whereas at 8.3–9.2 GB/s the actual disk time for 18.8 MB is ~2 ms;
+the 10× discrepancy was unexplained.~~ **Explained: it is the drive itself** (`bench/nvme_bench`, `p4_hitrate.md` §10):
+For an 18.8 MB **random** read, QD=4 gives **5.19 GB/s / 13.6 ms per request**, while QD=1 gives 4.47 GB/s / 4.05 ms;
+6 expert misses in one layer take **21.7 ms**, matching 20–31 ms.
+That “~2 ms” divided a single request by decode's aggregate bandwidth across multiple concurrent fills; the denominator was wrong.
+**No CPU overhead, no cost to write shared graphics memory, no queueing; just the drive.**
+This also rules out three plausible ideas: offline repacking (the checkpoint is already quantized, and 17.7 MB requests already run at 5.2 GB/s,
+leaving no per-request fixed overhead to save), reducing alignment waste (3 KB of 18.8 MB, 0.02%), and increasing QD (only +16% from 1→4).
+**Conclusion**: decode time per token = `MB/token ÷ 5.2 GB/s`. **The only route is reading fewer bytes.**
 
-⚠️ **2026-09-18 收窄（Track Q1，`p4_p0_queue.md`）**：上面这句里的「没有排队」**现在是实测的**
-（decode 里 **0.0%** 的 P0 在发出时有非 P0 的 chunk 在飞），但「就是盘」**只成立于一次 miss 的量级**。
-聚合速率上不成立：引擎在 stall 窗口里拿到的是 **3.55 GB/s**（383 MiB / 105.2 ms），
-而 `nvme_bench` 在同一块盘、同一请求大小上是 **5.16 GB/s**，而且**盘对请求大小是平的**
-（1 MiB–18.4 MiB，QD ≥ 4 都是 5.07–5.16），**引擎对它不平**（16 MiB 慢 8.4%、1 MiB 快 1.4%）。
-所以那 30% 的缺口在**引擎侧**——目的地是 GPU 可见内存，或 `issue_ready_chunks` 的补队速度
-（上限 QD 8，实测发出时平均只有 3.80）。这两条**本轮没有分开**，是 §7 里新的一项。
+⚠️ **2026-09-18 qualification (Track Q1, `p4_p0_queue.md`)**: The “no queueing” part of the claim above **is now measured**
+(**0.0%** of P0 requests in decode had non-P0 chunks in flight at issue), but “just the drive” **holds only at the scale of one miss**.
+It fails at aggregate rate: the engine gets **3.55 GB/s** during the stall window (383 MiB / 105.2 ms),
+while `nvme_bench` gets **5.16 GB/s** on the same drive at the same request size. The **drive is flat across request sizes**
+(5.07–5.16 for 1 MiB–18.4 MiB at QD ≥ 4), but **the engine is not** (16 MiB is 8.4% slower, 1 MiB is 1.4% faster).
+Thus the 30% gap is **on the engine side**—either GPU-visible destination memory or the rate at which `issue_ready_chunks` replenishes the queue
+(QD limit 8, measured mean only 3.80 in flight at issue). **This round did not distinguish those two causes**; this is a new item in §7.
 
 ---
 
