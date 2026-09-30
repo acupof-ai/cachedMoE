@@ -1622,6 +1622,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    变异（「降级了但仍然返回错误」）在 `tests/mutate.py`。
    ② path A 满时的落点（退到 path B，或者像 `p4_hitrate.md` §5 给 GPU prefill 留 4 GiB 那样给 KV 留一块）
    **仍然没做**——H1b 只保证不致命，不保证恢复得成，所以 41× 的复用在 path A 满时拿不到。
+   **2026-09-30 Linux 实测（4,900 槽、17K prompt、单盘）**：第一次 serve 冷 prefill 59.0 s、退出写 `default.pkv` 15 MB；第二次启动恢复成功（17,017 token，启动时重放 127 个位置），同一 prompt 的 TTFT **3.27 s**（回滚到公共前缀 17,008、重放 10 步 3.08 s + 2 个 token 的 prefill 0.2 s），解码命中 0.78 → 0.96。所以 ② 在这台机器的默认预算下没触发；限制只剩"必须是同一 prompt 前缀"和重放那 3 s（每步 300 ms 是冷 cache 的 miss）。`prefill_ahead/serve17010_pkv{1,2}`。
 3. ~~**量 verify-only 的 resident-only 路由在 DSpark 上的收益。**~~ **已做，答案是 NO-GO**（§3 的 40，
    `p4_resident_routing.md` §10）。`DEEPMOE_ROUTE_RESIDENT_ONLY=verify` 已经实现（第四档，
    两个 CLI 都收，`DEEPMOE_VERIFY_FIRST` / `DEEPMOE_VERIFY_DRAFT` 拆开两半）：
