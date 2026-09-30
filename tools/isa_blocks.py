@@ -20,7 +20,7 @@ def blocks(path):
     tail = txt.split("Assembly (Final Assembly)")[-1]
     out, cur, name = {}, [], None
     for line in tail.splitlines():
-        m = re.match(r"^BB(\d+)\s*$", line.strip())
+        m = re.match(r"^BB(\d+):?\s*$", line.strip())
         if m:
             if name is not None: out[name] = cur
             name, cur = f"BB{m.group(1)}", []
@@ -44,6 +44,21 @@ CLASSES = [
 def mix(lines):
     c = collections.Counter()
     for l in lines:
+        # RADV versions differ: ACO IR uses "%n = v_op", while final ISA
+        # starts directly with "v_op ..." and labels its blocks "BBn:".
+        final = re.match(r"^\s*([a-z][a-z0-9_]*)\s", l)
+        if final:
+            op = final.group(1)
+            if op.startswith("v_wmma"): c["wmma"] += 1
+            elif op.startswith("v_dual_"): c["vopd"] += 1
+            elif op.startswith("v_"): c["valu"] += 1
+            elif op.startswith("global_load"): c["gload"] += 1
+            elif op.startswith("ds_read"): c["dsread"] += 1
+            elif op.startswith("ds_write"): c["dswrite"] += 1
+            elif op == "s_waitcnt": c["waitcnt"] += 1
+            elif op == "s_barrier": c["barrier"] += 1
+            elif op.startswith("s_"): c["salu"] += 1
+            continue
         for name, pred in CLASSES:
             if pred(l): c[name] += 1
     return c
