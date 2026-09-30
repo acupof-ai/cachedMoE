@@ -3,13 +3,12 @@
   "configurations": [
     {
       "name": "web-chat",
-      "runtimeExecutable": "C:/Users/Asus/code/deepmoe/.venv/Scripts/python.exe",
+      "runtimeExecutable": "python3",
       "runtimeArgs": [
-        "C:/Users/Asus/code/deepmoe/tools/web/server.py",
-        "--exe", "C:/Users/Asus/code/deepmoe/build/deepmoe.exe",
+        "${workspaceFolder}/tools/web/server.py",
         "--max-context", "524280",
         "--port", "8080",
-        "--log", "C:/Users/Asus/code/deepmoe/build/web_serve.log"
+        "--log", "${workspaceFolder}/build/web_serve.log"
       ],
       "port": 8080
     }

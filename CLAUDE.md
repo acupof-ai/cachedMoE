@@ -1,8 +1,11 @@
 # deepMoE — working rules
 
-Windows Strix Halo runtime for DeepSeek-V4.1-Flash (552B MoE, 510 GB, native FP4/FP8, no
-re-quantisation). C++20 + Vulkan/Slang, cross-compiled with zig. Repo:
-`git@github.com:acupof-ai/cachedMoE.git`.
+Strix Halo runtime for DeepSeek-V4.1-Flash (552B MoE, 510 GB, native FP4/FP8, no
+re-quantisation). C++20 + Vulkan/Slang. Repo: `git@github.com:acupof-ai/cachedMoE.git`.
+
+`main` is the **Linux** line (machine x, Omarchy, RADV). The Windows mainline it came from is
+kept on the `windows` branch and is not merged any more, so anything below that says "Windows"
+is there to explain a number, not to be run here.
 
 ## Read first
 
@@ -14,11 +17,12 @@ anything — its §7 "不做" list exists so closed questions stay closed.
 ## Hard rules
 
 - **One GPU job at a time.** `deepmoe serve`, `ctest`, any bench — serialise them. The web UI's
-  engine counts as one: stop it (`tools/web/RUNNING.txt` has the PIDs and the launch command)
-  before running anything else on the GPU, and start it again afterwards. Three concurrent
-  engines froze the machine once.
-- **Never write under `D:\models`** (the checkpoint). The one exception already made is
-  `deepmoe_manifest.json`. `E:\models\...` is a read-only mirror of the same checkpoint.
+  engine counts as one: stop it (`tools/web/RUNNING.txt` has the launch command and how to find
+  the live PIDs) before running anything else on the GPU, and start it again afterwards. Three
+  concurrent engines froze the machine once.
+- **Never write under the checkpoint** — `~/models/DeepSeek-V4.1-Flash` here. The one exception
+  already made is `deepmoe_manifest.json`. `/mnt/deepmoe2/models/...` is a read-only mirror of
+  the same checkpoint.
 - **Never route ModelScope through the proxy.** Clear `HTTP_PROXY`/`HTTPS_PROXY` for downloads.
 - **No attribution lines** in commits or PR bodies.
 - **Experiments answer in minutes, not hours.** Smallest N first; kill a run whose verdict is
@@ -26,31 +30,34 @@ anything — its §7 "不做" list exists so closed questions stay closed.
   2026-09-29: no repeated A/B). An effect near the ±3% jitter floor is judged on the
   machine-recorded per-op numbers, not by repeating whole runs. **Halve every predicted gain**
   before believing it.
-- Worktrees: one per track under `C:\Users\Asus\code\deepmoe-<track>`; merge → verify → push →
+- Worktrees: one per track next to the checkout, `../deepmoe-<track>`; merge → verify → push →
   **delete the worktree and branch**.
 
 ## Build and test
 
 ```bash
-export PATH="/c/Program Files/CMake/bin:/c/msys64/ucrt64/bin:$PATH" \
-       VULKAN_SDK="C:/VulkanSDK/1.4.357.0" \
-       DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash' \
-       DEEPMOE_LONGCTX_DIR=C:/Users/Asus/code/deepmoe/traces/longctx \
-       ZIG_GLOBAL_CACHE_DIR=C:/Users/Asus/code/zig-cache-int
-cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/zig-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+export DEEPMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash" \
+       DEEPMOE_LONGCTX_DIR="$PWD/traces/longctx"
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/linux-clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build -j 1 -LE "needs-model|needs-gpu"   # CPU gate, ~4 s, 25/25
-.venv/Scripts/python.exe tests/run_all.py                  # 29/29 gates
+.venv/bin/python tests/run_all.py                          # 29/29 gates
 ctest --test-dir build -j 1                                # full, needs the checkpoint + GPU
 ```
 
-- A zig `compiler_rt`/`libcxxabi` sub-compilation failure is a cache race — just rerun.
-- `lld-link: failed to write output 'deepmoe.exe': Permission denied` means an engine is running.
-- Per-worktree `ZIG_GLOBAL_CACHE_DIR`, or concurrent builds race.
+`slangc` comes from the `shader-slang` package. The second read source is
+`/mnt/deepmoe2/models/DeepSeek-V4.1-Flash`, mounted read-only; pass it as
+`DEEPMOE_MODEL_MIRRORS` (or `--mirror`) for the two-drive numbers, which are the default
+reporting basis.
+
+- One worktree, one build directory, one toolchain cache — concurrent builds in a shared cache race.
+- `failed to write output` on the engine binary means an engine is still running.
 - Quality gate for anything touching numerics: `tools/l3_ppl.py` in mode `off` must reproduce
-  the platform's current NLL on `traces/l3_64` bit for bit — **0.630051** on the Windows zig build,
-  **0.622784** on Linux RADV (2026-09-29; the latest STATUS §7 entry that moved it says why) —
-  plus `suite.decode` 8/8 + 8/8.
+  the platform's current NLL on `traces/l3_64` bit for bit — **0.622784** here on Linux RADV
+  (2026-09-29; the latest STATUS §7 entry that moved it says why; the Windows zig build's figure
+  was **0.630051**) — plus `suite.decode` 8/8 + 8/8.
+- The Windows recipe (zig cross-compile, `cmake/zig-toolchain.cmake`, the MSYS2 and Vulkan SDK
+  paths) is on the `windows` branch.
 
 ## Web chat UI
 

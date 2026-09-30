@@ -66,7 +66,7 @@ kept as the probe that measured this.
 Usage
 -----
     .venv/Scripts/python.exe tools/oracle_l3_ppl.py greedy
-        --model D:/models/DeepSeek-V4.1-Flash --out traces/l3_64 --steps 64
+        --model "$DEEPMOE_MODEL_DIR" --out traces/l3_64 --steps 64
 
 `index.json` is rewritten after every step, so a run stopped early leaves a
 shorter but complete and loadable export behind. `tools/l3_ppl.py` then measures

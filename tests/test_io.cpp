@@ -722,7 +722,7 @@ DEEPMOE_TEST(io, keepalive_is_off_without_a_second_source) {
     // awake, and the primary -- the drive the decode is already hammering -- is
     // never poked. `DEEPMOE_MIRROR_KEEPALIVE_MS` cannot change that, which is
     // what makes the no-mirror path still byte-for-byte what it was.
-    engine.set_sources({"D:/models"}, {4.8});
+    engine.set_sources({"/models"}, {4.8});
     CHECK(!engine.mirrors_enabled());
     CHECK_EQ(engine.keepalive_ms(), 0u);
     CHECK_EQ(engine.keepalive_reads(0), 0u);

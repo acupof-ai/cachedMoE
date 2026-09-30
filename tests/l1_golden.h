@@ -148,7 +148,7 @@ inline const char* model_dir() {
 inline bool skip_without_model(const char* what) {
     if (model_dir()) return false;
     DEEPMOE_SKIP_PRINTF("       SKIP %s: set DEEPMOE_MODEL_DIR to the checkpoint "
-                "(e.g. D:\\models\\DeepSeek-V4.1-Flash) to run it\n", what);
+                "directory (the one holding deepmoe_manifest.json) to run it\n", what);
     return true;
 }
 

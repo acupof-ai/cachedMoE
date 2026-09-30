@@ -53,7 +53,7 @@ formula would be reproduced on both sides).
 
 Usage (about the cost of `oracle.py --level l3`'s prefill pass, ~5 minutes):
     .venv/Scripts/python.exe tools/oracle_prefill.py \
-        --model D:/models/DeepSeek-V4.1-Flash --out tests/data/prefill
+        --model "$DEEPMOE_MODEL_DIR" --out tests/data/prefill
 """
 
 from __future__ import annotations

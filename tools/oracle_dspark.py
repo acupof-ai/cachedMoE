@@ -79,7 +79,7 @@ spells out the surgical version for Track I.
 
 Usage
 -----
-    .venv/Scripts/python.exe tools/oracle_dspark.py --model D:\\models\\DeepSeek-V4.1-Flash \\
+    .venv/Scripts/python.exe tools/oracle_dspark.py --model "$DEEPMOE_MODEL_DIR" \\
         --out tests/data/dspark --steps 32 --crosscheck
 """
 

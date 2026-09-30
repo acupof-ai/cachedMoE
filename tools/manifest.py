@@ -52,7 +52,7 @@ Output schema (version 2)
 
 Usage
 -----
-    uv run python tools/manifest.py --src D:/models/DeepSeek-V4.1-Flash
+    uv run python tools/manifest.py --src "$DEEPMOE_MODEL_DIR"
     uv run python tools/manifest.py --src ... --verify --workers 8
     uv run python tools/manifest.py --src ... --out build/manifest.json --dry-run
 """

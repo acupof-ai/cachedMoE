@@ -64,17 +64,18 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 def _state_home():
-    """Where a user's transcripts live. Windows has LOCALAPPDATA; Linux does not,
-    and the old fallback was HERE, which wrote them into the repo tree
-    (`tools/web/deepmoe/web_chat/`). Follow the XDG base directory spec there."""
-    win = os.environ.get("LOCALAPPDATA")
-    if win:
-        return win
-    xdg = os.environ.get("XDG_STATE_HOME")
+    """The base directory a transcript lives under, the same one `serve` picks for
+    its KV disk (cli/serve.cpp) so a session and its .pkv still travel together.
+    Windows has LOCALAPPDATA; Linux does not, and the old fallback here was HERE,
+    which wrote a user's transcripts into the repo tree as
+    `tools/web/deepmoe/web_chat/`."""
+    if os.name == "nt":
+        return os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or HERE
+    xdg = os.environ.get("XDG_CACHE_HOME")
     if xdg:
         return xdg
     home = os.path.expanduser("~")
-    return os.path.join(home, ".local", "state") if home != "~" else HERE
+    return os.path.join(home, ".cache") if home != "~" else HERE
 
 REPO = os.path.dirname(os.path.dirname(HERE))
 MODEL = os.environ.get("DEEPMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))

@@ -39,7 +39,7 @@ the reference's numbers going in, so it still catches everything a GPU kernel
 can get wrong about the arithmetic.
 
 Usage (about 5 minutes, same cost as the oracle's own L2 run):
-    uv run python tools/oracle_l2_extra.py --model D:/models/DeepSeek-V4.1-Flash \\
+    uv run python tools/oracle_l2_extra.py --model "$DEEPMOE_MODEL_DIR" \\
         --out tests/data/l2x --l2-layers 2,14,20
 """
 

@@ -1,273 +1,182 @@
-deepMoE web UI —— 正在运行的实例
-================================
+deepMoE web UI -- the running instance
+=====================================
 
-【当前实例：Linux（x，2026-09-30）】——下面 Windows 一段是历史，机器换回去时再看
---------------------------------------------------------------------
+Machine x, Linux. The Windows section this file used to carry is gone: its launch
+commands, its %LOCALAPPDATA% paths and its eight restart logs were all Windows, and
+every conclusion in them is already folded into docs/STATUS.md and the per-track
+reports named below. Nothing in here hardcodes a path any more.
 
-打开： http://127.0.0.1:8080/
+STATE: STOPPED (2026-10-01). No server.py and no `deepmoe serve` process. The PIDs
+this file used to list -- 57498 / 57505, and a `kill 2533672` line older than those --
+were already dead when they were read, so they are not recorded here again: read the
+live ones out of the machine, not out of this file.
 
-启动命令（setsid 脱离会话，关终端不停）：
+  what is running right now:   pgrep -ax deepmoe ; pgrep -af tools/web/server.py
+
+Open: http://127.0.0.1:8080/
+
+Start (setsid detaches it from the session, so closing the terminal does not stop it):
 
   cd ~/projects/cachedMoE
   DEEPMOE_MODEL_DIR=$HOME/models/DeepSeek-V4.1-Flash setsid nohup \
-    .venv/bin/python tools/web/server.py --max-context 65536 --port 8080 \
+    python3 tools/web/server.py --max-context 65536 --port 8080 \
     --log build/web_serve.log > build/web_ui.out 2> build/web_ui.err &
 
-PID
----
-  server.py       57498
-  deepmoe serve   57505
+Nothing else needs passing. `--exe` defaults to build/deepmoe (build/deepmoe.exe on
+Windows), the model directory comes from DEEPMOE_MODEL_DIR, and the three switches
+below are already the engine's defaults. The desktop app can start the same thing from
+.claude/launch.json, which uses ${workspaceFolder} and `python3`.
 
-  （2026-09-30 重启后起的第二次；镜像盘回来了，启动日志里
-   "mirror '/mnt/deepmoe2/...' holds 48 of 48 shards" = 两个读源都在用。）
+Stop (BY PID ONLY)
+------------------
+  kill <server.py pid>          -- it takes the engine child with it
 
-停止（只按 PID）：kill 2533672（它会带走引擎 2533685）
+  Kill server.py FIRST and then check the engine is not a zombie. The engine is
+  server.py's child and server.py sits in serve_forever() without ever waiting on it,
+  so killing the engine alone leaves a defunct `deepmoe` behind -- and `pgrep -x
+  deepmoe` matches a zombie, so the "is the GPU free?" check then reports a process
+  forever (walked into on 2026-09-30: it looked like a wait, the GPU had been free the
+  whole time). Judge it with `ps -o stat= -p <pid>` (Z = already dead), or just kill
+  server.py and let it reap the child.
 
-⚠️ **停的时候先杀 server.py，再确认引擎不是僵尸**：引擎是 server.py 的子进程，
-而 server.py 卡在 `serve_forever` 里不会 wait 它——单独 `kill` 引擎会留下一个
-`Z`（defunct）的 `deepmoe`，而 **`pgrep -x deepmoe` 连僵尸一起匹配**，于是
-"GPU 空了吗"这个检查会一直报有进程（2026-09-30 踩过：以为要等，其实早就空了）。
-判据用 `ps -o stat= -p <pid>`（`Z` = 已死）或直接杀 server.py 让它带走子进程。
-另外重起之前务必确认 8080 已经放开：老 server 还占着端口时新实例会先花 40 s
-加载引擎、然后在 bind 上崩掉，两个都没了。
+  Also make sure 8080 is released before restarting: while an old server still holds
+  the port, the new instance spends 40 s loading the engine and then dies on bind,
+  and you lose both.
 
-ℹ️ 可选：`VK_DRIVER_FILES=~/deepmoe-mesa/radeon_icd_b128.json` 起 serve 会用
-本地补丁的 RADV（LDS b128 读，STATUS §7 0bl；全部闸已过，FP4 GEMM −5~6%）。
-本实例用的是系统驱动。
+One GPU job at a time
+---------------------
+  Only one `deepmoe` engine may exist at once, and the UI's engine counts as one.
+  Stop it before any bench or ctest and start it again afterwards. Three concurrent
+  engines froze the machine once.
 
-状态（2026-09-30 18:5x 重启：0bj tail 盲读 + 0bk codex 修复后的二进制；12:26 那轮 PID 2290402/2290408 已停）
+Logs
 ----
-  就绪          39.6 s
-  专家缓存      85.8 GiB / 4,900 槽（auto）
-  max_context   65536（满载 live KV ≈ 0.20 GiB）
-  读源          1 个——镜像盘 /mnt/deepmoe2 掉线未挂载（STATUS §6 20，要拔插）；
-                盘回来、只读重挂后【重启本进程】才会变成 2 个（find_mirrors 只在启动时找）
-  kv disk       ~/.cache/deepmoe/kv/_home_chenkailun_models_DeepSeek-V4.1-Flash
-  /api/status   200；首轮对话已验证（48 token，输出正常）
-
-GPU 满载条（2026-09-30 新增，commit 517e664）
-----
-  页面 #bar 下面一条实时条带：GPU 占用 %（蓝色面积，固定 0–100 刻度）+
-  NVMe 读速（橙线，按窗口峰值缩放，角上标峰值）+ 数字（占用 / 时钟 / 盘读 /
-  GTT / 温度 / 功耗），每秒一采、留 4 分钟历史，标签页不可见时暂停轮询。
-  数据源是 server.py 自己的采样线程（amdgpu sysfs + /proc/diskstats 全部
-  nvme*n* 盘的读增量），走 /api/gpu，【不排队】——引擎正忙时也在动，
-  这正是它要回答的问题：此刻忙的是 GPU 还是盘。
-  读法：解码时 GPU 26–37 % + 盘 2.4–3.5 GB/s = 正常（NVMe-bound）；
-  时钟 600 MHz 是空闲、~2.9 GHz 是在跑；GPU 高 + 盘低 = prefill 的计算段。
-
-日志
-----
-  build/web_ui.out     server.py stdout（就绪横幅）
+  build/web_ui.out     server.py stdout (the ready banner)
   build/web_ui.err     server.py stderr
-  build/web_serve.log  引擎 stderr（cache / IO / session 决策）
+  build/web_serve.log  the engine's stderr (cache / IO / session decisions)
 
-注意：同一时刻只能有一个 deepmoe 引擎（GPU 任务一次一个）。跑 bench/ctest
-之前先 kill 上面两个 PID，跑完再起。
-
-
-打开： http://127.0.0.1:8080/
-
-镜像（第二个读源）：**开，而且是自动找到的**（Track D5，docs/p4_dual_source.md §9）。
-用户把同一块 J.ZAO SSD 换进 **USB4 盒子**之后，Windows 枚举成 **`BusType NVMe`**
-（PCIe 隧道，**没有 UAS、没有 RTL9210**）—— D2/D3/D4 四次杀死引擎的那一层整个不在了。
-**12 个 A/B cell 零错误**，`y_turns` **+9.4%**、`long_turns` **+4.63%**、两条流 **+13.5%**，
-`l3_ppl` **NLL 0.630051 逐位不变**。
-
-⚠️ **D2–D4 的「这块 U 盘不要再试」要重新读**：坏的一直是**桥**，不是这块 SSD。
-同一块 NAND 在 USB4 盒子里跑完 476 GiB × 12 个 cell，一条 win32 1117 都没有。
-
-ℹ️ **`server.py` 现在自己找第二块盘**（`find_mirrors()`）：另一个盘上**同样路径**、
-且有 `deepmoe_manifest.json` 的那份拷贝。所以下面的命令**没有 `--mirror`**，
-横幅里的 `read sources 2` 是它自己找到的。
-* 关掉：`--no-mirror-auto`
-* 指定别的：`--mirror DIR`（给了就不自动找）
-* **引擎默认仍然是单盘**：`deepmoe serve` 不给 `--mirror` 与 main 逐字相同。
-  自动检测只在网页 UI 这一层，因为它是用户走到机器前时正在跑的那个进程。
-
-ℹ️ **启动比以前慢 ~2 秒**，是故意的：权重探针现在**先热身 1 秒再测 1 秒**。
-一块空闲过的 USB4 盒子第一个读要 ~1 秒，不热身的话 1 秒窗口整个就是那一个读，
-E: 会被测成 **0.03 GB/s**（实际 3.77），加权路由只给它 **0.0%** 的字节 ——
-**第二块盘就白插了**。`DEEPMOE_MIRROR_PROBE_WARMUP_MS=0` 回到旧行为。
-
-ℹ️ 引擎侧的镜像健康闸（Track D4）仍然在：启动时从镜像试读 pinned 权重、失败就摘镜像单盘跑，
-运行期连续 3 次 I/O 错误也动态摘源。**横幅的 `read sources N` 是过闸之后真正在读的源数。**
-盘拔了就是 `read sources 1` + 一条 warning，不是崩溃。
-
-启动命令（已用 Start-Process 脱离本会话，关掉终端也不会停）：
-
-  $env:DEEPMOE_MODEL_DIR = 'D:\models\DeepSeek-V4.1-Flash'
-  Start-Process -FilePath C:\Users\Asus\code\deepmoe\.venv\Scripts\python.exe `
-    -ArgumentList C:\Users\Asus\code\deepmoe\tools\web\server.py,
-                  --exe,C:\Users\Asus\code\deepmoe\build\deepmoe.exe,
-                  --max-context,524280,--port,8080,
-                  --log,C:\Users\Asus\code\deepmoe\build\web_serve.log `
-    -WorkingDirectory C:\Users\Asus\code\deepmoe -WindowStyle Hidden `
-    -RedirectStandardOutput C:\Users\Asus\code\deepmoe\build\web_ui.out `
-    -RedirectStandardError  C:\Users\Asus\code\deepmoe\build\web_ui.err
-
-✅ **`--cache-slots` 已经不用给了**（Track H1a 生效，本实例就是这样起的）：
-`auto` 自己封顶到 5,000 槽（`DEEPMOE_CACHE_SLOT_CAP` 可改，0 = 关），
-并且建完 slab 池先提交一个空命令缓冲探一下，被拒就退 200 槽重建（最多 5 次）。
-本次就绪横幅：`expert cache 87.6 GiB (5000 slots)`。
-
-✅ **GPU prefill 现在默认开着，不用给 `--gpu-prefill-min`**（Track PF，docs/p3_chat.md §8）：
-引擎默认 `gpu_prefill_min = 512`（`runtime/session.h`），`server.py` **什么都不传**。
-1,118-token 的新 prompt 在 5,000 槽热 cache 上 **168.8 s → 28.6 s（25.6 ms/token，5.9×）**。
-续写（reuse > 0）也上 GPU，靠的是「reuse 不值钱就扔掉、整个 prompt 重新 prefill」这条规则
-（`--gpu-prefill-speedup`，默认 6.0，`<= 1` 关）：1,514-token 的第二轮 **70.5 → 35.5 s（2.0×）**。
-要关掉回到旧行为：`--gpu-prefill-min 0`（这个 0 以前是空操作，Track PF 一起修了）。
-
-✅ **`.pkv` 也不用在重启前清了**（Track H1b 生效）：恢复失败——分配被拒 / 损坏 / 尺寸不符——
-是一条 warning + 冷 prefill，那一轮照常跑完，失败的那份 `.pkv` 被删掉。
-本次启动前仍然顺手清了一次，日志里 `serve: restored 374 tokens from kv disk` 是之后写的。
-
-PID
----
-  server.py 启动器 (.venv python.exe)   29900
-  server.py 实际解释器 (Python312)      29788
-  deepmoe serve                         18152
-
-状态
-----
-  引擎就绪      15.1 s（比以前的 12.9 s 多 ~2 s = 两个源各 1 s 的探针热身）
-  专家缓存      87.6 GiB / 5000 slots（`auto`，没给 --cache-slots）
-  max_context   524280（满载 live KV ≈ 1.56 GiB）
-  读源          **2 个** —— 就绪横幅写着 `read sources 2`
-                D: 探到 4.82 GB/s、E: 探到 3.41 GB/s，`status.json` 的 io 段有两行 `src[]`
-                （典型分流 D: 73–77% / E: 23–27%；E: 的 mean lat 是 D: 的 5–6 倍，
-                 所以加权路由自己把它压在带宽比之下 —— 这是对的，见 §9.5）
-  /api/status   已验证返回 **200**
-
-日志
-----
-  C:\Users\Asus\code\deepmoe\build\web_ui.out     server.py 的 stdout（就绪横幅）
-  C:\Users\Asus\code\deepmoe\build\web_ui.err     server.py 的 stderr
-  C:\Users\Asus\code\deepmoe\build\web_serve.log  引擎的 stderr（专家缓存 / IO / 路由日志）
-
-  ✅ **这个文件现在真的有东西了**（Track PF，docs/p3_chat.md §8.1）：以前它只有两行，
-  因为 `core/log.h` 写的是 `FILE* stdout`，而 serve 把 stdout 让给协议之后 fd 1 虽然
-  指向 stderr，那个 `FILE*` 在 pipe 上是**全缓冲**的、`emit` 只在 `>= Warn` 时 flush ——
-  每条 `log_info` 都躺在没人 flush 的 4 KiB 缓冲里，进程被 `Stop-Process` 杀掉时一起没。
-  现在 logger 有进程级 sink（serve 调 `set_log_stream(stderr)`）并且**每行 flush**，
-  开机就有 26 行，而且**每一轮对话都有一行 session 决策**：
+  web_serve.log really has content in it (Track PF, docs/p3_chat.md §8.1). It used to
+  hold two lines, because core/log.h wrote to `FILE* stdout`: once serve hands stdout
+  to the protocol, fd 1 points at stderr but that FILE* is fully buffered on a pipe and
+  `emit` only flushed at >= Warn, so every log_info sat in an unflushed 4 KiB buffer and
+  died with the process. The logger now has a process-level sink (serve calls
+  `set_log_stream(stderr)`) and flushes every line: 26 lines at startup, plus one
+  session-decision line per turn.
 
       [INF] session: prompt N tokens, history H, common prefix C -> reuse R (cold|extend|rollback|reset|gpu-recompute), S to prefill (gpu_prefill_min 512)
       [INF] session: S tokens prefilled on the GPU in T s (X ms/token)
 
-  `预填充 … ms/token` 那一行慢的时候，先看这里。
+  When a turn reports a slow `prefill ... ms/token`, look here first.
 
-.pkv 前缀 KV 缓存
------------------
-  目录  %LOCALAPPDATA%\deepmoe\kv\D__models_DeepSeek-V4.1-Flash
+The GPU load strip (added 2026-09-30, commit 517e664)
+-----------------------------------------------------
+  Under #bar: GPU utilisation % (blue area, fixed 0-100 scale) + NVMe read rate
+  (orange line, scaled to the window's peak, peak printed in the corner) + the numbers
+  (utilisation / clock / disk read / GTT / temperature / power). One sample a second,
+  four minutes of history, polling paused while the tab is hidden. The source is
+  server.py's own sampling thread (amdgpu sysfs + the read deltas of every nvme*n*
+  device in /proc/diskstats) over /api/gpu, and it does NOT queue behind the engine --
+  it keeps moving while the engine is busy, which is the whole question it answers: is
+  the GPU busy right now, or the disk?
 
-  ✅ **不用再在重启前清空了**（Track H1b，本实例的 exe 已经带上）：`.pkv` 恢复失败——
-  分配被拒 / 损坏 / 尺寸不符，任何错误码——现在是一条 warning + 冷 prefill，
-  那一轮照常跑完，失败的那份 `.pkv` 自己被删掉。见 docs/p4_kv_ux.md §5.2。
+  Reading it: during decode, GPU 26-37% + disk 2.4-3.5 GB/s is normal (NVMe-bound).
+  A 600 MHz clock is idle, ~2.9 GHz is running. High GPU + low disk is prefill's
+  compute stretch.
 
-  它以前是致命的：默认 cache 大小下 path A 会被 expert cache 占满
-  （`slab pool: path A full after 34 slabs`），恢复拿不到显存就报
-  `serve: kv-disk restore failed: internal: vkQueueSubmit2 failed (-2)`，
-  而这个错误**直接杀掉那一轮对话**（抛进 tools/chat.py:186）。
+The second read source
+----------------------
+  server.py finds it itself (`find_mirrors()`): a copy at the same path on another
+  drive that carries a deepmoe_manifest.json. That is why the command above has no
+  --mirror, and why the banner's `read sources 2` is not something anyone passed.
+  On this machine that is /mnt/deepmoe2/models/DeepSeek-V4.1-Flash, mounted read-only.
 
-  注意「不致命」不等于「能恢复」：path A 满时恢复仍然拿不到显存，
-  那一轮付完整 prefill（STATUS §7 第 2 项的 ②）。要手动清的话还是这一行：
+    * off:              --no-mirror-auto
+    * somewhere else:   --mirror DIR   (given explicitly, it does not auto-detect)
+    * the ENGINE still defaults to one drive: `deepmoe serve` without --mirror is
+      byte for byte main's behaviour. Auto-detection lives only in the web UI layer,
+      because that is the process a user walks up to.
 
-      Remove-Item "$env:LOCALAPPDATA\deepmoe\kv\D__models_DeepSeek-V4.1-Flash\*.pkv"
+  find_mirrors() runs ONLY at startup. If the drive comes back after the server is up,
+  restart the server or it stays on one source.
 
-停止
-----
-  Get-Process -Id 29900,29788,18152 | Stop-Process -Force
+  Startup is ~2 s slower on purpose: the weight probe now warms up for 1 s before
+  measuring for 1 s. A USB4 enclosure that has been idle takes ~1 s for its first read,
+  and without the warm-up that read IS the whole 1 s window, so a 3.77 GB/s drive
+  measures 0.03 GB/s and weighted routing hands it 0.0% of the bytes -- the second
+  drive would be plugged in for nothing.
+  DEEPMOE_MIRROR_PROBE_WARMUP_MS=0 restores the old behaviour.
 
-  （停完确认 `Get-Process deepmoe*` 为空；上一次 deepmoe 要再 Stop-Process 一次才真的退。）
+  The engine-side mirror health gate (Track D4) is still there: it test-reads the
+  pinned weights from the mirror at startup and drops the mirror if that fails, and it
+  drops a source after three consecutive I/O errors at run time. So the banner's
+  `read sources N` is the number of sources actually being read after the gate. Pull
+  the drive and you get `read sources 1` plus a warning, not a crash.
 
-注意：同一时刻只能有一个 deepmoe 引擎进程。再起一个之前先把这个停掉
-（`Get-Process deepmoe` 应该是空的）。
+  Two things about the mirror that were measured and LOST, recorded so nobody retries
+  them (docs/p4_dual_source.md §10, STATUS §3):
+    * DEEPMOE_MIRROR_KEEPALIVE_MS=15 -- a 4 KiB keep-alive read while the mirror is
+      idle. 3,052 pokes, zero errors, +0.15%, the split bit-identical. The drive was
+      never asleep: its typical idle gap is 59 ms and the slowest P0 in a whole cell
+      is 19.84 ms.
+    * DEEPMOE_MIRROR_STATIC_SPLIT=0.44 -- force the split open-loop to the bandwidth
+      ratio. The split really did reach 44.0%, and it was -2.68% (stall 95.1 -> 100.9).
+      28.5% is not routing failing to reach 44%; 44% is simply worse, because once a
+      layer's burst is spread out both drives have to climb their ramp every layer and
+      decode waits on the slower of the two.
 
+  Reading a per-source latency: use the `src[]` line's P0 counters, not the mixed
+  mean. The mixed mean crosses two priority classes -- P0 (what decode waits for) and
+  P3 backfill (idle) -- and the mirror carries ~75% of the backfill, which is preempted
+  by P0 and so waits 1.1-1.3 s. On the main drive backfill waits 1.1 s too. P0 alone:
+  4.5 ms against 3.8 ms, a factor of 1.19 (Track D6, docs/p4_dual_source.md §10).
 
-2026-09-19 重启（H1 之后，auto 探测生效，无 --cache-slots）：
-  server.py 启动器 32028 / 解释器 42856 / deepmoe serve 46276
-  auto 落在 5000 槽（budget 5100 → cap 5000，probe 通过）；smoke.auto_cache 在 GPU 上通过。
+Things that no longer need passing
+----------------------------------
+  --cache-slots        Track H1a: `auto` caps itself at 5,000 slots
+                       (DEEPMOE_CACHE_SLOT_CAP adjusts it, 0 disables), and after
+                       building the slab pool it submits an empty command buffer to
+                       probe; if that is rejected it drops 200 slots and rebuilds, up
+                       to 5 times.
+  --gpu-prefill-min    Track PF, docs/p3_chat.md §8: the engine defaults to
+                       gpu_prefill_min = 512 (runtime/session.h) and server.py passes
+                       nothing. A 1,118-token new prompt on a warm 5,000-slot cache:
+                       168.8 s -> 28.6 s (25.6 ms/token, 5.9x). A continuation
+                       (reuse > 0) reaches the GPU too, via "throw the reuse away and
+                       re-prefill the whole prompt when the reuse is not worth it"
+                       (--gpu-prefill-speedup, default 6.0, <= 1 disables): a
+                       1,514-token second turn went 70.5 -> 35.5 s (2.0x).
+                       --gpu-prefill-min 0 restores the old behaviour (that 0 used to
+                       be a no-op; Track PF fixed it in the same change).
+  clearing .pkv        Track H1b: a failed restore -- allocation refused, corrupt,
+                       wrong size, any error code -- is a warning plus a cold prefill,
+                       the turn finishes normally, and the bad .pkv deletes itself
+                       (docs/p4_kv_ux.md §5.2). It used to be fatal: under the default
+                       cache size path A fills with the expert cache (`slab pool: path
+                       A full after 34 slabs`), the restore could not get memory, and
+                       `serve: kv-disk restore failed: internal: vkQueueSubmit2 failed
+                       (-2)` killed the turn outright.
+                       Not fatal is not the same as recovered: with path A full the
+                       restore still cannot get memory and that turn pays a full
+                       prefill (STATUS §7 item 2 (2)).
 
-2026-09-19 晚重启（Track D4 之后，main d2ba271，仍然**不带 --mirror**）：
-  server.py 启动器 44620 / 解释器 46980 / deepmoe serve 43132
-  就绪 12.9 s，auto → 5,000 槽，`read sources 1`，/api/status 200。
-  这一次 exe 里多了镜像健康闸（启动 pinned 试读 / 失败摘镜像 / 运行期连续 3 次错误摘源），
-  默认路径（不给 --mirror）与之前逐字相同——闸整个在 `if (mirrors_on_)` 里。
+Where things are written
+------------------------
+  transcripts   $XDG_CACHE_HOME/deepmoe/web_chat/<session>.json, i.e.
+                ~/.cache/deepmoe/web_chat/ here; %LOCALAPPDATA%\deepmoe\web_chat on
+                Windows. One file per session name, replayed on a page refresh or a
+                server restart.
+                Until 2026-10-01 the Linux fallback was the repo tree itself
+                (tools/web/deepmoe/web_chat/), because the code read
+                os.environ.get("LOCALAPPDATA", HERE) and Linux has no LOCALAPPDATA.
+                The one transcript that landed there was moved, not deleted.
+  .pkv KV cache  the same base as serve picks (cli/serve.cpp):
+                ~/.cache/deepmoe/kv/<model dir with / and : turned into _>/
+                To clear it by hand: rm ~/.cache/deepmoe/kv/*/*.pkv
 
-2026-09-19 再重启（Track PF 之后，main ee779ce，仍然**不带 --mirror**）：
-  server.py 启动器 46712 / 解释器 40060 / deepmoe serve 37892
-  就绪 13.0 s，auto → 5,000 槽，`read sources 1`，kv disk 开着，/api/status **200**。
-  这一次的新默认是 **GPU prefill 开（512）** —— 命令行一个字没变（不用给
-  `--gpu-prefill-min`），变的是引擎的默认值。`web_serve.log` 从 2 行变成开机 26 行 +
-  每轮一行 session 决策。
-
-
-2026-09-19 重启（网页对话按会话落盘 + /api/history）：
-  server.py 启动器 25888 / 解释器 33280 / deepmoe serve 43652
-  会话记录在 %LOCALAPPDATA%\deepmoe\web_chat\<会话名>.json，刷新页面或重启 server.py 都会回放。
-
-
-2026-09-20 重启（Track D5，第二个读源**默认开**，分支 p4/d5-usb4 合进 main）：
-  server.py 启动器 13732 / 解释器 28016 / deepmoe serve 18368
-  就绪 15.1 s，auto -> 5,000 槽，**`read sources 2`**，kv disk 开着，/api/status **200**。
-  命令行**一个字没变**（下面那条，没有 --mirror）—— 变的是 server.py 会自己找 E:，
-  日志里多一行 `web: second read source auto-detected: E:\models\DeepSeek-V4.1-Flash`。
-  这是 D2 以来第一次网页 UI 带着第二块盘跑：decode 的 nvme_stall 从 ~114 ms 降到 ~95 ms。
-
-
-2026-09-20 晚重启（Track D6 之后，main 4751e97，命令行和上面那条**一个字没变**）：
-  server.py 启动器 29900 / 解释器 29788 / deepmoe serve 18152
-  就绪 15.1 s，auto -> 5,000 槽，**`read sources 2`**，kv disk 开着，/api/status **200**。
-
-  ℹ️ **D6 把一个误读修正了**（`docs/p4_dual_source.md` §10）：
-  上面「读源」那一栏写着「E: 的 mean lat 是 D: 的 5–6 倍」——**那个平均数混了两个优先级类**。
-  routed 的是 P0（decode 等的那些）和 P3 backfill（空闲回填），而 **E: 扣着 75% 的 backfill**，
-  backfill 被 P0 抢占所以它等 **1.1–1.3 秒**——**D: 的 backfill 一样是 1.1 秒**。
-  **单独看 P0：E: 4.5 ms，D: 3.8 ms，只差 1.19 倍。**
-  所以 `status.json` 的 `src[]` 行现在多了一行：**每源的 P0 计数器 + 空闲间隔**。
-  看盘快不快，**看那一行的 `P0 ... mean lat`**，不要看上面的混合均值。
-
-  ℹ️ **两个新开关，都默认关，都测过且输了**，写在这里只是为了别再试一遍：
-  * `DEEPMOE_MIRROR_KEEPALIVE_MS=15` —— 镜像空闲时发 4 KiB 保活读。
-    3,052 次 poke、零错误、**+0.15%**，分流逐位不变。盘根本没睡：
-    E: 典型空闲只有 **59 ms**，而一整个 cell 最慢的 P0 是 **19.84 ms**。
-  * `DEEPMOE_MIRROR_STATIC_SPLIT=0.44` —— 按带宽比开环压分流。
-    分流真的到了 44.0%，然后 **−2.68%**：stall 95.1 → 100.9。
-    **28.5% 不是路由够不到，是 44% 本来就更差**：一层的突发摊平之后
-    **每层要在两块盘上各爬一次坡**，而 decode 等的是一层里最慢的那个。
-
-  ⚠️ **本轮遇到一次瞬时的 E: 掉线**（1 / 11 个带镜像的引擎进程）：
-  `l3_ppl` 第一次跑的 warm-cache backfill 途中报 `win32 433 / 55`，
-  运行期闸连续 3 次摘源、单盘跑完、**NLL 仍然 0.630051**，立即重跑零错误。
-  **USB4 把 D2–D4 那个码的概率压得很低，但没压到零。**
-  这就是闸存在的理由：盘掉了是一条 warning 加一次降级，不是一次崩溃。
-
-
-2026-09-21 重启（Track BF 之后，分支 p4/bf-batched-forward，命令行和上面那条**一个字没变**）：
-  server.py 启动器 30376 / 解释器 21720 / deepmoe serve 15324
-  就绪 15.3 s，auto -> 5,000 槽，**`read sources 2`**，kv disk 开着，/api/status **200**。
-
-  ℹ️ **这一轮跑的是 main 的 exe**（`C:\Users\Asus\code\deepmoe\build\deepmoe.exe`），
-  Track BF 的改动在 worktree `C:\Users\Asus\code\deepmoe-bf` 里，**没有合进 main、没有 push**。
-  BF 改的是 `Engine::forward_batch` 这条投机 verify 路径（网页 UI 不走它）加一个
-  `wc_read()`（`vmovntdqa` 读写合并内存，M=1 的 `stage_input` 也用上了，
-  但实测对 decode 步**没有可测变化**，见 `docs/p4_dspark_runtime.md` §8.3）。
-
-  ⚠️ **停止用的 PID 换成上面这三个**（下面那条 `Get-Process -Id 29900,29788,18152` 是上一轮的）：
-
-      Get-Process -Id 30376,21720,15324 | Stop-Process -Force
-
-2026-09-21 晚重启（Track HG 的探针跑完之后，命令行和上面那条**一个字没变**）：
-  server.py 启动器 26720 / 解释器 21368 / deepmoe serve 13748
-  就绪 15.9 s，auto -> 5,000 槽，**`read sources 2`**，kv disk 开着，/api/status **200**。
-
-  ℹ️ **这一轮跑的仍然是 main 的 exe**（`C:\Users\Asus\code\deepmoe\build\deepmoe.exe`）。
-  Track HG 只加了一个探针（`bench/probes/hostflag_probe.cpp` + `gpu/shaders/probe_hostflag.slang`），
-  在 worktree `C:\Users\Asus\code\deepmoe-hg` 的分支 `p4/hg-hostflag-probe` 上，
-  **运行时一行没动、没合进 main、没 push**。停机只是因为探针要独占 GPU。
-  结论写在 `docs/p4_hostflag_gate.md`：**host 写 flag、device 自旋等它 = NO-GO（输在延迟，不是合法性）**。
-
-  ⚠️ **停止用的 PID 换成上面这三个**：
-
-      Get-Process -Id 26720,21368,13748 | Stop-Process -Force
+Optional
+--------
+  VK_DRIVER_FILES=$HOME/deepmoe-mesa/radeon_icd_b128.json runs serve on the locally
+  patched RADV (LDS b128 reads, STATUS §7 0bl: all gates pass, isolated FP4 GEMMs
+  -5~6%). Do not bother: STATUS §3 89 measured it end to end on two drives and it is a
+  NO-GO -- expert gpu is flat and wall time is 0.8% worse. The system driver is what
+  this instance uses.
