@@ -1,0 +1,33 @@
+Mesa 26.2.3: lift the two 64-bit caps on LDS *loads* (stores already allow
+128) so aligned 128-bit ds_load_b128 can form. STATUS §7 0bl measured the
+prefill's LDS GEMMs 5-6% faster with it on Strix Halo (RDNA3.5), margins bit
+for bit. Both lifts read RADV_LDS_LOAD_B128 (default ON in this local build;
+=0 restores stock behaviour). Apply to mesa-26.2.3, build only RADV:
+
+  meson setup rbuild -Dbuildtype=release -Dvulkan-drivers=amd \
+      -Dgallium-drivers= -Dplatforms=x11,wayland -Dllvm=disabled
+  ninja -C rbuild src/amd/vulkan/libvulkan_radeon.so
+
+and point VK_DRIVER_FILES at an icd json whose library_path is the built .so
+(~/deepmoe-mesa/radeon_icd_b128.json on x).
+
+--- a/src/amd/common/nir/ac_nir_lower_mem_access_bit_sizes.c
++++ b/src/amd/common/nir/ac_nir_lower_mem_access_bit_sizes.c
+@@
+    if (intrin == nir_intrinsic_load_shared || intrin == nir_intrinsic_store_shared) {
+       /* Don't use >64-bit LDS loads for performance reasons. */
+-      unsigned max_bytes = intrin == nir_intrinsic_store_shared && cb_data->gfx_level >= GFX7 ? 16 : 8;
++      static int b128 = -1;
++      if (b128 < 0) { const char* e = getenv("RADV_LDS_LOAD_B128"); b128 = !e || atoi(e); }
++      unsigned max_bytes = (intrin == nir_intrinsic_store_shared || b128) && cb_data->gfx_level >= GFX7 ? 16 : 8;
+       bytes = MIN3(bytes, combined_align, max_bytes);
+
+--- a/src/amd/common/nir/ac_nir.c
++++ b/src/amd/common/nir/ac_nir.c
+@@ (ac_nir_mem_vectorize_callback, the is_shared tail)
+       /* 96-bit and 128-bit LDS loads are slow. Don't use them. */
+-      if (!is_store && bit_size * num_components > 64)
++      static int b128 = -1;
++      if (b128 < 0) { const char* e = getenv("RADV_LDS_LOAD_B128"); b128 = !e || atoi(e); }
++      if (!is_store && bit_size * num_components > (b128 ? 128 : 64))
+          return false;
