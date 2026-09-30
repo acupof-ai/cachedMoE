@@ -15,12 +15,12 @@ deepMoE web UI —— 正在运行的实例
 
 PID
 ---
-  server.py       2290402
-  deepmoe serve   2290408
+  server.py       2422461
+  deepmoe serve   2422463
 
-停止（只按 PID）：kill 2290402 2290408
+停止（只按 PID）：kill 2422461 2422463
 
-状态（2026-09-30 12:26 启动）
+状态（2026-09-30 18:5x 重启：0bj tail 盲读 + 0bk codex 修复后的二进制；12:26 那轮 PID 2290402/2290408 已停）
 ----
   就绪          39.6 s
   专家缓存      85.8 GiB / 4,900 槽（auto）
