@@ -44,6 +44,8 @@ anything is spent on it.
 from __future__ import annotations
 
 import argparse
+import collections
+import glob
 import json
 import os
 import queue
@@ -122,6 +124,97 @@ def find_mirrors(model_dir: str):
         if os.path.isfile(os.path.join(cand, "deepmoe_manifest.json")):
             found.append(cand)
     return found
+
+
+# --------------------------------------------------------------------------- gpu telemetry
+
+class GpuMon:
+    """amdgpu + NVMe telemetry off sysfs, one sample a second, in this process.
+
+    Independent of the engine on purpose: `/api/status` queues behind the turn
+    in flight, but the question this answers -- is the GPU the thing that is
+    busy right now, or the disk -- is exactly a mid-turn question.  Readings:
+    `gpu_busy_percent` (the saturation number), sclk from hwmon (600 MHz idle
+    vs boost tells throttling apart from idleness), GTT/VRAM used, edge
+    temperature, package power, and the NVMe read rate summed over every
+    nvme*n* whole disk in /proc/diskstats (so a returning mirror shows up
+    without a restart).  No sysfs (Windows): `available: false`, the page
+    hides the strip.
+    """
+
+    PERIOD = 1.0
+    KEEP = 240                      # four minutes of history
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.hist: collections.deque = collections.deque(maxlen=self.KEEP)
+        self.dev = None
+        self.hwmon = None
+        self.gtt_total = self.vram_total = 0
+        self._disk_prev = None      # (t, sectors_read)
+        for dev in sorted(glob.glob("/sys/class/drm/card*/device")):
+            if os.path.isfile(os.path.join(dev, "gpu_busy_percent")):
+                self.dev = dev
+                hw = sorted(glob.glob(os.path.join(dev, "hwmon", "hwmon*")))
+                self.hwmon = hw[0] if hw else None
+                self.gtt_total = self._num(os.path.join(dev, "mem_info_gtt_total"))
+                self.vram_total = self._num(os.path.join(dev, "mem_info_vram_total"))
+                break
+        if self.dev:
+            threading.Thread(target=self._loop, daemon=True).start()
+
+    @staticmethod
+    def _num(path):
+        try:
+            with open(path) as f:
+                return int(f.read().strip())
+        except Exception:
+            return 0
+
+    def _disk_read_bps(self, now):
+        """Bytes/s read, summed over nvme whole disks (diskstats field 3 is
+        sectors read, 512 B each regardless of the device's block size)."""
+        sectors = 0
+        try:
+            with open("/proc/diskstats") as f:
+                for line in f:
+                    p = line.split()
+                    if len(p) > 5 and re.fullmatch(r"nvme\d+n\d+", p[2]):
+                        sectors += int(p[5])
+        except Exception:
+            return 0.0
+        prev, self._disk_prev = self._disk_prev, (now, sectors)
+        if not prev or now <= prev[0]:
+            return 0.0
+        return max(0, sectors - prev[1]) * 512 / (now - prev[0])
+
+    def _loop(self):
+        d, h = self.dev, self.hwmon
+        while True:
+            now = time.time()
+            s = {
+                "t": round(now, 1),
+                "busy": self._num(os.path.join(d, "gpu_busy_percent")),
+                "gtt": self._num(os.path.join(d, "mem_info_gtt_used")),
+                "vram": self._num(os.path.join(d, "mem_info_vram_used")),
+                "mhz": round(self._num(os.path.join(h, "freq1_input")) / 1e6) if h else 0,
+                "temp": round(self._num(os.path.join(h, "temp1_input")) / 1000) if h else 0,
+                "watt": round(self._num(os.path.join(h, "power1_input")) / 1e6, 1) if h else 0,
+                "disk": round(self._disk_read_bps(now) / 1e6, 1),   # MB/s
+            }
+            with self.lock:
+                self.hist.append(s)
+            time.sleep(self.PERIOD)
+
+    def snapshot(self):
+        if not self.dev:
+            return {"available": False}
+        with self.lock:
+            hist = list(self.hist)
+        return {"available": True, "gtt_total": self.gtt_total,
+                "vram_total": self.vram_total,
+                "now": hist[-1] if hist else None,
+                "hist": [[s["busy"], s["mhz"], s["disk"]] for s in hist]}
 
 
 def load_encoding():
@@ -582,6 +675,7 @@ def sse(obj):
 
 class Handler(BaseHTTPRequestHandler):
     bridge: Bridge = None        # set on the class before serve_forever
+    gpumon: GpuMon = None
     protocol_version = "HTTP/1.1"
     server_version = "deepmoe-web"
 
@@ -625,6 +719,8 @@ class Handler(BaseHTTPRequestHandler):
                     "model": MODEL,
                     "cmd": " ".join(b.serve.cmd),
                 })
+            if u.path == "/api/gpu":
+                return self._send(200, self.gpumon.snapshot())
             if u.path == "/api/status":
                 q = parse_qs(u.query)
                 s = (q.get("session") or ["default"])[0]
@@ -784,6 +880,7 @@ def main():
 
     bridge = Bridge(serve, enc, args)
     Handler.bridge = bridge
+    Handler.gpumon = GpuMon()
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     httpd.daemon_threads = True
     print(f"open http://{args.host}:{args.port}/", flush=True)
