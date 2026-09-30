@@ -266,22 +266,36 @@ void s_softmax(uint3 gid, uint tid) {
     const uint64_t srow = Ptr[kScore] + ((uint64_t)b * pc.n_heads + h) * E * 4;
     const uint64_t irow = Ptr[kIdx] + (uint64_t)b * pc.g * 4;
     const uint64_t prow = Ptr[kO] + ((uint64_t)b * pc.n_heads + h) * E * 2;
+    // The lane's entries (at most kMaxIdx / 128 float4s) and their validity
+    // stay in registers between the max pass and the exp pass: S and the
+    // index list are read once, not twice (STATUS §7 0bf).
+    static const uint kIt = kMaxIdx / 128;
+    float4 sv[kIt];
+    uint   ok[kIt];
     float mx = -3.0e38f;
-    for (uint t0 = lane * 4; t0 < pc.g; t0 += 128) {
-        const float4 s = load_f32x4(srow + (uint64_t)t0 * 4);
-        [unroll] for (uint k = 0; k < 4; ++k)
-            if (t0 + k < pc.g && load_i32(irow + (uint64_t)(t0 + k) * 4) >= 0) mx = max(mx, s[k] * pc.scale);
+    [unroll] for (uint it = 0; it < kIt; ++it) {
+        const uint t = it * 128 + lane * 4;
+        sv[it] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        ok[it] = 0u;
+        if (t < E) {
+            sv[it] = load_f32x4(srow + (uint64_t)t * 4);
+            [unroll] for (uint k = 0; k < 4; ++k)
+                if (t + k < pc.g && load_i32(irow + (uint64_t)(t + k) * 4) >= 0) {
+                    ok[it] |= 1u << k;
+                    mx = max(mx, sv[it][k] * pc.scale);
+                }
+        }
     }
     mx = max(WaveActiveMax(mx), -1.0e30f);
     float den = 0.0f;
-    for (uint t0 = 0; t0 < E; t0 += 128) {
+    [unroll] for (uint it = 0; it < kIt; ++it) {
+        const uint t0 = it * 128;
+        if (t0 >= E) break;
         const uint t = t0 + lane * 4;
         float p[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         if (t < E) {
-            const float4 s = load_f32x4(srow + (uint64_t)t * 4);
             [unroll] for (uint k = 0; k < 4; ++k)
-                if (t + k < pc.g && load_i32(irow + (uint64_t)(t + k) * 4) >= 0)
-                    p[k] = bf16_round(exp(s[k] * pc.scale - mx));
+                if ((ok[it] & (1u << k)) != 0u) p[k] = bf16_round(exp(sv[it][k] * pc.scale - mx));
             *(uint2*)(prow + (uint64_t)t * 2) =
                 uint2(f32tof16(p[0]) | (f32tof16(p[1]) << 16), f32tof16(p[2]) | (f32tof16(p[3]) << 16));
         }
