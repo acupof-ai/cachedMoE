@@ -281,6 +281,22 @@ int run_gemm(const Options& o) {
     csv.open(o.csv);
     std::printf("prefill_bench gemm: %s, load = %s\n", rig.device.caps().device_name.c_str(),
                 o.load.c_str());
+    // Hardware counters around the tiled dispatch: the question §3 83 left open
+    // is whether this kernel re-reads the weight ceil(n / TileM) times, which
+    // the cost model counts once (bench/perf_query.h).
+    bench::PerfCounters pc;
+    {
+        std::vector<std::string> want;
+        for (size_t p = 0; p < o.perf_counters.size();) {
+            const size_t q = std::min(o.perf_counters.size(), o.perf_counters.find(',', p));
+            if (q > p) want.emplace_back(o.perf_counters.substr(p, q - p));
+            p = q + 1;
+        }
+        if (auto r = pc.create(rig.device, want); !r) {
+            std::fprintf(stderr, "perf counters: %s\n", r.error().str().c_str());
+            return 1;
+        }
+    }
 
     // --- the tensors ---------------------------------------------------------
     const uint32_t dim = 5120, inter = 2304;
@@ -389,6 +405,23 @@ int run_gemm(const Options& o) {
             // so check it separately with the dense stage on w1 alone.
             emit("expert.gateup", std::format("tiled M{}", t), n, inter, dim, 2 * fp4_bytes, best,
                  0.0, 1.0);
+            if (pc.enabled()) {
+                auto cv = pc.run(rig.cmd, [&](gpu::CommandBuffer& c) -> Result<void> {
+                    return rig.runner.record(c, *kh, &p, sizeof(p), gpu::PrefillRunner::gemm_gx(inter),
+                                             gpu::PrefillRunner::gemm_gy(n, t));
+                });
+                if (!cv) { std::fprintf(stderr, "%s\n", cv.error().str().c_str()); return 1; }
+                const double want_bytes = double(2 * fp4_bytes);
+                for (const auto& x : *cv) {
+                    std::printf("      %-26s %14.2f %-7s (%u reads, lost <=%.1f%%)", x.name.c_str(),
+                                x.value, x.unit.c_str(), x.reads,
+                                x.value > 0 ? (x.value - x.lo) / x.value * 100.0 : 0.0);
+                    if (x.name.find("VRAM read") != std::string::npos)
+                        std::printf("  = %.2fx the %.1f MB of weight, ceil(n/M) = %u",
+                                    x.value / want_bytes, want_bytes / 1e6, (n + t - 1) / t);
+                    std::printf("\n");
+                }
+            }
         }
         for (uint32_t t : o.tiles) {
             // dense FP4 w1 alone -- the correctness anchor for the expert path

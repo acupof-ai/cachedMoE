@@ -286,7 +286,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 86 条）
+## 3. 试过并退掉的（编号，共 87 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -416,10 +416,11 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **80** | **下一层的盲读提前到本层最后一批算的时候发（`ahead_next_`：本层最后一批的读到齐后，就把下一层按分片序的前 d 段发进环里空着的段；以及"深发"——第 i 批在第 i−(R−1) 批算完就发，不是 i−2）**（2026-09-30）——深发 ring 6：17K 45.0（不变），4K 35.2（+6 s：4K 本来盘就是瓶颈，多在飞的批只是把当前批的读挤慢）。提前发：先撞了两个自己的 bug（`times_.layers.resize` 让 `run_layer` 里的引用悬空——堆被踩；第 0 批没发——每层 ~64 个 expert 没读），修完在**旧的 io_uring 后端上 4K 三次都不逐位**（r2 30.98 s / margin 8.819、r6 36.09 / 8.422、跳过 engram 层前的提前发 34.8 / 8.598 逐位），17K r6 45.85 / 10.108 逐位。这就是 §6 18 的另一面：expert 的 1 MiB 读和 engram 的 4 KiB 行读一重叠就错——于是找到了 io_uring 后端的记录表冲突（§7 0aw）。**修好后端再跑同一份代码，四个配置全逐位**：4K r2 29.06、r6 29.23，17K r2 48.41、r6 46.90（镜像盘那趟探到 3.57 GB/s，在降频）。但收益没有：ring 2 时下一层的盲读本来就在本层 MoE 之后马上发、盘也没闲着（4K），ring 6 时 17K 第 0–19 层是 GPU-bound、第 20–39 层的读本来就全在盲读里。代码撤了（少 90 行），只留后端的修复。`prefill_ahead/early_*`、`early_fixed_*`、`ring6deep_*`。 | NO-GO（收益 0；但把 §6 18 定位了） |
 | **81** | **FP4 融合 GEMM 用 128 宽的 K 片（`prefill_gemm_lds128.spv`，`#define LDS_BK 128` 包一层，只给 expert 的 fp4 kernel）**（2026-09-30）——§3 68 量过 fp16 版的 w1 +12%，想着 fp4 版每片解码的 ALU 摊到两倍的 K 上会更好。17K ring 6：gate/up fp4 6,226 → **6,965 ms**（+12%）、down 2,882 → 3,437（+19%）。解码是按元素的，K 片宽一倍每线程要解的也宽一倍，寄存器压力先撞上了。`prefill_ahead/bk128_r6_17010`。 | NO-GO |
 | **82** | **routed expert 走 coop 路的行数门槛（`coopmat_min_rows` 16）挪到 8 或 32**（2026-09-30，17K ring 6 单盘）——8：routed GPU 11.39 → 11.27 s（tiled 1.0 → 0.7，coop 多 650 个 expert）；32：12.09（tiled 1.5）。但 **margin 变了**（10.310 / 10.338 对 10.108）：tiled 路（每 lane 一块的 fp32 点积、ldexp 和 xs 逐块乘）和 coop 路（fp16 tile 累加）不是逐位同一个数，门槛是数值的一部分。−0.1 s 不值得动基线。`prefill_ahead/coopmin{8,32}_r6_17010`。 | NO-GO |
+| **87** | **tiled small-expert path's `TileM` 8 → 16 (`--tiles 16`, `PrefillConfig::tile`)** (2026-09-30, after 0bt measured the weight re-read). The premise, measured on the real FP4 expert with the counters: this kernel's grid is `gemm_gy(n, TileM) = ceil(n/TileM)` row blocks and **each block reads the whole weight**, so VRAM read size tracks `ceil(n/TileM)` exactly — at n=16, TileM 4 / 8 / 16 read **54.2 / 27.6 / 13.9 MB against 12.5 MB of weight = 4.33× / 2.20× / 1.11×**, with L2 hit only 29–43%, so the re-reads land in DRAM. 4K: tiled gate/up 882.1 → **848.1 ms (−3.9%)**, tiled down 397.5 → **380.8 (−4.2%)**, routed bucket 5,071 → 5,027; **margin 8.598 bit for bit**; wall time unchanged (4K is disk-bound single-drive). | **Works, small, default unchanged.** −51 ms of the tiled path's 1,280 ms, far less than halving the traffic would suggest, because **most tiled experts already have n ≤ 8** so `ceil(n/8)` was already 1 and only n ∈ (8,16] benefits. An adaptive `TileM = min(16, n)` a job would capture it exactly and is the version to try; owner's call whether −1% of the routed bucket is worth the knob |
 | **86** | **LDS GEMM 的 K 切片 64 → 32（`LDS_BK`，两份 Codex review 排第一的假设：LDS 27,648 → 15,360 B，每 CU 从 2 个 workgroup 变 4 个，占用率 4 → 8 wave/SIMD，暂存寄存器也减半——正面打 §7 0bn 的占用率结论；5120 和 2304 都能被 32 整除，不用处理尾巴）**（2026-09-30，补丁驱动、真实几何 wm4wn2）——**占用率确实翻倍了**（stats：LDS 15,360、VGPR 256 → 192、0 溢出；4 → 8 wave/SIMD——**这里原写 2 → 4，算错了一倍，一个 CU 有 2 个 SIMD32，见 §7 0br**），**kernel 全线更慢**：n=64 0.117（不变）、128 0.117 → 0.127、256 0.208 → **0.257（+24%）**、512 0.411 → **0.573（+39%）**、1024 0.906 → 1.154（+27%）。计数器指出机制（n=512 配对）：**VRAM 读 102.7 → 200.8 MB（+96%）**，而总数据量不变——**BK=32 时每行每片只读 32 个 half = 64 B，低于 128 B 的 cache line，每条线被取两次**；SALU 指令 +64%（多一倍的片 = 多一倍的循环和屏障），GPU cycles +18%，Waves 不变，VALU 只 +1%。**所以 64 halfs = 128 B = 正好一条 cache line 是被两侧钉住的局部最优**：往上 128 撞寄存器压力（§3 68、81：FP4 对 +12%/+19%），往下 32 撞读粒度。 | **NO-GO。并且它否掉的不止自己——见 §7 0bp：占用率不是这个 kernel 的限制** |
 | **85** | **手写提出 FP4 路的地址算术**（`load_a_fp4` 改成收两个已成型的字节地址；每个寄存器槽的行号在 k 循环里不变、八个槽的行号差 16、而且八个槽读同一列（`kThreads % kQ == 0`），所以地址 = 一个提出循环的 64 位基址 + 每槽一个字面量 + 每个 K 片一个 32 位偏移）——动机是 0bl 之后重查 ISA 时看到的 45 条 `v_dual_mov_b32 0`，当时读成"每次 global load 的 64 位地址算术"（2026-09-30）| 17K ring 6：gate/up fp4 6,385 → **6,537 ms（+2.4%）**、down 2,926 → **2,980（+1.8%）**，两个我动过的 kernel 同向变差；attention −0.5%、shared +2.7%（别的 op 在漂移里）；逐位不变（10.108，`gpu_prefill` 7/7）。ISA 对照给出原因：**64 位乘法数量一个没变（两边都是 8 条 = 每个寄存器槽一次，早就被提出 k 循环了）**——ACO 的 LICM 已经做完这件事，手写版只是把同样的 8 个 64 位基址变成了**跨整个循环活着的寄存器**，在 255 VGPR 的形状上多付了压力 | **NO-GO，已撤回**。教训记两条：① 0ag 写的"85 条寄存器搬运是 ACO 在 256 VGPR 下的代价"要订正——那些 `v_dual_mov_b32 0` 是 64 位地址的高位补零，**和有用的 add 双发射在一起**，不是寄存器分配的浪费；② 在 ACO 上"手写编译器已经做的优化"是负收益，下一次先数 ISA 再改源码。`prefill_ahead/addr_r6_17010`。 |
 | **84** | **routed expert 的 FP4 LDS GEMM 降到 wm2（64 行块，`PrefillConfig::fp4_wm`，bench `DEEPMOE_PF_FP4_WM`；累加器 −32 VGPR、行块并行度 ×2——0bc 的「每个 expert 只有 ~80 个 workgroup 在飞」是它的动机）**（2026-09-30，§7 0bk 之后）：17K ring 6 同状态趟（总 56.6 对 56.4、attention 12.98 对 12.96——漂移对齐），gate/up fp4 6,385 → **6,705 ms（+5%）**、down 2,926 → **3,222（+10%）**、routed GPU 11.96 → 12.56 s；4K 在盘后没变化；两个 margin 逐位（8.598 / 10.108）。占用率不是这个 kernel 的限制——0t 的 wm4 对融合 FP4 变体仍然成立，0ag 的「钱在寄存器搬运和 b64 LDS 读」也就无法从 Slang 侧再压（b128 §3 71 已否、BK 128 §3 81 已否、整数解码 0ba 已否、x 过 LDS §3 83 已否）。**kernel 内部的便宜层到此关闭**：剩下的是换 kernel 家族级别的重构。旋钮留着（默认 0 = 原几何），下一个人重跑而不是重推 | NO-GO，默认不变 |
-| **83** | **tiled 小 expert 路（`prefill_gemm` s1 / s2）把 tile 的 x 经 LDS 一个 workgroup 只读一遍**（2026-09-30）——猜的是 8 个 row-wave 各自从 L2 读同一份 x（一个 expert 256 MB 的 L2 读对 16 MB 权重）是它 70 GB/s 的原因。17K tiled gate/up 687 → 708 ms、down 311 → 319（没变），4K 723 → **1,200**（更差：每片两个 barrier 在小 n 上比 L2 命中还贵）；逐位不变（10.108 / 8.598）。不是 L2。这条路 17K 1.0 s、4K 1.2 s（藏在盘后），限制在哪还没量到（不是权重流量、不是 x 流量；剩 VALU 里的 32 次 f16→f32 转换和每 job 一次派发的 drain）。`prefill_ahead/tiledx_{r6_17010,4133}`。 | NO-GO |
+| **83** | **tiled 小 expert 路（`prefill_gemm` s1 / s2）把 tile 的 x 经 LDS 一个 workgroup 只读一遍**（2026-09-30）——猜的是 8 个 row-wave 各自从 L2 读同一份 x（一个 expert 256 MB 的 L2 读对 16 MB 权重）是它 70 GB/s 的原因。17K tiled gate/up 687 → 708 ms、down 311 → 319（没变），4K 723 → **1,200**（更差：每片两个 barrier 在小 n 上比 L2 命中还贵）；逐位不变（10.108 / 8.598）。不是 L2。这条路 17K 1.0 s、4K 1.2 s（藏在盘后），限制在哪还没量到（~~不是权重流量~~、不是 x 流量；剩 VALU 里的 32 次 f16→f32 转换和每 job 一次派发的 drain）。**「不是权重流量」是错的，2026-09-30 订正（§3 87、§7 0bt）**：这个 kernel 每个行块都读整份权重，VRAM 读量精确等于 `ceil(n/TileM)` 倍（n=16 时 TileM 4/8/16 各读 4.33×/2.20×/1.11×），当年的判断建立在成本模型只按一次计的漏算上。不过重读也不是主因——真实的 n 分布里多数 expert 已经 `ceil(n/8)=1`，改 TileM 16 只省 4%。**真正的限制仍未定性**：这条路把 68.4 GB 以 ~80 GB/s 流完，只有 236 GB/s 上限的 34%，而重读和 L2 都已排除；下一个嫌疑是合并访存（每 workgroup 读 8 个相邻权重行、行长 2560 B，L2 命中 29–43% 正是「线只用一部分又被再命中」的签名）。`prefill_ahead/tiledx_{r6_17010,4133}`。 | NO-GO |
 
 ---
 
@@ -696,6 +697,57 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0bt. **The tiled small-expert path is 28% of the routed chain doing 4% of its FLOPs, and measuring it corrected a wrong conclusion in §3 83.** (following 0bs, which sized fusion at 6.4% and pointed here instead.)
+
+**What the per-op profile says once the FLOPs are divided out** (4K, `--ops-json`, theoretical peak 59.4 TFLOP/s):
+
+| path | ms | Tflop | TFLOP/s | of theoretical |
+|---|---:|---:|---:|---:|
+| FP4 LDS gate/up | 1873.0 | 26.57 | 14.2 | 23.9% |
+| FP4 LDS down | 813.2 | 13.29 | 16.3 | 27.5% |
+| **tiled gate/up** | **882.1** | **1.14** | **1.3** | **2.2%** |
+| **tiled down** | **397.5** | **0.57** | **1.4** | **2.4%** |
+| non-FP4 coop gate/up | 180.3 | 4.11 | 22.8 | 38.4% |
+
+The tiled path spends 1,280 ms on 1.71 Tflop. It is not a compute path at all -- **half the
+experts at 4K take it** (5,430 of 10,634, back-derived from its modelled `2*wfp4*(j1-j0)` bytes
+of 68.32 GB), each streaming 12.6 MB of FP4 weight for a handful of tokens, so it is a weight
+streaming path and should be priced against DRAM, not against the mma peak.
+
+**The first thing measured, and it corrects §3 83.** That row concluded "not weight traffic".
+It is weight traffic, and the row's premise was the cost model's, which counts the weight once:
+the kernel's grid is `ceil(n/TileM)` row blocks and **every block reads the whole weight**
+(the shader's own header says so). With the counters on the real FP4 expert at n=16:
+
+| TileM | ceil(n/TileM) | VRAM read size | vs the 12.5 MB of weight | ms |
+|---|---:|---:|---:|---:|
+| 4 | 4 | 54.2 MB | **4.33x** | 0.300 |
+| 8 (the default) | 2 | 27.6 MB | **2.20x** | 0.138 |
+| 16 | 1 | 13.9 MB | **1.11x** | 0.137 |
+
+L2 hit is 29-43%, so the re-reads reach DRAM. Raising `TileM` to 16 on the real run (§3 87)
+gives tiled gate/up 882.1 -> 848.1 ms and tiled down 397.5 -> 380.8, margin 8.598 bit for bit
+-- **real but only -4%**, because at the true n distribution most tiled experts already have
+n <= 8 and were already reading the weight once. So the re-read is a genuine effect, a
+correction to the record, and not the main cost.
+
+**What is still unexplained, now with a number on it.** The path streams 68.4 GB at about
+**80 GB/s, 34% of the 236 GB/s ceiling**, with re-reads and L2 both excluded. 848 ms over 5,430
+experts is 156 us each against a 53 us streaming floor. Within a batch the gate/up dispatches
+are already issued back to back with a single barrier at the end, so it is not per-expert
+barriers either (and `moe tiled down`, which *does* barrier per expert because experts share y
+rows, is the cheaper of the two). **The next suspect is coalescing**: a workgroup covers 8
+consecutive weight rows of 2,560 B each and its lanes read 16 B quanta across those rows, and an
+L2 hit ratio of 29-43% on a stream with no reuse is the signature of lines being partly used and
+then hit again. Measuring that needs the ISA's address pattern plus a swizzle A/B, not another
+counter.
+
+**Why this now outranks the fusion work of 0bs**: bringing this path from 34% to 70% of the DRAM
+ceiling would save about 0.43 s of the 5.07 s chain at 4K, against fusion's 0.5 s ceiling for a
+much larger change -- and unlike fusion, none of it is closed by §3 76.
+
+`scratchpad/ops4k.jsonl`, `ops4k_t16.jsonl`.
 
 0bs. **Sizing the fusion question before designing for it (user 2026-09-30 "AMD has issue-rate problems too, fuse as much as possible on a single machine"): the fusable part of the routed-expert chain is 6.4% of it, and the two obvious variants were already measured and lost.** Per-op profile of a 4,133-token prefill, `--ops-json`, routed-expert chain:
 
