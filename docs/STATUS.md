@@ -2146,11 +2146,11 @@ Each item's mechanism, its prediction (already halved by the "halve it" rule), i
    other stream's submits interleave with this one's and nothing here has been measured."*
    **Multi-stream decode therefore pays a cost single-stream decode does not, and nobody has
    measured it.** That is the item that replaces c4.
-8. ~~**2-bit expert**（等 F5 的精度判定）~~ **已否决**（§3 的 37，2 bit 与 3 bit 都是 NO-GO）；
-   ~~**命中率杠杆**（等 F4）~~ **已交付**（默认 `auto`、路径 A 预留、三个 A/B，§2.4 / §2.5 / §6 的 7）。
-   ~~接这一位的是 **`prefill_coopmat` stage 0 重写**（多 wave 经 LDS 协作一个输出 tile + 下一个 K 切片预取）。
-   它是 F3 点名的、唯一能动 2.1 TFLOP/s 这个速率的改动（§2.5），但它**只动 prefill**，
-   所以按 §4 的排序它排在最后——除非对话里的 prompt 变长到 prefill 压过 decode。~~
+8. ~~**2-bit expert** (waiting on F5's accuracy verdict)~~ **rejected** (§3 37, 2 bit and 3 bit are both NO-GO);
+   ~~**the hit-rate lever** (waiting on F4)~~ **delivered** (`auto` by default, the path A reservation, three A/Bs, §2.4 / §2.5 / §6 7).
+   ~~What takes this slot is the **`prefill_coopmat` stage 0 rewrite** (several waves cooperating on one output tile through LDS + prefetching the next K slice).
+   It is the change F3 named as the only one that can move that rate of 2.1 TFLOP/s (§2.5), but it **only touches prefill**,
+   so by §4's ordering it comes last -- unless prompts in a conversation grow long enough for prefill to outweigh decode.~~
    **Stale, corrected 2026-10-01: that rewrite is `prefill_gemm_lds`, and it has been the default
    for a long time.** "Several waves cooperating on one output tile through LDS, with the next K
    slice prefetched" is exactly what `gpu/shaders/prefill_gemm_lds.slang` does, and
@@ -2161,14 +2161,14 @@ Each item's mechanism, its prediction (already halved by the "halve it" rule), i
    90 and §7 0br/0bu/0bw are all work *on* that kernel. **Nothing here is open; the successor to
    item 8 is item 7's multi-stream `shared_early` gap.**
 
-**不做**（有编号的理由，不要再提）：BIOS VGM（§3 的 29）、lookahead 预取（23、**35**、**51**——
-**48 换掉了 35 的理由**：盈亏平衡不是 precision 1.00 而是 **≈0.60**，NO-GO 的原因是
-**可用的提前量只有 2 ms/层**，诚实的 lead=1 只拿得到 `pred_d2` 的 0.588；验收线是
-**两层提前量上 precision ≥ 0.77**）、**attention / dense kernel 的带宽（49：已经 91% of UMA）**、
-**节流 P2 engram（43：−27.8%，engram 4.5 → 85.8 ms/token）**、
-**为 P0 加深队列或加大 chunk（44）**、
-CPU 分担 GEMV（25）、树采样作为提速手段（32）、静态 pin / 每层配额（24、**35**）、
-LDS x-tiling 配 per-K-chunk barrier（1）、饱和 cache 上的 reheat（21、**F4 §6**）、
-任何预测式预取（**35**）、**score-aware / ARC / LFU-decay / LRU-K / S3-FIFO 任何非 LRU 的淘汰策略（47）**、2-bit / 3-bit expert（**37**）、resident-only 作为默认路由（**38、39**）、verify-only 的 resident-only 路由（**40**）、
-**投机解码本身（41、42：`chain` 0.86×、`longest` ≤1.07× 且不无损）**、
-**把 gate 的 host 往返压小（53：265 µs/层 是驱动的，可动的只有 103）**、手写 `--cache-slots`（它绕过三条实测边界，5,500 就是这么够得着的）。
+**Do not do** (each with a numbered reason; do not raise them again): BIOS VGM (§3 29); lookahead prefetch (23, **35**, **51** --
+**48 replaced 35's reason**: break-even is not precision 1.00 but **≈0.60**, and the reason it is a NO-GO is that
+**only 2 ms a layer of lead is available**, while an honest lead=1 gets only `pred_d2`'s 0.588; the acceptance line is
+**precision ≥ 0.77 at two layers of lead**); **the attention / dense kernel's bandwidth (49: already 91% of UMA)**;
+**throttling P2 engram (43: −27.8%, engram 4.5 → 85.8 ms/token)**;
+**deeper queues or larger chunks for P0 (44)**;
+the CPU taking a share of the GEMV (25); tree sampling as a way to go faster (32); static pinning / per-layer quotas (24, **35**);
+LDS x-tiling with a per-K-chunk barrier (1); reheating on a saturated cache (21, **F4 §6**);
+any predictive prefetch (**35**); **score-aware / ARC / LFU-decay / LRU-K / S3-FIFO -- any non-LRU eviction policy (47)**; 2-bit / 3-bit experts (**37**); resident-only as the default routing (**38, 39**); verify-only resident-only routing (**40**);
+**speculative decoding itself (41, 42: `chain` 0.86×, `longest` ≤1.07× and not lossless)**;
+**shrinking the gate's host round trip (53: 265 µs a layer is the driver's, and only 103 is movable)**; and passing `--cache-slots` by hand (it bypasses three measured boundaries, and that is how 5,500 was ever reached).
