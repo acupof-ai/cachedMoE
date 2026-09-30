@@ -72,6 +72,7 @@ Windows Strix Halo（Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe）
 | 31 | default-dual-8turns | `4b72b5ee71+3 dirty (b97c1018a7970283)` | – | 0 | 0% | 41 MB | **9.294** | 107.6 | 62.4 (28.5/25.9/6.1/1.9) | 41.9 (54.7 @ 4.8 GB/s) | 2.87 | 3.1 | 0.9418 | 44.6 |
 | 32 | gttsized-dual-8turns | `435ae6bf6d` | – | 0 | 0% | 35 MB | **9.166** | 109.1 | 62.4 (28.5/26.0/6.1/1.9) | 43.6 (56.0 @ 4.8 GB/s) | 2.90 | 2.8 | 0.9405 | 45.6 |
 | 33 | ahead64-p0qd24-dual-8turns | `317ce28b60+6 dirty (f45016cc60563c41)` | – | 0 | 0% | 33 MB | **9.157** | 109.2 | 61.8 (28.5/25.3/6.1/1.9) | 44.1 (57.4 @ 4.8 GB/s) | 2.88 | 3.0 | 0.9389 | 46.2 |
+| 34 | 2drive-postreboot-8turns | `4fa3aea45c` | – | 0 | 0.6% | 76 MB | **9.135** | 109.5 | 61.9 (28.5/25.4/6.1/1.9) | 44.6 (57.4 @ 4.8 GB/s) | 2.91 | 2.9 | 0.9389 | 45.7 |
 
 **热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**
 
@@ -689,11 +690,36 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 17. **17K 的 prompt 在默认 5,500 槽的 cache 下会丢设备**（Linux，2026-09-29，§7 0t）：prefill 的缓冲区是按 prompt 长度分配的，加上 96 GiB 的 expert cache 就超出了 GTT，内核报 "Not enough memory for command submission"。**已修（§7 0ah，2026-09-30）**：cache 预算先扣掉 prefill 在 min(`--max-context`, 16K) 个 token 下的工作区（17K 自动 5,046 槽，正常跑完），更长的 prompt 在 prefill 前按 heap 余量拒绝而不是丢设备。仍然开着的一半：网页 UI 的 65,536 上下文只预留到 16K，16K 以上的 prompt 会被拒绝——真正的解法是 prefill 按块分配工作区（KV 平面全长，激活只留一块），没做。
 18. ~~prefill 在并发 4 KiB DMA 流下不再逐位~~ **已定位、已修**（2026-09-30，§7 0aw；§3 78、80 是它的两次现身）：io_uring 后端的在飞记录表是 1,024 项、按 `chunk_id & 1023` 存，且无条件覆盖。一个 1 MiB 的 expert 读排在几十万个 4 KiB engram 行读后面时，在它落地前会有超过 1,024 个新 chunk 发出，新的那个把它的记录占了：完成事件按记录归属，于是**另一个 chunk 的 future 先被当作完成**——GPU 在数据没落地时就开算，错的正是几个孤立的位置，且错法只有几种（8.374 ×5）。只有 expert 流和 engram 流在飞中重叠时才会发生，所以 decode（只有 1 MiB backfill）从不出错、engram 行读只要在本层等完（默认路径）也不出错。修法是记录从 free list 拿、SQE 的 `user_data` 存记录的下标而不是 chunk id，短读续读和 bounce 重试沿用原记录。验证：同一份"提前发"代码（§3 80）旧后端 4K 三次全错、新后端四个配置全逐位；默认路径 4K 29.72 / 8.598、`gpu_prefill` 7/7、`suite.io` 过。§3 78 那条路（engram 行提前发，17K −2.4 s）现在可以重开。
 19. **serve 的内存离顶太近时 prefill 的 host 时间涨 2–3 s**（2026-09-30，§7 0as、0av）：4,900 槽（85.8 GiB）+ 常驻 9.2 GiB + 17K 工作区，再多 5.7 GiB 就撞上——`other` 从 3.0 涨到 5–6 s，bench 里没有。THP 是 `always`，怀疑是分配等整页/回收。自动预算按 `available_physical_bytes()` 减 12 GiB 地板算，手给 `--cache-slots` 时没有这层保护；任何常驻新东西都要从槽数里扣（scale 平面 5.7 GB ≈ 300 槽，transit 环 6 段 +4.8 GB ≈ 260 槽）。
-20. **镜像盘会从 USB4 总线上掉**（2026-09-30，§7 0bd）：机制（09:05:53 那次，内核日志）：PCIe 隧道先断（pciehp Link Down），USB4 层面盒子没断开，但 thunderbolt 驱动对盒子路由器和主机路由器的 config 读写全部超时——控制通道卡死，隧道重建不了，PCI rescan 够不到这一层；要拔插盒子（给 ASM2464 桥片断电），不行再 rebind 这个 USB4 口的 thunderbolt 驱动。**2026-09-30 晚续**：rebind 试过了，**救不回来**——unbind 成功、re-bind 时驱动 `invalid hop: 0` / `failed to determine connection manager`，这个 host router 要断电才行。本机有两个 USB4 口（`c6:00.5`=domain0、`c6:00.6`=domain1），插另一个口是唯一不重启的出路；换口后盒子能认出来但**连上 11 秒就断**，且按 USB 大容量存储（sda）而不是 PCIe 隧道枚举——D2–D4「坏的是桥」那条老路。双盘口径继续挂着。连续跑 ~90 分钟、74–75 °C 后 J.ZAO 掉线，`/sys/class/nvme` 里只剩内置盘，PCI rescan 不回来，要重新插；掉的那一趟 IO 引擎 955 个请求 failover 到内置盘、结果逐位。长基准要预期它，且 IO-bound 的对比只在表头探针 ≥ 3.7 GB/s 的趟之间做。
+20. **镜像盘会从 USB4 总线上掉**（2026-09-30，§7 0bd）：机制（09:05:53 那次，内核日志）：PCIe 隧道先断（pciehp Link Down），USB4 层面盒子没断开，但 thunderbolt 驱动对盒子路由器和主机路由器的 config 读写全部超时——控制通道卡死，隧道重建不了，PCI rescan 够不到这一层；要拔插盒子（给 ASM2464 桥片断电），不行再 rebind 这个 USB4 口的 thunderbolt 驱动。**2026-09-30 最终结论（§7 0bo）：thunderbolt 对两个 router 的 config 访问全面超时时，唯一的恢复手段是重启——rescan / unbind+re-probe / 换另一个 USB4 口全部无效，重启一次盘就干净回来了（满速 40 Gb/s、探测 3.70 GB/s，无退化）。这也排除了盒子和线：换口后「连上 11 秒就断、按 sda 枚举」是楔住状态的副作用，不是 D2–D4 那族硬件故障。下次见到同样现象不要在内核侧花时间，直接断电。另：`rx_speed` 是每 lane 的值，20.0 Gb/s + `rx_lanes=2` 就是满速，别误读成降级。** 以下是当时的过程记录：**2026-09-30 晚续**：rebind 试过了，**救不回来**——unbind 成功、re-bind 时驱动 `invalid hop: 0` / `failed to determine connection manager`，这个 host router 要断电才行。本机有两个 USB4 口（`c6:00.5`=domain0、`c6:00.6`=domain1），插另一个口是唯一不重启的出路；换口后盒子能认出来但**连上 11 秒就断**，且按 USB 大容量存储（sda）而不是 PCIe 隧道枚举——D2–D4「坏的是桥」那条老路。双盘口径继续挂着。连续跑 ~90 分钟、74–75 °C 后 J.ZAO 掉线，`/sys/class/nvme` 里只剩内置盘，PCI rescan 不回来，要重新插；掉的那一趟 IO 引擎 955 个请求 failover 到内置盘、结果逐位。长基准要预期它，且 IO-bound 的对比只在表头探针 ≥ 3.7 GB/s 的趟之间做。
 
 ---
 
 ## 7. Next, in order
+
+0bo. **重启把楔住的 USB4 主控救回来了，双盘口径恢复；顺带量到一件事：17K 双盘下盘不再是关键路径，GPU 是。**（用户 2026-09-30「重启吧」）
+
+**盘**：§6 风险 20 里试过并失败的手段——PCI rescan、thunderbolt 驱动 unbind + re-probe、换另一个 USB4 口——**重启一次全部作废，盘干净回来**：`nvme1n1p2` / `deepmoe2` 只读挂在 `/mnt/deepmoe2`，`0-2: Ugreen Storage Device` 授权、`rx_speed`/`tx_speed` 各 20.0 Gb/s（**是每 lane 的值**，`rx_lanes=2` → 满速 40，不是降级；我第一眼读错了，记在这里免得下个人再错），探测 **3.70 GB/s**（掉线前 3.72，没有退化）。这同时**反过来排除了盒子和线**：同一个盒子同一根线现在满速工作，所以换口之后那「连上约 11 秒就断、按 USB 大容量存储 `sda` 枚举」不是独立的硬件故障，是**楔住状态的副作用**——D2–D4「坏的是桥」那条老路在这次不成立。结论进 §6 风险 20：**thunderbolt 配置访问全面超时 = 只能断电，别在内核侧花时间**。
+
+**双盘三个数字**（都在 margin 逐位的前提下，单盘一行作对照）：
+
+| | 双盘（今天） | 单盘（§7 0bn 那趟） |
+|---|---|---|
+| 4K（4,133 tok，ring 2） | **29.80 s** / 139 tok/s，margin 8.598 | 46.78 s |
+| 17K（17,010 tok，ring 6） | **42.25 s** / 403 tok/s，margin 10.108 | 56.4 s |
+| decode（8 轮对话） | **9.135 tok/s** / 109.5 ms/token，hit 0.9389 → **ledger #34** | — |
+
+两个源各 0 error 0 failover（主盘 118.8 GB @ 4.58 权重、镜像 95.7 GB @ 3.70）。4K 29.80 与历史双盘 29.06 / 29.23（§7 0aw）在 ±3% 抖动带内，decode 9.135 也落在口径上——**恢复之后没有退化，双盘口径可以继续用**。
+
+**真正要记的一条：17K 的关键路径换人了。**
+
+```
+双盘 17K：expert io 12.04 s  ≈  expert gpu 11.45 s      （已交叉）
+单盘 17K：expert io 24.41 s  对  expert gpu 12.26 s     （盘压倒性）
+```
+
+盘时间砍半之后两者持平，**盘不再是 17K 的瓶颈**。这对 §3 和 §7 的历史判决有系统性影响：**凡是当年以「藏在盘后」「端到端低于 ±3% 抖动带」结案的 GPU 侧条目，判决前提已经不成立**，需要按新口径重审（不是自动翻案——重开一条要有理由，§7 的「不做」清单存在的意义就是让已关的问题保持关闭）。最直接受益的是 §7 0bn：LDS GEMM 差 1.8× 到 mma 峰值、限制是占用率（2 wave/SIMD、VGPR 顶在 256、再大一格溢出 14 个），这条昨天还只能说「知道钱在哪个 kernel」，现在它在关键路径上。0bl 的补丁驱动（FP4 GEMM −5~6%）同理——它在单盘 17K 上墙钟不动，在双盘上应当直接兑现，**这是下一个该量的**（还没量）。
+
+`bench/results/linux/reboot2drive/`。
 
 0bn. **硬件计数器仪器（`VK_KHR_performance_query`）建起来了，并用它把 LDS GEMM 离峰值的那一截定性了：不是带宽，不是指令数，是占用率。**（用户 2026-09-30「剩下的都做好」+「让 CodeX 帮忙看看」）
 
