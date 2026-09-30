@@ -15,10 +15,11 @@ deepMoE web UI —— 正在运行的实例
 
 PID
 ---
-  （2026-09-30 为了给楔住的 USB4 主控断电重启过机器，UI 没有自动起。
-    按上面的启动命令重新起一次，然后把新 PID 填回这里。）
-  server.py       —
-  deepmoe serve   —
+  server.py       33898
+  deepmoe serve   33900
+
+  （2026-09-30 重启后起的第二次；镜像盘回来了，启动日志里
+   "mirror '/mnt/deepmoe2/...' holds 48 of 48 shards" = 两个读源都在用。）
 
 停止（只按 PID）：kill 2533672（它会带走引擎 2533685）
 
