@@ -1,6 +1,56 @@
 deepMoE web UI —— 正在运行的实例
 ================================
 
+【当前实例：Linux（x，2026-09-30）】——下面 Windows 一段是历史，机器换回去时再看
+--------------------------------------------------------------------
+
+打开： http://127.0.0.1:8080/
+
+启动命令（setsid 脱离会话，关终端不停）：
+
+  cd ~/projects/cachedMoE
+  DEEPMOE_MODEL_DIR=$HOME/models/DeepSeek-V4.1-Flash setsid nohup \
+    .venv/bin/python tools/web/server.py --max-context 65536 --port 8080 \
+    --log build/web_serve.log > build/web_ui.out 2> build/web_ui.err &
+
+PID
+---
+  server.py       2290402
+  deepmoe serve   2290408
+
+停止（只按 PID）：kill 2290402 2290408
+
+状态（2026-09-30 12:26 启动）
+----
+  就绪          39.6 s
+  专家缓存      85.8 GiB / 4,900 槽（auto）
+  max_context   65536（满载 live KV ≈ 0.20 GiB）
+  读源          1 个——镜像盘 /mnt/deepmoe2 掉线未挂载（STATUS §6 20，要拔插）；
+                盘回来、只读重挂后【重启本进程】才会变成 2 个（find_mirrors 只在启动时找）
+  kv disk       ~/.cache/deepmoe/kv/_home_chenkailun_models_DeepSeek-V4.1-Flash
+  /api/status   200；首轮对话已验证（48 token，输出正常）
+
+GPU 满载条（2026-09-30 新增，commit 517e664）
+----
+  页面 #bar 下面一条实时条带：GPU 占用 %（蓝色面积，固定 0–100 刻度）+
+  NVMe 读速（橙线，按窗口峰值缩放，角上标峰值）+ 数字（占用 / 时钟 / 盘读 /
+  GTT / 温度 / 功耗），每秒一采、留 4 分钟历史，标签页不可见时暂停轮询。
+  数据源是 server.py 自己的采样线程（amdgpu sysfs + /proc/diskstats 全部
+  nvme*n* 盘的读增量），走 /api/gpu，【不排队】——引擎正忙时也在动，
+  这正是它要回答的问题：此刻忙的是 GPU 还是盘。
+  读法：解码时 GPU 26–37 % + 盘 2.4–3.5 GB/s = 正常（NVMe-bound）；
+  时钟 600 MHz 是空闲、~2.9 GHz 是在跑；GPU 高 + 盘低 = prefill 的计算段。
+
+日志
+----
+  build/web_ui.out     server.py stdout（就绪横幅）
+  build/web_ui.err     server.py stderr
+  build/web_serve.log  引擎 stderr（cache / IO / session 决策）
+
+注意：同一时刻只能有一个 deepmoe 引擎（GPU 任务一次一个）。跑 bench/ctest
+之前先 kill 上面两个 PID，跑完再起。
+
+
 打开： http://127.0.0.1:8080/
 
 镜像（第二个读源）：**开，而且是自动找到的**（Track D5，docs/p4_dual_source.md §9）。
