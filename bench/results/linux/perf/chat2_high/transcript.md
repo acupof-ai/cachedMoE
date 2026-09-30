@@ -1,0 +1,38 @@
+# deepMoE chat transcript
+
+server: {"event": "ready", "load_s": 45.4609124, "max_context": 4096, "vocab": 129280, "cache_gb": 96.3439941, "cache_slots": 5500, "gpu_prefill_min": 16, "check_topk": false, "engram_tables": "/home/chenkailun/projects/cachedMoE/tests/data/l3", "kv_mb": 16.044032, "rollback": true, "max_parked": 8, "reheat": false, "reheat_decay": 0.5, "kv_disk": true, "kv_disk_dir": "/home/chenkailun/.cache/deepmoe/kv/_home_chenkailun_models_DeepSeek-V4.1-Flash", "sources": 1}
+
+### Turn 0 — zh essay
+*mode chat, temperature 1.0, top_p 0.95, seed 41001*
+
+**User:** 请写一篇三百字左右的短文，谈谈城市里的夜跑为什么越来越流行，以及夜跑时需要注意的安全问题。
+
+**Assistant:**
+
+## 城市夜跑：流动的风景与安全的边界
+
+夜幕降临，城市的街道渐渐褪去白日的喧嚣。越来越多的年轻人换上跑鞋，戴上耳机，在路灯下奔跑。夜跑，正成为都市生活的新风尚。
+
+夜跑流行的背后，是现代人对时间的妥协与对健康的追求。白天被工作占据，夜晚便成了难得的“自我时间”。奔跑在霓虹闪烁的街头，既能释放压力，又能锻炼身体，何乐而不为？更重要的是，夜跑让孤独的都市人找到了一种独特的归属感——跑团群里的打卡、擦肩而过的点头致意，都是城市里温暖的微光。
+
+然而，夜色也藏着看不见的风险。安全，是夜跑不可逾越的底线。首先，选择光线充足、人流量适中的路线，避开偏僻巷道与施工路段。其次，穿亮色或反光材质的衣物，让自己在车灯下“被看见”。再次，尽量结伴而行，或提前告知家人路线。最后，耳机音量不宜过高，保持对周围环境的警觉。
+
+夜跑是城市写给夜晚的情书，但只有守住安全的边界，才能让这份浪漫长久延续。奔跑吧，但请记得：回家的路，永远比配速更重要。
+
+`[TTFT 3.7 s | prefill 29 tok (gpu, reused 0) 7.83 tok/s hit 0.00 | decode 256 tok 7.51 tok/s hit 0.960 | stop | ctx 284]`
+
+### Turn 1 — zh follow-up
+*mode chat, temperature 1.0, top_p 0.95, seed 41002*
+
+**User:** 把上面的短文压缩成五条要点，每条不超过二十个字。
+
+**Assistant:**
+
+1. 夜跑成风，释放压力兼顾健康。
+2. 选亮路多人处，避开偏僻地段。
+3. 穿反光衣物，让车辆看见自己。
+4. 结伴而行，提前告知家人路线。
+5. 耳机音量勿高，保持环境警觉。
+
+`[TTFT 5.4 s | prefill 18 tok (decode, reused 284) 3.35 tok/s hit 0.83 | decode 64 tok 7.30 tok/s hit 0.959 | stop | ctx 365]`
+

@@ -62,6 +62,20 @@ from urllib.parse import urlparse, parse_qs
 sys.dont_write_bytecode = True
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+def _state_home():
+    """Where a user's transcripts live. Windows has LOCALAPPDATA; Linux does not,
+    and the old fallback was HERE, which wrote them into the repo tree
+    (`tools/web/deepmoe/web_chat/`). Follow the XDG base directory spec there."""
+    win = os.environ.get("LOCALAPPDATA")
+    if win:
+        return win
+    xdg = os.environ.get("XDG_STATE_HOME")
+    if xdg:
+        return xdg
+    home = os.path.expanduser("~")
+    return os.path.join(home, ".local", "state") if home != "~" else HERE
+
 REPO = os.path.dirname(os.path.dirname(HERE))
 MODEL = os.environ.get("DEEPMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
 
@@ -508,7 +522,7 @@ class Bridge:
         self.prefill_ms_per_token = PREFILL_MS_PER_TOKEN
         # Transcripts, one JSON per session name, next to serve's KV disk so a
         # session and its .pkv travel together.
-        base = args.kv_dir or os.path.join(os.environ.get("LOCALAPPDATA", HERE), "deepmoe")
+        base = args.kv_dir or os.path.join(_state_home(), "deepmoe")
         self.chat_dir = os.path.join(base, "web_chat")
         threading.Thread(target=self._worker, daemon=True).start()
 

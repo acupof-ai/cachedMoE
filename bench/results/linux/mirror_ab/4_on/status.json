@@ -1,0 +1,14 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 396,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 4400 slots (4400 resident, 0 filling, 0 free, 0 pinned)  lookups 657120 hits 594385 (0.905)  fills 62735/62735 ok  runs 125470/125470  evictions 58335 (+0 guard-blocked)  path A hits 594385 / B 0 (1.0000 A)  fills A 62735 / B 0",
+ "planner": "planner: 109520 layers, 657120 requests (594385 hits, 62735 misses, 0.905), 58335 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 43349 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped",
+ "io": "io: 389532 req (389532 done, 0 failed, 0 cancelled), 642591 chunks, 1190933730728 / 1190933954560 bytes, busy 300.734 s, eff 3.96 GB/s, mean lat 11.570 ms, peak QD 24 / 83.9 MiB\n  p0_blocking   125470 req  1125309.1 MiB\n  p2_engram     262848 req  1058.8 MiB\n  p3_backfill     1214 req  9395.3 MiB\n  P0: 125470 req, 1125308.9 MiB, lat mean 4.91 / p50 4.56 / p95 11.69 / max 57.55 ms  (queue wait 0.14 + service 4.77)\n  P0: first-of-burst 43349 at 1.65 ms, behind 82121 at 6.63 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 5.04\n  src[0] /home/chenkailun/models/DeepSeek-V4.1-Flash  w 4.61 GB/s  95923 req  842.8 GiB (76.0%)  mean lat 12.10 ms  inflight 0 req / 0.0 MiB\n         P0 95650 req  837.8 GiB  mean lat 4.45 ms | idle gaps >= 15 ms: 3624 (mean 24.6, max 449.5 ms) | keep-alive 0 reads, 0 done, 0 refused\n  src[1] /mnt/deepmoe2/models/DeepSeek-V4.1-Flash  w 3.72 GB/s  30761 req  265.3 GiB (23.9%)  mean lat 102.74 ms  inflight 0 req / 0.0 MiB\n         P0 29820 req  261.2 GiB  mean lat 6.39 ms | idle gaps >= 15 ms: 6100 (mean 64.2, max 861.3 ms) | keep-alive 0 reads, 0 done, 0 refused\n  dispatcher: 661600 iters, issue 0.86 s / poll 293.17 s / handle 0.71 s (callbacks 0.30 s, 389532 at 0.8 us mean)\n  dispatcher: Backend::submit 47.56 s over 642591 chunks, mean 74.0 us, max 11.32 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.2% of the non-waiting loop; refill gap 1.2 us mean over 195553 reaps\n",
+ "route": "route     resident-only=off\n"
+}

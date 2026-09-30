@@ -1,0 +1,15 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 17017,
+ "max_context": 17408,
+ "kv_mb": 58.642432,
+ "kv_capacity": 17408,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 58.642432,
+ "store": "expert store: 4900 slots (4900 resident, 0 filling, 0 free, 0 pinned)  lookups 1680 hits 1311 (0.780)  fills 10476/10476 ok  runs 20952/20952  evictions 5576 (+0 guard-blocked)  path A hits 1311 / B 0 (1.0000 A)  fills A 10476 / B 0",
+ "planner": "planner: 280 layers, 1680 requests (1311 hits, 369 misses, 0.780), 369 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 208 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 10107 kept / 709 dropped",
+ "io": "io: 1223834 req (1223834 done, 0 failed, 0 cancelled), 1417016 chunks, 226314517080 / 226314559488 bytes, busy 39.350 s, eff 5.75 GB/s, mean lat 2631.763 ms, peak QD 512 / 32.0 MiB\n  p0_blocking    22478 req  201599.6 MiB\n  p2_engram     1200142 req  4835.5 MiB\n  p3_backfill     1214 req  9395.3 MiB\n  P0: 22478 req, 201599.5 MiB, lat mean 137.08 / p50 126.84 / p95 302.65 / max 420.90 ms  (queue wait 131.81 + service 5.27)\n  P0: first-of-burst 268 at 1.51 ms, behind 22210 at 138.71 ms; 25 (0.1%) issued with a non-P0 chunk in flight, mean 7.08; mean QD at issue 21.50\n  src[0] /home/chenkailun/models/DeepSeek-V4.1-Flash  w 4.60 GB/s  22624 req  114.0 GiB (54.1%)  mean lat 167.48 ms  inflight 0 req / 0.0 MiB  stripe 113321 chunks\n         P0 22343 req  108.9 GiB  mean lat 136.42 ms | idle gaps >= 15 ms: 59 (mean 427.7, max 5805.2 ms) | keep-alive 0 reads, 0 done, 0 refused\n  src[1] /mnt/deepmoe2/models/DeepSeek-V4.1-Flash  w 3.71 GB/s  23257 req  92.1 GiB (43.7%)  mean lat 253.27 ms  inflight 0 req / 0.0 MiB  stripe 100220 chunks\n         P0 22324 req  88.0 GiB  mean lat 135.40 ms | idle gaps >= 15 ms: 59 (mean 427.7, max 5805.2 ms) | keep-alive 0 reads, 0 done, 0 refused | 74 C (max 74), rested 0x\n  dispatcher: 160094 iters, issue 8.93 s / poll 29.26 s / handle 1.14 s (callbacks 0.32 s, 1223834 at 0.3 us mean)\n  dispatcher: Backend::submit 8.21 s over 1417016 chunks, mean 5.8 us, max 6.08 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 2.9% of the non-waiting loop; refill gap 0.6 us mean over 157324 reaps\n",
+ "route": "route     resident-only=off\n",
+ "gate_probe": ""
+}

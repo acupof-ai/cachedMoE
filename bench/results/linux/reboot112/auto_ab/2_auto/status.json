@@ -1,0 +1,14 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 396,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5400 slots (5400 resident, 0 filling, 0 free, 0 pinned)  lookups 657120 hits 607048 (0.924)  fills 50072/50072 ok  runs 100144/100144  evictions 44672 (+0 guard-blocked)  path A hits 607048 / B 0 (1.0000 A)  fills A 50072 / B 0",
+ "planner": "planner: 109520 layers, 657120 requests (607048 hits, 50072 misses, 0.924), 44672 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 35777 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped",
+ "io": "io: 364206 req (364206 done, 0 failed, 0 cancelled), 566613 chunks, 952757553240 / 952757714944 bytes, busy 299.198 s, eff 3.18 GB/s, mean lat 12.457 ms, peak QD 24 / 84.1 MiB\n  p0_blocking   100144 req  898166.5 MiB\n  p2_engram     262848 req  1058.8 MiB\n  p3_backfill     1214 req  9395.3 MiB\n  P0: 100144 req, 898166.4 MiB, lat mean 6.50 / p50 4.94 / p95 20.32 / max 60.63 ms  (queue wait 0.14 + service 6.36)\n  P0: first-of-burst 35777 at 1.47 ms, behind 64367 at 9.29 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 4.88\n  dispatcher: 605071 iters, issue 0.77 s / poll 290.25 s / handle 0.63 s (callbacks 0.27 s, 364206 at 0.7 us mean)\n  dispatcher: Backend::submit 11.13 s over 566613 chunks, mean 19.6 us, max 0.92 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.2% of the non-waiting loop; refill gap 1.1 us mean over 195107 reaps\n",
+ "route": "route     resident-only=off\n"
+}

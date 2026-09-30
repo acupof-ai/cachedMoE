@@ -1,0 +1,53 @@
+{
+ "time": "2026-09-30T08:50:30+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "05b9bf95ba",
+ "dirty": [
+  "bench/prefill_bench.cpp",
+  "gpu/vulkan/prefill_kernels.cpp"
+ ],
+ "diff_sha": "757fc78a09702075",
+ "exe": "build/deepmoe",
+ "exe_sha": "6508232f7f7583d1",
+ "shaders": {
+  "dir": "build/shaders",
+  "count": 46,
+  "sha": "99245d15fe1ce261"
+ },
+ "env": {
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_PF_OPS_JSON": "bench/results/linux/prefill_ahead/serve17010_0bb_r6.ops.jsonl",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/linux/prefill_ahead/serve17010_0bb_r6/route.bin",
+  "DEEPMOE_SHADER_DIR": "build/shaders"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 12.6,
+  "gpu_busy_max": 20,
+  "loadavg": [
+   "3.35",
+   "2.79",
+   "2.67"
+  ],
+  "top_cpu": [
+   "kworker/u130:15-btrfs-endio 10.9%",
+   "steam 7.3%",
+   "kworker/u130:8-kcryptd-253:0-1 5.9%",
+   "kworker/u130:2-btrfs-endio 4.0%"
+  ]
+ },
+ "disks_start": {
+  "t": 1790729431.467123,
+  "nvme0n1": [
+   216624829435,
+   373755753
+  ],
+  "nvme1n1": [
+   44133684128,
+   0
+  ]
+ },
+ "gamemode_lib": true
+}

@@ -89,3 +89,15 @@ bench/results/cache_evict/trace_cols.npz
 
 # Claude Code desktop app: session worktrees live here; never commit them
 .claude/worktrees/
+
+# bench/results: the large machine artefacts of a run. The per-run records worth
+# keeping are status.json and transcript.md, and everything already tracked stays
+# tracked -- these patterns only stop new runs from burying `git status` (534
+# untracked files / 404 MB is how an unrelated edit got discarded once).
+bench/results/**/events.jsonl
+bench/results/**/profile.jsonl
+bench/results/**/*.bin
+bench/results/linux/prefill_ahead/engdbg/
+# DEEPMOE_PIPELINE_STATS dumps: one file per pipeline specialisation, machine output.
+bench/results/**/isa/
+bench/results/**/isa_dec3/

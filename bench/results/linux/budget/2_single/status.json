@@ -1,0 +1,15 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 396,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5500 slots (5500 resident, 0 filling, 0 free, 0 pinned)  lookups 604560 hits 566089 (0.936)  fills 50274/50274 ok  runs 100548/100548  evictions 44774 (+0 guard-blocked)  path A hits 566089 / B 0 (1.0000 A)  fills A 50274 / B 0",
+ "planner": "planner: 100760 layers, 604560 requests (566089 hits, 38471 misses, 0.936), 33645 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 29802 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 6901 resident / 11803 kept / 0 dropped",
+ "io": "io: 368034 req (368034 done, 0 failed, 0 cancelled), 571249 chunks, 956571791792 / 956571947008 bytes, busy 277.047 s, eff 3.45 GB/s, mean lat 20.442 ms, peak QD 24 / 87.0 MiB\n  p0_blocking   100548 req  901789.9 MiB\n  p2_engram     266272 req  1072.9 MiB\n  p3_backfill     1214 req  9395.3 MiB\n  P0: 100548 req, 901789.7 MiB, lat mean 31.55 / p50 5.75 / p95 173.74 / max 347.62 ms  (queue wait 22.02 + service 9.53)\n  P0: first-of-burst 30042 at 1.29 ms, behind 70506 at 44.44 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 8.38\n  dispatcher: 635869 iters, issue 0.83 s / poll 267.67 s / handle 0.75 s (callbacks 0.32 s, 368034 at 0.9 us mean)\n  dispatcher: Backend::submit 11.15 s over 571249 chunks, mean 19.5 us, max 0.81 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.3% of the non-waiting loop; refill gap 1.3 us mean over 260878 reaps\n",
+ "route": "route     resident-only=off\n",
+ "gate_probe": "gate round trip, host clock, us per layer-step (DEEPMOE_GATE_PROBE):\n  hit   n=70958  fence(i)   1880.5  ids(ii)  17.7  plan(iii)    6.2  pwait(iii)      0.2  stage(iv)   9.5  record(iv)   1.1  next(v)   54.8 (submit  11.5)  | after the fence    89.5 us\n  miss  n=29802  fence(i)   1970.2  ids(ii)  15.4  plan(iii)   84.0  pwait(iii)   6861.4  stage(iv)   7.0  record(iv)   5.5  next(v)   68.3 (submit  29.2)  | after the fence  7041.7 us\n  (i) blocked in cmd_wait; (ii) verify + top-k, already host-coherent; (iii) planner lookup and miss issue, then the wait on it; (iv) MoE staging and recording; (v) the next layer's prologue up to the vkQueueSubmit that carries this layer's MoE. 'after the fence' is (ii)..(v): the host half of the GPU-side gap the trace calls the gate gap.\n"
+}
