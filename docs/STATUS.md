@@ -1996,144 +1996,144 @@ Each item's mechanism, its prediction (already halved by the "halve it" rule), i
    (it incidentally freezes path A's 3,400 slots into a first-touch pin, raising misses by 41%). **The default stays a single global LRU**, recorded in §3 55.
    What is left is the instrumentation (`hits_path_a/b`, `fills_path_a/b`) and two numbers: a path-B read is **0.036 ms per expert read** and a path-A write is **~6.8 ms/token** --
    **the latter is an order of magnitude larger than the former**, and reopening this needs a form that "changes placement only, without also becoming a pin", and that is positive on more than one script at once.
-1. ~~**给 `ReadFile` 两侧插桩，解释每次 miss 的 20–31 ms。**~~ **已完成，答案是"就是盘"**（§4）。
-   接这一位的是那条式子的两个因子。**(a) score-aware 淘汰已经做完了，答案是 NO-GO**
-   （§3 的 47，`p4_cache_policy.md` §12）：127 种淘汰配置在 4.6 GB/s 的 demand-only 模型上
-   跑完，最好的可实现形状 `last_use + α × heat` 在 C=5,100 的测试集上只有 **+2.3%**，
-   折半后 **+1.2%**，低于 ±3% 的抖动带；top-16 的原始分数只贡献其中 0.06 pt。
-   Belady 的 **+40%** 在"未来"里，当前状态的任何函数都够不着它。
-   **所以第 1 项现在只剩 (b)：第二块盘。**
-   ⚠️ **2026-09-19 收窄（Track D2，§3 的 58，`p4_dual_source.md`）**：读路径这一侧**已经做完了**——
-   `--mirror DIR` 把 manifest 引用的每个 shard 在第二个根下也开一份，
-   按**加权最小在飞字节**分流（权重 = 启动探针），默认关。
-   **但「stripe 到 9 GB/s，+32–40%」这个预测在本机不成立**：本机没有第二块 NVMe，
-   手上的第二块盘是 **1.0 GB/s 的 USB 外置**，加起来是 **+22% 的带宽**而不是 ×2。
-   实测聚合随机读 **3.453 → 4.555 GB/s（+31%，分流 78 : 22，主盘份额没掉）**，
-   折成 decode 的预测是 **+14%，砍半 +7%**，而且两条打折理由已经点名
-   （只路由 P0/P3；decode 是突发形状）——**很可能落进 ±3% 的带**。
-   **端到端 ABAB 本轮没跑成，而且不是因为没排上机器**：机器空了之后
-   **E: 在引擎的负载形状下掉出了总线**（48 个 `NO_BUFFERING|OVERLAPPED` 句柄上的并发随机读，
-   跟在 510 GB 的持续写后面），把一个 `deepmoe` 留在 `taskkill /F` 都杀不掉的 I/O 等待里。
-   harness 是 `bench/d2_abab.py`，等一块**插得住**的盘。
-   ⚠️ **2026-09-19 下午再收窄一次（Track D3，§3 的 59，`p4_dual_source.md` §7）**：
-   那条命令**跑了**。E: 物理重插、机器空、先 relink，`ls` 与 `nvme_bench`（**0.962 GB/s**）**都过**——
-   **引擎带 `--mirror` 还是死在初始化**：`pinned load of 'norm.weight': overlapped read failed`，
-   **win32 1117 = ERROR_IO_DEVICE**，和上午**同一个 tensor**（D2 在 `iocp.cpp` 里加的那个码，
-   第一次派上用场）。**A/B 表不存在，因为 B 臂起不来 ⇒ NO-GO，不看 3%。**
-   off 臂今天的单盘基线：**4.5693 tok/s / `nvme_stall` 113.5 ms / hit 0.8957**（`y_turns`，252 step，5,000 槽）。
-   **新教训：轻 I/O 恢复 ≠ 盘可用**——`ls` 当健康检查不够，判据得是「引擎能不能加载完」。
-   所以 **(b2) 不要再试**升级成：**不要再试，包括在它看起来已经好了的时候**；
-   **(b1) 第二块真 NVMe** 一个字不改，仍然是这一侧唯一开着的大杠杆，读路径的代码仍然就位。
-   顺带：`d2_abab.py` 的 `cell_stats` 读错 key（`"type"` vs serve 写的 `"event"`），
-   **每个 cell 都静默报 0.0000 tok/s**——D2 §4 那个「正常跑完 144 s」的 off 臂就是这样丢掉数的，已修。
-   **这一项要重新写成两条**：(b1) **第二块真 NVMe** ——+32–40% 的那句只对它成立，
-   而读路径的代码**已经就位**，插上盘、拷一份、`--mirror` 就行；
-   (b2) **这块 U 盘** —— **不要再试**：带宽是真的（净加 1.0 GB/s），可靠性不是。
-   ⚠️ **2026-09-19 晚第三次收窄（Track D4，§3 的 60，`p4_dual_source.md` §8）**：
-   用户换了 USB 口、`chkdsk /spotfix` 修了 NTFS、补拷了丢掉的 2 个文件，
-   **DX §5.1 的验收门这一次 PASS 了**——`dx_probe` 48 句柄 × QD 24，
-   **300 s 纯 4 MiB 1.041 GB/s 零错误、300 s 带 12 KiB 插入 1.040 GB/s 零错误，句柄 158 ms（原 17 s）**。
-   **引擎还是死在同一个地方**：第一个 `--mirror` cell 拿到
-   `pinned load of 'norm.weight' ... win32 1117, 12288 B at off 1323827200`——
-   **和 D3 逐字相同的 tensor 和偏移，跨三个会话的第四次复现**，
-   同一秒 39 条 `disk 153` + 7 条 `UASPStor 129`，之后 `Get-Process` 又挂住。
-   **DX §5.2 建议的那条镜像侧健康闸本轮全部落地了**（启动 pinned 试读 + 失败摘镜像 + 运行期连续 N 次 I/O 错误动态摘源），
-   **闸做了它该做的**（摘源时拿到的码是 **win32 433 = ERROR_NO_SUCH_DEVICE**：盘不在总线上了），
-   **但它救不了这一局**：`PinnedStore::load` 把第一个失败的请求直接抛出去，
-   摘源和「引擎决定失败」是同一秒。**最后差的那一条是「被摘源上失败的请求在主盘上重放」，没写**——判决已定。
-   **新教训比 D3 那条更贵**：**`dx_probe` 也不是健康检查**。
-   单盘 48 句柄 QD 24 的稳态形状过了 600 秒，不等于引擎的形状
-   （**两块盘各 48 个句柄 + pinned load 的上千并发请求 + 权重路由**）能活 10 秒。
-   **唯一算数的门是引擎自己跑完一个 cell。**
-   所以 **(b2) 不要再试**再升级一次：**不要再试，包括在它通过了为它专门写的那道验收门之后。**
-   **(b1) 仍然一个字不改**，而 DX §4.1 的 **USB4/雷电盒子**（把 UAS 桥那一层整个拿掉）
-   是 (b1) 之外唯一还没试过的形状。
-   **它仍然是 MB/token 这一侧唯一还开着的大杠杆**——另一个是容量，已经顶到本机的 5,100 槽。
-2. ~~**把 SSD KV 前缀复用接进 `serve` 的默认路径。**~~ **Linux 上已关闭（2026-09-29，见 0s）**：`serve` 早就默认开着它（Track R2，`p4_kv_ux.md` §8）。
-   Linux 上 55 个 slab 全在 path A（5,500 槽）的状态下，启动恢复 40 次里成功 39 次；唯一一次被拒是上下文长度（4,197 > `--max-context` 4,096），按 H1b 降级为冷启动。
-   下面的 ② 只剩 Windows 还开着。
-   （原文）已实测 41×（101.6 s → 2.47 s），已实现，只是没默认开。这是当前性价比最高的一项。
-   ⚠️ **2026-09-19 发现一个先决条件（Track D3，§3 的 59）**：在**默认 cache 大小**下
-   `.pkv` 恢复**会失败，而且失败是致命的不是降级的**——path A 被 expert cache 占满之后
-   （`slab pool: path A full after 34 slabs`），KV 盘恢复拿不到显存：
-   `serve: kv-disk restore failed: internal: vkQueueSubmit2 failed (-2)`，
-   这个错误**直接抛进 `tools/chat.py:186` 杀掉那一轮**。
-   镜像那一侧有「优化永远不是正确性输入，开不出来就降级成 warning」这条规矩（`p4_dual_source.md` §2），
-   **KV 盘这一侧没有**。默认开之前要先补两件：~~① 恢复失败降级成冷启动 warning；~~
-   **① 已做（Track H1b，2026-09-19）**：`restore_or_cold()`（`runtime/session.h`）把恢复失败——
-   分配被拒、文件损坏、尺寸不符，**一个错误码都不例外**——变成一条 warning + 冷 prefill，
-   `ReplayStats.cold_fallback` / `cold_reason` 带出来，`serve` 的 `session` 事件多一个
-   `"cold_fallback"` 字段，**那一轮不再报错**。失败后那份 `.pkv` 会被删掉，
-   免得下一次 activate 以同样的方式再失败一次。注入失败的 CPU 单测在 `kvdisk.restore_failure_degrades`，
-   变异（「降级了但仍然返回错误」）在 `tests/mutate.py`。
-   ② path A 满时的落点（退到 path B，或者像 `p4_hitrate.md` §5 给 GPU prefill 留 4 GiB 那样给 KV 留一块）
-   **仍然没做**——H1b 只保证不致命，不保证恢复得成，所以 41× 的复用在 path A 满时拿不到。
-   **2026-09-30 Linux 实测（4,900 槽、17K prompt、单盘）**：第一次 serve 冷 prefill 59.0 s、退出写 `default.pkv` 15 MB；第二次启动恢复成功（17,017 token，启动时重放 127 个位置），同一 prompt 的 TTFT **3.27 s**（回滚到公共前缀 17,008、重放 10 步 3.08 s + 2 个 token 的 prefill 0.2 s），解码命中 0.78 → 0.96。所以 ② 在这台机器的默认预算下没触发；限制只剩"必须是同一 prompt 前缀"和重放那 3 s（每步 300 ms 是冷 cache 的 miss）。`prefill_ahead/serve17010_pkv{1,2}`。
-3. ~~**量 verify-only 的 resident-only 路由在 DSpark 上的收益。**~~ **已做，答案是 NO-GO**（§3 的 40，
-   `p4_resident_routing.md` §10）。`DEEPMOE_ROUTE_RESIDENT_ONLY=verify` 已经实现（第四档，
-   两个 CLI 都收，`DEEPMOE_VERIFY_FIRST` / `DEEPMOE_VERIFY_DRAFT` 拆开两半）：
-   速度这一侧过了（四轮对话 ×1.57，P0 字节 −76%），**质量这一侧 ×1.376 出了 ≤1.3 的带**。
-   本条原本的前提——「`stall1` 的 ≤×1.3 就是 verify-only 的 cache 状态」——**是错的**：
-   那 0.076 是每步一次 P0 买的。
-   ~~**接这一位的是投机解码本身**~~ **也做完了，也是 NO-GO**（§3 的 41 / 42，`p4_dspark_runtime.md` §7）：
-   `Engine::forward_batch` 落地了，于是 verify 的代价第一次是**实测**的——M=6 每位置 0.74× 顺序 decode，
-   并集实测对离线值误差 ≤2%，接受长度 `chain` 3.82 / `longest` 4.77。把这些代进去，
-   **草稿白送时 k=5 反而更慢（0.86×），k=1 最好 1.13×，加上 19–42 ms 的草稿就打平**。
-   **不要再往投机上写代码**，除非第 1 项（score-aware 淘汰 / 第二块盘）先把 MB/token 压下来；
-   那时要重跑的是 `bench.spec_forward_m_curve` 和 `tools/spec_longest.py`，不是重写循环。
-   **2026-09-30 Linux 重跑（0bi）**：命中 0.94 之后顺序 decode 69.6 ms/位置、M=6 批 61.2——decode 快了，批路径没跟上，草稿白送的最好一格从 1.13× 掉到 1.00×。条件改成「批路径先快 1.5 倍」。
-   **唯一还开着、方向为正的问题**：verify 批的草稿行用 resident-only 路由把 P0 打到 0、
-   ms/位置从 102.6 压到 70.9，而草稿行掉质量的代价是"接受率低一点"而不是"输出差一点"——
-   这条要有真实草稿链才测得了。
-3b. ~~**把「引擎只拿到盘的 69%」这件事的两个候选分开**~~ **已做，答案是两个候选是同一件事**（Track Q2，`p4_p0_queue.md` §9–§13）。**目的地内存**确实是原因，但它贵在**提交**不在传输：往 path A 读一个 4 MiB chunk，同步的 `ReadFile` 要 **704 µs**（普通主机内存 70–122 µs），因为内核要 probe 并锁住 1,024 个写合并的设备映射页。而这个调用过去**只在 dispatcher 一条线程上**发生，所以它同时也是**补队速度**：42.81 s 的 issue 里 42.71 s 是它，一个 token ~124 个 chunk × 0.7 ms ≈ **87 ms**，而 `nvme_stall` 才 105 ms。完成回调是清白的（0.13 s，1.6 µs/次）。**已落地并默认开**：`IoEngine` 的提交线程池（`kDefaultSubmitThreads = 8`，`DEEPMOE_IO_SUBMIT_THREADS=1` 回到旧行为）+ runtime `IoConfig` 的 P0 队列 24 / 96 MiB（P1–P3 仍是 8 / 32 MiB）。**4.828 → 4.998 tok/s（+3.5%）**，stall 108.1 → 100.9 ms，issue 42.81 → **0.51 s**，queue wait 2.01 → 0.09 ms，busy 窗口 3.90 → **4.10 GB/s = D: 天花板的 89%**。**预测（+13%）偏乐观，机制说对了**：参照系本来就该是 D: 的 4.60 而不是 C: 的 5.16（§3 的 46），而且那还是**连续流**的天花板——引擎是突发的，一层只有 ~9.6 个 chunk，每层都要重新爬坡再排空。**剩下的不是「填队列」能拿的**，所以这一条到此为止；接下去仍然回到第 1 项（score-aware 淘汰 / 第二块盘）。
-   **2026-09-19 追记（Track S1，§3 的 56）**：这条的最后一个疑问——「704 µs 还在，把它换成 staged fill 是不是还能再拿一次」——
-   **也关掉了**。`io_dst_bench` 新的 `stage` 档（读进 path B 环 + `vkCmdCopyBuffer` 进 path A，端到端墙钟含拷贝，n=5）：
-   QD 8 **+0.12%**、QD 24 **+0.35%**，A 臂噪声底 **0.69% / 0.40%**，判据 ≥5%。
-   **因为 Q2 自己已经把那 704 µs 拿走了**：`patha` 和 `pathb` **在发出时的队列深度相同**（6.87/6.87、22.02/22.04）。
-   **运行时一行没动。** 顺带定价：`vkCmdCopyBuffer` 18.8 MB = **0.145 ms（129 GB/s）**，
-   而 `gpu::Device` **只有一个 compute 队列**——拷贝要和 decode 抢它（21.3 miss × 0.145 = 3.1 ms/token）。
-   要重开需要一条真正的 transfer 队列，外加一个**突发**形状的 bench（K1b 那 6.8 ms/token 是 `first-of-burst` 的残留，稳态 bench 量不到）。
+1. ~~**Instrument both sides of `ReadFile` and explain the 20–31 ms of every miss.**~~ **Done, and the answer is "it is the drive"** (§4).
+   What takes this slot are the two factors in that formula. **(a) score-aware eviction is done, and the answer is NO-GO**
+   (§3 47, `p4_cache_policy.md` §12): 127 eviction configurations were run on a demand-only model at 4.6 GB/s,
+   and the best achievable shape, `last_use + α × heat`, is only **+2.3%** on the C=5,100 test set,
+   **+1.2%** after halving, below the ±3% jitter band; the raw top-16 scores contribute 0.06 pt of that.
+   Belady's **+40%** lives in "the future", and no function of the current state can reach it.
+   **So item 1 is now only (b): a second drive.**
+   ⚠️ **Narrowed 2026-09-19 (Track D2, §3 58, `p4_dual_source.md`)**: the read-path side **is done** --
+   `--mirror DIR` opens a second copy of every shard the manifest references under a second root,
+   and splits by **weighted least in-flight bytes** (the weights come from the startup probe), off by default.
+   **But the prediction "stripe to 9 GB/s, +32–40%" does not hold on this machine**: it has no second NVMe,
+   and the second drive to hand is a **1.0 GB/s USB external**, which adds up to **+22% of bandwidth** rather than ×2.
+   Measured aggregate random read **3.453 → 4.555 GB/s (+31%, a 78 : 22 split, the primary's share did not drop)**,
+   which folds into a decode prediction of **+14%, halved +7%**, and the two reasons to discount it are already named
+   (only P0/P3 are routed; decode is burst-shaped) -- **so it will very likely land inside the ±3% band**.
+   **The end-to-end ABAB did not run this round, and not for want of machine time**: once the machine was free,
+   **E: fell off the bus under the engine's load shape** (concurrent random reads over 48 `NO_BUFFERING|OVERLAPPED` handles,
+   following a sustained 510 GB write), leaving a `deepmoe` in an I/O wait that `taskkill /F` could not kill.
+   The harness is `bench/d2_abab.py`, waiting for a drive that **stays plugged in**.
+   ⚠️ **Narrowed again on the afternoon of 2026-09-19 (Track D3, §3 59, `p4_dual_source.md` §7)**:
+   that command **ran**. E: was physically replugged, the machine was free, it was relinked first, and both `ls` and `nvme_bench` (**0.962 GB/s**) **passed** --
+   **and the engine with `--mirror` still died in initialisation**: `pinned load of 'norm.weight': overlapped read failed`,
+   **win32 1117 = ERROR_IO_DEVICE**, on **the same tensor** as that morning (the code D2 added in `iocp.cpp`,
+   earning its keep for the first time). **There is no A/B table, because the B arm will not come up ⇒ NO-GO, never mind the 3%.**
+   Today's single-drive baseline for the off arm: **4.5693 tok/s / `nvme_stall` 113.5 ms / hit 0.8957** (`y_turns`, 252 steps, 5,000 slots).
+   **The new lesson: recovering under light I/O ≠ the drive is usable** -- an `ls` is not enough as a health check, and the criterion has to be "can the engine finish loading".
+   So **(b2) do not try again** is upgraded to: **do not try again, including when it looks like it has recovered**;
+   **(b1) a second real NVMe** is unchanged to the letter, still the one large lever open on this side, and the read path's code is still in place.
+   Incidentally: `d2_abab.py`'s `cell_stats` read the wrong key (`"type"` against the `"event"` serve writes),
+   so **every cell silently reported 0.0000 tok/s** -- that is how D2 §4's "ran normally for 144 s" off arm lost its numbers; fixed.
+   **This item needs rewriting as two**: (b1) **a second real NVMe** -- the +32–40% sentence holds only for that,
+   and the read path's code **is already in place**: plug the drive in, copy a shard set, pass `--mirror`;
+   (b2) **this thumb drive** -- **do not try again**: the bandwidth is real (a net +1.0 GB/s), the reliability is not.
+   ⚠️ **Narrowed a third time on the evening of 2026-09-19 (Track D4, §3 60, `p4_dual_source.md` §8)**:
+   the user changed the USB port, `chkdsk /spotfix` repaired the NTFS, and the 2 missing files were re-copied,
+   and **DX §5.1's acceptance gate PASSED this time** -- `dx_probe`, 48 handles × QD 24,
+   **300 s of pure 4 MiB at 1.041 GB/s with zero errors, 300 s with 12 KiB reads interleaved at 1.040 GB/s with zero errors, handles in 158 ms (17 s before)**.
+   **The engine still died in the same place**: the first `--mirror` cell got
+   `pinned load of 'norm.weight' ... win32 1117, 12288 B at off 1323827200` --
+   **the same tensor and the same offset as D3, to the letter, the fourth reproduction across three sessions** --
+   with 39 `disk 153` + 7 `UASPStor 129` in the same second, after which `Get-Process` hung again.
+   **Every part of the mirror-side health gate DX §5.2 recommended landed this round** (a pinned test read at startup + dropping the mirror on failure + dropping a source dynamically after N consecutive I/O errors at run time),
+   **and the gate did its job** (the code it got when dropping the source was **win32 433 = ERROR_NO_SUCH_DEVICE**: the drive was no longer on the bus),
+   **but it could not save this round**: `PinnedStore::load` throws the first failed request straight out,
+   so dropping the source and "the engine decides it has failed" happen in the same second. **The one piece still missing is "replay a request that failed on a dropped source against the primary", and it is not written** -- the verdict is already in.
+   **The new lesson is dearer than D3's**: **`dx_probe` is not a health check either.**
+   A steady-state shape of 48 handles at QD 24 on one drive surviving 600 seconds does not mean the engine's shape
+   (**48 handles on each of two drives + the thousands of concurrent requests of a pinned load + weighted routing**) survives 10.
+   **The only gate that counts is the engine finishing a cell itself.**
+   So **(b2) do not try again** is upgraded once more: **do not try again, including after it has passed the acceptance gate written specially for it.**
+   **(b1) is still unchanged to the letter**, and DX §4.1's **USB4/Thunderbolt enclosure** (removing the UAS bridge layer entirely)
+   is the only shape besides (b1) that has not been tried.
+   **It is still the one large lever open on the MB/token side** -- the other is capacity, and that is already at this machine's 5,100-slot ceiling.
+2. ~~**Wire SSD KV prefix reuse into `serve`'s default path.**~~ **Closed on Linux (2026-09-29, see 0s)**: `serve` has had it on by default for a long time (Track R2, `p4_kv_ux.md` §8).
+   On Linux, with all 55 slabs in path A (5,500 slots), startup restore succeeded 39 times out of 40; the one refusal was the context length (4,197 > `--max-context` 4,096), and H1b degraded it to a cold start.
+   ② below is only still open on Windows.
+   (Original text) 41× measured (101.6 s → 2.47 s), implemented, just not on by default. This is the best value for money right now.
+   ⚠️ **A precondition found 2026-09-19 (Track D3, §3 59)**: at the **default cache size**,
+   a `.pkv` restore **fails, and the failure is fatal rather than degrading** -- once path A is filled by the expert cache
+   (`slab pool: path A full after 34 slabs`), the KV disk restore cannot get memory:
+   `serve: kv-disk restore failed: internal: vkQueueSubmit2 failed (-2)`,
+   and that error **is thrown straight into `tools/chat.py:186` and kills the turn**.
+   The mirror side has the rule "an optimisation is never a correctness input; if it cannot come up it degrades to a warning" (`p4_dual_source.md` §2),
+   and **the KV disk side did not**. Two things had to be added before it could be on by default: ~~① a failed restore degrades to a cold-start warning;~~
+   **① done (Track H1b, 2026-09-19)**: `restore_or_cold()` (`runtime/session.h`) turns a failed restore --
+   allocation refused, a corrupt file, a size mismatch, **with no error code excepted** -- into a warning plus a cold prefill,
+   carried out through `ReplayStats.cold_fallback` / `cold_reason`, with a `"cold_fallback"` field added to `serve`'s `session` event,
+   and **that turn no longer errors**. The bad `.pkv` is deleted afterwards,
+   so the next activate does not fail the same way again. The CPU unit test with the injected failure is `kvdisk.restore_failure_degrades`,
+   and the mutation ("it degraded but still returned an error") is in `tests/mutate.py`.
+   ② Where to land when path A is full (fall back to path B, or reserve a piece for KV the way `p4_hitrate.md` §5 reserves 4 GiB for GPU prefill)
+   **is still not done** -- H1b only guarantees it is not fatal, not that the restore succeeds, so the 41× of reuse is unavailable when path A is full.
+   **Measured on Linux 2026-09-30 (4,900 slots, a 17K prompt, one drive)**: the first serve cold-prefilled in 59.0 s and wrote a 15 MB `default.pkv` on exit; the second start restored successfully (17,017 tokens, replaying 127 positions at startup), and the same prompt's TTFT was **3.27 s** (rolled back to the common prefix at 17,008, replayed 10 steps in 3.08 s + 0.2 s of prefill for 2 tokens), with decode hit 0.78 → 0.96. So ② does not trigger under this machine's default budget; the limits left are "it has to be the same prompt prefix" and the 3 s of replay (the 300 ms a step is a cold-cache miss). `prefill_ahead/serve17010_pkv{1,2}`.
+3. ~~**Measure what verify-only resident-only routing buys on DSpark.**~~ **Done, and the answer is NO-GO** (§3 40,
+   `p4_resident_routing.md` §10). `DEEPMOE_ROUTE_RESIDENT_ONLY=verify` is implemented (a fourth mode,
+   accepted by both CLIs, with `DEEPMOE_VERIFY_FIRST` / `DEEPMOE_VERIFY_DRAFT` splitting the two halves):
+   the speed side passed (×1.57 over four turns, P0 bytes −76%), and **the quality side, ×1.376, left the ≤1.3 band**.
+   This item's original premise -- "`stall1`'s ≤×1.3 is verify-only's cache state" -- **was wrong**:
+   that 0.076 was bought by one P0 per step.
+   ~~**What takes this slot is speculative decoding itself**~~ **also done, also a NO-GO** (§3 41 / 42, `p4_dspark_runtime.md` §7):
+   `Engine::forward_batch` landed, so verify's cost is **measured** for the first time -- M=6 is 0.74× sequential decode per position,
+   the measured union is within ≤2% of the offline figure, and the acceptance length is `chain` 3.82 / `longest` 4.77. Put those in and
+   **k=5 is actually slower even with the draft free (0.86×), k=1 is the best at 1.13×, and adding 19–42 ms of draft brings it back to even**.
+   **Do not write any more code toward speculation** unless item 1 (score-aware eviction / a second drive) brings MB/token down first;
+   when that happens what has to be rerun is `bench.spec_forward_m_curve` and `tools/spec_longest.py`, not a rewrite of the loop.
+   **Rerun on Linux 2026-09-30 (0bi)**: past hit 0.94, sequential decode is 69.6 ms a position and an M=6 batch is 61.2 -- decode got faster and the batch path did not keep up, so the best cell with the draft free fell from 1.13× to 1.00×. The condition becomes "the batch path has to be 1.5 times faster first".
+   **The one question still open and pointing the right way**: routing the verify batch's draft rows resident-only takes P0 to 0
+   and the ms per position from 102.6 to 70.9, and what a draft row loses in quality is "a slightly lower acceptance rate" rather than "worse output" --
+   that one cannot be measured without a real draft chain.
+3b. ~~**Separate the two candidates for "the engine only gets 69% of the drive"**~~ **done, and the answer is that the two candidates are the same thing** (Track Q2, `p4_p0_queue.md` §9–§13). **The destination memory** really is the cause, but its cost is in the **submit**, not the transfer: reading a 4 MiB chunk into path A takes **704 µs** of synchronous `ReadFile` (70–122 µs for ordinary host memory), because the kernel has to probe and lock 1,024 write-combining device-mapped pages. And that call used to happen **on the dispatcher's single thread**, which makes it the **queue-refill rate** as well: of 42.81 s of issue, 42.71 s was it, and at ~124 chunks a token × 0.7 ms ≈ **87 ms** against an `nvme_stall` of only 105 ms. The completion callbacks are innocent (0.13 s, 1.6 µs each). **Landed and on by default**: a submit thread pool in `IoEngine` (`kDefaultSubmitThreads = 8`, `DEEPMOE_IO_SUBMIT_THREADS=1` restores the old behaviour) + P0 queues of 24 / 96 MiB in the runtime's `IoConfig` (P1–P3 stay at 8 / 32 MiB). **4.828 → 4.998 tok/s (+3.5%)**, stall 108.1 → 100.9 ms, issue 42.81 → **0.51 s**, queue wait 2.01 → 0.09 ms, and the busy window 3.90 → **4.10 GB/s = 89% of D:'s ceiling**. **The prediction (+13%) was optimistic and the mechanism was right**: the reference should have been D:'s 4.60 rather than C:'s 5.16 (§3 46), and even that is the ceiling of a **continuous stream** -- the engine is bursty, a layer has only ~9.6 chunks, and every layer has to climb the ramp again and then drain. **What is left is not something "filling the queue" can get**, so this item stops here; the way forward is still item 1 (score-aware eviction / a second drive).
+   **2026-09-19 addendum (Track S1, §3 56)**: this item's last open question -- "the 704 µs is still there, would replacing it with a staged fill buy another round" --
+   **is closed too**. `io_dst_bench`'s new `stage` mode (read into a path B ring + `vkCmdCopyBuffer` into path A, end-to-end wall clock including the copy, n=5):
+   QD 8 **+0.12%**, QD 24 **+0.35%**, against A-arm noise floors of **0.69% / 0.40%** and a criterion of ≥5%.
+   **Because Q2 had already taken that 704 µs away**: `patha` and `pathb` **are issued at the same queue depth** (6.87/6.87, 22.02/22.04).
+   **Not a line of the runtime changed.** A price tag in passing: `vkCmdCopyBuffer` of 18.8 MB is **0.145 ms (129 GB/s)**,
+   and `gpu::Device` **has only one compute queue** -- a copy has to contend with decode for it (21.3 misses × 0.145 = 3.1 ms/token).
+   Reopening it needs a real transfer queue, plus a **burst**-shaped bench (K1b's 6.8 ms/token was a `first-of-burst` residue that a steady-state bench cannot see).
 
-4. ~~**per-dispatch trace 上 GPU**~~ **已完成**（Track PD，§3 的 49）。trace 在真机上工作、没有丢 stamp、开销为 0。
-   拿到的数：热步 **busy 85.23 + gap 16.84 = 102.07 ms**，而 gap 的分布是 **16.04 ms 在 gate 往返、0.80 ms 在全部 700 个非 MoE dispatch 的 barrier 上**。
-   **这个分布就是第 5、7 项的判决**。
-   **Track F6 的 roofline（§3 的 52）把这 16 ms 标了价**：MoE 每 token 读 4.512 GB，`moe_gpu` 42.14 ms = 107 GB/s = UMA 的 50%，而 kernel 本身 222.6 GB/s；缺口 18.5–21.9 ms/token 全在 dispatch / 间隙，与 trace 的 16.04 ms gate 往返一致。
-   **压到 kernel 速率 = +5.2%…+6.3%（砍半）**，但唯一够得着它的机制（device 侧 gate）被第 5 项关掉。
-   ~~剩下的路是把 gate 往返本身从 0.40 ms 压小（host 侧轮询 / 预录 MoE 命令缓冲 / 间接参数），未测。~~ **已测，也是 NO-GO**（Track G，§3 的 53，`plan_p5.md` §3(g)）：
-   那 0.40 ms/层 里 **265 µs 是驱动的**——`vkQueueSubmit2` 这一次调用 **99.5 µs**、submit 返回到 GPU 起跑 **≈150 µs**、fence 唤醒 **≈15 µs**；
-   我们自己的代码（planner + staging + record + 下一层序言）一共 **95 µs**，而其中 45 是 `act_quant`（归第 7 项的 c4）。
-   三件可动的（自旋 60.9 + 提前 submit 32.6 + 预录 9.7）**合计 103 µs/层 = 4.1 ms/token**，而可测的门槛是 **250 µs/层**。
-   已落地的 `DEEPMOE_FENCE_SPIN_US`：热步 **−2.3%**、对话 **−1.0%（反向）**，**默认 0**。
-   **attention 这条线关掉**：dense 8,522.8 MB/token ÷ 43.51 ms = 196 GB/s = 91% of UMA，打满也只有 +1.1%（砍半）。
-5. ~~**persistent-dispatch decode**~~ **关闭**（§3 的 48 + 49）。两侧同时倒：
-   合法性——`residency_probe` 说**两个 workgroup 的握手 1,000 次里第 3 次就超时**，自旋等待在这台机器上不可用（常驻上限 ~406 组，但共存不蕴含前进）；
-   收益——「一张 dispatch 图」的退化形**已经是今天的实现**（41 submit，只在 gate 处切开），再融合的天花板是 **0.8 ms/token**。
-   ~~要重开它，先得有一条**不用自旋**的 device 侧 gate。~~
-   **2026-09-21 订正（Track HG，§3 的 66，`p4_hostflag_gate.md`）**：那句话的前提只对
-   **workgroup↔workgroup** 成立。**host 信号的自旋是合法的**——一个 command buffer 装下整个 token、
-   每层 gate 之后一个 1-workgroup 自旋等 host 写的 uint：2,500+ 个 cmdbuf **零 TDR、零 payload 错误**，
-   256 个背景 workgroup 常驻时**零超时**，**3998/4000 轮真的看到了 kernel 已在跑之后 host 才写下的值**。
-   **它输在延迟**：p50 **3.6 µs**，但 host 没在几微秒内答上来就固定 **~5.5 ms**（1 ms 与 5 ms 服务时间
-   延迟完全一样 ⇒ 是刷新周期不是延迟；专职热轮询线程无效）。
-   按 `40 × (400 − 实测)`：**−23 ~ −205 ms/token，每一格都是负的**。
-   **所以第 5 项仍然关闭，但关它的理由换了**：不是"自旋不合法"，是"host→device 的可见性粒度是 5.5 ms"。
-   稳态 3.6 µs 若拿得到值 **15.9 ms/token**，够不着的原因是 decode 一层 host 侧最少 95 µs（§3 的 53）。
-6. ~~**absorbed-K attention（V4.1）**：哪些矩阵可以折叠~~ **已关闭，不要做**（`plan_p5.md` §3(b)，一次只读的代数检查）：
-   **V4.1-Flash 不是 MLA**——`wkv` 是唯一的 KV 矩阵且是降维，attention kernel 的 K 和 V 是同一个张量，
-   没有 `wkv_b` / `W_UK` / `W_UV` 可吸收（448/64 只是一个 512 向量的 RoPE 划分）。吸收已经烤进 checkpoint：
-   `wq_b` 就是 MLA 语言里的乘积形式。四个阻断折叠的点（`q_norm`、`kv_norm`、进 window KV 前对整个 512 维的 fp8 假量化、
-   输出最后 64 维的逆 RoPE）也一并记在那张表里，将来任何"把两个矩阵合起来"的提议先看它。
-   代数上唯一干净的 `wo_a`→`wo_b` 会把参数量 ×4（LoRA 分解存在的全部理由），也不做。
-   **2026-09-30 订正**：本条原来写成"待办"，读者会以为它开着；它在 P5 规划阶段就已经是一个"不做"。
-7. ~~**prologue/epilogue 融合**（c1–c3）~~ **划掉**（§3 的 49）。层内 barrier 实测：普通层 17 个 dispatch 一共 **18 µs**、源层 26 个一共 **24 µs**——40 层 = 0.8 ms/token，四分之一个抖动带。
-   ~~**新开一项（Track G，§3 的 54）**：把 Track T 的 live-column mask 在 M=1 路径上特化掉~~
-   **已做完，而且比预测大三倍**（Track K1a，2026-09-19，`plan_p5.md` §3(h)）。
-   mask 那一半对上了：`kernel_bench` M=1 ABAB 四对 **0.6547 → 0.6028 ms/pair（−7.9%）**，B 臂正好落在 `fb53514^` 的 0.6035。
-   但**引擎从来没有创建过 M=1 的 pipeline**：`moe_bridge.cpp` 用 `spec.m = kMoeBatchMax`（=6）建 runner，decode 只把 `live_columns` 设成 1，
-   于是每个 decode token 用六个累加器算一列。`MoeRunner` 现在带一套 M=1 特化（gate/up + h 量化 + down 三个必须一起换）：
-   **热步 101.8 → 97.0 ms（−4.7%）、moe gpu 37.87 → 34.33（−9.3%）**，预测是 −1.6 ms，实测 **−4.8**。
-   闸：`l3_ppl` off **NLL 0.630051** 逐位复现、`suite.gpu_moe` / `suite.decode` / `suite.decode_longctx` 全过。**默认开**，`DEEPMOE_MOE_STATIC_M1=0` 是退路。
-   ~~**c4 还开着**（`WoB` 的 epilogue 直接写出量化好的 FFN 输入），它省的是 host 往返不是 dispatch：MoE host 今天 1.6–1.9 ms/token。~~
+4. ~~**Get the per-dispatch trace onto the GPU**~~ **done** (Track PD, §3 49). The trace works on the real machine, loses no stamps, and its overhead is 0.
+   What it gave: the hot step is **busy 85.23 + gap 16.84 = 102.07 ms**, and the gap's distribution is **16.04 ms in the gate round trip and 0.80 ms across the barriers of all 700 non-MoE dispatches**.
+   **That distribution is the verdict on items 5 and 7.**
+   **Track F6's roofline (§3 52) put a price on those 16 ms**: MoE reads 4.512 GB a token, `moe_gpu` 42.14 ms = 107 GB/s = 50% of UMA, while the kernel itself does 222.6 GB/s; the shortfall of 18.5–21.9 ms/token is all in dispatch and gaps, which agrees with the trace's 16.04 ms of gate round trip.
+   **Pressing it down to kernel rate = +5.2% … +6.3% (halved)**, but the only mechanism that can reach it (a device-side gate) is closed by item 5.
+   ~~The route left is to shrink the gate round trip itself from 0.40 ms (host-side polling / pre-recorded MoE command buffers / indirect parameters), unmeasured.~~ **Measured, and also a NO-GO** (Track G, §3 53, `plan_p5.md` §3(g)):
+   of that 0.40 ms a layer, **265 µs is the driver's** -- the single `vkQueueSubmit2` call is **99.5 µs**, submit returning to the GPU starting is **≈150 µs**, and the fence wake-up is **≈15 µs**;
+   our own code (planner + staging + record + the next layer's prologue) is **95 µs** in total, of which 45 is `act_quant` (which belongs to item 7's c4).
+   The three movable pieces (spinning 60.9 + submitting earlier 32.6 + pre-recording 9.7) come to **103 µs a layer = 4.1 ms/token**, against a measurable threshold of **250 µs a layer**.
+   `DEEPMOE_FENCE_SPIN_US` landed: the hot step **−2.3%**, the conversation **−1.0% (the wrong way)**, **default 0**.
+   **The attention line is closed**: dense 8,522.8 MB/token ÷ 43.51 ms = 196 GB/s = 91% of UMA, and saturating it is worth only +1.1% (halved).
+5. ~~**persistent-dispatch decode**~~ **closed** (§3 48 + 49). Both sides fall at once:
+   legality -- `residency_probe` says **a handshake between two workgroups timed out on the 3rd attempt out of 1,000**, so spin-waiting is unavailable on this machine (the resident ceiling is ~406 groups, but coexistence does not imply progress);
+   and the gain -- the degenerate form of "one dispatch graph" **is already today's implementation** (41 submits, cut only at the gate), and fusing further has a ceiling of **0.8 ms/token**.
+   ~~To reopen it, there first has to be a device-side gate that **does not spin**.~~
+   **2026-09-21 correction (Track HG, §3 66, `p4_hostflag_gate.md`)**: that sentence's premise holds only for
+   **workgroup↔workgroup**. **Spinning on a host signal is legal** -- one command buffer holding a whole token,
+   with a 1-workgroup spin after each layer's gate waiting on a uint the host writes: 2,500+ command buffers with **zero TDRs and zero payload errors**,
+   **zero timeouts** with 256 background workgroups resident, and **3998 of 4000 rounds genuinely saw a value the host wrote after the kernel was already running**.
+   **It loses on latency**: p50 **3.6 µs**, but if the host does not answer within a few microseconds it is a fixed **~5.5 ms** (the latency is identical at 1 ms and 5 ms of service time
+   ⇒ it is a refresh period, not a delay; a dedicated hot polling thread does not help).
+   By `40 × (400 − measured)`: **−23 to −205 ms/token, every cell negative**.
+   **So item 5 is still closed, but for a different reason**: not "spinning is illegal" but "host→device visibility is granular at 5.5 ms".
+   The steady-state 3.6 µs would be **15.9 ms/token** if it could be had, and the reason it cannot is that a decode layer's host side is at least 95 µs (§3 53).
+6. ~~**absorbed-K attention (V4.1)**: which matrices can be folded~~ **closed, do not do it** (`plan_p5.md` §3(b), one read-only algebraic check):
+   **V4.1-Flash is not MLA** -- `wkv` is the only KV matrix and it is a down-projection, the attention kernel's K and V are the same tensor,
+   and there is no `wkv_b` / `W_UK` / `W_UV` to absorb (448/64 is just a RoPE split of one 512 vector). The absorption is already baked into the checkpoint:
+   `wq_b` **is** the product form in MLA's language. The four points that block folding (`q_norm`, `kv_norm`, the fp8 fake-quantisation of the whole 512 dimensions before entering the window KV,
+   and the inverse RoPE on the last 64 dimensions of the output) are recorded in that same table; any future proposal to "combine two matrices" should read it first.
+   The one algebraically clean fold, `wo_a`→`wo_b`, would multiply the parameter count by 4 (the entire reason the LoRA factorisation exists), so that is out too.
+   **2026-09-30 correction**: this entry used to be written as a to-do, which reads as open; it was already a "do not do" at P5's planning stage.
+7. ~~**prologue/epilogue fusion** (c1–c3)~~ **struck out** (§3 49). Intra-layer barriers measured: an ordinary layer's 17 dispatches cost **18 µs** in total and a source layer's 26 cost **24 µs** -- 40 layers = 0.8 ms/token, a quarter of the jitter band.
+   ~~**A new item (Track G, §3 54)**: specialise Track T's live-column mask away on the M=1 path~~
+   **done, and three times larger than predicted** (Track K1a, 2026-09-19, `plan_p5.md` §3(h)).
+   The mask half matched: `kernel_bench` at M=1, four ABAB pairs, **0.6547 → 0.6028 ms/pair (−7.9%)**, with the B arm landing exactly on `fb53514^`'s 0.6035.
+   But **the engine had never created an M=1 pipeline**: `moe_bridge.cpp` builds the runner with `spec.m = kMoeBatchMax` (=6) and decode only sets `live_columns` to 1,
+   so every decode token computes one column with six accumulators. `MoeRunner` now carries an M=1 specialisation (gate/up + h quantisation + down all have to change together):
+   **the hot step 101.8 → 97.0 ms (−4.7%), moe gpu 37.87 → 34.33 (−9.3%)**, against a prediction of −1.6 ms and a measurement of **−4.8**.
+   Gates: `l3_ppl` off reproduces **NLL 0.630051** bit for bit, and `suite.gpu_moe` / `suite.decode` / `suite.decode_longctx` all pass. **On by default**, with `DEEPMOE_MOE_STATIC_M1=0` as the way back.
+   ~~**c4 is still open** (`WoB`'s epilogue writes the quantised FFN input out directly); what it saves is host round trips, not dispatches: MoE host is 1.6–1.9 ms/token today.~~
    **Stale, corrected 2026-10-01: c4's saving is already taken on this platform, and a real gap
    sits behind it.** `Engine::init_gpu` turns `shared_early` on by default under RADV
    (`runtime/engine.cpp:912`), `Engine::forward` then calls `moe_.stage_input(call, lc.shared_early)`,
