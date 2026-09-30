@@ -1429,18 +1429,32 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
     std::memcpy(b_.csr_rw.host_ptr, rw.data(), rw.size() * sizeof(float));
     times_.gate += ms_since(t_host);
 
-    auto kg = runner_->kernel({"prefill_gemm", 1, 0, kPfActQ, pcfg_.tile});
-    auto kd = runner_->kernel({"prefill_gemm", 2, 0, kPfActQ, pcfg_.tile});
+    struct TiledPair { uint32_t tile, gateup, down; };
+    std::vector<TiledPair> tiled;
+    const auto add_tile = [&](uint32_t tile) -> Result<void> {
+        auto gateup = runner_->kernel({"prefill_gemm", 1, 0, kPfActQ, tile});
+        if (!gateup) return std::unexpected(gateup.error());
+        auto down = runner_->kernel({"prefill_gemm", 2, 0, kPfActQ, tile});
+        if (!down) return std::unexpected(down.error());
+        tiled.push_back({tile, *gateup, *down});
+        return {};
+    };
+    if (pcfg_.adaptive_moe_tile) {
+        for (uint32_t tile : {4u, 8u, 16u})
+            if (auto r = add_tile(tile); !r) return r;
+    } else {
+        if (auto r = add_tile(pcfg_.tile); !r) return r;
+    }
     auto kq = runner_->kernel({"prefill_elem", 0});
-    if (!kg) return std::unexpected(kg.error());
-    if (!kd) return std::unexpected(kd.error());
     if (!kq) return std::unexpected(kq.error());
-    uint64_t* sg = runner_->slots(*kg);
-    sg[kPgX] = xq; sg[kPgXS] = xs; sg[kPgY] = b_.hplane.dev_addr; sg[kPgIdx] = b_.csr_idx.dev_addr;
-    sg[kPgRW] = b_.csr_rw.dev_addr; sg[kPgJob] = b_.jobs.dev_addr;
-    uint64_t* sd = runner_->slots(*kd);
-    sd[kPgX] = b_.hq.dev_addr; sd[kPgXS] = b_.hs.dev_addr; sd[kPgY] = y;
-    sd[kPgIdx] = b_.csr_idx.dev_addr; sd[kPgJob] = b_.jobs.dev_addr;
+    for (const TiledPair& pair : tiled) {
+        uint64_t* sg = runner_->slots(pair.gateup);
+        sg[kPgX] = xq; sg[kPgXS] = xs; sg[kPgY] = b_.hplane.dev_addr; sg[kPgIdx] = b_.csr_idx.dev_addr;
+        sg[kPgRW] = b_.csr_rw.dev_addr; sg[kPgJob] = b_.jobs.dev_addr;
+        uint64_t* sd = runner_->slots(pair.down);
+        sd[kPgX] = b_.hq.dev_addr; sd[kPgXS] = b_.hs.dev_addr; sd[kPgY] = y;
+        sd[kPgIdx] = b_.csr_idx.dev_addr; sd[kPgJob] = b_.jobs.dev_addr;
+    }
     uint64_t* sq = runner_->slots(*kq);
     sq[0] = b_.hplane.dev_addr; sq[1] = b_.hq.dev_addr; sq[2] = b_.hs.dev_addr;
 
@@ -1453,12 +1467,14 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         // the small experts' three steps, timestamped as three stages
         const double wfp4 = double(inter) * dim * (0.5 + 1.0 / 32);
         for (uint32_t j = j0; j < j1; ++j) {
+            const TiledPair& pair = pcfg_.adaptive_moe_tile
+                ? tiled[jobs[j].n <= 4 ? 0 : jobs[j].n <= 8 ? 1 : 2] : tiled[0];
             PfGemmPush p;
             p.rows = inter; p.k = dim; p.scale_cols = dim / 32; p.n = jobs[j].n; p.x_stride = dim;
             p.y_stride = inter; p.job = j; p.flags = round;
             p.swiglu_limit = static_cast<float>(c.swiglu_limit);
-            if (auto r = runner_->record(cmd_, *kg, &p, sizeof(p), PrefillRunner::gemm_gx(inter),
-                                         PrefillRunner::gemm_gy(jobs[j].n, pcfg_.tile)); !r)
+            if (auto r = runner_->record(cmd_, pair.gateup, &p, sizeof(p), PrefillRunner::gemm_gx(inter),
+                                         PrefillRunner::gemm_gy(jobs[j].n, pair.tile)); !r)
                 return r;
             ++times_.dispatches;
         }
@@ -1471,11 +1487,13 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         if (auto r = cmd_.barrier(); !r) return r;
         mark("moe tiled quant", {0, double(hrows) * inter * (4 + 2.125)});
         for (uint32_t j = j0; j < j1; ++j) {
+            const TiledPair& pair = pcfg_.adaptive_moe_tile
+                ? tiled[jobs[j].n <= 4 ? 0 : jobs[j].n <= 8 ? 1 : 2] : tiled[0];
             PfGemmPush p;
             p.rows = dim; p.k = inter; p.scale_cols = inter / 32; p.n = jobs[j].n;
             p.y_stride = dim; p.job = j; p.flags = round;
-            if (auto r = runner_->record(cmd_, *kd, &p, sizeof(p), PrefillRunner::gemm_gx(dim),
-                                         PrefillRunner::gemm_gy(jobs[j].n, pcfg_.tile)); !r)
+            if (auto r = runner_->record(cmd_, pair.down, &p, sizeof(p), PrefillRunner::gemm_gx(dim),
+                                         PrefillRunner::gemm_gy(jobs[j].n, pair.tile)); !r)
                 return r;
             // y rows are shared between experts: each B must see the last's adds
             if (auto r = cmd_.barrier(); !r) return r;

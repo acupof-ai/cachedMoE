@@ -255,6 +255,9 @@ struct PrefillConfig {
     uint32_t replay = 128;
     uint32_t query_block = 512;
     uint32_t tile = 8;
+    // Use the smallest of 4/8/16 that covers a routed expert's rows, capped
+    // at 16. Disable to use the original single TileM pipeline.
+    bool adaptive_moe_tile = true;
     // Routed-expert transit slots per half of the read-ahead (two halves:
     // one computing, one filling), 2.4 GB at 64. With the P0 queue at the
     // prefill's depth (p0_qd) the read-ahead of 128 experts covers a 4K
