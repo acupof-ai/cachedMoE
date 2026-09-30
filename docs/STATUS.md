@@ -357,10 +357,10 @@ for the same phenomenon here see 23, 25, 30), so **halve** any byte-count-based 
 - **The `XLayout` enum never took effect**: `run_batch` never reads `layout`, and `column_x` fills all 6 columns in both modes, so `Staged ≡ OneColumn`. **Deleted**. The real bug underneath it: the host copied every column out of **column 0 of y**, while the weights are staged per column -- column 0 "happened" to be bit for bit correct, while columns 1/2 were off by 15–22% in |y|max. Fingerprint: the dispersion of `per-column weights only` was **0** before the fix and **5.235e+00** after
 - **bf16 residual stream experiment** (would it put the 6th/7th expert back into the reference's order) -- design §15 issue 3, **never done**. The near-tie at layer 2: incoming cos 0.9997, MoE output **0.9883866**, gate 5/6
 - **softplus in `gate.slang`**: `log(1+exp(z))` goes to zero below z≈−16, max |gpu−cpu| **1.5e-4**, affecting only experts with scores <1e-3. A one-line fix, **still open** (design §15 issue 20)
-- **`KvStore::clear()`** writes 163,840 `−inf` values element by element into the path A mapping on every `reset_context` -- a violation of §7.1 rule 10, **unfixed** (design §15 issue 26)
+- ~~**`KvStore::clear()`** writes 163,840 `−inf` values element by element into the path A mapping on every `reset_context` -- a violation of §7.1 rule 10, **unfixed** (design §15 issue 26)~~ **Stale, corrected 2026-10-01: already fixed.** `runtime/kvstore.cpp` builds the `−inf` fill **once** in ordinary host memory (`ninf_`) and `memcpy`s it in, and its comment cites rule 10 and prices the scalar-loop version it replaced (16,384 uncached stores, ~230 ns each = 3.8 ms per `clear()`).
 - **storing the compressed KV as bf16 instead of packed FP4**: saves 18 MB at 64K (66 vs 48 MB), at the cost of one nibble unpack in the `sparse_attn` inner loop. **Deliberately deferred**
 - **P2 step 2's irreproducibility was not the kernel** -- it was **three tracks concurrently rebuilding `.spv` into the same `build/shaders` directory**. Evidence: step 2 reported a step-0 margin of **7.0927**, an isolated rebuild of its own commit gives **6.7477**, and with Track F's kernel it gives **6.9389** -- the runs that were cited **executed neither set of kernels**. **This is where the "quiet machine" rule comes from** (`plan_p5.md` §1)
-- **the A/B for `MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL`**: the table was designed but **never run** (the sandbox gave `SetNamedSecurityInfoW failed (Win32 5)`). `p4_hitrate.md` §4 is still empty. **Not measured**
+- ~~**the A/B for `MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL`**: the table was designed but **never run** (the sandbox gave `SetNamedSecurityInfoW failed (Win32 5)`). `p4_hitrate.md` §4 is still empty. **Not measured**~~ **Stale, corrected 2026-10-01.** That was the Windows attempt; **F4 later ran it** and the result is in `p4_hitrate.md` §6 and in §7 item 7 (`MOE_OVERLAP` +1-4% and on by default, `PREFILL_HANDOFF` +72% / +49% / +17% at 512 / 1,024 / 2,048 tokens and on by default, `BACKFILL` worth +0.0011 hit for 21.5 GiB more read and **off** by default). This line is what made the owner start re-running it on 2026-10-01; the run was killed once §7 item 7 was read. **Closed -- do not measure it again.**
 
 ### 3.7 The negative results of P4's four wrap-up tracks (2026-09-18) + Track Q1 (43, 44)
 
@@ -2121,12 +2121,33 @@ Even so, the change of direction is real: on a single drive the disk was overwhe
    于是每个 decode token 用六个累加器算一列。`MoeRunner` 现在带一套 M=1 特化（gate/up + h 量化 + down 三个必须一起换）：
    **热步 101.8 → 97.0 ms（−4.7%）、moe gpu 37.87 → 34.33（−9.3%）**，预测是 −1.6 ms，实测 **−4.8**。
    闸：`l3_ppl` off **NLL 0.630051** 逐位复现、`suite.gpu_moe` / `suite.decode` / `suite.decode_longctx` 全过。**默认开**，`DEEPMOE_MOE_STATIC_M1=0` 是退路。
-   **c4 还开着**（`WoB` 的 epilogue 直接写出量化好的 FFN 输入），它省的是 host 往返不是 dispatch：MoE host 今天 1.6–1.9 ms/token。
+   ~~**c4 还开着**（`WoB` 的 epilogue 直接写出量化好的 FFN 输入），它省的是 host 往返不是 dispatch：MoE host 今天 1.6–1.9 ms/token。~~
+   **Stale, corrected 2026-10-01: c4's saving is already taken on this platform, and a real gap
+   sits behind it.** `Engine::init_gpu` turns `shared_early` on by default under RADV
+   (`runtime/engine.cpp:912`), `Engine::forward` then calls `moe_.stage_input(call, lc.shared_early)`,
+   and `GpuMoeBridge::stage_input` skips the host read, the host `act_quant` and the shared table
+   row entirely when `x_on_gpu` is true -- the GPU's `moe_xact` has already written them. So the
+   45 us/layer that §3 53 priced as host `act_quant` is **not being paid here**; what c4 would have
+   bought is bought. **The new open item is the condition on the end of `shared_early_on()`:**
+   `return on && streams_.size() == 1;`. With more than one stream live the whole path silently
+   reverts to the host `act_quant`, and the function's own comment says why -- *"with two, the
+   other stream's submits interleave with this one's and nothing here has been measured."*
+   **Multi-stream decode therefore pays a cost single-stream decode does not, and nobody has
+   measured it.** That is the item that replaces c4.
 8. ~~**2-bit expert**（等 F5 的精度判定）~~ **已否决**（§3 的 37，2 bit 与 3 bit 都是 NO-GO）；
    ~~**命中率杠杆**（等 F4）~~ **已交付**（默认 `auto`、路径 A 预留、三个 A/B，§2.4 / §2.5 / §6 的 7）。
-   接这一位的是 **`prefill_coopmat` stage 0 重写**（多 wave 经 LDS 协作一个输出 tile + 下一个 K 切片预取）。
+   ~~接这一位的是 **`prefill_coopmat` stage 0 重写**（多 wave 经 LDS 协作一个输出 tile + 下一个 K 切片预取）。
    它是 F3 点名的、唯一能动 2.1 TFLOP/s 这个速率的改动（§2.5），但它**只动 prefill**，
-   所以按 §4 的排序它排在最后——除非对话里的 prompt 变长到 prefill 压过 decode。
+   所以按 §4 的排序它排在最后——除非对话里的 prompt 变长到 prefill 压过 decode。~~
+   **Stale, corrected 2026-10-01: that rewrite is `prefill_gemm_lds`, and it has been the default
+   for a long time.** "Several waves cooperating on one output tile through LDS, with the next K
+   slice prefetched" is exactly what `gpu/shaders/prefill_gemm_lds.slang` does, and
+   `pf_lds_geo` picks its geometry for every shape that tiles: `prefill_kernels.cpp:681` (the dense
+   GEMMs), `:926` and `:936` (the two attention tile multiplies) and `:1558` (the routed experts).
+   `prefill_coopmat` stage 0 now runs only as the fallback for a shape that does not tile
+   (`wm == 0`). The rate this item was written against is also long gone -- §3 rows 81, 85, 86, 88,
+   90 and §7 0br/0bu/0bw are all work *on* that kernel. **Nothing here is open; the successor to
+   item 8 is item 7's multi-stream `shared_early` gap.**
 
 **不做**（有编号的理由，不要再提）：BIOS VGM（§3 的 29）、lookahead 预取（23、**35**、**51**——
 **48 换掉了 35 的理由**：盈亏平衡不是 precision 1.00 而是 **≈0.60**，NO-GO 的原因是
