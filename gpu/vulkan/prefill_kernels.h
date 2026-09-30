@@ -291,6 +291,11 @@ struct PrefillConfig {
     // run_moe hands the transit back: the drive was idle from the last batch
     // landing until the next layer's serial phase re-issued otherwise.
     bool     read_ahead_tail = true;
+    // The routed experts' FP4 LDS GEMMs' 16-row tiles per wave, 0 = the
+    // geometry's own choice (wm4 at 17K). wm2 halves the accumulator
+    // registers and doubles the row blocks in flight (STATUS §7 0bc measured
+    // ~80 workgroups per expert against 40 CUs).
+    uint32_t fp4_wm = 0;
     // Round onto bf16 wherever the reference holds a bf16 tensor.
     bool     round = true;
     // The largest prompt the activation buffers are sized for.

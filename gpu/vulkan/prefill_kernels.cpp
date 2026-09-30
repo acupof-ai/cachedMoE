@@ -1534,7 +1534,8 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         // expert (the token count varies); stage 0 otherwise.
         auto gemm = [&](uint32_t R, uint32_t K, uint32_t n32, uint64_t x, uint64_t y,
                         uint32_t fallback, bool fp4) -> Result<std::pair<uint32_t, LdsGeo>> {
-            const LdsGeo g = pf_lds_geo(pcfg_, R, K, n32);
+            LdsGeo g = pf_lds_geo(pcfg_, R, K, n32);
+            if (fp4 && pcfg_.fp4_wm && g.wm) g.wm = std::min(g.wm, pcfg_.fp4_wm);
             if (!g.wm) return std::pair{fallback, g};
             auto k = runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, R, K, g.wm, g.wn, 0, 0, fp4 ? 1u : 0u});
             if (!k) return std::unexpected(k.error());
