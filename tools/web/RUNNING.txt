@@ -15,8 +15,8 @@ deepMoE web UI —— 正在运行的实例
 
 PID
 ---
-  server.py       2533672
-  deepmoe serve   2533685
+  server.py       2589232
+  deepmoe serve   2589234
 
 停止（只按 PID）：kill 2533672（它会带走引擎 2533685）
 
