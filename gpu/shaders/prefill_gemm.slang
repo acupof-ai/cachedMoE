@@ -199,8 +199,8 @@ void stage_gateup(uint3 gid, uint tid) {
         for (uint blk = lane; blk < blocks; blk += LanesPerRow) {
             float w1[32], w3[32];
             int e1, e3;
-            load_wblock(jb.fmt, jb.w1, jb.s1, row, pc.k, pc.scale_cols, blk, w1, e1);
-            load_wblock(jb.fmt, jb.w3, jb.s3, row, pc.k, pc.scale_cols, blk, w3, e3);
+            load_wblock(WFmt, jb.w1, jb.s1, row, pc.k, pc.scale_cols, blk, w1, e1);
+            load_wblock(WFmt, jb.w3, jb.s3, row, pc.k, pc.scale_cols, blk, w3, e3);
             for (uint j = 0; j < TileM; ++j) {
                 const uint m = t0 + j;
                 if (m >= jb.n) break;
@@ -252,7 +252,7 @@ void stage_down(uint3 gid, uint tid) {
         for (uint blk = lane; blk < blocks; blk += LanesPerRow) {
             float w[32];
             int e;
-            load_wblock(jb.fmt, jb.w2, jb.s2, row, pc.k, pc.scale_cols, blk, w, e);
+            load_wblock(WFmt, jb.w2, jb.s2, row, pc.k, pc.scale_cols, blk, w, e);
             for (uint j = 0; j < TileM; ++j) {
                 const uint m = t0 + j;
                 if (m >= jb.n) break;
