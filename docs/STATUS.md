@@ -1892,111 +1892,110 @@ Even so, the change of direction is real: on a single drive the disk was overwhe
    第 0→1 轮库搬了家、句柄从第 3 轮起重复。修法：每次调用都 `vkGetDeviceProcAddr`，不缓存。
    新测试 `gpu.host_import_survives_device_churn`：12 轮设备生命周期，每轮一次 path B 导入；每轮结束在旧入口页上 `MAP_FIXED_NOREPLACE` 一页可写不可执行的匿名页，
    逼 ICD 装到别处——**旧代码 3/3 次 SIGSEGV（exit 139），修后 3/3 过**。
-0g. **2026-09-21：device 侧 gate 的第二条路也关了，但 48 的那句判词要加限定（Track HG，`p4_hostflag_gate.md`，§3 的 66）。**
-   §3 的 **48** 说「自旋等待在这台机器上 NO-GO」——**那只对 workgroup↔workgroup 成立**。
-   换成 **host 写 flag、device 自旋等它**（一个 command buffer 装下整个 token，
-   每层 gate kernel 之后一个 1-workgroup 的自旋 kernel），依赖方向指向 CPU 而不是同伴 workgroup：
-   **合法、安全、正确**——2,500+ 个 command buffer **零 TDR / 零 device 丢失 / 零 payload 错误**，
-   256 个背景 workgroup 常驻时**零超时**，**3998/4000 轮真的观察到了 kernel 已在跑之后 host 才写下的值**。
-   **它输在一个我们改不动的地方**：延迟是**双峰**的，p50 **3.6 µs**、p99 **5,598 µs**，中间几乎没有东西。
-   host 没在自旋启动后的**几微秒**内答上来，这一轮就固定 **~5.5 ms**；
-   **1 ms 和 5 ms 两档服务时间的延迟完全一样（5532 vs 5553）⇒ 那是一个固定的刷新周期，不是一段延迟**。
-   三个「是不是我们的锅」全排除了：host 补 `mfence` + 读回无变化、**专职热轮询线程无变化**、
-   按轮次拆开是第 1 轮永远 ~5.06 ms / 第 40 轮 1.1–1.5 ms。
-   按 §3 的 53 那条式子 `40 × (400 − 实测)`：**−23（最乐观）/ −99（真实背景负载）/ −205（现实）ms/token**，
-   **每一格都是负的，而热步一共 102 ms**。
-   **重开的条件不是写代码，是那 5.5 ms 消失**：稳态 3.6 µs 若每层都拿得到值 **15.9 ms/token**，
-   但 decode 一层 host 侧最少 **95 µs**、未命中层 **8,780 µs**（53）——**差两个数量级**。
-   ⚠️ **留给下一个人的两条**：① 用**原子**读那个 flag 是 **76/80 轮超时**（原子加 0 也是
-   read-modify-**WRITE**，它把 device 缓存里那一行弄脏，host 的写从此进不来，回写还可能盖掉它）——
-   **要用 `globallycoherent` 的普通读**；② device 侧自旋的上限要按 **packet** 夹
-   （`rounds × cap < TDR 窗口`，不是按单个 dispatch），而那个 cap 要**用同一个循环标定出来**，不能猜迭代数。
+0g. **2026-09-21: the second route to a device-side gate is closed too, but 48's verdict needs a qualifier (Track HG, `p4_hostflag_gate.md`, §3 66).**
+   §3 **48** says "spin-waiting is a NO-GO on this machine" -- **that holds only for workgroup↔workgroup**.
+   Change it to **the host writes a flag and the device spins on it** (one command buffer holding a whole token,
+   with a 1-workgroup spin kernel after each layer's gate kernel), and the dependency points at the CPU rather than at a peer workgroup:
+   **legal, safe and correct** -- 2,500+ command buffers with **zero TDRs, zero device losses, zero payload errors**,
+   **zero timeouts** with 256 background workgroups resident, and **3998 of 4000 rounds genuinely observed a value the host wrote after the kernel was already running**.
+   **It loses somewhere we cannot touch**: the latency is **bimodal**, p50 **3.6 µs** and p99 **5,598 µs**, with almost nothing in between.
+   If the host does not answer within **a few microseconds** of the spin starting, that round costs a fixed **~5.5 ms**;
+   **the latency is identical at 1 ms and 5 ms of service time (5532 against 5553) ⇒ that is a fixed refresh period, not a delay**.
+   All three "is it our fault" candidates are excluded: an `mfence` plus a read-back on the host changed nothing, **a dedicated hot polling thread changed nothing**,
+   and split by round it is always ~5.06 ms on round 1 and 1.1–1.5 ms on round 40.
+   By §3 53's formula `40 × (400 − measured)`: **−23 (most optimistic) / −99 (a realistic background load) / −205 (reality) ms/token**,
+   **every cell negative, against a hot step of 102 ms in total**.
+   **Reopening it is not a matter of writing code, it is a matter of that 5.5 ms going away**: the steady-state 3.6 µs would be **15.9 ms/token** if every layer got its value,
+   but a decode layer's host side is at least **95 µs**, and **8,780 µs** on a missing layer (53) -- **two orders of magnitude apart**.
+   ⚠️ **Two things for whoever comes next**: ① reading that flag **atomically** gives **76 of 80 rounds timing out** (an atomic add of 0 is still a
+   read-modify-**WRITE**, it dirties that line in the device cache so the host's writes can no longer get in, and the write-back may even overwrite it) --
+   **use an ordinary `globallycoherent` read**; ② the device-side spin's cap has to be clamped per **packet**
+   (`rounds × cap < the TDR window`, not per dispatch), and that cap has to be **calibrated with the same loop**, not guessed as an iteration count.
 
-0f. **2026-09-21：批前向的归因做完了，目标没到，而立目标用的 roofline 要订正（Track BF，`p4_dspark_runtime.md` §8，§3 的 64 / 65）。**
-   批路径现在**进 `--trace`**（`record_attention_batch` / `record_ced_batch` / `record_tail_batch` /
-   `record_close_batch` / engram 逐行 / 并集，加 `Engine::flush_trace_batch`），这是本 track 最持久的一件东西。
-   拿回来的一笔是 **`wc_read()`**：`vmovntdqa` 读 WC 内存，**主机时间 −28 ms/批**，
-   M 曲线最好格 **69.8 → 65.2 ms/位置**，数值逐位不变。
-   **目标是 ≤ 35 ms/位置，到的是 65.2。** 但**「400 MB → 1.9 ms/层 = 77 ms/批」这个 roofline 是错的**：
-   1.9 ms 用的是 222 GB/s，那是 `kernel_p2_moe.md` §3.5 的 **M=1** 读数，而同一张表量过
-   **M=5 只有 149.7（69%）、M=6 135.3（62%）**，因为 dispatch A 在 M 大时是 **VALU 发射受限**（§3.1）。
-   **MoE 并集的真地板是 107 ms/批 = 21.3 ms/位置**，不是 77。
-   剩下的差额按大小是：**并集 kernel 离它自己的 M=5 冠军还有 1.6×（62 ms/批）**、
-   **attention 链离 dense roofline 29 ms/批**（最大三格 `mega_mhc.post.ffn` 16.0 / `wkv.gemv` 10.4 / `wq_a` 8.0）、
-   **每层一次 submit+fence 的往返 34 ms/批**（就是下面第 5 项的 persistent dispatch）、
-   **engram 行的 NVMe 读 13 ms/批**（要 §9.5 的草稿预取）。五条都做完约 **31 ms/位置**——
-   **原理上够得着，但那是四个互不相干的项目，不是一个 track**，而且最大的一项没有现成方案（64 已经否掉最便宜的那条路）。
-   投机的账按 after 重算：`chain` k=5 **0.83× → 0.94×（仍然更慢）**，
-   `longest` **1.03× → 1.18×（草稿白送）/ 1.06–1.12×（算上草稿）**，而 `longest` **仍然不无损** ⇒ **§3 的 42 不变**。
+0f. **2026-09-21: the batched forward is attributed, the target was not met, and the roofline the target was set from needs correcting (Track BF, `p4_dspark_runtime.md` §8, §3 64 / 65).**
+   The batch path now **appears in `--trace`** (`record_attention_batch` / `record_ced_batch` / `record_tail_batch` /
+   `record_close_batch`, engram row by row, the union, plus `Engine::flush_trace_batch`), which is this track's most durable product.
+   One thing was collected: **`wc_read()`**, a `vmovntdqa` read of WC memory, **−28 ms a batch of host time**,
+   the M curve's best cell **69.8 → 65.2 ms a position**, numerics bit-identical.
+   **The target was ≤ 35 ms a position and it reached 65.2.** But **the roofline "400 MB → 1.9 ms a layer = 77 ms a batch" is wrong**:
+   that 1.9 ms uses 222 GB/s, which is `kernel_p2_moe.md` §3.5's **M=1** figure, while the same table measured
+   **only 149.7 (69%) at M=5 and 135.3 (62%) at M=6**, because dispatch A is **VALU-issue bound** at large M (§3.1).
+   **The MoE union's real floor is 107 ms a batch = 21.3 ms a position**, not 77.
+   The remaining shortfall, largest first: **the union kernel is still 1.6× off its own M=5 champion (62 ms a batch)**,
+   **the attention chain is 29 ms a batch off the dense roofline** (the three largest cells are `mega_mhc.post.ffn` 16.0 / `wkv.gemv` 10.4 / `wq_a` 8.0),
+   **the submit+fence round trip per layer is 34 ms a batch** (that is item 5 below, persistent dispatch),
+   and **the engram rows' NVMe reads are 13 ms a batch** (which needs §9.5's draft prefetch). All five done is about **31 ms a position** --
+   **reachable in principle, but that is four unrelated projects rather than one track**, and the largest of them has no ready approach (64 already rejected the cheapest route).
+   Recomputing speculation's arithmetic with the after numbers: `chain` k=5 **0.83× → 0.94× (still slower)**,
+   `longest` **1.03× → 1.18× (draft free) / 1.06–1.12× (draft included)**, and `longest` is **still not lossless** ⇒ **§3 42 stands**.
 
-0e. **2026-09-20 晚：镜像的「唤醒」假说被证伪（Track D6，`p4_dual_source.md` §10，§3 的 63）。**
-   **§9.5 里那句「`src[1]` 的 mean lat 是 D: 的 5–6 倍」要划掉。** 它混了 routed 的两个类：
-   **E: 扛着 1,214 个 P3 backfill 里的 914 个**，而 backfill 被 P0 抢占、mean lat **1,272 ms**
-   （**D: 的 backfill 也是 1,138 ms**）——**它量的是引擎队列，不是盘**。
-   每源 P0 计数器一加就清楚：**E: 4.52 ms vs D: 3.81 ms，差 1.19 倍**；
-   而且 D5 自己的 `status.json` 早就写着**一整个 cell 最慢的 P0 是 19.84 ms**。
-   keep-alive **+0.15%**（3,052 次 poke，零错误），`STATIC_SPLIT=0.44` **−2.68%** ⇒ **两个都 NO-GO**。
-   **分流 28.5% 是对的，不是不够**：稳态带宽比不是 decode 的目标函数，
-   **每层突发的完成时间才是**（摊平之后 `first-of-burst` 1.15 → 1.27 ms，`io: eff` 5.15 → 4.90）。
-   **第 1 项的 (b1) 那句「差距因为 E: 对突发慢 5–6 倍」到此订正**：
-   E: 对 P0 只慢 1.19 倍，剩下的差距在 **backfill 的在飞字节把 P0 推回 D:** 这个环上——
-   **下一个能动的是这个环（给 P3 单独的在飞字节口径），不是盘、不是权重、不是电源。**
-   ⚠️ 顺带记一次**瞬时 E: 掉线**：`l3_ppl` 第一次跑的 warm-cache backfill 途中 `win32 433 / 55`，
-   运行期闸连续 3 次摘源、单盘跑完、**NLL 仍然 0.630051**，立刻重跑零错误。
-   本会话 11 个带镜像的引擎进程只有这一次——**USB4 把 D2–D4 那个码的概率压得很低，但没压到零**。
+0e. **2026-09-20, evening: the mirror's "wake-up" hypothesis is falsified (Track D6, `p4_dual_source.md` §10, §3 63).**
+   **Strike §9.5's sentence that "`src[1]`'s mean lat is 5–6 times D:'s".** It crossed routed's two classes:
+   **the mirror carried 914 of the 1,214 P3 backfills**, and backfill is preempted by P0 with a mean lat of **1,272 ms**
+   (**D:'s backfill is 1,138 ms too**) -- **it measured the engine's queue, not the drive**.
+   Add per-source P0 counters and it is clear: **4.52 ms on E: against 3.81 ms on D:, a factor of 1.19**;
+   and D5's own `status.json` already said **the slowest P0 in a whole cell is 19.84 ms**.
+   Keep-alive is **+0.15%** (3,052 pokes, zero errors), `STATIC_SPLIT=0.44` is **−2.68%** ⇒ **both NO-GO**.
+   **A 28.5% split is right, not insufficient**: steady-state bandwidth ratio is not decode's objective function,
+   **the completion time of each layer's burst is** (flattened out, `first-of-burst` goes 1.15 → 1.27 ms and `io: eff` 5.15 → 4.90).
+   **This corrects item 1's (b1) sentence, "the gap is because E: is 5–6 times slower on bursts"**:
+   E: is only 1.19 times slower on P0, and the rest of the gap is in the loop where **backfill's in-flight bytes push P0 back onto D:** --
+   **the next thing that can be moved is that loop (a separate in-flight byte budget for P3), not the drive, not the weights, not the power settings.**
+   ⚠️ One **transient E: dropout** recorded in passing: `win32 433 / 55` during the warm-cache backfill of `l3_ppl`'s first run,
+   the run-time gate dropped the source after 3 consecutive errors, it finished on one drive, **NLL was still 0.630051**, and an immediate rerun had zero errors.
+   One occurrence out of 11 mirrored engine processes this session -- **USB4 makes the D2–D4 code very unlikely, but not impossible**.
 
-0d. **2026-09-20：第二个读源落地并成为网页 UI 的默认（Track D5，`p4_dual_source.md` §9，§3 的 62）。**
-   **第 1 项的 (b) 结清了。** 同一块 J.ZAO SSD 换进 **USB4 盒子**（`BusType NVMe`，UAS 桥整层消失）之后，
-   **12 个 cell 零错误**——跨四个会话、五次尝试之后的第一张 A/B 表：
-   `y_turns` **+9.40%**、`long_turns` **+4.63%**、两条流 **+13.50%**，`nvme_stall` **113.9 → 95.4 ms**，
-   `l3_ppl` off **NLL 0.630051 逐位不变**。
-   **挡在最后的不是盘，是我们自己的启动探针**：1 s 的窗口正好是一块刚睡醒的 USB4 盒子的第一个读，
-   把 **3.77 GB/s 的盘测成 0.03**，路由只给它 **0.0%** 的字节 —— 修法是**热身之后再取基线**。
-   **默认值分两层**：引擎仍然关（`deepmoe serve` 不给 `--mirror` 逐字不变），
-   **网页 UI 开**（`server.py` 的 `find_mirrors()`，`--no-mirror-auto` 关）。
-   **(b1) 原来写的「+32–40%」没有兑现**，拿到的是 **+4.6%–+9.4%**，
-   原因量到了：**只路由 P0/P3**，而且 **E: 在 decode 的突发形状下 mean lat 是 D: 的 5–6 倍**
-   （149 vs 26 ms），所以加权路由自己把它压到 23–27% 而不是带宽比的 44%。
-   **接这一位的是 §1 那条式子的另一个因子**：MB/token —— 也就是槽数（两条流抢一个 LRU 的 +13.5%，§9.6）。
-   **`(b2) 这块 U 盘不要再试` 仍然成立，但要重新读**：坏的一直是**桥**，不是这块 SSD。
+0d. **2026-09-20: the second read source landed and became the web UI's default (Track D5, `p4_dual_source.md` §9, §3 62).**
+   **Item 1's (b) is settled.** With the same J.ZAO SSD moved into a **USB4 enclosure** (`BusType NVMe`, the UAS bridge gone entirely),
+   **12 cells with zero errors** -- the first A/B table after four sessions and five attempts:
+   `y_turns` **+9.40%**, `long_turns` **+4.63%**, two streams **+13.50%**, `nvme_stall` **113.9 → 95.4 ms**,
+   `l3_ppl` off **NLL 0.630051 bit for bit unchanged**.
+   **What stood in the way at the end was not the drive but our own startup probe**: its 1 s window was exactly the first read of a USB4 enclosure that had just woken up,
+   so it measured a **3.77 GB/s drive as 0.03** and routing gave it **0.0%** of the bytes -- the fix is to **take the baseline after a warm-up**.
+   **The default is in two layers**: the engine is still off (`deepmoe serve` without `--mirror` is unchanged to the letter),
+   and **the web UI is on** (`server.py`'s `find_mirrors()`, disabled with `--no-mirror-auto`).
+   **(b1)'s original "+32–40%" did not materialise**; what arrived was **+4.6% to +9.4%**,
+   and the reason was measured: **only P0/P3 are routed**, and **E:'s mean lat under decode's burst shape is 5–6 times D:'s**
+   (149 against 26 ms), so weighted routing holds it at 23–27% rather than the bandwidth ratio's 44%.
+   **What takes this slot is the other factor in §1's formula**: MB/token -- which is the slot count (two streams fighting over one LRU, +13.5%, §9.6).
+   **`(b2) do not try this thumb drive again` still holds, but it needs re-reading**: what was broken all along was the **bridge**, not this SSD.
 
-0c. **2026-09-19：GPU prefill 默认开，续写也上了 GPU（Track PF，`p3_chat.md` §8）。**
-   用户在 web UI 上看到 `预填充 304 / 1,067 token · 199.6 ms/token` —— 那个 `total` 是
-   `to_prefill`，所以是 **reuse 0、整个 prompt 在 decode 路径上**，TTFT ≈ 213 s。
-   三件事：① **`--log` 里之前只有两行**，因为 `core/log.h` 写 `FILE* stdout` 而它在 pipe 上
-   全缓冲、只有 `>= Warn` 才 flush——现在有 sink + 每行 flush，session 的
-   reuse / rollback / prefill 决策每轮一行；② **`gpu_prefill_min` 0 → 512**
-   （§6 当初关它的两条理由被 F4 的 path-A 预留和 `PREFILL_HANDOFF` 拆掉了）：
-   1,118-token 热 cache **168.8 → 28.6 s（5.9×）**；③ **续写**：引擎还不能在非零位置
-   prefill 后缀（§3 的 61 逐条记了卡点），改成**算一算就把 reuse 扔掉**
-   ——`p−r` 个 decode token 对 `p/6` 个 GPU token ——**70.5 → 35.5 s（2.0×）**，
-   输出逐字不变。门：`gpu_prefill.forty_layers` 8/8 + `longctx`（4,133）8/8、
-   `kv_replay.l3_64` 的回退场景 (5)(6) 不变。
-   **`thinking` 模式不是 reuse=0 的原因**（R2 的回退给的是 1,116 不是 0，实测复现），
-   渲染器没改。
+0c. **2026-09-19: GPU prefill is on by default, and continuations reach the GPU too (Track PF, `p3_chat.md` §8).**
+   The user saw `prefill 304 / 1,067 tokens · 199.6 ms/token` in the web UI -- that `total` is
+   `to_prefill`, so it was **reuse 0, the whole prompt on the decode path**, TTFT ≈ 213 s.
+   Three things: ① **`--log` used to hold two lines**, because `core/log.h` writes `FILE* stdout`, which is
+   fully buffered on a pipe and only flushed at `>= Warn` -- there is now a sink and a flush per line, and the
+   session's reuse / rollback / prefill decision is one line per turn; ② **`gpu_prefill_min` 0 → 512**
+   (the two reasons §6 originally gave for turning it off were taken apart by F4's path-A reservation and by `PREFILL_HANDOFF`):
+   a 1,118-token prompt on a warm cache, **168.8 → 28.6 s (5.9×)**; ③ **continuations**: the engine still cannot
+   prefill a suffix at a nonzero position (§3 61 records the blockers one by one), so instead it **does the arithmetic and throws the reuse away**
+   -- `p−r` decode tokens against `p/6` GPU tokens -- **70.5 → 35.5 s (2.0×)**,
+   with the output unchanged to the letter. Gates: `gpu_prefill.forty_layers` 8/8 + `longctx` (4,133) 8/8, and
+   `kv_replay.l3_64`'s rollback scenarios (5)(6) unchanged.
+   **`thinking` mode is not the reason for reuse=0** (R2's fallback gives 1,116, not 0; reproduced by measurement),
+   and the renderer was not changed.
 
-顺序的依据是 §4：**先降 MB/token 和 stall，再降 kernel 时间**。
-每一项的机制、预测（已按"二分之一法则"砍半）、成本与探针在 [plan_p5.md](plan_p5.md)。
+The ordering follows §4: **bring MB/token and stall down first, kernel time second**.
+Each item's mechanism, its prediction (already halved by the "halve it" rule), its cost and its probe are in [plan_p5.md](plan_p5.md).
 
-0b. **2026-09-19：多路 decode 落地（Track MS，`p4_multistream.md`，§3 的 57）。**
-   引擎按「进程拥有的」（expert cache、planner、pinned、IO、device）和「序列拥有的」
-   （KV、激活、**shader 在执行时才读的那几张地址表**、command buffer、两条 timeline）
-   切成 `Engine` 与 `runtime::Stream`；`run_layer` 拆成 begin / gate / moe 三段，
-   交错的规则是**「进 stall 之前队列里必须有活」**。
-   **两条并发对话：4.6474 → 5.4602 tok/s（+17.5%，ABAB 三对）**，每路延迟 0.62×。
-   **预测的 1.6–1.8× 没达到**，而且**缺口是量到的**：盘的聚合速率 +28%，但两个工作集
-   抢一个 5,100 槽的 LRU 让 MB/token 涨 13.5%，且 2.83 GB/s 只到 D: 天花板的 69%。
-   **N≥3 是负的**，所以「再加一条流」这条路是关的。**接这一位的仍然是第 1 项**：
-   MB/token 这一侧唯一还开着的杠杆（第二块盘）——它同时是多路这条路的解锁条件。
-   单流路径与 main 逐字相同（`l3_ppl` 的 `off` 臂 **NLL 0.630051** 逐位复现）。
-0. **2026-09-19：K1a 落地并默认开，K1b 两个方向都退掉**（`plan_p5.md` §3(h) / §3(i)）：
-   **K1a**——decode 一直在跑 M=6 的 MoE kernel（引擎的 runner 是 `spec.m = kMoeBatchMax`，decode 只设 `live_columns = 1`）。
-   M=1 特化的 pipeline：热步 **101.8 → 97.0 ms**、moe gpu **37.87 → 34.33**。第 7 项点名的 live-column mask 只是其中 1.6 ms。
-   **K1b 是 NO-GO，但它量到了一个新系数**：path 放置的两个方向都试了——新 expert 落 path A 四轮 **−5.4%**；
-   落 path B 四轮 **+7.0%**（`nvme_stall` −6.78 ms，因为 Track Q2 的 704 µs vs 70 µs）却在八轮换题脚本上 **−20.5%**
-   （它顺带把 path A 的 3,400 槽冻成 first-touch pin，miss 涨 41%）。**默认保持单一全局 LRU**，记在 §3 的 55。
-   留下的是仪器（`hits_path_a/b`、`fills_path_a/b`）和两个数：path-B 的读 **0.036 ms/expert-read**、path-A 的写 **~6.8 ms/token**——
-   **后者比前者大一个量级**，下一次开这一条要的是"只改放置、不顺带变成 pin"的形式，且必须在两个以上的脚本上同时为正。
+0b. **2026-09-19: multi-stream decode landed (Track MS, `p4_multistream.md`, §3 57).**
+   The engine is split into `Engine` and `runtime::Stream` along "owned by the process" (the expert cache, the planner, pinned, IO, the device)
+   against "owned by the sequence" (KV, the activations, **the address tables a shader only reads while executing**, the command buffers, the two timelines);
+   `run_layer` splits into begin / gate / moe, and the interleaving rule is **"there must be work in the queue before you enter a stall"**.
+   **Two concurrent conversations: 4.6474 → 5.4602 tok/s (+17.5%, three ABAB pairs)**, with 0.62× the latency each.
+   **The predicted 1.6–1.8× was not reached**, and **the shortfall was measured**: the drive's aggregate rate is +28%, but two working sets
+   fighting over one 5,100-slot LRU raise MB/token by 13.5%, and 2.83 GB/s is only 69% of D:'s ceiling.
+   **N≥3 is negative**, so "add another stream" is a closed route. **What takes this slot is still item 1**:
+   the one lever still open on the MB/token side (a second drive) -- which is simultaneously the unlock condition for this route.
+   The single-stream path is unchanged to the letter (`l3_ppl`'s `off` arm reproduces **NLL 0.630051** bit for bit).
+0. **2026-09-19: K1a landed and is on by default, and both of K1b's directions were backed out** (`plan_p5.md` §3(h) / §3(i)):
+   **K1a** -- decode had been running the M=6 MoE kernel all along (the engine's runner is `spec.m = kMoeBatchMax` and decode only sets `live_columns = 1`).
+   With an M=1 specialised pipeline: the hot step **101.8 → 97.0 ms**, moe gpu **37.87 → 34.33**. The live-column mask item 7 named is only 1.6 ms of that.
+   **K1b is a NO-GO, but it measured a new coefficient**: both directions of path placement were tried -- putting new experts in path A is **−5.4%** over four turns;
+   putting them in path B is **+7.0%** over four turns (`nvme_stall` −6.78 ms, because of Track Q2's 704 µs against 70 µs) and yet **−20.5%** on the eight-turn topic-switching script
+   (it incidentally freezes path A's 3,400 slots into a first-touch pin, raising misses by 41%). **The default stays a single global LRU**, recorded in §3 55.
+   What is left is the instrumentation (`hits_path_a/b`, `fills_path_a/b`) and two numbers: a path-B read is **0.036 ms per expert read** and a path-A write is **~6.8 ms/token** --
+   **the latter is an order of magnitude larger than the former**, and reopening this needs a form that "changes placement only, without also becoming a pin", and that is positive on more than one script at once.
 1. ~~**给 `ReadFile` 两侧插桩，解释每次 miss 的 20–31 ms。**~~ **已完成，答案是"就是盘"**（§4）。
    接这一位的是那条式子的两个因子。**(a) score-aware 淘汰已经做完了，答案是 NO-GO**
    （§3 的 47，`p4_cache_policy.md` §12）：127 种淘汰配置在 4.6 GB/s 的 demand-only 模型上
