@@ -84,7 +84,7 @@ def render(rows: list[dict]) -> str:
            "do not edit by hand -->", ""]
     chat = [r for r in rows if "chat" in r]
     if chat:
-        out += ["**对话（`tools/hitrate_bench.py` → `perf_report --chat --record`，每 token ms）**", "",
+        out += ["**Chat (`tools/hitrate_bench.py` -> `perf_report --chat --record`, ms per token)**", "",
                 "| # | label | code | switches | start KV | bg GPU | disk writes | decode tok/s | ms/tok | compute (attn/moe/tail/engram) "
                 "| NVMe stall (floor) | ms/miss | other | hit | prefill s |",
                 "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -102,7 +102,7 @@ def render(rows: list[dict]) -> str:
         out.append("")
     hot = [r for r in rows if "hot" in r]
     if hot:
-        out += ["**热步（`perf_report --capture --record`，全部 expert 驻留，每 token ms）**", "",
+        out += ["**The hot step (`perf_report --capture --record`, every expert resident, ms per token)**", "",
                 "| # | label | code | switches | bg GPU | GPU span (pass range) | weight floor | barriers | top excess |",
                 "|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows):
@@ -115,12 +115,12 @@ def render(rows: list[dict]) -> str:
             out.append(f"| {i} | {r['label']} | {code(p)} | {switches(p)} | {bg(p)} | **{h['span']:.2f}**{rng} | "
                        f"{h['floor']:.2f} | {h['barriers']:.2f} | {top} |")
         out.append("")
-    out += ["`†` = 这次运行早于 `provenance.json`，code 列是**记录时**的树与二进制，不是运行时的。"
-            "ms/miss 是 decode 步（hit > 0.8）的 NVMe stall 对该步 miss 数的回归斜率：同配置复跑只动 ~1%，比 tok/s 稳得多，IO 改动看它。"
-            "start KV 是 serve 启动时从盘上 KV 缓存恢复并重放进 expert cache 的 token 数（上一次运行的最后一段上下文；0 = 干净起步，STATUS §7 0s 之前的行大多不是）。"
-            "disk writes 是运行期间所有 NVMe 的写入量（引擎自己只写几 MB 日志；>500 MB 标 ⚠：有别的程序在写同一块盘，IO 数字不可信）。"
-            "bg GPU 是开跑前 1 s 的 `gpu_busy_percent` 均值（别的进程占着同一块 LPDDR5X，会让每个 kernel 慢几个百分点）。"
-            "`dirty` 后面是 `git diff HEAD` 的哈希；完整出处（exe / shader 哈希、全部开关、DPM 状态）在 ledger 那一行里。",
+    out += ["`†` = this run predates `provenance.json`, so the code column is the tree and the binaries **as recorded**, not as run. "
+            "ms/miss is the regression slope of a decode step's NVMe stall against that step's miss count, over the steps with hit > 0.8: a rerun of the same configuration moves it by only ~1%, which is far steadier than tok/s, so judge an IO change on it. "
+            "start KV is the number of tokens `serve` restored from the on-disk KV cache at startup and replayed into the expert cache (the tail of the previous run's context; 0 = a clean start, which most rows older than STATUS §7 0s are not). "
+            "disk writes is everything written to any NVMe during the run (the engine itself writes only a few MB of logs; >500 MB is marked ⚠, meaning another program was writing the same drive and the IO numbers cannot be trusted). "
+            "bg GPU is the mean `gpu_busy_percent` over the second before the run started (another process holding the same LPDDR5X costs every kernel a few percent). "
+            "What follows `dirty` is the hash of `git diff HEAD`; the full provenance -- exe and shader hashes, every switch, the DPM state -- is in that row of the ledger.",
             END]
     return "\n".join(out)
 
