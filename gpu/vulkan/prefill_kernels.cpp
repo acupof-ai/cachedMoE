@@ -3,6 +3,7 @@
 #include <cstring>
 #include <format>
 #include <future>
+#include <thread>
 #include <utility>
 
 #include "core/align.h"
@@ -1183,20 +1184,31 @@ Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, 
     times_.engram_io += io_ms;
     times_.engram_reads += a.reads;
     add_op("io: engram rows", io_ms, {0, a.bytes, double(a.reads)});
-    // ParallelEngramEmbedding: value.float() * scale per 32, then .to(bf16)
-    std::vector<float> x(size_t(n) * cols * 256);
-    for (uint32_t p = 0; p < n; ++p)
-        for (uint32_t c = 0; c < cols; ++c) {
-            const size_t u = static_cast<size_t>(
-                std::lower_bound(a.uniq.begin(), a.uniq.end(), a.rows[size_t(p) * cols + c]) - a.uniq.begin());
-            const auto* v = reinterpret_cast<const uint8_t*>(base + u * 2 * per + a.skew[u * 2]);
-            const auto* s = reinterpret_cast<const uint8_t*>(base + (u * 2 + 1) * per + a.skew[u * 2 + 1]);
-            float* dst = x.data() + (size_t(p) * cols + c) * 256;
-            for (uint32_t i = 0; i < 256; ++i)
-                dst[i] = cpu::bf16_to_float(cpu::float_to_bf16(
-                    cpu::fp8_e4m3_to_float(v[i]) * cpu::e8m0_to_float(s[i / 32])));
-        }
-    std::memcpy(b_.eng_x.host_ptr, x.data(), x.size() * sizeof(float));
+    // ParallelEngramEmbedding: value.float() * scale per 32, then .to(bf16),
+    // straight into the mapped activation
+    const auto t1 = Clk::now();
+    auto* x = static_cast<float*>(b_.eng_x.host_ptr);
+    auto convert = [&](uint32_t p0, uint32_t p1) {
+        for (uint32_t p = p0; p < p1; ++p)
+            for (uint32_t c = 0; c < cols; ++c) {
+                const size_t u = static_cast<size_t>(
+                    std::lower_bound(a.uniq.begin(), a.uniq.end(), a.rows[size_t(p) * cols + c]) - a.uniq.begin());
+                const auto* v = reinterpret_cast<const uint8_t*>(base + u * 2 * per + a.skew[u * 2]);
+                const auto* s = reinterpret_cast<const uint8_t*>(base + (u * 2 + 1) * per + a.skew[u * 2 + 1]);
+                float* dst = x + (size_t(p) * cols + c) * 256;
+                for (uint32_t i = 0; i < 256; ++i)
+                    dst[i] = cpu::bf16_to_float(cpu::float_to_bf16(
+                        cpu::fp8_e4m3_to_float(v[i]) * cpu::e8m0_to_float(s[i / 32])));
+            }
+    };
+    {   // 104 M elements at 17K: 1 s on one core, one row a token a thread (§7 0ay)
+        const uint32_t T = std::clamp(n / 256, 1u, 16u), step = (n + T - 1) / T;
+        std::vector<std::jthread> pool;
+        for (uint32_t t = 1; t < T; ++t)
+            pool.emplace_back(convert, t * step, std::min(n, (t + 1) * step));
+        convert(0, std::min(n, step));
+    }
+    add_op("host: engram convert", ms_since(t1), {0, double(n) * cols * 256 * 5, double(n) * cols});
     a.drop();
     if (engram_next_) return engram_issue_next(L, prompt);
     return {};
