@@ -1,0 +1,83 @@
+{
+ "cmd": [
+  "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+  "serve",
+  "--model",
+  "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "--max-context",
+  "4096",
+  "--engram-tables",
+  "/home/chenkailun/projects/cachedMoE/tests/data/l3",
+  "--profile",
+  "bench/results/linux/ms_se/b_on/profile.jsonl",
+  "--streams",
+  "2",
+  "--no-kv-disk"
+ ],
+ "scripts": [
+  "bench/results/hitrate/y_turns.json",
+  "bench/results/hitrate/long_turns.json"
+ ],
+ "streams": 2,
+ "sched": "pipeline",
+ "turns": 4,
+ "decode_steps": 1210,
+ "decode_ms": 135984.5124,
+ "aggregate_tok_s": 8.898072130749501,
+ "wall_s": 186.3388957977295,
+ "per_stream": [
+  {
+   "script": "y_turns.json",
+   "decode_steps": 252,
+   "decode_ms": 59525.8425,
+   "tok_s": 4.2334554105639075,
+   "hit_rate": 0.8745535715000001,
+   "nvme_mb_per_token": 566.2801920634921,
+   "per_token_ms": {
+    "attn": 30.478830775,
+    "moe_gpu": 28.2672376,
+    "moe_host": 0.0607225992,
+    "nvme_stall": 90.39814980000001,
+    "engram": 1.858972405,
+    "tail": 5.887191295,
+    "other": 72.60663015000002,
+    "fence_wait": 37.736430150000004,
+    "submits": 101.714285725
+   }
+  },
+  {
+   "script": "long_turns.json",
+   "decode_steps": 958,
+   "decode_ms": 135984.5119,
+   "tok_s": 7.04491994429845,
+   "hit_rate": 0.9372651356075157,
+   "nvme_mb_per_token": 283.19268559498954,
+   "per_token_ms": {
+    "attn": 31.241142580271397,
+    "moe_gpu": 26.62843149676409,
+    "moe_host": 0.05377693009519832,
+    "nvme_stall": 46.246493487787056,
+    "engram": 1.9071470177035492,
+    "tail": 6.133208537160751,
+    "other": 29.671264167014613,
+    "fence_wait": 56.0417329631524,
+    "submits": 93.08872647734864
+   }
+  }
+ ],
+ "status": {
+  "event": "status",
+  "session": "default",
+  "context": 1062,
+  "max_context": 4096,
+  "kv_mb": 16.044032,
+  "kv_capacity": 4096,
+  "kv_slabs": 1,
+  "kv_largest_slab_mb": 16.044032,
+  "store": "expert store: 5300 slots (5300 resident, 0 filling, 0 free, 0 pinned)  lookups 321120 hits 293448 (0.914)  fills 36700/36700 ok  runs 73400/73400  evictions 31400 (+0 guard-blocked)  path A hits 293448 / B 0 (1.0000 A)  fills A 36700 / B 0",
+  "planner": "planner: 53520 layers, 321120 requests (293448 hits, 27672 misses, 0.914), 26864 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 20052 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 2343 resident / 9028 kept / 30 dropped",
+  "io": "io: 220658 req (220658 done, 0 failed, 0 cancelled), 847187 chunks, 701316425376 / 701316558848 bytes, busy 111.840 s, eff 6.27 GB/s, mean lat 33.274 ms, peak QD 512 / 32.0 MiB\n  p0_blocking    73460 req  658844.4 MiB\n  p2_engram     145984 req  587.9 MiB\n  p3_backfill     1214 req  9395.3 MiB\n  P0: 73460 req, 658844.3 MiB, lat mean 29.23 / p50 3.30 / p95 172.39 / max 419.53 ms  (queue wait 26.28 + service 2.95)\n  P0: first-of-burst 20172 at 0.76 ms, behind 53288 at 40.01 ms; 1090 (1.5%) issued with a non-P0 chunk in flight, mean 5.01; mean QD at issue 10.00\n  src[0] /home/chenkailun/models/DeepSeek-V4.1-Flash  w 4.62 GB/s  73657 req  362.2 GiB (55.5%)  mean lat 38.59 ms  inflight 0 req / 0.0 MiB  stripe 367731 chunks\n         P0 73381 req  357.2 GiB  mean lat 28.91 ms | idle gaps >= 15 ms: 1045 (mean 28.3, max 4402.2 ms) | keep-alive 0 reads, 0 done, 0 refused\n  src[1] /mnt/deepmoe2/models/DeepSeek-V4.1-Flash  w 3.72 GB/s  74299 req  290.3 GiB (44.5%)  mean lat 66.11 ms  inflight 0 req / 0.0 MiB  stripe 330139 chunks\n         P0 73361 req  286.2 GiB  mean lat 28.06 ms | idle gaps >= 15 ms: 1045 (mean 28.3, max 4402.2 ms) | keep-alive 0 reads, 0 done, 0 refused | 74 C (max 74), rested 0x\n  dispatcher: 645765 iters, issue 17.09 s / poll 94.05 s / handle 0.63 s (callbacks 0.17 s, 220658 at 0.8 us mean)\n  dispatcher: Backend::submit 16.77 s over 847187 chunks, mean 19.8 us, max 6.20 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.6% of the non-waiting loop; refill gap 0.4 us mean over 481111 reaps\n",
+  "route": "route     resident-only=off\n",
+  "gate_probe": ""
+ }
+}

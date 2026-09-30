@@ -2541,9 +2541,19 @@ bool Engine::shared_early_on() const {
         return *e == '0' ? 0 : 1;
     }();
     const bool on = env >= 0 ? env != 0 : g_shared_early_default.load() != 0;
-    // One stream only: with two, the other stream's submits interleave with
-    // this one's and nothing here has been measured.
-    return on && streams_.size() == 1;
+    // One stream by default: with two, the other stream's submits interleave
+    // with this one's, and until 2026-10-01 nothing here had been measured. The
+    // per-stream state it needs is per-stream already (`Stream::se_cmd_[2]`,
+    // `Stream::moe_` and its two pointer-table pages), so the risk is not a
+    // shared buffer but submission order -- shared-early issues an extra submit
+    // with no wait behind the gate's, which is the same shape as the eager MoE
+    // submit that raced under `--streams 2` on RADV (0h). Opt in with
+    // `DEEPMOE_SHARED_EARLY_MS=1` to measure it; see STATUS §3 92.
+    static const bool ms = [] {
+        const char* e = std::getenv("DEEPMOE_SHARED_EARLY_MS");
+        return e && *e && *e != '0';
+    }();
+    return on && (ms || streams_.size() == 1);
 }
 
 bool Engine::ms_eager_moe() {
