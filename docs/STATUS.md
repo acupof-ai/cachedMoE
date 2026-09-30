@@ -695,6 +695,28 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0bn. **硬件计数器仪器（`VK_KHR_performance_query`）建起来了，并用它把 LDS GEMM 离峰值的那一截定性了：不是带宽，不是指令数，是占用率。**（用户 2026-09-30「剩下的都做好」+「让 CodeX 帮忙看看」）
+
+**仪器**：`bench/perf_query.h`（header-only）+ `prefill_bench --section coopgeo --perf-counters "<名字子串,...>"`，扩展本身由 `DEEPMOE_PERF_COUNTERS` 开关（照 `DEEPMOE_PIPELINE_STATS` 的样子，默认一个字节都不改）。`--perf-counters list` 打印驱动有的 16 个计数器。**踩到的三条 RADV 事实，都记下来**：① 计数器**只在 GENERAL（图形）队列族**上回答——`radv_perfcounter.c` 对其他队列直接返回 0 个，所以开计数器时 `pick_compute_family` 必须放弃异步计算引擎（换队列本身就是扰动，**计数器趟的时间不能和平台数字对比，能用的是计数和比值**）；② **RADV 报的 pass 数不是安全判据**（`radv_get_num_counter_passes` 按 block 的寄存器数算，SQ 的槽位共享它没覆盖）：13 个计数器它说 1 个 pass，其中 5 个回 0；4 个一组仍丢 `VALU Instructions` 和 `VALU Busy`；**一次一个才诚实**，所以 `DEEPMOE_PERF_GROUP` 默认 1（子毫秒 kernel 重放一次不要钱）；③ 这颗片子上 `VMEM Load Instructions` 恒为 0，`VALU Busy` 3.30% / `SALU Busy` 0.39% 与"已达峰值 56%"自相矛盾，**两个 Busy 百分比不采信**；`GPU active cycles`（2.27M ≈ 0.78 ms，对得上墙钟）和 `Waves`（2,304，等于 576 workgroup × 4）都校验过，是可信的。没有任何 stall/wait 计数器——"周期去哪了"只能靠相减。
+
+**归因**：`coopgeo` 的 w1 形状（2304×5120，就是 gate/up 的形状）n=1024，系统驱动、fp16 随机权重（coopgeo 不走 FP4 路，所以这是这个 kernel 家族在这个形状上的行为，不是融合 FP4 变体的精确数字）。需要的数据一共 34.1 MB（W 23.6 + X 10.5）：
+
+| wm,wn | ms | VRAM 读 | 放大 | L2 命中 | VALU 指令 | LDS 指令 | VGPR | LDS/wg | 溢出 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1,1 | 1.372 | 668 MB | 19.6× | 43.7% | 10.71M | 10.60M | — | — | — |
+| 2,2 | 1.089 | 280 MB | 8.2× | 51.9% | 5.37M | 5.44M | 240 | 18,432 | 0 |
+| **2,4** | **0.811** | 157 MB | 4.6× | 56.6% | 5.48M | 4.01M | **256** | 27,648 | 0 |
+| 4,2 | 0.880 | 159 MB | 4.7× | 57.0% | 5.87M | 3.73M | 256 | 27,648 | 0 |
+| 4,4 | 1.149 | **90 MB** | **2.6×** | 62.3% | 4.22M | 2.95M | 256 | 36,864 | **14 VGPR / 1,792 B scratch** |
+
+**流量随 tile 单调下降（668 → 90 MB）而时间在 wm2wn4 触底后变慢——所以它不是带宽受限**。赢家那格：24.16 GFLOP / 0.811 ms = **29.8 TFLOP/s = mma 峰值（52.8）的 56%**；L2 请求流量 157 MB / 0.811 ms = 194 GB/s，按 56.6% 命中折到 DRAM ≈ 68 MB = **84 GB/s，只有 236 GB/s 上限的三分之一**。限制是**占用率**：27,648 B LDS/workgroup，64 KB 的 CU 只塞得下 2 个 workgroup = 8 wave/CU = **2 wave/SIMD**，同时 VGPR 正好顶在 256 的天花板（`DEEPMOE_PIPELINE_STATS` 读的）。再放大 tile 本来还能省 1.7× 流量，但 wm4wn4 就开始溢出寄存器。这和 §3 84「占用率不是这个 kernel 的限制」**不矛盾也不支持**——84 量的是往下降到 wm2（更小的 tile），这里量的是往上升，两边都更慢，说明 wm2wn4 是这个 LDS 用量下的局部最优。
+
+**因此下一个杠杆有名字了**（都属于 §3 84 说的"换 kernel 家族级别的重构"，不是旋钮）：① 在 wm2wn4 几何下把 LDS/workgroup 压到 21,845 B 以下（64 KB / 3），换 3 wave/SIMD；② 或者削累加器的 VGPR 数，让更大的 tile 不再溢出。**先量再做**：预测的收益按惯例先砍半。
+
+**codex review**（同一轮，读 `perf_query.h` + `device.{h,cpp}` + bench 改动）报两条，都真、都修了：① `perf_counters` 只按扩展名判断就请求 `performanceCounterQueryPools`——扩展在而特性不在时会让建设备失败，改成 `vkGetPhysicalDeviceFeatures2` 真问一遍；② profiling lock 在命令缓冲还处于 executable 状态时就释放了（规范要求锁覆盖 recording/executable/pending 全程），改成 `Unlock` 析构里先 `vkResetCommandBuffer` 再释放锁，错误路径一起覆盖。它对查询协议、生命周期、"默认不改行为"、"重放幂等"四项无发现。
+
+**闸**：CPU 25/25、`gpu_prefill` 7/7、`gpu_prefill.longctx` 首 token MATCH + free-running 8/8、4K `prefill_bench` margin **8.598 逐位**（46.78 s，单盘）。
+
 0bm. **b128 在 decode 侧量完（0bl 的补丁驱动，同 session A/B，两把微基准）：MoE 派发一点没变，注意力的 coopmat kernel −28%，整层 −2.3%。**`kernel_bench --quick --layer-cycle 8 --iters 48`（FP4 MoE 的两个派发，§3 54 用的同一把尺）：M=1 每对 **0.624 → 0.624 ms**、M=6 0.692 → 0.689——逐格相同，它是 DRAM 带宽受限，LDS 发射不是它的限制（这也解释了 0bl 里 17K 的 score / P.V 为什么持平）。`attn_bench --layers 8 --kv 640`：**`attn_cm` 五个派发 32.53 → 23.41 µs（−28%）**，一层合计 882.76 → 862.88 µs（−2.3%）、P3 路 763.11 → 743.47（−2.6%），40 层 + head **36.19 → 35.41 ms/token（−2.2%）**；其余格子（gate.score、compressor、indexer）在 ±10% 噪声里来回，没有系统性变化。**折成真实 decode**：计算侧 −0.78 ms/token ≈ 整 token 的 −0.7%（108 ms 里 44 是等盘）——**低于 ±3% 抖动带，端到端量不出来**，所以这一条的价值在"知道钱在哪个 kernel"，不在 tok/s。decode 的 attention 桶 28.5 ms 里，coopmat 那部分现在便宜了四分之一。`mesab128/kb_{stock,b128}.csv`、`mesab128/attn_ab.out`。
 
 0bl. **驱动级定制第一刀（用户 2026-09-30「模型确定 硬件确定……做最定制化的开发」）：本地 Mesa 26.2.3 的 RADV 放开 LDS *load* 的 64 位上限，`ds_load_b128` 第一次出现，FP4 GEMM −5~6%。**§3 71 当年说"96 条 b64 是这个 kernel 的下限、Vulkan 侧拿不到 b128"——对，但驱动是我们的。上限一共三道闸：① `ac_nir_lower_mem_access_bit_sizes.c` 的拆分 pass（load 截 8 字节、store 允许 16）；② `ac_nir.c` `ac_nir_mem_vectorize_callback` 尾部的 `/* 96-bit and 128-bit LDS loads are slow */`——**真正的作者是它**（coopmat lowering 发标量读，向量化器合到 4×f16 就被它按住）；③ ACO 的 `visit_load_shared` 本来就支持 b128，不用动。两处都以 `RADV_LDS_LOAD_B128`（本地构建默认开，=0 回原样）放开，补丁在 `tools/mesa/lds-load-b128.patch`，构建产物 `~/deepmoe-mesa/libvulkan_radeon.so` + `radeon_icd_b128.json`，**opt-in**：`VK_DRIVER_FILES=~/deepmoe-mesa/radeon_icd_b128.json`，系统 Mesa 一个字节没动。**ISA**：WMMA kernel 的 LDS 读 2,496 条全是 `ds_read_b128`、b64 归零（原来每 wave 每 slice 96 条 b64）。**数字**（单盘、与 0bj 那趟漂移对齐）：17K gate/up fp4 6,385 → **6,027 ms（−5.6%）**、down 2,926 → **2,770（−5.3%）**、shared 1,492 → 1,438，routed GPU 11.96 → **11.48 s**；score/P.V 持平（不卡 LDS 读）；墙钟藏在盘后（56.2 对 56.4）。**"128 位 LDS 读慢"这句在 RDNA3.5 的这个形状上是反的。****闸（都在补丁驱动下跑）**：margins 8.598 / 10.108 逐位，`gpu_prefill` 7/7，`suite.decode` 过，`l3_ppl` off **0.622784 逐位**（它影响所有 kernel 的代码生成，所以 decode 闸也过了才算数）。**默认不换**：serve / 网页 UI 仍用系统驱动，要用就设上面的 env——是否做默认、是否给 Mesa 上游发 MR，owner 定。重启后 `~/deepmoe-mesa` 还在，/tmp 里的源码树会丢（重建按补丁头部的三行命令）。`prefill_ahead/mesab128_{4133,r6_17010}`。

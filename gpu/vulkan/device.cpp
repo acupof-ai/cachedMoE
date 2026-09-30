@@ -200,6 +200,19 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
         const char* dir = std::getenv("DEEPMOE_PIPELINE_STATS");
         c.pipeline_stats = dir && *dir && has_ext(ex, "VK_KHR_pipeline_executable_properties");
     }
+    {
+        // The extension can be advertised while performanceCounterQueryPools is
+        // not supported, and requesting an unsupported feature fails device
+        // creation -- so ask the driver, do not infer it from the name.
+        const char* on = std::getenv("DEEPMOE_PERF_COUNTERS");
+        if (on && *on && *on != '0' && has_ext(ex, "VK_KHR_performance_query")) {
+            VkPhysicalDevicePerformanceQueryFeaturesKHR pq{
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR};
+            VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &pq};
+            vkGetPhysicalDeviceFeatures2(pd, &f2);
+            c.perf_counters = pq.performanceCounterQueryPools == VK_TRUE;
+        }
+    }
     if (!c.timeline_semaphore)    c.timeline_semaphore    = has_ext(ex, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
     if (!c.buffer_device_address) c.buffer_device_address = has_ext(ex, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
     if (!c.integer_dot_product)   c.integer_dot_product   = has_ext(ex, "VK_KHR_shader_integer_dot_product");
@@ -221,11 +234,21 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     return c;
 }
 
-Result<uint32_t> pick_compute_family(VkPhysicalDevice pd) {
+Result<uint32_t> pick_compute_family(VkPhysicalDevice pd, bool want_general) {
     uint32_t n = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &n, nullptr);
     std::vector<VkQueueFamilyProperties> q(n);
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &n, q.data());
+    // RADV answers VK_KHR_performance_query only on the general (graphics)
+    // family -- radv_perfcounter.c returns 0 counters for any other queue -- so
+    // a counter run has to give up the async compute engine. Only
+    // DEEPMOE_PERF_COUNTERS asks for this: the queue swap is itself a
+    // perturbation, so times taken under the counters are not comparable with
+    // the platform's own numbers, and the counts and ratios are what to read.
+    if (want_general)
+        for (uint32_t i = 0; i < n; ++i)
+            if ((q[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && (q[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+                return i;
     // Prefer a compute-only family: on RDNA it is an async compute engine that
     // does not contend with graphics work the desktop compositor submits.
     for (uint32_t i = 0; i < n; ++i)
@@ -286,7 +309,7 @@ Result<void> Device::create(const DeviceOptions& opts) {
     physical_ = devs[pick];
     caps_ = query_caps(physical_);
 
-    auto fam = pick_compute_family(physical_);
+    auto fam = pick_compute_family(physical_, caps_.perf_counters);
     if (!fam) { destroy(); return std::unexpected(fam.error()); }
     compute_family_ = *fam;
     {
@@ -302,6 +325,7 @@ Result<void> Device::create(const DeviceOptions& opts) {
     if (caps_.subgroup_size_control) exts.push_back(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
     if (caps_.cooperative_matrix)    exts.push_back("VK_KHR_cooperative_matrix");
     if (caps_.pipeline_stats)        exts.push_back("VK_KHR_pipeline_executable_properties");
+    if (caps_.perf_counters)         exts.push_back("VK_KHR_performance_query");
 
     // Everything promoted into a VkPhysicalDeviceVulkanNNFeatures struct has to
     // be requested *there* and nowhere else: mixing the promoted struct with the
@@ -324,9 +348,12 @@ Result<void> Device::create(const DeviceOptions& opts) {
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pexf{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR, &v13};
     pexf.pipelineExecutableInfo = VK_TRUE;
-    VkPhysicalDeviceFeatures2 feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                   caps_.pipeline_stats ? static_cast<void*>(&pexf)
-                                                        : static_cast<void*>(&v13)};
+    void* chain = caps_.pipeline_stats ? static_cast<void*>(&pexf) : static_cast<void*>(&v13);
+    VkPhysicalDevicePerformanceQueryFeaturesKHR pqf{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR, chain};
+    pqf.performanceCounterQueryPools = VK_TRUE;
+    if (caps_.perf_counters) chain = &pqf;
+    VkPhysicalDeviceFeatures2 feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, chain};
     // SPIR-V PhysicalStorageBuffer64 addressing (the expert pointer table of
     // design §5.3) needs Int64; `half` in a storage buffer needs Int16.
     feat.features.shaderInt64 = caps_.shader_int64 ? VK_TRUE : VK_FALSE;

@@ -91,6 +91,13 @@ struct DeviceCaps {
     // driver's statistics (VGPRs, SGPRs, LDS, instructions, waves per SIMD) and
     // its ISA there (gpu/vulkan/pipeline.cpp). Off, it changes nothing.
     bool pipeline_stats         = false;
+    // VK_KHR_performance_query, enabled only when DEEPMOE_PERF_COUNTERS is set.
+    // It gives the hardware counters (SQ instruction classes, VALU/SALU busy,
+    // VRAM read/write size, L0/L1/L2 hit ratio) the GEMM attribution of
+    // docs/STATUS.md needs. RADV reports counters only while the profiling lock
+    // is held and re-runs the workload once a pass, so it is never on by
+    // default: enabling it alone serialises submission.
+    bool perf_counters          = false;
 
     std::vector<HeapInfo>       heaps;
     std::vector<MemoryTypeInfo> memory_types;

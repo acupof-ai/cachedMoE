@@ -49,6 +49,7 @@
 #include <string>
 #include <vector>
 
+#include "bench/perf_query.h"
 #include "core/align.h"
 #include "core/json.h"
 #include "core/config.h"
@@ -93,6 +94,11 @@ struct Options {
     std::string handoff_dir;
     std::string ops_json;                  // section prefill: per-op profile, one JSON line a run
     std::string only;                      // section coopgeo: shape names to run
+    // section coopgeo: comma-separated case-insensitive substrings of the
+    // VK_KHR_performance_query counter names to collect around each variant
+    // (bench/perf_query.h). "list" only prints what the driver has. Needs
+    // DEEPMOE_PERF_COUNTERS=1, and costs one workload re-run a counter pass.
+    std::string perf_counters;
     // PrefillConfig::attn_pv_dim_tiles, swept in ONE process so the A/B sees
     // the same machine (docs/p4_prefill_speed.md §3.1).
     std::vector<uint32_t> attn_dv = {};
@@ -517,6 +523,32 @@ int run_coopgeo(const Options& o) {
     }
     Csv csv;
     csv.open(o.csv);
+    // Hardware counters (bench/perf_query.h): off unless --perf-counters names
+    // some and DEEPMOE_PERF_COUNTERS is set.
+    bench::PerfCounters pc;
+    {
+        std::vector<std::string> want;
+        for (size_t p = 0; p < o.perf_counters.size();) {
+            const size_t q = std::min(o.perf_counters.size(), o.perf_counters.find(',', p));
+            if (q > p) want.emplace_back(o.perf_counters.substr(p, q - p));
+            p = q + 1;
+        }
+        const bool list = want.size() == 1 && want[0] == "list";
+        if (auto r = pc.create(rig.device, list ? std::vector<std::string>{} : want); !r) {
+            std::fprintf(stderr, "perf counters: %s\n", r.error().str().c_str());
+            return 1;
+        }
+        if (!o.perf_counters.empty() && pc.available().empty())
+            std::fprintf(stderr, "perf counters: none exposed (cap=%d)\n", int(rig.device.caps().perf_counters));
+        if (list) {
+            for (const std::string& n : pc.available()) std::printf("  counter %s\n", n.c_str());
+            return 0;
+        }
+        if (pc.enabled())
+            std::printf("  counters: %zu selected in %zu single-pass group(s); the workload\n"
+                        "            replays that many times a variant\n",
+                        pc.selected(), pc.replays());
+    }
     struct Shape { const char* name; uint32_t R, K; };
     const Shape shapes[] = {{"w1", 2304, 5120}, {"w2", 5120, 2304}, {"wq_b", 32768, 1280},
                             {"wo_b", 5120, 8192}, {"wo_a.g", 1024, 4096}, {"eng.wkv", 25600, 6144},
@@ -648,6 +680,25 @@ int run_coopgeo(const Options& o) {
                     std::fprintf(csv.f, "coopgeo,%s,%s,%u,%u,%u,%llu,%.4f,%.1f,%.3f,%zu,0,\"%s\"\n", sh.name, name.c_str(),
                                  n, R, K, (unsigned long long)(uint64_t(R) * K * 2), v.best, n / (v.best / 1e3), tps,
                                  v.diff, o.load.c_str());
+                if (pc.enabled()) {
+                    uint64_t* sl = rig.runner.slots(v.kh);
+                    sl[gpu::kPcW] = v.g.wt ? Wt.dev_addr : W.dev_addr;
+                    sl[gpu::kPcX] = X.dev_addr; sl[gpu::kPcY] = Y.dev_addr;
+                    auto cv = pc.run(rig.cmd, [&](gpu::CommandBuffer& c) -> Result<void> {
+                        for (uint32_t x0 = 0; x0 < v.ntok; x0 += v.tb)
+                            for (uint32_t r0 = 0; r0 < R; r0 += v.rb) {
+                                gpu::PfCoopPush p;
+                                p.n = v.ntok; p.flags = 64; p.x_off = x0; p.row0 = r0;
+                                const uint32_t gx = (std::min(v.tb, v.ntok - x0) + v.tok - 1) / v.tok;
+                                const uint32_t gy = (std::min(v.rb, R - r0) + v.rtile - 1) / v.rtile;
+                                if (auto r = rig.runner.record(c, v.kh, &p, sizeof(p), gx, gy); !r) return r;
+                            }
+                        return {};
+                    });
+                    if (!cv) { std::fprintf(stderr, "%s\n", cv.error().str().c_str()); return 1; }
+                    for (const auto& x : *cv)
+                        std::printf("      %-34s %16.2f %s\n", x.name.c_str(), x.value, x.unit.c_str());
+                }
             }
             std::fflush(stdout);
             if (csv.f) std::fflush(csv.f);
@@ -977,6 +1028,7 @@ int main(int argc, char** argv) {
         else if (a == "--ring")    o.ring = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (a == "--handoff-dir") o.handoff_dir = next();
         else if (a == "--ops-json") o.ops_json = next();
+        else if (a == "--perf-counters") o.perf_counters = next();
         else if (a == "--only")    o.only = next();
         else if (a == "--attn-dv") o.attn_dv = list(next());
         else if (a == "--coop-tt") o.coop_tt = list(next());
