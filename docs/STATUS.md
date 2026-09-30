@@ -1664,71 +1664,71 @@ Even so, the change of direction is real: on a single drive the disk was overwhe
    the first few turns have a short context and n_kv < 640, so it is under 5 ms), decode **6.850 → 7.264 tok/s** -- of which stall 72.8 → 67.2 is IO noise (ms/miss 5.16 / 4.89, the spread of a rerun of the same configuration),
    and what can be trusted is the 2.9 ms of compute.
 
-0j. **系统测量 + 按瓶颈排序的第一轮：GPU 空闲降频（GameMode）+ `sample_topk` 的 LDS 直方图。对话结果见 §1.0 的 ledger，不在这里重抄。**
-   **尺子**：`tools/perf_report.py`——热步（`--capture`，全部 expert 驻留）每个 dispatch stage 的忙时对它要流过的权重字节 ÷ `--bw`（230 GB/s，
-   x 上 `wq_b` 实测 ~229）给出地板，按"超出地板"排序；对话（`--chat RUN`）把每 token 拆成 compute / NVMe stall（对 miss × 18,808,832 B ÷ 盘速的地板）/ other。
-   出处由机器记：`tools/provenance.py`、`--record`、`tools/perf_ledger.py`（§1.0）。
-   **瓶颈 1：GPU 等盘时降频。** 对话里 compute 比热步多出 ~14 ms，热步看不见。把每层 MoE 的忙时按"它之前 GPU 空闲了多久"分桶
-   （`bench/results/linux/perf/idle_ramp.py`，输出 `idle_ramp.txt`）：空闲 ≥2 ms 之后 `moe_down` p50 从 ~263 µs 跳到 ~885 µs、
-   其后的 gate/up 也慢一倍；同样的 trace 在 `power_dpm_force_performance_level=high` 下这一跳消失。这是 RADV 自动 DPM 在等 NVMe 的几毫秒里把 sclk 降到 600 MHz。
-   **修法**：`deepmoe serve` 在每个 generate / reheat 请求期间持有一个 Feral GameMode 请求（`core/gamemode.h`），
-   gamemoded 经 polkit 把 DPM 钉在 high，请求结束或进程死亡时还原——不把笔记本的 GPU 永远钉在高频。系统配置见 `build.md` Linux 第 8 条。
-   第一次试 GameMode 的默认配置会**绑核**，盖掉 CCD 亲和性（`perf/gm_single`：other 涨到 ~11 ms），关掉它的 CPU 动作后回到 ~3 ms。
-   **瓶颈 2：`sample_topk` 每 token ~3.5 ms**（对话的 tail 里，热步不采样所以也看不见）：第 2–3 步的全局直方图改成 workgroup 内 LDS 直方图（`groupshared` + `InterlockedAdd`），
-   `--check-topk` 对 CPU 参考 319 步 0 不一致（`perf/topk_check.log`）。
-   **两件一起量一次**（按用户的"全部优化好一次测量"，不做 ABAB）：ledger 的 `all1-single` 行对照改前的 `bench/results/linux/budget/2_single`
-   （`perf_report --chat` 可重算）——decode tok/s、compute、tail、other 都在那两行里。
-   **按瓶颈的下一项**（`perf_report` 的排序）：NVMe 地板本身（命中率 / 容量）> NVMe stall 超出地板的部分 > `wo_b`/`wo_a` 的 K-split（mgt1 批路径**本来就是** K-split，
-   下面第 6 项那句"先让 mgt1 也用 K-split"的前提不成立；`set_attn_ksplit_default` 从没被调用）> MoE gate/up、down 的超出 > barriers。
-   **瓶颈 3：每次 miss 的盘等待。** 新尺子：`perf_report --chat` 对 decode 步（hit > 0.8）做 stall 对该步 miss 数的回归，斜率 = **ms/missed expert**
-   （ledger 的 ms/miss 列）。它比 tok/s 稳得多：预碰页之后四次同配置单盘运行 5.19 / 5.27 / 5.27 / 5.29，前 800 步与全程差 ≤0.03——**IO 改动看它，3 轮对话就够**（`hitrate_bench --max-turns 3`）。
-   单盘理想是 18,808,832 B ÷ 4.8 GB/s = 3.92 ms，实测 5.29，所以每 token ~13.6 次 miss × 1.4 ms 是盘之外的开销。
-   ① **P0 改成 1 MiB chunk × QD 8（Linux 默认，`runtime/engine.cpp`；Windows 保持 Track Q2 的 4 MiB × 24）**：ledger `p0-1MiB-qd8`，斜率 5.29 → **4.82**，prefill 总时 75.3 → **66.6 s**。
-   与 §3 的 44 和 0h 里"`c1q64m128` NO-GO"不矛盾：那两次是 QD 48–64，更深只会更慢（斜率 6.11–6.18）；变好的是**更浅**。
-   ② **中转拷贝不是它**：`io_uring` 后端现在在退出时打出中转拷贝总量（`[INF] io_uring: bounce copies …`）。拷贝池（3 个帮手线程分 256 KiB 片）把拷贝从 0.85 压到 0.45 ms/expert，
-   而每 expert 延迟没有可测变化，**撤掉**。③ **`io_dst_bench` 的 `patha` 行此前在 Linux 上是错的**：它不预碰页，QD 越深轮转的槽越多、首写缺页越多（~2.4 GB/s），
-   于是"patha 随 QD 变慢"是 bench 的假象；现在与引擎一样预碰页（`--verbose` 打出拷贝总量）。修正后 bench 里 path A 反而是 4 MiB × 32 最好——**bench 只有 P0，引擎里 P0 与 engram 的 4 KiB 读、backfill 交错**，
-   两者不一致时以引擎的斜率为准。④ **QD 扫描（ledger 4–7、9–12，各 3 轮）：1 MiB 块下 QD 3–8 是一个平台**——4.69 / 4.53 / 4.63 / 4.72（QD 3 / 4 / 6 / 8），
-   第一轮 QD 4 是 4.68；两轮都是 QD 4 最低，但差距 ≤3%，在抖动线内，**默认保持 QD 8 不动**。明确更差的是 QD 2（5.38）、QD 12（4.90）和 2 MiB 块（5.00）。
-   **瓶颈 4：`wo_b` / `wo_a` 超出地板（热步第 2、4 名）→ K-split 在 RADV 上默认开**（`Engine::init_gpu`，与 L16 R2、shared-early 同一处；`DEEPMOE_ATTN_KSPLIT=0` 关）。
-   0h 里它被两道漂移闸挡住，这次先量**闸本身的噪声**（`bench/results/linux/drift_noise/`，`run.sh` / `summary.json`）：四种只差 fp32 求和顺序的算术——
-   默认、dispatch B 旧形状（LB 32 RB 1，上一版默认）、+K-split、两者都开——外加默认的重跑作对照。**重跑逐位相同**（尺子确定），`SHARED_EARLY=0` 也逐位相同。
-   `suite.decode` index keys **0.9685 / 0.9751 / 0.9493 / 0.9642**，compressed KV 0.9547 / 0.9673 / 0.9560 / 0.9573，window KV 0.9309 / 0.9265 / 0.9054 / 0.9055；
-   `suite.spec_forward` worst cos **0.9415 / 0.9300 / 0.9132 / 0.9441**，top-1 52 / 54 / 53 / 57 of 60。**四个里两个过不了旧线——上一版的默认形状自己就在 spec 的 0.93 之下**。
-   所以旧线是划在"同样正确的算术"的散布**里面**的回归绊线，不是质量线（接线错误落在 cos ~0.2 或 NaN）。新线统一按**四者最小值 − 四者极差**：
-   window 0.87、compressed 0.94、index keys 0.92、spec cos 0.88、top-1 47/60，表格写进两个测试的注释。
+0j. **The first round of systematic measurement ordered by bottleneck: GPU downclocking while idle (GameMode) + an LDS histogram in `sample_topk`. The conversation results are in §1.0's ledger and are not copied out here.**
+   **The ruler**: `tools/perf_report.py` -- for the hot step (`--capture`, every expert resident) it gives each dispatch stage a floor from the weight bytes it has to stream ÷ `--bw` (230 GB/s;
+   `wq_b` measures ~229 on x) and sorts by "above the floor"; for a conversation (`--chat RUN`) it splits each token into compute / NVMe stall (against a floor of misses × 18,808,832 B ÷ the drive's rate) / other.
+   Provenance is recorded by machine: `tools/provenance.py`, `--record`, `tools/perf_ledger.py` (§1.0).
+   **Bottleneck 1: the GPU downclocks while it waits on the disk.** A conversation's compute is ~14 ms above the hot step's, and the hot step cannot see it. Bucketing each layer's MoE busy time by "how long the GPU was idle before it"
+   (`bench/results/linux/perf/idle_ramp.py`, which writes `idle_ramp.txt`): after ≥2 ms of idle, `moe_down`'s p50 jumps from ~263 µs to ~885 µs
+   and the gate/up after it is twice as slow too; the same trace under `power_dpm_force_performance_level=high` has no such jump. This is RADV's automatic DPM dropping sclk to 600 MHz during the few milliseconds of waiting on the NVMe.
+   **The fix**: `deepmoe serve` holds a Feral GameMode request for the duration of each generate / reheat request (`core/gamemode.h`),
+   gamemoded pins DPM to high through polkit, and it is restored when the request ends or the process dies -- rather than pinning a laptop's GPU high forever. The system configuration is in `build.md`, Linux item 8.
+   GameMode's default configuration **pins cores** on a first attempt, which overrides the CCD affinity (`perf/gm_single`: other grows to ~11 ms); turning its CPU actions off brings it back to ~3 ms.
+   **Bottleneck 2: `sample_topk` at ~3.5 ms a token** (in the conversation's tail; the hot step does not sample, so it cannot see this either): steps 2–3's global histogram became a per-workgroup LDS histogram (`groupshared` + `InterlockedAdd`),
+   and `--check-topk` finds 0 disagreements against the CPU reference over 319 steps (`perf/topk_check.log`).
+   **Both measured together, once** (following the user's "optimise everything, then measure once", no ABAB): the ledger's `all1-single` row against the pre-change `bench/results/linux/budget/2_single`
+   (`perf_report --chat` can recompute it) -- decode tok/s, compute, tail and other are all in those two rows.
+   **The next item by bottleneck** (`perf_report`'s ordering): the NVMe floor itself (hit rate / capacity) > the part of the NVMe stall above its floor > `wo_b`/`wo_a`'s K-split (the mgt1 batch path **already is** K-split,
+   so item 6 below's "make mgt1 use K-split first" has a premise that does not hold; `set_attn_ksplit_default` was never called) > MoE gate/up's and down's excess > barriers.
+   **Bottleneck 3: the disk wait of each miss.** A new ruler: `perf_report --chat` regresses stall against that step's miss count over the decode steps (hit > 0.8), and the slope is **ms per missed expert**
+   (the ledger's ms/miss column). It is far steadier than tok/s: after pre-touching the pages, four single-drive runs of the same configuration gave 5.19 / 5.27 / 5.27 / 5.29, and the first 800 steps differ from the whole run by ≤0.03 -- **judge an IO change on it, and 3 turns is enough** (`hitrate_bench --max-turns 3`).
+   The single-drive ideal is 18,808,832 B ÷ 4.8 GB/s = 3.92 ms against 5.29 measured, so the ~13.6 misses a token × 1.4 ms is overhead outside the drive.
+   ① **P0 becomes 1 MiB chunks × QD 8 (the Linux default, `runtime/engine.cpp`; Windows keeps Track Q2's 4 MiB × 24)**: ledger `p0-1MiB-qd8`, the slope 5.29 → **4.82**, total prefill time 75.3 → **66.6 s**.
+   That does not contradict §3 44 or 0h's "`c1q64m128` NO-GO": those two were QD 48–64, and deeper only gets slower (slopes 6.11–6.18); what improved is **shallower**.
+   ② **The bounce copy is not it**: the `io_uring` backend now prints the total bounce copies on exit (`[INF] io_uring: bounce copies …`). A copy pool (3 helper threads over 256 KiB pieces) took the copy from 0.85 to 0.45 ms an expert,
+   with no measurable change in per-expert latency, so it was **backed out**. ③ **`io_dst_bench`'s `patha` row was wrong on Linux until now**: it did not pre-touch the pages, so the deeper the QD the more slots it rotated through and the more first-write faults it took (~2.4 GB/s),
+   which made "patha gets slower with QD" an artefact of the bench; it now pre-touches like the engine does (and `--verbose` prints the copy total). After the correction, path A is actually best at 4 MiB × 32 in the bench -- **the bench has only P0, while in the engine P0 interleaves with engram's 4 KiB reads and with backfill**,
+   so when the two disagree, the engine's slope is what counts. ④ **A QD sweep (ledger 4–7, 9–12, 3 turns each): QD 3–8 is a plateau at 1 MiB blocks** -- 4.69 / 4.53 / 4.63 / 4.72 (QD 3 / 4 / 6 / 8),
+   with QD 4 at 4.68 in the first round; QD 4 is lowest in both rounds, but the gap is ≤3%, inside the jitter line, so **the default stays at QD 8**. What is clearly worse is QD 2 (5.38), QD 12 (4.90) and 2 MiB blocks (5.00).
+   **Bottleneck 4: `wo_b` / `wo_a` above their floor (2nd and 4th in the hot step) → K-split is on by default on RADV** (`Engine::init_gpu`, in the same place as L16 R2 and shared-early; `DEEPMOE_ATTN_KSPLIT=0` disables it).
+   In 0h it was blocked by two drift gates, and this time **the gates' own noise was measured first** (`bench/results/linux/drift_noise/`, `run.sh` / `summary.json`): four arithmetics differing only in fp32 summation order --
+   the default, dispatch B's old shape (LB 32 RB 1, the previous default), +K-split, and both on -- plus a rerun of the default as a control. **The rerun is bit-identical** (so the ruler is settled), and `SHARED_EARLY=0` is bit-identical too.
+   `suite.decode`'s index keys are **0.9685 / 0.9751 / 0.9493 / 0.9642**, compressed KV 0.9547 / 0.9673 / 0.9560 / 0.9573, window KV 0.9309 / 0.9265 / 0.9054 / 0.9055;
+   `suite.spec_forward`'s worst cos is **0.9415 / 0.9300 / 0.9132 / 0.9441** and top-1 52 / 54 / 53 / 57 of 60. **Two of the four fail the old lines -- the previous default shape is itself below spec's 0.93.**
+   So the old lines were a regression trip-wire drawn **inside** the spread of equally correct arithmetics, not a quality line (a wiring error lands at cos ~0.2 or NaN). The new lines are uniformly **the minimum of the four minus their range**:
+   window 0.87, compressed 0.94, index keys 0.92, spec cos 0.88, top-1 47/60, and the table is written into both tests' comments.
 
-0i. **Track ST：chunk 级条带化（`DEEPMOE_MIRROR_STRIPE=1`，默认关）——GO：双盘对话 decode 6.33 → 7.39 tok/s（+16.8%，两对），PR #2 已合入。**
-   **机制**：D2 的路由按**整个请求**选盘。一个 expert 是两个 run（17,698,816 B weights + 1,110,016 B scales），
-   Linux 账本里有 miss 的层平均只缺 1.16 个 expert，所以 17.7 MB 的 weights run 整块落在一块盘上，另一块盘只分到 scales run
-   （`io_dst_bench` 的 `whole` 臂 mirror 份额正好 **5.9% = 1,084 / 18,368 KiB**）。条带化把 P0 的**每个 chunk** 按同一条
-   `(outstanding + chunk) / rate` 规则单独路由，一个 run 按速率比分到两块盘，完成时间是较慢那一份。
-   **上限**（0h 账本）：单盘 stall 74.0 ms，双盘理想带宽地板 257.6 MB ÷ 8.56 GB/s = **30.1 ms**；
-   预测 mirror 的 66.4 → ~40 ms，**砍半后 ~55 ms ≈ 6.75 tok/s（相对 mirror +7.7%）**，置信度 M-L。
-   与 D6 的 static split（−2.68%）不同：那是把**整个 expert** 开环压给慢盘，这里是两块盘同时完成同一个请求。
-   **实现**（`storage/io_engine.cpp`）：只条带 P0（P3 backfill 仍按整请求）；每 chunk 入账、每 chunk 出账，失败后没发出去的 chunk 的余额在 `finish` 归还；
-   镜像那一份失败 ⇒ 整个请求回到主盘重读（与 D2 的 failover 同一条路），主盘那一份失败照常报错；
-   `src[i]` 行追加 `stripe N chunks`，条带请求的每源延迟是「提交 → 该盘最后一个 chunk」。
-   单测 `io.stripe_splits_one_p0_across_both_sources_by_weight`（4.87 : 3.69 下 16 个 chunk 分成 9 : 7）、
-   `io.stripe_leaves_backfill_and_the_default_whole`、`io.striped_mirror_error_is_reread_from_the_primary`；
-   变异三条（关掉条带 / 不归还余额 / 条带不 failover）全部 caught。
-   **判据（先 bench，分钟级）**：`io_dst_bench` 新增 `--mirror`、`--route single,whole,stripe`、`--req-kb 17284,1084`（一次读 = 一个 expert 的两个 run 成组计时）、
-   `--inflight 1`（decode 形状）、`--chunk-kb` 列表、`--repeat`（ABAB，同一 repeat 的两臂读同样的偏移），权重默认用 2 s 热身后的探针。
+0i. **Track ST: chunk-level striping (`DEEPMOE_MIRROR_STRIPE=1`, off by default) -- GO: two-drive conversation decode 6.33 → 7.39 tok/s (+16.8%, two pairs), PR #2 merged.**
+   **The mechanism**: D2's routing picks a drive per **whole request**. An expert is two runs (17,698,816 B of weights + 1,110,016 B of scales),
+   and in the Linux ledger a layer with misses is on average missing only 1.16 experts, so the 17.7 MB weights run lands entirely on one drive while the other gets only the scales run
+   (`io_dst_bench`'s `whole` arm gives the mirror a share of exactly **5.9% = 1,084 / 18,368 KiB**). Striping routes **each chunk** of a P0 separately by the same
+   `(outstanding + chunk) / rate` rule, so one run is divided between the two drives by their rate ratio and the completion time is the slower half.
+   **The ceiling** (0h's ledger): single-drive stall is 74.0 ms, and the two-drive ideal bandwidth floor is 257.6 MB ÷ 8.56 GB/s = **30.1 ms**;
+   the prediction was mirror's 66.4 → ~40 ms, **halved to ~55 ms ≈ 6.75 tok/s (+7.7% against mirror)**, confidence M-L.
+   It differs from D6's static split (−2.68%): that pushed a **whole expert** open-loop onto the slower drive, while this has both drives finishing the same request together.
+   **The implementation** (`storage/io_engine.cpp`): only P0 is striped (P3 backfill still goes per whole request); each chunk is charged and discharged, and after a failure the balance of chunks never issued is returned in `finish`;
+   if the mirror's half fails ⇒ the whole request is re-read from the primary (the same route as D2's failover), and if the primary's half fails it errors as usual;
+   the `src[i]` row gains `stripe N chunks`, and a striped request's per-source latency is "submit → that drive's last chunk".
+   Unit tests `io.stripe_splits_one_p0_across_both_sources_by_weight` (16 chunks split 9 : 7 at 4.87 : 3.69),
+   `io.stripe_leaves_backfill_and_the_default_whole`, `io.striped_mirror_error_is_reread_from_the_primary`;
+   and three mutations (striping turned off / the balance not returned / a striped request not failing over) all caught.
+   **The criterion (bench first, in minutes)**: `io_dst_bench` gained `--mirror`, `--route single,whole,stripe`, `--req-kb 17284,1084` (one read = one expert's two runs, timed as a group),
+   `--inflight 1` (decode's shape), a `--chunk-kb` list, and `--repeat` (ABAB, with both arms of a repeat reading the same offsets), with the weights coming by default from a probe after a 2 s warm-up.
    ```
    io_dst_bench --file ~/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors \
        --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash/model-00020-of-00048.safetensors \
        --dst ram --req-kb 17284,1084 --inflight 1 --qd 8 --chunk-kb 1024,4096 \
        --route whole,stripe --repeat 4 --reads 200 --csv bench/results/linux/stripe/io_dst.csv
    ```
-   `stripe` 的组延迟 **≤ 0.75× `whole`** 才进对话 ABAB（`long_turns.json`，`DEEPMOE_MIRROR_STRIPE=0/1`）；否则 NO-GO。
-   4 MiB chunk 下贪心分配是 8 : 8.9 MiB（慢盘反而多），1 MiB 是 10.2 : 8.2（接近 57 : 43），所以两种 chunk 都要看。
-   风险：每个请求都依赖两块盘，外接盘每小时一次的掉线会更频繁地打到关键路径上（走主盘重读）。
-   **实测（2026-09-28 晚，x 上，`bench/results/linux/stripe/`）**：微基准过门——`io_dst_bench` 四个 repeat，组延迟 1 MiB chunk **4.980 → 2.973 ms（×0.597）**、
-   4 MiB **4.767 → 2.945 ms（×0.618）**，镜像份额 5.9% → 44.3–44.6%，repeat 间差 <2%（探针 4.36 : 3.75 GB/s）。
-   对话 ABAB 两对（`long_turns.json`，auto 5,500 槽，**两臂都带外接盘**，只差 `DEEPMOE_MIRROR_STRIPE=0/1`）：decode **6.361 / 6.291 → 7.487 / 7.292 tok/s**（+17.7% / +15.9%，均值 **+16.8%**），
-   端到端 5.668 / 5.609 → 6.596 / 6.427（+15.5%），`nvme_stall` 66.8 / 66.8 → **41.9 / 43.8 ms**，hit 两臂逐位同 0.9430，外接盘份额 25% → 45–49%，
-   P0 p50 5.35 → 3.17–3.38 ms。**实测收益大于砍半后的预测（+7.7%），接近未砍半的上限**。外接盘最高 74 °C，四轮未掉线，`src[1]` 零错误。
-   合入时 CPU 闸 25/25、`io.` 19/19（含三个新单测）。**默认仍关**：它只在有镜像时起作用，而外接盘按用户要求只作辅助，是否默认开由用户定。
+   `stripe`'s group latency has to be **≤ 0.75× `whole`** before it goes to a conversation ABAB (`long_turns.json`, `DEEPMOE_MIRROR_STRIPE=0/1`); otherwise NO-GO.
+   At 4 MiB chunks the greedy allocation is 8 : 8.9 MiB (the slower drive gets more, which is backwards), and at 1 MiB it is 10.2 : 8.2 (close to 57 : 43), so both chunk sizes have to be looked at.
+   The risk: every request now depends on both drives, so the external drive's hourly dropout hits the critical path more often (falling back to a primary re-read).
+   **Measured (the evening of 2026-09-28, on x, `bench/results/linux/stripe/`)**: the microbenchmark passed the gate -- over four repeats of `io_dst_bench`, group latency at 1 MiB chunks was **4.980 → 2.973 ms (×0.597)**
+   and at 4 MiB **4.767 → 2.945 ms (×0.618)**, the mirror's share 5.9% → 44.3–44.6%, and the repeats differed by <2% (the probe read 4.36 : 3.75 GB/s).
+   Two conversation ABAB pairs (`long_turns.json`, auto 5,500 slots, **both arms with the external drive**, differing only in `DEEPMOE_MIRROR_STRIPE=0/1`): decode **6.361 / 6.291 → 7.487 / 7.292 tok/s** (+17.7% / +15.9%, a mean of **+16.8%**),
+   end to end 5.668 / 5.609 → 6.596 / 6.427 (+15.5%), `nvme_stall` 66.8 / 66.8 → **41.9 / 43.8 ms**, hit bit-identical at 0.9430 in both arms, the external drive's share 25% → 45–49%,
+   and P0 p50 5.35 → 3.17–3.38 ms. **The measured gain exceeds the halved prediction (+7.7%) and is close to the unhalved ceiling.** The external drive peaked at 74 °C, did not drop over four turns, and `src[1]` had zero errors.
+   At merge, the CPU gate was 25/25 and `io.` 19/19 (including the three new unit tests). **Still off by default**: it only does anything when there is a mirror, and the user wants the external drive kept as an auxiliary, so whether it becomes the default is the user's call.
 0h. **2026-09-28：开发机换成 Linux（Omarchy，Mesa 26.2 RADV），热步 ~117 → ~79 ms（−33%），数值逐位不变（Track LX，`build.md` 的 Linux 一节）。**
    同一台 Strix Halo 重装成 Linux 之后，引擎的 MoE 段从 Windows 的 31 ms 变成 **50–53 ms/token**，而 `kernel_bench` 的纯 fp4 一对仍是
    **0.622 ms = 92% ceiling**（Windows 0.603）。按字节算不通，于是看 ACO 的机器码：**`fp4_decode` 的 DecodeMode 0（`kE2M1[nib]`，
