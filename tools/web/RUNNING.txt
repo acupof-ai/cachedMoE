@@ -15,8 +15,8 @@ deepMoE web UI —— 正在运行的实例
 
 PID
 ---
-  server.py       33898
-  deepmoe serve   33900
+  server.py       57498
+  deepmoe serve   57505
 
   （2026-09-30 重启后起的第二次；镜像盘回来了，启动日志里
    "mirror '/mnt/deepmoe2/...' holds 48 of 48 shards" = 两个读源都在用。）
