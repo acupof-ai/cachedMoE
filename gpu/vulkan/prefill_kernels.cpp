@@ -1367,6 +1367,8 @@ Result<void> Prefill::read_ahead(uint32_t L) {
     ahead_.slot.assign(E, ~0u);
     const uint32_t segs = std::clamp(ahead_segments_, 2u, std::clamp(pcfg_.transit_segments, 2u, kPfTransitSegmentsMax));
     const size_t n = std::min<size_t>(order.size(), size_t(segs) * pcfg_.transit_slots);
+    // No resize here: run() sized layers[] once, and run_layer holds a
+    // reference into it while this runs at the previous layer's tail.
     if (times_.layers.size() > L) times_.layers[L].ahead_n = static_cast<uint32_t>(n);
     ahead_.range.assign(n, {0, 0});
     for (uint32_t i = 0; i < n; ++i) {
@@ -1825,6 +1827,9 @@ Result<PrefillHandoff> Prefill::run(std::span<const uint32_t> prompt) {
         return fail(Err::InvalidArgument,
                     std::format("{} prompt tokens; the buffers hold 1..{}", N, pcfg_.max_tokens));
     times_ = PrefillTimes{};
+    // Sized once: run_layer holds a reference into it across read_ahead(L + 1),
+    // so nothing may reallocate layers[] mid-layer.
+    times_.layers.resize(c.num_hidden_layers);
     const auto t_all = Clk::now();
     // The P0 queue at the prefill's depth until this returns (PrefillConfig::p0_qd).
     struct P0Depth {
@@ -1971,7 +1976,8 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
 
     // the routed experts' reads start here, with the drive otherwise idle until
     // the gate (after the engram's rows, which the next op waits for)
-    if (pcfg_.read_ahead_min_rows && A >= pcfg_.read_ahead_min_rows) PF_TRY(read_ahead(L));
+    if (pcfg_.read_ahead_min_rows && A >= pcfg_.read_ahead_min_rows && ahead_.layer != L)
+        PF_TRY(read_ahead(L));   // not already issued at the previous layer's MoE tail
 
     // --- mHC, attention half ----------------------------------------------------------
     auto t0 = Clk::now();
@@ -2277,6 +2283,13 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
     PF_TRY(run_moe(L, A, b_.fx.dev_addr, b_.fxq.dev_addr, b_.fxs.dev_addr, b_.y.dev_addr,
                    probe_ids_, probe_wts_));
     phase(lio.moe_ms, lio.moe_bytes);
+    // The next layer's blind reads go out now, with the transit just handed
+    // back: the drive was idle otherwise from this layer's last batch landing
+    // through the post half and the next serial half's ops before read_ahead.
+    if (pcfg_.read_ahead_tail && pcfg_.read_ahead_min_rows && L + 1 < c.num_hidden_layers) {
+        const uint32_t A1 = (replay && L + 1 >= 20) ? R : N;   // the next layer's rows (§1.1)
+        if (A1 >= pcfg_.read_ahead_min_rows) PF_TRY(read_ahead(L + 1));
+    }
 
     t0 = Clk::now();
     PF_TRY(op_mhc_post(b_.h_b.dev_addr, b_.y.dev_addr, b_.mix_f.dev_addr, b_.h_a.dev_addr, A));

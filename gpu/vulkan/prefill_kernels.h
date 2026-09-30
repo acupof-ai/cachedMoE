@@ -287,6 +287,10 @@ struct PrefillConfig {
     // the transit; the gate then decides as before, and a picked expert that
     // was read ahead is computed from where it already is. 0 = off.
     uint32_t read_ahead_min_rows = 1024;
+    // Issue the NEXT layer's blind reads at this layer's MoE tail, the moment
+    // run_moe hands the transit back: the drive was idle from the last batch
+    // landing until the next layer's serial phase re-issued otherwise.
+    bool     read_ahead_tail = true;
     // Round onto bf16 wherever the reference holds a bf16 tensor.
     bool     round = true;
     // The largest prompt the activation buffers are sized for.
