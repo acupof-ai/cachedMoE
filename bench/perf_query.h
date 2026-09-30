@@ -17,6 +17,16 @@
 //     never uses more than one pass: it splits the selection into groups that
 //     each fit in a single pass and runs the workload once a group. The caller's
 //     workload must be idempotent, which it already had to be.
+//   * the instruction-count counters UNDER-report, and only ever under-report:
+//     the same 576-wave dispatch read VALU Instructions as 2,484,288 /
+//     2,691,312 / 2,898,336 on three identical runs and 3,312,384 on a fourth,
+//     and LDS Instructions as 998,400 / 1,152,000 / 1,152,000 (STATUS §7 0bq).
+//     The largest read is the honest one -- it is the only one divisible into a
+//     whole number per wave. So every group runs DEEPMOE_PERF_REPEAT times
+//     (default 3) and `Value::value` is the maximum, with `lo` kept so the
+//     caller can see how far it moved. Waves is exact, GPU active cycles move
+//     +-2% and VRAM read size +-10%, both of which are real machine noise
+//     rather than lost counts.
 //   * results are only defined while the profiling lock is held, and the lock
 //     must be held for as long as a command buffer holding the query is
 //     recording, executable or pending -- so `run` resets the command buffer
@@ -48,7 +58,9 @@ public:
     struct Value {
         std::string name;
         std::string unit;        // "generic", "percent", "bytes", "cycles", ...
-        double      value = 0;   // storage-decoded into a double
+        double      value = 0;   // the largest of `repeats` reads (see below)
+        double      lo = 0;      // the smallest, so the caller can see the spread
+        uint32_t    reads = 1;
     };
 
     ~PerfCounters() { destroy(); }
@@ -60,6 +72,7 @@ public:
     size_t selected() const { return sel_.size(); }
     // How many times run() replays the workload: one per single-pass group.
     size_t replays() const { return groups_.size(); }
+    uint32_t repeats() const { return repeats_; }
     // Every counter this driver has, in enumeration order: what a bench's
     // --perf-counters can name.
     const std::vector<std::string>& available() const { return names_; }
@@ -128,6 +141,8 @@ public:
         }
         if (!cur.empty())
             if (auto r = add_group(cur); !r) return r;
+        if (const char* r = std::getenv("DEEPMOE_PERF_REPEAT"); r && *r)
+            repeats_ = uint32_t(std::max(1, std::atoi(r)));
         return {};
     }
 
@@ -138,10 +153,10 @@ public:
         groups_.clear();
     }
 
-    // Records `fn` once a group and returns every selected counter, in the
-    // order create() selected them. `fn` runs replays() times, so it must leave
-    // behind no state that changes the next run's work (a GEMM into a scratch
-    // buffer is fine).
+    // Records `fn` once a group per repeat and returns every selected counter,
+    // in the order create() selected them. `fn` runs replays() * repeats()
+    // times, so it must leave behind no state that changes the next run's work
+    // (a GEMM into a scratch buffer is fine).
     template <class F>
     Result<std::vector<Value>> run(gpu::CommandBuffer& cmd, F&& fn) {
         std::vector<Value> out;
@@ -159,6 +174,8 @@ public:
         } unlock{release_, dev_->handle(), &cmd};
 
         for (const Group& g : groups_) {
+          std::vector<double> hi(g.idx.size(), -1e300), lo(g.idx.size(), 1e300);
+          for (uint32_t rep = 0; rep < repeats_; ++rep) {
             if (auto r = cmd.begin(); !r) return std::unexpected(r.error());
             vkCmdResetQueryPool(cmd.handle(), g.pool, 0, 1);
             vkCmdBeginQuery(cmd.handle(), g.pool, 0, 0);
@@ -182,8 +199,14 @@ public:
                                       res.size() * sizeof(res[0]), res.data(),
                                       res.size() * sizeof(res[0]), VK_QUERY_RESULT_WAIT_BIT) != VK_SUCCESS)
                 return fail(Err::Internal, "vkGetQueryPoolResults (performance) failed");
-            for (size_t i = 0; i < g.idx.size(); ++i)
-                out.push_back(Value{names_[g.idx[i]], g.unit[i], decode(g.storage[i], res[i])});
+            for (size_t i = 0; i < g.idx.size(); ++i) {
+                const double v = decode(g.storage[i], res[i]);
+                hi[i] = std::max(hi[i], v);
+                lo[i] = std::min(lo[i], v);
+            }
+          }
+          for (size_t i = 0; i < g.idx.size(); ++i)
+              out.push_back(Value{names_[g.idx[i]], g.unit[i], hi[i], lo[i], repeats_});
         }
         return out;
     }
@@ -265,6 +288,7 @@ private:
     std::vector<VkPerformanceCounterStorageKHR> storage_;
     std::vector<uint32_t> sel_;
     std::vector<Group>    groups_;
+    uint32_t              repeats_ = 3;
     PFN_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR passes_fn_ = nullptr;
     PFN_vkAcquireProfilingLockKHR acquire_ = nullptr;
     PFN_vkReleaseProfilingLockKHR release_ = nullptr;

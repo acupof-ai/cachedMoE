@@ -545,9 +545,10 @@ int run_coopgeo(const Options& o) {
             return 0;
         }
         if (pc.enabled())
-            std::printf("  counters: %zu selected in %zu single-pass group(s); the workload\n"
-                        "            replays that many times a variant\n",
-                        pc.selected(), pc.replays());
+            std::printf("  counters: %zu selected in %zu single-pass group(s) x %u repeats; the\n"
+                        "            workload replays that many times a variant, and each counter\n"
+                        "            reports the MAX (they under-report, never over-report)\n",
+                        pc.selected(), pc.replays(), pc.repeats());
     }
     struct Shape { const char* name; uint32_t R, K; };
     const Shape shapes[] = {{"w1", 2304, 5120}, {"w2", 5120, 2304}, {"wq_b", 32768, 1280},
@@ -696,8 +697,13 @@ int run_coopgeo(const Options& o) {
                         return {};
                     });
                     if (!cv) { std::fprintf(stderr, "%s\n", cv.error().str().c_str()); return 1; }
-                    for (const auto& x : *cv)
-                        std::printf("      %-34s %16.2f %s\n", x.name.c_str(), x.value, x.unit.c_str());
+                    for (const auto& x : *cv) {
+                        // the max of `reads`; the spread says how much the
+                        // counter lost on its worst read (bench/perf_query.h)
+                        const double sp = x.value > 0 ? (x.value - x.lo) / x.value * 100.0 : 0.0;
+                        std::printf("      %-34s %16.2f %-8s  (%u reads, lost up to %.1f%%)\n",
+                                    x.name.c_str(), x.value, x.unit.c_str(), x.reads, sp);
+                    }
                 }
             }
             std::fflush(stdout);
