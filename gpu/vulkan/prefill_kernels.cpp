@@ -1511,16 +1511,22 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             if (auto r = rec(*kx1, &px, sizeof(px), PrefillRunner::stage_groups(n32, dim)); !r) return r;
             mark("moe x16", {0, double(n32) * dim * (2 + 4.0 / 32 + 2)});
             PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64; pg.job = j; pg.part = 0;
-            if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
-            mark(fused ? "moe gemm gate/up fp4" : "moe gemm gate/up", gemm_cost);
-            if (!fused) {
+            if (fused) {
+                // gate and up in one dispatch: twice the workgroups in flight,
+                // one drain instead of two (§7 0bc)
+                pg.part = 3; pg.up_off = np;
+                if (auto r = rec(gu->first, &pg, sizeof(pg), gux, 2 * guy); !r) return r;
+                mark("moe gemm gate/up fp4", {2 * gemm_cost.flop, 2 * gemm_cost.bytes});
+            } else {
+                if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
+                mark("moe gemm gate/up", gemm_cost);
                 pd.idx_off = 1;
                 if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
                 mark("moe decode", {0, wdec});
+                pg.idx_off = np; pg.part = 1;
+                if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
+                mark("moe gemm gate/up", gemm_cost);
             }
-            pg.idx_off = np; pg.part = 1;
-            if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
-            mark(fused ? "moe gemm gate/up fp4" : "moe gemm gate/up", gemm_cost);
             PfElemPush ps; ps.n = n; ps.d = inter; ps.a0 = np; ps.a1 = jb.h_off; ps.a2 = jb.rows_off;
             ps.f1 = static_cast<float>(c.swiglu_limit); ps.flags = round;
             if (auto r = rec(*ksw, &ps, sizeof(ps), groups_for(uint64_t(n) * (inter / 4))); !r) return r;

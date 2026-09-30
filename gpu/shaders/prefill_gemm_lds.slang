@@ -76,7 +76,8 @@ static const uint kRegs = kMaxW * 32 * kQ / kThreads;   // a slice's uint4 per t
 struct CoopPush {
     uint n, k, idx_off, flags, row0, x_off, x_stride, x_col0, y_stride, y_row0;
     uint rope_pos0, rope_hd, rope_dim;   // prefill_coopmat stage 2's
-    uint job, part;                      // LdsWFp4: the expert and its matrix
+    uint job, part;                      // LdsWFp4: the expert and its matrix (3 = w1 and w3 in one dispatch,
+    uint up_off;                         //   row blocks past R are w3's, their y tokens from up_off)
 };
 [[vk::push_constant]] CoopPush pc;
 
@@ -110,16 +111,20 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint xs = (pc.x_stride == 0u) ? K : pc.x_stride;
     const uint ys = (pc.y_stride == 0u) ? R : pc.y_stride;
     const bool batched = (pc.flags & kFlagBatched) != 0u;
-    const uint r_base = pc.row0 + (batched ? gid.x : gid.y) * bm;
+    const uint rblk = batched ? gid.x : gid.y;
+    const bool up = LdsWFp4 && pc.part == 3u && rblk * bm >= R;   // the w3 half of a gate/up dispatch
+    const uint r_base = pc.row0 + rblk * bm - (up ? R : 0u);
     const uint m_base = pc.x_off + (batched ? 0u : gid.x * bn);
     const uint64_t batch = batched ? gid.y : 0u;
     uint4* W = (uint4*)(Ptr[kW] + batch * R * K * 2);
     uint64_t W4 = 0, S4 = 0;
     if (LdsWFp4) {
         const Job jb = load_job(Ptr[kJob], pc.job);
-        W4 = (pc.part == 0u) ? jb.w1 : ((pc.part == 1u) ? jb.w3 : jb.w2);
-        S4 = (pc.part == 0u) ? jb.s1 : ((pc.part == 1u) ? jb.s3 : jb.s2);
+        const uint part = (pc.part == 3u) ? (up ? 1u : 0u) : pc.part;
+        W4 = (part == 0u) ? jb.w1 : ((part == 1u) ? jb.w3 : jb.w2);
+        S4 = (part == 0u) ? jb.s1 : ((part == 1u) ? jb.s3 : jb.s2);
     }
+    const uint y_tok = pc.idx_off + (up ? pc.up_off : 0u);
     uint4* X = (uint4*)(Ptr[kX] + batch * bn * xs * 2);
     float* Y = (float*)(Ptr[kY] + batch * bn * ys * 4);
     // A grouped weight's row block multiplies its own group's slice of X,
@@ -202,6 +207,6 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                     for (uint e = 0; e < c[i * kMaxW + j].GetLength(); ++e)
                         c[i * kMaxW + j][e] = bf16_round(c[i * kMaxW + j][e]);
                 c[i * kMaxW + j].Store<linalg.CoopMatMatrixLayout.ColumnMajor>(
-                    Y, (pc.idx_off + m_base + w_m + 16 * j) * ys + pc.y_row0 + r_base + w_r + 16 * i, ys);
+                    Y, (y_tok + m_base + w_m + 16 * j) * ys + pc.y_row0 + r_base + w_r + 16 * i, ys);
             }
 }

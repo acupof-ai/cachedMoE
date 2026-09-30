@@ -107,8 +107,9 @@ struct PfCoopPush {
     uint32_t n = 0, k = 0, idx_off = 0, flags = 0, row0 = 0, x_off = 0;
     uint32_t x_stride = 0, x_col0 = 0, y_stride = 0, y_row0 = 0;   // stage 0: 0 = K, 0, R, 0
     uint32_t rope_pos0 = 0, rope_hd = 0, rope_dim = 0;             // stage 2: RoPE folded into the staging
-    uint32_t job = 0, part = 0;                                    // prefill_gemm_lds LdsWFp4: the expert and its matrix
-};
+    uint32_t job = 0, part = 0, up_off = 0;                        // prefill_gemm_lds LdsWFp4: the expert and its matrix
+};                                                                 //   (part 3: w1 and w3 in one dispatch, w3's y tokens from up_off)
+static_assert(sizeof(PfCoopPush) <= 64);
 // A RoPE applied to a GEMM's fp32 input as it is staged to fp16 (the attention
 // output's inverse rotation before wo_a, STATUS §7 0au): one pass less over
 // the widest activation of the layer.
