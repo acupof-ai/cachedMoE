@@ -883,6 +883,7 @@ int run_prefill(const Options& o) {
             pc.max_tokens = n;
             pc.replay = replay ? replay : n;
             pc.tile = o.tiles.empty() ? 8 : o.tiles[0];
+            if (const char* e = env("DEEPMOE_PF_ADAPTIVE_TILE")) pc.adaptive_moe_tile = std::atoi(e) != 0;
             pc.transit_slots = o.transit;
             pc.transit_segments = o.ring;
             if (const char* e = env("DEEPMOE_PF_ENGRAM_AHEAD")) pc.engram_ahead = std::atoi(e) != 0;   // §7 0ax
