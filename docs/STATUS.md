@@ -1594,75 +1594,75 @@ Even so, the change of direction is real: on a single drive the disk was overwhe
    **下一步候选（按量）**：fence 之后主机先录下一层的 attention（61 µs/层）才提交这一层的 MoE——热步只露出 5–9 µs（shared-early 盖住了其余），但 miss 层要在 IO 落地之后再付 ~55 µs；
    要在等 gate fence 时预录，attention 的地址表得双缓冲（`bind` 会改正在跑的那层读的 slot）。估计对话 ~0.9 ms/token，折半 0.3%。shared-early 79% 天花板，但它被主机往返盖住，单独提速无收益。
 
-0m. **V4.1 推理形式复核（逐层计算方式 + KV 获取），replay 128 长上下文首次按 token 验证，Linux 长 prompt 丢设备修掉。**
-   **逐层对照**（参考 `inference/model.py`，全部已实现，测试对的是**未改动的** `model.py`——`tools/dsref.py` 的 CPU 壳）：
-   层型 `compress_ratios` = [0,0, 2×18, 1×20]；ratio 0 纯窗口、theta 1e4、无 YaRN，ratio > 0 theta 1.6e5 + YaRN（16 / 65536 / 32 / 1）（`runtime/rope.h`）；
-   mHC 的 attention 用**上一层 FFN** 的 `pre_mix`（第 0 层 one-hot），FFN 用本层 attention 的，收尾用最后一层的；engram 在 1、14 层 block **之前**加在 hc 流上；
-   窗口 KV 每层 128 环（E4M3 + UE8M0/32，含 RoPE 尾；decode 最旧在前，未填 −1）；压缩 KV 与 index key **只在 2/8/14/20 各一平面**
-   （block16 + E4M3 / block32 + E8M0，存解量化后的 bf16，逐位等价），latent 与 key 的 RoPE 取**组首**位置 `pos + 1 − ratio`，
-   非源层读最近源的平面（`KvStoreConfig::for_model` / `Engine::build_ced_plan`），非 index 源复用最近 index 源的 top-k，
-   24–36 打第 20 层的 key、在第 20 层的 2,048 候选块内选（最新块钉住）；`topk = min(512, (pos+1)//ratio)`，越界 −1，其余 + 窗口偏移；
-   gate sqrt∘softplus、bias 只选不加权、归一 +1e-20、×1.5；SwiGLU gate 只截上限、up 双边截 10（共享专家同）。
-   覆盖：`suite.decode` 探针层 0/1/2/13/14/20/39，`decode_longctx` 4K / 17K（indexer tie-aware、候选块、salt 取回 8/8）。
-   **一处照抄参考、看起来是参考 bug 的行为（2026-09-29 用户决定改掉：各层用自己的 key，见 0o）**：参考 decode 在 ratio-2 组没满的步（每隔一步）不发布 index key，
-   第 2/8/14 层于是对**上一步第 20 层**的 key cache 打分（`shared_attn.index_k` 从不重置；它的 docstring 假设「每个源先写后读」），prefill 则用自己的 key。
-   （以下是 0o 之前的做法，已废。）我们两条都照抄（`pub_index_k_`）。只在上下文 > 1,024 时生效：17K 时这些步的 top-k 与「用自己的 key」只重叠 8%，
-   L8 压缩注意力质量 0.71 → 0.37，输出 token 不受影响（`p3_longctx.md` §5.3）。偏离参考就失去 L3 对照，所以留给决定。
-   **replay 128**（`serve` 在 prompt > 128 token 时的默认，是**我们自己的近似**，参考里没有）此前只验过首 token：
-   现在 **4K / 17K 从我们自己的预填状态自由生成都是 8/8**（`p3_longctx_decode.md` §4.3，`bench/results/linux/replay128/`）。
-   **修复**：17K 在 Linux 上第 0 层 `VK_ERROR_DEVICE_LOST`——amdgpu 的 2 s job 上限，而 shared expert、engram wkv（8K 时 1.9 s 一个 submit）、engram gate
-   都是一个 submit 覆盖全部行。`PrefillConfig::max_rows_per_submit = 2048`，`by_rows` 按行等分，三处调用。4,133 token **不再逐位相同**，
-   按站点二分：shared / engram 的分块是精确的，变化来自 `op_gemm_coop` 的 `x16` 尺寸判断（按 `n32 + slack` 比 `N + slack` 行的平面，
-   N % 32 ≠ 0 时全行稠密线性退回 tiled），分块后统一走 N % 32 == 0 一直在走的 coopmat；`DEEPMOE_PF_MAX_ROWS=0` 逐字节复现旧输出。
-   顺带：shared expert 在 17K 上共 14.6 s，不分块时 8K 就要 19.6 s（超线性消失）。
-   小差异（不改）：RoPE 角我们在 double 里算，参考是 fp32 `outer(arange, freqs)`；≤ 64K 在 fp32 ulp 以下，524K 时最高频一对约 0.03 rad。
-0l. **ISA 层看 MoE：FP4 解码占了主循环 83% 的指令 → `DecodeMode 3`（位移解码）成为 RADV 默认，MoE 7 槽一对 0.848 → 0.710 ms（−16%），数值逐位不变。**
-   **新仪器**：`DEEPMOE_PIPELINE_STATS=<dir>` 让每个 pipeline 带 `VK_KHR_pipeline_executable_properties` 创建，驱动自己的统计（VGPR/SGPR、LDS、
-   指令数、VALU/VMEM、每 SIMD wave 数、ACO 的 latency / inverse throughput 估计）一行进 `<dir>/index.tsv`，NIR / ACO IR / 最终汇编进 `<dir>/<pipeline>.txt`
-   （`gpu/vulkan/pipeline.cpp`；不设就什么都不变）。引擎跑一步就拿到全部 65 个 pipeline：`bench/results/linux/isa/`。**所有 kernel 都是满占用（16 wave/SIMD）、零 spill**——
-   瓶颈不在寄存器。**MoE gate/up 的主循环**（一次一个块：gate、up 两行 × 32 个 FP4）沿 FP4 路径 **840 条指令，其中 FMA 只有 64 条（`v_fma_mix_f32`），~700 条是解码**：
-   `DecodeMode 1` 对每个元素按指数是否为 0 分支、拼 fp32 位模式，~11 条 VALU 一个元素。按 16 wave/SIMD 摊，VALU 占用 ~68%——和 `kernel_p2_moe.md` 的「61% VALU」一致：
-   **M=1 不是纯访存瓶颈，解码指令在吃带宽**（此前从没做过 ISA / 占用率分析，见 MoE 历史：只看过一次 `dec0` 的 select tree）。
-   **做法**（`moe_common.slang` 的 `fp4_pair_bits`）：E2M1 的 nibble `s e1 e0 m` 原样放进 fp16 位模式（符号到 bit 15、`e1 e0 m` 到 bit 11..9）**就是值 × 2⁻¹⁴**，
-   正规码与次正规码都成立（E2M1 偏置 1、fp16 偏置 15，差的 14 正好也是 fp16 次正规的指数）；一个字的第 k 与 k+4 个 nibble 在两个半字的同一位置，
-   所以一对元素是两次移位两次掩码，经 `f16tof32` 由 ACO 折进 `v_fma_mix_f32` 的 op_sel（每元素仍一条 FMA）；2¹⁴ 并进块的 `ldexp`。
-   每个乘积和部分和恰是原来的 2⁻¹⁴ 倍，ldexp 精确乘回，所以**逐位相同**。驱动统计（`isa` → `isa_dec3`）：gate/up VALU **988 → 498**、
-   down（L16 R2）**1089 → 541**，ACO inverse throughput 6464 → 3524。`kernel_bench --only "fp8 engine shape"`（引擎的 A L32 R1 + B L16 R2 + fp8 共享专家）：
-   **A 191 → 212 GB/s、B 161 → 203、一对 0.848 → 0.710 ms**；M=6 验证批 0.841 → 0.697（`bench/results/linux/moe_dec3/`）。
-   闸：`gpu_moe` 12/12（oracle 变体里 dec3 的 cos 0.999999961、max|dy| 与 dec1 同值）；**`l3_ppl` off 0.621814 / 59/64，与 dec1 逐位相同**。
-   `runtime/moe_bridge.cpp` 在 RADV 上 `decode_mode = 3`（Windows 驱动仍是常量表 dec0，未测 dec3）；`DEEPMOE_MOE_DEC=1` 退回。
-   **热步**（ledger `hot-dec3`）：span 73.85 → **71.31 ms**，`moe_gateup` 16.2 → 14.45 ms（91% 天花板）、`moe_down` 11.1 → 9.6（89%）——引擎里省 3.3 ms，
-   不是 kernel_bench 那 5.5：bench 的一对里有 fp8 共享专家槽，引擎把它放在 shared-early 里单独跑。开 coopmat 注意力再 −1.7（`hot-dec3-attncm` 69.61 ms，1021 dispatch）。
-   **同一招用在 fp8（E4M3 放进 fp16 位 = 值 × 2⁻⁸，`fp8_pair_bits`）**：`gpu_moe` fp8 变体全过、`l3_ppl` 仍 0.621814 / 59/64；bench 一对 0.710 → 0.687，
-   但**引擎里 `moe_shared_early` 5.29 → 5.37 ms，看不出来**（那一段三个小 dispatch，不受 ALU 限制；这一轮所有 stage 都慢 1–2%，Tctl 94 °C）。留着（逐位相同、指令更少），不记收益。
+0m. **A review of V4.1's inference form (how each layer computes, and how KV is fetched), replay 128 verified token by token on a long context for the first time, and the Linux long-prompt device loss fixed.**
+   **Layer by layer against the reference** (`inference/model.py`; all of it is implemented, and the tests compare against an **unmodified** `model.py` -- the CPU shell in `tools/dsref.py`):
+   the layer types are `compress_ratios` = [0,0, 2×18, 1×20]; ratio 0 is pure window, theta 1e4, no YaRN, and ratio > 0 is theta 1.6e5 + YaRN (16 / 65536 / 32 / 1) (`runtime/rope.h`);
+   mHC's attention uses the **previous layer's FFN** `pre_mix` (one-hot at layer 0), the FFN uses this layer's attention one, and the tail uses the last layer's; engram is added onto the hc stream **before** the blocks of layers 1 and 14;
+   the window KV is a 128-entry ring per layer (E4M3 + UE8M0/32, RoPE tail included; oldest first in decode, unfilled as −1); the compressed KV and the index keys live on **one plane each at 2/8/14/20 only**
+   (block16 + E4M3 / block32 + E8M0, stored as dequantised bf16, bit-equivalent), and the RoPE for the latent and the key takes the **group's first** position, `pos + 1 − ratio`;
+   a non-source layer reads the nearest source's plane (`KvStoreConfig::for_model` / `Engine::build_ced_plan`), a non-index source reuses the nearest index source's top-k,
+   and 24–36 score layer 20's keys and select within layer 20's 2,048 candidate blocks (with the newest block pinned); `topk = min(512, (pos+1)//ratio)`, out of range is −1, and the rest get the window offset;
+   the gate is sqrt∘softplus, the bias selects without weighting, normalisation adds 1e-20 and multiplies by 1.5; SwiGLU clamps only the gate's upper bound and clamps up on both sides at 10 (the shared expert likewise).
+   Coverage: `suite.decode` probes layers 0/1/2/13/14/20/39, and `decode_longctx` covers 4K / 17K (indexer tie-aware, the candidate blocks, the salt round trip 8/8).
+   **One behaviour copied from the reference that looks like a reference bug (the user decided on 2026-09-29 to change it: every layer uses its own keys, see 0o)**: in decode the reference does not publish an index key on a step where the ratio-2 group is not full (every other step),
+   so layers 2/8/14 score against **the previous step's layer 20** key cache (`shared_attn.index_k` is never reset; its docstring assumes "every source writes before it reads"), while prefill uses its own keys.
+   (What follows is the pre-0o behaviour, now retired.) We copied both (`pub_index_k_`). It only takes effect above a context of 1,024: at 17K, those steps' top-k overlaps "use your own keys" by only 8%,
+   L8's compressed attention quality goes 0.71 → 0.37, and the output tokens are unaffected (`p3_longctx.md` §5.3). Departing from the reference loses the L3 comparison, so it was left for a decision.
+   **replay 128** (`serve`'s default above a prompt of 128 tokens, and **our own approximation** -- the reference has nothing like it) had only ever been verified on the first token:
+   now **4K and 17K free-generating from our own prefilled state are both 8/8** (`p3_longctx_decode.md` §4.3, `bench/results/linux/replay128/`).
+   **The fix**: 17K got `VK_ERROR_DEVICE_LOST` at layer 0 on Linux -- amdgpu's 2 s job limit, while the shared expert, the engram wkv (1.9 s in one submit at 8K) and the engram gate
+   each covered every row in a single submit. `PrefillConfig::max_rows_per_submit = 2048`, `by_rows` splits the rows evenly, three call sites. 4,133 tokens is **no longer bit-identical**,
+   and bisecting by site: the shared / engram splits are exact, and the change comes from `op_gemm_coop`'s `x16` size decision (a plane of `n32 + slack` rows against `N + slack`;
+   with N % 32 ≠ 0, a full-row dense linear falls back to tiled), while after splitting everything takes the coopmat path that N % 32 == 0 always took; `DEEPMOE_PF_MAX_ROWS=0` reproduces the old output byte for byte.
+   In passing: the shared expert is 14.6 s in total at 17K, while without splitting 8K alone took 19.6 s (the superlinearity is gone).
+   A small difference (not changed): we compute the RoPE angles in double where the reference uses an fp32 `outer(arange, freqs)`; below 64K that is under an fp32 ulp, and at 524K the highest-frequency pair differs by about 0.03 rad.
+0l. **MoE seen at the ISA level: FP4 decoding was 83% of the main loop's instructions → `DecodeMode 3` (shift decoding) becomes the RADV default, a MoE pair over 7 slots goes 0.848 → 0.710 ms (−16%), numerics bit-identical.**
+   **New instrument**: `DEEPMOE_PIPELINE_STATS=<dir>` creates every pipeline with `VK_KHR_pipeline_executable_properties`, and the driver's own statistics (VGPR/SGPR, LDS,
+   instruction count, VALU/VMEM, waves per SIMD, ACO's latency / inverse throughput estimates) go one line each into `<dir>/index.tsv`, with the NIR / ACO IR / final assembly in `<dir>/<pipeline>.txt`
+   (`gpu/vulkan/pipeline.cpp`; nothing changes if it is unset). One engine step yields all 65 pipelines: `bench/results/linux/isa/`. **Every kernel is at full occupancy (16 waves/SIMD) with zero spills** --
+   the bottleneck is not registers. **The MoE gate/up main loop** (one block at a time: two rows, gate and up, × 32 FP4 values) is **840 instructions along the FP4 path, of which only 64 are FMA (`v_fma_mix_f32`) and ~700 are decoding**:
+   `DecodeMode 1` branches per element on whether the exponent is 0 and assembles an fp32 bit pattern, ~11 VALU per element. Spread over 16 waves/SIMD, VALU occupancy is ~68% -- which agrees with `kernel_p2_moe.md`'s "61% VALU":
+   **M=1 is not purely memory-bound, the decode instructions are eating the bandwidth** (no ISA or occupancy analysis had ever been done before; see the MoE history: only `dec0`'s select tree was ever looked at, once).
+   **The method** (`fp4_pair_bits` in `moe_common.slang`): putting an E2M1 nibble `s e1 e0 m` into an fp16 bit pattern as it stands (sign to bit 15, `e1 e0 m` to bits 11..9) **is the value × 2⁻¹⁴**,
+   and that holds for both normal and subnormal codes (E2M1's bias is 1 and fp16's is 15, and the difference of 14 is exactly fp16's subnormal exponent); nibbles k and k+4 of a word sit at the same position in the two halfwords,
+   so a pair of elements is two shifts and two masks, and `f16tof32` lets ACO fold them into `v_fma_mix_f32`'s op_sel (still one FMA per element); the 2¹⁴ is merged into the block's `ldexp`.
+   Every product and partial sum is exactly 2⁻¹⁴ times the original, and ldexp multiplies it back exactly, so it is **bit-identical**. Driver statistics (`isa` → `isa_dec3`): gate/up VALU **988 → 498**,
+   down (L16 R2) **1089 → 541**, and ACO inverse throughput 6464 → 3524. `kernel_bench --only "fp8 engine shape"` (the engine's A L32 R1 + B L16 R2 + the fp8 shared expert):
+   **A 191 → 212 GB/s, B 161 → 203, a pair 0.848 → 0.710 ms**; an M=6 verify batch 0.841 → 0.697 (`bench/results/linux/moe_dec3/`).
+   Gates: `gpu_moe` 12/12 (in the oracle variants, dec3's cos is 0.999999961 and max|dy| is the same value as dec1's); **`l3_ppl` off 0.621814 / 59/64, bit-identical to dec1**.
+   `runtime/moe_bridge.cpp` sets `decode_mode = 3` on RADV (the Windows driver still uses the constant table dec0, and dec3 was not measured there); `DEEPMOE_MOE_DEC=1` reverts.
+   **The hot step** (ledger `hot-dec3`): span 73.85 → **71.31 ms**, `moe_gateup` 16.2 → 14.45 ms (91% of the ceiling), `moe_down` 11.1 → 9.6 (89%) -- 3.3 ms saved in the engine,
+   not kernel_bench's 5.5: the bench's pair includes the fp8 shared expert slot, while the engine runs that separately inside shared-early. Turning coopmat attention on takes another −1.7 (`hot-dec3-attncm` 69.61 ms, 1021 dispatches).
+   **The same trick on fp8** (E4M3 into fp16 bits = the value × 2⁻⁸, `fp8_pair_bits`): the `gpu_moe` fp8 variants all pass and `l3_ppl` is still 0.621814 / 59/64; the bench pair goes 0.710 → 0.687,
+   but **`moe_shared_early` in the engine goes 5.29 → 5.37 ms, which is not visible** (that stretch is three small dispatches and is not ALU-limited; every stage in that round was 1–2% slower, Tctl 94 °C). Kept (bit-identical, fewer instructions), with no gain credited.
 
-0k. **GPU 模型 → decode 注意力改成两次 coopmat GEMM（`decode_attn_cm.slang`，**RADV 默认开**，`DEEPMOE_ATTN_CM=0` 关）：n_kv 640 时 149 → 23.5 µs/层。**
-   **怎么找到的**：`tools/gpu_model.py`（`model_probe` 量出的常数 + trace 的 DMGEOM01 几何）把每个 stage 的实测减模型排序，
-   `sparse_attn.score/combine` 是**唯一一个实测是模型 9 倍的 stage**（热步 23 µs 对 2.5，每 token 缺口 1.6 ms）；
-   `attn_bench --kv` 在对话的真实长度（window 128 + index_topk 512 = 640）上是 **85.5 + 63.8 = 149 µs/层 ≈ 6 ms/token**，tiled 版 49 + 67。
-   原因不是字节（KV 0.6 MB）也不是 FLOP（2 × 42 M），是**每个 head 各走一遍**：64 个 workgroup 各自把同一行 KV 解码、做 16 维标量点积再 `WaveActiveSum`，
-   一个 wave 串行走 80 行，每行一次依赖加载 + 一次 wave 归约。这与 §3 的 50（「读一次再发布」不赚——重复**读**是免费的）不矛盾：这里省的是重复的**解码和串行链**。
-   **做法**：64 个 head 是矩阵的行——`S = Q·Gᵀ`、`O = P·G`，G 是按 index 表收集好的 KV 行（fp16），fp16 tile、fp32 累加，五个 dispatch：
-   gather / score / softmax / pv / finish。参考实现的每一条都保留（max 只取 KV 分数、−1e30 下限、p 在最终 max 之后取 bf16、sink 进分母、逆 RoPE）；
-   E4M3 × UE8M0 与 bf16 在 fp16 里都是精确的，p 存成 p × 2¹⁴ 让 2⁻²⁸ 以上都精确。P·V 按列表切 4 片（部分和进 `kAttnCmPart`，finish 相加）：
-   pv 18.5 → **8.0 µs**（2 片 10.9、6–8 片 7.3–7.9 + finish 多 0.5–0.9）；score 切 2 片 6.9 → 5.9 但 softmax 3.4 → 4.5，不切。
-   `attn_bench --kv 640`：gather 3.1 / score 6.9 / softmax 3.4 / pv 8.0 / finish 2.1 = **23.5 µs**（`bench/results/linux/attn_cm/`）。
-   **数值**：`suite.gpu_attn` 在 7 层 oracle 数据上与参考的 cos **和经典 kernel 逐位相同到 9 位**（0.999997368 …），对经典 kernel relL2 **5e-8 – 1.7e-7**，
-   与已合入的 tiled 版（3e-8 – 7e-8）同量级；三种切片（1/1、1/4、4/8）都过。整机闸（`DEEPMOE_ATTN_CM=1`）：
-   `suite.spec_forward` worst cos **0.9316**、top-1 52/60（等价变体 0.913–0.944 / 52–57）；`suite.decode_longctx` 最差 attn_norm **0.822**（变体 0.838–0.933，线 0.74）；
-   `suite.decode` 三个漂移量 window 0.910 / compressed 0.959 / index keys 0.962（线 0.87 / 0.94 / 0.92）——都在散布里。
-   **没过的一格**：`suite.decode` 第一段 teacher-forced **6/8**（要 7/8）。step 6 在**所有**等价变体里都错；step 7 在默认算术下我们只以 **margin 0.0019** 蒙对
-   （变体 0.12 / 1.17 / 1.26），coopmat 翻成 −0.21；第二段同一个 step 7 在 ksplit_oldB 变体里也翻过。**这一格是一个硬币**。
-   `l3_ppl` off（64 步）：默认 **0.621814 / 59/64**（与 K-split 那次逐位相同），coopmat **0.622784 / 56/64**（+0.16%；等价变体散布 0.602–0.648 / 56–62）。
-   逐位置对比：翻转**双向**——coopmat 把默认错的 step 4、12 翻对，把 11、17、20、45、46 翻错，七处两边 margin 全部 < 0.47，全是近平局。
-   它没有系统性的精度损失，但默认开就要改 `suite.decode` 的 7/8——质量闸的定义，**交给用户决定：选了「默认开、改闸」**。
-   **新判据**（`tests/test_decode.cpp` 的 `kNearTie = 0.5`）：teacher-forced 数「参考 token 在**我们**分布里落后我们 top-1 超过 0.5 logit」的硬错，8 步里最多 1 个；
-   精确匹配数照打。0.5 来自上面那七处双向翻转（margin 全 < 0.47）。接线错误差的是几个 logit、整条分布（rho ~0.2），不会落在 0.5 以内。
-   默认开之后：第一段 6/8、硬错 1（step 7 差 0.79；step 6 差 0.10 不计），第二段 7/8、硬错 0——过（`bench/results/linux/attn_cm/decode_default_on.txt`）；
-   旧默认算术下 step 6 差 1.45 是硬错、step 7 对，同样是 1 个。
-   **8 轮对话**（ledger `final-default-8turns` / `final-attncm-8turns`，同一树、只差开关）：compute **71.2 → 68.3 ms**（attn 34.1 → 31.1；
-   对话前几轮上下文短、n_kv < 640，所以不到 5 ms），decode **6.850 → 7.264 tok/s**——其中 stall 72.8 → 67.2 是 IO 噪声（ms/miss 5.16 / 4.89，同配置复跑的散布），
-   可信的是 compute 那 2.9 ms。
+0k. **The GPU model → decode attention became two coopmat GEMMs (`decode_attn_cm.slang`, **on by default on RADV**, `DEEPMOE_ATTN_CM=0` disables it): at n_kv 640, 149 → 23.5 µs/layer.**
+   **How it was found**: `tools/gpu_model.py` (the constants `model_probe` measures + the DMGEOM01 geometry from the trace) sorts every stage by measured minus modelled,
+   and `sparse_attn.score/combine` is **the only stage whose measurement is 9 times its model** (23 µs against 2.5 in the hot step, a shortfall of 1.6 ms a token);
+   `attn_bench --kv` at a conversation's real length (window 128 + index_topk 512 = 640) is **85.5 + 63.8 = 149 µs/layer ≈ 6 ms/token**, and 49 + 67 for the tiled version.
+   The cause is neither bytes (KV is 0.6 MB) nor FLOPs (2 × 42 M) but **every head walking it separately**: 64 workgroups each decode the same KV row, do a 16-dimensional scalar dot product and then a `WaveActiveSum`,
+   with one wave walking 80 rows serially, each row a dependent load plus a wave reduction. This does not contradict §3 50 ("read once and publish" does not pay -- repeated **reads** are free): what is saved here is repeated **decoding and the serial chain**.
+   **The method**: the 64 heads are the rows of a matrix -- `S = Q·Gᵀ` and `O = P·G`, where G is the KV rows gathered by the index table (fp16), fp16 tiles with fp32 accumulation, in five dispatches:
+   gather / score / softmax / pv / finish. Every line of the reference implementation is preserved (max over KV scores only, the −1e30 floor, p taken as bf16 after the final max, the sink in the denominator, the inverse RoPE);
+   E4M3 × UE8M0 and bf16 are both exact in fp16, and p is stored as p × 2¹⁴ so that everything above 2⁻²⁸ is exact. P·V is split into 4 pieces by column (partial sums into `kAttnCmPart`, summed in finish):
+   pv 18.5 → **8.0 µs** (2 pieces 10.9, 6–8 pieces 7.3–7.9 plus 0.5–0.9 more in finish); splitting score into 2 takes it 6.9 → 5.9 but softmax 3.4 → 4.5, so it is not split.
+   `attn_bench --kv 640`: gather 3.1 / score 6.9 / softmax 3.4 / pv 8.0 / finish 2.1 = **23.5 µs** (`bench/results/linux/attn_cm/`).
+   **Numerics**: on 7 layers of oracle data, `suite.gpu_attn`'s cos against the reference is **bit-identical to the classic kernel's to 9 digits** (0.999997368 …), and relL2 against the classic kernel is **5e-8 – 1.7e-7**,
+   the same order as the already-merged tiled version (3e-8 – 7e-8); all three splittings (1/1, 1/4, 4/8) pass. Whole-engine gates (`DEEPMOE_ATTN_CM=1`):
+   `suite.spec_forward` worst cos **0.9316**, top-1 52/60 (the equivalent variants 0.913–0.944 / 52–57); `suite.decode_longctx`'s worst attn_norm **0.822** (variants 0.838–0.933, the line at 0.74);
+   `suite.decode`'s three drift figures window 0.910 / compressed 0.959 / index keys 0.962 (lines 0.87 / 0.94 / 0.92) -- all inside the spread.
+   **The one cell that did not pass**: `suite.decode`'s first teacher-forced stretch at **6/8** (7/8 is required). Step 6 is wrong in **every** equivalent variant; step 7 we only get right under the default arithmetic by a **margin of 0.0019**
+   (the variants give 0.12 / 1.17 / 1.26), and coopmat flips it to −0.21; in the second stretch that same step 7 has also flipped in the ksplit_oldB variant. **That cell is a coin flip.**
+   `l3_ppl` off (64 steps): the default is **0.621814 / 59/64** (bit-identical to the K-split round) and coopmat is **0.622784 / 56/64** (+0.16%; the equivalent variants spread 0.602–0.648 / 56–62).
+   Position by position, the flips go **both ways**: coopmat turns the default's wrong steps 4 and 12 right, and 11, 17, 20, 45 and 46 wrong, and at all seven the margin is < 0.47 on both sides -- all near-ties.
+   It has no systematic accuracy loss, but turning it on by default means changing `suite.decode`'s 7/8 -- the definition of the quality gate, so **it was left to the user, who chose "on by default, change the gate"**.
+   **The new criterion** (`kNearTie = 0.5` in `tests/test_decode.cpp`): teacher-forced counts the hard errors, "the reference token trails **our** top-1 by more than 0.5 logit in **our** distribution", at most 1 in 8 steps;
+   exact matches are still counted. The 0.5 comes from those seven two-way flips above (every margin < 0.47). A wiring error is off by several logits over the whole distribution (rho ~0.2) and will not land inside 0.5.
+   After turning it on: the first stretch is 6/8 with 1 hard error (step 7 off by 0.79; step 6's 0.10 does not count) and the second is 7/8 with 0 -- it passes (`bench/results/linux/attn_cm/decode_default_on.txt`);
+   under the old default arithmetic, step 6's 1.45 is a hard error and step 7 is right, which is also 1.
+   **8 turns of conversation** (ledger `final-default-8turns` / `final-attncm-8turns`, the same tree, only the switch differs): compute **71.2 → 68.3 ms** (attn 34.1 → 31.1;
+   the first few turns have a short context and n_kv < 640, so it is under 5 ms), decode **6.850 → 7.264 tok/s** -- of which stall 72.8 → 67.2 is IO noise (ms/miss 5.16 / 4.89, the spread of a rerun of the same configuration),
+   and what can be trusted is the 2.9 ms of compute.
 
 0j. **系统测量 + 按瓶颈排序的第一轮：GPU 空闲降频（GameMode）+ `sample_topk` 的 LDS 直方图。对话结果见 §1.0 的 ledger，不在这里重抄。**
    **尺子**：`tools/perf_report.py`——热步（`--capture`，全部 expert 驻留）每个 dispatch stage 的忙时对它要流过的权重字节 ÷ `--bw`（230 GB/s，
