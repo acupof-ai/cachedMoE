@@ -831,6 +831,14 @@ int run_prefill(const Options& o) {
                                        e.failovers, e.readmits, e.dropped ? " DROPPED" : "");
                 std::printf("  io: %llu requests, %llu failed%s\n", (unsigned long long)st.requests_submitted,
                             (unsigned long long)st.requests_failed, src.c_str());
+                if (st.p0_requests)   // the expert reads' queue: what they waited behind (§7 0bb)
+                    std::printf("  p0: %llu req, lat %.2f ms mean (queue %.2f, service %.2f), %.0f%% issued with %.1f bg in flight, qd %.1f at issue\n",
+                                (unsigned long long)st.p0_requests, st.p0_lat_ns_sum / 1e6 / double(st.p0_requests),
+                                st.p0_queue_wait_ns_sum / 1e6 / double(st.p0_requests),
+                                st.p0_service_ns_sum / 1e6 / double(st.p0_requests),
+                                st.p0_chunks_issued ? 100.0 * double(st.p0_with_bg_n) / double(st.p0_chunks_issued) : 0.0,
+                                st.p0_with_bg_n ? double(st.p0_bg_inflight_sum) / double(st.p0_with_bg_n) : 0.0,
+                                st.p0_chunks_issued ? double(st.p0_qd_at_issue_sum) / double(st.p0_chunks_issued) : 0.0);
             }
             if (!out) { std::fprintf(stderr, "prefill: %s\n", out.error().str().c_str()); return 1; }
             const gpu::PrefillTimes& t = pf.times();

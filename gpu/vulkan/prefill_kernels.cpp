@@ -447,6 +447,19 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
             std::fprintf(stderr, "create: %.2f GB of workspace, zeroed by the GPU in %.0f ms, %.0f ms in all\n",
                          total / 1e9, ms_since(ta), ms_since(tc0));
     }
+    {
+        // The transit ring takes the drives' DMA: its pages have to be mapped
+        // on the CPU side before the first read lands, or the first pass
+        // over the ring pays for it a page at a time (ring 6 at 17K: layer
+        // 0's MoE 1.0 -> 3.1 s after the GPU took over the zeroing, §7 0bb).
+        const auto tt = Clk::now();
+        std::vector<std::jthread> pool;
+        for (uint32_t t = 0; t < kPfTransitSegmentsMax; ++t)
+            if (b_.transit[t].valid())
+                pool.emplace_back([b = b_.transit[t]] { std::memset(b.host_ptr, 0, static_cast<size_t>(b.bytes)); });
+        pool.clear();
+        if (std::getenv("DEEPMOE_PF_CREATE_TRACE")) std::fprintf(stderr, "create: transit touched in %.0f ms\n", ms_since(tt));
+    }
     qp_ok_ = static_cast<bool>(qp_.create(device, 1024));   // a routed batch marks every dispatch
     return build_rope(static_cast<uint32_t>(N + 8));
 }
