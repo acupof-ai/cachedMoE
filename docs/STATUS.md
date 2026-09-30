@@ -697,6 +697,52 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0bs. **Sizing the fusion question before designing for it (user 2026-09-30 "AMD has issue-rate problems too, fuse as much as possible on a single machine"): the fusable part of the routed-expert chain is 6.4% of it, and the two obvious variants were already measured and lost.** Per-op profile of a 4,133-token prefill, `--ops-json`, routed-expert chain:
+
+| op | ms | calls |
+|---|---:|---:|
+| `gpu: moe gemm gate/up fp4` | 1873.0 | 5121 |
+| `gpu: moe tiled gate/up` | 882.1 | 348 |
+| `gpu: moe gemm down fp4` | 813.2 | 5121 |
+| `gpu: moe tiled down` | 397.5 | 348 |
+| `gpu: moe gemm gate/up` (non-FP4) | 180.3 | 160 |
+| `gpu: moe scatter` | 120.5 | 5201 |
+| `gpu: moe x16` (x and h staging) | 102.9 | 10402 |
+| `gpu: moe gemm down` (non-FP4) | 88.2 | 80 |
+| `gpu: moe swiglu` | 50.7 | 5201 |
+| `gpu: moe decode` | 44.2 | 240 |
+| `gpu: moe quant` | 19.8 | 5201 |
+| `gpu: moe tiled quant` | 0.9 | 348 |
+| **op time** | **4573.3** | |
+| `moe routed (gpu)` bucket | 5071.2 | 350 |
+
+Two numbers matter. **The elementwise and staging steps a fusion would absorb -- x16, swiglu,
+quant, scatter -- are 294 ms, 6.4% of the chain**; the GEMMs are 59% (FP4) plus 28% (the tiled
+small-expert path) plus 6% (non-FP4 coop). And **the gap between the op sum and the bucket is
+498 ms, 10%**, spread over 52,072 dispatches -- that is the inter-dispatch drain and barrier
+cost, the part of "AMD's issue rate" that shows up here. So the whole fusion family's ceiling
+is about 0.5 s of 5.07 s = 10%, halved **5%**, and at 4K it sits behind 35.9 s of disk.
+
+**And two variants of it are already closed** (§3 76, so this is not a new question in the
+parts that were asked): grouping 8 experts and recording stage by stage took 4K expert GPU
+6.4 -> 8.8 s, and keeping per-expert order while overlapping only the decode with the adjacent
+GEMM took it to 9.4 s. The recorded reason is that this chain lives on L2 locality between
+*adjacent* dispatches -- gather then GEMM reads `x16`, up then swiglu reads `gu`, stage then
+down reads `h16`, a few MB each -- so breaking the order costs more than the drains save.
+
+**Against that, 0br's stall account says the FP4 GEMM's interior holds 29 points of a 9.07 s
+bucket at 17K.** So fusion is ranked below it, and this entry exists so the next person does
+not have to re-derive the 6.4%. What is *not* settled and is out with codex: whether any of the
+498 ms of barrier gap is reachable while keeping the dispatch order that §3 76 proved is
+load-bearing, and whether the one fusion with real DRAM traffic behind it -- swiglu + quant +
+h-staging into the gate/up epilogue, which needs one workgroup to hold gate and up for the same
+rows and therefore a geometry change on a kernel already at the 256-VGPR architectural
+maximum -- can pay for itself given §3 84 measured plain wm2 as a loss. Also open: **the tiled
+small-expert path is 1,280 ms, 28% of the chain, in 7% of the experts, and §3 83 records its
+limit as still unmeasured.**
+
+`scratchpad/ops4k.jsonl`.
+
 0br. **The full cycle account, from the ISA rather than from the counters -- and it reorders the whole backlog: stalls are 36% of the time and worth four times more than every instruction we could remove.** (user 2026-09-30 "go", after 0bq killed the counter-based model.)
 
 **The instrument.** `tools/isa_blocks.py` reads a `DEEPMOE_PIPELINE_STATS` dump and reports the
