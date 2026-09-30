@@ -640,75 +640,75 @@ steps, and the reference continuation has to be produced step by step.**
 
 ---
 
-## 6. 已知限制与未决风险
+## 6. Known limits and open risks
 
-1. **decode 被 NVMe 钉死**：每 token 60% 是 stall。**默认 `auto` = 5,100 槽 / 89.3 GiB，6.05 → 5.60 tok/s / hit 0.9383**，
-   ⚠️ **2026-09-19（Track H1a）改了**：`auto` 现在先封顶到 **5,000 槽**再**探一次提交**，refused 就每次退 200 槽重建（最多 5 次）。
-   所以 `auto` 不再会起不来；代价是默认容量从算出来的 5,100 降到 5,000（约 −0.2 点 hit）。
-   而且这已经是本机安全上限附近（5,400 八轮中途死、5,500 第一个 token 丢设备，§3 的 30 / `p4_hitrate.md` §4）。
-   容量曲线还在爬（sim 6,500 槽 +2.2 点），但**本机没有字节了**。20 tok/s 需要把 MB/token 再砍 3×：
-   2-bit 已经否掉（§3 的 37），只剩投机解码，而它今天做不到（§3 的 34）。
-2. ~~**每次 expert miss 20–31 ms，真实盘时间 ~2 ms，10× 的差没有解释。**~~ **已关闭**：
-   那就是盘对 expert 尺寸随机读的表现（QD=4 时 5.19 GB/s / 13.6 ms 每请求，一层 6 个 = 21.7 ms），§4。
-3. **热步只剩 ~7% 余量**（81.5 vs 地板 75.8 ms）。剩下的是结构性的：每 token 40 次 host 往返读 gate
-   （~1.6 ms submit + ~2 ms fence），以及 MoE 的 `x` 每层往 host 走一趟。
-4. **prefill 是 19.5 ms/prompt token 的 compute**（F3 实测，4,133 token = 80.6 s），
-   在对话里比 decode 还贵。**≥ 5× 的目标低于这台机器的算术地板**：73.5 TFLOP ÷ 本趟最好的
-   2.1 TFLOP/s = 35 s，而 5 ms/token 只有 20.7 s——**要 3.56 TFLOP/s 持续**。
-   唯一能动速率的是重写 `prefill_coopmat` stage 0（多 wave + LDS + 双缓冲），**未做**（§2.5）。
-   **2026-09-29 更新**：LDS 版本做了（§7 0t），4K 68 s（`prefill_bench`）/ 17K 160 s。完整的成本模型见 §7 0u：4K 被盘卡住（下限 43.8 s），17K 被串行段的计算卡住（注意力、indexer、engram 行读、engram GEMM 依次排前）。
-   **另外它已经有一个 41× 的复用手段（SSD KV）没接进 `serve` 的默认路径。**
-5. ~~**`Engine::generate` 的 `speculative` 是 `unimplemented`**，缺三个 kernel 能力~~ **verify 那一半做完了，draft 那一半没有**（Track SP，`p4_dspark_runtime.md` §7）：
-   `Engine::forward_batch(p0, tokens[M<=6])` + `snapshot_batch_ring` / `restore_batch_ring` 已经是 `SpecModel` 的三个方法，
-   CPU 比较器早就有。**`Engine::generate` 的 `speculative` 仍然是 `unimplemented`**，因为 `SpecModel::draft_forward`
-   缺 runtime 侧的 DSpark 草稿链（37/38/39 层 hc-mean → 三个 `DSparkBlock` → top-16 矩阵；kernel 齐了，`runtime/` 里一行没有），
-   而且它要 **7.2 GB 的 mtp expert 常驻**，那是从 expert cache 里拿走的。`--spec` / `--accept` 的 CLI **没有接**，因为没有可接的东西。
-   **接不接得下去现在是个已答的问题**：§3 的 42 说，就算草稿白送，投机在这台机器上也只是打平。
-6. **Track J 的接口（K-split / tiled attention，696 µs/层）没有被 runtime 采纳**，
-   而且**它的 LDS 修复在真机上看不到**：attention 在 Track I 是 36.0 ms、Track Q 后是 36.9 ms，J 声称 −3.8 ms 且"已生效"。**这个矛盾未解决。**
-   （有一份**从未编译、从未验证**的采纳尝试，是 P4 合并时在 `deepmoe-t` 工作树里捡到的未提交改动，
-   保存在 tag `wip/track-t-ksplit-decode` 上，免得删工作树时丢掉。**不要当成已验证的东西用。**）
-7. ~~**`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` 从未 A/B 过。**~~ **已做（F4，`p4_hitrate.md` §6）**：
-   `MOE_OVERLAP` +1–4%（hit 到小数点后四位不变——它搬运工作，不改 cache 内容）**默认 on**；
-   `PREFILL_HANDOFF` 在 512 / 1,024 / 2,048 token prompt 上 **+72% / +49% / +17%**，
-   还顺带削掉 prefill 自己的 9–14%，**默认 on**；`BACKFILL` 整体只值 +0.0011 hit 却多读 21.5 GiB，
-   **默认 off**（而且计数器显示它一直就是 off 的）。**留下一个未解释的格子**：两对 2,048-token
-   run 只差 `--max-context`（4,096 vs 8,192），handoff-**off** 那一侧从 0.8487 跳到 0.9715，
-   而 handoff-on 两侧完全相同（0.8874/0.8874）。在这条被命名之前，4,133-token 那一行**不能**读成"长 prompt 上 handoff 输了"。
-8. **C(M) 曲线缺失**（`bench/results/mgt1_p4.csv`），DSpark 的 20 tok/s 判定挂在它上面。
-9. **`serve` 单会话、不能中途打断**。~~GPU prefill 默认关（`--gpu-prefill-min` 默认 0）~~ **过期（codex 2026-09-30 审出）：现在默认开**——`runtime/session.h:223` 的默认值是 **512**，`cli/serve.cpp:362` 在 RADV 上再压到 **16**（`--gpu-prefill-min` 可覆盖，且会打一行日志）。经过见 §7 0c。
-10. **口径分裂：本文件 §1 / §2.4 里 5,500 槽那一行（6.05 tok/s / 0.9431）是在一台当时能撑住 5,500 槽的机器上量的**，
-    而 F4 在安静机上复现不出来（第一个 token 就丢设备）。两个数都留着，但**可依赖的默认是 5,100 槽那一行**。
-11. **路径 B 封顶 16 GiB**，因为按物理内存定大小会让下一次 submit 发现设备丢失（§3 的 30）。
-12. ~~**没有 per-dispatch 的时间线**……**尚未在 GPU 上验证**~~ **已过期（codex 2026-09-30 审出）**：`runtime/trace.*` + `tools/trace_timeline.py` 已在用——`runtime/engine.cpp:567` 在别的东西碰设备之前就把 tracer 开起来（query pool 按它定大小），§3 49 / 53 和后面的 ledger 行都是读它的 GPU trace 得出的。命令见 `plan_p5.md` §4。
-13. **F3（prefill kernel 几何）与 F2（KV / session）都是部分工作。** F3 的四处几何修正 + `wo_a` 的 coopmat
-    已合入，每个 pre-F3 几何都留了一个环境变量开关用于归因（`tests/test_gpu_prefill.cpp`），
-    它的报告与 per-op CSV 也已合入（本轮从 `p4/fin-s` 的工作树里捡回来的，**当时没提交**）。
-    但 **F3 自己的那次测量是在另一条 track 的三个 `deepmoe_tests` 同时占着 GPU/NVMe 时做的**——
-    只有 per-op 那几列可比，墙钟不可比；§2.5 的 TTFT 仍是 Track L 的数，**没有新的安静机端到端对照**。
-    F2 的 KV 多 slab、`clear()` 批量化、fence 等待改成预算（不再是 120 s 死线）、`.pkv`
-    字段表与三会话 park/spill 演示已合入，但 **SSD KV 前缀复用仍然不是 `serve` 的默认路径**（见 §7 的 2）。
-14. **H1a 的三条新行为一行都没在 GPU 上跑过**（2026-09-19，Track H1a）：封顶、探测提交、退让重建、
-    以及丢设备时的致命信息，**全部只过了 CPU 单测 + 变异**。这台机器的引擎正被网页 UI 占着，
-    本轮按约定没有起第二个引擎。闸是新注册的 `smoke.auto_cache`（`ctest -L needs-gpu`，
-    auto 起引擎 + decode 两个 token）；**在它绿之前，「`auto` 安全了」是一个设计声明，不是一个测量**。
-    另外那个空命令缓冲究竟够不够触发驻留检查，**只能在真机上验**——如果不够，探测会假阳性通过，
-    而封顶（① 那一半）仍然挡着本机已知的 5,100。
-15. **`p4/one-pr` 合进 main 时，整个 P4 的数字没有在合并后的这棵树上重跑**——
-    合并后跑的是 build + 全量 ctest，不是 bench。任何性能数字的出处仍然是它自己那一行指的报告。
-16. **E:（USB 外置 NVMe）的三次失败已定位到 USB/UAS 桥，不是 `deepmoe`，也不大可能是 SSD**
-    （2026-09-19，Track DX，[p4_e_drive_diag.md](p4_e_drive_diag.md)）：不带引擎的纯 Win32 探针，
-    **48 句柄 `NO_BUFFERING|OVERLAPPED` + QD 24 的 4 MiB 随机读，17 秒把 E: 打死**（开句柄就花了 17 s，
-    D: 是 1 ms），同一份负载 D: 跑 60 s / 4.53 GB/s / 零错误；系统日志 48 h 内 180 条 `UASPStor 129`
-    端口复位**先于** 983 条 `disk 154` 硬件错误，出错 LBA 全不重复。`win32 1117` 落在 `norm.weight` 上
-    **是巧合**——12 KiB 小读不是触发条件。**SMART / 温度没读到**（本会话非管理员、`smartctl` 未装），
-    所以 SSD 本身**排最后但未证伪**。USB4 盒子到货后**必须跑 `p4_e_drive_diag.md` §5.1 的验收门**，
-    `ls` 和单句柄 `nvme_bench` 都不算健康检查（D2 §7.3 已经付过这个学费）。
-    **E: 现在是掉线状态，需要物理拔插。**
-17. **17K 的 prompt 在默认 5,500 槽的 cache 下会丢设备**（Linux，2026-09-29，§7 0t）：prefill 的缓冲区是按 prompt 长度分配的，加上 96 GiB 的 expert cache 就超出了 GTT，内核报 "Not enough memory for command submission"。**已修（§7 0ah，2026-09-30）**：cache 预算先扣掉 prefill 在 min(`--max-context`, 16K) 个 token 下的工作区（17K 自动 5,046 槽，正常跑完），更长的 prompt 在 prefill 前按 heap 余量拒绝而不是丢设备。仍然开着的一半：网页 UI 的 65,536 上下文只预留到 16K，16K 以上的 prompt 会被拒绝——真正的解法是 prefill 按块分配工作区（KV 平面全长，激活只留一块），没做。
-18. ~~prefill 在并发 4 KiB DMA 流下不再逐位~~ **已定位、已修**（2026-09-30，§7 0aw；§3 78、80 是它的两次现身）：io_uring 后端的在飞记录表是 1,024 项、按 `chunk_id & 1023` 存，且无条件覆盖。一个 1 MiB 的 expert 读排在几十万个 4 KiB engram 行读后面时，在它落地前会有超过 1,024 个新 chunk 发出，新的那个把它的记录占了：完成事件按记录归属，于是**另一个 chunk 的 future 先被当作完成**——GPU 在数据没落地时就开算，错的正是几个孤立的位置，且错法只有几种（8.374 ×5）。只有 expert 流和 engram 流在飞中重叠时才会发生，所以 decode（只有 1 MiB backfill）从不出错、engram 行读只要在本层等完（默认路径）也不出错。修法是记录从 free list 拿、SQE 的 `user_data` 存记录的下标而不是 chunk id，短读续读和 bounce 重试沿用原记录。验证：同一份"提前发"代码（§3 80）旧后端 4K 三次全错、新后端四个配置全逐位；默认路径 4K 29.72 / 8.598、`gpu_prefill` 7/7、`suite.io` 过。§3 78 那条路（engram 行提前发，17K −2.4 s）现在可以重开。
-19. **serve 的内存离顶太近时 prefill 的 host 时间涨 2–3 s**（2026-09-30，§7 0as、0av）：4,900 槽（85.8 GiB）+ 常驻 9.2 GiB + 17K 工作区，再多 5.7 GiB 就撞上——`other` 从 3.0 涨到 5–6 s，bench 里没有。THP 是 `always`，怀疑是分配等整页/回收。自动预算按 `available_physical_bytes()` 减 12 GiB 地板算，手给 `--cache-slots` 时没有这层保护；任何常驻新东西都要从槽数里扣（scale 平面 5.7 GB ≈ 300 槽，transit 环 6 段 +4.8 GB ≈ 260 槽）。
-20. **镜像盘会从 USB4 总线上掉**（2026-09-30，§7 0bd）：机制（09:05:53 那次，内核日志）：PCIe 隧道先断（pciehp Link Down），USB4 层面盒子没断开，但 thunderbolt 驱动对盒子路由器和主机路由器的 config 读写全部超时——控制通道卡死，隧道重建不了，PCI rescan 够不到这一层；要拔插盒子（给 ASM2464 桥片断电），不行再 rebind 这个 USB4 口的 thunderbolt 驱动。**2026-09-30 最终结论（§7 0bo）：thunderbolt 对两个 router 的 config 访问全面超时时，唯一的恢复手段是重启——rescan / unbind+re-probe / 换另一个 USB4 口全部无效，重启一次盘就干净回来了（满速 40 Gb/s、探测 3.70 GB/s，无退化）。这也排除了盒子和线：换口后「连上 11 秒就断、按 sda 枚举」是楔住状态的副作用，不是 D2–D4 那族硬件故障。下次见到同样现象不要在内核侧花时间，直接断电。另：`rx_speed` 是每 lane 的值，20.0 Gb/s + `rx_lanes=2` 就是满速，别误读成降级。** 以下是当时的过程记录：**2026-09-30 晚续**：rebind 试过了，**救不回来**——unbind 成功、re-bind 时驱动 `invalid hop: 0` / `failed to determine connection manager`，这个 host router 要断电才行。本机有两个 USB4 口（`c6:00.5`=domain0、`c6:00.6`=domain1），插另一个口是唯一不重启的出路；换口后盒子能认出来但**连上 11 秒就断**，且按 USB 大容量存储（sda）而不是 PCIe 隧道枚举——D2–D4「坏的是桥」那条老路。双盘口径继续挂着。连续跑 ~90 分钟、74–75 °C 后 J.ZAO 掉线，`/sys/class/nvme` 里只剩内置盘，PCI rescan 不回来，要重新插；掉的那一趟 IO 引擎 955 个请求 failover 到内置盘、结果逐位。长基准要预期它，且 IO-bound 的对比只在表头探针 ≥ 3.7 GB/s 的趟之间做。
+1. **decode is pinned by the NVMe**: 60% of every token is stall. **The default `auto` = 5,100 slots / 89.3 GiB, 6.05 → 5.60 tok/s / hit 0.9383**,
+   ⚠️ **changed 2026-09-19 (Track H1a)**: `auto` now caps itself at **5,000 slots** first and then **probes one submit**, and on a refusal it drops 200 slots and rebuilds, up to 5 times.
+   So `auto` can no longer fail to come up; the price is that the default capacity falls from the computed 5,100 to 5,000 (about −0.2 points of hit).
+   And that is already near this machine's safe ceiling (5,400 died mid-way through eight turns, 5,500 lost the device on the first token, §3 30 / `p4_hitrate.md` §4).
+   The capacity curve is still climbing (the sim says +2.2 points at 6,500 slots), but **this machine has no bytes left**. 20 tok/s needs MB/token cut by another 3×:
+   2-bit is already rejected (§3 37), which leaves speculative decoding, and that cannot do it today (§3 34).
+2. ~~**Every expert miss costs 20–31 ms while the real disk time is ~2 ms, and the 10× gap is unexplained.**~~ **Closed**:
+   that is simply what the drive does on random reads at expert size (5.19 GB/s at QD=4, 13.6 ms per request, 6 per layer = 21.7 ms), §4.
+3. **The hot step has only ~7% of headroom left** (81.5 against a floor of 75.8 ms). What remains is structural: 40 host round trips per token to read the gate
+   (~1.6 ms of submit + ~2 ms of fence), and MoE's `x` making a trip to the host every layer.
+4. **prefill is 19.5 ms/prompt token of compute** (F3 measured, 4,133 tokens = 80.6 s),
+   which in a conversation is dearer than decode. **A target of ≥ 5× is below this machine's arithmetic floor**: 73.5 TFLOP ÷ the best rate of that round,
+   2.1 TFLOP/s, = 35 s, while 5 ms/token is only 20.7 s -- **that needs 3.56 TFLOP/s sustained**.
+   The only thing that can move the rate is rewriting `prefill_coopmat` stage 0 (several waves + LDS + double buffering), **not done** (§2.5).
+   **2026-09-29 update**: the LDS version was done (§7 0t), 4K 68 s (`prefill_bench`) / 17K 160 s. The full cost model is in §7 0u: 4K is held up by the disk (a lower bound of 43.8 s), 17K by the compute in its serial stretch (attention, the indexer, the engram row reads and the engram GEMM, in that order).
+   **And it already has a 41× reuse mechanism (SSD KV) that is not wired into `serve`'s default path.**
+5. ~~**`Engine::generate`'s `speculative` is `unimplemented`**, three kernel capabilities missing~~ **the verify half is done, the draft half is not** (Track SP, `p4_dspark_runtime.md` §7):
+   `Engine::forward_batch(p0, tokens[M<=6])` + `snapshot_batch_ring` / `restore_batch_ring` are already the three methods of `SpecModel`,
+   and the CPU comparator has existed for a long time. **`Engine::generate`'s `speculative` is still `unimplemented`**, because `SpecModel::draft_forward`
+   is missing the runtime-side DSpark draft chain (the hc-mean of layers 37/38/39 → three `DSparkBlock`s → the top-16 matrix; the kernels are all there, `runtime/` has not a line of it),
+   and it would need **7.2 GB of mtp expert resident**, taken out of the expert cache. The `--spec` / `--accept` CLI is **not wired up**, because there is nothing to wire it to.
+   **Whether it is worth continuing is now an answered question**: §3 42 says that even with the draft free, speculation only breaks even on this machine.
+6. **Track J's interface (K-split / tiled attention, 696 µs/layer) was never adopted by the runtime**,
+   and **its LDS fix cannot be seen on the real machine**: attention was 36.0 ms in Track I and 36.9 ms after Track Q, while J claimed −3.8 ms and "already in effect". **That contradiction is unresolved.**
+   (There is an adoption attempt that was **never compiled and never verified**, an uncommitted change found in the `deepmoe-t` worktree while merging P4,
+   kept on the tag `wip/track-t-ksplit-decode` so deleting the worktree would not lose it. **Do not treat it as something verified.**)
+7. ~~**`MOE_OVERLAP` / `PREFILL_HANDOFF` / `BACKFILL` have never been A/B'd.**~~ **Done (F4, `p4_hitrate.md` §6)**:
+   `MOE_OVERLAP` +1–4% (hit unchanged to four decimals -- it moves work around, it does not change what is in the cache) **on by default**;
+   `PREFILL_HANDOFF` **+72% / +49% / +17%** on 512 / 1,024 / 2,048-token prompts,
+   and it also takes 9–14% off prefill itself, **on by default**; `BACKFILL` is worth only +0.0011 hit overall for 21.5 GiB more read,
+   so it is **off by default** (and the counters show it always was off). **One cell is left unexplained**: two pairs of 2,048-token
+   runs differ only in `--max-context` (4,096 against 8,192), and the handoff-**off** side jumps from 0.8487 to 0.9715
+   while the two handoff-on sides are identical (0.8874/0.8874). Until that is named, the 4,133-token row **must not** be read as "handoff loses on long prompts".
+8. **The C(M) curve is missing** (`bench/results/mgt1_p4.csv`), and DSpark's 20 tok/s verdict hangs on it.
+9. **`serve` is single-session and cannot be interrupted mid-way**. ~~GPU prefill is off by default (`--gpu-prefill-min` defaults to 0)~~ **stale (audited out by codex 2026-09-30): it is on by default now** -- `runtime/session.h:223` defaults to **512**, and `cli/serve.cpp:362` pushes it down to **16** on RADV (`--gpu-prefill-min` overrides it, and logs a line when it does). The account is in §7 0c.
+10. **A split basis: the 5,500-slot row in §1 / §2.4 of this file (6.05 tok/s / 0.9431) was measured on a machine that could hold 5,500 slots at the time**,
+    and F4 could not reproduce it on a quiet machine (it lost the device on the first token). Both numbers are kept, but **the default you can rely on is the 5,100-slot row**.
+11. **Path B is capped at 16 GiB**, because sizing it by physical memory makes the next submit find the device lost (§3 30).
+12. ~~**There is no per-dispatch timeline** … **not yet verified on the GPU**~~ **stale (audited out by codex 2026-09-30)**: `runtime/trace.*` + `tools/trace_timeline.py` are in use -- `runtime/engine.cpp:567` starts the tracer before anything else touches the device (the query pool is sized from it), and §3 49 / 53 and the ledger rows after them were all read off its GPU trace. The commands are in `plan_p5.md` §4.
+13. **F3 (the prefill kernel's geometry) and F2 (KV / session) are both partial work.** F3's four geometry corrections + `wo_a`'s coopmat
+    are merged, and every pre-F3 geometry kept an environment variable for attribution (`tests/test_gpu_prefill.cpp`),
+    as are its report and its per-op CSV (recovered this round from the `p4/fin-s` worktree, where they **had not been committed**).
+    But **F3's own measurement was taken while another track's three `deepmoe_tests` were holding the GPU and the NVMe** --
+    only the per-op columns are comparable, the wall clock is not; §2.5's TTFT is still Track L's number, and **there is no new quiet-machine end-to-end comparison**.
+    F2's several KV slabs, the batching of `clear()`, the fence wait turned into a budget (no longer a 120 s deadline), the `.pkv`
+    field table and the three-session park/spill demonstration are all merged, but **SSD KV prefix reuse is still not `serve`'s default path** (see §7 2).
+14. **Not one of H1a's three new behaviours has been run on the GPU** (2026-09-19, Track H1a): the cap, the probe submit, the back-off rebuild,
+    and the fatal message when the device is lost -- **all of it has only passed CPU unit tests + mutation**. This machine's engine was held by the web UI,
+    and by the agreement no second engine was started this round. The gate is the newly registered `smoke.auto_cache` (`ctest -L needs-gpu`,
+    auto brings up an engine + decodes two tokens); **until that is green, "`auto` is safe" is a design claim, not a measurement**.
+    And whether that empty command buffer is enough to trigger the residency check **can only be settled on the real machine** -- if it is not, the probe passes as a false positive,
+    and the cap (half ① of it) still blocks the 5,100 this machine is known to fail at.
+15. **When `p4/one-pr` was merged into main, P4's numbers were not re-run on the merged tree** --
+    what ran after the merge was the build plus the full ctest, not the benches. The provenance of any performance number is still the report its own row points at.
+16. **E:'s (the USB external NVMe) three failures are localised to the USB/UAS bridge, not to `deepmoe`, and probably not to the SSD**
+    (2026-09-19, Track DX, [p4_e_drive_diag.md](p4_e_drive_diag.md)): a pure Win32 probe with no engine,
+    **48 handles of `NO_BUFFERING|OVERLAPPED` + QD 24 of 4 MiB random reads, killed E: in 17 seconds** (opening the handles alone took 17 s,
+    against 1 ms on D:), while the same load ran 60 s / 4.53 GB/s / zero errors on D:; in the system log over 48 h, 180 `UASPStor 129`
+    port resets came **before** 983 `disk 154` hardware errors, and no faulting LBA repeated. `win32 1117` landing on `norm.weight`
+    **was a coincidence** -- a 12 KiB small read is not the trigger. **SMART and temperature were not read** (this session was not administrator and `smartctl` was not installed),
+    so the SSD itself is **last on the list but not falsified**. When the USB4 enclosure arrives, **`p4_e_drive_diag.md` §5.1's acceptance gate must be run**:
+    an `ls` and a single-handle `nvme_bench` are not a health check (D2 §7.3 already paid for that lesson).
+    **E: is currently offline and needs to be physically unplugged and replugged.**
+17. **A 17K prompt loses the device under the default 5,500-slot cache** (Linux, 2026-09-29, §7 0t): prefill's buffers are allocated from the prompt's length, and together with a 96 GiB expert cache that exceeds GTT, so the kernel reports "Not enough memory for command submission". **Fixed (§7 0ah, 2026-09-30)**: the cache budget now subtracts prefill's working set at min(`--max-context`, 16K) tokens first (17K lands on 5,046 slots automatically and runs to completion), and a longer prompt is refused before prefill on the remaining heap rather than losing the device. The half that is still open: the web UI's 65,536-token context only reserves up to 16K, so a prompt above 16K is refused -- the real fix is for prefill to allocate its working set in blocks (the KV planes at full length, only one block of activations), and that is not done.
+18. ~~prefill is no longer bit-exact under a concurrent 4 KiB DMA stream~~ **located and fixed** (2026-09-30, §7 0aw; §3 78 and 80 are its two appearances): the io_uring backend's in-flight record table had 1,024 entries, indexed by `chunk_id & 1023`, and overwrote unconditionally. When a 1 MiB expert read queues behind a few hundred thousand 4 KiB engram row reads, more than 1,024 new chunks are issued before it lands, and one of the new ones takes its record: completion events are attributed by record, so **another chunk's future is treated as complete first** -- the GPU starts computing before the data has landed, and what it gets wrong is exactly a few isolated positions, in only a few ways (8.374 ×5). It can only happen while the expert stream and the engram stream overlap in flight, which is why decode (1 MiB backfill only) never got it wrong, and neither did engram row reads as long as they were waited out within their layer (the default path). The fix: records come off a free list, and an SQE's `user_data` holds the record's index instead of the chunk id, with short-read continuations and bounce retries reusing the original record. Verified: the same "issue early" code (§3 80) got 4K wrong three times out of three on the old backend and was bit-exact in all four configurations on the new one; the default path gives 4K 29.72 / 8.598, `gpu_prefill` 7/7, and `suite.io` passes. That reopens §3 78's route (issuing engram rows early, 17K −2.4 s).
+19. **prefill's host time grows by 2–3 s when serve's memory is too close to the ceiling** (2026-09-30, §7 0as, 0av): 4,900 slots (85.8 GiB) + 9.2 GiB resident + a 17K working set, and another 5.7 GiB hits it -- `other` grows from 3.0 to 5–6 s, and it does not show in the bench. THP is `always`, and the suspicion is allocation waiting on whole pages or on reclaim. The automatic budget works from `available_physical_bytes()` minus a 12 GiB floor; passing `--cache-slots` by hand has no such protection, and anything newly made resident has to be taken out of the slot count (the scale planes, 5.7 GB ≈ 300 slots; a 6-segment transit ring, +4.8 GB ≈ 260 slots).
+20. **The mirror drive falls off the USB4 bus** (2026-09-30, §7 0bd). The mechanism (the 09:05:53 occurrence, from the kernel log): the PCIe tunnel drops first (pciehp Link Down), the enclosure is not disconnected at the USB4 level, but every config read and write the thunderbolt driver makes to the enclosure's router and to the host router times out -- the control channel is wedged, the tunnel cannot be rebuilt, and a PCI rescan cannot reach that layer; unplug and replug the enclosure (to power-cycle the ASM2464 bridge), and if that fails, rebind that USB4 port's thunderbolt driver. **The final conclusion, 2026-09-30 (§7 0bo): when thunderbolt's config access to both routers times out across the board, the only recovery is a reboot -- rescan, unbind + re-probe, and moving to the other USB4 port all fail, and one reboot brought the drive back clean (full speed 40 Gb/s, probed at 3.70 GB/s, no degradation). That also clears the enclosure and the cable: after moving ports, "connects, drops 11 seconds later, enumerates as sda" is a side effect of the wedged state, not the D2–D4 family of hardware faults. Next time this appears, do not spend time on the kernel side -- cut the power. Also: `rx_speed` is a per-lane figure, so 20.0 Gb/s with `rx_lanes=2` is full speed, not a downgrade.** What follows is the record of the process at the time. **2026-09-30, later**: rebinding was tried and **cannot recover it** -- the unbind succeeds, and the re-bind reports `invalid hop: 0` / `failed to determine connection manager`; this host router needs to be power-cycled. This machine has two USB4 ports (`c6:00.5` = domain0, `c6:00.6` = domain1), and using the other one is the only way out short of a reboot; after moving ports the enclosure is recognised but **drops 11 seconds after connecting**, and enumerates as USB mass storage (sda) rather than a PCIe tunnel -- the old D2–D4 "the bridge is what is broken" route. The two-drive basis stays suspended. After ~90 minutes of continuous running at 74–75 °C the J.ZAO dropped, `/sys/class/nvme` was left with only the internal drive, a PCI rescan did not bring it back, and it had to be replugged; on the run where it dropped, the IO engine failed 955 requests over to the internal drive and the result was bit-exact. Long benchmarks should expect it, and IO-bound comparisons should only be made between runs whose header probe reads ≥ 3.7 GB/s.
 
 ---
 
