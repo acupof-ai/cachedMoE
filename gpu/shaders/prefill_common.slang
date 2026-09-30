@@ -147,6 +147,26 @@ uint fp8_pack(float v) {
     return s | (e << 3) | m;
 }
 
+// design §5.3's pointer table, one level up: everything one expert needs
+// (prefill_gemm's decode and stagings, prefill_gemm_lds's fused FP4 GEMM).
+struct Job {
+    uint64_t w1, s1, w3, s3, w2, s2;
+    uint     rows_off;     // into Idx / RouteW
+    uint     n;            // rows routed to this expert
+    uint     h_off;        // first row of this expert in the h plane
+    uint     fmt;          // 0 fp8 E4M3 (the shared expert), 3 FP4 E2M1
+};
+Job load_job(uint64_t table, uint j) {
+    const uint64_t a = table + (uint64_t)j * 64;
+    Job o;
+    o.w1 = *(uint64_t*)(a);       o.s1 = *(uint64_t*)(a + 8);
+    o.w3 = *(uint64_t*)(a + 16);  o.s3 = *(uint64_t*)(a + 24);
+    o.w2 = *(uint64_t*)(a + 32);  o.s2 = *(uint64_t*)(a + 40);
+    o.rows_off = load_u32(a + 48); o.n = load_u32(a + 52);
+    o.h_off = load_u32(a + 56);    o.fmt = load_u32(a + 60);
+    return o;
+}
+
 // --- FP4 E2M1 ---------------------------------------------------------------
 // moe_common.slang kE2M1 (low nibble = even element along K).
 static const float kE2M1[16] = { 0.0,  0.5,  1.0,  1.5,  2.0,  3.0,  4.0,  6.0,

@@ -51,12 +51,19 @@
 [vk::constant_id(11)] const uint LdsWn = 2;        // 16-token tiles per wave
 [vk::constant_id(12)] const uint LdsWt = 0;        // W stored [K][R]
 [vk::constant_id(13)] const uint LdsGroupRows = 0; // grouped weight: rows a group, X [groups][n][K]
+// LdsWFp4: W is a routed expert's FP4 E2M1 [R][K/2] with UE8M0 scales
+// [R][K/32], part pc.part (0 w1, 1 w3, 2 w2) of job pc.job. The A tiles are
+// decoded as they are staged -- the same f32tof16(ldexp(v, e)) that
+// prefill_gemm stage 3 wrote into the fp16 transit, so the tiles and Y are bit
+// for bit the decoded path's -- and the decode pass and its 2-byte plane go
+// away (STATUS §7 0ba: 17K 2.9 s of DRAM-bound decodes).
+[vk::constant_id(14)] const uint LdsWFp4 = 0;
 
 typealias TileA = linalg.CoopMat<half,  MemoryScope.Subgroup, 16, 16, linalg.CoopMatMatrixUse.MatrixA>;
 typealias TileB = linalg.CoopMat<half,  MemoryScope.Subgroup, 16, 16, linalg.CoopMatMatrixUse.MatrixB>;
 typealias TileC = linalg.CoopMat<float, MemoryScope.Subgroup, 16, 16, linalg.CoopMatMatrixUse.MatrixAccumulator>;
 
-static const uint kW = 0, kX = 1, kY = 2;
+static const uint kW = 0, kX = 1, kY = 2, kJob = 7;
 static const uint kBk = LDS_BK;           // K slice, in halfs
 static const uint kQ = kBk / 8;           // uint4 of data per LDS row
 static const uint kRowQ = kQ + 1;         // uint4 per LDS row: kQ of data + 1 of padding
@@ -68,8 +75,24 @@ static const uint kRegs = kMaxW * 32 * kQ / kThreads;   // a slice's uint4 per t
 
 struct CoopPush {
     uint n, k, idx_off, flags, row0, x_off, x_stride, x_col0, y_stride, y_row0;
+    uint rope_pos0, rope_hd, rope_dim;   // prefill_coopmat stage 2's
+    uint job, part;                      // LdsWFp4: the expert and its matrix
 };
 [[vk::push_constant]] CoopPush pc;
+
+// Eight halfs of FP4 row `row` from column k (a multiple of 8), decoded and
+// packed as the fp16 transit holds them.
+uint4 load_a_fp4(uint64_t W4, uint64_t S4, uint row, uint k) {
+    const uint nib = load_u32(W4 + (uint64_t)row * (LdsCols / 2) + k / 2);
+    const int  e   = int(load_u8(S4 + (uint64_t)row * (LdsCols / 32) + k / 32)) - 127;
+    uint h[8];
+    // (integer construction of the half's bits: exact for |e| <= 13 but 9 ops
+    // an element against 4, gate/up 6.7 -> 9.5 s at 17K; the loads alone
+    // cost nothing against the fp16 plane's, the decode 0.7 s a prefill)
+    [ForceUnroll] for (uint j = 0; j < 8; ++j)
+        h[j] = f32tof16(ldexp(kE2M1[(nib >> (4 * j)) & 0xFu], e)) & 0xFFFFu;
+    return uint4(h[0] | (h[1] << 16), h[2] | (h[3] << 16), h[4] | (h[5] << 16), h[6] | (h[7] << 16));
+}
 
 // The blocks at this geometry's size, not the largest one's: a 64-row block
 // takes 18 KB for both, a 128-row one 28 KB, and the CU's 64 KB then holds
@@ -91,6 +114,12 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint m_base = pc.x_off + (batched ? 0u : gid.x * bn);
     const uint64_t batch = batched ? gid.y : 0u;
     uint4* W = (uint4*)(Ptr[kW] + batch * R * K * 2);
+    uint64_t W4 = 0, S4 = 0;
+    if (LdsWFp4) {
+        const Job jb = load_job(Ptr[kJob], pc.job);
+        W4 = (pc.part == 0u) ? jb.w1 : ((pc.part == 1u) ? jb.w3 : jb.w2);
+        S4 = (pc.part == 0u) ? jb.s1 : ((pc.part == 1u) ? jb.s3 : jb.s2);
+    }
     uint4* X = (uint4*)(Ptr[kX] + batch * bn * xs * 2);
     float* Y = (float*)(Ptr[kY] + batch * bn * ys * 4);
     // A grouped weight's row block multiplies its own group's slice of X,
@@ -105,8 +134,9 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     [ForceUnroll] for (uint i = 0; i < kRegs; ++i) {
         if (i < a_per) {
             const uint q = tid + i * kThreads, qp = tid + (i / 2) * kThreads;
-            ra[i] = LdsWt ? W[((2 * (qp / aq) + i % 2) * R + r_base) / 8 + qp % aq]
-                          : W[((r_base + q / kQ) * K) / 8 + q % kQ];
+            ra[i] = LdsWt   ? W[((2 * (qp / aq) + i % 2) * R + r_base) / 8 + qp % aq]
+                  : LdsWFp4 ? load_a_fp4(W4, S4, r_base + q / kQ, (q % kQ) * 8)
+                            : W[((r_base + q / kQ) * K) / 8 + q % kQ];
         }
         if (i < b_per) { const uint q = tid + i * kThreads; rb[i] = X[((m_base + q / kQ) * xs + xc) / 8 + q % kQ]; }
     }
@@ -142,8 +172,9 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
             [ForceUnroll] for (uint i = 0; i < kRegs; ++i) {
                 const uint q = tid + i * kThreads, qp = tid + (i / 2) * kThreads;
                 if (i < a_per)
-                    ra[i] = LdsWt ? W[((k1 + 2 * (qp / aq) + i % 2) * R + r_base) / 8 + qp % aq]
-                                  : W[((r_base + q / kQ) * K) / 8 + kq + q % kQ];
+                    ra[i] = LdsWt   ? W[((k1 + 2 * (qp / aq) + i % 2) * R + r_base) / 8 + qp % aq]
+                          : LdsWFp4 ? load_a_fp4(W4, S4, r_base + q / kQ, k1 + (q % kQ) * 8)
+                                    : W[((r_base + q / kQ) * K) / 8 + kq + q % kQ];
                 if (i < b_per) rb[i] = X[((m_base + q / kQ) * xs + xc) / 8 + kq + q % kQ];
             }
         }

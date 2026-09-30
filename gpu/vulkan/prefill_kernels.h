@@ -76,7 +76,8 @@ struct PfKernel {
     uint32_t extra3 = 0;    // prefill_coopmat: CmRowTilesPerWg (0 = 1)
     uint32_t extra4 = 0;    // prefill_gemm_lds: LdsWt (W stored [K][R])
     uint32_t extra5 = 0;    // prefill_gemm_lds: LdsGroupRows (grouped weight: rows a group, x [groups][n][K])
-    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1, extra2, extra3, extra4, extra5); }
+    uint32_t extra6 = 0;    // prefill_gemm_lds: LdsWFp4 (a routed expert's FP4 from the job table, decoded as staged)
+    auto key() const { return std::tie(spv, stage, wfmt, xfmt, tile, extra0, extra1, extra2, extra3, extra4, extra5, extra6); }
     bool operator<(const PfKernel& o) const { return key() < o.key(); }
 };
 
@@ -106,6 +107,7 @@ struct PfCoopPush {
     uint32_t n = 0, k = 0, idx_off = 0, flags = 0, row0 = 0, x_off = 0;
     uint32_t x_stride = 0, x_col0 = 0, y_stride = 0, y_row0 = 0;   // stage 0: 0 = K, 0, R, 0
     uint32_t rope_pos0 = 0, rope_hd = 0, rope_dim = 0;             // stage 2: RoPE folded into the staging
+    uint32_t job = 0, part = 0;                                    // prefill_gemm_lds LdsWFp4: the expert and its matrix
 };
 // A RoPE applied to a GEMM's fp32 input as it is staged to fp16 (the attention
 // output's inverse rotation before wo_a, STATUS §7 0au): one pass less over
@@ -292,6 +294,10 @@ struct PrefillConfig {
     // cooperative-matrix GEMM (docs/p3_prefill.md §5 option (a)); fewer tokens
     // run on the tiled GEMV job table (b), whose cost has no fixed per-matrix
     // decode. 0 = every expert on (a); UINT32_MAX = every expert on (b).
+    // A routed expert's LDS GEMMs stage its FP4 straight from the job table
+    // (prefill_gemm_lds LdsWFp4) instead of a decode pass through the fp16
+    // transit first: bit for bit the same tiles (STATUS §7 0ba).
+    bool fuse_fp4 = true;
     uint32_t coopmat_min_rows = 16;
     // A dense linear over at least this many rows runs on cooperative-matrix
     // GEMM when its shape allows (rows and cols multiples of 16, no grouping,

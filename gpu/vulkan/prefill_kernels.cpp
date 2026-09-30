@@ -141,7 +141,7 @@ Result<uint32_t> PrefillRunner::kernel(const PfKernel& k) {
     ps.lanes_per_row = 32;
     ps.rows_per_wg   = 8;
     ps.subgroup_size = 32;
-    ps.extra = {k.stage, k.wfmt, k.xfmt, k.tile, k.extra0, k.extra1, k.extra2, k.extra3, k.extra4, k.extra5};
+    ps.extra = {k.stage, k.wfmt, k.xfmt, k.tile, k.extra0, k.extra1, k.extra2, k.extra3, k.extra4, k.extra5, k.extra6};
     PipelineLayoutSpec la;
     la.storage_buffers    = 1;
     la.push_constant_size = kPfPushBytes;
@@ -1458,13 +1458,13 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         // prefill_gemm_lds when the shape tiles, with its geometry picked per
         // expert (the token count varies); stage 0 otherwise.
         auto gemm = [&](uint32_t R, uint32_t K, uint32_t n32, uint64_t x, uint64_t y,
-                        uint32_t fallback) -> Result<std::pair<uint32_t, LdsGeo>> {
+                        uint32_t fallback, bool fp4) -> Result<std::pair<uint32_t, LdsGeo>> {
             const LdsGeo g = pf_lds_geo(pcfg_, R, K, n32);
             if (!g.wm) return std::pair{fallback, g};
-            auto k = runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, R, K, g.wm, g.wn});
+            auto k = runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, R, K, g.wm, g.wn, 0, 0, fp4 ? 1u : 0u});
             if (!k) return std::unexpected(k.error());
             uint64_t* s = runner_->slots(*k);
-            s[kPcW] = b_.w16.dev_addr; s[kPcX] = x; s[kPcY] = y;
+            s[kPcW] = b_.w16.dev_addr; s[kPcX] = x; s[kPcY] = y; s[kPgJob] = b_.jobs.dev_addr;
             return std::pair{*k, g};
         };
         auto groups = [&](const LdsGeo& g, uint32_t n32, uint32_t R) {
@@ -1474,8 +1474,12 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         for (uint32_t j = j0; j < j1; ++j) {
             const PfJob& jb = jobs[j];
             const uint32_t n = jb.n, n32 = (jb.n + 31) / 32 * 32;
-            auto gu = gemm(inter, dim, n32, b_.x16.dev_addr, b_.gu.dev_addr, *kgu);
-            auto dn = gemm(dim, inter, n32, b_.h16.dev_addr, b_.dout.dev_addr, *kdn);
+            // the FP4 is staged by the LDS GEMMs themselves when both take
+            // the LDS path (§7 0ba); stage 0's fallback still wants the decode
+            const bool fused = pcfg_.fuse_fp4 && jb.fmt == kPfFp4 &&
+                               pf_lds_geo(pcfg_, inter, dim, n32).wm && pf_lds_geo(pcfg_, dim, inter, n32).wm;
+            auto gu = gemm(inter, dim, n32, b_.x16.dev_addr, b_.gu.dev_addr, *kgu, fused);
+            auto dn = gemm(dim, inter, n32, b_.h16.dev_addr, b_.dout.dev_addr, *kdn, fused);
             if (!gu) return std::unexpected(gu.error());
             if (!dn) return std::unexpected(dn.error());
             // up's rows start where gate's padded block ends
@@ -1486,20 +1490,24 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             PfGemmPush pd;
             pd.job = j; pd.flags = kPfFlagFromJob;
             pd.rows = inter; pd.k = dim; pd.scale_cols = dim / 32; pd.idx_off = 0;
-            if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
-            mark("moe decode", {0, wdec});
+            if (!fused) {
+                if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
+                mark("moe decode", {0, wdec});
+            }
             PfCoopPush px; px.n = n32; px.k = dim; px.idx_off = jb.rows_off; px.flags = kPfFlagGather;
             if (auto r = rec(*kx1, &px, sizeof(px), PrefillRunner::stage_groups(n32, dim)); !r) return r;
             mark("moe x16", {0, double(n32) * dim * (2 + 4.0 / 32 + 2)});
-            PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64;
+            PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = 64; pg.job = j; pg.part = 0;
             if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
-            mark("moe gemm gate/up", gemm_cost);
-            pd.idx_off = 1;
-            if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
-            mark("moe decode", {0, wdec});
-            pg.idx_off = np;
+            mark(fused ? "moe gemm gate/up fp4" : "moe gemm gate/up", gemm_cost);
+            if (!fused) {
+                pd.idx_off = 1;
+                if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(inter, dim)); !r) return r;
+                mark("moe decode", {0, wdec});
+            }
+            pg.idx_off = np; pg.part = 1;
             if (auto r = rec(gu->first, &pg, sizeof(pg), gux, guy); !r) return r;
-            mark("moe gemm gate/up", gemm_cost);
+            mark(fused ? "moe gemm gate/up fp4" : "moe gemm gate/up", gemm_cost);
             PfElemPush ps; ps.n = n; ps.d = inter; ps.a0 = np; ps.a1 = jb.h_off; ps.a2 = jb.rows_off;
             ps.f1 = static_cast<float>(c.swiglu_limit); ps.flags = round;
             if (auto r = rec(*ksw, &ps, sizeof(ps), groups_for(uint64_t(n) * (inter / 4))); !r) return r;
@@ -1510,12 +1518,14 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             PfCoopPush ph; ph.n = n32; ph.k = inter; ph.idx_off = jb.h_off; ph.flags = 0;
             if (auto r = rec(*kx2, &ph, sizeof(ph), PrefillRunner::stage_groups(n32, inter)); !r) return r;
             mark("moe x16", {0, double(n32) * inter * (2 + 4.0 / 32 + 2)});
-            pd.idx_off = 2; pd.rows = dim; pd.k = inter; pd.scale_cols = inter / 32;
-            if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(dim, inter)); !r) return r;
-            mark("moe decode", {0, wdec});
-            PfCoopPush pn; pn.n = n32; pn.idx_off = 0; pn.flags = 64;
+            if (!fused) {
+                pd.idx_off = 2; pd.rows = dim; pd.k = inter; pd.scale_cols = inter / 32;
+                if (auto r = rec(*kdec, &pd, sizeof(pd), PrefillRunner::per_block_groups(dim, inter)); !r) return r;
+                mark("moe decode", {0, wdec});
+            }
+            PfCoopPush pn; pn.n = n32; pn.idx_off = 0; pn.flags = 64; pn.job = j; pn.part = 2;
             if (auto r = rec(dn->first, &pn, sizeof(pn), dnx, dny); !r) return r;
-            mark("moe gemm down", gemm_cost);
+            mark(fused ? "moe gemm down fp4" : "moe gemm down", gemm_cost);
             PfElemPush pc2; pc2.n = n; pc2.d = dim; pc2.a2 = jb.rows_off; pc2.flags = round;
             if (auto r = rec(*ksc, &pc2, sizeof(pc2), groups_for(uint64_t(n) * (dim / 4))); !r) return r;
             mark("moe scatter", {0, double(n) * dim * 12});
