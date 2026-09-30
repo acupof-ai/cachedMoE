@@ -1729,169 +1729,169 @@ Even so, the change of direction is real: on a single drive the disk was overwhe
    end to end 5.668 / 5.609 → 6.596 / 6.427 (+15.5%), `nvme_stall` 66.8 / 66.8 → **41.9 / 43.8 ms**, hit bit-identical at 0.9430 in both arms, the external drive's share 25% → 45–49%,
    and P0 p50 5.35 → 3.17–3.38 ms. **The measured gain exceeds the halved prediction (+7.7%) and is close to the unhalved ceiling.** The external drive peaked at 74 °C, did not drop over four turns, and `src[1]` had zero errors.
    At merge, the CPU gate was 25/25 and `io.` 19/19 (including the three new unit tests). **Still off by default**: it only does anything when there is a mirror, and the user wants the external drive kept as an auxiliary, so whether it becomes the default is the user's call.
-0h. **2026-09-28：开发机换成 Linux（Omarchy，Mesa 26.2 RADV），热步 ~117 → ~79 ms（−33%），数值逐位不变（Track LX，`build.md` 的 Linux 一节）。**
-   同一台 Strix Halo 重装成 Linux 之后，引擎的 MoE 段从 Windows 的 31 ms 变成 **50–53 ms/token**，而 `kernel_bench` 的纯 fp4 一对仍是
-   **0.622 ms = 92% ceiling**（Windows 0.603）。按字节算不通，于是看 ACO 的机器码：**`fp4_decode` 的 DecodeMode 0（`kE2M1[nib]`，
-   Windows 上的 M=1 冠军）在 ACO 里被编成每个元素一棵带 `s_cbranch_execz` 的选择树**（gate/up 一个内核 140 个 execz），
-   带 fp8 共享专家的 7 槽一对因此从 Windows 的 216.9 GB/s 掉到 **92.2 GB/s（40%）**。
-   **DecodeMode 1（直接拼 fp32 位模式，E2M1 值精确）**：moe gpu **50–53 → 31–32 ms**，热步 ABAB 两对 **中位 ~117 → ~81 ms**（80.5 最好，
-   Windows 的历史最好是 81.5），`l3_ppl` off **NLL 0.601884 逐位不变**。**默认开，只在 RADV 上**（`VkPhysicalDeviceDriverProperties.driverID`，
-   `DeviceCaps::driver_id`）；AMD 专有驱动仍是 0；`DEEPMOE_MOE_DEC` 覆盖。
-   **Linux 的 NLL 基准是 0.601884 / top-1 62/64，不是 0.630051 / 61/64**——同一份 `traces/l3_64`，两次逐位相同；差在两个驱动的编译器上
-   （本仓库的尺子对 fp32 参考的噪声底在 Linux 上是 ×1.007，Windows ×1.033）。**以后在这台机器上"逐位复现"指的是 0.601884**（同日 dispatch B 形状改默认后改为 0.623007 / 60/64，attention `fp8_round` 修正后再改为 **0.639409 / 58/64**，见本条下文）。
-   试过并退掉的（同一次）：① MoE 形状 L16 R2 **xgf16**：moe 37 ms 但 **NLL 0.647669 / top-1 56/64**（fp4 槽的 x 打包成 fp16）⇒ NO-GO；
-   ② L16 R2 / L16 R1 xglob：moe 48 ms，只拿到一小截；③ fp8 E4M3 的位运算解码（代替 LDS 表，256 码逐位相同）：`kernel_bench` 无差别 ⇒ 表不是瓶颈，已回退；
-   ④ 同样的算术 FP4 解码放进 `prefill_gemm`：**反而慢 10–50%**（prefill 一个权重复用 TileM 次，表的代价被摊掉），已回退。
-   **然后是 gate 往返，答案是 CCD**：MoE 变快后热步呈双峰（~80 / ~93 ms），差全在 "other"（3 vs 17 ms）。
-   amdgpu 的中断实际投递在 **CPU 29（CCD1）**；`taskset` 绑 CCD1 两对 **78–79.5 ms**、绑 CCD0 **90–100 ms**——
-   等 fence 的线程和中断不在同一个 L3 时，每层多一次跨 CCD 唤醒和缓存行搬运。
-   **已落地并默认开**（Linux）：`Engine::init` 在起 IoEngine 之前把线程绑到 amdgpu 中断所在 CPU 的 L3 域（读 `/proc/interrupts`
-   + `effective_affinity_list` + `index3/shared_cpu_list`），`DEEPMOE_CPU_AFFINITY=off` 关、给 cpulist 则照用。
-   结果：auto 7 轮里 6 轮 **78.0–79.5 ms**（与 taskset 同），off 5 轮在 79–95 之间跳；残余一轮 81–89 未解释。**热步 ~117 → ~79 ms（−33%）**。
-   `DEEPMOE_FENCE_SPIN_US=3000`：两对都 **~95 ms（更差）** ⇒ NO-GO，与 Windows 结论同向。
-   Linux 另外修的（都在 `build.md`）：io_uring 后端 SQ 多线程丢请求（挂死）、path A 的 `-EFAULT`（中转缓冲）、
-   `available_physical_bytes()` 在 Linux 返回 0（自动缓存大小把 path B 算成零）。
-   ⚠️ **`suite.multistream` 在 Linux 上两个用例 GPU 超时**（amdgpu 默认每个 job 2 s，`ring comp_1.2.0 timeout` → device lost），
-   **`RADV_DEBUG=hang`（隐含 syncshaders）下通过**、`zerovram` 与主机内存清零都不影响 ⇒ 是**同步竞争**：两个流的命令之间缺一个屏障/依赖，
-   Windows 驱动在相邻提交之间隐式串行把它盖住了。**只影响可选的多流模式**（`serve --streams N`，默认 1，网页端不开）。
-   **定位到 eager MoE 提交**（多流时每层 MoE 单独一个等驻留时间线的 submit）：`DEEPMOE_MS_EAGER_MOE=0` 三个用例全过、轨迹逐位相同、零超时。
-   **RADV 上默认关掉 eager**（`init_gpu` 按 `driver_id`），`DEEPMOE_MS_EAGER_MOE=1` 打开；`suite.multistream` 默认配置 280 s 通过。
-   **根因没找到**（devcoredump 只有寄存器与环，读不到在跑的 IB），eager 在 RADV 上值多少也没量——那是 `--streams 2` 的吞吐 A/B，要长时间读盘。
-   顺带：`alloc_host_pages` 在 Linux 改用匿名 `mmap`（VirtualAlloc 的对应物：清零、按页对齐），原来的对齐 `operator new` 不清零。
-   ⚠️ **外接模型盘会过热掉线**（空闲 72 °C、临界 95 °C，`unsafe_shutdowns` 552）：长时间读盘的测试前先看 `nvme smart-log /dev/nvme1`。
-   **path A 超额 → 给它设上限？NO-GO，默认关（`DEEPMOE_PATH_A_CAP=on` 开）。** RADV 从不拒绝 path A 的分配：auto 缓存 41 个 slab（71.8 GiB）
-   全落在 63.5 GiB 的显存堆上，开跑 ~9 s 内 TTM 把 ~24 GB 挪到 GTT（`mem_info_vram_used` 59 → 41 G），path B 一个没用。
-   按 `VK_EXT_memory_budget` 的余量（握着 4 GiB 预留时量，49 GiB）截断后 27 片在 A、14 片在 B——**热步 79.3 → 482 ms**：
-   submit 0.2 → 356 ms（每次 `vkQueueSubmit` ~8.7 ms）、moe gpu 32 → 64、engram 2.8 → 8.9。
-   Linux 上 path B 是 amdgpu userptr BO，推测每次提交都要重新校验它的页（未证实）；反过来 TTM 迁出的 GTT 没有可见代价。
-   ⇒ **Linux 上 path B 实际不可用，让 path A 超额是对的**；更大的缓存靠 BIOS 显存切分或 GTT，而不是 path B。
-   结果在 `bench/results/linux/path_a_cap/`。
-   **dispatch B（w2）单独的形状：GO，RADV 默认开，热步 ~79.9 → ~76.7 ms（−3.9%，四对交替）。** 引擎形状在 `kernel_bench` 的新段
-   "fp8 dec1 B" 里拆开看：A（w1+w3）204 GB/s，**B 只有 152 GB/s**（0.807 ms/7 槽一对）。`MoeSpec::lanes_b / rows_b`（0 = 跟 A）让 B 单独取形状：
-   A 保持 L32 R1、B 取 **L16 R2 → 0.757 ms**（L16 R4 0.753，L32 R2/R4 与 L64 都更慢）。引擎里 moe gpu 32.3 → 30.0。
-   数值：**只改了 fp32 归约宽度**——L1 golden 误差逐位相同（1.37e-4 of |y|max，cos 0.999999961，`gpu_moe` 新增 B:L16R2 的 M=1/M=6 用例），
-   但 `l3_ppl` off 从 **0.601884 → 0.623007（top-1 62 → 60/64）**：两个近平局位置翻了。**这个数只跟 B 的 lane 数走**：
-   L16 R4 逐位同 0.623007，L32 R2 逐位同 0.601884；PPL 1.021× off，在工具自己的 1.05× 线内；Windows 生产是 0.630051（×1.054 对 fp32 参考）。
-   ⇒ **Linux 的 NLL 基准改为 0.623007 / top-1 60/64**；`DEEPMOE_MOE_LB=32 DEEPMOE_MOE_RB=1` 回到旧形状（仍是 0.601884）。
-   union runner 不跟（没量过 ~20 槽的情形，`DEEPMOE_MOE_UNION_LB/RB`）。decode / gpu_layer / integration / spec_forward / speculate 全过。
-   **同一次退掉的**：B 走 int8 dot4（`x_mode_b` 3）内核 0.738 ms、热步 −3.7%，但 **NLL 0.622511 / 60/64**，而且它量化 h，
-   L1 误差是 5e-3 级——和纯重排的 L16 在尺子上分不开，但 L1 上分得开，不值得；B 的 LDS / ldsf16 / gi8 都没有收益。
-   开关：`DEEPMOE_MOE_XMODE_B`、`DEEPMOE_MOE_LB`、`DEEPMOE_MOE_RB`（`moe_bridge.cpp`）。
-   **Track SE：共享专家塞进 gate 往返的空档——GO，RADV 默认开，热步 ~77.2 → ~74.3 ms（−3.9%，三对交替，另三对 −2.6%），数值逐位不变。**
-   §3 的 53 在 Windows 上判的是 386 µs/层的 gate 空档（265 µs 是驱动）；Linux 上这段只有 **~114 µs/层（4.56 ms/token）**，
-   而共享专家不依赖路由：x 一出来它就能算。做法：gate 所在的 submit 之后**紧跟一个不带等待的 submit**——
-   GPU 上的 act_quant（新 `moe_xact.slang`，与主机 `act_quant_to_fp16` 逐位相同）+ 共享专家的 dispatch A + h 量化，
-   走 MoeRunner 第三条单元素 slot 列表；主机只等 gate 自己那次的 fence（`cmd_wait(lc.gate_fence)`），
-   路由的六个槽走 Track R1 的拆分形（A 六槽 + B 全七槽，逐位同一次派发）。指针表开两页、按层奇偶轮换
-   （`layer` push constant 选页），让第 L 层的共享行能在第 L−1 层的 MoE 还在队列里时写入；两个 `se_cmd_` 按奇偶轮用。
-   trace：MoE 前的空档 **4.56 → 0.78 ms/token**，但拆开的 A 多花 ~1.7 ms（共享 A 单独 128 µs + 路由 A 387 µs，比一次七槽慢 ~35 µs/层），净 −3 ms。
-   主机侧 act_quant（0.3 ms/token）也一并消失。闸：`l3_ppl` off **0.623007 / 60/64 逐位**，每个 warm pass 的 margin 逐位同，
-   decode / gpu_moe / gpu_layer / integration / spec_forward / speculate / multistream 见下。只在单流时开（多流没量过）；`DEEPMOE_SHARED_EARLY=0/1` 覆盖，
-   `DEEPMOE_SE_CHECK=1` 每层把 GPU 写的 x 与主机 act_quant 逐元素比对。
-   **做的过程中踩到的三个坑，留给下一个人**：① 引擎每流只有一个 `tok_cmd_`，规矩是重录前先等——在 gate 还在跑时重录它直接 GPU 超时；
-   ② **Mesa 的 NIR 会把 `(a + 1.5·2^14) − 1.5·2^14` 折叠成 `a`**：E4M3 次正规区的舍入被吃掉（x = 2.03e-5 → 0x0154，应为 0x0180），
-   `moe_xact` 改成全精确的整数 RNE；**`attn_common.slang` / `prefill_common.slang` 的 `fp8_round` 用的是同一个技巧，RADV 上一样被折叠——已同样改掉**
-   （Windows 驱动不折叠，所以这是让 Linux 回到参考语义、并与 KV 字节 `fp8_encode_rn` 一致的修正）：`gpu_attn` / `gpu_layer` 对 CPU oracle 的 598 行误差
-   只有少数几行在 1e-9（cos）量级上动、有升有降，全部通过；但 `l3_ppl` off **0.623007 → 0.639409（top-1 60 → 58/64）**——
-   与上面 B 形状同一类近平局翻转，这把 64 步尺子分不出好坏。**Linux 的 NLL 基准因此改为 0.639409 / 58/64**（热步不变 74.7 ms）；decode / spec_forward / integration 过；
-   ③ dispatch A 写的是 `swiglu × RouteW[slot]`，共享槽的 1.0 原本由 stage_input 写，提前派发时进程第一层还是 0（l3_ppl 0.646705 暴露）。
-   **同日试过并退掉的（gate 空档的另外两条路）**：PM QoS 把 C-state 限在 C2（`/dev/cpu_dma_latency` 20 µs）：两对 78.3/75.9 vs 75.8/77.1，噪声内；
-   unbound 工作队列（drm_sched 的 worker）绑到中断所在的 CCD1：77.1/76.8 vs 77.4/78.4，−1% 在 ±3% 之下。都已还原。
-   用户态队列（`amdgpu.user_queue=1`，绕开内核调度）要改内核参数重启，`userq_ip_mask = 0`，**未做，等用户决定**。
-   **对话端到端（Linux，模型迁到内置 SN740 之后）**：8-turn `long_turns.json`，auto：**4.90 tok/s**，hit 0.8965，每 token 计算 89.8 + stall 141.6 ms，
-   TTFT 均值 16.5 s；Windows `m_auto` 是 5.60 / hit 0.9175 / 99.9 + 100.7。**计算已比 Windows 快，差在 cache 小**：BIOS 切 64 GB 显存后系统只剩 62 GB，
-   path A 的超额由 TTM 挪进 GTT，而 GTT 上限 31.2 GiB（`ttm.pages_limit`）——auto 原来只拿 4,100 槽（71.8 GiB）。
-   `--cache-slots 4450`：**5.31 tok/s（+8.4%，8 轮每轮都更快）**，hit 0.9045，stall 130.8，GTT 峰值 30.6 / 31.2 GiB，**系统内存仍有 26 GB 空闲**。
-   ⇒ auto 在 RADV 上把主机堆（= GTT）的余量从 10 GiB 降到 5 GiB：现在 **4,400 槽 / 77.1 GiB**，GTT 峰值 30.6 GiB；
-   4K 提示走 GPU prefill（`--gpu-prefill-min 256`）正常，TTFT 80.3 s（Windows `ho_4k_on` 97.8 s），GTT 不再上涨。
-   **再往上的唯一障碍是 GTT 上限**：内核参数调大 `ttm.pages_limit`（或 BIOS 少切显存）可以把那 26 GB 空闲内存用上，按 hit 曲线约 +0.02 hit / +10% tok/s——要重启，等用户。
-   **双盘（Track D5 在 Linux 上重跑）：内置 SN740 主 + 外接 USB4（KP 2TB，`/mnt/deepmoe2`）做 `--mirror`——GO，+8.97%。**
-   ABAB 两对，`long_turns.json`，auto（4,400 槽），无权重覆盖（`bench/results/linux/mirror_ab/`，`summ.py` 出表）：
-   off **5.2034 / 5.3338**，on **5.7429 / 5.7397**（均值 5.2686 → 5.7413）；decode 加权 hit 两臂逐位相同 0.924；`nvme_stall` 100.7/95.4 → **81.7/82.1 ms**；
-   聚合读 `eff` 3.31 → **3.96 GB/s**。探针 4.63 : 3.72 GB/s（热身后，两次一致），分流 **76.0 : 23.9%**（与 Windows D5/D6 的 28.5% 同一形状——D6 已证明压到带宽比是负的）。
-   外接盘 `src[1]` 的 mean lat 95.8 ms 是口径问题不是盘：它的 **P0 是 6.43 ms**（主盘 4.33 ms），其余是被 P0 抢占的 P3 backfill（D6 §10.1 同一结论）。
-   四轮 ~37 分钟外接盘没掉（空闲 74°C）。**顺带补上运行中的失效转移**：外接盘约每小时掉一次链路，掉线那一刻在飞的读原来直接以失败返回给调用方
-   （「an expert read failed」），要等 SourceHealth 连错三次才把盘踢出路由；现在 `IoEngine::finish` 把镜像上失败的请求**重排到同一优先级队首、改读主盘**
-   （一次重试，主盘再错照常报错；`queued_at` 不变所以延迟含失败那次；`src[i]` 行追加 `N re-read from the primary`）。
-   单测 `io.mirror_error_is_reread_from_the_primary`（FakeBackend 新增 `fail_file`）；变异（`if (false && …)`）⇒ caught。无错时路径逐字不变。
-   `tools/web/server.py` 的 `find_mirrors` 在 Linux 上按 `/mnt/*/models/<name>` 等挂载点找同名目录（要求有 manifest），所以 web UI 自动带上外接盘；
-   引擎默认仍是单盘，命令行要 `--mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash` 或 `DEEPMOE_MODEL_MIRRORS`。
-   **重启：UMA carve-out 64 GB → 512 MB + `ttm.pages_limit=29360128`（112 GiB GTT），另带 `amdgpu.cwsr_enable=0 gpu_recovery=1 dcdebugmask=0x600`（`/etc/limine-entry-tool.d/z13.conf`）。**
-   系统内存 62 → 124 GB；RADV 把 GTT 按 2:1 报成两个堆：「device-local」75 GiB + host 37.5 GiB。`l3_ppl` off **0.639409 / 58/64 逐位不变**；
-   每 token 计算 attn 38.3 + moe_gpu 36.5 ms，与重启前同量级（cwsr 关掉没看到代价）。auto 从 4,400 槽涨到 5,000（Windows 的 kAutoSlotCap 卡住，预算本身 5,299）：
-   8-turn 单盘 **5.27 → 5.78 tok/s**（hit 0.924 → 0.937，stall ~98 → 81 ms），双盘 5.74 → 6.13（单次，`bench/results/linux/reboot112/`）。
-   `--cache-slots 5500`：6.19 tok/s，hit 0.945，GTT 峰值 107 / 112 GiB，内核无 amdgpu 超时/复位。
-   ⇒ **RADV 的 auto 改为按两个堆之和算：`heaps − pinned − kPathAOther − 4 GiB` = 预算 5,499 槽，但 slab 按 100 槽取整，**实际分配 5,400 槽 / 94.6 GiB**（下面 auto 臂的数都是 5,400；之后余量改 3 GiB 落到 5,500），且不套 Windows 的 5,000 槽上限**（`DEEPMOE_CACHE_SLOT_CAP` 显式设置时仍生效）。
-   ABAB 两对、单盘、`long_turns.json`（`reboot112/auto_ab/`）：cap5000 **5.8596 / 5.7898**，auto **6.1217 / 6.0764**——均值 5.8247 → **6.0991 = +4.71%**，两对各 +4.5% / +4.9%；
-   hit 0.9369 → 0.9436，stall 79.8 → 71.9 ms，GTT 峰值 98 → 105 GiB。**GO，Linux 单盘对话基线现为 ~6.10 tok/s**（Windows `m_auto` 5.60）。
-   **短 prompt 也走 GPU prefill：RADV 上 `gpu_prefill_min` 512 → 16（`cli/serve.cpp`，只在没给 `--gpu-prefill-min` 且驱动是 RADV 时）——GO。**
-   8-turn 的新话题首轮是 29–64 token，走 decode 路径逐 token 灌，TTFT 14–21 s（~2–3 tok/s，冷 expert 的 stall），占整轮时间 22%；同话题续问已经复用 KV（extend，18–22 token，~6 s），不受影响。
-   ABAB 两对、单盘（`bench/results/linux/pfmin/`，`summ.py`）：TTFT 合计 默认 **107.3 / 104.8 s** vs 16 **84.6 / 84.0 s（−20%）**，每个冷轮 −3~−5 s；
-   端到端（生成 token / 墙钟）**4.785 / 4.800 → 4.947 / 4.953 tok/s（+3.5%）**。纯 decode tok/s 6.10 → 5.99 两次逐位一样——**是生成内容变了不是代价**：
-   GPU prefill 的 KV 与 decode 路径不逐位同，回答随之不同（每臂 2,359 vs 2,322 token，臂内逐 token 相同）。不加参数的新默认复跑：TTFT 81.7 s，端到端 4.969。
-   `suite.gpu_prefill`：`stages` 110 项 0 失败（worst cos 0.99991）、`forty_layers` 过；longctx 三项因本机无 `traces/longctx` 跳过。
-   Windows 的 512（Track PF：512 以下 expert 流式比 decode 省下的更贵）没动。
-   **§7 第 6 项的一半：Track J 的 K-split `wo_a` / `wo_b` 接进 M=1 decode 路径——attention −3.8 ms/token，但**默认关**（`DEEPMOE_ATTN_KSPLIT=1` 开）。**
-   `attn_bench` 在 RADV 上：经典 `wo_a` 194.5 µs（173 GB/s）/ `wo_b` 251.8 µs（167 GB/s），K-split（4 / 8 片）157.4（213）/ 199.2（211）；
-   `wq_b` 本来就是 226 GB/s（~实际上限），所以只接这两个（旧的 `wip/track-t-ksplit-decode` 连 tiled attention 一起改、从没编译过，没用）。
-   `DecodeLayer` 加一块 K-split 部分和平面 `kpart`（16 × max(orows, dim) fp32），`bind` 两套 slot 都绑，`record_attention` 按 `attn_ksplit_on()` 选；
-   `DEEPMOE_ATTN_KSPLIT=0/1` 控制，默认关。热步 trace ABAB 两对（`bench/results/linux/ksplit/`）：
-   attention busy **32.4 / 32.8 → 28.6 / 29.1 ms/token（−3.8 ms，−11.6%）**，MoE 不变（这组 run 的 token 都带盘等待，整步 span 不可比）。
-   数值：`suite.gpu_attn` 里 K-split 对它替换的 kernel **relL2 ~1e-7、cos 1.000000000**，对 oracle 的误差与经典逐位同量级；
-   `l3_ppl` off **0.639409 → 0.621814，top-1 58 → 59/64**（近平局翻转；默认关所以 Linux 基准仍是 0.639409）。
-   `suite.decode` 的 64 步预填漂移（最差层 index-key cos）0.9685 → **0.9493**，掉到 0.95 的线下——这个量对 1e-7 级扰动混沌放大，
-   `suite.spec_forward`（mgt1 批 vs M=1，60 位置最差 cos）0.9415 → **0.9132**，掉到 0.93 的地板下（top-1 52 → 53/60 反而更好）。
-   **两道质量闸都被 1e-7 级舍入差推过线**，而收益只有下面这点，所以**不放宽阈值，保持 opt-in**。要默认开，得先让 mgt1 批路径也用 K-split（两条路径同一算术），再重评这两道闸。
-   另：`suite.gpu_moe` 在**不带任何本地改动的 HEAD** 上也失败（`L16 R2 … hq8` 几个变体 vs y_hq16 2.76e-3 超 tol），与本改动无关，待查。
-   对话端到端的预期：每 token ~164 ms 里省 3.8 ms ≈ +2.3%，砍半 +1.2%，**低于 ±3% 的抖动带，所以没跑对话 ABAB**——判据是 kernel 级的配对测量。
-   **缓存首次填充的缺页（Linux）——GO**：path A（`DEVICE_LOCAL|HOST_VISIBLE`，RADV 上是 GTT）由 TTM 惰性分配，每页第一次 CPU 写时才分配并清零，
-   而运行时对一个槽的第一次写就是它第一次填充时 io_uring 中转缓冲的那次 memcpy。于是**每个进程的前 ~5,400 次 miss 每次 10.0–10.5 ms，之后 5.4 ms**
-   （三个 run 一致，`profile.jsonl` 按累计 miss 分组），8-turn 里约 **27 s**，也就是前 ~150 个 token。`io_dst_bench --copy`（新增 Linux 分支）直接量到：
-   memcpy 进 path A 首次 ~2.4 GB/s，之后 48.5 GB/s——**所以中转拷贝本身不是瓶颈，首次缺页才是**。
-   `SlabPool::prefault()`：分配完 slab 后 16 线程每页写一个字节，**94.6 GiB 用 3.0 s**；`DEEPMOE_PREFAULT=0` 关。复跑：首填每 miss **10.0 → 5.40 ms**（= 稳态 5.45），
-   第 1 轮 TTFT 8.8 → 7.0 s、6.51 → 7.11 tok/s，整轮端到端 4.969 → **5.088 tok/s（+2.4%）**、decode 5.98 → 6.12。一次性收益，机制在每-miss 层面直接量到，没跑 ABAB。
-   同批还关掉了三条存储候选：P0 块大小 / QD / 在飞字节（`c2q48m160` 5.980、`c1q64m128` 5.929 vs 5.980，stall 76–78 vs 75）**NO-GO**；
-   NVMe `max_hw_sectors_kb` 128（IOMMU DMA-FQ 把 MDTS 的 1 MiB 压成 128 KiB）：调到 64 KiB 时 QD 4 不变、QD 16 −7%，引擎是浅队列 ⇒ **为 `iommu=pt` 重启不值得**；
-   udmabuf 零拷贝可行（`/dev/udmabuf` 可用、RADV 有 `VK_EXT_external_memory_dma_buf`），但拷贝本身 48 GB/s，**收益太小，不做**。
-   **逐层命中与任务分区**（`tools/expert_hit_report.py`、`tools/task_partition24.py`，`bench/results/linux/expert_hits/`）：miss 平摊在 40 层（最贵 5 层合计 16.5%）；
-   12 类任务 × 2（`bench/results/hitrate/tasks24.json`）同类两个提问逐层 expert 分布余弦 **0.59**、异类 **0.16**、同轮两半 0.83；按任务预热 / 分区 / 钉住在 LRU 模拟里都不划算（切换代价只有 0.5 pt/256 token），
-   多会话逐 token 交错 −5.1 pt 才是大头。
+0h. **2026-09-28: the development machine moved to Linux (Omarchy, Mesa 26.2 RADV), the hot step ~117 → ~79 ms (−33%), numerics bit-identical (Track LX, `build.md`'s Linux section).**
+   With the same Strix Halo reinstalled with Linux, the engine's MoE stretch went from Windows's 31 ms to **50–53 ms/token**, while `kernel_bench`'s pure fp4 pair was still
+   **0.622 ms = 92% of the ceiling** (0.603 on Windows). Bytes do not explain that, so we looked at ACO's machine code: **`fp4_decode`'s DecodeMode 0 (`kE2M1[nib]`,
+   the M=1 champion on Windows) is compiled by ACO into a selection tree with an `s_cbranch_execz` per element** (140 execz in one gate/up kernel),
+   and the 7-slot pair with the fp8 shared expert therefore fell from Windows's 216.9 GB/s to **92.2 GB/s (40%)**.
+   **DecodeMode 1 (assemble the fp32 bit pattern directly, exact for E2M1 values)**: moe gpu **50–53 → 31–32 ms**, the hot step's median over two ABAB pairs **~117 → ~81 ms** (80.5 at best;
+   Windows's historical best was 81.5), and `l3_ppl` off **NLL 0.601884 bit for bit unchanged**. **On by default, on RADV only** (`VkPhysicalDeviceDriverProperties.driverID`,
+   `DeviceCaps::driver_id`); the AMD proprietary driver stays on 0; `DEEPMOE_MOE_DEC` overrides.
+   **Linux's NLL baseline is 0.601884 / top-1 62/64, not 0.630051 / 61/64** -- the same `traces/l3_64`, bit-identical across two runs; the difference is in the two drivers' compilers
+   (this repository's ruler has a noise floor against the fp32 reference of ×1.007 on Linux and ×1.033 on Windows). **From now on, "reproduces bit for bit" on this machine means 0.601884** (changed the same day to 0.623007 / 60/64 after dispatch B's shape became the default, and again to **0.639409 / 58/64** after the attention `fp8_round` correction; see below in this entry).
+   Tried and backed out (in the same round): ① MoE shape L16 R2 **xgf16**: moe 37 ms but **NLL 0.647669 / top-1 56/64** (the fp4 slots' x packed as fp16) ⇒ NO-GO;
+   ② L16 R2 / L16 R1 xglob: moe 48 ms, only a fraction of the gain; ③ bitwise decoding of fp8 E4M3 (replacing the LDS table, bit-identical over all 256 codes): no difference in `kernel_bench` ⇒ the table is not the bottleneck, reverted;
+   ④ the same arithmetic FP4 decode put into `prefill_gemm`: **10–50% slower instead** (prefill reuses one weight TileM times, which amortises the table's cost away), reverted.
+   **Then the gate round trip, and the answer is the CCD**: once MoE got faster the hot step became bimodal (~80 / ~93 ms), with the whole difference in "other" (3 against 17 ms).
+   amdgpu's interrupts are actually delivered on **CPU 29 (CCD1)**; `taskset` onto CCD1 gives **78–79.5 ms** over two pairs and onto CCD0 **90–100 ms** --
+   when the thread waiting on the fence and the interrupt are not in the same L3, every layer costs an extra cross-CCD wake-up and cache-line migration.
+   **Landed and on by default** (Linux): `Engine::init` binds its threads to the L3 domain of the CPU amdgpu's interrupt lands on, before starting the IoEngine (reading `/proc/interrupts`
+   + `effective_affinity_list` + `index3/shared_cpu_list`); `DEEPMOE_CPU_AFFINITY=off` disables it, and a cpulist is used as given.
+   The result: 6 of 7 auto rounds at **78.0–79.5 ms** (the same as taskset), while 5 rounds with it off jumped between 79 and 95; one residual round at 81–89 is unexplained. **The hot step ~117 → ~79 ms (−33%)**.
+   `DEEPMOE_FENCE_SPIN_US=3000`: both pairs at **~95 ms (worse)** ⇒ NO-GO, the same direction as the Windows conclusion.
+   Other things fixed on Linux (all in `build.md`): the io_uring backend dropping requests with a multi-threaded SQ (a hang), `-EFAULT` on path A (the bounce buffer),
+   and `available_physical_bytes()` returning 0 on Linux (which made the automatic cache size compute path B as zero).
+   ⚠️ **`suite.multistream`'s two cases time out on the GPU on Linux** (amdgpu's default 2 s per job, `ring comp_1.2.0 timeout` → device lost),
+   **pass under `RADV_DEBUG=hang`** (which implies syncshaders), and are unaffected by `zerovram` or by zeroing host memory ⇒ it is a **synchronisation race**: a barrier or dependency is missing between the two streams' commands,
+   and the Windows driver covered it up by implicitly serialising adjacent submits. **It only affects the optional multi-stream mode** (`serve --streams N`, default 1, not used by the web front end).
+   **Localised to the eager MoE submit** (with multiple streams, each layer's MoE is its own submit waiting on the residency timeline): with `DEEPMOE_MS_EAGER_MOE=0` all three cases pass, the traces are bit-identical, and there are zero timeouts.
+   **Eager is off by default on RADV** (`init_gpu`, by `driver_id`), and `DEEPMOE_MS_EAGER_MOE=1` turns it on; `suite.multistream` passes in the default configuration in 280 s.
+   **The root cause was not found** (the devcoredump has only registers and rings, and the IB in flight cannot be read), and what eager is worth on RADV was not measured either -- that is a throughput A/B at `--streams 2` and needs long disk reads.
+   In passing: `alloc_host_pages` uses an anonymous `mmap` on Linux (VirtualAlloc's counterpart: zeroed, page-aligned), where the aligned `operator new` it used before does not zero.
+   ⚠️ **The external model drive overheats and drops** (72 °C idle, critical at 95 °C, `unsafe_shutdowns` 552): check `nvme smart-log /dev/nvme1` before a test with long disk reads.
+   **path A over-commits → should it be capped? NO-GO, off by default (`DEEPMOE_PATH_A_CAP=on` enables it).** RADV never refuses a path A allocation: the auto cache's 41 slabs (71.8 GiB)
+   all land on the 63.5 GiB video heap, TTM moves ~24 GB to GTT within ~9 s of starting (`mem_info_vram_used` 59 → 41 G), and path B goes entirely unused.
+   Truncating at `VK_EXT_memory_budget`'s remaining capacity (measured while holding the 4 GiB reservation, 49 GiB) puts 27 pieces in A and 14 in B -- and **the hot step goes 79.3 → 482 ms**:
+   submit 0.2 → 356 ms (~8.7 ms per `vkQueueSubmit`), moe gpu 32 → 64, engram 2.8 → 8.9.
+   On Linux path B is an amdgpu userptr BO, and the guess is that its pages have to be revalidated on every submit (unconfirmed); conversely, the GTT that TTM migrated out has no visible cost.
+   ⇒ **path B is effectively unusable on Linux, and letting path A over-commit is right**; a larger cache comes from the BIOS video-memory carve-out or from GTT, not from path B.
+   The results are in `bench/results/linux/path_a_cap/`.
+   **A separate shape for dispatch B (w2): GO, on by default on RADV, the hot step ~79.9 → ~76.7 ms (−3.9%, four alternating pairs).** The engine's shape is broken out in `kernel_bench`'s new
+   "fp8 dec1 B" section: A (w1+w3) is 204 GB/s and **B is only 152 GB/s** (0.807 ms per 7-slot pair). `MoeSpec::lanes_b / rows_b` (0 = follow A) lets B take its own shape:
+   A stays L32 R1 and B takes **L16 R2 → 0.757 ms** (L16 R4 is 0.753, while L32 R2/R4 and L64 are all slower). In the engine, moe gpu 32.3 → 30.0.
+   Numerics: **only the fp32 reduction width changed** -- the L1 golden error is bit-identical (1.37e-4 of |y|max, cos 0.999999961, with M=1/M=6 cases for B:L16R2 added to `gpu_moe`),
+   but `l3_ppl` off goes **0.601884 → 0.623007 (top-1 62 → 60/64)**: two near-tie positions flipped. **That number tracks only B's lane count**:
+   L16 R4 is bit-identical at 0.623007 and L32 R2 is bit-identical at 0.601884; the PPL is 1.021× off, inside the tool's own 1.05× line; Windows production is 0.630051 (×1.054 against the fp32 reference).
+   ⇒ **Linux's NLL baseline becomes 0.623007 / top-1 60/64**; `DEEPMOE_MOE_LB=32 DEEPMOE_MOE_RB=1` returns to the old shape (still 0.601884).
+   The union runner does not follow (the ~20-slot case was never measured, `DEEPMOE_MOE_UNION_LB/RB`). decode / gpu_layer / integration / spec_forward / speculate all pass.
+   **Backed out in the same round**: B on int8 dot4 (`x_mode_b` 3) gives a 0.738 ms kernel and −3.7% on the hot step, but **NLL 0.622511 / 60/64**, and it quantises h,
+   so the L1 error is of order 5e-3 -- indistinguishable from the purely reordered L16 on the ruler but distinguishable on L1, and not worth it; B's LDS / ldsf16 / gi8 variants bought nothing.
+   The switches: `DEEPMOE_MOE_XMODE_B`, `DEEPMOE_MOE_LB`, `DEEPMOE_MOE_RB` (`moe_bridge.cpp`).
+   **Track SE: fit the shared expert into the gate round trip's idle gap -- GO, on by default on RADV, the hot step ~77.2 → ~74.3 ms (−3.9%, three alternating pairs, another three at −2.6%), numerics bit-identical.**
+   §3 53's verdict on Windows was about a 386 µs/layer gate gap (265 µs of it the driver's); on Linux that stretch is only **~114 µs/layer (4.56 ms/token)**,
+   and the shared expert does not depend on routing: it can be computed as soon as x exists. The method: **a submit with no wait immediately behind the gate's submit** --
+   act_quant on the GPU (the new `moe_xact.slang`, bit-identical to the host's `act_quant_to_fp16`) + the shared expert's dispatch A + the h quantisation,
+   through a third single-element slot list in MoeRunner; the host only waits on the gate's own fence (`cmd_wait(lc.gate_fence)`),
+   and routing's six slots take Track R1's split form (A over six slots + B over all seven, bit-identical to a single dispatch). The pointer table gets two pages, rotated by the layer's parity
+   (a `layer` push constant selects the page), so layer L's shared row can be written while layer L−1's MoE is still in the queue; the two `se_cmd_`s are used alternately by parity.
+   From the trace: the gap before MoE goes **4.56 → 0.78 ms/token**, but the split A costs ~1.7 ms more (the shared A alone is 128 µs and routing's A is 387 µs, ~35 µs/layer slower than one seven-slot dispatch), for a net −3 ms.
+   The host-side act_quant (0.3 ms/token) disappears along with it. Gates: `l3_ppl` off **0.623007 / 60/64 bit for bit**, every warm pass's margin bit-identical,
+   and decode / gpu_moe / gpu_layer / integration / spec_forward / speculate / multistream as below. On only with a single stream (multi-stream was never measured); `DEEPMOE_SHARED_EARLY=0/1` overrides,
+   and `DEEPMOE_SE_CHECK=1` compares the GPU's x against the host's act_quant element by element every layer.
+   **Three traps hit on the way, left for whoever comes next**: ① the engine has one `tok_cmd_` per stream and the rule is to wait before re-recording -- re-recording it while the gate is still running is an immediate GPU timeout;
+   ② **Mesa's NIR folds `(a + 1.5·2^14) − 1.5·2^14` into `a`**: the rounding in E4M3's subnormal range gets eaten (x = 2.03e-5 → 0x0154 where it should be 0x0180),
+   so `moe_xact` was changed to an exactly integer RNE; **`attn_common.slang` / `prefill_common.slang`'s `fp8_round` used the same trick and is folded the same way on RADV -- changed likewise**
+   (the Windows driver does not fold, so this is a correction that returns Linux to the reference's semantics and makes it consistent with the KV bytes' `fp8_encode_rn`): of the 598 rows of `gpu_attn` / `gpu_layer` error against the CPU oracle,
+   only a few move at all, at the 1e-9 (cos) level, some up and some down, and all pass; but `l3_ppl` off goes **0.623007 → 0.639409 (top-1 60 → 58/64)** --
+   the same class of near-tie flip as B's shape above, and a 64-step ruler cannot tell which is better. **Linux's NLL baseline therefore becomes 0.639409 / 58/64** (the hot step unchanged at 74.7 ms); decode / spec_forward / integration pass;
+   ③ dispatch A writes `swiglu × RouteW[slot]`, and the shared slot's 1.0 used to be written by stage_input, so with the early dispatch the process's first layer still had 0 (exposed by l3_ppl 0.646705).
+   **Tried and backed out the same day (the other two routes at the gate gap)**: PM QoS limiting C-state to C2 (`/dev/cpu_dma_latency` 20 µs): two pairs at 78.3/75.9 against 75.8/77.1, inside the noise;
+   and binding the unbound workqueue (drm_sched's worker) to CCD1 where the interrupt lands: 77.1/76.8 against 77.4/78.4, −1%, below ±3%. Both reverted.
+   User-space queues (`amdgpu.user_queue=1`, bypassing the kernel scheduler) need a kernel parameter and a reboot, and `userq_ip_mask = 0`; **not done, waiting on the user**.
+   **Conversation end to end (Linux, after moving the model to the internal SN740)**: the 8-turn `long_turns.json` on auto: **4.90 tok/s**, hit 0.8965, 89.8 ms of compute + 141.6 ms of stall per token,
+   mean TTFT 16.5 s; Windows's `m_auto` is 5.60 / hit 0.9175 / 99.9 + 100.7. **Compute is already faster than Windows, and the difference is a smaller cache**: with 64 GB carved out for video memory in the BIOS the system has only 62 GB left,
+   path A's over-commit is migrated into GTT by TTM, and GTT's ceiling is 31.2 GiB (`ttm.pages_limit`) -- so auto originally took only 4,100 slots (71.8 GiB).
+   `--cache-slots 4450`: **5.31 tok/s (+8.4%, faster on every one of the 8 turns)**, hit 0.9045, stall 130.8, GTT peaking at 30.6 of 31.2 GiB, and **26 GB of system memory still free**.
+   ⇒ auto on RADV lowers the host heap's (= GTT's) headroom from 10 GiB to 5 GiB: it is now **4,400 slots / 77.1 GiB** with GTT peaking at 30.6 GiB;
+   a 4K prompt takes GPU prefill (`--gpu-prefill-min 256`) normally with a TTFT of 80.3 s (Windows's `ho_4k_on` is 97.8 s), and GTT no longer grows.
+   **The only obstacle above that is GTT's ceiling**: raising `ttm.pages_limit` by kernel parameter (or carving less out in the BIOS) would put those 26 GB of free memory to use, worth about +0.02 hit / +10% tok/s by the hit curve -- it needs a reboot, so it is waiting on the user.
+   **Two drives (Track D5 rerun on Linux): the internal SN740 as primary + the external USB4 (KP 2TB, `/mnt/deepmoe2`) as `--mirror` -- GO, +8.97%.**
+   Two ABAB pairs, `long_turns.json`, auto (4,400 slots), no weight override (`bench/results/linux/mirror_ab/`, with `summ.py` producing the table):
+   off **5.2034 / 5.3338**, on **5.7429 / 5.7397** (a mean of 5.2686 → 5.7413); decode's weighted hit is bit-identical at 0.924 in both arms; `nvme_stall` 100.7/95.4 → **81.7/82.1 ms**;
+   aggregate read `eff` 3.31 → **3.96 GB/s**. The probe reads 4.63 : 3.72 GB/s (after warm-up, consistent across two runs), and the split is **76.0 : 23.9%** (the same shape as Windows's D5/D6 28.5% -- D6 already proved that forcing it to the bandwidth ratio is negative).
+   The external drive's `src[1]` mean lat of 95.8 ms is a question of basis, not of the drive: its **P0 is 6.43 ms** (the primary's is 4.33 ms) and the rest is P3 backfill preempted by P0 (the same conclusion as D6 §10.1).
+   Over four turns and ~37 minutes the external drive did not drop (74 °C idle). **Failover at run time was filled in along the way**: the external drive loses its link about once an hour, and the reads in flight at that moment used to return failure straight to the caller
+   ("an expert read failed"), waiting for SourceHealth to see three consecutive errors before taking the drive out of routing; now `IoEngine::finish` **re-queues a request that failed on the mirror at the head of the same priority queue, against the primary**
+   (one retry; a second failure on the primary errors as usual; `queued_at` is unchanged so the latency includes the failed attempt; the `src[i]` row gains `N re-read from the primary`).
+   The unit test is `io.mirror_error_is_reread_from_the_primary` (with `fail_file` added to FakeBackend), and the mutation (`if (false && …)`) ⇒ caught. With no errors the path is unchanged to the letter.
+   `tools/web/server.py`'s `find_mirrors` looks for a directory of the same name under mount points like `/mnt/*/models/<name>` on Linux (requiring a manifest), so the web UI picks the external drive up automatically;
+   the engine still defaults to one drive and the command line needs `--mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash` or `DEEPMOE_MODEL_MIRRORS`.
+   **A reboot: the UMA carve-out 64 GB → 512 MB + `ttm.pages_limit=29360128` (112 GiB of GTT), together with `amdgpu.cwsr_enable=0 gpu_recovery=1 dcdebugmask=0x600` (`/etc/limine-entry-tool.d/z13.conf`).**
+   System memory 62 → 124 GB; RADV reports GTT as two heaps in a 2:1 ratio: a "device-local" 75 GiB + a host 37.5 GiB. `l3_ppl` off is **0.639409 / 58/64 bit for bit unchanged**;
+   per token, compute is attn 38.3 + moe_gpu 36.5 ms, the same order as before the reboot (turning cwsr off showed no cost). auto grew from 4,400 slots to 5,000 (held by Windows's kAutoSlotCap, with the budget itself at 5,299):
+   the 8-turn single-drive figure **5.27 → 5.78 tok/s** (hit 0.924 → 0.937, stall ~98 → 81 ms), and two drives 5.74 → 6.13 (a single run, `bench/results/linux/reboot112/`).
+   `--cache-slots 5500`: 6.19 tok/s, hit 0.945, GTT peaking at 107 of 112 GiB, with no amdgpu timeout or reset in the kernel log.
+   ⇒ **RADV's auto now works from the sum of the two heaps: `heaps − pinned − kPathAOther − 4 GiB` = a budget of 5,499 slots, but slabs are rounded to 100 slots, so **5,400 slots / 94.6 GiB are actually allocated** (every auto-arm number below is 5,400; the headroom later became 3 GiB, landing on 5,500), and Windows's 5,000-slot cap is not applied** (`DEEPMOE_CACHE_SLOT_CAP` still takes effect when set explicitly).
+   Two ABAB pairs, single drive, `long_turns.json` (`reboot112/auto_ab/`): cap5000 **5.8596 / 5.7898** against auto **6.1217 / 6.0764** -- a mean of 5.8247 → **6.0991 = +4.71%**, and +4.5% / +4.9% in the two pairs;
+   hit 0.9369 → 0.9436, stall 79.8 → 71.9 ms, GTT peaking 98 → 105 GiB. **GO, and Linux's single-drive conversation baseline is now ~6.10 tok/s** (Windows's `m_auto` is 5.60).
+   **Short prompts take GPU prefill too: `gpu_prefill_min` 512 → 16 on RADV (`cli/serve.cpp`, only when `--gpu-prefill-min` was not given and the driver is RADV) -- GO.**
+   The 8-turn script's first turn on a new topic is 29–64 tokens, which went down the decode path one token at a time with a TTFT of 14–21 s (~2–3 tok/s, the stall of cold experts), 22% of the whole turn; a follow-up within the same topic already reuses KV (extend, 18–22 tokens, ~6 s) and is unaffected.
+   Two ABAB pairs, single drive (`bench/results/linux/pfmin/`, `summ.py`): total TTFT is **107.3 / 104.8 s** on the default against **84.6 / 84.0 s (−20%)** at 16, with each cold turn −3 to −5 s;
+   end to end (generated tokens / wall clock) **4.785 / 4.800 → 4.947 / 4.953 tok/s (+3.5%)**. Pure decode tok/s goes 6.10 → 5.99, identical across both runs -- **that is the content changing, not a cost**:
+   GPU prefill's KV is not bit-identical to the decode path's, so the answers differ (2,359 against 2,322 tokens per arm, token for token identical within an arm). A rerun of the new default with no parameters: TTFT 81.7 s, end to end 4.969.
+   `suite.gpu_prefill`: `stages` 110 checks with 0 failures (worst cos 0.99991) and `forty_layers` passes; the three longctx cases skip because this machine has no `traces/longctx`.
+   Windows's 512 (Track PF: below 512, streaming the experts costs more than decode saves) was not touched.
+   **Half of §7 item 6: Track J's K-split `wo_a` / `wo_b` wired into the M=1 decode path -- attention −3.8 ms/token, but **off by default** (`DEEPMOE_ATTN_KSPLIT=1` enables it).**
+   `attn_bench` on RADV: the classic `wo_a` is 194.5 µs (173 GB/s) and `wo_b` 251.8 µs (167 GB/s), while K-split (4 / 8 pieces) gives 157.4 (213) / 199.2 (211);
+   `wq_b` is already 226 GB/s (~the real ceiling), so only those two were wired in (the old `wip/track-t-ksplit-decode` changed tiled attention as well and was never compiled; it was not used).
+   `DecodeLayer` gains a K-split partial-sum plane `kpart` (16 × max(orows, dim) fp32), `bind` binds both slot sets, and `record_attention` selects on `attn_ksplit_on()`;
+   `DEEPMOE_ATTN_KSPLIT=0/1` controls it, off by default. Two ABAB pairs of hot-step traces (`bench/results/linux/ksplit/`):
+   attention busy **32.4 / 32.8 → 28.6 / 29.1 ms/token (−3.8 ms, −11.6%)**, MoE unchanged (every token in this set of runs carries a disk wait, so the whole step's span is not comparable).
+   Numerics: in `suite.gpu_attn`, K-split against the kernel it replaces is **relL2 ~1e-7, cos 1.000000000**, and its error against the oracle is the same order as the classic one's, bit for bit;
+   `l3_ppl` off goes **0.639409 → 0.621814, top-1 58 → 59/64** (a near-tie flip; it is off by default, so Linux's baseline is still 0.639409).
+   `suite.decode`'s 64-step prefill drift (the worst layer's index-key cos) goes 0.9685 → **0.9493**, below the 0.95 line -- that quantity amplifies a 1e-7 perturbation chaotically --
+   and `suite.spec_forward` (mgt1 batch against M=1, the worst cos over 60 positions) goes 0.9415 → **0.9132**, below the 0.93 floor (while top-1 52 → 53/60 actually improves).
+   **Both quality gates are pushed over the line by rounding differences of order 1e-7**, and the gain is only what is above, so **the thresholds are not loosened and it stays opt-in**. To turn it on by default, the mgt1 batch path has to use K-split too (the same arithmetic on both paths), and then both gates re-evaluated.
+   Also: `suite.gpu_moe` fails **on HEAD with no local changes at all** (several `L16 R2 … hq8` variants against y_hq16 at 2.76e-3, over tol), unrelated to this change, still to be investigated.
+   The expected end-to-end effect on a conversation: 3.8 ms saved out of ~164 ms a token ≈ +2.3%, halved +1.2%, **below the ±3% jitter band, so no conversation ABAB was run** -- the criterion is the paired kernel-level measurement.
+   **The cache's first-fill page faults (Linux) -- GO**: path A (`DEVICE_LOCAL|HOST_VISIBLE`, which is GTT on RADV) is allocated lazily by TTM, with each page allocated and zeroed on the CPU's first write to it,
+   and at run time the first write to a slot is the io_uring bounce buffer's memcpy the first time it is filled. So **each of a process's first ~5,400 misses costs 10.0–10.5 ms, and 5.4 ms after that**
+   (consistent across three runs, grouping `profile.jsonl` by cumulative misses), which is about **27 s** in an 8-turn script -- that is, the first ~150 tokens. `io_dst_bench --copy` (with a new Linux branch) measures it directly:
+   a memcpy into path A is ~2.4 GB/s the first time and 48.5 GB/s afterwards -- **so the bounce copy itself is not the bottleneck, the first fault is**.
+   `SlabPool::prefault()`: after allocating the slabs, 16 threads write one byte per page, taking **3.0 s for 94.6 GiB**; `DEEPMOE_PREFAULT=0` disables it. Rerun: the first fill's per-miss cost **10.0 → 5.40 ms** (= the steady state's 5.45),
+   turn 1's TTFT 8.8 → 7.0 s and 6.51 → 7.11 tok/s, and the whole script's end to end 4.969 → **5.088 tok/s (+2.4%)** with decode 5.98 → 6.12. A one-off gain, with the mechanism measured directly at the per-miss level, so no ABAB was run.
+   Three storage candidates were closed in the same batch: P0 block size / QD / in-flight bytes (`c2q48m160` 5.980, `c1q64m128` 5.929 against 5.980, stall 76–78 against 75) **NO-GO**;
+   NVMe `max_hw_sectors_kb` 128 (IOMMU DMA-FQ squeezing MDTS's 1 MiB down to 128 KiB): at 64 KiB, QD 4 is unchanged and QD 16 is −7%, and the engine runs shallow queues ⇒ **a reboot for `iommu=pt` is not worth it**;
+   udmabuf zero-copy is feasible (`/dev/udmabuf` is available and RADV has `VK_EXT_external_memory_dma_buf`), but the copy itself runs at 48 GB/s, so **the gain is too small; not doing it**.
+   **Per-layer hit rates and task partitioning** (`tools/expert_hit_report.py`, `tools/task_partition24.py`, `bench/results/linux/expert_hits/`): the misses are spread evenly across the 40 layers (the most expensive 5 layers are 16.5% together);
+   over 12 task classes × 2 (`bench/results/hitrate/tasks24.json`), two questions of the same class have a per-layer expert-distribution cosine of **0.59**, different classes **0.16**, and two halves of one turn 0.83; warming, partitioning or pinning by task are all uneconomic in the LRU simulation (the switching cost is only 0.5 pt per 256 tokens),
+   and what dominates instead is multi-session token-by-token interleaving at −5.1 pt.
 
-   **每 token 时间账本（`bench/results/linux/budget/`，`budget.py`；8 轮 `long_turns`，auto 5,500 槽，`DEEPMOE_GATE_PROBE=1`，各一遍）**：
-   单盘 decode **5.986 tok/s = 167.1 ms**：attn 38.2 + moe_gpu 36.5 + tail 9.6 + engram 4.1（≈88 ms 计算，密集权重 8.52 GB 在 216 GB/s 的下限是 39.5 ms）+ **nvme_stall 74.0**
-   （下限 13.7 miss × 18.8 MB ÷ 4.8 GB/s = 53.6 ms）。gate 探针：有 miss 的层-步 29,802 / 100,760，**planner 等待 6.86 ms/层**，而 gate 之后主机侧其余只有 ~90 µs/层（ids 17 + plan 6–84 + stage 7–10 + next 55–68 µs）
-   ⇒ **主机开销不是瓶颈，剩下的是「gate 出结果 → 发读 → 读完」这条串行链本身**，每个有 miss 的层平均 1.16 个 expert、单个 18.8 MB 读在 QD≈5 下 ~6.9 ms（≈2.7 GB/s）。
-   P0 的 p95 173 ms / behind-of-burst 44 ms 来自 prefill 的成批 miss，不是 decode。
-   双盘（serve 现在在 Linux 上自动找 `/mnt/*/models/<name>` 当辅助读源，`DEEPMOE_MIRROR_AUTO=0` 关）：stall 74.0 → **66.4 ms**，decode **6.269 tok/s（+4.7%，单对，仅作附加）**，端到端 5.009 → 5.594，TTFT 78 → 47 s。
-   serve 的 `status` 事件新增 `gate_probe` 字段（开 `DEEPMOE_GATE_PROBE` 时）。
-   **局域网（2026-09-28 调查）不能用来加速单流 decode**：本机只有 Wi‑Fi（PHY ~2 Gbps），到 desktop（RTX 4070 Ti SUPER 16 GB、31 GB 内存、千兆有线、盘剩 130 GB）实测 ssh 44 MB/s、RTT 均值 5.4 ms；
-   作 expert 读源比 NVMe 慢 40–100 倍；按层切两机流水线要每 token 两跳（~11 ms）且 desktop 放不下一半权重（238 GB > 130 GB 空闲）、可做缓存的内存只有 ~20 GB——**不做**。
-   **`suite.gpu_moe` 在 RADV 上的失败查清并修掉（Mesa NIR 折叠的第二个实例），顺带补了测试框架一个会藏失败的洞。**
-   失败的是 `the_fp8_h_quantisation_matches_the_reference` 里三个 HQuant 2（dispatch A 写出时量化 h）的 L16 R2 变体：对 y_hq16 2.8e-3（判据 1e-3），
-   而同一规则的 HQuant 1 / 3 是 3e-7 / 5e-8。逐字节比 HQuant 2 与 3 写出的平面：72 个 scale 全同，**2,304 个 fp8 字节里 8 个差一格**，
-   而且这 8 个的 fp16 h 除以 scale **正好落在 E4M3 的平局上**（3.625、−19、−68、8.5、−15.5、−3.375、432）——HQuant 3 按 RNE 取偶，HQuant 2 落到另一侧。
-   ⇒ HQuant 2 量化的不是 fp16 h：`moe_gateup` 里 `float(half(h))` 被 NIR 折回 `h`（换成 `f16tof32(f32tof16(h))` 结果逐位不变，一样被折）。
-   修法与 0h 的 `fp8_round` 同：新 `f16_round`（`moe_common.slang`，整数 RNE：正规数 `(ab + 0xFFF + ((ab>>13)&1)) & ~0x1FFF`，次正规数 ×2^24 后整数取偶），
-   HQuant 2 现在与 3 **逐位相同**（y 5.030e-08 两者一样）。**引擎默认 HQuant 3，生产数值不变**；Windows 驱动不折叠，所以这是 RADV 专属。
-   新测试 `gpu_moe.hquant_2_and_3_write_identical_planes`（逐字节比两种写法的平面，失败时打印元素、fp16 h 与两个字节）；变异（改回 `float(half(h))`）⇒ caught（8 个值不同）。
-   shader 里其余 fp16 转换都是写回显存或真 fp16 运算，没有同类的"寄存器里窄化再用"。
-   **测试框架**：ctest 的 `SKIP_REGULAR_EXPRESSION` **压过失败**——两行的 ctest 小工程验证：输出里有一行 SKIP、退出码 1 ⇒ 报 Skipped（加 `FAIL_REGULAR_EXPRESSION` 也一样）。
-   即一个 suite 里只要有一个 case 因缺 golden/缺 GPU 打印 SKIP，其余 case 的失败全被藏成"跳过"。改成退出码：`DEEPMOE_SKIP_PRINTF` 计数（104 处 SKIP 打印机械替换），
-   `run_all` 有失败返回 1、否则有跳过返回 77、否则 0；`tests/CMakeLists.txt` 所有 `deepmoe_tests` 测试改 `SKIP_RETURN_CODE 77`（`bench.l3_ppl64` 是只在开头打印 SKIP 的 Python 驱动，保留正则）；
-   `tests/mutate.py` 把 77 记成 "skipped" 而不是 "caught"。验证：小程序 skip+fail ⇒ 1、只 skip ⇒ 77、只 pass ⇒ 0；无模型时 needs-model suite 仍报 Skipped；CPU 闸 25/25。
-   **`smoke.auto_cache` 也是测试过时**：它断言 `slots <= auto_slot_cap()`（Windows 的 5,000），而 247a31d 起 RADV 上引擎按 GTT 两堆定预算、不加上限（5,500 槽）。
-   引擎现在把实际用的上限记在 `Engine::applied_slot_cap()`，测试按它断言；12 s 过。完整 needs-model/needs-gpu 一轮里另有两件还在查：
-   `decode_longctx.engine_vs_reference` 在 4K 第 6 步 L20 attn_norm 余弦 0.882 < 0.90（token 全对，L14 gate 集 3/6，路由近平局漂移）——**已定位**：
-   808e030（RADV 数值改动之前）同一步 0.942 过；HEAD 上 `DEEPMOE_MOE_LB=32 RB=1`（关 B 形状）0.933 过、L14 gate 5/6；开 B 形状 0.882、L14 gate 3/6。
-   即 B 形状的 fp32 求和顺序多翻了一个路由近平局，和它把 l3_ppl 0.601884 → 0.623007 是同一件事，token 与 margin 不变（9.82 vs 9.89）。
-   门槛 attn_norm/q/kv/attn_out/ffn_norm 从 0.90 调到 **0.85**（win_kv 0.99、cmp_kv 0.999 不动），测试里写了依据；`suite.decode_longctx` 过（62.7 s）。
-   以及整个 `deepmoe_tests` 一个进程跑完时的段错误——**已查清并修掉**：`[ RUN ] speculate.a_m` 只是 stdout 缓冲截断处，core 里 RIP `0x7227aa907680`
-   落在一块 `/dev/dri/renderD128` 映射里（SEGV_ACCERR），栈上返回地址在 `import_host_memory`。`gpu/vulkan/memory.cpp` 的 `host_ptr_props_fn` 把
-   `vkGetMemoryHostPointerPropertiesEXT` 缓存在函数 static 里、**以 VkDevice 句柄为键**：销毁实例时 loader 卸载了 RADV，下一个实例把它装到别处，
-   新设备却拿回了同一个句柄值 ⇒ 旧指针"命中"，跳进已被 GPU 映射复用的地址。实测：每轮查到的入口地址低位都是 `…07680`（与 core 的 RIP 一致），
-   第 0→1 轮库搬了家、句柄从第 3 轮起重复。修法：每次调用都 `vkGetDeviceProcAddr`，不缓存。
-   新测试 `gpu.host_import_survives_device_churn`：12 轮设备生命周期，每轮一次 path B 导入；每轮结束在旧入口页上 `MAP_FIXED_NOREPLACE` 一页可写不可执行的匿名页，
-   逼 ICD 装到别处——**旧代码 3/3 次 SIGSEGV（exit 139），修后 3/3 过**。
+   **A per-token time ledger (`bench/results/linux/budget/`, `budget.py`; the 8-turn `long_turns`, auto 5,500 slots, `DEEPMOE_GATE_PROBE=1`, one pass each)**:
+   single drive, decode **5.986 tok/s = 167.1 ms**: attn 38.2 + moe_gpu 36.5 + tail 9.6 + engram 4.1 (≈88 ms of compute, where the dense weights' 8.52 GB at 216 GB/s has a lower bound of 39.5 ms) + **nvme_stall 74.0**
+   (a lower bound of 13.7 misses × 18.8 MB ÷ 4.8 GB/s = 53.6 ms). The gate probe: 29,802 of 100,760 layer-steps have a miss, **the planner waits 6.86 ms a layer**, and everything else on the host side after the gate is only ~90 µs a layer (ids 17 + plan 6–84 + stage 7–10 + next 55–68 µs)
+   ⇒ **host overhead is not the bottleneck; what is left is the serial chain "the gate produces a result → issue the read → the read completes" itself**, with an average of 1.16 experts per missing layer and a single 18.8 MB read taking ~6.9 ms at QD≈5 (≈2.7 GB/s).
+   P0's p95 of 173 ms / behind-of-burst of 44 ms come from prefill's batched misses, not from decode.
+   Two drives (serve now finds `/mnt/*/models/<name>` automatically on Linux and uses it as an auxiliary read source, `DEEPMOE_MIRROR_AUTO=0` disables it): stall 74.0 → **66.4 ms**, decode **6.269 tok/s (+4.7%, a single pair, recorded as an addendum only)**, end to end 5.009 → 5.594, TTFT 78 → 47 s.
+   serve's `status` event gains a `gate_probe` field (when `DEEPMOE_GATE_PROBE` is set).
+   **The LAN (investigated 2026-09-28) cannot be used to speed up single-stream decode**: this machine has only Wi‑Fi (PHY ~2 Gbps), and to the desktop (RTX 4070 Ti SUPER 16 GB, 31 GB of memory, gigabit wired, 130 GB free on disk) ssh measures 44 MB/s with a mean RTT of 5.4 ms;
+   as an expert read source that is 40–100 times slower than the NVMe; a two-machine pipeline split by layer needs two hops per token (~11 ms), the desktop cannot hold half the weights (238 GB > 130 GB free), and it has only ~20 GB of memory usable as cache -- **not doing it**.
+   **`suite.gpu_moe`'s failure on RADV was traced and fixed (the second instance of Mesa NIR folding), and a hole in the test framework that hides failures was filled along the way.**
+   What failed were three HQuant 2 (h quantised as dispatch A writes out) L16 R2 variants in `the_fp8_h_quantisation_matches_the_reference`: 2.8e-3 against y_hq16 (the criterion is 1e-3),
+   while HQuant 1 / 3 under the same rule give 3e-7 / 5e-8. Comparing the planes HQuant 2 and 3 write byte by byte: all 72 scales are the same, and **8 of the 2,304 fp8 bytes differ by one step**,
+   and those 8's fp16 h divided by their scale **land exactly on an E4M3 tie** (3.625, −19, −68, 8.5, −15.5, −3.375, 432) -- HQuant 3 rounds to even under RNE and HQuant 2 falls the other way.
+   ⇒ what HQuant 2 quantises is not the fp16 h: `float(half(h))` in `moe_gateup` is folded back to `h` by NIR (replacing it with `f16tof32(f32tof16(h))` gives a bit-identical result, folded the same way).
+   The fix is the same as 0h's `fp8_round`: a new `f16_round` (`moe_common.slang`, an integer RNE: for normals `(ab + 0xFFF + ((ab>>13)&1)) & ~0x1FFF`, and for subnormals ×2^24 then round to even in integers),
+   and HQuant 2 is now **bit-identical** to 3 (y 5.030e-08 for both). **The engine defaults to HQuant 3, so production numerics are unchanged**; the Windows driver does not fold, so this is RADV-specific.
+   A new test `gpu_moe.hquant_2_and_3_write_identical_planes` (comparing the two writers' planes byte by byte, printing the element, the fp16 h and both bytes on failure); the mutation (putting `float(half(h))` back) ⇒ caught (8 values differ).
+   Every other fp16 conversion in the shaders either writes back to memory or is a real fp16 operation, so there is no other "narrow in a register and then use it" of the same kind.
+   **The test framework**: ctest's `SKIP_REGULAR_EXPRESSION` **overrides a failure** -- verified with a two-line ctest project: a SKIP line in the output plus exit code 1 ⇒ reported as Skipped (adding `FAIL_REGULAR_EXPRESSION` makes no difference).
+   That is, as soon as one case in a suite prints SKIP for a missing golden or a missing GPU, every other case's failure is hidden as "skipped". It now goes by exit code: `DEEPMOE_SKIP_PRINTF` counts (104 SKIP prints replaced mechanically),
+   `run_all` returns 1 if anything failed, else 77 if anything skipped, else 0; every `deepmoe_tests` test in `tests/CMakeLists.txt` moved to `SKIP_RETURN_CODE 77` (`bench.l3_ppl64` is a Python driver that prints SKIP only at the start, so it keeps the regex);
+   and `tests/mutate.py` records 77 as "skipped" rather than "caught". Verified: the small program with skip+fail ⇒ 1, skip only ⇒ 77, pass only ⇒ 0; a needs-model suite still reports Skipped with no model; the CPU gate is 25/25.
+   **`smoke.auto_cache` was out of date too**: it asserted `slots <= auto_slot_cap()` (Windows's 5,000), while since 247a31d the engine on RADV sizes its budget from GTT's two heaps with no cap (5,500 slots).
+   The engine now records the cap it actually applied in `Engine::applied_slot_cap()` and the test asserts against that; it passes in 12 s. A full needs-model/needs-gpu round has two other things still under investigation:
+   `decode_longctx.engine_vs_reference` at 4K step 6 gives an L20 attn_norm cosine of 0.882 < 0.90 (every token right, L14's gate set 3/6, a routing near-tie drift) -- **located**:
+   808e030 (before the RADV numerics changes) gives 0.942 at the same step and passes; on HEAD, `DEEPMOE_MOE_LB=32 RB=1` (B's shape off) gives 0.933 and passes with L14 gate 5/6, and with B's shape on it is 0.882 with L14 gate 3/6.
+   That is, B's shape's fp32 summation order flipped one more routing near-tie, which is the same thing as its taking l3_ppl 0.601884 → 0.623007, with the token and the margin unchanged (9.82 against 9.89).
+   The thresholds for attn_norm/q/kv/attn_out/ffn_norm move from 0.90 to **0.85** (win_kv 0.99 and cmp_kv 0.999 unchanged), with the reasoning written into the test; `suite.decode_longctx` passes (62.7 s).
+   And a segfault when the whole of `deepmoe_tests` runs in one process -- **diagnosed and fixed**: `[ RUN ] speculate.a_m` was merely where stdout's buffer was cut off, and in the core the RIP `0x7227aa907680`
+   lands inside a `/dev/dri/renderD128` mapping (SEGV_ACCERR) with a return address on the stack in `import_host_memory`. `gpu/vulkan/memory.cpp`'s `host_ptr_props_fn` cached
+   `vkGetMemoryHostPointerPropertiesEXT` in a function static, **keyed on the VkDevice handle**: destroying the instance made the loader unload RADV, the next instance loaded it somewhere else,
+   and the new device got the same handle value back ⇒ the old pointer "hit" and jumped into an address the GPU mapping had since reused. Measured: the entry point's low bits were `…07680` on every round (matching the core's RIP),
+   the library moved between rounds 0 and 1, and the handle started repeating from round 3. The fix: call `vkGetDeviceProcAddr` every time and cache nothing.
+   A new test `gpu.host_import_survives_device_churn`: 12 device lifecycles, one path B import each, and at the end of each round a writable non-executable anonymous page is placed on the old entry point's page with `MAP_FIXED_NOREPLACE`
+   to force the ICD somewhere else -- **the old code takes SIGSEGV 3 times out of 3 (exit 139), and after the fix it passes 3 of 3**.
 0g. **2026-09-21: the second route to a device-side gate is closed too, but 48's verdict needs a qualifier (Track HG, `p4_hostflag_gate.md`, §3 66).**
    §3 **48** says "spin-waiting is a NO-GO on this machine" -- **that holds only for workgroup↔workgroup**.
    Change it to **the host writes a flag and the device spins on it** (one command buffer holding a whole token,
