@@ -117,6 +117,9 @@ struct PfStageRope {
     bool     cmp_theta = false;   // the compressed table (op_rope's compressed_theta)
     uint32_t pos0 = 0, head_dim = 0, rope_dim = 0;
     bool     inverse = false, round = false;
+    // Set by op_attention when its finish stage wrote the staged plane itself
+    // (§7 0be): op_gemm_coop then multiplies x16 as it is.
+    bool     prestaged = false;
 };
 enum : uint32_t { kPcW = 0, kPcX = 1, kPcY = 2, kPcQ = 3, kPcQS = 4, kPcIdx = 5 };
 
@@ -234,6 +237,7 @@ struct PfAttnPush {
     uint32_t b = 0, n_idx = 0, n_heads = 0, head_dim = 0, n_win = 0, g = 0;
     float    scale = 1.0f;
     uint32_t ratio = 1, pos0 = 0, flags = 0;
+    uint32_t rope_dim = 0, rope_pos0 = 0, x16_n32 = 0, hg = 0;   // stage 5 with kPfFlagOutF16 (§7 0be)
 };
 
 // A weight as a GEMM sees it.
@@ -538,9 +542,12 @@ public:
     // (op_rope out_f16) and the q16 stage is skipped. attn_coop_ok says
     // whether the coopmat path -- the only one that takes q16 -- will run.
     bool attn_coop_ok(uint32_t b, uint32_t n_idx) const;
+    // `orope`: wo_a's staging (the inverse RoPE, the rounding, fp16 into the
+    // [groups][n32][K] plane the grouped LDS GEMM reads) folded into the
+    // finish stage when the coopmat path runs; orope->prestaged says so.
     Result<void> op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
                               uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b,
-                              bool q16 = false);
+                              bool q16 = false, PfStageRope* orope = nullptr);
     Result<void> op_index_score(uint64_t q, uint64_t keys, uint32_t g, uint64_t w, uint64_t score,
                                 uint32_t b, uint32_t ratio, uint32_t pos0);
     // design §2.1's first level (`select_candidate_blocks`) for queries at

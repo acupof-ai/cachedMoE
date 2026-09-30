@@ -603,6 +603,7 @@ Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint
         if (*used) return {};
     }
     if (rope) {   // not staged: rotate x in place first
+        if (rope->prestaged) return fail(Err::Internal, "gemm: x16 was staged by the attention but the coop path is not taken");
         if (xfmt != kPfActF32) return fail(Err::InvalidArgument, "gemm: a RoPE on x needs fp32 x");
         if (auto r = op_rope(x, x, n, x_stride, rope->head_dim, 0, 32, rope->cmp_theta, rope->pos0, 1,
                              rope->inverse); !r)
@@ -675,6 +676,8 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
     // under-filled. Its x is staged as [groups][n32][K], and the row block
     // finds its group's slice from its rows (LdsGroupRows).
     const bool fused = lg.wm && groups > 1 && uint64_t(groups) * n32 * K * 2 <= b_.x16.bytes;
+    if (rope && rope->prestaged && !(fused && rope->head_dim * groups * (cfg_->num_attention_heads / groups) == x_stride))
+        return fail(Err::Internal, "op_gemm_coop: x16 was staged by the attention but the grouped LDS path is not taken");
     auto km = lg.wm ? runner_->kernel({"prefill_gemm_lds", 0, 0, 0, 8, rows, K, lg.wm, lg.wn, 0, fused ? rpg : 0u})
                     : runner_->kernel({"prefill_coopmat", 0, 0, 0, 8, rows, K, tt});
     for (auto* k : {&kd, &kx, &km})
@@ -713,17 +716,20 @@ Result<bool> Prefill::op_gemm_coop(const PfWeight& w, uint32_t xfmt, uint64_t x,
         if (auto r = decode(0); !r) return std::unexpected(r.error());
     // pc.n = n real rows: the padded columns of x16 hold stale values whose
     // products only reach the padded rows of dout, which nobody copies
+    const bool prestaged = rope && rope->prestaged;   // the attention's finish wrote x16 (§7 0be)
     for (uint32_t g = 0; g < groups; ++g) {
-        PfCoopPush px; px.n = n; px.k = K; px.idx_off = 0; px.flags = 0;
-        px.x_stride = uint32_t(uint64_t(groups) * K); px.x_col0 = g * K;
-        if (fused) px.y_row0 = g * n32;   // its slice of x16 [groups][n32][K]
-        if (rope) {
-            px.rope_pos0 = rope->pos0; px.rope_hd = rope->head_dim; px.rope_dim = rope->rope_dim;
-            px.flags = (rope->inverse ? kPfFlagInverse : 0u) | (rope->round ? kPfFlagRound : 0u);
+        if (!prestaged) {
+            PfCoopPush px; px.n = n; px.k = K; px.idx_off = 0; px.flags = 0;
+            px.x_stride = uint32_t(uint64_t(groups) * K); px.x_col0 = g * K;
+            if (fused) px.y_row0 = g * n32;   // its slice of x16 [groups][n32][K]
+            if (rope) {
+                px.rope_pos0 = rope->pos0; px.rope_hd = rope->head_dim; px.rope_dim = rope->rope_dim;
+                px.flags = (rope->inverse ? kPfFlagInverse : 0u) | (rope->round ? kPfFlagRound : 0u);
+            }
+            if (auto r = rec(*kx, &px, sizeof(px), PrefillRunner::stage_groups(n, K)); !r)
+                return std::unexpected(r.error());
+            mark(shape + " x16", {0, double(n) * K * (xe + 2)});
         }
-        if (auto r = rec(*kx, &px, sizeof(px), PrefillRunner::stage_groups(n, K)); !r)
-            return std::unexpected(r.error());
-        mark(shape + " x16", {0, double(n) * K * (xe + 2)});
         if (slices > 1 || fused) continue;
         PfCoopPush pg; pg.n = n32; pg.idx_off = 0; pg.flags = gflags; pg.row0 = g * rpg; pg.y_stride = R;
         if (auto r = rec(*km, &pg, sizeof(pg), gx, gy); !r) return std::unexpected(r.error());
@@ -890,7 +896,8 @@ bool Prefill::attn_coop_ok(uint32_t b, uint32_t n_idx) const {
 
 Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
                                    uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o,
-                                   uint32_t b, bool q16) {
+                                   uint32_t b, bool q16, PfStageRope* orope) {
+    if (orope) orope->prestaged = false;
     if (!attn_coop_ok(b, n_idx)) {
         if (q16) return fail(Err::InvalidArgument, "attention: q16 needs the coopmat path");
         return op_attention_legacy(q, kv, n_win, cmp, idx, n_idx, sink, o, b);
@@ -940,6 +947,21 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     }
     runner_->slots(*km)[6] = b_.p16.dev_addr;
     runner_->slots(*kf)[6] = o;
+    // the finish writes wo_a's staged plane when the grouped LDS GEMM will
+    // take it as op_gemm_coop lays it out (its `fused` condition, §7 0aq)
+    const uint32_t groups = cfg_->o_groups, n32 = (b + 31) / 32 * 32;
+    const uint32_t gk = groups ? H * D / groups : 0;
+    const bool fold = orope && groups > 1 && H % groups == 0 && gk % 64 == 0 &&
+                      b >= pcfg_.coopmat_dense_min_rows && pcfg_.coop_grouped_dense &&   // op_gemm's coop predicate
+                      (!pcfg_.max_rows_per_submit || b <= pcfg_.max_rows_per_submit) &&
+                      pf_lds_geo(pcfg_, cfg_->o_lora_rank, gk, n32).wm &&
+                      uint64_t(groups) * n32 * gk * 2 <= b_.x16.bytes;
+    if (fold) {
+        s = runner_->slots(*kf);
+        s[8] = b_.x16.dev_addr;
+        s[9] = orope->cmp_theta ? b_.rope_cmp.dev_addr : b_.rope_win.dev_addr;
+        orope->prestaged = true;
+    }
     // the LDS GEMMs take G as their weight; the coopmat stages take it as x
     s = runner_->slots(*ks);
     s[lds ? kPcX : kPcW] = b_.q16.dev_addr; s[lds ? kPcW : kPcX] = b_.g16.dev_addr; s[kPcY] = b_.score.dev_addr;
@@ -950,6 +972,10 @@ Result<void> Prefill::op_attention(uint64_t q, uint64_t kv, uint32_t n_win, uint
     p.b = b; p.n_idx = E; p.g = n_idx; p.n_heads = H; p.head_dim = D; p.n_win = n_win;
     p.scale = 1.0f / std::sqrt(float(D));
     p.flags = pcfg_.round ? kPfFlagRound : 0u;
+    if (fold) {
+        p.flags |= kPfFlagOutF16 | (orope->inverse ? kPfFlagInverse : 0u);
+        p.rope_dim = orope->rope_dim; p.rope_pos0 = orope->pos0; p.x16_n32 = n32; p.hg = H / groups;
+    }
     PfCoopPush pq; pq.n = b; pq.k = H * D;
     PfCoopPush pc; pc.n = b; pc.k = H;
     if (lds) pc.flags = kPfFlagBatched;
@@ -2156,11 +2182,12 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
             pv.topk_first = probe_idx_.data();
             pv.n_idx = n_idx;
         }
+        // the inverse RoPE on o is applied as wo_a's staging reads it (§7 0au),
+        // and the attention's finish stage does that staging itself (§7 0be)
+        PfStageRope orope{cmp_theta, qpos, hd, cfg_->qk_rope_head_dim, true, pcfg_.round};
         PF_TRY(op_attention(q16 ? b_.q16.dev_addr : b_.q.dev_addr, b_.kv.dev_addr, A,
                             ratio ? sources_[cmp_src_].cache.dev_addr : 0, b_.idx.dev_addr, n_idx,
-                            pw("attn.attn_sink"), b_.o.dev_addr, nb, q16));
-        // the inverse RoPE on o is applied as wo_a's staging reads it (§7 0au)
-        const PfStageRope orope{cmp_theta, qpos, hd, cfg_->qk_rope_head_dim, true, pcfg_.round};
+                            pw("attn.attn_sink"), b_.o.dev_addr, nb, q16, &orope));
         PF_TRY(op_gemm(*woa, kPfActF32, b_.o.dev_addr, 0, nb, qdim, b_.woa.dev_addr, round, 1.0f,
                        c.o_lora_rank, 0, &orope));
         const uint32_t orows = c.o_groups * c.o_lora_rank;

@@ -42,7 +42,8 @@
 //          (each lane folds in the other lanes' p one by one), so P and inv
 //          are bit for bit the one-thread version's.
 // Stage 5  finish: O[b][h][d] = bf16(O * inv[b][h]) in place, sixteen dims a
-//          thread.
+//          thread; or, with kFlagOutF16, straight into wo_a's staged fp16 plane
+//          with the inverse RoPE applied (STATUS §7 0be).
 //
 // The KV rows are fp32 VALUES (the window KV already on its E4M3 grid, the
 // compressed KV on its FP4 grid), so nothing here decodes a byte.
@@ -50,6 +51,7 @@
 #include "prefill_common.slang"
 
 static const uint kQ = 0, kKv = 1, kCmp = 2, kIdx = 3, kSink = 4, kScore = 5, kO = 6, kW = 7;
+static const uint kX16 = 8, kTab = 9;       // stage 5 with kFlagOutF16
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
 
@@ -63,7 +65,11 @@ struct AttnPush {
     float scale;         // stage 0: head_dim ** -0.5
     uint  ratio;         // stage 2
     uint  pos0;          // stage 2: absolute position of query 0
-    uint  flags;         // stage 1: kFlagRound
+    uint  flags;         // stage 1: kFlagRound; stage 5: kFlagOutF16 (+ kFlagInverse)
+    uint  rope_dim;      // stage 5 with kFlagOutF16: the inverse RoPE folded in (prefill_coopmat stage 2's)
+    uint  rope_pos0;     //   rows of the table at kTab
+    uint  x16_n32;       //   the fp16 plane at kX16 is [groups][x16_n32][hg * head_dim]
+    uint  hg;            //   heads a group
 };
 [[vk::push_constant]] AttnPush pc;
 
@@ -297,8 +303,39 @@ void s_finish(uint3 gid, uint tid) {
     if (b >= pc.b) return;
     const float inv = load_f32(Ptr[kW] + (uint64_t)bh * 4);
     const uint64_t o = Ptr[kO] + ((uint64_t)bh * pc.head_dim + c0) * 4;
-    [unroll] for (uint q = 0; q < 16; ++q)
-        store_f32(o + (uint64_t)q * 4, maybe_round(load_f32(o + (uint64_t)q * 4) * inv, pc.flags));
+    if ((pc.flags & kFlagOutF16) == 0u) {
+        [unroll] for (uint q = 0; q < 16; ++q)
+            store_f32(o + (uint64_t)q * 4, maybe_round(load_f32(o + (uint64_t)q * 4) * inv, pc.flags));
+        return;
+    }
+    // kFlagOutF16: the values wo_a's staging would have made of the fp32 plane
+    // (prefill_coopmat stage 2 with its RoPE: the pair rotation, the rounding,
+    // then fp16), written straight into that staging's [groups][n32][K] plane
+    // and nowhere else (STATUS §7 0be). Same operations in the same order on
+    // every element, so the plane is bit for bit the staged one.
+    float v[16];
+    [unroll] for (uint q = 0; q < 16; ++q) v[q] = maybe_round(load_f32(o + (uint64_t)q * 4) * inv, pc.flags);
+    const uint lo = pc.head_dim - pc.rope_dim;
+    if (c0 + 16 > lo) {
+        const uint64_t tab = Ptr[kTab] + (uint64_t)(pc.rope_pos0 + b) * pc.rope_dim * 4;
+        const bool inverse = (pc.flags & kFlagInverse) != 0u;
+        [unroll] for (uint i = 0; i < 16; i += 2) {
+            const uint rel = c0 + i;
+            if (rel < lo) continue;
+            const uint j = (rel - lo) >> 1;
+            const float c = load_f32(tab + (uint64_t)j * 8);
+            const float sn = load_f32(tab + (uint64_t)j * 8 + 4);
+            rope_pair(c, sn, v[i], v[i + 1], inverse);
+            v[i] = maybe_round(v[i], pc.flags);
+            v[i + 1] = maybe_round(v[i + 1], pc.flags);
+        }
+    }
+    const uint h = bh % pc.n_heads, K = pc.hg * pc.head_dim;
+    const uint64_t dst = Ptr[kX16] + (((uint64_t)(h / pc.hg) * pc.x16_n32 + b) * K + (h % pc.hg) * pc.head_dim + c0) * 2;
+    float a[8], d[8];
+    [unroll] for (uint q = 0; q < 8; ++q) { a[q] = v[q]; d[q] = v[8 + q]; }
+    *(uint4*)dst = f16x8(a);
+    *(uint4*)(dst + 16) = f16x8(d);
 }
 
 [shader("compute")]
