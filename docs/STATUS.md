@@ -691,6 +691,9 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0bh. **q 的 rope（`prefill_elem` s5 的 fp16 输出路）每线程 8 个元素（两个 float4 读、一个 16 B 写，原来 4 个元素 8 B 写）：17K `rope m0 f16` 497 → **454 ms**，4K 124 → 113；逐位（10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。fp32 输出路（现在只剩 <64 行的块用）仍是 4 个。`prefill_ahead/rope8_{r6_17010,4133}`（单盘趟）。
+   **17K 现在的 GPU 侧账**（单盘趟的 per-op，ring 6）：routed GPU 11.4 s（gate/up fp4 6.15 @ 16.5 TF/s、down 2.82 @ 18、tiled 小 expert 1.0 @ 1.1 TF/s、scatter 0.59、x16 0.35）、attention 桶 12.5（coop 核 5.58：score 1.99 @ 6.6 TF/s、P.V 1.47 @ 9、gather 1.18 @ 196 GB/s、softmax 0.42、finish 0.34；dense GEMM 5120×8192 1.77、8192×4096 1.62、32768×1280 1.33、1280×5120 0.26；rope 0.45；index score 0.50）、mHC 1.89（s2 0.68、s4 0.67、24×20480 0.50）、shared 1.53、engram 0.66、host 0.21。GEMM 都在峰值 52.8 TF/s 的 30–45%（0ag 的诊断：256 VGPR、LDS 只能 b64 读、寄存器搬运），是剩下最大的一块，但是 kernel 内部的活。
+
 0bg. **act_quant（`prefill_elem` s0，MoE 的 expert quant 和 tiled 路也用它）改成四个 lane 一个 32 块、每 lane 8 个元素（两个 16 B 读、一个 16 B 写；块的 amax 用两次 lane 交换取 max——顺序无关，scale 逐位同）：17K `prefill_elem s0` 373 → **297 ms**、`moe quant` 138 → 93；4K 99 → 79 / 30 → 20；逐位（10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。同一个 kernel 有三个派发点，第一版只改了两个（tiled 路那个漏了），4K margin 0.271、17K 1.900——又是逐位闸抓的。`prefill_ahead/aq4b_{4133,r6_17010}`（单盘趟）。
 
 0bf. **注意力 softmax（`prefill_attn` s4）一趟：每 lane 的条目（最多 8 个 float4）和有效位留在寄存器里过 max 和 exp 两个阶段，S 和 index 列表只读一遍。17K 473 → **417 ms**，4K 115 → 103；逐位（求和顺序没动；10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。`prefill_ahead/smx1_{r6_17010,4133}`（单盘趟）。

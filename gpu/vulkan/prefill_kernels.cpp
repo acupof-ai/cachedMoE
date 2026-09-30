@@ -832,7 +832,7 @@ Result<void> Prefill::op_rope(uint64_t x, uint64_t y, uint32_t n, uint32_t d, ui
     cost_ = {0, double(n) * d * (out_f16 ? 6 : 8)};
     // one op a use: q (m0 f16), o (m0 inv), the window KV (m1), iq (m2), cache (m3)
     tag_ = std::format("rope m{}{}{}", mode, inverse ? " inv" : "", out_f16 ? " f16" : "");
-    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * (d / (mode == 0 ? 4 : block))));
+    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * (d / (mode == 0 ? (out_f16 ? 8 : 4) : block))));
 }
 
 Result<void> Prefill::op_cmp_pool(uint64_t kv, uint64_t score, uint64_t out, uint32_t groups,

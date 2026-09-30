@@ -300,13 +300,23 @@ void s_rope(uint3 gid, uint tid) {
     if (pc.a1 == 0) {
         // No quantisation: four elements (two pairs) a thread, the host
         // dispatches n x d / 4 -- a block of 32 a thread ran at 138 GB/s, four
-        // elements at the elementwise kernels' 208 (STATUS §7 0ak).
-        const uint row = idx / (pc.d / 4), e0 = (idx % (pc.d / 4)) * 4;
+        // elements at the elementwise kernels' 208 (STATUS §7 0ak). The fp16
+        // output takes eight (two float4s in, one 16-byte store; §7 0bh).
+        const bool f16 = (pc.flags & kFlagOutF16) != 0u;
+        const uint per = f16 ? 8u : 4u;
+        const uint row = idx / (pc.d / per), e0 = (idx % (pc.d / per)) * per;
         if (row >= pc.n) return;
         const uint pos = pc.pos0 + (pc.row_off + row) * pc.pos_step;
         const uint64_t tab = Ptr[kA2] + (uint64_t)pos * pc.a2 * 4;
-        float4 v = load_f32x4(Ptr[kIn] + ((uint64_t)row * pc.d + e0) * 4);
-        [unroll] for (uint i = 0; i < 4; i += 2) {
+        const uint64_t src = Ptr[kIn] + ((uint64_t)row * pc.d + e0) * 4;
+        float v[8];
+        {
+            const float4 a = load_f32x4(src);
+            const float4 c = f16 ? load_f32x4(src + 16) : float4(0.0f);
+            [unroll] for (uint z = 0; z < 4; ++z) { v[z] = a[z]; v[4 + z] = c[z]; }
+        }
+        [unroll] for (uint i = 0; i < 8; i += 2) {
+            if (i >= per) continue;
             const uint rel = (e0 + i) % hd;
             if (rel < lo) continue;
             const uint j = (rel - lo) >> 1;
@@ -316,11 +326,10 @@ void s_rope(uint3 gid, uint tid) {
             v[i] = maybe_round(v[i], pc.flags);
             v[i + 1] = maybe_round(v[i + 1], pc.flags);
         }
-        if ((pc.flags & kFlagOutF16) != 0u)
-            *(uint2*)(Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 2) =
-                uint2(f32tof16(v[0]) | (f32tof16(v[1]) << 16), f32tof16(v[2]) | (f32tof16(v[3]) << 16));
+        if (f16)
+            *(uint4*)(Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 2) = f16x8(v);
         else
-            store_f32x4(Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 4, v);
+            store_f32x4(Ptr[kOut] + ((uint64_t)row * pc.d + e0) * 4, float4(v[0], v[1], v[2], v[3]));
         return;
     }
     const uint blk_sz = pc.a3;
