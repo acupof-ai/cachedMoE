@@ -294,8 +294,7 @@ float* fptr(const GpuBuffer& b, uint64_t elems = 0) { return static_cast<float*>
 Result<GpuBuffer> Prefill::scratch(uint64_t bytes) {
     auto b = alloc_->allocate(align_up(std::max<uint64_t>(bytes, kPageSize), kPageSize), true, true);
     if (!b) return std::unexpected(b.error());
-    std::memset(b->host_ptr, 0, static_cast<size_t>(b->bytes));
-    owned_.push_back(*b);
+    owned_.push_back(*b);   // zeroed by the GPU in create (§7 0az)
     return *b;
 }
 
@@ -409,6 +408,7 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
     if (pcfg_.tile == 0 || pcfg_.tile > 32) return fail(Err::InvalidArgument, "tile must be 1..32");
     const std::vector<Want> wants = plan(cfg, pcfg);
     const uint64_t N = pcfg_.max_tokens, hd = cfg.head_dim;
+    const auto tc0 = Clk::now();
     for (const Want& w : wants) {
         auto b = scratch(w.bytes);
         if (!b) return fail(b.error().code, std::format("prefill buffers ({} B): {}", w.bytes,
@@ -426,6 +426,26 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         if (!c || !k) return fail(Err::ResourceExhausted, "compressed-KV buffers");
         sources_[L].cache = *c;
         sources_[L].keys = *k;
+    }
+    {
+        // The workspace is zeroed by the GPU in one command buffer: 13.6 GB at
+        // 17K is 0.9 s of one core touching write-combined pages, and the
+        // fabric of this APU takes it in a fraction of that (§7 0az).
+        const auto ta = Clk::now();
+        uint64_t total = 0;
+        auto cb = runner.pool().acquire();
+        if (!cb) return std::unexpected(cb.error());
+        CommandBuffer cmd = *cb;
+        if (auto r = cmd.begin(); !r) return r;
+        for (const GpuBuffer& b : owned_) {
+            vkCmdFillBuffer(cmd.handle(), b.buffer, 0, b.bytes, 0u);
+            total += b.bytes;
+        }
+        if (auto r = cmd.end(); !r) return r;
+        if (auto r = submit_and_wait(device, cmd); !r) return r;
+        if (std::getenv("DEEPMOE_PF_CREATE_TRACE"))
+            std::fprintf(stderr, "create: %.2f GB of workspace, zeroed by the GPU in %.0f ms, %.0f ms in all\n",
+                         total / 1e9, ms_since(ta), ms_since(tc0));
     }
     qp_ok_ = static_cast<bool>(qp_.create(device, 1024));   // a routed batch marks every dispatch
     return build_rope(static_cast<uint32_t>(N + 8));
@@ -1738,6 +1758,13 @@ Result<PrefillHandoff> Prefill::run(std::span<const uint32_t> prompt) {
     out.prompt.assign(prompt.begin(), prompt.end());
     out.layers.assign(c.num_hidden_layers, {});
 
+    // the first engram layer's rows go out now, the next one's when a layer's
+    // are consumed: they depend on the prompt alone, and land while the embed
+    // and the layers before compute (§7 0ax)
+    engram_next_ = pcfg_.engram_ahead;
+    if (engram_next_)
+        if (auto r = engram_issue_next(~0u, prompt); !r) return std::unexpected(r.error());
+
     // --- embedding: one row per token, widened once, four hc copies -----------
     {
         const auto t0 = Clk::now();
@@ -1763,12 +1790,6 @@ Result<PrefillHandoff> Prefill::run(std::span<const uint32_t> prompt) {
     for (SourceState& s : sources_) { s.n = 0; s.valid = false; }
     topk_shared_.clear();
     cand_.clear();
-    // the first engram layer's rows go out now, the next one's when a layer's
-    // are consumed: they depend on the prompt alone, and land while the
-    // layers before compute (§7 0ax)
-    engram_next_ = pcfg_.engram_ahead;
-    if (engram_next_)
-        if (auto r = engram_issue_next(~0u, prompt); !r) return std::unexpected(r.error());
     for (uint32_t L = 0; L < c.num_hidden_layers; ++L)
         if (auto r = run_layer(L, prompt, out); !r)
             return fail(r.error().code, std::format("layer {}: {}", L, r.error().message));

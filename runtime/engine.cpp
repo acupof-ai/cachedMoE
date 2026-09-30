@@ -3320,6 +3320,7 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     const TimePoint t0 = Clock::now();
     gpu::PrefillRunner runner;
     if (auto r = runner.create(device_, alloc_a_, gpu::default_shader_dir()); !r) return std::unexpected(r.error());
+    const double runner_ms = ms_since(t0);
     gpu::PrefillConfig pc;
     pc.max_tokens = static_cast<uint32_t>(prompt.size());
     pc.transit_segments = cfg_.prefill_transit_segments;
@@ -3342,6 +3343,7 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     if (auto r = pf.create(device_, alloc_a_, runner, manifest_, shards_, io_, pinned_, c,
                            &cur_->engram_.tables(), pc); !r)
         return std::unexpected(r.error());
+    const double create_ms = ms_since(t0);
 
     // Track R1 (docs/p4_hitrate.md §3): the experts the prefill streams land in
     // the decode cache under design §9.7.3's rule -- what a global LRU over the
@@ -3403,8 +3405,10 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     store_.set_completed_timeline(guard_clock_);
     if (!h) return std::unexpected(h.error());
     const gpu::PrefillTimes tm = pf.times();
+    const TimePoint t_down = Clock::now();
     pf.destroy();
     runner.destroy();
+    const double teardown_ms = ms_since(t_down);
     {
         const store::PlannerStats ps1 = planner_.stats();
         log_info("engine: prefill handoff -- {} experts already cached, {} kept, {} dropped; "
@@ -3413,7 +3417,9 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
                  ps1.streamed_dropped - ps0.streamed_dropped, store_.stats().resident,
                  store_.slot_count());
     }
+    const TimePoint t_seed = Clock::now();
     if (auto r = seed_from_prefill(*h); !r) return std::unexpected(r.error());
+    const double seed_ms = ms_since(t_seed);
 
     DecodeStepResult res;
     res.position     = static_cast<uint32_t>(prompt.size()) - 1;
@@ -3441,11 +3447,11 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     // buffers, the KV seeding, the teardown -- so the terms add up to the total.
     log_info("engine: GPU prefill of {} tokens in {:.1f} s: embed {:.0f}  engram io {:.0f} / gpu {:.0f}  "
              "mhc {:.0f}  attention {:.0f}  gate {:.0f}  shared {:.0f}  expert io {:.0f} / gpu {:.0f}  "
-             "head {:.0f}  other {:.0f}  setup {:.0f} ms; {} experts / {}, {} dispatches, {} submits; "
+             "head {:.0f}  other {:.0f}  setup {:.0f} ms (runner {:.0f}, create {:.0f}, teardown {:.0f}, seed {:.0f}); {} experts / {}, {} dispatches, {} submits; "
              "first token {}",
              prompt.size(), res.wall_ms / 1e3, tm.embed, tm.engram_io, tm.engram, tm.mhc, tm.attention,
              tm.gate, tm.shared_expert, tm.expert_io, tm.expert_gpu, tm.head, tm.host,
-             res.wall_ms - tm.total, tm.experts_read, human_bytes(tm.expert_bytes), tm.dispatches,
+             res.wall_ms - tm.total, runner_ms, create_ms - runner_ms, teardown_ms, seed_ms, tm.experts_read, human_bytes(tm.expert_bytes), tm.dispatches,
              tm.submits, res.token);
     // DEEPMOE_PF_OPS_JSON=FILE appends the per-op profile prefill_bench --ops-json writes
     if (const char* f = std::getenv("DEEPMOE_PF_OPS_JSON"))
