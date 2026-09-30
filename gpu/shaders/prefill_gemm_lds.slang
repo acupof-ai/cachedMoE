@@ -37,8 +37,17 @@
 
 // Every tile read out of LDS is four ds_load_b64 (STATUS §3 71): Mesa lowers
 // shared loads to 64 bits at most ("for performance reasons"), so 128-bit
-// reads cannot be had from a Vulkan shader, by hand or by the compiler.
+// reads cannot be had from a Vulkan shader, by hand or by the compiler --
+// true of STOCK RADV only. STATUS §7 0bl patches our own Mesa build to lift
+// that cap and every one of these becomes a ds_read_b128 (gate/up -5.6%); the
+// shader has no toggle for it, the driver does (VK_DRIVER_FILES).
 //
+// LDS_BK: 64 halfs = 128 B a row a slice = exactly one cache line, and it is a
+// local optimum pinned on BOTH sides for two different reasons (STATUS §3 86):
+// 128 costs register pressure (§3 68, 81: +12%/+19% on the FP4 pair) and 32
+// halves the read granularity below the line, so VRAM reads double (102.7 ->
+// 200.8 MB at n=512) and the kernel is 40% slower even though occupancy goes
+// from 2 to 4 waves a SIMD. Do not turn this knob again without a new reason.
 // LDS_BK: the K slice in halfs. 128 was measured (STATUS §3 68): +12% on
 // w1, nothing on wq_b, slower on wo_b, at twice the LDS and staging registers.
 #ifndef LDS_BK
