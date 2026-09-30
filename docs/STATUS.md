@@ -148,141 +148,141 @@ hit 0.59 → 0.84 cuts MB/token from 4,998 to 2,269, doubling tok/s.
 
 ---
 
-## 2. 优化路径：每一步与它的归因
+## 2. The optimisation path: every step and what attributed it
 
-### 2.1 decode 热步：134 ms → 81.5 ms（Track I，`p2_decode.md` §10）
+### 2.1 The decode hot step: 134 ms → 81.5 ms (Track I, `p2_decode.md` §10)
 
-| 步骤 | 每 token 前 → 后 | 归因它的那次测量 |
+| Step | per token, before → after | The measurement that attributed it |
 |---|---|---|
-| 基线（P2 step 2） | **134.0 ms**，~128 submits | 分项：attention 51.9 / MoE ~68 / tail 8.4 |
-| **command buffer 只在 gate 处切开**（一层的 MoE + 下一层的 attention 同一次 submit） | ~128 → **41 submits** | `Engine::measure_submit_overhead` = **0.13–0.15 ms/往返** × ~128 = **~17 ms/token = 热步的 13%**。residency gate 变成 submit 内部的 semaphore wait，host fence 走第二条 timeline |
-| **一个 MoE runner、七个槽**（6 个 FP4 routed + fp8 shared 在备用 index 384，`HQuant=3`） | MoE 1.72 → 0.73 ms/层 | §5.2 量到 MoE 是 1.72 ms/层，而 `kernel_p2_moe` 的 kernel 只要 0.68——**其中 ~0.75 ms 是 host 的 fp32 加法和两次 20 KB write-combining 读**。"最便宜的 40 ms" |
-| 向量化 host `act_quant`（branch-free `fp8_round` + F16C） | MoE host ~28 → 6.4 → **1.0 ms** | 对 `cpu::act_quant_block` 5,120 个值逐位自检 |
-| 修掉三处每次调用都分配、从不释放的 `VkCommandBuffer` | — | 每 token 泄 40 个（`run_attention` / `run_close` / `EngramRunner::run`） |
-| **engram 行在 token 开始时取**，与 layer 0 的 attention 重叠；RoPE 表缓存 | engram 4.9 → **3.9 ms** | 每 engram 层少一次 submit；40 次 `bind` 每次都在算一张 RoPE 表，一步只需要三张 |
-| **FFN 输入搬到 cached host 页（path B）** | −6.2 ms/token | 那一个 host 每层都要读的 20 KB 激活原本在 path A 的 write-combining 内存里，**读它实测 155 µs/层** |
-| **合计** | **134.0 → 86.7 → 81.5 ms = 12.3 tok/s** | 重复：81.5 / 81.9 / 81.8 / 83.2 / 81.7 / 83.2 ms |
-| **decode 走 M=1 特化的 MoE pipeline**（Track K1a，2026-09-19，在今天的 `auto` 基线上） | 热步 **101.8 → 97.0 ms**，moe gpu **37.87 → 34.33** | 引擎的 runner 是 `spec.m = 6`（为了 verify 批），decode 只设 `live_columns = 1`——六个累加器算一列。ABAB 三对，A = `DEEPMOE_MOE_STATIC_M1=0`；`plan_p5.md` §3(h) |
+| Baseline (P2 step 2) | **134.0 ms**, ~128 submits | Breakdown: attention 51.9 / MoE ~68 / tail 8.4 |
+| **Cut the command buffer only at the gate** (one layer's MoE and the next layer's attention in the same submit) | ~128 → **41 submits** | `Engine::measure_submit_overhead` = **0.13–0.15 ms a round trip** × ~128 = **~17 ms/token = 13% of the hot step**. The residency gate becomes a semaphore wait inside the submit, and the host fence moves to a second timeline |
+| **One MoE runner, seven slots** (6 FP4 routed + the fp8 shared one at spare index 384, `HQuant=3`) | MoE 1.72 → 0.73 ms/layer | §5.2 measured MoE at 1.72 ms/layer while `kernel_p2_moe`'s kernel needs only 0.68 -- **~0.75 ms of that is the host's fp32 addition and two 20 KB write-combining reads**. "The cheapest 40 ms" |
+| Vectorised host `act_quant` (branch-free `fp8_round` + F16C) | MoE host ~28 → 6.4 → **1.0 ms** | A bit-for-bit self-check of `cpu::act_quant_block` over 5,120 values |
+| Fixed three `VkCommandBuffer`s that were allocated on every call and never freed | — | 40 leaked per token (`run_attention` / `run_close` / `EngramRunner::run`) |
+| **Fetch the engram rows at the start of the token**, overlapped with layer 0's attention; cache the RoPE tables | engram 4.9 → **3.9 ms** | One submit fewer per engram layer; all 40 `bind` calls were computing a RoPE table each, while a step needs only three |
+| **Move the FFN input to cached host pages (path B)** | −6.2 ms/token | That one 20 KB activation the host reads every layer used to live in path A's write-combining memory, and **reading it measured 155 µs a layer** |
+| **Total** | **134.0 → 86.7 → 81.5 ms = 12.3 tok/s** | Repeats: 81.5 / 81.9 / 81.8 / 83.2 / 81.7 / 83.2 ms |
+| **decode takes the M=1 specialised MoE pipeline** (Track K1a, 2026-09-19, on today's `auto` baseline) | hot step **101.8 → 97.0 ms**, moe gpu **37.87 → 34.33** | The engine's runner is `spec.m = 6` (for the verify batch) and decode only sets `live_columns = 1` -- six accumulators computing one column. Three ABAB pairs, A = `DEEPMOE_MOE_STATIC_M1=0`; `plan_p5.md` §3(h) |
 
-对地板：非 MoE 42.2 地板 vs 41.8 实测（**已在地板上**）；MoE GPU 25.0–27.3 vs 29.4
-（第 7 个槽是真的 23.6 MB fp8 expert，不是 12.5 MB 的 FP4 替身）；engram 4.9 vs 3.9。
-**剩下的是结构性的**：每 token 40 次 host 往返读 gate（~1.6 ms submit + ~2 ms fence 延迟），
-以及 MoE 的 `x` 每层往 host 走一趟再回来。
+Against the floors: non-MoE, a floor of 42.2 against 41.8 measured (**already on the floor**); MoE GPU 25.0–27.3 against 29.4
+(the 7th slot is a real 23.6 MB fp8 expert, not a 12.5 MB FP4 stand-in); engram 4.9 against 3.9.
+**What remains is structural**: 40 host round trips per token to read the gate (~1.6 ms of submit + ~2 ms of fence latency),
+and MoE's `x` making a trip out to the host and back every layer.
 
-### 2.2 attention：1,071 → 696 µs/层
+### 2.2 attention: 1,071 → 696 µs/layer
 
-| 阶段 | 一层（dispatch 1–9） | 40 层 + head | 做了什么 |
+| Stage | One layer (dispatches 1–9) | 40 layers + head | What was done |
 |---|---|---|---|
-| P2 step 1 | **1,071 µs / 124 GB/s** | 48.5 ms | 基线 |
-| P2 step 2 | **892.6 µs / 149 GB/s** | 41.4 ms | per-shader LDS 预算；act_quant staging 摊到整个 workgroup；per-stage `WaveReduce`；`sparse_attn` 向量化（141 → 69 µs） |
-| + LDS bank-conflict 修复 | **797–804 µs** | 37.6–37.8 ms | **一个字的 padding**（`kXStride = 17`）——纯 layout 改动，输出逐位相同 |
-| + K-split、8-tile attention | 709–711 µs | 34.0 ms | |
-| **+ K-split、32×1 tile（P3 默认）** | **696.3–696.8 µs / 191 GB/s = 217 的 88%** | **33.5 ms** | K-split 默认：wq_a 2 / wkv 2 / wo_a 4 / wo_b 8，**一行一 lane** |
+| P2 step 1 | **1,071 µs / 124 GB/s** | 48.5 ms | baseline |
+| P2 step 2 | **892.6 µs / 149 GB/s** | 41.4 ms | A per-shader LDS budget; the act_quant staging spread over the whole workgroup; a per-stage `WaveReduce`; `sparse_attn` vectorised (141 → 69 µs) |
+| + the LDS bank-conflict fix | **797–804 µs** | 37.6–37.8 ms | **One word of padding** (`kXStride = 17`) -- a pure layout change, output bit for bit identical |
+| + K-split, 8-tile attention | 709–711 µs | 34.0 ms | |
+| **+ K-split, 32×1 tiles (the P3 default)** | **696.3–696.8 µs / 191 GB/s = 88% of 217** | **33.5 ms** | The K-split defaults: wq_a 2 / wkv 2 / wo_a 4 / wo_b 8, **one row per lane** |
 
-`wo_b` 的逐步账：312–314 µs（62%）→ +17 字 LDS stride **259–266（73–75%）**
-→ +算术解码 / 4 累加器 / 折叠 scale **258–272（没变化）** → **+K-split ×8、一行一 lane：203.5–205.4 µs / 204–206 GB/s（94–95%）**；
-K-split ×16 又退回 216–220。
+`wo_b` step by step: 312–314 µs (62%) → +a 17-word LDS stride **259–266 (73–75%)**
+→ +arithmetic decode / 4 accumulators / folded scale **258–272 (no change)** → **+K-split ×8, one row per lane: 203.5–205.4 µs / 204–206 GB/s (94–95%)**;
+K-split ×16 goes back up to 216–220.
 
-路上修掉两个"亏 50×"的 bug：**被 push constant 界定大小的局部数组会落到 VRAM**
-（Sinkhorn **216 µs → 2.8 µs**，gate rank 循环 55 → 2 µs）；**单 lane 串行 argmax**（gate top-k **56 µs → 12.6 µs**）。
+Two bugs each worth 50× were fixed along the way: **a local array sized by a push constant lands in VRAM**
+(Sinkhorn **216 µs → 2.8 µs**, the gate rank loop 55 → 2 µs); and **a single-lane serial argmax** (the gate's top-k **56 µs → 12.6 µs**).
 
-⚠️ **Track J 的这条路径尚未被 runtime 采纳**（`design.md` §15.2）。
-而且 LDS bank-conflict 修复**在真机上看不到**：attention 在 Track I 是 36.0 ms，Track Q 之后是 36.9 ms，
-而 J 声称 −3.8 ms 且"已经生效"。这是一个未解决的矛盾（限制 6.5）。
+⚠️ **Track J's path has not been adopted by the runtime** (`design.md` §15.2).
+And the LDS bank-conflict fix **cannot be seen on the real machine**: attention was 36.0 ms in Track I and 36.9 ms after Track Q,
+while J claimed −3.8 ms and "already in effect". That is an unresolved contradiction (limit 6.5).
 
-### 2.3 MoE kernel（`kernel_p1.md` / `kernel_p2_moe.md`）
+### 2.3 The MoE kernel (`kernel_p1.md` / `kernel_p2_moe.md`)
 
-| M | 最佳变体 | A+B GB/s | 占上限 | ms/pair | **ms/token** |
+| M | Best variant | A+B GB/s | of the ceiling | ms/pair | **ms/token** |
 |---|---|---|---|---|---|
 | 1 | `L32 R1 xglob` | 222.6 | **102%** | 0.591 | **0.5912** |
 | 2 | `L32 R1 xgf16` | 206.4 | 95% | 0.637 | 0.3187 |
 | 4 | `L16 R2 xgf16` | 162.0 | 74% | 0.813 | 0.2031 |
 | 6 | `L16 R2 xgf16/ldsi8` | 135.3 | 62% | 0.972 | **0.1621** |
 
-ms/token **0.5912 → 0.1621 = 3.65×**——**这就是投机解码真正买到的东西**（每份权重换更多 token）。
+ms/token **0.5912 → 0.1621 = 3.65×** -- **this is what speculative decoding actually buys** (more tokens for the same weights).
 
-保留的三项：**packed fp16（`XMode=4`）只上 dispatch A**（M=6 A 117.2 → 133.9 GB/s，+14%；误差 4.52e-4，远在 1e-3 内，"可以无条件采纳"）；
-**int8 dot4（`xldsi8`）只上 dispatch B**（M=6 B 100.0 → 125.7，+26%）；
-**`HQuant=3`**（h 量化挪进第三个小 dispatch）——把 decode 的量化税从 **6.3 ms/token 降到 ≈1.0 ms/token**，
-对 `HQuant=2` 逐位相同（5.030e-08），M=1 的 +4.2% 全是那个额外 dispatch 和它的全局 barrier。
+The three things kept: **packed fp16 (`XMode=4`) on dispatch A only** (M=6 A 117.2 → 133.9 GB/s, +14%; error 4.52e-4, well inside 1e-3, "adoptable unconditionally");
+**int8 dot4 (`xldsi8`) on dispatch B only** (M=6 B 100.0 → 125.7, +26%);
+and **`HQuant=3`** (h quantisation moved into a third small dispatch) -- which takes decode's quantisation tax from **6.3 ms/token down to ≈1.0 ms/token**,
+bit for bit identical to `HQuant=2` (5.030e-08); M=1's +4.2% is entirely that extra dispatch and its global barrier.
 
-**诊断的转折**：P1 说"M=6 被激活载入指令卡住"是**错的**。`t_A(M) ≈ 0.33 + 0.055·M` ms
-对得上一个指令计数（165 M FMA + 82.6 M `f16tof32`，7.4 Top/s，61% VALU 占用）：
-**M≥3 是 VALU-issue bound，不是 memory bound**。所有省内存的设计都失败了，省指令的都成功了（§3 的 1/2/9）。
-"≥80% raw-read"这个出口判据本身对一个 VALU-bound kernel 不合适，已换成 `ms/token ≤ 0.17`（实测 0.158）。
+**The diagnostic turning point**: P1's "M=6 is held up by activation load instructions" was **wrong**. `t_A(M) ≈ 0.33 + 0.055·M` ms
+matches an instruction count (165 M FMA + 82.6 M `f16tof32`, 7.4 Top/s, 61% VALU occupancy):
+**M≥3 is VALU-issue bound, not memory bound**. Every memory-saving design failed and every instruction-saving one worked (§3 1/2/9).
+The exit criterion "≥80% of raw-read" is itself wrong for a VALU-bound kernel, and was replaced with `ms/token ≤ 0.17` (0.158 measured).
 
-### 2.4 命中率与容量——decode 真正的杠杆
+### 2.4 Hit rate and capacity -- decode's real lever
 
-| 配置 | 槽数 | cache | decode tok/s | hit | MB/token | 有效 NVMe |
+| Configuration | Slots | cache | decode tok/s | hit | MB/token | effective NVMe |
 |---|---|---|---|---|---|---|
 | cache-1000 | 1000 | 17.5 GiB | 1.830 | 0.5912 | 4,998 | 9.14 GB/s |
 | cache-2200 | 2200 | 38.5 GiB | 2.593 | 0.7431 | 3,528 | 9.15 GB/s |
 | cache-4500 | 4500 | 78.8 GiB | 3.647 | 0.8370 | 2,269 | 8.28 GB/s |
-| **8-turn，5500 槽** | 5500 | **96.34 GiB** | **6.05** | **0.9431** | — | stall 46–71 ms |
+| **8 turns, 5500 slots** | 5500 | **96.34 GiB** | **6.05** | **0.9431** | — | stall 46–71 ms |
 
-**容量每翻一倍，hit +0.093**（0.5912 → 0.7431 → 0.8370）。
-5500 槽实测的 0.9431 与 `cache_sim` 在 5711 槽的 0.9451 对上——**收益来自容量，不是策略**。
+**Every doubling of capacity is worth +0.093 of hit** (0.5912 → 0.7431 → 0.8370).
+The 0.9431 measured at 5500 slots agrees with `cache_sim`'s 0.9451 at 5711 -- **the gain comes from capacity, not from policy**.
 
-**F4（2026-09-18，`p4_hitrate.md` §0/§3/§4）把"策略"这一侧彻底关掉了：engine 就是纯 LRU。**
-把一次 run 自己的 `route.bin` 回放进 `cache_sim` 的 LRU，engine 与模拟器在**每一步**上一致
-（4,500 槽 2,489/2,489；5,000 槽 2,489/2,489；4 轮 `config_sweep` 214/214）。
-所谓"engine 比纯 LRU 低 6.8 点"的前提**不存在**——那是拿一个 4 轮 92 步冷 cache 的 run
-去比一个 8 轮 2,193 步的 run。把 `BACKFILL` / `PREFILL_HANDOFF` / `MOE_OVERLAP` 全关掉的
-ablation 从另一侧确认：hit 0.9250 → 0.9252，MB/token 338.3 → 337.8，**没有东西可关**。
-容量曲线在本机上限处**仍在爬**（sim：5,100 → 0.9383，6,500 → 0.9532），所以**每一点 hit 都是吞吐**。
+**F4 (2026-09-18, `p4_hitrate.md` §0/§3/§4) closed the "policy" side for good: the engine is plain LRU.**
+Replaying a run's own `route.bin` through `cache_sim`'s LRU, the engine and the simulator agree at **every step**
+(4,500 slots 2,489/2,489; 5,000 slots 2,489/2,489; the 4-turn `config_sweep` 214/214).
+The premise that "the engine is 6.8 points below plain LRU" **does not exist** -- that compared a 4-turn, 92-step cold-cache run
+against an 8-turn, 2,193-step one. An ablation with `BACKFILL` / `PREFILL_HANDOFF` / `MOE_OVERLAP` all turned off
+confirms it from the other side: hit 0.9250 → 0.9252, MB/token 338.3 → 337.8, **there is nothing to turn off**.
+The capacity curve is **still climbing** at this machine's ceiling (sim: 5,100 → 0.9383, 6,500 → 0.9532), so **every point of hit is throughput**.
 
-路由事实（`p4_expert_patterns.md`）：`prefill_hit = 0.7607`，decode 选中的 expert **86.6% 在 prompt prefill 里已经出现过**
-→ prefill→decode 交接是最大的单一杠杆。掉命中率的原因是**换话题，不是上下文变长**
-（同话题每 128 步 hit 0.94–0.955，跨话题 0.877–0.90；stall 58 ms ↔ 151 ms）。
-**没有小的热核**：出现在 ≥50% decode 步里的 expert 是 0.025/层 = 事件的 0.2%；~380/384 个 expert 都被碰过。
-时间复用是 128 步尺度（63.7%），相邻 token 只有 15.4%——**相邻 token 预取没有意义**。
+Routing facts (`p4_expert_patterns.md`): `prefill_hit = 0.7607`, and **86.6% of the experts decode picks have already appeared in the prompt's prefill**
+→ the prefill→decode handover is the largest single lever. Hit rate drops because **the topic changes, not because the context gets longer**
+(within one topic, hit is 0.94–0.955 per 128 steps; across topics 0.877–0.90; stall 58 ms against 151 ms).
+**There is no small hot core**: the experts appearing in ≥50% of decode steps are 0.025 per layer = 0.2% of events; ~380 of 384 experts get touched.
+Temporal reuse is at the 128-step scale (63.7%), and only 15.4% between adjacent tokens -- **prefetching for the adjacent token is pointless**.
 
 ### 2.5 prefill
 
-| N | TTFT | expert NVMe 等待 | compute | design §7.13.3 模型 |
+| N | TTFT | expert NVMe wait | compute | the design §7.13.3 model |
 |---|---|---|---|---|
-| 64 | **43.2 s** | 33.7 s（94 GB） | 8.2 s | ≈34 s |
-| 4,133 | **199.6 s（≈150 s 安静机）** | 44.5 s（198 GB） | 100 s | ≈62–65 s |
-| 17,010 | **628.6 s（≈445 s 安静机）** | 28.2 s（203 GB） | 396 s | ≈78–88 s |
+| 64 | **43.2 s** | 33.7 s (94 GB) | 8.2 s | ≈34 s |
+| 4,133 | **199.6 s (≈150 s on a quiet machine)** | 44.5 s (198 GB) | 100 s | ≈62–65 s |
+| 17,010 | **628.6 s (≈445 s on a quiet machine)** | 28.2 s (203 GB) | 396 s | ≈78–88 s |
 
-**模型漏掉的是 compute：24 ms/prompt token，线性，先验只给了 0.7 ms**；
-§7.13.4 判据 4（±15%）在重拟成 `T_compute(N) ≈ 8 s + 0.024·N` 之前都是 fail。
-17K 的 prefill 是 **compute-bound，不是 NVMe-bound**。
+**What the model missed is compute: 24 ms/prompt token, linear, where the prior allowed only 0.7 ms**;
+§7.13.4's criterion 4 (±15%) fails until it is refitted as `T_compute(N) ≈ 8 s + 0.024·N`.
+A 17K prefill is **compute-bound, not NVMe-bound**.
 
-**prefill 唯一一个大的保留项**：host 的 top-6 每 token 通过 device-mapped 内存读 gate bias ~3,000 次——
-**4K prefill 里 58 s（1.45 s/层）→ 1.1 s**，只是把 384 个 float 每层拷一次。
+**prefill's one large remaining item**: the host's top-6 reads the gate bias through device-mapped memory ~3,000 times a token --
+**58 s of a 4K prefill (1.45 s a layer) → 1.1 s**, just by copying 384 floats once a layer.
 
-**F4 找到的更大一件事：GPU prefill 一个字节都分配不到（`p4_hitrate.md` §5）。**
-slab 池会把路径 A 填到 `vkAllocateMemory` 拒绝为止，所以 **≥ 3,600 槽的 cache 之后，
-晚一步分配、且只认路径 A 的 GPU prefill 连 21 MB 都要不到**，静默退回 decode 路径——
-这就是为什么本文档此前每一格都报 `prefill_mode: "decode"`。
-修法是 `Engine::build_expert_cache` 在建池期间持住 **4 GiB 路径 A 预留**（`kPathAReserve`，
-按 2 GiB 一块，因为一次性 4 GiB 会撞 `maxMemoryAllocationSize`），建完立刻释放。
-代价两个 slab，收益：**4,133-token prompt 的 prefill 1,061.7 s → 100.0 s（10.6×），
-prefill 吞吐 3.89 → 41.3 tok/s，整格 19 min → 3 min**。
+**The bigger thing F4 found: GPU prefill could not allocate a single byte (`p4_hitrate.md` §5).**
+The slab pool fills path A until `vkAllocateMemory` refuses, so **past a cache of ≥ 3,600 slots,
+GPU prefill -- which allocates later and only accepts path A -- cannot even get 21 MB**, and silently falls back to the decode path.
+That is why every cell in this document used to report `prefill_mode: "decode"`.
+The fix is for `Engine::build_expert_cache` to hold a **4 GiB path A reservation** while it builds the pool (`kPathAReserve`,
+in 2 GiB pieces, because 4 GiB at once hits `maxMemoryAllocationSize`), released as soon as the pool is built.
+It costs two slabs, and it buys: **a 4,133-token prompt's prefill 1,061.7 s → 100.0 s (10.6×),
+prefill throughput 3.89 → 41.3 tok/s, the whole cell 19 min → 3 min**.
 
-Track S 的 coopmat：N=4133 **legacy 103.67 s vs coop 99.89 s，只快 3.6%**，5× 目标未达成。
+Track S's coopmat: at N=4133, **legacy 103.67 s against coop 99.89 s, only 3.6% faster**, and the 5× target was not met.
 
-**F3（`p4_prefill_speed.md` v1.0）说清楚了那 3.6% 为什么这么小，以及 5× 为什么够不着。**
-那次 coopmat 是**对的**（110 项 stage 全过），但它的 **P·V 那一段访存顺序是坏的**——
-它按 dim 索引输出、按 entry 归约，于是一个 dim tile 以 16 KiB 的步长走一遍聚合后的 KV 平面、
-**把它重读 32 遍**：13,119 ms → **3,032 ms**。另外三处同样是**网格/循环顺序**而不是算术：
-每个 coopmat GEMM 固定 2 个 token tile/workgroup（n=512 时对 `wq_b` 的 84 MB 走 16 遍）、
-mHC pre-norm **一行一个线程**（4,133 个线程，每个走 20,480 个 float）、
-gate top-6 把 n × 384 个分数经 device-mapped 映射读回主机再 `partial_sort`；
-再加上 `wo_a`——唯一还留在 tiled GEMV 上的大 linear，因为 `op_gemm` 对**分组** linear 拒绝走 coopmat 分支。
+**F3 (`p4_prefill_speed.md` v1.0) explained why that 3.6% was so small, and why 5× is out of reach.**
+That coopmat was **correct** (all 110 stage checks pass), but its **P·V stretch had a bad access order** --
+it indexed the output by dim and reduced over entries, so one dim tile walked the aggregated KV plane in 16 KiB strides
+and **re-read it 32 times**: 13,119 ms → **3,032 ms**. Three others were likewise **grid or loop order** rather than arithmetic:
+each coopmat GEMM was fixed at 2 token tiles per workgroup (at n=512 that walks `wq_b`'s 84 MB 16 times),
+the mHC pre-norm used **one thread per row** (4,133 threads, each walking 20,480 floats),
+and the gate's top-6 read n × 384 scores back to the host through a device-mapped mapping and then `partial_sort`ed them;
+plus `wo_a` -- the only large linear still on a tiled GEMV, because `op_gemm` refuses the coopmat branch for a **grouped** linear.
 
-修完之后 4,133 token 的 **compute 是 80.6 s = 19.5 ms/prompt token**
-（band attention 38.2 / routed expert GPU 27.1 / mHC 4.9 / shared expert 3.2 / engram 2.8 / gate+route 2.5 / 其它 1.9）。
+After those fixes, 4,133 tokens' **compute is 80.6 s = 19.5 ms/prompt token**
+(band attention 38.2 / routed expert GPU 27.1 / mHC 4.9 / shared expert 3.2 / engram 2.8 / gate+route 2.5 / everything else 1.9).
 
-**≥ 5× 在这台机器上低于算术地板，这是一句可以据此停手的话**：replay 128 下这个 prompt 是
-**73.5 TFLOP**（光 routed expert 就 36.2），而这趟 prefill 里**任何** kernel 达到过的最好速率是
-**2.1 TFLOP/s**（shared expert，最干净的大 GEMM；routed expert 只有 1.15–1.34）。
-5 ms/prompt token = 20.7 s = **需要 3.56 TFLOP/s 持续**，是最好速率的 1.7 倍。
-所以**目标不是靠"少算"能到的**——§6 那七项去work/重叠加起来值 12–15 s。
-唯一能动速率的是把 `prefill_coopmat` stage 0 重写成
-**多 wave 经 LDS 协作一个输出 tile + 下一个 K 切片预取**（今天是一个 workgroup 一个 32-lane wave、
-tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这是 F3 的建议，也是它没做的事。**
+**≥ 5× is below this machine's arithmetic floor, and that is a sentence you can stop on**: at replay 128 this prompt is
+**73.5 TFLOP** (36.2 of it routed expert alone), while the best rate **any** kernel reached during that prefill is
+**2.1 TFLOP/s** (the shared expert, the cleanest large GEMM; routed experts only manage 1.15–1.34).
+5 ms/prompt token = 20.7 s = **3.56 TFLOP/s sustained**, 1.7 times the best rate.
+So **the target is not reachable by computing less** -- the seven de-work/overlap items in §6 add up to 12–15 s.
+The only thing that can move the rate is rewriting `prefill_coopmat` stage 0 into
+**several waves cooperating on one output tile through LDS, with the next K slice prefetched** (today it is one 32-lane wave per workgroup,
+tiles read straight out of global memory, with no LDS staging and no double buffering). **That was F3's recommendation, and the thing it did not do.**
 
 ---
 
