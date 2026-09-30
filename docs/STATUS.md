@@ -285,7 +285,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 80 条）
+## 3. 试过并退掉的（编号，共 81 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -413,6 +413,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **78** | **engram 行读提前发（第一个 engram 层的行在第 0 层之前发，下一个 engram 层的行在上一个消费完就发；行号只取决于 prompt）**（2026-09-30）——17K 的 engram io 4.63 → 1.75 s、`prefill_bench` 50.30 → **47.86 s**，4K 1.18 → 0.50 s、31.8 → 30.1；margins 都对上过一次。但反复跑 4K **不再逐位**：17 次里 6 次 margin 不是 8.598（8.306 / 8.227 / 7.962 / 7.808 / 8.374 ×5 / 9.111），提前发之前同一天 9 次全对、撤回后 4 次全对。定位到的：staged 行本身的哈希每次一样（不是读错行）；引擎 0 error 0 failover；首次分歧在第 1 层的输出（第 2 层 cmp_cache 有 472/2,066 行不同，成 6 段各约 128 个 query 的连续区间——即第 1 层 KV 里孤立的几个位置错了、其 128 窗口内的 query 全跟着错），且 8.374 重复出现 5 次（像是两种结果的竞争，不像随机踩内存）；把暂存页先 `MADV_POPULATE_WRITE` 填好没用（8 次 3 次错）。另见到一次 `short read: 4096 of 8192`（btrfs O_DIRECT 8 KiB 读只回一页）。没找到根因——DMA 与 GPU 计算并发时的什么竞争；见 §6 18。`prefill_ahead/engdbg/run*.out`、`engahead_*.jsonl`。 | NO-GO 当时（根因是 §7 0aw 的 io_uring 记录冲突；§7 0ax 重开，默认开） |
 | **79** | **transit 的批次变细**（2026-09-30）：(a) 预读的 expert 按 32 个一批算而不是等整个半区——transit 64 时 4K 29.84 / 30.64 s、17K 49.67（默认 50.0，都在抖动里）；transit 192 + 32 一批 17K **48.91**（比 §3 72 的 50.98 再好 2 s，整层盲读时 GPU 不用等 192 个全落地），但 4K **35.49**（整半区一批是 32.35，默认 29.8–30.6）——4K 每层只用 ~250 个 expert、串行段只有 0.25 s，384 个盲读把该读的挤到后面。(b) miss 的批次也改成 32、transit 走 32 槽一格的环：4K 32.38、17K **54.10**（expert io 11.8 → 15.3 s）——每批在飞的读只剩 0.6 GB，盘喂不饱。两条都撤回；transit 192 仍是 17K 的选项（`--transit 192`，多占 4.8 GB GTT）。`prefill_ahead/sub32_*`、`ring32_*`、`t192_4133`、`t128_4133`。 | NO-GO |
 | **80** | **下一层的盲读提前到本层最后一批算的时候发（`ahead_next_`：本层最后一批的读到齐后，就把下一层按分片序的前 d 段发进环里空着的段；以及"深发"——第 i 批在第 i−(R−1) 批算完就发，不是 i−2）**（2026-09-30）——深发 ring 6：17K 45.0（不变），4K 35.2（+6 s：4K 本来盘就是瓶颈，多在飞的批只是把当前批的读挤慢）。提前发：先撞了两个自己的 bug（`times_.layers.resize` 让 `run_layer` 里的引用悬空——堆被踩；第 0 批没发——每层 ~64 个 expert 没读），修完在**旧的 io_uring 后端上 4K 三次都不逐位**（r2 30.98 s / margin 8.819、r6 36.09 / 8.422、跳过 engram 层前的提前发 34.8 / 8.598 逐位），17K r6 45.85 / 10.108 逐位。这就是 §6 18 的另一面：expert 的 1 MiB 读和 engram 的 4 KiB 行读一重叠就错——于是找到了 io_uring 后端的记录表冲突（§7 0aw）。**修好后端再跑同一份代码，四个配置全逐位**：4K r2 29.06、r6 29.23，17K r2 48.41、r6 46.90（镜像盘那趟探到 3.57 GB/s，在降频）。但收益没有：ring 2 时下一层的盲读本来就在本层 MoE 之后马上发、盘也没闲着（4K），ring 6 时 17K 第 0–19 层是 GPU-bound、第 20–39 层的读本来就全在盲读里。代码撤了（少 90 行），只留后端的修复。`prefill_ahead/early_*`、`early_fixed_*`、`ring6deep_*`。 | NO-GO（收益 0；但把 §6 18 定位了） |
+| **81** | **FP4 融合 GEMM 用 128 宽的 K 片（`prefill_gemm_lds128.spv`，`#define LDS_BK 128` 包一层，只给 expert 的 fp4 kernel）**（2026-09-30）——§3 68 量过 fp16 版的 w1 +12%，想着 fp4 版每片解码的 ALU 摊到两倍的 K 上会更好。17K ring 6：gate/up fp4 6,226 → **6,965 ms**（+12%）、down 2,882 → 3,437（+19%）。解码是按元素的，K 片宽一倍每线程要解的也宽一倍，寄存器压力先撞上了。`prefill_ahead/bk128_r6_17010`。 | NO-GO |
 
 ---
 
@@ -684,10 +685,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 17. **17K 的 prompt 在默认 5,500 槽的 cache 下会丢设备**（Linux，2026-09-29，§7 0t）：prefill 的缓冲区是按 prompt 长度分配的，加上 96 GiB 的 expert cache 就超出了 GTT，内核报 "Not enough memory for command submission"。**已修（§7 0ah，2026-09-30）**：cache 预算先扣掉 prefill 在 min(`--max-context`, 16K) 个 token 下的工作区（17K 自动 5,046 槽，正常跑完），更长的 prompt 在 prefill 前按 heap 余量拒绝而不是丢设备。仍然开着的一半：网页 UI 的 65,536 上下文只预留到 16K，16K 以上的 prompt 会被拒绝——真正的解法是 prefill 按块分配工作区（KV 平面全长，激活只留一块），没做。
 18. ~~prefill 在并发 4 KiB DMA 流下不再逐位~~ **已定位、已修**（2026-09-30，§7 0aw；§3 78、80 是它的两次现身）：io_uring 后端的在飞记录表是 1,024 项、按 `chunk_id & 1023` 存，且无条件覆盖。一个 1 MiB 的 expert 读排在几十万个 4 KiB engram 行读后面时，在它落地前会有超过 1,024 个新 chunk 发出，新的那个把它的记录占了：完成事件按记录归属，于是**另一个 chunk 的 future 先被当作完成**——GPU 在数据没落地时就开算，错的正是几个孤立的位置，且错法只有几种（8.374 ×5）。只有 expert 流和 engram 流在飞中重叠时才会发生，所以 decode（只有 1 MiB backfill）从不出错、engram 行读只要在本层等完（默认路径）也不出错。修法是记录从 free list 拿、SQE 的 `user_data` 存记录的下标而不是 chunk id，短读续读和 bounce 重试沿用原记录。验证：同一份"提前发"代码（§3 80）旧后端 4K 三次全错、新后端四个配置全逐位；默认路径 4K 29.72 / 8.598、`gpu_prefill` 7/7、`suite.io` 过。§3 78 那条路（engram 行提前发，17K −2.4 s）现在可以重开。
 19. **serve 的内存离顶太近时 prefill 的 host 时间涨 2–3 s**（2026-09-30，§7 0as、0av）：4,900 槽（85.8 GiB）+ 常驻 9.2 GiB + 17K 工作区，再多 5.7 GiB 就撞上——`other` 从 3.0 涨到 5–6 s，bench 里没有。THP 是 `always`，怀疑是分配等整页/回收。自动预算按 `available_physical_bytes()` 减 12 GiB 地板算，手给 `--cache-slots` 时没有这层保护；任何常驻新东西都要从槽数里扣（scale 平面 5.7 GB ≈ 300 槽，transit 环 6 段 +4.8 GB ≈ 260 槽）。
+20. **镜像盘会从 USB4 总线上掉**（2026-09-30，§7 0bd）：连续跑 ~90 分钟、74–75 °C 后 J.ZAO 掉线，`/sys/class/nvme` 里只剩内置盘，PCI rescan 不回来，要重新插；掉的那一趟 IO 引擎 955 个请求 failover 到内置盘、结果逐位。长基准要预期它，且 IO-bound 的对比只在表头探针 ≥ 3.7 GB/s 的趟之间做。
 
 ---
 
 ## 7. Next, in order
+
+0bd. **host 桶拆到层：`layers[]` 多一项 `host_ms`（层的墙钟减去层内记了名的 op），17K 一看：第 0–19 层每层 ~20 ms（MoE 前 CPU memset y——17K 一层 280 MB）、第 1 层 260 ms + 第 0 层之前 260 ms（engram 行的哈希 + 排序 + 120 万次 submit 在主线程）。两处都搬走：y 由 GPU 在自己的 submit 里 `vkCmdFillBuffer`（`op_zero`，17K 全程 41 ms），engram 行的发出在 `std::async` 的线程上、`engram_rows` 取行前 join。17K host 桶 878 → **186 ms**（单盘那趟），4K 219 → 71；逐位（10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。**仪器的边界**：`host_ms` 只在 op 串行的层有意义——4K 的 routed 段里它算成负数（某个 op 的计时比层墙钟还长，没查），17K 第 1 层现在也是 −62（async 的发出和别的 op 叠着）。**这一轮的事故**：镜像盘（J.ZAO，USB4 盒）连续跑了 ~90 分钟、74–75 °C 之后从总线上掉了（§6、memory 里记过的老毛病），掉的那一趟是 4K：955 个请求 err → failover 到内置盘，`DROPPED`，prefill **仍然逐位**（8.598，47.1 s 单盘）——真实掉盘下的 failover 第一次在实机上见到，通过了；`echo 1 > /sys/bus/pci/rescan` 没让它回来，要重新插。之后的数字是单盘的：17K ring 6 52.8 s（expert io 21.4）、4K 47.2（0ag 时单盘 48.7 / 69.75）。双盘的口径等盘回来再补。`prefill_ahead/hostlayer_r6_17010`（仪器）、`hostfix1_r6_17010`、`hostfix1_4133`、`hostfix_4133`（掉盘那趟）。
 
 0bc. **routed expert 的 gate 和 up 合成一个派发（`prefill_gemm_lds` LdsWFp4 的 `part = 3`：行块过了 R 的读 w3、y 的 token 偏移加 `up_off`）：每个 expert 少一次 drain，飞着的 workgroup 翻倍（17K 一个 expert 的 gate/up 原来只有 ~80 个 workgroup 在 40 个 CU 上，每个 SIMD 两个 wave）。17K `gate/up fp4` 6,698 → **6,226 ms**（−7%，派发 13,878 → 6,939），4K 2,125 → 2,018；逐位（10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。这趟 17K 墙钟 40.84 对 40.57：其余每个 GPU op 都慢了 5%（attention 13.4 → 14.1、mhc、shared 一起），GPU 温度 52 °C、时钟表读 600 MHz——连续跑了一小时的抖动，按 op 记。4K `prefill_bench` **28.66 s**（routed GPU 5.27 → 4.79，expert io 18.3——盘热）。`prefill_ahead/gumerge_r6_17010`、`gumerge_4133`。
 

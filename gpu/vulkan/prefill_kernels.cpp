@@ -301,6 +301,7 @@ Result<GpuBuffer> Prefill::scratch(uint64_t bytes) {
 void Prefill::destroy() {
     for (auto& f : ahead_.futs) if (f.valid()) f.wait();   // nothing lands in a freed transit
     ahead_ = {};
+    (void)engram_join();
     engram_ahead_.drop();
     if (alloc_)
         for (GpuBuffer& b : owned_) if (b.valid()) alloc_->free(b);
@@ -1138,9 +1139,9 @@ std::string PrefillTimes::json(uint32_t n, std::string_view mode, std::string_vi
     for (size_t L = 0; L < layers.size(); ++L) {
         const LayerIo& l = layers[L];
         js += std::format("{}{{\"L\":{},\"pre_ms\":{:.1f},\"pre_gb\":{:.3f},\"moe_ms\":{:.1f},\"moe_gb\":{:.3f},"
-                          "\"post_ms\":{:.1f},\"post_gb\":{:.3f},\"ahead_n\":{},\"ahead_used\":{},\"ahead_wait_ms\":{:.1f}}}",
+                          "\"post_ms\":{:.1f},\"post_gb\":{:.3f},\"ahead_n\":{},\"ahead_used\":{},\"ahead_wait_ms\":{:.1f},\"host_ms\":{:.1f}}}",
                           L ? "," : "", L, l.pre_ms, l.pre_bytes / 1e9, l.moe_ms, l.moe_bytes / 1e9, l.post_ms,
-                          l.post_bytes / 1e9, l.ahead_n, l.ahead_used, l.ahead_wait_ms);
+                          l.post_bytes / 1e9, l.ahead_n, l.ahead_used, l.ahead_wait_ms, l.host_ms);
     }
     return js + "]}\n";
 }
@@ -1200,8 +1201,16 @@ Result<void> Prefill::engram_issue(uint32_t L, std::span<const uint32_t> prompt)
     return {};
 }
 
+Result<void> Prefill::engram_join() {
+    if (!engram_issuing_.valid()) return {};
+    auto r = engram_issuing_.get();
+    engram_issuing_ = {};
+    return r;
+}
+
 Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out) {
     (void)out;
+    if (auto r = engram_join(); !r) return r;
     if (engram_ahead_.L != L)
         if (auto r = engram_issue(L, prompt); !r) return r;
     EngramAhead& a = engram_ahead_;
@@ -1247,11 +1256,25 @@ Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, 
     return {};
 }
 
-// The rows of the first engram layer after `after`.
+// The rows of the first engram layer after `after`, issued on a helper thread.
 Result<void> Prefill::engram_issue_next(uint32_t after, std::span<const uint32_t> prompt) {
     for (uint32_t L = after + 1; L < cfg_->num_hidden_layers; ++L)
-        if (cfg_->is_engram_layer(L)) return engram_issue(L, prompt);
+        if (cfg_->is_engram_layer(L)) {
+            engram_issuing_ = std::async(std::launch::async, [this, L, prompt] { return engram_issue(L, prompt); });
+            return {};
+        }
     return {};
+}
+
+Result<void> Prefill::op_zero(const GpuBuffer& b, uint64_t bytes) {
+    const auto t0 = Clk::now();
+    if (auto r = cmd_open(); !r) return r;
+    vkCmdFillBuffer(cmd_.handle(), b.buffer, 0, align_up(bytes, uint64_t(4)), 0u);
+    if (auto r = cmd_.barrier(); !r) return r;
+    ++times_.dispatches;
+    mark("zero", {0, double(bytes)});
+    if (auto r = cmd_close(); !r) return r;
+    add_op("zero (gpu)", ms_since(t0), {0, double(bytes)});
     return {};
 }
 
@@ -1864,6 +1887,8 @@ Result<PrefillHandoff> Prefill::run(std::span<const uint32_t> prompt) {
 Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, PrefillHandoff& out) {
     if (times_.layers.size() <= L) times_.layers.resize(L + 1);
     PrefillTimes::LayerIo& lio = times_.layers[L];
+    const double top0 = times_.top_ms;
+    const auto tl0 = Clk::now();
     auto t_phase = Clk::now();
     uint64_t b_phase = disk_bytes_read();
     auto phase = [&](double& ms, uint64_t& bytes) {
@@ -2219,7 +2244,7 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
     }
     out.layers[L].gate_ids_last.assign(probe_ids_.end() - k6, probe_ids_.end());
     times_.gate += ms_since(t0);
-    std::memset(b_.y.host_ptr, 0, size_t(A) * dim * sizeof(float));
+    PF_TRY(op_zero(b_.y, uint64_t(A) * dim * sizeof(float)));
     moe_pos0_ = apos0;
     phase(lio.pre_ms, lio.pre_bytes);
     PF_TRY(run_moe(L, A, b_.fx.dev_addr, b_.fxq.dev_addr, b_.fxs.dev_addr, b_.y.dev_addr,
@@ -2248,6 +2273,7 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
     }
     std::swap(b_.mix_prev, b_.mix_f);
     phase(lio.post_ms, lio.post_bytes);
+    lio.host_ms = ms_since(tl0) - (times_.top_ms - top0);
     return {};
 }
 

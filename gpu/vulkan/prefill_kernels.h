@@ -392,7 +392,9 @@ struct PrefillTimes {
         uint64_t pre_bytes = 0, moe_bytes = 0, post_bytes = 0;
         uint32_t ahead_n = 0, ahead_used = 0;   // experts read blind, and how many the gate then picked
         double   ahead_wait_ms = 0;             // waited on those reads (0 = they had landed)
+        double   host_ms = 0;                   // the layer's wall clock not inside any recorded op
     };
+    double top_ms = 0;   // sum of the top-level ops (the "gpu:" marks nest inside them)
     std::vector<LayerIo> layers;
     // One JSON line: the run, its buckets, every op by wall time -- what
     // prefill_bench --ops-json writes and tools/prefill_model.py reads.
@@ -583,6 +585,7 @@ private:
     void add_op(const std::string& key, double ms, PfCost cost = {}) {
         auto& op = times_.per_op[key];
         op.ms += ms; op.flop += cost.flop; op.bytes += cost.bytes; op.reads += cost.reads; ++op.calls;
+        if (!key.starts_with("gpu: ")) times_.top_ms += ms;
     }
     Result<void> op_attention_legacy(uint64_t q, uint64_t kv, uint32_t n_win, uint64_t cmp,
                                      uint64_t idx, uint32_t n_idx, uint64_t sink, uint64_t o, uint32_t b);
@@ -618,6 +621,13 @@ private:
     Result<void> engram_rows(uint32_t L, std::span<const uint32_t> prompt, uint64_t out);
     Result<void> engram_issue_next(uint32_t after, std::span<const uint32_t> prompt);
     bool engram_next_ = false;   // run() is in progress: engram_rows issues the next engram layer's
+    // The issue itself (hashing n x 24 rows, sorting them, 1.2 M submits at
+    // 17K: 0.26 s) runs on a helper thread; engram_rows joins it (§7 0bd).
+    std::future<Result<void>> engram_issuing_;
+    Result<void> engram_join();
+    // A buffer zeroed by the GPU in its own submit: y before a layer's MoE
+    // (280 MB at 17K, 20 ms a layer as a CPU memset; §7 0bd).
+    Result<void> op_zero(const GpuBuffer& b, uint64_t bytes);
     Result<void> read_ahead(uint32_t L);
     std::byte* transit_host(uint32_t slot) const {
         return static_cast<std::byte*>(b_.transit[slot / pcfg_.transit_slots].host_ptr) +
