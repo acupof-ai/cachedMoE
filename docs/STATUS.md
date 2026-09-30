@@ -476,57 +476,57 @@ Thus the 30% gap is **on the engine side**—either GPU-visible destination memo
 
 ---
 
-## 5. 测试套件
+## 5. The test suites
 
-一条命令跑完所有不需要 GPU / 不需要 checkpoint 的 gate：
+One command runs every gate that needs neither a GPU nor the checkpoint:
 
-```powershell
-.venv\Scripts\python.exe tests\run_all.py            # 全部 CPU gate，一个退出码
-.venv\Scripts\python.exe tests\run_all.py --mutate   # 再加变异注入这一道闸
+```bash
+.venv/bin/python tests/run_all.py            # every CPU gate, one exit code
+.venv/bin/python tests/run_all.py --mutate   # and the mutation-injection gate on top
 ```
 
-需要 checkpoint / GPU 的另一半由 `ctest` 跑（命令见 §5.3）。
+The other half, the parts that need the checkpoint or the GPU, is run by `ctest` (commands in §5.3).
 
-### 5.1 纯 CPU（`run_all.py` 覆盖）
+### 5.1 CPU only (covered by `run_all.py`)
 
-| 套件 | 验什么 | 规模 |
+| Suite | What it checks | Scale |
 |---|---|---|
-| `suite.align` / `suite.layout` / `suite.types` / `suite.json` / `suite.status` / `suite.bytes` | `core/`：4 KiB 对齐、`Result<T>`、JSON 读写、字节记账 | 单元 |
-| `suite.profiler` | per-token JSONL 记录与汇总 | 单元 |
-| `suite.dequant` | FP4 E2M1 / FP8 E4M3 / E8M0 解码表 | 单元 |
-| `suite.gate` | router 数学（noaux_tc top-k） | 单元 |
-| `suite.slab` / `suite.expert_store` | slab 池、每 expert 6 项的 GPU 指针表 | 单元 |
-| `suite.planner` | 全局 LRU（与 `cache_sim` 逐步相同），含"尾部探针自毁"的钉子 | 单元 |
-| `suite.io` | 优先级队列、切分、QD、忙碌记账 | 单元 |
-| `suite.v41_config` / `suite.manifest` / `suite.block_info` | `config.json`、`deepmoe_manifest.json` v2（run/skew）、与 `layout.h` 的交叉校验 | 单元 |
-| `suite.kvcache` / `suite.kvstore` | KV 平面几何、ring 解析 | 单元 |
-| `suite.dspark_tree` | 树采样的格 / 路径 / confidence / 精确接受，**对 Python 参考逐位** | 单元 |
-| `suite.sampling` | L3 logits 上 **200,000 次抽样的 χ²** | 单元 |
-| `suite.kvdisk` | SSD parked-context 存/取/丢 round-trip | 单元 |
-| `suite.resident_route` | resident-only 路由的选择逻辑（`runtime/resident_route.h`） | 单元 |
-| `suite.speculate` | 投机周期的算术：位置对齐、接受、回滚记账 | 单元 |
-| `suite.trace` | per-dispatch trace 的格式与解析 | 单元 |
+| `suite.align` / `suite.layout` / `suite.types` / `suite.json` / `suite.status` / `suite.bytes` | `core/`: 4 KiB alignment, `Result<T>`, JSON read and write, byte accounting | unit |
+| `suite.profiler` | the per-token JSONL records and their summary | unit |
+| `suite.dequant` | the FP4 E2M1 / FP8 E4M3 / E8M0 decode tables | unit |
+| `suite.gate` | the router's maths (noaux_tc top-k) | unit |
+| `suite.slab` / `suite.expert_store` | the slab pool, and the GPU pointer table of 6 entries per expert | unit |
+| `suite.planner` | global LRU (step for step identical to `cache_sim`), including the pin against "the tail probe destroys itself" | unit |
+| `suite.io` | the priority queues, splitting, QD, busy accounting | unit |
+| `suite.v41_config` / `suite.manifest` / `suite.block_info` | `config.json`, `deepmoe_manifest.json` v2 (run/skew), and the cross-check against `layout.h` | unit |
+| `suite.kvcache` / `suite.kvstore` | the KV plane geometry, ring resolution | unit |
+| `suite.dspark_tree` | the tree sampler's lattice / paths / confidence / exact acceptance, **bit for bit against the Python reference** | unit |
+| `suite.sampling` | a **χ² over 200,000 draws** on L3 logits | unit |
+| `suite.kvdisk` | the SSD parked-context store / fetch / drop round trip | unit |
+| `suite.resident_route` | resident-only routing's selection logic (`runtime/resident_route.h`) | unit |
+| `suite.speculate` | the speculation cycle's arithmetic: position alignment, acceptance, rollback accounting | unit |
+| `suite.trace` | the per-dispatch trace's format and its parser | unit |
 
-### 5.2 需要 checkpoint 或 GPU
+### 5.2 Needs the checkpoint or the GPU
 
-| 套件 | 验什么 | 今天 |
+| Suite | What it checks | Today |
 |---|---|---|
-| `suite.tokenizer` | 909 个黄金用例（全量 24,897 个见 `tools/tokenizer_golden.py`） | pass，对 HF 100% |
-| `suite.engram_tables` | engram hash 常量在 C++ 里的推导 | pass |
-| `suite.integration` | 读路径端到端 | pass |
-| `suite.gpu` / `suite.gpu_moe` / `suite.gpu_attn` | MoE kernel、attention 逐 stage 对 L1/L2 oracle | pass |
-| `suite.gpu_layer` | 整层对 oracle（chained block cos ≈0.9999，gate 6/6）；`mgt1_layer_batch_vs_steps`（M=2/4/6 批 vs 逐步） | pass |
-| `suite.decode` | 四十层、八步对 L3 oracle | pass：从自己的慢 prefill 教师强制 8/8、自由运行 8/8 |
-| `suite.decode_longctx` | 4K / 17K 的 indexer kernel tie-aware、引擎逐层逐步、8 教师强制 + 8 自由运行 | pass（需要 `DEEPMOE_LONGCTX_DIR`） |
-| `suite.gpu_prefill` | prefill 逐 stage **110 项**，worst cos 0.999912 | pass |
-| `suite.gpu_dspark` | DSpark 草稿 kernel 逐阶段对参考 | pass |
-| `suite.kv_replay` | KV 回放/回退记账 | pass（l3_64：(1) 8/8；(3) restore ≈52 s + 8/8；(4) 0 raw rows） |
-| `bench.l3_ppl64` | **64 步教师强制 L3 PPL 尺**，三档路由各起一个进程串行跑，出 NLL / PPL / top-1 / served / mass lost 与判据 | 有导出集（`traces/l3_64`，.gitignore）才跑，否则 skip；§5.5 |
-| `bench.mgt1_m_curve` / `bench.mgt1_moe_m_curve` | C(M) 曲线 | **未产出**（`bench/results/mgt1_p4.csv` 缺） |
-| `suite.spec_forward` | **M1**：`Engine::forward_batch` 对 M=1 decode（64 步 teacher-forced、块 5、逐层 bisect、环回滚逐字节） | pass **带 WARN**（gate 不逐位：打印 cos 0.9398 / top-1 54/60；默认判据是回归地板 **cos ≥0.93、top-1 ≥50/60**，加 PPL 比 ≤1.05×；原 gate 在 `DEEPMOE_SPEC_STRICT=1` 后面，**它不过**，§3 的 41）；要 `traces/l3_64` |
-| `bench.spec_forward_m_curve` | verify 前向在引擎里的 M=1..6 代价、并集大小、P0 字节，对顺序 decode | 出表（§3 的 42）；要 `traces/l3_64` |
+| `suite.tokenizer` | 909 golden cases (all 24,897 of them are in `tools/tokenizer_golden.py`) | pass, 100% against HF |
+| `suite.engram_tables` | the derivation of the engram hash constants in C++ | pass |
+| `suite.integration` | the read path end to end | pass |
+| `suite.gpu` / `suite.gpu_moe` / `suite.gpu_attn` | the MoE kernel and attention, stage by stage against the L1/L2 oracle | pass |
+| `suite.gpu_layer` | a whole layer against the oracle (chained block cos ≈0.9999, gate 6/6); `mgt1_layer_batch_vs_steps` (M=2/4/6 batched against step by step) | pass |
+| `suite.decode` | forty layers, eight steps, against the L3 oracle | pass: 8/8 teacher-forced from its own slow prefill, 8/8 free-running |
+| `suite.decode_longctx` | 4K / 17K: the indexer kernel tie-aware, the engine layer by layer and step by step, 8 teacher-forced + 8 free-running | pass (needs `DEEPMOE_LONGCTX_DIR`) |
+| `suite.gpu_prefill` | prefill stage by stage, **110 checks**, worst cos 0.999912 | pass |
+| `suite.gpu_dspark` | the DSpark draft kernel stage by stage against the reference | pass |
+| `suite.kv_replay` | the KV replay / rollback accounting | pass (l3_64: (1) 8/8; (3) restore ≈52 s + 8/8; (4) 0 raw rows) |
+| `bench.l3_ppl64` | the **64-step teacher-forced L3 PPL ruler**: one process per routing mode, run serially, reporting NLL / PPL / top-1 / served / mass lost and the criterion | runs only with the export set (`traces/l3_64`, gitignored), otherwise skipped; §5.5 |
+| `bench.mgt1_m_curve` / `bench.mgt1_moe_m_curve` | the C(M) curve | **not produced** (`bench/results/mgt1_p4.csv` is missing) |
+| `suite.spec_forward` | **M1**: `Engine::forward_batch` against M=1 decode (64 teacher-forced steps, block 5, a per-layer bisect, the ring rollback byte for byte) | pass **with a WARN** (the gate is not bit for bit: it prints cos 0.9398 / top-1 54/60; the default criterion is the regression floor **cos ≥0.93, top-1 ≥50/60** plus a PPL ratio ≤1.05×; the original gate sits behind `DEEPMOE_SPEC_STRICT=1` and **it does not pass**, §3 41); needs `traces/l3_64` |
+| `bench.spec_forward_m_curve` | the cost of a verify forward inside the engine at M=1..6, the union's size, the P0 bytes, against sequential decode | produces the table (§3 42); needs `traces/l3_64` |
 
-**本轮合并后的全量 gate（2026-09-18，`p4/one-pr`，安静机，`ctest -j 1`）**：
+**The full gate after this round's merge** (2026-09-18, `p4/one-pr`, quiet machine, `ctest -j 1`):
 
 ```
 100% tests passed, 0 tests failed out of 41
@@ -536,94 +536,107 @@ The following tests did not run:  25 - suite.gpu_layer (Skipped)
                                   41 - bench.l3_ppl64 (Skipped)
 ```
 
-三条 Skipped **都不是失败，是可选子用例的 skip 正则命中了整条 ctest 项**，直接跑二进制可以看到：
+None of those three Skipped lines is a failure: **an optional sub-case's skip regex matched the whole ctest entry**. Running the binary directly shows it:
 
-- `gpu_layer`：2 个用例过（层 0 / 39 的 chained `block_out` cos 0.99993 / 0.99998，gate 6/6），
-  只有 `mgt1_layer_batch_vs_steps` 的两档因为这棵工作树里没有 `traces/mgt1` 而 skip。
-- `gpu_prefill`：5 个用例过——**110 项 stage 检查 0 失败、worst cos 0.999912**，
-  `forty_layers` 自由运行 **8/8**，`longctx` **8/8**（这是 F3 改了 prefill kernel 几何之后的复核）；
-  只有 opt-in 的 `gpu_prefill.repeat` 要 `DEEPMOE_PF_REPEAT=1` 才跑。
-- `bench.l3_ppl64`：导出集 `traces/l3_64` 只在主 checkout 里（`traces/` 是 .gitignore 的），
-  按设计 skip。
+- `gpu_layer`: 2 cases pass (the chained `block_out` of layers 0 and 39 at cos 0.99993 / 0.99998, gate 6/6),
+  and only `mgt1_layer_batch_vs_steps`'s two modes skip, because this worktree has no `traces/mgt1`.
+- `gpu_prefill`: 5 cases pass -- **110 stage checks, 0 failures, worst cos 0.999912**,
+  `forty_layers` free-running **8/8**, `longctx` **8/8** (this was the re-check after F3 changed the
+  prefill kernel's geometry); only the opt-in `gpu_prefill.repeat` needs `DEEPMOE_PF_REPEAT=1`.
+- `bench.l3_ppl64`: the export set `traces/l3_64` exists only in the main checkout (`traces/` is
+  gitignored), so it skips by design.
 
-`tests/run_all.py`：**28/28 gates passed**。
+`tests/run_all.py`: **28/28 gates passed**.
 
-### 5.3 命令
+### 5.3 The commands
 
-```powershell
-# 纯 CPU（无 checkpoint、无 GPU）
+```bash
+# CPU only (no checkpoint, no GPU)
 ctest --test-dir build -LE "needs-model|needs-gpu" --output-on-failure
 
-# 全部
-$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
-$env:DEEPMOE_LONGCTX_DIR='C:\Users\Asus\code\deepmoe\traces\longctx'
+# everything
+export DEEPMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash"
+export DEEPMOE_LONGCTX_DIR="$PWD/traces/longctx"
 ctest --test-dir build --output-on-failure
 ```
 
-### 5.4 套件本身的审计（变异注入）
+### 5.4 Auditing the suites themselves (mutation injection)
 
-一个全绿的套件本身什么也不证明。`tests/mutate.py` 往测试**声称覆盖**的代码里注入真实的回归，
-重新编译，跑那一个套件，**要求它失败**。今天 14 条，**14/14 被抓到**：
+An all-green suite proves nothing by itself. `tests/mutate.py` injects a real regression into the
+code a test **claims to cover**, rebuilds, runs that one suite, and **requires it to fail**. 14
+of them today, and **14/14 are caught**:
 
-| 注入 | 套件 | 结果 |
+| Injection | Suite | Result |
 |---|---|---|
-| 交换 FP4 E2M1 表里两个幅值 | `dequant` | caught |
-| FP8 E4M3 指数偏置差一 | `dequant` | caught |
-| 丢掉 run 的 skew（张量在对齐 run 内的偏移） | `manifest` | caught |
-| `min_bytes` 允许读过文件尾 | `io` | caught |
-| 后台 op 节流放宽一个 | `io` | caught |
-| 淘汰最近用过的而不是最久没用的 | `planner` | caught |
-| 反转 LRU 的确定性 tie-break | `planner` | caught |
-| BPE merge 平局取最右而不是最左 | `tokenizer` | caught |
-| 核采样多吃 2% 的质量 | `sampling` | caught |
-| 在 top 集合证明不了的时候声称 nucleus 精确 | `sampling` | caught |
-| 窗口环的 slot→position 映射偏一代 | `kvstore` | caught |
-| 把序列从未到过的槽当成已占用 | `kvstore` | caught |
-| engram 乘子改成偶数（参考强制奇数） | `engram_tables` | caught |
-| 改 engram 的每层种子 | `engram_tables` | caught |
+| Swap two magnitudes in the FP4 E2M1 table | `dequant` | caught |
+| Shift the FP8 E4M3 exponent bias by one | `dequant` | caught |
+| Drop a run's skew (a tensor's offset inside its aligned run) | `manifest` | caught |
+| Let `min_bytes` read past the end of the file | `io` | caught |
+| Loosen the background op throttle by one | `io` | caught |
+| Evict the most recently used instead of the least | `planner` | caught |
+| Reverse LRU's deterministic tie-break | `planner` | caught |
+| Break a BPE merge tie to the right instead of the left | `tokenizer` | caught |
+| Let nucleus sampling take 2% more mass | `sampling` | caught |
+| Claim nucleus is exact when the top set cannot prove it | `sampling` | caught |
+| Shift the window ring's slot→position map by one generation | `kvstore` | caught |
+| Treat a slot the sequence never reached as occupied | `kvstore` | caught |
+| Make the engram multiplier even (the reference forces it odd) | `engram_tables` | caught |
+| Change engram's per-layer seed | `engram_tables` | caught |
 
-**这次审计抓到的真问题**（第一轮是 10/14，四条活了下来）：
+**The real problems this audit caught** (the first round was 10/14, four survived):
 
-1. **`suite.kvstore` 对窗口环的 slot→position 算术零覆盖。** 唯一在跑它的是
-   `suite.kv_replay`——而那条同时要 checkpoint **和** GPU。
-   也就是说，一个"replay 用错误的位置重建窗口"的 bug 可以通过每一道 CPU 闸。
-   **已修**：算术抽成纯函数 `KvStore::ring_slot_position`，`resolve_ring` 调用它，
-   并加了一个 CPU 用例把它钉在"按顺序写入 n 个位置之后每个槽拿到什么"这个定义上。
-2. 另外两条活下来的是**变异本身太弱**，不是测试弱（一个浮点和上的 `>=` vs `>`、
-   一个 1e-9 的 CDF 亏空，两者都是测度零），已换成真的会改变行为的版本。
-   **记在这里是因为它是这套方法的失败模式**：一个"survived"要先怀疑变异，再怀疑测试。
+1. **`suite.kvstore` had zero coverage of the window ring's slot→position arithmetic.** The only
+   thing exercising it was `suite.kv_replay` -- which needs the checkpoint **and** the GPU. Which
+   means a bug of the form "replay rebuilds the window at the wrong positions" could pass every CPU
+   gate. **Fixed**: the arithmetic was pulled out into the pure function
+   `KvStore::ring_slot_position`, `resolve_ring` calls it, and a CPU case now pins it to the
+   definition of "what each slot holds after n positions have been written in order".
+2. The other two survivors were **weak mutations, not weak tests** (a `>=` against `>` on a float
+   sum, and a 1e-9 CDF shortfall -- both measure zero). They were replaced with versions that
+   really do change behaviour. **This is recorded because it is the method's own failure mode**: a
+   "survived" should make you suspect the mutation first and the test second.
 
-**这套方法第二次抓到同一类缺陷**：合并 Track Y 时 `suite.resident_route` 被加进了 suite 列表
-却**没有加进 `unit` 标签那个 foreach**——于是它在 `ctest -LE needs-model` 里会跑（它没有任何标签），
-但 `run_all.py` 和 `ctest -L unit` 都**看不见它**。本轮补上（27 → 28 个 gate）。
-**教训和 `suite.kvdisk` 那次是同一条**：新套件要改两处，而只改一处的症状是"全绿但少跑了一个"。
+**The method caught the same class of defect a second time**: when Track Y was merged,
+`suite.resident_route` was added to the suite list but **not to the `foreach` that applies the
+`unit` label** -- so it ran under `ctest -LE needs-model` (it had no label at all) while
+`run_all.py` and `ctest -L unit` **could not see it**. Fixed this round (27 → 28 gates).
+**The lesson is the same one as the `suite.kvdisk` case**: a new suite has to be added in two
+places, and the symptom of doing only one is "all green, one fewer thing run".
 
-**已知的标签缺陷**：`deepmoe_tests`（整个二进制这一条 ctest 项）挂着 `needs-model`，
-所以 `ctest -LE needs-model` 会把它整条跳掉。
-（`suite.kvdisk` 原本完全没有 `set_tests_properties`——没有标签也没有 skip 正则；本轮补上 `unit`。）
-这也是 `run_all.py` 问 ctest 要 `unit` 标签、而不是自己维护一张列表的原因：
-列表会把这种缺陷藏起来。
+**A known labelling defect**: `deepmoe_tests` -- the single ctest entry for the whole binary --
+carries `needs-model`, so `ctest -LE needs-model` skips it entirely.
+(`suite.kvdisk` originally had no `set_tests_properties` at all: no label and no skip regex; `unit`
+was added this round.)
+This is also why `run_all.py` asks ctest for the `unit` label instead of keeping its own list: a
+list would hide exactly this kind of defect.
 
-### 5.5 尺子本身：8 步分不开的东西，64 步分得开
+### 5.5 The ruler itself: what 8 steps cannot separate, 64 steps can
 
-Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 harness——这条值得单列，
-因为它是这份文件里唯一一次"结论被尺子决定"。
+Track Y's verdict **flipped once on the same code**, and what flipped was not the code but the
+harness. It deserves its own entry, because it is the only place in this file where a conclusion was
+decided by the ruler.
 
-- **8 步的 teacher-forced L3 分不开档位**：三档都落在 6/8 或 8/8，而且出现过自相矛盾
-  （`stall1` 的 gate mass lost 只有 `all` 的一半，PPL 却更高）。
-- **64 步（`traces/l3_64` + `tools/l3_ppl.py`）就分得开**：top-1 **61 / 42 / 51**，
-  PPL ×1.00 / ×2.29 / ×1.11，**与 mass lost 单调同向**；`stall1` 三次独立进程跑进 0.0035 的带里，
-  `all` 三次跨 0.87 个 PPL（那是后台补盘时序的真实方差，不是测量噪声）。
-- **这把尺子自己的噪声底是 ×1.0330**（`off` 对 fp32 参考：NLL 0.5976 → 0.6301，top-1 61/64）。
-  所以 ×1.09 只有噪声底的三倍——**读得出来，但不要把 1.09 和 1.05 的差别当大数字**。
-- **导出必须逐步解码，不能用一遍 prefill 抄近路。** 一遍 128 token 的 prefill 能一次拿到全部 65 个
-  next-token 分布，快 7.4 倍（226.5 s vs 1,687.8 s），但它只能**证明** 5/64 个位置。
-  把同一遍跑在参考**自己逐步**解码出的 token 上，分叉位置和分叉 token 一模一样（index 5）——
-  **"一遍 prefill 的第 j 个位置"和"逐步解码到第 j 个位置"不是同一个分布**
-  （compressor 结尾不完整分组的进位、indexer 在整段 compressed cache 上的 top-k，在一遍式里都不是逐位置因果的）。
-  顺带的对照：**引擎自由跑跟住参考 12 个 token，一遍式只跟住 5 个——这一局引擎比捷径准。**
+- **Teacher-forced L3 over 8 steps cannot separate the modes**: all three land on 6/8 or 8/8, and it
+  even contradicted itself (`stall1`'s gate mass lost was half of `all`'s while its PPL was higher).
+- **64 steps (`traces/l3_64` + `tools/l3_ppl.py`) can**: top-1 **61 / 42 / 51**, PPL ×1.00 / ×2.29 /
+  ×1.11, **monotone with mass lost**; `stall1` landed inside a 0.0035 band across three independent
+  processes, while `all` spread 0.87 PPL across three (which is the real variance of background
+  backfill timing, not measurement noise).
+- **This ruler's own noise floor is ×1.0330** (`off` against the fp32 reference: NLL 0.5976 →
+  0.6301, top-1 61/64). So ×1.09 is only three times the noise floor -- **readable, but do not treat
+  the difference between 1.09 and 1.05 as a large number**.
+- **The export has to decode step by step; a single prefill pass is not a shortcut.** One 128-token
+  prefill pass yields all 65 next-token distributions at once and is 7.4 times faster (226.5 s
+  against 1,687.8 s), but it can only **prove** 5 of the 64 positions. Running that same pass on the
+  tokens the reference decoded **step by step itself** gives the identical divergence position and
+  divergence token (index 5) -- **"position j of a single prefill pass" and "step-by-step decoding to
+  position j" are not the same distribution** (the carry out of the compressor's incomplete trailing
+  group, and the indexer's top-k over the whole compressed cache, are not per-position causal in the
+  single-pass form). The incidental comparison: **the engine free-running tracked the reference for
+  12 tokens and the shortcut tracked 5 -- the engine beat the shortcut here.**
 
-一句话：**任何跨 routing / cache 策略的质量判决，尺子至少要 64 步，而且参考续写必须是逐步产的。**
+In one line: **any quality verdict across routing or cache policies needs a ruler of at least 64
+steps, and the reference continuation has to be produced step by step.**
 
 ---
 
