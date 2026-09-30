@@ -1,0 +1,44 @@
+[ RUN ] bench_spec.forward_batch_m_curve
+      warm: 4900 experts resident
+      mode   M  positions  ms/batch  ms/position  union/layer  P0 MB  vs M=1/pos
+      off    1         60      89.8         89.8         6.00   2577      1.000x
+             host/batch: gate(plan+wait) 11.4 ms, moe host 0.5 ms (x+quant 0.3, union+table 0.1)
+             engram row fetch (host I/O) 0.0 ms/batch
+      off    2         60     120.8         60.4         9.90   1317      0.673x
+             host/batch: gate(plan+wait) 11.3 ms, moe host 0.9 ms (x+quant 0.7, union+table 0.2)
+             engram row fetch (host I/O) 0.1 ms/batch
+      off    3         60     168.7         56.2        13.34    828      0.626x
+             host/batch: gate(plan+wait) 10.9 ms, moe host 1.3 ms (x+quant 1.0, union+table 0.3)
+             engram row fetch (host I/O) 0.1 ms/batch
+      off    4         60     227.4         56.9        16.53   1091      0.633x
+             host/batch: gate(plan+wait) 21.6 ms, moe host 1.8 ms (x+quant 1.4, union+table 0.4)
+             engram row fetch (host I/O) 0.1 ms/batch
+      off    5         60     290.5         58.1        19.35    640      0.647x
+             host/batch: gate(plan+wait) 14.0 ms, moe host 2.3 ms (x+quant 1.8, union+table 0.5)
+             engram row fetch (host I/O) 0.2 ms/batch
+      off    6         60     347.4         57.9        22.11    508      0.645x
+             host/batch: gate(plan+wait) 14.7 ms, moe host 3.0 ms (x+quant 2.4, union+table 0.6)
+             engram row fetch (host I/O) 0.2 ms/batch
+      off    -         60         -         66.9            -      0  (sequential decode steps)
+      verify 1         60      79.9         79.9         6.00      0      1.000x
+             host/batch: gate(plan+wait) 0.1 ms, moe host 0.6 ms (x+quant 0.5, union+table 0.1)
+             engram row fetch (host I/O) 0.0 ms/batch
+      verify 2         60     127.6         63.8         9.90      0      0.799x
+             host/batch: gate(plan+wait) 0.1 ms, moe host 0.9 ms (x+quant 0.7, union+table 0.2)
+             engram row fetch (host I/O) 0.1 ms/batch
+      verify 3         60     188.8         62.9        13.34      0      0.788x
+             host/batch: gate(plan+wait) 0.1 ms, moe host 1.3 ms (x+quant 1.0, union+table 0.3)
+             engram row fetch (host I/O) 0.1 ms/batch
+      verify 4         60     257.1         64.3        16.53      0      0.805x
+             host/batch: gate(plan+wait) 0.2 ms, moe host 1.8 ms (x+quant 1.4, union+table 0.4)
+             engram row fetch (host I/O) 0.1 ms/batch
+      verify 5         60     312.8         62.6        19.35      0      0.783x
+             host/batch: gate(plan+wait) 0.4 ms, moe host 2.5 ms (x+quant 2.0, union+table 0.5)
+             engram row fetch (host I/O) 0.2 ms/batch
+      verify 6         60     366.9         61.2        22.11      0      0.766x
+             host/batch: gate(plan+wait) 0.6 ms, moe host 3.4 ms (x+quant 2.7, union+table 0.6)
+             engram row fetch (host I/O) 0.3 ms/batch
+      verify -         60         -         69.6            -      0  (sequential decode steps)
+[  ok ] bench_spec.forward_batch_m_curve
+
+1 case(s) run, 0 failed, 0 assertion failure(s)

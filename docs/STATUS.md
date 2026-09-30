@@ -693,6 +693,8 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0bi. **投机解码的 verify 代价在 Linux 上重量**（`bench.spec_forward_m_curve`，l3_64、4,900 槽、warm、单盘）——第 3 项说「MB/token 压下来之后重跑」，decode 命中已到 0.94，所以量一次。顺序 decode **69.6 ms/位置**（Windows 09-21 的 `p4_dspark_runtime.md` §8.6 是 96.3），`forward_batch` M=1 79.9（比顺序慢 1.15×）、M=2 63.8、M=3 62.9、M=6 **61.2**（Windows 65.2）；verify 列 P0 = 0，并集/层 9.90 … 22.11 与 Windows 相同。**顺序 decode 快了 28%，批路径只快了 6%**——decode 链上这些天的优化没进批路径。代进 §7.4 的 E[tokens]、草稿白送：`chain` k=1 **1.00×**、k=2 0.93×、k=5 **0.72×**；`longest`（不无损）最好是 k=2 的 **1.05×**、k=5 0.90×。再加今天 19–42 ms/周期的草稿，全部 < 1。**NO-GO 第四次，而且比 Windows 那次更远**（最好一格 1.13× → 1.00×）。**什么时候能用，按实测反推**：`chain` k=5 草稿白送要 M=6 ≤ **44 ms/位置**，算上今天的草稿要 **37–41**，今天 61.2——批路径要快 1.5–1.6 倍（`p4_dspark_runtime.md` §8.7 的四项：并集 MoE kernel 离自己的 M=5 冠军 1.6×、每层一次 submit+fence 往返、attention 链、engram 行预取），或者先把 decode 链的优化搬进批路径（M=1 那 1.15× 就是差距）。在那之前另有三件没做的：草稿链在 runtime 里一行没有（kernel 齐了）、它要常驻 7.2 GB 的 mtp expert（≈ 390 个 cache 槽，压命中）、`forward_batch` 不逐位等于 M=1（§3 41，温度 0 下开关投机输出会变）。真实对话是 NVMe-bound 的，而并集相对热缓存省下的 miss 实测为 0（§3 34b），盘那一侧不会替它补。`linux/spec/m_curve_0930.txt`。
+
 0bh. **q 的 rope（`prefill_elem` s5 的 fp16 输出路）每线程 8 个元素（两个 float4 读、一个 16 B 写，原来 4 个元素 8 B 写）：17K `rope m0 f16` 497 → **454 ms**，4K 124 → 113；逐位（10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。fp32 输出路（现在只剩 <64 行的块用）仍是 4 个。`prefill_ahead/rope8_{r6_17010,4133}`（单盘趟）。
    **17K 现在的 GPU 侧账**（单盘趟的 per-op，ring 6）：routed GPU 11.4 s（gate/up fp4 6.15 @ 16.5 TF/s、down 2.82 @ 18、tiled 小 expert 1.0 @ 1.1 TF/s、scatter 0.59、x16 0.35）、attention 桶 12.5（coop 核 5.58：score 1.99 @ 6.6 TF/s、P.V 1.47 @ 9、gather 1.18 @ 196 GB/s、softmax 0.42、finish 0.34；dense GEMM 5120×8192 1.77、8192×4096 1.62、32768×1280 1.33、1280×5120 0.26；rope 0.45；index score 0.50）、mHC 1.89（s2 0.68、s4 0.67、24×20480 0.50）、shared 1.53、engram 0.66、host 0.21。GEMM 都在峰值 52.8 TF/s 的 30–45%（0ag 的诊断：256 VGPR、LDS 只能 b64 读、寄存器搬运），是剩下最大的一块，但是 kernel 内部的活。
 
@@ -1635,6 +1637,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    **草稿白送时 k=5 反而更慢（0.86×），k=1 最好 1.13×，加上 19–42 ms 的草稿就打平**。
    **不要再往投机上写代码**，除非第 1 项（score-aware 淘汰 / 第二块盘）先把 MB/token 压下来；
    那时要重跑的是 `bench.spec_forward_m_curve` 和 `tools/spec_longest.py`，不是重写循环。
+   **2026-09-30 Linux 重跑（0bi）**：命中 0.94 之后顺序 decode 69.6 ms/位置、M=6 批 61.2——decode 快了，批路径没跟上，草稿白送的最好一格从 1.13× 掉到 1.00×。条件改成「批路径先快 1.5 倍」。
    **唯一还开着、方向为正的问题**：verify 批的草稿行用 resident-only 路由把 P0 打到 0、
    ms/位置从 102.6 压到 70.9，而草稿行掉质量的代价是"接受率低一点"而不是"输出差一点"——
    这条要有真实草稿链才测得了。
