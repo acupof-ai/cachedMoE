@@ -75,7 +75,18 @@ typealias TileC = linalg.CoopMat<float, MemoryScope.Subgroup, 16, 16, linalg.Coo
 static const uint kW = 0, kX = 1, kY = 2, kJob = 7;
 static const uint kBk = LDS_BK;           // K slice, in halfs
 static const uint kQ = kBk / 8;           // uint4 of data per LDS row
-static const uint kRowQ = kQ + 1;         // uint4 per LDS row: kQ of data + 1 of padding
+// LDS_SPLIT: stage the slice into LDS in two halves and run two sub-slices of
+// MMA per global read (STATUS §7 0br). The global read stays a whole kBk row --
+// 128 B at kBk 64, exactly one cache line, which is what §3 86 showed must not
+// shrink -- while the LDS footprint halves, so the CU holds twice the
+// workgroups. The cost is twice the barriers and a prefetch hidden by half as
+// many MMA steps, because ra/rb must survive until the second half is staged.
+#ifndef LDS_SPLIT
+#define LDS_SPLIT 0
+#endif
+static const uint kHalves = LDS_SPLIT ? 2u : 1u;
+static const uint kQh = kQ / kHalves;     // uint4 of data per LDS row, per half
+static const uint kRowQ = kQh + 1;        // uint4 per LDS row: kQh of data + 1 of padding
 static const uint kMaxW = 4;              // LdsWm, LdsWn <= 4
 static const uint kThreads = 128;
 static const uint kRegs = kMaxW * 32 * kQ / kThreads;   // a slice's uint4 per thread at the widest block
@@ -162,11 +173,15 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     [ForceUnroll] for (uint t = 0; t < kMaxW * kMaxW; ++t) c[t] = TileC(0.0f);
 
     for (uint k0 = 0; k0 < K; k0 += kBk) {
-        GroupMemoryBarrierWithGroupSync();     // the last slice's reads are done
+      [ForceUnroll] for (uint h = 0; h < kHalves; ++h) {
+        GroupMemoryBarrierWithGroupSync();     // the last (sub)slice's reads are done
         [ForceUnroll] for (uint i = 0; i < kRegs; ++i) {
             const uint q = tid + i * kThreads;
-            if (i < a_per && !LdsWt) As[(q / kQ) * kRowQ + q % kQ] = ra[i];
-            if (i < a_per && LdsWt && i % 2 == 0) {
+            // Each register holds one (row, column) of the slice, so it belongs
+            // to exactly one half: column q % kQ, half (q % kQ) / kQh.
+            const bool mine = kHalves == 1u || (q % kQ) / kQh == h;
+            if (i < a_per && !LdsWt && mine) As[(q / kQ) * kRowQ + (q % kQ) % kQh] = ra[i];
+            if (i < a_per && LdsWt && i % 2 == 0 && kHalves == 1u) {
                 // The 16 lanes of one k-row pair hold rows 8 apart, which share
                 // an LDS bank (8 x 36 dwords); each lane walks its 8 rows in
                 // its own order so a store instruction spreads over 8 banks.
@@ -178,10 +193,12 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                     As[(r0 + jj) * kRowQ + kd / 4][kd % 4] = lo | (hi << 16);
                 }
             }
-            if (i < b_per) Bs[(q / kQ) * kRowQ + q % kQ] = rb[i];
+            if (i < b_per && mine) Bs[(q / kQ) * kRowQ + (q % kQ) % kQh] = rb[i];
         }
         GroupMemoryBarrierWithGroupSync();
-        if (k0 + kBk < K) {
+        // The prefetch overwrites ra/rb, so with two halves it cannot be issued
+        // until the second half has been staged.
+        if (k0 + kBk < K && h + 1 == kHalves) {
             const uint kq = (k0 + kBk) / 8, k1 = k0 + kBk;
             [ForceUnroll] for (uint i = 0; i < kRegs; ++i) {
                 const uint q = tid + i * kThreads, qp = tid + (i / 2) * kThreads;
@@ -192,7 +209,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                 if (i < b_per) rb[i] = X[((m_base + q / kQ) * xs + xc) / 8 + kq + q % kQ];
             }
         }
-        [ForceUnroll] for (uint kk = 0; kk < kBk / 16; ++kk) {
+        [ForceUnroll] for (uint kk = 0; kk < kBk / (16 * kHalves); ++kk) {
             TileB b[kMaxW];
             [ForceUnroll] for (uint j = 0; j < kMaxW; ++j)
                 if (j < wn) b[j] = TileB.Load<linalg.CoopMatMatrixLayout.ColumnMajor>(Bs, (w_m + 16 * j) * kRowQ + 2 * kk, kRowQ);
@@ -204,6 +221,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
                         c[i * kMaxW + j] = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b[j], c[i * kMaxW + j]);
             }
         }
+      }
     }
     // kFlagRound: the caller wants y rounded onto bf16 -- on the accumulator
     // here, so y is written once instead of copied through a rounding pass

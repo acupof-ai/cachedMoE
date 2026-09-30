@@ -286,7 +286,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 
 ---
 
-## 3. 试过并退掉的（编号，共 87 条）
+## 3. 试过并退掉的（编号，共 88 条）
 
 这一节是这份文件里最有用的部分。**估计值系统性偏高**（fleet 那边是"二分之一法则"；
 这里的同类现象见 23、25、30），所以任何基于字节数的估计**先砍一半**再决定要不要花一天。
@@ -416,6 +416,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **80** | **下一层的盲读提前到本层最后一批算的时候发（`ahead_next_`：本层最后一批的读到齐后，就把下一层按分片序的前 d 段发进环里空着的段；以及"深发"——第 i 批在第 i−(R−1) 批算完就发，不是 i−2）**（2026-09-30）——深发 ring 6：17K 45.0（不变），4K 35.2（+6 s：4K 本来盘就是瓶颈，多在飞的批只是把当前批的读挤慢）。提前发：先撞了两个自己的 bug（`times_.layers.resize` 让 `run_layer` 里的引用悬空——堆被踩；第 0 批没发——每层 ~64 个 expert 没读），修完在**旧的 io_uring 后端上 4K 三次都不逐位**（r2 30.98 s / margin 8.819、r6 36.09 / 8.422、跳过 engram 层前的提前发 34.8 / 8.598 逐位），17K r6 45.85 / 10.108 逐位。这就是 §6 18 的另一面：expert 的 1 MiB 读和 engram 的 4 KiB 行读一重叠就错——于是找到了 io_uring 后端的记录表冲突（§7 0aw）。**修好后端再跑同一份代码，四个配置全逐位**：4K r2 29.06、r6 29.23，17K r2 48.41、r6 46.90（镜像盘那趟探到 3.57 GB/s，在降频）。但收益没有：ring 2 时下一层的盲读本来就在本层 MoE 之后马上发、盘也没闲着（4K），ring 6 时 17K 第 0–19 层是 GPU-bound、第 20–39 层的读本来就全在盲读里。代码撤了（少 90 行），只留后端的修复。`prefill_ahead/early_*`、`early_fixed_*`、`ring6deep_*`。 | NO-GO（收益 0；但把 §6 18 定位了） |
 | **81** | **FP4 融合 GEMM 用 128 宽的 K 片（`prefill_gemm_lds128.spv`，`#define LDS_BK 128` 包一层，只给 expert 的 fp4 kernel）**（2026-09-30）——§3 68 量过 fp16 版的 w1 +12%，想着 fp4 版每片解码的 ALU 摊到两倍的 K 上会更好。17K ring 6：gate/up fp4 6,226 → **6,965 ms**（+12%）、down 2,882 → 3,437（+19%）。解码是按元素的，K 片宽一倍每线程要解的也宽一倍，寄存器压力先撞上了。`prefill_ahead/bk128_r6_17010`。 | NO-GO |
 | **82** | **routed expert 走 coop 路的行数门槛（`coopmat_min_rows` 16）挪到 8 或 32**（2026-09-30，17K ring 6 单盘）——8：routed GPU 11.39 → 11.27 s（tiled 1.0 → 0.7，coop 多 650 个 expert）；32：12.09（tiled 1.5）。但 **margin 变了**（10.310 / 10.338 对 10.108）：tiled 路（每 lane 一块的 fp32 点积、ldexp 和 xs 逐块乘）和 coop 路（fp16 tile 累加）不是逐位同一个数，门槛是数值的一部分。−0.1 s 不值得动基线。`prefill_ahead/coopmin{8,32}_r6_17010`。 | NO-GO |
+| **88** | **Stage the K slice into LDS in two halves and run two sub-slices of MMA per global read (`LDS_SPLIT`, default 0 = unchanged)** (2026-09-30) — the one cell §3 86 did not test, and what §7 0br's cycle account pointed at: keep the global read at a whole 128 B row (86 showed that must not shrink) while halving the LDS footprint, so the CU holds twice the workgroups. **The mechanism worked exactly as designed**: LDS 27,648 → **15,360 B**, 2 → **4 workgroups a CU = 4 → 8 waves a SIMD**, VGPR 256 → 240, 0 spill, output bit-identical. **It is still slower.** Paired at wm4wn2, n=512, patched driver: 0.367 → **0.421 ms (+15%)**, GPU active cycles 1,041,898 → **1,596,662 (+53%)**, LDS instructions 1,228,800 → 1,566,720 (+27%); n=1024 0.744 → 0.877. **The stated falsification criterion was "VRAM read size unchanged", and it failed there**: **103.5 → 133.2 MB (+29%)** with L2 hit **53.6% → 46.0%**. The read granularity *was* preserved; what doubled is the **working set competing for L2** — four workgroups' tiles instead of two — and this kernel lives on adjacent workgroups reading overlapping W rows and X columns. | **NO-GO. And with §3 86 it closes occupancy for this kernel, tested two independent ways**: buying occupancy by narrowing the read costs sub-cache-line traffic (+96%), buying it by halving the LDS footprint costs L2 thrash (+29%). Different causes, same verdict — **the kernel is already on the right side of the occupancy/L2 trade**. Knob kept at 0, documented in the shader, so the next person reads the result instead of re-deriving it |
 | **87** | **tiled small-expert path's `TileM` 8 → 16 (`--tiles 16`, `PrefillConfig::tile`)** (2026-09-30, after 0bt measured the weight re-read). The premise, measured on the real FP4 expert with the counters: this kernel's grid is `gemm_gy(n, TileM) = ceil(n/TileM)` row blocks and **each block reads the whole weight**, so VRAM read size tracks `ceil(n/TileM)` exactly — at n=16, TileM 4 / 8 / 16 read **54.2 / 27.6 / 13.9 MB against 12.5 MB of weight = 4.33× / 2.20× / 1.11×**, with L2 hit only 29–43%, so the re-reads land in DRAM. 4K: tiled gate/up 882.1 → **848.1 ms (−3.9%)**, tiled down 397.5 → **380.8 (−4.2%)**, routed bucket 5,071 → 5,027; **margin 8.598 bit for bit**; wall time unchanged (4K is disk-bound single-drive). | **Works, small, default unchanged.** −51 ms of the tiled path's 1,280 ms, far less than halving the traffic would suggest, because **most tiled experts already have n ≤ 8** so `ceil(n/8)` was already 1 and only n ∈ (8,16] benefits. An adaptive `TileM = min(16, n)` a job would capture it exactly and is the version to try; owner's call whether −1% of the routed bucket is worth the knob |
 | **86** | **LDS GEMM 的 K 切片 64 → 32（`LDS_BK`，两份 Codex review 排第一的假设：LDS 27,648 → 15,360 B，每 CU 从 2 个 workgroup 变 4 个，占用率 4 → 8 wave/SIMD，暂存寄存器也减半——正面打 §7 0bn 的占用率结论；5120 和 2304 都能被 32 整除，不用处理尾巴）**（2026-09-30，补丁驱动、真实几何 wm4wn2）——**占用率确实翻倍了**（stats：LDS 15,360、VGPR 256 → 192、0 溢出；4 → 8 wave/SIMD——**这里原写 2 → 4，算错了一倍，一个 CU 有 2 个 SIMD32，见 §7 0br**），**kernel 全线更慢**：n=64 0.117（不变）、128 0.117 → 0.127、256 0.208 → **0.257（+24%）**、512 0.411 → **0.573（+39%）**、1024 0.906 → 1.154（+27%）。计数器指出机制（n=512 配对）：**VRAM 读 102.7 → 200.8 MB（+96%）**，而总数据量不变——**BK=32 时每行每片只读 32 个 half = 64 B，低于 128 B 的 cache line，每条线被取两次**；SALU 指令 +64%（多一倍的片 = 多一倍的循环和屏障），GPU cycles +18%，Waves 不变，VALU 只 +1%。**所以 64 halfs = 128 B = 正好一条 cache line 是被两侧钉住的局部最优**：往上 128 撞寄存器压力（§3 68、81：FP4 对 +12%/+19%），往下 32 撞读粒度。 | **NO-GO。并且它否掉的不止自己——见 §7 0bp：占用率不是这个 kernel 的限制** |
 | **85** | **手写提出 FP4 路的地址算术**（`load_a_fp4` 改成收两个已成型的字节地址；每个寄存器槽的行号在 k 循环里不变、八个槽的行号差 16、而且八个槽读同一列（`kThreads % kQ == 0`），所以地址 = 一个提出循环的 64 位基址 + 每槽一个字面量 + 每个 K 片一个 32 位偏移）——动机是 0bl 之后重查 ISA 时看到的 45 条 `v_dual_mov_b32 0`，当时读成"每次 global load 的 64 位地址算术"（2026-09-30）| 17K ring 6：gate/up fp4 6,385 → **6,537 ms（+2.4%）**、down 2,926 → **2,980（+1.8%）**，两个我动过的 kernel 同向变差；attention −0.5%、shared +2.7%（别的 op 在漂移里）；逐位不变（10.108，`gpu_prefill` 7/7）。ISA 对照给出原因：**64 位乘法数量一个没变（两边都是 8 条 = 每个寄存器槽一次，早就被提出 k 循环了）**——ACO 的 LICM 已经做完这件事，手写版只是把同样的 8 个 64 位基址变成了**跨整个循环活着的寄存器**，在 255 VGPR 的形状上多付了压力 | **NO-GO，已撤回**。教训记两条：① 0ag 写的"85 条寄存器搬运是 ACO 在 256 VGPR 下的代价"要订正——那些 `v_dual_mov_b32 0` 是 64 位地址的高位补零，**和有用的 add 双发射在一起**，不是寄存器分配的浪费；② 在 ACO 上"手写编译器已经做的优化"是负收益，下一次先数 ISA 再改源码。`prefill_ahead/addr_r6_17010`。 |
@@ -697,6 +698,63 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 ---
 
 ## 7. Next, in order
+
+0bu. **I ran the experiment 0br proposed and it failed, on the criterion I had set for it -- which closes occupancy for this kernel for good and leaves the 36% of stalls standing but unreachable from here.** (user 2026-09-30 "go", "talk the fusion plan over with codex".)
+
+The proposal was the one cell §3 86 left untested: keep the global read at a whole 128 B row --
+86 proved that must not shrink -- but stage it into LDS in **two halves**, running two sub-slices
+of MMA per global read, so the LDS footprint halves and the CU holds twice the workgroups. Built
+behind `LDS_SPLIT` (default 0, which folds to the original code and is byte-identical).
+
+**Everything about the mechanism worked.** LDS 27,648 → 15,360 B, 2 → 4 workgroups a CU, 4 → 8
+waves a SIMD, VGPR 256 → 240 with no spill, output bit-identical. **And it is 15% slower**
+(§3 88): 0.367 → 0.421 ms at n=512 with GPU active cycles up 53%.
+
+**It failed on the criterion I wrote down in advance**, which is the useful part. I had said
+"falsified if active cycles do not fall at unchanged VRAM read size". VRAM read rose **103.5 →
+133.2 MB, +29%**, and L2 hit fell **53.6% → 46.0%**. The read *granularity* was preserved
+exactly as designed; what I had not accounted for is that doubling the resident workgroups
+doubles the **working set competing for L2**, and this kernel lives on adjacent workgroups
+reading overlapping W rows and X columns. One prediction, one measurement, one identified
+mechanism.
+
+**So occupancy is closed for this kernel, tested two independent ways with different failure
+mechanisms**: §3 86 bought occupancy by narrowing the K slice and paid +96% traffic to
+sub-cache-line reads; this bought it by halving the LDS footprint and paid +29% to L2 thrash.
+The kernel is already on the right side of the occupancy/L2 trade. That does **not** dissolve
+0br's finding that 35.9% of its cycles are stalls -- it says those stalls cannot be bought out
+with waves, because on this chip more waves cost cache and this kernel is cache-sensitive. The
+stall is presumably the prefetch latency (the global loads for slice i+1 are hidden by slice i's
+four MMA steps, and the split halved that window to two), and what remains is to shorten the
+dependency rather than add waves to cover it.
+
+**Where that leaves the ranking** (codex's fusion review, same round, agreed the order):
+1. **`tiled` small-expert path** -- §7 0bt: 1,280 ms of the 5,071 ms chain at 4K, streaming 68.4
+   GB at 34% of the DRAM ceiling, with re-reads and L2 excluded and coalescing the open suspect.
+   Untouched by any closed row. **The best remaining target.**
+2. **Fusion**, with codex's ceilings, all already halved: gate/up epilogue → SwiGLU → quant →
+   h16 **110-161 ms**; the same three as a standalone dispatch **85-136 ms**; down epilogue →
+   scatter **85 ms**; gather into the gate/up prologue **≤76 ms**. All ≤3% of the bucket. Codex's
+   one non-obvious contribution here: pairing gate and up for the *same* rows as two `wm2`
+   halves in one workgroup keeps **the same eight accumulator tiles a wave** as today's one-sided
+   `wm4`, so it is not the plain `wm2` §3 84 measured as a loss and it does not breach 256 VGPRs.
+3. **Barrier pruning** ~27 ms after halving, 0.5% -- and note codex's methodological correction
+   below.
+
+**A correction to §7 0bs**: I wrote that the 498 ms between the op-time sum and the `moe routed
+(gpu)` bucket is inter-dispatch drain and barrier cost that fusion could recover. Codex pointed
+out that each op's timestamp is written **after** its barrier, so barrier time is already inside
+the op measurements; the 498 ms is a ceiling on unattributed time, not an independently
+recoverable quantity, and counting it in a fusion forecast double-counts. 0bs's 6.4% figure for
+the fusable ops stands; the "+10% of gap" framing does not.
+
+Also from codex, checked against the code: `CommandBuffer::barrier()` is already a compute
+write→read memory dependency rather than an all-stage barrier, so there is no cheap win in
+narrowing it to `VkBufferMemoryBarrier2` -- the execution dependency is what costs, not the
+scope.
+
+Gates: CPU 25/25, `gpu_prefill` 7/7, 4K margin **8.598 bit for bit** with the knob at 0.
+`scratchpad/ps_split`.
 
 0bt. **The tiled small-expert path is 28% of the routed chain doing 4% of its FLOPs, and measuring it corrected a wrong conclusion in §3 83.** (following 0bs, which sized fusion at 6.4% and pointed here instead.)
 
