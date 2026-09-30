@@ -15,10 +15,14 @@ deepMoE web UI —— 正在运行的实例
 
 PID
 ---
-  server.py       2429141
-  deepmoe serve   2429143
+  server.py       2464244
+  deepmoe serve   2464248
 
-停止（只按 PID）：kill 2429141 2429143
+停止（只按 PID）：kill 2464244 2464248
+
+ℹ️ 可选：`VK_DRIVER_FILES=~/deepmoe-mesa/radeon_icd_b128.json` 起 serve 会用
+本地补丁的 RADV（LDS b128 读，STATUS §7 0bl；全部闸已过，FP4 GEMM −5~6%）。
+本实例用的是系统驱动。
 
 状态（2026-09-30 18:5x 重启：0bj tail 盲读 + 0bk codex 修复后的二进制；12:26 那轮 PID 2290402/2290408 已停）
 ----
