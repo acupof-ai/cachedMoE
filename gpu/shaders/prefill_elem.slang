@@ -72,30 +72,37 @@ void load_row32(uint64_t base, out float v[32]) {
 // --- 0: act_quant -------------------------------------------------------------
 // kIn = x f32, kOut = fp16 values, kA2 = f32 scales. flags & kFlagRound rounds
 // the input onto bf16 first (`x.to(dtype)` before `linear()`).
+// Four lanes a 32-block, eight elements each (two 16-byte loads, one 16-byte
+// store a lane): one thread a block had eight loads in flight and ran at half
+// of DRAM (STATUS §7 0ak's finding, §7 0bg). The block's amax is the max over
+// the four lanes' -- order-free, so the scale is bit for bit the one-thread one.
 void s_act_quant(uint3 gid, uint tid) {
     const uint blocks = pc.d / kBlockK;
     const uint idx = thread_index(gid, tid);
-    const uint rr = idx / blocks, blk = idx % blocks;
+    const uint part = idx & 3u, bi = idx >> 2;
+    const uint rr = bi / blocks, blk = bi % blocks;
     if (rr >= pc.n) return;
     const uint row = rr + pc.row_off;      // rows [row_off, row_off + n)
-    float v[32];
-    load_row32(Ptr[kIn] + ((uint64_t)row * pc.d + (uint64_t)blk * 32) * 4, v);
+    const uint64_t x = Ptr[kIn] + ((uint64_t)row * pc.d + (uint64_t)blk * 32 + part * 8) * 4;
+    const float4 a = load_f32x4(x), c = load_f32x4(x + 16);
+    float v[8];
+    [unroll] for (uint i = 0; i < 4; ++i) { v[i] = a[i]; v[4 + i] = c[i]; }
     float amax = 0.0f;
-    [unroll] for (uint i = 0; i < 32; ++i) {
+    [unroll] for (uint i = 0; i < 8; ++i) {
         v[i] = maybe_round(v[i], pc.flags);
         amax = max(amax, abs(v[i]));
     }
+    const uint lane = WaveGetLaneIndex();
+    amax = max(amax, WaveReadLaneAt(amax, lane ^ 1u));
+    amax = max(amax, WaveReadLaneAt(amax, lane ^ 2u));
     const float s = act_scale(amax);
     const float inv = 1.0f / s;
-    const uint64_t q = Ptr[kOut] + ((uint64_t)row * pc.d + (uint64_t)blk * 32) * 2;
-    [unroll] for (uint i = 0; i < 32; i += 8) {   // 16-byte stores, not 32 two-byte ones
-        uint4 o;
-        [unroll] for (uint z = 0; z < 4; ++z)
-            o[z] = f32tof16(fp8_round(clamp(v[i + 2 * z] * inv, -kFp8MaxF, kFp8MaxF))) |
-                   (f32tof16(fp8_round(clamp(v[i + 2 * z + 1] * inv, -kFp8MaxF, kFp8MaxF))) << 16);
-        *(uint4*)(q + (uint64_t)i * 2) = o;
-    }
-    store_f32(Ptr[kA2] + ((uint64_t)row * blocks + blk) * 4, s);
+    uint4 o;
+    [unroll] for (uint z = 0; z < 4; ++z)
+        o[z] = f32tof16(fp8_round(clamp(v[2 * z] * inv, -kFp8MaxF, kFp8MaxF))) |
+               (f32tof16(fp8_round(clamp(v[2 * z + 1] * inv, -kFp8MaxF, kFp8MaxF))) << 16);
+    *(uint4*)(Ptr[kOut] + ((uint64_t)row * pc.d + (uint64_t)blk * 32 + part * 8) * 2) = o;
+    if (part == 0u) store_f32(Ptr[kA2] + ((uint64_t)row * blocks + blk) * 4, s);
 }
 
 // --- 1: rmsnorm ---------------------------------------------------------------

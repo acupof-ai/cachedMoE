@@ -691,6 +691,8 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0bg. **act_quant（`prefill_elem` s0，MoE 的 expert quant 和 tiled 路也用它）改成四个 lane 一个 32 块、每 lane 8 个元素（两个 16 B 读、一个 16 B 写；块的 amax 用两次 lane 交换取 max——顺序无关，scale 逐位同）：17K `prefill_elem s0` 373 → **297 ms**、`moe quant` 138 → 93；4K 99 → 79 / 30 → 20；逐位（10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。同一个 kernel 有三个派发点，第一版只改了两个（tiled 路那个漏了），4K margin 0.271、17K 1.900——又是逐位闸抓的。`prefill_ahead/aq4b_{4133,r6_17010}`（单盘趟）。
+
 0bf. **注意力 softmax（`prefill_attn` s4）一趟：每 lane 的条目（最多 8 个 float4）和有效位留在寄存器里过 max 和 exp 两个阶段，S 和 index 列表只读一遍。17K 473 → **417 ms**，4K 115 → 103；逐位（求和顺序没动；10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。`prefill_ahead/smx1_{r6_17010,4133}`（单盘趟）。
 
 0be. **wo_a 的 x16 staging（fp32 → fp16，带逆 RoPE，写成 [groups][n32][K]）折进注意力的 finish 阶段（`prefill_attn` s5 的 `kFlagOutF16`）：finish 本来把 O × inv 舍成 bf16 存回 fp32 平面、staging 再读它一遍做 rope 后写 fp16；现在 finish 直接算出 staging 会算出的值写进 x16，fp32 平面不再写（它没有别的读者）。`op_attention` 通过 `PfStageRope::prestaged` 告诉 `op_gemm_coop` 跳过 staging；折叠只在 wo_a 会走 grouped LDS 路时做（`op_gemm` 的 coop 谓词 + `fused` 条件复制了一份），不走时 finish 照旧、`op_gemm` 的非 coop 路上加了守卫（prestaged 却走到那里就报错——第一版没这守卫，4K 最后一个不足 64 行的块走了 stage 0 读到没写的 fp32 平面，margin 0.146，被 4K 的逐位闸抓住；`gpu_prefill` 7/7 没抓到，它的块都够大）。17K：`attn finish` 507 → **336 ms**、`gemm 8192x4096 x16` 465 → 0（coop op 2,199 → 1,615），attention 桶 13.3 → **12.66 s**；4K attention 3.53 → 3.30；逐位（10.108 / 8.598，`gpu_prefill` 7/7，CPU 闸 25/25）。单盘趟（镜像盘还没回来）：17K ring 6 52.5、4K 47.1。`prefill_ahead/ofold2_{r6_17010,4133}`、`ofold_4133`（错的那趟）。

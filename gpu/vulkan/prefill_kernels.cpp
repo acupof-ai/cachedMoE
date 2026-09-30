@@ -577,7 +577,7 @@ Result<void> Prefill::op_act_quant(uint64_t x, uint32_t n, uint32_t d, uint64_t 
     s[0] = x; s[1] = q16; s[2] = sc;
     PfElemPush p; p.n = n; p.d = d;
     cost_ = {0, double(n) * d * (4 + 2 + 4.0 / 32)};
-    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * (d / 32)));
+    return flush_one(*k, &p, sizeof(p), groups_for(uint64_t(n) * (d / 32) * 4));   // four lanes a block (§7 0bg)
 }
 
 Result<void> Prefill::op_gemm(const PfWeight& w, uint32_t xfmt, uint64_t x, uint64_t xs,
@@ -1453,7 +1453,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         mark("moe tiled gate/up", {4.0 * inter * dim * hrows, 2 * wfp4 * (j1 - j0) + double(hrows) * (dim * 2.125 + inter * 4)});
         PfElemPush pq; pq.n = hrows; pq.d = inter;
         if (auto r = runner_->record(cmd_, *kq, &pq, sizeof(pq),
-                                     groups_for(uint64_t(hrows) * (inter / 32))); !r)
+                                     groups_for(uint64_t(hrows) * (inter / 32) * 4)); !r)   // four lanes a block
             return r;
         if (auto r = cmd_.barrier(); !r) return r;
         mark("moe tiled quant", {0, double(hrows) * inter * (4 + 2.125)});
@@ -1581,7 +1581,7 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
             if (auto r = rec(*ksw, &ps, sizeof(ps), groups_for(uint64_t(n) * (inter / 4))); !r) return r;
             mark("moe swiglu", {0, double(n) * inter * 12});
             PfElemPush pq; pq.n = n; pq.d = inter; pq.row_off = jb.h_off;
-            if (auto r = rec(*kq, &pq, sizeof(pq), groups_for(uint64_t(n) * (inter / 32))); !r) return r;
+            if (auto r = rec(*kq, &pq, sizeof(pq), groups_for(uint64_t(n) * (inter / 32) * 4)); !r) return r;
             mark("moe quant", {0, double(n) * inter * (4 + 2 + 4.0 / 32)});
             PfCoopPush ph; ph.n = n32; ph.k = inter; ph.idx_off = jb.h_off; ph.flags = 0;
             if (auto r = rec(*kx2, &ph, sizeof(ph), PrefillRunner::stage_groups(n32, inter)); !r) return r;
