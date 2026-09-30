@@ -1681,8 +1681,13 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
    按 `40 × (400 − 实测)`：**−23 ~ −205 ms/token，每一格都是负的**。
    **所以第 5 项仍然关闭，但关它的理由换了**：不是"自旋不合法"，是"host→device 的可见性粒度是 5.5 ms"。
    稳态 3.6 µs 若拿得到值 **15.9 ms/token**，够不着的原因是 decode 一层 host 侧最少 95 µs（§3 的 53）。
-6. **absorbed-K attention（V4.1）**：给定 `wkv` latent、`kv_norm`、只在最后 64 维上的 RoPE、fp8 量化点，哪些矩阵可以折叠。
-   代数在 `plan_p5.md` §3(b)，读 `D:\models\DeepSeek-V4.1-Flash\inference\`（只读）。
+6. ~~**absorbed-K attention（V4.1）**：哪些矩阵可以折叠~~ **已关闭，不要做**（`plan_p5.md` §3(b)，一次只读的代数检查）：
+   **V4.1-Flash 不是 MLA**——`wkv` 是唯一的 KV 矩阵且是降维，attention kernel 的 K 和 V 是同一个张量，
+   没有 `wkv_b` / `W_UK` / `W_UV` 可吸收（448/64 只是一个 512 向量的 RoPE 划分）。吸收已经烤进 checkpoint：
+   `wq_b` 就是 MLA 语言里的乘积形式。四个阻断折叠的点（`q_norm`、`kv_norm`、进 window KV 前对整个 512 维的 fp8 假量化、
+   输出最后 64 维的逆 RoPE）也一并记在那张表里，将来任何"把两个矩阵合起来"的提议先看它。
+   代数上唯一干净的 `wo_a`→`wo_b` 会把参数量 ×4（LoRA 分解存在的全部理由），也不做。
+   **2026-09-30 订正**：本条原来写成"待办"，读者会以为它开着；它在 P5 规划阶段就已经是一个"不做"。
 7. ~~**prologue/epilogue 融合**（c1–c3）~~ **划掉**（§3 的 49）。层内 barrier 实测：普通层 17 个 dispatch 一共 **18 µs**、源层 26 个一共 **24 µs**——40 层 = 0.8 ms/token，四分之一个抖动带。
    ~~**新开一项（Track G，§3 的 54）**：把 Track T 的 live-column mask 在 M=1 路径上特化掉~~
    **已做完，而且比预测大三倍**（Track K1a，2026-09-19，`plan_p5.md` §3(h)）。
