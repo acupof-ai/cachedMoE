@@ -283,6 +283,12 @@ private:
         if (r) free_slots_.pop_back();
         return r;
     }
+    // Once store_release publishes the SQE the request is in flight, full
+    // stop: this function fails only BEFORE the publish (ring full). A later
+    // enter flushes the whole backlog, so a transiently failed enter leaves
+    // the entry queued rather than failing the request -- failing it would
+    // hand its record (and its destination) back while the kernel can still
+    // consume the published SQE, the §6 18 family of corruption.
     Result<void> submit_locked(uint32_t idx, uint64_t chunk_id, const Slot& slot) {
         const unsigned tail = *sq_tail_;
         const unsigned head = load_acquire(sq_head_);
@@ -302,8 +308,13 @@ private:
         sq_array_[index] = index;
         store_release(sq_tail_, tail + 1);
 
-        const int r = sys_io_uring_enter(ring_fd_, 1, 0, 0);
-        if (r < 0) return fail(Err::Io, "io_uring_enter(submit)", static_cast<uint32_t>(errno));
+        for (int tries = 0;; ++tries) {
+            const int r = sys_io_uring_enter(ring_fd_, params_.sq_entries, 0, 0);
+            if (r >= 0) break;
+            if (errno == EINTR) continue;
+            if ((errno == EAGAIN || errno == EBUSY) && tries < 1024) { sched_yield(); continue; }
+            break;   // still published; the next enter flushes it
+        }
         return {};
     }
 

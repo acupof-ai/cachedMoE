@@ -1229,7 +1229,14 @@ Result<void> Prefill::engram_issue(uint32_t L, std::span<const uint32_t> prompt)
 
 Result<void> Prefill::engram_join() {
     if (!engram_issuing_.valid()) return {};
-    auto r = engram_issuing_.get();
+    // get() rethrows anything the worker threw past its Result (bad_alloc,
+    // a system_error from the thread itself): fail the prefill, not the process.
+    Result<void> r;
+    try {
+        r = engram_issuing_.get();
+    } catch (const std::exception& e) {
+        r = fail(Err::Internal, std::format("engram issue thread: {}", e.what()));
+    }
     engram_issuing_ = {};
     return r;
 }
@@ -1286,7 +1293,11 @@ Result<void> Prefill::engram_rows(uint32_t L, std::span<const uint32_t> prompt, 
 Result<void> Prefill::engram_issue_next(uint32_t after, std::span<const uint32_t> prompt) {
     for (uint32_t L = after + 1; L < cfg_->num_hidden_layers; ++L)
         if (cfg_->is_engram_layer(L)) {
-            engram_issuing_ = std::async(std::launch::async, [this, L, prompt] { return engram_issue(L, prompt); });
+            try {
+                engram_issuing_ = std::async(std::launch::async, [this, L, prompt] { return engram_issue(L, prompt); });
+            } catch (const std::system_error&) {
+                return engram_issue(L, prompt);   // no thread to be had: issue on this one
+            }
             return {};
         }
     return {};
