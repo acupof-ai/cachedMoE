@@ -416,7 +416,7 @@ tile 直接从全局内存读、没有 LDS 暂存也没有双缓冲）。**这�
 | **80** | **下一层的盲读提前到本层最后一批算的时候发（`ahead_next_`：本层最后一批的读到齐后，就把下一层按分片序的前 d 段发进环里空着的段；以及"深发"——第 i 批在第 i−(R−1) 批算完就发，不是 i−2）**（2026-09-30）——深发 ring 6：17K 45.0（不变），4K 35.2（+6 s：4K 本来盘就是瓶颈，多在飞的批只是把当前批的读挤慢）。提前发：先撞了两个自己的 bug（`times_.layers.resize` 让 `run_layer` 里的引用悬空——堆被踩；第 0 批没发——每层 ~64 个 expert 没读），修完在**旧的 io_uring 后端上 4K 三次都不逐位**（r2 30.98 s / margin 8.819、r6 36.09 / 8.422、跳过 engram 层前的提前发 34.8 / 8.598 逐位），17K r6 45.85 / 10.108 逐位。这就是 §6 18 的另一面：expert 的 1 MiB 读和 engram 的 4 KiB 行读一重叠就错——于是找到了 io_uring 后端的记录表冲突（§7 0aw）。**修好后端再跑同一份代码，四个配置全逐位**：4K r2 29.06、r6 29.23，17K r2 48.41、r6 46.90（镜像盘那趟探到 3.57 GB/s，在降频）。但收益没有：ring 2 时下一层的盲读本来就在本层 MoE 之后马上发、盘也没闲着（4K），ring 6 时 17K 第 0–19 层是 GPU-bound、第 20–39 层的读本来就全在盲读里。代码撤了（少 90 行），只留后端的修复。`prefill_ahead/early_*`、`early_fixed_*`、`ring6deep_*`。 | NO-GO（收益 0；但把 §6 18 定位了） |
 | **81** | **FP4 融合 GEMM 用 128 宽的 K 片（`prefill_gemm_lds128.spv`，`#define LDS_BK 128` 包一层，只给 expert 的 fp4 kernel）**（2026-09-30）——§3 68 量过 fp16 版的 w1 +12%，想着 fp4 版每片解码的 ALU 摊到两倍的 K 上会更好。17K ring 6：gate/up fp4 6,226 → **6,965 ms**（+12%）、down 2,882 → 3,437（+19%）。解码是按元素的，K 片宽一倍每线程要解的也宽一倍，寄存器压力先撞上了。`prefill_ahead/bk128_r6_17010`。 | NO-GO |
 | **82** | **routed expert 走 coop 路的行数门槛（`coopmat_min_rows` 16）挪到 8 或 32**（2026-09-30，17K ring 6 单盘）——8：routed GPU 11.39 → 11.27 s（tiled 1.0 → 0.7，coop 多 650 个 expert）；32：12.09（tiled 1.5）。但 **margin 变了**（10.310 / 10.338 对 10.108）：tiled 路（每 lane 一块的 fp32 点积、ldexp 和 xs 逐块乘）和 coop 路（fp16 tile 累加）不是逐位同一个数，门槛是数值的一部分。−0.1 s 不值得动基线。`prefill_ahead/coopmin{8,32}_r6_17010`。 | NO-GO |
-| **86** | **LDS GEMM 的 K 切片 64 → 32（`LDS_BK`，两份 Codex review 排第一的假设：LDS 27,648 → 15,360 B，每 CU 从 2 个 workgroup 变 4 个，占用率 2 → 4 wave/SIMD，暂存寄存器也减半——正面打 §7 0bn 的占用率结论；5120 和 2304 都能被 32 整除，不用处理尾巴）**（2026-09-30，补丁驱动、真实几何 wm4wn2）——**占用率确实翻倍了**（stats：LDS 15,360、VGPR 256 → 192、0 溢出），**kernel 全线更慢**：n=64 0.117（不变）、128 0.117 → 0.127、256 0.208 → **0.257（+24%）**、512 0.411 → **0.573（+39%）**、1024 0.906 → 1.154（+27%）。计数器指出机制（n=512 配对）：**VRAM 读 102.7 → 200.8 MB（+96%）**，而总数据量不变——**BK=32 时每行每片只读 32 个 half = 64 B，低于 128 B 的 cache line，每条线被取两次**；SALU 指令 +64%（多一倍的片 = 多一倍的循环和屏障），GPU cycles +18%，Waves 不变，VALU 只 +1%。**所以 64 halfs = 128 B = 正好一条 cache line 是被两侧钉住的局部最优**：往上 128 撞寄存器压力（§3 68、81：FP4 对 +12%/+19%），往下 32 撞读粒度。 | **NO-GO。并且它否掉的不止自己——见 §7 0bp：占用率不是这个 kernel 的限制** |
+| **86** | **LDS GEMM 的 K 切片 64 → 32（`LDS_BK`，两份 Codex review 排第一的假设：LDS 27,648 → 15,360 B，每 CU 从 2 个 workgroup 变 4 个，占用率 4 → 8 wave/SIMD，暂存寄存器也减半——正面打 §7 0bn 的占用率结论；5120 和 2304 都能被 32 整除，不用处理尾巴）**（2026-09-30，补丁驱动、真实几何 wm4wn2）——**占用率确实翻倍了**（stats：LDS 15,360、VGPR 256 → 192、0 溢出；4 → 8 wave/SIMD——**这里原写 2 → 4，算错了一倍，一个 CU 有 2 个 SIMD32，见 §7 0br**），**kernel 全线更慢**：n=64 0.117（不变）、128 0.117 → 0.127、256 0.208 → **0.257（+24%）**、512 0.411 → **0.573（+39%）**、1024 0.906 → 1.154（+27%）。计数器指出机制（n=512 配对）：**VRAM 读 102.7 → 200.8 MB（+96%）**，而总数据量不变——**BK=32 时每行每片只读 32 个 half = 64 B，低于 128 B 的 cache line，每条线被取两次**；SALU 指令 +64%（多一倍的片 = 多一倍的循环和屏障），GPU cycles +18%，Waves 不变，VALU 只 +1%。**所以 64 halfs = 128 B = 正好一条 cache line 是被两侧钉住的局部最优**：往上 128 撞寄存器压力（§3 68、81：FP4 对 +12%/+19%），往下 32 撞读粒度。 | **NO-GO。并且它否掉的不止自己——见 §7 0bp：占用率不是这个 kernel 的限制** |
 | **85** | **手写提出 FP4 路的地址算术**（`load_a_fp4` 改成收两个已成型的字节地址；每个寄存器槽的行号在 k 循环里不变、八个槽的行号差 16、而且八个槽读同一列（`kThreads % kQ == 0`），所以地址 = 一个提出循环的 64 位基址 + 每槽一个字面量 + 每个 K 片一个 32 位偏移）——动机是 0bl 之后重查 ISA 时看到的 45 条 `v_dual_mov_b32 0`，当时读成"每次 global load 的 64 位地址算术"（2026-09-30）| 17K ring 6：gate/up fp4 6,385 → **6,537 ms（+2.4%）**、down 2,926 → **2,980（+1.8%）**，两个我动过的 kernel 同向变差；attention −0.5%、shared +2.7%（别的 op 在漂移里）；逐位不变（10.108，`gpu_prefill` 7/7）。ISA 对照给出原因：**64 位乘法数量一个没变（两边都是 8 条 = 每个寄存器槽一次，早就被提出 k 循环了）**——ACO 的 LICM 已经做完这件事，手写版只是把同样的 8 个 64 位基址变成了**跨整个循环活着的寄存器**，在 255 VGPR 的形状上多付了压力 | **NO-GO，已撤回**。教训记两条：① 0ag 写的"85 条寄存器搬运是 ACO 在 256 VGPR 下的代价"要订正——那些 `v_dual_mov_b32 0` 是 64 位地址的高位补零，**和有用的 add 双发射在一起**，不是寄存器分配的浪费；② 在 ACO 上"手写编译器已经做的优化"是负收益，下一次先数 ISA 再改源码。`prefill_ahead/addr_r6_17010`。 |
 | **84** | **routed expert 的 FP4 LDS GEMM 降到 wm2（64 行块，`PrefillConfig::fp4_wm`，bench `DEEPMOE_PF_FP4_WM`；累加器 −32 VGPR、行块并行度 ×2——0bc 的「每个 expert 只有 ~80 个 workgroup 在飞」是它的动机）**（2026-09-30，§7 0bk 之后）：17K ring 6 同状态趟（总 56.6 对 56.4、attention 12.98 对 12.96——漂移对齐），gate/up fp4 6,385 → **6,705 ms（+5%）**、down 2,926 → **3,222（+10%）**、routed GPU 11.96 → 12.56 s；4K 在盘后没变化；两个 margin 逐位（8.598 / 10.108）。占用率不是这个 kernel 的限制——0t 的 wm4 对融合 FP4 变体仍然成立，0ag 的「钱在寄存器搬运和 b64 LDS 读」也就无法从 Slang 侧再压（b128 §3 71 已否、BK 128 §3 81 已否、整数解码 0ba 已否、x 过 LDS §3 83 已否）。**kernel 内部的便宜层到此关闭**：剩下的是换 kernel 家族级别的重构。旋钮留着（默认 0 = 原几何），下一个人重跑而不是重推 | NO-GO，默认不变 |
 | **83** | **tiled 小 expert 路（`prefill_gemm` s1 / s2）把 tile 的 x 经 LDS 一个 workgroup 只读一遍**（2026-09-30）——猜的是 8 个 row-wave 各自从 L2 读同一份 x（一个 expert 256 MB 的 L2 读对 16 MB 权重）是它 70 GB/s 的原因。17K tiled gate/up 687 → 708 ms、down 311 → 319（没变），4K 723 → **1,200**（更差：每片两个 barrier 在小 n 上比 L2 命中还贵）；逐位不变（10.108 / 8.598）。不是 L2。这条路 17K 1.0 s、4K 1.2 s（藏在盘后），限制在哪还没量到（不是权重流量、不是 x 流量；剩 VALU 里的 32 次 f16→f32 转换和每 job 一次派发的 drain）。`prefill_ahead/tiledx_{r6_17010,4133}`。 | NO-GO |
@@ -697,6 +697,85 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ## 7. Next, in order
 
+0br. **The full cycle account, from the ISA rather than from the counters -- and it reorders the whole backlog: stalls are 36% of the time and worth four times more than every instruction we could remove.** (user 2026-09-30 "go", after 0bq killed the counter-based model.)
+
+**The instrument.** `tools/isa_blocks.py` reads a `DEEPMOE_PIPELINE_STATS` dump and reports the
+static instruction mix per basic block, weighted by trip counts the caller supplies, split into
+WMMA / VOPD / other VALU / SALU / global load / LDS read / LDS write / waitcnt / barrier. It
+exists because the hardware instruction counters under-report (0bq) while the ISA does not: the
+dump is exact, and the trip counts are known from the shape. A `v_dual_*` encoding is reported
+as one issue slot carrying two operations, and both figures are printed, because which one
+matters depends on whether you are counting issue slots or work.
+
+**The loop body of the real kernel** (fp16 variant of the gate/up shape 2304x5120, wm4 wn2,
+`LDS_BK` 64, patched driver, 80 K slices):
+
+| block | what it does | per slice | of which |
+|---|---|---|---|
+| BB1 | write the prefetched slice into LDS | 38 issue | 24 VOPD, 12 `ds_write_b128`, **2 `s_barrier`**, 13 `s_waitcnt` |
+| BB2 | form the addresses for the next 12 global loads | 73 issue | 60 VALU, 12 `global_load` |
+| BB4 | read LDS, pack fragments, multiply | 117 issue | **32 `v_wmma`**, 33 VOPD, 48 `ds_read_b128`, 20 `s_waitcnt` |
+| BB5 | loop-carried moves | 32 issue | 32 VOPD |
+| BB6 | back edge | 7 issue | 7 VOPD |
+| | **total** | **267 issue** | **32 WMMA = 12%** |
+
+Per wave that is 21,804 issue slots, 2,560 of them WMMA, plus 2,883 `s_waitcnt` and 160
+`s_barrier`.
+
+**The account.** A WMMA coordinates 32 clocks of work on its SIMD32 and gfx1151 has 80 of them
+(0bq). Charging every other encoding one clock, for the n=512 dispatch (576 waves, 1,131,129
+measured active cycles):
+
+| | cycles a SIMD | share |
+|---|---:|---:|
+| WMMA issue | 589,824 | **52.1%** |
+| every other instruction's issue | 135,360 | **12.0%** |
+| **neither -- stalls** | **405,945** | **35.9%** |
+
+**What that implies, and it is the useful part.** Removing *every* non-WMMA instruction in the
+kernel would take it from 52.1% to **59.2%** of peak. Removing the stalls would take it to
+**81.3%**. So the entire "cut instructions" family -- codex's ranked items 2, 3 and 4, and my
+own reading of 0bn -- competes for at most 7 points, while the stalls hold 29. **The
+instruction count is not where the money is.** This also retires the question 0bq left open:
+calibrating the hardware instruction counter is no longer on the critical path, because the ISA
+answers the same question exactly and the answer is "not there".
+
+**Where the stalls are, from the same dump**: 2 `s_barrier` and 13 `s_waitcnt` in BB1, 20
+`s_waitcnt` in BB4, every slice. The barriers are the LDS staging handshake and the waitcnts are
+the global loads landing. With the LDS at 27,648 B a workgroup only 2 workgroups fit a 64 KB CU
+= 8 waves a CU = **4 waves a SIMD**, and the VGPR count of 256 would have allowed 6 -- so
+occupancy is LDS-bound, as codex said.
+
+**A correction to 0bn, 0bp and row 86 while I am here**: I wrote that occupancy as "2 waves a
+SIMD" and BK=32's as "2 to 4". A CU has **two** SIMD32s, so a 128-thread workgroup is 4 wave32s
+and the real figures are **4 waves a SIMD at BK=64 and 8 at BK=32**. Off by a factor of two
+throughout; the three places are fixed in place. The qualitative story is unchanged -- doubling
+occupancy made the kernel slower -- but the absolute numbers were wrong and anyone reasoning
+from them would have been misled.
+
+**The one experiment this points at.** Row 86 proved that buying occupancy by narrowing the K
+slice loses, because a 32-half row read is 64 B, under the 128 B cache line, and VRAM reads
+double. But those two things need not be coupled: **keep reading 128 B a row into registers as
+now, and stage it into LDS in two halves of 32 halfs, running two sub-slices of WMMA per global
+read.** LDS then falls to 15,360 B a workgroup -- 4 workgroups a CU, **8 waves a SIMD** -- with
+the global read granularity, and therefore the VRAM traffic, exactly unchanged. It costs twice
+the barriers, but with twice the waves to hide them. This is the one cell of the design space
+that row 86 did not test and that the cycle account says is where the 29 points live.
+Predicted, already halved: **unpriced** -- the account says the headroom is 29 points but says
+nothing about how much of the stall this removes. Falsified if GPU active cycles do not fall at
+the same VRAM read size, or if the extra barriers cost more than the waves recover. Cost:
+hours, in the staging loop of `prefill_gemm_lds.slang`, and it changes no arithmetic, so the
+bit-exactness gates are the check.
+
+**Caveat on the whole account**: it rests on WMMA occupying 32 clocks of a SIMD32, which is
+AMD's published figure for RDNA3 and is what makes the theoretical peak 59.4 TFLOP/s. The
+repo's 52.8 TFLOP/s is a *measured probe* peak, 89% of that, so a ceiling stated against the
+probe would be slightly lower. Charging one clock to every non-WMMA encoding is also generous
+to that bucket -- SALU issues on a separate pipe and can overlap -- so 12.0% is an upper bound
+and the 35.9% stall share is a lower bound.
+
+`tools/isa_blocks.py`, `scratchpad/ps_fp4`.
+
 0bq. **我提了一个模型、用自己的数据把它推翻了，过程中发现仪器有个真缺陷；换来的是一个不依赖计数器、两条路线互证的模型：这个 kernel 的 WMMA 管子有 47% 的时间是空的。**（用户 2026-09-30「go」+「让 CodeX 帮你」）
 
 **一、仪器的缺陷（已修）：指令计数类计数器会漏计，而且只会少报。** 同一份工作（wm4wn2、n=512、576 wave、补丁驱动）连跑四次，`VALU Instructions` 给 **2,484,288 / 2,691,312 / 2,898,336 / 3,312,384**——每次正好差 207,024，最大值才是能整除成每 wave 整数的那个；`LDS Instructions` 同样（998,400 / 1,152,000 / 1,152,000）。对照组说明这不是机器噪声：**`Waves` 四次都是 576，离散度 0.0%**（且等于按 grid 算出来的数），`GPU active cycles` ±2%、`VRAM read size` ±10%、`L2 命中` ±4.5%——这三个的抖动是物理的。**修法**：每组重复 `DEEPMOE_PERF_REPEAT` 次（默认 3）取**最大值**，并把"最差一次丢了百分之几"一起打出来。这条连同 §7 0bn 的「一次一个计数器」是这把仪器的两条使用纪律。
@@ -730,7 +809,7 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 
 ② **0bn 的适用范围我没交代清楚。** 那趟是 **fp16 随机权重、n=1024**，而且 **`wm2wn4` 这一格平台根本到不了**——`pf_lds_geo` 里 `wn = n <= 32 ? 1 : 2`，wn 永不超过 2，2304 行在 n > 64 时取 **wm4wn2**。0bn 已加这两条限制。
 
-**二、两份 review 都排第一的前提检查，我做了，通过了。** 抓真实**融合 FP4** kernel（`LdsWFp4=1`）在**补丁驱动**下的 pipeline stats：gate/up 2304×5120 wm4wn2 **VGPR 256 / LDS 27,648 / 0 溢出**，down 5120×2304 同样，**和 fp16 变体逐字节相同**。所以 0bn 的占用率刻画（2 workgroup/CU = 2 wave/SIMD、VGPR 顶格）**确实迁移到真实 FP4 路**——这条不是我猜的了。
+**二、两份 review 都排第一的前提检查，我做了，通过了。** 抓真实**融合 FP4** kernel（`LdsWFp4=1`）在**补丁驱动**下的 pipeline stats：gate/up 2304×5120 wm4wn2 **VGPR 256 / LDS 27,648 / 0 溢出**，down 5120×2304 同样，**和 fp16 变体逐字节相同**。所以 0bn 的占用率刻画（2 workgroup/CU = **4** wave/SIMD、VGPR 顶格）**确实迁移到真实 FP4 路**——这条不是我猜的了。
 
 **三、然后假设被证伪。** 两份 review 的头号杠杆都是「同一 tile 几何下把 LDS 压到 64 KB/3 以下换 3 个 workgroup」。有一个比它们提的 BK=48 更便宜的版本：**BK=32**（5120、2304 都整除，不用做 K 尾巴，而且暂存寄存器也减半）。结果见 **§3 86**：**占用率确实从 2 翻到 4 wave/SIMD（LDS 15,360、VGPR 192、0 溢出），kernel 慢了最多 39%。**
 
@@ -787,9 +866,9 @@ Track Y 的判决在同一份代码上**翻过一次**，翻的不是代码是 h
 | 4,2 | 0.880 | 159 MB | 4.7× | 57.0% | 5.87M | 3.73M | 256 | 27,648 | 0 |
 | 4,4 | 1.149 | **90 MB** | **2.6×** | 62.3% | 4.22M | 2.95M | 256 | 36,864 | **14 VGPR / 1,792 B scratch** |
 
-**这一段的适用范围，codex 审出来的两条限制（2026-09-30，务必连着读）**：① 这趟是 **fp16 随机权重、n=1024**，而真实 routed 路走的是 `LdsWFp4`、每个 expert 的 n 变化且常常小得多——「占用率是 FP4 的限制」目前是**强线索，不是已证**，要用真 FP4 路在代表性 n 上复核；② **`wm2wn4` 这一格平台根本到不了**：`pf_lds_geo`（`prefill_kernels.cpp:264`）里 `wn = n <= 32 ? 1 : 2`，**wn 永远不超过 2**，2304 行在 n > 64 时取的是 **wm4wn2**。所以下面这张表里真正描述平台行为的是 wm4wn2 那一行（0.880 ms、159 MB、27,648 B LDS、256 VGPR、无溢出）——**占用率结论（2 workgroup/CU = 2 wave/SIMD、VGPR 顶格）对它成立**，但"wm2wn4 是赢家"只是微基准里的事，要兑现得先把 wn4 对 FP4 放出来（代价是 128 token 的 tile 对小 n 的 expert 会白算，这大概就是当初把 wn 封在 2 的原因）。
+**这一段的适用范围，codex 审出来的两条限制（2026-09-30，务必连着读）**：① 这趟是 **fp16 随机权重、n=1024**，而真实 routed 路走的是 `LdsWFp4`、每个 expert 的 n 变化且常常小得多——「占用率是 FP4 的限制」目前是**强线索，不是已证**，要用真 FP4 路在代表性 n 上复核；② **`wm2wn4` 这一格平台根本到不了**：`pf_lds_geo`（`prefill_kernels.cpp:264`）里 `wn = n <= 32 ? 1 : 2`，**wn 永远不超过 2**，2304 行在 n > 64 时取的是 **wm4wn2**。所以下面这张表里真正描述平台行为的是 wm4wn2 那一行（0.880 ms、159 MB、27,648 B LDS、256 VGPR、无溢出）——**占用率结论（2 workgroup/CU = **4** wave/SIMD、VGPR 顶格）对它成立**，但"wm2wn4 是赢家"只是微基准里的事，要兑现得先把 wn4 对 FP4 放出来（代价是 128 token 的 tile 对小 n 的 expert 会白算，这大概就是当初把 wn 封在 2 的原因）。
 
-**流量随 tile 单调下降（668 → 90 MB）而时间在 wm2wn4 触底后变慢——所以它不是带宽受限**。赢家那格：24.16 GFLOP / 0.811 ms = **29.8 TFLOP/s = mma 峰值（52.8）的 56%**；L2 请求流量 157 MB / 0.811 ms = 194 GB/s，按 56.6% 命中折到 DRAM ≈ 68 MB = **84 GB/s，只有 236 GB/s 上限的三分之一**。限制是**占用率**：27,648 B LDS/workgroup，64 KB 的 CU 只塞得下 2 个 workgroup = 8 wave/CU = **2 wave/SIMD**，同时 VGPR 正好顶在 256 的天花板（`DEEPMOE_PIPELINE_STATS` 读的）。再放大 tile 本来还能省 1.7× 流量，但 wm4wn4 就开始溢出寄存器。这和 §3 84「占用率不是这个 kernel 的限制」**不矛盾也不支持**——84 量的是往下降到 wm2（更小的 tile），这里量的是往上升，两边都更慢，说明 wm2wn4 是这个 LDS 用量下的局部最优。
+**流量随 tile 单调下降（668 → 90 MB）而时间在 wm2wn4 触底后变慢——所以它不是带宽受限**。赢家那格：24.16 GFLOP / 0.811 ms = **29.8 TFLOP/s = mma 峰值（52.8）的 56%**；L2 请求流量 157 MB / 0.811 ms = 194 GB/s，按 56.6% 命中折到 DRAM ≈ 68 MB = **84 GB/s，只有 236 GB/s 上限的三分之一**。限制是**占用率**：27,648 B LDS/workgroup，64 KB 的 CU 只塞得下 2 个 workgroup = 8 wave/CU = **4 wave/SIMD**（原写 2，算错一倍；§7 0br），同时 VGPR 正好顶在 256 的天花板（`DEEPMOE_PIPELINE_STATS` 读的）。再放大 tile 本来还能省 1.7× 流量，但 wm4wn4 就开始溢出寄存器。这和 §3 84「占用率不是这个 kernel 的限制」**不矛盾也不支持**——84 量的是往下降到 wm2（更小的 tile），这里量的是往上升，两边都更慢，说明 wm2wn4 是这个 LDS 用量下的局部最优。
 
 **因此下一个杠杆有名字了**（都属于 §3 84 说的"换 kernel 家族级别的重构"，不是旋钮）：① 在 wm2wn4 几何下把 LDS/workgroup 压到 21,845 B 以下（64 KB / 3），换 3 wave/SIMD；② 或者削累加器的 VGPR 数，让更大的 tile 不再溢出。**先量再做**：预测的收益按惯例先砍半。
 
