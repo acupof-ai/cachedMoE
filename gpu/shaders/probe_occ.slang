@@ -26,6 +26,20 @@
 //           best a perfect scheduler could do with the same instruction count.
 //           The two together bracket what better VALU scheduling -- the one
 //           thing a different compiler could plausibly offer -- is worth.
+//   mode 6  mode 3 at the wm4wn4 ratio instead: 4 A + 4 B loads feed 16 MACs,
+//           0.5 tile loads per MAC against wm4wn2's 0.75. §7 0bo left "open
+//           wn4 up for FP4" unexplored because `pf_lds_geo` caps wn at 2; this
+//           prices the ratio side of that change (16 accumulator tiles, so it
+//           also exposes the register-pressure side) before any kernel work.
+//   mode 7  pure VALU, no tiles: per iteration 12 hashed operand pairs feed 96
+//           scalar fp32 FMAs on fp16 operands, four chains -- the
+//           `v_fma_mix_f32` pattern the real kernels use 1,024 times across
+//           the captured ISA dumps, one element each.
+//   mode 8  the same 192 FLOP per iteration as 48 packed-pair ops: acc =
+//           fma(a.x, b.x, fma(a.y, b.y, acc)) on half2 -- the shape ACO could
+//           merge into `v_dot2_f32_f16` (present on gfx1151, used nowhere in
+//           the tree). If it is emitted, mode 8 runs near twice mode 7; the
+//           ISA dump of this pipeline is the proof either way.
 //
 // Mode 1 against mode 0 prices occupancy; mode 2 against mode 1 prices the LDS
 // reads. Both would still apply under any other API: the 64 KB LDS per CU and
@@ -64,6 +78,59 @@ void main(uint lane : SV_GroupIndex) {
     if (pc.mode != 0) {
         for (uint i = lane; i < kLdsHalves; i += 256) Stage[i] = (i & 1) == 0 ? av : bv;
         GroupMemoryBarrierWithGroupSync();
+    }
+
+    // --- pure VALU modes: no tiles at all -----------------------------------
+    // Operands are hashed from the loop counter in BOTH modes with identical
+    // code, so nothing hoists or folds; the only difference is the FMA shape.
+    if (pc.mode == 7 || pc.mode == 8) {
+        float acc[4];
+        [ForceUnroll] for (uint q = 0; q < 4; ++q) acc[q] = float(pc.base + q) * 1e-3f;
+        for (uint i = 0; i < pc.n; ++i) {
+            [ForceUnroll] for (uint k = 0; k < 12; ++k) {
+                const uint r = (pc.base + i * 12 + k) * 2654435761u + lane;
+                // Two half2 values with safe exponents (mask keeps them finite).
+                const uint u0 = r & 0x3BFF3BFFu, u1 = (r >> 1) & 0x3BFF3BFFu;
+                const half2 a = reinterpret<half2>(u0), b = reinterpret<half2>(u1);
+                if (pc.mode == 7) {
+                    [ForceUnroll] for (uint q = 0; q < 4; ++q) {
+                        acc[q] = fma(float(a.x), float(b.x), acc[q]);
+                        acc[q] = fma(float(a.y), float(b.y), acc[q]);
+                    }
+                } else {
+                    [ForceUnroll] for (uint q = 0; q < 4; ++q)
+                        acc[q] = fma(float(a.x), float(b.x),
+                                     fma(float(a.y), float(b.y), acc[q]));
+                }
+            }
+        }
+        float s = 0; [ForceUnroll] for (uint q = 0; q < 4; ++q) s += acc[q];
+        Sink[lane] = s;
+        return;
+    }
+
+    if (pc.mode == 6) {
+        // wm4wn4: 16 accumulator tiles, 4 A + 4 B loads per iteration.
+        const uint stride = 16;
+        TileC c16[16];
+        [ForceUnroll] for (uint t = 0; t < 16; ++t) c16[t] = TileC(float(t));
+        for (uint i = 0; i < pc.n; ++i) {
+            const uint off = ((i * 256) % (kLdsHalves - 2048));
+            TileA a[4];
+            [ForceUnroll] for (uint t = 0; t < 4; ++t)
+                a[t] = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(Stage, off + t * 256, stride);
+            TileB b[4];
+            [ForceUnroll] for (uint t = 0; t < 4; ++t)
+                b[t] = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(Stage, off + 1024 + t * 256, stride);
+            [ForceUnroll] for (uint m = 0; m < 4; ++m)
+                [ForceUnroll] for (uint nn = 0; nn < 4; ++nn)
+                    c16[m * 4 + nn] = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a[m], b[nn], c16[m * 4 + nn]);
+        }
+        [ForceUnroll] for (uint t = 0; t < 8; ++t)
+            c16[t].Store<linalg.CoopMatMatrixLayout.RowMajor>(Sink, ((lane / 32) * 8 + t) * 256, 16);
+        [ForceUnroll] for (uint t = 8; t < 16; ++t)
+            c16[t].Store<linalg.CoopMatMatrixLayout.RowMajor>(Sink, 2048 + ((lane / 32) * 8 + (t - 8)) * 256, 16);
+        return;
     }
 
     TileC c[8];

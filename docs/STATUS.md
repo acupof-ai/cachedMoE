@@ -721,6 +721,14 @@ steps, and the reference continuation has to be produced step by step.**
 
 ## 7. Next, in order
 
+0by. **The two levers 0bx left are now both priced, and both close (user 2026-10-01 "go": wn4 first, dot2 if it survives). Three new probe_occ modes, one run each, no kernel touched.**
+
+**The dot2 lever is dead at the premise, and the ceiling confirms it would not have paid anyway.** gfx1151 has `v_dot2_f32_f16` -- one instruction, two fp16 products into an fp32 accumulator -- and the captured ISA dumps use it zero times against 1,024 `v_fma_mix_f32` (one element each). Mode 7 issues 96 scalar fp32-on-fp16 FMAs per iteration from hash-generated operands, mode 8 the same 192 FLOP as 48 nested packed-pair ops, `acc = fma(a.x, b.x, fma(a.y, b.y, acc))` on `half2` -- the shape that maps onto the instruction. Measured: **5.9 vs 5.8 TFLOP/s, identical**, and the pipeline's ISA holds **zero `v_dot2`** -- ACO lowers both shapes to one `v_fma_mix_f32` per product and has no pattern that fuses them. (The first attempt at these two modes used loop-invariant operands and reported 250 TFLOP/s -- the loop had been folded; a VALU microbenchmark is only believed when its operands depend on the counter.) Reaching the instruction would take a Mesa patch in the lds-load-b128 vein, and the ceiling says no: the dot is 1 of the 4.85 instructions per decoded element (0bx finding four), halving it saves ~10% of the tiled path's VALU stream ~= 2-3% of that path, invisible end to end, and 0's worth after the halving rule. **Closed.**
+
+**The wn4 ratio is worth +27-44% on the probe and cannot be cashed on this register file.** Mode 6 runs mode 3's loop at the `wm4wn4` ratio -- 4 A + 4 B tile loads feed 16 MACs, 0.5 loads per MAC against `wm4wn2`'s 0.75: **30.1 -> 43.3 TFLOP/s (+44%) at W 40**, and **~30 -> ~38 (+27%)** in the occupancy-constrained regime (W >= 80, two workgroups per CU; both runs of mode 6 agree, 43.3/43.4 and 37.8/38.0). So §7 0bo's unexplored "open wn4 up for FP4" has a real prize attached. The cost kills it: 16 fp32 accumulator tiles are **+64 VGPR** over today's 8, the real kernel already sits at RDNA 3.5's 256-VGPR architectural ceiling with 192 VGPR of non-accumulator state (0br), and the probe's own union pipeline reads 240 VGPR with only a trivial decode in it. With 8 accumulator tiles, every wm x wn = 8 split gives loads/MAC >= 0.75 (wm4wn2 and wm2wn4 tie at 0.75, wm8wn1 is 1.125), so **0.75 is optimal at 8 accumulators and the only way down is more of them** -- which is more VGPRs, which do not exist. fp16 accumulators would halve the cost and fail the bit-exact gate (the reference accumulates fp32). **Closed, and 0bo's suggestion goes from "unexplored" to "measured dead end: +27% behind a 64-VGPR bill the ceiling cannot pay".**
+
+**Where this leaves the FP4 GEMM's 24-27% of peak**: every named lever now has a number and a reason -- occupancy free (0bx mode 1), LDS reads at a favourable ratio free (mode 2), the real tile ratio -35% with the fix priced and unaffordable (mode 6), the decode's VALU count at both compilers' floor with no converter instruction in the ISA (0bx findings four and five), dot2 unreachable and too small (above), direct-to-LDS absent (0bx finding two). The 24-27% is what this silicon's register file, LDS size and ISA leave over for this arithmetic; the remaining FLOP-side money on this machine is in regimes, not kernels (keeping the clock up, 0bw's 23 us/expert ramp). `bench/results/linux/rocm_q/occ2.json`, probe modes 6-8 in `gpu/shaders/probe_occ.slang`.
+
 0bx. **Would a ROCm/HIP port help? No, and the reason is now measured rather than argued (user 2026-10-01 "would replicating rocm be any use, make a few micro benches").** Five findings, in the order they close the question.
 
 **One, both ceilings are already reachable from Vulkan, so no API can raise the roof.** `model_probe` on this boot: the fp16 cooperative-matrix rate peaks at **47.6-52.5 TFLOP/s = 80-88% of the theoretical 59.4**, and the cold DRAM stream peaks at **232 GB/s against the 236 GB/s ceiling** (262,144 KB over 16 workgroups; the "access shape" rows hold 208-213 GB/s on segmented reads). A port could only change how close a real kernel gets to those two numbers, not the numbers.
@@ -877,8 +885,11 @@ dependency rather than add waves to cover it.
 
 **Where that leaves the ranking** (codex's fusion review, same round, agreed the order):
 1. **`tiled` small-expert path** -- §7 0bt: 1,280 ms of the 5,071 ms chain at 4K, streaming 68.4
-   GB at 34% of the DRAM ceiling, with re-reads and L2 excluded and coalescing the open suspect.
-   Untouched by any closed row. **The best remaining target.**
+   GB at 34% of the DRAM ceiling, with re-reads and L2 excluded. ~~coalescing the open suspect~~
+   (0bw measured the isolated dispatch at 13.71 MB of VRAM reads = 1.09x the weight, and its
+   active-cycle denominator gives 227 GB/s -- coalescing is exonerated; the in-chain 80 GB/s is
+   execution latency plus the idle-after-NVMe clock ramp, and 0bx/0by close the instruction-count
+   and ratio levers behind it). What remains here is the regime, not the kernel.
 2. **Fusion**, with codex's ceilings, all already halved: gate/up epilogue → SwiGLU → quant →
    h16 **110-161 ms**; the same three as a standalone dispatch **85-136 ms**; down epilogue →
    scatter **85 ms**; gather into the gate/up prologue **≤76 ms**. All ≤3% of the bucket. Codex's

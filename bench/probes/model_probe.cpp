@@ -319,6 +319,32 @@ int main(int argc, char** argv) {
             std::printf("  | best %.1f TFLOP/s\n", best_m);
             jkv(keys[mode], jnum(best_m));
         }
+
+        // --- the two levers 0bx left: the wn4 ratio, and the dot2 pattern ----
+        std::printf("\nthe wn4 ratio and the dot2 pattern:\n");
+        static const char* names2[3] = {"wm4wn4 tile ratio", "96 fma_mix / iter",
+                                        "48 dot2-pattern / iter"};
+        static const char* keys2[3] = {"occ_tflops_wn4_ratio", "occ_gflops_fma_mix",
+                                       "occ_gflops_dot2"};
+        for (uint32_t m2 = 0; m2 < 3; ++m2) {
+            const uint32_t mode = 6 + m2;
+            double best_m = 0;
+            std::printf("  mode %u %-24s", mode, names2[m2]);
+            for (uint32_t w : {40u, 80u, 160u, 320u, 640u}) {
+                const uint32_t n = mode == 6 ? 2000 : 40000;
+                auto t = co.time({mode, n, 1000, 1000}, w, 1, false);
+                if (!t) continue;
+                // mode 6: 8 waves x 16 MACs; modes 7/8: 256 threads x 1,584 FLOP.
+                const double fl = mode == 6
+                    ? double(w) * 8 * 16 * n * 16 * 16 * 16 * 2
+                    : double(w) * 256 * n * 12 * 8 * 2;
+                const double tf = fl / *t / 1e12;
+                best_m = std::max(best_m, tf);
+                std::printf("  W %u %.1f", w, tf);
+            }
+            std::printf("  | best %.1f TFLOP/s\n", best_m);
+            jkv(keys2[m2], jnum(best_m));
+        }
         occ.destroy();
     }
 
