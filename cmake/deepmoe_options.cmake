@@ -135,7 +135,8 @@ set(DEEPMOE_SHADERS
     gpu/shaders/probe_resident.slang
     gpu/shaders/probe_hostflag.slang
     gpu/shaders/probe_model.slang
-    gpu/shaders/probe_mma.slang)
+    gpu/shaders/probe_mma.slang
+    gpu/shaders/probe_occ.slang)
 
 function(deepmoe_report)
     message(STATUS "deepmoe: tests=${DEEPMOE_BUILD_TESTS} vulkan=${DEEPMOE_ENABLE_VULKAN} "

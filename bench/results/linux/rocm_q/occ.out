@@ -1,0 +1,62 @@
+[INF] vulkan: AMD Radeon 8060S Graphics (RADV STRIX_HALO) (compute family 1)
+[INF] gpu memory: path A device-local/host-visible (memory type 3)
+device: AMD Radeon 8060S Graphics (RADV STRIX_HALO)  api 1.4.354  driver 109060099
+  maxMemoryAllocationSize 4095 MiB   maxBufferSize 4095 MiB   maxStorageBufferRange 4095 MiB
+  maxComputeSharedMemorySize 64 KiB   subgroup 64 (32..64)
+  minImportedHostPointerAlignment 4096 B
+  heap[0] 37.5 GiB host
+  heap[1] 75.0 GiB DEVICE_LOCAL
+  type[3] DEVICE_LOCAL|HOST_VISIBLE|COHERENT (heap 1)
+  type[4] DEVICE_LOCAL|HOST_VISIBLE|COHERENT (heap 1)
+  type[9] DEVICE_LOCAL|HOST_VISIBLE|COHERENT (heap 1)
+  external_memory_host yes   timeline_semaphore yes   buffer_device_address yes
+  integer_dot_product yes   subgroup_size_control yes   cooperative_matrix yes
+  shaderFloat16 yes   shaderInt8 yes   shaderInt16 yes   shaderInt64 yes
+  8bit_storage yes   16bit_storage yes   synchronization2 yes
+  timestampPeriod 10.0 ns   timestampValidBits 64
+
+
+dispatch  one alone 10.82 us; in a chain of 400: 0.33 us each with a barrier, 0.09 without; 640 empty workgroups + barrier 1.15 us
+
+stream, COLD (caches flushed first: a weight read): us for one dispatch reading B bytes over W workgroups (GB/s in brackets)
+      B \ W             1             2             4             8            16            20            40            64            80           128           160           256           320           640          1280          2560
+       64 K     3.4(  19)     2.6(  25)     2.0(  32)             -             -             -             -             -             -             -             -             -             -             -             -             -
+      256 K    11.4(  23)     6.6(  40)     4.0(  65)     3.3(  80)     3.4(  76)             -             -             -             -             -             -             -             -             -             -             -
+     1024 K    42.4(  25)    21.2(  49)    11.7(  89)     7.3( 144)     7.7( 136)     7.0( 141)     6.7(  97)     8.7( 121)             -             -             -             -             -             -             -             -
+     4096 K   144.1(  29)    73.5(  57)    38.6( 109)    22.5( 186)    22.2( 189)    21.2( 185)    28.5( 138)    26.0( 161)    20.7( 190)    24.6( 170)    16.0( 164)    23.5( 179)             -             -             -             -
+    16384 K   573.9(  29)   286.5(  59)   165.0( 102)    86.4( 194)    75.4( 222)    76.1( 219)    95.8( 171)    95.3( 176)    88.8( 177)    85.3( 197)    84.7( 186)    84.0( 200)    77.0( 204)    52.2( 201)             -             -
+    65536 K  2396.1(  28)  1297.7(  52)   644.5( 104)   354.4( 189)   294.7( 228)   294.5( 227)   364.9( 183)   348.3( 193)   354.7( 188)   345.3( 194)   330.1( 199)   318.0( 211)   299.2( 210)   306.8( 205)   309.2( 203)   204.7( 205)
+   262144 K  9591.5(  28)  5303.3(  51)  2594.1( 103)  1318.9( 204)  1150.9( 233)  1161.5( 231)  1313.3( 204)  1370.3( 196)  1321.1( 202)  1290.5( 208)  1275.7( 210)  1267.8( 212)  1239.0( 216)  1235.6( 212)  1239.4( 203)  1264.2( 199)
+
+stream, HOT (the same bytes again: an activation): us for one dispatch reading B bytes over W workgroups (GB/s in brackets)
+      B \ W             1             2             4             8            16            20            40            64            80           128           160           256           320           640          1280          2560
+       64 K     2.4(  27)     2.4(  27)     2.5(  26)             -             -             -             -             -             -             -             -             -             -             -             -             -
+      256 K     4.2(  63)     2.7(  96)     2.5( 106)     2.4( 111)     2.6( 102)             -             -             -             -             -             -             -             -             -             -             -
+     1024 K    13.2(  80)     7.2( 146)     4.3( 242)     2.9( 363)     2.7( 385)     2.7( 366)     2.6( 252)     2.8( 379)             -             -             -             -             -             -             -             -
+     4096 K    49.5(  85)    25.8( 163)    13.3( 314)     7.3( 572)     5.3( 787)     5.1( 767)     5.2( 761)     5.6( 753)     5.4( 727)     5.9( 707)     4.6( 569)     6.7( 630)             -             -             -             -
+    16384 K   211.9(  79)   101.1( 166)    51.5( 326)    27.7( 607)    21.9( 765)    21.8( 765)    21.4( 764)    22.1( 760)    20.9( 753)    22.4( 749)    21.4( 734)    23.0( 728)    22.1( 711)    17.4( 604)             -             -
+    65536 K  2189.3(  31)  1141.5(  59)   602.4( 111)   348.1( 193)   288.9( 232)   271.8( 246)   305.4( 219)   280.5( 239)   269.3( 248)   277.8( 242)   303.3( 216)   270.4( 248)   254.1( 248)   304.3( 207)   315.6( 199)   215.0( 195)
+   262144 K 10448.3(  26)  5268.6(  51)  2594.8( 103)  1368.8( 196)  1150.6( 233)  1200.9( 223)  1270.6( 211)  1253.2( 214)  1314.5( 203)  1245.0( 216)  1277.2( 209)  1270.7( 211)  1255.7( 213)  1256.6( 209)  1233.6( 204)  1249.3( 201)
+
+access shape, cold, 7 segments of 32 KB per row block:
+  W   40 (   9.2 MB): 7 segments each    41.8 us (219 GB/s) | contiguous    48.9 us (188) | 280 workgroups x 1 segment    47.0 us (195)
+  W   80 (  18.4 MB): 7 segments each    87.8 us (209 GB/s) | contiguous   105.2 us (174) | 560 workgroups x 1 segment    91.7 us (200)
+  W  160 (  36.7 MB): 7 segments each   174.9 us (210 GB/s) | contiguous   195.3 us (188) | 1120 workgroups x 1 segment   176.6 us (208)
+  W  320 (  73.4 MB): 7 segments each   347.4 us (211 GB/s) | contiguous   350.3 us (210) | 2240 workgroups x 1 segment   370.2 us (198)
+
+one workgroup: barrier 22.6 ns, dependent WaveActiveSum 42.4 ns
+
+dependent load latency:  32 KB 41 ns  2 MB 190 ns  24 MB 318 ns  256 MB 483 ns
+
+fp32 FMA: 15.09 TFLOP/s over 2560 workgroups
+
+fp16 coopmat 16x16x16 (8 waves a workgroup, 8 accumulators a wave):  W 40 47.6  W 80 47.1  W 160 42.2  W 320 44.4  W 640 45.4  W 1280 45.6  W 2560 45.6 TFLOP/s
+
+fp16 coopmat at the real kernel's occupancy:
+  mode 0 no LDS (control)      W 40 49.1  W 80 46.4  W 160 46.3  W 320 43.9  W 640 46.1  | best 49.1 TFLOP/s
+  mode 1 +27,648 B LDS live    W 40 45.9  W 80 45.4  W 160 45.6  W 320 45.4  W 640 45.9  | best 45.9 TFLOP/s
+  mode 2 +A/B read from LDS    W 40 44.3  W 80 45.1  W 160 44.8  W 320 45.1  W 640 45.1  | best 45.1 TFLOP/s
+  mode 3 +wm4wn2 tile ratio    W 40 28.5  W 80 29.7  W 160 30.7  W 320 29.8  W 640 29.2  | best 30.7 TFLOP/s
+  mode 4 +791 VALU ops/iter    W 40 5.1  W 80 5.2  W 160 5.2  W 320 5.2  W 640 5.2  | best 5.2 TFLOP/s
+  mode 5 791 VALU, 8 chains    W 40 5.8  W 80 5.8  W 160 5.8  W 320 5.8  W 640 5.8  | best 5.8 TFLOP/s
+-> bench/results/linux/rocm_q/occ.json

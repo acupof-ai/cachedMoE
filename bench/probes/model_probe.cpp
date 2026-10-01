@@ -288,6 +288,40 @@ int main(int argc, char** argv) {
         jkv("mma_f16_tflops", jnum(best));
     }
 
+    // --- what separates the real GEMM's 14.2 TFLOP/s from the probe's peak ---
+    // probe_occ adds the real kernel's LDS footprint, then its LDS tile reads,
+    // to the same WMMA loop. See gpu/shaders/probe_occ.slang.
+    gpu::Pipeline occ;
+    if (auto r = occ.create(g.device, g.shader_dir + "/probe_occ.spv", lspec, wave32); !r) {
+        std::fprintf(stderr, "probe: %s\n", r.error().str().c_str());
+    } else {
+        Ctx co{g, occ, desc, c.binds, c.reps};
+        static const char* names[6] = {"no LDS (control)", "+27,648 B LDS live",
+                                       "+A/B read from LDS", "+wm4wn2 tile ratio",
+                                       "+791 VALU ops/iter",
+                                       "791 VALU, 8 chains"};
+        static const char* keys[6] = {"occ_tflops_nolds", "occ_tflops_lds_alloc",
+                                      "occ_tflops_lds_read", "occ_tflops_tile_ratio",
+                                      "occ_tflops_valu",
+                                      "occ_tflops_valu_ilp"};
+        std::printf("\nfp16 coopmat at the real kernel's occupancy:\n");
+        for (uint32_t mode = 0; mode < 6; ++mode) {
+            double best_m = 0;
+            std::printf("  mode %u %-20s", mode, names[mode]);
+            for (uint32_t w : {40u, 80u, 160u, 320u, 640u}) {
+                const uint32_t n = 4000;
+                auto t = co.time({mode, n, 1000, 1000}, w, 1, false);
+                if (!t) continue;
+                const double tf = double(w) * 8 * 8 * n * 16 * 16 * 16 * 2 / *t / 1e12;
+                best_m = std::max(best_m, tf);
+                std::printf("  W %u %.1f", w, tf);
+            }
+            std::printf("  | best %.1f TFLOP/s\n", best_m);
+            jkv(keys[mode], jnum(best_m));
+        }
+        occ.destroy();
+    }
+
     jkv("device", "\"" + g.device.caps().device_name + "\"", true);
     js += "}\n";
     if (!json_path.empty()) {
