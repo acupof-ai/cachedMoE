@@ -6,9 +6,12 @@ commands, its %LOCALAPPDATA% paths and its eight restart logs were all Windows, 
 every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
-STATE: RUNNING (started 2026-10-01). Ready in 35.1 s, expert cache 85.8 GiB / 4900 slots
-(auto), max_context 65536, **read sources 2** (the mirror was auto-detected at
-/mnt/deepmoe2/models/DeepSeek-V4.1-Flash), /api/status 200. No PIDs are written down here
+STATE: RUNNING (restarted 2026-10-01 after the reboot that unwedged the USB4 host
+controller). Ready in ~30 s, expert cache 85.8 GiB / 4900 slots (auto), max_context 65536,
+**read sources 2** (the mirror was auto-detected at
+/mnt/deepmoe2/models/DeepSeek-V4.1-Flash and the P0 stripe is live on both: 45600 chunks on
+path A, 41040 on path B), /api/status 200. It runs in tmux session `deepmoe`, so
+`tmux attach -t deepmoe` shows the live log. No PIDs are written down here
 on purpose: the ones this file used to list -- 57498 / 57505, and a `kill 2533672` line
 older than those -- were already dead when they were read. Read the live ones out of the
 machine.
