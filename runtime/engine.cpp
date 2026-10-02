@@ -2174,10 +2174,17 @@ Result<void> Engine::layer_begin(Stream& s, uint32_t L, uint32_t position, bool&
         g->sub_us  += gp_sub_us;
         cur_->gp_open_ = nullptr;
     }
-    // design §9.5: the engram row reads used to be issued here, at layer 0's
-    // tail; they moved to `step_prologue` (2026-10-02), where layer 0's gate
-    // and P0 misses are still ahead of them. The `fetched()` fallback at the
-    // engram layer itself is the only other issue site.
+    // design §9.5: the engram's 96 row reads depend only on the token ids, so
+    // they go out the moment the first buffer of the token is on the GPU and
+    // overlap it, instead of blocking the engram layers when they are reached.
+    if (L == 0) {
+        for (uint32_t E = 1; E < c.num_hidden_layers; ++E) {
+            if (!cur_->engram_.has_layer(E)) continue;
+            const TimePoint f0 = Clock::now();
+            if (auto r = cur_->engram_.fetch(E, cur_->history_, position); !r) return r;
+            cur_->engram_host_ms_[E] += ms_since(f0);
+        }
+    }
     return {};
 }
 
@@ -3523,20 +3530,6 @@ Result<void> Engine::step_prologue(Stream& s, uint32_t in_token, uint32_t positi
             return fail(Err::Internal,
                         std::format("the residency timeline is at {} but token {} starts "
                                     "at {}", *cur, s.token_, base));
-    }
-    // design §9.5: the engram's row reads depend only on the token ids, which
-    // `history_[position]` fixed at the top of this function -- so they are
-    // issued HERE, before layer 0 is even recorded, not at the end of layer 0
-    // as until 2026-10-02. The first engram layer is L=1: issued from layer
-    // 0's tail it had layer 0's record alone to hide in (microseconds), while
-    // from here it also overlaps layer 0's residency gate and P0 misses. The
-    // reads stay P2, so they take nothing from the expert misses; `fetch` is
-    // issue-only and the engram layer's `record` is what waits.
-    for (uint32_t E = 1; E < c.num_hidden_layers; ++E) {
-        if (!s.engram_.has_layer(E)) continue;
-        const TimePoint f0 = Clock::now();
-        if (auto r = s.engram_.fetch(E, s.history_, position); !r) return r;
-        s.engram_host_ms_[E] += ms_since(f0);
     }
     return {};
 }
