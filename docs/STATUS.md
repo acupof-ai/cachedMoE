@@ -719,7 +719,22 @@ steps, and the reference continuation has to be produced step by step.**
 17. **A 17K prompt loses the device under the default 5,500-slot cache** (Linux, 2026-09-29, §7 0t): prefill's buffers are allocated from the prompt's length, and together with a 96 GiB expert cache that exceeds GTT, so the kernel reports "Not enough memory for command submission". **Fixed (§7 0ah, 2026-09-30)**: the cache budget now subtracts prefill's working set at min(`--max-context`, 16K) tokens first (17K lands on 5,046 slots automatically and runs to completion), and a longer prompt is refused before prefill on the remaining heap rather than losing the device. The half that is still open: the web UI's 65,536-token context only reserves up to 16K, so a prompt above 16K is refused -- the real fix is for prefill to allocate its working set in blocks (the KV planes at full length, only one block of activations), and that is not done.
 18. ~~prefill is no longer bit-exact under a concurrent 4 KiB DMA stream~~ **located and fixed** (2026-09-30, §7 0aw; §3 78 and 80 are its two appearances): the io_uring backend's in-flight record table had 1,024 entries, indexed by `chunk_id & 1023`, and overwrote unconditionally. When a 1 MiB expert read queues behind a few hundred thousand 4 KiB engram row reads, more than 1,024 new chunks are issued before it lands, and one of the new ones takes its record: completion events are attributed by record, so **another chunk's future is treated as complete first** -- the GPU starts computing before the data has landed, and what it gets wrong is exactly a few isolated positions, in only a few ways (8.374 ×5). It can only happen while the expert stream and the engram stream overlap in flight, which is why decode (1 MiB backfill only) never got it wrong, and neither did engram row reads as long as they were waited out within their layer (the default path). The fix: records come off a free list, and an SQE's `user_data` holds the record's index instead of the chunk id, with short-read continuations and bounce retries reusing the original record. Verified: the same "issue early" code (§3 80) got 4K wrong three times out of three on the old backend and was bit-exact in all four configurations on the new one; the default path gives 4K 29.72 / 8.598, `gpu_prefill` 7/7, and `suite.io` passes. That reopens §3 78's route (issuing engram rows early, 17K −2.4 s).
 19. **prefill's host time grows by 2–3 s when serve's memory is too close to the ceiling** (2026-09-30, §7 0as, 0av): 4,900 slots (85.8 GiB) + 9.2 GiB resident + a 17K working set, and another 5.7 GiB hits it -- `other` grows from 3.0 to 5–6 s, and it does not show in the bench. THP is `always`, and the suspicion is allocation waiting on whole pages or on reclaim. The automatic budget works from `available_physical_bytes()` minus a 12 GiB floor; passing `--cache-slots` by hand has no such protection, and anything newly made resident has to be taken out of the slot count (the scale planes, 5.7 GB ≈ 300 slots; a 6-segment transit ring, +4.8 GB ≈ 260 slots).
-20. **The mirror drive falls off the USB4 bus** (2026-09-30, §7 0bd). The mechanism (the 09:05:53 occurrence, from the kernel log): the PCIe tunnel drops first (pciehp Link Down), the enclosure is not disconnected at the USB4 level, but every config read and write the thunderbolt driver makes to the enclosure's router and to the host router times out -- the control channel is wedged, the tunnel cannot be rebuilt, and a PCI rescan cannot reach that layer; unplug and replug the enclosure (to power-cycle the ASM2464 bridge), and if that fails, rebind that USB4 port's thunderbolt driver. **The final conclusion, 2026-09-30 (§7 0bo): when thunderbolt's config access to both routers times out across the board, the only recovery is a reboot -- rescan, unbind + re-probe, and moving to the other USB4 port all fail, and one reboot brought the drive back clean (full speed 40 Gb/s, probed at 3.70 GB/s, no degradation). That also clears the enclosure and the cable: after moving ports, "connects, drops 11 seconds later, enumerates as sda" is a side effect of the wedged state, not the D2–D4 family of hardware faults. Next time this appears, do not spend time on the kernel side -- cut the power. Also: `rx_speed` is a per-lane figure, so 20.0 Gb/s with `rx_lanes=2` is full speed, not a downgrade.** What follows is the record of the process at the time. **2026-09-30, later**: rebinding was tried and **cannot recover it** -- the unbind succeeds, and the re-bind reports `invalid hop: 0` / `failed to determine connection manager`; this host router needs to be power-cycled. This machine has two USB4 ports (`c6:00.5` = domain0, `c6:00.6` = domain1), and using the other one is the only way out short of a reboot; after moving ports the enclosure is recognised but **drops 11 seconds after connecting**, and enumerates as USB mass storage (sda) rather than a PCIe tunnel -- the old D2–D4 "the bridge is what is broken" route. The two-drive basis stays suspended. After ~90 minutes of continuous running at 74–75 °C the J.ZAO dropped, `/sys/class/nvme` was left with only the internal drive, a PCI rescan did not bring it back, and it had to be replugged; on the run where it dropped, the IO engine failed 955 requests over to the internal drive and the result was bit-exact. Long benchmarks should expect it, and IO-bound comparisons should only be made between runs whose header probe reads ≥ 3.7 GB/s.
+20. **The mirror drive falls off the USB4 bus** (2026-09-30, §7 0bd; **recurrence and a new
+    hypothesis 2026-10-02, read this paragraph first**). **It happened again on 2026-10-01 at
+    21:16 and the circumstances change the diagnosis: the machine was IDLE** (the web UI was up
+    with nobody using it), and it then ran the same 11-second connect/disconnect loop all night,
+    so the first bench arm of 2026-10-02 silently ran single-drive and had to be thrown away --
+    **check `serve.log` for `holds 48 of 48` before trusting any IO-bound arm.** Both occurrences
+    now (2026-10-01 06:44 and 2026-10-01 21:16) were at idle and neither was under load, so
+    **"74 °C thermal throttling" does not explain it and the 2026-09-30 reading of the port-switch
+    behaviour as merely "a side effect of the wedged state" is too strong**: this is a recurring
+    independent failure, most likely the external NVMe's deep idle power state (APST) or the USB4
+    link's runtime PM failing to wake. Staged for the owner's next reboot (written into
+    `/boot/limine.conf`, previous file backed up beside it):
+    **`nvme_core.default_ps_max_latency_us=0`**, which forbids the deep power states, at the cost
+    of a few hundred mW and a little more heat while idle. A cooling heatsink is complementary,
+    not an alternative. The recovery is still a reboot. The rest of this item is the 2026-09-30
+    record, which stands as far as recovery goes. The mechanism (the 09:05:53 occurrence, from the kernel log): the PCIe tunnel drops first (pciehp Link Down), the enclosure is not disconnected at the USB4 level, but every config read and write the thunderbolt driver makes to the enclosure's router and to the host router times out -- the control channel is wedged, the tunnel cannot be rebuilt, and a PCI rescan cannot reach that layer; unplug and replug the enclosure (to power-cycle the ASM2464 bridge), and if that fails, rebind that USB4 port's thunderbolt driver. **The final conclusion, 2026-09-30 (§7 0bo): when thunderbolt's config access to both routers times out across the board, the only recovery is a reboot -- rescan, unbind + re-probe, and moving to the other USB4 port all fail, and one reboot brought the drive back clean (full speed 40 Gb/s, probed at 3.70 GB/s, no degradation). That also clears the enclosure and the cable: after moving ports, "connects, drops 11 seconds later, enumerates as sda" is a side effect of the wedged state, not the D2–D4 family of hardware faults. Next time this appears, do not spend time on the kernel side -- cut the power. Also: `rx_speed` is a per-lane figure, so 20.0 Gb/s with `rx_lanes=2` is full speed, not a downgrade.** What follows is the record of the process at the time. **2026-09-30, later**: rebinding was tried and **cannot recover it** -- the unbind succeeds, and the re-bind reports `invalid hop: 0` / `failed to determine connection manager`; this host router needs to be power-cycled. This machine has two USB4 ports (`c6:00.5` = domain0, `c6:00.6` = domain1), and using the other one is the only way out short of a reboot; after moving ports the enclosure is recognised but **drops 11 seconds after connecting**, and enumerates as USB mass storage (sda) rather than a PCIe tunnel -- the old D2–D4 "the bridge is what is broken" route. The two-drive basis stays suspended. After ~90 minutes of continuous running at 74–75 °C the J.ZAO dropped, `/sys/class/nvme` was left with only the internal drive, a PCI rescan did not bring it back, and it had to be replugged; on the run where it dropped, the IO engine failed 955 requests over to the internal drive and the result was bit-exact. Long benchmarks should expect it, and IO-bound comparisons should only be made between runs whose header probe reads ≥ 3.7 GB/s.
 
 ---
 
@@ -887,21 +902,46 @@ stall is presumably the prefetch latency (the global loads for slice i+1 are hid
 four MMA steps, and the split halved that window to two), and what remains is to shorten the
 dependency rather than add waves to cover it.
 
-**Where that leaves the ranking** (codex's fusion review, same round, agreed the order):
-1. **`tiled` small-expert path** -- §7 0bt: 1,280 ms of the 5,071 ms chain at 4K, streaming 68.4
-   GB at 34% of the DRAM ceiling, with re-reads and L2 excluded. ~~coalescing the open suspect~~
+**Where that leaves the ranking** (codex's fusion review, same round, agreed the order).
+**Read the 2026-10-02 note under this list first: items 1 and 3 have since been closed and
+item 2 is the only one of the three still open.**
+1. ~~**`tiled` small-expert path**~~ **closed 2026-10-02** -- §7 0bt: 1,280 ms of the 5,071 ms
+   chain at 4K, streaming 68.4 GB at 34% of the DRAM ceiling. ~~coalescing the open suspect~~
    (0bw measured the isolated dispatch at 13.71 MB of VRAM reads = 1.09x the weight, and its
    active-cycle denominator gives 227 GB/s -- coalescing is exonerated; the in-chain 80 GB/s is
-   execution latency plus the idle-after-NVMe clock ramp, and 0bx/0by close the instruction-count
-   and ratio levers behind it). What remains here is the regime, not the kernel.
+   execution latency plus the idle-after-NVMe clock ramp). Every lever behind it now has a
+   number: 0bx closed the instruction count (both compilers at the 4.85-per-element floor, no
+   FP4 converter in the ISA, no direct-to-LDS) and 0by closed the tile ratio (+27-44% on the
+   probe behind a 64-VGPR bill the 256 ceiling cannot pay) and dot2 (ACO emits none, and the
+   ceiling would not pay for a driver patch). **What was left was the regime, and row 93 closed
+   that too for decode**: holding the clock with `power_dpm_force_performance_level=high`
+   changes nothing there, because 0bw's ramp is a prefill effect. The clock lever is still
+   unmeasured **for prefill**, which is the one place it should work.
 2. **Fusion**, with codex's ceilings, all already halved: gate/up epilogue → SwiGLU → quant →
    h16 **110-161 ms**; the same three as a standalone dispatch **85-136 ms**; down epilogue →
    scatter **85 ms**; gather into the gate/up prologue **≤76 ms**. All ≤3% of the bucket. Codex's
    one non-obvious contribution here: pairing gate and up for the *same* rows as two `wm2`
    halves in one workgroup keeps **the same eight accumulator tiles a wave** as today's one-sided
    `wm4`, so it is not the plain `wm2` §3 84 measured as a loss and it does not breach 256 VGPRs.
-3. **Barrier pruning** ~27 ms after halving, 0.5% -- and note codex's methodological correction
-   below.
+3. ~~**Barrier pruning**~~ ~27 ms after halving, 0.5% -- below the jitter band on its own
+   number, and note codex's methodological correction below, which removes the 498 ms that
+   made it look bigger. Not worth a day.
+
+**2026-10-02, what this ranking looks like after rows 93 / 0bx / 0by.** Of the three items
+above, **only fusion is still open**, and its own ceilings are all <=3% of the bucket after
+halving. On the **decode** side every named lever is now numbered and closed -- cache policy
+(§1 "eviction policy as a lever", §3 47: Belady is +40% and all of it is in the future),
+capacity (no bytes left), the engram rows' issue point and the GPU clock (row 93), multi-stream
+shared-early (row 92), the ring and resident scales (row 91), and the patched driver (row 89).
+Speculation is the one line with a 2x claim still attached (§3 34: conditional GO x1.18-1.19),
+and it is gated behind MB/token coming down, which nothing above achieves. **So the honest
+statement of where decode's 109 ms/token stands is: 44 ms of it is the disk at 89% of that
+drive's measured ceiling, and 62 ms is compute whose largest block sits at 24-27% of the mma
+peak for reasons that are this silicon's register file, LDS size and ISA.** The remaining
+money on this machine is physical -- the mirror drive's stability and cooling (§6 risk 20,
+which row 93 reopened as a recurring idle failure, with
+`nvme_core.default_ps_max_latency_us=0` staged for the next reboot) -- not algorithmic. Anyone
+proposing a kernel change here should first say which of 0bx's two throughputs it reduces.
 
 **A correction to §7 0bs**: I wrote that the 498 ms between the op-time sum and the `moe routed
 (gpu)` bucket is inter-dispatch drain and barrier cost that fusion could recover. Codex pointed

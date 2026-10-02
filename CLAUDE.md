@@ -41,7 +41,7 @@ export DEEPMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash" \
 cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/linux-clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build -j 1 -LE "needs-model|needs-gpu"   # CPU gate, ~4 s, 25/25
-.venv/bin/python tests/run_all.py                          # 29/29 gates
+.venv/bin/python tests/run_all.py                          # 30/30 gates
 ctest --test-dir build -j 1                                # full, needs the checkpoint + GPU
 ```
 

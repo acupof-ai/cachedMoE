@@ -49,6 +49,22 @@
 // gfx950 and for no gfx11 target).
 //
 // Wave32 required (the pipeline sets it): 256 threads are 8 waves.
+//
+// Run it with `build/model_probe` (the whole ladder prints at the end; add
+// `--json FILE` to record it). Results so far are in STATUS §7 0bx and 0by, and
+// `bench/results/linux/rocm_q/occ{,2}.json`.
+//
+// TWO RULES FOR ADDING A MODE, both learned the hard way here:
+//  - A VALU mode's operands must depend on the loop counter. The first version
+//    of modes 7 and 8 used loop-invariant operands, the whole loop folded, and
+//    they reported 250 TFLOP/s -- a number about nothing. Modes 7/8 hash the
+//    counter into the operands with identical code in both arms, so the only
+//    difference between them is the FMA shape.
+//  - A claim about which instruction the compiler emitted is only believed from
+//    the ISA. Dump it with `DEEPMOE_PIPELINE_STATS=DIR build/model_probe` and
+//    read DIR/probe_occ_*.txt. That is how 0by established there is no `v_dot2`
+//    in mode 8, and how 0bx caught `RADV_DEBUG=llvm` silently falling back to
+//    ACO (both arms' ISA was byte for byte identical).
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint4>   Src;
 [[vk::binding(1, 0)]] RWStructuredBuffer<float> Sink;
