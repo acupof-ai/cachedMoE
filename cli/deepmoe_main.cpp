@@ -74,6 +74,8 @@ int usage(int code = 2) {
         "                [--transit-ring N]  (segments of 64 expert slots, 1.2 GB each; 2)\n"
         "                [--cache-slots N]  (5711 slots ~ 100 GiB, design P1/P2)\n"
         "                [--check-topk] [--profile FILE.jsonl]\n"
+        "                [--dspark] [--spec-k 1..5] [--spec-top-k N]\n"
+        "                [--spec-confidence-min X] (experimental, permits k=0)\n"
         "      A long-running engine behind line-delimited JSON on stdin/stdout:\n"
         "      generate (streamed tokens, temperature/top_p/seed, KV continuation\n"
         "      or rollback to the common prefix, named sessions), cancel, reset,\n"
@@ -555,8 +557,9 @@ int cmd_run(int argc, char** argv) {
         if (resident_only == "all")      engine.set_resident_only(runtime::Engine::ResidentOnly::All);
         else if (resident_only == "stall1") engine.set_resident_only(runtime::Engine::ResidentOnly::Stall1);
         else if (resident_only == "verify") engine.set_resident_only(runtime::Engine::ResidentOnly::Verify);
+        else if (resident_only == "mask") engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
         else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
-        else { std::fprintf(stderr, "--resident-only takes off|all|stall1|verify, got '%s'\n", resident_only.c_str()); return 1; }
+        else { std::fprintf(stderr, "--resident-only takes off|all|stall1|verify|mask, got '%s'\n", resident_only.c_str()); return 1; }
     }
     const runtime::DecodeState* st = engine.decode_state();
     std::vector<uint32_t> prompt;

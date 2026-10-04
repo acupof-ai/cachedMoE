@@ -78,13 +78,36 @@ struct CmPush {
     float softmax_scale;   // head_dim ** -0.5
     uint  s_split;         // score: slices of head_dim, partial S planes summed by softmax
     uint  pv_split;        // pv: slices of the list, partial O planes summed by finish
+#if defined(DEEPMOE_CM_BATCH)
+    uint n_ovf, list_stride, part_stride; // verify overflow and per-query planes
+#endif
 };
 [[vk::push_constant]] CmPush pc;
 
+#if defined(DEEPMOE_CM_BATCH)
+static uint cm_query;
+#endif
+uint64_t cm_ptr(uint slot) {
+    const uint64_t base = Ptr[slot];
+#if defined(DEEPMOE_CM_BATCH)
+    const uint64_t m = cm_query;
+    if (slot == kQ) return base + m * pc.n_heads * pc.head_dim * 2;
+    if (slot == kTopIdx) return base + m * pc.list_stride * 4;
+    if (slot == kRope) return base + m * pc.rope_dim * 4;
+    if (slot == kScore) return base + m * pc.n_heads * pc.score_stride * 4;
+    if (slot == kO) return base + m * pc.n_heads * pc.head_dim * 4;
+    if (slot == kG16) return base + m * pc.e * pc.head_dim * 2;
+    if (slot == kQ16) return base + m * pc.n_heads * pc.head_dim * 2;
+    if (slot == kP16) return base + m * pc.n_heads * pc.e * 2;
+    if (slot == kInv) return base + m * pc.n_heads * 4;
+    if (slot == kPart) return base + m * pc.part_stride * 4;
+#endif
+    return base;
+}
 groupshared float gRedF[kWg];
 
 int top_idx(uint t) {
-    return (t < pc.n_kv) ? (int)load_u32(Ptr[kTopIdx] + (uint64_t)t * 4) : -1;
+    return (t < pc.n_kv) ? (int)load_u32(cm_ptr(kTopIdx) + (uint64_t)t * 4) : -1;
 }
 
 // --- stage 0 ------------------------------------------------------------------
@@ -120,8 +143,8 @@ void stage_gather(uint gid, uint tid) {
         const int idx = top_idx(row);
         [unroll] for (uint i = 0; i < 32; ++i) v[i] = 0.0f;
         if (idx >= 0 && uint(idx) < pc.n_win) {
-            const uint64_t base = Ptr[kWinVal] + (uint64_t)idx * pc.head_dim + d0;
-            const uint e = load_u8(Ptr[kWinScale] + (uint64_t)idx * (pc.head_dim / kBlockK)
+            const uint64_t base = cm_ptr(kWinVal) + (uint64_t)idx * pc.head_dim + d0;
+            const uint e = load_u8(cm_ptr(kWinScale) + (uint64_t)idx * (pc.head_dim / kBlockK)
                                    + d0 / kBlockK);
             const float sc = ldexp(1.0f, int(e) - 127);
             [unroll] for (uint w = 0; w < 2; ++w) {
@@ -129,14 +152,29 @@ void stage_gather(uint gid, uint tid) {
                 [unroll] for (uint j = 0; j < 16; ++j)
                     v[w * 16 + j] = fp8_decode((b[j / 4] >> (8 * (j % 4))) & 0xFFu) * sc;
             }
+#if defined(DEEPMOE_CM_BATCH)
+        } else if (idx >= 0 && uint(idx) < pc.n_win + pc.n_ovf) {
+            const uint row = uint(idx) - pc.n_win;
+            const uint64_t base = cm_ptr(10) + (uint64_t)row * pc.head_dim + d0;
+            const uint e = load_u8(cm_ptr(11) + (uint64_t)row * (pc.head_dim / kBlockK) + d0 / kBlockK);
+            const float sc = ldexp(1.0f, int(e) - 127);
+            [unroll] for (uint w = 0; w < 2; ++w) {
+                const uint4 b = load16(base + (uint64_t)w * 16);
+                [unroll] for (uint j = 0; j < 16; ++j)
+                    v[w * 16 + j] = fp8_decode((b[j / 4] >> (8 * (j % 4))) & 0xFFu) * sc;
+            }
         } else if (idx >= 0) {
-            load_bf16x32(Ptr[kCmpKv] + ((uint64_t)(uint(idx) - pc.n_win) * pc.head_dim + d0) * 2, v);
+            load_bf16x32(cm_ptr(kCmpKv) + ((uint64_t)(uint(idx) - pc.n_win - pc.n_ovf) * pc.head_dim + d0) * 2, v);
+#else
+        } else if (idx >= 0) {
+            load_bf16x32(cm_ptr(kCmpKv) + ((uint64_t)(uint(idx) - pc.n_win) * pc.head_dim + d0) * 2, v);
+#endif
         }
-        store_h32(Ptr[kG16] + ((uint64_t)row * pc.head_dim + d0) * 2, v);
+        store_h32(cm_ptr(kG16) + ((uint64_t)row * pc.head_dim + d0) * 2, v);
     } else {
         const uint h = row - pc.e;
-        load_bf16x32(Ptr[kQ] + ((uint64_t)h * pc.head_dim + d0) * 2, v);
-        store_h32(Ptr[kQ16] + ((uint64_t)h * pc.head_dim + d0) * 2, v);
+        load_bf16x32(cm_ptr(kQ) + ((uint64_t)h * pc.head_dim + d0) * 2, v);
+        store_h32(cm_ptr(kQ16) + ((uint64_t)h * pc.head_dim + d0) * 2, v);
     }
 }
 
@@ -151,15 +189,15 @@ void stage_score(uint gid, uint tid) {
     const uint tile = task % tiles, c = task / tiles;
     const uint h0 = (tile % ht) * 16, t0 = (tile / ht) * 16;
     const uint dn = pc.head_dim / pc.s_split, d0 = c * dn;
-    half* Q = (half*)Ptr[kQ16];
-    half* G = (half*)Ptr[kG16];
+    half* Q = (half*)cm_ptr(kQ16);
+    half* G = (half*)cm_ptr(kG16);
     TileC acc = TileC(0.0f);
     for (uint d = d0; d < d0 + dn; d += 16) {
         const TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(Q, h0 * pc.head_dim + d, pc.head_dim);
         const TileB b = TileB.Load<linalg.CoopMatMatrixLayout.ColumnMajor>(G, t0 * pc.head_dim + d, pc.head_dim);
         acc = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b, acc);
     }
-    float* S = (pc.s_split == 1u) ? (float*)Ptr[kScore] : (float*)Ptr[kPart];
+    float* S = (pc.s_split == 1u) ? (float*)cm_ptr(kScore) : (float*)cm_ptr(kPart);
     acc.Store<linalg.CoopMatMatrixLayout.RowMajor>(S, (c * pc.n_heads + h0) * pc.score_stride + t0,
                                                    pc.score_stride);
 }
@@ -192,15 +230,15 @@ float wg_max_f(float v, uint tid) {
 // The raw dot product of head h with entry t: S itself, or the sum of the
 // s_split partial planes in slice order.
 float score_at(uint h, uint t) {
-    if (pc.s_split == 1u) return load_f32(Ptr[kScore] + ((uint64_t)h * pc.score_stride + t) * 4);
+    if (pc.s_split == 1u) return load_f32(cm_ptr(kScore) + ((uint64_t)h * pc.score_stride + t) * 4);
     float v = 0.0f;
     for (uint c = 0; c < pc.s_split; ++c)
-        v += load_f32(Ptr[kPart] + (((uint64_t)c * pc.n_heads + h) * pc.score_stride + t) * 4);
+        v += load_f32(cm_ptr(kPart) + (((uint64_t)c * pc.n_heads + h) * pc.score_stride + t) * 4);
     return v;
 }
 
 void stage_softmax(uint h, uint tid) {
-    half* P = (half*)Ptr[kP16] + (uint64_t)h * pc.e;
+    half* P = (half*)cm_ptr(kP16) + (uint64_t)h * pc.e;
     float local = -3.0e38f;
     for (uint t = tid; t < pc.n_kv; t += kWg)
         if (top_idx(t) >= 0) local = max(local, score_at(h, t) * pc.softmax_scale);
@@ -215,10 +253,10 @@ void stage_softmax(uint h, uint tid) {
         P[t] = half(p * kPScale);
         lsum += p;
     }
-    const float denom = wg_sum_f(lsum, tid) + exp(load_f32(Ptr[kSink] + (uint64_t)h * 4) - mx);
+    const float denom = wg_sum_f(lsum, tid) + exp(load_f32(cm_ptr(kSink) + (uint64_t)h * 4) - mx);
     // 1/denominator, and the 2^-14 that undoes kPScale: both exact scalings of
     // the one division the reference does.
-    if (tid == 0) *(float*)(Ptr[kInv] + (uint64_t)h * 4) = (1.0f / denom) / kPScale;
+    if (tid == 0) *(float*)(cm_ptr(kInv) + (uint64_t)h * 4) = (1.0f / denom) / kPScale;
 }
 
 // --- stage 3 ------------------------------------------------------------------
@@ -234,15 +272,15 @@ void stage_pv(uint gid, uint tid) {
     // Slices of whole 16-row tiles; the last may be short or empty.
     const uint steps = pc.e / 16, per = (steps + pc.pv_split - 1) / pc.pv_split;
     const uint t_lo = min(c * per, steps) * 16, t_hi = min(c * per + per, steps) * 16;
-    half* P = (half*)Ptr[kP16];
-    half* G = (half*)Ptr[kG16];
+    half* P = (half*)cm_ptr(kP16);
+    half* G = (half*)cm_ptr(kG16);
     TileC acc = TileC(0.0f);
     for (uint t = t_lo; t < t_hi; t += 16) {
         const TileA a = TileA.Load<linalg.CoopMatMatrixLayout.RowMajor>(P, h0 * pc.e + t, pc.e);
         const TileB b = TileB.Load<linalg.CoopMatMatrixLayout.RowMajor>(G, t * pc.head_dim + d0, pc.head_dim);
         acc = linalg.coopMatMulAdd<float, false, half, half, float, MemoryScope.Subgroup, 16, 16, 16>(a, b, acc);
     }
-    float* O = (pc.pv_split == 1u) ? (float*)Ptr[kO] : (float*)Ptr[kPart];
+    float* O = (pc.pv_split == 1u) ? (float*)cm_ptr(kO) : (float*)cm_ptr(kPart);
     acc.Store<linalg.CoopMatMatrixLayout.RowMajor>(O, (c * pc.n_heads + h0) * pc.head_dim + d0,
                                                    pc.head_dim);
 }
@@ -254,8 +292,8 @@ void stage_finish(uint gid, uint tid) {
     const uint half_dim = pc.head_dim / 2;
     if (pair >= pc.n_heads * half_dim) return;
     const uint h = pair / half_dim, d = (pair % half_dim) * 2;
-    const uint64_t o = Ptr[kO] + ((uint64_t)h * pc.head_dim + d) * 4;
-    const float inv = load_f32(Ptr[kInv] + (uint64_t)h * 4);
+    const uint64_t o = cm_ptr(kO) + ((uint64_t)h * pc.head_dim + d) * 4;
+    const float inv = load_f32(cm_ptr(kInv) + (uint64_t)h * 4);
     float re, im;
     if (pc.pv_split == 1u) {
         re = load_f32(o);
@@ -264,7 +302,7 @@ void stage_finish(uint gid, uint tid) {
         re = 0.0f;
         im = 0.0f;
         for (uint c = 0; c < pc.pv_split; ++c) {
-            const uint64_t q = Ptr[kPart] + (((uint64_t)c * pc.n_heads + h) * pc.head_dim + d) * 4;
+            const uint64_t q = cm_ptr(kPart) + (((uint64_t)c * pc.n_heads + h) * pc.head_dim + d) * 4;
             re += load_f32(q);
             im += load_f32(q + 4);
         }
@@ -274,7 +312,7 @@ void stage_finish(uint gid, uint tid) {
     const uint rope_lo = pc.head_dim - pc.rope_dim;
     if (d >= rope_lo) {
         const uint j = (d - rope_lo) >> 1;
-        rope_pair(load_f32(Ptr[kRope] + (uint64_t)j * 8), load_f32(Ptr[kRope] + (uint64_t)j * 8 + 4),
+        rope_pair(load_f32(cm_ptr(kRope) + (uint64_t)j * 8), load_f32(cm_ptr(kRope) + (uint64_t)j * 8 + 4),
                   re, im, true);     // inverse: conjugate
     }
     *(float*)o = re;
@@ -284,6 +322,9 @@ void stage_finish(uint gid, uint tid) {
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
+#if defined(DEEPMOE_CM_BATCH)
+    cm_query = gid.y;
+#endif
     if (Stage == 0)      stage_gather(gid.x, tid);
     else if (Stage == 1) stage_score(gid.x, tid);
     else if (Stage == 2) stage_softmax(gid.x, tid);

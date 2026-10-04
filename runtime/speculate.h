@@ -43,6 +43,11 @@
 
 namespace deepmoe::runtime {
 
+// Keep the drafted tokens unchanged; stop at the first token outside its row top-K.
+Result<uint32_t> accept_topk_prefix(std::span<const uint32_t> draft,
+                                   std::span<const float> matrix,uint32_t vocab,uint32_t topk);
+Result<uint32_t> draft_prefix_from_confidence(std::span<const float> confidence,float minimum);
+
 enum class SpecMode : uint8_t {
     Off = 0,
     // Temperature 0. `accept_greedy`; the hard invariant applies.
@@ -79,6 +84,7 @@ struct SpecCycle {
     uint32_t k = 0;             // draft positions verified
     uint32_t accepted = 0;      // a in [0, k]
     uint32_t emitted = 0;       // a + 1 tokens committed
+    bool     gpu_readout = false;
     double   draft_ms = 0.0;
     double   verify_ms = 0.0;
     double   cpu_ms = 0.0;      // lattice + acceptance
@@ -93,6 +99,7 @@ struct SpecStats {
     uint64_t tokens = 0;        // emitted
     uint64_t accepted = 0;      // sum of a
     uint64_t verified = 0;      // sum of k
+    uint64_t gpu_readout_cycles = 0;
     double   draft_ms = 0.0, verify_ms = 0.0, cpu_ms = 0.0, rollback_ms = 0.0, stall_ms = 0.0;
     uint64_t union_experts = 0;
     uint64_t miss_bytes = 0;
@@ -110,7 +117,7 @@ struct SpecStats {
 //
 // The cycle is separable from the forwards, and deliberately so: the two
 // forwards are `Engine`'s (the verify one is `Engine::forward_batch`, which
-// does not exist yet -- see docs/p4_dspark_runtime.md §6), while the position
+// produces the single main-path verification matrix), while the position
 // arithmetic, the acceptance and the rollback bookkeeping are here and are
 // testable without a GPU or a checkpoint. `tests/test_speculate.cpp` drives a
 // `SpecModel` that replays a recorded token stream, which is what pins the

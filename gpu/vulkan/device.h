@@ -82,6 +82,7 @@ struct DeviceCaps {
     bool shader_float16         = false;
     bool shader_int8            = false;
     bool shader_int16           = false;   // SPIR-V Int16: half-typed storage buffers
+    bool vulkan_memory_model = false;
     bool shader_int64           = false;   // SPIR-V Int64: PhysicalStorageBuffer addressing (§5.3)
     bool synchronization2       = false;   // vkCmdPipelineBarrier2 / vkCmdWriteTimestamp2
     bool storage_buffer_8bit    = false;

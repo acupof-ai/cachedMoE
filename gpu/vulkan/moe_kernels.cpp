@@ -232,7 +232,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         destroy(); return r;
     }
     PipelineLayoutSpec lb;
-    lb.storage_buffers   = 5;
+    lb.storage_buffers   = 6;
     lb.push_constant_size = sizeof(DownPush);
     if (auto r = down_.create(device, shader_dir + "/moe_down.spv", lb, ps_b); !r) {
         destroy(); return r;
@@ -357,12 +357,13 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
         static_cast<uint32_t*>(list_sh_.host_ptr)[0] = dims.slots - 1;
     }
 
-    std::vector<BufferBinding> bb(5);
+    std::vector<BufferBinding> bb(6);
     bb[0] = {0, 0, 0, table_.buffer};
     bb[1] = {1, 0, 0, ids_.buffer};
     bb[2] = {2, 0, 0, list_.buffer};
     bb[3] = {3, 0, 0, h_.buffer};
     bb[4] = {4, 0, 0, y_.buffer};
+    bb[5] = {5, 0, 0, routew_.buffer};
     auto sb = descriptors_.allocate(down_, bb);
     if (!sb) { destroy(); return std::unexpected(sb.error()); }
     set_b_ = *sb;

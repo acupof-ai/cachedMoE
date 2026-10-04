@@ -97,7 +97,7 @@ void ExpertStore::unpublish_locked(uint32_t slot) {
         table_[table_index(s.key, static_cast<ExpertPart>(p))] = kNoDeviceAddress;
 }
 
-std::optional<SlotAddress> ExpertStore::lookup(ExpertKey key, TokenIndex token) {
+std::optional<SlotAddress> ExpertStore::lookup(ExpertKey key, TokenIndex token, TimelineValue guard) {
     std::lock_guard lk(mutex_);
     ++stats_.lookups;
     auto it = index_.find(key);
@@ -107,6 +107,7 @@ std::optional<SlotAddress> ExpertStore::lookup(ExpertKey key, TokenIndex token) 
     }
     ExpertSlot& s = slots_[it->second];
     s.last_use_token = token;
+    s.guard_timeline = std::max(s.guard_timeline, guard);
     ++stats_.hits;
     // Track K1b: a demand hit's memory path, which is what decides whether the
     // MoE kernel reads it at path-A or path-B speed.
@@ -138,6 +139,8 @@ Result<ExpertStore::Reservation> ExpertStore::reserve_locked(ExpertKey key, Tier
     ExpertSlot& s = slots_[slot];
     s.key   = key;
     s.state = SlotState::Filling;
+    // A new occupant must not inherit the evicted expert's LRU timestamp.
+    s.last_use_token = 0;
     s.tier  = tier;
     s.guard_timeline = 0;
     s.runs_done  = 0;
@@ -239,7 +242,7 @@ void ExpertStore::settle_locked(uint32_t slot, bool ok, TokenIndex token) {
     --stats_.filling;
     if (ok) {
         s.state = SlotState::Resident;
-        s.last_use_token = token;
+        s.last_use_token = std::max(s.last_use_token, token);
         publish_locked(slot);
         ++stats_.resident;
         ++stats_.fills_ok;
@@ -406,6 +409,16 @@ std::optional<ExpertSlot> ExpertStore::slot_info(uint32_t slot) const {
     return slots_[slot];
 }
 
+Result<void> ExpertStore::pin(ExpertKey key) {
+    std::lock_guard lk(mutex_);
+    auto it = index_.find(key);
+    if (it == index_.end()) return fail(Err::NotFound, "cannot pin an absent expert");
+    auto& s = slots_[it->second];
+    if (s.state != SlotState::Resident) return fail(Err::FailedPrecondition, "cannot pin an unsettled expert");
+    if (s.tier != Tier::Pinned) { s.tier = Tier::Pinned; ++stats_.pinned; }
+    return {};
+}
+
 std::optional<ExpertSlot> ExpertStore::slot_for(ExpertKey key) const {
     std::lock_guard lk(mutex_);
     auto it = index_.find(key);
@@ -465,11 +478,12 @@ Result<uint32_t> ExpertStore::evict_lru() {
     return best;
 }
 
-bool ExpertStore::touch(ExpertKey key, TokenIndex stamp) {
+bool ExpertStore::touch(ExpertKey key, TokenIndex stamp, bool include_filling) {
     std::lock_guard lk(mutex_);
     auto it = index_.find(key);
-    if (it == index_.end() || slots_[it->second].state != SlotState::Resident) return false;
+    if (it == index_.end()) return false;
     ExpertSlot& s = slots_[it->second];
+    if (s.state != SlotState::Resident && !(include_filling && s.state == SlotState::Filling)) return false;
     if (stamp > s.last_use_token) s.last_use_token = stamp;
     return true;
 }

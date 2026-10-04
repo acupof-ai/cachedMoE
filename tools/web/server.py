@@ -265,6 +265,8 @@ class Serve:
             cmd += ["--kv-max-gb", str(args.kv_max_gb)]
         if args.max_parked:
             cmd += ["--max-parked", str(args.max_parked)]
+        if args.resident_only != "off":
+            cmd += ["--resident-only", args.resident_only]
         # Track D4: the second read source. Repeatable, and the engine drops a
         # mirror that fails its health probe rather than dying on it
         # (docs/p4_e_drive_diag.md §5.2), so a passthrough here cannot take the
@@ -861,6 +863,8 @@ def main():
     ap.add_argument("--kv-max-gb", type=int, default=0)
     ap.add_argument("--no-kv-disk", action="store_true")
     ap.add_argument("--max-parked", type=int, default=0)
+    ap.add_argument("--resident-only", choices=("off", "mask"), default="off",
+                    help="mask missing MoE experts while normal LRU loading continues")
     ap.add_argument("--mirror", action="append", default=[],
                     help="a second read source holding the same checkpoint "
                          "(repeatable); passed through to `deepmoe serve`. "

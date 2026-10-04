@@ -767,6 +767,56 @@ struct FullRig {
     }
 };
 
+// A masked slot may have no resident table row and stale h from an earlier
+// call. Neither its weights nor its stale activation may be read by A/B.
+DEEPMOE_TEST(gpu_moe, masked_missing_slots_and_shared_only) {
+    if (skip_without_model("gpu_moe.masked_missing_slots_and_shared_only")) return;
+    FullRig rig;
+    REQUIRE(rig.bring_up(8));
+    auto names = store::pinned_global_tensors(rig.manifest);
+    auto per = store::pinned_layer_tensors(rig.manifest, 0);
+    names.insert(names.end(), per.begin(), per.end());
+    REQUIRE_OK(rig.pinned.load(rig.manifest, rig.shards, rig.io, names));
+    runtime::GpuMoeBridge bridge;
+    REQUIRE_OK(bridge.create(rig.device, rig.alloc, gpu::default_shader_dir(), rig.store,
+                            rig.planner, rig.pinned, rig.config.text));
+    const uint32_t dim = rig.config.text.hidden_size;
+    uint32_t ids[6]{10, 11, 12, 13, 14, 15};
+    float w[6]{0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
+    for (uint32_t id : ids) REQUIRE_OK(rig.planner.fetch(ExpertKey{0, uint16_t(id)},
+                                                      IoPriority::BlockingMiss, 1, 0));
+    rig.io.drain();
+    std::vector<float> x(dim), y(dim), ref(dim);
+    for (uint32_t i = 0; i < dim; ++i) x[i] = std::sin(0.01f * float(i % 977));
+    runtime::MoeCall call;
+    call.layer = 0; call.ids = ids; call.weights = w; call.topk = 6;
+    call.x = x.data(); call.y = y.data(); call.hidden = dim;
+    REQUIRE_OK(bridge.run(call));  // poison every slot's previous h
+    w[1] = w[4] = 0.0f;
+    REQUIRE_OK(bridge.run(call));
+    ref = y;
+    ids[1] = 200; ids[4] = 201;  // valid expert IDs, absent from the cache
+    REQUIRE_OK(bridge.run(call));
+    for (uint32_t i = 0; i < dim; ++i) CHECK_EQ(y[i], ref[i]);
+    for (uint32_t i = 0; i < 6; ++i) { w[i] = 0.0f; ids[i] = 200 + i; }
+    REQUIRE_OK(bridge.run(call)); // no routed table rows, only shared contributes
+    ref = y;
+    for (uint32_t i = 0; i < 6; ++i) ids[i] = 10 + i;
+    REQUIRE_OK(bridge.run(call));
+    for (uint32_t i = 0; i < dim; ++i) CHECK_EQ(y[i], ref[i]);
+    std::array<uint32_t,12> bids;std::array<float,12> bw{};
+    for(uint32_t i=0;i<12;++i)bids[i]=200+i%6;
+    std::vector<float> bx(2*dim),by(2*dim);
+    std::copy(x.begin(),x.end(),bx.begin());std::copy(x.begin(),x.end(),bx.begin()+dim);
+    runtime::GpuMoeBridge::BatchCall batch;
+    batch.layer=0;batch.m=2;batch.topk=6;batch.ids=bids.data();batch.weights=bw.data();
+    batch.x=bx.data();batch.y=by.data();batch.hidden=dim;
+    REQUIRE(bridge.union_experts(batch).empty());
+    REQUIRE_OK(bridge.run_batch_union(batch));
+    for(uint32_t j=0;j<2;++j)CHECK(compare(std::vector<float>(by.begin()+size_t(j)*dim,by.begin()+size_t(j+1)*dim),ref).cosine>0.999999);
+
+}
+
 DEEPMOE_TEST(mgt1, moe_m_curve) {
     if (skip_without_model("mgt1.moe_m_curve")) return;
 

@@ -184,6 +184,7 @@ struct GenerateStats {
     uint64_t decode_requests = 0, decode_hits = 0, decode_nvme_bytes = 0;
     // design 13.1, summed over the decode steps (divide by decode_steps)
     StepBreakdown decode_sum{};
+    SpecStats speculation{};
     uint32_t decode_steps = 0;
     uint32_t sampled_steps = 0, topk_fallbacks = 0, topk_checked = 0, topk_mismatches = 0;
     uint64_t nucleus_sum = 0;

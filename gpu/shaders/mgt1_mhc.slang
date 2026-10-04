@@ -67,6 +67,7 @@ void stage_post(uint gid, uint m, uint tid) {
                 [unroll] for (uint i = 0; i < kMaxHc; ++i)
                     v += load_f32(mix + (uint64_t)(8 + i * kMaxHc + j) * 4) * xin[i];
             }
+            if ((pc.flags & 4u) != 0u) v = bf16_round(v);
             xp[j] = v;
             sq += v * v;
             u += load_f32(mix + (uint64_t)j * 4) * v;

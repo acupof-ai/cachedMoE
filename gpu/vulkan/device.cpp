@@ -175,7 +175,8 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES, &ts};
     VkPhysicalDeviceShaderIntegerDotProductFeatures idp{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES, &bda};
-    VkPhysicalDeviceFeatures2 feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &idp};
+    VkPhysicalDeviceVulkanMemoryModelFeatures mm{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES, &idp};
+    VkPhysicalDeviceFeatures2 feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &mm};
     vkGetPhysicalDeviceFeatures2(pd, &feat);
     c.shader_float16       = f16i8.shaderFloat16 == VK_TRUE;
     c.shader_int8          = f16i8.shaderInt8 == VK_TRUE;
@@ -183,6 +184,7 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.storage_buffer_16bit = s16.storageBuffer16BitAccess == VK_TRUE &&
                              s16.uniformAndStorageBuffer16BitAccess == VK_TRUE;
     c.shader_int16         = feat.features.shaderInt16 == VK_TRUE;
+    c.vulkan_memory_model = mm.vulkanMemoryModel && mm.vulkanMemoryModelDeviceScope;
     c.shader_int64         = feat.features.shaderInt64 == VK_TRUE;
     c.synchronization2     = sync2.synchronization2 == VK_TRUE;
     c.timeline_semaphore   = ts.timelineSemaphore == VK_TRUE;
@@ -335,6 +337,9 @@ Result<void> Device::create(const DeviceOptions& opts) {
     v11f.storageBuffer16BitAccess           = caps_.storage_buffer_16bit ? VK_TRUE : VK_FALSE;
     v11f.uniformAndStorageBuffer16BitAccess = caps_.storage_buffer_16bit ? VK_TRUE : VK_FALSE;
     VkPhysicalDeviceVulkan12Features v12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &v11f};
+    v12.vulkanMemoryModel = caps_.vulkan_memory_model;
+    v12.vulkanMemoryModelDeviceScope = caps_.vulkan_memory_model;
+    v12.vulkanMemoryModelAvailabilityVisibilityChains = VK_FALSE;
     v12.timelineSemaphore       = caps_.timeline_semaphore ? VK_TRUE : VK_FALSE;
     v12.bufferDeviceAddress     = caps_.buffer_device_address ? VK_TRUE : VK_FALSE;
     v12.storageBuffer8BitAccess = caps_.storage_buffer_8bit ? VK_TRUE : VK_FALSE;

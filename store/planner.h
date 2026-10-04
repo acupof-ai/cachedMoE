@@ -48,6 +48,7 @@ struct RouteDecision {
     std::span<const float>    weights;     // normalised routing weights
     std::span<const uint16_t> near_ids;    // top-16 ids, for the heat EWMA of §9.3
     std::span<const float>    near_scores;
+    TimelineValue guard_hits = 0;         // hold hits through the caller's GPU use
 };
 
 // One layer's outstanding P0 fills, waited on as a group (Track R1). The

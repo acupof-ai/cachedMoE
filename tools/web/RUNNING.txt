@@ -6,8 +6,18 @@ commands, its %LOCALAPPDATA% paths and its eight restart logs were all Windows, 
 every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
-STATE: RUNNING (restarted 2026-10-02 after row 93's bench arms), max_context 65536,
-/api/status 200, in tmux session `deepmoe` -- `tmux attach -t deepmoe` shows the live log.
+STATE: STOPPED (2026-10-05, owner requested DSpark optimisation).
+Supervisor, web and engine exited; prior performance profile restored.
+Last configuration: ordinary miss-mask, normal LRU/P0, DSpark off.
+5500 slots, max_context 65536, GPU prefill minimum 16, one read source.
+HTTP / and /api/status 200; /api/config confirms --resident-only mask.
+Detached supervisor: build/web_mask/launch.py. It selects balanced, pauses the
+engine at GPU/NVMe 80 C and resumes at 72 C. Stop the supervisor by its LIVE PID
+from build/web_mask/state.json; it stops the web/engine and restores the prior
+power profile. Do not run GPU benches while this web instance is active.
+Logs and live state: build/web_mask/{web.log,engine.log,guard.log,thermal.jsonl,state.json}.
+Restart: python3 build/web_mask/launch.py (detach as needed).
+The old tmux instance and launch command below are historical, not this instance.
 
 **ONE read source right now, and that is not the steady state.** The external USB4 mirror
 re-entered its 11-second connect/disconnect loop at 2026-10-01 21:16 while the machine was

@@ -198,6 +198,7 @@ struct BatchScratch {
     gpu::GpuScratch::View x, xout, utmp, u, partials, mix_raw, mix_a, mix_b;
     gpu::GpuScratch::View qr_raw, qr, q, rope, rope_lat, kv_out, ovf_val, ovf_scale;
     gpu::GpuScratch::View score, tile_max, o, woa, wob, part;
+    gpu::GpuScratch::View cm_g, cm_q, cm_p, cm_inv, cm_part;
     gpu::GpuScratch::View gate_scores, gate_ids, gate_weights, layer_done, moe_y;
     gpu::GpuScratch::View cmp_y, cmp_g, latent, latent_q, cmp_fp4, cmp_scale;
     gpu::GpuScratch::View idx_q_raw, idx_q, idx_q_fp4, idx_q_scale;
@@ -391,6 +392,8 @@ public:
         uint64_t logits = 0;          // [M][vocab] fp32
         uint64_t sample = 0;          // [M][4] words
         uint64_t topk_out = 0, topk_hist = 0;
+        uint64_t draft_ids = 0, draft_rank = 0;
+        uint32_t accept_topk = 0;     // nonzero: sample only first rejection/bonus
         uint32_t topk_k = 1024;
         float    inv_t = 1.0f;
     };

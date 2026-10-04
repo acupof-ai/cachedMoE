@@ -150,7 +150,9 @@ public:
     // Resident lookup. On a hit the slot's LRU stamp is refreshed to `token`.
     // Counts one lookup in the stats either way. The returned address is the
     // slot's base; the six parts are at pointer_table() offsets from it.
-    std::optional<SlotAddress> lookup(ExpertKey key, TokenIndex token);
+    // A nonzero guard protects the hit atomically with the lookup, before a
+    // later admission can recycle it. Default callers keep the old behaviour.
+    std::optional<SlotAddress> lookup(ExpertKey key, TokenIndex token, TimelineValue guard = 0);
 
     // Same but without touching LRU or the stats; used by the planner when it
     // is only asking "would this miss?".
@@ -238,6 +240,7 @@ public:
 
     std::optional<ExpertSlot> slot_info(uint32_t slot) const;
     std::optional<ExpertSlot> slot_for(ExpertKey key) const;
+    Result<void> pin(ExpertKey key);
     // Snapshot of every Resident, non-pinned slot; the Planner ranks these.
     std::vector<ExpertSlot> evictable() const;
 
@@ -253,8 +256,9 @@ public:
 
     // Refreshes a RESIDENT key's LRU stamp to `stamp` if that is newer, without
     // counting a lookup. False when the key is not resident. The prefill
-    // handoff uses it for an expert the cache already holds.
-    bool touch(ExpertKey key, TokenIndex stamp);
+    // handoff uses it for an expert the cache already holds. include_filling
+    // also stamps an asynchronous demand; settlement preserves the latest stamp.
+    bool touch(ExpertKey key, TokenIndex stamp, bool include_filling = false);
     // The stamp `evict_lru` would evict next, or nullopt when nothing is
     // evictable (every resident slot pinned or guarded).
     std::optional<TokenIndex> oldest_evictable_stamp() const;

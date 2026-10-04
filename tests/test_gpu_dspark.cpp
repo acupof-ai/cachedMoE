@@ -1,3 +1,5 @@
+#include "core/wc_read.h"
+#include "cpu/dequant.h"
 // The design §7.12 DSpark draft kernels against tools/oracle_dspark.py's golden
 // tensors, on the real checkpoint.
 //
@@ -53,6 +55,8 @@
 #include "model/manifest.h"
 #include "runtime/rope.h"
 #include "runtime/speculate.h"
+#include "runtime/sampling.h"
+#include "runtime/engine.h"
 #include "storage/backend.h"
 #include "storage/io_engine.h"
 #include "store/pinned.h"
@@ -754,4 +758,439 @@ DEEPMOE_TEST(gpu_dspark, verify_rows_give_exact_acceptance_its_four_numbers) {
         // cells + 4 sqrt(cells).
         CHECK(chi2 <= double(chi_cells) + 4.0 * std::sqrt(double(chi_cells)));
     }
+}
+
+DEEPMOE_TEST(gpu_dspark, main_path_gpu_readout) {
+    gpu::Device device;
+    REQUIRE(device.create({}));
+    gpu::MemoryAllocator alloc;
+    REQUIRE(alloc.init(device, MemoryPath::DeviceLocalHostVisible));
+    gpu::MgtRunner runner;
+    REQUIRE(runner.create(device,alloc,gpu::default_shader_dir()));
+    gpu::GpuScratch scratch;
+    REQUIRE(scratch.create(alloc,16ull<<20));
+    auto logits=take(scratch,6ull*kVocab*4);
+    auto ids=take(scratch,6*4);
+    auto ranks=take(scratch,6*sizeof(gpu::MgtRankOut));
+    auto candidates=take(scratch,6ull*gpu::kMgtTopKRecordWords*4);
+    auto hist=take(scratch,6ull*256*256*4);
+    REQUIRE(logits.v.addr && ids.v.addr && ranks.v.addr && candidates.v.addr && hist.v.addr);
+    const std::array<uint32_t,5> path{256,1023,5,17,32};
+    std::memcpy(ids.v.host,path.data(),path.size()*4);
+    auto* rp=runner.slots(gpu::MgtStage::HeadRank);
+    rp[gpu::mslot::kHLogits]=logits.v.addr;
+    rp[gpu::mslot::kHDraft]=ids.v.addr;
+    rp[gpu::mslot::kHRank]=ranks.v.addr;
+    auto* tp=runner.slots(gpu::MgtStage::HeadTopK);
+    tp[gpu::mslot::kHLogits]=logits.v.addr;
+    tp[gpu::mslot::kHTopOut]=candidates.v.addr;
+    tp[gpu::mslot::kHHist]=hist.v.addr;
+    tp[gpu::mslot::kHRank]=ranks.v.addr;
+    uint32_t exact=0,fallback=0;
+    for(uint32_t m=1;m<=6;++m) {
+        std::vector<float> matrix(size_t(m)*kVocab,-32.0f);
+        for(uint32_t row=0;row+1<m;++row)
+            for(uint32_t id:{5u,17u,32u,256u,1023u})matrix[size_t(row)*kVocab+id]=4.0f;
+        // The bonus row is flat and exceeds the per-thread candidate cap.
+        std::fill(matrix.end()-kVocab,matrix.end(),0.0f);
+        std::memcpy(logits.v.host,matrix.data(),matrix.size()*4);
+        REQUIRE(runner.ensure(m));
+        gpu::MgtHeadPush p{};p.rows=kVocab;p.k=m-1;
+        if(m>1) {
+            REQUIRE(runner.dispatch_now(m,gpu::MgtStage::HeadRank,&p,sizeof p,1,m-1));
+            std::array<gpu::MgtRankOut,5> got{};
+            wc_readback(got.data(),ranks.v.host,(m-1)*sizeof(gpu::MgtRankOut));
+            uint32_t accepted=0;
+            for(uint32_t row=0;row+1<m;++row) {
+                uint32_t better=0;
+                const float v=matrix[size_t(row)*kVocab+path[row]];
+                for(uint32_t id=0;id<kVocab;++id) {
+                    const float x=matrix[size_t(row)*kVocab+id];
+                    better+=x>v || (x==v && id<path[row]);
+                }
+                CHECK_EQ(got[row].rows,kVocab);CHECK_EQ(got[row].token,path[row]);
+                CHECK_EQ(got[row].error,0u);CHECK_EQ(got[row].better,better);
+                if(accepted==row && better<4)++accepted;
+            }
+            auto cpu=runtime::accept_topk_prefix(std::span(path).first(m-1),matrix,kVocab,4);
+            REQUIRE(cpu);CHECK_EQ(accepted,*cpu);
+        }
+        p.topk_k=runtime::kTopKDefaultK;
+        for(float temperature:{0.7f,1.0f,1.5f}) {
+            p.inv_t=1.0f/temperature;
+            std::memset(candidates.v.host,0xcd,size_t(m)*gpu::kMgtTopKRecordWords*4);
+            REQUIRE(runner.dispatch_now(m,gpu::MgtStage::HeadTopK,&p,sizeof p,1,m));
+            std::vector<uint32_t> words(size_t(m)*gpu::kMgtTopKRecordWords);
+            wc_readback(words.data(),candidates.v.host,words.size()*4);
+            for(uint32_t row=0;row<m;++row) {
+                const auto* w=words.data()+size_t(row)*gpu::kMgtTopKRecordWords;
+                CHECK_EQ(w[0],kVocab);CHECK_EQ(w[7],row);
+                runtime::TopKLogits tk;tk.rows=w[0];tk.max_logit=std::bit_cast<float>(w[1]);
+                tk.tail=std::bit_cast<float>(w[2]);tk.bin=w[3];tk.overflow=w[5]!=0;
+                if(!tk.overflow)for(uint32_t t=0;t<256;++t) {
+                    const uint32_t n=w[8+t];REQUIRE(n<=32);
+                    const uint32_t* seg=w+8+256+t*64;
+                    for(uint32_t j=0;j<n;++j)tk.cand.push_back({seg[j*2],std::bit_cast<float>(seg[j*2+1])});
+                }
+                const auto full=std::span(matrix).subspan(size_t(row)*kVocab,kVocab);
+                for(float top_p:{0.95f,1.0f}) {
+                    const auto a=runtime::nucleus_from_topk(tk,temperature,top_p);
+                    const auto b=runtime::nucleus_from_full(full,temperature,top_p);
+                    if(!a.exact){++fallback;continue;}
+                    ++exact;CHECK(a.ids==b.ids);
+                    for(double u:{0.0,0.17,0.51,0.99})
+                        CHECK_EQ(runtime::sample_nucleus(a,u),runtime::sample_nucleus(b,u));
+                }
+            }
+            // A single matrix feeds both rank and sampling. Poison every row:
+            // only the rejection/bonus row may change, including M=1 (k=0).
+            for(uint32_t accept_k:{1u,4u,kVocab}) {
+                auto cpu=runtime::accept_topk_prefix(std::span(path).first(m-1),matrix,kVocab,accept_k);
+                REQUIRE(cpu);
+                std::memset(candidates.v.host,0xcd,words.size()*4);
+                p.slice=gpu::kMgtHeadSpecReadout;p.x_stride=accept_k;
+                REQUIRE(runner.dispatch_now(m,gpu::MgtStage::HeadTopK,&p,sizeof p,1,m));
+                std::vector<uint32_t> selected(words.size());
+                wc_readback(selected.data(),candidates.v.host,selected.size()*4);
+                for(uint32_t row=0;row<m;++row) {
+                    const size_t start=size_t(row)*gpu::kMgtTopKRecordWords;
+                    const auto got=std::span(selected).subspan(start,gpu::kMgtTopKRecordWords);
+                    if(row==*cpu) CHECK(std::equal(got.begin(),got.end(),words.begin()+start));
+                    else CHECK(std::all_of(got.begin(),got.end(),[](uint32_t w){return w==0xcdcdcdcdu;}));
+                }
+            }
+            p.slice=0;p.x_stride=0;
+        }
+    }
+    // Invalid ids must never become out-of-bounds device reads; nonfinite
+    // values must be reported even when the offending id is in another wave.
+    gpu::MgtHeadPush p{};p.rows=kVocab;p.k=1;
+    static_cast<uint32_t*>(ids.v.host)[0]=kVocab;
+    REQUIRE(runner.dispatch_now(2,gpu::MgtStage::HeadRank,&p,sizeof p,1,1));
+    gpu::MgtRankOut bad{};wc_readback(&bad,ranks.v.host,sizeof bad);CHECK_EQ(bad.error,1u);
+    static_cast<uint32_t*>(ids.v.host)[0]=256;
+    static_cast<float*>(logits.v.host)[257]=std::numeric_limits<float>::quiet_NaN();
+    REQUIRE(runner.dispatch_now(2,gpu::MgtStage::HeadRank,&p,sizeof p,1,1));
+    wc_readback(&bad,ranks.v.host,sizeof bad);CHECK_EQ(bad.error,2u);
+    CHECK(exact>0);CHECK(fallback>0);
+    std::printf("main-path readout: M=1..6 ranks/ties exact, %u nuclei exact, %u fallback cases\n",exact,fallback);
+}
+
+DEEPMOE_TEST(gpu_dspark, batch_cm_causal_rows_match_decode) {
+    gpu::Device device;REQUIRE(device.create({}));
+    if(!device.caps().cooperative_matrix){DEEPMOE_SKIP_PRINTF("no cooperative matrices\n");return;}
+    gpu::MemoryAllocator alloc;REQUIRE(alloc.init(device,MemoryPath::DeviceLocalHostVisible));
+    gpu::MgtSpec spec;spec.attn_cm=true;gpu::MgtRunner batch;
+    REQUIRE(batch.create(device,alloc,gpu::default_shader_dir(),spec));
+    gpu::AttnRunner decode;REQUIRE(decode.create(device,alloc,gpu::default_shader_dir()));
+    REQUIRE(decode.has_attn_cm());
+    gpu::GpuScratch scratch;REQUIRE(scratch.create(alloc,20ull<<20));
+    constexpr uint32_t heads=64,dim=512,list_stride=160,score_stride=256,part_stride=262144;
+    auto q=take(scratch,6ull*heads*dim*2),win=take(scratch,133ull*dim),sc=take(scratch,133ull*16);
+    auto cmp=take(scratch,23ull*dim*2),lists=take(scratch,6ull*list_stride*4);
+    auto sink=take(scratch,heads*4),rope=take(scratch,6ull*64*4),score=take(scratch,6ull*heads*score_stride*4);
+    auto out=take(scratch,6ull*heads*dim*4),g16=take(scratch,6ull*list_stride*dim*2);
+    auto q16=take(scratch,6ull*heads*dim*2),p16=take(scratch,6ull*heads*list_stride*2);
+    auto inv=take(scratch,6ull*heads*4),part=take(scratch,6ull*part_stride*4),reference=take(scratch,heads*dim*4);
+    REQUIRE(q.v.addr && win.v.addr && sc.v.addr && cmp.v.addr && lists.v.addr && sink.v.addr && rope.v.addr);
+    REQUIRE(score.v.addr && out.v.addr && g16.v.addr && q16.v.addr && p16.v.addr && inv.v.addr && part.v.addr && reference.v.addr);
+    for(uint32_t i=0;i<6*heads*dim;++i)static_cast<uint16_t*>(q.v.host)[i]=cpu::float_to_bf16(std::sin(float(i%977)*.03f)*.2f);
+    for(uint32_t i=0;i<133*dim;++i)static_cast<uint8_t*>(win.v.host)[i]=uint8_t(32+(i*13)%64)|uint8_t((i&1)<<7);
+    for(uint32_t i=0;i<133*16;++i)static_cast<uint8_t*>(sc.v.host)[i]=uint8_t(123+i%3);
+    for(uint32_t i=0;i<23*dim;++i)static_cast<uint16_t*>(cmp.v.host)[i]=cpu::float_to_bf16(std::sin(float(i%997)*.01f)*.1f);
+    for(uint32_t i=0;i<heads;++i)static_cast<float*>(sink.v.host)[i]=float(i%7)*.1f;
+    for(uint32_t m=0;m<6;++m)for(uint32_t i=0;i<32;++i){
+        auto* r=static_cast<float*>(rope.v.host)+m*64;r[2*i]=std::cos(float(m+i)*.07f);r[2*i+1]=std::sin(float(m+i)*.07f);
+    }
+    using S=gpu::MgtStage;using A=gpu::AttnStage;
+    const std::array stages{std::pair{S::AttnCmGather,A::AttnCmGather},std::pair{S::AttnCmScore,A::AttnCmScore},
+        std::pair{S::AttnCmSoftmax,A::AttnCmSoftmax},std::pair{S::AttnCmPv,A::AttnCmPv},std::pair{S::AttnCmFinish,A::AttnCmFinish}};
+    for(uint32_t m=1;m<=6;++m) {
+        REQUIRE(batch.ensure(m));const uint32_t nkv=128+m-1+23,e=gpu::AttnRunner::attn_cm_e(nkv);
+        for(uint32_t row=0;row<m;++row)for(uint32_t t=0;t<list_stride;++t){
+            int32_t id=-1;
+            if(t<128 && (t>6 || t<=row))id=int32_t(t);
+            else if(t>=128 && t<128+m-1 && t-128+1>row)id=int32_t(t);
+            else if(t>=128+m-1 && t<nkv && t-128-m+1<=row)id=int32_t(t);
+            static_cast<int32_t*>(lists.v.host)[row*list_stride+t]=id;
+        }
+        uint64_t ptr[32]{};ptr[0]=q.v.addr;ptr[1]=win.v.addr;ptr[2]=sc.v.addr;ptr[3]=cmp.v.addr;
+        ptr[4]=lists.v.addr;ptr[5]=sink.v.addr;ptr[6]=rope.v.addr;ptr[7]=score.v.addr;ptr[8]=out.v.addr;
+        ptr[10]=win.v.addr+128*dim;ptr[11]=sc.v.addr+128*16;
+        ptr[12]=g16.v.addr;ptr[13]=q16.v.addr;ptr[14]=p16.v.addr;ptr[15]=inv.v.addr;ptr[16]=part.v.addr;
+        for(auto [b,d]:stages)std::memcpy(batch.slots(b),ptr,sizeof ptr);
+        gpu::MgtAttnCmPush push{{nkv,e,128,dim,64,heads,score_stride,1/std::sqrt(float(dim)),1,4},m-1,list_stride,part_stride};
+        for(auto [b,d]:stages)REQUIRE(batch.dispatch_now(m,b,&push,sizeof push,gpu::AttnRunner::attn_cm_groups(d,push.cm),m));
+        std::vector<float> got(size_t(m)*heads*dim),ref(heads*dim);
+        wc_readback(got.data(),out.v.host,got.size()*4);
+        for(uint32_t row=0;row<m;++row) {
+            ptr[0]=q.v.addr+uint64_t(row)*heads*dim*2;ptr[4]=lists.v.addr+uint64_t(row)*list_stride*4;
+            ptr[6]=rope.v.addr+row*64*4;ptr[8]=reference.v.addr;
+            for(auto [b,d]:stages)std::memcpy(decode.slots(d),ptr,sizeof ptr);
+            auto single=push.cm;single.n_win=128+m-1;
+            for(auto [b,d]:stages)REQUIRE(decode.dispatch_now(d,&single,sizeof single,gpu::AttnRunner::attn_cm_groups(d,single)));
+            wc_readback(ref.data(),reference.v.host,ref.size()*4);
+            CHECK(std::equal(ref.begin(),ref.end(),got.begin()+size_t(row)*heads*dim));
+        }
+        std::printf("batch CM M=%u causal/overflow/compressed/padding/RoPE: decode rows bit-identical\n",m);
+    }
+}
+
+DEEPMOE_TEST(gpu_dspark, batch_engram_prefetch_planes) {
+    if(skip_without_model("gpu_dspark.batch_engram_prefetch_planes"))return;
+    Rig rig;REQUIRE(rig.bring_up());
+    gpu::DecodeRunner dec;REQUIRE(dec.create(rig.device,rig.alloc,gpu::default_shader_dir()));
+    auto tables=runtime::EngramTables::load(std::string(DEEPMOE_TEST_DATA_DIR)+"/l3");REQUIRE(tables);
+    auto model=V41Config::load(std::string(model_dir())+"/config.json");REQUIRE(model);
+    TextConfig cfg=model->text;
+    runtime::EngramRunner eg;
+    REQUIRE(eg.create(rig.device,rig.alloc,dec,rig.manifest,rig.shards,rig.io,rig.pinned,cfg,std::move(*tables)));
+    constexpr uint32_t HCD=4*5120;
+    auto x=rig.scratch.alloc(6*HCD*4);auto y=rig.scratch.alloc(6*HCD*4);REQUIRE(x && y);
+    auto* input=static_cast<float*>(x->host);
+    for(uint32_t i=0;i<6*HCD;++i)input[i]=std::sin(float(i)*.013f)*.5f;
+    std::vector<uint32_t> history(150);
+    for(uint32_t i=0;i<history.size();++i)history[i]=(i*191+500)%kVocab;
+    gpu::CommandPool pool;REQUIRE(pool.create(rig.device));auto cb=pool.acquire();REQUIRE(cb);
+    for(uint32_t L:{1u,14u}) {
+        std::vector<std::string> names;
+        for(const char* suffix:{"wkv.weight","q_weight","k_weight"})names.push_back(std::format("layers.{}.engram.{}",L,suffix));
+        REQUIRE(rig.pinned.load(rig.manifest,rig.shards,rig.io,names));
+        for(uint32_t M=1;M<=6;++M) {
+            std::vector<float> expected(size_t(M)*HCD);
+            for(uint32_t m=0;m<M;++m) {
+                REQUIRE_OK(eg.run(L,history,128+m,x->addr+m*HCD*4,y->addr+m*HCD*4));
+                wc_readback(expected.data()+size_t(m)*HCD,static_cast<float*>(y->host)+size_t(m)*HCD,HCD*4);
+            }
+            for(uint32_t m=0;m<M;++m)REQUIRE(eg.fetch(L,history,128+m,m));
+            REQUIRE(cb->begin());
+            for(uint32_t m=0;m<M;++m)REQUIRE(eg.record(*cb,L,x->addr+m*HCD*4,y->addr+m*HCD*4,m));
+            REQUIRE(cb->end());REQUIRE(gpu::submit_and_wait(rig.device,*cb));
+            std::vector<float> actual(expected.size());wc_readback(actual.data(),y->host,actual.size()*4);
+            CHECK(actual==expected);
+            std::printf("batch engram L%u M%u: bit-identical across one submission\n",L,M);
+        }
+    }
+    CHECK(!eg.fetch(1,history,128,6));
+    eg.destroy();CHECK(!eg.fetch(1,history,128));
+}
+
+DEEPMOE_TEST(gpu_dspark, batch_projection_fold_scale) {
+    gpu::Device device;REQUIRE(device.create({}));
+    gpu::MemoryAllocator alloc;REQUIRE(alloc.init(device,MemoryPath::DeviceLocalHostVisible));
+    gpu::MgtRunner original,folded;gpu::MgtSpec spec;
+    REQUIRE(original.create(device,alloc,gpu::default_shader_dir(),spec));
+    spec.fold_scale=true;REQUIRE(folded.create(device,alloc,gpu::default_shader_dir(),spec));
+    gpu::GpuScratch scratch;REQUIRE(scratch.create(alloc,80ull<<20));
+    auto w=take(scratch,32768ull*1280);auto scale=take(scratch,32768ull*1280/1024);
+    auto x=take(scratch,6ull*32768*4);auto parts=take(scratch,8ull*6*32768*4);
+    REQUIRE(w.v.addr && scale.v.addr && x.v.addr && parts.v.addr);
+    auto* wb=static_cast<uint8_t*>(w.v.host);
+    for(size_t i=0;i<32768ull*1280;++i)wb[i]=uint8_t((i*17+31)%126)|uint8_t((i&1)<<7);
+    auto* sb=static_cast<uint8_t*>(scale.v.host);
+    for(size_t i=0;i<32768ull*1280/1024;++i)sb[i]=uint8_t(121+i%12);
+    auto* xb=static_cast<float*>(x.v.host);
+    for(uint32_t i=0;i<6*32768;++i)xb[i]=std::sin(float(i%977)*0.01f)*(1+float(i%13)*0.03f);
+    struct Shape {gpu::MgtStage stage;uint32_t rows,k;};
+    using S=gpu::MgtStage;
+    for(const auto shape:{Shape{S::WqASplit,1280,5120},Shape{S::WqBSplit,32768,1280},
+                          Shape{S::WkvSplit,512,5120},Shape{S::WoASplit,8192,4096},Shape{S::WoBSplit,5120,8192}}) {
+        for(uint32_t m:{1u,3u,6u}) {
+            const size_t n=size_t(original.ksplit(shape.stage))*m*shape.rows;
+            std::vector<float> ref(n),got(n);double elapsed[2]{};
+            uint32_t arm=0;
+            for(auto* r:{&original,&folded}) {
+                REQUIRE(r->ensure(m));auto* p=r->slots(shape.stage);
+                p[gpu::mslot::kGW]=w.v.addr;p[gpu::mslot::kGS]=scale.v.addr;
+                p[gpu::mslot::kGX]=x.v.addr;p[gpu::mslot::kGP]=parts.v.addr;
+                gpu::MgtGemvPush push{};push.rows=shape.rows;push.k=shape.k;
+                push.scale_cols=shape.k/32;push.part_stride=shape.rows;push.x_stride=shape.k;
+                if(shape.stage==S::WoASplit){push.rows_per_group=1024;push.x_stride=32768;}
+                const auto start=std::chrono::steady_clock::now();
+                REQUIRE(r->dispatch_now(m,shape.stage,&push,sizeof push,r->split_groups(shape.stage,shape.rows)));
+                elapsed[arm++]=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+                auto& values=r==&original?ref:got;
+                wc_readback(values.data(),parts.v.host,values.size()*4);
+            }
+            CHECK(ref==got);
+            std::printf("projection fold %s M=%u old_ms=%.6f fold_ms=%.6f partials=%zu bit-identical\n",
+                        gpu::mgt_stage_name(shape.stage),m,elapsed[0],elapsed[1],n);
+        }
+    }
+}
+
+DEEPMOE_TEST(gpu_dspark, full_runtime_chain) {
+    if (skip_without_model("gpu_dspark.full_runtime_chain")) return;
+    auto set=load_l2(ds_dir()); REQUIRE(set);
+    const L2Step* gold=nullptr;
+    for (auto& g:set->steps) if(g.step=="golden_pos64") gold=&g;
+    REQUIRE(gold); const auto& g=*gold;
+    RuntimeConfig cfg; cfg.model_dir=model_dir();
+    cfg.cache.budget_bytes=512ull*layout::kExpertSlotBytes;
+    cfg.cache.slots_per_slab=64;cfg.speculation.enabled=true;
+    runtime::Engine engine;
+    REQUIRE(engine.init(cfg)); REQUIRE(engine.init_gpu());
+    auto& draft=*engine.dspark_runtime();
+    std::array<std::span<const float>,3> rings;
+    for(uint32_t st=0;st<3;++st) rings[st]={g.f(std::format("s{}.sparse_kv",st)).data(),kWin*kHeadDim};
+    REQUIRE(draft.seed_window(64,rings));
+    REQUIRE(draft.append(64,g.f("main_hidden")));
+    draft.set_mega(false);
+    std::map<std::string,std::vector<float>> serial_values;
+    bool agree_all=true;
+    draft.probe=[&](std::string_view name,std::span<const float> val) {
+        auto& saved=serial_values[std::string(name)];saved.resize(val.size());
+        wc_readback(saved.data(),val.data(),val.size_bytes());
+        if(name.starts_with("diag."))return;
+        std::string ref(name);
+        if(ref.starts_with("mtp.")) ref="s"+ref.substr(4,1)+"."+ref.substr(6);
+        const auto& expected=g.f(ref);
+        const auto ag=agree(val.data(),expected.data(),expected.size());
+        agree_all &= ok(ref.c_str(),ag,0.999,0.05);
+    };
+    const auto input=uint32_t(g.f("draft_ids")[0]);
+    auto out=draft.draft(64,input);
+    if(!out) std::printf("DSpark runtime: %s\n",out.error().str().c_str());
+    REQUIRE(out);
+    for(const auto& [name,t]:out->timing_ms)std::printf("draft timing %-32s %.6f ms\n",name.c_str(),t);
+    for(uint32_t j=0;j<5;++j) {
+        std::printf("draft[%u] %u expected %.0f confidence %.5f expected %.5f\n",j,out->tokens[j],g.f("draft_ids")[j+1],out->confidence[j],g.f("confidence")[j]);
+        const auto& top=g.f("draft_logits.top_ids");
+        const auto& val=g.f("draft_logits.top_logits");
+        const size_t width=top.size()/5;
+        if(out->tokens[j]!=uint32_t(g.f("draft_ids")[j+1])) {
+            // The existing MoE path keeps intermediate activations in fp16.
+            // Permit only a top-two reference tie below 0.1 logit, never a broad
+            // token disagreement. Drafts are proposals; target acceptance owns correctness.
+            std::printf("      near-tie: reference margin %.6f, fp16 MoE draft differs\n",val[j*width]-val[j*width+1]);
+            CHECK(val[j*width]-val[j*width+1]<0.1f);
+            CHECK(out->tokens[j]==uint32_t(top[j*width+1]));
+        }
+        CHECK(std::abs(out->confidence[j]-g.f("confidence")[j])<0.1f);
+    }
+    CHECK(agree_all);
+    draft.set_mega(true);
+    draft.probe=[&](std::string_view name,std::span<const float> val) {
+        const auto& expected=serial_values.at(std::string(name));
+        const auto ag=agree(val.data(),expected.data(),expected.size());
+        std::printf("mega vs serial %s %s max=%.8g expectedmax=%.8g\n",std::string(name).c_str(),ag.str().c_str(),*std::max_element(val.begin(),val.end()),*std::max_element(expected.begin(),expected.end()));
+        CHECK(std::memcmp(val.data(),expected.data(),val.size_bytes())==0);
+    };
+    auto fused=draft.draft(64,input);
+    if(!fused)std::printf("mega: %s\n",fused.error().str().c_str());
+    REQUIRE(fused);
+    CHECK_EQ(fused->gpu_dispatches,1u);
+    CHECK(fused->tokens==out->tokens);
+    CHECK(fused->confidence==out->confidence);
+    const auto ag=agree(fused->logits.data(),out->logits.data(),out->logits.size());
+    std::printf("mega logits %s\n",ag.str().c_str());
+    CHECK(fused->logits==out->logits);
+    for(const auto& [name,t]:fused->timing_ms)std::printf("mega timing %-32s %.6f ms\n",name.c_str(),t);
+    std::printf("mega dispatches=%u phases=%u\n",fused->gpu_dispatches,fused->gpu_phases);
+    // Compare wall time without oracle callbacks or snapshot phases.
+    draft.probe={};draft.set_mega(false);
+    auto plain=draft.draft(64,input);REQUIRE(plain);
+    draft.set_mega(true);auto fast=draft.draft(64,input);REQUIRE(fast);
+    CHECK(fast->logits==plain->logits);CHECK(fast->tokens==plain->tokens);
+    std::printf("draft bench serial_ms=%.6f mega_ms=%.6f kernel_ms=%.6f dispatches=%u phases=%u\n",
+        plain->timing_ms.at("wall.draft"),fast->timing_ms.at("wall.draft"),fast->timing_ms.at("mega.kernel"),fast->gpu_dispatches,fast->gpu_phases);
+    for(uint32_t rows=1;rows<5;++rows) {
+        for(bool mega:{false,true}) {
+            draft.set_mega(mega);
+            auto prefix=draft.draft(64,input,rows);REQUIRE(prefix);
+            CHECK_EQ(prefix->logits.size(),size_t(rows)*kVocab);
+            CHECK(std::equal(prefix->logits.begin(),prefix->logits.end(),plain->logits.begin()));
+            CHECK(std::equal(prefix->tokens.begin(),prefix->tokens.begin()+rows,plain->tokens.begin()));
+            CHECK(std::equal(prefix->confidence.begin(),prefix->confidence.begin()+rows,plain->confidence.begin()));
+            std::printf("draft prefix rows=%u mega=%u wall_ms=%.6f phases=%u bit-identical\n",rows,mega,
+                        prefix->timing_ms.at("wall.draft"),prefix->gpu_phases);
+        }
+    }
+    auto compact=draft.draft(64,input,2,false);REQUIRE(compact);CHECK(compact->logits.empty());
+    CHECK_EQ(compact->tokens[0],plain->tokens[0]);CHECK_EQ(compact->tokens[1],plain->tokens[1]);
+    // KV updates stay on the GPU, including a five-row append across the ring wrap.
+    std::vector<float> hidden;
+    for(uint32_t i=0;i<5;++i)hidden.insert(hidden.end(),g.f("main_hidden").begin(),g.f("main_hidden").end());
+    draft.set_mega(false);REQUIRE(draft.seed_window(127,rings));REQUIRE(draft.append(127,g.f("main_hidden")));
+    draft.set_mega(true);REQUIRE(draft.append(128,hidden));
+    auto gpu_kv=draft.draft(132,input);REQUIRE(gpu_kv);
+    draft.set_mega(false);REQUIRE(draft.seed_window(127,rings));REQUIRE(draft.append(127,g.f("main_hidden")));
+    REQUIRE(draft.append(128,hidden));auto cpu_kv=draft.draft(132,input);REQUIRE(cpu_kv);
+    CHECK(gpu_kv->logits==cpu_kv->logits);CHECK(gpu_kv->tokens==cpu_kv->tokens);
+    std::printf("mega committed KV wrap: logits bit-identical\n");
+}
+
+DEEPMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
+    if(skip_without_model("gpu_dspark.adaptive_zero_keeps_one_target_forward"))return;
+    auto state=runtime::DecodeState::load(std::string(DEEPMOE_TEST_DATA_DIR)+"/l3");REQUIRE(state);
+    RuntimeConfig cfg;cfg.model_dir=model_dir();cfg.cache.budget_bytes=512ull*layout::kExpertSlotBytes;
+    cfg.cache.slots_per_slab=64;cfg.speculation.enabled=true;cfg.speculation.max_draft=5;
+    cfg.speculation.min_confidence=1e6f;
+    runtime::Engine engine;REQUIRE(engine.init(cfg));REQUIRE(engine.init_gpu());
+    runtime::SessionConfig sc;sc.max_context=256;
+    sc.engram_tables_dir=std::string(DEEPMOE_TEST_DATA_DIR)+"/l3";
+    REQUIRE(engine.begin_session(sc));engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    auto first=engine.feed(std::span(state->prompt_ids()).first(8));REQUIRE(first);
+    uint32_t layers=0;engine.batch_probe=[&](uint32_t,const auto&){++layers;};
+    uint32_t root=first->token;
+    for(uint32_t i=0;i<2;++i) {
+        const uint32_t before=engine.context_length();layers=0;
+        auto cycle=engine.speculative_step(root,6);REQUIRE(cycle);
+        CHECK_EQ(cycle->cycle.k,0u);CHECK_EQ(cycle->cycle.accepted,0u);
+        CHECK_EQ(cycle->rows.size(),size_t(1));CHECK_EQ(layers,40u);
+        CHECK_EQ(engine.context_length(),before+1);CHECK_EQ(engine.history().back(),root);
+        CHECK_EQ(engine.dspark_runtime()->next_position(),before+1);
+        CHECK(cycle->cycle.draft_ms>0);root=cycle->rows.back().token;
+    }
+}
+
+DEEPMOE_TEST(gpu_dspark, committed_prefix_survives_window_wrap) {
+    if (skip_without_model("gpu_dspark.committed_prefix_survives_window_wrap")) return;
+    auto state=runtime::DecodeState::load(std::string(DEEPMOE_TEST_DATA_DIR)+"/l3");
+    REQUIRE(state);REQUIRE(!state->prompt_ids().empty());
+    RuntimeConfig cfg;cfg.model_dir=model_dir();cfg.speculation.enabled=true;
+    cfg.cache.budget_bytes=2000ull*layout::kExpertSlotBytes;cfg.cache.slots_per_slab=100;
+    runtime::Engine engine;REQUIRE(engine.init(cfg));REQUIRE(engine.init_gpu());
+    runtime::SessionConfig sc;sc.max_context=512;
+    sc.engram_tables_dir=std::string(DEEPMOE_TEST_DATA_DIR)+"/l3";
+    REQUIRE(engine.begin_session(sc));
+    engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    std::vector<uint32_t> prompt(128);
+    for(size_t i=0;i<prompt.size();++i)prompt[i]=state->prompt_ids()[i%state->prompt_ids().size()];
+    auto first=engine.feed(prompt);REQUIRE_OK(first);
+    // Every token is a stop: a six-row verification must retain only row 0.
+    // Rows 1..5 wrap over committed positions 1..5 and must be restored.
+    std::vector<uint32_t> stops(engine.model().text.vocab_size);
+    for(uint32_t i=0;i<stops.size();++i)stops[i]=i;
+    std::vector<uint32_t> slots{1,2,3,4,5},layers(40);
+    for(uint32_t i=0;i<layers.size();++i)layers[i]=i;
+    auto ring_before=engine.kv_store().snapshot_ring(slots,layers);REQUIRE(ring_before);
+    auto carry_before=engine.kv_store().backup_rows(128,128);REQUIRE(carry_before);
+    auto cycle=engine.speculative_step(first->token,6,stops);REQUIRE(cycle);
+    CHECK_EQ(cycle->cycle.k,5u);CHECK_EQ(cycle->rows.size(),size_t(1));
+    CHECK_EQ(engine.context_length(),129u);
+    CHECK(std::equal(prompt.begin(),prompt.end(),engine.history().begin()));
+    CHECK_EQ(engine.history().back(),first->token);
+    CHECK_EQ(engine.dspark_runtime()->next_position(),129u);
+    auto ring_after=engine.kv_store().snapshot_ring(slots,layers);REQUIRE(ring_after);
+    CHECK(ring_before->val==ring_after->val);CHECK(ring_before->scale==ring_after->scale);
+    auto carry_after=engine.kv_store().backup_rows(129,129);REQUIRE(carry_after);
+    REQUIRE(carry_before->planes.size()==carry_after->planes.size());
+    for(size_t i=0;i<carry_before->planes.size();++i) {
+        const auto& before=carry_before->planes[i];const auto& after=carry_after->planes[i];
+        const uint32_t changed=128%before.ratio;
+        for(size_t j=0;j<before.carry_kv.size();++j)if(j/512!=changed) {
+            CHECK_EQ(before.carry_kv[j],after.carry_kv[j]);
+            CHECK_EQ(before.carry_score[j],after.carry_score[j]);
+        }
+    }
+    // Force the real reseed path to consume the restored hidden window.
+    engine.dspark_runtime()->reset();
+    auto tail=engine.speculative_step(cycle->rows.back().token,1);REQUIRE(tail);
+    CHECK_EQ(tail->cycle.k,0u);CHECK_EQ(tail->rows.size(),size_t(1));
+    CHECK_EQ(engine.context_length(),130u);CHECK_EQ(engine.dspark_runtime()->next_position(),130u);
+    engine.reset_context();CHECK_EQ(engine.context_length(),0u);
+    auto reset=engine.feed(std::span(prompt).first(4));REQUIRE(reset);
+    auto fresh=engine.speculative_step(reset->token,2);REQUIRE(fresh);
+    CHECK(engine.context_length()==4+fresh->rows.size());
 }

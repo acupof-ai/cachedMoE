@@ -11,6 +11,7 @@
 #include "core/profiler.h"
 #include "core/status.h"
 #include "core/types.h"
+#include "core/wc_read.h"
 #include "model/layout.h"
 #include "tests/test_framework.h"
 
@@ -246,4 +247,19 @@ DEEPMOE_TEST(bytes, human_and_readers) {
     REQUIRE_OK(b);
     CHECK_EQ(*b, 2u);
     CHECK_ERR(read_le<uint32_t>(span, 6), Err::OutOfRange);
+}
+
+// The streamed middle must preserve unaligned heads/tails and never overwrite
+// the destination guards; batch index-list strides are not 32-byte aligned.
+DEEPMOE_TEST(bytes, wc_readback_handles_unaligned_heads_and_tails) {
+    alignas(32) uint8_t src[1024], dst[1024], expected[1024];
+    for (size_t i=0;i<sizeof src;++i) src[i]=uint8_t(i*37u+11u);
+    for (size_t offset=0;offset<32;++offset)
+        for (size_t count : {size_t(0),size_t(1),size_t(31),size_t(32),size_t(63),
+                             size_t(64),size_t(65),size_t(100),size_t(513)}) {
+            std::memset(dst,0xA5,sizeof dst);std::memset(expected,0xA5,sizeof expected);
+            std::memcpy(expected+13,src+offset,count);
+            wc_readback(dst+13,src+offset,count);
+            CHECK(std::memcmp(dst,expected,sizeof dst)==0);
+        }
 }

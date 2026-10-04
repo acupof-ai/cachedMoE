@@ -58,6 +58,7 @@ set(DEEPMOE_GPU_SOURCES
     gpu/vulkan/moe_kernels.cpp
     gpu/vulkan/attn_kernels.cpp
     gpu/vulkan/decode_kernels.cpp
+    gpu/vulkan/dspark_mega.cpp
     gpu/vulkan/dspark_kernels.cpp
     gpu/vulkan/prefill_kernels.cpp)
 
@@ -70,6 +71,7 @@ set(DEEPMOE_RUNTIME_SOURCES
     runtime/engram.cpp
     runtime/sampling.cpp
     runtime/session.cpp
+    runtime/dspark_runtime.cpp
     runtime/speculate.cpp
     runtime/engram_tables.cpp
     runtime/trace.cpp)
@@ -85,10 +87,13 @@ set(DEEPMOE_SHADER_DEPS
     gpu/shaders/fp8_gemv.slang
     gpu/shaders/dspark_common.slang
     gpu/shaders/prefill_common.slang)
+list(APPEND DEEPMOE_SHADER_DEPS gpu/shaders/decode_attn_cm.slang)
 
 # design §7.14 dispatch list, plus the FP4 GEMV template and the raw-read
 # upper bound every kernel is scored against (design §7.1 rule 2).
 set(DEEPMOE_SHADERS
+    gpu/shaders/dspark_mega.slang
+    gpu/shaders/dspark_grid.slang
     gpu/shaders/moe_gemv_fp4.slang
     gpu/shaders/rawread.slang
     gpu/shaders/mega_mhc.slang
@@ -119,6 +124,7 @@ set(DEEPMOE_SHADERS
     gpu/shaders/mgt1_gemv.slang
     gpu/shaders/mgt1_mhc.slang
     gpu/shaders/mgt1_attn.slang
+    gpu/shaders/mgt1_attn_cm.slang
     gpu/shaders/mgt1_gate.slang
     gpu/shaders/mgt1_cmp.slang
     gpu/shaders/mgt1_idx.slang

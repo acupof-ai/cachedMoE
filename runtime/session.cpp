@@ -194,6 +194,11 @@ std::string GenerateStats::json_fields() const {
                      sampled_steps, topk_fallbacks, topk_checked, topk_mismatches,
                      json_number(sampled_steps ? double(nucleus_sum) / sampled_steps : 0.0),
                      context_after, reheat_turn, reheat_keys, reheat_free_slots);
+    s += std::format(",\"speculation\":{{\"cycles\":{},\"verified\":{},\"accepted\":{},\"tokens\":{},\"draft_ms\":{},\"verify_ms\":{},\"commit_ms\":{},\"cpu_ms\":{},\"target_rows\":{},\"union_experts\":{},\"miss_bytes\":{},\"gpu_readout_cycles\":{}}}",
+        speculation.cycles,speculation.verified,speculation.accepted,speculation.tokens,
+        json_number(speculation.draft_ms),json_number(speculation.verify_ms),json_number(speculation.rollback_ms),
+        json_number(speculation.cpu_ms),speculation.cycles+speculation.verified,
+        speculation.union_experts,speculation.miss_bytes,speculation.gpu_readout_cycles);
     return s;
 }
 
@@ -389,7 +394,7 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
 // Emits `ts.cur`'s token and decides whether the turn continues. Returns true
 // when another step is wanted.
 bool turn_emit(Engine& e, TurnState& ts, uint32_t index,
-               const std::function<void(uint32_t, const TokenEvent&)>& on_token) {
+               const std::function<void(uint32_t, const TokenEvent&)>& on_token, bool burst = false) {
     GenerateStats& st = ts.st;
     const GenerateRequest& req = *ts.req;
     const uint32_t tok_id = ts.cur.token;
@@ -411,10 +416,10 @@ bool turn_emit(Engine& e, TurnState& ts, uint32_t index,
     ts.emitted_token = tok_id;
     if (stop)                                     { st.finish = "stop";    return false; }
     if (st.generated >= req.max_tokens)           { st.finish = "length";  return false; }
-    if (e.context_length() + 1 >= e.max_context()){ st.finish = "context"; return false; }
+    if (!burst && e.context_length() + 1 >= e.max_context()){ st.finish = "context"; return false; }
     // Between tokens: the emitted token is not fed, so the store holds exactly
     // history() and the next request continues or rolls back as usual.
-    if (req.cancel && req.cancel())               { st.finish = "cancel";  return false; }
+    if (!burst && req.cancel && req.cancel())     { st.finish = "cancel";  return false; }
     return true;
 }
 
@@ -465,12 +470,28 @@ Result<GenerateStats> Session::generate(
         return std::unexpected(r.error());
     if (!ts.live) return ts.st;
     auto emit = [&](uint32_t, const TokenEvent& ev) { if (on_token) on_token(ev); };
-    for (;;) {
-        if (!turn_emit(e, ts, 0, emit)) break;
-        const std::array<uint32_t, 1> one{ts.emitted_token};
-        auto r = e.feed(one);
-        if (!r) return std::unexpected(r.error());
-        turn_account(ts, *r);
+    bool more=turn_emit(e,ts,0,emit);
+    while(more) {
+        if(e.config().speculation.enabled) {
+            auto r=e.speculative_step(ts.emitted_token,req.max_tokens-ts.st.generated,req.stop_ids);
+            if(!r)return std::unexpected(r.error());
+            ts.st.speculation.add(r->cycle);
+            add(ts.st.decode_sum,r->breakdown);
+            ts.st.decode_requests+=r->breakdown.requests;
+            ts.st.decode_hits+=r->breakdown.hits;
+            ts.st.decode_nvme_bytes+=r->breakdown.miss_bytes;
+            ts.step_hit=r->breakdown.requests?double(r->breakdown.hits)/r->breakdown.requests:0;
+            for(size_t j=0;j<r->rows.size();++j) {
+                ts.cur=r->rows[j];ts.step_ms=ts.cur.wall_ms;
+                ++ts.st.decode_steps;account_sample(ts.st,ts.cur);
+                more=turn_emit(e,ts,0,emit,j+1<r->rows.size());
+                if(!more)break;
+            }
+        } else {
+            const std::array<uint32_t,1> one{ts.emitted_token};
+            auto r=e.feed(one);if(!r)return std::unexpected(r.error());
+            turn_account(ts,*r);more=turn_emit(e,ts,0,emit);
+        }
     }
     turn_finish(e, ts, opt_);
     return ts.st;

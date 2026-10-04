@@ -98,10 +98,13 @@ public:
                         const std::string& shader_dir, const AttnSpec& spec = {});
     void destroy();
 
-    uint64_t* slots(DecodeStage s);
+    // Separate address-table bindings let a batch record several engram rows
+    // without overwriting the descriptors an earlier dispatch will consume.
+    static constexpr uint32_t kBindings = 6;
+    uint64_t* slots(DecodeStage s, uint32_t binding = 0);
 
     Result<void> record(CommandBuffer& cmd, DecodeStage s, const void* push,
-                        uint32_t push_bytes, uint32_t groups);
+                        uint32_t push_bytes, uint32_t groups, uint32_t binding = 0);
     Result<void> dispatch_now(DecodeStage s, const void* push, uint32_t push_bytes,
                               uint32_t groups);
 
@@ -124,7 +127,7 @@ private:
     CommandPool      pool_;
     GpuBuffer        table_{};
 #if defined(DEEPMOE_ENABLE_VULKAN)
-    VkDescriptorSet  sets_[static_cast<uint32_t>(DecodeStage::Count)]{};
+    VkDescriptorSet  sets_[kBindings][static_cast<uint32_t>(DecodeStage::Count)]{};
 #endif
 };
 
@@ -160,6 +163,8 @@ enum class MgtStage : uint32_t {
     Head, HeadArgmax, HeadTopK,
     // mgt1_engram
     EngramGemv, EngramGate,
+    HeadRank,                    // original draft token's exact rank, one row per WG
+    AttnCmGather, AttnCmScore, AttnCmSoftmax, AttnCmPv, AttnCmFinish,
     Count,
 };
 
@@ -170,6 +175,8 @@ inline constexpr uint32_t kMgtMaxM = 6;
 // The knobs. A K-split factor must be a power of two dividing K / 32 with
 // K / factor <= 1024 (mgt1_gemv.slang's staged slice).
 struct MgtSpec {
+    bool fold_scale = false;       // share UE8M0 factor in the staged activation
+    bool attn_cm = false;
     uint32_t lanes_per_row = 32;
     uint32_t subgroup_size = 32;
     uint32_t ksplit_wq_a = 8;       // 5120 / 8 = 640
@@ -202,6 +209,11 @@ struct MgtAttnPush {
     float    softmax_scale = 0.0f;
     uint32_t n_heads = 0, n_tiles = 0, tile_len = 0, list_stride = 0;
 };
+struct MgtAttnCmPush {
+    AttnCmPush cm;
+    uint32_t n_ovf = 0, list_stride = 0, part_stride = 0;
+};
+static_assert(sizeof(MgtAttnCmPush)==52);
 // mgt1_cmp.slang
 struct MgtCmpPush {
     uint32_t rows = 0, k = 0, ratio = 1, p0 = 0, rope_dim = 0;
@@ -241,12 +253,18 @@ enum : uint32_t { kIQRaw = 0, kIQ = 1, kIQFp4 = 2, kIQScale = 3, kIRope = 4, kIW
                   kIKScale = 11, kIWProjW = 12, kIX = 13, kIWeights = 14, kIScore = 15,
                   kIOut = 16, kIBlkKey = 17, kICand = 18 };
 // mgt1_head
-enum : uint32_t { kHW = 0, kHX = 1, kHLogits = 2, kHSample = 3, kHTopOut = 4, kHHist = 5 };
+enum : uint32_t { kHW = 0, kHX = 1, kHLogits = 2, kHSample = 3, kHTopOut = 4, kHHist = 5,
+                  kHDraft = 6, kHRank = 7 };
 // mgt1_engram: dslot's engram indices
 }  // namespace mslot
 
 // Words of one row's record in mgt1_head stage 2's output.
 inline constexpr uint32_t kMgtTopKRecordWords = 8 + 256 + 256 * 32 * 2;
+// HeadTopK: k = draft count, x_stride = acceptance top-K, slice high bit set.
+inline constexpr uint32_t kMgtHeadSpecReadout = 0x80000000u;
+struct MgtRankOut {
+    uint32_t rows = 0, better = 0, error = 0, token = 0;
+};
 
 class MgtRunner {
 public:

@@ -10,6 +10,15 @@
 
 namespace deepmoe::runtime {
 
+Result<uint32_t> draft_prefix_from_confidence(std::span<const float> confidence,float minimum) {
+    if(confidence.size()>5 || !std::isfinite(minimum))
+        return fail(Err::InvalidArgument,"draft confidence needs at most five rows and a finite threshold");
+    for(float c:confidence)if(!std::isfinite(c))return fail(Err::InvalidArgument,"nonfinite draft confidence");
+    uint32_t k=0;
+    while(k<confidence.size() && confidence[k]>=minimum)++k;
+    return k;
+}
+
 namespace {
 constexpr uint32_t kWg = 256;   // gpu/shaders/attn_common.slang's kWg
 }  // namespace
@@ -36,6 +45,7 @@ void SpecStats::add(const SpecCycle& c) {
     tokens        += c.emitted;
     accepted      += c.accepted;
     verified      += c.k;
+    gpu_readout_cycles += c.gpu_readout;
     draft_ms      += c.draft_ms;
     verify_ms     += c.verify_ms;
     cpu_ms        += c.cpu_ms;
@@ -313,3 +323,26 @@ void emulate_verify_row(std::span<const float> logits, std::span<const int32_t> 
 }
 
 }  // namespace deepmoe::runtime
+
+namespace deepmoe::runtime {
+Result<uint32_t> accept_topk_prefix(std::span<const uint32_t> draft,
+                                   std::span<const float> matrix,uint32_t vocab,uint32_t topk) {
+    if(!vocab || !topk || topk>vocab || matrix.size()!=(draft.size()+1)*vocab)
+        return fail(Err::InvalidArgument,"top-K acceptance requires a [k+1,vocab] matrix");
+    uint32_t accepted=0;
+    for(uint32_t j=0;j<draft.size();++j) {
+        if(draft[j]>=vocab)return fail(Err::OutOfRange,"draft token outside vocabulary");
+        auto row=matrix.subspan(size_t(j)*vocab,vocab);
+        const float value=row[draft[j]];
+        if(!std::isfinite(value))return fail(Err::InvalidArgument,"nonfinite draft logit");
+        uint32_t better=0;
+        for(uint32_t id=0;id<vocab;++id) {
+            if(!std::isfinite(row[id]))return fail(Err::InvalidArgument,"nonfinite verification logit");
+            better+=row[id]>value || (row[id]==value && id<draft[j]);
+        }
+        if(better>=topk)break;
+        ++accepted;
+    }
+    return accepted;
+}
+}

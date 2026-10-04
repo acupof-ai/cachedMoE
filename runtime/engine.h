@@ -68,6 +68,7 @@
 #include "model/v41_config.h"
 #include "runtime/decode_layer.h"
 #include "runtime/decode_state.h"
+#include "runtime/dspark_runtime.h"
 #include "runtime/engram.h"
 #include "runtime/kvcache.h"
 #include "runtime/kvstore.h"
@@ -75,6 +76,7 @@
 #include "runtime/resident_route.h"
 #include "runtime/sampler.h"
 #include "runtime/sampling.h"
+#include "runtime/speculate.h"
 #include "runtime/trace.h"
 #include "storage/file.h"
 #include "storage/io_engine.h"
@@ -293,6 +295,9 @@ struct Stream {
     EngramRunner         engram_;
     KvStore              kvs_;
     std::vector<uint32_t> history_;
+    std::vector<float> draft_hidden_;
+    std::array<int64_t,128> draft_position_{};
+    std::array<uint8_t,128> draft_mask_{};
     // The stream's own token counter. It numbers the residency timeline
     // (`gpu::timeline_value(token_, L)`), which is per stream because the
     // timeline is; the cache's LRU clock is the process-wide `Engine::clock_`,
@@ -319,7 +324,7 @@ struct Stream {
     // --- the M > 1 forward, stream 0 only (docs/p4_dspark_runtime.md) ---
     gpu::MgtRunner       mgt_;
     gpu::GpuScratch      bscratch_;
-    gpu::GpuBuffer       blogits_{}, bsample_{}, btopk_out_{}, btopk_hist_{};
+    gpu::GpuBuffer       blogits_{}, bsample_{}, btopk_out_{}, btopk_hist_{}, bdraft_{}, brank_{};
     // Track MS: what `run_layer` decided in its first two phases and its third
     // needs. In a single-stream step the three phases are consecutive
     // statements and this is dead bookkeeping; in an interleaved step the
@@ -473,12 +478,20 @@ public:
     struct BatchRow {
         uint32_t argmax = 0;
         float    top1 = 0.0f, top2 = 0.0f;
+        gpu::MgtRankOut draft_rank{};
     };
     // `logits`, when non-empty, must be [M][vocab] and receives every row.
     Result<void> forward_batch(uint32_t p0, std::span<const uint32_t> tokens,
                                std::span<BatchRow> rows, std::span<float> logits = {});
     // Builds the M > 1 runner, its scratch and its tail buffers. Called by
     // `forward_batch` on first use; separate so a caller can pay for it up front.
+    struct SpecStep {
+        std::vector<DecodeStepResult> rows;
+        SpecCycle cycle;
+        StepBreakdown breakdown;
+    };
+    Result<SpecStep> speculative_step(uint32_t last_token,uint32_t max_new,
+                                      std::span<const uint32_t> stop_ids = {});
     Result<void> init_batch(uint32_t m_cap);
     bool batch_ready() const { return batch_ready_; }
     // The union of the last forward_batch's routed experts, summed over layers,
@@ -616,7 +629,9 @@ public:
     // the same cache state and the same routing decision, one position at a
     // time, which is what makes it measurable on the teacher-forced harness
     // while `Engine::forward_batch` does not exist.
-    enum class ResidentOnly : uint8_t { Off = 0, All = 1, Stall1 = 2, Verify = 3 };
+    // Mask keeps the normal demand planner/LRU and asynchronous P0 fills,
+    // but computes only plan hits at their original weights (no renormalisation).
+    enum class ResidentOnly : uint8_t { Off = 0, All = 1, Stall1 = 2, Verify = 3, Mask = 4 };
     // DSpark's block: one verify forward over [last accepted, 4 drafts].
     // `Verify` mode routes step `token_ % kVerifyBlock == 0` exactly and the
     // other four resident-only.
@@ -627,7 +642,7 @@ public:
     // does the same thing for a conversation; this is the `run` path's version.
     Result<uint32_t> warm_cache_from_heat(std::chrono::seconds timeout = std::chrono::seconds(180));
 
-    void set_resident_only(ResidentOnly m) { resident_only_ = m; }
+    void set_resident_only(ResidentOnly m);
     ResidentOnly resident_only() const { return resident_only_; }
     const ResidentRouteStats& resident_route_stats() const { return rr_; }
     void reset_resident_route_stats() { rr_ = {}; }
@@ -699,6 +714,7 @@ public:
     gpu::Device&            device()         { return device_; }
     TokenIndex              token_index() const { return cur_->token_; }
     bool                    gpu_ready()  const { return gpu_ready_; }
+    DsparkRuntime* dspark_runtime() { return dspark_.get(); }
 
     // The per-layer breakdown of the last decode step (design §13.1).
     const std::vector<LayerTiming>& layer_timings() const { return cur_->timings_; }
@@ -717,6 +733,7 @@ public:
 
     // One line per subsystem, for `deepmoe info` and the benchmark header.
     std::string status() const;
+    std::string engram_status() const;
 
     // --- Track G: the gate host round trip, broken down (docs/plan_p5.md (g))
     //
@@ -850,6 +867,12 @@ private:
     Result<void> prepare_ced(uint32_t position);
     void         build_ced_plan();
 
+    void capture_draft_hidden(uint32_t layer,uint32_t position,const float* hc);
+    Result<void> seed_draft(uint32_t position);
+    struct BatchCarry { uint32_t layer=0; std::vector<float> kv,score; };
+    std::vector<BatchCarry> batch_carry_;
+    KvRowBackup batch_carry_before_;
+    bool spec_inflight_=false;
     RuntimeConfig cfg_{};
     V41Config     model_cfg_{};
     Manifest      manifest_{};
@@ -864,6 +887,7 @@ private:
     store::Planner      planner_;
     store::PinnedStore  pinned_;
 
+    std::unique_ptr<DsparkRuntime> dspark_;
     gpu::Device          device_;
     gpu::MemoryAllocator alloc_a_, alloc_b_;
     // Track MS: the per-sequence half, one per stream. `cur_` is the stream
@@ -895,7 +919,9 @@ private:
     uint32_t             topk_mismatches_ = 0;
     // Draws the emitted token for a sampled step from the kernel's top set (or
     // the full logits) into `res`.
-    Result<void>         sample_into(DecodeStepResult& res, uint32_t position);
+    Result<void>         sample_into(DecodeStepResult& res, uint32_t position,
+                                   const uint32_t* readout = nullptr,
+                                   const float* logits = nullptr);
     // --- M1: the M > 1 forward (docs/p4_dspark_runtime.md §6.4) -----------
     // The runner, the scratch and the tail buffers are the stream's; the batch
     // is only ever run on stream 0.
@@ -951,6 +977,9 @@ private:
     // the accesses this process made through cache_sim's LRU and compare it
     // step for step. Off (null) unless the variable is set.
     std::FILE*            route_dump_ = nullptr;
+    std::FILE*            spec_diagnostics_ = nullptr;
+    bool spec_diagnostics_started_ = false;
+    std::vector<uint16_t> batch_route_requests_;
     MsSched               ms_sched_ = MsSched::Pipeline;
     void write_route_record(uint32_t position);
 

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -74,9 +75,12 @@ struct PrefetchConfig {
 };
 
 struct SpeculationConfig {
-    bool     enabled   = false;   // design §15: DSpark lands in P4
+    bool     enabled   = false;   // real three-stage MTP draft
     uint32_t max_draft = 5;       // dspark_block_size
-    bool     greedy    = true;    // sampling-mode verification is P4b
+    uint32_t accept_topk = 4;    // accept the unchanged main-path token in target top-K
+    // Experimental raw-score prefix policy; unset keeps fixed max_draft.
+    // The draft has already run when this selects k, including k=0.
+    std::optional<float> min_confidence;
 };
 
 struct RuntimeConfig {

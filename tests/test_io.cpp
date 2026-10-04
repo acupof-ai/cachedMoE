@@ -12,6 +12,7 @@
 #include "core/align.h"
 #include "core/config.h"
 #include "model/layout.h"
+#include "runtime/engine.h"
 #include "storage/backend.h"
 #include "storage/file.h"
 #include "storage/io_engine.h"
@@ -76,6 +77,120 @@ DEEPMOE_TEST(io, chunk_planning) {
     // expert size is (design §2.3).
     CHECK_EQ(c[4].bytes, static_cast<uint32_t>(layout::kExpertBytes - 4ull * (4u << 20)));
     CHECK_EQ(c[4].bytes % 4096, 0u);
+}
+
+DEEPMOE_TEST(io, engram_wait_bypasses_async_p0_backlog) {
+    const size_t bytes = 1u << 20;
+    auto content = pattern_bytes(bytes);
+    auto scratch = make_scratch("engramdeadline", bytes, false);
+    REQUIRE_OK(scratch);
+    IoConfig cfg;
+    cfg.chunk_bytes = 4096;
+    cfg.max_inflight_ops = 2;
+    cfg.max_inflight_bytes = bytes;
+    cfg.engram_qd = 12;
+    auto backend = std::make_unique<test::FakeBackend>(content, 16);
+    auto* fake = backend.get();
+    fake->hold_completions(true);
+    runtime::Engine owner;
+    auto& engine = owner.io();
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+    AlignedBuffer expert(32 * 4096), rows(20 * 4096);
+    IoRequest p0;
+    p0.file = &scratch->file;
+    p0.priority = IoPriority::BlockingMiss;
+    p0.bytes = expert.size(); p0.dst = expert.data();
+    auto p0_done = engine.submit_future(p0);
+    REQUIRE_OK(p0_done);
+    auto wait_count = [&](size_t n) {
+        const auto until = Clock::now() + std::chrono::seconds(1);
+        while (fake->submit_count() < n && Clock::now() < until)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    };
+    wait_count(2);
+    std::vector<std::future<IoResult>> pending;
+    for (uint32_t i = 0; i < 20; ++i) {
+        IoRequest r;
+        r.priority = IoPriority::Engram; r.file = &scratch->file;
+        r.file_off = (64 + i) * 4096; r.bytes = 4096;
+        r.dst = rows.data() + i * 4096;
+        auto f = engine.submit_future(r);
+        REQUIRE_OK(f);
+        pending.push_back(std::move(*f));
+    }
+    {
+        // Off mode's scope is inert: no P2 can pass a held P0 queue.
+        auto ordinary = engine.engram_wait();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        CHECK_EQ(fake->submit_count(), 2u);
+    }
+    // The serve CLI sets this after init. Exercise that same setter rather
+    // than manually enabling the scheduler, so policy wiring is covered.
+    owner.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    {
+        auto urgent = engine.engram_wait();
+        wait_count(12);
+        CHECK_EQ(fake->submit_count(), 12u); // backend/Engram QD still enforced
+        CHECK_EQ(engine.inflight_chunks(IoPriority::BlockingMiss), 2u);
+        CHECK_EQ(engine.inflight_chunks(IoPriority::Engram), 10u);
+        CHECK_EQ(engine.stats().p2_deadline_chunks, 10u);
+    }
+    fake->release_all();
+    engine.drain();
+    CHECK(p0_done->get().ok());
+    for (auto& f : pending) CHECK(f.get().ok());
+    const auto log = fake->log();
+    // Leaving the scope restores strict P0 ordering for the unissued rows.
+    CHECK_EQ(log[12].file_off, 2u * 4096);
+    CHECK_EQ(std::memcmp(expert.data(), content.data(), expert.size()), 0);
+    CHECK_EQ(std::memcmp(rows.data(), content.data() + 64 * 4096, rows.size()), 0);
+    CHECK_EQ(engine.stats().p2_requests, 20u);
+    CHECK_EQ(engine.stats().requests_cancelled, 0u);
+    engine.stop();
+}
+
+DEEPMOE_TEST(io, engram_wait_has_a_bounded_issue_window) {
+    const size_t bytes = 2u << 20;
+    auto content = pattern_bytes(bytes);
+    auto scratch = make_scratch("engramdeadlinecap", bytes, false);
+    REQUIRE_OK(scratch);
+    IoConfig cfg;
+    cfg.chunk_bytes = 4096; cfg.max_inflight_ops = 2;
+    cfg.max_inflight_bytes = bytes; cfg.engram_qd = 256;
+    auto backend = std::make_unique<test::FakeBackend>(content, 256);
+    auto* fake = backend.get(); fake->hold_completions(true);
+    IoEngine engine;
+    REQUIRE_OK(engine.start(std::move(backend), cfg));
+    engine.set_engram_wait_priority(true);
+    AlignedBuffer expert(32 * 4096), rows(128 * 4096);
+    IoRequest r;
+    r.priority = IoPriority::BlockingMiss; r.file = &scratch->file;
+    r.bytes = expert.size(); r.dst = expert.data();
+    REQUIRE_OK(engine.submit(r, [](const IoResult&) {}));
+    auto await_count = [&](size_t n) {
+        const auto until = Clock::now() + std::chrono::seconds(1);
+        while (fake->submit_count() < n && Clock::now() < until)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    };
+    await_count(2);
+    for (uint32_t i = 0; i < 128; ++i) {
+        r.priority = IoPriority::Engram;
+        r.file_off = (64 + i) * 4096; r.bytes = 4096;
+        r.dst = rows.data() + i * 4096;
+        REQUIRE_OK(engine.submit(r, [](const IoResult&) {}));
+    }
+    {
+        auto waiting = engine.engram_wait();
+        await_count(2 + IoEngine::kEngramWaitChunks);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        CHECK_EQ(engine.inflight_chunks(IoPriority::Engram), IoEngine::kEngramWaitChunks);
+        CHECK_EQ(fake->submit_count(), 2u + IoEngine::kEngramWaitChunks);
+    }
+    fake->release_all(); engine.drain();
+    CHECK_EQ(engine.stats().requests_completed, 129u);
+    CHECK_EQ(engine.stats().requests_failed, 0u);
+    CHECK_EQ(std::memcmp(rows.data(), content.data() + 64 * 4096, rows.size()), 0);
+    engine.stop();
 }
 
 DEEPMOE_TEST(io, chunk_planning_edge_cases) {

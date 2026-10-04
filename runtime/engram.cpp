@@ -209,12 +209,15 @@ Result<void> EngramRunner::create(gpu::Device& device, gpu::MemoryAllocator& all
     auto place = [&](uint64_t n) { const uint64_t at = align_up(off, 256); off = at + n; return at; };
     planes_.clear();
     for (const EngramTables::LayerTable& lt : tables_.layers) {
+      for(uint32_t row=0;row<gpu::DecodeRunner::kBindings;++row) {
         Planes pl;
         pl.layer   = lt.layer;
+        pl.batch_row = row;
         pl.off_val = place(val_bytes);
         pl.off_sc  = place(sc_bytes);
         pl.staging = planes_.size() * kReadsPerToken * kStagingPerRead;
         planes_.push_back(std::move(pl));
+      }
     }
     off_kv_  = place(kv_bytes);
 
@@ -265,22 +268,22 @@ Result<EngramRunner::LayerBind> EngramRunner::bind_layer(uint32_t layer) const {
     return LayerBind{(*w)->data, (*w)->scale, (*q)->data, (*k)->data};
 }
 
-EngramRunner::Planes* EngramRunner::planes_for(uint32_t layer) {
+EngramRunner::Planes* EngramRunner::planes_for(uint32_t layer, uint32_t batch_row) {
     for (Planes& p : planes_)
-        if (p.layer == layer) return &p;
+        if (p.layer == layer && p.batch_row==batch_row) return &p;
     return nullptr;
 }
 
-bool EngramRunner::fetched(uint32_t layer, uint64_t position) const {
+bool EngramRunner::fetched(uint32_t layer, uint64_t position, uint32_t batch_row) const {
     for (const Planes& p : planes_)
-        if (p.layer == layer) return p.fetched_position == position;
+        if (p.layer == layer && p.batch_row==batch_row) return p.fetched_position == position;
     return false;
 }
 
 Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> history,
-                                 uint64_t position) {
+                                 uint64_t position, uint32_t batch_row) {
     if (!runner_) return fail(Err::FailedPrecondition, "engram runner is not created");
-    Planes* pl = planes_for(layer);
+    Planes* pl = planes_for(layer,batch_row);
     if (!pl) return fail(Err::InvalidArgument, std::format("layer {} has no engram", layer));
     if (auto r = land(*pl); !r) return r;   // the landing zone must be free
     uint64_t rows[layout::kEngramRowsPerToken];
@@ -323,6 +326,8 @@ Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> histo
 
 Result<void> EngramRunner::land(Planes& pl) {
     if (pl.pending.empty()) return {};
+    const auto land_start = Clock::now();
+    uint64_t wait = 0;
     const auto* base = static_cast<const std::byte*>(staging_.ptr) + pl.staging;
     // Gathered into ordinary host memory first and written to the mapping in
     // one memcpy per plane: 24 scattered writes of 256 and 8 bytes each would
@@ -330,10 +335,13 @@ Result<void> EngramRunner::land(Planes& pl) {
     std::vector<std::byte> vals(size_t(layout::kEngramRowsPerToken) * layout::kEngramValueRowBytes);
     std::vector<std::byte> scs(size_t(layout::kEngramRowsPerToken) * layout::kEngramScaleRowBytes);
     Status failed{Err::Ok};   // the first failed read; the rest still have to land
+    const auto deadline = io_->engram_wait();
     for (size_t i = 0; i < pl.pending.size(); ++i) {
         auto& [f, skew] = pl.pending[i];
         if (f.valid()) {   // a resident scale row has no read behind it
+            const auto wait_start = Clock::now();
             const storage::IoResult res = f.get();
+            wait += uint64_t((Clock::now() - wait_start).count());
             if (!res.ok() && failed.code == Err::Ok) failed = res.status;
         }
         const std::byte* src = base + i * kStagingPerRead + skew;
@@ -344,19 +352,22 @@ Result<void> EngramRunner::land(Planes& pl) {
             std::memcpy(vals.data() + row * layout::kEngramValueRowBytes, src, layout::kEngramValueRowBytes);
     }
     pl.pending.clear();
+    ++land_calls_;
+    wait_ns_ += wait;
     if (failed.code != Err::Ok) {
         pl.fetched_position = ~0ull;
         return fail(failed.code, std::format("engram layer {}: {}", pl.layer, failed.message));
     }
     std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + pl.off_val, vals.data(), vals.size());
     std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + pl.off_sc, scs.data(), scs.size());
+    stage_ns_ += uint64_t((Clock::now() - land_start).count()) - wait;
     return {};
 }
 
 Result<void> EngramRunner::record(gpu::CommandBuffer& cmd, uint32_t layer, DeviceAddress x_in,
-                                  DeviceAddress x_out) {
+                                  DeviceAddress x_out, uint32_t batch_row) {
     if (!runner_) return fail(Err::FailedPrecondition, "engram runner is not created");
-    Planes* pl = planes_for(layer);
+    Planes* pl = planes_for(layer,batch_row);
     if (!pl || pl->fetched_position == ~0ull)
         return fail(Err::FailedPrecondition,
                     std::format("engram layer {} recorded before its rows were fetched", layer));
@@ -369,14 +380,14 @@ Result<void> EngramRunner::record(gpu::CommandBuffer& cmd, uint32_t layer, Devic
     const uint32_t k   = layout::kEngramWkvCols;
     const uint32_t rowsn = dim * (hc + 1);
 
-    uint64_t* g = runner_->slots(gpu::DecodeStage::EngramGemv);
+    uint64_t* g = runner_->slots(gpu::DecodeStage::EngramGemv,batch_row);
     g[gpu::dslot::kRowVal] = buf_.dev_addr + pl->off_val;
     g[gpu::dslot::kRowSc]  = buf_.dev_addr + pl->off_sc;
     g[gpu::dslot::kW]      = bound->w;
     g[gpu::dslot::kS]      = bound->s;
     g[gpu::dslot::kKv]     = buf_.dev_addr + off_kv_;
 
-    uint64_t* a = runner_->slots(gpu::DecodeStage::EngramGate);
+    uint64_t* a = runner_->slots(gpu::DecodeStage::EngramGate,batch_row);
     a[gpu::dslot::kKv]   = buf_.dev_addr + off_kv_;
     a[gpu::dslot::kX]    = x_in;
     a[gpu::dslot::kQW]   = bound->qw;
@@ -386,10 +397,10 @@ Result<void> EngramRunner::record(gpu::CommandBuffer& cmd, uint32_t layer, Devic
     gpu::EngramPush push{rowsn, k, k / 32, dim, hc,
                          static_cast<float>(cfg_->rms_norm_eps)};
     if (auto r = runner_->record(cmd, gpu::DecodeStage::EngramGemv, &push, sizeof push,
-                                 runner_->gemv_groups(rowsn)); !r)
+                                 runner_->gemv_groups(rowsn),batch_row); !r)
         return r;
     if (auto r = cmd.barrier(); !r) return r;
-    if (auto r = runner_->record(cmd, gpu::DecodeStage::EngramGate, &push, sizeof push, hc); !r)
+    if (auto r = runner_->record(cmd, gpu::DecodeStage::EngramGate, &push, sizeof push, hc,batch_row); !r)
         return r;
     return cmd.barrier();
 }

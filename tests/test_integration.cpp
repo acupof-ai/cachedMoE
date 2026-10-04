@@ -378,6 +378,34 @@ DEEPMOE_TEST(integration, planner_wait_layer_is_lru_and_backfill_joins) {
     }
 
     {
+        // Mask can accumulate filling slots. A selected hit must survive a
+        // later miss even when it is the ONLY resident victim available.
+        CacheConfig cache; cache.slots_per_slab = 1;
+        cache.budget_bytes = 2 * layout::kExpertSlotBytes;
+        ExpertStore store;
+        REQUIRE_OK(store.init(std::make_unique<HostSlabBacking>(), cache));
+        auto a = store.begin_fill({7, 0}); REQUIRE_OK(a);
+        REQUIRE_OK(store.finish_fill(a->slot, true, 1));
+        auto b = store.begin_fill({7, 1}); REQUIRE_OK(b);
+        Planner planner;
+        REQUIRE_OK(planner.init(store, io, *mf, shards, cache, PrefetchConfig{}));
+        const uint16_t selected[] = {0, 2};
+        RouteDecision route; route.layer = 7;
+        route.chosen = selected; route.guard_hits = 17;
+        auto plan = planner.plan_layer(route, 1); REQUIRE_OK(plan);
+        REQUIRE_EQ(plan->hits.size(), 1u);
+        CHECK(store.resident({7, 0}));
+        CHECK_EQ(store.slot_for({7, 0})->guard_timeline, 17u);
+        CHECK_EQ(plan->misses.size(), 1u);
+        CHECK(plan->issued.empty()); // no room: miss stays masked
+        REQUIRE_OK(store.finish_fill(b->slot, true, 2));
+        REQUIRE_OK(store.evict_lru());
+        CHECK(store.resident({7, 0})); CHECK(!store.resident({7, 1}));
+        store.set_completed_timeline(17);
+        REQUIRE_OK(store.evict_lru());
+    }
+
+    {
         CacheConfig cache;
         cache.slots_per_slab = 1;
         cache.budget_bytes   = 4 * layout::kExpertSlotBytes;

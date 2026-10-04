@@ -351,7 +351,9 @@ Result<void> GpuMoeBridge::bind_shared_into(uint32_t layer, uint64_t* dest_table
     }
     if (shared_layer_ != layer) {
         shared_ok_ = false;
-        const std::string pre = std::format("layers.{}.ffn.shared_experts", layer);
+        const std::string pre = layer < layout::kNumLayers
+                ? std::format("layers.{}.ffn.shared_experts", layer)
+                : std::format("mtp.{}.ffn.shared_experts", layer - layout::kNumLayers);
         // The order is model/manifest.h's ExpertPart: w1.weight, w1.scale,
         // w2.weight, w2.scale, w3.weight, w3.scale. Getting it wrong swaps the
         // gate and up branches, which is silent and wrong.
@@ -390,6 +392,7 @@ Result<void> GpuMoeBridge::stage_rows(const MoeCall& call, std::span<const uint3
     uint64_t* table = page_table();
     for (uint32_t s : slots) {
         if (s >= call.topk) return fail(Err::InvalidArgument, "stage_rows: not a routed slot");
+        if (call.weights[s] == 0.0f) continue;
         const ExpertKey key{static_cast<uint16_t>(call.layer),
                             static_cast<uint16_t>(call.ids[s])};
         if (auto r = store_->table_row(key, row); !r)
@@ -452,19 +455,20 @@ Result<void> GpuMoeBridge::stage_input(const MoeCall& call, bool x_on_gpu) {
     uint32_t ids[16];
     uint32_t list[16];
     float    w[16];
+    uint32_t live = 0;
     for (uint32_t s = 0; s < call.topk; ++s) {
         ids[s]  = call.ids[s];
-        list[s] = s;
+        if (call.weights[s] != 0.0f) list[live++] = s;
         w[s]    = call.weights[s];
     }
     // The shared expert: not routed, weight 1, fp8.
     ids[call.topk]  = shared_index_ | gpu::kSlotFp8;
-    list[call.topk] = call.topk;
+    list[live++] = call.topk;
     w[call.topk]    = 1.0f;
     std::memcpy(runner_.ids(), ids, slots * sizeof(uint32_t));
-    std::memcpy(runner_.slot_list(), list, slots * sizeof(uint32_t));
+    std::memcpy(runner_.slot_list(), list, live * sizeof(uint32_t));
     std::memcpy(runner_.route_weights(), w, slots * sizeof(float));
-    runner_.set_list_count(slots);
+    runner_.set_list_count(live);
     runner_.set_accumulate(false);
     const TimePoint t3 = Clock::now();
 
@@ -628,6 +632,7 @@ std::vector<uint32_t> GpuMoeBridge::union_experts(const BatchCall& call) const {
     out.reserve(size_t(call.m) * call.topk);
     for (uint32_t m = 0; m < call.m; ++m)
         for (uint32_t s = 0; s < call.topk; ++s) {
+            if (call.weights && call.weights[size_t(m) * call.topk + s] == 0.0f) continue;
             const uint32_t e = call.ids[size_t(m) * call.topk + s];
             if (std::find(out.begin(), out.end(), e) == out.end()) out.push_back(e);
         }
@@ -668,6 +673,7 @@ Result<void> GpuMoeBridge::stage_batch_union(const BatchCall& call) {
     uint32_t n_routed = 0;
     for (uint32_t m = 0; m < call.m; ++m)
         for (uint32_t s = 0; s < call.topk; ++s) {
+            if (call.weights && call.weights[size_t(m) * call.topk + s] == 0.0f) continue;
             const uint32_t e = call.ids[size_t(m) * call.topk + s];
             if (e >= union_slot_of_.size())
                 return fail(Err::InvalidArgument,
@@ -691,6 +697,7 @@ Result<void> GpuMoeBridge::stage_batch_union(const BatchCall& call) {
     std::fill(w, w + size_t(call.m) * slots, 0.0f);
     for (uint32_t m = 0; m < call.m; ++m)
         for (uint32_t s = 0; s < call.topk; ++s) {
+            if (call.weights[size_t(m) * call.topk + s] == 0.0f) continue;
             const uint32_t u = union_slot_of_[call.ids[size_t(m) * call.topk + s]];
             // `+=`, not `=`: the gate's own top-k has no duplicates, but Track Y's
             // resident-only routing fills a skipped slot with a BORROWED resident

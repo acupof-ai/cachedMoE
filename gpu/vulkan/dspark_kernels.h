@@ -205,6 +205,7 @@ inline constexpr uint32_t kDsFlagRoundIn      = 4u;
 // MarkovBias only: take the token id from `kMkTokenIn[pos]` rather than
 // `DsparkHeadPush::token`, so the five sequential Markov steps chain on the GPU
 // with no host readback between them.
+inline constexpr uint32_t kDsFlagRoundOut = 16u; // bf16 grid, stored as fp32
 inline constexpr uint32_t kDsFlagTokenFromBuf = 8u;
 
 // What AddBiasArgmax writes at `kAbSample`: the token, its logit, the runner-up

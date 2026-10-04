@@ -339,7 +339,7 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
     plan.group = std::make_shared<FetchGroup>();
     for (uint16_t id : route.chosen) {
         const ExpertKey key{static_cast<uint16_t>(route.layer), id};
-        if (store_->lookup(key, next_stamp())) {
+        if (store_->lookup(key, next_stamp(), route.guard_hits)) {
             plan.hits.push_back(key);
             if (profiler_) profiler_->note_expert_lookup(true);
             continue;
@@ -400,15 +400,7 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
 
 Result<void> Planner::pin(ExpertKey key) {
     if (!store_) return fail(Err::FailedPrecondition, "planner is not initialised");
-    auto s = store_->slot_for(key);
-    if (!s) return fail(Err::NotFound, std::format("expert ({}, {}) is not held", key.layer, key.expert));
-    if (s->state != SlotState::Resident)
-        return fail(Err::FailedPrecondition, "cannot pin a slot that is not resident");
-    // Tier is set at begin_fill; re-filling as Pinned is the clean path, so
-    // this is deliberately a stub rather than a mutation behind the store's back.
-    // TODO(design §9.3): give ExpertStore a retier(slot, Tier) once the pinned
-    // set is loaded at startup from the manifest rather than promoted here.
-    return unimplemented("Planner::pin (design §9.3 pinned set is loaded at startup)");
+    return store_->pin(key);
 }
 
 // TODO(design §9.4): needs store/predictor.h and the Q4/Q5 answers. Until then

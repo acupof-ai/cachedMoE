@@ -44,6 +44,8 @@
 #define DEEPMOE_MGT1_MAX_K 1024
 #include "attn_common.slang"
 
+[vk::constant_id(11)] const uint FoldScale = 0;
+
 static const uint kMaxM       = 6;
 static const uint kMaxBlocksS = DEEPMOE_MGT1_MAX_K / kBlockK;            // 32
 static const uint kColBlocks  = ((kMaxBlocksS + 31u) / 32u) * 32u;        // 32
@@ -111,7 +113,7 @@ float stage_amax(float a, uint tid, uint sub, uint tpb) {
 // where `main_x` is `main_norm`'s bf16 output. Reading it here is the only
 // difference -- the amax, the ActQuant round trip and the LDS layout are the
 // same, and the reference quantises exactly this bf16 value.
-void stage_cols(uint64_t xaddr, uint xoff, uint k0, uint kc, uint tid) {
+void stage_cols(uint64_t xaddr, uint xoff, uint k0, uint kc, uint tid, uint64_t srow) {
     const uint tpb = stage_tpb();
     const uint E = kBlockK / tpb;                 // elements this thread owns
     const uint blocks = kc / kBlockK;
@@ -166,7 +168,11 @@ void stage_cols(uint64_t xaddr, uint xoff, uint k0, uint kc, uint tid) {
         gXQ[xq_word(m, blk, sub * (E / 2) + i)] =
             bf16_encode(v[i * 2]) | (bf16_encode(v[i * 2 + 1]) << 16);
     }
-    if (sub == 0) gXS[m * kColBlocks + blk] = s;
+    // Every row in this WG lies in the same 32-row scale band. Fold its
+    // power-of-two weight scale once per column/block into the staged factor.
+    // The old inner loop computes precisely this product for every row.
+    if (sub == 0) gXS[m * kColBlocks + blk] = FoldScale != 0
+        ? s * ldexp(1.0f, (int)load_u8(srow + blk) - 127) : s;
 }
 
 // --- stage 0 ------------------------------------------------------------------
@@ -180,7 +186,8 @@ void stage_split(uint gid, uint tid) {
     const uint group = (pc.rows_per_group != 0u) ? (base / pc.rows_per_group) : 0u;
 
     fp8_table_fill(tid);
-    stage_cols(Ptr[kX], group * pc.k, k0, kc, tid);
+    const uint64_t srow = Ptr[kS] + (uint64_t)(base >> 5) * pc.scale_cols + k0 / kBlockK;
+    stage_cols(Ptr[kX], group * pc.k, k0, kc, tid, srow);
     GroupMemoryBarrierWithGroupSync();
 
     const uint sublane = tid % LanesPerRow;
@@ -196,7 +203,7 @@ void stage_split(uint gid, uint tid) {
         for (uint blk = sublane; blk < blocks; blk += LanesPerRow) {
             const uint4 w0 = load16(Ptr[kW] + roff + (uint64_t)blk * 32);
             const uint4 w1 = load16(Ptr[kW] + roff + (uint64_t)blk * 32 + 16);
-            const float we = ldexp(1.0f, (int)load_u8(srow + blk) - 127);
+            const float we = FoldScale != 0 ? 1.0f : ldexp(1.0f, (int)load_u8(srow + blk) - 127);
             float wv[32];
             [unroll] for (uint i = 0; i < 4; ++i) {
                 const uint a = w0[i], b = w1[i];

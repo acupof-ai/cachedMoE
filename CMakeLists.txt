@@ -19,13 +19,30 @@ endif()
 function(add_slang_shader target src)
     get_filename_component(name "${src}" NAME_WE)
     set(out "${CMAKE_BINARY_DIR}/shaders/${name}.spv")
+    set(_mega_args "")
+    set(_mega_memory_command "")
+    if(name STREQUAL "dspark_mega")
+        find_program(DEEPMOE_FUSION_PYTHON python3 REQUIRED)
+        file(GLOB _mega_sources "${CMAKE_SOURCE_DIR}/gpu/shaders/*.slang")
+        add_custom_command(
+            OUTPUT "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/shaders"
+            COMMAND "${DEEPMOE_FUSION_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/fuse_dspark.py"
+                    "${CMAKE_SOURCE_DIR}/gpu/shaders" "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
+            DEPENDS "${CMAKE_SOURCE_DIR}/tools/fuse_dspark.py" ${_mega_sources}
+            VERBATIM)
+        set(_mega_memory_command COMMAND "${DEEPMOE_FUSION_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/dspark_spirv_memory.py" "${out}")
+        list(APPEND _mega_args "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
+                              "${CMAKE_SOURCE_DIR}/tools/dspark_spirv_memory.py")
+    endif()
     add_custom_command(
         OUTPUT "${out}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/shaders"
         COMMAND "${SLANGC_EXECUTABLE}" "${src}" -target spirv -profile spirv_1_6 -entry main -O2
-                -I "${CMAKE_SOURCE_DIR}/gpu/shaders" -o "${out}"
+                -I "${CMAKE_SOURCE_DIR}/gpu/shaders" -I "${CMAKE_BINARY_DIR}/shaders" -o "${out}"
+        ${_mega_memory_command}
         COMMAND "${SPIRV_VAL_EXECUTABLE}" --target-env vulkan1.3 "${out}"
-        DEPENDS "${src}" ${_shader_dep_paths}
+        DEPENDS "${src}" ${_shader_dep_paths} ${_mega_args}
         COMMENT "slangc ${name}.slang"
         VERBATIM)
     add_custom_target("${target}" DEPENDS "${out}")
@@ -135,7 +152,7 @@ add_dependencies(prefill_bench shaders)
 # --- Track W: the P5 feasibility probes (docs/plan_p5.md §5) -----------------
 # A probe is a question that costs minutes and can close a week of kernel work.
 # They are built here, and run by the GPU owner on a quiet machine.
-foreach(_probe residency_probe sharing_probe capacity_probe hostflag_probe model_probe)
+foreach(_probe dspark_grid_probe residency_probe sharing_probe capacity_probe hostflag_probe model_probe)
     add_executable(${_probe} bench/probes/${_probe}.cpp)
     target_link_libraries(${_probe} PRIVATE deepmoe_core)
     add_dependencies(${_probe} shaders)

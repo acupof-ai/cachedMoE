@@ -23,21 +23,24 @@
 //      of how many
 //   1  argmax + runner-up of row m (head.slang stage 1), gid.y = m
 //   2  top set + tail mass of row m (sample_topk.slang's arithmetic, one
-//      workgroup a row), gid.y = m
+//      workgroup a row), gid.y = m; spec mode runs only the first rejected
+//      row or the all-accepted bonus, after stage 3
+//   3  exact rank of each original draft token, gid.y = draft row
 
 #include "attn_common.slang"
 
 static const uint kMaxM = 6;
 static const uint kW = 0, kX = 1, kLogits = 2, kSample = 3, kTopOut = 4, kHist = 5;
+static const uint kDraft = 6, kRank = 7;
 
 [[vk::binding(0, 0)]] StructuredBuffer<uint64_t> Ptr;
 
 struct Mgt1HeadPush {
     uint  rows;             // vocab 129280
-    uint  k;                // 5120
-    uint  slice;            // 0: this dispatch's slice
+    uint  k;                // 0: 5120; 3: number of draft tokens
+    uint  slice;            // 0: this dispatch's slice; 2: high bit selects spec row
     uint  slices;           // 0: how many
-    uint  x_stride;         // elements between rows of X
+    uint  x_stride;         // 0: X row stride; 2 spec mode: acceptance top-K
     uint  topk_k;           // 2: candidates to reach
     float inv_t;            // 2: 1 / temperature
     float bins_per_logit;   // 2
@@ -152,11 +155,22 @@ groupshared float gMax[kWg];
 groupshared float gTail[kWg];
 groupshared uint  gCnt[kWg];
 groupshared uint  gJ[1];
+groupshared uint  gBinCount[kBins];
 
 // Words of one row's output record; the host lays the M records end to end.
 uint topk_record_words() { return kHdr + kWg + kWg * kCap * 2; }
 
 void stage_topk(uint m, uint tid) {
+    if ((pc.slice & 0x80000000u) != 0) {
+        uint selected = pc.k; // all accepted: bonus row
+        for (uint row = 0; row < pc.k; ++row) {
+            const uint64_t rank = Ptr[kRank] + (uint64_t)row * 16;
+            if (load_u32(rank) != pc.rows || load_u32(rank + 8) != 0 ||
+                load_u32(rank + 4) >= pc.x_stride) { selected = row; break; }
+        }
+        // Workgroup-uniform: no skipped lane can strand a later barrier.
+        if (m != selected) return;
+    }
     const uint64_t L = Ptr[kLogits] + (uint64_t)m * pc.rows * 4;
     const uint64_t O = Ptr[kTopOut] + (uint64_t)m * topk_record_words() * 4;
     const uint64_t H = Ptr[kHist] + (uint64_t)m * kWg * kBins * 4;
@@ -178,12 +192,19 @@ void stage_topk(uint m, uint tid) {
             if (fb < (float)kBins) hist[(uint)fb] += 1;
         }
     }
+    AllMemoryBarrierWithGroupSync();
+    // Each lane owns a bin; adjacent lanes read adjacent histogram words.
+    // Counts are integers, so parallelising their sum preserves the threshold.
+    uint count = 0;
+    for (uint t = 0; t < kWg; ++t)
+        count += load_u32(H + (uint64_t)(t * kBins + tid) * 4);
+    gBinCount[tid] = count;
     GroupMemoryBarrierWithGroupSync();
     if (tid == 0) {
         uint cum = 0;
         uint J = kBins - 1;
         for (uint b = 0; b < kBins; ++b) {
-            for (uint t = 0; t < kWg; ++t) cum += load_u32(H + (uint64_t)(t * kBins + b) * 4);
+            cum += gBinCount[b];
             if (cum >= pc.topk_k) { J = b; break; }
         }
         gJ[0] = J;
@@ -228,10 +249,44 @@ void stage_topk(uint m, uint tid) {
     }
 }
 
+// A rank is sufficient for membership in any top-K, including deterministic
+// ties. No candidate truncation, exp or approximation enters this decision.
+groupshared uint gRankBetter[kWg];
+groupshared uint gRankError[kWg];
+void stage_rank(uint m, uint tid) {
+    if (m >= pc.k) return;
+    const uint token = load_u32(Ptr[kDraft] + (uint64_t)m * 4);
+    const uint64_t L = Ptr[kLogits] + (uint64_t)m * pc.rows * 4;
+    const float chosen = token < pc.rows ? load_f32(L + (uint64_t)token * 4) : 0.0f;
+    uint better = 0;
+    uint error = token < pc.rows ? 0 : 1;
+    for (uint i = tid; i < pc.rows; i += kWg) {
+        const float v = load_f32(L + (uint64_t)i * 4);
+        if ((asuint(v) & 0x7F800000u) == 0x7F800000u) error |= 2;
+        if (v > chosen || (v == chosen && i < token)) better += 1;
+    }
+    gRankBetter[tid] = better;
+    gRankError[tid] = error;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint s = kWg >> 1; s > 0; s >>= 1) {
+        if (tid < s) {
+            gRankBetter[tid] = gRankBetter[tid] + gRankBetter[tid + s];
+            gRankError[tid] = gRankError[tid] | gRankError[tid + s];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (tid == 0) {
+        uint* out = (uint*)(Ptr[kRank] + (uint64_t)m * 16);
+        out[0] = pc.rows; out[1] = gRankBetter[0];
+        out[2] = gRankError[0]; out[3] = token;
+    }
+}
+
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     if (Stage == 0)      stage_gemv(gid.x, tid);
     else if (Stage == 1) stage_argmax(gid.y, tid);
-    else                 stage_topk(gid.y, tid);
+    else if (Stage == 2) stage_topk(gid.y, tid);
+    else                stage_rank(gid.y, tid);
 }

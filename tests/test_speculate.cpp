@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <format>
 #include <string>
 #include <vector>
@@ -30,6 +31,17 @@
 
 using namespace deepmoe;
 using cpu::dspark::kPositions;
+
+DEEPMOE_TEST(speculate, live_confidence_selects_only_a_contiguous_prefix_including_zero) {
+    std::array<float,5> c{3.f,1.f,-1.f,4.f,5.f};
+    auto zero=runtime::draft_prefix_from_confidence(c,4.f);REQUIRE_OK(zero);CHECK_EQ(*zero,0u);
+    auto two=runtime::draft_prefix_from_confidence(c,1.f);REQUIRE_OK(two);CHECK_EQ(*two,2u);
+    auto five=runtime::draft_prefix_from_confidence(c,-1.f);REQUIRE_OK(five);CHECK_EQ(*five,5u);
+    auto short_prefix=runtime::draft_prefix_from_confidence(std::span(c).first(1),1.f);REQUIRE_OK(short_prefix);CHECK_EQ(*short_prefix,1u);
+    CHECK_ERR(runtime::draft_prefix_from_confidence(c,std::numeric_limits<float>::infinity()),Err::InvalidArgument);
+    c[4]=std::numeric_limits<float>::quiet_NaN();
+    CHECK_ERR(runtime::draft_prefix_from_confidence(c,1.f),Err::InvalidArgument);
+}
 
 namespace {
 
@@ -297,4 +309,18 @@ DEEPMOE_TEST(speculate, a_misconfigured_cycle_refuses) {
     CHECK(runtime::parse_spec_mode("greedy").has_value());
     CHECK(!runtime::parse_spec_mode("yes").has_value());
     CHECK(std::string(runtime::spec_mode_name(runtime::SpecMode::Sample)) == "sample");
+}
+
+DEEPMOE_TEST(speculate, topk_accepts_only_original_prefix) {
+    // draft 1 is rank 2, draft 2 is rank 3, draft 3 is rank 1.
+    std::array<uint32_t,3> path{1,2,3};
+    std::array<float,16> matrix{4,3,2,1, 4,3,2,1, 1,2,3,4, 4,3,2,1};
+    auto strict=runtime::accept_topk_prefix(path,matrix,4,1); REQUIRE_OK(strict);CHECK_EQ(*strict,0u);
+    auto relaxed=runtime::accept_topk_prefix(path,matrix,4,2);REQUIRE_OK(relaxed);CHECK_EQ(*relaxed,1u);
+    auto all=runtime::accept_topk_prefix(path,matrix,4,3);REQUIRE_OK(all);CHECK_EQ(*all,3u);
+    CHECK_EQ(path[0],1u);CHECK_EQ(path[1],2u); // no alternate-token substitution
+    std::array<float,16> tied{};
+    auto tie=runtime::accept_topk_prefix(path,tied,4,2);REQUIRE_OK(tie);CHECK_EQ(*tie,1u);
+    CHECK_ERR(runtime::accept_topk_prefix(path,matrix,4,0),Err::InvalidArgument);
+    CHECK_ERR(runtime::accept_topk_prefix(path,{matrix.data(),12},4,2),Err::InvalidArgument);
 }

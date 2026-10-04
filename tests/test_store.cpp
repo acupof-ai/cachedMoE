@@ -753,3 +753,60 @@ DEEPMOE_TEST(cache_cap, backoff_plan_decreases) {
     REQUIRE_EQ(zero.size(), size_t(3));
     for (size_t i = 1; i < zero.size(); ++i) CHECK(zero[i] < zero[i - 1]);
 }
+
+// An asynchronous masked miss can be requested again before its fill lands.
+// Its completion must not overwrite the newer demand stamp with the first one.
+DEEPMOE_TEST(expert_store, pending_demand_keeps_latest_lru_stamp) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache()));
+    const ExpertKey k{1, 0};
+    auto r = s.begin_fill(k);
+    REQUIRE_OK(r);
+    CHECK(!s.touch(k, 50));
+    CHECK(s.touch(k, 50, true));
+    REQUIRE_OK(s.finish_fill(r->slot, true, 10));
+    CHECK_EQ(s.slot_for(k)->last_use_token, 50u);
+    CHECK(s.touch(k, 40, true));
+    CHECK_EQ(s.slot_for(k)->last_use_token, 50u);
+}
+
+DEEPMOE_TEST(expert_store, refill_does_not_inherit_victim_lru_stamp) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(1, 1)));
+    REQUIRE_OK(fill_stamped(s, ExpertKey{1, 0}, 100));
+    REQUIRE_OK(s.evict_lru());
+    // A stale background request is allowed to have an older stamp.
+    REQUIRE_OK(fill_stamped(s, ExpertKey{1, 1}, 10));
+    CHECK_EQ(s.slot_for(ExpertKey{1, 1})->last_use_token, 10u);
+}
+
+DEEPMOE_TEST(expert_store, guarded_lookup_survives_admission_pressure) {
+    ExpertStore s;
+    REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(2, 1)));
+    const ExpertKey hit{1, 0}, pending{1, 1};
+    REQUIRE_OK(fill_stamped(s, hit, 1));
+    auto filling = s.begin_fill(pending); REQUIRE_OK(filling);
+    // Only the hit is resident: without a guard, LRU must recycle it even
+    // though the current layer is about to read it.
+    REQUIRE(s.lookup(hit, 2, 7));
+    CHECK_ERR(s.evict_lru(), Err::NotFound);
+    CHECK(s.resident(hit));
+    REQUIRE_OK(s.finish_fill(filling->slot, true, 3));
+    REQUIRE_OK(s.evict_lru());
+    CHECK(s.resident(hit)); CHECK(!s.resident(pending));
+    s.set_completed_timeline(7);
+    REQUIRE_OK(s.evict_lru()); CHECK(!s.resident(hit));
+}
+
+DEEPMOE_TEST(expert_store, pin_preserves_lru_and_prevents_recycling) {
+    ExpertStore s;REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(),small_cache(2,1)));
+    CHECK_ERR(s.pin({1,0}),Err::NotFound);
+    auto pending=s.begin_fill({1,0});REQUIRE_OK(pending);
+    CHECK_ERR(s.pin({1,0}),Err::FailedPrecondition);
+    REQUIRE_OK(s.finish_fill(pending->slot,true,10));
+    REQUIRE_OK(s.pin({1,0}));REQUIRE_OK(s.pin({1,0}));
+    REQUIRE_OK(fill_stamped(s,{1,1},20));
+    REQUIRE_OK(s.evict_lru());CHECK(s.resident({1,0}));CHECK(!s.resident({1,1}));
+    CHECK_EQ(s.stats().pinned,1u);CHECK_EQ(s.slot_for({1,0})->last_use_token,10u);
+    CHECK_ERR(s.evict_lru(),Err::NotFound);
+}

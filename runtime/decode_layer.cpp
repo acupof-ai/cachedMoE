@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "runtime/rope.h"
+#include "core/wc_read.h"
 
 namespace deepmoe::runtime {
 
@@ -903,6 +904,9 @@ Result<void> BatchScratch::create(gpu::GpuScratch& s, const TextConfig& cfg, uin
         {&ovf_val, M * cfg.head_dim}, {&ovf_scale, M * (cfg.head_dim / 32)},
         {&score, M * cfg.num_attention_heads * uint64_t(kAttnScoreStride) * 4},
         {&tile_max, M * cfg.num_attention_heads * 64ull * 4},
+        {&cm_g, M * align_up(list_stride,16) * cfg.head_dim * 2},
+        {&cm_q, M * qrows * 2}, {&cm_p, M * cfg.num_attention_heads * align_up(list_stride,16) * 2},
+        {&cm_inv, M * cfg.num_attention_heads * 4}, {&cm_part, M * gpu::kAttnCmPartBytes},
         {&o, M * qrows * 4}, {&woa, M * orows * 4}, {&wob, M * dim * 4}, {&part, part_floats * 4},
         {&gate_scores, M * cfg.n_routed_experts * 4}, {&gate_ids, M * 16 * 4},
         {&gate_weights, M * 16 * 4}, {&layer_done, 64}, {&moe_y, M * dim * 4},
@@ -1067,6 +1071,13 @@ Result<void> DecodeLayer::bind_batch(const LayerWeights& w, const BatchStep& st)
         a[gpu::mslot::kAOvfVal]   = b.ovf_val.addr;
         a[gpu::mslot::kAOvfScale] = b.ovf_scale.addr;
         std::memcpy(R.slots(S::AttnPv), a, gpu::kAttnStageStride);
+        if(R.spec().attn_cm) {
+            a[gpu::slot::kAttnCmG]=b.cm_g.addr;a[gpu::slot::kAttnCmQ]=b.cm_q.addr;
+            a[gpu::slot::kAttnCmP]=b.cm_p.addr;a[gpu::slot::kAttnCmInv]=b.cm_inv.addr;
+            a[gpu::slot::kAttnCmPart]=b.cm_part.addr;
+            for(S stage:{S::AttnCmGather,S::AttnCmScore,S::AttnCmSoftmax,S::AttnCmPv,S::AttnCmFinish})
+                std::memcpy(R.slots(stage),a,gpu::kAttnStageStride);
+        }
     }
     bind_gemv(R, S::WoASplit, S::WoACombine, w.wo_a, w.wo_a_scale, b.o.addr, b.woa.addr, b);
     bind_gemv(R, S::WoBSplit, S::WoBCombine, w.wo_b, w.wo_b_scale, b.woa.addr, b.wob.addr, b);
@@ -1236,8 +1247,20 @@ Result<void> DecodeLayer::record_attention_batch(gpu::CommandBuffer& cmd, const 
     ap.list_stride = b.list_stride;
     const uint32_t hg = (c.num_attention_heads + R.spec().tile_heads_per_wg - 1) /
                         R.spec().tile_heads_per_wg;
-    if (auto r = step(S::AttnScore, &ap, sizeof ap, hg * ap.n_tiles, M); !r) return r;
-    if (auto r = step(S::AttnPv, &ap, sizeof ap, c.num_attention_heads, M); !r) return r;
+    if(R.spec().attn_cm) {
+        gpu::MgtAttnCmPush cp{{n_kv,uint32_t(align_up(n_kv,16)),c.sliding_window,c.head_dim,
+            c.qk_rope_head_dim,c.num_attention_heads,kAttnScoreStride,ap.softmax_scale,1,4},
+            M-1,b.list_stride,uint32_t(gpu::kAttnCmPartBytes/4)};
+        using A=gpu::AttnStage;
+        const std::array pairs{std::pair{S::AttnCmGather,A::AttnCmGather},std::pair{S::AttnCmScore,A::AttnCmScore},
+            std::pair{S::AttnCmSoftmax,A::AttnCmSoftmax},std::pair{S::AttnCmPv,A::AttnCmPv},
+            std::pair{S::AttnCmFinish,A::AttnCmFinish}};
+        for(auto [stage,base]:pairs)
+            if(auto r=step(stage,&cp,sizeof cp,gpu::AttnRunner::attn_cm_groups(base,cp.cm),M);!r)return r;
+    } else {
+        if (auto r = step(S::AttnScore, &ap, sizeof ap, hg * ap.n_tiles, M); !r) return r;
+        if (auto r = step(S::AttnPv, &ap, sizeof ap, c.num_attention_heads, M); !r) return r;
+    }
 
     // Output projection.
     gpu::MgtGemvPush wa{};
@@ -1384,10 +1407,14 @@ Result<void> DecodeLayer::verify_after_attention_batch(const BatchStep& st) cons
     if (!st.run_indexer || !st.compress_ratio) return {};
     const TextConfig& c = *cfg_;
     const uint32_t off = c.sliding_window + st.m - 1;
+    // The full list includes poisoned padding. Scan cached RAM rather than
+    // making one uncached GPU-mapping read for every index and padding entry.
+    std::vector<int32_t> cached(size_t(st.m) * bb_.list_stride);
+    wc_readback(cached.data(),bb_.list_host(st.list),cached.size()*sizeof(int32_t));
     for (uint32_t mm = 0; mm < st.m; ++mm) {
         const uint32_t n = st.n_cmp(mm);
         const uint32_t k = std::min(c.index_topk, n);
-        const int32_t* row = bb_.list_host(st.list) + uint64_t(mm) * bb_.list_stride;
+        const int32_t* row = cached.data() + uint64_t(mm) * bb_.list_stride;
         int32_t prev = int32_t(off) - 1;
         for (uint32_t i = 0; i < k; ++i) {
             const int32_t v = row[off + i];
@@ -1466,8 +1493,11 @@ Result<void> DecodeLayer::record_tail_batch(gpu::CommandBuffer& cmd, const Batch
     h[gpu::mslot::kHSample] = t.sample;
     h[gpu::mslot::kHTopOut] = t.topk_out;
     h[gpu::mslot::kHHist] = t.topk_hist;
+    h[gpu::mslot::kHDraft] = t.draft_ids;
+    h[gpu::mslot::kHRank] = t.draft_rank;
     std::memcpy(R.slots(S::HeadArgmax), h, gpu::kAttnStageStride);
     std::memcpy(R.slots(S::HeadTopK), h, gpu::kAttnStageStride);
+    std::memcpy(R.slots(S::HeadRank), h, gpu::kAttnStageStride);
     gpu::MgtHeadPush hp{};
     hp.rows = c.vocab_size; hp.k = c.hidden_size; hp.slices = R.spec().head_slices;
     hp.x_stride = c.hidden_size; hp.topk_k = t.topk_k; hp.inv_t = t.inv_t;
@@ -1476,8 +1506,18 @@ Result<void> DecodeLayer::record_tail_batch(gpu::CommandBuffer& cmd, const Batch
         if (auto r = step(S::Head, &hp, sizeof hp, R.row_groups(c.vocab_size), 1); !r) return r;
     }
     if (auto r = step(S::HeadArgmax, &hp, sizeof hp, 1, M); !r) return r;
-    if (t.topk_out && t.topk_hist)
+    if (t.draft_ids && t.draft_rank && M > 1) {
+        hp.k = M - 1;
+        if (auto r = step(S::HeadRank, &hp, sizeof hp, 1, M - 1); !r) return r;
+    }
+    if (t.topk_out && t.topk_hist) {
+        if (t.accept_topk) {
+            hp.k = M - 1;
+            hp.x_stride = t.accept_topk;
+            hp.slice = gpu::kMgtHeadSpecReadout;
+        }
         if (auto r = step(S::HeadTopK, &hp, sizeof hp, 1, M); !r) return r;
+    }
     return {};
 }
 

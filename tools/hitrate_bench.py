@@ -35,10 +35,44 @@ import chat  # noqa: E402
 import provenance  # noqa: E402
 
 
+def wait_cool_for_dual_run():
+    """Compare arms starting below GPU 60 C / external NVMe 70 C.
+
+    Read sensors only; preserve the engine's independent 80/72 mirror gate.
+    """
+    from pathlib import Path
+    deadline = time.monotonic() + 600
+    announced = False
+    while True:
+        hot = []
+        for name in Path("/sys/class/hwmon").glob("hwmon*/name"):
+            try:
+                kind = name.read_text().strip()
+                temp = int((name.parent / "temp1_input").read_text()) / 1000
+                device = str((name.parent / "device").resolve())
+            except (OSError, ValueError):
+                continue
+            if kind == "amdgpu" and temp > 60:
+                hot.append(f"GPU {temp:.1f} C")
+            elif kind == "nvme" and "/nvme/nvme0/" not in device and temp > 70:
+                hot.append(f"mirror {temp:.1f} C")
+        if not hot:
+            if announced: print("cooled; starting next arm", flush=True)
+            return
+        if not announced:
+            print("waiting for cooling: " + ", ".join(hot), flush=True)
+            announced = True
+        if time.monotonic() >= deadline:
+            raise SystemExit("sensor did not return to the comparison start temperature")
+        time.sleep(2)
+
+
 class BenchServer(chat.Server):
     """chat.Server with a free-form command line, extra environment and an event log."""
 
     def __init__(self, args, out_dir):
+        if getattr(args, "require_sources", 0) == 2:
+            wait_cool_for_dual_run()
         cmd = [args.exe, "serve", "--model", chat.MODEL, "--max-context", str(args.max_context),
                "--engram-tables", os.path.join(REPO, "tests", "data", "l3"),
                "--profile", os.path.join(out_dir, "profile.jsonl")]
@@ -77,6 +111,12 @@ class BenchServer(chat.Server):
         self.ready = self.read_event()
         if self.ready.get("event") != "ready":
             raise SystemExit(f"server did not start: {self.ready}")
+        self.require_sources = expected = getattr(args, "require_sources", 0)
+        if expected and self.ready.get("sources") != expected:
+            self.close()
+            self.events.close()
+            self.log.close()
+            raise SystemExit(f"expected {expected} live read sources, got {self.ready.get('sources')}")
 
     def read_event(self):
         ev = super().read_event()
@@ -204,6 +244,8 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
     ap.add_argument("--shader-dir", default="")
+    ap.add_argument("--require-sources", type=int, default=0,
+                    help="refuse the run unless this many sources survive the health gate")
     ap.add_argument("--cache-gb", type=int, default=0)
     ap.add_argument("--cache-slots", type=int, default=0,
                     help="expert cache slots passed to serve (5711 ~ 100 GiB)")
@@ -296,6 +338,8 @@ def main() -> int:
     with open(os.path.join(args.out, "turns.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
     provenance.finish(args.out)
+    if args.require_sources and (status.get("event") != "status" or "DROPPED" in status.get("io", "")):
+        raise SystemExit("read source check failed during the run; results are not a valid source-matched cell")
     if args.write_heat:
         print(f"wrote {write_heat_from_route(os.path.join(args.out, 'route.bin'), args.write_heat, args.heat_recent)} heat rows")
     return 0

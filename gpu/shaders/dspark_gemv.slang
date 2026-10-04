@@ -278,7 +278,7 @@ void stage_gemv(uint gid, uint tid) {
             // constant, so every thread runs the same number of row_reduces.
             const float y = row_reduce(acc[r][m], tid, sublane);
             if (sublane == 0 && rowBase + r < pc.rows)
-                act_store(Ptr[kY], act_index(m, pc.y_stride, rowBase + r), yb, y);
+                act_store(Ptr[kY], act_index(m, pc.y_stride, rowBase + r), yb, (pc.flags & kFlagRoundOut) != 0u ? bf16_round(y) : y);
         }
     }
 }
@@ -451,7 +451,7 @@ void stage_woa(uint gid, uint tid) {
             if (m >= ml) continue;
             const float y = row_reduce(acc[r][m], tid, sublane);
             if (sublane == 0 && rowBase + r < pc.rows)
-                act_store(Ptr[kY], act_index(m, pc.y_stride, rowBase + r), yb, y);
+                act_store(Ptr[kY], act_index(m, pc.y_stride, rowBase + r), yb, (pc.flags & kFlagRoundOut) != 0u ? bf16_round(y) : y);
         }
     }
 }

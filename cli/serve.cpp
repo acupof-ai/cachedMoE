@@ -12,6 +12,7 @@
 //   {"op":"drop", "session":"name"}      forget a session
 //   {"op":"tokenize", "text":"..."}      -> {"event":"tokens","ids":[...]}
 //   {"op":"detokenize", "ids":[...]}     -> {"event":"text","text":"..."}
+//   {"op":"score_tokens", "token_ids":[...]} -> selected last single-position logits
 //   {"op":"status"}                      -> {"event":"status",...}
 //   {"op":"quit"}
 // Events, one JSON object per line on stdout:
@@ -33,9 +34,11 @@
 // Ownership/threading: a reader thread owns stdin -- it answers `cancel` at once
 // and queues everything else -- and the main thread runs the engine. `emit` is
 // serialised by a mutex.
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -197,6 +200,17 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--profile")         cfg.profile_jsonl = value_of(argc, argv, i);
         else if (a == "--trace")           cfg.trace_file = value_of(argc, argv, i);
         else if (a == "--check-topk")      check_topk = true;
+        else if (a == "--dspark")          cfg.speculation.enabled = true;
+        else if (a == "--spec-k")          cfg.speculation.max_draft = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
+        else if (a == "--spec-top-k")      cfg.speculation.accept_topk = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
+        else if (a == "--spec-confidence-min") {
+            const auto value=value_of(argc,argv,i);char* end=nullptr;
+            const float v=std::strtof(value.c_str(),&end);
+            if(end==value.c_str() || *end || !std::isfinite(v)) {
+                std::fprintf(stderr,"--spec-confidence-min needs a finite raw score\n");return 2;
+            }
+            cfg.speculation.min_confidence=v;
+        }
         else if (a == "--resident-only")   resident_only = value_of(argc, argv, i);
         // Track MS (docs/p4_multistream.md): decode streams inside this one
         // engine process, and how a multi-stream round is scheduled.
@@ -318,12 +332,14 @@ int cmd_serve(int argc, char** argv) {
     engine.set_check_topk(check_topk);
     engine.set_reheat(engine_reheat);
     // Track Y. The flag wins over DEEPMOE_ROUTE_RESIDENT_ONLY, which the load read.
+    if (cfg.speculation.enabled && streams != 1) { std::fprintf(stderr,"DSpark requires --streams 1\n"); return 2; }
     if (!resident_only.empty()) {
         if (resident_only == "all")      engine.set_resident_only(runtime::Engine::ResidentOnly::All);
         else if (resident_only == "stall1") engine.set_resident_only(runtime::Engine::ResidentOnly::Stall1);
         else if (resident_only == "verify") engine.set_resident_only(runtime::Engine::ResidentOnly::Verify);
+        else if (resident_only == "mask") engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
         else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
-        else { std::fprintf(stderr, "--resident-only takes off|all|stall1|verify, got '%s'\n", resident_only.c_str()); return 1; }
+        else { std::fprintf(stderr, "--resident-only takes off|all|stall1|verify|mask, got '%s'\n", resident_only.c_str()); return 1; }
     }
     // Track MS: the extra streams, and the session each of them starts from.
     // They are created BEFORE begin_session so every one of them gets its own
@@ -382,7 +398,8 @@ int cmd_serve(int argc, char** argv) {
     emit(std::format("{{\"event\":\"ready\",\"load_s\":{},\"max_context\":{},\"vocab\":{},"
                      "\"cache_gb\":{},\"cache_slots\":{},\"gpu_prefill_min\":{},\"check_topk\":{},"
                      "\"engram_tables\":{},\"kv_mb\":{},\"rollback\":{},\"max_parked\":{},"
-                     "\"reheat\":{},\"reheat_decay\":{},\"kv_disk\":{},\"kv_disk_dir\":{},\"sources\":{}}}",
+                     "\"reheat\":{},\"reheat_decay\":{},\"kv_disk\":{},\"kv_disk_dir\":{},\"sources\":{},"
+                     "\"speculation\":{{\"enabled\":{},\"draft_tokens\":{},\"accept_top_k\":{},\"confidence_min\":{},\"main_paths\":1,\"mtp_pinned_experts\":{}}}}}",
                      json_number(load_s), engine.max_context(), tok->vocab_size(),
                      json_number(engine.store().capacity_bytes() / double(1ull << 30)),
                      engine.store().slot_count(), so.gpu_prefill_min, check_topk ? "true" : "false",
@@ -393,8 +410,13 @@ int cmd_serve(int argc, char** argv) {
                      // Track D4: how many read sources survived the mirror
                      // health gate, so the banner says what the run is actually
                      // reading from rather than what it was asked for.
-                     engine.io().live_source_count()));
+                     engine.io().live_source_count(),cfg.speculation.enabled ? "true" : "false",
+                     cfg.speculation.max_draft,cfg.speculation.accept_topk,
+                     cfg.speculation.min_confidence ? json_number(*cfg.speculation.min_confidence) : "null",
+                     cfg.speculation.enabled ? 384 : 0));
 
+    bool score_ready = false;
+    std::string score_session;
     Inbox inbox;
     std::thread reader([&] { inbox.run(); });
 
@@ -428,6 +450,8 @@ int cmd_serve(int argc, char** argv) {
         std::optional<GameModeScope> gpu_busy;
         if (op == "generate" || op == "generate_multi" || op == "reheat") gpu_busy.emplace();
         if (op == "quit") break;
+        if (op == "reset" || op == "drop" || op == "generate" || op == "generate_multi")
+            score_ready = false;
         if (op == "reset") {
             if (!switch_to(session)) continue;
             pool.reset_live();
@@ -462,16 +486,42 @@ int cmd_serve(int argc, char** argv) {
             emit("{\"event\":\"text\",\"text\":" + json_quote(tok->decode(v)) + "}");
             continue;
         }
+        // Read selected raw logits from the last completed emission, for
+        // multiple-choice evaluation. This never computes a step.
+        if (op == "score_tokens") {
+            if (!score_ready || session != pool.active() || session != score_session) {
+                emit_error("score_tokens requires a completed generate with decode logits in the active session");
+                continue;
+            }
+            const JsonValue* ids = doc->find("token_ids");
+            if (!ids || !ids->is_array()) { emit_error("score_tokens needs token_ids"); continue; }
+            const auto tokens = uint_array(*ids);
+            const auto logits = engine.last_logits();
+            if (tokens.empty() || std::any_of(tokens.begin(), tokens.end(),
+                [&](uint32_t id) { return id >= logits.size(); })) {
+                emit_error("score_tokens has an empty or out-of-range token list");
+                continue;
+            }
+            std::string values;
+            for (uint32_t id : tokens) {
+                if (!values.empty()) values += ",";
+                values += json_number(logits[id]);
+            }
+            emit("{\"event\":\"scores\",\"token_ids\":" + json_uint_array(tokens) +
+                 ",\"logits\":[" + values + "]}");
+            continue;
+        }
         if (op == "status") {
             emit(std::format("{{\"event\":\"status\",\"session\":{},\"context\":{},\"max_context\":{},"
                              "\"kv_mb\":{},\"kv_capacity\":{},\"kv_slabs\":{},\"kv_largest_slab_mb\":{},"
-                             "\"store\":{},\"planner\":{},\"io\":{},\"route\":{},\"gate_probe\":{}}}",
+                             "\"store\":{},\"planner\":{},\"io\":{},\"engram\":{},\"route\":{},\"gate_probe\":{}}}",
                              json_quote(pool.active()), engine.context_length(), engine.max_context(),
                              json_number(engine.kv().bytes() / 1e6), engine.kv().capacity(),
                              engine.kv().slabs(), json_number(engine.kv().largest_slab() / 1e6),
                              json_quote(engine.store().stats().to_string()),
                              json_quote(engine.planner().stats().to_string()),
                              json_quote(engine.io().stats().to_string()),
+                             json_quote(engine.engram_status()),
                              json_quote(engine.resident_route_report()),
                              json_quote(engine.gate_probe_on() ? engine.gate_probe_report() : std::string())));
             continue;
@@ -589,6 +639,8 @@ int cmd_serve(int argc, char** argv) {
             pool.reset_live();
             continue;
         }
+        score_ready = st->decode_steps > 0 || st->prefill_mode == "decode";
+        score_session = session;
         emit("{\"event\":\"done\",\"session\":" + json_quote(session) + "," + st->json_fields() + "}");
     }
     if (!po.disk.dir.empty()) {

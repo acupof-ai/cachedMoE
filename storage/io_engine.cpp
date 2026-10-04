@@ -85,6 +85,12 @@ std::string IoStats::to_string() const {
                          io_priority_name(static_cast<IoPriority>(p)),
                          per_priority_requests[p], per_priority_bytes[p] / 1048576.0);
     }
+    if (p2_requests) {
+        const double n = double(p2_requests);
+        s += std::format("  P2: {} req, lat mean {:.2f} / max {:.2f} ms (queue wait {:.2f} + service {:.2f}), {} deadline chunks\n",
+                         p2_requests, p2_lat_ns_sum / 1e6 / n, p2_lat_ns_max / 1e6,
+                         p2_queue_wait_ns_sum / 1e6 / n, p2_service_ns_sum / 1e6 / n, p2_deadline_chunks);
+    }
     if (p0_requests) {
         const double n = double(p0_requests);
         s += std::format(
@@ -977,21 +983,30 @@ size_t IoEngine::issue_ready_chunks() {
         uint8_t csrc = kNoStripeSource;
         {
             std::lock_guard lk(mutex_);
-            // Strict priority: a queued P0 keeps every lower class from issuing
-            // another chunk (design §9.6 preemption).
-            for (uint8_t pr = 0; pr < kIoPriorityCount && !p; ++pr) {
+            for (uint8_t pr = 0; pr < kIoPriorityCount; ++pr) {
                 auto& q = queues_[pr];
                 while (!q.empty() && q.front()->next_chunk >= q.front()->chunks.size())
                     q.pop_front();            // fully issued; chunk_owner_ keeps it alive
-                if (!q.empty()) p = q.front();
             }
+            auto& p2 = queues_[uint8_t(IoPriority::Engram)];
+            const uint32_t rescue_qd = uint32_t(std::min<uint64_t>(
+                tune_.engram_qd, uint64_t(tune_.p0_qd) + kEngramWaitChunks));
+            const bool rescue = engram_waiters_.load() &&
+                !queues_[uint8_t(IoPriority::BlockingMiss)].empty() && !p2.empty() &&
+                p2.front()->req.bytes <= 2 * kPageSize &&
+                inflight_ops_.load(std::memory_order_relaxed) < rescue_qd &&
+                inflight_class_[uint8_t(IoPriority::Engram)].load(std::memory_order_relaxed) < kEngramWaitChunks &&
+                inflight_bytes_.load(std::memory_order_relaxed) < tune_.bg_inflight_bytes;
+            if (rescue) p = p2.front();
+            else for (uint8_t pr = 0; pr < kIoPriorityCount && !p; ++pr)
+                if (!queues_[pr].empty()) p = queues_[pr].front();
             if (!p) break;
             const IoPriority cls = p->req.priority;
             // Track Q1 (b): the queue-depth and in-flight-byte ceilings are a
             // property of the class being issued, so a P0 burst can run the
             // drive deeper than the background classes are allowed to.
             const bool is_p0 = (cls == IoPriority::BlockingMiss);
-            const uint32_t qd_cap = is_p0 ? tune_.p0_qd
+            const uint32_t qd_cap = rescue ? rescue_qd : is_p0 ? tune_.p0_qd
                                   : cls == IoPriority::Engram ? tune_.engram_qd : tune_.bg_qd;
             const uint64_t byte_cap = is_p0 ? tune_.p0_inflight_bytes : tune_.bg_inflight_bytes;
             if (inflight_ops_.load(std::memory_order_relaxed) >= qd_cap) break;
@@ -1016,7 +1031,7 @@ size_t IoEngine::issue_ready_chunks() {
             cid = next_chunk_id_++;
             if (!p->chunk_src.empty()) csrc = p->chunk_src[idx];
             chunk_owner_.emplace(cid, InflightChunk{p, ch.bytes, csrc});
-            if (is_p0 && !p->issued_once) {
+            if (!p->issued_once) {
                 p->issued_once   = true;
                 p->first_issue_at = Clock::now();
                 p->bg_at_issue =
@@ -1028,6 +1043,10 @@ size_t IoEngine::issue_ready_chunks() {
                 std::lock_guard sk(stats_mutex_);
                 ++stats_.p0_chunks_issued;
                 stats_.p0_qd_at_issue_sum += inflight_ops_.load(std::memory_order_relaxed);
+            }
+            if (rescue) {
+                std::lock_guard sk(stats_mutex_);
+                ++stats_.p2_deadline_chunks;
             }
         }
 
@@ -1336,6 +1355,15 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
         const uint64_t lat = static_cast<uint64_t>(r.latency.count());
         stats_.latency_ns_sum += lat;
         if (lat > stats_.latency_ns_max) stats_.latency_ns_max = lat;
+        if (p->req.priority == IoPriority::Engram) {
+            ++stats_.p2_requests;
+            stats_.p2_lat_ns_sum += lat;
+            stats_.p2_lat_ns_max = std::max(stats_.p2_lat_ns_max, lat);
+            const uint64_t wait = p->issued_once
+                ? uint64_t((p->first_issue_at - p->queued_at).count()) : lat;
+            stats_.p2_queue_wait_ns_sum += wait;
+            stats_.p2_service_ns_sum += (lat > wait) ? (lat - wait) : 0;
+        }
         if (is_p0) {
             ++stats_.p0_requests;
             stats_.p0_bytes += r.bytes_moved;

@@ -58,6 +58,12 @@ const char* mgt_stage_name(MgtStage s) {
         case MgtStage::Head:           return "mgt1.head";
         case MgtStage::HeadArgmax:     return "mgt1.head.argmax";
         case MgtStage::HeadTopK:       return "mgt1.head.topk";
+        case MgtStage::HeadRank:       return "mgt1.head.rank";
+        case MgtStage::AttnCmGather:   return "mgt1.attn_cm.gather";
+        case MgtStage::AttnCmScore:    return "mgt1.attn_cm.score";
+        case MgtStage::AttnCmSoftmax:  return "mgt1.attn_cm.softmax";
+        case MgtStage::AttnCmPv:       return "mgt1.attn_cm.pv";
+        case MgtStage::AttnCmFinish:   return "mgt1.attn_cm.finish";
         case MgtStage::EngramGemv:     return "mgt1.engram.gemv";
         case MgtStage::EngramGate:     return "mgt1.engram.gate";
         case MgtStage::Count:          break;
@@ -71,8 +77,8 @@ Result<void> DecodeRunner::create(Device&, MemoryAllocator&, const std::string&,
     return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
 }
 void DecodeRunner::destroy() {}
-uint64_t* DecodeRunner::slots(DecodeStage) { return nullptr; }
-Result<void> DecodeRunner::record(CommandBuffer&, DecodeStage, const void*, uint32_t, uint32_t) {
+uint64_t* DecodeRunner::slots(DecodeStage, uint32_t) { return nullptr; }
+Result<void> DecodeRunner::record(CommandBuffer&, DecodeStage, const void*, uint32_t, uint32_t, uint32_t) {
     return fail(Err::Unavailable, "no vulkan");
 }
 Result<void> DecodeRunner::dispatch_now(DecodeStage, const void*, uint32_t, uint32_t) {
@@ -143,12 +149,12 @@ Result<void> DecodeRunner::create(Device& device, MemoryAllocator& alloc,
     spec_.rows_per_lane = 1;
 
     const uint32_t n = static_cast<uint32_t>(DecodeStage::Count);
-    auto t = alloc.allocate(uint64_t(n) * kAttnStageStride, true, false);
+    auto t = alloc.allocate(uint64_t(n) * kBindings * kAttnStageStride, true, false);
     if (!t) { destroy(); return std::unexpected(t.error()); }
     table_ = *t;
     std::memset(table_.host_ptr, 0, static_cast<size_t>(table_.bytes));
 
-    if (auto r = descriptors_.create(device, n, n); !r) { destroy(); return r; }
+    if (auto r = descriptors_.create(device, n*kBindings, n*kBindings); !r) { destroy(); return r; }
     for (const StageDef& d : kStages) {
         if (auto r = make(d.stage, shader_dir + "/" + d.spv + ".spv", d.stage_const); !r) {
             destroy();
@@ -156,11 +162,13 @@ Result<void> DecodeRunner::create(Device& device, MemoryAllocator& alloc,
                         std::format("{}: {}", decode_stage_name(d.stage), r.error().message));
         }
         const uint32_t i = static_cast<uint32_t>(d.stage);
-        std::vector<BufferBinding> b(1);
-        b[0] = {0, uint64_t(i) * kAttnStageStride, kAttnStageStride, table_.buffer};
-        auto set = descriptors_.allocate(pipes_[i], b);
-        if (!set) { destroy(); return std::unexpected(set.error()); }
-        sets_[i] = *set;
+        for(uint32_t row=0;row<kBindings;++row) {
+            std::vector<BufferBinding> b(1);
+            b[0] = {0, uint64_t(row*n+i) * kAttnStageStride, kAttnStageStride, table_.buffer};
+            auto set = descriptors_.allocate(pipes_[i], b);
+            if (!set) { destroy(); return std::unexpected(set.error()); }
+            sets_[row][i] = *set;
+        }
     }
     if (auto r = pool_.create(device); !r) { destroy(); return r; }
     return {};
@@ -172,25 +180,26 @@ void DecodeRunner::destroy() {
     for (Pipeline& p : pipes_) p.destroy();
     if (alloc_ && table_.valid()) alloc_->free(table_);
     table_ = GpuBuffer{};
-    for (VkDescriptorSet& s : sets_) s = VK_NULL_HANDLE;
+    for(auto& row:sets_)for(VkDescriptorSet& s:row)s=VK_NULL_HANDLE;
     device_ = nullptr;
     alloc_ = nullptr;
 }
 
-uint64_t* DecodeRunner::slots(DecodeStage s) {
-    if (!table_.host_ptr) return nullptr;
+uint64_t* DecodeRunner::slots(DecodeStage s, uint32_t binding) {
+    if (!table_.host_ptr || binding>=kBindings) return nullptr;
     return reinterpret_cast<uint64_t*>(static_cast<std::byte*>(table_.host_ptr) +
-                                       uint64_t(static_cast<uint32_t>(s)) * kAttnStageStride);
+        uint64_t(binding*static_cast<uint32_t>(DecodeStage::Count)+static_cast<uint32_t>(s)) * kAttnStageStride);
 }
 
 Result<void> DecodeRunner::record(CommandBuffer& cmd, DecodeStage s, const void* push,
-                                  uint32_t push_bytes, uint32_t groups) {
+                                  uint32_t push_bytes, uint32_t groups, uint32_t binding) {
+    if(binding>=kBindings)return fail(Err::OutOfRange,"decode binding exceeds row capacity");
     const uint32_t i = static_cast<uint32_t>(s);
     if (!pipes_[i].valid()) return fail(Err::FailedPrecondition, "pipeline is not created");
     if (push_bytes > kPushBytes)
         return fail(Err::InvalidArgument, "push constants exceed the shared 64 B range");
     if (groups == 0) return fail(Err::InvalidArgument, "zero workgroups");
-    if (auto r = cmd.bind(pipes_[i], sets_[i]); !r) return r;
+    if (auto r = cmd.bind(pipes_[i], sets_[binding][i]); !r) return r;
     if (push_bytes) {
         if (auto r = cmd.push(pipes_[i], push, push_bytes); !r) return r;
     }
@@ -263,6 +272,12 @@ constexpr MgtDef kMgt[] = {
     {MgtStage::HeadTopK,       "mgt1_head",   2, 1, 1},
     {MgtStage::EngramGemv,     "mgt1_engram", 0, 1, 1},
     {MgtStage::EngramGate,     "mgt1_engram", 1, 1, 1},
+    {MgtStage::HeadRank,       "mgt1_head",   3, 1, 1},
+    {MgtStage::AttnCmGather,   "mgt1_attn_cm",0, 1, 1},
+    {MgtStage::AttnCmScore,    "mgt1_attn_cm",1, 1, 1},
+    {MgtStage::AttnCmSoftmax,  "mgt1_attn_cm",2, 1, 1},
+    {MgtStage::AttnCmPv,       "mgt1_attn_cm",3, 1, 1},
+    {MgtStage::AttnCmFinish,   "mgt1_attn_cm",4, 1, 1},
 };
 static_assert(sizeof(kMgt) / sizeof(kMgt[0]) == static_cast<size_t>(MgtStage::Count));
 }  // namespace
@@ -331,6 +346,7 @@ void MgtRunner::destroy() {
 }
 
 Result<void> MgtRunner::make(uint32_t m, MgtStage s) {
+    if(s>=MgtStage::AttnCmGather && s<=MgtStage::AttnCmFinish && !spec_.attn_cm)return {};
     const MgtDef& d = kMgt[static_cast<uint32_t>(s)];
     PipelineSpec ps;
     ps.m             = m;
@@ -338,7 +354,8 @@ Result<void> MgtRunner::make(uint32_t m, MgtStage s) {
     ps.rows_per_wg   = 256 / spec_.lanes_per_row;
     ps.subgroup_size = spec_.subgroup_size;
     const uint32_t heads = (s == MgtStage::AttnScore) ? spec_.tile_heads_per_wg : 1u;
-    ps.extra = {d.stage_const, d.act_quant, 1u, heads, d.wave, ksplit(s), 0u};
+    ps.extra = {d.stage_const, d.act_quant, 1u, heads, d.wave, ksplit(s), 0u,
+                spec_.fold_scale ? 1u : 0u};
     PipelineLayoutSpec la;
     la.storage_buffers    = 1;
     la.push_constant_size = kPushBytes;
@@ -379,6 +396,8 @@ uint64_t* MgtRunner::slots(MgtStage s) {
 
 Result<void> MgtRunner::record(CommandBuffer& cmd, uint32_t m, MgtStage s, const void* push,
                                uint32_t push_bytes, uint32_t gx, uint32_t gy) {
+    if(s>=MgtStage::AttnCmGather && s<=MgtStage::AttnCmFinish && !spec_.attn_cm)
+        return fail(Err::FailedPrecondition,"batch ATTN_CM was not enabled");
     if (m < 1 || m > kMgtMaxM || !per_m_[m].ready)
         return fail(Err::FailedPrecondition, std::format("M = {} pipelines are not built", m));
     const uint32_t i = static_cast<uint32_t>(s);

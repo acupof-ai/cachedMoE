@@ -85,6 +85,7 @@ static const uint kFlagOutBf16 = 2u;   // write the output as bf16, not fp32
 // measures cos 0.999998 against the oracle either way (docs/p2_attention.md), so
 // this is offered rather than imposed.
 static const uint kFlagRoundIn = 4u;
+static const uint kFlagRoundOut = 16u;
 // dspark_head stage 0 only: take the token id from `kMkTokenIn[pos]` instead of
 // the push constant, so the five sequential Markov steps of design §7.12 can be
 // recorded as five dispatches with no host round trip between them.

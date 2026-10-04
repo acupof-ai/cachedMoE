@@ -113,6 +113,12 @@ struct IoStats {
     // Mean chunk queue depth seen at issue, over P0 chunks only.
     uint64_t p0_chunks_issued = 0, p0_qd_at_issue_sum = 0;
 
+    // P2 is also on the critical path when Engram's prefetched rows have
+    // not arrived. Keep its queue delay separate from actual drive service.
+    uint64_t p2_requests = 0, p2_lat_ns_sum = 0, p2_lat_ns_max = 0;
+    uint64_t p2_queue_wait_ns_sum = 0, p2_service_ns_sum = 0;
+    uint64_t p2_deadline_chunks = 0;
+
     // --- dispatcher refill accounting, Track Q2 E2 --------------------------
     // The dispatcher is one thread running issue -> poll -> handle -> issue.
     // Anything it spends in `handle` (which is where completion CALLBACKS run,
@@ -202,6 +208,32 @@ public:
 
     IoStats  stats() const;
     void     reset_stats();
+
+    // Masked misses fill asynchronously. When the GPU is waiting for Engram,
+    // its small row reads must not wait for the entire P0 backlog. The scope
+    // promotes P2 only during that wait; strict priority is otherwise intact.
+    void set_engram_wait_priority(bool enabled) {
+        engram_wait_priority_.store(enabled, std::memory_order_relaxed);
+    }
+    class EngramWait {
+    public:
+        EngramWait(const EngramWait&) = delete;
+        EngramWait& operator=(const EngramWait&) = delete;
+        ~EngramWait() {
+            if (io_) { io_->engram_waiters_.fetch_sub(1); io_->cv_.notify_one(); }
+        }
+    private:
+        friend class IoEngine;
+        explicit EngramWait(IoEngine* io) : io_(io) {
+            if (io_) { io_->engram_waiters_.fetch_add(1); io_->cv_.notify_one(); }
+        }
+        IoEngine* io_;
+    };
+    EngramWait engram_wait() {
+        return EngramWait(engram_wait_priority_.load(std::memory_order_relaxed) ? this : nullptr);
+    }
+    // At most two layers' 48 sector reads may bypass P0 in one issue window.
+    static constexpr uint32_t kEngramWaitChunks = 96;
 
     // --- second read source (Track D2, docs/p4_dual_source.md) --------------
     // Declares the read sources. `roots[0]` is the primary model directory and
@@ -477,6 +509,8 @@ private:
     std::vector<uint32_t> p0_lat_us_;     // one sample per completed P0, for p50/p95
     uint32_t p0_outstanding_ = 0;         // P0 requests submitted but not finished
     std::atomic<uint32_t> inflight_class_[kIoPriorityCount] = {};
+    std::atomic<bool> engram_wait_priority_{false};
+    std::atomic<uint32_t> engram_waiters_{0};
     std::atomic<int64_t>  last_p0_ns_{INT64_MIN / 2};
 
     std::unique_ptr<Backend> backend_;

@@ -209,6 +209,7 @@ struct MhcPush {
     float    norm_eps, hc_eps;
 };
 inline constexpr uint32_t kMhcFlagPost = 1u;          // apply hc_post
+inline constexpr uint32_t kMhcFlagRoundResidual = 4u; // DSpark: bf16 hc_post grid
 inline constexpr uint32_t kMhcFlagSkipSinkhorn = 2u;  // mgt1_mhc: the final collapse before the head
 
 struct GemvPush { uint32_t rows, k, scale_cols, row_base; };

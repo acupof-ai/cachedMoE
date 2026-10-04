@@ -267,6 +267,8 @@ public:
     uint64_t     union_y_address() const { return union_runner_.y_address(); }
     const float* union_y_host() { return union_runner_.y(); }
     // Where the union runner's ffn input goes; `[m][hidden]` fp16.
+    const uint32_t* union_debug_h() {return union_runner_.h_words();}
+    uint32_t union_debug_slots() const {return union_runner_.dims().slots;}
     const uint16_t* union_debug_x() { return union_runner_.x_fp16(); }
     // Slots the last `stage_batch_union` filled: `routed` distinct experts plus
     // the shared one.
