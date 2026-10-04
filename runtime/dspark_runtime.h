@@ -24,6 +24,7 @@ public:
         bool expert_ids_valid=false;
         std::vector<float> logits;
         std::map<std::string,double> timing_ms;
+        std::map<std::string,double> gpu_timing_ms; // timestamp durations, opt-in
         uint32_t gpu_dispatches=0, gpu_phases=0; // measured host wall per dispatch/transfer
     };
     DsparkRuntime();

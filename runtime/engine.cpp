@@ -4445,10 +4445,16 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root,uint32_t max_new
             draft_stages+=std::format("\"{}\":{}",name,elapsed);
         }
         draft_stages+="}";
-        const auto line=std::format("{{\"position\":{},\"k\":{},\"accepted\":{},\"emitted\":{},\"tokens\":{},\"confidence\":{},\"target_rank\":{},\"draft_routes_valid\":{},\"draft_routes\":{},\"target_routes\":{},\"draft_ms\":{},\"draft_seed_ms\":{},\"draft_dispatches\":{},\"draft_stages_ms\":{},\"verify_ms\":{},\"cpu_ms\":{},\"commit_ms\":{}}}\n",
+        std::string draft_gpu_stages="{";
+        for(const auto& [name,elapsed]:proposal.gpu_timing_ms) {
+            if(draft_gpu_stages.size()>1)draft_gpu_stages+=",";
+            draft_gpu_stages+=std::format("\"{}\":{}",name,elapsed);
+        }
+        draft_gpu_stages+="}";
+        const auto line=std::format("{{\"position\":{},\"k\":{},\"accepted\":{},\"emitted\":{},\"tokens\":{},\"confidence\":{},\"target_rank\":{},\"draft_routes_valid\":{},\"draft_routes\":{},\"target_routes\":{},\"draft_ms\":{},\"draft_seed_ms\":{},\"draft_dispatches\":{},\"draft_stages_ms\":{},\"draft_gpu_stages_ms\":{},\"verify_ms\":{},\"cpu_ms\":{},\"commit_ms\":{}}}\n",
             p0,k,out.cycle.accepted,n,array(input),array(std::span(proposal.confidence).first(k)),array(std::span(ranks).first(k)),
             proposal.expert_ids_valid,array(proposal.expert_ids),array(batch_route_requests_),out.cycle.draft_ms,
-            draft_seed_ms,proposal.gpu_dispatches,draft_stages,
+            draft_seed_ms,proposal.gpu_dispatches,draft_stages,draft_gpu_stages,
             out.cycle.verify_ms,out.cycle.cpu_ms,out.cycle.rollback_ms);
         if(auto r=write(line);!r)return abort(r.error());
         if(std::fflush(spec_diagnostics_))return abort(Status{Err::Io,"cannot flush speculative diagnostics"});

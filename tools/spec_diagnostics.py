@@ -44,6 +44,58 @@ def read_trace(path):
     return header, rows
 
 
+def timing_report(rows):
+    """GPU timestamp sums and matching host wall timings; no replay."""
+    active = [r for r in rows if r['k'] > 0]
+    profiled = [r for r in active if r.get('draft_gpu_stages_ms')]
+    if not profiled:
+        return dict(profiled_cycles=0)
+    stages = sorted(set().union(*(r['draft_gpu_stages_ms'] for r in profiled)))
+    table = []
+    for name in stages:
+        gpu = sum(r['draft_gpu_stages_ms'].get(name, 0) for r in profiled) / len(profiled)
+        host = sum(r['draft_stages_ms'].get(name, 0) for r in profiled) / len(profiled)
+        table.append(dict(stage=name, gpu_ms=gpu, host_ms=host,
+                          host_minus_gpu_ms=host-gpu))
+    wall = sum(r['draft_stages_ms']['wall.draft'] for r in profiled) / len(profiled)
+    return dict(profiled_cycles=len(profiled), stages=table, draft_wall_ms=wall,
+                gpu_sum_ms=sum(x['gpu_ms'] for x in table),
+                host_uncovered_ms=wall-sum(x['host_ms'] for x in table))
+
+
+def verify_report(path):
+    from trace_timeline import Trace, CLS
+    trace = Trace(Path(path).read_bytes())
+    groups = {}
+    for record in trace.records:
+        if record.timed:
+            groups.setdefault(record.token, []).append(record)
+    cycles = []
+    for token, records in groups.items():
+        records.sort(key=lambda x: x.seq)
+        busy = Counter()
+        cross_gap = same_gap = 0
+        for i, record in enumerate(records):
+            busy[CLS[record.cls]] += record.busy_ns / 1e6
+            if i:
+                gap = max(0, record.begin_ns-records[i-1].end_ns) / 1e6
+                if record.submit != records[i-1].submit:
+                    cross_gap += gap
+                else:
+                    same_gap += gap
+        cycles.append(dict(token=token, busy_ms=dict(busy),
+                           cross_submit_gap_ms=cross_gap, same_submit_gap_ms=same_gap,
+                           span_ms=(records[-1].end_ns-records[0].begin_ns)/1e6))
+    n = len(cycles)
+    if not n:
+        raise ValueError('no timed verify regions')
+    classes = sorted(set().union(*(r['busy_ms'] for r in cycles)))
+    return dict(cycles=n, mean_busy_ms={k:sum(r['busy_ms'].get(k,0) for r in cycles)/n for k in classes},
+                mean_cross_submit_gap_ms=sum(r['cross_submit_gap_ms'] for r in cycles)/n,
+                mean_same_submit_gap_ms=sum(r['same_submit_gap_ms'] for r in cycles)/n,
+                mean_span_ms=sum(r['span_ms'] for r in cycles)/n)
+
+
 def confidence_report(rows, accept_k):
     bins = [-math.inf, 0, 1, 2, 3, 4, 6, math.inf]
     by_bin = [Counter() for _ in range(len(bins) - 1)]
@@ -149,10 +201,14 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('trace',nargs='?');ap.add_argument('--out');ap.add_argument('--accept-top-k',type=int,default=4)
     ap.add_argument('--self-test',action='store_true')
+    ap.add_argument('--verify-trace',help='target --trace binary from the same job')
     args=ap.parse_args()
     if args.self_test:self_test();return
     if not args.trace or args.accept_top_k<1:ap.error('provide a trace and positive accept-top-k')
-    h,r=read_trace(args.trace);text=json.dumps(analyze(h,r,args.accept_top_k),indent=2)+'\n'
+    h,r=read_trace(args.trace);report=analyze(h,r,args.accept_top_k)
+    report['draft_timing']=timing_report(r)
+    if args.verify_trace:report['verify_timing']=verify_report(args.verify_trace)
+    text=json.dumps(report,indent=2)+'\n'
     if args.out:Path(args.out).write_text(text)
     else:print(text,end='')
 

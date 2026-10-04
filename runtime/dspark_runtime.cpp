@@ -6,6 +6,7 @@
 #include "cpu/dequant.h"
 #include "core/profiler.h"
 #include "core/wc_read.h"
+#include "core/log.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -27,6 +28,10 @@ struct DsparkRuntime::Impl {
     gpu::DsparkMegaRunner mega;
     gpu::Device* device=nullptr;gpu::MemoryAllocator* allocator=nullptr;
     bool use_mega=false,recording=false;uint32_t mega_groups=120;
+    bool profile_gpu=false;
+    gpu::CommandPool profile_pool;
+    gpu::CommandBuffer profile_cmd;
+    gpu::QueryPool profile_queries;
     std::vector<gpu::DsparkMegaOp> ops;
     std::array<View,3> mega_kv,mega_sink,expert_tables;
     View union_ids,union_list,union_w,union_count,xquant,hquant;
@@ -85,8 +90,31 @@ struct DsparkRuntime::Impl {
     uint32_t next=0;
     bool seeded=false;
     std::map<std::string,double> timing;
+    std::map<std::string,double> gpu_timing;
+    std::string profile_stage;
     void elapsed(const std::string& name,TimePoint start) {
         timing[name]+=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
+    }
+    template<class Record>
+    Result<void> profiled(const std::string& name,Record record) {
+#if defined(DEEPMOE_ENABLE_VULKAN)
+        const auto start=Clock::now();
+        profile_pool.reset();
+        DS_TRY(profile_cmd.begin());
+        DS_TRY(profile_cmd.reset_queries(profile_queries,0,2));
+        DS_TRY(profile_cmd.write_timestamp(profile_queries,0,false));
+        DS_TRY(record(profile_cmd));
+        DS_TRY(profile_cmd.write_timestamp(profile_queries,1,true));
+        DS_TRY(profile_cmd.end());
+        DS_TRY(gpu::submit_and_wait(*device,profile_cmd));
+        auto duration=profile_queries.elapsed_seconds(0,1);
+        if(!duration)return std::unexpected(duration.error());
+        const auto label=name.starts_with("mtp.")?name:profile_stage+name;
+        gpu_timing[label]+=*duration*1e3;
+        elapsed(label,start);return {};
+#else
+        return fail(Err::Unavailable,"DSpark timestamps require Vulkan");
+#endif
     }
     Result<void> run_ds(gpu::DsparkStage stage,const void* push,uint32_t bytes,uint32_t groups,
                         std::string name={}) {
@@ -98,6 +126,8 @@ struct DsparkRuntime::Impl {
             if(stage==gpu::DsparkStage::Confidence)o.kind=14;
             std::memcpy(o.push.data(),push,bytes);std::memcpy(o.ptr.data(),ds.slots(stage),256);ops.push_back(o);return {};
         }
+        const auto label=name.empty()?std::string(gpu::dspark_stage_name(stage)):name;
+        if(profile_gpu)return profiled(label,[&](auto& cmd){return ds.record(cmd,stage,push,bytes,groups);});
         auto start=Clock::now();auto r=ds.dispatch_now(stage,push,bytes,groups);
         elapsed(name.empty()?gpu::dspark_stage_name(stage):name,start);return r;
     }
@@ -117,6 +147,7 @@ struct DsparkRuntime::Impl {
             gpu::DsparkMegaOp o;o.kind=kind;o.gx=groups;o.gy=y;
             std::memcpy(o.push.data(),push,bytes);std::memcpy(o.ptr.data(),mgt.slots(stage),256);ops.push_back(o);return {};
         }
+        if(profile_gpu)return profiled(gpu::mgt_stage_name(stage),[&](auto& cmd){return mgt.record(cmd,m,stage,push,bytes,groups,y);});
         auto start=Clock::now();auto r=mgt.dispatch_now(m,stage,push,bytes,groups,y);
         elapsed(gpu::mgt_stage_name(stage),start);return r;
     }
@@ -231,6 +262,13 @@ std::vector<std::string> DsparkRuntime::tensors(const Manifest& manifest) {
 Result<void> DsparkRuntime::create(gpu::Device& dev,gpu::MemoryAllocator& alloc,const store::PinnedStore& pinned,
                                   store::ExpertStore& store,store::Planner& planner,const TextConfig& cfg) {
     auto& p=*p_;p.pinned=&pinned;p.cfg=cfg;p.device=&dev;p.allocator=&alloc;
+    if(const char* e=std::getenv("DEEPMOE_DSPARK_PROFILE"))p.profile_gpu=std::string_view(e)=="1";
+    if(p.profile_gpu) {
+        if(!dev.caps().timestamp_valid_bits)return fail(Err::Unavailable,"DSpark queue has no GPU timestamps");
+        DS_TRY(p.profile_pool.create(dev));DS_TRY(p.profile_queries.create(dev,2));
+        auto cb=p.profile_pool.acquire();if(!cb)return std::unexpected(cb.error());p.profile_cmd=*cb;
+    }
+    log_info("DSpark draft: GPU timestamps {}",p.profile_gpu?"on":"off");
     if(const char* e=std::getenv("DEEPMOE_DSPARK_MEGA"))p.use_mega=std::string_view(e)=="1";
     DS_TRY(p.ds.create(dev,alloc,gpu::default_shader_dir()));DS_TRY(p.mgt.create(dev,alloc,gpu::default_shader_dir()));DS_TRY(p.mgt.ensure(M));
     DS_TRY(p.scratch.create(alloc,32ull<<20));
@@ -317,7 +355,7 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
     if(p.use_mega&&!p.mega.valid())DS_TRY(p.mega.create(*p.device,*p.allocator,gpu::default_shader_dir()));
     p.observer=&probe;p.recording=p.use_mega;p.ops.clear();p.capture_names.clear();
     struct ResetRecording {Impl& p;~ResetRecording(){p.recording=false;}} reset_recording{p};
-    p.timing.clear();const auto draft_start=Clock::now();
+    p.timing.clear();p.gpu_timing.clear();const auto draft_start=Clock::now();
     std::array<uint32_t,45> expert_ids{};
     if(!p.recording)DS_TRY(p.mgt.ensure(output_rows));
     const auto* emb=p.pinned->find("embed.weight");auto* x=static_cast<float*>(p.x.host);
@@ -326,10 +364,12 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
         for(uint32_t h=0;h<H;++h)for(uint32_t d=0;d<D;++d)x[(m*H+h)*D+d]=cpu::bf16_to_float(row[d]);}
     std::memset(p.mix.host,0,M*32*4);for(uint32_t m=0;m<M;++m)static_cast<float*>(p.mix.host)[m*32]=1;
     for(uint32_t st=0;st<3;++st){const auto pre=std::format("mtp.{}.",st);
+        p.profile_stage=pre+"attn.";
         DS_TRY(p.mhc(pre,"attn",st!=0));
         if(probe){if(p.recording)p.snapshot(pre+"attn_norm",p.u,M*D);else probe(pre+"attn_norm",{static_cast<float*>(p.u.host),M*D});}
         DS_TRY(p.attention(st,pos));
         if(probe){if(p.recording)p.snapshot(pre+"wo_b",p.attn,M*D);else probe(pre+"wo_b",{static_cast<float*>(p.attn.host),M*D});}
+        p.profile_stage=pre+"ffn.";
         DS_TRY(p.mhc(pre,"ffn",true));
         if(probe){if(p.recording)p.snapshot(pre+"ffn_norm",p.u,M*D);else probe(pre+"ffn_norm",{static_cast<float*>(p.u.host),M*D});}
         auto* g=p.mgt.slots(gpu::MgtStage::GateScore);g[0]=p.A(pre+"ffn.gate.weight");g[1]=p.A(pre+"ffn.gate.bias");g[2]=p.u.addr;g[3]=p.gate_scores.addr;g[4]=p.gate_ids.addr;g[5]=p.gate_w.addr;g[6]=p.gate_done.addr;
@@ -350,7 +390,8 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
         }
         GpuMoeBridge::BatchCall bc;bc.layer=40+st;bc.m=M;bc.topk=3;bc.ids=ids;bc.weights=weights;bc.x=static_cast<float*>(p.u.host);bc.y=static_cast<float*>(p.attn.host);bc.hidden=D;
         auto moe_start=Clock::now();DS_TRY(p.moe.run_batch_union(bc));
-        p.elapsed("moe",moe_start);
+        p.elapsed(p.profile_gpu?pre+"moe":"moe",moe_start);
+        if(p.profile_gpu)p.gpu_timing[pre+"moe"]+=p.moe.union_info().gpu_ms;
         if(st==0&&probe&&std::getenv("DEEPMOE_DSPARK_MEGA_DIAG")) {
             std::vector<uint16_t> packed(M*D);wc_readback(packed.data(),p.moe.union_debug_x(),M*D*2);
             std::vector<float> vals(M*D);for(uint32_t i=0;i<M*D;++i)vals[i]=cpu::fp16_to_float(packed[i]);
@@ -371,6 +412,7 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
         std::memcpy(y,rounded.data(),M*D*4);
         }
     }
+    p.profile_stage.clear();
     // Close final MTP residual using its FFN coefficients; collapse with ffn pre.
     auto* s=p.mgt.slots(gpu::MgtStage::MhcClose);
     s[gpu::slot::kX]=p.x.addr;s[gpu::slot::kA]=p.attn.addr;s[gpu::slot::kPreMix]=p.mix.addr;
@@ -409,7 +451,7 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
     out.expert_ids=expert_ids;out.expert_ids_valid=!p.recording;
     std::copy(id+1,id+1+output_rows,out.tokens.begin());std::memcpy(out.confidence.data(),p.conf.host,output_rows*4);
     auto copy_start=Clock::now();if(read_logits){out.logits.resize(output_rows*V);wc_readback(out.logits.data(),p.logits.host,output_rows*V*4);}
-    p.elapsed("host.logits",copy_start);p.elapsed("wall.draft",draft_start);out.timing_ms=p.timing;return out;
+    p.elapsed("host.logits",copy_start);p.elapsed("wall.draft",draft_start);out.timing_ms=p.timing;out.gpu_timing_ms=p.gpu_timing;return out;
 }
 #undef DS_TRY
 }
