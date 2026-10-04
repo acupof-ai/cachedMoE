@@ -1031,11 +1031,15 @@ DEEPMOE_TEST(gpu_dspark, full_runtime_chain) {
     runtime::Engine engine;
     REQUIRE(engine.init(cfg)); REQUIRE(engine.init_gpu());
     auto& draft=*engine.dspark_runtime();
+    const bool onecb=std::getenv("DEEPMOE_DSPARK_TEST_ONECB")!=nullptr;
+    draft.set_onecb(false);
+    auto set_fused=[&](bool enabled){if(onecb)draft.set_onecb(enabled);else draft.set_mega(enabled);};
+    std::printf("draft comparison path=%s\n",onecb?"onecb":"mega");
     std::array<std::span<const float>,3> rings;
     for(uint32_t st=0;st<3;++st) rings[st]={g.f(std::format("s{}.sparse_kv",st)).data(),kWin*kHeadDim};
     REQUIRE(draft.seed_window(64,rings));
     REQUIRE(draft.append(64,g.f("main_hidden")));
-    draft.set_mega(false);
+    set_fused(false);
     std::map<std::string,std::vector<float>> serial_values;
     bool agree_all=true;
     draft.probe=[&](std::string_view name,std::span<const float> val) {
@@ -1069,34 +1073,37 @@ DEEPMOE_TEST(gpu_dspark, full_runtime_chain) {
         CHECK(std::abs(out->confidence[j]-g.f("confidence")[j])<0.1f);
     }
     CHECK(agree_all);
-    draft.set_mega(true);
+    set_fused(true);
     draft.probe=[&](std::string_view name,std::span<const float> val) {
         const auto& expected=serial_values.at(std::string(name));
         const auto ag=agree(val.data(),expected.data(),expected.size());
-        std::printf("mega vs serial %s %s max=%.8g expectedmax=%.8g\n",std::string(name).c_str(),ag.str().c_str(),*std::max_element(val.begin(),val.end()),*std::max_element(expected.begin(),expected.end()));
+        std::printf("fused vs serial %s %s max=%.8g expectedmax=%.8g\n",std::string(name).c_str(),ag.str().c_str(),*std::max_element(val.begin(),val.end()),*std::max_element(expected.begin(),expected.end()));
         CHECK(std::memcmp(val.data(),expected.data(),val.size_bytes())==0);
     };
     auto fused=draft.draft(64,input);
     if(!fused)std::printf("mega: %s\n",fused.error().str().c_str());
     REQUIRE(fused);
-    CHECK_EQ(fused->gpu_dispatches,1u);
+    CHECK_EQ(fused->gpu_submissions,1u);
+    if(!onecb)CHECK_EQ(fused->gpu_dispatches,1u);
+    else CHECK(fused->gpu_dispatches>80u);
     CHECK(fused->tokens==out->tokens);
     CHECK(fused->confidence==out->confidence);
     const auto ag=agree(fused->logits.data(),out->logits.data(),out->logits.size());
-    std::printf("mega logits %s\n",ag.str().c_str());
+    std::printf("fused logits %s\n",ag.str().c_str());
     CHECK(fused->logits==out->logits);
     for(const auto& [name,t]:fused->timing_ms)std::printf("mega timing %-32s %.6f ms\n",name.c_str(),t);
-    std::printf("mega dispatches=%u phases=%u\n",fused->gpu_dispatches,fused->gpu_phases);
+    for(const auto& [name,t]:fused->gpu_timing_ms)std::printf("draft gpu %-42s %.6f ms\n",name.c_str(),t);
+    std::printf("fused dispatches=%u phases=%u\n",fused->gpu_dispatches,fused->gpu_phases);
     // Compare wall time without oracle callbacks or snapshot phases.
-    draft.probe={};draft.set_mega(false);
+    draft.probe={};set_fused(false);
     auto plain=draft.draft(64,input);REQUIRE(plain);
-    draft.set_mega(true);auto fast=draft.draft(64,input);REQUIRE(fast);
+    set_fused(true);auto fast=draft.draft(64,input);REQUIRE(fast);
     CHECK(fast->logits==plain->logits);CHECK(fast->tokens==plain->tokens);
     std::printf("draft bench serial_ms=%.6f mega_ms=%.6f kernel_ms=%.6f dispatches=%u phases=%u\n",
-        plain->timing_ms.at("wall.draft"),fast->timing_ms.at("wall.draft"),fast->timing_ms.at("mega.kernel"),fast->gpu_dispatches,fast->gpu_phases);
+        plain->timing_ms.at("wall.draft"),fast->timing_ms.at("wall.draft"),fast->timing_ms.at(onecb?"onecb.record_submit":"mega.kernel"),fast->gpu_dispatches,fast->gpu_phases);
     for(uint32_t rows=1;rows<5;++rows) {
         for(bool mega:{false,true}) {
-            draft.set_mega(mega);
+            set_fused(mega);
             auto prefix=draft.draft(64,input,rows);REQUIRE(prefix);
             CHECK_EQ(prefix->logits.size(),size_t(rows)*kVocab);
             CHECK(std::equal(prefix->logits.begin(),prefix->logits.end(),plain->logits.begin()));
@@ -1111,13 +1118,21 @@ DEEPMOE_TEST(gpu_dspark, full_runtime_chain) {
     // KV updates stay on the GPU, including a five-row append across the ring wrap.
     std::vector<float> hidden;
     for(uint32_t i=0;i<5;++i)hidden.insert(hidden.end(),g.f("main_hidden").begin(),g.f("main_hidden").end());
-    draft.set_mega(false);REQUIRE(draft.seed_window(127,rings));REQUIRE(draft.append(127,g.f("main_hidden")));
-    draft.set_mega(true);REQUIRE(draft.append(128,hidden));
+    set_fused(false);REQUIRE(draft.seed_window(127,rings));REQUIRE(draft.append(127,g.f("main_hidden")));
+    set_fused(true);REQUIRE(draft.append(128,hidden));
     auto gpu_kv=draft.draft(132,input);REQUIRE(gpu_kv);
-    draft.set_mega(false);REQUIRE(draft.seed_window(127,rings));REQUIRE(draft.append(127,g.f("main_hidden")));
+    set_fused(false);REQUIRE(draft.seed_window(127,rings));REQUIRE(draft.append(127,g.f("main_hidden")));
     REQUIRE(draft.append(128,hidden));auto cpu_kv=draft.draft(132,input);REQUIRE(cpu_kv);
     CHECK(gpu_kv->logits==cpu_kv->logits);CHECK(gpu_kv->tokens==cpu_kv->tokens);
-    std::printf("mega committed KV wrap: logits bit-identical\n");
+    std::printf("fused committed KV wrap: logits bit-identical\n");
+    if(onecb){
+        set_fused(false);draft.probe={};REQUIRE_OK(draft.set_profile(false));
+        auto untimed=draft.draft(132,input,2,false);REQUIRE(untimed);
+        REQUIRE_OK(draft.set_profile(true));auto timed=draft.draft(132,input,2,false);REQUIRE(timed);
+        CHECK(untimed->tokens==timed->tokens);CHECK(untimed->confidence==timed->confidence);
+        std::printf("timestamp comparison same state: off=%.6f on=%.6f delta=%.3f%%\n",untimed->timing_ms.at("wall.draft"),timed->timing_ms.at("wall.draft"),100*(timed->timing_ms.at("wall.draft")/untimed->timing_ms.at("wall.draft")-1));
+    }
+
 }
 
 DEEPMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
@@ -1131,13 +1146,16 @@ DEEPMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
     sc.engram_tables_dir=std::string(DEEPMOE_TEST_DATA_DIR)+"/l3";
     REQUIRE(engine.begin_session(sc));engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     auto first=engine.feed(std::span(state->prompt_ids()).first(8));REQUIRE(first);
-    uint32_t layers=0;engine.batch_probe=[&](uint32_t,const auto&){++layers;};
+    uint32_t layers=0;const bool gpu_route=std::getenv("DEEPMOE_BATCH_GPU_ROUTE")&&std::string_view(std::getenv("DEEPMOE_BATCH_GPU_ROUTE"))=="1";
+    if(!gpu_route)engine.batch_probe=[&](uint32_t,const auto&){++layers;};
     uint32_t root=first->token;
     for(uint32_t i=0;i<2;++i) {
-        const uint32_t before=engine.context_length();layers=0;
+        const uint32_t before=engine.context_length();layers=0;const auto calls=engine.batch_forward_calls();
         auto cycle=engine.speculative_step(root,6);REQUIRE(cycle);
         CHECK_EQ(cycle->cycle.k,0u);CHECK_EQ(cycle->cycle.accepted,0u);
-        CHECK_EQ(cycle->rows.size(),size_t(1));CHECK_EQ(layers,40u);
+        CHECK_EQ(cycle->rows.size(),size_t(1));CHECK_EQ(engine.batch_forward_calls()-calls,1ull);
+        CHECK_EQ(engine.last_batch_layers(),40u);
+        if(gpu_route)CHECK_EQ(engine.last_batch_submits(),1u);else CHECK_EQ(layers,40u);
         CHECK_EQ(engine.context_length(),before+1);CHECK_EQ(engine.history().back(),root);
         CHECK_EQ(engine.dspark_runtime()->next_position(),before+1);
         CHECK(cycle->cycle.draft_ms>0);root=cycle->rows.back().token;

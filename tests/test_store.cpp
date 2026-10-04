@@ -810,3 +810,17 @@ DEEPMOE_TEST(expert_store, pin_preserves_lru_and_prevents_recycling) {
     CHECK_EQ(s.stats().pinned,1u);CHECK_EQ(s.slot_for({1,0})->last_use_token,10u);
     CHECK_ERR(s.evict_lru(),Err::NotFound);
 }
+
+DEEPMOE_TEST(expert_store, snapshot_freezes_hits_and_defers_publish){
+    ExpertStore s;REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(),small_cache(2,1),1,4));
+    REQUIRE_OK(fill(s,{0,0},10));auto pending=s.begin_fill({0,1});REQUIRE(pending);
+    auto snapshot=s.guarded_snapshot(7);REQUIRE(snapshot);
+    CHECK((*snapshot)[0]!=0);CHECK_EQ((*snapshot)[6],0ull);
+    CHECK(!s.evict_key({0,0}));CHECK(!s.evict_lru());
+    REQUIRE_OK(s.finish_fill(pending->slot,true,20));
+    CHECK_EQ((*snapshot)[6],0ull); // in-flight snapshot does not change
+    s.set_completed_timeline(7);REQUIRE_OK(s.evict_key({0,0}));
+    auto next=s.guarded_snapshot(8);REQUIRE(next);CHECK((*next)[6]!=0);
+    CHECK(!s.evict_key({0,1}));s.set_completed_timeline(8);REQUIRE_OK(s.evict_key({0,1}));
+    CHECK(!s.guarded_snapshot(8)); // an already completed guard is invalid
+}

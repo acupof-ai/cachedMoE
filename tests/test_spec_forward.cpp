@@ -197,6 +197,7 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
         CHECK(identical == steps);
     }
 
+    if(std::getenv("DEEPMOE_TEST_BATCH_MASK"))engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     // --- pass B: the same positions, in blocks, through forward_batch ---------
     REQUIRE_OK(engine.reseed_decode_state());
     std::vector<float> got(size_t(block) * vocab);

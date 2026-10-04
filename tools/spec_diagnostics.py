@@ -54,13 +54,15 @@ def timing_report(rows):
     table = []
     for name in stages:
         gpu = sum(r['draft_gpu_stages_ms'].get(name, 0) for r in profiled) / len(profiled)
-        host = sum(r['draft_stages_ms'].get(name, 0) for r in profiled) / len(profiled)
+        host = (sum(r['draft_stages_ms'].get(name, 0) for r in profiled) / len(profiled)
+                if any(name in r['draft_stages_ms'] for r in profiled) else None)
         table.append(dict(stage=name, gpu_ms=gpu, host_ms=host,
-                          host_minus_gpu_ms=host-gpu))
+                          host_minus_gpu_ms=None if host is None else host-gpu))
     wall = sum(r['draft_stages_ms']['wall.draft'] for r in profiled) / len(profiled)
     return dict(profiled_cycles=len(profiled), stages=table, draft_wall_ms=wall,
                 gpu_sum_ms=sum(x['gpu_ms'] for x in table),
-                host_uncovered_ms=wall-sum(x['host_ms'] for x in table))
+                wall_minus_gpu_ms=wall-sum(x['gpu_ms'] for x in table),
+                host_uncovered_ms=wall-sum(x['host_ms'] or 0 for x in table))
 
 
 def verify_report(path):
