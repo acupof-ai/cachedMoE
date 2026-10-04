@@ -1,0 +1,1031 @@
+{
+  "date": "2026-10-05",
+  "source_commit": "dc5d8706ea8ae674b2401c03482162f31d0632c5",
+  "commits": {
+    "snapshot": "66d0f7a2258bb84a68a766a6ce1d76c557ca3155",
+    "phase1": "81826bd",
+    "phase3": "c796e56",
+    "fixed_cache_host_mean": "dc5d870"
+  },
+  "defaults": {
+    "resident_only": "off",
+    "dspark": "off",
+    "dspark_onecb": 0,
+    "batch_gpu_route": 0,
+    "mgt_pair_dot": 0,
+    "mask_dynamic_lru": 0,
+    "spec_k": 2,
+    "accept_top_k": 4,
+    "mtp_pinned": 384
+  },
+  "mask_semantics": "all initial slots Resident before READY; frozen expert set; no LRU touches, heat, eviction, or decode miss/P3 admission; exact prefill transit still reads without replacing cache",
+  "fixed_dual_plain": {
+    "decode_tok_s": 18.091544247695868,
+    "decode_ms": 3482.2898,
+    "decode_steps": 63,
+    "generated": 64,
+    "cycle_ms": null,
+    "speculation": {
+      "cycles": 0,
+      "verified": 0,
+      "accepted": 0,
+      "tokens": 0,
+      "draft_ms": 0,
+      "verify_ms": 0,
+      "commit_ms": 0,
+      "cpu_ms": 0,
+      "target_rows": 0,
+      "union_experts": 0,
+      "miss_bytes": 0,
+      "gpu_readout_cycles": 0
+    },
+    "cache_fixed": true,
+    "cache_frozen": true,
+    "store_status": "expert store: 5500 slots (5500 resident, 0 filling, 0 free, 0 pinned)  lookups 15120 hits 5673 (0.375)  fills 5500/5500 ok  runs 11000/11000  evictions 0 (+0 guard-blocked)  path A hits 5673 / B 0 (1.0000 A)  fills A 5500 / B 0; failed fills 0",
+    "sources": 2
+  },
+  "fixed_dual_spec_unprofiled": {
+    "decode_tok_s": 18.49290904666594,
+    "decode_ms": 3406.71118,
+    "decode_steps": 63,
+    "generated": 64,
+    "cycle_ms": 121.66825642857142,
+    "speculation": {
+      "cycles": 28,
+      "verified": 54,
+      "accepted": 35,
+      "tokens": 63,
+      "draft_ms": 582.880977,
+      "verify_ms": 2763.44491,
+      "commit_ms": 28.398588,
+      "cpu_ms": 5.092854,
+      "target_rows": 82,
+      "union_experts": 3539,
+      "miss_bytes": 0,
+      "gpu_readout_cycles": 28
+    },
+    "cache_fixed": true,
+    "cache_frozen": true,
+    "store_status": "expert store: 5500 slots (5500 resident, 0 filling, 0 free, 384 pinned)  lookups 13651 hits 3539 (0.259)  fills 5500/5500 ok  runs 11000/11000  evictions 0 (+0 guard-blocked)  path A hits 3539 / B 0 (1.0000 A)  fills A 5500 / B 0; failed fills 0",
+    "sources": 2,
+    "tokens_ranks_routes_equal_to_profiled_control": true
+  },
+  "same_acceptance_cycle_comparison": {
+    "normalizing_outputs_per_cycle": 2.25,
+    "single_serial_ms": 202.735064,
+    "single_onecb_ms": 189.116489,
+    "single_gpu_route_ms": 179.594752,
+    "dual_serial_ms": 211.3165864,
+    "dual_gpu_route_ms": 211.7710571,
+    "interpretation": "same acceptance normalization does not equal identical routing; dual cycle cost did not improve"
+  },
+  "phase4_head": {
+    "controlled_tokens_ranks_routes_equal": true,
+    "cycle_off_ms": 121.73104857142857,
+    "cycle_on_ms": 119.80595392857143,
+    "saved_ms": 1.9250946428571467,
+    "halved_saving_ms": 0.9625473214285734,
+    "decision": "NO-GO: halved saving <2ms; flag remains 0",
+    "projection_off_ms": 36.79103054,
+    "projection_on_ms": 35.745391893,
+    "draft_head_off_ms": 8.403403714,
+    "draft_head_on_ms": 8.319406976,
+    "vgpr_before_after": [
+      96,
+      96
+    ],
+    "projection_spills_before_after": [
+      0,
+      0
+    ]
+  },
+  "host_residual": {
+    "dynamic_first_record_ms": 468.274,
+    "dynamic_steady_record_ms": 7.100388,
+    "dynamic_hidden_carry_ms": 4.249906,
+    "fixed_profiled_hidden_carry_ms": 0.0336571,
+    "fixed_profiled_verify_wall_minus_trace_span_ms": 5.556933,
+    "nested_times_must_not_be_added_twice": true
+  },
+  "quality": {
+    "mmlu_fixed": {
+      "correct": 48,
+      "questions": 57,
+      "invalid": 1,
+      "protocol": "one question per subject; zero-shot; exact prefix; final prompt token M1; <=16 generated tokens; T=0 seed=42; k=2 accept-top4",
+      "cycles": 60,
+      "accepted": 115,
+      "verified": 120,
+      "all_cycles_fixed_frozen": true,
+      "load_failures": {
+        "p0_reserve": 0,
+        "p0_submit": 0,
+        "p0_io": 0,
+        "fill": 0
+      },
+      "answers_sha256": "bc12fa507c60cb9ad687e8c223af53a0368f40037e8c9097d34f5f7a33e51b6b",
+      "sample_sha256": "094525e3ac606e3a67ccee8346c384b5c882edea95d0b84ec73da8f6ba220b77"
+    },
+    "longctx_fixed_spec": {
+      "protocol": "independent raw prompt sessions at 4133/17010 tokens; exact prefill; fixed mask + DSpark k2 top4; T0 seed42; 9 outputs per prompt; 4900 total slots to leave workspace for 17K prefill",
+      "sources": 2,
+      "cache_slots": 4900,
+      "cache_fixed": true,
+      "cache_frozen": true,
+      "store": "expert store: 4900 slots (4900 resident, 0 filling, 0 free, 384 pinned)  lookups 3596 hits 1931 (0.537)  fills 4900/4900 ok  runs 9800/9800  evictions 0 (+0 guard-blocked)  path A hits 1931 / B 0 (1.0000 A)  fills A 4900 / B 0; failed fills 0",
+      "rows": [
+        {
+          "session": "ctx4k",
+          "prompt_tokens": 4133,
+          "emitted_ids": [
+            77,
+            416,
+            4419,
+            15,
+            24391,
+            19,
+            15,
+            13749,
+            2701
+          ],
+          "reference_ids": [
+            77,
+            416,
+            4419,
+            15,
+            24391,
+            19,
+            15,
+            13749,
+            2701
+          ],
+          "matching_greedy_prefix": 9,
+          "output": "kestrel-4471-amber\"\n",
+          "needle_recovered": true,
+          "prefill_ms": 28211.0165,
+          "speculation": {
+            "cycles": 3,
+            "verified": 5,
+            "accepted": 5,
+            "tokens": 8,
+            "draft_ms": 90.188561,
+            "verify_ms": 407.258218,
+            "commit_ms": 2.978707,
+            "cpu_ms": 0.291747,
+            "target_rows": 8,
+            "union_experts": 980,
+            "miss_bytes": 0,
+            "gpu_readout_cycles": 3
+          }
+        },
+        {
+          "session": "ctx16k",
+          "prompt_tokens": 17010,
+          "emitted_ids": [
+            77,
+            416,
+            4419,
+            15,
+            24391,
+            19,
+            15,
+            13749,
+            2701
+          ],
+          "reference_ids": [
+            77,
+            416,
+            4419,
+            15,
+            24391,
+            19,
+            15,
+            13749,
+            2701
+          ],
+          "matching_greedy_prefix": 9,
+          "output": "kestrel-4471-amber\"\n",
+          "needle_recovered": true,
+          "prefill_ms": 52232.9608,
+          "speculation": {
+            "cycles": 3,
+            "verified": 5,
+            "accepted": 5,
+            "tokens": 8,
+            "draft_ms": 92.980852,
+            "verify_ms": 592.881053,
+            "commit_ms": 5.098327,
+            "cpu_ms": 1.931798,
+            "target_rows": 8,
+            "union_experts": 951,
+            "miss_bytes": 0,
+            "gpu_readout_cycles": 3
+          }
+        }
+      ],
+      "all_cycles_fixed_frozen": true,
+      "load_failures": {
+        "p0_reserve": 0,
+        "p0_submit": 0,
+        "p0_io": 0,
+        "fill": 0
+      },
+      "both_needles_recovered": true,
+      "limitations": "two retrieval prompts and nine-token free generations; does not establish lossless long-context quality or teacher-forced bitwise identity"
+    },
+    "off64_nll": 0.622784,
+    "off64_top1": "56/64",
+    "batch63_min_cosine": 0.9537048,
+    "batch63_top1": "55/63",
+    "batch63_ppl_ratio": 1.0053,
+    "ordinary_short_oracle": "6/8; own prefill 7/8; existing two cases pass but strict 8/8 not met",
+    "ordinary_exact_longctx": "4K/17K teacher/free 8/8 in quality_complete; does not prove mask quality",
+    "gpu_route_default_decision": "OFF: strict short decode 8/8 not met; mask remains approximate even if MMLU>=48/57"
+  },
+  "streams_guard": "set_streams, forward_batch, CLI reject GPU route with streams>1; CLI rejection before model load",
+  "quality_and_speed_runs": {
+    "fixed_final": [
+      {
+        "name": "gpu_mean_union",
+        "command": [
+          "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+          "gpu_moe.the_verify_batch_runs_its_expert_union_once"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0",
+          "DEEPMOE_TEST_GPU_ROUTE": "1"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 3.252251231999253,
+        "start": {
+          "ac": 1,
+          "k10temp": 51.25,
+          "nvme_hwmon4": 33.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 48.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 51.25,
+          "nvme_hwmon4": 36.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 49.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 51.25,
+          "nvme_hwmon4": 36.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 49.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:29:57.418998+08:00"
+      },
+      {
+        "name": "k0",
+        "command": [
+          "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+          "gpu_dspark.adaptive_zero_keeps_one_target_forward"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 12.726144040003419,
+        "start": {
+          "ac": 1,
+          "k10temp": 51.0,
+          "nvme_hwmon4": 36.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 49.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 53.5,
+          "nvme_hwmon4": 44.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 50.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 52.75,
+          "nvme_hwmon4": 46.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 57.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:30:10.529116+08:00"
+      },
+      {
+        "name": "wrap",
+        "command": [
+          "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+          "gpu_dspark.committed_prefix_survives_window_wrap"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 22.152738311997382,
+        "start": {
+          "ac": 1,
+          "k10temp": 52.875,
+          "nvme_hwmon4": 44.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 50.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 61.0,
+          "nvme_hwmon4": 51.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 56.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 62.125,
+          "nvme_hwmon4": 55.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 63.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:30:33.123416+08:00"
+      },
+      {
+        "name": "fixed_mask",
+        "command": [
+          "/usr/bin/python",
+          "tools/hitrate_bench.py",
+          "--script",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/inputs/turn64.json",
+          "--max-turns",
+          "1",
+          "--exe",
+          "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "2",
+          "--out",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_final/fixed_mask",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask",
+          "--serve-arg=--mirror",
+          "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "0",
+          "DEEPMOE_BATCH_GPU_ROUTE": "0",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 47.22213542601094,
+        "start": {
+          "ac": 1,
+          "k10temp": 60.0,
+          "nvme_hwmon4": 48.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 55.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 64.125,
+          "nvme_hwmon4": 47.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 58.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 66.0,
+          "nvme_hwmon4": 57.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 67.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:31:20.788996+08:00"
+      },
+      {
+        "name": "fixed_spec_old",
+        "command": [
+          "/usr/bin/python",
+          "tools/hitrate_bench.py",
+          "--script",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/inputs/turn64.json",
+          "--max-turns",
+          "1",
+          "--exe",
+          "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "2",
+          "--out",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_final/fixed_spec_old",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask",
+          "--serve-arg=--mirror",
+          "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+          "--serve-arg=--dspark",
+          "--serve-arg=--spec-k",
+          "--serve-arg=2",
+          "--serve-arg=--spec-top-k",
+          "--serve-arg=4",
+          "--serve-arg=--trace",
+          "--serve-arg=/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_final/fixed_spec_old/trace.bin"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "1",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0",
+          "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_final/fixed_spec_old_cycles.jsonl"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 107.04538304499874,
+        "start": {
+          "ac": 1,
+          "k10temp": 63.25,
+          "nvme_hwmon4": 47.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 57.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 62.625,
+          "nvme_hwmon4": 46.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 56.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 65.25,
+          "nvme_hwmon4": 55.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 66.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:33:08.155191+08:00"
+      },
+      {
+        "name": "fixed_spec_pair",
+        "command": [
+          "/usr/bin/python",
+          "tools/hitrate_bench.py",
+          "--script",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/inputs/turn64.json",
+          "--max-turns",
+          "1",
+          "--exe",
+          "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "2",
+          "--out",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_final/fixed_spec_pair",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask",
+          "--serve-arg=--mirror",
+          "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+          "--serve-arg=--dspark",
+          "--serve-arg=--spec-k",
+          "--serve-arg=2",
+          "--serve-arg=--spec-top-k",
+          "--serve-arg=4",
+          "--serve-arg=--trace",
+          "--serve-arg=/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_final/fixed_spec_pair/trace.bin"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "1",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "1",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0",
+          "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_final/fixed_spec_pair_cycles.jsonl"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 147.47725663699384,
+        "start": {
+          "ac": 1,
+          "k10temp": 61.875,
+          "nvme_hwmon4": 45.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 55.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 61.125,
+          "nvme_hwmon4": 46.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 55.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 63.5,
+          "nvme_hwmon4": 57.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 64.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:35:35.951193+08:00"
+      }
+    ],
+    "fixed_quality": [
+      {
+        "name": "batch63",
+        "command": [
+          "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+          "spec_forward.batch_matches_m1"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0",
+          "DEEPMOE_TEST_BATCH_MASK": "1",
+          "DEEPMOE_SPEC_BLOCK": "3",
+          "DEEPMOE_SPEC_STEPS": "64"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 60.87433174200123,
+        "start": {
+          "ac": 1,
+          "k10temp": 54.0,
+          "nvme_hwmon4": 35.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 50.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 66.0,
+          "nvme_hwmon4": 46.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 61.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 66.75,
+          "nvme_hwmon4": 60.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 67.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:37:02.811290+08:00"
+      },
+      {
+        "name": "off64",
+        "command": [
+          "/usr/bin/python",
+          "tools/l3_ppl.py",
+          "--state",
+          "traces/l3_64",
+          "--steps",
+          "64",
+          "--modes",
+          "off",
+          "--json",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_quality/off64.json",
+          "--log-dir",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_quality/l3_logs"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "0",
+          "DEEPMOE_BATCH_GPU_ROUTE": "0",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 60.37856110399298,
+        "start": {
+          "ac": 1,
+          "k10temp": 65.625,
+          "nvme_hwmon4": 46.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 60.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 67.5,
+          "nvme_hwmon4": 50.85,
+          "nvme_hwmon13": 61.85,
+          "amdgpu": 62.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 68.125,
+          "nvme_hwmon4": 62.85,
+          "nvme_hwmon13": 69.85,
+          "amdgpu": 67.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:38:03.549661+08:00"
+      },
+      {
+        "name": "mmlu57",
+        "command": [
+          "/usr/bin/python",
+          "tools/mmlu_bench.py",
+          "--sample",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/inputs/mmlu_sample.json",
+          "--out",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_quality/mmlu57",
+          "--modes",
+          "mask-spec",
+          "--generation",
+          "--limit",
+          "57",
+          "--max-tokens",
+          "16",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "2"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0",
+          "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+          "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_quality/mmlu57_cycles.jsonl"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 827.7753727890085,
+        "start": {
+          "ac": 1,
+          "k10temp": 65.5,
+          "nvme_hwmon4": 47.85,
+          "nvme_hwmon13": 61.85,
+          "amdgpu": 60.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 68.125,
+          "nvme_hwmon4": 55.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 63.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 71.25,
+          "nvme_hwmon4": 60.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 72.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:51:53.731178+08:00"
+      }
+    ],
+    "fixed_longctx": [
+      {
+        "name": "needle4k17k",
+        "command": [
+          "/usr/bin/python",
+          "tools/hitrate_bench.py",
+          "--requests",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/requests.json",
+          "--exe",
+          "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+          "--cache-slots",
+          "4900",
+          "--max-context",
+          "17408",
+          "--require-sources",
+          "2",
+          "--out",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/needle4k17k",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask",
+          "--serve-arg=--mirror",
+          "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+          "--serve-arg=--dspark",
+          "--serve-arg=--spec-k",
+          "--serve-arg=2",
+          "--serve-arg=--spec-top-k",
+          "--serve-arg=4"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0",
+          "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/cycles.jsonl"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 217.1880417529901,
+        "start": {
+          "ac": 1,
+          "k10temp": 62.75,
+          "nvme_hwmon4": 40.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 55.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 70.375,
+          "nvme_hwmon4": 51.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 64.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 71.5,
+          "nvme_hwmon4": 59.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 71.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:55:59.894886+08:00"
+      }
+    ],
+    "final_fixed_speed": [
+      {
+        "name": "fixed_spec",
+        "command": [
+          "/usr/bin/python",
+          "tools/hitrate_bench.py",
+          "--script",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/inputs/turn64.json",
+          "--max-turns",
+          "1",
+          "--exe",
+          "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "2",
+          "--out",
+          "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/final_fixed_speed/fixed_spec",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask",
+          "--serve-arg=--mirror",
+          "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+          "--serve-arg=--dspark",
+          "--serve-arg=--spec-k",
+          "--serve-arg=2",
+          "--serve-arg=--spec-top-k",
+          "--serve-arg=4",
+          "--serve-arg=--trace",
+          "--serve-arg=/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/final_fixed_speed/fixed_spec/trace.bin"
+        ],
+        "env": {
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_MGT_PAIR_DOT": "0",
+          "DEEPMOE_MGT_ATTN_CM": "0",
+          "DEEPMOE_MGT_FOLD_SCALE": "0",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+          "DEEPMOE_MIRROR_AUTO": "0",
+          "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/final_fixed_speed/fixed_spec_cycles.jsonl"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 115.99302065899246,
+        "start": {
+          "ac": 1,
+          "k10temp": 60.75,
+          "nvme_hwmon4": 37.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 52.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 62.375,
+          "nvme_hwmon4": 47.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 56.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 64.5,
+          "nvme_hwmon4": 58.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 66.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T01:58:53.269820+08:00"
+      }
+    ]
+  },
+  "primary_build": {
+    "source_commit": "dc5d8706ea8ae674b2401c03482162f31d0632c5",
+    "shader_count": 52,
+    "shaders_identical": true,
+    "exe_sha256": "9e4d44c75ccc6dcdcbb48fcefa808f788c8aa880df7756f30976074c84054542",
+    "tests_sha256": "979fef278495ae7a1226d2f5f5b3d754612b47d811c8c67c98aba86597ecf475",
+    "tested_exe_sha256": "62a42a90a128e4dd0de9c0a47b93529349d0cc8e9aa68aa667c484164f879942",
+    "primary_shaders": {
+      "moe_gemv_fp4.spv": "dd0e5586585004548ac10c73d0d64a2d00945798771348e09ed1255d99fad0be",
+      "rawread.spv": "19bb59d0b8ad408339f6d2beb4807f8ebafc58a4c89412e0e076e84e60f19896",
+      "mega_mhc.spv": "c9db35c649888491d0ef2b7440ceaa629c2f6f1f7b2006d99e2d4fb51d2be33e",
+      "wq_a.spv": "3ab509a810555d9e4933188a541964a985d01d3218a3f656bf07aea80a9be1db",
+      "wkv.spv": "c9b90b5e185e13babfb1fbd5291c097700474b369c23d0257745e1da67d17f08",
+      "wq_b.spv": "268311b2a05f8d1ce0ef49df871d55b525063f681f629c9f66f9fc763788255d",
+      "compressor.spv": "e0d87f9864f54ab49299e75714ee334046df777d24be7e5e26190cdb1a93e383",
+      "sparse_attn.spv": "227ec321309fb5d0864ae25a73fc264db67961522642b8efa2d20518b98ed6d5",
+      "wo_a.spv": "01a3254041f43fc2bffd64989e821337d11246f06d7b38b83b504eb55d0fc43a",
+      "wo_b.spv": "3ab509a810555d9e4933188a541964a985d01d3218a3f656bf07aea80a9be1db",
+      "gemv_ksplit.spv": "c0d346482cbc305742bd9dc9124a41654a9c5fc754dd5fb871250ddd0a796b3e",
+      "gate.spv": "840461445cbc159d39019b748ecbd19f468b8c4672827441c572d30ca7acb5ee",
+      "sparse_attn_t.spv": "f8236cbc9d96e98e77a14e007a0a26eaf706797f7390c51254bcf9fdb226be42",
+      "indexer.spv": "7389a7e0eeb9f3077429a47ef4575d58b3210dd18b799859919454e3b2881877",
+      "moe_hquant.spv": "120898f357d7d637d1f2d50288d8f02b45d11b1c8f26eac915348f42e02b02ae",
+      "sample_topk.spv": "e5c704f9bec800b5b41a7ca8c531e8836d5465e1bf3f4a065ae272ecc2c9d27c",
+      "moe_xquant.spv": "20f13827e34bb5f20c6cda9e04ef59eb51a3e499ab731cc2205e1ac21f83a8ad",
+      "head.spv": "e0bf996ce9cd988d34578b69b00f7bef26c494ce22076e899291a62ef2496c79",
+      "engram.spv": "2a33a411de6326bb8a27463d28c1e60c9ea024fb7868c78352205cdab77b877c",
+      "moe_down.spv": "9beda5ee1ac13dd71c662e34b0b1185e858fc87184da089148e569ba634e2eee",
+      "moe_gateup.spv": "ab7dd0fe262e3c9ac21f9daf2b537a30ad7f3e3759aa7592ad9f71f7c8aff46d",
+      "dspark_gemv.spv": "34f40844f833996386eeac069d74168da04b32d9374c7032a3f66cecb9fb4a7a",
+      "dspark_attn.spv": "0cc01b8b9c15658bb9e4b044ecf1a7716ce77bfbe398e8c2a8d984e4775c69ca",
+      "dspark_head.spv": "01e6cb4da873352f210a4f15a489038cb796630a8c85f938c74ae86ca2fe23c6",
+      "dspark_verify.spv": "37900c8db61ccef49faa4eb381c5eac37591fdc9eef41d8317de35268391c965",
+      "mgt1_gate.spv": "fb63db34bf3328c9a8da3d8ba2f7c677ba1b7eab234a3f143ee13d8cd13c5cb9",
+      "mgt1_attn.spv": "d5d9734dcaa0ba105afeaade5ea698ce7c987bfdca3603a7988308fa4c8570f6",
+      "mgt1_mhc.spv": "7ffdb8f2cd647e664a53f137f80910374106df4a4ad3b1c948fcad169ccd8da2",
+      "mgt1_gemv.spv": "b79b5cfa041bdf5a9b81df37d1a3a8db5f092588951992d7eddbbedafe12eccb",
+      "mgt1_head.spv": "b68db8a088d852289fb8f9e36ea38b9abd6cc39cb2596dbb307cfd2a26b5bf40",
+      "mgt1_cmp.spv": "d8643ce6a9ab15ecaa4ba0a92c4e795c0cce4a8181d970e130c6c8bb0c601ae2",
+      "mgt1_engram.spv": "a5619b9cc840dad193e12c84edba94047688b2ff51ab7b23d8f5e894eb0da046",
+      "mgt1_idx.spv": "d8a987d032f6152cd424728bb2c0c7b1a9cfa659df5fc6dfedacfde2f0c96f4e",
+      "prefill_gemm.spv": "09945e50a0147ad8ae86041841d030a0b2e0e02235bb1e4b27c801a4c9ee0ee8",
+      "prefill_coopmat.spv": "dfbb7a1f68ee7e7209be3a797fb8da10d423ddef3af1f61341b9ef721873a9c3",
+      "prefill_attn.spv": "bf84891778f735cd63bf27f3293ef567d2ed3275c01cd151da2623f1dd0fc440",
+      "probe_stream.spv": "a64b7bb37e67614e1c76026d5f15ea359d59019330e1a563feaf3dc4881ae1e7",
+      "probe_resident.spv": "2802df7b0d4ded4bddeb90dd8eb19765f58ccb1044f89d9f7acc9e3c11c3a74c",
+      "probe_hostflag.spv": "ab24fce0d43c1b03ee781e8afb44568fbcf4bc74ba4c9b1d4189cae6ecab3bb8",
+      "prefill_elem.spv": "9c205b2b282b05be9f2b47b5a665b27ffb6ecec32c2e04e4ce20dd68da4f8ec0",
+      "moe_xact.spv": "bbe2d89b41963cba790d519ecf549e5fbef92fc7f1bcae6e796b57e8e3f235ef",
+      "probe_model.spv": "11971939586baa0e595cc57173b9e2362e3ad81160dc9951c67db3148197a3aa",
+      "decode_attn_cm.spv": "5b5fc18988064f27ece67393fda0ead0c645fc31b363a3262a82ab3a001cc6c6",
+      "prefill_gemm_lds.spv": "80c6f2ce1f80a7061f75eee4001e02edf06f89813d177d7aecb8a9cef0a95ce4",
+      "probe_mma.spv": "839d7443a301c99c0f92d1edf0842cdcdaba914d75b99f17a33071d15a50cf24",
+      "prefill_topk.spv": "14a5ca5480f0b1f24ba0f333df66efcfabebd7a48b90df62b37200d494873576",
+      "probe_occ.spv": "f848c5ca0cea9f0b073cbe6b10f3e1122713bc43b681d7f79be12b24237f2375",
+      "dspark_grid.spv": "08b5d50d62bef71bdc61fec68f639336045d4d6e3e92988e74830b2a00a47488",
+      "dspark_mega.spv": "72dd86e2776c8cffa3967ab8235731fbe3836da9116207eb1bee1bbd2f32d779",
+      "mgt1_attn_cm.spv": "7688f12d4c1d642aa36463e27551a5a61785cc0a0f4bcd1f7a8dc2de1d02d0ab",
+      "batch_route.spv": "971a0643cd1925a650b4cb2b2620767b7e371ac3cbf9c2866fd512a5694bf63d",
+      "dspark_onecb.spv": "6529959347f6c2d4adb47a0a47783efd327ce1c61badb7d6c5c6322013605ae7"
+    }
+  },
+  "integration_checks": [
+    {
+      "name": "cpu",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-LE",
+        "needs-model|needs-gpu"
+      ],
+      "env": {},
+      "rc": 0,
+      "expected_rc": 0,
+      "elapsed_s": 3.1129116489901207
+    },
+    {
+      "name": "tools",
+      "command": [
+        ".venv/bin/python",
+        "tests/run_all.py"
+      ],
+      "env": {},
+      "rc": 0,
+      "expected_rc": 0,
+      "elapsed_s": 4.6683266409963835
+    },
+    {
+      "name": "streams",
+      "command": [
+        "build/deepmoe",
+        "serve",
+        "--streams",
+        "2",
+        "--model",
+        "/nonexistent"
+      ],
+      "env": {
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      },
+      "rc": 2,
+      "expected_rc": 2,
+      "elapsed_s": 0.003790297996602021
+    }
+  ],
+  "raw_results_location": "bench/results/spec_e2e/ in primary checkout; ignored logs archived there before worktree cleanup",
+  "web_state": "STOPPED; browser not refreshed",
+  "limitations": [
+    "mask drops routed gate mass without renormalization and top-K acceptance is approximate",
+    "the Chinese fixed-cache turn repeats text and has low served rate; throughput is not a useful-quality speed claim",
+    "not a full standard 5-shot MMLU score",
+    "profiled controls identify per-op cost; advertised final speed has draft profiling off",
+    "single run per configuration; differences within 3% jitter not promoted to default"
+  ]
+}

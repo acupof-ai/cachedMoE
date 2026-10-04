@@ -212,3 +212,33 @@
 2. `dspark_topk.md` 新的一节，包括：改了什么、per-stage 前后对比表、质量门结果、热数据、命令行和 env。
 3. 结果目录 `bench/results/spec_e2e/<phase>/`，含 `provenance.json`、cycles jsonl、thermal jsonl。
 4. 结论是 GO 时：改成默认开启，更新 STATUS 的主表；结论是 NO-GO 时：写进 STATUS §7，代码留在开关后面或者回退。
+
+## 10. 执行收据（2026-10-05）
+
+实现和阶段判断见 `dspark_topk.md` §14–15，原始结果在
+`bench/results/spec_e2e/`。用户本次明确要求停止网页，因此本次不恢复 web。
+追加要求“mask 不做 LRU，只用初始满槽专家”替代 Phase3 原文的动态缓存语义；
+历史动态格保留作对照，不能替代固定 cache 的质量验收。
+
+| 阶段 | 执行情况 |
+|---|---|
+| 0 测量 | 分离 GPU timestamp 与 host wall；序列化调度和 ONECB 的统计均可读。校准变化 −3.33%，未证明 <1%，性能格关闭 draft profiling。 |
+| 1 草稿 ONECB | 完成，独立 pipeline + compute barrier + GPU 常驻路由/量化；golden 全链、输出前缀和 KV wrap 逐位一致；k=2 从 81 次提交降到 1 次。 |
+| 2 草稿 tile/head | 小算子不扩大；按追加要求实际尝试逐对 weight decode，head 8.403→8.319 ms，低于止损线，保持关闭。 |
+| 3 验证 GPU 路由 | 完成，锁内原子快照/guard，immutable 参数、indirect union、GPU act_quant；40 层和 tail 一次提交；旧动态格在 fence 后补 LRU/P0；按追加要求，默认 mask 填满后冻结，禁止淘汰/新增换入。Engram 在提交前到位。 |
+| 4 attention 投影 | 实际实现/测试 pair-dot，同输出/同接受率/同 union；cycle 121.731→119.806 ms，减半仅 .963 ms，NO-GO，开关0。未达到 ≤45 ms，未重开 CM/fold。 |
+| 5 union WMMA | 本次不进入：Phase 1–3 周期约 180 ms，属于方案的 175–189 ms 区间，只检查 Phase 4。固定121ms格伴随低专家服务率，不能用它重设该决策条件。 |
+| 6 动态 k | 完成成本拟合工具与实际 k=0 单前向测试。旧动态样本最佳阈值仅估计 +0.47%；固定轨迹最佳仍 k=2、估计额外收益0。固定 k=2，保留 384 pin。 |
+
+同窗口单盘、power-saver、AC、无热暂停的 turn64：普通 mask
+**12.33 tok/s**，serial k=2 **12.43**，ONECB k=2 **11.90**，
+ONECB + GPU snapshot route **13.49**。最后一项相对普通 mask 吞吐约
+**+9.4%**，ms/output 从 **81.10 降到 74.12**。文本与路由不同，这是任务对照。
+
+镜像随后恢复挂载，双盘三格已完成。用户追加固定初始 cache、host 残差追踪和实际 Phase 4/head 优化；最新收据和启用判断以报告 §15 为准。
+
+最终固定5500槽、双盘生成式 MMLU **48/57**（1 invalid，60周期、115/120草稿接受），满足此项门槛。off64 **.622784/56**，batch63 **.9537048/55**；普通短oracle严格8/8未复现，故新GPU路由仍默认0。精确普通4K/17K TF/free8/8不代替固定mask质量；独立端到端检查见报告§15。
+
+固定mask+ONECB/GPU route的独立4K/17K端到端检索也已完成：各9/9输出前缀与参考一致、各5/5草稿接受；4900槽、双盘、0淘汰/加载失败/温控暂停。它是两次检索，不证明任意长对话无损。
+
+最终双盘5500槽、profiling-off速度：固定mask **18.091544**、固定投机 **18.492909 tok/s**（+2.22%，在抖动内），投机cycle **121.668256 ms**，draft **20.817178**、verify **98.694461**。28周期35/54接受，2.25output/cycle，与profiling对照全部tokens/ranks/routes一致。主目录52个shader hash一致、CPU25/工具30/streams拒绝通过；精简收据 `dspark_e2e_receipt.json`，完整日志留主目录 `bench/results/spec_e2e/`。网页停止、performance已恢复。

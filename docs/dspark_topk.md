@@ -500,3 +500,304 @@ k=3 增加接受输出，但验证成本增加更快，且 Engram host 等待重
 此次 MMLU 作业 **1045.868 s**、rc=0、零暂停，GPU/NVMe/CPU 峰值 **71/69.85/72.625°C**，AC 一直在线；该作业总耗时不当作 decode 吞吐。各 wrapper 结束后恢复原 performance，温控轨迹与 `profile_receipt.json` 全部保留。失败/暂停格没有进入有效速度表。最终验收汇总见 `final_acceptance.json`。
 
 最终二进制上的普通 decode / 长上下文作业分别 **142.783 / 126.848 s**，均 rc=0、零暂停；两格 GPU/NVMe/CPU 峰值 **63/64.85/67.375°C**。4K、16K 的自由生成和 teacher-forced 均 **8/8**。短 oracle 的 6/8 与自主 prefill 的 7/8 属于 STATUS §7 已记录的普通 ATTN_CM 平台门禁，本次没有修改 `tests/test_decode.cpp` 的任何阈值。普通 off64 的 NLL **0.622784** 基线也保持不变。
+
+## 14. 按端到端方案执行：草稿 ONECB 与验证 GPU 快照路由（2026-10-05）
+
+执行方案为 `docs/dspark_e2e_plan.md`。独立工作树 `../deepmoe-spec`，分支
+`spec-e2e`，从当前已验证代码的快照 `66d0f7a` 开始，独立 Ninja/Clang Release
+build。网页按用户本次要求停止。没有写入 checkpoint，没有并行 GPU 作业。
+结果根目录为 `bench/results/spec_e2e/`；下面的路径均相对该目录。
+
+### 实际改动与安全边界
+
+`DEEPMOE_DSPARK_ONECB=1` 将原串行草稿的独立 pipeline 放在同一 command
+buffer，使用 compute→compute barrier，只在末尾 submit/fence 一次。三阶段
+双向 attention 仍计算 M=5，只裁 head/Markov/readout 的输出行。GPU 实现常驻
+expert union、act_quant、BF16 舍入和 KV append；384 个 MTP expert 继续 pin。
+复用既有 GEMV、attention、head 和 Markov pipeline；helper source 由同一
+`fuse_dspark.py` 数学模板生成。这里没有 persistent grid、spin wait 或 mega
+单 kernel。k=2 由 **81 次提交降到 1 次**，仍有 90 个独立 dispatch。
+
+`DEEPMOE_BATCH_GPU_ROUTE=1` 仅允许在 `resident-only mask` 下使用。
+store 锁内复制已发布地址表并给所有 Resident slot 设置 guard；Filling 行不
+进入快照。后续 P0 完成的地址只能被下一批看见。共享 expert 继续执行。
+GPU 逐层生成 union 与 indirect 参数，计算所有活动行的量化、gate/up、hquant
+和 down；miss 权重归零，不重新归一化。40 层、head、rank 共 **一次提交**。
+每层参数、RoPE、隐藏状态和 compressor carry 有独立保存空间，参数从录制到
+fence 不可变；fence 后按原层序和 union 首次出现顺序执行 planner/LRU/P0。
+Engram P2 在 GPU 提交前到位，继续覆盖已有 ≤8 KiB/96-chunk deadline 策略。
+不提供与这一机制冲突的实时逐层 CPU probe；专项测试用实际 forward/layer/
+submission 计数确认 k=0 恰好一次 target。
+
+CPU 两槽快照测试覆盖 guard、晚到 publication 和 fence 后可驱逐。
+GPU 对拍覆盖 M=1/3/6 × disjoint/overlap/reordered × 无 miss/部分 miss/
+全 miss，共 **27 组**，act_quant 和 MoE 输出逐位一致，并使用第二层地址表
+验证 Vulkan storage offset 对齐。新资源在 allocator/device 关闭前释放。
+
+### 同窗口 turn64：端到端结果（旧动态 LRU）
+
+同一 29-token prompt、seed=41001、T=1/top_p=.95、5500 总槽，native FP4/FP8，
+AC 在线、power-saver、单读源。draft profiling 关闭，CM/fold/mega 关闭。
+共生成 64 token，其中 decode 为 63 token。每配置一次运行，没有重复 A/B。
+
+| 配置 | tok/s | ms/output | hit | 周期 | 接受/验证 | token/cycle |
+|---|---:|---:|---:|---:|---:|---:|
+| 普通 mask | 12.329986 | 81.103091 | .8345 | — | — | — |
+| serial draft k=2 | 12.430016 | 80.450422 | .7840 | 25 | 38/50 | 2.5200 |
+| ONECB draft k=2 | 11.897429 | 84.051773 | .8016 | 28 | 35/55 | 2.2500 |
+| ONECB + GPU snapshot route k=2 | **13.491914** | **74.118469** | .7646 | 26 | 37/50 | 2.4231 |
+
+最后一项吞吐相对本窗口普通 mask **+9.42%**，ms/output **−8.61%**。
+相对 serial spec 吞吐 +8.54%。输出文本、路由和异步填充完成时机不同，
+这是同 workload 的实际对照，不能当逐 token 同输出的算子 A/B。ONECB 单独
+降低了草稿时间，却因接受率从 76% 变成 63.6% 而没有带来本格端到端收益。
+新快照路径服务率降低，也不能将跳过的计算称作无损提速。
+
+`final64/{comparison.json,check_results.json}` 保存准确数字和热收据，每格
+`turns.json`、`provenance.json`、`transcript.md`、`trace.bin` 和 cycles jsonl
+保存原始证据。四格均 rc=0、**0 热暂停、0 AC 切换**；GPU/NVMe/CPU 的
+最高温为 **68/61.85/67.875°C**。测量二进制 SHA256
+`1aeb2426e1f6c7898655aedcbee39dd91311ada5ff4bb4774aa8d39cb3ee8af7`。
+
+### 时间分解：省去了什么，仍在付什么
+
+下面为 diagnostics 的每周期平均；包含首轮单独列出的草稿 seed 工作，
+结束余量可出现 k=0，因此不把这些数字当固定 M=3 微基准。
+
+| 项目，ms/cycle | serial k=2 | ONECB k=2 | ONECB + GPU route |
+|---|---:|---:|---:|
+| draft | 37.163905 | 24.536414 | **23.077655** |
+| verify wall | 160.278824 | 161.823334 | **153.736131** |
+| commit/rollback | 3.450352 | .991055 | **1.000300** |
+| 接受 CPU | .211057 | .197293 | **.183502** |
+| 已计量合计 | 201.104138 | 187.548096 | **177.997588** |
+| 其他：decode wall 减已计量项 | 1.630926 | 1.568393 | **1.597164** |
+| 完整 decode wall / cycle | 202.735064 | 189.116489 | **179.594752** |
+
+其他项是时间残差，未按函数单独剖析；不擅自全部归因于 diagnostics 或 token
+loop。按当前 2.4231 output/cycle 和普通 mask 81.1031 ms/output，盈亏平衡约
+**196.52 ms/cycle**；原方案的 189 ms 使用的是旧 2.25 output/cycle。
+新完整周期约180 ms，依旧处在原方案 175–189 ms 的决策区间。
+
+主模型 trace 的 per-cycle 平均：
+
+| 项目，ms | serial | GPU route |
+|---|---:|---:|
+| attention busy | 56.753422 | 56.200066 |
+| MoE busy | 63.966965 | 63.536584 |
+| Engram busy | 5.268651 | 5.130932 |
+| CED busy | 1.870431 | 1.829058 |
+| tail busy | 11.191728 | 11.171137 |
+| 跨提交 gap | 18.738114 | **0** |
+| 同提交 gap | 1.665117 | **2.140941** |
+| target GPU span | 159.454429 | **140.008718** |
+
+GPU route 的 verify wall 比 span 多 **13.73 ms**，包含 CPU 录制、快照与参数
+准备、提交/等待和 fence 后的路由回放；不能把这部分称为 GPU kernel 时间。
+attention/MoE 的 busy 基本未变。批中不同 row 的 expert union 仍需读取更多
+权重，target 仍是最大项。这组证据支持约 9% 的任务收益，不支持 1.6×。
+
+本格计算的 routed union 为 **9685 个 layer/expert 项 / 26 周期**，即
+**372.50 项/cycle、153.73 项/output**。按 native FP4 完整 slot 18,800,640 B
+估算，主模型 routed 权重约 **2.890 GB/output**，不含 shared、dense 与
+activation traffic，也不是硬件 DRAM counter。正常 P0 填充总量
+**32.859 GB / 63 output = .522 GB/output**；mask 没有等待这些填充。
+
+### 逐阶段判断和停止条件
+
+Phase 0 补齐每个 draft op 的 GPU stamp，并保留 host wall。`phase0/` 的
+16-token 格为 mask **12.90**、未 profile 的 k2 **11.28**、profile k2 **10.40**、
+profile k3 **11.88 tok/s**。k2 draft GPU sum **18.435 ms**、wall **23.975 ms**；
+head **10.005**、MoE **3.176**、Q/KV/O **3.674**、Markov/confidence **.956**。
+初版 profiler复用 command buffer，改变了 normal path 的分配成本；已改为
+与正常 dispatcher 一样 acquire。最终同状态校准 off **29.797** / on
+**28.804 ms**，变化 **−3.33%**。这未证明方案要求的 <1%；profile 只作为
+显式诊断，关闭它后的 final64 才用于速度结论。不得把其加速算成优化收益。
+
+Phase 1 初版错误沿用了 mega helper 的每次访问可见性 SPIR-V 修饰，ONECB
+full5 **32.232 vs serial 26.797 ms**。独立 dispatch 已有 API barrier，不需
+这些 mega 修饰；去掉后修正。后续修复只读已写 timestamp 的范围，并在
+runtime create 中初始化 ONECB，避免首次 seed 承担约 **210 ms** 的 pipeline
+初始化。`phase3_aligned/` 的 profile k2 草稿 wall **23.213**、GPU sum
+**22.012**，余量 **1.202 ms**，接近但没有满足严格 +1 ms 目标。
+
+Phase 2 最初按方案止损规则跳过 tile 改动；后续按用户要求实际尝试了 head/投影改动，见 §15。实测三阶段 wq_a 共 **.165 ms**、
+wq_b 共 **1.354 ms**；mHC 小算子的全部成本也很小。head 将带宽利用率从
+64% 提到 85% 的乐观节省为 `10.005 × (1 − .64/.85) = 2.47 ms`，减半仅
+**1.24 ms**，低于 2 ms 继续线。没有做 FP8 head 或 vocab 子集。
+
+Phase 3 完成并达到 **gap ≤5 ms**。第一轮端到端被主动停止，因为多层
+快照表的 descriptor offset 未补齐 storage alignment；该格在
+`phase3/k2_interrupted.json` 标为无效，不能取速度。补齐 stride、增加 layer-1
+对拍并修正资源销毁后，27 组全部通过。`phase3_aligned/` 短格 **12.21 tok/s**，
+首次 cold seed 和小样本不作最终收益判断；final64 才采用当前实现。
+
+Phase 4 初步检查确认 **178 ms 属于 175–189 ms** 的区间；后续实际优化尝试和验收见 §15，不进入 Phase 5。
+`mgt1_gemv.slang` 已在 weight-outer / batch-inner 的循环内复用一次读取，
+使用 128-bit `load16`，M 列在寄存器内累加；WqA/B、WoA/B 已采用 split-K
+和 decode 相同的 wave/LDS reduction 选择。不存在“把旧逐列 GEMV 换掉”
+这一未实现部分。现格 projection busy 为 wq_a **3.328**、wq_b **17.970**、
+wo_a **8.353**、wo_b **11.951 ms**。驱动统计 M=3 split 为 **96 VGPR、
+9216 B LDS、0 spill、16 subgroups/SIMD 的寄存器上限**，不是运行时活动
+occupancy 测量。完整统计在 `quality_complete/pipeline_stats/index.tsv`。
+方案的 attention ≤45 ms 未达到；不重开已经质量失败的 CM、scale-fold，
+也不把既有 split-K/weight-once 再计为新收益。
+
+Phase 5 本次按决策点不进入。union WMMA / 按 M champion / mega / host-flag
+均未重开。普通 decode 的单提交机制也单独检查：本格结束余量的 GPU-route
+M=1 verify **113.08 ms**，普通 mask 平均 **81.10 ms/output**，工作状态不同，
+不能当精确 A/B，但足以说明直接调用旧 batch M=1 不能作为 decode 加速实现。
+普通 decode 保留专用 attention/MoE 路径。
+
+Phase 6 新工具 `tools/dspark_cost_fit.py` 用优化后的实际 verify 成本拟合
+confidence-prefix 策略，包括 k=0。M=1 只有一次末尾样本，M=3 有 25 次，
+拟合每多一行约 **21.143 ms**；M=2 是插值，没有实测校准。k=0 仍支付已经
+执行的 draft，首次拒绝后不继续读后面行。训练轨迹最佳阈值 **−2**，只
+把一轮 k=2 裁成 k=1，估算相对固定 k=2 **+0.47%**，低于抖动范围，更
+没有 held-out 验证。`final64/confidence_fit.json` 保存全表和限制；保持固定
+k=2，不默认启用动态阈值，不推测 k=3 的收益。
+
+### 质量验收与启用方式
+
+| 门禁 | 当前结果 | 收据 |
+|---|---|---|
+| CPU / 工具 | **25/25；30/30** | `final_cpu.log` / `final_tools.log` |
+| 原生 MoE union、量化对拍 | **27/27 逐位一致** | `phase3_aligned/gpu_unit.log` |
+| DSpark golden / 前缀 / KV wrap | **逐位一致**，沿用原 near-tie 规则 | `quality_complete/profile_calibration.log` |
+| committed-prefix 窗口回滚 | **通过** | `quality/wrap.log` |
+| k=0 只调用一次 target | **通过：40 层、1 提交** | `quality_fixed/k0.log` |
+| 63-position batch mask | **cos .9537048，top-1 56/63，PPL 比 1.0072** | `quality_fixed/batch63.log` |
+| off64 平台基准 | **NLL .622784，top-1 56/64** | `quality_complete/l3_off.json` |
+| 普通 decode | **通过现有两用例门槛**；短 oracle teacher/free **6/8**、自身 prefill **7/8**，方案的严格 8/8 未复现，数值与平台基线一致，未改阈值 | `quality_complete/decode.log` |
+| 4K / 17K decode | **free / teacher-forced 均 8/8，两用例通过** | `quality_complete/longctx.log` |
+| 生成式 MMLU57（旧动态 LRU） | **48/57，2 个无效答案计错；67 轮、128/130 接受/验证** | `quality_complete/mmlu57/summary.json` |
+
+新开关默认 **off**。镜像随后恢复只读挂载，48/48 shard 的文件大小匹配；
+双盘三格已完成，ready 为 sources=2，status 和盘计数均证明两个源参与读取。
+固定专家 cache、双盘成本和后续 Phase 4 结果见 §15。网页保持停止。
+
+复现单盘速度（先停 web，AC/power-saver，并记录温控；profiling 保持关闭）：
+
+```bash
+DEEPMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash" \
+DEEPMOE_MIRROR_AUTO=0 DEEPMOE_DSPARK_MEGA=0 \
+DEEPMOE_DSPARK_ONECB=1 DEEPMOE_BATCH_GPU_ROUTE=1 \
+DEEPMOE_DSPARK_PROFILE=0 DEEPMOE_MGT_ATTN_CM=0 DEEPMOE_MGT_FOLD_SCALE=0 \
+DEEPMOE_MASK_DYNAMIC_LRU=1 \
+python tools/hitrate_bench.py --script bench/results/draft_attribution/turn64.json \
+  --max-turns 1 --exe build/deepmoe --cache-slots 5500 --require-sources 1 \
+  --out bench/results/spec_e2e/local --serve-arg=--resident-only --serve-arg=mask \
+  --serve-arg=--dspark --serve-arg=--spec-k --serve-arg=2 --serve-arg=--spec-top-k --serve-arg=4
+
+python tools/dspark_cost_fit.py bench/results/spec_e2e/final64/gpu_route_k2_cycles.jsonl \
+  --plain-ms-per-token 81.103091 --out bench/results/spec_e2e/final64/confidence_fit.json
+```
+
+测量 wrapper 的完整 argv/env、thermal、AC 和 power profile 恢复收据在各阶段
+`jobs.json` / `check_results.json` / `*_thermal.jsonl` / `profile_receipt.json`。
+mask 和 top-K 接受改变输出分布；本次不宣称长上下文无损或修复所有内容退化。
+
+## 15. 双盘验收、固定初始 cache 与实际 Phase 4 尝试（2026-10-05）
+
+本节覆盖用户追加的五项任务。§14 的速度和 MMLU 均为旧动态 LRU；不能替代固定 cache 的质量结论。网页始终停止，首页图片没有刷新网页后重拍。
+
+### 同接受率的周期成本
+
+固定采用 **2.25 output/cycle** 进行成本换算。这只是消除接受率差异的算术对照，路由/union 仍可能不同，不能称作相同 kernel workload。
+
+| 读源 / 配置 | 完整 cycle，ms | 按 2.25 output/cycle 的 ms/output |
+|---|---:|---:|
+| 单盘 serial k2 | 202.735064 | 90.104473 |
+| 单盘 ONECB k2 | 189.116489 | 84.051773 |
+| 单盘 ONECB + GPU route | 179.594752 | 79.819890 |
+| 双盘 serial k2 | 211.316586 | 93.918483 |
+| 双盘 ONECB + GPU route | 211.771057 | 94.120470 |
+
+单盘相同接受率下 cycle 成本下降 **11.4%**。双盘这格 cycle 成本没有下降（+0.22%）；实际 tok/s 的改善来自 2.52→2.625 output/cycle，不能归为计算加速。
+
+双盘 `final_dual/` 三格分别为普通 mask **12.06**、serial k2 **11.93**、ONECB + GPU route **12.40 tok/s**。每格一次、64 token、5500 总槽、AC/power-saver、0 暂停。镜像只读且 **holds 48 of 48**，ready `sources=2`。组合格两个盘实际读取 **60,368.2 / 50,818.3 MB**，不是只登记了 mirror。
+
+### 查清 verify 的 host 成本
+
+新增 `verify_host_ms`，将 setup/snapshot、输入与 Engram 发起、层/tail 录制、submit/fence、验证后路由、trace/readout 分开；嵌套子项不能重复相加。`phase4_controls/dynamic_host_trace/` 的首轮层/tail 录制 **468.274 ms**，是新 SPIR-V 的延迟 pipeline 创建；后续平均 **7.100 ms**（含 Engram 等待 **5.477 ms**）。验证后路由平均 **5.206 ms**，其中 hidden/carry 回读 **4.250 ms**，planner **.636 ms**，地址/索引检查 **.040 ms**。snapshot **.277 ms**、其他输入准备 **.415 ms**、trace/readout **.166 ms**。这说明残差不属于单一 GPU 算子。
+
+验证流水线改为生成前准备；37/38/39 层 hidden 的 BF16 mean 改在 GPU 上按相同加法顺序计算，回读量缩为四分之一。独立 GPU 对拍逐位一致，k=0 一次 target 和 committed-prefix 窗口回滚均通过。GPU 路由仍是每轮一次主路径前向，一份验证矩阵。
+
+新增 P0 reserve / submit / IO 与 failed-fill 计数。上述动态 trace **四类均为 0**，其完整 IO status 同样是 0 failed。小缓存测试的 ResourceExhausted 不再混为磁盘失败。`set_streams`、`forward_batch` 和 serve 参数解析均拒绝 GPU route + streams>1；serve 在加载模型前返回错误，CPU 专项测试覆盖拒绝后 stream 数和 forward 计数未变化。
+
+### 固定 cache 的实现边界
+
+mask 先用静态热表填满空槽，然后锁住初始专家。启用 DSpark 时保留 384 个 MTP pin，主模型用剩余 5116 槽。store 不更新 LRU/heat，不允许淘汰；满槽后的 decode miss 不再提交 P0/P3；精确 prefill 的 transit 读盘仍可能用 P0，但不进入 cache。KV/session 重置保留这一专家集合。prefill 仍精确计算：resident 直接复用，miss 走临时 transit，禁止用 prefill 替换固定槽。显式退出 mask 才恢复普通缓存策略。
+
+初版 serve 先 begin_session 后应用 mask，短格只达到 3979/4494 resident，未形成满槽 cache；这两格在 `phase4_controls/partial_cache_verdict.json` 标为不能用于固定 cache 速度判断，并取消待跑的同类 pair 格。已将 CLI mode 提前到 session 前，并要求初始填充全部 settle；部分加载则拒绝开始 session。旧动态行为仅供历史复现用 `DEEPMOE_MASK_DYNAMIC_LRU=1`，默认 mask 不启用它。
+
+### Phase 4 和 draft head 的实际尝试
+
+已实现 `DEEPMOE_MGT_PAIR_DOT=1`：保留 128-bit 读取和 weight-once，将一次保留 32 个解码浮点权重改为逐对解码并供 M 列共同累加。每列加法顺序相同，FP8 量化、归约和 head 精度不变。15 个 projection 对拍覆盖 M=1/3/6 和 Q/KV/out 五种形状，全部逐位一致；DSpark golden 全链、所有输出前缀和 KV wrap 也逐位一致。
+
+驱动统计 M=3 projection **96 VGPR / 9216 B LDS / 0 spill**，head **96 VGPR / 7168 B LDS / 0 spill**，前后寄存器占用相同。实际固定满槽的成本对照和启用判断在后续收据中；不将源码写法变化视作收益。CM、scale-fold、mega、union WMMA、champion 和 MTP unpin 的原停止结论保持不变。
+
+### 提交和 main 的处理
+
+Phase 1：`81826bd`；Phase 3：`c796e56`，是两个独立 commit。`7955423` 是共同依赖的不可变参数/indirect 基础设施，`faf20a4` 是专项验证。固定 cache、host 计时、提前准备与 GPU hidden mean 在 `dc5d870`。
+
+`66d0f7a` 是以 `200dc3f` 为父节点的已有工作快照，包含本轮开始前的 mask/DSpark 及文档。它不是可丢弃的测试提交。本机 main 的内容经核对与快照一致后，先保存 index/patch/ref 收据，再对齐快照并 fast-forward 整条链；已合入 main。其他 main 若仍在 `200dc3f` 且没有这些内容，先合快照/整条链；若已用其他 commit 纳入同一内容，应核对后仅 cherry-pick `2cd38a3` 起的优化提交，不能重复 cherry-pick `66d0f7a`。合回记录在 `integration_backup/`。
+
+### 固定满槽成本与 Phase 4 判定
+
+`fixed_final/` 的三格均为双盘、5500 槽、64 token、power-saver/AC、0 温控暂停。ready 前 5500 槽全部 settle。普通 mask **18.091544 tok/s**；投机两格 profiling 同时开启：
+
+| 项目 | pair-dot off | pair-dot on |
+|---|---:|---:|
+| tok/s | 18.483370 | 18.780369 |
+| 完整 cycle，ms | 121.731049 | 119.805954 |
+| output/cycle | 2.25 | 2.25 |
+| 接受/验证 | 35/54 | 35/54 |
+| Q/out 投影合计，ms/cycle | 36.791031 | 35.745392 |
+| wq_a / wq_b | 2.955411 / 16.033172 | 2.877120 / 15.505799 |
+| wo_a / wo_b | 7.471029 / 10.331419 | 7.312811 / 10.049662 |
+| draft head，ms/cycle | 8.403404 | 8.319407 |
+| target attention，ms/cycle | 48.631910 | 47.375583 |
+
+全部 tokens、target ranks、draft/target routes、接受数均一致；这次是同接受率、同输出和同 union 的实际对照。cycle 仅少 **1.925095 ms**，按规则减半为 **.962547 ms < 2 ms**；projection 自身只少 **1.045639 ms**、head **.083997 ms**。**NO-GO：pair-dot 保持 0，不做更多整轮 A/B。** attention ≤45 ms 仍未达到。
+
+提前准备 + GPU hidden mean 后的固定路径：host setup **.278 ms**、输入准备 **.334 ms**、层/tail 录制 **3.608 ms**（其中 Engram issue/land **2.092 ms**）、验证后路由 **.604 ms**、trace/readout **.175 ms**。hidden/carry 部分 **.034 ms**；trace span **92.750 ms**、verify wall **98.307 ms**，残差 **5.557 ms**。这是固定 cache 的新状态，不能把相对动态格的全部差额归为代码优化；逐位相同的 GPU mean 对拍单独证明数学不变。
+
+两格的 cache_fixed/cache_frozen 全为 true、cache 5500 resident/0 filling/0 free、evictions=0，全部 cycle miss_bytes=0，P0 reserve/submit/IO 和 failed-fill 均为0。prefill transit 仍有读盘，不能把其 P0 字节混为 cache 换入。`fixed_final/comparison.json` 保存各字段与同路径核对；`projection_comparison.json` 保存逐算子结果。
+
+k=2 的常规验证矩阵是3行；每行每层选6个 routed 专家，单层原始 union 最多18个，shared另算。mask 后只对驻留 union 读取权重，各行复用同一份专家权重，跨层仍需读取不同权重。固定格合计 **3539** 个驻留 layer/expert 项，平均 **126.393 项/cycle（3.160 项/层）**。按每项 **18,800,640 B** 计，routed 权重逻辑量为 **2.376 GB/cycle、1.056 GB/output**。这不含 shared/dense/激活，也不是 DRAM 硬件计数；0 miss_bytes 仅说明 decode 不换入专家，不表示无访存。收据 `fixed_final/memory_account.json`。
+
+固定专家集合的质量已出现明显退化：普通 mask route served 约 **37.5%**，投机约 **26.7%**；输出有反复“霓”字/重复句。上述速度是这种近似模型的硬件测量，**不能作为可用质量下的加速结论**。MMLU 使用相同固定初始化单独重跑，不能拿旧动态 LRU 的 48/57 代替。
+
+Phase 6 在该轨迹上重算：最优观察策略仍是固定 k=2（阈值 −inf），动态阈值估计净收益为0，继续不设默认。固定 cache 的121ms周期伴随严重服务率下降；它不能代替 Phase1–3 的原动态 LRU 180ms条件去触发 Phase5。更改 union 数学前先需要可用的质量门，故本轮不进入 WMMA。
+
+### 最终固定 cache 质量门
+
+固定 cache 的最终 MMLU57 为 **48/57 = 84.2105%**，**1** 个格式无效计错。全部57题都有投机参与，共 **60** 个周期，**115/120** 个草稿接受/验证。5500槽、双盘 `sources=2`、k=2/accept top-4、ONECB/GPU route=1、pair-dot/CM/fold/mega/profiling=0。协议与§14相同：每科一题、零样本、精确前缀、最后prompt token单位置处理、最多生成16个token、T=0/seed42。不能称为完整标准五样本 MMLU。
+
+该分数满足用户的 **≥48/57** 条件，但它不是唯一的启用条件。普通短 oracle 的严格8/8没有复现，固定中文 turn64 也有重复输出；因此 **ONECB/GPU route 仍默认0，mask仍显式近似模式**。不把旧动态LRU的48/57当作固定缓存的证明；这次是独立重跑的收据。
+
+最终源码 `dc5d870` 的 off64 仍为 **NLL .622784 / top1 56/64**；batch63 为 **min cosine .9537048 / top1 55/63 / PPL ratio 1.0053**。新 mean GPU对拍、27组union、k=0单前向和窗口回滚均通过。这里的普通精确4K/17K TF/free8/8来自 `quality_complete/longctx.log`；固定mask长上下文另列，不能混用。
+
+`fixed_quality/mmlu57/summary.json`、`mask-spec/answers.jsonl` 保存全部答案和计分。样本 SHA256 **74a41822ce7d3def56e1682f958469c04642a5336a5ce912fa375fdb90fb25d7**；所有诊断周期的fixed/frozen均true，四类load failures均0。三个最终质量作业均rc0、双盘48/48、AC保持在线、0温控暂停；峰值GPU **72°C**、内盘 **62.85°C**、外盘 **74.85°C**。MMLU作业827.775s包含启动等耗时，不用它算decode速度。最后恢复原performance模式。
+
+### 固定 mask 的长上下文端到端检查
+
+新增独立 raw prompt 检查，实际经过精确 GPU prefill、固定 mask、ONECB draft 和 GPU route 验证。两个session分别为 **4133 / 17010** token，T=0/seed42、k=2/top-4，各生成9个token。总cache用 **4900** 槽，为17K prefill保留工作区；不是5500槽速度格。
+
+| prompt | 输出 | 与参考相同的连续前缀 | 投机接受/验证 | 精确 prefill |
+|---|---|---:|---:|---:|
+| 4K | `kestrel-4471-amber"` | **9/9** | **5/5** | 28.211 s |
+| 17K | `kestrel-4471-amber"` | **9/9** | **5/5** | 52.233 s |
+
+cache全程fixed/frozen，最终4900 resident/0 filling/0 free、384pin、0evictions、0failed-fill；六个投机周期miss_bytes与四类load failures均0。双盘48/48、AC在线、0温控暂停，GPU峰值71°C、外盘74.85°C；结束恢复performance。原始输出/IDs/引用IDs/温控见 `fixed_longctx/{quality.json,needle4k17k/events.jsonl,check_results.json}`。两次检索通过不证明任意长对话或mask数学无损，也不替代普通teacher-forced质量门。
+
+### 最终关闭 profiling 的速度格与交付
+
+`final_fixed_speed/` 是独立配置：pair-dot/CM/fold/mega/draft profiling全部0、ONECB/GPU route=1，双盘5500槽、AC/power-saver、64个输出。最终 **18.492909 tok/s、54.074781 ms/output、121.668256 ms/cycle**；draft **20.817178**、verify **98.694461**、commit **1.014235**、CPU **.181888 ms/cycle**。28周期、35/54草稿接受、2.25output/cycle、82target rows、3539resident union项，与profiling-on对照的全部tokens/ranks/draft+target routes逐项相同。
+
+相对固定普通mask **18.091544** 的观察差为 **+2.22%**，在±3%抖动内；普通格输出/路由不同，不能隔离投机收益。没有达到1.6×，也不据此启用默认GPU路由。该格verify trace跨提交gap **0**、同提交gap **1.898 ms**、span **93.173 ms**，wall/span残差 **5.521 ms**；attention **48.980**、MoE **26.695**、Engram **4.423**、CED **1.648**、tail **9.529 ms/cycle**。four load-failure counters、cache evictions、decode miss_bytes全0，0温控暂停，GPU最高66°C、外盘74.85°C，AC稳定；结束恢复performance。源码与最终质量格均为 `dc5d870`。
+
+主目录已用自己的toolchain/shader路径编译；52个SPIR-V与被测工作树逐文件hash一致。主目录CPU **25/25**、工具 **30/30**、`--streams 2` GPU-route提前拒绝均通过。工作树被测exe SHA256 **62a42a90a128e4dd0de9c0a47b93529349d0cc8e9aa68aa667c484164f879942**；主目录exe **9e4d44c75ccc6dcdcbb48fcefa808f788c8aa880df7756f30976074c84054542**，路径嵌入不同，未声称exe hash相同。`integration_backup/final_provenance.json`保留逐shader hash与主目录编译收据。
+
+精简机器收据为 [`dspark_e2e_receipt.json`](dspark_e2e_receipt.json)，完整原始收据归档在主目录 `bench/results/spec_e2e/`。日志记录原始执行路径；清理工作树后，以主目录归档位置读取。Phase1/3分开提交；文档随整条链合入main。网页保持停止、浏览器没有刷新，系统回到原performance模式。

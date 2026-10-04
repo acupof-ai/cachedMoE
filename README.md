@@ -8,7 +8,14 @@ No re-quantisation and no repacking: the engine reads the checkpoint's 48 safete
 place, keeps ~9 GiB resident, caches ~96 GiB of experts and fetches the rest on demand.
 C++20, Vulkan compute, shaders in [Slang](https://shader-slang.org).
 
-<p align="center"><img src="docs/img/web_ui.png" width="540" alt="deepMoE web chat"></p>
+<p align="center"><img src="docs/img/web_ui.jpg" width="540" alt="deepMoE web chat showing 11.96 tok/s in mask mode"></p>
+
+The screenshot records a single-drive chat at **11.96 tok/s** with `--resident-only mask`,
+5,500 cache slots, balanced power mode and DSpark off. It was captured from the existing
+page using the earlier mask version, which kept LRU and asynchronous P0 fills.
+The current explicit mask mode fills the cache at startup and freezes that expert set.
+Missing routed experts have zero weight; the shared expert always runs. Mask changes
+the output distribution and can degrade long-context answers.
 
 ## Performance
 
@@ -29,10 +36,39 @@ Every number above is machine-recorded with its commit in [docs/STATUS.md](docs/
 (ledger rows 19, 28 and 29), §7 0t–0bb (prefill, with its per-op cost model) and
 [docs/p3_longctx_decode.md](docs/p3_longctx_decode.md) §4.3.
 
+**Optional miss masking.** Historical single-drive, AC-connected, 64-token runs with no thermal
+pause reached **11.88 tok/s in power-saver** and **13.23 tok/s in balanced mode**. These used
+the earlier dynamic-cache mask and differ from the exact dual-drive chat above. The small generative
+MMLU check scored **48/57** (one question per subject, zero-shot, at most 16 generated tokens);
+this is not a full standard MMLU score or a guarantee for long conversations. Controlled
+receipts and the speculation work are in [docs/dspark_topk.md](docs/dspark_topk.md).
+
+The current experimental DSpark path keeps independent kernels in one draft command
+buffer and verifies the main path with one GPU routing snapshot and one submission.
+In the earlier dynamic-cache single-drive power-saver 64-token workload, ordinary mask measured
+**12.33 tok/s (81.10 ms/output)** and DSpark k=2 measured **13.49 tok/s (74.12 ms/output)**.
+Enable both `DEEPMOE_DSPARK_ONECB=1` and `DEEPMOE_BATCH_GPU_ROUTE=1` with
+`--resident-only mask --dspark --spec-k 2 --spec-top-k 4`; both switches remain off
+by default. Use `DEEPMOE_MASK_DYNAMIC_LRU=1` only to reproduce those historical cache conditions.
+Dual-drive checks and the fixed-cache results are recorded separately. Conditions and quality
+receipts are in [the execution report](docs/dspark_topk.md#14-按端到端方案执行草稿-onecb-与验证-gpu-快照路由2026-10-05).
+
+The fixed-cache dual-drive mask measured **18.09 tok/s** and DSpark k=2 measured
+**18.49 tok/s** with profiling off. The ordinary mask only served about **37.5%**
+of routed expert requests and produced repeated text in the Chinese chat test.
+This speed does not establish useful answer quality. Fixed-cache quality and the
+projection/head experiment are recorded in [the latest report](docs/dspark_topk.md#15-双盘验收固定初始-cache-与实际-phase-4-尝试2026-10-05).
+The final fixed-cache generated MMLU sample scored **48/57**, with one invalid answer;
+it does not establish quality for arbitrary long conversations.
+
+GPU prefill currently uses the exact streaming path, including in mask mode. The captured
+chat's 2,835-token prefill took **39.6 s**; expert I/O took **29.7 s** and read **151.28 GiB**.
+The decode speed shown in the screenshot does not apply to prefill.
+
 **Where the time goes.** Each token routes to 6 of 384 experts in each of 40 layers. About 13.5 of
 those 240 lookups miss the cache and cost one ~19 MB read each, so half of every token is disk.
 The other half is compute, ~17% above its memory-bandwidth floor. The things that did
-*not* help — 2/3-bit re-quantisation, prefetching, speculative decoding, resident-only routing,
+*not* help — 2/3-bit re-quantisation, prefetching, the earlier speculative decoding paths and resident-only routing policies,
 persistent dispatch and some 60 others — are listed with their measurements in STATUS §3.
 
 ## How it works
