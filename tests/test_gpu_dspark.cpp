@@ -1019,6 +1019,55 @@ DEEPMOE_TEST(gpu_dspark, batch_projection_fold_scale) {
     }
 }
 
+DEEPMOE_TEST(gpu_dspark, batch_projection_pair_dot) {
+    gpu::Device device;REQUIRE(device.create({}));
+    gpu::MemoryAllocator alloc;REQUIRE(alloc.init(device,MemoryPath::DeviceLocalHostVisible));
+    gpu::MgtRunner original,folded;gpu::MgtSpec spec;
+    REQUIRE(original.create(device,alloc,gpu::default_shader_dir(),spec));
+    spec.pair_dot=true;REQUIRE(folded.create(device,alloc,gpu::default_shader_dir(),spec));
+    gpu::GpuScratch scratch;REQUIRE(scratch.create(alloc,80ull<<20));
+    auto w=take(scratch,32768ull*1280);auto scale=take(scratch,32768ull*1280/1024);
+    auto x=take(scratch,6ull*32768*4);auto parts=take(scratch,8ull*6*32768*4);
+    REQUIRE(w.v.addr && scale.v.addr && x.v.addr && parts.v.addr);
+    auto* wb=static_cast<uint8_t*>(w.v.host);
+    for(size_t i=0;i<32768ull*1280;++i)wb[i]=uint8_t((i*17+31)%126)|uint8_t((i&1)<<7);
+    auto* sb=static_cast<uint8_t*>(scale.v.host);
+    for(size_t i=0;i<32768ull*1280/1024;++i)sb[i]=uint8_t(121+i%12);
+    auto* xb=static_cast<float*>(x.v.host);
+    for(uint32_t i=0;i<6*32768;++i)xb[i]=std::sin(float(i%977)*0.01f)*(1+float(i%13)*0.03f);
+    gpu::CommandPool pool;REQUIRE(pool.create(device));gpu::QueryPool query;REQUIRE(query.create(device,2));
+    struct Shape {gpu::MgtStage stage;uint32_t rows,k;};
+    using S=gpu::MgtStage;
+    for(const auto shape:{Shape{S::WqASplit,1280,5120},Shape{S::WqBSplit,32768,1280},
+                          Shape{S::WkvSplit,512,5120},Shape{S::WoASplit,8192,4096},Shape{S::WoBSplit,5120,8192}}) {
+        for(uint32_t m:{1u,3u,6u}) {
+            const size_t n=size_t(original.ksplit(shape.stage))*m*shape.rows;
+            std::vector<float> ref(n),got(n);double elapsed[2]{};
+            uint32_t arm=0;
+            for(auto* r:{&original,&folded}) {
+                REQUIRE(r->ensure(m));auto* p=r->slots(shape.stage);
+                p[gpu::mslot::kGW]=w.v.addr;p[gpu::mslot::kGS]=scale.v.addr;
+                p[gpu::mslot::kGX]=x.v.addr;p[gpu::mslot::kGP]=parts.v.addr;
+                gpu::MgtGemvPush push{};push.rows=shape.rows;push.k=shape.k;
+                push.scale_cols=shape.k/32;push.part_stride=shape.rows;push.x_stride=shape.k;
+                if(shape.stage==S::WoASplit){push.rows_per_group=1024;push.x_stride=32768;}
+                pool.reset();auto cb=pool.acquire();REQUIRE(cb);REQUIRE(cb->begin());
+                REQUIRE(cb->reset_queries(query,0,2));REQUIRE(cb->write_timestamp(query,0,false));
+                REQUIRE(r->record(*cb,m,shape.stage,&push,sizeof push,r->split_groups(shape.stage,shape.rows)));
+                REQUIRE(cb->write_timestamp(query,1,true));REQUIRE(cb->end());REQUIRE(gpu::submit_and_wait(device,*cb));
+                auto ticks=query.read_range(0,2);REQUIRE(ticks);
+                const auto bits=device.caps().timestamp_valid_bits;const uint64_t mask=bits>=64?~0ull:(1ull<<bits)-1;
+                elapsed[arm++]=double(((*ticks)[1]-(*ticks)[0])&mask)*device.caps().timestamp_period_ns*1e-6;
+                auto& values=r==&original?ref:got;
+                wc_readback(values.data(),parts.v.host,values.size()*4);
+            }
+            CHECK(ref==got);
+            std::printf("projection pair %s M=%u old_ms=%.6f fold_ms=%.6f partials=%zu bit-identical\n",
+                        gpu::mgt_stage_name(shape.stage),m,elapsed[0],elapsed[1],n);
+        }
+    }
+}
+
 DEEPMOE_TEST(gpu_dspark, full_runtime_chain) {
     if (skip_without_model("gpu_dspark.full_runtime_chain")) return;
     auto set=load_l2(ds_dir()); REQUIRE(set);

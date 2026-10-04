@@ -45,6 +45,7 @@
 #include "attn_common.slang"
 
 [vk::constant_id(11)] const uint FoldScale = 0;
+[vk::constant_id(12)] const uint PairDot = 0;
 
 static const uint kMaxM       = 6;
 static const uint kMaxBlocksS = DEEPMOE_MGT1_MAX_K / kBlockK;            // 32
@@ -204,6 +205,25 @@ void stage_split(uint gid, uint tid) {
             const uint4 w0 = load16(Ptr[kW] + roff + (uint64_t)blk * 32);
             const uint4 w1 = load16(Ptr[kW] + roff + (uint64_t)blk * 32 + 16);
             const float we = FoldScale != 0 ? 1.0f : ldexp(1.0f, (int)load_u8(srow + blk) - 127);
+            if (PairDot != 0) {
+                // Keep eight packed words, rather than 32 decoded floats live.
+                // Each decoded pair is reused across M; each row's additions
+                // occur in exactly the original order.
+                float p[M];
+                [unroll] for (uint m=0;m<M;++m) p[m]=0.0f;
+                [unroll] for (uint i=0;i<16;++i) {
+                    const uint packed=i<8 ? w0[i/2] : w1[(i-8)/2];
+                    const uint pair=packed >> ((i&1u)*16);
+                    const float a=fp8_tbl(pair&255u),b=fp8_tbl((pair>>8)&255u);
+                    [unroll] for (uint m=0;m<M;++m) {
+                        const uint xw=gXQ[xq_word(m,blk,i)];
+                        p[m]+=a*bf16_decode(xw&65535u);
+                        p[m]+=b*bf16_decode(xw>>16);
+                    }
+                }
+                [unroll] for (uint m=0;m<M;++m) acc[m]+=p[m]*(we*gXS[m*kColBlocks+blk]);
+                continue;
+            }
             float wv[32];
             [unroll] for (uint i = 0; i < 4; ++i) {
                 const uint a = w0[i], b = w1[i];

@@ -824,3 +824,22 @@ DEEPMOE_TEST(expert_store, snapshot_freezes_hits_and_defers_publish){
     CHECK(!s.evict_key({0,1}));s.set_completed_timeline(8);REQUIRE_OK(s.evict_key({0,1}));
     CHECK(!s.guarded_snapshot(8)); // an already completed guard is invalid
 }
+
+DEEPMOE_TEST(expert_store, fixed_mask_retains_initial_slots) {
+    ExpertStore s;REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(),small_cache(2,1),1,4));
+    s.set_fixed_cache(true);REQUIRE_OK(fill(s,{0,0},10));
+    CHECK(!s.cache_frozen());CHECK_ERR(s.evict_lru(),Err::FailedPrecondition);
+    auto pending=s.begin_fill({0,1});REQUIRE(pending);CHECK(!s.cache_frozen());
+    // A failed initial fill releases its slot and can be retried.
+    REQUIRE_OK(s.finish_fill(pending->slot,false));CHECK(!s.cache_frozen());
+    REQUIRE_OK(fill(s,{0,1},20));CHECK(s.cache_frozen());
+    const auto snapshot=s.pointer_table();std::vector<uint64_t> before(snapshot,snapshot+s.pointer_table_entries());
+    REQUIRE(s.lookup({0,0},999));CHECK(s.touch({0,1},999));
+    CHECK_EQ(s.slot_for({0,0})->last_use_token,10u);CHECK_EQ(s.slot_for({0,1})->last_use_token,20u);
+    CHECK_ERR(s.evict_key({0,0}),Err::FailedPrecondition);
+    CHECK_ERR(s.begin_fill({0,2}),Err::ResourceExhausted);
+    auto streamed=admit_streamed(s,{0,2},1000,nullptr,0);REQUIRE(streamed);
+    CHECK_EQ(streamed->kind,StreamKind::Drop);CHECK_EQ(s.stats().evictions,0ull);
+    CHECK(std::equal(before.begin(),before.end(),s.pointer_table()));
+    s.set_fixed_cache(false);REQUIRE_OK(s.evict_key({0,0}));
+}

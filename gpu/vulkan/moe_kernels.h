@@ -236,7 +236,8 @@ public:
     // Device address of `y`, so the caller's next dispatch can read the MoE
     // output through buffer-device-address instead of the host copying it.
     uint64_t y_address() const { return y_.dev_addr; }
-    Result<void> record_gpu_copy(CommandBuffer&,uint64_t src,uint64_t dst,uint32_t words);
+    Result<void> record_gpu_copy(CommandBuffer&,uint64_t src,uint64_t dst,uint32_t words,
+                                 bool hc_mean=false,uint32_t hidden=0);
     Result<void> init_gpu_route(uint32_t layers,const std::string& dir);
     Result<void> upload_snapshot(std::span<const uint64_t>);
     // snapshot is [layers][experts][6], each layer includes its shared row.
@@ -251,7 +252,7 @@ public:
     uint64_t bytes_dispatch_b() const;
 
 private:
-    Pipeline gpu_copy_,gpu_route_,gpu_up_,gpu_down_,gpu_hq_;
+    Pipeline gpu_copy_,gpu_mean_,gpu_route_,gpu_up_,gpu_down_,gpu_hq_;
     GpuBuffer gpu_snapshot_,gpu_args_,gpu_indirect_;
     DescriptorPool gpu_descriptors_;uint32_t gpu_layers_=0;uint64_t gpu_table_stride_=0,gpu_arg_stride_=256;
 #if defined(DEEPMOE_ENABLE_VULKAN)

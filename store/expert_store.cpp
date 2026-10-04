@@ -13,11 +13,11 @@ std::string ExpertStoreStats::to_string() const {
         "expert store: {} slots ({} resident, {} filling, {} free, {} pinned)  "
         "lookups {} hits {} ({:.3f})  fills {}/{} ok  runs {}/{}  "
         "evictions {} (+{} guard-blocked)  "
-        "path A hits {} / B {} ({:.4f} A)  fills A {} / B {}",
+        "path A hits {} / B {} ({:.4f} A)  fills A {} / B {}; failed fills {}",
         resident + filling + free, resident, filling, free, pinned,
         lookups, hits, hit_rate(), fills_ok, fills_started, runs_done, runs_started,
         evictions, eviction_blocked_by_guard,
-        hits_path_a, hits_path_b, path_a_hit_share(), fills_path_a, fills_path_b);
+        hits_path_a, hits_path_b, path_a_hit_share(), fills_path_a, fills_path_b, fills_failed);
 }
 
 Result<void> ExpertStore::init(std::unique_ptr<SlabBacking> backing,
@@ -60,6 +60,7 @@ Result<void> ExpertStore::init(std::unique_ptr<SlabBacking> backing,
                   kNoDeviceAddress);
     stats_ = ExpertStoreStats{};
     stats_.free = n;
+    fixed_cache_ = cache_frozen_ = false;
 
     log_info("expert store: {} slots x {} ({:.2f} GiB) on '{}', table {} entries ({} per expert)",
              n, pool_.slot_bytes(), pool_.bytes() / 1073741824.0, pool_.backing_name(),
@@ -76,8 +77,17 @@ void ExpertStore::reset() {
     layers_ = experts_per_layer_ = 0;
     completed_timeline_ = 0;
     stats_ = ExpertStoreStats{};
+    fixed_cache_ = cache_frozen_ = false;
     pool_.reset();     // releases every slab through the backing, then drops it
 }
+
+void ExpertStore::set_fixed_cache(bool enabled) {
+    std::lock_guard lk(mutex_);
+    fixed_cache_ = enabled;
+    cache_frozen_ = enabled && !slots_.empty() && stats_.resident == slots_.size();
+}
+bool ExpertStore::fixed_cache() const { std::lock_guard lk(mutex_); return fixed_cache_; }
+bool ExpertStore::cache_frozen() const { std::lock_guard lk(mutex_); return cache_frozen_; }
 
 void ExpertStore::publish_locked(uint32_t slot) {
     const ExpertSlot& s = slots_[slot];
@@ -106,7 +116,7 @@ std::optional<SlotAddress> ExpertStore::lookup(ExpertKey key, TokenIndex token, 
         return std::nullopt;
     }
     ExpertSlot& s = slots_[it->second];
-    s.last_use_token = token;
+    if (!fixed_cache_) s.last_use_token = token;
     s.guard_timeline = std::max(s.guard_timeline, guard);
     ++stats_.hits;
     // Track K1b: a demand hit's memory path, which is what decides whether the
@@ -122,6 +132,7 @@ bool ExpertStore::resident(ExpertKey key) const {
 }
 
 Result<ExpertStore::Reservation> ExpertStore::reserve_locked(ExpertKey key, Tier tier) {
+    if (cache_frozen_) return fail(Err::ResourceExhausted, "initial mask cache is frozen");
     if (!key_in_range(key))
         return fail(Err::OutOfRange, std::format("expert ({}, {}) is outside the table",
                                                  key.layer, key.expert));
@@ -246,6 +257,10 @@ void ExpertStore::settle_locked(uint32_t slot, bool ok, TokenIndex token) {
         publish_locked(slot);
         ++stats_.resident;
         ++stats_.fills_ok;
+        if (fixed_cache_ && stats_.resident == slots_.size()) {
+            cache_frozen_ = true;
+            log_info("mask cache: frozen {} initial resident slots; no LRU or further admissions", stats_.resident);
+        }
         // Track K1b: which path this admission landed on.
         if (s.slab >= path_b_first_slab_) ++stats_.fills_path_b; else ++stats_.fills_path_a;
         if (s.tier == Tier::Pinned) ++stats_.pinned;
@@ -289,6 +304,7 @@ Result<void> ExpertStore::finish_fill(uint32_t slot, bool ok, TokenIndex token) 
 
 Result<void> ExpertStore::evict(uint32_t slot) {
     std::lock_guard lk(mutex_);
+    if (fixed_cache_) return fail(Err::FailedPrecondition, "fixed mask cache forbids eviction");
     if (slot >= slots_.size()) return fail(Err::OutOfRange, std::format("slot {} out of range", slot));
     ExpertSlot& s = slots_[slot];
     if (s.state != SlotState::Resident)
@@ -351,6 +367,7 @@ Result<void> ExpertStore::set_guard(uint32_t slot, TimelineValue v) {
 
 void ExpertStore::note_heat(ExpertKey key, float score, float alpha) {
     std::lock_guard lk(mutex_);
+    if (fixed_cache_) return;
     auto it = index_.find(key);
     if (it == index_.end()) return;
     float& h = slots_[it->second].heat;
@@ -437,6 +454,7 @@ std::optional<ExpertSlot> ExpertStore::slot_for(ExpertKey key) const {
 std::vector<ExpertSlot> ExpertStore::evictable() const {
     std::lock_guard lk(mutex_);
     std::vector<ExpertSlot> out;
+    if (fixed_cache_) return out;
     out.reserve(slots_.size());
     for (const ExpertSlot& s : slots_)
         if (s.state == SlotState::Resident && s.tier != Tier::Pinned &&
@@ -447,6 +465,7 @@ std::vector<ExpertSlot> ExpertStore::evictable() const {
 
 Result<uint32_t> ExpertStore::evict_lru() {
     std::lock_guard lk(mutex_);
+    if (fixed_cache_) return fail(Err::FailedPrecondition, "fixed mask cache forbids LRU");
     // Track K1b: one LRU scan, optionally restricted to one memory path. The
     // slot this returns is the slot the caller's admission will occupy, so
     // restricting the scan to path A puts new experts on path A and leaves path
@@ -492,12 +511,13 @@ bool ExpertStore::touch(ExpertKey key, TokenIndex stamp, bool include_filling) {
     if (it == index_.end()) return false;
     ExpertSlot& s = slots_[it->second];
     if (s.state != SlotState::Resident && !(include_filling && s.state == SlotState::Filling)) return false;
-    if (stamp > s.last_use_token) s.last_use_token = stamp;
+    if (!fixed_cache_ && stamp > s.last_use_token) s.last_use_token = stamp;
     return true;
 }
 
 std::optional<TokenIndex> ExpertStore::oldest_evictable_stamp() const {
     std::lock_guard lk(mutex_);
+    if (fixed_cache_) return std::nullopt;
     std::optional<TokenIndex> best;
     for (const ExpertSlot& s : slots_) {
         if (s.state != SlotState::Resident || s.tier == Tier::Pinned ||

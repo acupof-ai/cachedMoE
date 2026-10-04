@@ -179,6 +179,7 @@ inline constexpr uint32_t kMgtMaxM = 6;
 // The knobs. A K-split factor must be a power of two dividing K / 32 with
 // K / factor <= 1024 (mgt1_gemv.slang's staged slice).
 struct MgtSpec {
+    bool pair_dot = false;         // decode one weight pair at a time, exact reduction order
     bool fold_scale = false;       // share UE8M0 factor in the staged activation
     bool attn_cm = false;
     uint32_t lanes_per_row = 32;

@@ -6,6 +6,15 @@ struct RoutePush{uint layer,m,topk,slots,experts,up_groups,hq_groups,copy_count;
 [shader("compute")]
 [numthreads(256,1,1)]
 void main(uint3 gid:SV_GroupID,uint tid:SV_GroupIndex){
+    if(Copy==2){
+        const uint i=gid.x*256+tid;if(i>=pc.copy_count)return;
+        const uint D=pc.experts,base=(i/D)*4*D+i%D;float* x=(float*)pc.src;
+        precise float sum=x[base]+x[base+D];sum=sum+x[base+2*D];sum=sum+x[base+3*D];
+        const uint bits=asuint(sum*.25f);
+        const uint rounded=((bits&0x7f800000u)==0x7f800000u && (bits&0x007fffffu)!=0)
+            ? ((bits>>16)|0x40u) : ((bits+0x7fffu+((bits>>16)&1u))>>16);
+        ((float*)pc.dst)[i]=asfloat(rounded<<16);return;
+    }
     if(Copy!=0){uint i=gid.x*256+tid;if(i<pc.copy_count)((uint*)pc.dst)[i]=((uint*)pc.src)[i];return;}
     if(tid!=0)return;
     uint* raw=(uint*)A[0];float* raw_w=(float*)A[1];uint64_t* table=(uint64_t*)A[2];

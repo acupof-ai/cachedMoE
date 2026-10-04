@@ -18,11 +18,11 @@ std::string PlannerStats::to_string() const {
         "planner: {} layers, {} requests ({} hits, {} misses, {:.3f}), "
         "{} evictions (+{} refused), prefetch {} issued / {} used / {} wasted, {} stalls, "
         "{} joined; backfill {} issued / {} done / {} failed; prefill handoff {} resident / "
-        "{} kept / {} dropped",
+        "{} kept / {} dropped; P0 failures reserve {} / submit {} / IO {}",
         layers_planned, requests, hits, misses, hit_rate(),
         evictions, evict_failures, prefetch_issued, prefetch_used, prefetch_wasted, stall_waits,
         joined_fills, backfill_issued, backfill_done, backfill_failed, streamed_resident,
-        streamed_filled, streamed_dropped);
+        streamed_filled, streamed_dropped,p0_reserve_failed,p0_submit_failed,p0_io_failed);
 }
 
 Result<StreamAdmit> admit_streamed(ExpertStore& store, ExpertKey key, TokenIndex stamp,
@@ -336,16 +336,18 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
     // would be thrown out under it. The fills themselves still run
     // concurrently; only the bookkeeping is ordered.
     const bool lru = std::string_view(policy_->name()) == "lru";
+    const bool fixed = store_->fixed_cache();
     plan.group = std::make_shared<FetchGroup>();
     for (uint16_t id : route.chosen) {
         const ExpertKey key{static_cast<uint16_t>(route.layer), id};
-        if (store_->lookup(key, next_stamp(), route.guard_hits)) {
+        if (store_->lookup(key, fixed ? 0 : next_stamp(), route.guard_hits)) {
             plan.hits.push_back(key);
             if (profiler_) profiler_->note_expert_lookup(true);
             continue;
         }
         plan.misses.push_back(key);
         if (profiler_) profiler_->note_expert_lookup(false);
+        if (fixed && store_->free_slots() == 0) continue;
         // Already being filled by another class (the P3 backfill): join it.
         if (store_->slot_of(key)) {
             plan.joined.emplace_back(key, next_stamp());
@@ -368,13 +370,17 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
             ++plan.group->pending;
         }
         auto f = fetch(key, IoPriority::BlockingMiss, token, route.layer,
-                       [g = plan.group](bool ok) {
+                       [this,g = plan.group](bool ok) {
+                           if (!ok) { std::lock_guard lk(stats_mutex_); ++stats_.p0_io_failed; }
                            std::lock_guard lk(g->m);
                            --g->pending;
                            g->failed |= !ok;
                            g->cv.notify_all();
                        });
         if (!f) {
+            { std::lock_guard lk(stats_mutex_);
+              if (f.error().code == Err::ResourceExhausted) ++stats_.p0_reserve_failed;
+              else ++stats_.p0_submit_failed; }
             {
                 std::lock_guard lk(plan.group->m);
                 --plan.group->pending;

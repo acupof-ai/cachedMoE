@@ -84,7 +84,7 @@ Result<void> MoeRunner::create(Device&, MemoryAllocator&, const std::string&,
     return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
 }
 void MoeRunner::destroy() {
-    gpu_descriptors_.destroy();gpu_copy_.destroy();gpu_route_.destroy();gpu_up_.destroy();gpu_down_.destroy();gpu_hq_.destroy();
+    gpu_descriptors_.destroy();gpu_copy_.destroy();gpu_mean_.destroy();gpu_route_.destroy();gpu_up_.destroy();gpu_down_.destroy();gpu_hq_.destroy();
     if(alloc_){for(auto* b:{&gpu_snapshot_,&gpu_args_,&gpu_indirect_})if(b->valid())alloc_->free(*b);}
     gpu_layers_=0;
 }
@@ -413,7 +413,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
 }
 
 void MoeRunner::destroy() {
-    gpu_descriptors_.destroy();gpu_copy_.destroy();gpu_route_.destroy();gpu_up_.destroy();gpu_down_.destroy();gpu_hq_.destroy();
+    gpu_descriptors_.destroy();gpu_copy_.destroy();gpu_mean_.destroy();gpu_route_.destroy();gpu_up_.destroy();gpu_down_.destroy();gpu_hq_.destroy();
     if(alloc_){for(auto* b:{&gpu_snapshot_,&gpu_args_,&gpu_indirect_})if(b->valid())alloc_->free(*b);}
     gpu_snapshot_=gpu_args_=gpu_indirect_={};gpu_layers_=0;
     gpu_route_sets_.clear();gpu_up_sets_.clear();gpu_down_sets_.clear();
@@ -696,6 +696,7 @@ Result<void> MoeRunner::init_gpu_route(uint32_t layers,const std::string& dir){
     PipelineSpec rp;rp.subgroup_size=32;rp.extra={0};
     ROUTE_TRY(gpu_route_.create(*device_,dir+"/batch_route.spv",{1,48},rp));
     rp.extra={1};ROUTE_TRY(gpu_copy_.create(*device_,dir+"/batch_route.spv",{1,48},rp));
+    rp.extra={2};ROUTE_TRY(gpu_mean_.create(*device_,dir+"/batch_route.spv",{1,48},rp));
     VkPhysicalDeviceProperties props{};vkGetPhysicalDeviceProperties(device_->physical(),&props);
     const auto align=std::max<uint64_t>(256,props.limits.minStorageBufferOffsetAlignment);
     gpu_arg_stride_=align;
@@ -724,10 +725,12 @@ Result<void> MoeRunner::upload_snapshot(std::span<const uint64_t> table){
     for(uint32_t l=0;l<gpu_layers_;++l)std::memcpy(static_cast<std::byte*>(gpu_snapshot_.host_ptr)+l*gpu_table_stride_,table.data()+size_t(l)*dims_.experts_per_layer*6,row_bytes);
     return {};
 }
-Result<void> MoeRunner::record_gpu_copy(CommandBuffer& cmd,uint64_t src,uint64_t dst,uint32_t n){
+Result<void> MoeRunner::record_gpu_copy(CommandBuffer& cmd,uint64_t src,uint64_t dst,uint32_t n,bool mean,uint32_t hidden){
 #if defined(DEEPMOE_ENABLE_VULKAN)
-    struct Push{uint32_t l,m,k,s,e,u,h,n;uint64_t src,dst;} p{0,0,0,0,0,0,0,n,src,dst};
-    ROUTE_TRY(cmd.bind(gpu_copy_,gpu_route_sets_[0]));ROUTE_TRY(cmd.push(gpu_copy_,&p,sizeof p));ROUTE_TRY(cmd.dispatch((n+255)/256));return cmd.barrier();
+    if(mean && (!hidden || n%hidden))return fail(Err::InvalidArgument,"hidden mean requires complete rows");
+    struct Push{uint32_t l,m,k,s,e,u,h,n;uint64_t src,dst;} p{0,0,0,0,hidden,0,0,n,src,dst};
+    auto& pipe=mean?gpu_mean_:gpu_copy_;
+    ROUTE_TRY(cmd.bind(pipe,gpu_route_sets_[0]));ROUTE_TRY(cmd.push(pipe,&p,sizeof p));ROUTE_TRY(cmd.dispatch((n+255)/256));return cmd.barrier();
 #else
     return fail(Err::Unavailable,"no Vulkan");
 #endif

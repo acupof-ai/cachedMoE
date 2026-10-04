@@ -28,6 +28,7 @@
 //   3  exact rank of each original draft token, gid.y = draft row
 
 #include "attn_common.slang"
+[vk::constant_id(12)] const uint PairDot = 0;
 
 static const uint kMaxM = 6;
 static const uint kW = 0, kX = 1, kLogits = 2, kSample = 3, kTopOut = 4, kHist = 5;
@@ -78,6 +79,23 @@ void stage_gemv(uint gid, uint tid) {
     if (row < pc.rows) {
         const uint64_t wrow = Ptr[kW] + ((uint64_t)row * pc.k + k0) * 2;
         for (uint blk = sublane; blk < blocks; blk += LanesPerRow) {
+            if (PairDot != 0) {
+                float p[M];
+                [unroll] for (uint m=0;m<M;++m) p[m]=0.0f;
+                [unroll] for (uint chunk=0;chunk<4;++chunk) {
+                    const uint4 v=load16(wrow+(uint64_t)blk*64+(uint64_t)chunk*16);
+                    [unroll] for (uint j=0;j<4;++j) {
+                        const float a=bf16_decode(v[j]&65535u),b=bf16_decode(v[j]>>16);
+                        [unroll] for (uint m=0;m<M;++m) {
+                            const uint xw=gXQ[(m*kSliceBlk+blk)*kXStride+chunk*4+j];
+                            p[m]+=a*bf16_decode(xw&65535u);
+                            p[m]+=b*bf16_decode(xw>>16);
+                        }
+                    }
+                }
+                [unroll] for (uint m=0;m<M;++m) acc[m]+=p[m];
+                continue;
+            }
             float wv[32];
             [unroll] for (uint i = 0; i < 4; ++i) {
                 const uint4 v = load16(wrow + (uint64_t)blk * 64 + (uint64_t)i * 16);

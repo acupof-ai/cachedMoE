@@ -635,8 +635,8 @@ public:
     // the same cache state and the same routing decision, one position at a
     // time, which is what makes it measurable on the teacher-forced harness
     // while `Engine::forward_batch` does not exist.
-    // Mask keeps the normal demand planner/LRU and asynchronous P0 fills,
-    // but computes only plan hits at their original weights (no renormalisation).
+    // Mask fills unused slots then freezes the initial expert set, without LRU.
+    // It computes only plan hits at original weights (no renormalisation).
     enum class ResidentOnly : uint8_t { Off = 0, All = 1, Stall1 = 2, Verify = 3, Mask = 4 };
     // DSpark's block: one verify forward over [last accepted, 4 drafts].
     // `Verify` mode routes step `token_ % kVerifyBlock == 0` exactly and the
@@ -940,6 +940,9 @@ private:
     uint32_t             batch_cap_ = 0;
     std::vector<uint32_t> batch_list_;   // layer -> BatchScratch list index
     uint32_t             batch_union_ = 0;
+    std::vector<std::pair<std::string,double>> batch_host_ms_;
+    std::array<double,5> batch_route_host_ms_{};
+    std::array<uint64_t,4> batch_load_failures_{};
     uint64_t             batch_miss_bytes_ = 0;
     KvStore::RingSnapshot batch_snap_{};
     uint32_t             batch_snap_p0_ = 0, batch_snap_m_ = 0;

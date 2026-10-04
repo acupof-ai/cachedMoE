@@ -79,7 +79,7 @@ for ns,file,push in files:
     s=immutable16+s
     if ns in ('up','hq','down','xq'): vals['M']=6
     def constant(m):
-        key=m[1];v=0 if key=='GpuList' else vals[key]
+        key=m[1];v=0 if key in ('GpuList','PairDot') else vals[key]
         if key=='ActQuant' and ns=='gemv': return 'static uint ActQuant;'
         return f'static const uint {key} = {v};'
     s=re.sub(r'\[vk::constant_id\(\d+\)\]\s*const uint\s+(\w+)\s*=\s*[^;]+;',constant,s)

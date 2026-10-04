@@ -113,6 +113,7 @@ struct PlannerStats {
     uint64_t joined_fills = 0;              // misses already being filled by the backfill
     uint64_t backfill_issued = 0, backfill_done = 0, backfill_failed = 0;
     uint64_t streamed_resident = 0, streamed_filled = 0, streamed_dropped = 0;
+    uint64_t p0_reserve_failed = 0, p0_submit_failed = 0, p0_io_failed = 0;
     double hit_rate() const { return requests ? static_cast<double>(hits) / requests : 0.0; }
     std::string to_string() const;
 };

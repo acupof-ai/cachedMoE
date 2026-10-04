@@ -600,3 +600,14 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
     }
     engine.shutdown();
 }
+
+DEEPMOE_TEST(spec_forward, gpu_route_rejects_multiple_streams) {
+    const char* previous=std::getenv("DEEPMOE_BATCH_GPU_ROUTE");
+    const bool had=previous!=nullptr;const std::string saved=previous?previous:"";
+    struct Restore {bool had;std::string value;~Restore(){if(had)setenv("DEEPMOE_BATCH_GPU_ROUTE",value.c_str(),1);else unsetenv("DEEPMOE_BATCH_GPU_ROUTE");}} restore{had,saved};
+    setenv("DEEPMOE_BATCH_GPU_ROUTE","1",1);
+    runtime::Engine engine;
+    CHECK_ERR(engine.set_streams(2),Err::FailedPrecondition);
+    CHECK_EQ(engine.streams(),1u);
+    CHECK_EQ(engine.batch_forward_calls(),0ull);
+}

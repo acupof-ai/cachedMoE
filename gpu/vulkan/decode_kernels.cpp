@@ -361,7 +361,7 @@ Result<void> MgtRunner::make(uint32_t m, MgtStage s) {
     ps.subgroup_size = spec_.subgroup_size;
     const uint32_t heads = (s == MgtStage::AttnScore) ? spec_.tile_heads_per_wg : 1u;
     ps.extra = {d.stage_const, d.act_quant, 1u, heads, d.wave, ksplit(s), 0u,
-                spec_.fold_scale ? 1u : 0u};
+                spec_.fold_scale ? 1u : 0u, spec_.pair_dot ? 1u : 0u};
     PipelineLayoutSpec la;
     la.storage_buffers    = 1;
     la.push_constant_size = kPushBytes;

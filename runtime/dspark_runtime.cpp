@@ -278,7 +278,8 @@ Result<void> DsparkRuntime::create(gpu::Device& dev,gpu::MemoryAllocator& alloc,
     if(const char* e=std::getenv("DEEPMOE_DSPARK_ONECB"))p.use_onecb=std::string_view(e)=="1";
     if(p.use_mega&&p.use_onecb)return fail(Err::InvalidArgument,"DSpark mega and one-CB are mutually exclusive");
     log_info("DSpark draft: one command buffer {}",p.use_onecb?"on":"off");
-    DS_TRY(p.ds.create(dev,alloc,gpu::default_shader_dir()));DS_TRY(p.mgt.create(dev,alloc,gpu::default_shader_dir()));DS_TRY(p.mgt.ensure(M));
+    gpu::MgtSpec spec;if(const char* e=std::getenv("DEEPMOE_MGT_PAIR_DOT"))spec.pair_dot=*e=='1';
+    DS_TRY(p.ds.create(dev,alloc,gpu::default_shader_dir()));DS_TRY(p.mgt.create(dev,alloc,gpu::default_shader_dir(),spec));DS_TRY(p.mgt.ensure(M));
     DS_TRY(p.scratch.create(alloc,32ull<<20));
 #define BUF(name, bytes) {auto v=p.take(bytes);if(!v)return std::unexpected(v.error());p.name=*v;}
     BUF(hidden,4ull*M*D*3);BUF(main,4ull*M*D);BUF(temp,4ull*M*32768);

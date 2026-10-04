@@ -145,6 +145,12 @@ public:
     // needs a way to say "let go now" that is not the destructor's ordering.
     void reset();
 
+    // Mask mode admits only into unused slots. Freeze the initial resident
+    // set when all slots have settled; prefill/session reuse cannot replace it.
+    void set_fixed_cache(bool enabled);
+    bool fixed_cache() const;
+    bool cache_frozen() const;
+
     // --- hot path ---------------------------------------------------------
 
     // Resident lookup. On a hit the slot's LRU stamp is refreshed to `token`.
@@ -306,6 +312,7 @@ private:
         return k.layer < layers_ && k.expert < experts_per_layer_;
     }
     Result<Reservation> reserve_locked(ExpertKey key, Tier tier);
+    bool fixed_cache_ = false, cache_frozen_ = false;
     void publish_locked(uint32_t slot);
     void unpublish_locked(uint32_t slot);
     void release_locked(uint32_t slot);

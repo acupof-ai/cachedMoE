@@ -230,6 +230,9 @@ int cmd_serve(int argc, char** argv) {
         return 2;
     }
 #if defined(__linux__)
+    if(const char* e=std::getenv("DEEPMOE_BATCH_GPU_ROUTE");e && *e=='1' && streams>1){
+        std::fprintf(stderr,"batch GPU routing requires --streams 1\n");return 2;
+    }
     // The second read source as a helper, on by default for serve on Linux: the
     // same model directory name under /mnt/*/ or /mnt/*/models/ with the
     // manifest in it (the x box keeps its USB4 copy at /mnt/deepmoe2/models/).
@@ -328,7 +331,6 @@ int cmd_serve(int argc, char** argv) {
     runtime::Engine engine;
     if (auto r = engine.init(cfg); !r) { emit_error("init: " + r.error().str()); return 1; }
     if (auto r = engine.init_gpu(); !r) { emit_error("gpu init: " + r.error().str()); return 1; }
-    if (auto r = engine.begin_session(sc); !r) { emit_error("session: " + r.error().str()); return 1; }
     engine.set_check_topk(check_topk);
     engine.set_reheat(engine_reheat);
     // Track Y. The flag wins over DEEPMOE_ROUTE_RESIDENT_ONLY, which the load read.
@@ -341,6 +343,7 @@ int cmd_serve(int argc, char** argv) {
         else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
         else { std::fprintf(stderr, "--resident-only takes off|all|stall1|verify|mask, got '%s'\n", resident_only.c_str()); return 1; }
     }
+    if (auto r = engine.begin_session(sc); !r) { emit_error("session: " + r.error().str()); return 1; }
     // Track MS: the extra streams, and the session each of them starts from.
     // They are created BEFORE begin_session so every one of them gets its own
     // KV store and engram planes from it.
@@ -514,10 +517,12 @@ int cmd_serve(int argc, char** argv) {
         if (op == "status") {
             emit(std::format("{{\"event\":\"status\",\"session\":{},\"context\":{},\"max_context\":{},"
                              "\"kv_mb\":{},\"kv_capacity\":{},\"kv_slabs\":{},\"kv_largest_slab_mb\":{},"
+                             "\"cache_fixed\":{},\"cache_frozen\":{},"
                              "\"store\":{},\"planner\":{},\"io\":{},\"engram\":{},\"route\":{},\"gate_probe\":{}}}",
                              json_quote(pool.active()), engine.context_length(), engine.max_context(),
                              json_number(engine.kv().bytes() / 1e6), engine.kv().capacity(),
                              engine.kv().slabs(), json_number(engine.kv().largest_slab() / 1e6),
+                             engine.store().fixed_cache(),engine.store().cache_frozen(),
                              json_quote(engine.store().stats().to_string()),
                              json_quote(engine.planner().stats().to_string()),
                              json_quote(engine.io().stats().to_string()),
