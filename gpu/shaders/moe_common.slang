@@ -30,6 +30,8 @@
 // for RowsPerLane weight rows. Both are pure register-blocking knobs.
 [vk::constant_id(6)] const uint RowsPerLane  = 1;
 
+[vk::constant_id(11)] const uint GpuList = 0; // count at SlotList[num_slots], opt-in
+
 static const uint kWgSize    = 256;
 static const uint kMaxM      = 6;      // design §1.2: verify batch <= 6
 static const uint kMaxRows   = 16;     // upper bound on RowsPerLane (host-checked)

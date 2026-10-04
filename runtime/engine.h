@@ -324,6 +324,9 @@ struct Stream {
     // --- the M > 1 forward, stream 0 only (docs/p4_dspark_runtime.md) ---
     gpu::MgtRunner       mgt_;
     gpu::GpuScratch      bscratch_;
+    gpu::GpuScratch      route_scratch_;
+    std::array<gpu::GpuScratch::View,40> saved_routes_,saved_carry_k_,saved_carry_g_,saved_rope_,saved_rope_lat_;
+    std::array<gpu::GpuScratch::View,3> saved_hidden_;
     gpu::GpuBuffer       blogits_{}, bsample_{}, btopk_out_{}, btopk_hist_{}, bdraft_{}, brank_{};
     // Track MS: what `run_layer` decided in its first two phases and its third
     // needs. In a single-stream step the three phases are consecutive
@@ -494,6 +497,9 @@ public:
                                       std::span<const uint32_t> stop_ids = {});
     Result<void> init_batch(uint32_t m_cap);
     bool batch_ready() const { return batch_ready_; }
+    uint64_t batch_forward_calls() const {return batch_forward_calls_;}
+    uint32_t last_batch_layers() const {return last_batch_layers_;}
+    uint32_t last_batch_submits() const {return cur_?cur_->submits_:0;}
     // The union of the last forward_batch's routed experts, summed over layers,
     // and the P0 bytes it missed.
     uint32_t last_batch_union() const { return batch_union_; }
@@ -873,6 +879,11 @@ private:
     std::vector<BatchCarry> batch_carry_;
     KvRowBackup batch_carry_before_;
     bool spec_inflight_=false;
+    uint64_t batch_forward_calls_=0;uint32_t last_batch_layers_=0;
+    bool batch_gpu_route_=false,route_config_logged_=false;
+    std::vector<uint64_t> route_snapshot_;
+    std::vector<BatchStep> route_steps_;
+    Result<void> finish_gpu_routes(uint32_t p0,uint32_t m);
     RuntimeConfig cfg_{};
     V41Config     model_cfg_{};
     Manifest      manifest_{};

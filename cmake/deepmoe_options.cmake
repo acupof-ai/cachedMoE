@@ -93,6 +93,7 @@ list(APPEND DEEPMOE_SHADER_DEPS gpu/shaders/decode_attn_cm.slang)
 # design §7.14 dispatch list, plus the FP4 GEMV template and the raw-read
 # upper bound every kernel is scored against (design §7.1 rule 2).
 set(DEEPMOE_SHADERS
+    gpu/shaders/batch_route.slang
     gpu/shaders/dspark_onecb.slang
     gpu/shaders/dspark_mega.slang
     gpu/shaders/dspark_grid.slang

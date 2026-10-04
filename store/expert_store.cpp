@@ -333,6 +333,14 @@ TimelineValue ExpertStore::completed_timeline() const {
     return completed_timeline_;
 }
 
+Result<std::vector<uint64_t>> ExpertStore::guarded_snapshot(TimelineValue guard) {
+    std::lock_guard lk(mutex_);
+    if(guard<=completed_timeline_)return fail(Err::InvalidArgument,"snapshot guard is already completed");
+    auto copy=table_;
+    for(auto& s:slots_)if(s.state==SlotState::Resident)s.guard_timeline=std::max(s.guard_timeline,guard);
+    return copy;
+}
+
 Result<void> ExpertStore::set_guard(uint32_t slot, TimelineValue v) {
     std::lock_guard lk(mutex_);
     if (slot >= slots_.size()) return fail(Err::OutOfRange, std::format("slot {} out of range", slot));

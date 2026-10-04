@@ -260,7 +260,7 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     for (uint i = 0; i < RowsPerLane; ++i)
         for (uint j = 0; j < M; ++j) acc[i][j] = 0.0f;
 
-    for (uint ci = 0; ci < pc.list_count; ++ci) {
+    for (uint ci = 0; ci < ((GpuList != 0) ? SlotList[pc.num_slots] : pc.list_count); ++ci) {
         const uint slot   = SlotList[ci];
         uint active_mask = 0u;
         for (uint m = 0; m < kLiveM; ++m)

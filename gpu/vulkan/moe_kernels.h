@@ -236,6 +236,13 @@ public:
     // Device address of `y`, so the caller's next dispatch can read the MoE
     // output through buffer-device-address instead of the host copying it.
     uint64_t y_address() const { return y_.dev_addr; }
+    Result<void> record_gpu_copy(CommandBuffer&,uint64_t src,uint64_t dst,uint32_t words);
+    Result<void> init_gpu_route(uint32_t layers,const std::string& dir);
+    Result<void> upload_snapshot(std::span<const uint64_t>);
+    // snapshot is [layers][experts][6], each layer includes its shared row.
+    Result<void> record_gpu_route(CommandBuffer&,uint32_t layer,uint32_t m,
+                                  uint32_t topk,uint64_t ids,uint64_t weights,uint64_t x,
+                                  uint64_t saved,uint32_t* trace_unused=nullptr);
 
     // Bytes of weights + scales one A+B pair touches, the numerator of the
     // effective GB/s of design §7.1 rule 2.
@@ -244,6 +251,13 @@ public:
     uint64_t bytes_dispatch_b() const;
 
 private:
+    Pipeline gpu_copy_,gpu_route_,gpu_up_,gpu_down_,gpu_hq_;
+    GpuBuffer gpu_snapshot_,gpu_args_,gpu_indirect_;
+    DescriptorPool gpu_descriptors_;uint32_t gpu_layers_=0;uint64_t gpu_table_stride_=0,gpu_arg_stride_=256;
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    std::vector<VkDescriptorSet> gpu_route_sets_,gpu_up_sets_,gpu_down_sets_;
+#endif
+
     Result<void> record(uint32_t iterations, MoePhase phase);
 
     Device*          device_ = nullptr;

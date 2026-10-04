@@ -264,6 +264,8 @@ public:
     // The dispatches only, into a command buffer the caller has begun, so the
     // verify batch's MoE joins the layer's submit the way `record` does at M = 1.
     Result<void> record_batch_union(gpu::CommandBuffer& cmd);
+    gpu::MoeRunner& gpu_union(){return union_runner_;}
+    std::vector<uint64_t> snapshot_with_shared(std::span<const uint64_t> table,uint32_t layers) const;
     uint64_t     union_y_address() const { return union_runner_.y_address(); }
     const float* union_y_host() { return union_runner_.y(); }
     // Where the union runner's ffn input goes; `[m][hidden]` fp16.

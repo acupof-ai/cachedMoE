@@ -203,6 +203,9 @@ public:
     // Slots whose guard exceeds it cannot be recycled.
     void          set_completed_timeline(TimelineValue v);
     TimelineValue completed_timeline() const;
+    // One atomic residency snapshot and guard installation. Filling rows are
+    // absent; later publications are visible only in the next snapshot.
+    Result<std::vector<uint64_t>> guarded_snapshot(TimelineValue guard);
     // Records that a command buffer signalling `v` will read this slot.
     Result<void> set_guard(uint32_t slot, TimelineValue v);
 

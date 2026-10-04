@@ -88,7 +88,7 @@ uint xa_f16(float f) {
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-    const uint blocks = pc.k / kBlockK;
+    const uint blocks = max(1u,pc.pad) * pc.k / kBlockK;
     const uint blk    = gid.x * kWgSize + tid;
     if (blk >= blocks) return;
 

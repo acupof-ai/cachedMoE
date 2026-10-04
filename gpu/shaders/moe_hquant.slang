@@ -43,11 +43,11 @@ struct HQuantPush {
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     const uint blocks = pc.k / kBlockK;                 // 72
     const uint idx    = gid.x * kWgSize + tid;
-    if (idx >= M * pc.list_count * blocks) return;
+    if (idx >= M * ((GpuList != 0) ? SlotList[pc.num_slots] : pc.list_count) * blocks) return;
 
     const uint blk  = idx % blocks;
-    const uint li   = (idx / blocks) % pc.list_count;
-    const uint m    = idx / (blocks * pc.list_count);
+    const uint li   = (idx / blocks) % ((GpuList != 0) ? SlotList[pc.num_slots] : pc.list_count);
+    const uint m    = idx / (blocks * ((GpuList != 0) ? SlotList[pc.num_slots] : pc.list_count));
     const uint row  = m * pc.num_slots + SlotList[li];
 
     // The fp16 h dispatch A wrote. HPrecision == 1 is rejected host-side: the
