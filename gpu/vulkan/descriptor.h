@@ -18,6 +18,7 @@
 #include "core/status.h"
 #include "gpu/vulkan/device.h"
 #include "gpu/vulkan/pipeline.h"
+#include "gpu/vulkan/memory.h"
 
 namespace deepmoe::gpu {
 
@@ -60,3 +61,25 @@ private:
 };
 
 }  // namespace deepmoe::gpu
+
+namespace deepmoe::gpu {
+// Pointer-table pages are immutable from recording until the fence. Reuse
+// only after completion; compatible layouts are one storage binding, 64 B push.
+class ArgumentPages {
+public:
+    ~ArgumentPages();
+    Result<void> create(Device&,MemoryAllocator&,uint32_t capacity);
+    void destroy();
+    void reset(){used_=0;}
+    bool valid()const{return buffer_.valid();}
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    Result<VkDescriptorSet> snapshot(const Pipeline&,const uint64_t*);
+#endif
+private:
+    MemoryAllocator* allocator_=nullptr;GpuBuffer buffer_;DescriptorPool descriptors_;
+    uint64_t stride_=256;uint32_t used_=0,capacity_=0;
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    std::vector<VkDescriptorSet> sets_;
+#endif
+};
+}

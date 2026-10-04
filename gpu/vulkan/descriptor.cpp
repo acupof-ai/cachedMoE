@@ -86,3 +86,34 @@ Result<VkDescriptorSet> DescriptorPool::allocate(const Pipeline& pipeline,
 #endif  // DEEPMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu
+
+#include <cstring>
+namespace deepmoe::gpu {
+ArgumentPages::~ArgumentPages(){destroy();}
+void ArgumentPages::destroy(){descriptors_.destroy();if(allocator_&&buffer_.valid())allocator_->free(buffer_);allocator_=nullptr;buffer_={};used_=capacity_=0;
+#if defined(DEEPMOE_ENABLE_VULKAN)
+sets_.clear();
+#endif
+}
+Result<void> ArgumentPages::create(Device& dev,MemoryAllocator& alloc,uint32_t capacity){
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    if(valid())return fail(Err::AlreadyExists,"argument pages already created");
+    VkPhysicalDeviceProperties props{};vkGetPhysicalDeviceProperties(dev.physical(),&props);
+    stride_=std::max<uint64_t>(256,props.limits.minStorageBufferOffsetAlignment);
+    allocator_=&alloc;capacity_=capacity;
+    auto b=alloc.allocate(capacity*stride_,true,false);if(!b)return std::unexpected(b.error());buffer_=*b;
+    sets_.resize(capacity,VK_NULL_HANDLE);return descriptors_.create(dev,capacity,capacity);
+#else
+    return fail(Err::Unavailable,"no Vulkan");
+#endif
+}
+#if defined(DEEPMOE_ENABLE_VULKAN)
+Result<VkDescriptorSet> ArgumentPages::snapshot(const Pipeline& pipe,const uint64_t* ptr){
+    if(!valid()||used_>=capacity_)return fail(Err::ResourceExhausted,"immutable argument pages exhausted");
+    const auto i=used_++;std::memcpy(static_cast<std::byte*>(buffer_.host_ptr)+i*stride_,ptr,256);
+    if(!sets_[i]){auto s=descriptors_.allocate(pipe,{{0,i*stride_,256,buffer_.buffer}});
+        if(!s)return std::unexpected(s.error());sets_[i]=*s;}
+    return sets_[i];
+}
+#endif
+}

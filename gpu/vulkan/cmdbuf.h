@@ -23,6 +23,7 @@
 #include "core/status.h"
 #include "core/types.h"
 #include "gpu/vulkan/device.h"
+#include "gpu/vulkan/memory.h"
 #include "gpu/vulkan/pipeline.h"
 #include "gpu/vulkan/timeline.h"
 
@@ -104,6 +105,8 @@ public:
     // global shader-write -> shader-read dependency, which is all a strictly
     // serial decode chain needs.
     Result<void> barrier();
+    Result<void> indirect_barrier();
+    Result<void> dispatch_indirect(const GpuBuffer&,uint64_t offset);
 
     // A compute dispatch. `bind` and `push` first; the expert addresses come
     // from the pointer table (design §5.3), so nothing is rebound per expert.

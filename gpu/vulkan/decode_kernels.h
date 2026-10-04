@@ -96,6 +96,8 @@ public:
 
     Result<void> create(Device& device, MemoryAllocator& alloc,
                         const std::string& shader_dir, const AttnSpec& spec = {});
+    Result<void> begin_immutable();
+    void end_immutable(){immutable_=false;}
     void destroy();
 
     // Separate address-table bindings let a batch record several engram rows
@@ -117,6 +119,8 @@ public:
     }
 
 private:
+    ArgumentPages pages_;bool immutable_=false;
+
     Result<void> make(DecodeStage s, const std::string& spv, uint32_t stage_const);
 
     Device*          device_ = nullptr;
@@ -275,6 +279,8 @@ public:
 
     Result<void> create(Device& device, MemoryAllocator& alloc, const std::string& shader_dir,
                         const MgtSpec& spec = {});
+    Result<void> begin_immutable();
+    void end_immutable(){immutable_=false;}
     void destroy();
     const MgtSpec& spec() const { return spec_; }
 
@@ -285,6 +291,10 @@ public:
     uint64_t* slots(MgtStage s);
     Result<void> record(CommandBuffer& cmd, uint32_t m, MgtStage s, const void* push,
                         uint32_t push_bytes, uint32_t gx, uint32_t gy = 1);
+#if defined(DEEPMOE_ENABLE_VULKAN)
+    Result<void> record_bound(CommandBuffer&, uint32_t, MgtStage, const void*, uint32_t,
+                              uint32_t, uint32_t, VkDescriptorSet);
+#endif
     Result<void> dispatch_now(uint32_t m, MgtStage s, const void* push, uint32_t push_bytes,
                               uint32_t gx, uint32_t gy = 1);
 
@@ -298,6 +308,8 @@ public:
     static uint32_t combine_groups(uint32_t rows) { return (rows + 255) / 256; }
 
 private:
+    ArgumentPages pages_;bool immutable_=false;
+
     Result<void> make(uint32_t m, MgtStage s);
 
     Device*          device_ = nullptr;

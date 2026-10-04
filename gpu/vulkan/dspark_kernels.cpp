@@ -181,12 +181,17 @@ uint64_t* DsparkRunner::slots(DsparkStage s) {
 
 Result<void> DsparkRunner::record(CommandBuffer& cmd, DsparkStage s, const void* push,
                                   uint32_t push_bytes, uint32_t groups) {
+    return record_bound(cmd,s,push,push_bytes,groups,sets_[static_cast<uint32_t>(s)]);
+}
+
+Result<void> DsparkRunner::record_bound(CommandBuffer& cmd, DsparkStage s, const void* push,
+                                  uint32_t push_bytes, uint32_t groups, VkDescriptorSet immutable_set) {
     const uint32_t i = static_cast<uint32_t>(s);
     if (!pipes_[i].valid()) return fail(Err::FailedPrecondition, "pipeline is not created");
     if (push_bytes > kPushBytes)
         return fail(Err::InvalidArgument, "push constants exceed the shared 64 B range");
     if (groups == 0) return fail(Err::InvalidArgument, "zero workgroups");
-    if (auto r = cmd.bind(pipes_[i], sets_[i]); !r) return r;
+    if (auto r = cmd.bind(pipes_[i], immutable_set); !r) return r;
     if (push_bytes) {
         if (auto r = cmd.push(pipes_[i], push, push_bytes); !r) return r;
     }

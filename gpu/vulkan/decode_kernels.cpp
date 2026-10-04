@@ -76,7 +76,8 @@ const char* mgt_stage_name(MgtStage s) {
 Result<void> DecodeRunner::create(Device&, MemoryAllocator&, const std::string&, const AttnSpec&) {
     return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
 }
-void DecodeRunner::destroy() {}
+void DecodeRunner::destroy() {
+    pages_.destroy();immutable_=false;}
 uint64_t* DecodeRunner::slots(DecodeStage, uint32_t) { return nullptr; }
 Result<void> DecodeRunner::record(CommandBuffer&, DecodeStage, const void*, uint32_t, uint32_t, uint32_t) {
     return fail(Err::Unavailable, "no vulkan");
@@ -90,7 +91,8 @@ Result<void> DecodeRunner::make(DecodeStage, const std::string&, uint32_t) {
 Result<void> MgtRunner::create(Device&, MemoryAllocator&, const std::string&, const MgtSpec&) {
     return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
 }
-void MgtRunner::destroy() {}
+void MgtRunner::destroy() {
+    pages_.destroy();immutable_=false;}
 Result<void> MgtRunner::ensure(uint32_t) { return fail(Err::Unavailable, "no vulkan"); }
 uint64_t* MgtRunner::slots(MgtStage) { return nullptr; }
 Result<void> MgtRunner::record(CommandBuffer&, uint32_t, MgtStage, const void*, uint32_t, uint32_t,
@@ -175,6 +177,7 @@ Result<void> DecodeRunner::create(Device& device, MemoryAllocator& alloc,
 }
 
 void DecodeRunner::destroy() {
+    pages_.destroy();immutable_=false;
     pool_.destroy();
     descriptors_.destroy();
     for (Pipeline& p : pipes_) p.destroy();
@@ -199,7 +202,9 @@ Result<void> DecodeRunner::record(CommandBuffer& cmd, DecodeStage s, const void*
     if (push_bytes > kPushBytes)
         return fail(Err::InvalidArgument, "push constants exceed the shared 64 B range");
     if (groups == 0) return fail(Err::InvalidArgument, "zero workgroups");
-    if (auto r = cmd.bind(pipes_[i], sets_[binding][i]); !r) return r;
+    VkDescriptorSet set=sets_[binding][i];
+    if(immutable_){auto snap=pages_.snapshot(pipes_[i],slots(s,binding));if(!snap)return std::unexpected(snap.error());set=*snap;}
+    if (auto r = cmd.bind(pipes_[i], set); !r) return r;
     if (push_bytes) {
         if (auto r = cmd.push(pipes_[i], push, push_bytes); !r) return r;
     }
@@ -332,6 +337,7 @@ Result<void> MgtRunner::create(Device& device, MemoryAllocator& alloc,
 }
 
 void MgtRunner::destroy() {
+    pages_.destroy();immutable_=false;
     pool_.destroy();
     descriptors_.destroy();
     for (PerM& p : per_m_) {
@@ -396,6 +402,14 @@ uint64_t* MgtRunner::slots(MgtStage s) {
 
 Result<void> MgtRunner::record(CommandBuffer& cmd, uint32_t m, MgtStage s, const void* push,
                                uint32_t push_bytes, uint32_t gx, uint32_t gy) {
+    if(m<1||m>kMgtMaxM||!per_m_[m].ready)return fail(Err::FailedPrecondition,"M pipelines not built");
+    VkDescriptorSet set=per_m_[m].sets[static_cast<uint32_t>(s)];
+    if(immutable_){auto snap=pages_.snapshot(per_m_[m].pipes[static_cast<uint32_t>(s)],slots(s));if(!snap)return std::unexpected(snap.error());set=*snap;}
+    return record_bound(cmd,m,s,push,push_bytes,gx,gy,set);
+}
+
+Result<void> MgtRunner::record_bound(CommandBuffer& cmd, uint32_t m, MgtStage s, const void* push,
+                               uint32_t push_bytes, uint32_t gx, uint32_t gy, VkDescriptorSet immutable_set) {
     if(s>=MgtStage::AttnCmGather && s<=MgtStage::AttnCmFinish && !spec_.attn_cm)
         return fail(Err::FailedPrecondition,"batch ATTN_CM was not enabled");
     if (m < 1 || m > kMgtMaxM || !per_m_[m].ready)
@@ -409,7 +423,7 @@ Result<void> MgtRunner::record(CommandBuffer& cmd, uint32_t m, MgtStage s, const
         return fail(Err::InvalidArgument,
                     std::format("{}: {} x {} workgroups exceeds a dispatch", mgt_stage_name(s),
                                 gx, gy));
-    if (auto r = cmd.bind(pm.pipes[i], pm.sets[i]); !r) return r;
+    if (auto r = cmd.bind(pm.pipes[i], immutable_set); !r) return r;
     if (push_bytes)
         if (auto r = cmd.push(pm.pipes[i], push, push_bytes); !r) return r;
     return cmd.dispatch(gx, gy);
@@ -429,3 +443,8 @@ Result<void> MgtRunner::dispatch_now(uint32_t m, MgtStage s, const void* push,
 #endif  // DEEPMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu
+
+namespace deepmoe::gpu {
+Result<void> DecodeRunner::begin_immutable(){if(!pages_.valid()){if(auto r=pages_.create(*device_,*alloc_,32);!r)return r;}pages_.reset();immutable_=true;return {};}
+Result<void> MgtRunner::begin_immutable(){if(!pages_.valid()){if(auto r=pages_.create(*device_,*alloc_,2048);!r)return r;}pages_.reset();immutable_=true;return {};}
+}
