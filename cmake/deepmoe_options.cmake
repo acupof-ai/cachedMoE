@@ -58,6 +58,7 @@ set(DEEPMOE_GPU_SOURCES
     gpu/vulkan/moe_kernels.cpp
     gpu/vulkan/attn_kernels.cpp
     gpu/vulkan/decode_kernels.cpp
+    gpu/vulkan/dspark_onecb.cpp
     gpu/vulkan/dspark_mega.cpp
     gpu/vulkan/dspark_kernels.cpp
     gpu/vulkan/prefill_kernels.cpp)
@@ -92,6 +93,7 @@ list(APPEND DEEPMOE_SHADER_DEPS gpu/shaders/decode_attn_cm.slang)
 # design §7.14 dispatch list, plus the FP4 GEMV template and the raw-read
 # upper bound every kernel is scored against (design §7.1 rule 2).
 set(DEEPMOE_SHADERS
+    gpu/shaders/dspark_onecb.slang
     gpu/shaders/dspark_mega.slang
     gpu/shaders/dspark_grid.slang
     gpu/shaders/moe_gemv_fp4.slang

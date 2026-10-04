@@ -1,6 +1,7 @@
 #include "runtime/dspark_runtime.h"
 #include "runtime/rope.h"
 #include "gpu/vulkan/dspark_mega.h"
+#include "gpu/vulkan/dspark_onecb.h"
 #include <cstdlib>
 #include <bit>
 #include "cpu/dequant.h"
@@ -26,6 +27,10 @@ struct DsparkRuntime::Impl {
     gpu::GpuScratch scratch;
     GpuMoeBridge moe;
     gpu::DsparkMegaRunner mega;
+    gpu::DsparkOneCbRunner onecb;
+    bool use_onecb=false;
+    std::vector<std::string> op_labels;
+    View route_save;
     gpu::Device* device=nullptr;gpu::MemoryAllocator* allocator=nullptr;
     bool use_mega=false,recording=false;uint32_t mega_groups=120;
     bool profile_gpu=false;
@@ -48,7 +53,7 @@ struct DsparkRuntime::Impl {
     void op(uint32_t kind,const Push& push,std::initializer_list<uint64_t> ptr,uint32_t gx=1,uint32_t gy=1) {
         gpu::DsparkMegaOp o;o.kind=kind;o.gx=gx;o.gy=gy;
         static_assert(sizeof push<=64);std::memcpy(o.push.data(),&push,sizeof push);
-        std::copy(ptr.begin(),ptr.end(),o.ptr.begin());ops.push_back(o);
+        std::copy(ptr.begin(),ptr.end(),o.ptr.begin());ops.push_back(o);op_labels.push_back(profile_stage+"helper."+std::to_string(kind));
     }
     void snapshot(std::string name,View src,uint32_t count,uint32_t mode=0) {
         const auto dst=captures[capture_names.size()];
@@ -99,7 +104,7 @@ struct DsparkRuntime::Impl {
     Result<void> profiled(const std::string& name,Record record) {
 #if defined(DEEPMOE_ENABLE_VULKAN)
         const auto start=Clock::now();
-        profile_pool.reset();
+        auto cb=profile_pool.acquire();if(!cb)return std::unexpected(cb.error());profile_cmd=*cb;
         DS_TRY(profile_cmd.begin());
         DS_TRY(profile_cmd.reset_queries(profile_queries,0,2));
         DS_TRY(profile_cmd.write_timestamp(profile_queries,0,false));
@@ -124,7 +129,7 @@ struct DsparkRuntime::Impl {
             if(stage==gpu::DsparkStage::MarkovBias)o.kind=12;
             if(stage==gpu::DsparkStage::AddBiasArgmax)o.kind=13;
             if(stage==gpu::DsparkStage::Confidence)o.kind=14;
-            std::memcpy(o.push.data(),push,bytes);std::memcpy(o.ptr.data(),ds.slots(stage),256);ops.push_back(o);return {};
+            std::memcpy(o.push.data(),push,bytes);std::memcpy(o.ptr.data(),ds.slots(stage),256);ops.push_back(o);op_labels.push_back(name.empty()?profile_stage+gpu::dspark_stage_name(stage):name);return {};
         }
         const auto label=name.empty()?std::string(gpu::dspark_stage_name(stage)):name;
         if(profile_gpu)return profiled(label,[&](auto& cmd){return ds.record(cmd,stage,push,bytes,groups);});
@@ -144,8 +149,8 @@ struct DsparkRuntime::Impl {
                 case gpu::MgtStage::Head:kind=11;break;
                 default:return fail(Err::Internal,"unsupported DSpark mega phase");
             }
-            gpu::DsparkMegaOp o;o.kind=kind;o.gx=groups;o.gy=y;
-            std::memcpy(o.push.data(),push,bytes);std::memcpy(o.ptr.data(),mgt.slots(stage),256);ops.push_back(o);return {};
+            gpu::DsparkMegaOp o;o.kind=kind;o.gx=groups;o.gy=y;o.reserved=m|(uint32_t(stage)<<8);
+            std::memcpy(o.push.data(),push,bytes);std::memcpy(o.ptr.data(),mgt.slots(stage),256);ops.push_back(o);op_labels.push_back(profile_stage+gpu::mgt_stage_name(stage));return {};
         }
         if(profile_gpu)return profiled(gpu::mgt_stage_name(stage),[&](auto& cmd){return mgt.record(cmd,m,stage,push,bytes,groups,y);});
         auto start=Clock::now();auto r=mgt.dispatch_now(m,stage,push,bytes,groups,y);
@@ -270,6 +275,9 @@ Result<void> DsparkRuntime::create(gpu::Device& dev,gpu::MemoryAllocator& alloc,
     }
     log_info("DSpark draft: GPU timestamps {}",p.profile_gpu?"on":"off");
     if(const char* e=std::getenv("DEEPMOE_DSPARK_MEGA"))p.use_mega=std::string_view(e)=="1";
+    if(const char* e=std::getenv("DEEPMOE_DSPARK_ONECB"))p.use_onecb=std::string_view(e)=="1";
+    if(p.use_mega&&p.use_onecb)return fail(Err::InvalidArgument,"DSpark mega and one-CB are mutually exclusive");
+    log_info("DSpark draft: one command buffer {}",p.use_onecb?"on":"off");
     DS_TRY(p.ds.create(dev,alloc,gpu::default_shader_dir()));DS_TRY(p.mgt.create(dev,alloc,gpu::default_shader_dir()));DS_TRY(p.mgt.ensure(M));
     DS_TRY(p.scratch.create(alloc,32ull<<20));
 #define BUF(name, bytes) {auto v=p.take(bytes);if(!v)return std::unexpected(v.error());p.name=*v;}
@@ -293,9 +301,11 @@ Result<void> DsparkRuntime::create(gpu::Device& dev,gpu::MemoryAllocator& alloc,
         for(uint32_t j=0;j<3;++j){const auto n=pre+std::format("w{}.weight",j+1);t[128*6+j*2]=p.A(n);t[128*6+j*2+1]=p.S(n);}
     }
     auto take=[&](View& v,uint64_t bytes)->Result<void>{auto r=p.take(bytes);if(!r)return std::unexpected(r.error());v=*r;return {};};
+    DS_TRY(take(p.route_save,3*M*16*4));
     DS_TRY(take(p.union_ids,16*4));DS_TRY(take(p.union_list,16*4));DS_TRY(take(p.union_w,M*16*4));DS_TRY(take(p.union_count,4));
     DS_TRY(take(p.xquant,6ull*D*2));DS_TRY(take(p.hquant,6ull*16*2304*4));
     for(auto& v:p.captures)DS_TRY(take(v,M*32768*4));
+    if(p.use_onecb)DS_TRY(p.onecb.create(dev,alloc,gpu::default_shader_dir()));
     reset();return {};
 }
 void DsparkRuntime::set_mega(bool enabled,uint32_t groups) {
@@ -303,6 +313,22 @@ void DsparkRuntime::set_mega(bool enabled,uint32_t groups) {
     if(p.use_mega&&!enabled)for(uint32_t st=0;st<3;++st)
         wc_readback(p.ring[st].data(),p.mega_kv[st].host,WIN*HD*2);
     p.use_mega=enabled;p.mega_groups=groups;
+}
+Result<void> DsparkRuntime::set_profile(bool enabled){
+    auto& p=*p_;if(enabled&&!p.profile_queries.count()){
+        if(!p.device->caps().timestamp_valid_bits)return fail(Err::Unavailable,"DSpark queue has no timestamps");
+        DS_TRY(p.profile_pool.create(*p.device));DS_TRY(p.profile_queries.create(*p.device,2));
+        auto cb=p.profile_pool.acquire();if(!cb)return std::unexpected(cb.error());p.profile_cmd=*cb;
+    }
+    p.profile_gpu=enabled;return {};
+}
+void DsparkRuntime::set_onecb(bool enabled) {
+    auto& p=*p_;
+    if(p.use_onecb&&!enabled)for(uint32_t st=0;st<3;++st)
+        wc_readback(p.ring[st].data(),p.mega_kv[st].host,WIN*HD*2);
+    if(enabled&&!p.use_onecb)for(uint32_t st=0;st<3;++st)
+        std::memcpy(p.mega_kv[st].host,p.ring[st].data(),WIN*HD*2);
+    p.use_onecb=enabled;
 }
 uint32_t DsparkRuntime::next_position() const { return p_->seeded?p_->next:0; }
 void DsparkRuntime::reset(){
@@ -321,10 +347,11 @@ Result<void> DsparkRuntime::append(uint32_t start,std::span<const float> hidden)
     if(p.seeded && start!=p.next)return fail(Err::FailedPrecondition,"DSpark committed hidden positions are not contiguous");
     if(p.use_mega&&!p.mega.valid())DS_TRY(p.mega.create(*p.device,*p.allocator,gpu::default_shader_dir()));
     struct ResetRecording {Impl& p;~ResetRecording(){p.recording=false;}} reset_recording{p};
-    p.recording=p.use_mega;
+    if(p.use_onecb&&!p.onecb.valid())DS_TRY(p.onecb.create(*p.device,*p.allocator,gpu::default_shader_dir()));
+    p.recording=p.use_mega||p.use_onecb;
     const uint32_t count=uint32_t(hidden.size()/(3*D));
     for(uint32_t at=0;at<count;at+=M){const uint32_t n=std::min(M,count-at);
-        p.ops.clear();
+        p.ops.clear();p.op_labels.clear();
         std::memcpy(p.hidden.host,hidden.data()+size_t(at)*3*D,size_t(n)*3*D*4);
         DS_TRY(p.gemv("mtp.0.main_proj.weight",p.hidden,p.temp,n,D,3*D));
         DS_TRY(p.norm("mtp.0.main_norm.weight",p.temp,p.main,n,D));
@@ -344,7 +371,8 @@ Result<void> DsparkRuntime::append(uint32_t start,std::span<const float> hidden)
                 }
             }
         }
-        if(p.recording)DS_TRY(p.mega.run(p.ops,p.mega_groups));
+        if(p.use_onecb)DS_TRY(p.onecb.run(p.ops,p.ds,p.mgt));
+        else if(p.recording)DS_TRY(p.mega.run(p.ops,p.mega_groups));
     }
     p.next=start+count;p.seeded=true;return {};
 }
@@ -353,11 +381,12 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
     if(output_rows<1 || output_rows>M)return fail(Err::InvalidArgument,"DSpark output rows must be 1..5");
     auto& p=*p_;if(!p.seeded||p.next!=pos+1||token>=V)return fail(Err::FailedPrecondition,"DSpark draft needs committed main KV through position");
     if(p.use_mega&&!p.mega.valid())DS_TRY(p.mega.create(*p.device,*p.allocator,gpu::default_shader_dir()));
-    p.observer=&probe;p.recording=p.use_mega;p.ops.clear();p.capture_names.clear();
+    if(p.use_onecb&&!p.onecb.valid())DS_TRY(p.onecb.create(*p.device,*p.allocator,gpu::default_shader_dir()));
+    p.observer=&probe;p.recording=p.use_mega||p.use_onecb;p.ops.clear();p.op_labels.clear();p.capture_names.clear();
     struct ResetRecording {Impl& p;~ResetRecording(){p.recording=false;}} reset_recording{p};
     p.timing.clear();p.gpu_timing.clear();const auto draft_start=Clock::now();
     std::array<uint32_t,45> expert_ids{};
-    if(!p.recording)DS_TRY(p.mgt.ensure(output_rows));
+    if(!p.use_mega)DS_TRY(p.mgt.ensure(output_rows));
     const auto* emb=p.pinned->find("embed.weight");auto* x=static_cast<float*>(p.x.host);
     for(uint32_t m=0;m<M;++m){const uint32_t id=m?128799:token;std::vector<uint16_t> row(D);
         std::memcpy(row.data(),static_cast<const uint16_t*>(emb->data_host)+size_t(id)*D,D*2);
@@ -379,6 +408,8 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
         DS_TRY(p.run_mgt(M,gpu::MgtStage::GateTopK,&gp,sizeof gp,1,M));
         if(p.recording) {
             if(probe){p.snapshot(pre+"route_i",p.gate_ids,M*3,1);p.snapshot(pre+"route_w",p.gate_w,M*3,2);}
+            if(p.use_onecb){uint32_t n=M*16;
+                p.op(21,n,{p.gate_ids.addr,p.route_save.addr+st*M*16*4},(n+255)/256);}
             p.moe_ops(st);
         } else {
         uint32_t ids[M*3];float weights[M*3];
@@ -428,7 +459,7 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
     gpu::MgtHeadPush hp{};hp.rows=V;hp.k=D;hp.slices=p.mgt.spec().head_slices;hp.x_stride=D;
     // The mega body has a fixed five-column head; its Markov suffix still
     // truncates. Serial uses the existing specialised head for the needed rows.
-    const uint32_t head_rows=p.recording?M:output_rows;
+    const uint32_t head_rows=p.use_mega?M:output_rows;
     for(uint32_t i=0;i<hp.slices;++i){hp.slice=i;DS_TRY(p.run_mgt(head_rows,gpu::MgtStage::Head,&hp,sizeof hp,p.mgt.row_groups(V)));}
     auto* id=static_cast<uint32_t*>(p.ids.host);id[0]=token;
     for(uint32_t i=0;i<output_rows;++i){gpu::DsparkHeadPush dp{};dp.m=M;dp.rows=V;dp.k=256;dp.rank=256;dp.pos=i;dp.logit_stride=V;dp.flags=gpu::kDsFlagTokenFromBuf;
@@ -441,14 +472,20 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos,uint32_t token,
     gpu::DsparkHeadPush cp{};cp.m=output_rows;cp.k=D;cp.rank=256;cp.x_stride=D;
     DS_TRY(p.run_ds(gpu::DsparkStage::Confidence,&cp,sizeof cp,1));
     if(p.recording) {
-        const auto start=Clock::now();DS_TRY(p.mega.run(p.ops,p.mega_groups));p.elapsed("mega.kernel",start);
+        const auto start=Clock::now();
+        if(p.use_onecb){DS_TRY(p.onecb.run(p.ops,p.ds,p.mgt,p.op_labels,p.profile_gpu));
+            p.gpu_timing=p.onecb.timing_ms;p.elapsed("onecb.record_submit",start);}
+        else {DS_TRY(p.mega.run(p.ops,p.mega_groups));p.elapsed("mega.kernel",start);}
         for(size_t i=0;i<p.capture_names.size();++i) {
             std::vector<float> v(p.capture_names[i].count);wc_readback(v.data(),p.captures[i].host,v.size()*4);
             if(probe)probe(p.capture_names[i].name,v);
         }
     }
-    Output out;out.gpu_dispatches=p.recording?1:87-2*(M-output_rows);out.gpu_phases=p.recording?uint32_t(p.ops.size()):out.gpu_dispatches;
-    out.expert_ids=expert_ids;out.expert_ids_valid=!p.recording;
+    Output out;out.gpu_submissions=p.recording?1:87-2*(M-output_rows);out.gpu_dispatches=p.use_onecb?uint32_t(p.ops.size()):p.recording?1:87-2*(M-output_rows);out.gpu_phases=p.recording?uint32_t(p.ops.size()):out.gpu_dispatches;
+    if(p.use_onecb){std::array<uint32_t,3*M*16> raw_ids;wc_readback(raw_ids.data(),p.route_save.host,sizeof raw_ids);
+        for(uint32_t st=0;st<3;++st)for(uint32_t m=0;m<M;++m)for(uint32_t j=0;j<3;++j)
+            expert_ids[(st*M+m)*3+j]=raw_ids[(st*M+m)*16+j];}
+    out.expert_ids=expert_ids;out.expert_ids_valid=!p.use_mega;
     std::copy(id+1,id+1+output_rows,out.tokens.begin());std::memcpy(out.confidence.data(),p.conf.host,output_rows*4);
     auto copy_start=Clock::now();if(read_logits){out.logits.resize(output_rows*V);wc_readback(out.logits.data(),p.logits.host,output_rows*V*4);}
     p.elapsed("host.logits",copy_start);p.elapsed("wall.draft",draft_start);out.timing_ms=p.timing;out.gpu_timing_ms=p.gpu_timing;return out;

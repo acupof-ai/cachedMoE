@@ -25,6 +25,7 @@ public:
         std::vector<float> logits;
         std::map<std::string,double> timing_ms;
         std::map<std::string,double> gpu_timing_ms; // timestamp durations, opt-in
+        uint32_t gpu_submissions=0;
         uint32_t gpu_dispatches=0, gpu_phases=0; // measured host wall per dispatch/transfer
     };
     DsparkRuntime();
@@ -32,6 +33,8 @@ public:
     Result<void> create(gpu::Device&, gpu::MemoryAllocator&, const store::PinnedStore&,
                         store::ExpertStore&, store::Planner&, const TextConfig&);
     void reset();
+    Result<void> set_profile(bool enabled);
+    void set_onecb(bool enabled);
     void set_mega(bool enabled, uint32_t groups=120);
     uint32_t next_position() const;
     // Committed main positions only. Input is [n,15360], rounded hc means.

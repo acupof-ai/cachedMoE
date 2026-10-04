@@ -21,9 +21,10 @@ function(add_slang_shader target src)
     set(out "${CMAKE_BINARY_DIR}/shaders/${name}.spv")
     set(_mega_args "")
     set(_mega_memory_command "")
-    if(name STREQUAL "dspark_mega")
+    if(name STREQUAL "dspark_mega" OR name STREQUAL "dspark_onecb")
         find_program(DEEPMOE_FUSION_PYTHON python3 REQUIRED)
         file(GLOB _mega_sources "${CMAKE_SOURCE_DIR}/gpu/shaders/*.slang")
+        if(NOT TARGET dspark_ops_generated)
         add_custom_command(
             OUTPUT "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/shaders"
@@ -31,7 +32,11 @@ function(add_slang_shader target src)
                     "${CMAKE_SOURCE_DIR}/gpu/shaders" "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
             DEPENDS "${CMAKE_SOURCE_DIR}/tools/fuse_dspark.py" ${_mega_sources}
             VERBATIM)
+        add_custom_target(dspark_ops_generated DEPENDS "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang")
+        endif()
+        if(name STREQUAL "dspark_mega")
         set(_mega_memory_command COMMAND "${DEEPMOE_FUSION_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/dspark_spirv_memory.py" "${out}")
+        endif()
         list(APPEND _mega_args "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
                               "${CMAKE_SOURCE_DIR}/tools/dspark_spirv_memory.py")
     endif()
