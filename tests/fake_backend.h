@@ -52,6 +52,7 @@ public:
 
         storage::ChunkCompletion c;
         c.chunk_id = req.chunk_id;
+        c.landing_copy_ns = copy_ns_;
         // Same EOF rule as the real backends: a read may run past the end of the
         // file by less than one sector and come back short, but never shorter
         // than ChunkRequest::min_bytes (storage/backend.h).
@@ -89,6 +90,7 @@ public:
 
     // --- test controls ---
     void hold_completions(bool on) { std::lock_guard lk(m_); hold_ = on; }
+    void set_copy_ns(uint64_t ns) { std::lock_guard lk(m_); copy_ns_ = ns; }
     // Every read of `f` completes with an I/O error: a mirror whose link dropped.
     void fail_file(const storage::File* f) { std::lock_guard lk(m_); fail_files_.push_back(f); }
     void clear_failures() { std::lock_guard lk(m_); fail_files_.clear(); }
@@ -107,6 +109,7 @@ private:
     std::deque<storage::ChunkCompletion> pending_, held_;
     std::vector<SubmitRecord> log_;
     bool hold_ = false;
+    uint64_t copy_ns_ = 0;
     std::vector<const storage::File*> fail_files_;
 };
 

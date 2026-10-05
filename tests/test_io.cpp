@@ -277,6 +277,7 @@ DEEPMOE_TEST(io, fake_backend_round_trip) {
     IoEngine engine;
     auto backend = std::make_unique<test::FakeBackend>(content, 8);
     test::FakeBackend* fake = backend.get();
+    fake->set_copy_ns(100);
     REQUIRE_OK(engine.start(std::move(backend), cfg));
 
     AlignedBuffer dst(256 * 1024);
@@ -301,6 +302,8 @@ DEEPMOE_TEST(io, fake_backend_round_trip) {
 
     engine.drain();
     const IoStats st = engine.stats();
+    CHECK_EQ(st.p0_copy_ns_sum, st.p0_chunks_issued * 100);
+    CHECK_EQ(st.p0_queue_wait_ns_sum + st.p0_service_ns_sum, st.p0_lat_ns_sum);
     CHECK_EQ(st.requests_submitted, 1u);
     CHECK_EQ(st.requests_completed, 1u);
     CHECK_EQ(st.bytes_completed, req.bytes);
