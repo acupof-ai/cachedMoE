@@ -761,7 +761,7 @@ steps, and the reference continuation has to be produced step by step.**
    查清动态 host 成本：首轮延迟编译录制 **468.274 ms**，稳态录制 **7.100 ms**（嵌套 Engram **5.477**），验证后路由 **5.206 ms**（hidden/carry **4.250**）。提前准备 pipeline 与精确 GPU hidden mean 后，固定格 hidden/carry **.034 ms**、verify wall/span 残差 **5.557 ms**；不同 cache 的总差额不能全归为实现收益。
    加载失败四类均0；serve 在模型加载前拒绝 `GPU_ROUTE=1` + streams>1，engine 两入口也拒绝。全程一个 GPU 作业、双盘48/48、速度0温控暂停。
    实际 pair-dot Q/out + draft head 同路径对照：cycle **121.731→119.806 ms**、projection **36.791→35.745**、head **8.403→8.319**，VGPR仍96。减半 **.963 ms <2**，NO-GO，开关0；attention **47.38 ms >45**。不重开 CM/fold/mega/host-flag/persistent/champion/MTP-unpin/缩小双向 draft body。
-   Phase5 按原动态周期175–189规则跳过；不能用质量下降的固定121ms条件替代它。动态 k 的固定轨迹新拟合最佳仍 k=2，估计收益0，保留384pin。ONECB/GPU route 默认0，未放宽短decode严格8/8门禁。profiling校准−3.33%未证明<1%，正式速度关闭。网页保持停止。
+   Phase5 按原动态周期175–189规则跳过；不能用质量下降的固定121ms条件替代它。动态 k 的固定轨迹新拟合最佳仍 k=2，估计收益0，保留384pin。ONECB/GPU route 默认0，未放宽短decode严格8/8门禁。profiling校准−3.33%未证明<1%，正式速度关闭。随后按用户要求网页显式启用原生k=5/top-4，固定5500槽双盘；短测15.2335805 tok/s、10周期/10验证提交，非配对速度结论。增加原生思考effort 1–100选择，CPU/工具31/31。见[报告§16](dspark_topk.md#16-网页启用原生-k5-与思考-effort2026-10-05)和[机器收据](dspark_web_receipt.json)。网页目前运行，温控80/72°C。
 
 0by. **The two levers 0bx left are now both priced, and both close (user 2026-10-01 "go": wn4 first, dot2 if it survives). Three new probe_occ modes, one run each, no kernel touched.**
 

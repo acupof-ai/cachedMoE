@@ -6,20 +6,33 @@ commands, its %LOCALAPPDATA% paths and its eight restart logs were all Windows, 
 every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
-STATE: STOPPED (2026-10-05, owner requested DSpark optimisation).
-Supervisor, web and engine exited; prior performance profile restored.
-Last configuration: ordinary miss-mask, normal LRU/P0, DSpark off.
-5500 slots, max_context 65536, GPU prefill minimum 16, one read source.
-HTTP / and /api/status 200; /api/config confirms --resident-only mask.
-Detached supervisor: build/web_mask/launch.py. It selects balanced, pauses the
-engine at GPU/NVMe 80 C and resumes at 72 C. Stop the supervisor by its LIVE PID
-from build/web_mask/state.json; it stops the web/engine and restores the prior
-power profile. Do not run GPU benches while this web instance is active.
+STATE: RUNNING (2026-10-05, owner requested DSpark k=5).
+Engine binary unchanged from 2ff1fdc; web settings implementation e6580e4.
+Fixed miss-mask; DSpark ON, --spec-k 5 --spec-top-k 4.
+DEEPMOE_DSPARK_ONECB=1, DEEPMOE_BATCH_GPU_ROUTE=1, draft profiling=0.
+One main path; one six-row verify per full cycle. Native effort selector
+50/75/100 and custom 1..100, default high75, active only when thinking is on.
+Short web smoke: 32 outputs, 15.2335805 tok/s; 10 cycles / 10 verify submits,
+21/47 draft accepts, 0 thermal pauses. This is not the earlier 18 tok/s workload.
+Receipt: docs/dspark_web_receipt.json; raw: bench/results/web_spec5/.
+5500 initial resident slots frozen before READY: no LRU/heat/eviction or decode
+miss admissions. Shared expert always runs; exact GPU prefill uses transit.
+Two read sources, mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash (48/48 shards).
+max_context 4096, GPU prefill minimum 16, --no-kv-disk.
+HTTP /, /api/config and /api/status 200; cache_fixed/cache_frozen true.
+Detached supervisor: build/web_mask/launch.py. It selects power-saver (the
+18.09 tok/s benchmark profile), pauses the engine at GPU/NVMe 80 C and resumes
+at 72 C. Stop the supervisor by its LIVE PID from build/web_mask/state.json;
+it stops the web/engine and restores the prior performance profile.
+Do not run GPU benches while this web instance is active.
 Logs and live state: build/web_mask/{web.log,engine.log,guard.log,thermal.jsonl,state.json}.
 Restart: python3 build/web_mask/launch.py (detach as needed).
+The old page was not refreshed; a new page with the controls is open.
+Transcripts and old disk KV were preserved. Restarting clears live GPU KV;
+restored transcript history does not imply that the prompt is already prefilled.
 The old tmux instance and launch command below are historical, not this instance.
 
-**ONE read source right now, and that is not the steady state.** The external USB4 mirror
+**Historical outage (2026-10-01); the current instance has two healthy sources.** The external USB4 mirror
 re-entered its 11-second connect/disconnect loop at 2026-10-01 21:16 while the machine was
 IDLE, so `/mnt/deepmoe2` is not mounted and decode runs at ~7.5 tok/s instead of the
 two-drive ~9.1. The recovery is a reboot (STATUS §6 risk 20), and

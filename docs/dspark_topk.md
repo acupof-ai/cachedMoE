@@ -801,3 +801,32 @@ cache全程fixed/frozen，最终4900 resident/0 filling/0 free、384pin、0evict
 主目录已用自己的toolchain/shader路径编译；52个SPIR-V与被测工作树逐文件hash一致。主目录CPU **25/25**、工具 **30/30**、`--streams 2` GPU-route提前拒绝均通过。工作树被测exe SHA256 **62a42a90a128e4dd0de9c0a47b93529349d0cc8e9aa68aa667c484164f879942**；主目录exe **9e4d44c75ccc6dcdcbb48fcefa808f788c8aa880df7756f30976074c84054542**，路径嵌入不同，未声称exe hash相同。`integration_backup/final_provenance.json`保留逐shader hash与主目录编译收据。
 
 精简机器收据为 [`dspark_e2e_receipt.json`](dspark_e2e_receipt.json)，完整原始收据归档在主目录 `bench/results/spec_e2e/`。日志记录原始执行路径；清理工作树后，以主目录归档位置读取。Phase1/3分开提交；文档随整条链合入main。网页保持停止、浏览器没有刷新，系统回到原performance模式。
+
+## 16. 网页启用原生 k=5 与思考 effort（2026-10-05）
+
+用户先要求尝试16，随后改为5；没有扩展模型原生五位置草稿块。此前网页
+`draft_tokens=5` 只是默认值，实际 `enabled=false`。新增 server 的显式投机参数，
+重启后 READY 为 `enabled=true / draft_tokens=5 / accept_top_k=4 / main_paths=1`。
+ONECB/GPU route=1，profiling/pair-dot/CM/fold/mega=0，固定5500槽、384 MTP pin、
+双盘 sources=2、power-saver，温控仍80°C暂停/72°C恢复。网页显示实际投机状态。
+
+一次独立冷会话短测，提示词 `简短解释 GPU 的作用。`（10 tokens），T=0、seed42、
+生成32 tokens（首个来自prefill，decode输出31）。实测 **15.2335805 tok/s**；
+**10 cycles、10 verify submits、57 target rows、21/47 草稿接受、3.1 decode outputs/cycle**。
+满周期将 root 和唯一五位置主路径合成六行验证，最后一轮按剩余输出长度缩短。
+没有多树、多次验证前向。所有decode专家miss_bytes为0；固定cache保持冻结。
+
+每周期 draft **23.3931 ms**、verify **177.7626 ms**、commit **1.2334 ms**、
+CPU **.0933 ms**，合计 **202.4824 ms**。更长的验证矩阵仍需要更多计算，且被拒绝的
+后缀不计入输出；按本次3.1输出摊销约65.32ms/output。前一节k=2的提示词和输出
+轨迹不同，不能把15.23与18.49直接当作配对加速比。这是功能短测，不是标准吞吐基准。
+GPU峰值62°C、外盘74.85°C，0温控暂停。
+
+思考 effort 使用checkpoint自身renderer，支持低50、高75、最大100与自定义1–100整数；
+不思考时不渲染预算前缀。预览和发送使用同一预算，随会话保存；预算改变可能使前缀
+不可复用并重新prefill。原默认75的思考prompt逐字一致；真实renderer预算1/50/75/100、
+API保存50/100/33与拒绝101、旧会话兼容、浏览器自定义输入均通过。CPU/工具门禁31/31。
+
+机器收据：[`dspark_web_receipt.json`](dspark_web_receipt.json)；原始events、READY、done、
+状态和派生统计：主目录 `bench/results/web_spec5/`。网页保持运行，新页面含控件，
+旧页面没有刷新。恢复历史消息不表示重启后的GPU KV仍驻留。
