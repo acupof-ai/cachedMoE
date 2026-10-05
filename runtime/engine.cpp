@@ -337,6 +337,9 @@ uint64_t host_heap_headroom(const gpu::Device& d, uint64_t* budget_out, uint64_t
 Engine::~Engine() { shutdown(); }
 
 Engine::Engine() {
+    // Preserve configuration checks made before init (such as set_streams).
+    // init resolves the supplied RuntimeConfig for the actual engine lifetime.
+    cfg_.gpu.apply_environment();
     streams_.push_back(std::make_unique<Stream>());
     cur_ = streams_[0].get();
 }
@@ -559,6 +562,13 @@ Result<void> Engine::configure_io_sources() {
 Result<void> Engine::init(const RuntimeConfig& cfg) {
     shutdown();
     cfg_ = cfg;
+    cfg_.gpu.apply_environment();
+    log_info("GPU config: route {}, engram early {}, readout {}, ONECB {}, mega {}, "
+             "profile {}, diagnostics {}, trim {}, pair dot {}, fold scale {}, ATTN_CM {}",
+             cfg_.gpu.batch_gpu_route, cfg_.gpu.batch_engram_early, cfg_.gpu.spec_gpu_readout,
+             cfg_.gpu.draft_onecb, cfg_.gpu.draft_mega, cfg_.gpu.draft_profile,
+             cfg_.gpu.draft_diagnostics, cfg_.gpu.draft_trim_tail, cfg_.gpu.mgt_pair_dot,
+             cfg_.gpu.mgt_fold_scale, cfg_.gpu.mgt_attn_cm);
     mask_wait_tau_ = -1;
     mask_wait_budget_experts_ = 8;
     mask_wait_budget_ms_ = 20;
@@ -1257,7 +1267,7 @@ Result<void> Engine::init_gpu() {
             for (auto id:ids) if (auto r=planner_.pin({uint16_t(40+st),id});!r) return r;
         }
         dspark_=std::make_unique<DsparkRuntime>();
-        if (auto r=dspark_->create(device_,alloc_a_,pinned_,store_,planner_,model_cfg_.text);!r) return r;
+        if (auto r=dspark_->create(device_,alloc_a_,pinned_,store_,planner_,model_cfg_.text,cfg_.gpu);!r) return r;
         log_info("engine: DSpark ready, 3 MTP stages / 384 pinned experts, draft {}, acceptance top-{}",cfg_.speculation.max_draft,cfg_.speculation.accept_topk);
     }
     gpu_ready_ = true;
@@ -1541,7 +1551,7 @@ Result<void> Engine::create_stream(Stream& s) {
 
 Result<void> Engine::set_streams(uint32_t n) {
     if (n == 0) return fail(Err::InvalidArgument, "a run needs at least one stream");
-    if (const char* e=std::getenv("DEEPMOE_BATCH_GPU_ROUTE"); n>1 && e && *e=='1')
+    if (n > 1 && cfg_.gpu.batch_gpu_route)
         return fail(Err::FailedPrecondition,"batch GPU routing requires streams=1");
     if (n < streams_.size())
         return fail(Err::InvalidArgument,
@@ -2303,7 +2313,7 @@ Result<void> Engine::layer_gate(Stream& s, uint32_t L, uint32_t position) {
     lc.gp_w1 = gp_w1;
     // The indexer wrote every compressed entry of the list sparse_attn just read.
     if (auto r = cur_->layer_.verify_after_attention(st); !r) return r;
-    if (dspark_ && L>=37) capture_draft_hidden(L,position,static_cast<const float*>(b.xout.host));
+    if (dspark_) capture_draft_hidden(L, position, static_cast<const float*>(b.xout.host));
 
     // design §7.1 / §7.8: the gate's ids are already in host-coherent memory.
     // Classify them, fetch the misses at P0, wait, host-signal the timeline the
@@ -2761,11 +2771,9 @@ Result<void> Engine::init_batch(uint32_t m_cap) {
     const TextConfig& c = model_cfg_.text;
     const std::string dir = gpu::default_shader_dir();
     gpu::MgtSpec mgt_spec;
-    if(const char* e=std::getenv("DEEPMOE_MGT_PAIR_DOT"))mgt_spec.pair_dot=*e=='1';
-    const char* fold_env=std::getenv("DEEPMOE_MGT_FOLD_SCALE");
-    mgt_spec.fold_scale=fold_env && *fold_env!='0';
-    const char* cm_env=std::getenv("DEEPMOE_MGT_ATTN_CM");
-    mgt_spec.attn_cm=cm_env && *cm_env!='0';
+    mgt_spec.pair_dot = cfg_.gpu.mgt_pair_dot;
+    mgt_spec.fold_scale = cfg_.gpu.mgt_fold_scale;
+    mgt_spec.attn_cm = cfg_.gpu.mgt_attn_cm;
     if(mgt_spec.attn_cm && !device_.caps().cooperative_matrix)
         return fail(Err::Unavailable,"batch ATTN_CM requires cooperative matrix support");
     if(mgt_spec.attn_cm)
@@ -2844,8 +2852,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     // so the previous layer's deferred hc_post has to be materialised first --
     // the same order `run_layer` uses, one dispatch for all M rows.
     if (cur_->engram_.has_layer(L)) {
-        const char* early_env=std::getenv("DEEPMOE_BATCH_ENGRAM_EARLY");
-        const bool early=batch_gpu_route_||!early_env || *early_env!='0';
+        const bool early = batch_gpu_route_ || cfg_.gpu.batch_engram_early;
         if (auto r = cmd_open(); !r) return r;
         if (apply_post) {
             BatchStep prev = st;
@@ -2902,7 +2909,10 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     if(batch_gpu_route_){
         auto& runner=cur_->moe_.gpu_union();
         route_steps_.push_back(st);
-        if(dspark_&&L>=37){if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.xout.addr,cur_->saved_hidden_[L-37].addr,M*c.hidden_size,true,c.hidden_size);!r)return r;}
+        if (const auto capture = draft_layer_slot(L); dspark_ && capture) {
+            if (auto r = runner.record_gpu_copy(cur_->tok_cmd_, bb.xout.addr,
+                    cur_->saved_hidden_[*capture].addr, M * c.hidden_size, true, c.hidden_size); !r) return r;
+        }
         if(spec_inflight_&&st.run_compressor&&st.compress_ratio>1){
             if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.cmp_y.addr,cur_->saved_carry_k_[L].addr,M*c.head_dim);!r)return r;
             if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.cmp_g.addr,cur_->saved_carry_g_[L].addr,M*c.head_dim);!r)return r;
@@ -2913,7 +2923,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     }
     if (auto r = cmd_flush(0); !r) return r;
     if (auto r = cur_->layer_.verify_after_attention_batch(st); !r) return r;
-    if (dspark_ && L>=37) for(uint32_t j=0;j<M;++j)
+    if (dspark_) for(uint32_t j=0;j<M;++j)
         capture_draft_hidden(L,p0+j,static_cast<const float*>(bb.xout.host)+size_t(j)*c.hc_mult*c.hidden_size);
     if (spec_inflight_ && st.run_compressor && st.compress_ratio>1) {
         BatchCarry carry;carry.layer=L;carry.kv.resize(size_t(M)*c.head_dim);carry.score.resize(carry.kv.size());
@@ -3073,57 +3083,118 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     return {};
 }
 
-Result<void> Engine::finish_gpu_routes(uint32_t p0,uint32_t M) {
-    const auto& c=model_cfg_.text;const auto topk=c.num_experts_per_tok;
+Result<void> Engine::finish_gpu_routes(uint32_t p0, uint32_t M) {
+    const auto &c = model_cfg_.text;
+    const auto topk = c.num_experts_per_tok;
+    constexpr auto records = layout::kGateRecordCount;
+    constexpr auto weight_offset = layout::kMoeBatchColumns * records;
     batch_route_host_ms_.fill(0);
-    for(const auto& st:route_steps_){const uint32_t L=st.layer;
-        auto stamp=Clock::now();
-        if(auto r=cur_->layer_.verify_after_attention_batch(st);!r)return r;
-        if(spec_diagnostics_)batch_route_host_ms_[0]+=ms_since(stamp);
-        stamp=Clock::now();
-        if(dspark_&&L>=37)for(uint32_t m=0;m<M;++m){
-            if(cur_->draft_hidden_.empty())cur_->draft_hidden_.resize(128*3*c.hidden_size);
-            const uint32_t pos=p0+m,slot=pos%128;
-            if(cur_->draft_position_[slot]!=pos){cur_->draft_position_[slot]=pos;cur_->draft_mask_[slot]=0;}
-            wc_readback(cur_->draft_hidden_.data()+size_t(slot)*3*c.hidden_size+(L-37)*c.hidden_size,
-                static_cast<const float*>(cur_->saved_hidden_[L-37].host)+size_t(m)*c.hidden_size,c.hidden_size*4);
-            cur_->draft_mask_[slot]|=uint8_t(1u<<(L-37));
-        }
-        if(spec_inflight_&&st.run_compressor&&st.compress_ratio>1){
-            BatchCarry carry;carry.layer=L;carry.kv.resize(size_t(M)*c.head_dim);carry.score.resize(carry.kv.size());
-            wc_readback(carry.kv.data(),cur_->saved_carry_k_[L].host,carry.kv.size()*4);
-            wc_readback(carry.score.data(),cur_->saved_carry_g_[L].host,carry.score.size()*4);batch_carry_.push_back(std::move(carry));
-        }
-        if(spec_diagnostics_)batch_route_host_ms_[1]+=ms_since(stamp);
-        stamp=Clock::now();
-        std::array<uint32_t,6*16*2> saved;wc_readback(saved.data(),cur_->saved_routes_[L].host,sizeof saved);
-        if(spec_diagnostics_)batch_route_host_ms_[2]+=ms_since(stamp);
-        stamp=Clock::now();
-        std::vector<uint16_t> chosen,near_ids;std::vector<float> chosen_w,near_scores;
-        std::set<uint32_t> kept_union;uint32_t snapshot_hits=0;
-        for(uint32_t m=0;m<M;++m){uint32_t served=0;double total=0,kept=0;
-            for(uint32_t i=0;i<16;++i){const auto e=saved[m*16+i];const float w=std::bit_cast<float>(saved[6*16+m*16+i]);
-                if(e>=c.n_routed_experts)return fail(Err::Internal,"GPU route emitted invalid expert");
-                near_ids.push_back(uint16_t(e));near_scores.push_back(w);if(i>=topk)continue;
-                if(spec_diagnostics_&&spec_inflight_)batch_route_requests_[(size_t(L)*M+m)*topk+i]=uint16_t(e);
-                total+=w;bool hit=route_snapshot_[(size_t(L)*c.n_routed_experts+e)*6]!=0;
-                if(hit){++served;kept+=w;if(w!=0)kept_union.insert(e);}
-                auto at=std::find(chosen.begin(),chosen.end(),uint16_t(e));
-                if(at==chosen.end()){chosen.push_back(uint16_t(e));chosen_w.push_back(w);if(hit)++snapshot_hits;}
-                else chosen_w[size_t(at-chosen.begin())]=std::max(chosen_w[size_t(at-chosen.begin())],w);
+    // The batch fence has completed. Read back its immutable routing snapshot
+    // before planning asynchronous demand fills for the following cycle.
+    for (const auto &st : route_steps_) {
+        const uint32_t L = st.layer;
+        auto stamp = Clock::now();
+        if (auto r = cur_->layer_.verify_after_attention_batch(st); !r) return r;
+        if (spec_diagnostics_) batch_route_host_ms_[0] += ms_since(stamp);
+        stamp = Clock::now();
+        if (const auto capture = draft_layer_slot(L); dspark_ && capture) {
+            if (cur_->draft_hidden_.empty())
+                cur_->draft_hidden_.resize(layout::kSlidingWindow * layout::kDsparkCaptureWidth);
+            for (uint32_t m = 0; m < M; ++m) {
+                const uint32_t pos = p0 + m, slot = pos % layout::kSlidingWindow;
+                if (cur_->draft_position_[slot] != pos) {
+                    cur_->draft_position_[slot] = pos;
+                    cur_->draft_mask_[slot] = 0;
+                }
+                wc_readback(cur_->draft_hidden_.data() +
+                                size_t(slot) * layout::kDsparkCaptureWidth +
+                                *capture * c.hidden_size,
+                            static_cast<const float *>(cur_->saved_hidden_[*capture].host) +
+                                size_t(m) * c.hidden_size,
+                            c.hidden_size * sizeof(float));
+                cur_->draft_mask_[slot] |= uint8_t(1u << *capture);
             }
-            ++rr_.layers;rr_.requested+=topk;rr_.served+=served;rr_.skipped+=topk-served;rr_.shared_only+=served==0;
-            if(total>0)rr_.mass_lost_sum+=1-kept/total;
         }
-        store::RouteDecision route;route.layer=L;route.chosen=chosen;route.weights=chosen_w;route.near_ids=near_ids;route.near_scores=near_scores;
-        if(spec_diagnostics_)batch_route_host_ms_[3]+=ms_since(stamp);
-        stamp=Clock::now();
-        auto plan=planner_.plan_layer(route,clock_);if(!plan)return std::unexpected(plan.error());
-        for(const auto& [key,stamp]:plan->joined)(void)store_.touch(key,stamp,true);
-        if(spec_diagnostics_)batch_route_host_ms_[4]+=ms_since(stamp);
-        cur_->timings_[L].hits=snapshot_hits;cur_->timings_[L].misses=uint32_t(chosen.size())-snapshot_hits;
-        cur_->timings_[L].miss_bytes=plan->miss_bytes;batch_miss_bytes_+=plan->miss_bytes;
-        batch_union_+=kept_union.size();profiler_.note_hot_bytes(layer_hot_bytes_[L]);
+        if (spec_inflight_ && st.run_compressor && st.compress_ratio > 1) {
+            BatchCarry carry;
+            carry.layer = L;
+            carry.kv.resize(size_t(M) * c.head_dim);
+            carry.score.resize(carry.kv.size());
+            wc_readback(carry.kv.data(), cur_->saved_carry_k_[L].host,
+                        carry.kv.size() * sizeof(float));
+            wc_readback(carry.score.data(), cur_->saved_carry_g_[L].host,
+                        carry.score.size() * sizeof(float));
+            batch_carry_.push_back(std::move(carry));
+        }
+        if (spec_diagnostics_) batch_route_host_ms_[1] += ms_since(stamp);
+        stamp = Clock::now();
+        std::array<uint32_t, layout::kSavedRouteWords> saved;
+        wc_readback(saved.data(), cur_->saved_routes_[L].host, sizeof saved);
+        if (spec_diagnostics_) batch_route_host_ms_[2] += ms_since(stamp);
+        stamp = Clock::now();
+        std::vector<uint16_t> chosen, near_ids;
+        std::vector<float> chosen_w, near_scores;
+        std::set<uint32_t> kept_union;
+        uint32_t snapshot_hits = 0;
+        for (uint32_t m = 0; m < M; ++m) {
+            uint32_t served = 0;
+            double total = 0, kept = 0;
+            for (uint32_t i = 0; i < records; ++i) {
+                const auto e = saved[m * records + i];
+                const float w = std::bit_cast<float>(saved[weight_offset + m * records + i]);
+                if (e >= c.n_routed_experts)
+                    return fail(Err::Internal, "GPU route emitted invalid expert");
+                near_ids.push_back(uint16_t(e));
+                near_scores.push_back(w);
+                if (i >= topk) continue;
+                if (spec_diagnostics_ && spec_inflight_)
+                    batch_route_requests_[(size_t(L) * M + m) * topk + i] = uint16_t(e);
+                total += w;
+                // Residency must use the snapshot consumed by the GPU, not
+                // the live store where a fill might already have landed.
+                const bool hit = route_snapshot_[(size_t(L) * c.n_routed_experts + e) *
+                                                 layout::kExpertAddressWords] != 0;
+                if (hit) {
+                    ++served;
+                    kept += w;
+                    if (w != 0) kept_union.insert(e);
+                }
+                const auto at = std::find(chosen.begin(), chosen.end(), uint16_t(e));
+                if (at == chosen.end()) {
+                    chosen.push_back(uint16_t(e));
+                    chosen_w.push_back(w);
+                    if (hit) ++snapshot_hits;
+                } else {
+                    chosen_w[size_t(at - chosen.begin())] =
+                        std::max(chosen_w[size_t(at - chosen.begin())], w);
+                }
+            }
+            ++rr_.layers;
+            rr_.requested += topk;
+            rr_.served += served;
+            rr_.skipped += topk - served;
+            rr_.shared_only += served == 0;
+            if (total > 0) rr_.mass_lost_sum += 1 - kept / total;
+        }
+        store::RouteDecision route;
+        route.layer = L;
+        route.chosen = chosen;
+        route.weights = chosen_w;
+        route.near_ids = near_ids;
+        route.near_scores = near_scores;
+        if (spec_diagnostics_) batch_route_host_ms_[3] += ms_since(stamp);
+        stamp = Clock::now();
+        auto plan = planner_.plan_layer(route, clock_);
+        if (!plan) return std::unexpected(plan.error());
+        for (const auto &[key, use_stamp] : plan->joined)
+            (void)store_.touch(key, use_stamp, true);
+        if (spec_diagnostics_) batch_route_host_ms_[4] += ms_since(stamp);
+        cur_->timings_[L].hits = snapshot_hits;
+        cur_->timings_[L].misses = uint32_t(chosen.size()) - snapshot_hits;
+        cur_->timings_[L].miss_bytes = plan->miss_bytes;
+        batch_miss_bytes_ += plan->miss_bytes;
+        batch_union_ += kept_union.size();
+        profiler_.note_hot_bytes(layer_hot_bytes_[L]);
     }
     return {};
 }
@@ -3131,13 +3202,16 @@ Result<void> Engine::finish_gpu_routes(uint32_t p0,uint32_t M) {
 Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens,
                                    std::span<BatchRow> rows, std::span<float> logits) {
     if (mask_wait_tau_ >= 0)
-        return fail(Err::FailedPrecondition, "weighted mask waiting is not supported in batched verification");
-    const auto host_begin=Clock::now();
-    const auto loads_before=store_.stats();const auto planner_before=planner_.stats();
-    batch_host_ms_.clear();batch_route_host_ms_.fill(0);
+        return fail(Err::FailedPrecondition,
+                    "weighted mask waiting is not supported in batched verification");
+    const auto host_begin = Clock::now();
+    const auto loads_before = store_.stats();
+    const auto planner_before = planner_.stats();
+    batch_host_ms_.clear();
+    batch_route_host_ms_.fill(0);
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     if (weights_.empty()) return fail(Err::FailedPrecondition, "no layer weights resolved");
-    const TextConfig& c = model_cfg_.text;
+    const TextConfig &c = model_cfg_.text;
     const uint32_t M = static_cast<uint32_t>(tokens.size());
     if (M == 0 || M > gpu::kMgtMaxM)
         return fail(Err::InvalidArgument,
@@ -3152,59 +3226,111 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         return fail(Err::FailedPrecondition,
                     "forward_batch produces design §7.4's state itself; the LOADED per-step "
                     "seeding has no batch form (set_produce_ced(true))");
-    const char* route_env=std::getenv("DEEPMOE_BATCH_GPU_ROUTE");
-    const bool gpu_route=route_env&&std::string_view(route_env)=="1";
-    if(gpu_route&&streams_.size()>1)return fail(Err::FailedPrecondition,"batch GPU routing requires streams=1");
+    const bool gpu_route = cfg_.gpu.batch_gpu_route;
+    if (gpu_route && streams_.size() > 1)
+        return fail(Err::FailedPrecondition, "batch GPU routing requires streams=1");
     if (auto r = init_batch(std::max(M, batch_cap_)); !r) return r;
     if (uint64_t(p0) + M > max_context())
         return fail(Err::ResourceExhausted,
                     std::format("a batch at {}..{} past the {}-position context", p0, p0 + M - 1,
                                 max_context()));
 
-    if(gpu_route&&resident_only_!=ResidentOnly::Mask)return fail(Err::FailedPrecondition,"batch GPU routing requires resident-only mask");
-    if(gpu_route&&batch_probe)return fail(Err::FailedPrecondition,"batch GPU routing cannot provide live per-layer CPU probes");
-    if(!route_config_logged_){log_info("verify batch: GPU snapshot routing {}",gpu_route?"on":"off");route_config_logged_=true;}
-    batch_gpu_route_=gpu_route;route_steps_.clear();
-    TimelineValue snapshot_guard=0;
-    const auto original_rope=cur_->layer_.batch().rope,original_rope_lat=cur_->layer_.batch().rope_lat;
-    struct FinishRoute{Engine& e;TimelineValue& guard;gpu::GpuScratch::View rope,rope_lat;~FinishRoute(){
-        if(!e.batch_gpu_route_)return;
-        if(e.cur_->tok_open_){(void)e.cur_->tok_cmd_.end();e.cur_->tok_open_=false;}
-        e.cur_->mgt_.end_immutable();e.cur_->dec_.end_immutable();
-        e.cur_->layer_.batch().rope=rope;e.cur_->layer_.batch().rope_lat=rope_lat;
-        if(guard){auto fence=e.cur_->fence_.value();if(e.cur_->submits_==0||(fence&&*fence>=e.cur_->fence_value_))e.store_.set_completed_timeline(guard);}
-        e.batch_gpu_route_=false;
-    }} finish_route{*this,snapshot_guard,original_rope,original_rope_lat};
-    if(gpu_route){
-        auto& runner=cur_->moe_.gpu_union();
-        if(auto r=runner.init_gpu_route(c.num_hidden_layers,gpu::default_shader_dir());!r)return r;
-        if(!cur_->route_scratch_.capacity()){
-            if(auto r=cur_->route_scratch_.create(alloc_a_,8ull<<20);!r)return r;
-            auto take=[&](gpu::GpuScratch::View& v,uint64_t n)->Result<void>{auto r=cur_->route_scratch_.alloc(n);if(!r)return std::unexpected(r.error());v=*r;return {};};
-            for(uint32_t l=0;l<c.num_hidden_layers;++l){
-                if(auto r=take(cur_->saved_routes_[l],6*16*2*4);!r)return r;
-                if(auto r=take(cur_->saved_rope_[l],6*c.qk_rope_head_dim*4);!r)return r;
-                if(auto r=take(cur_->saved_rope_lat_[l],6*c.qk_rope_head_dim*4);!r)return r;
-                if(auto r=take(cur_->saved_carry_k_[l],6*c.head_dim*4);!r)return r;
-                if(auto r=take(cur_->saved_carry_g_[l],6*c.head_dim*4);!r)return r;
+    if (gpu_route && resident_only_ != ResidentOnly::Mask)
+        return fail(Err::FailedPrecondition, "batch GPU routing requires resident-only mask");
+    if (gpu_route && batch_probe)
+        return fail(Err::FailedPrecondition,
+                    "batch GPU routing cannot provide live per-layer CPU probes");
+    if (!route_config_logged_) {
+        log_info("verify batch: GPU snapshot routing {}", gpu_route ? "on" : "off");
+        route_config_logged_ = true;
+    }
+    batch_gpu_route_ = gpu_route;
+    route_steps_.clear();
+    TimelineValue snapshot_guard = 0;
+    const auto original_rope = cur_->layer_.batch().rope,
+               original_rope_lat = cur_->layer_.batch().rope_lat;
+    struct FinishRoute {
+        Engine &e;
+        TimelineValue &guard;
+        gpu::GpuScratch::View rope, rope_lat;
+        ~FinishRoute() {
+            if (!e.batch_gpu_route_) return;
+            if (e.cur_->tok_open_) {
+                (void)e.cur_->tok_cmd_.end();
+                e.cur_->tok_open_ = false;
             }
-            for(auto& v:cur_->saved_hidden_)if(auto r=take(v,6*c.hidden_size*4);!r)return r;
+            e.cur_->mgt_.end_immutable();
+            e.cur_->dec_.end_immutable();
+            e.cur_->layer_.batch().rope = rope;
+            e.cur_->layer_.batch().rope_lat = rope_lat;
+            if (guard) {
+                auto fence = e.cur_->fence_.value();
+                if (e.cur_->submits_ == 0 || (fence && *fence >= e.cur_->fence_value_))
+                    e.store_.set_completed_timeline(guard);
+            }
+            e.batch_gpu_route_ = false;
         }
-        if(auto r=cur_->mgt_.begin_immutable();!r)return r;
-        if(auto r=cur_->dec_.begin_immutable();!r)return r;
-        snapshot_guard=++guard_clock_;
-        auto snapshot=store_.guarded_snapshot(snapshot_guard);if(!snapshot)return std::unexpected(snapshot.error());
-        route_snapshot_=std::move(*snapshot);
-        auto shared=cur_->moe_.snapshot_with_shared(route_snapshot_,c.num_hidden_layers);
-        if(auto r=runner.upload_snapshot(shared);!r)return r;
+    } finish_route{*this, snapshot_guard, original_rope, original_rope_lat};
+    if (gpu_route) {
+        auto &runner = cur_->moe_.gpu_union();
+        if (auto r = runner.init_gpu_route(c.num_hidden_layers, gpu::default_shader_dir()); !r)
+            return r;
+        if (!cur_->route_scratch_.capacity()) {
+            if (auto r = cur_->route_scratch_.create(alloc_a_, 8ull << 20); !r) return r;
+            auto take = [&](gpu::GpuScratch::View &v, uint64_t n) -> Result<void> {
+                auto r = cur_->route_scratch_.alloc(n);
+                if (!r) return std::unexpected(r.error());
+                v = *r;
+                return {};
+            };
+            for (auto *views : {&cur_->saved_routes_, &cur_->saved_rope_, &cur_->saved_rope_lat_,
+                                &cur_->saved_carry_k_, &cur_->saved_carry_g_})
+                views->resize(c.num_hidden_layers);
+            cur_->saved_hidden_.resize(c.dspark_target_layer_ids.size());
+            for (uint32_t l = 0; l < c.num_hidden_layers; ++l) {
+                if (auto r =
+                        take(cur_->saved_routes_[l], layout::kSavedRouteWords * sizeof(uint32_t));
+                    !r)
+                    return r;
+                if (auto r = take(cur_->saved_rope_[l],
+                                  layout::kMoeBatchColumns * c.qk_rope_head_dim * sizeof(float));
+                    !r)
+                    return r;
+                if (auto r = take(cur_->saved_rope_lat_[l],
+                                  layout::kMoeBatchColumns * c.qk_rope_head_dim * sizeof(float));
+                    !r)
+                    return r;
+                if (auto r = take(cur_->saved_carry_k_[l],
+                                  layout::kMoeBatchColumns * c.head_dim * sizeof(float));
+                    !r)
+                    return r;
+                if (auto r = take(cur_->saved_carry_g_[l],
+                                  layout::kMoeBatchColumns * c.head_dim * sizeof(float));
+                    !r)
+                    return r;
+            }
+            for (auto &v : cur_->saved_hidden_)
+                if (auto r = take(v, layout::kMoeBatchColumns * c.hidden_size * sizeof(float)); !r)
+                    return r;
+        }
+        if (auto r = cur_->mgt_.begin_immutable(); !r) return r;
+        if (auto r = cur_->dec_.begin_immutable(); !r) return r;
+        snapshot_guard = ++guard_clock_;
+        auto snapshot = store_.guarded_snapshot(snapshot_guard);
+        if (!snapshot) return std::unexpected(snapshot.error());
+        route_snapshot_ = std::move(*snapshot);
+        auto shared = cur_->moe_.snapshot_with_shared(route_snapshot_, c.num_hidden_layers);
+        if (auto r = runner.upload_snapshot(shared); !r) return r;
     }
 
-    ++batch_forward_calls_;last_batch_layers_=0;
+    ++batch_forward_calls_;
+    last_batch_layers_ = 0;
     const TimePoint t_start = Clock::now();
-    if(spec_diagnostics_)batch_host_ms_.emplace_back("setup_snapshot",ms_since(host_begin));
+    if (spec_diagnostics_) batch_host_ms_.emplace_back("setup_snapshot", ms_since(host_begin));
     tracer_.token_begin(p0);
     if (cur_->history_.size() < size_t(p0) + M) cur_->history_.resize(size_t(p0) + M, 0);
-    for (uint32_t m = 0; m < M; ++m) cur_->history_[p0 + m] = tokens[m];
+    for (uint32_t m = 0; m < M; ++m)
+        cur_->history_[p0 + m] = tokens[m];
 
     cur_->timings_.assign(c.num_hidden_layers, LayerTiming{});
     cur_->submits_ = 0;
@@ -3213,78 +3339,86 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     cur_->gp_open_ = nullptr;
     batch_union_ = 0;
     batch_miss_bytes_ = 0;
-    if(spec_diagnostics_ && spec_inflight_)batch_route_requests_.assign(size_t(c.num_hidden_layers)*M*c.num_experts_per_tok,0);
+    if (spec_diagnostics_ && spec_inflight_)
+        batch_route_requests_.assign(size_t(c.num_hidden_layers) * M * c.num_experts_per_tok, 0);
     cur_->tok_first_ = true;
-    if (cur_->tok_open_) { (void)cur_->tok_cmd_.end(); cur_->tok_open_ = false; }
+    if (cur_->tok_open_) {
+        (void)cur_->tok_cmd_.end();
+        cur_->tok_open_ = false;
+    }
     cur_->layer_.invalidate_candidates();
 
     // Hashes depend only on the single verification path, already in history.
     // Issue P2 before layer-0 P0 reads rather than joining that queue at L1/L14.
     // Normal main-model LRU/P0 work and its residency snapshot are unchanged.
-    if(const char* e=std::getenv("DEEPMOE_BATCH_ENGRAM_EARLY");batch_gpu_route_||!e || *e!='0') {
-        const TimePoint f0=Clock::now();
-        for(const auto& table:cur_->engram_.tables().layers)
-            for(uint32_t m=0;m<M;++m)
-                if(auto r=cur_->engram_.fetch(table.layer,cur_->history_,p0+m,m);!r)return r;
-        cur_->mq_ms_+=ms_since(f0);
+    if (batch_gpu_route_ || cfg_.gpu.batch_engram_early) {
+        const TimePoint f0 = Clock::now();
+        for (const auto &table : cur_->engram_.tables().layers)
+            for (uint32_t m = 0; m < M; ++m)
+                if (auto r = cur_->engram_.fetch(table.layer, cur_->history_, p0 + m, m); !r)
+                    return r;
+        cur_->mq_ms_ += ms_since(f0);
     }
 
     // Once for the batch, not once a layer: the counts every layer may read are
     // the LAST position's, and the window half of every list is the same shape
     // for all M queries (docs/p4_dspark_runtime.md §6.4 item 3).
     if (auto r = prepare_ced(p0 + M - 1); !r) return r;
-    BatchScratch& bb = cur_->layer_.batch();
+    BatchScratch &bb = cur_->layer_.batch();
     write_batch_window_lists(bb, c.sliding_window, p0, M);
 
     // The M embeddings, in the layout `Engine::embed_token` writes for M = 1.
     {
         std::vector<uint16_t> row(c.hidden_size);
-        std::vector<float>    wide(c.hidden_size);
-        auto* x = static_cast<float*>(bb.x.host);
+        std::vector<float> wide(c.hidden_size);
+        auto *x = static_cast<float *>(bb.x.host);
         for (uint32_t m = 0; m < M; ++m) {
             const uint32_t tok = tokens[m];
             if (tok >= c.vocab_size)
-                return fail(Err::OutOfRange, std::format("token {} >= vocab {}", tok, c.vocab_size));
+                return fail(Err::OutOfRange,
+                            std::format("token {} >= vocab {}", tok, c.vocab_size));
             std::memcpy(row.data(),
-                        static_cast<const std::byte*>(embed_->data_host) +
+                        static_cast<const std::byte *>(embed_->data_host) +
                             uint64_t(tok) * c.hidden_size * 2,
                         size_t(c.hidden_size) * 2);
-            for (uint32_t d = 0; d < c.hidden_size; ++d) wide[d] = bf16_to_f32(row[d]);
-            float* dst = x + size_t(m) * c.hc_mult * c.hidden_size;
+            for (uint32_t d = 0; d < c.hidden_size; ++d)
+                wide[d] = bf16_to_f32(row[d]);
+            float *dst = x + size_t(m) * c.hc_mult * c.hidden_size;
             for (uint32_t j = 0; j < c.hc_mult; ++j)
                 std::memcpy(dst + size_t(j) * c.hidden_size, wide.data(),
                             size_t(c.hidden_size) * sizeof(float));
-            auto* mix = static_cast<float*>(bb.mix_a.host) + size_t(m) * 32;
+            auto *mix = static_cast<float *>(bb.mix_a.host) + size_t(m) * 32;
             std::memset(mix, 0, 128);
             mix[0] = 1.0f;
         }
     }
 
-    const auto record_begin=Clock::now();
-    if(spec_diagnostics_)batch_host_ms_.emplace_back("input_ced_engram_issue",ms_since(t_start));
+    const auto record_begin = Clock::now();
+    if (spec_diagnostics_) batch_host_ms_.emplace_back("input_ced_engram_issue", ms_since(t_start));
     bool apply_post = false;
     for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
         ++last_batch_layers_;
         if (auto r = run_layer_batch(L, p0, M, apply_post); !r) {
-            if (cur_->tok_open_) { (void)cur_->tok_cmd_.end(); cur_->tok_open_ = false; }
+            if (cur_->tok_open_) {
+                (void)cur_->tok_cmd_.end();
+                cur_->tok_open_ = false;
+            }
             return r;
         }
-
     }
     // The tail runs the last layer's hc_post, the collapse, the model norm, the
     // head and the per-row argmax. `record_tail_batch` does the close itself, so
     // there is no `record_close_batch` for layer 39.
     BatchStep last;
     last.layer = c.num_hidden_layers - 1;
-    last.p0    = p0;
-    last.m     = M;
+    last.p0 = p0;
+    last.m = M;
     DecodeLayer::BatchTail bt;
     bt.norm_w = norm_w_;
     bt.head_w = head_w_;
     bt.logits = cur_->blogits_.dev_addr;
     bt.sample = cur_->bsample_.dev_addr;
-    const char* readout_env = std::getenv("DEEPMOE_SPEC_GPU_READOUT");
-    const bool spec_readout = spec_inflight_ && (!readout_env || *readout_env != '0');
+    const bool spec_readout = spec_inflight_ && cfg_.gpu.spec_gpu_readout;
     if (spec_readout) {
         bt.accept_topk = cfg_.speculation.accept_topk;
         if (M > 1) {
@@ -3300,66 +3434,86 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     }
     if (auto r = cmd_open(); !r) return r;
     if (auto r = cur_->layer_.record_tail_batch(cur_->tok_cmd_, last, bt); !r) return r;
-    const auto flush_begin=Clock::now();
-    if(spec_diagnostics_)batch_host_ms_.emplace_back("record_layers_tail",ms_since(record_begin));
+    const auto flush_begin = Clock::now();
+    if (spec_diagnostics_)
+        batch_host_ms_.emplace_back("record_layers_tail", ms_since(record_begin));
     if (auto r = cmd_flush(0); !r) return r;
-    const auto routes_begin=Clock::now();
-    if(spec_diagnostics_){batch_host_ms_.emplace_back("submit_fence",ms_since(flush_begin));batch_host_ms_.emplace_back("queue_submit",cur_->sub_ms_);batch_host_ms_.emplace_back("fence_wait",cur_->wait_ms_);batch_host_ms_.emplace_back("engram_issue_land",cur_->mq_ms_);}
-    if(batch_gpu_route_){
-        store_.set_completed_timeline(snapshot_guard);snapshot_guard=0;
-        if(cur_->submits_!=1)return fail(Err::Internal,"GPU verify must have exactly one queue submission");
-        if(auto r=finish_gpu_routes(p0,M);!r)return r;
+    const auto routes_begin = Clock::now();
+    if (spec_diagnostics_) {
+        batch_host_ms_.emplace_back("submit_fence", ms_since(flush_begin));
+        batch_host_ms_.emplace_back("queue_submit", cur_->sub_ms_);
+        batch_host_ms_.emplace_back("fence_wait", cur_->wait_ms_);
+        batch_host_ms_.emplace_back("engram_issue_land", cur_->mq_ms_);
     }
-    if(spec_diagnostics_)batch_host_ms_.emplace_back("finish_routes",ms_since(routes_begin));
-    const auto readout_begin=Clock::now();
+    if (batch_gpu_route_) {
+        store_.set_completed_timeline(snapshot_guard);
+        snapshot_guard = 0;
+        if (cur_->submits_ != 1)
+            return fail(Err::Internal, "GPU verify must have exactly one queue submission");
+        if (auto r = finish_gpu_routes(p0, M); !r) return r;
+    }
+    if (spec_diagnostics_) batch_host_ms_.emplace_back("finish_routes", ms_since(routes_begin));
+    const auto readout_begin = Clock::now();
     flush_trace_batch();
     profiler_.note_hot_bytes(uint64_t(c.vocab_size) * c.hidden_size * 2);
 
     for (uint32_t m = 0; m < M; ++m) {
         gpu::SampleOut out{};
-        std::memcpy(&out, static_cast<const std::byte*>(cur_->bsample_.host_ptr) + size_t(m) * sizeof out,
-                    sizeof out);
+        std::memcpy(
+            &out, static_cast<const std::byte *>(cur_->bsample_.host_ptr) + size_t(m) * sizeof out,
+            sizeof out);
         if (out.rows != c.vocab_size)
             return fail(Err::Internal,
                         std::format("verify row {} scanned {} rows, not the {}-wide vocabulary", m,
                                     out.rows, c.vocab_size));
         rows[m].argmax = out.token;
-        rows[m].top1   = out.top1;
-        rows[m].top2   = out.top2;
+        rows[m].top1 = out.top1;
+        rows[m].top2 = out.top2;
         if (spec_readout && m + 1 < M)
             std::memcpy(&rows[m].draft_rank,
-                        static_cast<const std::byte*>(cur_->brank_.host_ptr) + size_t(m) * sizeof(gpu::MgtRankOut),
+                        static_cast<const std::byte *>(cur_->brank_.host_ptr) +
+                            size_t(m) * sizeof(gpu::MgtRankOut),
                         sizeof(gpu::MgtRankOut));
     }
     if (!logits.empty())
-        wc_readback(logits.data(), cur_->blogits_.host_ptr, size_t(M) * c.vocab_size * sizeof(float));
+        wc_readback(logits.data(), cur_->blogits_.host_ptr,
+                    size_t(M) * c.vocab_size * sizeof(float));
     ++cur_->token_;
     ++clock_;
-    if(spec_diagnostics_){
-        batch_host_ms_.emplace_back("trace_readout",ms_since(readout_begin));
-        static constexpr const char* labels[]={"route_index_validation","route_hidden_carry","route_readback","route_classify","route_planner"};
-        for(size_t i=0;i<5;++i)batch_host_ms_.emplace_back(labels[i],batch_route_host_ms_[i]);
-        const auto s=store_.stats();const auto ps=planner_.stats();
-        batch_load_failures_={ps.p0_reserve_failed-planner_before.p0_reserve_failed,ps.p0_submit_failed-planner_before.p0_submit_failed,ps.p0_io_failed-planner_before.p0_io_failed,s.fills_failed-loads_before.fills_failed};
-        batch_expert_wait_calls_=ps.wait_calls-planner_before.wait_calls;
-        batch_expert_miss_joins_=ps.stall_waits-planner_before.stall_waits;
-        batch_expert_wait_ms_=(ps.wait_ns-planner_before.wait_ns)/1e6;
+    if (spec_diagnostics_) {
+        batch_host_ms_.emplace_back("trace_readout", ms_since(readout_begin));
+        static constexpr const char *labels[] = {"route_index_validation", "route_hidden_carry",
+                                                 "route_readback", "route_classify",
+                                                 "route_planner"};
+        for (size_t i = 0; i < 5; ++i)
+            batch_host_ms_.emplace_back(labels[i], batch_route_host_ms_[i]);
+        const auto s = store_.stats();
+        const auto ps = planner_.stats();
+        batch_load_failures_ = {ps.p0_reserve_failed - planner_before.p0_reserve_failed,
+                                ps.p0_submit_failed - planner_before.p0_submit_failed,
+                                ps.p0_io_failed - planner_before.p0_io_failed,
+                                s.fills_failed - loads_before.fills_failed};
+        batch_expert_wait_calls_ = ps.wait_calls - planner_before.wait_calls;
+        batch_expert_miss_joins_ = ps.stall_waits - planner_before.stall_waits;
+        batch_expert_wait_ms_ = (ps.wait_ns - planner_before.wait_ns) / 1e6;
     }
     (void)t_start;
     return {};
 }
 
 Result<void> Engine::snapshot_batch_ring(uint32_t p0, uint32_t m) {
-    const TextConfig& c = model_cfg_.text;
+    const TextConfig &c = model_cfg_.text;
     if (m == 0 || m > gpu::kMgtMaxM) return fail(Err::InvalidArgument, "snapshot of 0 positions");
     std::vector<uint32_t> slots(m), layers(c.num_hidden_layers);
-    for (uint32_t i = 0; i < m; ++i) slots[i] = (p0 + i) % c.sliding_window;
-    for (uint32_t l = 0; l < c.num_hidden_layers; ++l) layers[l] = l;
+    for (uint32_t i = 0; i < m; ++i)
+        slots[i] = (p0 + i) % c.sliding_window;
+    for (uint32_t l = 0; l < c.num_hidden_layers; ++l)
+        layers[l] = l;
     auto s = cur_->kvs_.snapshot_ring(slots, layers);
     if (!s) return std::unexpected(s.error());
-    batch_snap_      = std::move(*s);
-    batch_snap_p0_   = p0;
-    batch_snap_m_    = m;
+    batch_snap_ = std::move(*s);
+    batch_snap_p0_ = p0;
+    batch_snap_m_ = m;
     batch_snap_hist_ = cur_->history_.size();
     return {};
 }
@@ -3647,7 +3801,7 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
         if(auto r=init_batch(6);!r)return r;
         for(uint32_t m=1;m<=cfg_.speculation.max_draft+1;++m)
             if(auto r=cur_->mgt_.ensure(m);!r)return r;
-        if(const char* e=std::getenv("DEEPMOE_BATCH_GPU_ROUTE");e && *e=='1')
+        if (cfg_.gpu.batch_gpu_route)
             if(auto r=cur_->moe_.gpu_union().init_gpu_route(model_cfg_.text.num_hidden_layers,gpu::default_shader_dir());!r)return r;
     }
     return {};
@@ -4466,238 +4620,357 @@ std::string Engine::status() const {
 
 
 namespace deepmoe::runtime {
-void Engine::capture_draft_hidden(uint32_t L,uint32_t pos,const float* hc) {
-    if(L<37 || L>39)return;
-    constexpr uint32_t D=5120;
-    if(cur_->draft_hidden_.empty())cur_->draft_hidden_.resize(128*3*D);
-    const uint32_t slot=pos%128;
-    if(cur_->draft_position_[slot]!=pos){cur_->draft_position_[slot]=pos;cur_->draft_mask_[slot]=0;}
-    std::vector<float> host(4*D);wc_readback(host.data(),hc,host.size()*4);
-    auto* out=cur_->draft_hidden_.data()+size_t(slot)*3*D+(L-37)*D;
+std::optional<uint32_t> Engine::draft_layer_slot(uint32_t layer) const {
+    const auto &targets = model_cfg_.text.dspark_target_layer_ids;
+    const auto it = std::find(targets.begin(), targets.end(), int64_t(layer));
+    if (it == targets.end()) return std::nullopt;
+    return uint32_t(it - targets.begin());
+}
+
+void Engine::capture_draft_hidden(uint32_t L, uint32_t pos, const float *hc) {
+    const auto capture = draft_layer_slot(L);
+    if (!capture) return;
+    const uint32_t D = model_cfg_.text.hidden_size;
+    if (cur_->draft_hidden_.empty())
+        cur_->draft_hidden_.resize(layout::kSlidingWindow * layout::kDsparkCaptureWidth);
+    const uint32_t slot = pos % layout::kSlidingWindow;
+    if (cur_->draft_position_[slot] != pos) {
+        cur_->draft_position_[slot] = pos;
+        cur_->draft_mask_[slot] = 0;
+    }
+    std::vector<float> host(4 * D);
+    wc_readback(host.data(), hc, host.size() * 4);
+    auto *out =
+        cur_->draft_hidden_.data() + size_t(slot) * layout::kDsparkCaptureWidth + *capture * D;
     // mean(hc), rounded as the checkpoint's bf16 tensor.
-    for(uint32_t d=0;d<D;++d)out[d]=bf16_to_f32(cpu::float_to_bf16((host[d]+host[D+d]+host[2*D+d]+host[3*D+d])*0.25f));
-    cur_->draft_mask_[slot]|=uint8_t(1u<<(L-37));
+    for (uint32_t d = 0; d < D; ++d)
+        out[d] = bf16_to_f32(cpu::float_to_bf16(
+            (host[d] + host[D + d] + host[2 * D + d] + host[3 * D + d]) * 0.25f));
+    cur_->draft_mask_[slot] |= uint8_t(1u << *capture);
 }
 Result<void> Engine::seed_draft(uint32_t pos) {
-    if(dspark_->next_position()==pos+1)return {};
-    const uint32_t first=pos>=127?pos-127:0;
-    std::vector<float> hidden;hidden.reserve(size_t(pos-first+1)*15360);
-    for(uint32_t p=first;p<=pos;++p) {
-        if(cur_->draft_position_[p%128]!=p || cur_->draft_mask_[p%128]!=7)
-            return fail(Err::FailedPrecondition,"DSpark needs main hidden means for the committed 128-token window");
-        auto* row=cur_->draft_hidden_.data()+size_t(p%128)*15360;
-        hidden.insert(hidden.end(),row,row+15360);
+    if (dspark_->next_position() == pos + 1) return {};
+    const uint32_t first =
+        pos >= layout::kSlidingWindow - 1 ? pos - (layout::kSlidingWindow - 1) : 0;
+    std::vector<float> hidden;
+    hidden.reserve(size_t(pos - first + 1) * layout::kDsparkCaptureWidth);
+    for (uint32_t p = first; p <= pos; ++p) {
+        if (cur_->draft_position_[p % layout::kSlidingWindow] != p ||
+            cur_->draft_mask_[p % layout::kSlidingWindow] != layout::kDsparkCaptureMask)
+            return fail(Err::FailedPrecondition,
+                        "DSpark needs main hidden means for the committed 128-token window");
+        auto *row = cur_->draft_hidden_.data() +
+                    size_t(p % layout::kSlidingWindow) * layout::kDsparkCaptureWidth;
+        hidden.insert(hidden.end(), row, row + layout::kDsparkCaptureWidth);
     }
-    dspark_->reset();return dspark_->append(first,hidden);
+    dspark_->reset();
+    return dspark_->append(first, hidden);
 }
-Result<Engine::SpecStep> Engine::speculative_step(uint32_t root,uint32_t max_new,
-                                                std::span<const uint32_t> stops) {
-    if(!dspark_ || !produce_ced_ || current_stream()!=0 || !context_length() || !max_new)
-        return fail(Err::FailedPrecondition,"DSpark step requires an initialized stream-0 session and nonempty context");
-    const uint32_t p0=context_length(),V=model_cfg_.text.vocab_size;
-    if(p0+1>=max_context())return fail(Err::FailedPrecondition,"DSpark context is full");
-    uint32_t k=std::min({cfg_.speculation.max_draft,max_new-1,max_context()-p0-1});
-    SpecStep out;out.cycle.k=k;
+Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_new,
+                                                  std::span<const uint32_t> stops) {
+    if (!dspark_ || !produce_ced_ || current_stream() != 0 || !context_length() || !max_new)
+        return fail(Err::FailedPrecondition,
+                    "DSpark step requires an initialized stream-0 session and nonempty context");
+    const uint32_t p0 = context_length(), V = model_cfg_.text.vocab_size;
+    if (p0 + 1 >= max_context()) return fail(Err::FailedPrecondition, "DSpark context is full");
+    uint32_t k = std::min({cfg_.speculation.max_draft, max_new - 1, max_context() - p0 - 1});
+    SpecStep out;
+    out.cycle.k = k;
     DsparkRuntime::Output proposal;
     std::vector<uint32_t> initial;
-    if(spec_diagnostics_ && !spec_diagnostics_started_) {
-        auto slots=store_.evictable();
-        std::sort(slots.begin(),slots.end(),[](const auto& a,const auto& b){
-            if(a.last_use_token!=b.last_use_token)return a.last_use_token<b.last_use_token;
-            return a.slot<b.slot;
+    if (spec_diagnostics_ && !spec_diagnostics_started_) {
+        auto slots = store_.evictable();
+        std::sort(slots.begin(), slots.end(), [](const auto &a, const auto &b) {
+            if (a.last_use_token != b.last_use_token) return a.last_use_token < b.last_use_token;
+            return a.slot < b.slot;
         });
-        for(const auto& slot:slots)initial.push_back(uint32_t(slot.key.layer)*384+slot.key.expert);
+        for (const auto &slot : slots)
+            initial.push_back(uint32_t(slot.key.layer) * 384 + slot.key.expert);
     }
-    const TimePoint t0=Clock::now();
-    if(auto r=seed_draft(p0-1);!r)return std::unexpected(r.error());
-    const double draft_seed_ms=spec_diagnostics_ ? ms_since(t0) : 0.0;
+    const TimePoint t0 = Clock::now();
+    if (auto r = seed_draft(p0 - 1); !r) return std::unexpected(r.error());
+    const double draft_seed_ms = spec_diagnostics_ ? ms_since(t0) : 0.0;
     std::vector<uint32_t> input{root};
-    if(k) {
-        const char* tail_env=std::getenv("DEEPMOE_DSPARK_TRIM_TAIL");
-        const bool trim_tail=!tail_env || *tail_env!='0';
-        auto draft=dspark_->draft(p0-1,root,trim_tail?k:5,false);if(!draft)return std::unexpected(draft.error());
-        proposal=std::move(*draft);
-        if(cfg_.speculation.min_confidence) {
-            auto selected=draft_prefix_from_confidence(std::span(proposal.confidence).first(k),*cfg_.speculation.min_confidence);
-            if(!selected)return std::unexpected(selected.error());
-            k=*selected;out.cycle.k=k;
+    if (k) {
+        const bool trim_tail = cfg_.gpu.draft_trim_tail;
+        auto draft = dspark_->draft(p0 - 1, root, trim_tail ? k : layout::kDsparkBlockSize, false);
+        if (!draft) return std::unexpected(draft.error());
+        proposal = std::move(*draft);
+        if (cfg_.speculation.min_confidence) {
+            auto selected = draft_prefix_from_confidence(std::span(proposal.confidence).first(k),
+                                                         *cfg_.speculation.min_confidence);
+            if (!selected) return std::unexpected(selected.error());
+            k = *selected;
+            out.cycle.k = k;
         }
-        input.insert(input.end(),proposal.tokens.begin(),proposal.tokens.begin()+k);
+        input.insert(input.end(), proposal.tokens.begin(), proposal.tokens.begin() + k);
     }
-    out.cycle.draft_ms=ms_since(t0);
-    if(auto r=init_batch(cfg_.speculation.max_draft+1);!r)return std::unexpected(r.error());
-    if(auto r=snapshot_batch_ring(p0,k+1);!r)return std::unexpected(r.error());
+    out.cycle.draft_ms = ms_since(t0);
+    if (auto r = init_batch(cfg_.speculation.max_draft + 1); !r) return std::unexpected(r.error());
+    if (auto r = snapshot_batch_ring(p0, k + 1); !r) return std::unexpected(r.error());
     // Verification may wrap onto committed hidden means in the 128-position
     // draft window. Preserve the overwritten slots as well as the target KV:
     // a rejected suffix must not prevent a later continuation from reseeding.
-    std::vector<float> hidden_before(size_t(k+1)*15360);
-    std::array<int64_t,6> hidden_positions{};
-    std::array<uint8_t,6> hidden_masks{};
-    for(uint32_t j=0;j<=k;++j) {
-        const uint32_t slot=(p0+j)%128;
-        std::memcpy(hidden_before.data()+size_t(j)*15360,
-                    cur_->draft_hidden_.data()+size_t(slot)*15360,15360*sizeof(float));
-        hidden_positions[j]=cur_->draft_position_[slot];hidden_masks[j]=cur_->draft_mask_[slot];
+    std::vector<float> hidden_before(size_t(k + 1) * layout::kDsparkCaptureWidth);
+    std::array<int64_t, layout::kMoeBatchColumns> hidden_positions{};
+    std::array<uint8_t, layout::kMoeBatchColumns> hidden_masks{};
+    for (uint32_t j = 0; j <= k; ++j) {
+        const uint32_t slot = (p0 + j) % layout::kSlidingWindow;
+        std::memcpy(hidden_before.data() + size_t(j) * layout::kDsparkCaptureWidth,
+                    cur_->draft_hidden_.data() + size_t(slot) * layout::kDsparkCaptureWidth,
+                    layout::kDsparkCaptureWidth * sizeof(float));
+        hidden_positions[j] = cur_->draft_position_[slot];
+        hidden_masks[j] = cur_->draft_mask_[slot];
     }
-    auto carry=cur_->kvs_.backup_rows(p0,p0);if(!carry)return std::unexpected(carry.error());
-    batch_carry_before_=std::move(*carry);batch_carry_.clear();spec_inflight_=true;
-    const char* readout_env = std::getenv("DEEPMOE_SPEC_GPU_READOUT");
-    const bool gpu_readout = !readout_env || *readout_env != '0';
+    auto carry = cur_->kvs_.backup_rows(p0, p0);
+    if (!carry) return std::unexpected(carry.error());
+    batch_carry_before_ = std::move(*carry);
+    batch_carry_.clear();
+    spec_inflight_ = true;
+    const bool gpu_readout = cfg_.gpu.spec_gpu_readout;
     out.cycle.gpu_readout = gpu_readout;
-    std::vector<BatchRow> rows(k+1);
-    std::vector<float> matrix(gpu_readout ? 0 : size_t(k+1)*V);
-    const TimePoint tv=Clock::now();
-    auto verify=forward_batch(p0,input,rows,matrix);spec_inflight_=false;
-    if(!verify) { reset_context();return std::unexpected(verify.error()); }
-    out.cycle.verify_ms=ms_since(tv);
-    out.cycle.union_experts=batch_union_;out.cycle.miss_bytes=batch_miss_bytes_;
-    for(const auto& t:cur_->timings_) {
-        out.breakdown.attn_ms+=t.attn_ms;out.breakdown.moe_gpu_ms+=t.moe_gpu_ms;
-        out.breakdown.moe_host_ms+=t.moe_host_ms;out.breakdown.gate_ms+=t.gate_ms;
-        out.breakdown.engram_ms+=t.engram_ms;
-        out.breakdown.requests+=t.hits+t.misses;out.breakdown.hits+=t.hits;
-        out.breakdown.miss_bytes+=t.miss_bytes;
+    std::vector<BatchRow> rows(k + 1);
+    std::vector<float> matrix(gpu_readout ? 0 : size_t(k + 1) * V);
+    const TimePoint tv = Clock::now();
+    auto verify = forward_batch(p0, input, rows, matrix);
+    spec_inflight_ = false;
+    if (!verify) {
+        reset_context();
+        return std::unexpected(verify.error());
     }
-    out.breakdown.engram_ms+=cur_->mq_ms_; // measured synchronous batch row fetches
-    out.breakdown.record_ms=cur_->rec_ms_;out.breakdown.submit_ms=cur_->sub_ms_;
-    out.breakdown.bind_ms=cur_->bind_ms_;out.breakdown.wait_ms=cur_->wait_ms_;
-    out.breakdown.submits=cur_->submits_;
-    out.cycle.stall_ms=out.breakdown.gate_ms;
-    const TimePoint tc=Clock::now();
+    out.cycle.verify_ms = ms_since(tv);
+    out.cycle.union_experts = batch_union_;
+    out.cycle.miss_bytes = batch_miss_bytes_;
+    for (const auto &t : cur_->timings_) {
+        out.breakdown.attn_ms += t.attn_ms;
+        out.breakdown.moe_gpu_ms += t.moe_gpu_ms;
+        out.breakdown.moe_host_ms += t.moe_host_ms;
+        out.breakdown.gate_ms += t.gate_ms;
+        out.breakdown.engram_ms += t.engram_ms;
+        out.breakdown.requests += t.hits + t.misses;
+        out.breakdown.hits += t.hits;
+        out.breakdown.miss_bytes += t.miss_bytes;
+    }
+    out.breakdown.engram_ms += cur_->mq_ms_; // measured synchronous batch row fetches
+    out.breakdown.record_ms = cur_->rec_ms_;
+    out.breakdown.submit_ms = cur_->sub_ms_;
+    out.breakdown.bind_ms = cur_->bind_ms_;
+    out.breakdown.wait_ms = cur_->wait_ms_;
+    out.breakdown.submits = cur_->submits_;
+    out.cycle.stall_ms = out.breakdown.gate_ms;
+    const TimePoint tc = Clock::now();
     Result<uint32_t> a = uint32_t(0);
     if (gpu_readout) {
         uint32_t accepted = 0;
         for (; accepted < k; ++accepted) {
-            const auto& rank = rows[accepted].draft_rank;
-            if (rank.rows != V || rank.token != input[accepted+1]) {
-                a = fail(Err::Internal,"GPU draft rank header does not match verification row"); break;
+            const auto &rank = rows[accepted].draft_rank;
+            if (rank.rows != V || rank.token != input[accepted + 1]) {
+                a = fail(Err::Internal, "GPU draft rank header does not match verification row");
+                break;
             }
             if (rank.error) {
-                a = fail(Err::InvalidArgument,"invalid draft token or nonfinite verification logit"); break;
+                a = fail(Err::InvalidArgument,
+                         "invalid draft token or nonfinite verification logit");
+                break;
             }
             if (rank.better >= cfg_.speculation.accept_topk) break;
         }
         if (a) a = accepted;
-    } else a=accept_topk_prefix({input.data()+1,k},matrix,V,cfg_.speculation.accept_topk);
-    if(!a){reset_context();return std::unexpected(a.error());}
-    for(uint32_t j=0;j<=*a;++j) {
-        DecodeStepResult r;r.position=p0+j;r.greedy_token=rows[j].argmax;
-        r.top1=rows[j].top1;r.top2=rows[j].top2;r.token=j<*a?input[j+1]:rows[j].argmax;
-        if(j==*a && !sampling_.greedy()) {
+    } else
+        a = accept_topk_prefix({input.data() + 1, k}, matrix, V, cfg_.speculation.accept_topk);
+    if (!a) {
+        reset_context();
+        return std::unexpected(a.error());
+    }
+    for (uint32_t j = 0; j <= *a; ++j) {
+        DecodeStepResult r;
+        r.position = p0 + j;
+        r.greedy_token = rows[j].argmax;
+        r.top1 = rows[j].top1;
+        r.top2 = rows[j].top2;
+        r.token = j < *a ? input[j + 1] : rows[j].argmax;
+        if (j == *a && !sampling_.greedy()) {
             if (gpu_readout) {
                 std::vector<uint32_t> readout(gpu::kMgtTopKRecordWords);
-                wc_readback(readout.data(), static_cast<const uint32_t*>(cur_->btopk_out_.host_ptr) +
-                            size_t(j)*gpu::kMgtTopKRecordWords, readout.size()*4);
-                const auto* full=static_cast<const float*>(cur_->blogits_.host_ptr)+size_t(j)*V;
-                if (auto s=sample_into(r,p0+j,readout.data(),full);!s) {
-                    reset_context();return std::unexpected(s.error());
+                wc_readback(readout.data(),
+                            static_cast<const uint32_t *>(cur_->btopk_out_.host_ptr) +
+                                size_t(j) * gpu::kMgtTopKRecordWords,
+                            readout.size() * 4);
+                const auto *full =
+                    static_cast<const float *>(cur_->blogits_.host_ptr) + size_t(j) * V;
+                if (auto s = sample_into(r, p0 + j, readout.data(), full); !s) {
+                    reset_context();
+                    return std::unexpected(s.error());
                 }
             } else {
-                const TimePoint ts=Clock::now();
-                auto nuc=nucleus_from_full({matrix.data()+size_t(j)*V,V},sampling_.temperature,sampling_.top_p);
-                r.token=sample_nucleus(nuc,uniform01(sampling_.seed,uint64_t(p0)+j+1));
-                r.sampled=true;r.topk_fallback=true;r.nucleus_size=nuc.ids.size();
-                const auto it=std::find(nuc.ids.begin(),nuc.ids.end(),r.token);
-                if(it!=nuc.ids.end())r.p_token=nuc.p[size_t(it-nuc.ids.begin())];
-                r.sample_ms=ms_since(ts);
+                const TimePoint ts = Clock::now();
+                auto nuc = nucleus_from_full({matrix.data() + size_t(j) * V, V},
+                                             sampling_.temperature, sampling_.top_p);
+                r.token = sample_nucleus(nuc, uniform01(sampling_.seed, uint64_t(p0) + j + 1));
+                r.sampled = true;
+                r.topk_fallback = true;
+                r.nucleus_size = nuc.ids.size();
+                const auto it = std::find(nuc.ids.begin(), nuc.ids.end(), r.token);
+                if (it != nuc.ids.end()) r.p_token = nuc.p[size_t(it - nuc.ids.begin())];
+                r.sample_ms = ms_since(ts);
             }
         }
         out.rows.push_back(r);
-        if(std::find(stops.begin(),stops.end(),r.token)!=stops.end())break;
+        if (std::find(stops.begin(), stops.end(), r.token) != stops.end()) break;
     }
-    const uint32_t n=uint32_t(out.rows.size());
+    const uint32_t n = uint32_t(out.rows.size());
     // Keep the public selected-token scoring API on the last emitted row,
     // including a stop in an accepted prefix, rather than stale M=1 logits.
     if (gpu_readout) {
         // The selected-token scoring API still needs a full row. Copy only
         // the last emitted row, rather than every speculative suffix row.
         std::vector<float> last(V);
-        wc_readback(last.data(),static_cast<const float*>(cur_->blogits_.host_ptr)+size_t(n-1)*V,size_t(V)*4);
-        std::memcpy(cur_->logits_.host_ptr,last.data(),size_t(V)*4);
-    } else std::memcpy(cur_->logits_.host_ptr,matrix.data()+size_t(n-1)*V,size_t(V)*sizeof(float));
-    out.cycle.accepted=std::min(*a,n);out.cycle.emitted=n;out.cycle.cpu_ms=ms_since(tc);
-    const TimePoint tr=Clock::now();
-    auto abort=[&](const Status& error)->Result<SpecStep>{reset_context();return std::unexpected(error);};
-    if(auto r=restore_batch_ring(p0,n-1,k+1);!r)return abort(r.error());
-    for(uint32_t j=n;j<=k;++j) {
-        const uint32_t slot=(p0+j)%128;
-        std::memcpy(cur_->draft_hidden_.data()+size_t(slot)*15360,
-                    hidden_before.data()+size_t(j)*15360,15360*sizeof(float));
-        cur_->draft_position_[slot]=hidden_positions[j];cur_->draft_mask_[slot]=hidden_masks[j];
+        wc_readback(last.data(),
+                    static_cast<const float *>(cur_->blogits_.host_ptr) + size_t(n - 1) * V,
+                    size_t(V) * 4);
+        std::memcpy(cur_->logits_.host_ptr, last.data(), size_t(V) * 4);
+    } else
+        std::memcpy(cur_->logits_.host_ptr, matrix.data() + size_t(n - 1) * V,
+                    size_t(V) * sizeof(float));
+    out.cycle.accepted = std::min(*a, n);
+    out.cycle.emitted = n;
+    out.cycle.cpu_ms = ms_since(tc);
+    const TimePoint tr = Clock::now();
+    auto abort = [&](const Status &error) -> Result<SpecStep> {
+        reset_context();
+        return std::unexpected(error);
+    };
+    if (auto r = restore_batch_ring(p0, n - 1, k + 1); !r) return abort(r.error());
+    for (uint32_t j = n; j <= k; ++j) {
+        const uint32_t slot = (p0 + j) % layout::kSlidingWindow;
+        std::memcpy(cur_->draft_hidden_.data() + size_t(slot) * layout::kDsparkCaptureWidth,
+                    hidden_before.data() + size_t(j) * layout::kDsparkCaptureWidth,
+                    layout::kDsparkCaptureWidth * sizeof(float));
+        cur_->draft_position_[slot] = hidden_positions[j];
+        cur_->draft_mask_[slot] = hidden_masks[j];
     }
     // Restore carry, then overwrite exactly the slots the retained prefix wrote.
-    if(auto r=cur_->kvs_.restore_carry(batch_carry_before_);!r)return abort(r.error());
-    for(const auto& c:batch_carry_) {
-        auto v=cur_->kvs_.layer(c.layer);if(!v)return abort(v.error());
-        const uint32_t ratio=model_cfg_.text.compress_ratio(c.layer),D=model_cfg_.text.head_dim;
-        for(uint32_t j=0;j<n;++j) {
-            std::memcpy(v->cmp_state_kv_host+((p0+j)%ratio)*D,c.kv.data()+size_t(j)*D,D*4);
-            std::memcpy(v->cmp_state_score_host+((p0+j)%ratio)*D,c.score.data()+size_t(j)*D,D*4);
+    if (auto r = cur_->kvs_.restore_carry(batch_carry_before_); !r) return abort(r.error());
+    for (const auto &c : batch_carry_) {
+        auto v = cur_->kvs_.layer(c.layer);
+        if (!v) return abort(v.error());
+        const uint32_t ratio = model_cfg_.text.compress_ratio(c.layer),
+                       D = model_cfg_.text.head_dim;
+        for (uint32_t j = 0; j < n; ++j) {
+            std::memcpy(v->cmp_state_kv_host + ((p0 + j) % ratio) * D, c.kv.data() + size_t(j) * D,
+                        D * 4);
+            std::memcpy(v->cmp_state_score_host + ((p0 + j) % ratio) * D,
+                        c.score.data() + size_t(j) * D, D * 4);
         }
     }
-    cur_->history_.resize(p0+n);cur_->kvs_.resolve_ring(p0+n);
-    if(auto r=prepare_ced(p0+n-1);!r)return abort(r.error());
-    std::vector<float> committed;committed.reserve(size_t(n)*15360);
-    for(uint32_t p=p0;p<p0+n;++p) {
-        auto* h=cur_->draft_hidden_.data()+size_t(p%128)*15360;committed.insert(committed.end(),h,h+15360);
+    cur_->history_.resize(p0 + n);
+    cur_->kvs_.resolve_ring(p0 + n);
+    if (auto r = prepare_ced(p0 + n - 1); !r) return abort(r.error());
+    std::vector<float> committed;
+    committed.reserve(size_t(n) * layout::kDsparkCaptureWidth);
+    for (uint32_t p = p0; p < p0 + n; ++p) {
+        auto *h = cur_->draft_hidden_.data() +
+                  size_t(p % layout::kSlidingWindow) * layout::kDsparkCaptureWidth;
+        committed.insert(committed.end(), h, h + layout::kDsparkCaptureWidth);
     }
-    if(auto r=dspark_->append(p0,committed);!r)return abort(r.error());
-    out.cycle.rollback_ms=ms_since(tr);
-    const double wall=ms_since(t0);
+    if (auto r = dspark_->append(p0, committed); !r) return abort(r.error());
+    out.cycle.rollback_ms = ms_since(tr);
+    const double wall = ms_since(t0);
     // The batch path has no per-kernel GPU timestamps. Keep its unmeasured
     // time in 'other' so the reported components still account for the cycle.
-    out.breakdown.other_ms=std::max(0.0,wall-out.breakdown.attn_ms-out.breakdown.moe_gpu_ms-
-        out.breakdown.moe_host_ms-out.breakdown.gate_ms-out.breakdown.engram_ms);
-    for(auto& r:out.rows)r.wall_ms=wall/n;
-    if(spec_diagnostics_) {
-        const TimePoint td=Clock::now();
-        auto array=[](const auto& values){std::string s="[";for(const auto& x:values){if(s.size()>1)s+=",";s+=std::format("{}",x);}return s+"]";};
-        auto write=[&](const std::string& text)->Result<void>{
-            if(std::fwrite(text.data(),1,text.size(),spec_diagnostics_)!=text.size())
-                return fail(Err::Io,"cannot write speculative diagnostics");
+    out.breakdown.other_ms = std::max(0.0, wall - out.breakdown.attn_ms - out.breakdown.moe_gpu_ms -
+                                               out.breakdown.moe_host_ms - out.breakdown.gate_ms -
+                                               out.breakdown.engram_ms);
+    for (auto &r : out.rows)
+        r.wall_ms = wall / n;
+    if (spec_diagnostics_) {
+        const TimePoint td = Clock::now();
+        auto array = [](const auto &values) {
+            std::string s = "[";
+            for (const auto &x : values) {
+                if (s.size() > 1) s += ",";
+                s += std::format("{}", x);
+            }
+            return s + "]";
+        };
+        auto write = [&](const std::string &text) -> Result<void> {
+            if (std::fwrite(text.data(), 1, text.size(), spec_diagnostics_) != text.size())
+                return fail(Err::Io, "cannot write speculative diagnostics");
             return {};
         };
-        if(!spec_diagnostics_started_) {
-            const auto header=std::format("{{\"schema\":1,\"main_layers\":40,\"main_experts\":384,\"main_topk\":6,\"draft_experts\":128,\"initial_main_lru\":{},\"slots\":{},\"draft_pins\":384}}\n",array(initial),store_.slot_count());
-            if(auto r=write(header);!r)return abort(r.error());
-            spec_diagnostics_started_=true;
+        if (!spec_diagnostics_started_) {
+            const auto header = std::format(
+                "{{\"schema\":1,\"main_layers\":40,\"main_experts\":384,\"main_topk\":6,\"draft_"
+                "experts\":128,\"initial_main_lru\":{},\"slots\":{},\"draft_pins\":384}}\n",
+                array(initial), store_.slot_count());
+            if (auto r = write(header); !r) return abort(r.error());
+            spec_diagnostics_started_ = true;
         }
-        for(uint32_t j=0;j<k;++j)if(!std::isfinite(proposal.confidence[j]))
-            return abort(Status{Err::InvalidArgument,"nonfinite draft confidence in diagnostics"});
-        std::array<uint32_t,5> ranks; ranks.fill(UINT32_MAX);
-        for(uint32_t j=0;j<k;++j) {
-            if(gpu_readout)ranks[j]=rows[j].draft_rank.better;
-            else {ranks[j]=0;const float chosen=matrix[size_t(j)*V+input[j+1]];
-                for(uint32_t id=0;id<V;++id){const float x=matrix[size_t(j)*V+id];ranks[j]+=x>chosen || (x==chosen && id<input[j+1]);}}
+        for (uint32_t j = 0; j < k; ++j)
+            if (!std::isfinite(proposal.confidence[j]))
+                return abort(
+                    Status{Err::InvalidArgument, "nonfinite draft confidence in diagnostics"});
+        std::array<uint32_t, 5> ranks;
+        ranks.fill(UINT32_MAX);
+        for (uint32_t j = 0; j < k; ++j) {
+            if (gpu_readout)
+                ranks[j] = rows[j].draft_rank.better;
+            else {
+                ranks[j] = 0;
+                const float chosen = matrix[size_t(j) * V + input[j + 1]];
+                for (uint32_t id = 0; id < V; ++id) {
+                    const float x = matrix[size_t(j) * V + id];
+                    ranks[j] += x > chosen || (x == chosen && id < input[j + 1]);
+                }
+            }
         }
-        std::string draft_stages="{";
-        for(const auto& [name,elapsed]:proposal.timing_ms) {
-            if(draft_stages.size()>1)draft_stages+=",";
-            draft_stages+=std::format("\"{}\":{}",name,elapsed);
+        std::string draft_stages = "{";
+        for (const auto &[name, elapsed] : proposal.timing_ms) {
+            if (draft_stages.size() > 1) draft_stages += ",";
+            draft_stages += std::format("\"{}\":{}", name, elapsed);
         }
-        draft_stages+="}";
-        std::string draft_gpu_stages="{";
-        for(const auto& [name,elapsed]:proposal.gpu_timing_ms) {
-            if(draft_gpu_stages.size()>1)draft_gpu_stages+=",";
-            draft_gpu_stages+=std::format("\"{}\":{}",name,elapsed);
+        draft_stages += "}";
+        std::string draft_gpu_stages = "{";
+        for (const auto &[name, elapsed] : proposal.gpu_timing_ms) {
+            if (draft_gpu_stages.size() > 1) draft_gpu_stages += ",";
+            draft_gpu_stages += std::format("\"{}\":{}", name, elapsed);
         }
-        draft_gpu_stages+="}";
-        auto line=std::format("{{\"position\":{},\"k\":{},\"accepted\":{},\"emitted\":{},\"tokens\":{},\"confidence\":{},\"target_rank\":{},\"draft_routes_valid\":{},\"draft_routes\":{},\"target_routes\":{},\"draft_ms\":{},\"draft_seed_ms\":{},\"draft_dispatches\":{},\"draft_submits\":{},\"draft_stages_ms\":{},\"draft_gpu_stages_ms\":{},\"verify_ms\":{},\"cpu_ms\":{},\"commit_ms\":{}}}\n",
-            p0,k,out.cycle.accepted,n,array(input),array(std::span(proposal.confidence).first(k)),array(std::span(ranks).first(k)),
-            proposal.expert_ids_valid,array(proposal.expert_ids),array(batch_route_requests_),out.cycle.draft_ms,
-            draft_seed_ms,proposal.gpu_dispatches,proposal.gpu_submissions,draft_stages,draft_gpu_stages,
-            out.cycle.verify_ms,out.cycle.cpu_ms,out.cycle.rollback_ms);
-        line.resize(line.size()-2);line+=",\"verify_host_ms\":{";
-        for(size_t i=0;i<batch_host_ms_.size();++i){if(i)line+=",";line+=std::format("\"{}\":{}",batch_host_ms_[i].first,batch_host_ms_[i].second);}
-        line+=std::format("}},\"expert_io_wait\":{{\"calls\":{},\"miss_joins\":{},\"ms\":{}}},\"load_failures\":{{\"p0_reserve\":{},\"p0_submit\":{},\"p0_io\":{},\"fill\":{}}},\"cache_fixed\":{},\"cache_frozen\":{}}}\n",batch_expert_wait_calls_,batch_expert_miss_joins_,batch_expert_wait_ms_,batch_load_failures_[0],batch_load_failures_[1],batch_load_failures_[2],batch_load_failures_[3],store_.fixed_cache(),store_.cache_frozen());
-        if(auto r=write(line);!r)return abort(r.error());
-        if(std::fflush(spec_diagnostics_))return abort(Status{Err::Io,"cannot flush speculative diagnostics"});
+        draft_gpu_stages += "}";
+        auto line = std::format(
+            "{{\"position\":{},\"k\":{},\"accepted\":{},\"emitted\":{},\"tokens\":{},"
+            "\"confidence\":{},\"target_rank\":{},\"draft_routes_valid\":{},\"draft_routes\":{},"
+            "\"target_routes\":{},\"draft_ms\":{},\"draft_seed_ms\":{},\"draft_dispatches\":{},"
+            "\"draft_submits\":{},\"draft_stages_ms\":{},\"draft_gpu_stages_ms\":{},\"verify_ms\":{"
+            "},\"cpu_ms\":{},\"commit_ms\":{}}}\n",
+            p0, k, out.cycle.accepted, n, array(input),
+            array(std::span(proposal.confidence).first(k)), array(std::span(ranks).first(k)),
+            proposal.expert_ids_valid, array(proposal.expert_ids), array(batch_route_requests_),
+            out.cycle.draft_ms, draft_seed_ms, proposal.gpu_dispatches, proposal.gpu_submissions,
+            draft_stages, draft_gpu_stages, out.cycle.verify_ms, out.cycle.cpu_ms,
+            out.cycle.rollback_ms);
+        line.resize(line.size() - 2);
+        line += ",\"verify_host_ms\":{";
+        for (size_t i = 0; i < batch_host_ms_.size(); ++i) {
+            if (i) line += ",";
+            line += std::format("\"{}\":{}", batch_host_ms_[i].first, batch_host_ms_[i].second);
+        }
+        line +=
+            std::format("}},\"expert_io_wait\":{{\"calls\":{},\"miss_joins\":{},\"ms\":{}}},\"load_"
+                        "failures\":{{\"p0_reserve\":{},\"p0_submit\":{},\"p0_io\":{},\"fill\":{}}}"
+                        ",\"cache_fixed\":{},\"cache_frozen\":{}}}\n",
+                        batch_expert_wait_calls_, batch_expert_miss_joins_, batch_expert_wait_ms_,
+                        batch_load_failures_[0], batch_load_failures_[1], batch_load_failures_[2],
+                        batch_load_failures_[3], store_.fixed_cache(), store_.cache_frozen());
+        if (auto r = write(line); !r) return abort(r.error());
+        if (std::fflush(spec_diagnostics_))
+            return abort(Status{Err::Io, "cannot flush speculative diagnostics"});
         // Include opt-in diagnostic logging in the public wall time. These
         // instrumented cells must be identified separately in speed reports.
-        const double diagnostic_ms=ms_since(td);
-        out.breakdown.other_ms+=diagnostic_ms;
-        for(auto& r:out.rows)r.wall_ms=(wall+diagnostic_ms)/n;
+        const double diagnostic_ms = ms_since(td);
+        out.breakdown.other_ms += diagnostic_ms;
+        for (auto &r : out.rows)
+            r.wall_ms = (wall + diagnostic_ms) / n;
     }
     return out;
 }
-}
+} // namespace deepmoe::runtime

@@ -1,0 +1,19 @@
+// Shared host/shader ABI. Keep field counts here so helper offsets cannot
+// drift from DsparkMegaOp when its immutable schedule changes.
+#ifndef DEEPMOE_DSPARK_PLAN_LAYOUT_H
+#define DEEPMOE_DSPARK_PLAN_LAYOUT_H
+#define DM_DS_PLAN_HEADER_WORDS 4
+#define DM_DS_PLAN_PUSH_WORDS 16
+#define DM_DS_PLAN_PTR_WORDS 32
+#define DM_DS_PLAN_PUSH_OFFSET (DM_DS_PLAN_HEADER_WORDS * 4)
+#define DM_DS_PLAN_PTR_OFFSET (DM_DS_PLAN_PUSH_OFFSET + DM_DS_PLAN_PUSH_WORDS * 4)
+#define DM_DS_PLAN_OP_BYTES (DM_DS_PLAN_PTR_OFFSET + DM_DS_PLAN_PTR_WORDS * 8)
+#define DM_ROUTE_MAX_COLUMNS 6
+#define DM_ROUTE_GATE_RECORDS 16
+#define DM_ROUTE_ADDRESS_WORDS 6
+#define DM_ROUTE_INTER_BLOCKS (2304 / 32)
+#define DM_DS_DRAFT_COLUMNS 5
+#define DM_DS_TOPK 3
+#define DM_DS_MOE_SLOTS (DM_DS_DRAFT_COLUMNS * DM_DS_TOPK + 1)
+#define DM_DS_EXPERTS 128
+#endif

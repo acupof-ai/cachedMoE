@@ -22,6 +22,47 @@
 using namespace deepmoe;
 using namespace deepmoe::storage;
 
+DEEPMOE_TEST(io, gpu_options_resolve_once_and_preserve_overrides) {
+    struct Env {
+        const char* key;
+        std::string saved;
+        bool present;
+        explicit Env(const char* name)
+            : key(name), saved(std::getenv(name) ? std::getenv(name) : ""),
+              present(std::getenv(name) != nullptr) {}
+        void set(const char* value) {
+#ifdef _WIN32
+            _putenv_s(key, value ? value : "");
+#else
+            if (value) setenv(key, value, 1); else unsetenv(key);
+#endif
+        }
+        ~Env() { set(present ? saved.c_str() : nullptr); }
+    } route("DEEPMOE_BATCH_GPU_ROUTE"), early("DEEPMOE_BATCH_ENGRAM_EARLY"),
+      onecb("DEEPMOE_DSPARK_ONECB"), readout("DEEPMOE_SPEC_GPU_READOUT");
+    route.set("1");
+    early.set("0");
+    onecb.set("1");
+    readout.set("0");
+    RuntimeConfig cfg;
+    cfg.gpu.apply_environment();
+    route.set("0");
+    early.set("1");
+    onecb.set("0");
+    readout.set("1");
+    CHECK(cfg.gpu.batch_gpu_route && cfg.gpu.draft_onecb);
+    CHECK(!cfg.gpu.batch_engram_early && !cfg.gpu.spec_gpu_readout);
+    GpuExecutionConfig next;
+    next.apply_environment();
+    CHECK(!next.batch_gpu_route && !next.draft_onecb);
+    CHECK(next.batch_engram_early && next.spec_gpu_readout);
+    // With no environment override, an explicit API configuration survives.
+    route.set(nullptr);
+    next.batch_gpu_route = true;
+    next.apply_environment();
+    CHECK(next.batch_gpu_route);
+}
+
 DEEPMOE_TEST(io, weighted_mask_rejects_invalid_limits_and_speculation) {
     struct Env {
         const char* key; std::string value; bool present;

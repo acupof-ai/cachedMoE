@@ -53,7 +53,7 @@ function(add_slang_shader target src)
     add_custom_target("${target}" DEPENDS "${out}")
 endfunction()
 
-set(_shader_dep_paths "")
+set(_shader_dep_paths "${CMAKE_SOURCE_DIR}/gpu/shaders/dspark_plan_layout.h")
 foreach(_d IN LISTS DEEPMOE_SHADER_DEPS)
     list(APPEND _shader_dep_paths "${CMAKE_SOURCE_DIR}/${_d}")
 endforeach()

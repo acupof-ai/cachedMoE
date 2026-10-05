@@ -774,16 +774,25 @@ Result<void> GpuMoeBridge::run(const MoeCall& call) {
     return {};
 }
 
-}  // namespace deepmoe::runtime
-
-namespace deepmoe::runtime {
-std::vector<uint64_t> GpuMoeBridge::snapshot_with_shared(std::span<const uint64_t> table,uint32_t layers) const {
-    const uint32_t routed=shared_index_,experts=routed+1;
-    std::vector<uint64_t> out(size_t(layers)*experts*6);
-    for(uint32_t l=0;l<layers;++l){std::memcpy(out.data()+size_t(l)*experts*6,table.data()+size_t(l)*routed*6,routed*6*8);
-        const auto pre=std::format("layers.{}.ffn.shared_experts.",l);
-        for(uint32_t j=0;j<3;++j){const auto* t=pinned_->find(pre+std::format("w{}.weight",j+1));
-            out[(size_t(l)*experts+routed)*6+j*2]=t?t->data:0;out[(size_t(l)*experts+routed)*6+j*2+1]=t?t->scale:0;}}
+std::vector<uint64_t> GpuMoeBridge::snapshot_with_shared(std::span<const uint64_t> table,
+                                                         uint32_t layers) const {
+    constexpr auto words = layout::kExpertAddressWords;
+    const uint32_t routed = shared_index_, experts = routed + 1;
+    std::vector<uint64_t> out(size_t(layers) * experts * words);
+    // Copy routed experts from the guarded snapshot. The shared expert is
+    // pinned separately and occupies the last row in each layer's GPU table.
+    for (uint32_t l = 0; l < layers; ++l) {
+        std::memcpy(out.data() + size_t(l) * experts * words,
+                    table.data() + size_t(l) * routed * words, routed * words * sizeof(uint64_t));
+        const auto prefix = std::format("layers.{}.ffn.shared_experts.", l);
+        for (uint32_t j = 0; j < words / 2; ++j) {
+            const auto *tensor = pinned_->find(prefix + std::format("w{}.weight", j + 1));
+            const auto row = (size_t(l) * experts + routed) * words + j * 2;
+            out[row] = tensor ? tensor->data : 0;
+            out[row + 1] = tensor ? tensor->scale : 0;
+        }
+    }
     return out;
 }
-}
+
+} // namespace deepmoe::runtime

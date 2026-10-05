@@ -262,6 +262,12 @@ Result<void> V41Config::validate_against_layout() const {
     check("dspark_n_routed_experts", text.dspark_n_routed_experts, L::kDsparkExperts);
     check("dspark_num_experts_per_tok", text.dspark_num_experts_per_tok, L::kDsparkTopK);
     check("dspark_markov_rank",    text.dspark_markov_rank,    L::kDsparkMarkovRank);
+    check("dspark_target_layer_ids count", text.dspark_target_layer_ids.size(), L::kMtpBlocks);
+    for (const auto layer : text.dspark_target_layer_ids)
+        if (layer < 0 || layer >= text.num_hidden_layers)
+            bad += std::format("  dspark_target_layer_ids: {} outside main layers\n", layer);
+    if (text.dspark_noise_token_id >= text.vocab_size)
+        bad += "  dspark_noise_token_id outside vocabulary\n";
     check("quant weight_block_m",  quantization.weight_block_m, L::kFp8ScaleBlockM);
     check("quant weight_block_k",  quantization.weight_block_k, L::kFp8ScaleBlockK);
 

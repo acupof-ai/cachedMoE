@@ -34,6 +34,12 @@ inline constexpr uint32_t kDsparkExperts     = 128;
 inline constexpr uint32_t kDsparkTopK        = 3;
 inline constexpr uint32_t kDsparkBlockSize   = 5;      // draft positions produced per cycle
 inline constexpr uint32_t kDsparkMarkovRank  = 256;
+inline constexpr uint32_t kDsparkCaptureWidth = kMtpBlocks * kHiddenSize;
+inline constexpr uint8_t kDsparkCaptureMask = (1u << kMtpBlocks) - 1;
+inline constexpr uint32_t kGateRecordCount = 16;     // gate ids and scores per row
+inline constexpr uint32_t kExpertAddressWords = 6;   // three (data, scale) pairs
+inline constexpr uint32_t kMoeBatchColumns = kDsparkBlockSize + 1;
+inline constexpr uint32_t kSavedRouteWords = 2 * kMoeBatchColumns * kGateRecordCount;
 
 // attention (MQA over a 512-wide latent, low-rank Q, grouped low-rank O)
 inline constexpr uint32_t kAttnHeads         = 64;

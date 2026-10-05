@@ -9,8 +9,10 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/types.h"
@@ -83,6 +85,46 @@ struct SpeculationConfig {
     std::optional<float> min_confidence;
 };
 
+// Resolved once by Engine::init. Environment overrides remain compatible with
+// existing experiment commands; changing the process environment later cannot
+// change a live engine's pipelines or verification policy.
+struct GpuExecutionConfig {
+    bool batch_gpu_route = false;
+    bool batch_engram_early = true;
+    bool spec_gpu_readout = true;
+    bool draft_onecb = false;
+    bool draft_mega = false;
+    bool draft_profile = false;
+    bool draft_diagnostics = false;
+    bool draft_trim_tail = true;
+    bool mgt_pair_dot = false;
+    bool mgt_fold_scale = false;
+    bool mgt_attn_cm = false;
+
+    void apply_environment() {
+        const auto exact_one = [](const char* key, bool& value) {
+            if (const char* e = std::getenv(key)) value = std::string_view(e) == "1";
+        };
+        const auto first_one = [](const char* key, bool& value) {
+            if (const char* e = std::getenv(key)) value = *e == '1';
+        };
+        const auto not_zero = [](const char* key, bool& value) {
+            if (const char* e = std::getenv(key)) value = *e != '0';
+        };
+        exact_one("DEEPMOE_BATCH_GPU_ROUTE", batch_gpu_route);
+        not_zero("DEEPMOE_BATCH_ENGRAM_EARLY", batch_engram_early);
+        not_zero("DEEPMOE_SPEC_GPU_READOUT", spec_gpu_readout);
+        exact_one("DEEPMOE_DSPARK_ONECB", draft_onecb);
+        exact_one("DEEPMOE_DSPARK_MEGA", draft_mega);
+        exact_one("DEEPMOE_DSPARK_PROFILE", draft_profile);
+        if (std::getenv("DEEPMOE_DSPARK_MEGA_DIAG")) draft_diagnostics = true;
+        not_zero("DEEPMOE_DSPARK_TRIM_TAIL", draft_trim_tail);
+        first_one("DEEPMOE_MGT_PAIR_DOT", mgt_pair_dot);
+        not_zero("DEEPMOE_MGT_FOLD_SCALE", mgt_fold_scale);
+        not_zero("DEEPMOE_MGT_ATTN_CM", mgt_attn_cm);
+    }
+};
+
 struct RuntimeConfig {
     // The checkpoint directory: the 48 original safetensors shards, config.json
     // and the deepmoe_manifest.json that tools/manifest.py writes beside them
@@ -113,6 +155,7 @@ struct RuntimeConfig {
     CacheConfig       cache;
     PrefetchConfig    prefetch;
     SpeculationConfig speculation;
+    GpuExecutionConfig gpu;
 
     uint32_t max_context = 65536;   // design §1.2 stage-one target
     uint64_t seed        = 0;       // Philox counter seed, decode is reproducible

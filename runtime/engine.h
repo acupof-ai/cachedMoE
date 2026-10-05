@@ -296,8 +296,8 @@ struct Stream {
     KvStore              kvs_;
     std::vector<uint32_t> history_;
     std::vector<float> draft_hidden_;
-    std::array<int64_t,128> draft_position_{};
-    std::array<uint8_t,128> draft_mask_{};
+    std::array<int64_t, layout::kSlidingWindow> draft_position_{};
+    std::array<uint8_t, layout::kSlidingWindow> draft_mask_{};
     // The stream's own token counter. It numbers the residency timeline
     // (`gpu::timeline_value(token_, L)`), which is per stream because the
     // timeline is; the cache's LRU clock is the process-wide `Engine::clock_`,
@@ -327,8 +327,10 @@ struct Stream {
     gpu::MgtRunner       mgt_;
     gpu::GpuScratch      bscratch_;
     gpu::GpuScratch      route_scratch_;
-    std::array<gpu::GpuScratch::View,40> saved_routes_,saved_carry_k_,saved_carry_g_,saved_rope_,saved_rope_lat_;
-    std::array<gpu::GpuScratch::View,3> saved_hidden_;
+    // Per-layer verification readback. Sized from the loaded model when the
+    // GPU route scratch is first built, rather than assuming forty layers.
+    std::vector<gpu::GpuScratch::View> saved_routes_, saved_carry_k_, saved_carry_g_;
+    std::vector<gpu::GpuScratch::View> saved_rope_, saved_rope_lat_, saved_hidden_;
     gpu::GpuBuffer       blogits_{}, bsample_{}, btopk_out_{}, btopk_hist_{}, bdraft_{}, brank_{};
     // Track MS: what `run_layer` decided in its first two phases and its third
     // needs. In a single-stream step the three phases are consecutive
@@ -889,6 +891,7 @@ private:
     std::vector<uint64_t> route_snapshot_;
     std::vector<BatchStep> route_steps_;
     Result<void> finish_gpu_routes(uint32_t p0,uint32_t m);
+    std::optional<uint32_t> draft_layer_slot(uint32_t layer) const;
     RuntimeConfig cfg_{};
     V41Config     model_cfg_{};
     Manifest      manifest_{};

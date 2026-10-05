@@ -26,8 +26,16 @@
 #include "gpu/vulkan/memory.h"
 #include "gpu/vulkan/pipeline.h"
 #include "model/layout.h"
+#include "gpu/shaders/dspark_plan_layout.h"
 
 namespace deepmoe::gpu {
+static_assert(layout::kMoeBatchColumns == DM_ROUTE_MAX_COLUMNS);
+static_assert(layout::kGateRecordCount == DM_ROUTE_GATE_RECORDS);
+static_assert(layout::kExpertAddressWords == DM_ROUTE_ADDRESS_WORDS);
+static_assert(layout::kMoeIntermediate / 32 == DM_ROUTE_INTER_BLOCKS);
+static_assert(layout::kDsparkBlockSize == DM_DS_DRAFT_COLUMNS);
+static_assert(layout::kDsparkTopK == DM_DS_TOPK);
+static_assert(layout::kDsparkExperts == DM_DS_EXPERTS);
 
 // The specialisation sweep of design §7.1.
 struct MoeSpec {
