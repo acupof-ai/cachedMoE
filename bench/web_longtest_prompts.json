@@ -1,0 +1,27 @@
+{
+  "description": "Three web turns: native high75 thinking, a same-session follow-up, then independent English chat. 512 outputs per turn, T=1/top_p=.95, each configuration once.",
+  "turns": [
+    {
+      "label": "zh_thinking",
+      "text": "请用中文写一份详细的高性能 HIP 算子设计说明，讨论 GEMM、attention、MoE、RMSNorm 各组件的 tile 大小和流水线深度。逐项解释寄存器、LDS、占用率和访存的约束，给出选择步骤、计算例子和如何验证性能的方法。请充分展开，至少两千字。",
+      "think": true,
+      "seed": 51001,
+      "max_tokens": 512
+    },
+    {
+      "label": "zh_followup",
+      "text": "接着详细讨论小批量 decode 和批量验证的差别。给出一个具体的矩阵形状示例，逐步计算权重访问量、激活复用、tile 选择、同步开销和流水线深度，并解释性能低于预测时应如何定位。请充分展开，不要只列结论。",
+      "think": true,
+      "seed": 51002,
+      "max_tokens": 512
+    },
+    {
+      "label": "en_chat",
+      "text": "Write a detailed engineering guide to measuring a GPU inference runtime. Explain how to distinguish memory bandwidth, arithmetic throughput, kernel launch latency, synchronization and data transfer limits. Include concrete worked examples, an experiment plan, sources of measurement bias and how to assess answer quality. Expand each topic with several paragraphs rather than a short summary.",
+      "think": false,
+      "reset": true,
+      "seed": 51003,
+      "max_tokens": 512
+    }
+  ]
+}
