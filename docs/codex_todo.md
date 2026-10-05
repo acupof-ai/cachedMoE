@@ -6,6 +6,20 @@
 **本文件规则：只追加和勾选，不删除条目，不整篇覆盖。** 关闭某项须写明证据或 owner 决定，保留原文。
 §4「review 补充/纠正」由 review 维护，Codex 只能勾选或在条目下追加收据。
 
+## 0. owner 决定（2026-10-06，优先于下文任何旧表述）
+
+1. **默认电源模式 performance。** 所有测速、质量作业和网页都用 performance。
+   监督脚本（`phase_*/run_checks.py` 里 `job.get('profile','power-saver')` 及开头的 `set power-saver`）
+   默认值改为 `performance`；provenance 记 `powerprofilesctl get`。power-saver 下已有的速度数只作参考，
+   需要速度结论的配置在 performance 下补测一次。
+   温控 80°C 暂停/72°C 恢复和 AC 检查保持不变；若 performance 下频繁热暂停，记录暂停次数后照常跑完。
+2. **网页默认：动态 mask + 投机。** owner 接受 A 当前质量（MMLU 46/57、续轮重复 .118）作为默认。
+   - k 由 D 决定：在 performance 下测 k2/k3/k5（mask），选 ms/token 最低且无循环/重复门不失败的 k。
+   - D 完成前网页先用 mask + k=2，不用 k=5。
+   - ONECB 开；GPU route 按 §4.2 的 D 结果决定，无收益则关。
+   - 网页仍保留 `off`/plain 显式选项。
+3. 以上不影响 C：C 继续，按原门判断，GO 也只加显式选项，不改默认。
+
 ## 当前现场
 
 - 主仓库：`/home/chenkailun/projects/cachedMoE`，main 已推到 `41cc44c`。
@@ -16,7 +30,8 @@
   review 时唯一 GPU 作业为 `phase_c/conversation/run_checks.py`（tau.20 中文64等）。
   接续时重新检查进程，不得重复启动。
 - 原始结果均在主仓库 `bench/results/mask_quality/`；监督脚本、命令、环境和温度记录也在里面。
-- **一次一个 GPU 任务**；power-saver、AC、80°C 暂停/72°C 恢复。镜像须为 `holds 48 of 48`。
+- **一次一个 GPU 任务**；电源模式 **performance**（owner 2026-10-06，见 §0），必须接 AC 电源，
+  80°C 暂停/72°C 恢复。镜像须为 `holds 48 of 48`。
   不得写 checkpoint。每种配置只跑一次，已有结果要复用。
   **注意：监督脚本把作业切到 power-saver（ACPI `quiet`），`profile_receipt.json` 里的
   `performance` 只是恢复值。** power-saver 下的 ms/token 不能和历史 STATUS 速度直接比较，见 §4.1。
@@ -78,6 +93,8 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 - [x] `docs/miss_mask.md` 已记录矩阵、分段计时和质量结果；STATUS 待最终决策更新。
 - [ ] **A 未通过（MMLU 46/57、续轮重复 .118 > 1.5×off）。按方案此时应停下请 owner 决定，
   而不是直接进入 C。** C 已经开跑，结果可以保留作为数据，但在 owner 决定前不得据此改默认或改网页。
+  - [x] owner 2026-10-06 已决定：接受当前质量，动态 mask + 投机作网页默认，C 继续（见 §0）。
+    STATUS 里要如实写 A 的两项未达标及 owner 接受。
 
 > review 注：八轮 plain 110.1ms/token 比历史动态 mask 76.7ms/token 慢 43%，命中率却相同，
 > 原因未查清，见 §4.1。在查清前不要用这个数判断 C/D 的速度。
@@ -172,6 +189,7 @@ mask 只比 off 快约 4%（历史 +43%）。
 - [ ] 若 performance 下仍慢，按提交二分（`41cc44c` → `4a262da`），以 per-op 的 `expert_hit_ms`/`hot_gemv_ms` 判断。
 - [ ] 查清前，C 的「比 off 快 ≥20%」门和 D 的 k 选择都不判；温控仍按 80/72，
   若 performance 下温度无法跑完，写明并请 owner 决定测速用哪个模式。
+  （owner 已定 performance，见 §0。）
 
 ### 4.2 P1：双盘 GPU route 让 verify 变慢（原 #4，被删）
 
@@ -183,8 +201,10 @@ mask 只比 off 快约 4%（历史 +43%）。
 
 ### 4.3 P1：网页投机配置
 
-- [ ] 网页之前跑 k=5（约 65ms/token，可能比不投机还慢）。恢复网页时用 D 的结论；D 未完成就用 plain，不用 k=5。
-- [ ] mask 默认值、是否开网页投机都由 owner 决定，A 未通过前不改网页默认。
+- [ ] 网页之前跑 k=5（约 65ms/token，可能比不投机还慢）。恢复网页时用 D 的结论；
+  ~~D 未完成就用 plain~~ → owner 改为：D 未完成就用 mask + k=2，不用 k=5（§0）。
+- [x] ~~mask 默认值、是否开网页投机都由 owner 决定~~ → 已决定：动态 mask + 投机（§0）。
+  恢复网页后验证 `/api/config` 显示 mask、投机 k、performance 模式。
 
 ### 4.4 P2：代码质量（原 #10、#13 等，被删或只做了一部分）
 
