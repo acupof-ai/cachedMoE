@@ -1,6 +1,7 @@
 #include <thread>
 #include <chrono>
 #include "runtime/engine.h"
+#include "runtime/mask_wait.h"
 
 #include <algorithm>
 #include <atomic>
@@ -558,6 +559,31 @@ Result<void> Engine::configure_io_sources() {
 Result<void> Engine::init(const RuntimeConfig& cfg) {
     shutdown();
     cfg_ = cfg;
+    mask_wait_tau_ = -1;
+    mask_wait_budget_experts_ = 8;
+    mask_wait_budget_ms_ = 20;
+    if (const char* e = std::getenv("DEEPMOE_MASK_WAIT_TAU")) {
+        char* end = nullptr;
+        mask_wait_tau_ = std::strtod(e, &end);
+        if (end == e || *end || !std::isfinite(mask_wait_tau_) || mask_wait_tau_ < 0 || mask_wait_tau_ > 1)
+            return fail(Err::InvalidArgument, "DEEPMOE_MASK_WAIT_TAU must be in [0,1]");
+        if (cfg_.speculation.enabled)
+            return fail(Err::FailedPrecondition, "weighted mask waiting supports plain decode only; disable DSpark");
+        if (const char* budget = std::getenv("DEEPMOE_MASK_WAIT_BUDGET")) {
+            char* middle = nullptr;
+            const auto n = std::strtoul(budget, &middle, 10);
+            if (middle == budget || *middle != ',' || n > UINT32_MAX)
+                return fail(Err::InvalidArgument, "DEEPMOE_MASK_WAIT_BUDGET takes experts,milliseconds (0 means unlimited)");
+            char* tail = nullptr;
+            const auto ms = std::strtod(middle + 1, &tail);
+            if (tail == middle + 1 || *tail || !std::isfinite(ms) || ms < 0)
+                return fail(Err::InvalidArgument, "invalid weighted mask time budget");
+            mask_wait_budget_experts_ = uint32_t(n);
+            mask_wait_budget_ms_ = ms;
+        }
+        log_info("weighted mask wait: tau {}, budget {} experts / {} ms per token (0=unlimited); plain decode only",
+                 mask_wait_tau_, mask_wait_budget_experts_, mask_wait_budget_ms_);
+    } else log_info("weighted mask wait: off");
 #if defined(__linux__)
     pin_to_gpu_irq_ccd();
 #endif
@@ -2391,15 +2417,36 @@ Result<void> Engine::layer_gate(Stream& s, uint32_t L, uint32_t position) {
                 eff_w[i] = std::find(lc.plan.hits.begin(), lc.plan.hits.end(), key) !=
                            lc.plan.hits.end() ? wts_raw[i] : 0.0f;
             }
+            uint32_t served = uint32_t(lc.plan.hits.size());
+            if (mask_wait_tau_ >= 0 && !store_.fixed_cache()) {
+                const auto candidates = mask_wait_candidates({wts_raw, topk}, {eff_w, topk}, mask_wait_tau_);
+                // Guard selected filling slots before any of them becomes
+                // evictable. Their original demand IO and LRU stamps stay intact.
+                guard_layer(L, candidates, ids_raw);
+                for (uint32_t i : candidates) {
+                    if (mask_wait_budget_experts_ && cur_->mask_wait_count_ >= mask_wait_budget_experts_) break;
+                    const double remaining = mask_wait_budget_ms_ - cur_->mask_wait_ms_;
+                    if (mask_wait_budget_ms_ && remaining < 1) break;
+                    auto timeout = std::chrono::milliseconds(mask_wait_budget_ms_
+                        ? int64_t(std::min(remaining, 120000.0)) : 120000);
+                    const auto started = Clock::now();
+                    const ExpertKey key{uint16_t(L), uint16_t(ids_raw[i])};
+                    const bool ready = planner_.wait_expert(key, timeout);
+                    const auto elapsed = ms_since(started);
+                    ++cur_->mask_wait_count_; cur_->mask_wait_ms_ += elapsed;
+                    ++rr_.weighted_wait_attempts; rr_.weighted_wait_ms += elapsed;
+                    if (ready) { eff_w[i] = wts_raw[i]; ++served; ++rr_.weighted_wait_ready; }
+                }
+            }
             ids = eff_ids;
             wts = eff_w;
             call.ids = ids;
             call.weights = wts;
             ++rr_.layers;
             rr_.requested += topk;
-            rr_.served += lc.plan.hits.size();
-            rr_.skipped += lc.plan.misses.size();
-            rr_.shared_only += lc.plan.hits.empty();
+            rr_.served += served;
+            rr_.skipped += topk - served;
+            rr_.shared_only += served == 0;
             double total = 0.0, kept = 0.0;
             for (uint32_t i = 0; i < topk; ++i) { total += wts_raw[i]; kept += eff_w[i]; }
             if (total > 0.0) rr_.mass_lost_sum += 1.0 - kept / total;
@@ -3083,6 +3130,8 @@ Result<void> Engine::finish_gpu_routes(uint32_t p0,uint32_t M) {
 
 Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens,
                                    std::span<BatchRow> rows, std::span<float> logits) {
+    if (mask_wait_tau_ >= 0)
+        return fail(Err::FailedPrecondition, "weighted mask waiting is not supported in batched verification");
     const auto host_begin=Clock::now();
     const auto loads_before=store_.stats();const auto planner_before=planner_.stats();
     batch_host_ms_.clear();batch_route_host_ms_.fill(0);
@@ -3846,6 +3895,8 @@ Result<void> Engine::step_prologue(Stream& s, uint32_t in_token, uint32_t positi
     cur_ = &s;
     const TextConfig& c = model_cfg_.text;
     if (s.history_.size() <= position) s.history_.resize(position + 1, 0);
+    s.mask_wait_count_ = 0;
+    s.mask_wait_ms_ = 0;
     s.history_[position] = in_token;
 
     const TimePoint t_prep = Clock::now();
@@ -4308,12 +4359,14 @@ std::string Engine::resident_route_report() const {
         "  background enqueued {}  refused {}  dropped stale {}\n"
         "  background queue depth mean {:.1f} peak {} (window {} steps, cap {} experts)\n"
         "  background fetch latency mean {:.1f} ms over {} completions\n"
-        "  stall1 P0 fetches {}  {:.1f} ms total\n",
+        "  stall1 P0 fetches {}  {:.1f} ms total\n"
+        "  weighted mask wait {} attempts / {} ready, {:.3f} ms total\n",
         resident_only_name(resident_only_),
         rr_.layers, rr_.requested, rr_.served, rr_.served_frac(), rr_.skipped,
         rr_.mass_lost(), rr_.shared_only, rr_.bg_enqueued, rr_.bg_refused, rr_.bg_stale,
         rr_.bg_depth_mean(), rr_.bg_depth_peak, rr_queue_steps_, rr_outstanding_cap_,
-        lat, done, rr_.stall1_p0, rr_.stall1_ms);
+        lat, done, rr_.stall1_p0, rr_.stall1_ms,
+        rr_.weighted_wait_attempts, rr_.weighted_wait_ready, rr_.weighted_wait_ms);
 }
 
 std::span<const float> Engine::last_logits() const {

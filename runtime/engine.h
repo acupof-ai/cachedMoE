@@ -317,6 +317,8 @@ struct Stream {
     double               mx_ms_ = 0.0, mq_ms_ = 0.0, mt_ms_ = 0.0;
     uint64_t             spin_hits_ = 0, spin_misses_ = 0;
     TimelineValue        layer_guard_ = 0;
+    uint32_t             mask_wait_count_ = 0;
+    double               mask_wait_ms_ = 0;
     bool                 layer_guard_pending_ = false;
     TimelineValue        open_guard_ = 0;
     TimelineValue        inflight_guard_ = 0;
@@ -1020,6 +1022,9 @@ private:
     ResidentOnly       resident_only_ = ResidentOnly::Off;
     bool               mask_cache_fixed_ = false;
     bool               mask_cache_explicit_ = false;
+    double             mask_wait_tau_ = -1; // disabled unless explicitly set
+    uint32_t           mask_wait_budget_experts_ = 8; // zero means unlimited
+    double             mask_wait_budget_ms_ = 20; // zero means unlimited
     // What `Verify` does at the block's first position and at its four draft
     // positions (DEEPMOE_VERIFY_FIRST / DEEPMOE_VERIFY_DRAFT).
     ResidentOnly       verify_first_ = ResidentOnly::Off;

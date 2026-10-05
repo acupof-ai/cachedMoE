@@ -22,6 +22,33 @@
 using namespace deepmoe;
 using namespace deepmoe::storage;
 
+DEEPMOE_TEST(io, weighted_mask_rejects_invalid_limits_and_speculation) {
+    struct Env {
+        const char* key; std::string value; bool present;
+        explicit Env(const char* k): key(k), value(std::getenv(k) ? std::getenv(k) : ""), present(std::getenv(k) != nullptr) {}
+        void set(const char* v) {
+#ifdef _WIN32
+            _putenv_s(key, v ? v : "");
+#else
+            if (v) setenv(key, v, 1); else unsetenv(key);
+#endif
+        }
+        ~Env() {set(present ? value.c_str() : nullptr);}
+    } tau("DEEPMOE_MASK_WAIT_TAU"), budget("DEEPMOE_MASK_WAIT_BUDGET");
+    budget.set(nullptr);
+    RuntimeConfig cfg;
+    runtime::Engine engine;
+    for (const char* bad : {"", "nan", "-0.1", "1.1", ".2junk"}) {
+        tau.set(bad); CHECK_ERR(engine.init(cfg), Err::InvalidArgument);
+    }
+    tau.set(".1");
+    for (const char* bad : {"8", "-1,20", "8,-1", "8,nan", "8,", "8,20junk"}) {
+        budget.set(bad); CHECK_ERR(engine.init(cfg), Err::InvalidArgument);
+    }
+    budget.set("0,0"); cfg.speculation.enabled = true;
+    CHECK_ERR(engine.init(cfg), Err::FailedPrecondition);
+}
+
 DEEPMOE_TEST(io, mask_cache_policy_default_and_explicit_override) {
     const char* name = "DEEPMOE_MASK_DYNAMIC_LRU";
     const char* old = std::getenv(name);

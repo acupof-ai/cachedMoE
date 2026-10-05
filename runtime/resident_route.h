@@ -110,6 +110,8 @@ struct ResidentRouteStats {
     uint32_t bg_depth_peak = 0;
     uint64_t stall1_p0     = 0;   // stall1: single highest-weight experts fetched at P0
     double   stall1_ms     = 0.0; // ... and the wall time that cost
+    uint64_t weighted_wait_attempts = 0, weighted_wait_ready = 0;
+    double weighted_wait_ms = 0;
     double bg_depth_mean() const { return bg_depth_n ? double(bg_depth_sum) / double(bg_depth_n) : 0.0; }
     double mass_lost() const { return layers ? mass_lost_sum / double(layers) : 0.0; }
     double served_frac() const { return requested ? double(served) / double(requested) : 0.0; }

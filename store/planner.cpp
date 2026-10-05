@@ -453,6 +453,19 @@ Result<void> Planner::wait_layer(LayerPlan& plan, std::chrono::milliseconds time
     return {};
 }
 
+bool Planner::wait_expert(ExpertKey key, std::chrono::milliseconds timeout) {
+    if (!store_) return false;
+    const auto begin = std::chrono::steady_clock::now();
+    const bool ready = store_->wait_settled(key, timeout) && store_->resident(key);
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - begin).count();
+    std::lock_guard lk(stats_mutex_);
+    ++stats_.wait_calls;
+    ++stats_.stall_waits;
+    stats_.wait_ns += uint64_t(ns);
+    return ready;
+}
+
 Result<StreamAdmit> Planner::admit_streamed(ExpertKey key, TokenIndex stamp, TimelineValue guard) {
     if (!store_ || !manifest_) return fail(Err::FailedPrecondition, "planner is not initialised");
     auto entry = manifest_->require_expert(key);

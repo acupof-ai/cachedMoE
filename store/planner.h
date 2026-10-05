@@ -196,6 +196,8 @@ public:
     // settled. Err::Io if one failed or `timeout` passed.
     Result<void> wait_layer(LayerPlan& plan,
                             std::chrono::milliseconds timeout = std::chrono::seconds(120));
+    // A selected P0 fill in weighted mask; timeout degrades to masking.
+    bool wait_expert(ExpertKey key, std::chrono::milliseconds timeout);
 
     // Reserves `n` consecutive LRU stamps for a caller that computes its own
     // (the prefill handoff) and returns the first; every later tick is newer.
