@@ -1,7 +1,10 @@
 # Codex 接续任务
 
-更新：2026-10-05 23:39（Asia/Shanghai）。这是未完成事项清单，不是完成报告。
+更新：2026-10-05 23:53（Asia/Shanghai），review 纠正 2026-10-06。这是接续任务与验收状态，不是全部完成报告。
 先读 [STATUS](STATUS.md)、[质量方案](mask_quality_plan.md) 和本文件，再核对进程及 Git 状态。
+
+**本文件规则：只追加和勾选，不删除条目，不整篇覆盖。** 关闭某项须写明证据或 owner 决定，保留原文。
+§4「review 补充/纠正」由 review 维护，Codex 只能勾选或在条目下追加收据。
 
 ## 当前现场
 
@@ -9,13 +12,14 @@
 - 当前工作树：`/home/chenkailun/projects/deepmoe-mask-quality`，分支 `codex/mask-quality`。
   **在这里继续，勿新开重复工作树。** 构建目录是该工作树的 `build/`。
 - 用户网页已停止，聊天记录保留。结束后须恢复；不要刷新用户的浏览器页。
-- GPU 监督进程当时为 PID `2782881`，命令为
-  `python3 bench/results/mask_quality/phase_a/validation/run_checks.py`（主仓库目录）。
-  正在跑动态 mask 的生成式 MMLU57，之后自动跑双盘八轮 plain mask。
-  PID 会变化，接续时重新检查，不能直接再启动一次。
+- Phase A 的 MMLU 与八轮 plain 已结束。`phase_c/run_checks.py`（四项 NLL）已结束；
+  review 时唯一 GPU 作业为 `phase_c/conversation/run_checks.py`（tau.20 中文64等）。
+  接续时重新检查进程，不得重复启动。
 - 原始结果均在主仓库 `bench/results/mask_quality/`；监督脚本、命令、环境和温度记录也在里面。
 - **一次一个 GPU 任务**；power-saver、AC、80°C 暂停/72°C 恢复。镜像须为 `holds 48 of 48`。
   不得写 checkpoint。每种配置只跑一次，已有结果要复用。
+  **注意：监督脚本把作业切到 power-saver（ACPI `quiet`），`profile_receipt.json` 里的
+  `performance` 只是恢复值。** power-saver 下的 ms/token 不能和历史 STATUS 速度直接比较，见 §4.1。
 
 ## 1. 优先完成本轮代码审查修复
 
@@ -27,13 +31,15 @@
 
 仍需：
 
-- [ ] 审核队列 coalesce/reset/失败路径，以及 `SessionPool::activate` 返回保存错误后的状态。
-- [ ] 在最终构建上复用全部 `suite.kvdisk` 和工具门禁；必要的实机回归与下面 GPU 测试串行。
-- [ ] 更新 `docs/kv_async.md`：队列满时允许等待；淘汰/退出必须确认写盘，不能再写“永不阻塞”。
+- [x] 审核 coalesce/reset/失败路径：同名较新快照继承确认；reset 取消排队确认并等待在途写盘。
+  activate 的必要保存失败会返回错误，但目标会话已激活，超预算旧副本保留；已写进文档。
+- [x] 最终 CPU 25/25，包括 `suite.kvdisk` 8 cases。工具门禁因与 CTest 同时跑固定临时文件
+  出现一次 suite.io 失败；其余32项通过，suite.io 串行复验通过。最终交付前仍须串行跑完整门禁。
+- [x] 更新 `docs/kv_async.md` 的背压、必要保存与错误保留语义。
 
 ### GPU 路由 / ONECB 整理
 
-当前有未提交修改，不能宣称已验收：
+`4a262da` 已独立提交，CPU 与 GPU 验收通过：
 
 - `RuntimeConfig::gpu` 集中解析 11 个 GPU 路由、ONECB、MGT 和 readout 开关；热路径读取配置。
 - 捕获层号读取 `dspark_target_layer_ids`，噪声 token 读取 `dspark_noise_token_id`。
@@ -43,12 +49,12 @@
 
 仍需：
 
-- [ ] 审核 diff，确保只是配置/常量/排版整理；核对参数默认值和原环境变量语义。
-- [ ] 看 `gpu_review_build.log`、`gpu_review_cpu.log`；完成 CPU 与 Python 工具门禁。
-- [ ] 当前 A 实验结束前不要覆盖 `build/deepmoe` 或 `build/shaders`，它们属于已跑/待跑 A 格。
-- [ ] A 结束后完整构建；运行已有 GPU 路由 quant/hidden mean、ONECB 对 serial、KV 回绕、k=0
-  单次 target 的逐位对拍。每个 case 必须实际执行，不能把 skip 当 pass。
-- [ ] 整理成独立 commit，和数值策略/报告分开。
+- [x] 审核默认值及旧环境变量语义，保持 union 顺序与数学不变。
+- [x] A 完成后完整构建；52个 SPIR-V shader 与整理前 hash 全部一致。
+- [x] 五项已有 GPU case 均实际执行通过：route quant/hidden mean、ONECB 对 serial、
+  prefix KV 回绕、k=0 单次 target、GPU route 拒绝多 streams。0 skips、0 热暂停。
+- [x] 独立整理 commit；构建和逐项收据在 `gpu_review/`、`gpu_review_build_provenance.json`。
+  （review：`4a262da` 还带了 `tests/test_io.cpp` +41 行，与整理无关，不算完全独立，见 §4.4。）
 
 ## 2. 完成 mask_quality_plan（顺序执行）
 
@@ -65,10 +71,16 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 **但 mask 中文续轮重复 4-gram 为 `.117878`，off 为 `.049116`，超过 1.5 倍门槛。**
 不得把 A 写成“全质量通过”。
 
-- [ ] 收尾正在跑的 MMLU57 和八轮 plain 基线，记录实际分数/invalid/速度/命中/重复率。
+- [x] MMLU57 **46/57、2 invalid，不达48/57**。八轮 plain **110.142ms/token，9.079226tok/s**，
+  served `.9390`、mass lost `.0483`、八轮无循环、P0失败0。全部 A 作业热暂停0。
 - [ ] 执行 `phase_a/validation/additional/run_checks.py` 的 decode 与 longctx 门禁（尚未启动）。
-- [ ] 对 baseline 不合格项明确作判定；不能擅自降低门槛或设置未合格默认值。
-- [ ] 把矩阵、P0 分段/读源计时、温控、命令和质量门写入 `docs/miss_mask.md`，更新 STATUS。
+- [x] mask 的 MMLU 与续轮重复门失败，不能设置为新的质量合格默认值。
+- [x] `docs/miss_mask.md` 已记录矩阵、分段计时和质量结果；STATUS 待最终决策更新。
+- [ ] **A 未通过（MMLU 46/57、续轮重复 .118 > 1.5×off）。按方案此时应停下请 owner 决定，
+  而不是直接进入 C。** C 已经开跑，结果可以保留作为数据，但在 owner 决定前不得据此改默认或改网页。
+
+> review 注：八轮 plain 110.1ms/token 比历史动态 mask 76.7ms/token 慢 43%，命中率却相同，
+> 原因未查清，见 §4.1。在查清前不要用这个数判断 C/D 的速度。
 
 ### B：重复质量工具已实现，待最终交付
 
@@ -85,13 +97,17 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 离线 mixed 27,399 token 已扫完，结果是理想即时 LRU，**不含填充延迟或生成反馈**。
 `.20` 与 `.10` 的理想平均等待为 `5.52/15.82` expert/token，仅用于选候选。
 
-- [ ] 最终整理构建后更新 `phase_c/deepmoe-tested`；当前该 raw exe 是整理前版本，勿混用来源。
-- [ ] 串行执行 `phase_c/run_checks.py`：off、tau0、tau.20、tau.10 的 l3 NLL。
+- [x] 已保存最终整理构建 exe，SHA256 `08a13390735e53ee…`；来源 `4a262da`，52 shaders 不变。
+- [x] 串行执行 `phase_c/run_checks.py`：off、tau0、tau.20、tau.10 的 l3 NLL。
   环境含双盘、`DEEPMOE_MASK_WAIT_BUDGET=0,0` 和工作树 shader 目录。
-- [ ] off 必须 `.622784`；tau0 无限预算核对 off 等价性。
+  （review 读数：off `.622784`；tau0 `.622784`，served 1.0；tau.10 `.623711`，served .9666，
+  mass lost .016；tau.20 `.626679`，served .896，mass lost .0687。NLL/off 均 ≤1.007。
+  l3 的 tok/s 含 prefill 且在 power-saver 下，不能当速度结论。）
+- [x] off 必须 `.622784`；tau0 无限预算核对 off 等价性（两者逐位一致）。
 - [ ] 候选 NLL/off ≤1.10 才继续长生成、中文64、MMLU和八轮速度。
   已经判失败的配置按止损规则停止，写明省略哪些测试及理由，不冒充完成。
-- [ ] 最好候选同工作负载带 off/全 mask 对照。速度 ≥20% 且全部质量通过才 GO；
+- [ ] 最好候选同工作负载带 off/全 mask 对照，**三者同一会话、同一电源模式、连续跑**，
+  provenance 写电源模式。速度 ≥20% 且全部质量通过才 GO；
   质量通过但速度 <10% 则 NO-GO。GO 才添加网页显式选项，是否默认仍由 owner 决定。
 - [ ] 报告写 `miss_mask.md` / STATUS；NO-GO 不进默认，可移除没有价值的运行时策略。
 
@@ -123,7 +139,7 @@ Engram 全量 scale 默认没有常驻，也没有可再释放一次的整套 ho
 
 - [ ] 提交本方案和简洁结论报告、机器收据。原始大数据保持 gitignored。
 - [ ] 合回 main，验证、推送，再删除**本任务自己的**工作树与分支；不得删用户 untracked 数据。
-- [ ] 更新本清单为最终未完成事项；本文件主仓库副本是任务新增文件，合并前处理同名 untracked 副本。
+- [ ] 更新本清单为最终未完成事项；先核对主仓库同名 untracked 副本是否有用户新编辑，再合并。
 - [ ] 用主仓库 `build/web_mask/launch.py` 恢复网页（磁盘KV开启、1M上下文、5500槽、双盘、80/72温控），
   验证 `/api/config` 与引擎日志。用户 transcript 不动，浏览器页不刷新。
 - [ ] 完成当前 goal 前确认以上必要项已处理；NO-GO / 按决策跳过必须有证据。
@@ -135,3 +151,58 @@ Strata 可选 DeepMoE 文本后端 [PR #943](https://github.com/Niko1221/Strata/
 维护者尚未合并；本账号只有上游 READ 权限。等待维护者不是本地可自主完成的工作。
 宣传稿在 `docs/launch_announcement.md`，GitHub About/topics 已更新；未自动发布社交媒体消息。
 不要重新开启预测预取、非LRU、固定cache默认、自动冻结、重新归一化或已关闭 kernel 实验。
+
+## 4. review 补充/纠正（23:53 版覆盖时丢失或遗漏的条目，勿删）
+
+### 4.1 P0：速度回退未解释（新发现）
+
+同为动态 mask、双盘、5500 槽、八轮 plain：
+
+| | ms/token | tok/s | 命中 | nvme_stall | expert_hit_ms | hot_gemv_ms |
+|---|---|---|---|---|---|---|
+| 历史 `miss_mask/speed_mask` | 76.7 | 13.04 | .94 | 1.22 | 24.9 | 38.6 |
+| Phase A `long8_plain` | 110.1 | 9.08 | .94 | 1.31 | 35.3 | 58.7 |
+
+IO 没变，变慢的是 GPU 计算（+40~50%）。最可能是 power-saver/DPM：监督脚本把作业切到 power-saver，
+历史数据大概率在 performance 下测。同会话 512 token 网页测：off 8.52/9.13/8.34，mask 10.19/8.91/7.84，
+mask 只比 off 快约 4%（历史 +43%）。
+
+- [ ] 在 performance 模式下同会话连续跑 off 与动态 mask 八轮（已有脚本，每配置一次），
+  看能否回到 ~77ms/token。provenance 写 `powerprofilesctl get`、GPU 时钟/DPM 状态。
+- [ ] 若 performance 下仍慢，按提交二分（`41cc44c` → `4a262da`），以 per-op 的 `expert_hit_ms`/`hot_gemv_ms` 判断。
+- [ ] 查清前，C 的「比 off 快 ≥20%」门和 D 的 k 选择都不判；温控仍按 80/72，
+  若 performance 下温度无法跑完，写明并请 owner 决定测速用哪个模式。
+
+### 4.2 P1：双盘 GPU route 让 verify 变慢（原 #4，被删）
+
+`final_dual`：verify 169.7 → 182.8ms/周期（+13ms），同接受率周期 211.3 vs 211.8，无收益；
+按 `dspark_e2e_plan.md` §8 是 >189 档。
+
+- [ ] D 里 GPU_ROUTE 开/关分开测；双盘下若仍无收益，只保留 ONECB，GPU route 默认关，记为 NO-GO。
+- [ ] 查 +13ms 来源（双盘时 snapshot/union 与 IO 完成的同步点），只查不改，结论写进 `dspark_topk.md`。
+
+### 4.3 P1：网页投机配置
+
+- [ ] 网页之前跑 k=5（约 65ms/token，可能比不投机还慢）。恢复网页时用 D 的结论；D 未完成就用 plain，不用 k=5。
+- [ ] mask 默认值、是否开网页投机都由 owner 决定，A 未通过前不改网页默认。
+
+### 4.4 P2：代码质量（原 #10、#13 等，被删或只做了一部分）
+
+- [ ] **一个 commit 一件事**：`4a262da` 混入了 `tests/test_io.cpp` +41 行；以后拆开。
+- [ ] GPU route 状态移出 `Engine`：`4a262da` 只把 `saved_*` 改成按层数的 vector，
+  `route_snapshot_`/`route_steps_`/`finish_gpu_routes` 仍在 `Engine` 里，未完成。
+- [ ] 环境变量收进 `RuntimeConfig`：`engine.cpp` 的 `getenv` 由 47 降到 38，剩余项列清单，热路径上的优先。
+- [ ] 魔数：核对 `L>=37`、`6*16*2`、`128799`、`opidx*336+80` 是否都已命名，未命名的列出。
+- [ ] 新代码不要只追加到文件末尾；超长行与一行多语句按周边风格整理（与功能改动分 commit）。
+
+### 4.5 P3：先测量再决定
+
+- [ ] 单线程 union kernel：先用 per-op 计时看占周期多少，<2ms 就不动。
+- [ ] profiling 开销 3.33%，目标 <1%；查是哪些计时点，默认关闭或降采样。
+- [ ] draft head 约 10ms：FP8 head / vocab 子集只有估算，不实现，等 owner 决定。
+
+### 4.6 不做（已关闭，勿重开）
+
+预测预取（含 CPU 预测预取）、非 LRU 淘汰、reheat、resident-only 默认、固定 cache 默认、自动冻结、
+mega kernel、host-flag、champion port、CM attention、scale-fold、pair-dot、MTP unpin、缩小 draft attention、
+CPU 计算 miss 专家、部分专家、重新归一化、streams>1 的 GPU route。

@@ -24,7 +24,8 @@ from repetition_metrics import from_events
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("off", "plain", "spec5"), required=True)
+    parser.add_argument("--mode", choices=("off", "plain", "spec", "spec5"), required=True)
+    parser.add_argument("--spec-k", type=int, choices=(2, 3, 5), default=5)
     parser.add_argument("--mask-cache", choices=("dynamic", "fixed"), default="fixed",
                         help="keep the historical fixed-cache longtest reproducible")
     parser.add_argument("--script", type=Path, required=True)
@@ -33,6 +34,8 @@ def main():
     parser.add_argument("--mirror", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8081)
     args = parser.parse_args()
+    speculative = args.mode in ("spec", "spec5")
+    spec_k = 5 if args.mode == "spec5" else args.spec_k
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     script = json.loads(args.script.read_text())
@@ -41,8 +44,8 @@ def main():
     for key in ("DEEPMOE_SPEC_DIAGNOSTICS", "DEEPMOE_ROUTE_DUMP"):
         env.pop(key, None)
     env.update(DEEPMOE_MASK_DYNAMIC_LRU="0" if args.mask_cache == "fixed" else "1", DEEPMOE_DSPARK_PROFILE="0",
-        DEEPMOE_DSPARK_ONECB="1" if args.mode == "spec5" else "0",
-        DEEPMOE_BATCH_GPU_ROUTE="1" if args.mode == "spec5" else "0",
+        DEEPMOE_DSPARK_ONECB="1" if speculative else "0",
+        DEEPMOE_BATCH_GPU_ROUTE="1" if speculative else "0",
         DEEPMOE_DSPARK_MEGA="0", DEEPMOE_MGT_PAIR_DOT="0",
         DEEPMOE_MGT_ATTN_CM="0", DEEPMOE_MGT_FOLD_SCALE="0")
     command = [sys.executable, str(ROOT / "tools/web/server.py"), "--exe", str(args.exe.resolve()),
@@ -50,8 +53,8 @@ def main():
         "--cache-slots", "5500", "--max-context", "4096",
         "--gpu-prefill-min", "16", "--mirror", str(args.mirror), "--no-kv-disk",
         "--port", str(args.port), "--log", str(out / "engine.log")]
-    if args.mode == "spec5":
-        command += ["--dspark", "--spec-k", "5", "--spec-top-k", "4"]
+    if speculative:
+        command += ["--dspark", "--spec-k", str(spec_k), "--spec-top-k", "4"]
     provenance.write(out, exe=args.exe, env=env)
     base = f"http://127.0.0.1:{args.port}"
 
@@ -79,8 +82,8 @@ def main():
                     time.sleep(.5)
             assert config["ready"]["sources"] == 2
             spec = config["ready"]["speculation"]
-            assert spec["enabled"] == (args.mode == "spec5")
-            assert spec["draft_tokens"] == 5 and spec["accept_top_k"] == 4
+            assert spec["enabled"] == speculative
+            assert spec["draft_tokens"] == (spec_k if speculative else 5) and spec["accept_top_k"] == 4
             (out / "config.json").write_text(json.dumps(config, indent=2))
             print("READY", args.mode, json.dumps(spec), flush=True)
             for index, turn in enumerate(script["turns"]):
@@ -124,7 +127,7 @@ def main():
                 fixed = args.mode != "off" and args.mask_cache == "fixed"
                 if fixed:
                     assert done["decode_nvme_mb"] == 0
-                if args.mode == "spec5":
+                if speculative:
                     spec = done["speculation"]
                     assert spec["cycles"] and spec["gpu_readout_cycles"] == spec["cycles"]
                     assert spec["accepted"] <= spec["verified"]

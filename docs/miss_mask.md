@@ -229,3 +229,100 @@ environments, outputs, source status and thermal samples are under
 are also recorded in `phase_a_matrix.json`, and repetition calibration in
 `phase_b_calibration.json`. A passes its recovery thresholds; MMLU and long
 repetition failures prohibit promoting plain mask as a newly qualified default.
+
+## Weighted miss waits: Phase C (2026-10-05)
+
+`DEEPMOE_MASK_WAIT_TAU` is an experiment, **disabled by default**. For each
+layer it selects the smallest descending miss-weight prefix needed to bound
+lost routed mass. An all-miss layer waits for at least one expert, except at
+tau=1, which preserves all-mask behaviour. The selected weights return unchanged
+when their P0 reads land; the remaining misses retain zero weight. All misses
+still enter normal LRU/P0 planning. `DEEPMOE_MASK_WAIT_BUDGET=experts,milliseconds`
+limits actual joins per token; zero means unlimited, default is `8,20`.
+Startup logs the values. Speculation and batched verification reject this
+option: a decode-only experiment cannot silently stall or alter a verify batch.
+
+Offline mixed-trace replay covered 27,399 weighted token rows at 5,500 slots.
+Its LRU uses immediate fills and fixed routes; it omits IO lag, guards, prefill,
+budgets and generation feedback. Its hit estimate is .9170. Mean selected
+experts per token / remaining lost mass:
+
+| tau | selected experts/token | mean lost mass |
+|---|---:|---:|
+| 1 | 0 | .070385 |
+| .30 | 2.738 | .053426 |
+| .20 | 5.521 | .041628 |
+| .15 | 8.245 | .031037 |
+| .10 | 15.819 | .007781 |
+| .05 | 19.493 | .000373 |
+
+These are selection counts, not serial IO costs. Multiplying them by P0 mean
+latency would count overlapping or already queued requests several times.
+
+The first GPU screen used two sources, 5,100 slots, static heat, l3_64,
+power-saver, no speculation and **unlimited `0,0` budgets**. Each ran once:
+
+| mode | NLL | NLL/off | top-1 / 64 | served | lost mass | teacher-forced tok/s |
+|---|---:|---:|---:|---:|---:|---:|
+| off | .622784 | 1 | 56 | 1 | 0 | 4.665 |
+| tau0 | .622784 | 1 | 56 | 1 | 0 | 4.532 |
+| tau.20 | .626679 | 1.006254 | 60 | .8960 | .0687 | 6.439 |
+| tau.10 | .623711 | 1.001488 | 62 | .9666 | .0160 | 5.075 |
+
+Tau0 also reproduced all 64 off greedy IDs. Both candidates pass the <=1.10
+NLL ratio screen. More top-1 matches here do not prove a general quality gain.
+These rates include the teacher-forced runtime's workload and are not the
+eight-turn conversation comparison. Long-output, MMLU and conversation speed
+decisions are still pending; the default `8,20` budget is not qualified by this
+unlimited-budget test.
+
+The final refactor build used executable SHA-256 `08a13390735e53ee...`, source
+`4a262da`; all 52 SPIR-V outputs are identical to the earlier Phase A shaders.
+The five existing GPU route/ONECB/zero-target/window-wrap/multistream-rejection
+tests ran with no skips or failures. All four NLL jobs had AC, zero thermal
+pauses, GPU peak <=69 C and external NVMe <=74.85 C. Raw receipts:
+`bench/results/mask_quality/{phase_c,gpu_review}/` and
+`gpu_review_build_provenance.json`; offline selection:
+`phase_c_offline_final.json`.
+
+## Cache capacity audit: Phase E
+
+**No allocation change is justified by the >=150-slot reclaim rule.** The final
+build's measured l3 decode allocation ledger (5,100 slots, no MTP pins) is:
+
+| Allocation | GiB | Relationship |
+|---|---:|---|
+| Expert slots | 89.337 | inside allocator A |
+| Pinned dense/attention tensors | 10.466 reserved / 9.170 payload | inside A; 1.295 padding |
+| KV, 64-token imported state | .00346 | inside A |
+| Decode scratch | .03125 | inside A |
+| Other tracked A allocations | .00314 | remainder, not a free pool |
+| Allocator A / B totals | 99.841 / .000061 | totals; do not add again |
+
+The exact byte ledger is `phase_e_accounting.json` under the raw result root.
+At 5,500 slots the expert payload is **96.344 GiB**. In speculative mode 384
+MTP expert slots are inside this cache, leaving 5,116 replaceable main-model
+slots; they are not an extra allocation. Batch and route scratch add at most
+128+8 MiB for one stream. Engram table scales are not resident by default.
+Prefill transit and its runner are destroyed before decode; bootstrap host
+weights are released before the GPU store is built. Neither is a second
+resident copy that can be freed again.
+
+The earlier 5,500-slot live OS snapshot reported **121.49 GiB MemTotal**,
+**5.65 GiB MemAvailable**, driver VRAM/GTT **3.41/104.71 GiB** and process RSS
+about **.286 GiB**. Driver counters include desktop clients; mapped UMA and
+runtime allocations overlap. They must not be summed as independent memory
+consumers. OS, desktop and page-cache usage is not a demonstrated runtime
+reclaim. Even reclaiming all measured pinned padding and all decode/batch/route
+scratch would remain below the plan's roughly 3 GB threshold, and their safe
+repacking has not been validated.
+
+Immediate-fill LRU replay of the same 27,399-token mixed trace gives hits
+**.9155/.9179/.9202/.9224** at 5,500/5,600/5,700/5,800 slots. Each additional
+100 slots costs **1.881 GB** for about **.22-.24 percentage points** of hit rate.
+This excludes prefill and async loading. The simulator's legacy disk bandwidth
+and emitted tok/s are not hardware measurements or a speed forecast. Therefore
+Phase E ends with an accounting result and skips allocation changes; there is
+no changed prefill/long-context allocation path to qualify. Sources:
+`phase_e_memory_live.json`, `phase_e_capacity.json`, the final l3 runtime log,
+and `Engine::feed_gpu` cleanup.
