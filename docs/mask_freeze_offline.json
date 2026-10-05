@@ -1,0 +1,220 @@
+{
+  "controller": {
+    "enter": 0.95,
+    "leave": 0.9,
+    "layer_floor": 0.75,
+    "hard_floor": 0.8,
+    "warm_tokens": 32,
+    "frozen_tokens": 16,
+    "alpha": 0.125,
+    "churn_window": 16,
+    "churn_fraction": 0.01
+  },
+  "native": [
+    {
+      "input": "bench/results/miss_mask/speed_mask",
+      "sha256": "0ee06dc84e4ec9b5954e71ac9e30f58887e9ce65bd486d653b4c8fa0e9e8d17a",
+      "capacity": 5500,
+      "records": 2358,
+      "decode_tokens": 2318,
+      "weighted_mass": null,
+      "churn_candidates": 0,
+      "rolling16_min": 69,
+      "rolling16_median": 199.0,
+      "rolling16_max": 773,
+      "limitation": "Demand-LRU replay with immediate fills and static initial heat; GPU prefill routes, async IO, P3 and output feedback absent. Native trace has no gate weights or output ids."
+    },
+    {
+      "input": "bench/results/miss_mask/speed_mask",
+      "sha256": "0ee06dc84e4ec9b5954e71ac9e30f58887e9ce65bd486d653b4c8fa0e9e8d17a",
+      "capacity": 5116,
+      "records": 2358,
+      "decode_tokens": 2318,
+      "weighted_mass": null,
+      "churn_candidates": 0,
+      "rolling16_min": 78,
+      "rolling16_median": 224.5,
+      "rolling16_max": 811,
+      "limitation": "Demand-LRU replay with immediate fills and static initial heat; GPU prefill routes, async IO, P3 and output feedback absent. Native trace has no gate weights or output ids."
+    },
+    {
+      "input": "bench/results/spec_e2e/final_dual/mask",
+      "sha256": "9b197720001fd9a90431cba81f9aad3af4cbf21e4906d5e75e4c422b3f91a2a5",
+      "capacity": 5500,
+      "records": 63,
+      "decode_tokens": 63,
+      "weighted_mass": null,
+      "churn_candidates": 0,
+      "rolling16_min": 272,
+      "rolling16_median": 395.5,
+      "rolling16_max": 493,
+      "limitation": "Demand-LRU replay with immediate fills and static initial heat; GPU prefill routes, async IO, P3 and output feedback absent. Native trace has no gate weights or output ids."
+    },
+    {
+      "input": "bench/results/spec_e2e/final_dual/mask",
+      "sha256": "9b197720001fd9a90431cba81f9aad3af4cbf21e4906d5e75e4c422b3f91a2a5",
+      "capacity": 5116,
+      "records": 63,
+      "decode_tokens": 63,
+      "weighted_mass": null,
+      "churn_candidates": 0,
+      "rolling16_min": 282,
+      "rolling16_median": 406.0,
+      "rolling16_max": 507,
+      "limitation": "Demand-LRU replay with immediate fills and static initial heat; GPU prefill routes, async IO, P3 and output feedback absent. Native trace has no gate weights or output ids."
+    }
+  ],
+  "weighted": [
+    {
+      "capacity": 5500,
+      "enter": 0.93,
+      "leave": 0.88,
+      "tokens": 27399,
+      "frozen_tokens": 753,
+      "frozen_fraction": 0.027482754845067337,
+      "mean_pre_admission_mass": 0.9290235903620051,
+      "mean_frozen_mass": 0.9626750692925402,
+      "switches": 6,
+      "switch_reasons": {
+        "freeze": 3,
+        "layer_mass": 3
+      },
+      "churn_candidates": 186,
+      "zero_cost_frozen_token_speedup_ceiling": 0.028259401035802746
+    },
+    {
+      "capacity": 5500,
+      "enter": 0.95,
+      "leave": 0.9,
+      "tokens": 27399,
+      "frozen_tokens": 753,
+      "frozen_fraction": 0.027482754845067337,
+      "mean_pre_admission_mass": 0.9290235903620051,
+      "mean_frozen_mass": 0.9626750692925402,
+      "switches": 6,
+      "switch_reasons": {
+        "freeze": 3,
+        "layer_mass": 3
+      },
+      "churn_candidates": 186,
+      "zero_cost_frozen_token_speedup_ceiling": 0.028259401035802746
+    },
+    {
+      "capacity": 5500,
+      "enter": 0.97,
+      "leave": 0.92,
+      "tokens": 27399,
+      "frozen_tokens": 739,
+      "frozen_fraction": 0.02697178729150699,
+      "mean_pre_admission_mass": 0.9291282232489907,
+      "mean_frozen_mass": 0.9661285824715554,
+      "switches": 7,
+      "switch_reasons": {
+        "freeze": 4,
+        "mean_mass": 2,
+        "layer_mass": 1
+      },
+      "churn_candidates": 187,
+      "zero_cost_frozen_token_speedup_ceiling": 0.027719429857464364
+    },
+    {
+      "capacity": 5116,
+      "enter": 0.93,
+      "leave": 0.88,
+      "tokens": 27399,
+      "frozen_tokens": 216,
+      "frozen_fraction": 0.00788349939778824,
+      "mean_pre_admission_mass": 0.9212738259452009,
+      "mean_frozen_mass": 0.9692918106948634,
+      "switches": 7,
+      "switch_reasons": {
+        "freeze": 4,
+        "hard_floor": 2,
+        "layer_mass": 1
+      },
+      "churn_candidates": 164,
+      "zero_cost_frozen_token_speedup_ceiling": 0.007946142809844388
+    },
+    {
+      "capacity": 5116,
+      "enter": 0.95,
+      "leave": 0.9,
+      "tokens": 27399,
+      "frozen_tokens": 216,
+      "frozen_fraction": 0.00788349939778824,
+      "mean_pre_admission_mass": 0.9212738259452009,
+      "mean_frozen_mass": 0.9692918106948634,
+      "switches": 7,
+      "switch_reasons": {
+        "freeze": 4,
+        "hard_floor": 2,
+        "layer_mass": 1
+      },
+      "churn_candidates": 164,
+      "zero_cost_frozen_token_speedup_ceiling": 0.007946142809844388
+    },
+    {
+      "capacity": 5116,
+      "enter": 0.97,
+      "leave": 0.92,
+      "tokens": 27399,
+      "frozen_tokens": 212,
+      "frozen_fraction": 0.007737508668199569,
+      "mean_pre_admission_mass": 0.921276835488814,
+      "mean_frozen_mass": 0.9712660775780751,
+      "switches": 5,
+      "switch_reasons": {
+        "freeze": 3,
+        "layer_mass": 1,
+        "hard_floor": 1
+      },
+      "churn_candidates": 165,
+      "zero_cost_frozen_token_speedup_ceiling": 0.007797844558060838
+    }
+  ],
+  "weighted_sources": {
+    "route_layer00.parquet": "9ba9f5bd76476c08cb13b24105b4d9256c0476ed451c2465e3da839f0894b594",
+    "route_layer01.parquet": "43de816f660c38bd48bf76074879e2b706099151a34c1c0a2294f6952874f378",
+    "route_layer02.parquet": "261c0fedb44a8ab9936e14172db2a6a858f7a3c150f0a6c4e1bfd543cf87f207",
+    "route_layer03.parquet": "b3de915d3efd09c82f52b028daa3396409afbe94015b99a22230113171623004",
+    "route_layer04.parquet": "5d45daf5da681fc7064fd8599b052b827f2e9ef3192ada9effe8f2c4de61b62b",
+    "route_layer05.parquet": "922765d7f72682fc64c338d6030de5109aca33c8466ce2ee643b515739eb0c59",
+    "route_layer06.parquet": "ecdb21b163623cf75522825c714bad37555e8ab6dd616d6a3f260d6a5d0be9f5",
+    "route_layer07.parquet": "f3942cbedbd8c944414ba2ac9cd11240366275541ff813b89883df1f05924145",
+    "route_layer08.parquet": "24df709eb5513969a11c5a3541064a8003d6e0e5b0b5f119d380ae40388af6d7",
+    "route_layer09.parquet": "353fa1d74966df55cc525042489e401e0808a8bda59eaaa044d8da4e574f231c",
+    "route_layer10.parquet": "e45532661d6a245d989a243d979b2df0c6c5751b9179a0554c81e852999c946a",
+    "route_layer11.parquet": "d8843b548bb0c6de828303395578b26174f56434e2e75e917800855959723cfa",
+    "route_layer12.parquet": "a602d4895ec4925cf828b48f6c74d9498ee731cf88fd4695c092683e2298c0ab",
+    "route_layer13.parquet": "caa0bd159982f1d8028be471fdabbd9804e0f1c3d1f26cd0f711903b51aa605f",
+    "route_layer14.parquet": "1a4d517688ec56e6f13bda4afe2fbbd42b83fb31a9ce8ea086091cd9ea867cb9",
+    "route_layer15.parquet": "c6130b9324f250b095b4c816cef677bab28722dfed0d49f23f0b1a8cc4cdb6c1",
+    "route_layer16.parquet": "ee5956ab2401b9b5128ee2f5ffed2ffc838de2d956802ce967878c0cc37b852f",
+    "route_layer17.parquet": "9fafd592d64f5b2d098a9e72eac68a2249af9340eb7ad58def342fae91f00003",
+    "route_layer18.parquet": "7330d767701d5506f542b44def2af623ef49eee3f8163d2ef5be4f057b272c81",
+    "route_layer19.parquet": "0de61de3ab33c30f19aa6f5ff2bd09a7188eac72a9d1a9afd0c1aa833ad42ee0",
+    "route_layer20.parquet": "c39ffac8c02c4c3217aa501427c82c2bfc0bd42ef640bfcc9bc5e1881b9bc392",
+    "route_layer21.parquet": "d6b9e5420361022c3f94315a19bd2e964689baf254c1cabee649ba69c6b3354e",
+    "route_layer22.parquet": "03ca71d92fdaae8c389243eb78406beb2b01cec57a864272dd12a582ed4ea4cc",
+    "route_layer23.parquet": "81c3cb18e6094ca020f5ce44cdab8ec6c5e0d012bf2500e2a7223739e2ac2429",
+    "route_layer24.parquet": "37ccb593027a38e841f4fdd94e0fe09f69b0caa58e52d61972b77f15a906d26c",
+    "route_layer25.parquet": "1063360b46df974d189ba35966696cd8f5d98ac35d337a5e9fba228afcaa9c0d",
+    "route_layer26.parquet": "af6de24e9ee253185d0fa4c22b3c3cdb86fb324f96c079b51b62955aa4d98842",
+    "route_layer27.parquet": "6b1fa071e1a7c460de9b13aef1e9f9fddf9aba41fecc0e097703db57ec730186",
+    "route_layer28.parquet": "13d1438381c88c162cb897e88f52514ba9f4eb9d3e5b524cf3eb372660e3a3e2",
+    "route_layer29.parquet": "8077af9517a1ad7953f3328d6682f42dd64d7235cf6c5063383a21163c374177",
+    "route_layer30.parquet": "4f0a87ca7653730b5a9ed18bdff005480ed3f092542ee42d00d41a0bcc48cbda",
+    "route_layer31.parquet": "8a57fe7f671add44411baf4865d1f4d3f1dc3eae926d8c018173591e632ce675",
+    "route_layer32.parquet": "c2576896acc9877023c9908fe1989a3ec10ff3c4a03995a8a1727215c7291667",
+    "route_layer33.parquet": "ae43997dd702c82472975ea3dd17075a3b8e947c6d2a7df63974ccb163f28507",
+    "route_layer34.parquet": "7ec1bad08b1dadbe3675e0c950945294eba91a6a1580ae1d17aef56b3436d1d3",
+    "route_layer35.parquet": "16b45c7bba11a648e10b370a952f6dd591862b0d89955dc05a7593c7984fb59d",
+    "route_layer36.parquet": "df9a0b00aeed7d1ef4598a2454a2d3dccedfd8fa0295f305ecb04c9afdeaeec4",
+    "route_layer37.parquet": "0c65fdaeb18f8e2b18137e5ca7c30fa9d2120490bc6193bb2432d9d7368e3cd4",
+    "route_layer38.parquet": "004c4103ba58bba7961640d47f8db713f1ff0f676309eb95268ee9a4592af00b",
+    "route_layer39.parquet": "75de98cb76f5ece13af052c30a3a0ac536b3a677083d4b87c5638535e017f65a"
+  },
+  "weighted_limitation": "Recorded mixed teacher-forced prompt routes, not generated tokens. Warm signal is pre-admission resident mass; no P3 reheat, repetition ids, runtime fencing, IO cadence, MTP pin keys or feedback. 5116 approximates 5500 minus 384 pinned MTP slots. Speed ceiling assumes uniform token cost and zero total cost for frozen tokens; it is not measured throughput.",
+  "decision": "NO-GO: replay has no native churn candidate; weighted mixed occupancy too low to justify runtime adaptive freeze. Restore dynamic mask default, keep fixed explicit.",
+  "native_threshold_independence": "All three mass thresholds share the same necessary churn condition; there are zero native candidates before applying mass thresholds."
+}

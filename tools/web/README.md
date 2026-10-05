@@ -27,6 +27,8 @@ python3 tools/web/server.py --max-context 1048576
 |---|---|
 | `--max-context N` | 引擎 KV 位置数，默认 1048576；**硬上限 1048576**（见下）。KV 从 4096 位置起按需翻倍；解码 score scratch 预留 1M，GPU prefill 工作集另受显存余量限制 |
 | `--cache-gb N` / `--cache-slots N` | 专家缓存 |
+| `--resident-only mask` | miss 专家的权重置零；有损模式，默认仍为 off |
+| `--mask-cache dynamic\|fixed` | mask 默认走动态 LRU/P0 异步加载；fixed 显式冻结初始集合，会降低长对话质量 |
 | `--kv-dir DIR` | SSD 上的 `.pkv` 前缀/挂起 KV 缓存（不给就用 serve 的默认目录） |
 | `--kv-max-gb N` | 该目录的预算 |
 | `--max-parked N` | 内存里最多挂起几个会话，其余落盘 |

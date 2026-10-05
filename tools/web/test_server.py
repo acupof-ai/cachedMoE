@@ -49,9 +49,14 @@ class WebSettings(unittest.TestCase):
         args = SimpleNamespace(exe="deepmoe", max_context=1 << 20, cache_slots=5500,
             cache_gb=0, gpu_prefill_min=16, gpu_prefill_speedup=None, kv_dir="",
             no_kv_disk=True, kv_max_gb=0, max_parked=0, resident_only="mask",
-            dspark=True, spec_k=5, spec_top_k=4, mirror=[], no_mirror_auto=True)
+            dspark=True, spec_k=5, spec_top_k=4, mirror=[], no_mirror_auto=True,
+            mask_cache="dynamic")
         command = server.Serve.command(args)
         self.assertEqual(command[command.index("--max-context") + 1], "1048576")
+        self.assertEqual(command[command.index("--mask-cache") + 1], "dynamic")
+        args.mask_cache = "fixed"
+        command = server.Serve.command(args)
+        self.assertEqual(command[command.index("--mask-cache") + 1], "fixed")
         # Keep the web preflight bound consistent with the compiled engine cap.
         self.assertEqual(server.K_MAX_INDEX_POSITIONS, 1 << 20)
 
@@ -59,7 +64,8 @@ class WebSettings(unittest.TestCase):
         args = SimpleNamespace(exe="deepmoe", max_context=4096, cache_slots=5500,
             cache_gb=0, gpu_prefill_min=16, gpu_prefill_speedup=None, kv_dir="",
             no_kv_disk=True, kv_max_gb=0, max_parked=0, resident_only="mask",
-            dspark=False, spec_k=5, spec_top_k=4, mirror=["/mirror"], no_mirror_auto=True)
+            dspark=False, spec_k=5, spec_top_k=4, mirror=["/mirror"], no_mirror_auto=True,
+            mask_cache="dynamic")
         self.assertNotIn("--dspark", server.Serve.command(args))
         args.dspark = True
         command = server.Serve.command(args)

@@ -3,6 +3,11 @@
 `deepmoe serve --resident-only mask` (also `run` and
 `DEEPMOE_ROUTE_RESIDENT_ONLY=mask`) is an opt-in lossy mode. Default remains `off`.
 
+2026-10-05: dynamic LRU is again mask's default. `--mask-cache fixed` freezes
+the initial set explicitly. The legacy env flag `DEEPMOE_MASK_DYNAMIC_LRU=0`
+also selects fixed; `1` selects dynamic, and the CLI takes priority. The
+[adaptive-freeze scan](mask_freeze.md) did not pass its offline usefulness gate.
+
 The gate's original full top-k list and weights go to the existing demand planner.
 Hits are touched, misses evict/admit via normal LRU, and P0 reads are issued as
 usual. A miss already filling is stamped with the newest request time; its

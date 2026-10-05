@@ -171,6 +171,7 @@ int cmd_serve(int argc, char** argv) {
     bool check_topk = false;
     bool engine_reheat = false;
     std::string resident_only;   // Track Y: docs/p4_resident_routing.md
+    std::string mask_cache;
     uint32_t    streams = 1;     // Track MS: docs/p4_multistream.md
     bool        warm_cache = false;
     std::string ms_sched;
@@ -212,6 +213,7 @@ int cmd_serve(int argc, char** argv) {
             cfg.speculation.min_confidence=v;
         }
         else if (a == "--resident-only")   resident_only = value_of(argc, argv, i);
+        else if (a == "--mask-cache")      mask_cache = value_of(argc, argv, i);
         // Track MS (docs/p4_multistream.md): decode streams inside this one
         // engine process, and how a multi-stream round is scheduled.
         else if (a == "--streams")         streams = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
@@ -224,6 +226,9 @@ int cmd_serve(int argc, char** argv) {
             std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data());
             return 2;
         }
+    }
+    if (!mask_cache.empty() && mask_cache != "dynamic" && mask_cache != "fixed") {
+        std::fputs("--mask-cache takes dynamic|fixed\n", stderr); return 2;
     }
     if (cfg.model_dir.empty()) {
         std::fputs("serve needs --model DIR (or DEEPMOE_MODEL_DIR)\n", stderr);
@@ -331,6 +336,7 @@ int cmd_serve(int argc, char** argv) {
     runtime::Engine engine;
     if (auto r = engine.init(cfg); !r) { emit_error("init: " + r.error().str()); return 1; }
     if (auto r = engine.init_gpu(); !r) { emit_error("gpu init: " + r.error().str()); return 1; }
+    if (!mask_cache.empty()) engine.set_mask_cache_fixed(mask_cache == "fixed");
     engine.set_check_topk(check_topk);
     engine.set_reheat(engine_reheat);
     // Track Y. The flag wins over DEEPMOE_ROUTE_RESIDENT_ONLY, which the load read.

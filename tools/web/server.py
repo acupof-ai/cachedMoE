@@ -275,7 +275,8 @@ class Serve:
         if args.max_parked:
             cmd += ["--max-parked", str(args.max_parked)]
         if args.resident_only != "off":
-            cmd += ["--resident-only", args.resident_only]
+            cmd += ["--resident-only", args.resident_only,
+                    "--mask-cache", args.mask_cache]
         if args.dspark:
             cmd += ["--dspark", "--spec-k", str(args.spec_k),
                     "--spec-top-k", str(args.spec_top_k)]
@@ -896,7 +897,9 @@ def main():
     ap.add_argument("--no-kv-disk", action="store_true")
     ap.add_argument("--max-parked", type=int, default=0)
     ap.add_argument("--resident-only", choices=("off", "mask"), default="off",
-                    help="mask missing MoE experts using the fixed initial cache")
+                    help="skip missing routed MoE experts; lossy, default cache uses dynamic LRU")
+    ap.add_argument("--mask-cache", choices=("dynamic", "fixed"), default="dynamic",
+                    help="mask cache policy; fixed freezes the initial experts (experimental)")
     ap.add_argument("--dspark", action="store_true", help="enable DSpark main-path speculation")
     ap.add_argument("--spec-k", type=int, choices=range(1, 6), default=5,
                     help="draft tokens per cycle (native block size 5)")

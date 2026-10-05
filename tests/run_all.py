@@ -126,6 +126,7 @@ def main() -> int:
         # STATUS 1.0's measured table is rendered from the ledger, never typed.
         ("tools/perf_ledger.py --check", [PY, str(ROOT / "tools" / "perf_ledger.py"), "--check"]),
         ("tools/web/test_server.py", [PY, str(ROOT / "tools" / "web" / "test_server.py")]),
+        ("tools/tests/test_mask_freeze_sim.py", [PY, str(ROOT / "tools" / "tests" / "test_mask_freeze_sim.py")]),
     ):
         t0 = time.time()
         rc, out = run(cmd)

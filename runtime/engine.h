@@ -649,6 +649,9 @@ public:
     Result<uint32_t> warm_cache_from_heat(std::chrono::seconds timeout = std::chrono::seconds(180));
 
     void set_resident_only(ResidentOnly m);
+    // Dynamic LRU is mask's default. Explicit freezing is an experiment.
+    // Call between requests, before begin_session; the CLI overrides the env.
+    void set_mask_cache_fixed(bool fixed);
     ResidentOnly resident_only() const { return resident_only_; }
     const ResidentRouteStats& resident_route_stats() const { return rr_; }
     void reset_resident_route_stats() { rr_ = {}; }
@@ -1013,6 +1016,8 @@ private:
     // the P3 backfill's, the prefill handoff's -- can recycle a slot a
     // submitted buffer still reads.
     ResidentOnly       resident_only_ = ResidentOnly::Off;
+    bool               mask_cache_fixed_ = false;
+    bool               mask_cache_explicit_ = false;
     // What `Verify` does at the block's first position and at its four draft
     // positions (DEEPMOE_VERIFY_FIRST / DEEPMOE_VERIFY_DRAFT).
     ResidentOnly       verify_first_ = ResidentOnly::Off;

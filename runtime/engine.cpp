@@ -1966,13 +1966,22 @@ void Engine::read_timestamps(DecodeStepResult& res) {
 // something this can see.
 void Engine::set_resident_only(ResidentOnly m) {
     resident_only_ = m;
-    const char* dynamic = std::getenv("DEEPMOE_MASK_DYNAMIC_LRU");
-    store_.set_fixed_cache(m == ResidentOnly::Mask && !(dynamic && *dynamic == '1'));
+    if (!mask_cache_explicit_) {
+        const char* dynamic = std::getenv("DEEPMOE_MASK_DYNAMIC_LRU");
+        mask_cache_fixed_ = dynamic && std::string_view(dynamic) == "0";
+    }
+    store_.set_fixed_cache(m == ResidentOnly::Mask && mask_cache_fixed_);
     bool enabled = m == ResidentOnly::Mask;
     if (const char* e = std::getenv("DEEPMOE_IO_ENGRAM_DEADLINE"); e && *e == '0')
         enabled = false;
     io_.set_engram_wait_priority(enabled);
     log_info("engram wait priority: {}", enabled ? "on" : "off");
+}
+
+void Engine::set_mask_cache_fixed(bool fixed) {
+    mask_cache_explicit_ = true;
+    mask_cache_fixed_ = fixed;
+    store_.set_fixed_cache(resident_only_ == ResidentOnly::Mask && fixed);
 }
 
 bool Engine::route_resident_only(uint32_t L, ResidentOnly ro, const uint32_t* ids_raw,

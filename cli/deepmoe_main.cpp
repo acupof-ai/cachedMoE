@@ -75,6 +75,7 @@ int usage(int code = 2) {
         "                [--cache-slots N]  (5711 slots ~ 100 GiB, design P1/P2)\n"
         "                [--check-topk] [--profile FILE.jsonl]\n"
         "                [--dspark] [--spec-k 1..5] [--spec-top-k N]\n"
+        "                [--resident-only off|mask] [--mask-cache dynamic|fixed]\n"
         "                [--spec-confidence-min X] (experimental, permits k=0)\n"
         "      A long-running engine behind line-delimited JSON on stdin/stdout:\n"
         "      generate (streamed tokens, temperature/top_p/seed, KV continuation\n"
@@ -490,6 +491,7 @@ int cmd_run(int argc, char** argv) {
     std::string state_dir = "tests/data/l3";
     uint32_t steps = 8;
     std::string resident_only;
+    std::string mask_cache;
     bool warm_cache = false;
     bool teacher_force = false;
     bool per_layer = false;
@@ -524,6 +526,7 @@ int cmd_run(int argc, char** argv) {
         else if (a == "--qd")          cfg.io.max_inflight_ops = static_cast<uint32_t>(std::atoi(arg_value(argc, argv, i, a).data()));
         else if (a == "--buffered")    cfg.io.unbuffered = false;
         else if (a == "--resident-only") resident_only = arg_value(argc, argv, i, a);
+        else if (a == "--mask-cache") mask_cache = arg_value(argc, argv, i, a);
         else if (a == "--warm-cache")  warm_cache = true;
         else { std::fprintf(stderr, "unknown option %.*s\n", static_cast<int>(a.size()), a.data()); return usage(); }
     }
@@ -533,7 +536,11 @@ int cmd_run(int argc, char** argv) {
         return 2;
     }
 
+    if (!mask_cache.empty() && mask_cache != "dynamic" && mask_cache != "fixed") {
+        std::fputs("--mask-cache takes dynamic|fixed\n", stderr); return 2;
+    }
     runtime::Engine engine;
+    if (!mask_cache.empty()) engine.set_mask_cache_fixed(mask_cache == "fixed");
     if (auto r = engine.init(cfg); !r) {
         std::fprintf(stderr, "init failed: %s\n", r.error().str().c_str());
         return 1;

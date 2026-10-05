@@ -13,7 +13,8 @@ C++20, Vulkan compute, shaders in [Slang](https://shader-slang.org).
 The screenshot records a single-drive chat at **11.96 tok/s** with `--resident-only mask`,
 5,500 cache slots, balanced power mode and DSpark off. It was captured from the existing
 page using the earlier mask version, which kept LRU and asynchronous P0 fills.
-The current explicit mask mode fills the cache at startup and freezes that expert set.
+Mask now defaults to dynamic LRU and asynchronous P0 fills. Use
+`--resident-only mask --mask-cache fixed` to freeze the initial expert set explicitly.
 Missing routed experts have zero weight; the shared expert always runs. Mask changes
 the output distribution and can degrade long-context answers.
 
@@ -29,7 +30,7 @@ expert cache.
 | … internal drive alone | **7.61 tok/s** — 66 ms waiting |
 | Decode step, all experts resident | **66.0 ms** (the weight-read floor is 56.6 ms) |
 | GPU prefill | 4,133 tokens in 29 s · 17,010 tokens in 45 s (both drives, cache at 4,900 slots, §7 0bb; 43 s with `--transit-ring 6` at 4,600 slots, §7 0bb; the internal drive alone last measured at 48.7 / 69.75 s, §7 0ag) — 4K waits on the drives, 17K on the GPU |
-| Context | up to 524,280 tokens |
+| Context | up to 1,048,576 tokens; index-score/KV boundaries checked, full 1M prompt quality not tested |
 | Quality | 64-step teacher-forced NLL 0.623 against 0.598 for the fp32 reference; needle retrieval at 4K and 17K tokens 8/8 |
 
 Every number above is machine-recorded with its commit in [docs/STATUS.md](docs/STATUS.md) §1
@@ -49,7 +50,8 @@ In the earlier dynamic-cache single-drive power-saver 64-token workload, ordinar
 **12.33 tok/s (81.10 ms/output)** and DSpark k=2 measured **13.49 tok/s (74.12 ms/output)**.
 Enable both `DEEPMOE_DSPARK_ONECB=1` and `DEEPMOE_BATCH_GPU_ROUTE=1` with
 `--resident-only mask --dspark --spec-k 2 --spec-top-k 4`; both switches remain off
-by default. Use `DEEPMOE_MASK_DYNAMIC_LRU=1` only to reproduce those historical cache conditions.
+by default. Mask uses dynamic LRU by default; `--mask-cache` overrides the legacy
+`DEEPMOE_MASK_DYNAMIC_LRU` switch (`0` selects fixed, `1` selects dynamic).
 Dual-drive checks and the fixed-cache results are recorded separately. Conditions and quality
 receipts are in [the execution report](docs/dspark_topk.md#14-按端到端方案执行草稿-onecb-与验证-gpu-快照路由2026-10-05).
 
@@ -60,6 +62,10 @@ This speed does not establish useful answer quality. Fixed-cache quality and the
 projection/head experiment are recorded in [the latest report](docs/dspark_topk.md#15-双盘验收固定初始-cache-与实际-phase-4-尝试2026-10-05).
 The final fixed-cache generated MMLU sample scored **48/57**, with one invalid answer;
 it does not establish quality for arbitrary long conversations.
+The proposed adaptive freeze did not pass its offline usefulness check: the
+recorded eight-turn demand-LRU replay has no eligible freeze point at the requested
+churn threshold. See [the calibration report](docs/mask_freeze.md). Automatic
+freezing is not enabled; fixed cache remains an explicit experiment.
 
 The web server accepts `--dspark --spec-k 5 --spec-top-k 4` with the same two
 environment switches above. The page displays the engine's actual enabled state,

@@ -22,6 +22,40 @@
 using namespace deepmoe;
 using namespace deepmoe::storage;
 
+DEEPMOE_TEST(io, mask_cache_policy_default_and_explicit_override) {
+    const char* name = "DEEPMOE_MASK_DYNAMIC_LRU";
+    const char* old = std::getenv(name);
+    const bool had_old = old != nullptr;
+    const std::string saved = old ? old : "";
+    auto set = [&](const char* value) {
+#ifdef _WIN32
+        _putenv_s(name, value ? value : "");
+#else
+        if (value) setenv(name, value, 1); else unsetenv(name);
+#endif
+    };
+    set(nullptr);
+    runtime::Engine normal;
+    normal.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    CHECK(!normal.store().fixed_cache());
+    set("0");
+    runtime::Engine frozen;
+    frozen.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    CHECK(frozen.store().fixed_cache());
+    frozen.set_mask_cache_fixed(false); // explicit CLI beats legacy env
+    frozen.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    CHECK(!frozen.store().fixed_cache());
+    set("1");
+    normal.set_mask_cache_fixed(true);
+    normal.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    CHECK(normal.store().fixed_cache());
+    normal.set_resident_only(runtime::Engine::ResidentOnly::Off);
+    CHECK(!normal.store().fixed_cache());
+    normal.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    CHECK(normal.store().fixed_cache());
+    set(had_old ? saved.c_str() : nullptr);
+}
+
 namespace {
 
 std::vector<std::byte> pattern_bytes(size_t n) {

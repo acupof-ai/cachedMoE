@@ -24,6 +24,8 @@ import provenance
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("plain", "spec5"), required=True)
+    parser.add_argument("--mask-cache", choices=("dynamic", "fixed"), default="fixed",
+                        help="keep the historical fixed-cache longtest reproducible")
     parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--exe", type=Path, required=True)
@@ -37,13 +39,14 @@ def main():
     env["XDG_CACHE_HOME"] = str(out / "session_state")
     for key in ("DEEPMOE_SPEC_DIAGNOSTICS", "DEEPMOE_ROUTE_DUMP"):
         env.pop(key, None)
-    env.update(DEEPMOE_MASK_DYNAMIC_LRU="0", DEEPMOE_DSPARK_PROFILE="0",
+    env.update(DEEPMOE_MASK_DYNAMIC_LRU="0" if args.mask_cache == "fixed" else "1", DEEPMOE_DSPARK_PROFILE="0",
         DEEPMOE_DSPARK_ONECB="1" if args.mode == "spec5" else "0",
         DEEPMOE_BATCH_GPU_ROUTE="1" if args.mode == "spec5" else "0",
         DEEPMOE_DSPARK_MEGA="0", DEEPMOE_MGT_PAIR_DOT="0",
         DEEPMOE_MGT_ATTN_CM="0", DEEPMOE_MGT_FOLD_SCALE="0")
     command = [sys.executable, str(ROOT / "tools/web/server.py"), "--exe", str(args.exe.resolve()),
-        "--resident-only", "mask", "--cache-slots", "5500", "--max-context", "4096",
+        "--resident-only", "mask", "--mask-cache", args.mask_cache,
+        "--cache-slots", "5500", "--max-context", "4096",
         "--gpu-prefill-min", "16", "--mirror", str(args.mirror), "--no-kv-disk",
         "--port", str(args.port), "--log", str(out / "engine.log")]
     if args.mode == "spec5":
