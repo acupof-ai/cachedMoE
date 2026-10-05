@@ -15,6 +15,13 @@ One main path; one six-row verify per full cycle. Native effort selector
 Short web smoke: 32 outputs, 15.2335805 tok/s; 10 cycles / 10 verify submits,
 21/47 draft accepts, 0 thermal pauses. This is not the earlier 18 tok/s workload.
 Receipt: docs/dspark_web_receipt.json; raw: bench/results/web_spec5/.
+Long test: each configuration 3 x 512 outputs, plain 13.528916 / k5 16.264449
+decode tok/s (+20.2%); including prefill +10.3%. Both repeat; k5 English tail
+has a two-token loop, so this is not a quality pass or a usable-quality speedup.
+337 cycles / 337 target submits, 1196/1676 drafts accepted, 0 failures/evictions
+or thermal pauses. Receipt: docs/dspark_longtest_receipt.json; raw:
+bench/results/web_spec5_long/. User web was stopped during testing and restored
+afterwards without refreshing either browser tab.
 5500 initial resident slots frozen before READY: no LRU/heat/eviction or decode
 miss admissions. Shared expert always runs; exact GPU prefill uses transit.
 Two read sources, mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash (48/48 shards).

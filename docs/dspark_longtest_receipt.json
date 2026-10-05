@@ -1,0 +1,665 @@
+{
+  "cells": {
+    "plain": {
+      "generated": 1536,
+      "decode_steps": 1533,
+      "decode_ms": 113312.849,
+      "weighted_tok_s": 13.528915860195166,
+      "turn_total_ms": 142591.4387,
+      "including_prefill_tok_s": 10.772035221775205,
+      "prefill_ms": 29278.44727,
+      "turns": [
+        {
+          "label": "zh_thinking",
+          "generated": 512,
+          "decode_steps": 511,
+          "tok_s": 13.7597501,
+          "decode_ms": 37137.3023,
+          "prefill_ms": 9683.98541,
+          "prefill_tokens": 100,
+          "reused_tokens": 0,
+          "context": 611,
+          "finish": "length",
+          "total_ms": 46821.3063,
+          "decode_hit_rate": 0.699812459,
+          "decode_nvme_mb": 0,
+          "effective_quarter_tok_s": [
+            14.638324627028778,
+            13.333153278820394,
+            13.4626906510312,
+            13.701104309499728
+          ],
+          "tail128_exact_period": null,
+          "repeated_fourgram_fraction": 0.16502946954813358,
+          "content_chars": 1335,
+          "reasoning_chars": 0,
+          "text_tail": "On MI300, has `buffer_load_dword` with `lds`? Actually? On AMD GPUs, no cp.async? There \"global_load_lds\" exists? I think? On CDNA3, there is `buffer_load_dword` and `ds_write`. But HIP exposes? Not sure. We may use `__builtin_amdgcn_global_load_lds`? For gfx9? Maybe? On gfx9? `global_load_lds`? Let's? On MI250? There?",
+          "speculation": {
+            "cycles": 0,
+            "verified": 0,
+            "accepted": 0,
+            "tokens": 0,
+            "draft_ms": 0,
+            "verify_ms": 0,
+            "commit_ms": 0,
+            "cpu_ms": 0,
+            "target_rows": 0,
+            "union_experts": 0,
+            "miss_bytes": 0,
+            "gpu_readout_cycles": 0
+          },
+          "target_submits": 41391,
+          "target_forwards": 511
+        },
+        {
+          "label": "zh_followup",
+          "generated": 512,
+          "decode_steps": 511,
+          "tok_s": 13.5274134,
+          "decode_ms": 37775.1449,
+          "prefill_ms": 13278.0308,
+          "prefill_tokens": 675,
+          "reused_tokens": 0,
+          "context": 1186,
+          "finish": "length",
+          "total_ms": 51053.2853,
+          "decode_hit_rate": 0.61853392,
+          "decode_nvme_mb": 0,
+          "effective_quarter_tok_s": [
+            14.262037876635285,
+            13.293491098211945,
+            13.255717922146061,
+            13.366958793993904
+          ],
+          "tail128_exact_period": null,
+          "repeated_fourgram_fraction": 0.168958742632613,
+          "content_chars": 1677,
+          "reasoning_chars": 0,
+          "text_tail": " MB, activation 8 KB? If one token. Compute FLOPs = 2*M*N*K = 2*1*4096*4096 = 8.4 GFLOP? Actually? M=1 N=4096 K=4096 = 2*1*4096*4096 = 8.59 GFLOP? Wait: 1*4096*4096*2 = 8.39e9? 4096*4096*2 = 8.39e9? yes. Weight 8MB. Arithmetic intensity 8.39e9 / 8e6 = 8.39e9? Actually 8.39e9 flops / 8e6 bytes = 8.39e9? Wait: 8.39e9/8e6",
+          "speculation": {
+            "cycles": 0,
+            "verified": 0,
+            "accepted": 0,
+            "tokens": 0,
+            "draft_ms": 0,
+            "verify_ms": 0,
+            "commit_ms": 0,
+            "cpu_ms": 0,
+            "target_rows": 0,
+            "union_experts": 0,
+            "miss_bytes": 0,
+            "gpu_readout_cycles": 0
+          },
+          "target_submits": 41391,
+          "target_forwards": 511
+        },
+        {
+          "label": "en_chat",
+          "generated": 512,
+          "decode_steps": 511,
+          "tok_s": 13.3071524,
+          "decode_ms": 38400.4018,
+          "prefill_ms": 6316.43106,
+          "prefill_tokens": 68,
+          "reused_tokens": 0,
+          "context": 579,
+          "finish": "length",
+          "total_ms": 44716.8471,
+          "decode_hit_rate": 0.631547619,
+          "decode_nvme_mb": 0,
+          "effective_quarter_tok_s": [
+            13.54412117514242,
+            13.16096522736956,
+            13.299348723432912,
+            13.24503565907246
+          ],
+          "tail128_exact_period": null,
+          "repeated_fourgram_fraction": 0.08644400785854622,
+          "content_chars": 2313,
+          "reasoning_chars": 0,
+          "text_tail": "y-bound, the useful, and the useful, the useful is the useful: of the useful: and the useful. **Arithmetic intensity** = FLOPs per byte moved from DRAM defines the useful. If intensity is to the and the useful and the useful is to the and and the useful is to the the the useful, the useful and the useful and the useful",
+          "speculation": {
+            "cycles": 0,
+            "verified": 0,
+            "accepted": 0,
+            "tokens": 0,
+            "draft_ms": 0,
+            "verify_ms": 0,
+            "commit_ms": 0,
+            "cpu_ms": 0,
+            "target_rows": 0,
+            "union_experts": 0,
+            "miss_bytes": 0,
+            "gpu_readout_cycles": 0
+          },
+          "target_submits": 41391,
+          "target_forwards": 511
+        }
+      ],
+      "speculation": {
+        "cycles": 0,
+        "verified": 0,
+        "accepted": 0,
+        "tokens": 0,
+        "draft_ms": 0,
+        "verify_ms": 0,
+        "commit_ms": 0,
+        "cpu_ms": 0,
+        "target_rows": 0,
+        "union_experts": 0,
+        "miss_bytes": 0,
+        "gpu_readout_cycles": 0
+      }
+    },
+    "spec5": {
+      "generated": 1536,
+      "decode_steps": 1533,
+      "decode_ms": 94254.6514,
+      "weighted_tok_s": 16.26444931077428,
+      "turn_total_ms": 129301.02489999999,
+      "including_prefill_tok_s": 11.879256186777527,
+      "prefill_ms": 35046.20112,
+      "turns": [
+        {
+          "label": "zh_thinking",
+          "generated": 512,
+          "decode_steps": 511,
+          "tok_s": 17.7862557,
+          "decode_ms": 28730.0492,
+          "prefill_ms": 10792.273,
+          "prefill_tokens": 100,
+          "reused_tokens": 0,
+          "context": 611,
+          "finish": "length",
+          "total_ms": 39522.333,
+          "decode_hit_rate": 0.584725911,
+          "decode_nvme_mb": 0,
+          "effective_quarter_tok_s": [
+            17.423657932265105,
+            15.532515519468205,
+            18.547184921147746,
+            20.341912421777113
+          ],
+          "tail128_exact_period": null,
+          "repeated_fourgram_fraction": 0.3988212180746562,
+          "content_chars": 1521,
+          "reasoning_chars": 0,
+          "text_tail": "4K registers per SIMD? Let's? Need mention. For AMD CDN A, each CU has 4 SIMD? Each SIMD has 64K registers? Hmm? Need? Let's? Need mention. For AMD CDN A, each CU has 4 SIMD? Each SIMD has 64K registers? Hmm. Need mention. For AMD CDN A, each CU has 4 SIMD? Each SIMD has 64K registers? Hmm. Need mention. For AMD CDN A,",
+          "speculation": {
+            "cycles": 108,
+            "verified": 539,
+            "accepted": 403,
+            "tokens": 511,
+            "draft_ms": 2861.25395,
+            "verify_ms": 25489.3396,
+            "commit_ms": 232.236253,
+            "cpu_ms": 17.835948,
+            "target_rows": 647,
+            "union_experts": 55915,
+            "miss_bytes": 0,
+            "gpu_readout_cycles": 108
+          },
+          "target_submits": 108,
+          "target_forwards": 108,
+          "accepted_per_verified": 0.7476808905380334,
+          "outputs_per_cycle": 4.731481481481482,
+          "cycle_ms": 264.8209791759259,
+          "cycle_components_ms": {
+            "draft_ms": 26.493092129629627,
+            "verify_ms": 236.0124037037037,
+            "commit_ms": 2.150335675925926,
+            "cpu_ms": 0.16514766666666666
+          }
+        },
+        {
+          "label": "zh_followup",
+          "generated": 512,
+          "decode_steps": 511,
+          "tok_s": 16.816002,
+          "decode_ms": 30387.7224,
+          "prefill_ms": 17193.6133,
+          "prefill_tokens": 675,
+          "reused_tokens": 0,
+          "context": 1186,
+          "finish": "length",
+          "total_ms": 47581.4839,
+          "decode_hit_rate": 0.573198912,
+          "decode_nvme_mb": 0,
+          "effective_quarter_tok_s": [
+            15.976474819060975,
+            15.044250586877183,
+            17.56654373659882,
+            19.283437455969803
+          ],
+          "tail128_exact_period": null,
+          "repeated_fourgram_fraction": 0.22200392927308443,
+          "content_chars": 1683,
+          "reasoning_chars": 0,
+          "text_tail": "96. For prefill M=512, K=4096, N=4096. Batch validation M=32, K=4096, N=4096. Hmm.\n\nNeed compute weight access:\n- For each GEMM, weight matrix B is K x 4096 = 4096x4096 = 16M elements? Actually 4096*4096 = 16,777,216 elements. At 4 bytes = 64MB? Wait 4096*4096*4 = 64MB. Actually 4096*4096 = 16,777,216 elements * 4 = 64",
+          "speculation": {
+            "cycles": 108,
+            "verified": 536,
+            "accepted": 403,
+            "tokens": 511,
+            "draft_ms": 2888.90028,
+            "verify_ms": 27138.0296,
+            "commit_ms": 223.402942,
+            "cpu_ms": 17.663507,
+            "target_rows": 644,
+            "union_experts": 53331,
+            "miss_bytes": 0,
+            "gpu_readout_cycles": 108
+          },
+          "target_submits": 108,
+          "target_forwards": 108,
+          "accepted_per_verified": 0.7518656716417911,
+          "outputs_per_cycle": 4.731481481481482,
+          "cycle_ms": 280.25922526851855,
+          "cycle_components_ms": {
+            "draft_ms": 26.749076666666664,
+            "verify_ms": 251.27805185185187,
+            "commit_ms": 2.0685457592592593,
+            "cpu_ms": 0.16355099074074073
+          }
+        },
+        {
+          "label": "en_chat",
+          "generated": 512,
+          "decode_steps": 511,
+          "tok_s": 14.543124,
+          "decode_ms": 35136.8798,
+          "prefill_ms": 7060.31482,
+          "prefill_tokens": 68,
+          "reused_tokens": 0,
+          "context": 579,
+          "finish": "length",
+          "total_ms": 42197.208,
+          "decode_hit_rate": 0.562564984,
+          "decode_nvme_mb": 0,
+          "effective_quarter_tok_s": [
+            12.985548544464887,
+            12.14538032577514,
+            15.060451101731424,
+            20.278362856214414
+          ],
+          "tail128_exact_period": 2,
+          "repeated_fourgram_fraction": 0.37917485265225936,
+          "content_chars": 1866,
+          "reasoning_chars": 0,
+          "text_tail": "the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *",
+          "speculation": {
+            "cycles": 121,
+            "verified": 601,
+            "accepted": 390,
+            "tokens": 511,
+            "draft_ms": 3415.78293,
+            "verify_ms": 31240.7759,
+            "commit_ms": 255.923318,
+            "cpu_ms": 87.961112,
+            "target_rows": 722,
+            "union_experts": 56270,
+            "miss_bytes": 0,
+            "gpu_readout_cycles": 121
+          },
+          "target_submits": 121,
+          "target_forwards": 121,
+          "accepted_per_verified": 0.64891846921797,
+          "outputs_per_cycle": 4.223140495867769,
+          "cycle_ms": 289.25986165289254,
+          "cycle_components_ms": {
+            "draft_ms": 28.229610991735537,
+            "verify_ms": 258.1882305785124,
+            "commit_ms": 2.1150687438016527,
+            "cpu_ms": 0.7269513388429752
+          }
+        }
+      ],
+      "speculation": {
+        "cycles": 337,
+        "verified": 1676,
+        "accepted": 1196,
+        "tokens": 1533,
+        "draft_ms": 9165.93716,
+        "verify_ms": 83868.1451,
+        "commit_ms": 711.562513,
+        "cpu_ms": 123.460567,
+        "target_rows": 2013,
+        "union_experts": 165516,
+        "miss_bytes": 0,
+        "gpu_readout_cycles": 337
+      }
+    }
+  },
+  "thermal_checks": [
+    {
+      "name": "plain",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/web_longtest.py",
+        "--mode",
+        "plain",
+        "--script",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/web_longtest_prompts.json",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/results/web_spec5_long/plain",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--mirror",
+        "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"
+      ],
+      "env": {
+        "DEEPMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders"
+      },
+      "profile": "power-saver",
+      "rc": 0,
+      "failure": null,
+      "elapsed_s": 184.63181502601947,
+      "start": {
+        "ac": 1,
+        "k10temp": 53.5,
+        "nvme_hwmon4": 34.85,
+        "nvme_hwmon13": 60.85,
+        "amdgpu": 49.0,
+        "missing_sensors": []
+      },
+      "end": {
+        "ac": 1,
+        "k10temp": 70.875,
+        "nvme_hwmon4": 37.85,
+        "nvme_hwmon13": 70.85,
+        "amdgpu": 66.0,
+        "missing_sensors": []
+      },
+      "peak": {
+        "k10temp": 73.375,
+        "nvme_hwmon4": 57.85,
+        "nvme_hwmon13": 74.85,
+        "amdgpu": 72.0
+      },
+      "thermal_pauses": 0,
+      "ac_changed": false,
+      "mirror_holds": 48,
+      "time": "2026-10-05T15:52:28.444584+08:00"
+    },
+    {
+      "name": "spec5",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/web_longtest.py",
+        "--mode",
+        "spec5",
+        "--script",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/web_longtest_prompts.json",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/results/web_spec5_long/spec5",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--mirror",
+        "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"
+      ],
+      "env": {
+        "DEEPMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders"
+      },
+      "profile": "power-saver",
+      "rc": 0,
+      "failure": null,
+      "elapsed_s": 172.17298251899774,
+      "start": {
+        "ac": 1,
+        "k10temp": 62.125,
+        "nvme_hwmon4": 36.85,
+        "nvme_hwmon13": 70.85,
+        "amdgpu": 61.0,
+        "missing_sensors": []
+      },
+      "end": {
+        "ac": 1,
+        "k10temp": 71.0,
+        "nvme_hwmon4": 38.85,
+        "nvme_hwmon13": 71.85,
+        "amdgpu": 65.0,
+        "missing_sensors": []
+      },
+      "peak": {
+        "k10temp": 72.875,
+        "nvme_hwmon4": 59.85,
+        "nvme_hwmon13": 74.85,
+        "amdgpu": 75.0
+      },
+      "thermal_pauses": 0,
+      "ac_changed": false,
+      "mirror_holds": 48,
+      "time": "2026-10-05T15:55:28.133576+08:00"
+    }
+  ],
+  "observed_tok_s_ratio": 1.2021990142334769,
+  "observed_including_prefill_ratio": 1.1027866083063043,
+  "limits": [
+    "Same prompts/settings, different generated histories and resident routes.",
+    "Plain has no draft pins; spec5 pins 384 MTP experts within 5500 total slots.",
+    "No per-op trace or cycle logging; draft GPU timestamps off.",
+    "Quarter rates derive from per-output costs; speculative bursts share a cycle's cost.",
+    "Tail period and repeated ngrams detect simple loops, not semantic correctness.",
+    "Long generation here does not establish 4K/17K input quality or a full MMLU score."
+  ],
+  "benchmark_source_commit": "7545ba8",
+  "runtime_base": "8c213f3; engine binary unchanged from prior 2ff1fdc build",
+  "engine_sha256": "9e4d44c75ccc6dcdcbb48fcefa808f788c8aa880df7756f30976074c84054542",
+  "configs": {
+    "plain": {
+      "max_context": 4096,
+      "ceiling": 524280,
+      "ready": {
+        "event": "ready",
+        "load_s": 39.3859886,
+        "max_context": 4096,
+        "vocab": 129280,
+        "cache_gb": 96.3439941,
+        "cache_slots": 5500,
+        "gpu_prefill_min": 16,
+        "check_topk": false,
+        "engram_tables": "derived",
+        "kv_mb": 16.044032,
+        "rollback": true,
+        "max_parked": 8,
+        "reheat": false,
+        "reheat_decay": 0.5,
+        "kv_disk": false,
+        "kv_disk_dir": "",
+        "sources": 2,
+        "speculation": {
+          "enabled": false,
+          "draft_tokens": 5,
+          "accept_top_k": 4,
+          "confidence_min": null,
+          "main_paths": 1,
+          "mtp_pinned_experts": 0
+        }
+      },
+      "prefill_ms_per_token": 24.0,
+      "kv_bytes_per_token": 3200,
+      "model": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+      "cmd": "/home/chenkailun/projects/cachedMoE/build/deepmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 4096 --cache-slots 5500 --gpu-prefill-min 16 --no-kv-disk --resident-only mask --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash"
+    },
+    "spec5": {
+      "max_context": 4096,
+      "ceiling": 524280,
+      "ready": {
+        "event": "ready",
+        "load_s": 40.1577476,
+        "max_context": 4096,
+        "vocab": 129280,
+        "cache_gb": 96.3439941,
+        "cache_slots": 5500,
+        "gpu_prefill_min": 16,
+        "check_topk": false,
+        "engram_tables": "derived",
+        "kv_mb": 16.044032,
+        "rollback": true,
+        "max_parked": 8,
+        "reheat": false,
+        "reheat_decay": 0.5,
+        "kv_disk": false,
+        "kv_disk_dir": "",
+        "sources": 2,
+        "speculation": {
+          "enabled": true,
+          "draft_tokens": 5,
+          "accept_top_k": 4,
+          "confidence_min": null,
+          "main_paths": 1,
+          "mtp_pinned_experts": 384
+        }
+      },
+      "prefill_ms_per_token": 24.0,
+      "kv_bytes_per_token": 3200,
+      "model": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+      "cmd": "/home/chenkailun/projects/cachedMoE/build/deepmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 4096 --cache-slots 5500 --gpu-prefill-min 16 --no-kv-disk --resident-only mask --dspark --spec-k 5 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash"
+    }
+  },
+  "provenance": {
+    "plain": {
+      "time": "2026-10-05T15:49:23+0800",
+      "host": "x",
+      "os": "Linux 7.2.5-3-omarchy",
+      "commit": "7545ba8853",
+      "dirty": [],
+      "diff_sha": null,
+      "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "exe_sha": "9e4d44c75ccc6dcd",
+      "shaders": {
+        "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+        "count": 52,
+        "sha": "3d4ab3fe2451926c"
+      },
+      "env": {
+        "DEEPMOE_BATCH_GPU_ROUTE": "0",
+        "DEEPMOE_DSPARK_MEGA": "0",
+        "DEEPMOE_DSPARK_ONECB": "0",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/deepmoe-spec5-longtest/traces/longctx",
+        "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_MGT_PAIR_DOT": "0",
+        "DEEPMOE_MIRROR_AUTO": "0",
+        "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders"
+      },
+      "gpu_dpm": "auto",
+      "idle": {
+        "gpu_busy_mean": 1.0,
+        "gpu_busy_max": 1,
+        "loadavg": [
+          "0.25",
+          "0.38",
+          "0.36"
+        ],
+        "top_cpu": [
+          "ChatGPT 3.2%",
+          "ChatGPT 3.0%",
+          "boltd 2.4%"
+        ]
+      },
+      "disks_start": {
+        "t": 1791186564.9378686,
+        "nvme0n1": [
+          77109758443,
+          379563612
+        ],
+        "nvme1n1": [
+          5000758440,
+          0
+        ]
+      },
+      "gamemode_lib": true,
+      "disks_during_run": {
+        "seconds": 183.0,
+        "nvme0n1": {
+          "read_MB": 169059.8,
+          "write_MB": 55.6
+        },
+        "nvme1n1": {
+          "read_MB": 130110.9,
+          "write_MB": 0.0
+        }
+      }
+    },
+    "spec5": {
+      "time": "2026-10-05T15:52:35+0800",
+      "host": "x",
+      "os": "Linux 7.2.5-3-omarchy",
+      "commit": "7545ba8853",
+      "dirty": [],
+      "diff_sha": null,
+      "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "exe_sha": "9e4d44c75ccc6dcd",
+      "shaders": {
+        "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+        "count": 52,
+        "sha": "3d4ab3fe2451926c"
+      },
+      "env": {
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_DSPARK_MEGA": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/deepmoe-spec5-longtest/traces/longctx",
+        "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_MGT_PAIR_DOT": "0",
+        "DEEPMOE_MIRROR_AUTO": "0",
+        "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders"
+      },
+      "gpu_dpm": "auto",
+      "idle": {
+        "gpu_busy_mean": 0.5,
+        "gpu_busy_max": 1,
+        "loadavg": [
+          "0.69",
+          "0.96",
+          "0.64"
+        ],
+        "top_cpu": [
+          "ChatGPT 3.2%",
+          "ChatGPT 3.0%",
+          "boltd 2.4%"
+        ]
+      },
+      "disks_start": {
+        "t": 1791186757.0340407,
+        "nvme0n1": [
+          77439953491,
+          379688212
+        ],
+        "nvme1n1": [
+          5254881272,
+          0
+        ]
+      },
+      "gamemode_lib": true,
+      "disks_during_run": {
+        "seconds": 170.7,
+        "nvme0n1": {
+          "read_MB": 174191.5,
+          "write_MB": 78.1
+        },
+        "nvme1n1": {
+          "read_MB": 133351.9,
+          "write_MB": 0.0
+        }
+      }
+    }
+  },
+  "profile_receipt": {
+    "original": "performance",
+    "final": "performance"
+  },
+  "quality_verdict": "FAIL: sustained repetitions; spec5 English tail has exact period2 over128 tokens. No MMLU or lossless-quality claim.",
+  "raw_archive": "bench/results/web_spec5_long/",
+  "test_scope": "Three512-token turns each; longest actual input675tokens, context1186. Not a4K/17K input test.",
+  "cpu_tools_gate": "31/31",
+  "test_input_sha256": "a2ccfa4cd904bef033a32302ab7a0c2fda263da97df5d63a20b4efdf405e58a2"
+}

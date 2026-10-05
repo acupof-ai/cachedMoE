@@ -73,6 +73,13 @@ high 75 (default), maximum 100, or a custom integer from 1 to 100. This budget i
 rendered into the thinking prompt and saved with the conversation. Changing it
 can change the reusable prompt prefix and require prefill again.
 
+A sustained web test generated three 512-token turns per configuration. Fixed-cache
+mask measured **13.53 tok/s**, versus **16.26 tok/s** for k=5: +20.2% in decode,
+or +10.3% including prefill. Both outputs showed repetition; the speculative English
+tail entered a two-token loop. This is not a speedup at established answer quality.
+The [long-test report](docs/dspark_topk.md#17-k5-网页长测吞吐提升重复质量未通过2026-10-05)
+records the workload, acceptance, cycle costs and thermal checks.
+
 GPU prefill currently uses the exact streaming path, including in mask mode. The captured
 chat's 2,835-token prefill took **39.6 s**; expert I/O took **29.7 s** and read **151.28 GiB**.
 The decode speed shown in the screenshot does not apply to prefill.

@@ -830,3 +830,64 @@ API保存50/100/33与拒绝101、旧会话兼容、浏览器自定义输入均�
 机器收据：[`dspark_web_receipt.json`](dspark_web_receipt.json)；原始events、READY、done、
 状态和派生统计：主目录 `bench/results/web_spec5/`。网页保持运行，新页面含控件，
 旧页面没有刷新。恢复历史消息不表示重启后的GPU KV仍驻留。
+
+## 17. k=5 网页长测：吞吐提升，重复质量未通过（2026-10-05）
+
+按用户“长测、提交好”要求，各配置只运行一次。直接使用web API和checkpoint原生
+renderer：中文思考high75、同会话中文续轮、重置后的英文chat，各生成512 token。
+T=1、top_p=.95、seed51001/51002/51003，固定5500槽、双盘48/48、AC/power-saver、
+max_context4096、精确GPU prefill minimum16、无磁盘KV。k5/top4显式启用ONECB和GPU
+route；plain无384个MTP pin，spec的384pin占用总5500槽。每个配置输出1536 token，
+其中1533个为decode输出。输入最多675 token，实际context最多1186；这是长生成和
+多轮测试，不替代4K/17K输入质量门。
+
+**本次不启用draft GPU时间戳、per-op trace、route dump、cycle diagnostics或engine
+profile。** 同一引擎exe和shader，完整构建信息、环境和启动参数保存在机器收据。
+网页先停止；测试只有一个GPU作业，结束后恢复k5网页与原温控80°C暂停/72°C恢复。
+
+| 工作负载 | plain decode tok/s | k5 decode tok/s | k5输出/周期 | k5周期ms |
+|---|---:|---:|---:|---:|
+| 中文思考512 | 13.759750 | 17.786256 | 4.7315 | 264.8210 |
+| 中文续轮512 | 13.527413 | 16.816002 | 4.7315 | 280.2592 |
+| 英文chat512 | 13.307152 | 14.543124 | 4.2231 | 289.2599 |
+| 加权decode总计 | **13.528916** | **16.264449** | **4.5490** | **278.5433** |
+
+加权decode按总decode_steps/总decode_ms计算，观察提升 **20.2199%**。包含prefill的
+三轮输出速度为 **10.772035 / 11.879256 tok/s，+10.2787%**；总prefill分别
+**29.278 / 35.046 s**。含启动、HTTP驱动与关闭的完整进程作业耗时
+**184.632 / 172.173 s**，观察比率1.0724。不要将sidebar的decode速度当成全流程速度。
+
+续轮的web start事件均只匹配到99个prefix token，而完整prompt是675；引擎选择整段精确
+GPU prefill，最终reused_tokens=0。plain/spec该轮prefill分别 **13.278 / 17.194 s**。
+未闭合的截断思考输出经官方renderer重新编码，不能假设全部已生成文本都复用KV。
+
+投机共 **337 cycles、337 target forwards/verify submits、2013 target rows**；
+**1196/1676 = 71.3604%** 草稿接受，输出 **1533/337 = 4.5490/cycle**。
+每轮仍只有一条主路径，完整轮root加五个草稿为六行一次前向，尾轮按剩余长度缩短。
+context计数逐轮满足prompt+generated−1，token流数量、范围、时间单调与数值有限
+检查均通过；每轮readout cycles与cycles相同，未发现多次target提交。
+
+周期成本为draft **27.1986**、verify **248.8669**、commit **2.1115**、CPU
+**.3664 ms**，合计 **278.5433 ms/cycle**。按当前成本摊销约61.23ms/output；
+plain实测约73.92ms/output。固定当前成本，要达到1.6×约需 **6.03个输出/周期**，
+已经接近六行全部接受的极限；这只是成本敏感性计算，未来轨迹和成本不会保持不变。
+不能把新接受率计作kernel降本，也不能据此承诺1.6×。
+
+**质量未通过。** 两种配置的持续输出都出现重复；spec英文最后128个token为精确
+period2，IDs交替 **1805/982**，文本为 `the *the *the *...`。英文spec首/末四分段
+的有效速度 **12.99→20.28 tok/s**，尾段加速与重复退化同时出现。中文spec首轮
+重复四元token片段比例 **39.88%**（plain **16.50%**）；此指标不能替代语义评分。
+最后累计gate mass lost plain/spec为 **.3365/.3729**，两条轨迹和常驻专家不同，
+不能仅凭本次确定固定miss-mask与top-K接受各自的质量责任。未重跑MMLU，也不声称
+通过长对话质量或无损门。ONECB/GPU route默认仍为0；网页k5保持用户显式实验配置。
+
+两配置都0温控暂停、AC未变化、48/48镜像健康；GPU峰值plain/spec为 **72/75°C**，
+外盘峰值均 **74.85°C**。全部逐轮status为cache_fixed/cache_frozen=true、0evictions、
+0failed-fill、P0 reserve/submit/IO失败均0，decode专家miss_bytes为0。
+
+驱动及输入：[`web_longtest.py`](../bench/web_longtest.py)、
+[`web_longtest_prompts.json`](../bench/web_longtest_prompts.json)；读取已有结果：
+[`web_longtest_report.py`](../bench/web_longtest_report.py)。驱动需要先停止其他engine并
+通过温控监督执行。机器收据：[`dspark_longtest_receipt.json`](dspark_longtest_receipt.json)。
+原始逐token events、完整输出、status、provenance、温控与监督计划归档到主目录
+`bench/results/web_spec5_long/`。执行时的工作树路径是历史记录，读取时用主目录归档。
