@@ -170,6 +170,7 @@ int cmd_serve(int argc, char** argv) {
     runtime::SessionPoolOptions po;
     bool check_topk = false;
     bool engine_reheat = false;
+    bool allow_route_switch = false;
     std::string resident_only;   // Track Y: docs/p4_resident_routing.md
     std::string mask_cache;
     uint32_t    streams = 1;     // Track MS: docs/p4_multistream.md
@@ -214,6 +215,7 @@ int cmd_serve(int argc, char** argv) {
         }
         else if (a == "--resident-only")   resident_only = value_of(argc, argv, i);
         else if (a == "--mask-cache")      mask_cache = value_of(argc, argv, i);
+        else if (a == "--allow-route-switch") allow_route_switch = true;
         // Track MS (docs/p4_multistream.md): decode streams inside this one
         // engine process, and how a multi-stream round is scheduled.
         else if (a == "--streams")         streams = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
@@ -459,6 +461,43 @@ int cmd_serve(int argc, char** argv) {
         std::optional<GameModeScope> gpu_busy;
         if (op == "generate" || op == "generate_multi" || op == "reheat") gpu_busy.emplace();
         if (op == "quit") break;
+        if (op == "set_decode_route") {
+            // The synchronous request loop reaches here after the previous
+            // generation's final fence. This opt-in is for same-engine A/B
+            // measurement; normal web/native adapters cannot change policy.
+            if (!allow_route_switch || cfg.speculation.enabled || streams != 1) {
+                emit_error("route switching requires --allow-route-switch and plain single-stream decode");
+                continue;
+            }
+            const std::string mode = doc->string_or("mode", "");
+            if (mode != "off" && mode != "mask") {
+                emit_error("set_decode_route mode must be off or mask");
+                continue;
+            }
+            std::optional<double> tau;
+            if (const auto* value = doc->find("tau")) {
+                auto number = value->as_double();
+                if (!number) { emit_error(number.error().str()); continue; }
+                tau = *number;
+            }
+            if (mode == "off" && tau) {
+                emit_error("tau requires mask mode");
+                continue;
+            }
+            // Benchmark joins have unlimited budgets. Bounded startup modes
+            // remain unchanged and do not require this opt-in.
+            if (auto r = engine.set_mask_wait(tau, 0, 0); !r) {
+                emit_error(r.error().str());
+                continue;
+            }
+            engine.set_resident_only(mode == "off" ? runtime::Engine::ResidentOnly::Off
+                                                    : runtime::Engine::ResidentOnly::Mask);
+            engine.reset_resident_route_stats();
+            emit(std::format("{{\"event\":\"decode_route\",\"mode\":{},\"tau\":{},"
+                             "\"expert_budget\":0,\"time_budget_ms\":0}}",
+                             json_quote(mode), tau ? json_number(*tau) : "null"));
+            continue;
+        }
         if (op == "reset" || op == "drop" || op == "generate" || op == "generate_multi")
             score_ready = false;
         if (op == "reset") {

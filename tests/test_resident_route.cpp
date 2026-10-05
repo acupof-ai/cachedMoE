@@ -8,12 +8,30 @@
 #include <vector>
 
 #include "runtime/resident_route.h"
+#include "runtime/engine.h"
 #include "runtime/mask_wait.h"
 
 #include "tests/test_framework.h"
 
 using namespace deepmoe;
 using namespace deepmoe::runtime;
+
+DEEPMOE_TEST(resident_route, request_boundary_wait_policy_rejects_invalid_numbers) {
+    Engine engine;
+    REQUIRE_OK(engine.set_mask_wait(.2, 0, 0));
+    REQUIRE_OK(engine.set_mask_wait(std::nullopt));
+    for (double tau : {-1.0, 1.01, std::nan("")}) {
+        const auto r = engine.set_mask_wait(tau);
+        REQUIRE(!r);
+        CHECK_EQ(r.error().code, Err::InvalidArgument);
+    }
+    for (double budget : {-1.0, std::nan("")}) {
+        const auto r = engine.set_mask_wait(.2, 8, budget);
+        REQUIRE(!r);
+        CHECK_EQ(r.error().code, Err::InvalidArgument);
+    }
+    REQUIRE_OK(engine.set_mask_wait(0, 0, 0));
+}
 
 DEEPMOE_TEST(resident_route, weighted_mask_wait_endpoints_and_weight_order) {
     const std::array<float, 6> w{.1f, .3f, .2f, .2f, .1f, .1f};

@@ -656,6 +656,10 @@ public:
     // Dynamic LRU is mask's default. Explicit freezing is an experiment.
     // Call between requests, before begin_session; the CLI overrides the env.
     void set_mask_cache_fixed(bool fixed);
+    // Call only between completed requests. Used by controlled, single-engine
+    // comparisons; no GPU route or pipeline configuration changes here.
+    Result<void> set_mask_wait(std::optional<double> tau, uint32_t expert_budget = 8,
+                               double time_budget_ms = 20);
     ResidentOnly resident_only() const { return resident_only_; }
     const ResidentRouteStats& resident_route_stats() const { return rr_; }
     void reset_resident_route_stats() { rr_ = {}; }

@@ -577,8 +577,6 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
         mask_wait_tau_ = std::strtod(e, &end);
         if (end == e || *end || !std::isfinite(mask_wait_tau_) || mask_wait_tau_ < 0 || mask_wait_tau_ > 1)
             return fail(Err::InvalidArgument, "DEEPMOE_MASK_WAIT_TAU must be in [0,1]");
-        if (cfg_.speculation.enabled)
-            return fail(Err::FailedPrecondition, "weighted mask waiting supports plain decode only; disable DSpark");
         if (const char* budget = std::getenv("DEEPMOE_MASK_WAIT_BUDGET")) {
             char* middle = nullptr;
             const auto n = std::strtoul(budget, &middle, 10);
@@ -591,8 +589,8 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
             mask_wait_budget_experts_ = uint32_t(n);
             mask_wait_budget_ms_ = ms;
         }
-        log_info("weighted mask wait: tau {}, budget {} experts / {} ms per token (0=unlimited); plain decode only",
-                 mask_wait_tau_, mask_wait_budget_experts_, mask_wait_budget_ms_);
+        if (auto r = set_mask_wait(mask_wait_tau_, mask_wait_budget_experts_, mask_wait_budget_ms_); !r)
+            return r;
     } else log_info("weighted mask wait: off");
 #if defined(__linux__)
     pin_to_gpu_irq_ccd();
@@ -2023,6 +2021,22 @@ void Engine::set_mask_cache_fixed(bool fixed) {
     mask_cache_explicit_ = true;
     mask_cache_fixed_ = fixed;
     store_.set_fixed_cache(resident_only_ == ResidentOnly::Mask && fixed);
+}
+
+Result<void> Engine::set_mask_wait(std::optional<double> tau, uint32_t expert_budget,
+                                  double time_budget_ms) {
+    if (tau && (!std::isfinite(*tau) || *tau < 0 || *tau > 1))
+        return fail(Err::InvalidArgument, "mask wait tau must be in [0,1]");
+    if (!std::isfinite(time_budget_ms) || time_budget_ms < 0)
+        return fail(Err::InvalidArgument, "mask wait budget must be finite and non-negative");
+    if (tau && (cfg_.speculation.enabled || streams_.size() > 1))
+        return fail(Err::FailedPrecondition, "weighted mask waiting supports plain single-stream decode only");
+    mask_wait_tau_ = tau.value_or(-1);
+    mask_wait_budget_experts_ = expert_budget;
+    mask_wait_budget_ms_ = time_budget_ms;
+    log_info("weighted mask wait: tau {}, budget {} experts / {} ms per token (0=unlimited)",
+             mask_wait_tau_, expert_budget, time_budget_ms);
+    return {};
 }
 
 bool Engine::route_resident_only(uint32_t L, ResidentOnly ro, const uint32_t* ids_raw,
