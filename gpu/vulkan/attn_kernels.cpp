@@ -367,6 +367,10 @@ Result<void> AttnRunner::record(CommandBuffer& cmd, AttnStage s, const void* pus
     if (push_bytes) {
         if (auto r = cmd.push(pipes_[i], push, push_bytes); !r) return r;
     }
+    if (s == AttnStage::IdxScore && groups > 65535)
+        return cmd.dispatch(kIdxScoreGridX, 1, (groups + kIdxScoreGridX - 1) / kIdxScoreGridX);
+    if (groups > 65535)
+        return fail(Err::InvalidArgument, "workgroups exceed a one-dimensional dispatch");
     return cmd.dispatch(groups);
 }
 

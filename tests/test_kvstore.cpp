@@ -310,7 +310,7 @@ DEEPMOE_TEST(gpu, kvstore_measured_bytes_and_64k_slabs) {
 
     std::printf("    %8s %12s %7s %8s %12s %12s %10s\n", "positions", "allocated", "slabs",
                 "largest", "bf16 live", "model fmt", "x");
-    for (uint32_t ctx : {64u, 4096u, 17010u, 65536u}) {
+    for (uint32_t ctx : {64u, 4096u, 17010u, 65536u, 1048576u}) {
         runtime::KvStore kv;
         KvStoreConfig k = KvStoreConfig::for_model(t, ctx, ctx);
         REQUIRE_OK(kv.create(alloc, k));
@@ -324,6 +324,27 @@ DEEPMOE_TEST(gpu, kvstore_measured_bytes_and_64k_slabs) {
         // The allocation is the layout plus alignment padding, never less.
         CHECK(kv.bytes() >= k.total_bytes(ctx));
         CHECK(kv.bytes() < k.total_bytes(ctx) + (1u << 20) + 4096u * (kv.slabs() + 8));
+        if (ctx == (1u << 20)) {
+            CHECK(kv.slabs() > 1u);
+            // Touch the first/last row of each plane across the slab split.
+            // Distinct sentinels detect aliasing and stale tail addresses.
+            for (uint32_t L : {2u, 8u, 14u, 20u}) {
+                auto v = kv.layer(L); REQUIRE_OK(v);
+                const uint32_t rows = ctx / t.compress_ratio(L);
+                v->cmp_kv_host[0] = uint16_t(L + 1);
+                v->cmp_kv_host[uint64_t(rows) * t.head_dim - 1] = uint16_t(L + 101);
+                v->idx_key_host[0] = uint16_t(L + 201);
+                v->idx_key_host[uint64_t(rows) * t.index_head_dim - 1] = uint16_t(L + 301);
+            }
+            for (uint32_t L : {2u, 8u, 14u, 20u}) {
+                auto v = kv.layer(L); REQUIRE_OK(v);
+                const uint32_t rows = ctx / t.compress_ratio(L);
+                CHECK_EQ(v->cmp_kv_host[0], uint16_t(L + 1));
+                CHECK_EQ(v->cmp_kv_host[uint64_t(rows) * t.head_dim - 1], uint16_t(L + 101));
+                CHECK_EQ(v->idx_key_host[0], uint16_t(L + 201));
+                CHECK_EQ(v->idx_key_host[uint64_t(rows) * t.index_head_dim - 1], uint16_t(L + 301));
+            }
+        }
         kv.destroy();
     }
 

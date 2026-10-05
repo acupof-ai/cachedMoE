@@ -45,6 +45,16 @@ class WebSettings(unittest.TestCase):
                     handler._chat.assert_not_called()
                     handler._preview.assert_not_called()
 
+    def test_1m_context_passes_to_engine(self):
+        args = SimpleNamespace(exe="deepmoe", max_context=1 << 20, cache_slots=5500,
+            cache_gb=0, gpu_prefill_min=16, gpu_prefill_speedup=None, kv_dir="",
+            no_kv_disk=True, kv_max_gb=0, max_parked=0, resident_only="mask",
+            dspark=True, spec_k=5, spec_top_k=4, mirror=[], no_mirror_auto=True)
+        command = server.Serve.command(args)
+        self.assertEqual(command[command.index("--max-context") + 1], "1048576")
+        # Keep the web preflight bound consistent with the compiled engine cap.
+        self.assertEqual(server.K_MAX_INDEX_POSITIONS, 1 << 20)
+
     def test_speculation_is_explicit_and_passes_length(self):
         args = SimpleNamespace(exe="deepmoe", max_context=4096, cache_slots=5500,
             cache_gb=0, gpu_prefill_min=16, gpu_prefill_speedup=None, kv_dir="",

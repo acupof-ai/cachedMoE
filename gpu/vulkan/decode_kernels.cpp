@@ -419,14 +419,19 @@ Result<void> MgtRunner::record_bound(CommandBuffer& cmd, uint32_t m, MgtStage s,
     if (push_bytes > kPushBytes)
         return fail(Err::InvalidArgument, "push constants exceed the shared 64 B range");
     if (gx == 0 || gy == 0) return fail(Err::InvalidArgument, "zero workgroups");
-    if (gx > 65535 || gy > 65535)
+    uint32_t gz = 1;
+    if (s == MgtStage::IdxScore && gx > 65535) {
+        gz = (gx + kIdxScoreGridX - 1) / kIdxScoreGridX;
+        gx = kIdxScoreGridX;
+    }
+    if (gx > 65535 || gy > 65535 || gz > 65535)
         return fail(Err::InvalidArgument,
                     std::format("{}: {} x {} workgroups exceeds a dispatch", mgt_stage_name(s),
                                 gx, gy));
     if (auto r = cmd.bind(pm.pipes[i], immutable_set); !r) return r;
     if (push_bytes)
         if (auto r = cmd.push(pm.pipes[i], push, push_bytes); !r) return r;
-    return cmd.dispatch(gx, gy);
+    return cmd.dispatch(gx, gy, gz);
 }
 
 Result<void> MgtRunner::dispatch_now(uint32_t m, MgtStage s, const void* push,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A local web chat UI for DeepSeek-V4.1-Flash over `deepmoe serve`.
 
-    .venv\\Scripts\\python.exe tools\\web\\server.py [--port 8080] [--max-context 65536]
+    .venv\\Scripts\\python.exe tools\\web\\server.py [--port 8080] [--max-context 1048576]
         [--cache-gb N | --cache-slots N] [--kv-dir DIR] [--kv-max-gb N]
         [--exe build\\deepmoe.exe] [--think] [--log build\\web_serve.log]
 
@@ -32,9 +32,10 @@ tab coming back replays <= 128 tokens instead of re-prefilling.
 The context ceiling
 -------------------
 `Engine::max_context()` is `min(KvStoreConfig::max_context, kMaxIndexPositions)`
-and `kMaxIndexPositions` is `65535 * kIdxScoreTile` = **524,280**
-(runtime/decode_layer.h): `indexer.score` covers 8 compressed positions per
-workgroup and a dispatch may have at most 65,535 workgroups.  It is a ceiling in
+and `kMaxIndexPositions` is **1,048,576** (runtime/decode_layer.h), the native
+checkpoint limit. `indexer.score` covers 8 positions per workgroup and tiles
+long grids over X/Z in a single dispatch, keeping Y for verify queries.
+The 65,535 per-axis Vulkan limit no longer caps the total positions. The cap is in
 TOKENS and not only in compressed positions because the checkpoint's last KV
 source, layer 20, has `compress_ratio == 1` -- it keeps one compressed row per
 token, so `n_cmp == positions` on that plane.  `Session::generate` refuses a
@@ -80,8 +81,8 @@ def _state_home():
 REPO = os.path.dirname(os.path.dirname(HERE))
 MODEL = os.environ.get("DEEPMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
 
-# runtime/decode_layer.h: 65535 workgroups * gpu::kIdxScoreTile (8).
-K_MAX_INDEX_POSITIONS = 65535 * 8          # 524,280
+# runtime/decode_layer.h: native checkpoint context, tiled index-score grid.
+K_MAX_INDEX_POSITIONS = 1 << 20           # 1,048,576
 # The live bf16 KV a position costs: (head_dim + index_dim) * 2 B per compressed
 # row, summed over the four kv sources at their ratios (2,2,2,1) -- 2,560 + 640.
 # docs/design.md §11's 894 B/token is the PACKED (.pkv) form of the same state.
@@ -884,7 +885,7 @@ def main():
     ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--max-context", type=int, default=65536)
+    ap.add_argument("--max-context", type=int, default=K_MAX_INDEX_POSITIONS)
     ap.add_argument("--cache-gb", type=int, default=0)
     ap.add_argument("--cache-slots", type=int, default=0)
     ap.add_argument("--gpu-prefill-min", type=int, default=None,
@@ -918,8 +919,8 @@ def main():
     if args.max_context > K_MAX_INDEX_POSITIONS:
         raise SystemExit(
             f"--max-context {args.max_context} is past the engine ceiling "
-            f"{K_MAX_INDEX_POSITIONS} (runtime/decode_layer.h kMaxIndexPositions = "
-            f"65535 workgroups * 8 positions); the engine would clamp it silently.")
+            f"{K_MAX_INDEX_POSITIONS} (native checkpoint context; "
+            f"runtime/decode_layer.h kMaxIndexPositions); the engine would clamp it silently.")
     kv_gb = args.max_context * KV_BYTES_PER_TOKEN / (1 << 30)
 
     try:

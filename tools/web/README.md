@@ -2,11 +2,11 @@
 
 一行启动（然后打开 <http://127.0.0.1:8080/>）：
 
-```powershell
-.venv\Scripts\python.exe tools\web\server.py --max-context 524280
+```bash
+python3 tools/web/server.py --max-context 1048576
 ```
 
-（`--max-context 524280` 就是引擎硬上限；不给 `--cache-gb` / `--cache-slots` 就是 `auto`。
+（`--max-context 1048576` 就是引擎硬上限；不给 `--cache-gb` / `--cache-slots` 就是 `auto`。
 启动约 75 秒。当前跑着的实例见 `RUNNING.txt`。）
 
 **`auto` 是安全的（Track H1a，2026-09-19）**：算出来的预算先封顶到 **5,000 槽 ≈ 87.6 GiB**
@@ -14,7 +14,7 @@
 这正是 over-size 被发现的那一刻——被拒就退 200 槽（`DEEPMOE_CACHE_BACKOFF_SLOTS`）重建，最多 5 次。
 在这之前 `auto` = 5,100 槽 / 89.3 GiB，而 5,100 在这台机器上第一个 decode submit 就丢设备，
 所以 `RUNNING.txt` 里的命令一直手写着 `--cache-slots 5000`。
-**要让它生效得重新链接 `build\deepmoe.exe` 并重启 server.py**；
+**修改引擎后需要重新编译 `build/deepmoe` 并重启 server.py**；
 手写的 `--cache-slots` / `--cache-gb` 一样会被探，但**不会被悄悄改小**，失败就是致命错并报下一个该试的数。
 
 `server.py` 把 `deepmoe serve`（docs/p3_chat.md §1）当子进程拉起来，自己不碰 GPU；
@@ -25,7 +25,7 @@
 
 | 参数 | 说明 |
 |---|---|
-| `--max-context N` | 引擎 KV 位置数，默认 65536；**硬上限 524280**（见下）。只是上限，KV 实际从 4096 位置起按需翻倍，所以直接给满不花钱 |
+| `--max-context N` | 引擎 KV 位置数，默认 1048576；**硬上限 1048576**（见下）。KV 从 4096 位置起按需翻倍；解码 score scratch 预留 1M，GPU prefill 工作集另受显存余量限制 |
 | `--cache-gb N` / `--cache-slots N` | 专家缓存 |
 | `--kv-dir DIR` | SSD 上的 `.pkv` 前缀/挂起 KV 缓存（不给就用 serve 的默认目录） |
 | `--kv-max-gb N` | 该目录的预算 |
@@ -34,38 +34,30 @@
 | `--think` | 默认开思考模式（网页上也能勾） |
 | `--exe build\deepmoe.exe` | 引擎二进制 |
 
-## 上下文硬上限：524,280 token
+## 上下文上限：1,048,576 token
 
-`Engine::max_context() = min(KvStoreConfig::max_context, kMaxIndexPositions)`，
-而 `kMaxIndexPositions = 65535 * kIdxScoreTile(8) = 524,280`
-（`runtime/decode_layer.h`）：`indexer.score` 一个 workgroup 覆盖 8 个压缩位置，
-一次 dispatch 最多 65,535 个 workgroup。
+网页默认及引擎容量上限现在为 `1 << 20`，与 checkpoint 的
+`max_position_embeddings` 一致。之前的 524,280 是索引评分的一维 dispatch
+限制（65,535 workgroup × 8 位置）。现在 decode 和投机 verify 的索引评分都将
+超长位置分到 X/Z 轴；1M 的网格为 `(32768, M, 4)`，Y 仍为验证行。
+整批评分仍只有一次 dispatch、一次主模型前向，没有重复验证树。
 
-这条限制**以 token 计**而不只是以压缩位置计，因为 checkpoint 最后一个 KV source
-（第 20 层）的 `compress_ratio == 1`——它每个 token 存一行压缩 KV，所以那个平面上
-`n_cmp == positions`。前三个 source（2/8/14 层）是 ratio 2，不是瓶颈。
+最后一个 KV source（第 20 层）的 `compress_ratio == 1`，因此它的压缩行数
+也按 token 数增长。引擎将 score/candidate 平面按 1M 配置，KV 从 4K 容量
+按需增长并分 slab；活跃 bf16 KV 约 3,200 B/token，1M 约 3.13 GiB，
+不含 window、scratch 和挂起会话。SWA/top-k 列表仍最多 640 行。
 
-其余的账：
-
-- 活跃 KV（bf16）**3,200 B/token**（2,560 压缩 + 640 index key，按 ratio 2/2/2/1 加权），
-  跑满 524,280 位置是 **1.68 GB**；打包成 `.pkv` 是 design §11 的 **894 B/token** = 469 MB。
-- `KvStore` 切 slab（每块 ≤ 2 GiB），**~600K 位置以后才需要第二块**，所以
-  524,280 这个上限先于内存生效。
-- SWA 窗口 128，`topk_rows = 128 + min(512, max_context) = 640`，在
-  `kAttnScoreStride = 1024` 之内，与 max_context 无关。
-- 解码路径里没有残留的 16,384 / 65,536 常量：`idx_score` / 候选块平面都是按
-  `kMaxIndexPositions` 一次性分配的（2 MB + 0.5 MB，在 32 MB scratch 里）。
-
-`server.py` 在启动时拒绝 `--max-context > 524280`，并在**发送前**用 serve 的
-`tokenize` 算出提示词 token 数，超过本次启动的 `max_context` 就直接拒绝并说明原因。
+`server.py` 在启动时拒绝高于 1M 的参数，发送前仍校验本次引擎实际
+`max_context`；提示词必须小于该值，以留出输出位置。
 
 ## 长文档
 
-- 粘贴框接受多 MB 文本；输入停下 0.35 秒（超长时 0.9 秒）后调 `/api/preview`，
-  显示「提示词 N token（复用 R，需预填充 P）· 预计 T」。
-- 预填充走 decode 路径，**约 24 ms/token**（会用实测值自动校正）：
-  10 万 token ≈ 40 分钟，100 万 token ≈ 6.7 小时（但 100 万超上限）。
-- 需预填充 ≥ 20,000 token 时发送前会二次确认。
+粘贴框接受多 MB 文本，`/api/preview` 返回提示词、复用和待预填充 token 数。
+容量上限与一次 GPU prefill 的可运行长度是不同条件：当前 GPU prefill 工作集
+按完整提示词分配，超出专家 cache 旁的 GPU heap 余量会在提交前拒绝，
+不能靠提高 `--max-context` 消除。1M 完整输入尚未做端到端质量验证。
+长文预填充耗时使用当前运行实测估计；未预填充满 1M 的速度不作承诺。
+需预填充 ≥ 20,000 token 时发送前仍二次确认。
 
 ## 并发
 

@@ -16,7 +16,7 @@
 //   2  the index key of completion c: k_norm(wk(latent_c)), rotated at the
 //      latent's position, FP4, into cache row (p0 + m_c) / ratio; gid = (0, c)
 //   3  weights_proj, bf16 [32 x 5120] against token m's input; gid = (0, m)
-//   4  scores, eight positions a workgroup; gid = (tile, m)
+//   4  scores, eight positions a workgroup; tile = x + z * 32768, Y = m
 //   5  the top-k into query m's list at `offset`; gid = (0, m)
 //   6  design §2.1 block keys; gid = (chunk, m)
 //   7  design §2.1 block selection; gid = (0, m)
@@ -357,7 +357,8 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     if (Stage == 1)      stage_q_finish(gid.y, tid);
     else if (Stage == 2) stage_key(gid.y, tid);
     else if (Stage == 3) stage_weights(gid.y, tid);
-    else if (Stage == 4) stage_score(gid.x, gid.y, tid);
+    // Match gpu::kIdxScoreGridX; preserve Y as the causal verify query.
+    else if (Stage == 4) stage_score(gid.x + gid.z * 32768u, gid.y, tid);
     else if (Stage == 5) stage_topk(gid.y, tid);
     else if (Stage == 6) stage_block_keys(gid.x, gid.y, tid);
     else if (Stage == 7) stage_block_select(gid.y, tid);

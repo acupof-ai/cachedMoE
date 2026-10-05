@@ -27,6 +27,7 @@
 #include "core/config.h"
 #include "cpu/dequant.h"
 #include "gpu/vulkan/attn_kernels.h"
+#include "gpu/vulkan/decode_kernels.h"
 #include "gpu/vulkan/device.h"
 #include "gpu/vulkan/memory.h"
 #include "model/layout.h"
@@ -47,6 +48,84 @@
 
 using namespace deepmoe;
 using namespace deepmoe::testing;
+
+// No checkpoint needed: exercise the former dispatch boundary and the native
+// 1M end, including all six independent causal verify rows and output guards.
+DEEPMOE_TEST(gpu_attn, indexer_1m_grid) {
+    gpu::Device device;
+    REQUIRE_OK(device.create());
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(device, MemoryPath::DeviceLocalHostVisible));
+    gpu::AttnRunner single;
+    REQUIRE_OK(single.create(device, alloc, gpu::default_shader_dir()));
+    gpu::MgtRunner batch;
+    REQUIRE_OK(batch.create(device, alloc, gpu::default_shader_dir()));
+    constexpr uint32_t N = 1u << 20, M = 6, HD = 128, NH = 32;
+    constexpr uint32_t stride = N + 8, offset = 128, topk = 512;
+    REQUIRE_OK(batch.ensure(M));
+    gpu::GpuScratch scratch;
+    REQUIRE_OK(scratch.create(alloc, 320ull << 20));
+    auto q = scratch.alloc(uint64_t(M) * NH * HD * 2);
+    auto keys = scratch.alloc(uint64_t(N) * HD * 2);
+    auto w = scratch.alloc(uint64_t(M) * NH * 4);
+    auto scores = scratch.alloc(uint64_t(M) * stride * 4);
+    auto list = scratch.alloc((offset + topk) * 4);
+    REQUIRE_OK(q); REQUIRE_OK(keys); REQUIRE_OK(w); REQUIRE_OK(scores); REQUIRE_OK(list);
+    std::fill_n(static_cast<uint16_t*>(q->host), M * NH * HD, cpu::float_to_bf16(1.0f));
+    std::memset(keys->host, 0, size_t(keys->bytes));
+    auto value = [](uint32_t p) { return p == N - 1 ? 10.0f : float(int(p % 7) - 3); };
+    for (uint32_t p = 0; p < N; ++p)
+        static_cast<uint16_t*>(keys->host)[uint64_t(p) * HD] = cpu::float_to_bf16(value(p));
+    for (uint32_t m = 0; m < M; ++m)
+        std::fill_n(static_cast<float*>(w->host) + m * NH, NH, float(m + 1) / NH);
+    float* sc = static_cast<float*>(scores->host);
+    auto* slots = single.slots(gpu::AttnStage::IdxScore);
+    slots[gpu::slot::kIdxQ] = q->addr;
+    slots[gpu::slot::kIdxKCache] = keys->addr;
+    slots[gpu::slot::kIdxWeights] = w->addr;
+    slots[gpu::slot::kIdxScore] = scores->addr;
+    gpu::IdxPush ip{};
+    ip.n_heads = NH; ip.head_dim = HD;
+    for (uint32_t n : {64u, 524280u, 524281u, N - 1, N}) {
+        std::fill_n(sc, stride, -123.0f);
+        ip.n_pos = n;
+        REQUIRE_OK(single.dispatch_now(gpu::AttnStage::IdxScore, &ip, sizeof ip,
+                                       (n + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile));
+        uint32_t bad = 0;
+        for (uint32_t p = 0; p < stride; ++p)
+            bad += sc[p] != (p < n ? std::max(value(p), 0.0f) : -123.0f);
+        std::printf("      single n=%u: %u score/guard errors\n", n, bad);
+        CHECK_EQ(bad, 0u);
+    }
+    slots = single.slots(gpu::AttnStage::IdxTopK);
+    slots[gpu::slot::kIdxScore] = scores->addr;
+    slots[gpu::slot::kIdxOut] = list->addr;
+    ip.topk = topk; ip.offset = offset;
+    REQUIRE_OK(single.dispatch_now(gpu::AttnStage::IdxTopK, &ip, sizeof ip, 1));
+    auto* out = static_cast<uint32_t*>(list->host);
+    for (uint32_t i = 0; i < topk - 1; ++i) CHECK_EQ(out[offset + i], offset + 6 + i * 7);
+    CHECK_EQ(out[offset + topk - 1], offset + N - 1);
+
+    auto* bs = batch.slots(gpu::MgtStage::IdxScore);
+    bs[gpu::mslot::kIQ] = q->addr;
+    bs[gpu::mslot::kIKCache] = keys->addr;
+    bs[gpu::mslot::kIWeights] = w->addr;
+    bs[gpu::mslot::kIScore] = scores->addr;
+    gpu::MgtIdxPush bp{};
+    bp.n_heads = NH; bp.head_dim = HD; bp.p0 = N - M; bp.ratio = 1; bp.score_stride = stride;
+    std::fill_n(sc, uint64_t(M) * stride, -123.0f);
+    REQUIRE_OK(batch.dispatch_now(M, gpu::MgtStage::IdxScore, &bp, sizeof bp,
+                                  (N + gpu::kIdxScoreTile - 1) / gpu::kIdxScoreTile, M));
+    for (uint32_t m = 0; m < M; ++m) {
+        const uint32_t n = bp.p0 + m + 1;
+        uint32_t bad = 0;
+        for (uint32_t p = 0; p < stride; ++p)
+            bad += sc[uint64_t(m) * stride + p] !=
+                   (p < n ? float(m + 1) * std::max(value(p), 0.0f) : -123.0f);
+        std::printf("      verify row %u n=%u: %u score/causal/guard errors\n", m, n, bad);
+        CHECK_EQ(bad, 0u);
+    }
+}
 
 namespace {
 

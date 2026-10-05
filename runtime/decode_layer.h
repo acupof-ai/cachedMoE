@@ -104,19 +104,16 @@ struct DecodeScratch {
     Result<void> create(gpu::GpuScratch& s, const TextConfig& cfg);
 };
 
-// Compressed positions one `indexer.score` dispatch can be asked for. This is
-// the KERNEL's limit, not a buffer size anyone chose: stage 4 covers
-// kIdxScoreTile positions a workgroup and a dispatch has at most 65,535
-// workgroups, so 524,280 positions -- eight times V4.1's original 65,536-token
-// context. The score plane is sized for it once (2 MB of the 32 MB scratch)
-// and so are the candidate-block planes (0.5 MB). What really bounds a decode's
-// context is the KV store's memory (KvStoreConfig::total_bytes), which the
-// caller sizes from the context it wants.
+// Native V4.1 context limit, also the largest compressed-position score plane.
+// Above 65,535 score workgroups the runners tile positions over X/Z in ONE
+// dispatch, with Y reserved for the verify query. At 1M positions the grid is
+// (32,768, M, 4), with eight positions per group. Score/candidate buffers are
+// sized for this cap; the KV store starts at 4K and grows on demand.
 //
 // History: this was 4,096 (then 16,384) and doubled as the context cap, which
 // hid that sparse_attn was being handed window + n_cmp entries instead of
 // window + min(index_topk, n_cmp) -- Track P's fix in Engine::prepare_ced.
-inline constexpr uint32_t kMaxIndexPositions = 65535u * gpu::kIdxScoreTile;
+inline constexpr uint32_t kMaxIndexPositions = 1u << 20;
 
 // Row stride of sparse_attn's [heads][stride] score plane. A top-k list is
 // window + min(index_topk, n_cmp) = 640 entries in V4.1; `record_attention`

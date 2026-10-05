@@ -490,7 +490,8 @@ void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
     else if (Stage == 1) stage_q_finish(tid);
     else if (Stage == 2) stage_key(tid);
     else if (Stage == 3) stage_weights(tid);
-    else if (Stage == 4) stage_score(gid.x, tid);
+    // Match gpu::kIdxScoreGridX. Z extends positions, in the same dispatch.
+    else if (Stage == 4) stage_score(gid.x + gid.z * 32768u, tid);
     else if (Stage == 5) stage_topk(tid);
     else if (Stage == 6) stage_block_keys(gid.x, tid);
     else if (Stage == 7) stage_block_select(tid);

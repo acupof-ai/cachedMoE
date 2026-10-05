@@ -65,7 +65,7 @@ reporting basis.
 `tools/web/RUNNING.txt`; the desktop app can also start it from `.Codex/launch.json`). It
 launches its own `deepmoe serve`, auto-detects the second read source on `E:`, keeps one named
 session per browser tab, and persists each transcript under
-`%LOCALAPPDATA%\deepmoe\web_chat\`. Context ceiling 524,280 tokens (indexer dispatch limit).
+`%LOCALAPPDATA%\deepmoe\web_chat\`. Context ceiling 1,048,576 tokens (native checkpoint cap; index scores tile X/Z).
 
 ## Where things are
 

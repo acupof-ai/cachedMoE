@@ -34,6 +34,10 @@
 
 namespace deepmoe::gpu {
 
+// Long index-score grids use Z for position tiles; Y stays the verify row.
+// Must match the flattening stride in indexer.slang / mgt1_idx.slang.
+inline constexpr uint32_t kIdxScoreGridX = 32768;
+
 // The dispatch list of design §7.14, expanded to one entry per pipeline.
 //
 // mega_mhc appears three times over because a layer runs it three times with
