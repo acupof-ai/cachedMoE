@@ -916,3 +916,20 @@ off l3 仍 **.622784**；冷启动动态 mask l3 是 **1.360084**，未接近历
 具体输入、控制器边界测试、原始数据限制和决策见
 [`mask_freeze.md`](mask_freeze.md)、[`mask_freeze_offline.json`](mask_freeze_offline.json)。
 raw 归档 `bench/results/adaptive_mask/`，工作树路径只表示执行时来源。
+
+## 19. 动态 mask 的异步等待核对（2026-10-05）
+
+同 prompt 的 32 输出短 trace：普通动态 mask 12.595869 tok/s，k5/top4
+13.398560 tok/s，9 cycle / 9 target submit，22/41 草稿接受。k5 平均 verify
+228.715 ms，target GPU span 218.896 ms，attention / MoE busy 86.515 /
+106.808 ms；跨 submit gap 0。fence 后 finish_routes 1.312 ms，其中规划／
+异步 P0 提交 .863 ms，没有等待专家 miss 完成。此为有 trace 的短测，
+不能将 +6.37% 推广为 8 轮加速，也不是逐 token 同输出的算子对拍。
+
+旧 planner 在出现 miss 时加 `stalls`，并没有测量 IO join。`45ee3ab`
+将 miss layers 和实际 wait_layer 分开，diagnostics 输出每个 target 的
+`expert_io_wait`；16-token 验证的 4 个 cycle 全部 0 calls / 0 miss joins /
+0 ms，启动 MTP 的 3 次 exact wait 另计。异步策略本身已经存在，这次只
+修正计数，没有新增 kernel 加速。长测9.52的上下文、union及接受率边界
+与固定cache18不同，说明与限制见 [报告](mask_async.md) 和
+[收据](mask_async_receipt.json)。

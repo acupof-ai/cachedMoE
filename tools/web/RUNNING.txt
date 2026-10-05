@@ -8,7 +8,7 @@ reports named below. Nothing in here hardcodes a path any more.
 
 STATE: RUNNING (2026-10-05, restored after adaptive-freeze evaluation).
 Engine includes native 1M index-score tiling from 3ba80ab, web settings e6580e4,
-and dynamic mask defaults from 8f594f8.
+dynamic mask defaults from 8f594f8, and real expert-wait counters from 45ee3ab.
 Dynamic miss-mask: --resident-only mask --mask-cache dynamic.
 LRU, eviction and P0 admissions run normally; current forward masks misses.
 Exact GPU prefill remains enabled. Adaptive freeze/P3 reheat was not added:
@@ -40,6 +40,11 @@ Current dynamic-mask validation (not a live web speed benchmark):
   fails the target near historical .835581. Strict decode remains 6/8 + 7/8,
   so there is no claim that all quality gates pass.
 Report/receipt: docs/mask_freeze.md and docs/mask_freeze_receipt.json.
+Async verification: each of four instrumented k5 target cycles has zero expert
+wait calls / miss joins / ms. Planner now distinguishes miss layers from waits;
+startup MTP exact waits remain counted. Same-prompt 32-output traced short cells
+plain/k5: 12.595869 / 13.398560 tok/s; not a new long-run performance verdict.
+See docs/mask_async.md and docs/mask_async_receipt.json.
 1M score/KV boundary checks pass; full 1M prompt prefill/quality not tested.
 GPU prefill still refuses whole-prompt workspaces exceeding heap headroom.
 1M receipt: docs/context_1m_receipt.json; raw: bench/results/context_1m/.

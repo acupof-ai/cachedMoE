@@ -753,6 +753,12 @@ steps, and the reference continuation has to be produced step by step.**
 
 ## 7. Next, in order
 
+0cc. **2026-10-05：动态 mask 的专家加载已异步；修正把 miss 层数误报为 stalls 的计数，新增实际专家等待。**
+   同中文 prompt/seed、32 输出、双盘5500槽、power-saver 的 target trace：普通动态 mask **12.595869 tok/s**、动态k5/top4 **13.398560**（短测+6.37%，不同输出，非长期／无损结论）。k5 9周期/9 target submit，22/41草稿接受；平均verify **228.715 ms**，GPU span **218.896**，attention/MoE **86.515/106.808**，跨提交gap0；finish_routes **1.312 ms**、planner/LRU/P0 issue **.863**。主要在等待GPU执行完成，没有用P0请求队列延迟冒充token阻塞。
+   `45ee3ab` 分开统计 miss layers 和 wait_layer 的调用／miss join／wall time，超时计入；仅可选 diagnostics 增加 `expert_io_wait`。新16-output检查 **4个cycle每个0调用/0 join/0 ms**；MTP启动的3次exact wait单独保留。CPU32/32、0热暂停、AC稳定、48/48。计数修复未改变计算、LRU、IO调度或采样，没有算作速度优化。
+   8轮旧记录9.521827tok/s的实际计算union为740.562项/cycle，本短测546.667；8轮每周期新miss字节反而较少（1.489 vs2.497GB）。8轮Engram land等待总3.930s，即使全记decode仅1.59%；无长测per-op trace，不能精确归因其各算子。18tok/s固定cache只服务37.5%且循环，与动态92.07%服务率不可当同质量对照。冷mask NLL问题未由这次计数修复解决。
+   [报告](mask_async.md)、[机器收据](mask_async_receipt.json)，raw `bench/results/mask_async/`。网页仍为动态mask、k5/top4、1M、双盘与80/72°C温控。
+
 0cb. **2026-10-05：自动冻结门槛先做离线价值检查；当前方案 NO-GO，mask 默认恢复动态 LRU。**
 原生双盘 8 轮的 demand-LRU 回放有 2318 个 decode token，最近 16 token
 淘汰门槛 <55 槽没有候选点（最低 69）；5116 主模型槽近似最低 78，门槛
