@@ -7,7 +7,7 @@ every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
 STATE: RUNNING (2026-10-05, owner requested DSpark k=5).
-Engine binary unchanged from 2ff1fdc; web settings implementation e6580e4.
+Engine includes native 1M index-score tiling from 3ba80ab; web settings e6580e4.
 Fixed miss-mask; DSpark ON, --spec-k 5 --spec-top-k 4.
 DEEPMOE_DSPARK_ONECB=1, DEEPMOE_BATCH_GPU_ROUTE=1, draft profiling=0.
 One main path; one six-row verify per full cycle. Native effort selector
@@ -25,7 +25,11 @@ afterwards without refreshing either browser tab.
 5500 initial resident slots frozen before READY: no LRU/heat/eviction or decode
 miss admissions. Shared expert always runs; exact GPU prefill uses transit.
 Two read sources, mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash (48/48 shards).
-max_context 4096, GPU prefill minimum 16, --no-kv-disk.
+max_context 1048576, GPU prefill minimum 16, --no-kv-disk.
+4161-token web smoke returned OK; one DSpark cycle / one target submit.
+1M score/KV boundary checks pass; full 1M prompt prefill/quality not tested.
+GPU prefill still refuses whole-prompt workspaces exceeding heap headroom.
+Receipt: docs/context_1m_receipt.json; raw: bench/results/context_1m/.
 HTTP /, /api/config and /api/status 200; cache_fixed/cache_frozen true.
 Detached supervisor: build/web_mask/launch.py. It selects power-saver (the
 18.09 tok/s benchmark profile), pauses the engine at GPU/NVMe 80 C and resumes

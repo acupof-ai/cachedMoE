@@ -753,6 +753,12 @@ steps, and the reference continuation has to be produced step by step.**
 
 ## 7. Next, in order
 
+0ca. **2026-10-05：网页容量上限从 4096 调到原生 1,048,576，移除索引器的一维 524,280 限制。**
+   `3ba80ab`：decode 和 verify 的 index score 超过 65,535 个工作组时在同一次 dispatch 中按 X/Z 分块（1M 为 32768×M×4），Y 保留验证行；score/candidate scratch 同步扩到 1M，网页默认和校验也同步。5500 固定 mask、k5/top4、双盘、温控80/72°C保留。
+   新边界测试覆盖 64 / 524280 / 524281 / 1048575 / 1048576 位置，以及六行因果范围/尾哨兵，全部0错误；GPU attention 7/7，1M KV 3358.38 MB/2 slabs（最大1744.8 MB），首尾哨兵通过；CPU/元数据/工具31/31。off64 NLL **0.622784**、top1 56/64，与既有基线一致。`suite.decode` 当前门禁通过，但严格匹配仍为 **6/8 + 自有prefill7/8**，未宣称严格8/8。
+   真实网页 **4161-token** 提示词完成并输出 `OK`，GPU prefill21.060 s；1轮投机/1次target提交、6行验证。是解除原4096拒绝的功能测试，不是速度基准。原网页未刷新，聊天记录和待发输入保留，重新统计解除旧提示。
+   **1M完整提示词/质量未验证**；全量GPU prefill工作集仍按输入长度分配并在超出heap余量时拒绝。容量上限不等于1M一次prefill已可运行。[机器收据](context_1m_receipt.json)，原始记录 `bench/results/context_1m/`；当前启动见 `tools/web/RUNNING.txt`。
+
 0bz. **2026-10-05：DSpark Phase1/3 已实现并分开提交；双盘成本、host 残差、固定 cache 和实际 Phase4/head 已验收，保持显式开关。**
    Phase1 `81826bd`、Phase3 `c796e56`，基础设施 `7955423`；固定 cache/残差修复 `dc5d870`。`66d0f7a` 是已有工作快照，核对内容并保存 index/patch/ref 后整体 fast-forward 合入 main，不能重复 cherry-pick，见报告§15。
    旧动态 LRU 单盘普通 mask **12.33**、组合 **13.49 tok/s**；双盘 **12.06 / 12.40**。双盘 serial/组合周期 **211.317/211.771 ms**，相同接受率下未降本；不能把接受率改善计作 kernel 加速。
