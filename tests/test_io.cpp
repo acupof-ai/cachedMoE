@@ -162,11 +162,23 @@ DEEPMOE_TEST(io, engram_wait_bypasses_async_p0_backlog) {
     // than manually enabling the scheduler, so policy wiring is covered.
     owner.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     {
+        // Dynamic mask preserves P0 catch-up by default. No P2 bypass.
+        auto ordinary = engine.engram_wait();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        CHECK_EQ(fake->submit_count(), 2u);
+        CHECK_EQ(engine.stats().p2_deadline_chunks, 0u);
+    }
+    owner.set_mask_cache_fixed(true);
+    owner.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    {
         auto urgent = engine.engram_wait();
         wait_count(12);
         CHECK_EQ(fake->submit_count(), 12u); // backend/Engram QD still enforced
         CHECK_EQ(engine.inflight_chunks(IoPriority::BlockingMiss), 2u);
         CHECK_EQ(engine.inflight_chunks(IoPriority::Engram), 10u);
+        CHECK_EQ(engine.stats().inflight_by_priority[0], 2u);
+        CHECK_EQ(engine.stats().inflight_by_priority[2], 10u);
+        CHECK(engine.stats().peak_by_priority[2] >= 10u);
         CHECK_EQ(engine.stats().p2_deadline_chunks, 10u);
     }
     fake->release_all();

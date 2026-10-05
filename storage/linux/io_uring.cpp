@@ -270,6 +270,7 @@ private:
         uint32_t want   = 0;       // the in-file part that must arrive (backend.h)
         uint32_t moved  = 0;       // bytes an earlier, short, completion of this chunk brought
         void*    bounce = nullptr; // host buffer the kernel reads into, or null
+        uint64_t landing_copy_ns = 0;
     };
 
     // Caller holds sq_mutex_. A new chunk takes a free record; a chunk read
@@ -379,8 +380,10 @@ private:
                 if (slot.bounce) {
                     const auto t0 = std::chrono::steady_clock::now();
                     std::memcpy(slot.dst, slot.bounce, got);
-                    copy_ns_ += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    const auto elapsed = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                           std::chrono::steady_clock::now() - t0).count());
+                    copy_ns_ += elapsed;
+                    slot.landing_copy_ns += elapsed;
                     copy_bytes_ += got;
                     ++copies_;
                 }
@@ -408,6 +411,7 @@ private:
             }
             give_bounce(slot.bounce);
             slot.bounce = nullptr;
+            c.landing_copy_ns = slot.landing_copy_ns;
             {
                 std::lock_guard lk(sq_mutex_);
                 free_slots_.push_back(idx);

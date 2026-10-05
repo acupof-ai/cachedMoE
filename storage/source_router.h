@@ -230,6 +230,7 @@ struct SourceStats {
     // path now carries its own counters and the two can never be confused
     // again (docs/p4_dual_source.md §10.1).
     uint64_t p0_requests = 0, p0_bytes = 0, p0_lat_ns_sum = 0;
+    uint64_t p0_queue_wait_ns_sum = 0, p0_service_ns_sum = 0, p0_copy_ns_sum = 0;
     // How long this source was carrying NOTHING before a request arrived,
     // counted only for gaps at or above the keep-alive window. This is the
     // quantity the power-state hypothesis is about, and it is measured whether

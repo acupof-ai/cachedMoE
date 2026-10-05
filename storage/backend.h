@@ -56,6 +56,7 @@ struct ChunkCompletion {
     uint64_t chunk_id    = 0;
     uint32_t bytes_moved = 0;
     Status   status{Err::Ok};
+    uint64_t landing_copy_ns = 0; // measured bounce -> destination copies; 0 for direct IO
     bool ok() const { return status.code == Err::Ok; }
 };
 

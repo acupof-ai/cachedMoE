@@ -109,7 +109,12 @@ std::string IoStats::to_string() const {
             p0_with_bg_n, 100.0 * double(p0_with_bg_n) / n,
             p0_with_bg_n ? double(p0_bg_inflight_sum) / double(p0_with_bg_n) : 0.0,
             p0_chunks_issued ? double(p0_qd_at_issue_sum) / double(p0_chunks_issued) : 0.0);
+        s += std::format("  P0 landing copy: {:.3f} ms/request (part of service wall time)\n", p0_copy_ns_sum / 1e6 / n);
     }
+    s += "  in-flight chunks now/peak:";
+    for (uint8_t p = 0; p < kIoPriorityCount; ++p)
+        s += std::format(" P{} {}/{}", p, inflight_by_priority[p], peak_by_priority[p]);
+    s += "\n";
     if (sources.size() > 1) {
         // Track D2: which drive served what. `inflight` is a live read, so a
         // status.json taken mid-decode shows both queues rather than a total.
@@ -154,6 +159,9 @@ std::string IoStats::to_string() const {
                 e.temp_c < 0 ? std::string()
                              : std::format(" | {} C (max {}), rested {}x{}", e.temp_c, e.temp_max_c,
                                            e.rests, e.resting ? ", RESTING" : ""));
+            if (e.p0_requests) s += std::format("         P0 phases: queue {:.2f} + service {:.2f} ms/request; landing copy {:.3f} ms/request (inside service)\n",
+                e.p0_queue_wait_ns_sum / 1e6 / e.p0_requests,
+                e.p0_service_ns_sum / 1e6 / e.p0_requests, e.p0_copy_ns_sum / 1e6 / e.p0_requests);
         }
     }
     if (disp_iters) {
@@ -911,6 +919,8 @@ uint32_t IoEngine::queued_requests() const {
 IoStats IoEngine::stats() const {
     std::lock_guard lk(stats_mutex_);
     IoStats s = stats_;
+    for (uint8_t p = 0; p < kIoPriorityCount; ++p)
+        s.inflight_by_priority[p] = inflight_class_[p].load(std::memory_order_relaxed);
     s.disp_submit_threads = tune_.submit_threads;
     if (!src_roots_.empty()) {
         std::lock_guard sl(src_mutex_);
@@ -949,6 +959,9 @@ void IoEngine::reset_stats() {
         src_stats_[i].bytes = 0;
         src_stats_[i].lat_ns_sum = 0;
         src_stats_[i].p0_requests = 0;
+        src_stats_[i].p0_queue_wait_ns_sum = 0;
+        src_stats_[i].p0_service_ns_sum = 0;
+        src_stats_[i].p0_copy_ns_sum = 0;
         src_stats_[i].p0_bytes = 0;
         src_stats_[i].p0_lat_ns_sum = 0;
         src_stats_[i].idle_gaps = 0;
@@ -1039,6 +1052,9 @@ size_t IoEngine::issue_ready_chunks() {
                     inflight_class_[uint8_t(IoPriority::Backfill)].load(std::memory_order_relaxed) +
                     inflight_class_[uint8_t(IoPriority::Engram)].load(std::memory_order_relaxed);
             }
+            const uint32_t source = csrc == kNoStripeSource ? p->source : csrc;
+            if (source < kMaxIoSources && p->src_first_issue_at[source] == TimePoint{})
+                p->src_first_issue_at[source] = Clock::now();
             if (is_p0) {
                 std::lock_guard sk(stats_mutex_);
                 ++stats_.p0_chunks_issued;
@@ -1068,12 +1084,14 @@ size_t IoEngine::issue_ready_chunks() {
         const TimePoint handed_at = Clock::now();
         ++p->issued_chunks;
         ++issued;
-        inflight_class_[static_cast<uint8_t>(p->req.priority)].fetch_add(1, std::memory_order_relaxed);
+        const auto priority = static_cast<uint8_t>(p->req.priority);
+        const auto class_ops = inflight_class_[priority].fetch_add(1, std::memory_order_relaxed) + 1;
         const uint32_t ops = inflight_ops_.fetch_add(1, std::memory_order_relaxed) + 1;
         const uint64_t byt = inflight_bytes_.fetch_add(ch.bytes, std::memory_order_relaxed) + ch.bytes;
         {
             std::lock_guard lk(stats_mutex_);
             ++stats_.chunks_submitted;
+            stats_.peak_by_priority[priority] = std::max(stats_.peak_by_priority[priority], class_ops);
             // Track Q2 E2: how long the freed queue slot stayed empty. Only the
             // first chunk after a reap closes the gap; the rest of the same
             // issue burst are limited by the backend, not by the refill.
@@ -1173,6 +1191,9 @@ void IoEngine::handle_completion(const ChunkCompletion& c) {
         chunk_owner_.erase(it);
         ++p->done_chunks;
         p->bytes_moved += c.bytes_moved;
+        p->landing_copy_ns += c.landing_copy_ns;
+        const uint32_t source = csrc == kNoStripeSource ? p->source : csrc;
+        if (source < kMaxIoSources) p->src_copy_ns[source] += c.landing_copy_ns;
         if (!c.ok() && !p->failed) {
             p->failed = true;
             p->status = c.status;
@@ -1262,6 +1283,11 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
             ++src_stats_[s].p0_requests;
             src_stats_[s].p0_bytes      += r.bytes_moved;
             src_stats_[s].p0_lat_ns_sum += static_cast<uint64_t>(r.latency.count());
+            const auto wait = p->src_first_issue_at[s] != TimePoint{}
+                ? uint64_t((p->src_first_issue_at[s] - p->queued_at).count()) : uint64_t(r.latency.count());
+            src_stats_[s].p0_queue_wait_ns_sum += wait;
+            src_stats_[s].p0_service_ns_sum += uint64_t(r.latency.count()) > wait ? uint64_t(r.latency.count()) - wait : 0;
+            src_stats_[s].p0_copy_ns_sum += p->src_copy_ns[s];
         }
         const int64_t now = mono_ns();
         src_last_activity_ns_[s] = now;
@@ -1288,6 +1314,11 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
                 ++src_stats_[s].p0_requests;
                 src_stats_[s].p0_bytes      += p->src_moved[s];
                 src_stats_[s].p0_lat_ns_sum += lat;
+                const auto wait = p->src_first_issue_at[s] != TimePoint{}
+                    ? uint64_t((p->src_first_issue_at[s] - p->queued_at).count()) : lat;
+                src_stats_[s].p0_queue_wait_ns_sum += wait;
+                src_stats_[s].p0_service_ns_sum += lat > wait ? lat - wait : 0;
+                src_stats_[s].p0_copy_ns_sum += p->src_copy_ns[s];
             }
             src_last_activity_ns_[s] = now;
             if (src_inflight_[s] == 0) src_idle_since_ns_[s] = now;
@@ -1327,6 +1358,8 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
         for (uint32_t s = 0; s < kMaxIoSources; ++s) {
             p->src_moved[s]   = 0;
             p->src_done_at[s] = TimePoint{};
+            p->src_first_issue_at[s] = TimePoint{};
+            p->src_copy_ns[s] = 0;
         }
         p->req.file      = p->primary;
         p->primary       = nullptr;
@@ -1373,6 +1406,7 @@ void IoEngine::finish(std::shared_ptr<Pending> p) {
                 ? uint64_t((p->first_issue_at - p->queued_at).count()) : lat;
             stats_.p0_queue_wait_ns_sum += wait;
             stats_.p0_service_ns_sum    += (lat > wait) ? (lat - wait) : 0;
+            stats_.p0_copy_ns_sum += p->landing_copy_ns;
             if (p->p0_ahead == 0) { ++stats_.p0_first_n;  stats_.p0_first_lat_ns_sum  += lat; }
             else                  { ++stats_.p0_behind_n; stats_.p0_behind_lat_ns_sum += lat; }
             if (p->bg_at_issue) {

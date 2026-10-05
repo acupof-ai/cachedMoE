@@ -47,6 +47,8 @@ def main():
     ap.add_argument('--spec-k', type=int, default=2)
     ap.add_argument('--spec-top-k', type=int, default=4)
     ap.add_argument('--cache-slots', type=int, default=0)
+    ap.add_argument('--exe', default=str(Path(chat.REPO) / 'build/deepmoe'),
+                    help='engine from the isolated worktree under evaluation')
     args = ap.parse_args()
     sample = json.loads(Path(args.sample).read_text())
     rows = sample['rows'][:args.limit or None]
@@ -59,7 +61,7 @@ def main():
             ap.error('use --generation for speculation; scoring the first answer token bypasses it')
         out = Path(args.out) / mode
         out.mkdir(parents=True, exist_ok=True)
-        opts = argparse.Namespace(exe=str(Path(chat.REPO) / 'build/deepmoe'),
+        opts = argparse.Namespace(exe=args.exe,
             max_context=4096, cache_gb=0, cache_slots=args.cache_slots, shader_dir='', env=[], require_sources=args.require_sources,
             serve_arg=['--resident-only', resident_mode, '--gpu-prefill-min', '1',
                        '--gpu-prefill-speedup', '0'])

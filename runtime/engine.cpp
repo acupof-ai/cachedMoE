@@ -1971,9 +1971,14 @@ void Engine::set_resident_only(ResidentOnly m) {
         mask_cache_fixed_ = dynamic && std::string_view(dynamic) == "0";
     }
     store_.set_fixed_cache(m == ResidentOnly::Mask && mask_cache_fixed_);
-    bool enabled = m == ResidentOnly::Mask;
-    if (const char* e = std::getenv("DEEPMOE_IO_ENGRAM_DEADLINE"); e && *e == '0')
-        enabled = false;
+    // Dynamic masking can outrun demand IO. Letting P2 jump the P0 backlog
+    // removed the historical cache catch-up point and degraded cold l3 NLL
+    // from .835581 to >1.3. Keep the bypass opt-in for dynamic mask; fixed
+    // cache has no new P0 demand and can retain it. The demand loads themselves
+    // remain asynchronous in either case.
+    bool enabled = m == ResidentOnly::Mask && mask_cache_fixed_;
+    if (const char* e = std::getenv("DEEPMOE_IO_ENGRAM_DEADLINE"))
+        enabled = m == ResidentOnly::Mask && std::string_view(e) == "1";
     io_.set_engram_wait_priority(enabled);
     log_info("engram wait priority: {}", enabled ? "on" : "off");
 }

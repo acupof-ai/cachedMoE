@@ -100,6 +100,9 @@ struct IoStats {
     uint64_t p0_lat_ns_sum = 0, p0_lat_ns_max = 0;
     uint64_t p0_queue_wait_ns_sum = 0;
     uint64_t p0_service_ns_sum = 0;
+    uint64_t p0_copy_ns_sum = 0;
+    uint32_t inflight_by_priority[kIoPriorityCount] = {};
+    uint32_t peak_by_priority[kIoPriorityCount] = {};
     // Split by whether another P0 was already outstanding when this one was
     // queued: "first" is the head of a layer's burst (the QD ramp), "behind"
     // is every later miss of the same layer.
@@ -374,6 +377,7 @@ private:
         size_t   issued_chunks = 0;  // handed to the backend (<= next_chunk after a rollback)
         size_t   done_chunks   = 0;
         uint64_t bytes_moved   = 0;
+        uint64_t landing_copy_ns = 0;
         TimePoint queued_at{};
         TimePoint first_issue_at{};      // when the backend took chunk 0
         bool      issued_once = false;
@@ -391,6 +395,8 @@ private:
         uint64_t  src_charged[kMaxIoSources] = {};  // still in src_outstanding_
         uint64_t  src_moved[kMaxIoSources]   = {};
         TimePoint src_done_at[kMaxIoSources]{};     // that source's last chunk
+        TimePoint src_first_issue_at[kMaxIoSources]{};
+        uint64_t src_copy_ns[kMaxIoSources] = {};
         uint32_t  src_used = 0;                     // bit s: carried a chunk
         uint32_t  src_err  = 0;                     // bit s: a chunk failed there
         Status    status{Err::Ok};

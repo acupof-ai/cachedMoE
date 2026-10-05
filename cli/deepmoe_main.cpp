@@ -754,6 +754,8 @@ int cmd_run(int argc, char** argv) {
     std::fputs(engine.resident_route_report().c_str(), stdout);
     if (engine.gate_probe_on()) std::fputs(engine.gate_probe_report().c_str(), stdout);
     std::fputs(engine.profiler().summary().to_string().c_str(), stdout);
+    if (const char* e = std::getenv("DEEPMOE_RUN_IO_REPORT"); e && std::string_view(e) == "1")
+        std::fputs(engine.status().c_str(), stdout);
     return 0;
 }
 
