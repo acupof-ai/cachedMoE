@@ -127,6 +127,7 @@ def main() -> int:
         ("tools/perf_ledger.py --check", [PY, str(ROOT / "tools" / "perf_ledger.py"), "--check"]),
         ("tools/web/test_server.py", [PY, str(ROOT / "tools" / "web" / "test_server.py")]),
         ("tools/tests/test_mask_freeze_sim.py", [PY, str(ROOT / "tools" / "tests" / "test_mask_freeze_sim.py")]),
+        ("tools/tests/test_repetition_metrics.py", [PY, str(ROOT / "tools" / "tests" / "test_repetition_metrics.py")]),
     ):
         t0 = time.time()
         rc, out = run(cmd)

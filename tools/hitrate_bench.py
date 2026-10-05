@@ -22,6 +22,7 @@ same routing through tools/cache_sim.py's LRU.
 from __future__ import annotations
 
 import argparse
+from repetition_metrics import from_events
 import json
 import os
 import subprocess
@@ -174,6 +175,7 @@ def round_stats(events_path: str) -> dict:
         "prefill_ms": prefill_ms,
         "decode_hit_rate": (hit_weighted / steps) if steps else 0.0,
         "decode_tok_s": (steps * 1e3 / decode_ms) if decode_ms > 0 else 0.0,
+        "repetition": from_events(events_path),
     }
 
 
@@ -301,7 +303,8 @@ def main() -> int:
             server.events.close()
         with open(os.path.join(args.out, "turns.json"), "w", encoding="utf-8", newline="\n") as f:
             json.dump({"server": server.ready, "turns": stats, "cmd": server.cmd,
-                       "env": args.env, "status": rstatus}, f, indent=1)
+                       "env": args.env, "status": rstatus,
+                       "repetition": from_events(os.path.join(args.out, "events.jsonl"))}, f, indent=1)
         return 0
     cargs = argparse.Namespace(think=False, temp=1.0, top_p=0.95, max_tokens=256, seed=None, system="")
     with open(args.script, encoding="utf-8") as f:
@@ -332,6 +335,7 @@ def main() -> int:
         server.events.close()
     with open(os.path.join(args.out, "turns.json"), encoding="utf-8") as f:
         doc = json.load(f)
+    doc["repetition"] = from_events(os.path.join(args.out, "events.jsonl"))
     doc["cmd"] = server.cmd
     doc["env"] = args.env
     doc["status"] = status

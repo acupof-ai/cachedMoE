@@ -19,11 +19,12 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import provenance
+from repetition_metrics import from_events
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("plain", "spec5"), required=True)
+    parser.add_argument("--mode", choices=("off", "plain", "spec5"), required=True)
     parser.add_argument("--mask-cache", choices=("dynamic", "fixed"), default="fixed",
                         help="keep the historical fixed-cache longtest reproducible")
     parser.add_argument("--script", type=Path, required=True)
@@ -45,7 +46,7 @@ def main():
         DEEPMOE_DSPARK_MEGA="0", DEEPMOE_MGT_PAIR_DOT="0",
         DEEPMOE_MGT_ATTN_CM="0", DEEPMOE_MGT_FOLD_SCALE="0")
     command = [sys.executable, str(ROOT / "tools/web/server.py"), "--exe", str(args.exe.resolve()),
-        "--resident-only", "mask", "--mask-cache", args.mask_cache,
+        "--resident-only", "off" if args.mode == "off" else "mask", "--mask-cache", args.mask_cache,
         "--cache-slots", "5500", "--max-context", "4096",
         "--gpu-prefill-min", "16", "--mirror", str(args.mirror), "--no-kv-disk",
         "--port", str(args.port), "--log", str(out / "engine.log")]
@@ -120,19 +121,26 @@ def main():
                 assert done is not None and done["generated"] == len(token_ids)
                 assert done["context"] == done["prompt_tokens"] + done["generated"] - 1
                 assert done["finish"] in ("length", "stop")
-                assert done["decode_nvme_mb"] == 0
+                fixed = args.mode != "off" and args.mask_cache == "fixed"
+                if fixed:
+                    assert done["decode_nvme_mb"] == 0
                 if args.mode == "spec5":
                     spec = done["speculation"]
                     assert spec["cycles"] and spec["gpu_readout_cycles"] == spec["cycles"]
-                    assert spec["accepted"] <= spec["verified"] and spec["miss_bytes"] == 0
+                    assert spec["accepted"] <= spec["verified"]
+                    if fixed:
+                        assert spec["miss_bytes"] == 0
                     submits = done["per_token_ms"]["submits"] * done["decode_steps"]
                     assert abs(submits - spec["cycles"]) < 1e-4
                 status = rpc("/api/status?session=" + session)
-                assert status["cache_fixed"] and status["cache_frozen"]
-                assert "failed fills 0" in status["store"] and "evictions 0" in status["store"]
+                assert status["cache_fixed"] == fixed and status["cache_frozen"] == fixed
+                assert "failed fills 0" in status["store"]
+                if fixed:
+                    assert "evictions 0" in status["store"]
                 assert "P0 failures reserve 0 / submit 0 / IO 0" in status["planner"]
                 done.update(label=turn["label"], token_ids=token_ids, token_times_ms=token_times,
-                    token_costs_ms=token_costs, request=body)
+                    token_costs_ms=token_costs, request=body,
+                    repetition=from_events(out / f"turn{index}_events.jsonl"))
                 turns.append(done)
                 (out / "turns.json").write_text(json.dumps(turns, ensure_ascii=False, indent=2))
                 (out / f"turn{index}_status.json").write_text(json.dumps(status, indent=2))
