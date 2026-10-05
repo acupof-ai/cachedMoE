@@ -91,7 +91,7 @@ class Controller:
                 self.frozen = False
                 self.age = 0
                 self.churn.clear()
-        elif full and self.churn_ready() and self.ewma.mean() >= self.cfg.enter:
+        elif not repeat and full and self.churn_ready() and self.ewma.mean() >= self.cfg.enter:
             self.frozen = True
             self.age = 0
             reason = "freeze"

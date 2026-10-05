@@ -5,7 +5,7 @@
   "raw": "bench/results/adaptive_mask/",
   "cpu_ctest_suites": 25,
   "cpu_tool_gates": 32,
-  "offline_policy_cases": 10,
+  "offline_policy_cases": 11,
   "web_settings_cases": 5,
   "benchmark_build": {
     "code": "8f594f8",
@@ -987,5 +987,46 @@
     "Current dynamic mask cold l3 quality is worse than historical mask baseline.",
     "Long8 uses max_context 4096; mask 4K/17K input quality and full 1M prompt quality not established.",
     "Profiling off: no per-op breakdown for slow verify. No speedup ratio versus historical fixed-cache or unpaired plain runs."
-  ]
+  ],
+  "live_web_restored": {
+    "config_raw": "bench/results/adaptive_mask/web_config.json",
+    "status_raw": "bench/results/adaptive_mask/web_status.json",
+    "state_raw": "bench/results/adaptive_mask/web_state.json",
+    "exe_sha256": "2d85ce72a48945117058b2f4ff43479388bedee5187acab043a89ff797090d2f",
+    "cache_policy": "dynamic",
+    "cache_fixed": false,
+    "cache_frozen": false,
+    "max_context": 1048576,
+    "sources": 2,
+    "cache_slots": 5500,
+    "speculation": {
+      "enabled": true,
+      "draft_tokens": 5,
+      "accept_top_k": 4,
+      "confidence_min": null,
+      "main_paths": 1,
+      "mtp_pinned_experts": 384
+    },
+    "guard_paused": false,
+    "profile": "power-saver",
+    "thermal_pause_c": 80,
+    "thermal_resume_c": 72,
+    "browser_refreshed": false,
+    "new_web_speed_benchmark": false
+  },
+  "offline_policy_final_check": {
+    "cases": 11,
+    "regression": "A repeating warm-state output must not enter freeze; native and weighted input replays have no output IDs, so their results are unchanged."
+  },
+  "final_cpu_validation": {
+    "gates_passed": 32,
+    "gates_total": 32,
+    "offline_policy_cases": 11,
+    "raw": "bench/results/adaptive_mask/final_cpu_gates.log",
+    "raw_sha256": "c7d9a2cba220f8cd7cfce51efb1d8798baa7cf06dd7555155dfaad89a048c8f1",
+    "tool_sha256": "e4d2554a9314c379861c96a4b391e8768a8bb3faa42a118242db2ff1615cbc53",
+    "tests_sha256": "34ddbe5eeac4b7fcfa68aa8c51a985f24a43ef11a62ed701e87db7a9bafd157f",
+    "gpu_rerun": false,
+    "reason": "Only offline repeat guard and documentation changed after GPU measurements; engine binary is unchanged."
+  }
 }

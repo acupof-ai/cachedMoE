@@ -84,8 +84,8 @@ token 恢复 LRU；本模拟未实现 P3 补热。所有 routed 原始权重按�
 `DEEPMOE_MASK_DYNAMIC_LRU=0` 兼容旧固定配置，`1` 为动态；显式 CLI 优先。
 普通路由默认仍 off；GPU 路由和 DSpark 仍是显式实验。
 
-离线控制器 10 项 CPU 测试覆盖停留、硬下限、回差、滚动淘汰、逐层 EWMA、
-重复和坏 trace；运行时测试覆盖默认动态、legacy 显式固定、CLI 覆盖及
+离线控制器 11 项 CPU 测试覆盖停留、硬下限、回差、滚动淘汰、逐层 EWMA、
+重复、预热时阻止重复输出进入冻结和坏 trace；运行时测试覆盖默认动态、legacy 显式固定、CLI 覆盖及
 离开 mask 后关闭固定 cache。CPU ctest 25/25，综合 gates 32/32。
 动态 mask 的本机输出、NLL、MMLU 与 8 轮速度验证另记在本文件后续结果段。
 
@@ -160,6 +160,12 @@ attention、MoE、tail 分桶没有采集，不能把零值当零耗时，未根
 重复检查只排除持续的精确短周期，不能证明语义质量。代码轮和杭州行程轮
 均到 450-token 上限；原文、token id、逐轮统计在 raw 中。输入并不是 1M，
 也没有为 mask 做新的 4K/17K 输入质量验收。固定 cache 与自动冻结均不默认启用。
+
+网页已恢复为动态 mask，双盘、5500 总槽、k5/top-K4、1M 上限与 80/72°C
+温控保留。`/api/config` 和 `/api/status` 均返回 200，确认一个主路径、
+`cache_fixed=false`、`cache_frozen=false`。浏览器没有刷新，聊天记录保留。
+启动后配置／状态快照在 raw 的 `web_config.json`、`web_status.json`；
+当前启动与停止方式见 `tools/web/RUNNING.txt`。这不是新的网页速度测量。
 
 ## 复跑
 

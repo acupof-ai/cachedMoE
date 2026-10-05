@@ -775,7 +775,7 @@ GPU对照，也没有与旧18 tok/s计算加速比。中文64短测12.1879 tok/s
 **.622784** bit-exact，当前冷启动动态 mask l3 **1.360084**，比历史
 .835581差，保留mass .669。当前 P0平均延迟1233.72 ms，根因未由这份
 无细trace的结果归因。decode ctest两套通过，严格L3仍6/8、自有prefill7/8，
-不是8/8+8/8。CPU25/25、综合32/32、离线控制器10边界、masked/shared-only
+不是8/8+8/8。CPU25/25、综合32/32、离线控制器11边界、masked/shared-only
 与k5前缀回滚各1/1。MMLU同一进程在延长监督预算后完成，续接温控日志已保存。
 网页保持1M、k5/top4、温控和两读源，cache_fixed/cache_frozen=false。
 [报告](mask_freeze.md)、[离线收据](mask_freeze_offline.json)、

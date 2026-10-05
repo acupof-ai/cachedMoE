@@ -86,6 +86,13 @@ class FreezePolicy(unittest.TestCase):
         self.assertFalse(ctl.tokens)
         self.assertEqual(ctl.age, 0)
 
+    def test_repeating_output_cannot_enter_frozen_state(self):
+        ctl = Controller(5500)
+        for _ in range(40):
+            self.assertIsNone(ctl.observe(np.ones(40), 0, True, 8))
+            self.assertFalse(ctl.frozen)
+        self.assertEqual(ctl.observe(np.ones(40), 0, True, 9), "freeze")
+
     def test_invalid_mass(self):
         ctl = Controller(5500)
         for mass in [np.full(40, float('nan')), np.full(40, -1), np.ones(39), np.full(40, 2)]:
