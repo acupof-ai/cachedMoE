@@ -635,8 +635,8 @@ public:
     // the same cache state and the same routing decision, one position at a
     // time, which is what makes it measurable on the teacher-forced harness
     // while `Engine::forward_batch` does not exist.
-    // Mask fills unused slots then freezes the initial expert set, without LRU.
-    // It computes only plan hits at original weights (no renormalisation).
+    // Mask defaults to normal LRU / async P0, and computes only current hits.
+    // Explicit fixed cache freezes the initial set; no weight renormalisation.
     enum class ResidentOnly : uint8_t { Off = 0, All = 1, Stall1 = 2, Verify = 3, Mask = 4 };
     // DSpark's block: one verify forward over [last accepted, 4 drafts].
     // `Verify` mode routes step `token_ % kVerifyBlock == 0` exactly and the

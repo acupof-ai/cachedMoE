@@ -753,6 +753,35 @@ steps, and the reference continuation has to be produced step by step.**
 
 ## 7. Next, in order
 
+0cb. **2026-10-05：自动冻结门槛先做离线价值检查；当前方案 NO-GO，mask 默认恢复动态 LRU。**
+原生双盘 8 轮的 demand-LRU 回放有 2318 个 decode token，最近 16 token
+淘汰门槛 <55 槽没有候选点（最低 69）；5116 主模型槽近似最低 78，门槛
+<51.16。原生 route.bin 没有 gate 权重，未拿命中个数冒充 mass。
+有权重的 mixed 参考 trace 扫 .93/.88、.95/.90、.97/.92：5500 槽冻结
+2.697～2.748%，5116 槽近似 .774～.788%。回放缺 GPU prefill、IO 节奏及
+输出反馈，结论限于这些输入；按用户“占比太低就放弃”规则不接入运行时
+自动冻结／P3 补热。固定集合仅显式 `--mask-cache fixed`，默认 dynamic，
+CLI 覆盖 legacy `DEEPMOE_MASK_DYNAMIC_LRU=0/1`。路由模式的全局默认仍 off。
+
+本次动态 mask / k5 / top-K4 / ONECB / GPU route / 5500 总槽 / 双盘
+8 轮：**105.022 ms/decode token，9.521827 tok/s**，2361 输出，
+**594 周期 / 594 target submit**，1764/2953 草稿接受。平均 draft / verify
+/ commit / CPU **33.199 / 379.451 / 1.834 / .197 ms/周期**。profiling off，
+没有算子细分，不能将未采集的零值当耗时。0 P0/failed-fill、0热暂停、
+AC稳定、48/48镜像；8轮没有末128 token的精确短周期循环。没有自动冻结
+GPU对照，也没有与旧18 tok/s计算加速比。中文64短测12.1879 tok/s、无重复连串。
+
+动态 k5 生成 MMLU57 **48/57，2 invalid**，只通过小样本门槛；off l3
+**.622784** bit-exact，当前冷启动动态 mask l3 **1.360084**，比历史
+.835581差，保留mass .669。当前 P0平均延迟1233.72 ms，根因未由这份
+无细trace的结果归因。decode ctest两套通过，严格L3仍6/8、自有prefill7/8，
+不是8/8+8/8。CPU25/25、综合32/32、离线控制器10边界、masked/shared-only
+与k5前缀回滚各1/1。MMLU同一进程在延长监督预算后完成，续接温控日志已保存。
+网页保持1M、k5/top4、温控和两读源，cache_fixed/cache_frozen=false。
+[报告](mask_freeze.md)、[离线收据](mask_freeze_offline.json)、
+[验收收据](mask_freeze_receipt.json)，raw `bench/results/adaptive_mask/`；
+DSpark当前数值也写入 [dspark_topk.md §18](dspark_topk.md#18-动态-lru-恢复与自动冻结离线判定2026-10-05)。
+
 0ca. **2026-10-05：网页容量上限从 4096 调到原生 1,048,576，移除索引器的一维 524,280 限制。**
    `3ba80ab`：decode 和 verify 的 index score 超过 65,535 个工作组时在同一次 dispatch 中按 X/Z 分块（1M 为 32768×M×4），Y 保留验证行；score/candidate scratch 同步扩到 1M，网页默认和校验也同步。5500 固定 mask、k5/top4、双盘、温控80/72°C保留。
    新边界测试覆盖 64 / 524280 / 524281 / 1048575 / 1048576 位置，以及六行因果范围/尾哨兵，全部0错误；GPU attention 7/7，1M KV 3358.38 MB/2 slabs（最大1744.8 MB），首尾哨兵通过；CPU/元数据/工具31/31。off64 NLL **0.622784**、top1 56/64，与既有基线一致。`suite.decode` 当前门禁通过，但严格匹配仍为 **6/8 + 自有prefill7/8**，未宣称严格8/8。

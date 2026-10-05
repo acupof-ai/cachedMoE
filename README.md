@@ -66,6 +66,11 @@ The proposed adaptive freeze did not pass its offline usefulness check: the
 recorded eight-turn demand-LRU replay has no eligible freeze point at the requested
 churn threshold. See [the calibration report](docs/mask_freeze.md). Automatic
 freezing is not enabled; fixed cache remains an explicit experiment.
+The latest dynamic-cache k=5 eight-turn run measured **9.52 tok/s (105.02 ms/decode token)**,
+with one target submission per cycle. Draft / verify averaged 33.20 / 379.45 ms per
+cycle. Its generated MMLU sample scored **48/57**, with two invalid answers; cold
+l3 mask NLL was **1.360084**, so this is not a general quality pass. See the
+[current validation](docs/mask_freeze.md#本机动态-mask-验证) for conditions and limits.
 
 The web server accepts `--dspark --spec-k 5 --spec-top-k 4` with the same two
 environment switches above. The page displays the engine's actual enabled state,

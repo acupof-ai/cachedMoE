@@ -891,3 +891,28 @@ period2，IDs交替 **1805/982**，文本为 `the *the *the *...`。英文spec�
 通过温控监督执行。机器收据：[`dspark_longtest_receipt.json`](dspark_longtest_receipt.json)。
 原始逐token events、完整输出、status、provenance、温控与监督计划归档到主目录
 `bench/results/web_spec5_long/`。执行时的工作树路径是历史记录，读取时用主目录归档。
+
+## 18. 动态 LRU 恢复与自动冻结离线判定（2026-10-05）
+
+本次按用户指定的 mass EWMA / 32-token 预热 / 16-token 冻结 / <1% churn
+规则扫描 .93/.88、.95/.90、.97/.92。原生 8 轮 demand-LRU 回放的 2318
+个 decode token 没有通过 churn 门槛的点；有权重的 mixed 参考 trace 冻结
+占比在 5500 槽为 2.697～2.748%，5116 主模型槽近似为 .774～.788%。
+这些是回放，缺少 GPU prefill、异步 IO 与输出反馈，不能作为运行时实测比例。
+按“占比太低就放弃”规则，自动冻结未接入运行时；mask 默认恢复动态 LRU。
+固定初始集合只保留显式 `--mask-cache fixed`，`--mask-cache dynamic` 为默认。
+
+新动态 k5 双盘 8 轮：**105.022 ms/decode token，9.521827 tok/s**；
+2361 输出，2353 decode step，**594 cycle / 594 target submit**，1764/2953
+草稿接受。平均 draft / verify / commit / CPU 是
+**33.199 / 379.451 / 1.834 / .197 ms/cycle**。0 source/load failure，0 热暂停，
+48/48 镜像健康；8 轮没有末 128 token 的精确短周期循环。
+
+动态 k5 的零样本生成 MMLU57 是 **48/57，2 invalid**，达到样本门槛。
+off l3 仍 **.622784**；冷启动动态 mask l3 是 **1.360084**，未接近历史
+.835581。因此不能将本次标为整体质量通过，也不把旧固定 cache 的 18 tok/s
+作为可用质量速度。没有自动冻结对照格；GPU route 与 ONECB 在全局仍显式启用。
+
+具体输入、控制器边界测试、原始数据限制和决策见
+[`mask_freeze.md`](mask_freeze.md)、[`mask_freeze_offline.json`](mask_freeze_offline.json)。
+raw 归档 `bench/results/adaptive_mask/`，工作树路径只表示执行时来源。
