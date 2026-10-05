@@ -14,16 +14,22 @@ time once per turn and is logged separately; this is not a zero-cost copy.
 A single disk worker serialises the existing temporary-file/atomic-rename format
 and disk quota eviction. Pending updates to one session coalesce to the newest
 snapshot. The pending queue has a 256 MiB budget; one oversized snapshot is
-allowed alone. Under sustained disk backlog it drops the oldest pending snapshot
-rather than blocking decode. The in-flight write plus one oversized queued
-snapshot can exceed 256 MiB. Persistence is best effort, not a crash-safe journal.
+allowed alone. Queue pressure applies backpressure until the worker releases
+space. It never discards another session's pending snapshot. The in-flight write
+and the producer's packed snapshot are outside the pending budget, so total
+snapshot memory can exceed 256 MiB. This is not a crash-safe journal.
 
 The worker only receives owned CPU data. It never reads mutable GPU KV. Session
 reset removes pending work, waits for that session's in-flight write, and then
 deletes the file, so the writer cannot recreate reset state. Loading from disk
 and clean shutdown drain the queue. Session switching may wait when loading a
-snapshot that has not landed yet; ordinary generation in the same session does
-not wait for disk completion.
+snapshot that has not landed yet. Ordinary turn completion queues work without
+waiting for disk completion, except when the pending budget is full. Before
+evicting a parked session from memory, the pool waits for a successful atomic
+save; a failure returns an error and retains the memory copy. `park_active` also
+returns a save error. A failed budget enforcement can leave the newly requested
+session active and retain extra parked sessions; it does not delete their data.
+Same-session coalescing carries save acknowledgements to the newer snapshot.
 
 The `.pkv` layout and pack/unpack arithmetic are unchanged. The sliding-window
 ring is still restored by bounded replay, not saved. `--no-kv-disk` continues to
@@ -31,10 +37,15 @@ disable persistence for clean-start benchmarks. Web use should omit that flag.
 
 ## Validation
 
-CPU checks: 25/25 CTest suites and 32/32 Python gates passed. `suite.kvdisk` has
-5 cases, including controlled background-write blocking, same-session coalescing,
+CPU checks after the queue fix: 25/25 CTest suites and 33/33 Python gates passed.
+`suite.kvdisk` has 8 cases, including controlled background-write blocking, same-session coalescing,
 owned snapshot data, cancellation/reset without resurrection, write failure,
-and destructor draining.
+and destructor draining. New tests require all sessions to land under a four-byte
+queue budget, propagate a required save failure, and load a stale snapshot from
+disk before checking its token prefix against a changed prompt. Prefix comparison
+uses the same helper as generation: a mismatched suffix is discarded and fed
+again, rather than treated as current conversation state. These are CPU tests;
+the previous hardware smoke below predates the queue fix.
 
 The serial hardware smoke used Linux/RADV, two checkpoint read sources, 5,000
 slots, exact routing and a 4K context capacity. Strata served OpenAI chat,

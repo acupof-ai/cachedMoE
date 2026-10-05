@@ -159,3 +159,73 @@ no outstanding reads. The measured exact-prefix prefill totals were 629.1 / 877.
 portion; the logs show mirror P0 mean latency 141.22 / 203.63 ms. This
 is an observed IO-time difference, not evidence that skipping routed decode
 work speeds up short-prompt exact prefill. No extra run was made.
+
+## Quality recovery: Phase A and repetition gates (2026-10-05)
+
+**The loading regression is fixed; dynamic mask has not passed the full quality
+gate.** `66d0f7a` allowed Engram P2 requests to bypass P0. Mask decode could then
+run ahead of its asynchronous expert fills. Restoring P0 priority recovered the
+historical teacher-forced result without changing routing mathematics.
+`ce589e8` makes this the dynamic-mask default; fixed-cache experiments retain
+their old behaviour. `DEEPMOE_IO_ENGRAM_DEADLINE=1` is an explicit experiment.
+LRU planning and expert loads remain asynchronous. Engram can again wait behind
+expert loads; removing that delay had also removed the cache's catch-up time.
+
+Each cell ran once with 5,100 slots, static heat, no DSpark and the same l3 trace:
+
+| Cell | NLL | top-1 / 64 | served | lost mass | teacher-forced tok/s |
+|---|---:|---:|---:|---:|---:|
+| Historical, one source | .835581 | 50 | .8135 | .1694 | 6.187 |
+| Current, one source, P2 bypass | 1.610124 | 39 | .5326 | .4462 | 14.309 |
+| One source, bypass disabled | .835581 | 50 | .8135 | .1694 | 6.120 |
+| Two sources, bypass enabled | 1.383369 | 39 | .6511 | .3310 | 13.712 |
+| Two sources, bypass disabled | .835581 | 50 | .8135 | .1694 | 7.597 |
+
+This isolates the switch; a commit bisect was unnecessary. The single-position
+l3 path does not use `BATCH_ENGRAM_EARLY`; MTP pins are absent, and the actual
+cache has 5,100 slots. A higher context ceiling does not allocate that many KV
+rows. The faster bypass cells computed substantially less routed expert work;
+their throughput is not a gain at equal quality.
+
+The final dual-source check reproduced off **.622784**, mask **.835581**,
+50/64, served **.8135**, lost mass **.1694**. P0 averaged **62.82 ms**, split
+into **60.42 ms queue** and **2.39 ms issue-to-land service**. Landing copy was
+**.739 ms/request inside service**, not an additional serial cost. Source 0/1
+P0 queue was **62.18/61.02 ms**, service **2.35/1.97 ms**, copy **.376/.415 ms**.
+Service includes IO and landing; it does not isolate pure SSD time. P0/P2/P3
+in-flight chunk peaks were **8/96/8**, with zero outstanding at shutdown and
+zero reserve/submit/IO/failed-fill failures. These request latencies are not
+decode joins and cannot be multiplied by miss count to predict stall time.
+
+Quality validation used two healthy sources, 5,500 slots, exact GPU prefill,
+dynamic decode masking, no speculation, power-saver and AC:
+
+| Gate | Result | Decision |
+|---|---|---|
+| Chinese 64, T=0 / T=1 | no loops; 11.22 / 10.65 tok/s | pass |
+| Three 512-token outputs | all no loops | structural gate passes |
+| Follow-up repeated 4-grams | mask .117878 / off .049116 = 2.40x | **fails <=1.5x** |
+| Generated-answer MMLU57 | **46/57**, two invalid formats | **fails >=48/57** |
+| Eight-turn plain mask | **110.142 ms/token, 9.079226 tok/s**; hit .9390, lost mass .0483; no loops | Phase D baseline |
+
+The other long-output repeated-4 fractions were off/mask **.033399/.033399**
+(Chinese thinking) and **.003929/.001965** (English). This MMLU uses the
+generated `Answer: X` protocol, not the older selected-logit result above;
+format failures count as incorrect. Each eight-turn arm starts with empty KV,
+keeps one session for its eight turns, and uses the same script and seeds.
+The baseline's P0 mean was **27.89 ms = 24.67 queue + 3.22 service**; its fills
+all completed successfully. All seven Phase A jobs had zero thermal pauses;
+GPU peak at most **72 C**, external NVMe at most **74.85 C**.
+
+`tools/repetition_metrics.py` now supplies token-level checks to both benchmark
+drivers. It rejects the known fixed-cache `霓` loop and the k5 English period-2
+loop, and accepts the two known normal Chinese outputs. Synthetic CPU cases
+cover run-length, short-period and event-boundary edges. CPU/tool gates pass
+25/25 and 33/33. The tests detect exact repetition, not semantic correctness.
+
+The tested Phase A executable SHA-256 starts `0930bb7174b1a98a`; raw commands,
+environments, outputs, source status and thermal samples are under
+`bench/results/mask_quality/phase_a/{matrix,validation}/`. The recovery cells
+are also recorded in `phase_a_matrix.json`, and repetition calibration in
+`phase_b_calibration.json`. A passes its recovery thresholds; MMLU and long
+repetition failures prohibit promoting plain mask as a newly qualified default.
