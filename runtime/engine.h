@@ -946,6 +946,8 @@ private:
     std::vector<std::pair<std::string,double>> batch_host_ms_;
     std::array<double,5> batch_route_host_ms_{};
     std::array<uint64_t,4> batch_load_failures_{};
+    uint64_t batch_expert_wait_calls_ = 0, batch_expert_miss_joins_ = 0;
+    double batch_expert_wait_ms_ = 0;
     uint64_t             batch_miss_bytes_ = 0;
     KvStore::RingSnapshot batch_snap_{};
     uint32_t             batch_snap_p0_ = 0, batch_snap_m_ = 0;

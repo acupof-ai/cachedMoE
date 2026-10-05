@@ -3287,6 +3287,9 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         for(size_t i=0;i<5;++i)batch_host_ms_.emplace_back(labels[i],batch_route_host_ms_[i]);
         const auto s=store_.stats();const auto ps=planner_.stats();
         batch_load_failures_={ps.p0_reserve_failed-planner_before.p0_reserve_failed,ps.p0_submit_failed-planner_before.p0_submit_failed,ps.p0_io_failed-planner_before.p0_io_failed,s.fills_failed-loads_before.fills_failed};
+        batch_expert_wait_calls_=ps.wait_calls-planner_before.wait_calls;
+        batch_expert_miss_joins_=ps.stall_waits-planner_before.stall_waits;
+        batch_expert_wait_ms_=(ps.wait_ns-planner_before.wait_ns)/1e6;
     }
     (void)t_start;
     return {};
@@ -4620,7 +4623,7 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root,uint32_t max_new
             out.cycle.verify_ms,out.cycle.cpu_ms,out.cycle.rollback_ms);
         line.resize(line.size()-2);line+=",\"verify_host_ms\":{";
         for(size_t i=0;i<batch_host_ms_.size();++i){if(i)line+=",";line+=std::format("\"{}\":{}",batch_host_ms_[i].first,batch_host_ms_[i].second);}
-        line+=std::format("}},\"load_failures\":{{\"p0_reserve\":{},\"p0_submit\":{},\"p0_io\":{},\"fill\":{}}},\"cache_fixed\":{},\"cache_frozen\":{}}}\n",batch_load_failures_[0],batch_load_failures_[1],batch_load_failures_[2],batch_load_failures_[3],store_.fixed_cache(),store_.cache_frozen());
+        line+=std::format("}},\"expert_io_wait\":{{\"calls\":{},\"miss_joins\":{},\"ms\":{}}},\"load_failures\":{{\"p0_reserve\":{},\"p0_submit\":{},\"p0_io\":{},\"fill\":{}}},\"cache_fixed\":{},\"cache_frozen\":{}}}\n",batch_expert_wait_calls_,batch_expert_miss_joins_,batch_expert_wait_ms_,batch_load_failures_[0],batch_load_failures_[1],batch_load_failures_[2],batch_load_failures_[3],store_.fixed_cache(),store_.cache_frozen());
         if(auto r=write(line);!r)return abort(r.error());
         if(std::fflush(spec_diagnostics_))return abort(Status{Err::Io,"cannot flush speculative diagnostics"});
         // Include opt-in diagnostic logging in the public wall time. These

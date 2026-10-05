@@ -448,6 +448,29 @@ DEEPMOE_TEST(planner, unimplemented_paths_report_themselves) {
     CHECK(empty->empty());
 }
 
+DEEPMOE_TEST(planner, expert_wait_counters_measure_joins_including_timeout) {
+    Planner p;
+    LayerPlan hit;
+    REQUIRE_OK(p.wait_layer(hit));
+    CHECK_EQ(p.stats().wait_calls, 1u);
+    CHECK_EQ(p.stats().stall_waits, 0u);
+
+    LayerPlan missing;
+    missing.layer = 7;
+    missing.misses.push_back(ExpertKey{7, 3});
+    missing.group = std::make_shared<FetchGroup>();
+    missing.group->pending = 1; // model an outstanding asynchronous read
+    CHECK_ERR(p.wait_layer(missing, std::chrono::milliseconds(2)), Err::Io);
+    const auto st = p.stats();
+    CHECK_EQ(st.wait_calls, 2u);
+    CHECK_EQ(st.stall_waits, 1u);
+    CHECK(st.wait_ns >= 1000000u);
+    CHECK_EQ(st.miss_layers, 0u); // waits do not invent classification events
+    PlannerStats async;
+    async.miss_layers = 900;
+    CHECK(async.to_string().find("900 miss layers, 0 expert wait calls") != std::string::npos);
+}
+
 // --- Track R1 (docs/p4_hitrate.md) --------------------------------------------
 
 namespace {

@@ -16,11 +16,13 @@ namespace deepmoe::store {
 std::string PlannerStats::to_string() const {
     return std::format(
         "planner: {} layers, {} requests ({} hits, {} misses, {:.3f}), "
-        "{} evictions (+{} refused), prefetch {} issued / {} used / {} wasted, {} stalls, "
+        "{} evictions (+{} refused), prefetch {} issued / {} used / {} wasted, "
+        "{} miss layers, {} expert wait calls ({} miss joins, {:.3f} ms), "
         "{} joined; backfill {} issued / {} done / {} failed; prefill handoff {} resident / "
         "{} kept / {} dropped; P0 failures reserve {} / submit {} / IO {}",
         layers_planned, requests, hits, misses, hit_rate(),
-        evictions, evict_failures, prefetch_issued, prefetch_used, prefetch_wasted, stall_waits,
+        evictions, evict_failures, prefetch_issued, prefetch_used, prefetch_wasted,
+        miss_layers, wait_calls, stall_waits, wait_ns / 1e6,
         joined_fills, backfill_issued, backfill_done, backfill_failed, streamed_resident,
         streamed_filled, streamed_dropped,p0_reserve_failed,p0_submit_failed,p0_io_failed);
 }
@@ -399,7 +401,7 @@ Result<LayerPlan> Planner::plan_layer(const RouteDecision& route, TokenIndex tok
         stats_.requests += route.chosen.size();
         stats_.hits     += plan.hits.size();
         stats_.misses   += plan.misses.size();
-        if (!plan.misses.empty()) ++stats_.stall_waits;
+        if (!plan.misses.empty()) ++stats_.miss_layers;
     }
     return plan;
 }
@@ -416,6 +418,23 @@ Result<uint32_t> Planner::prefetch_lookahead(uint32_t, TokenIndex) {
 }
 
 Result<void> Planner::wait_layer(LayerPlan& plan, std::chrono::milliseconds timeout) {
+    // A masked forward plans/fetches misses but never calls this function.
+    // Count the join here, rather than reporting every asynchronous miss as
+    // a stall. Keep failures/timeouts in the measured wall time as well.
+    struct WaitRecord {
+        PlannerStats& stats;
+        std::mutex& mutex;
+        bool misses;
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        ~WaitRecord() {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - begin).count();
+            std::lock_guard lk(mutex);
+            ++stats.wait_calls;
+            stats.stall_waits += misses;
+            stats.wait_ns += uint64_t(elapsed);
+        }
+    } record{stats_, stats_mutex_, !plan.misses.empty()};
     if (plan.group) {
         std::unique_lock lk(plan.group->m);
         if (!plan.group->cv.wait_for(lk, timeout, [&] { return plan.group->pending == 0; }))

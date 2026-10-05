@@ -109,7 +109,10 @@ struct PlannerStats {
     uint64_t requests = 0, hits = 0, misses = 0;
     uint64_t evictions = 0, evict_failures = 0;
     uint64_t prefetch_issued = 0, prefetch_used = 0, prefetch_wasted = 0;
-    uint64_t stall_waits = 0;
+    uint64_t miss_layers = 0;               // classification, not a blocking wait
+    uint64_t wait_calls = 0;                // actual calls to wait_layer
+    uint64_t stall_waits = 0;               // wait_layer calls joining a missing expert
+    uint64_t wait_ns = 0;                   // wall time inside wait_layer, including errors
     uint64_t joined_fills = 0;              // misses already being filled by the backfill
     uint64_t backfill_issued = 0, backfill_done = 0, backfill_failed = 0;
     uint64_t streamed_resident = 0, streamed_filled = 0, streamed_dropped = 0;
