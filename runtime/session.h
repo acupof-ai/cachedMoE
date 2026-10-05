@@ -47,7 +47,11 @@
 // cancel callback may be backed by an atomic set from another thread.
 #pragma once
 
+#include <condition_variable>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <functional>
 #include <list>
 #include <map>
@@ -309,6 +313,34 @@ struct SessionPoolOptions {
     KvDiskOptions disk{};            // non-empty dir: save/load parked contexts
 };
 
+// Immutable CPU snapshots only. One writer serialises atomic rename and quota
+// eviction. Pending updates for the same name coalesce; the queue is bounded.
+class KvDiskWriter {
+public:
+    using Write = std::function<Result<void>(const ParkedContext&, const KvDiskOptions&, const std::string&)>;
+    explicit KvDiskWriter(KvDiskOptions opt, Write write = save_parked_context);
+    ~KvDiskWriter();
+    void enqueue(std::string name, ParkedContext snapshot);
+    void flush();
+    // Remove pending writes and wait for this name's active write before reset.
+    void discard(const std::string& name);
+    struct Stats { uint64_t queued = 0, written = 0, coalesced = 0, skipped = 0, errors = 0; };
+    Stats stats() const;
+private:
+    void run();
+    struct Pending { ParkedContext snapshot; uint64_t order; };
+    KvDiskOptions opt_;
+    Write write_;
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::map<std::string, Pending> pending_;
+    uint64_t pending_bytes_ = 0;
+    Stats stats_;
+    bool stopping_ = false, busy_ = false;
+    std::string writing_;
+    std::thread thread_;
+};
+
 // Several conversations over one Engine. One is live in the KV store; the others
 // are parked as `ParkedContext`s (their non-SWA state, packed, and their ids).
 // The expert cache, the pinned set and the planner are shared by all of them.
@@ -326,6 +358,9 @@ public:
     // to load the active name from disk into an empty engine (fresh process).
     // `restore_active_from_disk` returns NotFound when there is no file.
     Result<void> park_active();
+    // Called after a turn's last GPU fence: pack once, enqueue disk I/O, retain live KV.
+    Result<void> checkpoint_active();
+    void flush_disk();
     Result<ReplayStats> restore_active_from_disk();
     Session& live() { return session_; }
     const std::string& active() const { return active_; }
@@ -348,6 +383,7 @@ private:
     Engine*                engine_;
     Session                session_;
     SessionPoolOptions     pool_;
+    std::unique_ptr<KvDiskWriter> disk_writer_;
     std::string            active_ = "default";
     std::map<std::string, ParkedContext> parked_;
     std::list<std::string> lru_;     // most recent first, parked names only

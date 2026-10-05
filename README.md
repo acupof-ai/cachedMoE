@@ -129,7 +129,8 @@ in restored conversation history. **Ctrl+Enter** sends; **Stop** cancels.
 
 The page has no CDN dependency. Conversations are stored locally, and requests
 share one queued engine. A second read source is detected when its matching
-manifest is present, or can be supplied with `--mirror`.
+manifest is present, or can be supplied with `--mirror`. Completed decode turns enqueue batched disk KV
+checkpoints in the background when disk KV is enabled; [details](docs/kv_async.md).
 
 For experimental dynamic mask and speculation:
 

@@ -37,6 +37,24 @@ class WebSettings(unittest.TestCase):
         self.assertEqual(message["content"], "")
         self.assertEqual(state.history()[-1], message)
 
+    def test_legacy_cancelled_thinking_is_reclassified_only_with_exact_prefix(self):
+        enc = Mock()
+        enc.encode_messages.return_value = "prompt<think>"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.json"
+            data = {"think": True, "ctx_text": "prompt<think>Partial reasoning",
+                    "messages": [{"role": "user", "content": "q"},
+                        {"role": "assistant", "content": "Partial reasoning", "reasoning_content": "",
+                         "stat": {"finish": "cancel"}}]}
+            path.write_text(json.dumps(data))
+            state = server.ChatState(enc, path=str(path))
+            self.assertEqual(state.history()[-1]["content"], "")
+            self.assertEqual(state.history()[-1]["reasoning_content"], "Partial reasoning")
+            data["ctx_text"] = "unmatched prefix"
+            path.write_text(json.dumps(data))
+            unchanged = server.ChatState(enc, path=str(path))
+            self.assertEqual(unchanged.history()[-1]["content"], "Partial reasoning")
+
     def test_old_transcript_uses_native_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "session.json"

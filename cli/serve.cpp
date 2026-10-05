@@ -652,12 +652,15 @@ int cmd_serve(int argc, char** argv) {
         }
         score_ready = st->decode_steps > 0 || st->prefill_mode == "decode";
         score_session = session;
+        if (auto saved = pool.checkpoint_active(); !saved)
+            std::fprintf(stderr, "serve: kv-disk snapshot failed: %s\n", saved.error().str().c_str());
         emit("{\"event\":\"done\",\"session\":" + json_quote(session) + "," + st->json_fields() + "}");
     }
     if (!po.disk.dir.empty()) {
         if (auto pr = pool.park_active(); !pr)
             std::fprintf(stderr, "serve: kv-disk save failed: %s\n", pr.error().str().c_str());
     }
+    pool.flush_disk();
     // The reader may still be blocked on stdin; it owns nothing the engine needs.
     reader.detach();
     engine.shutdown();

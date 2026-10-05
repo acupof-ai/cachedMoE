@@ -8,7 +8,8 @@ reports named below. Nothing in here hardcodes a path any more.
 
 STATE: RUNNING (2026-10-05, restored after adaptive-freeze evaluation).
 Engine includes native 1M index-score tiling from 3ba80ab, web settings e6580e4,
-dynamic mask defaults from 8f594f8, and real expert-wait counters from 45ee3ab.
+dynamic mask defaults from 8f594f8, real expert-wait counters from 45ee3ab,
+English separated thinking/answer UI from 039e042, and batched async disk KV.
 Dynamic miss-mask: --resident-only mask --mask-cache dynamic.
 LRU, eviction and P0 admissions run normally; current forward masks misses.
 Exact GPU prefill remains enabled. Adaptive freeze/P3 reheat was not added:
@@ -22,7 +23,9 @@ A full k5 cycle validates six rows in one target submit. Native effort selector
 5500 total cache slots, 384 MTP pinned experts, 5116 slots available to the
 main-model dynamic LRU; the cache is not filled/frozen before READY.
 Two read sources, mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash (48/48 shards).
-max_context 1048576, GPU prefill minimum 16, --no-kv-disk.
+max_context 1048576, GPU prefill minimum 16, disk KV enabled:
+--kv-dir build/web_mask/kv --kv-max-gb 4. Each completed/cancelled decode turn
+packs one snapshot and queues a background disk write. See docs/kv_async.md.
 HTTP /api/config and /api/status returned 200 after restoration:
 DSpark enabled, draft_tokens=5, accept_top_k=4, main_paths=1,
 cache_fixed=false, cache_frozen=false; guard not paused.

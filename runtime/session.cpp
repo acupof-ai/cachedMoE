@@ -568,11 +568,98 @@ Result<MultiStats> generate_multi(
     return ms;
 }
 
+// --- asynchronous disk snapshots -----------------------------------------------------
+KvDiskWriter::KvDiskWriter(KvDiskOptions opt, Write write)
+    : opt_(std::move(opt)), write_(std::move(write)), thread_([this] { run(); }) {}
+
+KvDiskWriter::~KvDiskWriter() {
+    { std::lock_guard lock(mutex_); stopping_ = true; }
+    cv_.notify_all();
+    thread_.join(); // drain pending snapshots on clean shutdown
+}
+
+void KvDiskWriter::enqueue(std::string name, ParkedContext snapshot) {
+    constexpr uint64_t budget = 256ull << 20;
+    const uint64_t bytes = snapshot.bytes();
+    {
+        std::lock_guard lock(mutex_);
+        if (auto it = pending_.find(name); it != pending_.end()) {
+            pending_bytes_ -= it->second.snapshot.bytes();
+            pending_.erase(it);
+            ++stats_.coalesced;
+        }
+        // One oversize context is allowed alone; never block decode behind disk.
+        while (!pending_.empty() && pending_bytes_ + bytes > budget) {
+            auto oldest = std::min_element(pending_.begin(), pending_.end(),
+                [](const auto& a, const auto& b) { return a.second.order < b.second.order; });
+            pending_bytes_ -= oldest->second.snapshot.bytes();
+            pending_.erase(oldest);
+            ++stats_.skipped;
+        }
+        pending_bytes_ += bytes;
+        pending_.emplace(std::move(name), Pending{std::move(snapshot), ++stats_.queued});
+    }
+    cv_.notify_all();
+}
+
+void KvDiskWriter::flush() {
+    std::unique_lock lock(mutex_);
+    cv_.wait(lock, [this] { return pending_.empty() && !busy_; });
+}
+
+void KvDiskWriter::discard(const std::string& name) {
+    std::unique_lock lock(mutex_);
+    if (auto it = pending_.find(name); it != pending_.end()) {
+        pending_bytes_ -= it->second.snapshot.bytes();
+        pending_.erase(it);
+    }
+    cv_.notify_all();
+    cv_.wait(lock, [this, &name] { return !busy_ || writing_ != name; });
+}
+
+KvDiskWriter::Stats KvDiskWriter::stats() const {
+    std::lock_guard lock(mutex_);
+    return stats_;
+}
+
+void KvDiskWriter::run() {
+    for (;;) {
+        std::string name;
+        ParkedContext snapshot;
+        {
+            std::unique_lock lock(mutex_);
+            cv_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
+            if (pending_.empty()) { if (stopping_) return; else continue; }
+            auto next = std::min_element(pending_.begin(), pending_.end(),
+                [](const auto& a, const auto& b) { return a.second.order < b.second.order; });
+            name = next->first;
+            pending_bytes_ -= next->second.snapshot.bytes();
+            snapshot = std::move(next->second.snapshot);
+            pending_.erase(next);
+            busy_ = true;
+            writing_ = name;
+        }
+        auto result = write_(snapshot, opt_, name);
+        if (!result) log_info("kv-disk: async save '{}' failed: {}", name, result.error().str());
+        else log_info("kv-disk: saved '{}' ({} tokens, {:.2f} MB)", name,
+                      snapshot.tokens.size(), snapshot.bytes() / 1e6);
+        {
+            std::lock_guard lock(mutex_);
+            if (result) ++stats_.written; else ++stats_.errors;
+            busy_ = false;
+            writing_.clear();
+        }
+        cv_.notify_all();
+    }
+}
+
 // --- named sessions -------------------------------------------------------------------
 
 SessionPool::SessionPool(Engine& engine, const text::Tokenizer& tok, SessionOptions opt,
                          SessionPoolOptions pool)
-    : engine_(&engine), session_(engine, tok, opt), pool_(pool) {}
+    : engine_(&engine), session_(engine, tok, opt), pool_(pool) {
+    if (!pool_.disk.dir.empty()) disk_writer_ = std::make_unique<KvDiskWriter>(pool_.disk);
+}
 
 Result<ReplayStats> SessionPool::activate(const std::string& name) {
     if (name == active_) return ReplayStats{};
@@ -587,13 +674,13 @@ Result<ReplayStats> SessionPool::activate(const std::string& name) {
         lru_.remove(active_);
         lru_.push_front(active_);
         if (!pool_.disk.dir.empty()) {
-            if (auto sr = save_parked_context(parked_[active_], pool_.disk, active_); !sr)
-                log_info("session pool: disk save '{}' failed: {}", active_, sr.error().str());
+            disk_writer_->enqueue(active_, parked_[active_]);
         }
     }
     ReplayStats st;
     auto it = parked_.find(name);
     if (it == parked_.end() && !pool_.disk.dir.empty()) {
+        disk_writer_->flush();
         auto loaded = load_parked_context(pool_.disk, name);
         if (loaded) {
             log_info("session pool: loaded '{}' from disk ({} tokens, {:.2f} MB packed)",
@@ -623,7 +710,10 @@ Result<ReplayStats> SessionPool::activate(const std::string& name) {
         // the next activate fail the same way.
         parked_.erase(it);
         lru_.remove(name);
-        if (st.cold_fallback) drop_parked_context(pool_.disk, name);
+        if (st.cold_fallback) {
+            if (disk_writer_) disk_writer_->discard(name);
+            drop_parked_context(pool_.disk, name);
+        }
     }
     active_ = name;
     enforce_budget();
@@ -639,15 +729,31 @@ Result<void> SessionPool::park_active() {
     lru_.remove(active_);
     lru_.push_front(active_);
     if (!pool_.disk.dir.empty()) {
-        if (auto sr = save_parked_context(parked_[active_], pool_.disk, active_); !sr)
-            return sr;
+        disk_writer_->enqueue(active_, parked_[active_]);
     }
     return {};
+}
+
+Result<void> SessionPool::checkpoint_active() {
+    if (!disk_writer_ || engine_->context_length() == 0) return {};
+    const auto start = Clock::now();
+    auto snapshot = park_context(*engine_);
+    if (!snapshot) return std::unexpected(snapshot.error());
+    const auto tokens = snapshot->tokens.size();
+    disk_writer_->enqueue(active_, std::move(*snapshot));
+    log_info("kv-disk: queued '{}' ({} tokens, pack {:.2f} ms; background write)",
+             active_, tokens, ms_since(start));
+    return {};
+}
+
+void SessionPool::flush_disk() {
+    if (disk_writer_) disk_writer_->flush();
 }
 
 Result<ReplayStats> SessionPool::restore_active_from_disk() {
     if (pool_.disk.dir.empty()) return fail(Err::InvalidArgument, "kv disk dir is empty");
     if (engine_->context_length() > 0) return ReplayStats{};
+    disk_writer_->flush();
     auto loaded = load_parked_context(pool_.disk, active_);
     // NotFound stays NotFound -- "there is no file" is not a failure, and serve
     // keeps quiet about it. Anything else (corrupt, truncated, wrong version,
@@ -678,6 +784,7 @@ Result<ReplayStats> SessionPool::restore_active_from_disk() {
 }
 
 bool SessionPool::drop(const std::string& name) {
+    if (disk_writer_) disk_writer_->discard(name);
     if (name == active_) {
         engine_->reset_context();
         drop_parked_context(pool_.disk, name);
@@ -709,8 +816,7 @@ void SessionPool::enforce_budget() {
     while (!lru_.empty() && (parked_.size() > pool_.max_parked || total() > pool_.max_parked_bytes)) {
         const std::string victim = lru_.back();
         if (!pool_.disk.dir.empty()) {
-            if (auto sr = save_parked_context(parked_[victim], pool_.disk, victim); !sr)
-                log_info("session pool: disk save '{}' failed: {}", victim, sr.error().str());
+            disk_writer_->enqueue(victim, parked_[victim]);
         }
         lru_.pop_back();
         parked_.erase(victim);

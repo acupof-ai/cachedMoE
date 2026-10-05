@@ -753,6 +753,12 @@ steps, and the reference continuation has to be produced step by step.**
 
 ## 7. Next, in order
 
+0cd. **2026-10-05：网页英文默认、思考与正文分栏；decode KV 按轮后台批量落盘，Strata 后端 PR。**
+   网页和 README/网页文档改为英文，思考生成时独立展开、正文开始后收起；保留 token hover、历史和取消。真实短 demo 截图显示10.04 tok/s，明确不是8轮基准；README主要数字仍为精确双盘9.20/单盘7.61与实验动态mask长期9.52。
+   之前当前网页带 `--no-kv-disk`，且serve开启磁盘时仅切会话/退出保存。新增每轮完成/取消后一次不可变CPU快照，后台单writer原子落盘，按会话合并等待快照，256MiB等待队列（单个超大快照可独占），reset先取消/等待该会话写入再删除；普通decode不join磁盘。打包仍在GPU最后fence后、引擎线程上，不能宣称零成本；文件格式与KV量化不改。加载磁盘与正常退出会drain。
+   CPU25/25、工具32/32、kvdisk5/5；Strata实机双盘5000槽exact路径通过OpenAI/Anthropic/思考正文流式：26/26/75 token快照打包1.51/2.14/6.02ms，退出前已写48/48/91KB；新进程读回75 token并bounded replay，0热暂停。非速度/质量A/B；未把小数学题当MMLU。网页恢复同mask/k5/top4/1M/5500槽与80/72°C温控，磁盘KV改为开启。另有精确prefix证明下的旧取消思考历史分类修复。
+   [KV报告](kv_async.md)、[收据](kv_async_receipt.json)，raw `bench/results/kv_async/`。可选原生Vulkan DeepSeek文本后端提交至 [Strata PR #943](https://github.com/Niko1221/Strata/pull/943)，不宣称移植CUDA/HIP算子或支持DSML工具/图片。
+
 0cc. **2026-10-05：动态 mask 的专家加载已异步；修正把 miss 层数误报为 stalls 的计数，新增实际专家等待。**
    同中文 prompt/seed、32 输出、双盘5500槽、power-saver 的 target trace：普通动态 mask **12.595869 tok/s**、动态k5/top4 **13.398560**（短测+6.37%，不同输出，非长期／无损结论）。k5 9周期/9 target submit，22/41草稿接受；平均verify **228.715 ms**，GPU span **218.896**，attention/MoE **86.515/106.808**，跨提交gap0；finish_routes **1.312 ms**、planner/LRU/P0 issue **.863**。主要在等待GPU执行完成，没有用P0请求队列延迟冒充token阻塞。
    `45ee3ab` 分开统计 miss layers 和 wait_layer 的调用／miss join／wall time，超时计入；仅可选 diagnostics 增加 `expert_io_wait`。新16-output检查 **4个cycle每个0调用/0 join/0 ms**；MTP启动的3次exact wait单独保留。CPU32/32、0热暂停、AC稳定、48/48。计数修复未改变计算、LRU、IO调度或采样，没有算作速度优化。

@@ -467,6 +467,19 @@ class ChatState:
             self.ctx_text = d.get("ctx_text", "")
             self.think = bool(d.get("think", self.think))
             self.reasoning_effort = reasoning_effort(d.get("reasoning_effort", 75))
+            # Older servers put a cancelled, unclosed thinking completion in content.
+            # Reclassify only the last turn when the exact rendered prefix proves its mode.
+            if self.think and len(self.messages) >= 2 and self.ctx_text:
+                last = self.messages[-1]
+                if (last.get("role") == "assistant" and not last.get("reasoning_content")
+                        and last.get("stat", {}).get("finish") in ("cancel", "length")):
+                    prefix = self.enc.encode_messages(self.messages[:-1], thinking_mode="thinking",
+                        drop_thinking=self.drop_thinking, reasoning_effort=self.reasoning_effort)
+                    if prefix.endswith("<think>") and self.ctx_text.startswith(prefix):
+                        partial = self.ctx_text[len(prefix):].replace(EOS_TEXT, "").removeprefix("<think>")
+                        if "</think>" not in partial and partial == last.get("content"):
+                            last["reasoning_content"], last["content"] = partial, ""
+                            self.save()
         except Exception as e:
             sys.stderr.write(f"chat state: load failed ({e}); starting empty\n")
 

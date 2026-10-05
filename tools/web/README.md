@@ -28,6 +28,8 @@ No CDN is required. Transcripts persist locally under
 `$XDG_CACHE_HOME/deepmoe/web_chat` (normally `~/.cache/deepmoe/web_chat`) on Linux,
 or `%LOCALAPPDATA%/deepmoe/web_chat` on Windows. The session-name field selects a
 conversation. Reloading restores it. Different tabs should use different names.
+With disk KV enabled, completed decode turns now enqueue one batched background
+checkpoint. The live KV stays in memory. [Persistence details](../../docs/kv_async.md).
 
 ## Configuration
 

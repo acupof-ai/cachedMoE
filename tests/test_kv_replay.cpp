@@ -714,3 +714,98 @@ DEEPMOE_TEST(kvdisk, restore_failure_degrades) {
         runtime::restore_or_cold("nobody", [] { return fail(Err::Corrupt, "no cb"); }, {});
     CHECK(none.cold_fallback);
 }
+
+// The writer owns snapshots; disk I/O never borrows live GPU KV or blocks enqueue.
+DEEPMOE_TEST(kvdisk, async_coalesces_and_drains) {
+    runtime::KvDiskOptions opt;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered = false, release = false;
+    std::vector<std::pair<std::string, uint32_t>> writes;
+    runtime::KvDiskWriter writer(opt, [&](const auto& p, const auto&, const auto& name) -> Result<void> {
+        std::unique_lock lock(mutex);
+        entered = true;
+        cv.notify_all();
+        cv.wait_for(lock, std::chrono::seconds(5), [&] { return release; });
+        writes.emplace_back(name, p.tokens.at(0));
+        return {};
+    });
+    runtime::ParkedContext first; first.tokens = {1};
+    writer.enqueue("first", first);
+    {
+        std::unique_lock lock(mutex);
+        CHECK(cv.wait_for(lock, std::chrono::seconds(5), [&] { return entered; }));
+    }
+    runtime::ParkedContext next; next.tokens = {2};
+    writer.enqueue("next", next);
+    next.tokens = {3};
+    writer.enqueue("next", next);
+    next.tokens[0] = 999; // the pending snapshot does not alias the caller
+    {
+        std::lock_guard lock(mutex);
+        CHECK(writes.empty()); // enqueue returned while the first disk write is held
+        release = true;
+    }
+    cv.notify_all();
+    writer.flush();
+    CHECK(writes.size() == 2);
+    CHECK(writes[0].second == 1);
+    CHECK(writes[1].first == "next" && writes[1].second == 3);
+    const auto stats = writer.stats();
+    CHECK(stats.queued == 3 && stats.written == 2 && stats.coalesced == 1 && stats.errors == 0);
+}
+
+DEEPMOE_TEST(kvdisk, async_reset_cannot_resurrect) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_async_reset";
+    std::error_code ec; fs::remove_all(dir, ec);
+    runtime::KvDiskOptions opt; opt.dir = dir.string(); opt.model_tag = "async-test";
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered = false, release = false;
+    runtime::KvDiskWriter writer(opt, [&](const auto& p, const auto& o, const auto& name) -> Result<void> {
+        {
+            std::unique_lock lock(mutex);
+            entered = true; cv.notify_all();
+            cv.wait_for(lock, std::chrono::seconds(5), [&] { return release; });
+        }
+        return runtime::save_parked_context(p, o, name);
+    });
+    runtime::ParkedContext p; p.tokens = {7};
+    writer.enqueue("active", p);
+    {
+        std::unique_lock lock(mutex);
+        CHECK(cv.wait_for(lock, std::chrono::seconds(5), [&] { return entered; }));
+    }
+    writer.enqueue("pending", p);
+    writer.discard("pending");
+    std::jthread reset([&] {
+        writer.discard("active");
+        runtime::drop_parked_context(opt, "active");
+    });
+    { std::lock_guard lock(mutex); release = true; }
+    cv.notify_all();
+    reset.join();
+    writer.flush();
+    CHECK(!runtime::load_parked_context(opt, "active"));
+    CHECK(!runtime::load_parked_context(opt, "pending"));
+    CHECK(writer.stats().written == 1);
+    fs::remove_all(dir, ec);
+}
+
+DEEPMOE_TEST(kvdisk, async_failure_and_shutdown) {
+    runtime::KvDiskOptions opt;
+    uint32_t calls = 0;
+    {
+        runtime::KvDiskWriter writer(opt, [&](const auto&, const auto&, const auto&) -> Result<void> {
+            ++calls;
+            return fail(Err::Io, "test failure");
+        });
+        runtime::ParkedContext p; p.tokens = {1};
+        writer.enqueue("unit", p);
+        writer.flush();
+        CHECK(writer.stats().errors == 1);
+        writer.enqueue("unit", p); // destructor also drains pending work
+    }
+    CHECK(calls == 2);
+}
