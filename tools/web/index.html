@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>deepMoE 对话</title>
+<title>deepMoE — Local chat</title>
 <style>
 :root{
   --bg:#fbfbfa; --fg:#1b1b19; --dim:#6b6b66; --line:#e2e0da;
@@ -62,7 +62,11 @@ button.stop{color:var(--bad);border-color:var(--bad)}
 .body pre{background:var(--code);padding:9px 11px;border-radius:7px;overflow-x:auto;
   white-space:pre;margin:7px 0}
 .body code{background:var(--code);padding:1px 4px;border-radius:4px}
-.think{color:var(--dim);border-left:2px solid var(--line);padding-left:9px;margin-bottom:6px}
+.thinking{background:var(--code);border:1px solid var(--line);border-radius:8px;margin:8px 0 12px}
+.thinking summary{cursor:pointer;color:var(--dim);padding:8px 11px;font-size:12px;user-select:none}
+.thinking .reasoning{border-top:1px solid var(--line);padding:10px 12px;color:var(--dim);max-height:300px;overflow-y:auto}
+.answer-label{color:var(--accent);font-size:11px;font-weight:600;margin-bottom:5px}
+[hidden]{display:none!important}
 .stat{max-width:860px;margin:-8px auto 14px;font-size:11px;color:var(--dim);
   font-family:ui-monospace,Consolas,monospace}
 .note{max-width:860px;margin:0 auto 12px;font-size:12px;color:var(--warn);text-align:center}
@@ -86,41 +90,41 @@ footer{border-top:1px solid var(--line);background:var(--card);padding:9px 14px}
 
 <header>
   <b>deepMoE</b>
-  <label>会话 <input id="sess" size="10" value="web"></label>
-  <label>温度 <input id="temp" type="number" step="0.05" min="0" max="2" value="1.0"></label>
+  <label>Session <input id="sess" size="10" value="web"></label>
+  <label>Temperature <input id="temp" type="number" step="0.05" min="0" max="2" value="1.0"></label>
   <label>top_p <input id="topp" type="number" step="0.01" min="0" max="1" value="0.95"></label>
-  <label>最长 <input id="maxtok" type="number" min="1" max="8192" value="1024"></label>
-  <label>种子 <input id="seed" size="6" placeholder="随机"></label>
-  <label><input id="think" type="checkbox"> 思考</label>
+  <label>Max tokens <input id="maxtok" type="number" min="1" max="8192" value="1024"></label>
+  <label>Seed <input id="seed" size="6" placeholder="Random"></label>
+  <label><input id="think" type="checkbox"> Thinking</label>
   <label>effort <select id="effort" disabled>
-    <option value="50">低 · 50</option><option value="75" selected>高 · 75</option>
-    <option value="100">最大 · 100</option><option value="custom">自定义</option>
+    <option value="50">Low · 50</option><option value="75" selected>High · 75</option>
+    <option value="100">Max · 100</option><option value="custom">Custom</option>
   </select></label>
-  <label id="effort_custom_label" hidden>预算 <input id="effort_custom" type="number"
+  <label id="effort_custom_label" hidden>Budget <input id="effort_custom" type="number"
     min="1" max="100" step="1" value="75" size="3" disabled></label>
-  <label><input id="hover" type="checkbox"> 逐 token 概率</label>
-  <button id="newconv">新对话</button>
+  <label><input id="hover" type="checkbox"> Token probabilities</label>
+  <button id="newconv">New chat</button>
 </header>
 
 <div id="bar">
-  <span>上下文 <b id="s_ctx">–</b></span>
-  <span>速度 <b id="s_tps">–</b></span>
-  <span>命中 <b id="s_hit">–</b></span>
-  <span>盘等待 <b id="s_stall">–</b></span>
-  <span>首字 <b id="s_ttft">–</b></span>
-  <span>预填充 <b id="s_pf">–</b></span>
-  <span>投机 <b id="s_spec">–</b></span>
+  <span>Context <b id="s_ctx">–</b></span>
+  <span>Speed <b id="s_tps">–</b></span>
+  <span>Hit rate <b id="s_hit">–</b></span>
+  <span>Disk wait <b id="s_stall">–</b></span>
+  <span>First token <b id="s_ttft">–</b></span>
+  <span>Prefill <b id="s_pf">–</b></span>
+  <span>Speculation <b id="s_spec">–</b></span>
   <span id="s_q"></span>
 </div>
 
 <div id="gpu" hidden>
   <canvas id="spark"></canvas>
   <span>GPU <b id="g_busy" class="busy">–</b></span>
-  <span>时钟 <b id="g_clk">–</b></span>
-  <span>盘读 <b id="g_disk" class="disk">–</b></span>
+  <span>Clock <b id="g_clk">–</b></span>
+  <span>Disk read <b id="g_disk" class="disk">–</b></span>
   <span>GTT <b id="g_gtt">–</b></span>
-  <span>温度 <b id="g_temp">–</b></span>
-  <span>功耗 <b id="g_pow">–</b></span>
+  <span>Temperature <b id="g_temp">–</b></span>
+  <span>Power <b id="g_pow">–</b></span>
 </div>
 
 <div id="log"></div>
@@ -128,11 +132,11 @@ footer{border-top:1px solid var(--line);background:var(--card);padding:9px 14px}
 <footer>
   <div id="wrap">
     <div id="prog"><i></i></div>
-    <textarea id="box" placeholder="输入消息，或粘贴长文档（Ctrl+Enter 发送）"></textarea>
+    <textarea id="box" placeholder="Write a message or paste a document (Ctrl+Enter to send)"></textarea>
     <div id="row">
-      <span id="count">0 字符</span>
-      <button id="stop" class="stop" hidden>停止</button>
-      <button id="send" class="primary">发送</button>
+      <span id="count">0 characters</span>
+      <button id="stop" class="stop" hidden>Stop</button>
+      <button id="send" class="primary">Send</button>
     </div>
   </div>
 </footer>
@@ -203,6 +207,64 @@ function md(s){
   return out;
 }
 
+// ---------- response channels (also exercised by test_ui.cjs) ----------
+class ResponseChannels {
+  constructor(thinking){
+    this.channel = thinking ? "reasoning" : "answer";
+    this.opening = thinking;
+    this.pending = [];
+    this.reasoning = "";
+    this.answer = "";
+  }
+  take(n, emit, out){
+    while(n && this.pending.length){
+      const part = this.pending[0], k = Math.min(n, part.text.length);
+      const text = part.text.slice(0, k);
+      if(emit){
+        this[this.channel] += text;
+        out.push({channel:this.channel, text, meta:part.meta});
+      }
+      part.text = part.text.slice(k); n -= k;
+      if(!part.text) this.pending.shift();
+    }
+  }
+  push(text, meta={}, flush=false){
+    if(text) this.pending.push({text, meta});
+    const out = [];
+    const eos = "<｜end▁of▁sentence｜>";
+    for(;;){
+      const rest = this.pending.map(p => p.text).join("");
+      if(!rest) break;
+      // The prompt already contains <think>; tolerate an optional echoed opener.
+      if(this.opening){
+        if(rest.startsWith("<think>")) this.take(7, false, out);
+        else if("<think>".startsWith(rest) && !flush) break;
+        this.opening = false;
+        continue;
+      }
+      const tags = this.channel === "reasoning" ? ["</think>", eos] : [eos];
+      let pos = rest.length, found = null;
+      for(const tag of tags){
+        const i = rest.indexOf(tag);
+        if(i >= 0 && i < pos){pos = i; found = tag;}
+      }
+      if(found){
+        this.take(pos, true, out);
+        this.take(found.length, false, out);
+        if(found === "</think>") this.channel = "answer";
+        continue;
+      }
+      let hold = 0;
+      if(!flush) for(const tag of tags) for(let k=1;k<tag.length;k++){
+        if(rest.endsWith(tag.slice(0,k))) hold = Math.max(hold,k);
+      }
+      this.take(rest.length-hold, true, out);
+      break;
+    }
+    return out;
+  }
+}
+// ---------- bubbles ----------
 function bubble(who, cls){
   const d = document.createElement("div");
   d.className = "msg " + (cls || "");
@@ -210,6 +272,49 @@ function bubble(who, cls){
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
   return d.querySelector(".body");
+}
+function assistant(thinking=false, perToken=false){
+  const body = bubble("deepMoE");
+  body.innerHTML = '<details class="thinking" hidden><summary>Thinking…</summary>'
+    + '<div class="body reasoning"></div></details><section class="answer" hidden>'
+    + '<div class="answer-label">Answer</div><div class="body answer-content"></div></section>';
+  const panel = body.querySelector(".thinking"), summary = panel.querySelector("summary");
+  const reasoning = body.querySelector(".reasoning"), section = body.querySelector(".answer");
+  const answer = body.querySelector(".answer-content"), channels = new ResponseChannels(thinking);
+  panel.open = true;
+  let closed = false;
+  function close(){if(!closed){panel.open=false; closed=true;}}
+  function paint(parts){
+    for(const part of parts){
+      const target = part.channel === "reasoning" ? reasoning : answer;
+      if(perToken){
+        const span = document.createElement("span");
+        span.className="tok"; span.dataset.p="1"; span.textContent=part.text;
+        const m=part.meta;
+        span.title = "p=" + Number(m.p||0).toFixed(3) + "  hit=" + Number(m.hit||0).toFixed(3)
+          + "  step=" + Number(m.step_ms||0).toFixed(0) + " ms  id=" + (m.id ?? "–");
+        target.appendChild(span);
+      }else target.innerHTML = md(channels[part.channel]);
+    }
+    panel.hidden = !channels.reasoning.trim();
+    section.hidden = !channels.answer.trim();
+    if(!section.hidden){summary.textContent="Thought process";close();}
+  }
+  return {
+    push(text, meta){paint(channels.push(text, meta));},
+    finish(r, c){
+      paint(channels.push("", {}, true));
+      // Keep partial reasoning in its own panel when the turn is cancelled or cut short.
+      if((r||"").trim() || (c||"").trim()){
+        if(!perToken || r !== channels.reasoning || c !== channels.answer){
+          reasoning.innerHTML=md(r||""); answer.innerHTML=md(c||"");
+        }
+        panel.hidden=!(r||"").trim(); section.hidden=!(c||"").trim();
+      }
+      summary.textContent="Thought process"; close();
+    },
+    close
+  };
 }
 function note(text, bad){
   const d = document.createElement("div");
@@ -230,9 +335,9 @@ const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 90;
 
 function hms(s){
   if (!isFinite(s) || s < 0) return "–";
-  if (s < 90) return s.toFixed(0) + " 秒";
-  if (s < 5400) return (s/60).toFixed(1) + " 分";
-  return (s/3600).toFixed(1) + " 小时";
+  if (s < 90) return s.toFixed(0) + " s";
+  if (s < 5400) return (s/60).toFixed(1) + " min";
+  return (s/3600).toFixed(1) + " h";
 }
 
 // ---------- config ----------
@@ -241,9 +346,9 @@ async function loadConfig(){
   $("s_ctx").textContent = "0 / " + CFG.max_context.toLocaleString();
   const spec = CFG.ready.speculation || {};
   $("s_spec").textContent = spec.enabled
-    ? "k=" + spec.draft_tokens + " / top-K=" + spec.accept_top_k : "关闭";
-  note("引擎就绪：max_context " + CFG.max_context.toLocaleString()
-     + "，硬上限 " + CFG.ceiling.toLocaleString() + " token");
+    ? "k=" + spec.draft_tokens + " / top-K=" + spec.accept_top_k : "Off";
+  note("Engine ready: max context " + CFG.max_context.toLocaleString()
+     + "; capacity limit " + CFG.ceiling.toLocaleString() + " token");
   refreshStatus();
 }
 
@@ -253,7 +358,7 @@ async function refreshStatus(){
     if (s.context !== undefined)
       $("s_ctx").textContent = s.context.toLocaleString() + " / " + s.max_context.toLocaleString();
     $("s_pf").textContent = (s.prefill_ms_per_token||0).toFixed(1) + " ms/tok";
-    $("s_q").textContent = s.queue > 1 ? ("队列 " + (s.queue - 1)) : "";
+    $("s_q").textContent = s.queue > 1 ? ("Queue " + (s.queue - 1)) : "";
   }catch(e){}
 }
 
@@ -306,7 +411,7 @@ function drawSpark(hist){
   ctx.stroke();
   ctx.fillStyle = css.getPropertyValue("--dim").trim();
   ctx.font = "9px ui-monospace,monospace"; ctx.textAlign = "right";
-  ctx.fillText("盘峰值 " + peak.toFixed(0) + " MB/s", w-4, 10);
+  ctx.fillText("Disk peak " + peak.toFixed(0) + " MB/s", w-4, 10);
 }
 setInterval(pollGpu, 1000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) pollGpu(); });
@@ -316,36 +421,36 @@ let previewTimer = null, lastPreview = null;
 function schedulePreview(){
   const n = $("box").value.length;
   $("count").className = "";
-  $("count").textContent = n.toLocaleString() + " 字符 · 统计中…";
+  $("count").textContent = n.toLocaleString() + " characters · counting…";
   clearTimeout(previewTimer);
   previewTimer = setTimeout(preview, n > 200000 ? 900 : 350);
 }
 async function preview(){
   const text = $("box").value;
-  if (!text.trim()){ $("count").textContent = "0 字符"; $("count").className=""; lastPreview=null; return; }
+  if (!text.trim()){ $("count").textContent = "0 characters"; $("count").className=""; lastPreview=null; return; }
   try{
     const r = await fetch("/api/preview", {method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({session:$("sess").value, text, think:$("think").checked,
         reasoning_effort:effortValue()})});
     const p = await r.json();
-    if (!r.ok) throw new Error(p.error || "预览失败");
+    if (!r.ok) throw new Error(p.error || "Preview failed");
     const el = $("count");
     if (p.pending){     // serve is mid-turn; it cannot tokenize until the turn ends
       lastPreview = null;
       el.className = "";
-      el.textContent = text.length.toLocaleString() + " 字符 · " + p.message;
+      el.textContent = text.length.toLocaleString() + " characters · " + p.message;
       return;
     }
     lastPreview = p;
-    let s = text.length.toLocaleString() + " 字符 · 提示词 " + p.prompt_tokens.toLocaleString()
-          + " token（复用 " + p.reused.toLocaleString() + "，需预填充 " + p.to_prefill.toLocaleString() + "）";
-    s += " · 预计 " + hms(p.eta_s) + "（" + p.ms_per_token.toFixed(1) + " ms/token）";
+    let s = text.length.toLocaleString() + " characters · Prompt " + p.prompt_tokens.toLocaleString()
+          + " token (reused " + p.reused.toLocaleString() + "; to prefill " + p.to_prefill.toLocaleString() + ")";
+    s += " · estimated " + hms(p.eta_s) + " (" + p.ms_per_token.toFixed(1) + " ms/token)";
     el.className = p.over ? "bad" : (p.to_prefill >= 20000 ? "warn" : "");
-    if (p.over) s = p.message + "，请缩短或重启时调大 --max-context（硬上限 "
-                    + p.ceiling.toLocaleString() + "）";
+    if (p.over) s = p.message + ", Shorten the prompt or restart with a larger --max-context (capacity limit "
+                    + p.ceiling.toLocaleString() + ")";
     el.textContent = s;
     $("send").disabled = p.over || running;
-  }catch(e){ $("count").textContent = "统计失败：" + e; }
+  }catch(e){ $("count").textContent = "Count failed: " + e; }
 }
 
 // ---------- history: the server keeps the transcript per session, so a reload
@@ -358,27 +463,25 @@ async function loadHistory(){
     const msgs = h.messages || [];
     for (const m of msgs){
       if (m.role === "user"){
-        const ub = bubble("我", "user");
+        const ub = bubble("You", "user");
         const t = m.content || "";
-        ub.textContent = t.length > 4000 ? t.slice(0, 4000) + "\n… （共 " + t.length.toLocaleString() + " 字符）" : t;
+        ub.textContent = t.length > 4000 ? t.slice(0, 4000) + "\n…  (total " + t.length.toLocaleString() + " characters)" : t;
       } else if (m.role === "assistant"){
-        const body = bubble("deepMoE");
-        const r0 = (m.reasoning_content || "").trim();
-        body.innerHTML = (r0 ? '<div class="think">' + md(r0) + "</div>" : "") + md(m.content || "");
+        assistant().finish(m.reasoning_content || "", m.content || "");
         const s = m.stat;
-        if (s) statline("TTFT " + ((s.ttft_ms||0)/1000).toFixed(1) + " s | 预填充 " + (s.prefill_tokens ?? "–")
-          + " tok (" + (s.prefill_mode || "–") + "，复用 " + (s.reused ?? "–") + ") | 解码 " + (s.generated ?? "–")
-          + " tok " + (s.tok_s||0).toFixed(2) + " tok/s 命中 " + (s.hit||0).toFixed(3)
-          + " | 盘等待 " + (s.stall||0).toFixed(0) + " ms/tok | " + (s.finish || "–") + " | ctx " + (s.context ?? "–"));
+        if (s) statline("TTFT " + ((s.ttft_ms||0)/1000).toFixed(1) + " s | Prefill " + (s.prefill_tokens ?? "–")
+          + " tok (" + (s.prefill_mode || "–") + ", reused " + (s.reused ?? "–") + ") | Decode " + (s.generated ?? "–")
+          + " tok " + (s.tok_s||0).toFixed(2) + " tok/s hit " + (s.hit||0).toFixed(3)
+          + " | Disk wait " + (s.stall||0).toFixed(0) + " ms/tok | " + (s.finish || "–") + " | ctx " + (s.context ?? "–"));
       }
     }
-    if (msgs.length) note("已恢复 " + msgs.filter(m => m.role === "user").length + " 轮对话");
+    if (msgs.length) note("Restored " + msgs.filter(m => m.role === "user").length + " turns");
     if (typeof h.think === "boolean") $("think").checked = h.think;
     const effort = h.reasoning_effort || 75;
     $("effort").value = [50,75,100].includes(effort) ? String(effort) : "custom";
     $("effort_custom").value = effort;
     updateEffort();
-  }catch(e){ note("历史读取失败：" + e, true); }
+  }catch(e){ note("Could not load history: " + e, true); }
   log.scrollTop = log.scrollHeight;
 }
 
@@ -389,22 +492,22 @@ async function send(){
   if (!text.trim()) return;
   const effort = effortValue();
   if (!Number.isInteger(effort) || effort < 1 || effort > 100){
-    note("思考 effort 必须是 1–100 的整数", true); return;
+    note("Reasoning effort must be an integer from 1 to 100", true); return;
   }
   if (lastPreview && lastPreview.over) return;
   if (lastPreview && lastPreview.to_prefill >= 20000 &&
-      !confirm("需要预填充 " + lastPreview.to_prefill.toLocaleString()
-             + " token，预计 " + hms(lastPreview.eta_s) + "。继续？")) return;
+      !confirm("Prefill required: " + lastPreview.to_prefill.toLocaleString()
+             + " tokens; estimated " + hms(lastPreview.eta_s) + " . Continue?")) return;
 
   running = true; $("send").disabled = true; $("stop").hidden = false;
-  $("box").value = ""; $("count").textContent = "0 字符"; $("count").className = ""; lastPreview = null;
+  $("box").value = ""; $("count").textContent = "0 characters"; $("count").className = ""; lastPreview = null;
 
-  const ub = bubble("我", "user");
-  ub.textContent = text.length > 4000 ? text.slice(0, 4000) + "\n… （共 " + text.length.toLocaleString() + " 字符）" : text;
+  const ub = bubble("You", "user");
+  ub.textContent = text.length > 4000 ? text.slice(0, 4000) + "\n…  (total " + text.length.toLocaleString() + " characters)" : text;
 
-  let noteEl = null, body = null, raw = "", t0 = performance.now(), first = null;
+  let noteEl = null, body = null, t0 = performance.now(), first = null;
   const prog = $("prog"), bar = prog.firstElementChild;
-  const perTok = $("hover").checked;
+  const perTok = $("hover").checked, thinking = $("think").checked;
 
   abort = new AbortController();
   try{
@@ -413,8 +516,8 @@ async function send(){
       body: JSON.stringify({session:$("sess").value, text,
         temperature:parseFloat($("temp").value), top_p:parseFloat($("topp").value),
         max_tokens:parseInt($("maxtok").value,10), seed:$("seed").value || null,
-        think:$("think").checked, reasoning_effort:effort})});
-    if (!res.ok){ const error = await res.json(); throw new Error(error.error || "发送失败"); }
+        think:thinking, reasoning_effort:effort})});
+    if (!res.ok){ const error = await res.json(); throw new Error(error.error || "Request failed"); }
     const rd = res.body.getReader(), dec = new TextDecoder();
     let buf = "";
     for(;;){
@@ -430,81 +533,67 @@ async function send(){
 
         if (ev.event === "queued"){
           if (!noteEl) noteEl = note("");
-          noteEl.textContent = "排队中：前面还有 " + ev.position + " 个请求";
-          $("s_q").textContent = "队列 " + ev.position;
+          noteEl.textContent = "Queued: " + ev.position + " requests ahead";
+          $("s_q").textContent = "Queue " + ev.position;
         }
         else if (ev.event === "start"){
           if (!noteEl) noteEl = note("");
-          noteEl.textContent = "提示词 " + ev.prompt_tokens.toLocaleString() + " token，复用 "
-            + ev.reused.toLocaleString() + "，预填充 " + ev.to_prefill.toLocaleString()
-            + " token，预计 " + hms(ev.eta_s);
+          noteEl.textContent = "Prompt " + ev.prompt_tokens.toLocaleString() + " token, reused "
+            + ev.reused.toLocaleString() + ", prefill " + ev.to_prefill.toLocaleString()
+            + " tokens; estimated " + hms(ev.eta_s);
           if (ev.to_prefill > 64){ prog.style.display = "block"; bar.style.width = "0%"; }
         }
         else if (ev.event === "prefill"){
           prog.style.display = "block";
           bar.style.width = (100 * ev.done / Math.max(1, ev.total)).toFixed(1) + "%";
-          if (noteEl) noteEl.textContent = "预填充 " + ev.done.toLocaleString() + " / "
-            + ev.total.toLocaleString() + " token · 剩余约 " + hms(ev.eta_s)
-            + "（" + ev.ms_per_token.toFixed(1) + " ms/token）";
+          if (noteEl) noteEl.textContent = "Prefill " + ev.done.toLocaleString() + " / "
+            + ev.total.toLocaleString() + " tokens · about " + hms(ev.eta_s)
+            + " (" + ev.ms_per_token.toFixed(1) + " ms/token)";
           $("s_pf").textContent = ev.ms_per_token.toFixed(1) + " ms/tok";
         }
         else if (ev.event === "token"){
           if (!body){
             prog.style.display = "none";
             if (noteEl){ noteEl.remove(); noteEl = null; }
-            body = bubble("deepMoE");
+            body = assistant(thinking, perTok);
             first = performance.now() - t0;
             $("s_ttft").textContent = (first/1000).toFixed(1) + " s";
           }
-          raw += ev.text;
-          if (perTok){
-            const sp = document.createElement("span");
-            sp.className = "tok"; sp.dataset.p = "1";
-            sp.textContent = ev.text;
-            sp.title = "p=" + ev.p.toFixed(3) + "  hit=" + ev.hit.toFixed(3)
-                     + "  step=" + ev.step_ms.toFixed(0) + " ms  id=" + ev.id;
-            body.appendChild(sp);
-          } else {
-            body.innerHTML = md(raw);
-          }
+          body.push(ev.text, ev);
           $("s_tps").textContent = (1000/Math.max(1, ev.step_ms)).toFixed(2) + " tok/s";
           $("s_hit").textContent = ev.hit.toFixed(3);
         }
         else if (ev.event === "done"){
           prog.style.display = "none";
           if (noteEl){ noteEl.remove(); noteEl = null; }
-          if (ev.queued_drop){ note("已取消（未开始）"); break; }
-          if (!body) body = bubble("deepMoE");
-          // A completion the official parser puts nowhere (no content, no
-          // reasoning) still has to be shown: fall back to the raw stream.
-          const hasR = !!(ev.reasoning && ev.reasoning.trim());
-          const hasC = !!(ev.content && ev.content.trim());
-          body.innerHTML = hasR ? '<div class="think">' + md(ev.reasoning.trim()) + "</div>" : "";
-          body.innerHTML += md(hasC ? ev.content : (hasR ? "" : raw));
+          if (ev.queued_drop){ note("Cancelled before starting"); break; }
+          if (!body) body = assistant(thinking, perTok);
+          body.finish(ev.reasoning || "", ev.content || "");
           const pt = ev.per_token_ms || {};
           $("s_tps").textContent = (ev.tok_s||0).toFixed(2) + " tok/s";
           $("s_hit").textContent = (ev.decode_hit_rate||0).toFixed(3);
           $("s_stall").textContent = (pt.nvme_stall||0).toFixed(0) + " ms";
           $("s_ttft").textContent = ((ev.ttft_ms||0)/1000).toFixed(1) + " s";
           $("s_ctx").textContent = (ev.context||0).toLocaleString() + " / " + CFG.max_context.toLocaleString();
-          statline("TTFT " + ((ev.ttft_ms||0)/1000).toFixed(1) + " s | 预填充 "
-            + ev.prefill_tokens + " tok (" + ev.prefill_mode + "，复用 " + ev.reused_tokens + ") "
-            + (ev.prefill_tok_s||0).toFixed(2) + " tok/s | 解码 " + ev.generated + " tok "
-            + (ev.tok_s||0).toFixed(2) + " tok/s 命中 " + (ev.decode_hit_rate||0).toFixed(3)
-            + " | 盘等待 " + (pt.nvme_stall||0).toFixed(0) + " ms/tok | " + ev.finish
+          statline("TTFT " + ((ev.ttft_ms||0)/1000).toFixed(1) + " s | Prefill "
+            + ev.prefill_tokens + " tok (" + ev.prefill_mode + ", reused " + ev.reused_tokens + ") "
+            + (ev.prefill_tok_s||0).toFixed(2) + " tok/s | Decode " + ev.generated + " tok "
+            + (ev.tok_s||0).toFixed(2) + " tok/s hit " + (ev.decode_hit_rate||0).toFixed(3)
+            + " | Disk wait " + (pt.nvme_stall||0).toFixed(0) + " ms/tok | " + ev.finish
             + " | ctx " + ev.context + " | seed " + ev.seed);
         }
         else if (ev.event === "error"){
           prog.style.display = "none";
           if (noteEl){ noteEl.remove(); noteEl = null; }
-          note("错误：" + ev.message, true);
+          note("Error: " + ev.message, true);
         }
         if (stick) log.scrollTop = log.scrollHeight;
       }
     }
   }catch(e){
-    if (e.name !== "AbortError") note("连接错误：" + e, true);
+    if (e.name !== "AbortError") note("Connection error: " + e, true);
   }finally{
+    if(body) body.finish("", "");
     running = false; abort = null;
     $("send").disabled = false; $("stop").hidden = true;
     $("prog").style.display = "none"; $("s_q").textContent = "";
@@ -523,7 +612,7 @@ $("newconv").onclick = async () => {
   await fetch("/api/reset", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({session:$("sess").value})});
   log.innerHTML = "";
-  note("已清空上下文（专家缓存保持热）");
+  note("Context cleared (expert cache stays warm)");
   refreshStatus();
 };
 $("box").addEventListener("input", schedulePreview);

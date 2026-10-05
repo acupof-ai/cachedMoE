@@ -99,7 +99,7 @@ STOP_IDS = [1]
 def reasoning_effort(value):
     """V4.1's native reasoning budget; reject bools/floats rather than coerce."""
     if type(value) is not int or not 1 <= value <= 100:
-        raise ValueError("思考 effort 必须是 1–100 的整数")
+        raise ValueError("Reasoning effort must be an integer from 1 to 100")
     return value
 
 
@@ -514,8 +514,12 @@ class ChatState:
         except Exception:
             body = completion.replace(EOS_TEXT, "")
             reasoning, content = "", body
-            if self.think and "</think>" in body:
-                reasoning, content = body.split("</think>", 1)
+            if self.think:
+                if "</think>" in body:
+                    reasoning, content = body.split("</think>", 1)
+                else:
+                    reasoning, content = body, ""
+                reasoning = reasoning.removeprefix("<think>")
             msg = {"role": "assistant", "content": content, "reasoning_content": reasoning}
         self.messages.append(msg)
         self.ctx_ids = ids + gen
@@ -629,14 +633,14 @@ class Bridge:
         b = job.body
         user_text = b.get("text", "")
         if not user_text.strip():
-            job.out.put({"event": "error", "message": "空消息"})
+            job.out.put({"event": "error", "message": "Empty message"})
             return
         with st.lock:
             st.settings(b)
             ids, full = st.prompt_ids(serve, user_text)
         if len(ids) >= serve.max_context:
             job.out.put({"event": "error", "message":
-                         f"提示词 {len(ids)} token，超过引擎上限 {serve.max_context}"})
+                         f"Prompt has {len(ids)} tokens; engine limit is {serve.max_context}"})
             return
         reused = st.reused(ids)
         to_prefill = max(0, len(ids) - reused)
@@ -827,7 +831,7 @@ class Handler(BaseHTTPRequestHandler):
                 # serve is inside a turn; a `tokenize` would block until it ends.
                 return self._send(200, {"pending": True, "over": False,
                                         "ms_per_token": b.prefill_ms_per_token,
-                                        "message": "生成中，发送前再统计"})
+                                        "message": "Generation in progress; tokens will be counted before sending"})
         st = b.state(s)
         with st.lock:
             st.settings(body)
@@ -842,7 +846,7 @@ class Handler(BaseHTTPRequestHandler):
             "eta_s": to_prefill * b.prefill_ms_per_token / 1e3,
             "max_context": b.serve.max_context, "ceiling": K_MAX_INDEX_POSITIONS,
             "over": over,
-            "message": (f"提示词 {len(ids)} token，超过本次启动的上限 {b.serve.max_context}"
+            "message": (f"Prompt has {len(ids)} tokens; this engine was started with a limit of {b.serve.max_context}"
                         if over else ""),
         })
 

@@ -27,6 +27,16 @@ class WebSettings(unittest.TestCase):
             restored.reset()
             self.assertEqual(restored.reasoning_effort, 100)
 
+    def test_partial_thinking_stays_reasoning_after_reload(self):
+        enc = Mock()
+        enc.parse_message_from_completion_text.side_effect = ValueError("missing </think>")
+        state = server.ChatState(enc)
+        state.think = True
+        message = state.commit("q", "prompt", [2], [3], "Still working")
+        self.assertEqual(message["reasoning_content"], "Still working")
+        self.assertEqual(message["content"], "")
+        self.assertEqual(state.history()[-1], message)
+
     def test_old_transcript_uses_native_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "session.json"
