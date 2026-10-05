@@ -4426,6 +4426,14 @@ std::string Engine::status() const {
     s += "engram    " + engram_status() + "\n";
     s += std::format("pinned    {} tensors, {} in {} regions\n", pinned_.tensor_count(),
                      human_bytes(pinned_.bytes_loaded()), pinned_.region_count());
+    uint64_t kv_bytes = 0, scratch_bytes = 0;
+    for (const auto& stream : streams_) {
+        kv_bytes += stream->kvs_.bytes();
+        scratch_bytes += stream->scratch_.capacity() + stream->bscratch_.capacity() + stream->route_scratch_.capacity();
+    }
+    s += std::format("memory    allocator A {} B {} bytes; expert slots {}; pinned reserved {} / payload {}; KV {}; decode/batch/route scratch {}; prefill transit freed before decode\n",
+        alloc_a_.allocated_bytes(), alloc_b_.allocated_bytes(), uint64_t(store_.slot_count()) * layout::kExpertSlotBytes,
+        pinned_.bytes_reserved(), pinned_.bytes_loaded(), kv_bytes, scratch_bytes);
     s += std::format("store     {}\n", store_.stats().to_string());
     s += std::format("planner   {}\n", planner_.stats().to_string());
     s += std::format("gpu       {}\n", device_.valid() ? device_.caps().device_name
