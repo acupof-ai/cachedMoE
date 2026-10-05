@@ -809,3 +809,90 @@ DEEPMOE_TEST(kvdisk, async_failure_and_shutdown) {
     }
     CHECK(calls == 2);
 }
+
+DEEPMOE_TEST(kvdisk, queue_backpressure_preserves_all_sessions) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_backpressure";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    runtime::KvDiskOptions opt;
+    opt.dir = dir.string();
+    opt.model_tag = "backpressure-test";
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered = false, release = false;
+    runtime::KvDiskWriter writer(opt, [&](const auto& p, const auto& o, const auto& name) -> Result<void> {
+        if (name == "first") {
+            std::unique_lock lock(mutex);
+            entered = true;
+            cv.notify_all();
+            cv.wait_for(lock, std::chrono::seconds(5), [&] { return release; });
+        }
+        return runtime::save_parked_context(p, o, name);
+    }, sizeof(uint32_t));
+    runtime::ParkedContext p;
+    p.tokens = {7};
+    writer.enqueue("first", p);
+    {
+        std::unique_lock lock(mutex);
+        CHECK(cv.wait_for(lock, std::chrono::seconds(5), [&] { return entered; }));
+    }
+    writer.enqueue("second", p); // Fills the bounded pending queue.
+    std::atomic<bool> returned = false;
+    Result<void> saved;
+    std::jthread third([&] {
+        saved = writer.save("third", p);
+        returned = true;
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!writer.stats().backpressure && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    CHECK(writer.stats().backpressure == 1);
+    CHECK(!returned);
+    { std::lock_guard lock(mutex); release = true; }
+    cv.notify_all();
+    third.join();
+    REQUIRE_OK(saved);
+    writer.flush();
+    for (const auto* name : {"first", "second", "third"}) {
+        auto loaded = runtime::load_parked_context(opt, name);
+        REQUIRE_OK(loaded);
+        CHECK(loaded->tokens == p.tokens);
+    }
+    CHECK(writer.stats().skipped == 0);
+    CHECK(writer.stats().written == 3);
+    fs::remove_all(dir, ec);
+}
+
+DEEPMOE_TEST(kvdisk, required_save_returns_write_error) {
+    runtime::KvDiskOptions opt;
+    runtime::KvDiskWriter writer(opt, [](const auto&, const auto&, const auto&) -> Result<void> {
+        return fail(Err::Io, "disk full");
+    });
+    runtime::ParkedContext p;
+    p.tokens = {1};
+    auto saved = writer.save("evicted", p);
+    CHECK(!saved && saved.error().code == Err::Io);
+    CHECK(p.tokens == std::vector<uint32_t>{1}); // Caller retains the source on failure.
+    CHECK(writer.stats().errors == 1);
+}
+
+DEEPMOE_TEST(kvdisk, stale_snapshot_checks_transcript_prefix) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_stale_prefix";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    runtime::KvDiskOptions opt;
+    opt.dir = dir.string();
+    opt.model_tag = "prefix-test";
+    runtime::ParkedContext old;
+    old.tokens = {1, 2, 3, 4};
+    REQUIRE_OK(runtime::save_parked_context(old, opt, "session"));
+    auto loaded = runtime::load_parked_context(opt, "session");
+    REQUIRE_OK(loaded);
+    const std::array<uint32_t, 5> changed{1, 2, 99, 100, 101};
+    CHECK_EQ(runtime::common_context_prefix(loaded->tokens, changed), 2u);
+    const std::array<uint32_t, 6> extended{1, 2, 3, 4, 5, 6};
+    CHECK_EQ(runtime::common_context_prefix(loaded->tokens, extended), 4u);
+    fs::remove_all(dir, ec);
+}

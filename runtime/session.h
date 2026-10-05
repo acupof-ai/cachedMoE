@@ -124,6 +124,15 @@ struct ParkedContext {
 };
 
 Result<ParkedContext> park_context(Engine& e);
+// Disk snapshots may predate or diverge from the current transcript. Only the
+// identical prefix may be reused; a shorter matching snapshot can be extended.
+inline size_t common_context_prefix(std::span<const uint32_t> history,
+                                    std::span<const uint32_t> prompt) {
+    size_t common = 0;
+    while (common < history.size() && common < prompt.size() && history[common] == prompt[common])
+        ++common;
+    return common;
+}
 // Replaces the engine's context with `p`: store cleared, non-SWA state
 // unpacked, window rebuilt by replaying the last <= replay_max tokens.
 Result<ReplayStats> restore_context(Engine& e, const ParkedContext& p, uint32_t replay_max = 128);
@@ -318,23 +327,41 @@ struct SessionPoolOptions {
 class KvDiskWriter {
 public:
     using Write = std::function<Result<void>(const ParkedContext&, const KvDiskOptions&, const std::string&)>;
-    explicit KvDiskWriter(KvDiskOptions opt, Write write = save_parked_context);
+    explicit KvDiskWriter(KvDiskOptions opt, Write write = save_parked_context,
+                          uint64_t queue_budget = 256ull << 20);
     ~KvDiskWriter();
     void enqueue(std::string name, ParkedContext snapshot);
+    // Before dropping the last in-memory copy, wait for the atomic disk save.
+    // A failed save is returned to the caller; it must retain that copy.
+    Result<void> save(std::string name, ParkedContext snapshot);
     void flush();
     // Remove pending writes and wait for this name's active write before reset.
     void discard(const std::string& name);
-    struct Stats { uint64_t queued = 0, written = 0, coalesced = 0, skipped = 0, errors = 0; };
+    struct Stats {
+        uint64_t queued = 0, written = 0, coalesced = 0, skipped = 0, errors = 0;
+        uint64_t backpressure = 0;
+    };
     Stats stats() const;
 private:
     void run();
-    struct Pending { ParkedContext snapshot; uint64_t order; };
+    struct Completion {
+        bool done = false;
+        Result<void> result;
+    };
+    struct Pending {
+        ParkedContext snapshot;
+        uint64_t order;
+        std::vector<std::shared_ptr<Completion>> completions;
+    };
+    void queue(std::string name, ParkedContext snapshot,
+               std::shared_ptr<Completion> completion = {});
     KvDiskOptions opt_;
     Write write_;
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::map<std::string, Pending> pending_;
     uint64_t pending_bytes_ = 0;
+    uint64_t queue_budget_;
     Stats stats_;
     bool stopping_ = false, busy_ = false;
     std::string writing_;
@@ -378,7 +405,7 @@ public:
     uint32_t evicted() const { return evicted_; }
 
 private:
-    void enforce_budget();
+    Result<void> enforce_budget();
 
     Engine*                engine_;
     Session                session_;

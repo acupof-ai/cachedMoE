@@ -275,8 +275,7 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
     const char* reuse_why = "cold";
     {
         const std::vector<uint32_t>& hist = e.history();
-        size_t common = 0;
-        while (common < hist.size() && common < prompt.size() && hist[common] == prompt[common]) ++common;
+        const size_t common = common_context_prefix(hist, prompt);
         hist_n = static_cast<uint32_t>(hist.size());
         common_n = static_cast<uint32_t>(common);
         const bool extend =
@@ -569,8 +568,9 @@ Result<MultiStats> generate_multi(
 }
 
 // --- asynchronous disk snapshots -----------------------------------------------------
-KvDiskWriter::KvDiskWriter(KvDiskOptions opt, Write write)
-    : opt_(std::move(opt)), write_(std::move(write)), thread_([this] { run(); }) {}
+KvDiskWriter::KvDiskWriter(KvDiskOptions opt, Write write, uint64_t queue_budget)
+    : opt_(std::move(opt)), write_(std::move(write)), queue_budget_(queue_budget),
+      thread_([this] { run(); }) {}
 
 KvDiskWriter::~KvDiskWriter() {
     { std::lock_guard lock(mutex_); stopping_ = true; }
@@ -579,25 +579,47 @@ KvDiskWriter::~KvDiskWriter() {
 }
 
 void KvDiskWriter::enqueue(std::string name, ParkedContext snapshot) {
-    constexpr uint64_t budget = 256ull << 20;
+    queue(std::move(name), std::move(snapshot));
+}
+
+Result<void> KvDiskWriter::save(std::string name, ParkedContext snapshot) {
+    auto completion = std::make_shared<Completion>();
+    queue(std::move(name), std::move(snapshot), completion);
+    std::unique_lock lock(mutex_);
+    cv_.wait(lock, [&] { return completion->done; });
+    return completion->result;
+}
+
+void KvDiskWriter::queue(std::string name, ParkedContext snapshot,
+                         std::shared_ptr<Completion> completion) {
     const uint64_t bytes = snapshot.bytes();
     {
-        std::lock_guard lock(mutex_);
+        std::unique_lock lock(mutex_);
+        // Coalescing may replace this name's older pending snapshot. Other
+        // names are never discarded: backpressure waits for the writer to
+        // release queue space. One oversized snapshot may occupy it alone.
+        const auto has_space = [&] {
+            const auto it = pending_.find(name);
+            const auto previous = it == pending_.end() ? 0 : it->second.snapshot.bytes();
+            const auto other_bytes = pending_bytes_ - previous;
+            return other_bytes == 0 || (bytes <= queue_budget_ && other_bytes <= queue_budget_ - bytes);
+        };
+        if (!has_space()) {
+            ++stats_.backpressure;
+            log_info("kv-disk: queue full; waiting to preserve snapshot '{}'", name);
+        }
+        cv_.wait(lock, has_space);
+        std::vector<std::shared_ptr<Completion>> completions;
         if (auto it = pending_.find(name); it != pending_.end()) {
             pending_bytes_ -= it->second.snapshot.bytes();
+            completions = std::move(it->second.completions);
             pending_.erase(it);
             ++stats_.coalesced;
         }
-        // One oversize context is allowed alone; never block decode behind disk.
-        while (!pending_.empty() && pending_bytes_ + bytes > budget) {
-            auto oldest = std::min_element(pending_.begin(), pending_.end(),
-                [](const auto& a, const auto& b) { return a.second.order < b.second.order; });
-            pending_bytes_ -= oldest->second.snapshot.bytes();
-            pending_.erase(oldest);
-            ++stats_.skipped;
-        }
+        if (completion) completions.push_back(std::move(completion));
         pending_bytes_ += bytes;
-        pending_.emplace(std::move(name), Pending{std::move(snapshot), ++stats_.queued});
+        pending_.emplace(std::move(name), Pending{std::move(snapshot), ++stats_.queued,
+                                                std::move(completions)});
     }
     cv_.notify_all();
 }
@@ -611,6 +633,10 @@ void KvDiskWriter::discard(const std::string& name) {
     std::unique_lock lock(mutex_);
     if (auto it = pending_.find(name); it != pending_.end()) {
         pending_bytes_ -= it->second.snapshot.bytes();
+        for (auto& completion : it->second.completions) {
+            completion->result = fail(Err::Cancelled, "KV snapshot discarded during reset");
+            completion->done = true;
+        }
         pending_.erase(it);
     }
     cv_.notify_all();
@@ -626,6 +652,7 @@ void KvDiskWriter::run() {
     for (;;) {
         std::string name;
         ParkedContext snapshot;
+        std::vector<std::shared_ptr<Completion>> completions;
         {
             std::unique_lock lock(mutex_);
             cv_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
@@ -635,10 +662,12 @@ void KvDiskWriter::run() {
             name = next->first;
             pending_bytes_ -= next->second.snapshot.bytes();
             snapshot = std::move(next->second.snapshot);
+            completions = std::move(next->second.completions);
             pending_.erase(next);
             busy_ = true;
             writing_ = name;
         }
+        cv_.notify_all(); // enqueue backpressure can proceed while this write runs
         auto result = write_(snapshot, opt_, name);
         if (!result) log_info("kv-disk: async save '{}' failed: {}", name, result.error().str());
         else log_info("kv-disk: saved '{}' ({} tokens, {:.2f} MB)", name,
@@ -646,6 +675,10 @@ void KvDiskWriter::run() {
         {
             std::lock_guard lock(mutex_);
             if (result) ++stats_.written; else ++stats_.errors;
+            for (auto& completion : completions) {
+                completion->result = result;
+                completion->done = true;
+            }
             busy_ = false;
             writing_.clear();
         }
@@ -716,7 +749,7 @@ Result<ReplayStats> SessionPool::activate(const std::string& name) {
         }
     }
     active_ = name;
-    enforce_budget();
+    if (auto r = enforce_budget(); !r) return std::unexpected(r.error());
     return st;
 }
 
@@ -729,7 +762,7 @@ Result<void> SessionPool::park_active() {
     lru_.remove(active_);
     lru_.push_front(active_);
     if (!pool_.disk.dir.empty()) {
-        disk_writer_->enqueue(active_, parked_[active_]);
+        return disk_writer_->save(active_, parked_[active_]);
     }
     return {};
 }
@@ -807,7 +840,7 @@ std::vector<SessionPool::Info> SessionPool::list() const {
     return out;
 }
 
-void SessionPool::enforce_budget() {
+Result<void> SessionPool::enforce_budget() {
     auto total = [&] {
         uint64_t b = 0;
         for (const auto& [n, p] : parked_) b += p.bytes();
@@ -816,13 +849,15 @@ void SessionPool::enforce_budget() {
     while (!lru_.empty() && (parked_.size() > pool_.max_parked || total() > pool_.max_parked_bytes)) {
         const std::string victim = lru_.back();
         if (!pool_.disk.dir.empty()) {
-            disk_writer_->enqueue(victim, parked_[victim]);
+            if (auto r = disk_writer_->save(victim, parked_.at(victim)); !r)
+                return r; // Retain the only current copy after a failed disk write.
         }
         lru_.pop_back();
         parked_.erase(victim);
         ++evicted_;
         log_info("session pool: dropped least recently used session '{}'", victim);
     }
+    return {};
 }
 
 }  // namespace deepmoe::runtime
