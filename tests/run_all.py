@@ -125,6 +125,7 @@ def main() -> int:
         ("tests/mutate.py --list", [PY, str(ROOT / "tests" / "mutate.py"), "--list"]),
         # STATUS 1.0's measured table is rendered from the ledger, never typed.
         ("tools/perf_ledger.py --check", [PY, str(ROOT / "tools" / "perf_ledger.py"), "--check"]),
+        ("tools/web/test_server.py", [PY, str(ROOT / "tools" / "web" / "test_server.py")]),
     ):
         t0 = time.time()
         rc, out = run(cmd)

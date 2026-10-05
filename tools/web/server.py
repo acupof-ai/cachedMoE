@@ -95,6 +95,13 @@ EOS_TEXT = "<\uff5cend\u2581of\u2581sentence\uff5c>"
 STOP_IDS = [1]
 
 
+def reasoning_effort(value):
+    """V4.1's native reasoning budget; reject bools/floats rather than coerce."""
+    if type(value) is not int or not 1 <= value <= 100:
+        raise ValueError("思考 effort 必须是 1–100 的整数")
+    return value
+
+
 def find_mirrors(model_dir: str):
     """Track D5: the same checkpoint on another drive, if one is plugged in.
 
@@ -244,7 +251,8 @@ def load_encoding():
 class Serve:
     """The `deepmoe serve` child: one writer, one reader thread, one turn in flight."""
 
-    def __init__(self, args):
+    @staticmethod
+    def command(args):
         cmd = [args.exe, "serve", "--model", MODEL, "--max-context", str(args.max_context)]
         if args.cache_slots:
             cmd += ["--cache-slots", str(args.cache_slots)]
@@ -267,6 +275,9 @@ class Serve:
             cmd += ["--max-parked", str(args.max_parked)]
         if args.resident_only != "off":
             cmd += ["--resident-only", args.resident_only]
+        if args.dspark:
+            cmd += ["--dspark", "--spec-k", str(args.spec_k),
+                    "--spec-top-k", str(args.spec_top_k)]
         # Track D4: the second read source. Repeatable, and the engine drops a
         # mirror that fails its health probe rather than dying on it
         # (docs/p4_e_drive_diag.md §5.2), so a passthrough here cannot take the
@@ -283,6 +294,10 @@ class Serve:
                       f"(--no-mirror-auto turns this off)", flush=True)
         for d in mirrors:
             cmd += ["--mirror", d]
+        return cmd
+
+    def __init__(self, args):
+        cmd = self.command(args)
         self.cmd = cmd
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -409,6 +424,7 @@ class ChatState:
         self.enc = enc
         self.system = system
         self.think = False
+        self.reasoning_effort = 75
         self.drop_thinking = True
         self.lock = threading.Lock()
         self.path = path     # where the transcript lives across page reloads / restarts
@@ -432,7 +448,8 @@ class ChatState:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"messages": self.messages, "ctx_ids": self.ctx_ids,
-                           "ctx_text": self.ctx_text, "think": self.think}, f, ensure_ascii=False)
+                           "ctx_text": self.ctx_text, "think": self.think,
+                           "reasoning_effort": self.reasoning_effort}, f, ensure_ascii=False)
             os.replace(tmp, self.path)
         except Exception as e:
             sys.stderr.write(f"chat state: save failed ({e})\n")
@@ -447,6 +464,7 @@ class ChatState:
             self.ctx_ids = d.get("ctx_ids", [])
             self.ctx_text = d.get("ctx_text", "")
             self.think = bool(d.get("think", self.think))
+            self.reasoning_effort = reasoning_effort(d.get("reasoning_effort", 75))
         except Exception as e:
             sys.stderr.write(f"chat state: load failed ({e}); starting empty\n")
 
@@ -457,10 +475,16 @@ class ChatState:
     def mode(self):
         return "thinking" if self.think else "chat"
 
+    def settings(self, body):
+        effort = reasoning_effort(body.get("reasoning_effort", self.reasoning_effort))
+        self.think = bool(body.get("think", self.think))
+        self.reasoning_effort = effort
+
     def render(self, user_text):
         msgs = self.messages + [{"role": "user", "content": user_text}]
         return self.enc.encode_messages(msgs, thinking_mode=self.mode(),
-                                        drop_thinking=self.drop_thinking)
+                                        drop_thinking=self.drop_thinking,
+                                        reasoning_effort=self.reasoning_effort)
 
     def prompt_ids(self, serve, user_text):
         """The turn's prompt ids, reusing the ids of the prefix already rendered."""
@@ -606,7 +630,7 @@ class Bridge:
             job.out.put({"event": "error", "message": "空消息"})
             return
         with st.lock:
-            st.think = bool(b.get("think", st.think))
+            st.settings(b)
             ids, full = st.prompt_ids(serve, user_text)
         if len(ids) >= serve.max_context:
             job.out.put({"event": "error", "message":
@@ -757,6 +781,7 @@ class Handler(BaseHTTPRequestHandler):
                 stt = self.bridge.state(s)
                 with stt.lock:
                     return self._send(200, {"session": s, "think": stt.think,
+                                            "reasoning_effort": stt.reasoning_effort,
                                             "messages": stt.history()})
             return self._send(404, {"error": "not found"})
         except Exception as e:
@@ -766,6 +791,11 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         try:
             body = self._json_body()
+            if u.path in ("/api/preview", "/api/chat") and "reasoning_effort" in body:
+                try:
+                    reasoning_effort(body["reasoning_effort"])
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
             if u.path == "/api/preview":
                 return self._preview(body)
             if u.path == "/api/chat":
@@ -798,9 +828,10 @@ class Handler(BaseHTTPRequestHandler):
                                         "message": "生成中，发送前再统计"})
         st = b.state(s)
         with st.lock:
-            st.think = bool(body.get("think", st.think))
+            st.settings(body)
             ids, _full = st.prompt_ids(b.serve, body.get("text", ""))
             reused = st.reused(ids)
+            st.save()
         to_prefill = max(0, len(ids) - reused)
         over = len(ids) >= b.serve.max_context
         return self._send(200, {
@@ -864,7 +895,12 @@ def main():
     ap.add_argument("--no-kv-disk", action="store_true")
     ap.add_argument("--max-parked", type=int, default=0)
     ap.add_argument("--resident-only", choices=("off", "mask"), default="off",
-                    help="mask missing MoE experts while normal LRU loading continues")
+                    help="mask missing MoE experts using the fixed initial cache")
+    ap.add_argument("--dspark", action="store_true", help="enable DSpark main-path speculation")
+    ap.add_argument("--spec-k", type=int, choices=range(1, 6), default=5,
+                    help="draft tokens per cycle (native block size 5)")
+    ap.add_argument("--spec-top-k", type=int, default=4,
+                    help="accept a draft token when it is in the target row's top K")
     ap.add_argument("--mirror", action="append", default=[],
                     help="a second read source holding the same checkpoint "
                          "(repeatable); passed through to `deepmoe serve`. "
@@ -876,6 +912,8 @@ def main():
     ap.add_argument("--think", action="store_true")
     ap.add_argument("--log", default=os.path.join(REPO, "build", "web_serve.log"))
     args = ap.parse_args()
+    if not 1 <= args.spec_top_k <= 129280:
+        ap.error("--spec-top-k must be within 1..129280")
 
     if args.max_context > K_MAX_INDEX_POSITIONS:
         raise SystemExit(

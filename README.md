@@ -61,6 +61,18 @@ projection/head experiment are recorded in [the latest report](docs/dspark_topk.
 The final fixed-cache generated MMLU sample scored **48/57**, with one invalid answer;
 it does not establish quality for arbitrary long conversations.
 
+The web server accepts `--dspark --spec-k 5 --spec-top-k 4` with the same two
+environment switches above. The page displays the engine's actual enabled state,
+draft length and acceptance K; a default draft length alone does not mean speculation
+is on. DSpark's native block has five draft tokens. Each full cycle verifies the
+root plus that one draft path in one six-row forward; rejected suffix rows do not
+become output tokens. Speculation stays off unless explicitly enabled.
+
+Enable **思考** to choose the checkpoint's native reasoning effort: low 50,
+high 75 (default), maximum 100, or a custom integer from 1 to 100. This budget is
+rendered into the thinking prompt and saved with the conversation. Changing it
+can change the reusable prompt prefix and require prefill again.
+
 GPU prefill currently uses the exact streaming path, including in mask mode. The captured
 chat's 2,835-token prefill took **39.6 s**; expert I/O took **29.7 s** and read **151.28 GiB**.
 The decode speed shown in the screenshot does not apply to prefill.
