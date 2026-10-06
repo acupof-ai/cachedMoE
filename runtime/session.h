@@ -164,6 +164,7 @@ bool drop_parked_context(const KvDiskOptions& opt, const std::string& name);
 
 struct GenerateRequest {
     std::vector<uint32_t> prompt_ids;
+    DecodeMode            decode_mode = DecodeMode::Startup;
     uint32_t              max_tokens = 256;
     SamplingParams        sampling{};                // temperature <= 0: greedy
     std::vector<uint32_t> stop_ids{1};               // <｜end▁of▁sentence｜>
@@ -189,6 +190,9 @@ struct GenerateStats {
     uint32_t prompt_tokens = 0, reused_tokens = 0, prefilled_tokens = 0, generated = 0;
     std::string prefill_mode = "none";     // none | decode | gpu
     std::string finish = "length";         // stop | length | context | cancel
+    // Actual policy of this request, separate from startup DSpark capability.
+    std::string decode_mode;
+    bool speculation_enabled = false;
     double   prefill_ms = 0.0, ttft_ms = 0.0, decode_ms = 0.0, total_ms = 0.0;
     // Wall-clock counterpart of decode_ms's monotonic end, before reheat or
     // disk checkpoint work. Unset when generation did not reach that boundary.

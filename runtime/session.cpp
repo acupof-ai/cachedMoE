@@ -167,6 +167,9 @@ std::string GenerateStats::json_fields() const {
     s += std::format("\"prompt_tokens\":{},\"reused_tokens\":{},\"prefill_tokens\":{},\"generated\":{},",
                      prompt_tokens, reused_tokens, prefilled_tokens, generated);
     s += std::format("\"prefill_mode\":{},\"finish\":{},", json_quote(prefill_mode), json_quote(finish));
+    s += std::format("\"decode_mode\":{},\"speculation_enabled\":{},",
+                     decode_mode.empty() ? "null" : json_quote(decode_mode),
+                     speculation_enabled ? "true" : "false");
     s += std::format("\"rollback_dropped\":{},\"replay_steps\":{},\"replay_ms\":{},",
                      rollback_dropped, replay_steps, json_number(replay_ms));
     s += std::format("\"prefill_ms\":{},\"prefill_tok_s\":{},\"ttft_ms\":{},\"decode_ms\":{},"
@@ -484,15 +487,19 @@ Result<GenerateStats> Session::generate(
     const GenerateRequest& req, const std::function<void(const TokenEvent&)>& on_token,
     const std::function<void(uint32_t, uint32_t)>& on_prefill) {
     Engine& e = *engine_;
+    auto policy = e.request_decode_policy(req.decode_mode);
+    if (!policy) return std::unexpected(policy.error());
     TurnState ts;
     ts.req = &req;
+    ts.st.decode_mode = policy->mode();
+    ts.st.speculation_enabled = policy->speculative();
     if (auto r = turn_prepare(e, *tok_, opt_, ts, on_prefill); !r)
         return std::unexpected(r.error());
     if (!ts.live) return ts.st;
     auto emit = [&](uint32_t, const TokenEvent& ev) { if (on_token) on_token(ev); };
     bool more=turn_emit(e,ts,0,emit);
     while(more) {
-        if(e.config().speculation.enabled) {
+        if(policy->speculative()) {
             auto r=e.speculative_step(ts.emitted_token,req.max_tokens-ts.st.generated,req.stop_ids);
             if(!r)return std::unexpected(r.error());
             ts.st.speculation.add(r->cycle);
@@ -534,6 +541,8 @@ Result<MultiStats> generate_multi(
     MultiStats ms;
     // (1) Each turn's prompt on its own stream, one at a time.
     for (uint32_t i = 0; i < n; ++i) {
+        if (turns[i].req.decode_mode != DecodeMode::Startup)
+            return fail(Err::FailedPrecondition, "request decode mode supports single-stream generation only");
         ts[i].req = &turns[i].req;
         ts[i].stream = turns[i].stream;
         if (auto r = e.select_stream(turns[i].stream); !r) return std::unexpected(r.error());

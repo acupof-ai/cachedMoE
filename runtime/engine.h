@@ -164,6 +164,13 @@ struct GenerateResult {
     RunSummary            summary;
 };
 
+// A request may select an existing decode path without changing the startup
+// resources, draft length or kernel configuration. Startup preserves legacy
+// callers, including routing modes that are not exposed by the web selector.
+enum class DecodeMode : uint8_t { Startup, MaskSpec, MaskPlain, OffPlain };
+Result<DecodeMode> parse_decode_mode(std::string_view name);
+std::string_view decode_mode_name(DecodeMode mode);
+
 // The §13.1 breakdown for one layer of one token.
 //
 // The GPU halves are GPU TIMESTAMPS, not host wall clocks around a submit: since
@@ -650,6 +657,32 @@ public:
     Result<uint32_t> warm_cache_from_heat(std::chrono::seconds timeout = std::chrono::seconds(180));
 
     void set_resident_only(ResidentOnly m);
+    // Applies only until this move-only guard leaves scope. Call before named
+    // session activation so replay also uses the selected routing policy.
+    class DecodePolicyGuard {
+      public:
+        DecodePolicyGuard(const DecodePolicyGuard&) = delete;
+        DecodePolicyGuard& operator=(const DecodePolicyGuard&) = delete;
+        DecodePolicyGuard(DecodePolicyGuard&& other) noexcept;
+        DecodePolicyGuard& operator=(DecodePolicyGuard&& other) noexcept;
+        ~DecodePolicyGuard();
+        bool speculative() const { return speculative_; }
+        const std::string& mode() const { return mode_; }
+
+      private:
+        friend class Engine;
+        DecodePolicyGuard(Engine& engine, ResidentOnly previous, bool changed,
+                          bool speculative, std::string mode);
+        void restore();
+        Engine* engine_;
+        ResidentOnly previous_;
+        bool changed_, speculative_;
+        std::string mode_;
+    };
+    Result<DecodePolicyGuard> request_decode_policy(DecodeMode mode);
+    // Capability list, not the policy of a turn currently executing.
+    std::vector<std::string> available_decode_modes() const;
+    std::string startup_decode_mode() const;
     // Dynamic LRU is mask's default. Explicit freezing is an experiment.
     // Call between requests, before begin_session; the CLI overrides the env.
     void set_mask_cache_fixed(bool fixed);

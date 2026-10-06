@@ -410,11 +410,18 @@ int cmd_serve(int argc, char** argv) {
                          loaded.error().str().c_str());
     }
     const double load_s = std::chrono::duration<double>(Clock::now() - t0).count();
+    std::string decode_modes = "[";
+    for (const auto& mode : engine.available_decode_modes()) {
+        if (decode_modes.size() > 1) decode_modes += ',';
+        decode_modes += json_quote(mode);
+    }
+    decode_modes += ']';
     emit(std::format("{{\"event\":\"ready\",\"load_s\":{},\"max_context\":{},\"vocab\":{},"
                      "\"cache_gb\":{},\"cache_slots\":{},\"gpu_prefill_min\":{},\"check_topk\":{},"
                      "\"engram_tables\":{},\"kv_mb\":{},\"rollback\":{},\"max_parked\":{},"
                      "\"reheat\":{},\"reheat_decay\":{},\"kv_disk\":{},\"kv_disk_dir\":{},\"sources\":{},"
-                     "\"speculation\":{{\"enabled\":{},\"draft_tokens\":{},\"accept_top_k\":{},\"confidence_min\":{},\"main_paths\":1,\"mtp_pinned_experts\":{}}}}}",
+                     "\"speculation\":{{\"enabled\":{},\"draft_tokens\":{},\"accept_top_k\":{},\"confidence_min\":{},\"main_paths\":1,\"mtp_pinned_experts\":{}}},"
+                     "\"decode_modes\":{{\"available\":{},\"default\":{}}}}}",
                      json_number(load_s), engine.max_context(), tok->vocab_size(),
                      json_number(engine.store().capacity_bytes() / double(1ull << 30)),
                      engine.store().slot_count(), so.gpu_prefill_min, check_topk ? "true" : "false",
@@ -428,7 +435,8 @@ int cmd_serve(int argc, char** argv) {
                      engine.io().live_source_count(),cfg.speculation.enabled ? "true" : "false",
                      cfg.speculation.max_draft,cfg.speculation.accept_topk,
                      cfg.speculation.min_confidence ? json_number(*cfg.speculation.min_confidence) : "null",
-                     cfg.speculation.enabled ? 384 : 0));
+                     cfg.speculation.enabled ? 384 : 0,
+                     decode_modes, json_quote(engine.startup_decode_mode())));
 
     bool score_ready = false;
     std::string score_session;
@@ -632,6 +640,10 @@ int cmd_serve(int argc, char** argv) {
         // parking pool: each stream keeps its own KV across turns, which is
         // what two concurrent conversations are.
         if (op == "generate_multi") {
+            if (doc->find("decode_mode")) {
+                emit_error("decode_mode supports single-stream generate only");
+                continue;
+            }
             const JsonValue* rs = doc->find("requests");
             if (!rs || !rs->is_array()) { emit_error("generate_multi needs \"requests\":[...]"); continue; }
             std::vector<runtime::MultiTurn> turns;
@@ -639,6 +651,7 @@ int cmd_serve(int argc, char** argv) {
             uint32_t idx = 0;
             for (const JsonValue& rv : **rs->as_array()) {
                 if (!rv.is_object()) { bad = true; break; }
+                if (rv.find("decode_mode")) { bad = true; break; }
                 runtime::MultiTurn t;
                 t.stream = static_cast<uint32_t>(rv.int_or("stream", idx));
                 if (const JsonValue* ids = rv.find("prompt_ids"); ids && ids->is_array())
@@ -684,11 +697,29 @@ int cmd_serve(int argc, char** argv) {
         }
         if (op != "generate") { emit_error("unknown op '" + op + "'"); continue; }
 
+        runtime::DecodeMode decode_mode = runtime::DecodeMode::Startup;
+        if (const auto* value = doc->find("decode_mode")) {
+            if (!value->is_string()) {
+                emit_error("decode_mode must be a string");
+                continue;
+            }
+            auto parsed = runtime::parse_decode_mode(*value->as_string());
+            if (!parsed) { emit_error(parsed.error().str()); continue; }
+            decode_mode = *parsed;
+        }
+        // Policy belongs to this request, including named-session replay.
+        // The guard restores startup routing on every continue/cancel/error.
+        // Retaining prior KV does not recompute an earlier masked prefix.
+        auto policy = engine.request_decode_policy(decode_mode);
+        if (!policy) { emit_error(policy.error().str()); continue; }
+
         const uint64_t seq = item.seq;
         auto cancelled = [&inbox, seq] { return inbox.cancel_upto.load() >= seq; };
         if (cancelled()) {
             runtime::GenerateStats gs;
             gs.finish = "cancel";
+            gs.decode_mode = policy->mode();
+            gs.speculation_enabled = policy->speculative();
             gs.context_after = engine.context_length();
             emit("{\"event\":\"done\",\"session\":" + json_quote(session) + "," + gs.json_fields() + "}");
             continue;
@@ -696,6 +727,7 @@ int cmd_serve(int argc, char** argv) {
         if (!switch_to(session)) continue;
 
         runtime::GenerateRequest req;
+        req.decode_mode = decode_mode;
         if (const JsonValue* ids = doc->find("prompt_ids"); ids && ids->is_array())
             req.prompt_ids = uint_array(*ids);
         else

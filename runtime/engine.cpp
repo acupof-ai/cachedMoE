@@ -2009,6 +2009,101 @@ void Engine::set_resident_only(ResidentOnly m) {
     log_info("engram wait priority: {}", enabled ? "on" : "off");
 }
 
+Result<DecodeMode> parse_decode_mode(std::string_view name) {
+    if (name == "mask-spec") return DecodeMode::MaskSpec;
+    if (name == "mask-plain") return DecodeMode::MaskPlain;
+    if (name == "off-plain") return DecodeMode::OffPlain;
+    return fail(Err::InvalidArgument,
+                "decode_mode must be mask-spec, mask-plain or off-plain");
+}
+
+std::string_view decode_mode_name(DecodeMode mode) {
+    switch (mode) {
+        case DecodeMode::Startup: return "startup";
+        case DecodeMode::MaskSpec: return "mask-spec";
+        case DecodeMode::MaskPlain: return "mask-plain";
+        case DecodeMode::OffPlain: return "off-plain";
+    }
+    return "unknown";
+}
+
+Engine::DecodePolicyGuard::DecodePolicyGuard(Engine& engine, ResidentOnly previous,
+                                            bool changed, bool speculative, std::string mode)
+    : engine_(&engine), previous_(previous), changed_(changed), speculative_(speculative),
+      mode_(std::move(mode)) {}
+
+Engine::DecodePolicyGuard::DecodePolicyGuard(DecodePolicyGuard&& other) noexcept
+    : engine_(std::exchange(other.engine_, nullptr)), previous_(other.previous_),
+      changed_(other.changed_), speculative_(other.speculative_), mode_(std::move(other.mode_)) {}
+
+Engine::DecodePolicyGuard& Engine::DecodePolicyGuard::operator=(DecodePolicyGuard&& other) noexcept {
+    if (this != &other) {
+        restore();
+        engine_ = std::exchange(other.engine_, nullptr);
+        previous_ = other.previous_;
+        changed_ = other.changed_;
+        speculative_ = other.speculative_;
+        mode_ = std::move(other.mode_);
+    }
+    return *this;
+}
+
+void Engine::DecodePolicyGuard::restore() {
+    if (engine_ && changed_) engine_->set_resident_only(previous_);
+    engine_ = nullptr;
+}
+
+Engine::DecodePolicyGuard::~DecodePolicyGuard() { restore(); }
+
+std::string Engine::startup_decode_mode() const {
+    return std::format("{}-{}", resident_only_name(resident_only_),
+                       cfg_.speculation.enabled ? "spec" : "plain");
+}
+
+std::vector<std::string> Engine::available_decode_modes() const {
+    if (!gpu_ready_ || streams_.size() != 1 || current_stream() != 0 ||
+        mask_cache_fixed_ || mask_wait_tau_ >= 0)
+        return {};
+    std::vector<std::string> modes;
+    if (dspark_ && cfg_.speculation.enabled) modes.emplace_back("mask-spec");
+    modes.emplace_back("mask-plain");
+    modes.emplace_back("off-plain");
+    return modes;
+}
+
+Result<Engine::DecodePolicyGuard> Engine::request_decode_policy(DecodeMode mode) {
+    const ResidentOnly previous = resident_only_;
+    if (mode == DecodeMode::Startup) {
+        // No fence query, restrictions or setters for existing callers.
+        return DecodePolicyGuard(*this, previous, false, cfg_.speculation.enabled,
+                                 startup_decode_mode());
+    }
+    if (mode != DecodeMode::MaskSpec && mode != DecodeMode::MaskPlain &&
+        mode != DecodeMode::OffPlain)
+        return fail(Err::InvalidArgument, "invalid decode mode");
+    if (!gpu_ready_ || streams_.size() != 1 || current_stream() != 0 ||
+        mask_cache_fixed_ || mask_wait_tau_ >= 0)
+        return fail(Err::FailedPrecondition,
+                    "request decode mode requires single-stream dynamic routing without weighted waits");
+    if (mode == DecodeMode::MaskSpec && (!dspark_ || !cfg_.speculation.enabled))
+        return fail(Err::FailedPrecondition, "mask-spec requires DSpark resources at startup");
+    if (spec_inflight_ || cur_->tok_open_ || gpu_route_.enabled)
+        return fail(Err::FailedPrecondition, "request decode mode requires a completed request");
+    if (auto completed = cur_->fence_.value(); !completed)
+        return std::unexpected(completed.error());
+    else if (*completed < cur_->fence_value_)
+        return fail(Err::FailedPrecondition, "request decode mode requires the final GPU fence");
+
+    const ResidentOnly selected = mode == DecodeMode::OffPlain ? ResidentOnly::Off
+                                                              : ResidentOnly::Mask;
+    const bool changed = selected != previous;
+    if (changed) set_resident_only(selected);
+    // Keep the main KV and hidden capture window. A later speculative request
+    // reseeds stale draft KV through seed_draft; startup resources stay intact.
+    return DecodePolicyGuard(*this, previous, changed, mode == DecodeMode::MaskSpec,
+                             std::string(decode_mode_name(mode)));
+}
+
 void Engine::set_mask_cache_fixed(bool fixed) {
     mask_cache_explicit_ = true;
     mask_cache_fixed_ = fixed;

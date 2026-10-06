@@ -23,6 +23,7 @@ add_executable(deepmoe_tests
     test_speculate.cpp
     test_spec_forward.cpp
     test_spec_switch.cpp
+    test_decode_mode.cpp
     test_tokenizer.cpp
     test_engram_tables.cpp
     test_kvstore.cpp
@@ -39,7 +40,7 @@ add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
 foreach(_suite align layout types json profiler status bytes
                 dequant gate slab expert_store planner resident_route
                 io v41_config manifest block_info kvcache kvstore trace
-                cache_cap runtime_config)
+                cache_cap runtime_config decode_mode)
     add_test(NAME "suite.${_suite}" COMMAND deepmoe_tests "${_suite}.")
 endforeach()
 
@@ -146,7 +147,7 @@ set_tests_properties("suite.gpu_moe" PROPERTIES
 # Everything else must keep passing on a machine with no weights at all.
 foreach(_t deepmoe_tests align layout types json profiler status bytes
            dequant gate slab expert_store planner resident_route io v41_config
-           manifest block_info kvcache kvstore runtime_config)
+           manifest block_info kvcache kvstore runtime_config decode_mode)
     if(_t STREQUAL "deepmoe_tests")
         set_tests_properties("${_t}" PROPERTIES LABELS "unit;needs-model")
     else()
@@ -159,6 +160,11 @@ endforeach()
 # level. No GPU, no checkpoint.
 add_test(NAME "suite.speculate" COMMAND deepmoe_tests "speculate.")
 set_tests_properties("suite.speculate" PROPERTIES LABELS "unit")
+
+add_test(NAME "suite.gpu_request_policy" COMMAND deepmoe_tests "gpu_request_policy.")
+set_tests_properties("suite.gpu_request_policy" PROPERTIES
+    LABELS "needs-model;needs-gpu"
+    SKIP_RETURN_CODE 77)
 
 # The design §7.12 DSpark draft kernels against tools/oracle_dspark.py's golden
 # draft cycle. Needs the ~2 GB of mtp + head weights and tests/data/dspark.
