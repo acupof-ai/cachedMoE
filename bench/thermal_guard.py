@@ -245,19 +245,34 @@ def run_job(job, base, env, sensors):
             failure = str(error)
         finally:
             terminate(child)
-        end = sample(sensors, monitor)
+        end, end_sample_error = None, None
+        try:
+            end = sample(sensors, monitor)
+        except Exception as error:
+            # A persistent sensor/profile error also affects this read. Keep
+            # the original failure and its receipt after cleaning up the job;
+            # an unavailable final read must not look like a successful run.
+            end_sample_error = str(error)
+            if failure is None:
+                failure = f"failed to collect final thermal sample: {error}"
+            if rc == 0:
+                rc = 99
+        finished_unix = time.time()
         if pause_start is not None:
-            intervals.append([pause_start, end["wall_time_s"]])
+            pause_end = end["wall_time_s"] if end is not None else finished_unix
+            intervals.append([pause_start, pause_end])
         wall, cooling, active = budget.elapsed(time.monotonic())
         result = dict(name=name, command=job["command"], env=job.get("env", {}), profile=target,
                       process_group=child.pid if child else None,
                       rc=rc, failure=failure, start=start, end=end, peak=peak,
+                      end_sample_error=end_sample_error, finished_unix=finished_unix,
                       elapsed_s=wall, active_elapsed_s=active, thermal_paused_s=cooling,
                       active_timeout_s=active_limit, wall_timeout_s=wall_limit,
                       thermal_pauses=sum(t["paused"] for t in transitions),
                       thermal_pause_intervals=intervals, thermal_transitions=transitions,
                       thermal_log=str(thermal_path), thermal_policy="per-sensor latched 80/72 C",
-                      sampling_period_s=0.05, ac_changed=end["ac"] != 1,
+                      sampling_period_s=0.05,
+                      ac_changed=end["ac"] != 1 if end is not None else None,
                       time=datetime.datetime.now().astimezone().isoformat())
         print("DONE", json.dumps(result), flush=True)
         return result
@@ -291,8 +306,12 @@ def main():
             if result["rc"]:
                 return result["rc"]
     finally:
-        (base / "profile_receipt.json").write_text(json.dumps(dict(
-            original=original, final=profile(), requested_default="performance")) + "\n")
+        receipt = dict(original=original, final=None, requested_default="performance")
+        try:
+            receipt["final"] = profile()
+        except Exception as error:
+            receipt["final_read_error"] = str(error)
+        (base / "profile_receipt.json").write_text(json.dumps(receipt) + "\n")
     return 0
 
 

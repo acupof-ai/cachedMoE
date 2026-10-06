@@ -187,5 +187,83 @@ class ThermalAccounting(unittest.TestCase):
             self.assertEqual(state["ac_online"], 1)
 
 
+class ThermalFailureReceipts(unittest.TestCase):
+    class Monitor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *unused):
+            pass
+
+    @staticmethod
+    def reading(temperature=42, timestamp=100):
+        return {"amdgpu:fake": temperature, "ac": 1,
+                "power_profile": "performance", "wall_time_s": timestamp}
+
+    def run_mock_job(self, root, samples, child):
+        # Every external action is mocked. These cases cannot spawn a process,
+        # change the power profile, or signal a live engine.
+        with patch.object(guard, "ProfileMonitor", self.Monitor), \
+                patch.object(guard, "assert_idle"), \
+                patch.object(guard.subprocess, "run"), \
+                patch.object(guard.subprocess, "Popen", return_value=child), \
+                patch.object(guard.os, "killpg"), \
+                patch.object(guard.time, "sleep"), \
+                patch.object(guard.time, "time", return_value=120), \
+                patch.object(guard, "sample", side_effect=samples), \
+                patch.object(guard, "terminate") as cleanup:
+            job = dict(name="failure_receipt", command=["mock-no-process"],
+                       active_timeout_s=10, wall_timeout_s=20)
+            result = guard.run_job(job, root, {}, {"amdgpu:fake": None})
+            cleanup.assert_called_once_with(child)
+            return result
+
+    def test_persistent_read_failure_preserves_primary_error_and_open_pause(self):
+        child = SimpleNamespace(pid=999999, poll=lambda: None)
+        samples = [self.reading(), self.reading(), self.reading(81, 101),
+                   RuntimeError("monitor failed during the job"),
+                   RuntimeError("monitor still unavailable")]
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_mock_job(Path(tmp), samples, child)
+        self.assertEqual(result["rc"], 99)
+        self.assertEqual(result["failure"], "monitor failed during the job")
+        self.assertEqual(result["end_sample_error"], "monitor still unavailable")
+        self.assertIsNone(result["end"])
+        self.assertIsNone(result["ac_changed"])
+        self.assertEqual(result["thermal_pause_intervals"], [[101, 120]])
+        self.assertEqual(result["thermal_pauses"], 1)
+
+    def test_missing_final_read_cannot_return_success_or_invent_ac_state(self):
+        child = SimpleNamespace(pid=999999, poll=lambda: 0, wait=lambda: 0)
+        samples = [self.reading(), self.reading(), OSError("sensor disappeared")]
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_mock_job(Path(tmp), samples, child)
+        self.assertEqual(result["rc"], 99)
+        self.assertIn("sensor disappeared", result["failure"])
+        self.assertEqual(result["end_sample_error"], "sensor disappeared")
+        self.assertIsNone(result["end"])
+        self.assertIsNone(result["ac_changed"])
+        self.assertEqual(result["thermal_pause_intervals"], [])
+
+    def test_persistent_profile_failure_still_writes_main_receipts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / "plan.json"
+            plan.write_text(json.dumps(dict(cwd=str(root), jobs=[dict(name="mock")])) + "\n")
+            result = dict(rc=99, failure="profile monitor failed", end=None)
+            with patch.object(sys, "argv", ["thermal_guard.py", "--plan", str(plan)]), \
+                    patch.object(guard.os, "chdir"), \
+                    patch.object(guard.signal, "signal"), \
+                    patch.object(guard, "discover_sensors", return_value={}), \
+                    patch.object(guard, "profile", side_effect=["performance", OSError("CLI unavailable")]), \
+                    patch.object(guard, "run_job", return_value=result):
+                self.assertEqual(guard.main(), 99)
+            self.assertEqual(json.loads((root / "check_results.json").read_text()), [result])
+            receipt = json.loads((root / "profile_receipt.json").read_text())
+            self.assertEqual(receipt["original"], "performance")
+            self.assertIsNone(receipt["final"])
+            self.assertEqual(receipt["final_read_error"], "CLI unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()
