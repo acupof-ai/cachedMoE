@@ -326,3 +326,46 @@ Phase E ends with an accounting result and skips allocation changes; there is
 no changed prefill/long-context allocation path to qualify. Sources:
 `phase_e_memory_live.json`, `phase_e_capacity.json`, the final l3 runtime log,
 and `Engine::feed_gpu` cleanup.
+
+## Power and thermal measurement correction (2026-10-06)
+
+The owner's current policy is **performance for benchmarks and the web**,
+with AC connected and the existing 80/72°C thermal thresholds. The earlier
+Phase A speed of 110.142 ms/token was measured in power-saver. It is a quality
+receipt and a historical speed observation, not a performance-mode baseline.
+The owner accepts A's 46/57 MMLU and .118 follow-up repeated-fourgram result as
+the web baseline; these remain failed original quality gates. Phase C retains
+its stricter quality and speed requirements and may become an explicit option
+only after passing them.
+
+In the interrupted performance check, mask completed seven turns. Attention,
+MoE and tail cost **31.147/24.566/6.649 ms/token**, against historical mask
+**31.853/24.896/6.734**. The specified GPU compute regression disappeared,
+so the conditional source bisect is skipped. Off finished eight turns; mask's
+eighth turn was interrupted. These unequal, cooling-affected totals cannot
+establish a speed ranking.
+
+The old supervisor paused 243 times and spent **994.673 of 1500.48 seconds**
+cooling. Its mean sample interval was .592 seconds, including a slow power
+profile CLI call. The 89°C peak occurred on the first trigger sample;
+subsequent samples while stopped did not exceed 72°C. It also held pauses
+until an NVMe sensor that never reached 80°C fell below 72°C. Finally, it
+counted cooling against the experiment's wall budget and killed the last turn.
+Sources: `p0_power_resume/thermal_analysis.json` and
+`evidence_audit/audit_20261006T092538.json` under the raw result root.
+
+The new `bench/thermal_guard.py` samples temperature every 50 ms, moves slow
+profile reads to a monitored thread, and latches each sensor at 80°C until
+that sensor reaches 72°C. It enforces separate active and wall safety budgets,
+records AC, actual profile, clocks/DPM and absolute pause intervals, and cleans
+up the owned process group on exit. Thirteen CPU cases passed, including a
+real ordinary-process stop/resume test. The thermal threshold is a trigger,
+not a claim that already submitted GPU work can be instantly preempted.
+
+New benchmarks retain raw wall time and also subtract the intersection of
+cooling intervals with each decode interval. Absolute BenchServer timestamps
+anchor this estimate; it uses the host receipt of `done` minus engine
+`decode_ms`, rather than GPU timestamps. Prefill cooling is excluded from the
+decode adjustment. The new Phase C four-arm run uses one frozen `4079180`
+engine and default session in off/mask/tau.20/tau.10 order, with KV reset and
+expert residency carried between arms. Its outcome remains pending.

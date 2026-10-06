@@ -34,6 +34,14 @@ Anything with no source is marked `not measured`.
 `tools/chat.py` starts a conversation and streams tokens, with each new turn prefilling only the added portion.
 Correctness against the fp32 reference is 8/8 at each of the 64 token / 4K / 17K contexts.
 
+**Latest mask quality audit:** dynamic-mask P0 priority now recovers the
+historical l3 NLL **.835581**, with off unchanged at **.622784**. Plain mask
+still fails the generated MMLU gate (**46/57**, required 48) and one long-output
+repetition ratio. Its new dual-source eight-turn baseline is **110.142 ms/token**.
+Weighted-wait and speculation decisions are still pending; these are not new
+qualified defaults. [Evidence and protocol](miss_mask.md#quality-recovery-phase-a-and-repetition-gates-2026-10-05),
+[remaining work](codex_todo.md).
+
 ### 1.0 Machine-recorded measurements (ledger)
 
 The table below is **not handwritten**: when `tools/hitrate_bench.py` starts, it writes the commit, uncommitted files, `git diff` hash, exe / shader hashes,
@@ -525,7 +533,7 @@ The other half, the parts that need the checkpoint or the GPU, is run by `ctest`
 | `suite.kvcache` / `suite.kvstore` | the KV plane geometry, ring resolution | unit |
 | `suite.dspark_tree` | the tree sampler's lattice / paths / confidence / exact acceptance, **bit for bit against the Python reference** | unit |
 | `suite.sampling` | a **χ² over 200,000 draws** on L3 logits | unit |
-| `suite.kvdisk` | the SSD parked-context store / fetch / drop round trip | unit |
+| `suite.kvdisk` | SSD round trip, async coalescing/reset, queue backpressure, required save errors and stale token-prefix checks | 8 cases |
 | `suite.resident_route` | resident-only routing's selection logic (`runtime/resident_route.h`) | unit |
 | `suite.speculate` | the speculation cycle's arithmetic: position alignment, acceptance, rollback accounting | unit |
 | `suite.trace` | the per-dispatch trace's format and its parser | unit |
@@ -758,6 +766,27 @@ steps, and the reference continuation has to be produced step by step.**
    之前当前网页带 `--no-kv-disk`，且serve开启磁盘时仅切会话/退出保存。新增每轮完成/取消后一次不可变CPU快照，后台单writer原子落盘，按会话合并等待快照，256MiB等待队列（单个超大快照可独占），reset先取消/等待该会话写入再删除；普通decode不join磁盘。打包仍在GPU最后fence后、引擎线程上，不能宣称零成本；文件格式与KV量化不改。加载磁盘与正常退出会drain。
    CPU25/25、工具32/32、kvdisk5/5；Strata实机双盘5000槽exact路径通过OpenAI/Anthropic/思考正文流式：26/26/75 token快照打包1.51/2.14/6.02ms，退出前已写48/48/91KB；新进程读回75 token并bounded replay，0热暂停。非速度/质量A/B；未把小数学题当MMLU。网页恢复同mask/k5/top4/1M/5500槽与80/72°C温控，磁盘KV改为开启。另有精确prefix证明下的旧取消思考历史分类修复。
    [KV报告](kv_async.md)、[收据](kv_async_receipt.json)，raw `bench/results/kv_async/`。可选原生Vulkan DeepSeek文本后端提交至 [Strata PR #943](https://github.com/Niko1221/Strata/pull/943)，不宣称移植CUDA/HIP算子或支持DSML工具/图片。
+
+0cd. **2026-10-05：mask_quality Phase A/B 找回历史 NLL，完整质量仍不合格；KV 写盘与 GPU 配置整理完成。**
+   `ce589e8` 恢复动态 mask 的 P0 优先级。`66d0f7a` 的 P2 绕过会让 decode 赶在异步 fill 前；
+   单盘与双盘关掉该开关均回到 **.835581 / served .8135 / mass lost .1694**，off **.622784** 不变。
+   P0 最终 **62.82ms = 60.42 排队 + 2.39 service**；拷贝 .739ms 在 service 内，不能相加或当作纯 SSD 时间。
+   八轮 plain 双盘5500槽 **110.142ms/token、9.079226tok/s**（power-saver，只作历史参考），
+   served .9390、mass lost .0483、加载失败0。
+   中文64和长512结构无循环；但续轮重复4-gram是off的 **2.40倍**，MMLU生成协议 **46/57、2 invalid**，
+   **两项质量门未通过**。owner 2026-10-06 接受这一质量作为网页基线：performance、动态mask+投机，
+   D结束前k2/ONECB，GPU route按独立收益决定。C仍须通过原质量和速度门，GO后仅显式可选。
+   新重复工具正确识别已知“霓”与周期2循环，正常参考输出通过。
+   `210cb0f` 让磁盘队列满时背压，内存淘汰先确认写盘，失败保留副本；GPU整理 `4a262da`
+   集中11项启动配置、具名层号/噪声ID/ABI常量，52个shader hash不变，五项GPU对拍/guard测试实际通过。
+   Phase E 未找到安全回收≥150槽的空间，按规则跳过扩容。Phase C/D 的最终决策仍待完成。
+   [方案](mask_quality_plan.md)、[证据](miss_mask.md)、[KV语义](kv_async.md)、[接续清单](codex_todo.md)。
+
+   2026-10-06 performance复核：mask七轮attention/MoE/tail **31.147/24.566/6.649ms/token**，
+   历史八轮 **31.853/24.896/6.734**；A的GPU计算回退来自电源模式，条件源码二分SKIP。
+   旧对照off八轮完成、mask第八轮被墙钟预算中断，243次暂停耗994.673秒，不能判最终速度。
+   新监督器保留80/72°C与AC检查，逐传感器锁存、快采样、冷却与执行预算分开；C正在同引擎
+   补performance四臂八轮。原墙钟和host边界扣暂停时间均保留，后者不冒充GPU计时。
 
 0cc. **2026-10-05：动态 mask 的专家加载已异步；修正把 miss 层数误报为 stalls 的计数，新增实际专家等待。**
    同中文 prompt/seed、32 输出、双盘5500槽、power-saver 的 target trace：普通动态 mask **12.595869 tok/s**、动态k5/top4 **13.398560**（短测+6.37%，不同输出，非长期／无损结论）。k5 9周期/9 target submit，22/41草稿接受；平均verify **228.715 ms**，GPU span **218.896**，attention/MoE **86.515/106.808**，跨提交gap0；finish_routes **1.312 ms**、planner/LRU/P0 issue **.863**。主要在等待GPU执行完成，没有用P0请求队列延迟冒充token阻塞。
