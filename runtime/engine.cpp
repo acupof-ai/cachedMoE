@@ -2840,31 +2840,36 @@ Result<void> Engine::init_batch(uint32_t m_cap) {
     return {};
 }
 
-Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& apply_post) {
-    const TextConfig& c = model_cfg_.text;
-    BatchScratch& bb = cur_->layer_.batch();
+Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool &apply_post) {
+    const TextConfig &c = model_cfg_.text;
+    BatchScratch &bb = cur_->layer_.batch();
     const uint64_t hcstride = uint64_t(c.hc_mult) * c.hidden_size * sizeof(float);
-    if(gpu_route_.enabled){bb.rope=cur_->gpu_route_buffers_.rope[L];bb.rope_lat=cur_->gpu_route_buffers_.rope_lat[L];}
+    if (gpu_route_.enabled) {
+        bb.rope = cur_->gpu_route_buffers_.rope[L];
+        bb.rope_lat = cur_->gpu_route_buffers_.rope_lat[L];
+    }
 
     auto view = cur_->kvs_.layer(L);
-    if (!view) return std::unexpected(view.error());
+    if (!view)
+        return std::unexpected(view.error());
 
     BatchStep st;
-    st.layer          = L;
-    st.p0             = p0;
-    st.m              = M;
+    st.layer = L;
+    st.p0 = p0;
+    st.m = M;
     st.compress_ratio = c.compress_ratio(L);
-    st.apply_hc_post  = apply_post;
-    st.kv             = *view;
-    st.list           = batch_list_[L];
+    st.apply_hc_post = apply_post;
+    st.kv = *view;
+    st.list = batch_list_[L];
     if (!ced_.empty() && st.compress_ratio) {
-        const CedPlan& p = ced_[L];
+        const CedPlan &p = ced_[L];
         st.run_compressor = p.is_kv_source;
-        st.run_indexer    = p.is_index_source;
+        st.run_indexer = p.is_index_source;
         auto cmp = cur_->kvs_.layer(p.cmp_src);
-        if (!cmp) return std::unexpected(cmp.error());
+        if (!cmp)
+            return std::unexpected(cmp.error());
         st.kv.cmp_kv = cmp->cmp_kv;
-        st.idx_key   = cmp->idx_key;      // the source's own keys, as at M = 1
+        st.idx_key = cmp->idx_key; // the source's own keys, as at M = 1
     }
 
     // The engram writes into the residual stream BEFORE the block (design §2.1),
@@ -2872,116 +2877,155 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     // the same order `run_layer` uses, one dispatch for all M rows.
     if (cur_->engram_.has_layer(L)) {
         const bool early = gpu_route_.enabled || cfg_.gpu.batch_engram_early;
-        if (auto r = cmd_open(); !r) return r;
+        if (auto r = cmd_open(); !r)
+            return r;
         if (apply_post) {
             BatchStep prev = st;
             prev.layer = L - 1;
-            if (auto r = cur_->layer_.record_close_batch(cur_->tok_cmd_, prev); !r) return r;
+            if (auto r = cur_->layer_.record_close_batch(cur_->tok_cmd_, prev); !r)
+                return r;
         }
         for (uint32_t m = 0; m < M; ++m) {
             // Track BF: the row fetch is host I/O; the rest of this loop body is
             // a submit + fence per row. The trace sees both as one gap.
             const TimePoint f0 = Clock::now();
-            if(!early) {
-                if (auto r = cur_->engram_.fetch(L, cur_->history_, p0 + m); !r) return r;
-            } else if(!cur_->engram_.fetched(L,p0+m,m))
-                return fail(Err::FailedPrecondition,"batch engram row was not prefetched");
+            if (!early) {
+                if (auto r = cur_->engram_.fetch(L, cur_->history_, p0 + m); !r)
+                    return r;
+            } else if (!cur_->engram_.fetched(L, p0 + m, m))
+                return fail(Err::FailedPrecondition, "batch engram row was not prefetched");
             cur_->mq_ms_ += ms_since(f0);
-            if (auto r = cmd_open(); !r) return r;
-            const DeviceAddress in  = (apply_post ? bb.xout.addr : bb.x.addr) + m * hcstride;
+            if (auto r = cmd_open(); !r)
+                return r;
+            const DeviceAddress in = (apply_post ? bb.xout.addr : bb.x.addr) + m * hcstride;
             const DeviceAddress out = bb.x.addr + m * hcstride;
             const uint32_t tr_eg = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Engram,
                                                         uint16_t(m), "engram_row");
-            const TimePoint land0=Clock::now();
-            if (auto r = cur_->engram_.record(cur_->tok_cmd_, L, in, out,early?m:0); !r) return r;
-            cur_->mq_ms_+=ms_since(land0); // record joins the asynchronous row reads
+            const TimePoint land0 = Clock::now();
+            if (auto r = cur_->engram_.record(cur_->tok_cmd_, L, in, out, early ? m : 0); !r)
+                return r;
+            cur_->mq_ms_ += ms_since(land0); // record joins the asynchronous row reads
             trace::close_dispatch(&tracer_, tr_eg);
             // Distinct data and pointer-table bindings keep every row stable
             // through one submission. The arithmetic remains the decode kernel.
-            if(!early)if (auto r = cmd_flush(0); !r) return r;
+            if (!early)
+                if (auto r = cmd_flush(0); !r)
+                    return r;
         }
-        apply_post       = false;
+        apply_post = false;
         st.apply_hc_post = false;
-        st.bind_close    = false;
+        st.bind_close = false;
     }
 
     {
         const TimePoint b0 = Clock::now();
-        if (auto r = cur_->layer_.bind_batch(weights_[L], st); !r) return r;
+        if (auto r = cur_->layer_.bind_batch(weights_[L], st); !r)
+            return r;
         // `bind_batch` points hc_post's `A` at the batch scratch's own moe_y;
         // the MoE output actually lives in the union runner's y, where the M = 1
         // path's `set_moe_output` would have put it.
         const uint64_t y = cur_->moe_.union_y_address();
-        uint64_t* s = cur_->mgt_.slots(gpu::MgtStage::MhcPost);
+        uint64_t *s = cur_->mgt_.slots(gpu::MgtStage::MhcPost);
         s[gpu::slot::kA] = y;
         std::memcpy(cur_->mgt_.slots(gpu::MgtStage::MhcMix), s, gpu::kAttnStageStride);
         std::memcpy(cur_->mgt_.slots(gpu::MgtStage::MhcFinal), s, gpu::kAttnStageStride);
-        if (st.bind_close) cur_->mgt_.slots(gpu::MgtStage::MhcClose)[gpu::slot::kA] = y;
+        if (st.bind_close)
+            cur_->mgt_.slots(gpu::MgtStage::MhcClose)[gpu::slot::kA] = y;
         cur_->bind_ms_ += ms_since(b0);
     }
-    if (auto r = cmd_open(); !r) return r;
+    if (auto r = cmd_open(); !r)
+        return r;
     {
         const TimePoint r0 = Clock::now();
-        if (auto r = cur_->layer_.record_attention_batch(cur_->tok_cmd_, st); !r) return r;
+        if (auto r = cur_->layer_.record_attention_batch(cur_->tok_cmd_, st); !r)
+            return r;
         cur_->rec_ms_ += ms_since(r0);
     }
-    if(gpu_route_.enabled){
-        auto& runner=cur_->moe_.gpu_union();
+    if (gpu_route_.enabled) {
+        auto &runner = cur_->moe_.gpu_union();
         gpu_route_.steps.push_back(st);
         if (const auto capture = draft_layer_slot(L); dspark_ && capture) {
             if (auto r = runner.record_gpu_copy(cur_->tok_cmd_, bb.xout.addr,
-                    cur_->gpu_route_buffers_.hidden[*capture].addr, M * c.hidden_size, true, c.hidden_size); !r) return r;
+                                                cur_->gpu_route_buffers_.hidden[*capture].addr,
+                                                M * c.hidden_size, true, c.hidden_size);
+                !r)
+                return r;
         }
-        if(spec_inflight_&&st.run_compressor&&st.compress_ratio>1){
-            if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.cmp_y.addr,cur_->gpu_route_buffers_.carry_k[L].addr,M*c.head_dim);!r)return r;
-            if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.cmp_g.addr,cur_->gpu_route_buffers_.carry_g[L].addr,M*c.head_dim);!r)return r;
+        if (spec_inflight_ && st.run_compressor && st.compress_ratio > 1) {
+            if (auto r = runner.record_gpu_copy(cur_->tok_cmd_, bb.cmp_y.addr,
+                                                cur_->gpu_route_buffers_.carry_k[L].addr,
+                                                M * c.head_dim);
+                !r)
+                return r;
+            if (auto r = runner.record_gpu_copy(cur_->tok_cmd_, bb.cmp_g.addr,
+                                                cur_->gpu_route_buffers_.carry_g[L].addr,
+                                                M * c.head_dim);
+                !r)
+                return r;
         }
-        const auto trace_id=trace::open_dispatch(&tracer_,uint16_t(L),trace::Cls::Moe,4,"moe_gpu_union");
-        if(auto r=runner.record_gpu_route(cur_->tok_cmd_,L,M,c.num_experts_per_tok,bb.gate_ids.addr,bb.gate_weights.addr,bb.u.addr,cur_->gpu_route_buffers_.routes[L].addr);!r)return r;
-        trace::close_dispatch(&tracer_,trace_id);apply_post=true;return {};
+        const auto trace_id =
+            trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 4, "moe_gpu_union");
+        if (auto r = runner.record_gpu_route(cur_->tok_cmd_, L, M, c.num_experts_per_tok,
+                                             bb.gate_ids.addr, bb.gate_weights.addr, bb.u.addr,
+                                             cur_->gpu_route_buffers_.routes[L].addr);
+            !r)
+            return r;
+        trace::close_dispatch(&tracer_, trace_id);
+        apply_post = true;
+        return {};
     }
-    if (auto r = cmd_flush(0); !r) return r;
-    if (auto r = cur_->layer_.verify_after_attention_batch(st); !r) return r;
-    if (dspark_) for(uint32_t j=0;j<M;++j)
-        capture_draft_hidden(L,p0+j,static_cast<const float*>(bb.xout.host)+size_t(j)*c.hc_mult*c.hidden_size);
-    if (spec_inflight_ && st.run_compressor && st.compress_ratio>1) {
-        BatchCarry carry;carry.layer=L;carry.kv.resize(size_t(M)*c.head_dim);carry.score.resize(carry.kv.size());
-        wc_readback(carry.kv.data(),bb.cmp_y.host,carry.kv.size()*4);
-        wc_readback(carry.score.data(),bb.cmp_g.host,carry.score.size()*4);
+    if (auto r = cmd_flush(0); !r)
+        return r;
+    if (auto r = cur_->layer_.verify_after_attention_batch(st); !r)
+        return r;
+    if (dspark_)
+        for (uint32_t j = 0; j < M; ++j)
+            capture_draft_hidden(L, p0 + j,
+                                 static_cast<const float *>(bb.xout.host) +
+                                     size_t(j) * c.hc_mult * c.hidden_size);
+    if (spec_inflight_ && st.run_compressor && st.compress_ratio > 1) {
+        BatchCarry carry;
+        carry.layer = L;
+        carry.kv.resize(size_t(M) * c.head_dim);
+        carry.score.resize(carry.kv.size());
+        wc_readback(carry.kv.data(), bb.cmp_y.host, carry.kv.size() * 4);
+        wc_readback(carry.score.data(), bb.cmp_g.host, carry.score.size() * 4);
         batch_carry_.push_back(std::move(carry));
     }
-    if (batch_probe) batch_probe(L, cur_->layer_);
+    if (batch_probe)
+        batch_probe(L, cur_->layer_);
 
     // --- routing, one decision per POSITION ---------------------------------
     const uint32_t topk = c.num_experts_per_tok;
-    const auto* ids_all = static_cast<const uint32_t*>(bb.gate_ids.host);
-    const auto* wts_all = static_cast<const float*>(bb.gate_weights.host);
+    const auto *ids_all = static_cast<const uint32_t *>(bb.gate_ids.host);
+    const auto *wts_all = static_cast<const float *>(bb.gate_weights.host);
     std::array<uint32_t, gpu::kMgtMaxM * 16> bids{};
-    std::array<float,    gpu::kMgtMaxM * 16> bwts{};
+    std::array<float, gpu::kMgtMaxM * 16> bwts{};
     std::vector<uint16_t> near_ids;
-    std::vector<float>    near_scores;
+    std::vector<float> near_scores;
     near_ids.reserve(size_t(M) * 16);
     near_scores.reserve(size_t(M) * 16);
     cur_->rr_pending_.clear();
     for (uint32_t m = 0; m < M; ++m) {
-        const uint32_t* ids_raw = ids_all + size_t(m) * 16;
-        const float*    wts_raw = wts_all + size_t(m) * 16;
+        const uint32_t *ids_raw = ids_all + size_t(m) * 16;
+        const float *wts_raw = wts_all + size_t(m) * 16;
         for (uint32_t i = 0; i < 16; ++i) {
             near_ids.push_back(static_cast<uint16_t>(ids_raw[i]));
             near_scores.push_back(wts_raw[i]);
         }
         uint32_t eff_ids[16];
-        float    eff_w[16];
+        float eff_w[16];
         uint16_t kept_ids[16];
-        float    kept_w[16];
+        float kept_w[16];
         uint32_t n_kept = topk;
-        const uint32_t* ids = ids_raw;
-        const float*    wts = wts_raw;
+        const uint32_t *ids = ids_raw;
+        const float *wts = wts_raw;
         // The DSpark block's phase inside a verify batch is the ROW, not the LRU
         // clock: row 0 is the last accepted token and routes exactly, rows 1..
         // are the drafts and route resident-only (docs/p4_resident_routing.md §10).
         ResidentOnly ro = resident_only_;
-        if (ro == ResidentOnly::Verify) ro = (m == 0) ? verify_first_ : verify_draft_;
+        if (ro == ResidentOnly::Verify)
+            ro = (m == 0) ? verify_first_ : verify_draft_;
         if (ro != ResidentOnly::Off && ro != ResidentOnly::Mask &&
             route_resident_only(L, ro, ids_raw, wts_raw, topk, eff_ids, eff_w, kept_ids, kept_w,
                                 n_kept, cur_->rr_pending_)) {
@@ -2994,25 +3038,25 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         }
     }
 
-    if(spec_diagnostics_ && spec_inflight_)
-        for(size_t i=0;i<size_t(M)*topk;++i)
-            batch_route_requests_[size_t(L)*M*topk+i]=uint16_t(bids[i]);
+    if (spec_diagnostics_ && spec_inflight_)
+        for (size_t i = 0; i < size_t(M) * topk; ++i)
+            batch_route_requests_[size_t(L) * M * topk + i] = uint16_t(bids[i]);
     GpuMoeBridge::BatchCall bc;
-    bc.layer   = L;
-    bc.m       = M;
-    bc.ids     = bids.data();
+    bc.layer = L;
+    bc.m = M;
+    bc.ids = bids.data();
     bc.weights = bwts.data();
-    bc.topk    = topk;
-    bc.x       = static_cast<const float*>(bb.u.host);
-    bc.y       = nullptr;
-    bc.hidden  = c.hidden_size;
+    bc.topk = topk;
+    bc.x = static_cast<const float *>(bb.u.host);
+    bc.y = nullptr;
+    bc.hidden = c.hidden_size;
 
     // The union is what the batch READS, so it is what the planner is handed:
     // one expert is fetched once for the whole batch, which is the whole point
     // of the union dispatch (docs/p4_dspark_runtime.md §6.1).
     std::vector<uint32_t> un = cur_->moe_.union_experts(bc);
     std::vector<uint16_t> chosen(un.size());
-    std::vector<float>    chosen_w(un.size(), 0.0f);
+    std::vector<float> chosen_w(un.size(), 0.0f);
     for (size_t u = 0; u < un.size(); ++u) {
         chosen[u] = static_cast<uint16_t>(un[u]);
         for (uint32_t m = 0; m < M; ++m)
@@ -3024,10 +3068,10 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     {
         const TimePoint g0 = Clock::now();
         store::RouteDecision route;
-        route.layer       = L;
-        route.chosen      = std::span<const uint16_t>(chosen);
-        route.weights     = std::span<const float>(chosen_w);
-        route.near_ids    = std::span<const uint16_t>(near_ids);
+        route.layer = L;
+        route.chosen = std::span<const uint16_t>(chosen);
+        route.weights = std::span<const float>(chosen_w);
+        route.near_ids = std::span<const uint16_t>(near_ids);
         route.near_scores = std::span<const float>(near_scores);
         if (resident_only_ == ResidentOnly::Mask) {
             guard_layer(L, {}, un.data());
@@ -3035,9 +3079,10 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
             cur_->open_guard_ = cur_->layer_guard_;
         }
         auto plan = planner_.plan_layer(route, clock_);
-        if (!plan) return std::unexpected(plan.error());
-        cur_->timings_[L].hits       = static_cast<uint32_t>(plan->hits.size());
-        cur_->timings_[L].misses     = static_cast<uint32_t>(plan->misses.size());
+        if (!plan)
+            return std::unexpected(plan.error());
+        cur_->timings_[L].hits = static_cast<uint32_t>(plan->hits.size());
+        cur_->timings_[L].misses = static_cast<uint32_t>(plan->misses.size());
         cur_->timings_[L].miss_bytes = plan->miss_bytes;
         batch_miss_bytes_ += plan->miss_bytes;
         if (resident_only_ == ResidentOnly::Mask) {
@@ -3050,32 +3095,41 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
                     const ExpertKey key{static_cast<uint16_t>(L), static_cast<uint16_t>(bids[at])};
                     if (std::find(plan->hits.begin(), plan->hits.end(), key) == plan->hits.end())
                         bwts[at] = 0.0f;
-                    else ++served;
+                    else
+                        ++served;
                     kept += bwts[at];
                 }
-                ++rr_.layers; rr_.requested += topk; rr_.served += served;
-                rr_.skipped += topk - served; rr_.shared_only += served == 0;
-                if (total > 0) rr_.mass_lost_sum += 1.0 - kept / total;
+                ++rr_.layers;
+                rr_.requested += topk;
+                rr_.served += served;
+                rr_.skipped += topk - served;
+                rr_.shared_only += served == 0;
+                if (total > 0)
+                    rr_.mass_lost_sum += 1.0 - kept / total;
             }
-            for (const auto& [key, stamp] : plan->joined) (void)store_.touch(key, stamp, true);
+            for (const auto &[key, stamp] : plan->joined)
+                (void)store_.touch(key, stamp, true);
             un = cur_->moe_.union_experts(bc);
-        } else if (auto r = planner_.wait_layer(*plan); !r) return std::unexpected(r.error());
+        } else if (auto r = planner_.wait_layer(*plan); !r)
+            return std::unexpected(r.error());
         cur_->timings_[L].gate_ms = ms_since(g0);
         for (uint32_t e : un)
             if (!store_.resident(ExpertKey{static_cast<uint16_t>(L), static_cast<uint16_t>(e)}))
                 return fail(Err::Internal,
                             std::format("layer {} expert {} is not resident after the verify "
-                                        "batch's gate; store: {}", L, e,
-                                        store_.stats().to_string()));
+                                        "batch's gate; store: {}",
+                                        L, e, store_.stats().to_string()));
     }
     {
         std::vector<uint32_t> slots(un.size());
-        for (uint32_t i = 0; i < slots.size(); ++i) slots[i] = i;
+        for (uint32_t i = 0; i < slots.size(); ++i)
+            slots[i] = i;
         guard_layer(L, std::span<const uint32_t>(slots), un.data());
     }
     {
         const TimePoint h0 = Clock::now();
-        if (auto r = cur_->moe_.stage_batch_union(bc); !r) return r;
+        if (auto r = cur_->moe_.stage_batch_union(bc); !r)
+            return r;
         cur_->timings_[L].moe_host_ms = ms_since(h0);
         // Track BF: the two halves of the union's host cost -- `stage` is the
         // read of x out of GPU-visible memory plus act_quant, `table` is the
@@ -3084,12 +3138,14 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         cur_->mt_ms_ += cur_->moe_.union_info().table_ms;
     }
     batch_union_ += cur_->moe_.union_info().routed;
-    if (auto r = cmd_open(); !r) return r;
+    if (auto r = cmd_open(); !r)
+        return r;
     {
         const TimePoint r0 = Clock::now();
-        const uint32_t tr_u = trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 4,
-                                                   "moe_union");
-        if (auto r = cur_->moe_.record_batch_union(cur_->tok_cmd_); !r) return r;
+        const uint32_t tr_u =
+            trace::open_dispatch(&tracer_, uint16_t(L), trace::Cls::Moe, 4, "moe_union");
+        if (auto r = cur_->moe_.record_batch_union(cur_->tok_cmd_); !r)
+            return r;
         trace::close_dispatch(&tracer_, tr_u);
         cur_->rec_ms_ += ms_since(r0);
     }
@@ -3112,8 +3168,10 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     const auto planner_before = planner_.stats();
     batch_host_ms_.clear();
     batch_route_host_ms_.fill(0);
-    if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
-    if (weights_.empty()) return fail(Err::FailedPrecondition, "no layer weights resolved");
+    if (!gpu_ready_)
+        return fail(Err::FailedPrecondition, "call init_gpu() first");
+    if (weights_.empty())
+        return fail(Err::FailedPrecondition, "no layer weights resolved");
     const TextConfig &c = model_cfg_.text;
     const uint32_t M = static_cast<uint32_t>(tokens.size());
     if (M == 0 || M > gpu::kMgtMaxM)
@@ -3132,7 +3190,8 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     const bool gpu_route = cfg_.gpu.batch_gpu_route;
     if (gpu_route && streams_.size() > 1)
         return fail(Err::FailedPrecondition, "batch GPU routing requires streams=1");
-    if (auto r = init_batch(std::max(M, batch_cap_)); !r) return r;
+    if (auto r = init_batch(std::max(M, batch_cap_)); !r)
+        return r;
     if (uint64_t(p0) + M > max_context())
         return fail(Err::ResourceExhausted,
                     std::format("a batch at {}..{} past the {}-position context", p0, p0 + M - 1,
@@ -3157,7 +3216,8 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         TimelineValue &guard;
         gpu::GpuScratch::View rope, rope_lat;
         ~FinishRoute() {
-            if (!e.gpu_route_.enabled) return;
+            if (!e.gpu_route_.enabled)
+                return;
             if (e.cur_->tok_open_) {
                 (void)e.cur_->tok_cmd_.end();
                 e.cur_->tok_open_ = false;
@@ -3178,23 +3238,30 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         auto &runner = cur_->moe_.gpu_union();
         if (auto r = runner.init_gpu_route(c.num_hidden_layers, gpu::default_shader_dir()); !r)
             return r;
-        if (auto r = cur_->gpu_route_buffers_.initialize(alloc_a_, c); !r) return r;
-        if (auto r = cur_->mgt_.begin_immutable(); !r) return r;
-        if (auto r = cur_->dec_.begin_immutable(); !r) return r;
+        if (auto r = cur_->gpu_route_buffers_.initialize(alloc_a_, c); !r)
+            return r;
+        if (auto r = cur_->mgt_.begin_immutable(); !r)
+            return r;
+        if (auto r = cur_->dec_.begin_immutable(); !r)
+            return r;
         snapshot_guard = ++guard_clock_;
         auto snapshot = store_.guarded_snapshot(snapshot_guard);
-        if (!snapshot) return std::unexpected(snapshot.error());
+        if (!snapshot)
+            return std::unexpected(snapshot.error());
         gpu_route_.snapshot = std::move(*snapshot);
         auto shared = cur_->moe_.snapshot_with_shared(gpu_route_.snapshot, c.num_hidden_layers);
-        if (auto r = runner.upload_snapshot(shared); !r) return r;
+        if (auto r = runner.upload_snapshot(shared); !r)
+            return r;
     }
 
     ++batch_forward_calls_;
     last_batch_layers_ = 0;
     const TimePoint t_start = Clock::now();
-    if (spec_diagnostics_) batch_host_ms_.emplace_back("setup_snapshot", ms_since(host_begin));
+    if (spec_diagnostics_)
+        batch_host_ms_.emplace_back("setup_snapshot", ms_since(host_begin));
     tracer_.token_begin(p0);
-    if (cur_->history_.size() < size_t(p0) + M) cur_->history_.resize(size_t(p0) + M, 0);
+    if (cur_->history_.size() < size_t(p0) + M)
+        cur_->history_.resize(size_t(p0) + M, 0);
     for (uint32_t m = 0; m < M; ++m)
         cur_->history_[p0 + m] = tokens[m];
 
@@ -3229,7 +3296,8 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     // Once for the batch, not once a layer: the counts every layer may read are
     // the LAST position's, and the window half of every list is the same shape
     // for all M queries (docs/p4_dspark_runtime.md §6.4 item 3).
-    if (auto r = prepare_ced(p0 + M - 1); !r) return r;
+    if (auto r = prepare_ced(p0 + M - 1); !r)
+        return r;
     BatchScratch &bb = cur_->layer_.batch();
     write_batch_window_lists(bb, c.sliding_window, p0, M);
 
@@ -3260,7 +3328,8 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     }
 
     const auto record_begin = Clock::now();
-    if (spec_diagnostics_) batch_host_ms_.emplace_back("input_ced_engram_issue", ms_since(t_start));
+    if (spec_diagnostics_)
+        batch_host_ms_.emplace_back("input_ced_engram_issue", ms_since(t_start));
     bool apply_post = false;
     for (uint32_t L = 0; L < c.num_hidden_layers; ++L) {
         ++last_batch_layers_;
@@ -3298,12 +3367,15 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
             bt.inv_t = 1.0f / sampling_.temperature;
         }
     }
-    if (auto r = cmd_open(); !r) return r;
-    if (auto r = cur_->layer_.record_tail_batch(cur_->tok_cmd_, last, bt); !r) return r;
+    if (auto r = cmd_open(); !r)
+        return r;
+    if (auto r = cur_->layer_.record_tail_batch(cur_->tok_cmd_, last, bt); !r)
+        return r;
     const auto flush_begin = Clock::now();
     if (spec_diagnostics_)
         batch_host_ms_.emplace_back("record_layers_tail", ms_since(record_begin));
-    if (auto r = cmd_flush(0); !r) return r;
+    if (auto r = cmd_flush(0); !r)
+        return r;
     const auto routes_begin = Clock::now();
     if (spec_diagnostics_) {
         batch_host_ms_.emplace_back("submit_fence", ms_since(flush_begin));
@@ -3316,9 +3388,11 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         snapshot_guard = 0;
         if (cur_->submits_ != 1)
             return fail(Err::Internal, "GPU verify must have exactly one queue submission");
-        if (auto r = gpu_route_.finish(*this, p0, M); !r) return r;
+        if (auto r = gpu_route_.finish(*this, p0, M); !r)
+            return r;
     }
-    if (spec_diagnostics_) batch_host_ms_.emplace_back("finish_routes", ms_since(routes_begin));
+    if (spec_diagnostics_)
+        batch_host_ms_.emplace_back("finish_routes", ms_since(routes_begin));
     const auto readout_begin = Clock::now();
     flush_trace_batch();
     profiler_.note_hot_bytes(uint64_t(c.vocab_size) * c.hidden_size * 2);
@@ -4542,7 +4616,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         return fail(Err::FailedPrecondition,
                     "DSpark step requires an initialized stream-0 session and nonempty context");
     const uint32_t p0 = context_length(), V = model_cfg_.text.vocab_size;
-    if (p0 + 1 >= max_context()) return fail(Err::FailedPrecondition, "DSpark context is full");
+    if (p0 + 1 >= max_context())
+        return fail(Err::FailedPrecondition, "DSpark context is full");
     uint32_t k = std::min({cfg_.speculation.max_draft, max_new - 1, max_context() - p0 - 1});
     SpecStep out;
     out.cycle.k = k;
@@ -4551,33 +4626,39 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
     if (spec_diagnostics_ && !spec_diagnostics_started_) {
         auto slots = store_.evictable();
         std::sort(slots.begin(), slots.end(), [](const auto &a, const auto &b) {
-            if (a.last_use_token != b.last_use_token) return a.last_use_token < b.last_use_token;
+            if (a.last_use_token != b.last_use_token)
+                return a.last_use_token < b.last_use_token;
             return a.slot < b.slot;
         });
         for (const auto &slot : slots)
             initial.push_back(uint32_t(slot.key.layer) * 384 + slot.key.expert);
     }
     const TimePoint t0 = Clock::now();
-    if (auto r = seed_draft(p0 - 1); !r) return std::unexpected(r.error());
+    if (auto r = seed_draft(p0 - 1); !r)
+        return std::unexpected(r.error());
     const double draft_seed_ms = spec_diagnostics_ ? ms_since(t0) : 0.0;
     std::vector<uint32_t> input{root};
     if (k) {
         const bool trim_tail = cfg_.gpu.draft_trim_tail;
         auto draft = dspark_->draft(p0 - 1, root, trim_tail ? k : layout::kDsparkBlockSize, false);
-        if (!draft) return std::unexpected(draft.error());
+        if (!draft)
+            return std::unexpected(draft.error());
         proposal = std::move(*draft);
         if (cfg_.speculation.min_confidence) {
             auto selected = draft_prefix_from_confidence(std::span(proposal.confidence).first(k),
                                                          *cfg_.speculation.min_confidence);
-            if (!selected) return std::unexpected(selected.error());
+            if (!selected)
+                return std::unexpected(selected.error());
             k = *selected;
             out.cycle.k = k;
         }
         input.insert(input.end(), proposal.tokens.begin(), proposal.tokens.begin() + k);
     }
     out.cycle.draft_ms = ms_since(t0);
-    if (auto r = init_batch(cfg_.speculation.max_draft + 1); !r) return std::unexpected(r.error());
-    if (auto r = snapshot_batch_ring(p0, k + 1); !r) return std::unexpected(r.error());
+    if (auto r = init_batch(cfg_.speculation.max_draft + 1); !r)
+        return std::unexpected(r.error());
+    if (auto r = snapshot_batch_ring(p0, k + 1); !r)
+        return std::unexpected(r.error());
     // Verification may wrap onto committed hidden means in the 128-position
     // draft window. Preserve the overwritten slots as well as the target KV:
     // a rejected suffix must not prevent a later continuation from reseeding.
@@ -4593,7 +4674,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         hidden_masks[j] = cur_->draft_mask_[slot];
     }
     auto carry = cur_->kvs_.backup_rows(p0, p0);
-    if (!carry) return std::unexpected(carry.error());
+    if (!carry)
+        return std::unexpected(carry.error());
     batch_carry_before_ = std::move(*carry);
     batch_carry_.clear();
     spec_inflight_ = true;
@@ -4643,9 +4725,11 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
                          "invalid draft token or nonfinite verification logit");
                 break;
             }
-            if (rank.better >= cfg_.speculation.accept_topk) break;
+            if (rank.better >= cfg_.speculation.accept_topk)
+                break;
         }
-        if (a) a = accepted;
+        if (a)
+            a = accepted;
     } else
         a = accept_topk_prefix({input.data() + 1, k}, matrix, V, cfg_.speculation.accept_topk);
     if (!a) {
@@ -4681,12 +4765,14 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
                 r.topk_fallback = true;
                 r.nucleus_size = nuc.ids.size();
                 const auto it = std::find(nuc.ids.begin(), nuc.ids.end(), r.token);
-                if (it != nuc.ids.end()) r.p_token = nuc.p[size_t(it - nuc.ids.begin())];
+                if (it != nuc.ids.end())
+                    r.p_token = nuc.p[size_t(it - nuc.ids.begin())];
                 r.sample_ms = ms_since(ts);
             }
         }
         out.rows.push_back(r);
-        if (std::find(stops.begin(), stops.end(), r.token) != stops.end()) break;
+        if (std::find(stops.begin(), stops.end(), r.token) != stops.end())
+            break;
     }
     const uint32_t n = uint32_t(out.rows.size());
     // Keep the public selected-token scoring API on the last emitted row,
@@ -4710,7 +4796,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         reset_context();
         return std::unexpected(error);
     };
-    if (auto r = restore_batch_ring(p0, n - 1, k + 1); !r) return abort(r.error());
+    if (auto r = restore_batch_ring(p0, n - 1, k + 1); !r)
+        return abort(r.error());
     for (uint32_t j = n; j <= k; ++j) {
         const uint32_t slot = (p0 + j) % layout::kSlidingWindow;
         std::memcpy(cur_->draft_hidden_.data() + size_t(slot) * layout::kDsparkCaptureWidth,
@@ -4720,10 +4807,12 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         cur_->draft_mask_[slot] = hidden_masks[j];
     }
     // Restore carry, then overwrite exactly the slots the retained prefix wrote.
-    if (auto r = cur_->kvs_.restore_carry(batch_carry_before_); !r) return abort(r.error());
+    if (auto r = cur_->kvs_.restore_carry(batch_carry_before_); !r)
+        return abort(r.error());
     for (const auto &c : batch_carry_) {
         auto v = cur_->kvs_.layer(c.layer);
-        if (!v) return abort(v.error());
+        if (!v)
+            return abort(v.error());
         const uint32_t ratio = model_cfg_.text.compress_ratio(c.layer),
                        D = model_cfg_.text.head_dim;
         for (uint32_t j = 0; j < n; ++j) {
@@ -4735,7 +4824,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
     }
     cur_->history_.resize(p0 + n);
     cur_->kvs_.resolve_ring(p0 + n);
-    if (auto r = prepare_ced(p0 + n - 1); !r) return abort(r.error());
+    if (auto r = prepare_ced(p0 + n - 1); !r)
+        return abort(r.error());
     std::vector<float> committed;
     committed.reserve(size_t(n) * layout::kDsparkCaptureWidth);
     for (uint32_t p = p0; p < p0 + n; ++p) {
@@ -4743,7 +4833,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
                   size_t(p % layout::kSlidingWindow) * layout::kDsparkCaptureWidth;
         committed.insert(committed.end(), h, h + layout::kDsparkCaptureWidth);
     }
-    if (auto r = dspark_->append(p0, committed); !r) return abort(r.error());
+    if (auto r = dspark_->append(p0, committed); !r)
+        return abort(r.error());
     out.cycle.rollback_ms = ms_since(tr);
     const double wall = ms_since(t0);
     // The batch path has no per-kernel GPU timestamps. Keep its unmeasured
@@ -4758,7 +4849,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         auto array = [](const auto &values) {
             std::string s = "[";
             for (const auto &x : values) {
-                if (s.size() > 1) s += ",";
+                if (s.size() > 1)
+                    s += ",";
                 s += std::format("{}", x);
             }
             return s + "]";
@@ -4773,7 +4865,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
                 "{{\"schema\":1,\"main_layers\":40,\"main_experts\":384,\"main_topk\":6,\"draft_"
                 "experts\":128,\"initial_main_lru\":{},\"slots\":{},\"draft_pins\":384}}\n",
                 array(initial), store_.slot_count());
-            if (auto r = write(header); !r) return abort(r.error());
+            if (auto r = write(header); !r)
+                return abort(r.error());
             spec_diagnostics_started_ = true;
         }
         for (uint32_t j = 0; j < k; ++j)
@@ -4796,13 +4889,15 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         }
         std::string draft_stages = "{";
         for (const auto &[name, elapsed] : proposal.timing_ms) {
-            if (draft_stages.size() > 1) draft_stages += ",";
+            if (draft_stages.size() > 1)
+                draft_stages += ",";
             draft_stages += std::format("\"{}\":{}", name, elapsed);
         }
         draft_stages += "}";
         std::string draft_gpu_stages = "{";
         for (const auto &[name, elapsed] : proposal.gpu_timing_ms) {
-            if (draft_gpu_stages.size() > 1) draft_gpu_stages += ",";
+            if (draft_gpu_stages.size() > 1)
+                draft_gpu_stages += ",";
             draft_gpu_stages += std::format("\"{}\":{}", name, elapsed);
         }
         draft_gpu_stages += "}";
@@ -4821,7 +4916,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         line.resize(line.size() - 2);
         line += ",\"verify_host_ms\":{";
         for (size_t i = 0; i < batch_host_ms_.size(); ++i) {
-            if (i) line += ",";
+            if (i)
+                line += ",";
             line += std::format("\"{}\":{}", batch_host_ms_[i].first, batch_host_ms_[i].second);
         }
         line +=
@@ -4831,7 +4927,8 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
                         batch_expert_wait_calls_, batch_expert_miss_joins_, batch_expert_wait_ms_,
                         batch_load_failures_[0], batch_load_failures_[1], batch_load_failures_[2],
                         batch_load_failures_[3], store_.fixed_cache(), store_.cache_frozen());
-        if (auto r = write(line); !r) return abort(r.error());
+        if (auto r = write(line); !r)
+            return abort(r.error());
         if (std::fflush(spec_diagnostics_))
             return abort(Status{Err::Io, "cannot flush speculative diagnostics"});
         // Include opt-in diagnostic logging in the public wall time. These
