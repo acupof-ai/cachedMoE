@@ -242,3 +242,28 @@ ONECB + GPU snapshot route **13.49**。最后一项相对普通 mask 吞吐约
 固定mask+ONECB/GPU route的独立4K/17K端到端检索也已完成：各9/9输出前缀与参考一致、各5/5草稿接受；4900槽、双盘、0淘汰/加载失败/温控暂停。它是两次检索，不证明任意长对话无损。
 
 最终双盘5500槽、profiling-off速度：固定mask **18.091544**、固定投机 **18.492909 tok/s**（+2.22%，在抖动内），投机cycle **121.668256 ms**，draft **20.817178**、verify **98.694461**。28周期35/54接受，2.25output/cycle，与profiling对照全部tokens/ranks/routes一致。主目录52个shader hash一致、CPU25/工具30/streams拒绝通过；精简收据 `dspark_e2e_receipt.json`，完整日志留主目录 `bench/results/spec_e2e/`。网页停止、performance已恢复。
+
+## 11. 后续 owner 决定与已关闭阶段（2026-10-06）
+
+[codex_todo.md §0](codex_todo.md#0-owner-决定2026-10-06优先于下文任何旧表述) 优先于本方案的旧规则。
+后续作业和网页使用performance、接AC、80/72°C暂停后继续并记录；保留原墙钟与扣暂停的active估算，
+后者不冒充GPU计算时间。旧power-saver速度及§10固定初始cache、停止网页的收据保留作历史。
+当前网页规则是动态mask、正常LRU/异步加载、投机开启；D完成前k2，ONECB开，GPU route须经独立收益判断。
+owner接受A的46/57与续轮重复 .118作网页基线，不等于原质量门通过；C仍按原门判断，GO也仅增加显式选项。
+最终k由D在performance下实测选择，网页保留off/plain；此处不提前宣布C/D完成或网页已恢复。
+
+已关闭阶段不因更名或新测速重开：
+
+- Phase1 `81826bd` 与Phase3 `c796e56` 已分别提交；当前配置与整理验收见接续清单和
+  `bench/results/mask_quality/final_validation_summary.json`，不将测试通过写成严格短decode8/8。
+- Phase4实际pair-dot保持NO-GO/开关0：同输出、接受率、union的cycle节省1.925ms，减半 .963ms低于2ms。
+  来源 `dspark_topk.md` §15、`dspark_e2e_receipt.json` 和 `bench/results/spec_e2e/fixed_final/`。
+- Phase5按原动态Phase1–3周期约180ms的175–189档判SKIP；低服务率且循环的固定121ms格不能改写该条件。
+  union计时也不支持新实现：27组隔离单层fixture的40层均值外推均低于2ms，非完整cycle实测，最大值保留。
+  来源 `bench/results/mask_quality/final_review/main_union_timing.json`；不重开WMMA/champion/mega。
+- Phase0的<1% profiling目标未证明；新同状态fixture为 +4.131%，生产profiling默认关闭、测试observer不启用。
+  来源 `bench/results/mask_quality/final_review/onecb_serial.log` 和最终验证汇总，不宣称达到<1%。
+
+C/D最终候选质量和速度、网页模式实际GPU验收、当前分支合并推送仍待完成。
+随后按 `codex_todo.md` §4.7在main上另开 `../cachedmoe-rename`，执行完整改名及旧名/数据兼容验收；
+不能以展示名已更新替代全面改名完成。

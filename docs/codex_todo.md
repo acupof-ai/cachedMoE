@@ -110,6 +110,10 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 短周期定义为滚动 128 token 内周期 ≤8、至少四轮且至少 16 token；同 token 连串 >3 另行判失败。
 
 - [ ] 将标定与边界测试收据写进报告；最终所有候选输出均列四项重复指标。
+  - [x] 标定与边界测试收据已写入 `miss_mask.md` 的 Phase B（`11af3d1`）。四个已知输出
+    判定正确；来源 `phase_b_calibration.json`、`cpu_final.log`、`tools_final.log`。
+    首次工具门禁32/33的失败保留，最终25/25与33/33另列，未冒充首次全过。
+  - [ ] C/D 最终所有候选逐轮列出最长连串、短周期、重复4-gram和distinct-2；原合并条目暂不关闭。
 
 ### C：加权部分 miss 等待，GPU 未验证
 
@@ -159,6 +163,8 @@ Engram 全量 scale 默认没有常驻，也没有可再释放一次的整套 ho
 - [x] 只有确证可安全腾出 ≥150槽（约3GB）才改分配，并验证 prefill/长上下文。
   没有足够安全空间则按方案跳过，记录依据。
   决策：SKIP。padding 与 scratch 不足3GB，且没有证明能安全挪作完整专家槽；未修改分配。
+  追加收据：账由 `38d730a` 导出，`11af3d1` 补明释放的是 bootstrap host expert store
+  （`store_.reset()`）；来源 `phase_e_accounting.json`、`phase_e_capacity.json` 与 `miss_mask.md` Phase E。
 
 ## 3. 收尾与交付
 
@@ -198,6 +204,8 @@ mask 只比 off 快约 4%（历史 +43%）。
   收据：条件未触发，SKIP 二分。performance 七轮 mask attention/MoE/tail 为
   31.147/24.566/6.649 ms/token，历史八轮为31.853/24.896/6.734；指定算子退化已消失。
   原八轮对照尚未完整，墙钟受温控暂停污染，不能从这些算子数推断最终速度。
+  追加来源：`p0_power_resume/thermal_analysis.json`、`evidence_audit/audit_20261006T092538.json`。
+  仅关闭条件二分；§4.1完整八轮与C/D的速度决策仍保持未完成。
 - [ ] 查清前，C 的「比 off 快 ≥20%」门和 D 的 k 选择都不判；温控仍按 80/72，
   若 performance 下温度无法跑完，写明并请 owner 决定测速用哪个模式。
   （owner 已定 performance，见 §0。）
@@ -219,17 +227,36 @@ mask 只比 off 快约 4%（历史 +43%）。
 
 ### 4.4 P2：代码质量（原 #10、#13 等，被删或只做了一部分）
 
-- [ ] **一个 commit 一件事**：`4a262da` 混入了 `tests/test_io.cpp` +41 行；以后拆开。
-- [ ] GPU route 状态移出 `Engine`：`4a262da` 只把 `saved_*` 改成按层数的 vector，
+- [x] **一个 commit 一件事**：`4a262da` 混入了 `tests/test_io.cpp` +41 行；以后拆开。
+  收据：后续状态抽离 `b154180`、配置 `60d0458`、ABI测试尺寸 `34eede7` 和格式提交分别独立；
+  保留 `4a262da` 的混合提交事实，不重写历史，后续仍须遵守本规则。
+- [x] GPU route 状态移出 `Engine`：`4a262da` 只把 `saved_*` 改成按层数的 vector，
   `route_snapshot_`/`route_steps_`/`finish_gpu_routes` 仍在 `Engine` 里，未完成。
-- [ ] 环境变量收进 `RuntimeConfig`：`engine.cpp` 的 `getenv` 由 47 降到 38，剩余项列清单，热路径上的优先。
-- [ ] 魔数：核对 `L>=37`、`6*16*2`、`128799`、`opidx*336+80` 是否都已命名，未命名的列出。
-- [ ] 新代码不要只追加到文件末尾；超长行与一行多语句按周边风格整理（与功能改动分 commit）。
+  收据：`b154180` 将状态与finish移入 `runtime/gpu_route_state.{h,cpp}`，Engine仅持有该状态对象；
+  顺序核对与最终数值验证见 `gpu_state_draft/cleanup_receipt.json`、`final_validation_summary.json`。
+- [x] 环境变量收进 `RuntimeConfig`：`engine.cpp` 的 `getenv` 由 47 降到 38，剩余项列清单，热路径上的优先。
+  收据：`4a262da` 集中GPU配置，`60d0458` 移除decode热路径8键/9处读取；剩29处、27键是
+  启动、session或prefill边界，逐项清单在 `gpu_state_draft/cleanup_receipt.json`，未声称全部getenv归零。
+- [x] 魔数：核对 `L>=37`、`6*16*2`、`128799`、`opidx*336+80` 是否都已命名，未命名的列出。
+  收据：`4a262da` 使用配置层号/噪声ID、`layout::kSavedRouteWords` 和共享plan ABI常量；
+  `7513dd0` 补prefill捕获层号，`34eede7` 补测试尺寸。上述四个旧模式在审查范围内无剩余，
+  host/shader尺寸有交叉断言；来源 `model/layout.h`、`gpu/shaders/dspark_plan_layout.h` 与最终验证收据。
+- [x] 新代码不要只追加到文件末尾；超长行与一行多语句按周边风格整理（与功能改动分 commit）。
+  收据：GPU route/ONECB相关实现重排与必要顺序注释在 `4a262da`、`b154180`；格式专用
+  `d5b7913`、`723d218`、`74eb84c` 与功能提交分开，可执行token核对和最终数值门另有收据。
+  本项覆盖此次审查范围，不宣称全仓库已统一格式；来源 `gpu_state_draft/cleanup_receipt.json`、
+  `final_static_review_20261006_094804/review.json`、`final_validation_summary.json`。
 
 ### 4.5 P3：先测量再决定
 
-- [ ] 单线程 union kernel：先用 per-op 计时看占周期多少，<2ms 就不动。
-- [ ] profiling 开销 3.33%，目标 <1%；查是哪些计时点，默认关闭或降采样。
+- [x] 单线程 union kernel：先用 per-op 计时看占周期多少，<2ms 就不动。
+  收据：`64b0443` 的27组单层fixture实测，M=1/3/6均值乘40约 .533/.970/1.754ms，
+  是算术外推，非完整cycle实测；M6最大外推4.080ms保留。按均值减半收益不足3%不改kernel。
+  来源 `final_review/main_union_timing.json`、`union_profile_receipt.json` 与 `final_validation_summary.json`。
+- [x] profiling 开销 3.33%，目标 <1%；查是哪些计时点，默认关闭或降采样。
+  收据：旧serial校准是 -3.33%，不等于开销；同状态ONECB fixture on/off为 +4.131%。
+  处理为生产draft profiling默认off，主模型测试observer为空时不录额外query；不声称已达到<1%。
+  来源 `final_review/onecb_serial.log`、`final_validation_summary.json` 的profiling段与 `core/config.h`。
 - [ ] draft head 约 10ms：FP8 head / vocab 子集只有估算，不实现，等 owner 决定。
 
 ### 4.6 不做（已关闭，勿重开）
