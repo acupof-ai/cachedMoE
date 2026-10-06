@@ -1037,6 +1037,8 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
             std::printf("GPU hidden mean M=6: bit-identical to host BF16 mean\n");
             rig.alloc.free(*hc);rig.alloc.free(*mean);
         }
+        gpu::QueryPool route_queries;
+        REQUIRE_OK(route_queries.create(rig.device, 2));
         for(uint32_t live:{1u,3u,6u})for(const auto& route:routings)for(uint32_t mask:{0u,1u,2u}){
             auto masked=table;std::vector<float> rw=w;
             for(uint32_t e=0;e<rig.config.text.n_routed_experts;++e)
@@ -1052,11 +1054,16 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
             std::vector<uint16_t> quant(size_t(live)*dim);wc_readback(quant.data(),bridge.union_debug_x(),quant.size()*2);
             auto second=masked;masked.insert(masked.end(),second.begin(),second.end());
             REQUIRE_OK(runner.upload_snapshot(masked));REQUIRE_OK(cb->begin());
-            REQUIRE_OK(runner.record_gpu_route(*cb,1,live,kTopk,gi->dev_addr,gw->dev_addr,gx->dev_addr,saved->dev_addr));
+            REQUIRE_OK(cb->reset_queries(route_queries, 0, 2));
+            REQUIRE_OK(runner.record_gpu_route(*cb,1,live,kTopk,gi->dev_addr,gw->dev_addr,gx->dev_addr,saved->dev_addr,nullptr,&route_queries));
             REQUIRE_OK(cb->end());REQUIRE_OK(gpu::submit_and_wait(rig.device,*cb));
             wc_readback(actual.data(),runner.y(),actual.size()*4);
             CHECK(actual==ref);std::vector<uint16_t> got(quant.size());wc_readback(got.data(),bridge.union_debug_x(),got.size()*2);CHECK(got==quant);
             std::printf("GPU route M=%u %s mask=%u: y and act_quant bit-identical\n",live,route.what,mask);
+            const auto route_seconds = route_queries.elapsed_seconds(0, 1);
+            REQUIRE(route_seconds);
+            std::printf("GPU route union timing M=%u %s mask=%u: %.6f ms\n",
+                        live,route.what,mask,*route_seconds * 1000);
         }
         rig.store.set_completed_timeline(77);rig.alloc.free(*gi);rig.alloc.free(*gw);rig.alloc.free(*gx);rig.alloc.free(*saved);
     }

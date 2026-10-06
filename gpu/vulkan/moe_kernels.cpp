@@ -797,7 +797,7 @@ Result<void> MoeRunner::record_gpu_copy(CommandBuffer &cmd, uint64_t src, uint64
 }
 Result<void> MoeRunner::record_gpu_route(CommandBuffer &cmd, uint32_t layer, uint32_t m,
                                          uint32_t topk, uint64_t ids, uint64_t weights, uint64_t x,
-                                         uint64_t saved, uint32_t *) {
+                                         uint64_t saved, uint32_t *, QueryPool *route_queries) {
 #if defined(DEEPMOE_ENABLE_VULKAN)
     // Each layer has immutable arguments. The routing dispatch selects from
     // the guarded snapshot and writes two VkDispatchIndirectCommand records.
@@ -806,6 +806,8 @@ Result<void> MoeRunner::record_gpu_route(CommandBuffer &cmd, uint32_t layer, uin
     constexpr uint32_t indirect_stride = 2 * indirect_bytes;
     if (layer >= gpu_layers_ || m < 1 || m > spec_.m || m * topk + 1 > dims_.slots)
         return fail(Err::InvalidArgument, "GPU route dimensions");
+    if (route_queries && route_queries->count() < 2)
+        return fail(Err::InvalidArgument, "GPU route timing needs two query slots");
     auto *a = reinterpret_cast<uint64_t *>(static_cast<std::byte *>(gpu_args_.host_ptr) +
                                            uint64_t(layer) * gpu_arg_stride_);
     uint64_t ptr[]{ids,
@@ -823,10 +825,14 @@ Result<void> MoeRunner::record_gpu_route(CommandBuffer &cmd, uint32_t layer, uin
         uint32_t l, m, k, s, e, u, h, n;
         uint64_t src, dst;
     } p{layer, m, topk, dims_.slots, dims_.experts_per_layer, ga, 0, 0, 0, 0};
+    // Optional observer brackets only routing/union and its indirect dependency.
+    // Normal verification records no extra GPU queries.
+    if (route_queries) ROUTE_TRY(cmd.write_timestamp(*route_queries, 0, false));
     ROUTE_TRY(cmd.bind(gpu_route_, gpu_route_sets_[layer]));
     ROUTE_TRY(cmd.push(gpu_route_, &p, sizeof p));
     ROUTE_TRY(cmd.dispatch(1));
     ROUTE_TRY(cmd.indirect_barrier());
+    if (route_queries) ROUTE_TRY(cmd.write_timestamp(*route_queries, 1, true));
     XActPush xa{x, dims_.hidden, m};
     ROUTE_TRY(cmd.bind(xact_, set_xact_));
     ROUTE_TRY(cmd.push(xact_, &xa, sizeof xa));

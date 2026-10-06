@@ -251,7 +251,8 @@ public:
     // snapshot is [layers][experts][6], each layer includes its shared row.
     Result<void> record_gpu_route(CommandBuffer&,uint32_t layer,uint32_t m,
                                   uint32_t topk,uint64_t ids,uint64_t weights,uint64_t x,
-                                  uint64_t saved,uint32_t* trace_unused=nullptr);
+                                  uint64_t saved,uint32_t* trace_unused=nullptr,
+                                  QueryPool* route_queries=nullptr);
 
     // Bytes of weights + scales one A+B pair touches, the numerator of the
     // effective GB/s of design §7.1 rule 2.
