@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <format>
 #include <span>
 
@@ -173,6 +174,12 @@ std::string GenerateStats::json_fields() const {
                      json_number(prefill_ms), json_number(prefill_tok_s()), json_number(ttft_ms),
                      json_number(decode_ms), decode_steps, json_number(decode_tok_s()),
                      json_number(total_ms));
+    // json_number's nine significant digits lose seconds at Unix-epoch scale.
+    // Seventeen digits preserve the double for alignment with thermal logs.
+    s += "\"decode_finished_unix\":";
+    s += decode_finished_unix && std::isfinite(*decode_finished_unix)
+             ? std::format("{:.17g}", *decode_finished_unix) : "null";
+    s += ',';
     s += std::format("\"prefill_hit_rate\":{},\"decode_hit_rate\":{},\"prefill_nvme_mb\":{},"
                      "\"decode_nvme_mb\":{},",
                      json_number(prefill_hit_rate()), json_number(decode_hit_rate()),
@@ -436,9 +443,23 @@ void turn_account(TurnState& ts, const DecodeStepResult& r) {
     account_sample(st, r);
 }
 
+void finish_decode_clock(TurnState& ts) {
+    // Take both clocks at the decode boundary. Later reheat, other streams,
+    // checkpoint backpressure and delayed delivery of done must not move it.
+    const TimePoint finished = Clock::now();
+    const auto finished_unix = std::chrono::system_clock::now();
+    ts.st.decode_ms = ts.st.decode_steps
+                          ? std::chrono::duration<double, std::milli>(finished - ts.td).count()
+                          : 0.0;
+    ts.st.decode_finished_unix =
+        std::chrono::duration<double>(finished_unix.time_since_epoch()).count();
+}
+
 void turn_finish(Engine& e, TurnState& ts, const SessionOptions& opt) {
     GenerateStats& st = ts.st;
-    if (st.decode_ms == 0.0) st.decode_ms = st.decode_steps ? ms_since(ts.td) : 0.0;
+    // A stopped multi-stream turn already froze both clocks, even when it
+    // performed no decode steps. Do not replace its end with another stream's.
+    if (!st.decode_finished_unix) finish_decode_clock(ts);
     st.total_ms = ms_since(ts.t0);
     st.context_after = e.context_length();
     // docs/p4_hitrate.md §7: the turn is over, so this is the boundary the heat
@@ -539,7 +560,7 @@ Result<MultiStats> generate_multi(
                 ts[i].live = false;
                 // This stream stops here; the others may run on, so its own
                 // decode_ms must be taken now.
-                ts[i].st.decode_ms = ts[i].st.decode_steps ? ms_since(ts[i].td) : 0.0;
+                finish_decode_clock(ts[i]);
                 continue;
             }
             Engine::MultiStep m;

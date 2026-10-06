@@ -13,6 +13,7 @@
 #include "core/types.h"
 #include "core/wc_read.h"
 #include "model/layout.h"
+#include "runtime/session.h"
 #include "tests/test_framework.h"
 
 using namespace deepmoe;
@@ -116,6 +117,35 @@ DEEPMOE_TEST(json, keeps_large_integers_exact) {
     REQUIRE_OK(off);
     CHECK_EQ(*off, 9007199254740993ull);
     CHECK_EQ(v->uint_at("bytes").value_or(0), 18800640ull);
+}
+
+DEEPMOE_TEST(json, generate_stats_preserves_decode_boundary_precision) {
+    runtime::GenerateStats st;
+    st.decode_steps = 3;
+    st.decode_ms = 125.25;
+    // Unix-epoch magnitudes need more than json_number's nine digits. This
+    // exercises the actual protocol writer and reader without an engine/GPU.
+    const double finished = 1791251234.1234567;
+    st.decode_finished_unix = finished;
+    auto doc = json_parse("{" + st.json_fields() + "}");
+    REQUIRE_OK(doc);
+    CHECK_EQ(doc->double_or("decode_finished_unix", -1), finished);
+    CHECK_EQ(doc->double_or("decode_ms", -1), st.decode_ms);
+    CHECK_EQ(doc->int_or("decode_steps", -1), 3);
+}
+
+DEEPMOE_TEST(json, generate_stats_distinguishes_unset_clock_from_unix_zero) {
+    runtime::GenerateStats st;
+    auto missing = json_parse("{" + st.json_fields() + "}");
+    REQUIRE_OK(missing);
+    REQUIRE(missing->find("decode_finished_unix") != nullptr);
+    CHECK(missing->find("decode_finished_unix")->is_null());
+
+    st.decode_finished_unix = 0.0;
+    auto epoch = json_parse("{" + st.json_fields() + "}");
+    REQUIRE_OK(epoch);
+    CHECK(epoch->find("decode_finished_unix")->is_number());
+    CHECK_EQ(epoch->double_or("decode_finished_unix", -1), 0.0);
 }
 
 DEEPMOE_TEST(json, handles_escapes_and_unicode) {

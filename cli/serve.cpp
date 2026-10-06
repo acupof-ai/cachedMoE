@@ -21,6 +21,8 @@
 //   {"event":"prefill","done":i,"total":n}
 //   {"event":"token","id":..,"text":"..","t_ms":..,"step_ms":..,"p":..,"margin":..,"hit":..}
 //   {"event":"done","session":.., <GenerateStats::json_fields>}   finish: stop|length|context|cancel
+//     decode_finished_unix is the decode_ms end, captured before reheat/checkpoint;
+//     it is null when generation never reached a decode-finish boundary.
 //   {"event":"cancel","upto":n}          acknowledges a cancel (from the reader thread)
 //   {"event":"error","message":".."}
 // `temperature` <= 0 is greedy; the defaults are the model README's 1.0 / 0.95.

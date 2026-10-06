@@ -51,6 +51,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <functional>
 #include <list>
@@ -189,6 +190,9 @@ struct GenerateStats {
     std::string prefill_mode = "none";     // none | decode | gpu
     std::string finish = "length";         // stop | length | context | cancel
     double   prefill_ms = 0.0, ttft_ms = 0.0, decode_ms = 0.0, total_ms = 0.0;
+    // Wall-clock counterpart of decode_ms's monotonic end, before reheat or
+    // disk checkpoint work. Unset when generation did not reach that boundary.
+    std::optional<double> decode_finished_unix;
     // Track R2: a rollback in front of the prefill.
     uint32_t rollback_dropped = 0, replay_steps = 0;
     double   replay_ms = 0.0;
