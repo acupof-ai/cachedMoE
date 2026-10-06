@@ -3,13 +3,16 @@
 // actual routing, retained KV, cancellation and named-session replay.
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstdlib>
+#include <thread>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "core/json.h"
 #include "model/layout.h"
+#include "runtime/decode_boundary.h"
 #include "runtime/session.h"
 #include "tests/l1_golden.h"
 #include "tests/test_framework.h"
@@ -110,6 +113,80 @@ DEEPMOE_TEST(decode_mode, stats_report_actual_policy_and_unset_metadata) {
     REQUIRE_OK(spec);
     CHECK_EQ(spec->string_or("decode_mode", ""), std::string("mask-spec"));
     CHECK(spec->bool_or("speculation_enabled", false));
+}
+
+DEEPMOE_TEST(decode_mode, exact_boundary_waits_for_capacity_not_all_fills) {
+    store::ExpertStore store;
+    CacheConfig cache;
+    cache.slots_per_slab = 4;
+    cache.budget_bytes = 4ull * layout::kExpertSlotBytes;
+    REQUIRE_OK(store.init(std::make_unique<store::HostSlabBacking>(), cache, 1, 4));
+    std::array<uint32_t, 4> slots{};
+    for (uint16_t expert = 0; expert < slots.size(); ++expert) {
+        auto fill = store.begin_fill({0, expert});
+        REQUIRE_OK(fill);
+        slots[expert] = fill->slot;
+    }
+    std::thread completion([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        store.finish_fill(slots[0], true);
+        store.finish_fill(slots[1], true);
+    });
+    auto boundary = runtime::settle_decode_boundary(store, 2, std::chrono::seconds(1));
+    completion.join();
+    REQUIRE_OK(boundary);
+    CHECK_EQ(boundary->before.filling, 4u);
+    CHECK(boundary->waits > 0);
+    CHECK_EQ(boundary->after.available(), 2u);
+    CHECK_EQ(boundary->after.filling, 2u);
+    CHECK_EQ(store.stats().filling, 2u);
+    CHECK_EQ(store.completed_timeline(), 0ull);
+}
+
+DEEPMOE_TEST(decode_mode, exact_boundary_rejects_guards_without_clearing_them) {
+    store::ExpertStore store;
+    CacheConfig cache;
+    cache.slots_per_slab = 1;
+    cache.budget_bytes = layout::kExpertSlotBytes;
+    REQUIRE_OK(store.init(std::make_unique<store::HostSlabBacking>(), cache, 1, 1));
+    auto fill = store.begin_fill({0, 0});
+    REQUIRE_OK(fill);
+    REQUIRE_OK(store.finish_fill(fill->slot, true));
+    REQUIRE_OK(store.set_guard(fill->slot, 7));
+    store.set_completed_timeline(6);
+    CHECK_ERR(runtime::settle_decode_boundary(store, 1, std::chrono::seconds(1)),
+              Err::ResourceExhausted);
+    auto capacity = runtime::decode_boundary_capacity(store);
+    CHECK_EQ(capacity.guarded, 1u);
+    CHECK_EQ(capacity.filling, 0u);
+    CHECK_EQ(capacity.max_guard, 7ull);
+    CHECK_EQ(store.completed_timeline(), 6ull);
+    store.set_completed_timeline(7);
+    auto ready = runtime::settle_decode_boundary(store, 1, std::chrono::milliseconds(0));
+    REQUIRE_OK(ready);
+    CHECK_EQ(ready->waits, 0u);
+}
+
+DEEPMOE_TEST(decode_mode, exact_boundary_timeout_and_failed_fill) {
+    store::ExpertStore store;
+    CacheConfig cache;
+    cache.slots_per_slab = 1;
+    cache.budget_bytes = layout::kExpertSlotBytes;
+    REQUIRE_OK(store.init(std::make_unique<store::HostSlabBacking>(), cache, 1, 1));
+    auto fill = store.begin_fill({0, 0});
+    REQUIRE_OK(fill);
+    CHECK_ERR(runtime::settle_decode_boundary(store, 1, std::chrono::milliseconds(1)),
+              Err::ResourceExhausted);
+    CHECK_EQ(store.stats().filling, 1u);
+    std::thread completion([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        store.finish_fill(fill->slot, false);
+    });
+    auto ready = runtime::settle_decode_boundary(store, 1, std::chrono::seconds(1));
+    completion.join();
+    REQUIRE_OK(ready);
+    CHECK_EQ(ready->after.free, 1u);
+    CHECK_EQ(store.stats().fills_failed, 1ull);
 }
 
 DEEPMOE_TEST(gpu_request_policy, retained_window_sessions_and_exact_plain) {
@@ -238,8 +315,13 @@ DEEPMOE_TEST(gpu_request_policy, retained_window_sessions_and_exact_plain) {
     // Match the CLI ordering: establish policy before session activation.
     const auto default_history = engine.history();
     {
+        const auto before = runtime::decode_boundary_capacity(engine.store());
+        std::printf("named Off boundary before: %s\n", before.describe().c_str());
         auto policy = engine.request_decode_policy(DecodeMode::OffPlain);
         REQUIRE_OK(policy);
+        const auto after = runtime::decode_boundary_capacity(engine.store());
+        std::printf("named Off boundary after: %s\n", after.describe().c_str());
+        CHECK(after.available() >= engine.model().text.num_experts_per_tok);
         REQUIRE_OK(pool.activate("other"));
         CHECK(engine.resident_only() == runtime::Engine::ResidentOnly::Off);
         auto other = request;
