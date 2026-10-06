@@ -61,13 +61,23 @@ cases pass. Old artifact names resolve to the three canonical build artifacts.
 The audit covers 87 native environment keys, 75 Python files, 15 typed shared
 facts and 39 optional model-metadata fallback sites.
 [Configuration authorities and scope](runtime_configuration.md).
-These are CPU and format checks. The actual main executable's GPU numerical
-validation, push, own-worktree cleanup and live web restoration remain pending.
-The preflight found AC=0 and no external mirror device, so the nine GPU jobs
-remain prepared only. The web launcher dry-run selects the canonical executable
-and tracked launch policy; it does not start a service. All 11 owner untracked
-result directories are preserved. Receipts are under
-`bench/results/mask_quality/rename_prepared/final_config_validation/`.
+**Actual-main numerical validation is now accepted (2026-10-06).** Hardware
+recovery restored AC and the full 48/48-shard read-only mirror. Nine serial jobs
+pass with ten registered cases and no skips: off/mask64 NLL
+**.622784/.835581**, short decode **6/8** and own-prefill **7/8**, and 4K/16K
+teacher-forced/free-running **8/8**. Source `825ee1a` uses the unchanged main
+executable `e6a9cce4...`; all 358 source, 55 artifact and 92 input hashes still
+match the freeze. This preserves the baseline, including its strict short
+decode limitation. Four thermal pauses total .543 seconds; test timing is
+not a new speed comparison. The tiny-cache switch fixture emits expected P0
+resource warnings, so its success does not establish zero full-cache failures.
+An isolated old KV snapshot restores 4,710 positions and continues generation
+with only the normal two-token rollback/prefill. Graceful quit drains disk KV;
+the original snapshot and eight transcripts remain byte/mtime identical.
+Push, owned cleanup and guarded web/API restoration remain pending. All 11
+owner untracked result directories are preserved. Raw summaries:
+`actual_main_numerical_summary.json` and `legacy_live_smoke/legacy_live_result.json`
+under `bench/results/mask_quality/rename_prepared/final_config_validation/`.
 
 **Current audit (2026-10-06): Phase C is NO-GO; Phase D has no eligible candidate.**
 Restoring strict P0 priority recovers dynamic-mask l3 NLL **.835581**. Phase A

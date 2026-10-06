@@ -1,7 +1,7 @@
 {
   "schema": "cachedmoe.configuration.receipt.v1",
   "source_commit": "43a2ab9bae460cc0fb8c1f2d14bf9f5775304301",
-  "status": "SOURCE_CPU_AND_MAIN_BUILD_ACCEPTED_GPU_PUSH_WEB_PENDING",
+  "status": "SOURCE_CPU_MAIN_BUILD_GPU_AND_LEGACY_CONTINUATION_ACCEPTED_PUSH_WEB_PENDING",
   "coverage": {
     "native_environment_keys": 87,
     "native_files_in_scope_audit": 127,
@@ -74,7 +74,42 @@
       "live_web_started": false,
       "owner_untracked_directories_preserved": 11,
       "committed_rename_audit_unreviewed_hits": 0,
-      "prepared_acceptance_adapter_cpu_cases": 15
+      "prepared_acceptance_adapter_cpu_cases": 15,
+      "numerical_acceptance": {
+        "source_commit": "825ee1a586f566fdf85defe9ea21c7b0df8172eb",
+        "jobs": 9,
+        "registered_cases": 10,
+        "skips": 0,
+        "off_nll": 0.622784,
+        "mask_nll": 0.835581,
+        "short_decode": [
+          6,
+          8
+        ],
+        "own_prefill_decode": [
+          7,
+          8
+        ],
+        "longctx_4k": [
+          8,
+          8
+        ],
+        "longctx_16k": [
+          8,
+          8
+        ],
+        "scope": "Current baseline preserved; strict short 8/8 + 8/8 remains unmet"
+      },
+      "legacy_gpu_continuation": {
+        "restored_tokens": 4710,
+        "replay_steps": 128,
+        "rollback_dropped": 2,
+        "reused_tokens": 4708,
+        "prefill_tokens": 2,
+        "generated": 2,
+        "engine_exit": 0,
+        "protected_originals_unchanged": true
+      }
     }
   },
   "observable_corrections": [
@@ -86,10 +121,10 @@
     "empty shader path remains empty and does not hash cwd"
   ],
   "limits": [
-    "New actual-main executable GPU numerical acceptance pending; no new numerical pass claimed",
-    "Local main fast-forward and existing build accepted; push, own-worktree cleanup and live web restoration pending",
-    "GPU preflight AC=0 and external read-only mirror device unavailable; nine main jobs remain prepared only",
-    "Current mask quality baseline and prior C/D NO-GO decisions are unchanged",
+    "Local main build, numerical and old-KV continuation accepted; push, owned cleanup and live web restoration remain pending",
+    "Strict short decode 8/8 + 8/8 remains unmet; current 6/8 and 7/8 preserved",
+    "Mask MMLU46/57 and strict repetition remain owner-accepted exceptions; C/D NO-GO decisions unchanged",
+    "1M capacity checks do not establish full 1M prompt quality or prefill feasibility",
     "Reserved public unsupported fields and distinct format/layout/experiment defaults remain documented"
   ],
   "raw_receipts": [
@@ -216,6 +251,26 @@
     {
       "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_gpu_prepared_source_freeze.json",
       "sha256": "b82ece086d1149520ca761299897295a93ab639c19e2da51a5eed0418a60ee50"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/actual_main_numerical_summary.json",
+      "sha256": "e998b4dca3214707b43cadfef589ba0707d7ce387c3bfd397e48e1e192ffceb0"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/hardware_recovered_preflight_825ee1a.json",
+      "sha256": "4685c270c98983b7219cf1c0a65fc1a5b9ffcf9db02acd8099d936352bb027bd"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/legacy_live_smoke/legacy_live_result.json",
+      "sha256": "fe65ebae02782da44aa2b50fde8a4eba40965cfcd5b845914bdf08c7f93530ed"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/legacy_live_smoke/check_results.json",
+      "sha256": "102172a74727bf2e5ad96acc4dbc42a5aecac85dcefe40f5831a6eec2f3d455b"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/legacy_live_smoke/acceptance_correction.json",
+      "sha256": "e65bc95be75cd3aab2ddd3aabb4dd95934eefd87857202c666878406938d4d5c"
     }
   ]
 }

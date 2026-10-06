@@ -356,7 +356,7 @@ CMake 选项 `CACHEDMOE_*`。
 **验收（全部在 performance 模式、一次一个 GPU 任务）：**
 
 - [x] 全新 build 目录和已有 build 目录都能构建；52 个 SPIR-V shader hash 与改名前一致。
-- [ ] CPU 25/25、`tests/run_all.py` 全过；l3 off NLL 逐位 `.622784`；`suite.decode` 不低于改名前。
+- [x] CPU 25/25、`tests/run_all.py` 全过；l3 off NLL 逐位 `.622784`；`suite.decode` 不低于改名前。
 - [x] 只设旧 `DEEPMOE_*` 变量、只设新变量、两者都设，三种情况各跑一次 CPU 门，行为一致。
 - [ ] 网页用新程序名恢复，`/api/config` 正常，旧 transcript 和 KV 快照能打开。
 - [x] `rg -i deepmoe` 剩余命中逐条列进报告，每条写明为什么保留。
@@ -538,3 +538,17 @@ CMake 选项 `CACHEDMOE_*`。
   ③温控恢复网页并实际验证API、旧聊天和KV续接，不刷新浏览器。此三项仍未完成。
 - 最终清单已核对主目录同名tracked文件与工作树，没有用户新编辑被覆盖；原11个untracked结果目录仍在。
   当前remote main仍`a016a78`，8080拒绝连接，AC=0且无外置NVMe；目标未标为完成。
+
+## 18. Codex 追加收据（2026-10-06，硬件恢复与实际main数值门）
+
+- 外置PCIe NVMe恢复，镜像只读挂载；48/48 shard尺寸与header核对，AC/performance。
+- 实际main `825ee1a` 的9项串行数值作业全rc0，10个registered cases、0 skip；
+  off/mask64 NLL `.622784/.835581`，短decode 6/8、own-prefill 7/8，4K/16K两种检查均8/8。
+  原严格短decode门仍未达8/8；本次证明不低于既有baseline，未重写A质量例外或C/D止损。
+- 358源文件、55产物、92输入逐hash与冻结版一致；52 SPIR-V不变。80/72温控4次暂停共.543秒，
+  不把验收用时当新速度跑分。tiny-cache switch fixture的P0资源告警有单独范围说明。
+- 原旧web KV的隔离副本GPU恢复4710 positions、回放128；正常rollback2，复用4708、补prefill2、生成2，
+  正常退出排空disk writer。原KV和8份聊天的hash/size/mtime均未改。
+  首次smoke脚本漏算正常rollback，失败记录及修正后的验收都保留，没有改runtime逻辑。
+- 原始收据：`rename_prepared/final_config_validation/actual_main_numerical_summary.json`、
+  `legacy_live_smoke/legacy_live_result.json`；仍待push/own清理与网页/API恢复。

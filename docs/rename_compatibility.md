@@ -12,9 +12,10 @@ byte-identical. Actual CLI guards and legacy source/KV readers also pass.
 The local main fast-forward at `bec29fd` and its existing directory build also
 pass, with three prefix combinations of 31 CPU suites and 52 tool gates.
 The actual main executable passes the five CLI policy cases, three artifact
-symlinks, old-source compilation and two legacy KV reads. New-executable GPU
-numerical checks, push, own-worktree cleanup and live web restoration remain
-pending. GPU work requires AC and the disconnected read-only mirror.
+symlinks, old-source compilation and two legacy KV reads. The actual main executable also passes nine numerical jobs with ten registered
+cases and no skips, preserving off/mask NLL .622784/.835581, short decode 6/8
+and own-prefill 7/8, and 4K/16K 8/8. The RO mirror has 48/48 healthy shards.
+Push, own-worktree cleanup and live web restoration remain pending.
 See [configuration scope](runtime_configuration.md).
 
 | Interface | Compatibility rule |
@@ -36,8 +37,16 @@ legacy snapshots with model-tag validation: `default` has 396 positions and four
 planes; `web` has 4,710 positions and four planes. File SHA-256, size and mtime
 were unchanged. The local raw evidence is
 `bench/results/mask_quality/rename_prepared/final_config_validation/binary_shader_legacy_final_receipt.json`.
-This proves CPU format/read compatibility. GPU restoration, current web/API
-configuration and session continuation still need final serial validation.
+A separate isolated copy of the old web snapshot also restores all 4,710
+positions on the actual GPU engine, replays the bounded 128-position window,
+reuses 4,708 tokens after the normal two-token rollback, prefills only those
+two tokens, and generates two new tokens. Normal quit drains disk writes.
+The original snapshot and eight transcripts retain their SHA-256, size and
+mtime. Raw evidence: `legacy_live_smoke/legacy_live_result.json` in the same
+validation directory. The first smoke assertion omitted normal rollback; its
+failed harness receipt and the corrected acceptance run are both preserved.
+Current web/API acceptance remains pending. This is compatibility evidence,
+not a new throughput or quality measurement.
 
 Run the committed-tree audit after the final documentation commit:
 

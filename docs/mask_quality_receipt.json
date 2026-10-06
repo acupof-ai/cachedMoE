@@ -805,9 +805,9 @@
   },
   "delivery_update": {
     "schema": "cachedmoe.actual_main_delivery_update.v1",
-    "verified_local_commit": "e5131abbb3caf16d2c8887a5c0d45bb3992ccfa9",
+    "verified_local_commit": "825ee1a586f566fdf85defe9ea21c7b0df8172eb",
     "verified_remote_main_commit": "a016a78aa38a99b230e6138184d1130eae2e5b0a",
-    "status": "CPU_AND_FORMAT_ACCEPTED_GPU_PUSH_WEB_PENDING",
+    "status": "CPU_MAIN_GPU_AND_OLD_KV_ACCEPTED_PUSH_WEB_PENDING",
     "goal_complete": false,
     "references": [
       {
@@ -815,15 +815,22 @@
         "sha256": "1d51351d357cf06ec1f0e72b560d9542e8d0108bcb7248534b25c954dc171fdb"
       },
       {
+        "path": "bench/results/mask_quality/rename_prepared/final_config_validation/actual_main_numerical_summary.json",
+        "sha256": "e998b4dca3214707b43cadfef589ba0707d7ce387c3bfd397e48e1e192ffceb0"
+      },
+      {
+        "path": "bench/results/mask_quality/rename_prepared/final_config_validation/legacy_live_smoke/legacy_live_result.json",
+        "sha256": "fe65ebae02782da44aa2b50fde8a4eba40965cfcd5b845914bdf08c7f93530ed"
+      },
+      {
         "path": "docs/runtime_configuration_receipt.json",
-        "sha256": "f1ba75b3e84aaf429cc8b62fe624b16cd907b8fda29e92180d841048da845279"
+        "sha256": "4510872cb5631bd135d45c6d46e3311524a9ef9d73c8c1c7838d89889af7d4af"
       }
     ],
     "remaining": [
-      "Actual-main numerical gates on AC and full read-only mirror",
       "Push accepted main and clean only owned worktree/branch",
-      "Restore guarded web and verify actual API/old-session continuation without refreshing browser"
+      "Restore guarded web and verify actual API/history without refreshing browser"
     ],
-    "scope": "All prior measured phases, original failures, owner exceptions and historical pending_at_receipt remain unchanged. Current source/CPU acceptance does not imply current GPU or live web acceptance."
+    "scope": "Prior measured phases, failures, owner exceptions and historical pending_at_receipt remain unchanged. Actual-main numerical and old-KV continuation now verified; push/live web pending."
   }
 }
