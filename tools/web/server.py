@@ -441,6 +441,9 @@ class Serve:
         """Require a clean engine exit; a killed writer has no drain receipt."""
         try:
             if self.p.poll() is None:
+                # quit is queued behind generation. Cancel the current turn
+                # first so shutdown can reach the required KV save promptly.
+                self.cancel()
                 self.send({"op": "quit"})
             code = self.p.wait(timeout=120)
         except (OSError, subprocess.TimeoutExpired) as error:

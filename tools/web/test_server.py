@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import Mock, call, mock_open, patch
 
 import server
 
@@ -17,7 +17,8 @@ class WebSettings(unittest.TestCase):
         serve.p.poll.return_value = None
         serve.p.wait.return_value = 0
         serve.close()
-        serve.send.assert_called_once_with({"op": "quit"})
+        self.assertEqual(serve.send.call_args_list,
+                         [call({"op": "cancel"}), call({"op": "quit"})])
         serve.p.kill.assert_not_called()
         serve.p.wait.return_value = 1
         with self.assertRaisesRegex(RuntimeError, "KV drain"):
