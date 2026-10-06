@@ -100,6 +100,26 @@ class QualityReportTests(unittest.TestCase):
         baseline["complete"] = False
         self.assertEqual(c_decision(arm, baseline)["verdict"], "PENDING")
 
+    def test_adjusted_gain_without_observed_gain_cannot_be_GO(self):
+        evidence = dict(off_nll=.622784, nll=.623711, mmlu_n=57, mmlu_correct=48,
+            chinese64_no_loop=True, long512_no_loop=True, long512_repeat_vs_off=True,
+            decode_baseline=True, longctx_baseline=True)
+        arm = dict(complete=True, performance_verified=True,
+            timing=dict(active_ms_per_token=80, raw_ms_per_token=140,
+                        engine_decode_boundaries=True),
+            quality=quality_gates(evidence), repetition_vs_off=dict(passed=True),
+            failures=dict(no_load_failures=True))
+        baseline = dict(complete=True, performance_verified=True,
+            timing=dict(active_ms_per_token=120, raw_ms_per_token=150,
+                        engine_decode_boundaries=True))
+        decision = c_decision(arm, baseline)
+        self.assertAlmostEqual(decision["active_speedup_vs_off"], 1.5)
+        self.assertIn("below 10%", decision["verdict"])
+        arm["timing"]["raw_ms_per_token"] = 130
+        self.assertIn("required 20%", c_decision(arm, baseline)["verdict"])
+        arm["timing"]["raw_ms_per_token"] = None
+        self.assertEqual(c_decision(arm, baseline)["verdict"], "PENDING")
+
     def test_failure_counter_deltas_do_not_blame_previous_arm(self):
         old = ZERO_STATUS | dict(store="failed fills 2")
         self.assertTrue(failure_report(old, old)["no_load_failures"])

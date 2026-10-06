@@ -234,6 +234,12 @@ def c_decision(arm, baseline):
     timing, control = arm["timing"], baseline["timing"] if baseline else {}
     value, off = timing.get("active_ms_per_token"), control.get("active_ms_per_token")
     speedup = off / value if off and value and value > 0 else None
+    raw_value, raw_off = timing.get("raw_ms_per_token"), control.get("raw_ms_per_token")
+    raw_speedup = raw_off / raw_value if raw_off and raw_value and raw_value > 0 else None
+    # CPU suspension subtraction can include time when queued GPU work kept
+    # running. An option must clear the speed gate in the observed wall cost
+    # as well as the adjusted estimate before it can become GO.
+    qualified_speedup = min(speedup, raw_speedup) if speedup and raw_speedup else None
     quality = arm["quality"]
     if (not arm["complete"] or arm["performance_verified"] is not True or
             not baseline or not baseline["complete"] or baseline["performance_verified"] is not True):
@@ -243,18 +249,18 @@ def c_decision(arm, baseline):
     elif (timing.get("engine_decode_boundaries") is not True or
           control.get("engine_decode_boundaries") is not True):
         verdict = "PENDING"
-    elif speedup is not None and speedup < 1.10:
+    elif qualified_speedup is not None and qualified_speedup < 1.10:
         verdict = "NO-GO: speedup below 10%"
-    elif speedup is not None and speedup < 1.20:
+    elif qualified_speedup is not None and qualified_speedup < 1.20:
         verdict = "NO-GO: required 20% speedup not reached"
-    elif (speedup is not None and quality["passed"] is True and
+    elif (qualified_speedup is not None and quality["passed"] is True and
           arm["repetition_vs_off"]["passed"] is True and arm["failures"]["no_load_failures"] is True):
         verdict = "GO: explicit option only; owner default unchanged"
     else:
         verdict = "PENDING"
     return dict(verdict=verdict, active_speedup_vs_off=speedup,
-                raw_speedup_vs_off=control.get("raw_ms_per_token") / timing["raw_ms_per_token"]
-                if control.get("raw_ms_per_token") and timing.get("raw_ms_per_token") else None,
+                raw_speedup_vs_off=raw_speedup,
+                speed_gate="at least 20% in raw wall cost and cooling-adjusted estimate",
                 missing_quality=quality["missing"])
 
 
