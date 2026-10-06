@@ -866,7 +866,7 @@
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_windows_workspace",
       "reason": "These are the actual old Windows workspace paths/dated P3 worktree commands, not current Linux defaults.",
-      "line_regex": "C:\\\\Users\\\\Asus\\\\code\\\\deepmoe|5d4c324|^cd \\.\\.\\\\deepmoe-r1|P3 \u8d77\u56db\u6761"
+      "line_regex": "C:\\\\Users\\\\Asus\\\\code\\\\deepmoe|5d4c324|^cd \\.\\.\\\\deepmoe-r1|P3 起四条"
     },
     {
       "id": "build-volume-label",
@@ -1144,6 +1144,34 @@
       "role": "legacy_root_ambiguity_diagnostic",
       "reason": "The diagnostic explicitly confirms the legacy directory remains intact when both roots exist.",
       "line_regex": "legacy deepmoe directory retained"
+    },
+    {
+      "id": "fixture-native-owned-environment",
+      "path_glob": "tests/test_runtime_environment.cpp",
+      "token_regex": "DEEPMOE_[A-Z0-9_]+",
+      "role": "runtime_alias_fixture",
+      "reason": "Reviewed CPU inputs prove old alias precedence and that later process changes do not mutate an owned native configuration.",
+      "reviewed_line_sha256": [
+        "66a55924fdbe3e94d035f0373b8ef68c37f1fa7dc361f20f3208473a1309fb16",
+        "da63ea3657f827a2c3cb69a4b21f501363f5ad0b4b4cb2cab5a430f9266b15fd"
+      ]
+    },
+    {
+      "id": "fixture-python-launch-policy",
+      "path_glob": "tools/tests/test_runtime_defaults.py",
+      "token_regex": "DEEPMOE_[A-Z0-9_]+",
+      "role": "runtime_alias_fixture",
+      "reason": "Reviewed CPU inputs test old-model selection, canonical empty shader precedence, provenance consistency and production removal of inherited legacy controls.",
+      "reviewed_line_sha256": [
+        "08e769e6555c768058afc08d3fc19801672a903ca8aaa9351982b7078248e54d",
+        "0a34b9e8e046d08f862b860eefa26591d416350dac453ed94b8f3b3a78b538f3",
+        "2399ec79d86ab05d9f8e2c50aa2e2ff16f91cfd6dccd874801930f1a92f0997d",
+        "24681c618245c522deb3b6e12aad0b2032e506b0cc885d3445e05b5a120198f2",
+        "5c05f8cef54e7276ecbc3f5fcb9d59feb7cbddcb66741d2709cd136ef323773f",
+        "6abf9ea9a5c01ac5658e855e5ded281b3d109651ac30d76381f20a6fec562674",
+        "76e2047155309def739b39266780b90bdf8a8acabaafc7cca08cac3f8192f1f3",
+        "835ceb57c644b30a585133ca9090b0523eb38df0dd3f46e73c8473b2edcdc5f2"
+      ]
     }
   ]
 }
