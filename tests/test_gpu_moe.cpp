@@ -1017,59 +1017,114 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
         CHECK(spread / ymax > 0.05);
     }
 
-    if(std::getenv("DEEPMOE_TEST_GPU_ROUTE")){
+    if (std::getenv("DEEPMOE_TEST_GPU_ROUTE")) {
         constexpr auto kColumns = layout::kMoeBatchColumns;
         constexpr auto kGateRecords = layout::kGateRecordCount;
         constexpr auto kAddressWords = layout::kExpertAddressWords;
         constexpr auto kHiddenCopies = layout::kHcMult;
-        auto& runner=bridge.gpu_union();REQUIRE_OK(runner.init_gpu_route(2,gpu::default_shader_dir()));
-        auto snap=rig.store.guarded_snapshot(77);REQUIRE(snap);
-        auto table=bridge.snapshot_with_shared(*snap,1);
-        auto gi=rig.alloc.allocate(kColumns*kGateRecords*sizeof(uint32_t),true,true),gw=rig.alloc.allocate(kColumns*kGateRecords*sizeof(uint32_t),true,true),gx=rig.alloc.allocate(kColumns*dim*sizeof(float),true,true),saved=rig.alloc.allocate(layout::kSavedRouteWords*sizeof(uint32_t),true,true);
-        REQUIRE(gi&&gw&&gx&&saved);std::memcpy(gx->host_ptr,x.data(),x.size()*4);
-        gpu::CommandPool pool;REQUIRE_OK(pool.create(rig.device));auto cb=pool.acquire();REQUIRE(cb);
+        auto &runner = bridge.gpu_union();
+        REQUIRE_OK(runner.init_gpu_route(2, gpu::default_shader_dir()));
+        auto snap = rig.store.guarded_snapshot(77);
+        REQUIRE(snap);
+        auto table = bridge.snapshot_with_shared(*snap, 1);
+        auto gi = rig.alloc.allocate(kColumns * kGateRecords * sizeof(uint32_t), true, true),
+             gw = rig.alloc.allocate(kColumns * kGateRecords * sizeof(uint32_t), true, true),
+             gx = rig.alloc.allocate(kColumns * dim * sizeof(float), true, true),
+             saved = rig.alloc.allocate(layout::kSavedRouteWords * sizeof(uint32_t), true, true);
+        REQUIRE(gi && gw && gx && saved);
+        std::memcpy(gx->host_ptr, x.data(), x.size() * 4);
+        gpu::CommandPool pool;
+        REQUIRE_OK(pool.create(rig.device));
+        auto cb = pool.acquire();
+        REQUIRE(cb);
         {
-            auto hc=rig.alloc.allocate(uint64_t(kColumns)*kHiddenCopies*dim*sizeof(float),true,true),mean=rig.alloc.allocate(uint64_t(kColumns)*dim*sizeof(float),true,true);REQUIRE(hc&&mean);
-            std::vector<float> input(kColumns*kHiddenCopies*dim),expected(kColumns*dim),actual(expected.size());
-            for(size_t i=0;i<input.size();++i)input[i]=std::sin(float(i%991)*.031f)*(float(i%19)-9.f);
-            std::memcpy(hc->host_ptr,input.data(),input.size()*4);
-            for(uint32_t m=0;m<kColumns;++m)for(uint32_t d=0;d<dim;++d){const auto base=m*4*dim+d;
-                expected[m*dim+d]=cpu::bf16_to_float(cpu::float_to_bf16((input[base]+input[base+dim]+input[base+2*dim]+input[base+3*dim])*.25f));}
-            REQUIRE_OK(cb->begin());REQUIRE_OK(runner.record_gpu_copy(*cb,hc->dev_addr,mean->dev_addr,kColumns*dim,true,dim));
-            REQUIRE_OK(cb->end());REQUIRE_OK(gpu::submit_and_wait(rig.device,*cb));
-            wc_readback(actual.data(),mean->host_ptr,actual.size()*4);CHECK(actual==expected);
+            auto hc = rig.alloc.allocate(uint64_t(kColumns) * kHiddenCopies * dim * sizeof(float),
+                                         true, true),
+                 mean = rig.alloc.allocate(uint64_t(kColumns) * dim * sizeof(float), true, true);
+            REQUIRE(hc && mean);
+            std::vector<float> input(kColumns * kHiddenCopies * dim), expected(kColumns * dim),
+                actual(expected.size());
+            for (size_t i = 0; i < input.size(); ++i)
+                input[i] = std::sin(float(i % 991) * .031f) * (float(i % 19) - 9.f);
+            std::memcpy(hc->host_ptr, input.data(), input.size() * 4);
+            for (uint32_t m = 0; m < kColumns; ++m)
+                for (uint32_t d = 0; d < dim; ++d) {
+                    const auto base = m * 4 * dim + d;
+                    expected[m * dim + d] = cpu::bf16_to_float(
+                        cpu::float_to_bf16((input[base] + input[base + dim] +
+                                            input[base + 2 * dim] + input[base + 3 * dim]) *
+                                           .25f));
+                }
+            REQUIRE_OK(cb->begin());
+            REQUIRE_OK(runner.record_gpu_copy(*cb, hc->dev_addr, mean->dev_addr, kColumns * dim,
+                                              true, dim));
+            REQUIRE_OK(cb->end());
+            REQUIRE_OK(gpu::submit_and_wait(rig.device, *cb));
+            wc_readback(actual.data(), mean->host_ptr, actual.size() * 4);
+            CHECK(actual == expected);
             std::printf("GPU hidden mean M=6: bit-identical to host BF16 mean\n");
-            rig.alloc.free(*hc);rig.alloc.free(*mean);
+            rig.alloc.free(*hc);
+            rig.alloc.free(*mean);
         }
         gpu::QueryPool route_queries;
         REQUIRE_OK(route_queries.create(rig.device, 2));
-        for(uint32_t live:{1u,3u,6u})for(const auto& route:routings)for(uint32_t mask:{0u,1u,2u}){
-            auto masked=table;std::vector<float> rw=w;
-            for(uint32_t e=0;e<rig.config.text.n_routed_experts;++e)
-                if(mask==2||(mask==1&&e%2))std::fill_n(masked.data()+e*kAddressWords,kAddressWords,0ull);
-            for(uint32_t m=0;m<live;++m)for(uint32_t j=0;j<kTopk;++j){
-                const auto e=(*route.ids)[m*kTopk+j];
-                static_cast<uint32_t*>(gi->host_ptr)[m*kGateRecords+j]=e;
-                static_cast<float*>(gw->host_ptr)[m*kGateRecords+j]=w[m*kTopk+j];
-                if(masked[e*kAddressWords]==0)rw[m*kTopk+j]=0;
-            }
-            runtime::GpuMoeBridge::BatchCall call;call.layer=0;call.m=live;call.ids=route.ids->data();call.weights=rw.data();call.topk=kTopk;call.x=x.data();call.hidden=dim;
-            std::vector<float> ref(size_t(live)*dim),actual(ref.size());call.y=ref.data();REQUIRE_OK(bridge.run_batch_union(call));
-            std::vector<uint16_t> quant(size_t(live)*dim);wc_readback(quant.data(),bridge.union_debug_x(),quant.size()*2);
-            auto second=masked;masked.insert(masked.end(),second.begin(),second.end());
-            REQUIRE_OK(runner.upload_snapshot(masked));REQUIRE_OK(cb->begin());
-            REQUIRE_OK(cb->reset_queries(route_queries, 0, 2));
-            REQUIRE_OK(runner.record_gpu_route(*cb,1,live,kTopk,gi->dev_addr,gw->dev_addr,gx->dev_addr,saved->dev_addr,nullptr,&route_queries));
-            REQUIRE_OK(cb->end());REQUIRE_OK(gpu::submit_and_wait(rig.device,*cb));
-            wc_readback(actual.data(),runner.y(),actual.size()*4);
-            CHECK(actual==ref);std::vector<uint16_t> got(quant.size());wc_readback(got.data(),bridge.union_debug_x(),got.size()*2);CHECK(got==quant);
-            std::printf("GPU route M=%u %s mask=%u: y and act_quant bit-identical\n",live,route.what,mask);
-            const auto route_seconds = route_queries.elapsed_seconds(0, 1);
-            REQUIRE(route_seconds);
-            std::printf("GPU route union timing M=%u %s mask=%u: %.6f ms\n",
-                        live,route.what,mask,*route_seconds * 1000);
-        }
-        rig.store.set_completed_timeline(77);rig.alloc.free(*gi);rig.alloc.free(*gw);rig.alloc.free(*gx);rig.alloc.free(*saved);
+        for (uint32_t live : {1u, 3u, 6u})
+            for (const auto &route : routings)
+                for (uint32_t mask : {0u, 1u, 2u}) {
+                    auto masked = table;
+                    std::vector<float> rw = w;
+                    for (uint32_t e = 0; e < rig.config.text.n_routed_experts; ++e)
+                        if (mask == 2 || (mask == 1 && e % 2))
+                            std::fill_n(masked.data() + e * kAddressWords, kAddressWords, 0ull);
+                    for (uint32_t m = 0; m < live; ++m)
+                        for (uint32_t j = 0; j < kTopk; ++j) {
+                            const auto e = (*route.ids)[m * kTopk + j];
+                            static_cast<uint32_t *>(gi->host_ptr)[m * kGateRecords + j] = e;
+                            static_cast<float *>(gw->host_ptr)[m * kGateRecords + j] =
+                                w[m * kTopk + j];
+                            if (masked[e * kAddressWords] == 0)
+                                rw[m * kTopk + j] = 0;
+                        }
+                    runtime::GpuMoeBridge::BatchCall call;
+                    call.layer = 0;
+                    call.m = live;
+                    call.ids = route.ids->data();
+                    call.weights = rw.data();
+                    call.topk = kTopk;
+                    call.x = x.data();
+                    call.hidden = dim;
+                    std::vector<float> ref(size_t(live) * dim), actual(ref.size());
+                    call.y = ref.data();
+                    REQUIRE_OK(bridge.run_batch_union(call));
+                    std::vector<uint16_t> quant(size_t(live) * dim);
+                    wc_readback(quant.data(), bridge.union_debug_x(), quant.size() * 2);
+                    auto second = masked;
+                    masked.insert(masked.end(), second.begin(), second.end());
+                    REQUIRE_OK(runner.upload_snapshot(masked));
+                    REQUIRE_OK(cb->begin());
+                    REQUIRE_OK(cb->reset_queries(route_queries, 0, 2));
+                    REQUIRE_OK(runner.record_gpu_route(*cb, 1, live, kTopk, gi->dev_addr,
+                                                       gw->dev_addr, gx->dev_addr, saved->dev_addr,
+                                                       nullptr, &route_queries));
+                    REQUIRE_OK(cb->end());
+                    REQUIRE_OK(gpu::submit_and_wait(rig.device, *cb));
+                    wc_readback(actual.data(), runner.y(), actual.size() * 4);
+                    CHECK(actual == ref);
+                    std::vector<uint16_t> got(quant.size());
+                    wc_readback(got.data(), bridge.union_debug_x(), got.size() * 2);
+                    CHECK(got == quant);
+                    std::printf("GPU route M=%u %s mask=%u: y and act_quant bit-identical\n", live,
+                                route.what, mask);
+                    const auto route_seconds = route_queries.elapsed_seconds(0, 1);
+                    REQUIRE(route_seconds);
+                    std::printf("GPU route union timing M=%u %s mask=%u: %.6f ms\n", live,
+                                route.what, mask, *route_seconds * 1000);
+                }
+        rig.store.set_completed_timeline(77);
+        rig.alloc.free(*gi);
+        rig.alloc.free(*gw);
+        rig.alloc.free(*gx);
+        rig.alloc.free(*saved);
     }
 
     // The zero-weight slots contribute exactly nothing: give column 0 a weight
