@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, call, mock_open, patch
 
@@ -10,14 +11,22 @@ import server
 
 
 class WebSettings(unittest.TestCase):
-    def test_shutdown_requires_successful_engine_exit(self):
+    @staticmethod
+    def bare_serve():
         serve = server.Serve.__new__(server.Serve)
-        serve.send = Mock()
+        serve.io_lock = threading.Lock()
+        serve.closing = False
+        serve.dead = False
         serve.p = Mock()
         serve.p.poll.return_value = None
         serve.p.wait.return_value = 0
+        return serve
+
+    def test_shutdown_requires_successful_engine_exit(self):
+        serve = self.bare_serve()
+        serve._write_unlocked = Mock()
         serve.close()
-        self.assertEqual(serve.send.call_args_list,
+        self.assertEqual(serve._write_unlocked.call_args_list,
                          [call({"op": "cancel"}), call({"op": "quit"})])
         serve.p.kill.assert_not_called()
         serve.p.wait.return_value = 1
@@ -25,14 +34,102 @@ class WebSettings(unittest.TestCase):
             serve.close()
 
     def test_shutdown_timeout_reports_unconfirmed_drain(self):
-        serve = server.Serve.__new__(server.Serve)
-        serve.send = Mock()
-        serve.p = Mock()
-        serve.p.poll.return_value = None
+        serve = self.bare_serve()
         serve.p.wait.side_effect = [server.subprocess.TimeoutExpired("deepmoe", 120), -9]
         with self.assertRaisesRegex(RuntimeError, "KV drain is unconfirmed"):
             serve.close()
         serve.p.kill.assert_called_once()
+
+    def test_constructor_initializes_closing_before_launch(self):
+        serve = server.Serve.__new__(server.Serve)
+        args = SimpleNamespace(log=None, max_context=64)
+
+        def start(*unused, **kwargs):
+            self.assertFalse(serve.closing)
+            self.assertIsNotNone(serve.io_lock)
+            return Mock()
+
+        with patch.object(serve, "command", return_value=["mock-no-process"]), \
+                patch.object(serve, "_read_ready", return_value=dict(max_context=64)), \
+                patch.object(server.subprocess, "Popen", side_effect=start), \
+                patch.object(server.threading, "Thread"):
+            serve.__init__(args)
+
+    def test_normal_send_repeated_close_and_late_send(self):
+        serve = self.bare_serve()
+        serve.send({"op": "generate", "max_tokens": 2})
+        serve.close()
+        serve.close()
+        with self.assertRaisesRegex(RuntimeError, "closing"):
+            serve.send({"op": "generate", "max_tokens": 2048})
+        operations = [json.loads(call.args[0])["op"] for call in serve.p.stdin.write.call_args_list]
+        self.assertEqual(operations, ["generate", "cancel", "quit"])
+        self.assertEqual(serve.p.wait.call_count, 2)
+        serve.p.kill.assert_not_called()
+
+    def test_worker_cannot_generate_between_shutdown_cancel_and_quit(self):
+        serve = self.bare_serve()
+        cancel_written, worker_attempting = threading.Event(), threading.Event()
+        operations, locked, worker_errors, close_errors = [], [], [], []
+
+        def write(obj):
+            operations.append(obj["op"])
+            locked.append(serve.io_lock.locked())
+            if obj["op"] == "cancel":
+                cancel_written.set()
+                if not worker_attempting.wait(1):
+                    raise RuntimeError("CPU worker did not reach send")
+
+        def worker():
+            if not cancel_written.wait(1):
+                worker_errors.append("cancel hook timed out")
+                return
+            worker_attempting.set()
+            try:
+                serve.send({"op": "generate", "max_tokens": 2048})
+            except RuntimeError as error:
+                worker_errors.append(str(error))
+
+        def closer():
+            try:
+                serve.close()
+            except Exception as error:
+                close_errors.append(str(error))
+
+        serve._write_unlocked = write
+        # Daemon threads keep a locking regression from hanging the CPU gate.
+        writer = threading.Thread(target=worker, daemon=True)
+        closing = threading.Thread(target=closer, daemon=True)
+        writer.start()
+        closing.start()
+        closing.join(timeout=2)
+        writer.join(timeout=2)
+        self.assertFalse(closing.is_alive(), "close deadlocked")
+        self.assertFalse(writer.is_alive(), "send deadlocked")
+        self.assertEqual(close_errors, [])
+        self.assertEqual(operations, ["cancel", "quit"])
+        self.assertEqual(locked, [True, True])
+        self.assertEqual(worker_errors, ["deepmoe serve is closing"])
+        serve.p.kill.assert_not_called()
+
+    def test_broken_shutdown_pipe_keeps_failed_drain_status(self):
+        serve = self.bare_serve()
+        serve.p.stdin.write.side_effect = BrokenPipeError("mock closed pipe")
+        serve.p.wait.return_value = -9
+        with self.assertRaisesRegex(RuntimeError, "KV drain is unconfirmed"):
+            serve.close()
+        self.assertTrue(serve.closing)
+        serve.p.kill.assert_called_once()
+        with self.assertRaisesRegex(RuntimeError, "KV drain"):
+            serve.close()
+        self.assertEqual(serve.p.stdin.write.call_count, 1)
+
+    def test_dead_engine_still_rejects_regular_send(self):
+        serve = self.bare_serve()
+        serve.dead = True
+        with self.assertRaisesRegex(RuntimeError, "gone"):
+            serve.send({"op": "status"})
+        serve.p.stdin.write.assert_not_called()
 
     def test_config_reports_active_speculation_and_current_power(self):
         bridge = SimpleNamespace(

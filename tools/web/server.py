@@ -330,12 +330,13 @@ class Serve:
         return cmd
 
     def __init__(self, args):
+        self.io_lock = threading.Lock()          # one writer, including shutdown
+        self.closing = False
         cmd = self.command(args)
         self.cmd = cmd
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=self.log, bufsize=0)
-        self.io_lock = threading.Lock()          # one writer
         self.rpc_lock = threading.Lock()         # one non-generate round trip at a time
         self.rpc_q: queue.Queue = queue.Queue()
         self.stream_q: queue.Queue | None = None  # the in-flight turn's event sink
@@ -389,12 +390,18 @@ class Serve:
                     continue
             self.rpc_q.put(ev)
 
+    def _write_unlocked(self, obj):
+        """Write one protocol message; the caller holds io_lock."""
+        self.p.stdin.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+        self.p.stdin.flush()
+
     def send(self, obj):
-        if self.dead:
-            raise RuntimeError("deepmoe serve is gone")
         with self.io_lock:
-            self.p.stdin.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
-            self.p.stdin.flush()
+            if self.closing:
+                raise RuntimeError("deepmoe serve is closing")
+            if self.dead:
+                raise RuntimeError("deepmoe serve is gone")
+            self._write_unlocked(obj)
 
     def rpc(self, obj, timeout=600):
         """A request with exactly one reply (tokenize / detokenize / status / ...)."""
@@ -440,11 +447,15 @@ class Serve:
     def close(self):
         """Require a clean engine exit; a killed writer has no drain receipt."""
         try:
-            if self.p.poll() is None:
-                # quit is queued behind generation. Cancel the current turn
-                # first so shutdown can reach the required KV save promptly.
-                self.cancel()
-                self.send({"op": "quit"})
+            with self.io_lock:
+                if not self.closing:
+                    self.closing = True
+                    if self.p.poll() is None:
+                        # Keep these writes in one critical section. A new
+                        # worker generate between cancel and quit would not
+                        # be covered by the engine's cancel_upto boundary.
+                        self._write_unlocked({"op": "cancel"})
+                        self._write_unlocked({"op": "quit"})
             code = self.p.wait(timeout=120)
         except (OSError, subprocess.TimeoutExpired) as error:
             print("web: engine shutdown failed; KV drain is unconfirmed: " + str(error),
