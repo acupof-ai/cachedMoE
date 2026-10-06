@@ -35,6 +35,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import state_paths
 
 import quant2_common as q2                                   # noqa: E402
 
@@ -319,7 +320,7 @@ def main(argv=None) -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("mode", choices=["screen", "sweep"])
     p.add_argument("--model", default=MODEL)
-    p.add_argument("--traces", default=r"C:\Users\Asus\code\deepmoe\traces")
+    p.add_argument("--traces", default=state_paths.windows_checkout_path('traces'))
     p.add_argument("--tests-data", default="tests/data")
     p.add_argument("--calib", default=None,
                    help="npz from tools/quant2_l3.py --dump-calib (real inputs, 40 layers)")

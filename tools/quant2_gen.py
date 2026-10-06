@@ -52,6 +52,7 @@ from collections import OrderedDict
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import state_paths
 
 import quant2_common as q2                                     # noqa: E402
 from quant2_l1 import SCHEMES                                  # noqa: E402
@@ -290,7 +291,7 @@ def main(argv=None) -> int:
     p.add_argument("--prompts", default="en_tech,en_story,code")
     p.add_argument("--tokens", type=int, default=64)
     p.add_argument("--model", default=MODEL)
-    p.add_argument("--traces", default=r"C:\Users\Asus\code\deepmoe\traces")
+    p.add_argument("--traces", default=state_paths.windows_checkout_path('traces'))
     p.add_argument("--steps", default="-2,-1,0,1")
     p.add_argument("--cache-experts", type=int, default=700,
                    help="LRU entries, packed form (~10 MB each at 2 bits)")

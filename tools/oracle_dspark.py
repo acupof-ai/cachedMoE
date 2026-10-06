@@ -101,6 +101,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+import state_paths
+
 import dsref                      # noqa: E402
 import oracle                     # noqa: E402  (L3Writer / L2_PROMPT / state helpers)
 
@@ -1886,7 +1888,7 @@ MGT1_PROBES = (0, 2, 13, 14, 20, 24, 39)
 MGT1_CONTEXTS = {
     # name -> (L3-container export whose PREFILL record seeds the state, max_seq_len)
     "l3": (os.path.join(os.path.dirname(_HERE), "tests", "data", "l3"), 128),
-    "ctx4k": (os.path.join(os.path.dirname(_HERE), "..", "deepmoe", "traces", "longctx",
+    "ctx4k": (os.path.join(state_paths.sibling_checkout(os.path.dirname(_HERE)), "traces", "longctx",
                            "ctx4k"), 4149),
 }
 
@@ -2021,7 +2023,7 @@ def run_mgt1(args: argparse.Namespace) -> int:
         margs = dsref.build_args(ref, inference_dir, max_seq_len=max_seq_len)
         layout_e = ref.EngramLayout.from_args(margs)
         cached = dsref.CachedTokenMap.build(tokenizer, os.path.join(
-            os.path.dirname(_HERE), "..", "deepmoe", "traces", "longctx", "token_map.npz"))
+            state_paths.sibling_checkout(os.path.dirname(_HERE)), "traces", "longctx", "token_map.npz"))
         orig_build = eng.build_compressed_token_map
         eng.build_compressed_token_map = lambda _t: (cached.lookup, cached.size)
         try:
@@ -2170,7 +2172,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Track T: per-stage M > 1 verify-batch reference (docs/p4_mgt1.md)")
     p.add_argument("--mgt1-ctx", default="l3,ctx4k")
     p.add_argument("--mgt1-m", default="2,4,6")
-    p.add_argument("--mgt1-out", default=os.path.join(os.path.dirname(_HERE), "..", "deepmoe",
+    p.add_argument("--mgt1-out", default=os.path.join(state_paths.sibling_checkout(os.path.dirname(_HERE)),
                                                       "traces", "mgt1"))
     p.add_argument("--need-gb", type=float, default=8.0)
     p.add_argument("--poll-s", type=int, default=120)

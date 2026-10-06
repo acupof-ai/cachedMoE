@@ -128,6 +128,7 @@ def main() -> int:
         ("tools/tests/test_runtime_env.py", [PY, str(ROOT / "tools" / "tests" / "test_runtime_env.py")]),
         ("tools/tests/test_cmake_rename.py", [PY, str(ROOT / "tools" / "tests" / "test_cmake_rename.py")]),
         ("tools/tests/test_process_names.py", [PY, str(ROOT / "tools" / "tests" / "test_process_names.py")]),
+        ("tools/tests/test_state_paths.py", [PY, str(ROOT / "tools" / "tests" / "test_state_paths.py")]),
         ("tools/trace_timeline.py", [PY, str(ROOT / "tools" / "trace_timeline.py"), "--self-test"]),
         ("tests/mutate.py --list", [PY, str(ROOT / "tests" / "mutate.py"), "--list"]),
         # STATUS 1.0's measured table is rendered from the ledger, never typed.

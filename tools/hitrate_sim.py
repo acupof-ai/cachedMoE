@@ -4,7 +4,7 @@ its routing through tools/cache_sim.py's LRU (Track R1).
 
     .venv/Scripts/python.exe tools/hitrate_sim.py curve bench/results/hitrate/auto \
         [--window 128] [--capacities 4500,5711] [--heat store/static_heat.inc] [--json out.json]
-    .venv/Scripts/python.exe tools/hitrate_sim.py heat --trace ../deepmoe/traces/mixed --out store/static_heat.inc
+    .venv/Scripts/python.exe tools/hitrate_sim.py heat --trace ../cachedmoe/traces/mixed --out store/static_heat.inc
 
 `curve` reads route.bin (runtime/engine.h's routing dump: u32 step, u32 position,
 u16[40x6] ids in gate order, u8[40] hits), profile.jsonl and turns.json, and prints

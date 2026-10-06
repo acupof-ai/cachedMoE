@@ -1,6 +1,7 @@
 ﻿import json, os, sys, math
 import numpy as np
-REPO = r"C:\Users\Asus\code\deepmoe\build\p4-integ"
+import state_paths
+REPO = state_paths.windows_checkout_path("build", "p4-integ")
 sys.path.insert(0, os.path.join(REPO, "tools"))
 import hitrate_sim  # noqa: E402
 
@@ -179,7 +180,7 @@ def heat_per_layer(path):
 
 def main():
     base = os.path.join(REPO, "bench", "results", "hitrate")
-    outdir = r"C:\Users\Asus\code\deepmoe\build"
+    outdir = state_paths.windows_checkout_path("build")
     all_sum = {}
     for name in ("base_auto", "base_88g", "stall_off"):
         d = os.path.join(base, name)

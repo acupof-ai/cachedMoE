@@ -37,6 +37,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import state_paths
 
 # design section 2.2 / 5.2 / 3.1
 EXPERT_ELEMS = 3 * 2304 * 5120          # w1 + w2 + w3, one expert
@@ -145,8 +146,8 @@ def tps(h: float, bytes_per_expert: int) -> dict:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--trace", default=r"C:\Users\Asus\code\deepmoe\traces\mixed")
-    p.add_argument("--sweep", default=r"C:\Users\Asus\code\deepmoe\reports\cache_sweep.json")
+    p.add_argument("--trace", default=state_paths.windows_checkout_path('traces', 'mixed'))
+    p.add_argument("--sweep", default=state_paths.windows_checkout_path('reports', 'cache_sweep.json'))
     p.add_argument("--bits", default="4.25,2.5,2.35,2.25,2.125",
                    help="effective bits/weight to model (4.25 = today's FP4)")
     p.add_argument("--slab-gib", type=float, default=100.0)

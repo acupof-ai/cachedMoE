@@ -25,6 +25,8 @@ import glob
 import os
 import sys
 
+import state_paths
+
 import numpy as np
 import pyarrow.parquet as pq
 
@@ -149,7 +151,7 @@ def misses(key, layers, capacity, m, warmup_frac=0.2):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("trace", nargs="?", default=r"C:\Users\Asus\code\deepmoe\traces\mixed")
+    ap.add_argument("trace", nargs="?", default=state_paths.windows_checkout_path("traces", "mixed"))
     ap.add_argument("--capacity", type=int, default=4500,
                     help="expert cache slots; 4500 is the cache-4500 cell of "
                          "docs/p4_hitrate.md, where decode hit is 0.837")

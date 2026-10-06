@@ -64,24 +64,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import runtime_env
+import state_paths
 
 sys.dont_write_bytecode = True
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-
-def _state_home():
-    """The base directory a transcript lives under, the same one `serve` picks for
-    its KV disk (cli/serve.cpp) so a session and its .pkv still travel together.
-    Windows has LOCALAPPDATA; Linux does not, and the old fallback here was HERE,
-    which wrote a user's transcripts into the repo tree as
-    `tools/web/deepmoe/web_chat/`."""
-    if os.name == "nt":
-        return os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or HERE
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    if xdg:
-        return xdg
-    home = os.path.expanduser("~")
-    return os.path.join(home, ".cache") if home != "~" else HERE
 
 REPO = os.path.dirname(os.path.dirname(HERE))
 MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
@@ -657,8 +644,8 @@ class Bridge:
         self.prefill_ms_per_token = PREFILL_MS_PER_TOKEN
         # Transcripts, one JSON per session name, next to serve's KV disk so a
         # session and its .pkv travel together.
-        base = args.kv_dir or os.path.join(_state_home(), "deepmoe")
-        self.chat_dir = os.path.join(base, "web_chat")
+        self.state_root = state_paths.web_root(serve.ready, explicit=args.kv_dir)
+        self.chat_dir = os.path.join(self.state_root.path, "web_chat")
         threading.Thread(target=self._worker, daemon=True).start()
 
     def state(self, session):
@@ -1048,6 +1035,10 @@ def main():
           f"| read sources {r.get('sources', 1)}", flush=True)
 
     bridge = Bridge(serve, enc, args)
+    print(f"web state: {bridge.state_root.path} ({bridge.state_root.source}); "
+          f"transcripts: {bridge.chat_dir}", flush=True)
+    if bridge.state_root.both_exist:
+        print("web state: both application directories exist; the legacy directory is retained", flush=True)
     Handler.bridge = bridge
     Handler.gpumon = GpuMon()
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)

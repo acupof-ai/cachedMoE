@@ -37,6 +37,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import state_paths
 
 import quant2_common as q2                                     # noqa: E402
 from quant2_l1 import SCHEMES                                  # noqa: E402
@@ -380,7 +381,7 @@ def main(argv=None) -> int:
     p.add_argument("--prompts", default="l3_64,corpus2k")
     p.add_argument("--n", type=int, default=2048, help="tokens taken for corpus2k")
     p.add_argument("--model", default=MODEL)
-    p.add_argument("--traces", default=r"C:\Users\Asus\code\deepmoe\traces")
+    p.add_argument("--traces", default=state_paths.windows_checkout_path('traces'))
     p.add_argument("--tests-data", default="tests/data")
     p.add_argument("--logits-dir", default=None)
     p.add_argument("--baseline-dir", default=None,

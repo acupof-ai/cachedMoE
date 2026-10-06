@@ -63,6 +63,7 @@
 #include "core/config.h"
 #include "core/gamemode.h"
 #include "core/json.h"
+#include "core/state_paths.h"
 #include "core/json_write.h"
 #include "core/log.h"
 #include "model/layout.h"
@@ -288,6 +289,7 @@ int cmd_serve(int argc, char** argv) {
     // was the default. `CACHEDMOE_KV_DIR` overrides the directory (empty string
     // disables it), `--kv-dir` sets it explicitly and `--no-kv-disk` turns it
     // off, which is what a benchmark that wants a cold prefill should use.
+    std::optional<state_paths::StateRoot> state_root;
     if (!kv_dir_given && !kv_disk_off) {
         if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_KV_DIR"); e && *e) po.disk.dir = e;
         else if (e && !*e) po.disk.dir.clear();
@@ -295,19 +297,17 @@ int cmd_serve(int argc, char** argv) {
             // Per model directory, so two checkpoints do not fight over one file
             // and a stale one is a miss rather than a corrupt hit (the header
             // carries the model tag as well).
-            std::string base;
-#if defined(_WIN32)
-            if (const char* la = std::getenv("LOCALAPPDATA"); la && *la) base = la;
-            else if (const char* tp = std::getenv("TEMP"); tp && *tp) base = tp;
-#else
-            if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && *xdg) base = xdg;
-            else if (const char* home = std::getenv("HOME"); home && *home) base = std::string(home) + "/.cache";
-#endif
-            if (!base.empty()) {
-                std::string tag = cfg.model_dir;
-                for (char& ch : tag) if (ch == '\\' || ch == '/' || ch == ':') ch = '_';
-                po.disk.dir = base + "/deepmoe/kv/" + tag;
+            auto selected = state_paths::application_root();
+            if (!selected) {
+                std::fprintf(stderr, "serve: state directory: %s\n",
+                             selected.error().str().c_str());
+                return 2;
             }
+            state_root = *std::move(selected);
+            po.disk.dir = state_paths::model_kv_directory(*state_root, cfg.model_dir).string();
+            std::fprintf(stderr, "[INF] serve: state root %s (%s)%s\n",
+                         state_root->path.string().c_str(), state_root->source.c_str(),
+                         state_root->both_exist ? "; legacy deepmoe directory retained" : "");
         }
     }
     // The disk cache stores the model identity in every file; a different
@@ -420,7 +420,8 @@ int cmd_serve(int argc, char** argv) {
     emit(std::format("{{\"event\":\"ready\",\"load_s\":{},\"max_context\":{},\"vocab\":{},"
                      "\"cache_gb\":{},\"cache_slots\":{},\"gpu_prefill_min\":{},\"check_topk\":{},"
                      "\"engram_tables\":{},\"kv_mb\":{},\"rollback\":{},\"max_parked\":{},"
-                     "\"reheat\":{},\"reheat_decay\":{},\"kv_disk\":{},\"kv_disk_dir\":{},\"sources\":{},"
+                     "\"reheat\":{},\"reheat_decay\":{},\"kv_disk\":{},\"kv_disk_dir\":{},"
+                     "\"state_root\":{},\"state_root_source\":{},\"state_root_both_exist\":{},\"sources\":{},"
                      "\"speculation\":{{\"enabled\":{},\"draft_tokens\":{},\"accept_top_k\":{},\"confidence_min\":{},\"main_paths\":1,\"mtp_pinned_experts\":{}}},"
                      "\"decode_modes\":{{\"available\":{},\"default\":{}}}}}",
                      json_number(load_s), engine.max_context(), tok->vocab_size(),
@@ -430,6 +431,9 @@ int cmd_serve(int argc, char** argv) {
                      json_number(engine.kv().bytes() / 1e6), so.rollback ? "true" : "false",
                      po.max_parked, so.reheat ? "true" : "false", json_number(so.reheat_decay),
                      po.disk.dir.empty() ? "false" : "true", json_quote(po.disk.dir),
+                     state_root ? json_quote(state_root->path.string()) : "null",
+                     state_root ? json_quote(state_root->source) : "null",
+                     state_root ? (state_root->both_exist ? "true" : "false") : "null",
                      // Track D4: how many read sources survived the mirror
                      // health gate, so the banner says what the run is actually
                      // reading from rather than what it was asked for.
