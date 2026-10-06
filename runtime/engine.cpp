@@ -1445,7 +1445,7 @@ void Engine::shutdown() {
         if (s.btopk_hist_.valid()) alloc_a_.free(s.btopk_hist_);
         if (s.bdraft_.valid()) alloc_a_.free(s.bdraft_);
         if (s.brank_.valid()) alloc_a_.free(s.brank_);
-        s.route_scratch_.destroy();
+        s.gpu_route_buffers_.scratch.destroy();
         s.bscratch_.destroy();
         s.mgt_.destroy();
         s.scratch_.destroy();
@@ -2839,7 +2839,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     const TextConfig& c = model_cfg_.text;
     BatchScratch& bb = cur_->layer_.batch();
     const uint64_t hcstride = uint64_t(c.hc_mult) * c.hidden_size * sizeof(float);
-    if(batch_gpu_route_){bb.rope=cur_->saved_rope_[L];bb.rope_lat=cur_->saved_rope_lat_[L];}
+    if(gpu_route_.enabled){bb.rope=cur_->gpu_route_buffers_.rope[L];bb.rope_lat=cur_->gpu_route_buffers_.rope_lat[L];}
 
     auto view = cur_->kvs_.layer(L);
     if (!view) return std::unexpected(view.error());
@@ -2866,7 +2866,7 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     // so the previous layer's deferred hc_post has to be materialised first --
     // the same order `run_layer` uses, one dispatch for all M rows.
     if (cur_->engram_.has_layer(L)) {
-        const bool early = batch_gpu_route_ || cfg_.gpu.batch_engram_early;
+        const bool early = gpu_route_.enabled || cfg_.gpu.batch_engram_early;
         if (auto r = cmd_open(); !r) return r;
         if (apply_post) {
             BatchStep prev = st;
@@ -2920,19 +2920,19 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
         if (auto r = cur_->layer_.record_attention_batch(cur_->tok_cmd_, st); !r) return r;
         cur_->rec_ms_ += ms_since(r0);
     }
-    if(batch_gpu_route_){
+    if(gpu_route_.enabled){
         auto& runner=cur_->moe_.gpu_union();
-        route_steps_.push_back(st);
+        gpu_route_.steps.push_back(st);
         if (const auto capture = draft_layer_slot(L); dspark_ && capture) {
             if (auto r = runner.record_gpu_copy(cur_->tok_cmd_, bb.xout.addr,
-                    cur_->saved_hidden_[*capture].addr, M * c.hidden_size, true, c.hidden_size); !r) return r;
+                    cur_->gpu_route_buffers_.hidden[*capture].addr, M * c.hidden_size, true, c.hidden_size); !r) return r;
         }
         if(spec_inflight_&&st.run_compressor&&st.compress_ratio>1){
-            if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.cmp_y.addr,cur_->saved_carry_k_[L].addr,M*c.head_dim);!r)return r;
-            if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.cmp_g.addr,cur_->saved_carry_g_[L].addr,M*c.head_dim);!r)return r;
+            if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.cmp_y.addr,cur_->gpu_route_buffers_.carry_k[L].addr,M*c.head_dim);!r)return r;
+            if(auto r=runner.record_gpu_copy(cur_->tok_cmd_,bb.cmp_g.addr,cur_->gpu_route_buffers_.carry_g[L].addr,M*c.head_dim);!r)return r;
         }
         const auto trace_id=trace::open_dispatch(&tracer_,uint16_t(L),trace::Cls::Moe,4,"moe_gpu_union");
-        if(auto r=runner.record_gpu_route(cur_->tok_cmd_,L,M,c.num_experts_per_tok,bb.gate_ids.addr,bb.gate_weights.addr,bb.u.addr,cur_->saved_routes_[L].addr);!r)return r;
+        if(auto r=runner.record_gpu_route(cur_->tok_cmd_,L,M,c.num_experts_per_tok,bb.gate_ids.addr,bb.gate_weights.addr,bb.u.addr,cur_->gpu_route_buffers_.routes[L].addr);!r)return r;
         trace::close_dispatch(&tracer_,trace_id);apply_post=true;return {};
     }
     if (auto r = cmd_flush(0); !r) return r;
@@ -3097,122 +3097,6 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool& 
     return {};
 }
 
-Result<void> Engine::finish_gpu_routes(uint32_t p0, uint32_t M) {
-    const auto &c = model_cfg_.text;
-    const auto topk = c.num_experts_per_tok;
-    constexpr auto records = layout::kGateRecordCount;
-    constexpr auto weight_offset = layout::kMoeBatchColumns * records;
-    batch_route_host_ms_.fill(0);
-    // The batch fence has completed. Read back its immutable routing snapshot
-    // before planning asynchronous demand fills for the following cycle.
-    for (const auto &st : route_steps_) {
-        const uint32_t L = st.layer;
-        auto stamp = Clock::now();
-        if (auto r = cur_->layer_.verify_after_attention_batch(st); !r) return r;
-        if (spec_diagnostics_) batch_route_host_ms_[0] += ms_since(stamp);
-        stamp = Clock::now();
-        if (const auto capture = draft_layer_slot(L); dspark_ && capture) {
-            if (cur_->draft_hidden_.empty())
-                cur_->draft_hidden_.resize(layout::kSlidingWindow * layout::kDsparkCaptureWidth);
-            for (uint32_t m = 0; m < M; ++m) {
-                const uint32_t pos = p0 + m, slot = pos % layout::kSlidingWindow;
-                if (cur_->draft_position_[slot] != pos) {
-                    cur_->draft_position_[slot] = pos;
-                    cur_->draft_mask_[slot] = 0;
-                }
-                wc_readback(cur_->draft_hidden_.data() +
-                                size_t(slot) * layout::kDsparkCaptureWidth +
-                                *capture * c.hidden_size,
-                            static_cast<const float *>(cur_->saved_hidden_[*capture].host) +
-                                size_t(m) * c.hidden_size,
-                            c.hidden_size * sizeof(float));
-                cur_->draft_mask_[slot] |= uint8_t(1u << *capture);
-            }
-        }
-        if (spec_inflight_ && st.run_compressor && st.compress_ratio > 1) {
-            BatchCarry carry;
-            carry.layer = L;
-            carry.kv.resize(size_t(M) * c.head_dim);
-            carry.score.resize(carry.kv.size());
-            wc_readback(carry.kv.data(), cur_->saved_carry_k_[L].host,
-                        carry.kv.size() * sizeof(float));
-            wc_readback(carry.score.data(), cur_->saved_carry_g_[L].host,
-                        carry.score.size() * sizeof(float));
-            batch_carry_.push_back(std::move(carry));
-        }
-        if (spec_diagnostics_) batch_route_host_ms_[1] += ms_since(stamp);
-        stamp = Clock::now();
-        std::array<uint32_t, layout::kSavedRouteWords> saved;
-        wc_readback(saved.data(), cur_->saved_routes_[L].host, sizeof saved);
-        if (spec_diagnostics_) batch_route_host_ms_[2] += ms_since(stamp);
-        stamp = Clock::now();
-        std::vector<uint16_t> chosen, near_ids;
-        std::vector<float> chosen_w, near_scores;
-        std::set<uint32_t> kept_union;
-        uint32_t snapshot_hits = 0;
-        for (uint32_t m = 0; m < M; ++m) {
-            uint32_t served = 0;
-            double total = 0, kept = 0;
-            for (uint32_t i = 0; i < records; ++i) {
-                const auto e = saved[m * records + i];
-                const float w = std::bit_cast<float>(saved[weight_offset + m * records + i]);
-                if (e >= c.n_routed_experts)
-                    return fail(Err::Internal, "GPU route emitted invalid expert");
-                near_ids.push_back(uint16_t(e));
-                near_scores.push_back(w);
-                if (i >= topk) continue;
-                if (spec_diagnostics_ && spec_inflight_)
-                    batch_route_requests_[(size_t(L) * M + m) * topk + i] = uint16_t(e);
-                total += w;
-                // Residency must use the snapshot consumed by the GPU, not
-                // the live store where a fill might already have landed.
-                const bool hit = route_snapshot_[(size_t(L) * c.n_routed_experts + e) *
-                                                 layout::kExpertAddressWords] != 0;
-                if (hit) {
-                    ++served;
-                    kept += w;
-                    if (w != 0) kept_union.insert(e);
-                }
-                const auto at = std::find(chosen.begin(), chosen.end(), uint16_t(e));
-                if (at == chosen.end()) {
-                    chosen.push_back(uint16_t(e));
-                    chosen_w.push_back(w);
-                    if (hit) ++snapshot_hits;
-                } else {
-                    chosen_w[size_t(at - chosen.begin())] =
-                        std::max(chosen_w[size_t(at - chosen.begin())], w);
-                }
-            }
-            ++rr_.layers;
-            rr_.requested += topk;
-            rr_.served += served;
-            rr_.skipped += topk - served;
-            rr_.shared_only += served == 0;
-            if (total > 0) rr_.mass_lost_sum += 1 - kept / total;
-        }
-        store::RouteDecision route;
-        route.layer = L;
-        route.chosen = chosen;
-        route.weights = chosen_w;
-        route.near_ids = near_ids;
-        route.near_scores = near_scores;
-        if (spec_diagnostics_) batch_route_host_ms_[3] += ms_since(stamp);
-        stamp = Clock::now();
-        auto plan = planner_.plan_layer(route, clock_);
-        if (!plan) return std::unexpected(plan.error());
-        for (const auto &[key, use_stamp] : plan->joined)
-            (void)store_.touch(key, use_stamp, true);
-        if (spec_diagnostics_) batch_route_host_ms_[4] += ms_since(stamp);
-        cur_->timings_[L].hits = snapshot_hits;
-        cur_->timings_[L].misses = uint32_t(chosen.size()) - snapshot_hits;
-        cur_->timings_[L].miss_bytes = plan->miss_bytes;
-        batch_miss_bytes_ += plan->miss_bytes;
-        batch_union_ += kept_union.size();
-        profiler_.note_hot_bytes(layer_hot_bytes_[L]);
-    }
-    return {};
-}
-
 Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens,
                                    std::span<BatchRow> rows, std::span<float> logits) {
     if (mask_wait_tau_ >= 0)
@@ -3254,12 +3138,12 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     if (gpu_route && batch_probe)
         return fail(Err::FailedPrecondition,
                     "batch GPU routing cannot provide live per-layer CPU probes");
-    if (!route_config_logged_) {
+    if (!gpu_route_.logged) {
         log_info("verify batch: GPU snapshot routing {}", gpu_route ? "on" : "off");
-        route_config_logged_ = true;
+        gpu_route_.logged = true;
     }
-    batch_gpu_route_ = gpu_route;
-    route_steps_.clear();
+    gpu_route_.enabled = gpu_route;
+    gpu_route_.steps.clear();
     TimelineValue snapshot_guard = 0;
     const auto original_rope = cur_->layer_.batch().rope,
                original_rope_lat = cur_->layer_.batch().rope_lat;
@@ -3268,7 +3152,7 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         TimelineValue &guard;
         gpu::GpuScratch::View rope, rope_lat;
         ~FinishRoute() {
-            if (!e.batch_gpu_route_) return;
+            if (!e.gpu_route_.enabled) return;
             if (e.cur_->tok_open_) {
                 (void)e.cur_->tok_cmd_.end();
                 e.cur_->tok_open_ = false;
@@ -3282,58 +3166,21 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
                 if (e.cur_->submits_ == 0 || (fence && *fence >= e.cur_->fence_value_))
                     e.store_.set_completed_timeline(guard);
             }
-            e.batch_gpu_route_ = false;
+            e.gpu_route_.enabled = false;
         }
     } finish_route{*this, snapshot_guard, original_rope, original_rope_lat};
     if (gpu_route) {
         auto &runner = cur_->moe_.gpu_union();
         if (auto r = runner.init_gpu_route(c.num_hidden_layers, gpu::default_shader_dir()); !r)
             return r;
-        if (!cur_->route_scratch_.capacity()) {
-            if (auto r = cur_->route_scratch_.create(alloc_a_, 8ull << 20); !r) return r;
-            auto take = [&](gpu::GpuScratch::View &v, uint64_t n) -> Result<void> {
-                auto r = cur_->route_scratch_.alloc(n);
-                if (!r) return std::unexpected(r.error());
-                v = *r;
-                return {};
-            };
-            for (auto *views : {&cur_->saved_routes_, &cur_->saved_rope_, &cur_->saved_rope_lat_,
-                                &cur_->saved_carry_k_, &cur_->saved_carry_g_})
-                views->resize(c.num_hidden_layers);
-            cur_->saved_hidden_.resize(c.dspark_target_layer_ids.size());
-            for (uint32_t l = 0; l < c.num_hidden_layers; ++l) {
-                if (auto r =
-                        take(cur_->saved_routes_[l], layout::kSavedRouteWords * sizeof(uint32_t));
-                    !r)
-                    return r;
-                if (auto r = take(cur_->saved_rope_[l],
-                                  layout::kMoeBatchColumns * c.qk_rope_head_dim * sizeof(float));
-                    !r)
-                    return r;
-                if (auto r = take(cur_->saved_rope_lat_[l],
-                                  layout::kMoeBatchColumns * c.qk_rope_head_dim * sizeof(float));
-                    !r)
-                    return r;
-                if (auto r = take(cur_->saved_carry_k_[l],
-                                  layout::kMoeBatchColumns * c.head_dim * sizeof(float));
-                    !r)
-                    return r;
-                if (auto r = take(cur_->saved_carry_g_[l],
-                                  layout::kMoeBatchColumns * c.head_dim * sizeof(float));
-                    !r)
-                    return r;
-            }
-            for (auto &v : cur_->saved_hidden_)
-                if (auto r = take(v, layout::kMoeBatchColumns * c.hidden_size * sizeof(float)); !r)
-                    return r;
-        }
+        if (auto r = cur_->gpu_route_buffers_.initialize(alloc_a_, c); !r) return r;
         if (auto r = cur_->mgt_.begin_immutable(); !r) return r;
         if (auto r = cur_->dec_.begin_immutable(); !r) return r;
         snapshot_guard = ++guard_clock_;
         auto snapshot = store_.guarded_snapshot(snapshot_guard);
         if (!snapshot) return std::unexpected(snapshot.error());
-        route_snapshot_ = std::move(*snapshot);
-        auto shared = cur_->moe_.snapshot_with_shared(route_snapshot_, c.num_hidden_layers);
+        gpu_route_.snapshot = std::move(*snapshot);
+        auto shared = cur_->moe_.snapshot_with_shared(gpu_route_.snapshot, c.num_hidden_layers);
         if (auto r = runner.upload_snapshot(shared); !r) return r;
     }
 
@@ -3365,7 +3212,7 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     // Hashes depend only on the single verification path, already in history.
     // Issue P2 before layer-0 P0 reads rather than joining that queue at L1/L14.
     // Normal main-model LRU/P0 work and its residency snapshot are unchanged.
-    if (batch_gpu_route_ || cfg_.gpu.batch_engram_early) {
+    if (gpu_route_.enabled || cfg_.gpu.batch_engram_early) {
         const TimePoint f0 = Clock::now();
         for (const auto &table : cur_->engram_.tables().layers)
             for (uint32_t m = 0; m < M; ++m)
@@ -3459,12 +3306,12 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         batch_host_ms_.emplace_back("fence_wait", cur_->wait_ms_);
         batch_host_ms_.emplace_back("engram_issue_land", cur_->mq_ms_);
     }
-    if (batch_gpu_route_) {
+    if (gpu_route_.enabled) {
         store_.set_completed_timeline(snapshot_guard);
         snapshot_guard = 0;
         if (cur_->submits_ != 1)
             return fail(Err::Internal, "GPU verify must have exactly one queue submission");
-        if (auto r = finish_gpu_routes(p0, M); !r) return r;
+        if (auto r = gpu_route_.finish(*this, p0, M); !r) return r;
     }
     if (spec_diagnostics_) batch_host_ms_.emplace_back("finish_routes", ms_since(routes_begin));
     const auto readout_begin = Clock::now();
@@ -4597,7 +4444,7 @@ std::string Engine::status() const {
     uint64_t kv_bytes = 0, scratch_bytes = 0;
     for (const auto& stream : streams_) {
         kv_bytes += stream->kvs_.bytes();
-        scratch_bytes += stream->scratch_.capacity() + stream->bscratch_.capacity() + stream->route_scratch_.capacity();
+        scratch_bytes += stream->scratch_.capacity() + stream->bscratch_.capacity() + stream->gpu_route_buffers_.scratch.capacity();
     }
     s += std::format("memory    allocator A {} B {} bytes; expert slots {}; pinned reserved {} / payload {}; KV {}; decode/batch/route scratch {}; prefill transit freed before decode\n",
         alloc_a_.allocated_bytes(), alloc_b_.allocated_bytes(), uint64_t(store_.slot_count()) * layout::kExpertSlotBytes,

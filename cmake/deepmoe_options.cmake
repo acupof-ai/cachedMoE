@@ -65,6 +65,7 @@ set(DEEPMOE_GPU_SOURCES
 
 set(DEEPMOE_RUNTIME_SOURCES
     runtime/engine.cpp
+    runtime/gpu_route_state.cpp
     runtime/kvstore.cpp
     runtime/decode_layer.cpp
     runtime/moe_bridge.cpp

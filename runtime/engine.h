@@ -72,6 +72,7 @@
 #include "runtime/engram.h"
 #include "runtime/kvcache.h"
 #include "runtime/kvstore.h"
+#include "runtime/gpu_route_state.h"
 #include "runtime/moe_bridge.h"
 #include "runtime/resident_route.h"
 #include "runtime/sampler.h"
@@ -326,11 +327,7 @@ struct Stream {
     // --- the M > 1 forward, stream 0 only (docs/p4_dspark_runtime.md) ---
     gpu::MgtRunner       mgt_;
     gpu::GpuScratch      bscratch_;
-    gpu::GpuScratch      route_scratch_;
-    // Per-layer verification readback. Sized from the loaded model when the
-    // GPU route scratch is first built, rather than assuming forty layers.
-    std::vector<gpu::GpuScratch::View> saved_routes_, saved_carry_k_, saved_carry_g_;
-    std::vector<gpu::GpuScratch::View> saved_rope_, saved_rope_lat_, saved_hidden_;
+    GpuRouteBuffers      gpu_route_buffers_;
     gpu::GpuBuffer       blogits_{}, bsample_{}, btopk_out_{}, btopk_hist_{}, bdraft_{}, brank_{};
     // Track MS: what `run_layer` decided in its first two phases and its third
     // needs. In a single-stream step the three phases are consecutive
@@ -795,6 +792,7 @@ public:
     std::function<void(uint32_t, const DecodeLayer&)> batch_probe;
 
 private:
+    friend struct GpuRouteState;
     Result<void> open_model_files();
     // Track D2: probes each read source and hands the mirror table to the
     // IoEngine. A no-op when no mirror was given.
@@ -891,10 +889,7 @@ private:
     KvRowBackup batch_carry_before_;
     bool spec_inflight_=false;
     uint64_t batch_forward_calls_=0;uint32_t last_batch_layers_=0;
-    bool batch_gpu_route_=false,route_config_logged_=false;
-    std::vector<uint64_t> route_snapshot_;
-    std::vector<BatchStep> route_steps_;
-    Result<void> finish_gpu_routes(uint32_t p0,uint32_t m);
+    GpuRouteState gpu_route_;
     std::optional<uint32_t> draft_layer_slot(uint32_t layer) const;
     RuntimeConfig cfg_{};
     V41Config     model_cfg_{};
