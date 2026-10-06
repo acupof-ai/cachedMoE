@@ -4,10 +4,11 @@ Environment aliases/layers belong to runtime_env. Profiles deliberately keep
 production resets separate from benchmark inheritance and resource controls.
 """
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import importlib.util
 import hashlib
 import os
+import math
 from pathlib import Path
 import sys
 from types import MappingProxyType
@@ -35,6 +36,42 @@ KV_DISK_GB = runtime_facts.KV_DISK_BYTES // (1 << 30)
 WEB_PORT = 8080
 KV_BYTES_PER_TOKEN = 3200
 PREFILL_MS_PER_TOKEN = 24.0
+
+@dataclass(frozen=True)
+class ThermalPolicy:
+    """One authority for current thresholds; historical receipts stay literal."""
+    gpu_pause_c: float = 85.0
+    gpu_resume_c: float = 77.0
+    gpu_start_c: float = 60.0
+    nvme_pause_c: float = 80.0
+    nvme_resume_c: float = 72.0
+    nvme_start_c: float = 65.0
+
+    def __post_init__(self):
+        for kind in ("gpu", "nvme"):
+            pause, resume, start = (getattr(self, f"{kind}_{name}_c")
+                                    for name in ("pause", "resume", "start"))
+            if any(type(v) not in (int, float) or not math.isfinite(v) for v in (pause, resume, start)):
+                raise ValueError("thermal thresholds must be finite numbers")
+            if not 0 <= start <= resume < pause:
+                raise ValueError("thermal thresholds require 0 <= start <= resume < pause")
+
+    def thresholds(self, sensor):
+        kind = "gpu" if sensor == "gpu" or sensor.startswith("amdgpu:") else "nvme"
+        if kind == "nvme" and sensor != "nvme" and not sensor.startswith("nvme:"):
+            raise ValueError(f"unrecognized guarded sensor: {sensor}")
+        return tuple(getattr(self, f"{kind}_{name}_c") for name in ("pause", "resume", "start"))
+
+    def cold(self, temperatures):
+        if not temperatures or not any(k == "gpu" or k.startswith("amdgpu:") for k in temperatures):
+            raise RuntimeError("GPU start sensor unavailable")
+        if any(not math.isfinite(v) for v in temperatures.values()):
+            raise RuntimeError("start temperature sensor invalid")
+        return all(v <= self.thresholds(k)[2] for k, v in temperatures.items())
+
+    def record(self):
+        return asdict(self)
+
 
 REQUEST_DEFAULTS = MappingProxyType({
     "temperature": runtime_facts.SAMPLING_TEMPERATURE,

@@ -18,30 +18,57 @@ from hitrate_bench import BenchServer
 
 class ThermalPolicy(unittest.TestCase):
     def test_thresholds_and_hysteresis(self):
-        latch = guard.ThermalLatch()
+        latch = guard.ThermalLatch(80, 72)
         self.assertFalse(latch.update({"gpu": 79.99}))
         self.assertTrue(latch.update({"gpu": 80}))
         self.assertTrue(latch.update({"gpu": 72.01}))
         self.assertFalse(latch.update({"gpu": 72}))
 
     def test_untriggered_disk_does_not_extend_gpu_pause(self):
-        latch = guard.ThermalLatch()
+        latch = guard.ThermalLatch(80, 72)
         self.assertTrue(latch.update({"gpu": 81, "nvme": 74.85}))
         self.assertFalse(latch.update({"gpu": 72, "nvme": 74.85}))
 
     def test_second_hot_sensor_must_also_cool(self):
-        latch = guard.ThermalLatch()
+        latch = guard.ThermalLatch(80, 72)
         latch.update({"gpu": 81, "nvme": 78})
         self.assertTrue(latch.update({"gpu": 72, "nvme": 80}))
         self.assertTrue(latch.update({"gpu": 71, "nvme": 73}))
         self.assertFalse(latch.update({"gpu": 71, "nvme": 72}))
 
     def test_missing_hot_or_invalid_sensor_fails_closed(self):
-        latch = guard.ThermalLatch()
+        latch = guard.ThermalLatch(80, 72)
         latch.update({"gpu": 81})
         for sensors in ({"nvme": 50}, {"gpu": float("nan")}, {}):
             with self.assertRaises(RuntimeError):
                 latch.update(sensors)
+
+    def test_current_per_device_policy_and_cold_start(self):
+        policy = guard.runtime_defaults.ThermalPolicy()
+        latch = guard.ThermalLatch(policy=policy)
+        self.assertFalse(latch.update({"amdgpu:fake": 84, "nvme:fake": 79}))
+        self.assertTrue(latch.update({"amdgpu:fake": 85, "nvme:fake": 79}))
+        self.assertTrue(latch.update({"amdgpu:fake": 77, "nvme:fake": 80}))
+        self.assertTrue(latch.update({"amdgpu:fake": 76, "nvme:fake": 72.01}))
+        self.assertFalse(latch.update({"amdgpu:fake": 77, "nvme:fake": 72}))
+        self.assertTrue(policy.cold({"amdgpu:fake": 60, "nvme:fake": 65}))
+        self.assertFalse(policy.cold({"amdgpu:fake": 60.01, "nvme:fake": 65}))
+        self.assertFalse(policy.cold({"amdgpu:fake": 60, "nvme:fake": 65.01}))
+        with self.assertRaises(RuntimeError):
+            policy.cold({"nvme:fake": 40})
+
+    def test_custom_policy_and_invalid_thresholds(self):
+        parser = guard.argparse.ArgumentParser()
+        guard.add_thermal_arguments(parser)
+        policy = guard.thermal_policy(parser.parse_args(["--gpu-pause-c", "82", "--gpu-resume-c", "74"]))
+        latch = guard.ThermalLatch(policy=policy)
+        self.assertTrue(latch.update({"amdgpu:x": 82, "nvme:x": 79}))
+        self.assertFalse(latch.update({"amdgpu:x": 74, "nvme:x": 79}))
+        self.assertEqual(policy.record()["gpu_pause_c"], 82)
+        for values in ({"gpu_pause_c": float("nan")}, {"nvme_pause_c": 72},
+                       {"nvme_start_c": 73}, {"gpu_resume_c": True}):
+            with self.assertRaises(ValueError):
+                guard.runtime_defaults.ThermalPolicy(**values)
 
     def test_budget_excludes_open_and_closed_pauses(self):
         budget = guard.RunBudget(100, 10, 60)
@@ -68,8 +95,8 @@ class ThermalPolicy(unittest.TestCase):
         def sample(sensors, monitor):
             nonlocal count
             count += 1
-            temperature = 81 if 4 <= count <= 6 else 42
-            return {"amdgpu:fake": temperature, "nvme:fake": 74.85,
+            temperature = 86 if 4 <= count <= 6 else 42
+            return {"amdgpu:fake": temperature, "nvme:fake": 50 if count <= 2 else 74.85,
                     "ac": 1, "power_profile": "performance", "wall_time_s": time.time()}
 
         class Monitor:
@@ -323,7 +350,7 @@ class ThermalFailureReceipts(unittest.TestCase):
 
     def test_persistent_read_failure_preserves_primary_error_and_open_pause(self):
         child = SimpleNamespace(pid=999999, poll=lambda: None)
-        samples = [self.reading(), self.reading(), self.reading(81, 101),
+        samples = [self.reading(), self.reading(), self.reading(86, 101),
                    RuntimeError("monitor failed during the job"),
                    RuntimeError("monitor still unavailable")]
         with tempfile.TemporaryDirectory() as tmp:

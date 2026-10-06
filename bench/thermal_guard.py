@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run serial GPU jobs on AC, pausing at 80 C and resuming at 72 C.
+"""Run serial GPU jobs on AC, with configurable per-device temperature limits.
 
 Only sensors that reached the pause threshold hold a pause open. Cooling is
 reported in wall time, but the experiment budget counts active time. Raw
@@ -28,10 +28,15 @@ import runtime_defaults
 from process_names import GPU_COMM_PATTERN
 
 class ThermalLatch:
-    def __init__(self, pause=80.0, resume=72.0):
-        if not math.isfinite(pause) or not math.isfinite(resume) or resume >= pause:
-            raise ValueError("resume temperature must be below pause temperature")
-        self.pause, self.resume = pause, resume
+    def __init__(self, pause=None, resume=None, *, policy=None):
+        # Explicit uniform thresholds keep old callers/fixtures reproducible.
+        if pause is not None or resume is not None:
+            if policy is not None or pause is None or resume is None:
+                raise ValueError("provide a policy or both uniform thresholds")
+            policy = runtime_defaults.ThermalPolicy(
+                gpu_pause_c=pause, gpu_resume_c=resume, gpu_start_c=0,
+                nvme_pause_c=pause, nvme_resume_c=resume, nvme_start_c=0)
+        self.policy = policy or runtime_defaults.ThermalPolicy()
         self.hot = set()
 
     def update(self, temperatures):
@@ -40,9 +45,19 @@ class ThermalLatch:
         missing = self.hot.difference(temperatures)
         if missing:
             raise RuntimeError(f"missing latched temperature sensors: {sorted(missing)}")
-        self.hot.update(k for k, v in temperatures.items() if v >= self.pause)
-        self.hot = {k for k in self.hot if temperatures[k] > self.resume}
+        self.hot.update(k for k, v in temperatures.items() if v >= self.policy.thresholds(k)[0])
+        self.hot = {k for k in self.hot if temperatures[k] > self.policy.thresholds(k)[1]}
         return bool(self.hot)
+
+
+def add_thermal_arguments(parser):
+    for field, default in runtime_defaults.ThermalPolicy().record().items():
+        parser.add_argument("--" + field.replace("_", "-"), type=float, default=default)
+
+
+def thermal_policy(args):
+    return runtime_defaults.ThermalPolicy(**{
+        name: getattr(args, name) for name in runtime_defaults.ThermalPolicy().record()})
 
 
 class RunBudget:
@@ -182,7 +197,8 @@ def terminate(child):
     child.wait()
 
 
-def run_job(job, base, env, sensors):
+def run_job(job, base, env, sensors, policy=None):
+    policy = policy or runtime_defaults.ThermalPolicy()
     name = job["name"]
     log_path = base / f"{name}.log"
     thermal_path = base / f"{name}_thermal.jsonl"
@@ -193,15 +209,15 @@ def run_job(job, base, env, sensors):
     assert_idle()
     with ProfileMonitor() as monitor:
         deadline = time.monotonic() + 120
-        while any(v > 60 for k, v in sample(sensors, monitor).items() if k.startswith("amdgpu:")):
+        while not policy.cold(guarded_temperatures(sample(sensors, monitor))):
             if time.monotonic() >= deadline:
-                raise RuntimeError("GPU did not cool below 60 C")
+                raise RuntimeError(f"GPU/NVMe did not meet cold-start thresholds: {policy.record()}")
             time.sleep(0.2)
         start = sample(sensors, monitor)
         if start["ac"] != 1 or start["power_profile"] != target:
             raise RuntimeError("experiment requires AC and the requested power profile")
         peak = {k: start[k] for k in sensors}
-        latch = ThermalLatch()
+        latch = ThermalLatch(policy=policy)
         active_limit = job.get("active_timeout_s", job.get("timeout_s", 600))
         wall_limit = job.get("wall_timeout_s", min(14400, max(active_limit * 4, active_limit + 1800)))
         budget = RunBudget(time.monotonic(), active_limit, wall_limit)
@@ -211,7 +227,7 @@ def run_job(job, base, env, sensors):
         intervals = []
         transitions = []
         failure, rc = None, 99
-        print("START", name, flush=True)
+        print("START", name, "thermal thresholds", policy.record(), flush=True)
         try:
             with log_path.open("w") as log, thermal_path.open("w") as thermal:
                 child_env = dict(env)
@@ -241,7 +257,8 @@ def run_job(job, base, env, sensors):
                             pause_start = None
                         print("PAUSE" if paused else "RESUME", name, sorted(latch.hot), flush=True)
                     wall, cooling, active = budget.elapsed(now)
-                    values.update(elapsed_s=wall, active_elapsed_s=active, thermal_paused_s=cooling,
+                    values.update(thermal_thresholds=policy.record(), elapsed_s=wall,
+                                  active_elapsed_s=active, thermal_paused_s=cooling,
                                   paused=paused, latched_sensors=sorted(latch.hot))
                     thermal.write(json.dumps(values) + "\n")
                     thermal.flush()
@@ -279,7 +296,8 @@ def run_job(job, base, env, sensors):
                       active_timeout_s=active_limit, wall_timeout_s=wall_limit,
                       thermal_pauses=sum(t["paused"] for t in transitions),
                       thermal_pause_intervals=intervals, thermal_transitions=transitions,
-                      thermal_log=str(thermal_path), thermal_policy="per-sensor latched 80/72 C",
+                      thermal_log=str(thermal_path), thermal_policy="per-device latched",
+                      thermal_thresholds=policy.record(),
                       sampling_period_s=0.05,
                       ac_changed=end["ac"] != 1 if end is not None else None,
                       time=datetime.datetime.now().astimezone().isoformat())
@@ -290,7 +308,9 @@ def run_job(job, base, env, sensors):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, required=True)
+    add_thermal_arguments(parser)
     args = parser.parse_args()
+    policy = thermal_policy(args)
     plan = json.loads(args.plan.read_text())
     base = args.plan.resolve().parent
     os.chdir(plan["cwd"])
@@ -309,7 +329,7 @@ def main():
     signal.signal(signal.SIGINT, interrupt)
     try:
         for job in plan["jobs"]:
-            result = run_job(job, base, env, sensors)
+            result = run_job(job, base, env, sensors, policy)
             results.append(result)
             (base / "check_results.json").write_text(json.dumps(results, indent=2) + "\n")
             if result["rc"]:

@@ -296,6 +296,9 @@ def web_configuration(bridge):
         "spec_k": spec.get("draft_tokens") if spec.get("enabled") else 0,
         "power_profile": power["power_profile"],
         "platform_profile": power["platform_profile"],
+        "thermal_guard": {"enabled": getattr(bridge.args, "thermal_policy", None) is not None,
+                          "thresholds": bridge.args.thermal_policy.record()
+                          if getattr(bridge.args, "thermal_policy", None) else None},
     }
 
 class Serve:
@@ -975,6 +978,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser(description="local web chat UI for `cachedmoe serve`")
+    ap.add_argument("--thermal-policy-json", default=None,
+                    help="threshold provenance supplied by the external thermal supervisor")
     ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
     ap.add_argument("--model", default=None)
     ap.add_argument("--port", type=int, default=runtime_defaults.WEB_PORT)
@@ -1010,6 +1015,8 @@ def main():
     ap.add_argument("--think", action="store_true")
     ap.add_argument("--log", default=os.path.join(REPO, "build", "web_serve.log"))
     args = ap.parse_args()
+    args.thermal_policy = (runtime_defaults.ThermalPolicy(**json.loads(args.thermal_policy_json))
+                           if args.thermal_policy_json else None)
     if not 1 <= args.spec_top_k <= 129280:
         ap.error("--spec-top-k must be within 1..129280")
 

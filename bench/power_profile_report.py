@@ -96,7 +96,8 @@ def report(out):
                 for group in ("all", "first_two", "last_two")}
     # The owner must choose if the short and sustained raw winners differ.
     needs_owner = rankings["first_two"]["fastest"] != rankings["last_two"]["fastest"]
-    return dict(arms=arms, rankings=rankings, owner_decision_required=needs_owner,
+    return dict(thermal_thresholds=json.loads((out / "manifest.json").read_text())["thermal_thresholds"],
+                arms=arms, rankings=rankings, owner_decision_required=needs_owner,
                 default_candidate=rankings["all"]["selected"],
                 default_change_authorized=not needs_owner,
                 definitions=dict(primary="engine decode wall ms / timed decode steps, including cooling",

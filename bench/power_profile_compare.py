@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "tools/web"))
 import runtime_defaults
 import launch_guarded as web_guard
 from repetition_metrics import metrics
-from thermal_guard import ProfileMonitor, ThermalLatch, assert_idle, discover_sensors, sample
+from thermal_guard import ProfileMonitor, ThermalLatch, assert_idle, discover_sensors, sample, add_thermal_arguments, thermal_policy
 from power_profile_report import PROFILES, report
 
 
@@ -35,12 +35,13 @@ def save(path, value):
 
 
 class ThermalController:
-    def __init__(self, server, out, expected_engine):
+    def __init__(self, server, out, expected_engine, policy):
         self.server, self.out = server, out
         self.expected_engine = expected_engine
         self.child = None
         self.sensors = discover_sensors()
-        self.latch = ThermalLatch()
+        self.policy = policy
+        self.latch = ThermalLatch(policy=policy)
         self.paused = False
         self.stop = threading.Event()
         self.error = None
@@ -63,7 +64,7 @@ class ThermalController:
                     self.paused = web_guard.thermal_transition(
                         self.child, values, self.latch, self.paused)
                     values.update(paused=self.paused, latched_sensors=sorted(self.latch.hot),
-                                  arm=self.label, phase=self.phase,
+                                  arm=self.label, phase=self.phase, thermal_thresholds=self.policy.record(),
                                   engine_pid=self.child.pid if self.child else None)
                     log.write(json.dumps(values) + "\n")
                     log.flush()
@@ -94,10 +95,10 @@ class ThermalController:
             self.check()
             values = self.latest
             if (values and values["power_profile"] == target and not self.paused
-                    and all(v <= 60 for v in web_guard.guarded_temperatures(values).values())):
+                    and self.policy.cold(web_guard.guarded_temperatures(values))):
                 return dict(values)
             if time.monotonic() > deadline:
-                raise RuntimeError("all GPU/NVMe sensors did not cool to <=60 C within 900 s")
+                raise RuntimeError(f"GPU/NVMe did not meet cold-start thresholds within 900 s: {self.policy.record()}")
             if time.monotonic() - announced >= 30:
                 print("COOLING", target, web_guard.guarded_temperatures(values or {}), flush=True)
                 announced = time.monotonic()
@@ -110,7 +111,9 @@ def main():
     parser.add_argument("--script", type=Path, default=ROOT / "bench/power_profile_prompts.json")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8081)
+    add_thermal_arguments(parser)
     args = parser.parse_args()
+    policy = thermal_policy(args)
     assert_idle()
     with socket.socket() as port_probe:
         if port_probe.connect_ex(("127.0.0.1", args.port)) == 0:
@@ -123,7 +126,7 @@ def main():
     original_profile = subprocess.check_output(["powerprofilesctl", "get"], text=True).strip()
     launch = argparse.Namespace(repo=args.launch_repo.resolve(), state_dir=out,
                                spec_k=runtime_defaults.PRODUCTION_DRAFT_TOKENS,
-                               gpu_route=0, port=args.port)
+                               gpu_route=0, port=args.port, thermal_policy=policy)
     command, env = web_guard.launch_configuration(launch)
     # Preserve production policy. Only the private state, port and log differ.
     config = dict(command=command, environment={k: v for k, v in env.items()
@@ -132,7 +135,7 @@ def main():
                   launch_repo_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=args.launch_repo, text=True).strip(),
                   executable_sha256=hashlib.sha256(Path(command[command.index("--exe") + 1]).read_bytes()).hexdigest(),
                   workload_sha256=hashlib.sha256(args.script.read_bytes()).hexdigest(),
-                  order=list(PROFILES), original_profile=original_profile)
+                  order=list(PROFILES), original_profile=original_profile, thermal_thresholds=policy.record())
     save(out / "manifest.json", config)
     (out / "workload.json").write_bytes(args.script.read_bytes())
     base = f"http://127.0.0.1:{args.port}"
@@ -154,7 +157,7 @@ def main():
                                       start_new_session=True)
             expected = command[command.index("--exe") + 1]
             owned = web_guard.OwnedSession(server, expected)
-            controller = ThermalController(server, out, expected)
+            controller = ThermalController(server, out, expected, policy)
             controller.thread.start()
             deadline = time.monotonic() + 180
             while True:

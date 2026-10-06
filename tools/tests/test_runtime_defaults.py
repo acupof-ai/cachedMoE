@@ -253,11 +253,13 @@ class WebPolicy(unittest.TestCase):
     def test_api_actual_model_defaults_constraints_and_live_power(self):
         bridge = SimpleNamespace(serve=SimpleNamespace(
             config=defaults.resolve_launch("engine", {}, model="/chosen/model"), max_context=64,
-            cmd=["engine"], ready={}), args=SimpleNamespace(resident_only="off", mask_cache="dynamic"),
+            cmd=["engine"], ready={}), args=SimpleNamespace(resident_only="off", mask_cache="dynamic",
+                                 thermal_policy=defaults.ThermalPolicy(gpu_pause_c=83, gpu_resume_c=75)),
             prefill_ms_per_token=24)
         with patch.object(server.subprocess, "check_output", side_effect=["performance", "power-saver"]), \
                 patch.object(server.provenance, "_read", return_value="performance"):
             first, second = server.web_configuration(bridge), server.web_configuration(bridge)
+        self.assertEqual(first["thermal_guard"], dict(enabled=True, thresholds=bridge.args.thermal_policy.record()))
         self.assertEqual(first["model"], "/chosen/model")
         self.assertEqual(first["request_defaults"], defaults.request_policy()["defaults"])
         self.assertEqual(first["request_constraints"], defaults.request_policy()["constraints"])

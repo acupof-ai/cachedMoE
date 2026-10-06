@@ -42,6 +42,7 @@ class PowerProfileReportTests(unittest.TestCase):
                       for costs in raw]
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
+            (out / "manifest.json").write_text(json.dumps(dict(thermal_thresholds={"gpu_pause_c": 85})))
             for mode in PROFILES:
                 (out / mode).mkdir()
                 (out / mode / "turns.json").write_text(json.dumps([]))

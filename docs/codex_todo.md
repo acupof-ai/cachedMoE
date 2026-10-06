@@ -653,3 +653,11 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   原始thermal与临时engine日志在 `power_profiles_v1/`。测量样本为空，不更新默认或填造ms/token。
 - §4.8未完成；§4.9按owner顺序依赖仍未启动，不宣称离线/FP8质量或速度通过。
   待外盘散热达标（或owner明确修改起跑条件）后继续，使用新输出目录；本次未开始任何配置测量。
+
+## 22. 按 owner §0.7 更新温控（2026-10-06）
+
+- [x] `RuntimeDefaults.ThermalPolicy` 是六项设备阈值的唯一默认源：GPU 85/77、起跑60；NVMe80/72、起跑65。
+  监督器/网页启动器/三臂脚本共享参数解析，逐设备锁存；CLI 可覆盖且拒绝非有限或错误回差。
+- [x] 网页命令显式携带实际策略，state、thermal、结果 provenance 和 `/api/config` 报告实际值；直接裸跑server不声称有监督器。
+- [x] 温控、网页监督器、配置和三臂报告 CPU 检查73项通过；旧80/72行为测试改为显式旧策略，旧结果不改。
+- [ ] 新目录`power_profiles_v2`按§4.8执行；只在正常停网页并排空KV后启动，恢复时核对新阈值API。

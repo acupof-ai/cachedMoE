@@ -19,6 +19,17 @@ sys.path.insert(0, str(ROOT / "tools/web"))
 import launch_guarded as launch
 
 
+class ThermalConfiguration(unittest.TestCase):
+    def test_selected_thresholds_reach_server_without_environment_overrides(self):
+        args = launch.arguments(["--gpu-pause-c", "83", "--gpu-resume-c", "75"])
+        command, env = launch.launch_configuration(args, {})
+        actual = json.loads(command[command.index("--thermal-policy-json") + 1])
+        self.assertEqual(actual, args.thermal_policy.record())
+        self.assertEqual(actual["gpu_pause_c"], 83)
+        self.assertEqual(actual["nvme_pause_c"], 80)
+        self.assertEqual(actual["nvme_start_c"], 65)
+
+
 class PortablePidfd(unittest.TestCase):
     def test_builtins_are_preferred(self):
         with patch.object(launch.os, "pidfd_open", return_value=99, create=True) as opening, \
@@ -147,7 +158,7 @@ class GuardedWeb(unittest.TestCase):
                 signals.append(signum)
                 return True
 
-        latch = launch.ThermalLatch()
+        latch = launch.ThermalLatch(80, 72)
         values = {"amdgpu:fake": 80, "nvme:fake": 74.85, "k10temp:fake": 90}
         paused = launch.thermal_transition(Child(), values, latch, False)
         self.assertTrue(paused)
@@ -159,7 +170,7 @@ class GuardedWeb(unittest.TestCase):
     def test_ac_or_profile_change_holds_a_cool_engine(self):
         with patch.object(launch.EngineChild, "send", return_value=True) as signal_engine:
             child = launch.EngineChild(123, 100, 456, "/fake/deepmoe", 999)
-            latch = launch.ThermalLatch()
+            latch = launch.ThermalLatch(80, 72)
             for invalid in ({"ac": 0, "power_profile": "performance"},
                             {"ac": 1, "power_profile": "power-saver"},
                             {"ac": 1, "power_profile": "performance", "platform_profile": "balanced"}):
@@ -228,7 +239,7 @@ class GuardedWeb(unittest.TestCase):
                    "ac": 1, "power_profile": "performance"} for temp in (80, 72)]
         with patch.object(launch, "sample", side_effect=values), \
                 patch.object(launch.time, "sleep"):
-            clean = launch.shutdown(server, Child(), False, launch.ThermalLatch(), {}, None,
+            clean = launch.shutdown(server, Child(), False, launch.ThermalLatch(80, 72), {}, None,
                                     io.StringIO(), io.StringIO())
         self.assertTrue(clean)
         self.assertEqual(server_signals, [signal.SIGINT])
@@ -240,7 +251,7 @@ class GuardedWeb(unittest.TestCase):
             def poll(self):
                 return 1
         log = io.StringIO()
-        clean = launch.shutdown(Server(), None, False, launch.ThermalLatch(), {}, None,
+        clean = launch.shutdown(Server(), None, False, launch.ThermalLatch(80, 72), {}, None,
                                 log, io.StringIO())
         self.assertFalse(clean)
         self.assertIn("KV drain is not confirmed", log.getvalue())
@@ -308,7 +319,7 @@ class StartupShutdownOwnership(unittest.TestCase):
                 patch.object(launch.time, "sleep"):
             owned = launch.OwnedSession(server, "/fake/deepmoe")
             log = io.StringIO()
-            clean = launch.shutdown(server, None, False, launch.ThermalLatch(), {}, None,
+            clean = launch.shutdown(server, None, False, launch.ThermalLatch(80, 72), {}, None,
                                     log, io.StringIO(), owned)
             receipt = owned.receipt()
             owned.close()
