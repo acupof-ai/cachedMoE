@@ -230,6 +230,44 @@ are also recorded in `phase_a_matrix.json`, and repetition calibration in
 `phase_b_calibration.json`. A passes its recovery thresholds; MMLU and long
 repetition failures prohibit promoting plain mask as a newly qualified default.
 
+## Repetition detector calibration: Phase B
+
+**The known-output calibration and CPU boundary checks passed.** The detector
+uses a 128-token window, periods up to eight, at least four cycles and at least
+16 loop tokens. A same-token run longer than three also fails. The four saved
+calibration outputs give:
+
+| Output under `bench/results/` | Tokens | Longest run | Short-period loop | Repeated 4-grams | Distinct-2 | Result |
+|---|---:|---:|---|---:|---:|---|
+| `spec_e2e/fixed_final/fixed_mask` | 64 | 52 | period 1, indices [12,28) | .786885 | .206349 | fail |
+| `spec_e2e/final_dual/mask` | 64 | 1 | none | .000000 | .968254 | pass |
+| `spec_e2e/final64/mask` | 64 | 1 | none | .000000 | .952381 | pass |
+| `web_spec5_long/spec5/turn2_events.jsonl` | 512 | 1 | period 2, indices [337,353) | .379175 | .508806 | fail |
+
+The raw receipt is `bench/results/mask_quality/phase_b_calibration.json`.
+`tools/tests/test_repetition_metrics.py` covers runs of three versus four;
+14 versus 16 period-2 tokens; an embedded period-8 loop; period nine and only
+three cycles; empty input and n-gram arithmetic; output boundaries, prompt
+events and invalid boolean token IDs. Both benchmark drivers retain the four
+metrics for each output. These checks detect exact repetition, not semantic
+correctness.
+
+The first tool run was **32/33**, with `suite.io` failing
+(`bench/results/mask_quality/cpu_tools.log`); it was not a full pass. The final
+CPU and tool receipts are **25/25** and **33/33** in `cpu_final.log` and
+`tools_final.log` under the same raw root. A later concurrent tool run also
+failed `suite.io`; its serial recovery is recorded in `final_tools_serial.log`.
+The repetition test itself passed in those logs.
+
+Subsequent numerical checks are accounted separately in
+`bench/results/mask_quality/final_validation_summary.json`: six successful
+`final_review/` jobs plus three corrected `final_review_remaining/` jobs,
+with zero skips. The failed first off-NLL preparation is excluded. This is
+nine completed validation jobs, including a CPU preflight rejection. The
+receipt preserves the numerical binary's identity
+and the current short-decode baseline; it does not claim strict token accuracy
+of 8/8 or a fresh GPU rerun of the later build with clock metadata.
+
 ## Weighted miss waits: Phase C (2026-10-05)
 
 `DEEPMOE_MASK_WAIT_TAU` is an experiment, **disabled by default**. For each
@@ -305,8 +343,8 @@ MTP expert slots are inside this cache, leaving 5,116 replaceable main-model
 slots; they are not an extra allocation. Batch and route scratch add at most
 128+8 MiB for one stream. Engram table scales are not resident by default.
 Prefill transit and its runner are destroyed before decode; bootstrap host
-weights are released before the GPU store is built. Neither is a second
-resident copy that can be freed again.
+expert store is released before the GPU store is built (`store_.reset()`).
+Neither is a second resident copy that can be freed again.
 
 The earlier 5,500-slot live OS snapshot reported **121.49 GiB MemTotal**,
 **5.65 GiB MemAvailable**, driver VRAM/GTT **3.41/104.71 GiB** and process RSS
