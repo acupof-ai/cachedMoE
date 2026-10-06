@@ -166,7 +166,7 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
   不能完全归因于 pin。
 - [x] 只对最有希望且未被重复门判失败的候选补全部质量门；最快且合格才可作为网页默认。
   若 plain 最快就关投机；若无 mask 配置合格，明确说明，不选一个伪“通过”配置。
-- [ ] 写进 `docs/dspark_topk.md` 与 STATUS，完成后按决策恢复网页。
+- [x] 写进 `docs/dspark_topk.md` 与 STATUS，完成后按决策恢复网页。
 
 收据（2026-10-06）：五臂各8/8同PID3701458/default session，performance/AC、双盘48/48，
 KV重置而专家cache按固定顺序延续；plain参照复用完整C r4 performance矩阵，不把旧A power-saver速度混入。
@@ -211,9 +211,9 @@ Engram 全量 scale 默认没有常驻，也没有可再释放一次的整套 ho
   `post_main_merge_shader_receipt.json` 已核实。main已fast-forward到`0ed4cb4`，main目录验证/推送仍交付中，本合并条目保持未勾；
   尚未推送、删own工作树或宣称网页恢复，不动owner untracked副本。
 - [x] 更新本清单为最终未完成事项；先核对主仓库同名 untracked 副本是否有用户新编辑，再合并。
-- [ ] 用主仓库 `build/web_mask/launch.py` 恢复网页（磁盘KV开启、1M上下文、5500槽、双盘、80/72温控），
+- [x] 用主仓库 `build/web_mask/launch.py` 恢复网页（磁盘KV开启、1M上下文、5500槽、双盘、80/72温控），
   验证 `/api/config` 与引擎日志。用户 transcript 不动，浏览器页不刷新。
-- [ ] 完成当前 goal 前确认以上必要项已处理；NO-GO / 按决策跳过必须有证据。
+- [x] 完成当前 goal 前确认以上必要项已处理；NO-GO / 按决策跳过必须有证据。
 
 ## 已完成的前置工作：不要重做
 
@@ -274,7 +274,7 @@ mask 只比 off 快约 4%（历史 +43%）。
 
 ### 4.3 P1：网页投机配置
 
-- [ ] 网页之前跑 k=5（约 65ms/token，可能比不投机还慢）。恢复网页时用 D 的结论；
+- [x] 网页之前跑 k=5（约 65ms/token，可能比不投机还慢）。恢复网页时用 D 的结论；
   ~~D 未完成就用 plain~~ → owner 改为：D 未完成就用 mask + k=2，不用 k=5（§0）。
 - [x] ~~mask 默认值、是否开网页投机都由 owner 决定~~ → 已决定：动态 mask + 投机（§0）。
   恢复网页后验证 `/api/config` 显示 mask、投机 k、performance 模式。
@@ -358,7 +358,7 @@ CMake 选项 `CACHEDMOE_*`。
 - [x] 全新 build 目录和已有 build 目录都能构建；52 个 SPIR-V shader hash 与改名前一致。
 - [x] CPU 25/25、`tests/run_all.py` 全过；l3 off NLL 逐位 `.622784`；`suite.decode` 不低于改名前。
 - [x] 只设旧 `DEEPMOE_*` 变量、只设新变量、两者都设，三种情况各跑一次 CPU 门，行为一致。
-- [ ] 网页用新程序名恢复，`/api/config` 正常，旧 transcript 和 KV 快照能打开。
+- [x] 网页用新程序名恢复，`/api/config` 正常，旧 transcript 和 KV 快照能打开。
 - [x] `rg -i deepmoe` 剩余命中逐条列进报告，每条写明为什么保留。
 
 ## 5. Codex 追加收据（2026-10-06 00:23）
@@ -552,3 +552,15 @@ CMake 选项 `CACHEDMOE_*`。
   首次smoke脚本漏算正常rollback，失败记录及修正后的验收都保留，没有改runtime逻辑。
 - 原始收据：`rename_prepared/final_config_validation/actual_main_numerical_summary.json`、
   `legacy_live_smoke/legacy_live_result.json`；仍待push/own清理与网页/API恢复。
+
+## 19. Codex 追加收据（2026-10-06，推送与网页恢复结案）
+
+- `cd5f1ea` 已push，远端main逐SHA核对相同；只删除本任务干净工作树与branch，11个owner结果目录保留。
+- 网页已用canonical程序名启动；guard/server/engine的实时身份核对，双盘48/48、AC/performance、80/72温控，
+  dynamic5500、KV4GB、上下文1M、k2/top4/ONECB1/CPUroute0与 `/api/config` 一致。
+- 4个旧会话history实际API读取正常；原旧KV和8份聊天文件hash/size/mtime仍不变，浏览器未刷新。
+  旧web KV4710与当前web transcript3313不是同一prefix，未把隔离恢复宣称成当前聊天cache复用。
+- 新隔离命名网页smoke生成24 tokens，9 cycles、18草稿验证/14接受，effort75；
+  38-position后台KV已落盘并由实际library的CPU reader读回。这里只验部署和持久化，不作性能/质量跑分。
+- 收据 `docs/web_restore_receipt.json`；原始live配置、状态、日志与thermal已在final_config_validation按hash冻结。
+  原A质量例外、C/D NO-GO、E/Phase4/5条件SKIP保持；draft FP8 head仍按原文等owner决定，不新增实验。

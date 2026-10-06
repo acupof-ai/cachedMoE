@@ -15,7 +15,9 @@ The actual main executable passes the five CLI policy cases, three artifact
 symlinks, old-source compilation and two legacy KV reads. The actual main executable also passes nine numerical jobs with ten registered
 cases and no skips, preserving off/mask NLL .622784/.835581, short decode 6/8
 and own-prefill 7/8, and 4K/16K 8/8. The RO mirror has 48/48 healthy shards.
-Push, own-worktree cleanup and live web restoration remain pending.
+Accepted changes are pushed at `cd5f1ea`; the owned clean worktree and branch
+are removed. The guarded web service is restored and its live API, four old
+histories and fresh speculative generation are verified.
 See [configuration scope](runtime_configuration.md).
 
 | Interface | Compatibility rule |
@@ -45,7 +47,12 @@ The original snapshot and eight transcripts retain their SHA-256, size and
 mtime. Raw evidence: `legacy_live_smoke/legacy_live_result.json` in the same
 validation directory. The first smoke assertion omitted normal rollback; its
 failed harness receipt and the corrected acceptance run are both preserved.
-Current web/API acceptance remains pending. This is compatibility evidence,
+Current web/API acceptance also passes; the smoke generates 24 tokens in nine
+cycles, verifies 18 draft tokens and accepts 14. Its 38-position disk snapshot
+is readable. The existing old web KV and current web transcript contain
+different token counts, so the old-KV restore proof uses an isolated copy and
+does not claim current-chat prefix reuse. See [the web receipt](web_restore_receipt.json).
+This is compatibility evidence,
 not a new throughput or quality measurement.
 
 Run the committed-tree audit after the final documentation commit:
@@ -62,3 +69,10 @@ tokens on the same line. Binary files and legacy filenames are counted separatel
 Current build/launch instructions live in [build.md](build.md) and
 [the web guide](../tools/web/README.md); measured historical reports retain
 their original commands and ledger bytes.
+
+The complete nonignored working-tree scan also covers owner raw data: all
+8,210 text hits have retention roles. Its conservative filename check flags
+11 saved experiment binaries/source/chat paths. A separate exact-path/hash
+review retains all 11 as historical evidence; no owner files are renamed.
+Raw review: `final_config_validation/owner_untracked_filename_review.json`
+under the same results root. The committed-tree audit is the release gate.

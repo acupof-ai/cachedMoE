@@ -36,7 +36,7 @@ Current short-decode reference matching is **6/8**, or **7/8 with the engine's
 own prefill**. At 4K and 16K (17,010 prompt tokens), teacher-forced and
 free-running checks each match **8/8**. Off64 reproduces the printed platform
 NLL **.622784**. These results preserve the current baseline; they do not meet
-the strict short-decode 8/8 + 8/8 requirement. Numerical validation belongs to
+the strict short-decode 8/8 + 8/8 requirement. Earlier numerical validation belongs to
 `3c3a2c6` / executable `d4bf3184...`, with nine successful jobs, ten registered
 cases and no skips; the later clock-only build is recorded separately.
 Source: `bench/results/mask_quality/final_validation_summary.json`.
@@ -74,8 +74,15 @@ resource warnings, so its success does not establish zero full-cache failures.
 An isolated old KV snapshot restores 4,710 positions and continues generation
 with only the normal two-token rollback/prefill. Graceful quit drains disk KV;
 the original snapshot and eight transcripts remain byte/mtime identical.
-Push, owned cleanup and guarded web/API restoration remain pending. All 11
-owner untracked result directories are preserved. Raw summaries:
+**The accepted rename/configuration changes are pushed at `cd5f1ea`.** The
+owned clean worktree/branch is removed and all 11 owner result directories
+remain. The guarded web is LIVE on 8080: dynamic 5,500 slots, disk KV, 1M
+capacity, dual source, performance/AC, k2/top4/ONECB with CPU routing and
+80/72°C guarding. Live configuration and four old histories pass; browser
+pages and original files are unchanged. A fresh smoke generates 24 tokens in
+nine cycles (18 draft tokens verified, 14 accepted); its disk KV is readable.
+This confirms served policy and persistence, not a new speed or quality score.
+[Live web receipt](web_restore_receipt.json). Raw numerical summaries:
 `actual_main_numerical_summary.json` and `legacy_live_smoke/legacy_live_result.json`
 under `bench/results/mask_quality/rename_prepared/final_config_validation/`.
 

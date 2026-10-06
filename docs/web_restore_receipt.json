@@ -1,0 +1,107 @@
+{
+  "schema": "cachedmoe.web_restore.receipt.v1",
+  "as_of_unix": 1791279718.1954908,
+  "source_and_numerical_commit": "825ee1a586f566fdf85defe9ea21c7b0df8172eb",
+  "accepted_main_commit": "cd5f1ea2a5a055437b775ccdf81a462136a76240",
+  "status": "LIVE_AND_ACCEPTED",
+  "policy": {
+    "max_context": 1048576,
+    "cache_slots": 5500,
+    "sources": 2,
+    "kv_disk": true,
+    "mask_cache": "dynamic",
+    "spec_k": 2,
+    "accept_top_k": 4,
+    "main_paths": 1,
+    "onecb": true,
+    "gpu_route": false,
+    "power_profile": "performance"
+  },
+  "process_identity": {
+    "guard_pid": 4067391,
+    "server_pid": 4067417,
+    "engine_pid": 4067418,
+    "engine_start_ticks": 25977640
+  },
+  "verified_old_histories": [
+    {
+      "session": "codex-spec5-smoke-20261005",
+      "messages": 0,
+      "ctx_ids": 0,
+      "file_unchanged": true
+    },
+    {
+      "session": "ctx1m-smoke-20261005",
+      "messages": 2,
+      "ctx_ids": 4163,
+      "file_unchanged": true
+    },
+    {
+      "session": "readme-demo-20261005",
+      "messages": 2,
+      "ctx_ids": 78,
+      "file_unchanged": true
+    },
+    {
+      "session": "web",
+      "messages": 2,
+      "ctx_ids": 3313,
+      "file_unchanged": true
+    }
+  ],
+  "protected_original_files_unchanged": true,
+  "browser_refreshed": false,
+  "fresh_smoke": {
+    "session": "codex-rename-final-20261006",
+    "generated": 24,
+    "cycles": 9,
+    "verified": 18,
+    "accepted": 14,
+    "saved_kv_positions": 38,
+    "effort": 75
+  },
+  "legacy_kv_continuation": {
+    "isolated_copy": true,
+    "restored_positions": 4710,
+    "replay_positions": 128,
+    "reused_tokens": 4708,
+    "prefill_tokens": 2,
+    "generated": 2,
+    "normal_quit_rc": 0
+  },
+  "limits": [
+    "Fresh-session smoke proves served policy and generation, not speed or quality",
+    "Actual legacy KV restore verified separately using isolated copy; old web snapshot differs from current web transcript token count",
+    "Current MMLU/repetition and strict short-decode limitations remain unchanged"
+  ],
+  "raw_refs": [
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_live_acceptance.json",
+      "sha256": "15b3a46eefb8ca6644e3ada23280deead67c2a6f76dc5a4a799da285cd6b242b"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_api_config.json",
+      "sha256": "ebb6937c4775a114f1b39d0249c0f3816cef0c31655a3281c6d450b1eba24ef4"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_smoke_kv_saved_receipt.json",
+      "sha256": "2ba4f2ac594d0322018dba07c4331e0e6f8d1d194da8924f6490c97b0fe81b0c"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_live_inputs_frozen/receipt.json",
+      "sha256": "d90d92215a33af09fe4b8122ea7ceb410e1e603fefb46bf803aebd0ad0bbc1f9"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/accepted_main_push_cleanup_receipt.json",
+      "sha256": "eb145a24eaad4b4125ffd22042ea82f3b0e211aebf34814bb410669c7c0ff552"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_restore_launch_receipt.json",
+      "sha256": "f635ad6eda1c1e96cdb84c57e502ba5e2c7f4aa75dbe4c58871e76144bd4fa9c"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/legacy_live_smoke/legacy_live_result.json",
+      "sha256": "fe65ebae02782da44aa2b50fde8a4eba40965cfcd5b845914bdf08c7f93530ed"
+    }
+  ]
+}

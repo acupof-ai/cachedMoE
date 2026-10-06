@@ -1,7 +1,7 @@
 {
   "schema": "cachedmoe.configuration.receipt.v1",
   "source_commit": "43a2ab9bae460cc0fb8c1f2d14bf9f5775304301",
-  "status": "SOURCE_CPU_MAIN_BUILD_GPU_AND_LEGACY_CONTINUATION_ACCEPTED_PUSH_WEB_PENDING",
+  "status": "SOURCE_CPU_MAIN_BUILD_GPU_PUSH_CLEANUP_AND_WEB_ACCEPTED",
   "coverage": {
     "native_environment_keys": 87,
     "native_files_in_scope_audit": 127,
@@ -71,7 +71,7 @@
       "legacy_kv_files_unchanged": true,
       "qualified_legacy_source_client_compiled": true,
       "web_launcher_dry_run_rc": 0,
-      "live_web_started": false,
+      "live_web_started": true,
       "owner_untracked_directories_preserved": 11,
       "committed_rename_audit_unreviewed_hits": 0,
       "prepared_acceptance_adapter_cpu_cases": 15,
@@ -109,6 +109,24 @@
         "generated": 2,
         "engine_exit": 0,
         "protected_originals_unchanged": true
+      },
+      "push_and_cleanup": {
+        "accepted_main_commit": "cd5f1ea2a5a055437b775ccdf81a462136a76240",
+        "remote_main_verified": true,
+        "owned_worktree_removed": true,
+        "owned_branch_removed": true,
+        "owner_untracked_preserved": 11
+      },
+      "live_web_acceptance": {
+        "api_config_pass": true,
+        "old_histories": 4,
+        "old_files_unchanged": true,
+        "web_smoke_generated": 24,
+        "web_smoke_cycles": 9,
+        "web_smoke_verified": 18,
+        "web_smoke_accepted": 14,
+        "fresh_kv_saved_and_read": 38,
+        "browser_refreshed": false
       }
     }
   },
@@ -121,7 +139,6 @@
     "empty shader path remains empty and does not hash cwd"
   ],
   "limits": [
-    "Local main build, numerical and old-KV continuation accepted; push, owned cleanup and live web restoration remain pending",
     "Strict short decode 8/8 + 8/8 remains unmet; current 6/8 and 7/8 preserved",
     "Mask MMLU46/57 and strict repetition remain owner-accepted exceptions; C/D NO-GO decisions unchanged",
     "1M capacity checks do not establish full 1M prompt quality or prefill feasibility",
@@ -271,6 +288,34 @@
     {
       "path": "bench/results/mask_quality/rename_prepared/final_config_validation/legacy_live_smoke/acceptance_correction.json",
       "sha256": "e65bc95be75cd3aab2ddd3aabb4dd95934eefd87857202c666878406938d4d5c"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_live_acceptance.json",
+      "sha256": "15b3a46eefb8ca6644e3ada23280deead67c2a6f76dc5a4a799da285cd6b242b"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_api_config.json",
+      "sha256": "ebb6937c4775a114f1b39d0249c0f3816cef0c31655a3281c6d450b1eba24ef4"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_smoke_kv_saved_receipt.json",
+      "sha256": "2ba4f2ac594d0322018dba07c4331e0e6f8d1d194da8924f6490c97b0fe81b0c"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_live_inputs_frozen/receipt.json",
+      "sha256": "d90d92215a33af09fe4b8122ea7ceb410e1e603fefb46bf803aebd0ad0bbc1f9"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/accepted_main_push_cleanup_receipt.json",
+      "sha256": "eb145a24eaad4b4125ffd22042ea82f3b0e211aebf34814bb410669c7c0ff552"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/web_restore_launch_receipt.json",
+      "sha256": "f635ad6eda1c1e96cdb84c57e502ba5e2c7f4aa75dbe4c58871e76144bd4fa9c"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/legacy_live_smoke/legacy_live_result.json",
+      "sha256": "fe65ebae02782da44aa2b50fde8a4eba40965cfcd5b845914bdf08c7f93530ed"
     }
   ]
 }
