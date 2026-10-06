@@ -504,8 +504,8 @@ Result<void> DsparkRuntime::create(gpu::Device &dev, gpu::MemoryAllocator &alloc
     log_info("DSpark draft: one command buffer {}", p.use_onecb ? "on" : "off");
     gpu::MgtSpec spec;
     spec.pair_dot = options.mgt_pair_dot;
-    DS_TRY(p.ds.create(dev, alloc, gpu::default_shader_dir()));
-    DS_TRY(p.mgt.create(dev, alloc, gpu::default_shader_dir(), spec));
+    DS_TRY(p.ds.create(dev, alloc, dev.environment().shader_dir));
+    DS_TRY(p.mgt.create(dev, alloc, dev.environment().shader_dir, spec));
     DS_TRY(p.mgt.ensure(M));
     DS_TRY(p.scratch.create(alloc, 32ull << 20));
 #define BUF(name, bytes)                                                                           \
@@ -550,7 +550,7 @@ Result<void> DsparkRuntime::create(gpu::Device &dev, gpu::MemoryAllocator &alloc
     BUF(ids, 4ull * (M + 1));
     BUF(conf, 4ull * M);
 #undef BUF
-    DS_TRY(p.moe.create(dev, alloc, gpu::default_shader_dir(), store, planner, pinned, cfg));
+    DS_TRY(p.moe.create(dev, alloc, dev.environment().shader_dir, store, planner, pinned, cfg));
     for (uint32_t st = 0; st < 3; ++st) {
         auto kv = p.take(2ull * (WIN + M) * HD), sink = p.take(4ull * 64),
              table = p.take(129 * 6 * 8);
@@ -584,7 +584,8 @@ Result<void> DsparkRuntime::create(gpu::Device &dev, gpu::MemoryAllocator &alloc
     DS_TRY(take(p.hquant, 6ull * 16 * 2304 * 4));
     for (auto &v : p.captures)
         DS_TRY(take(v, M * 32768 * 4));
-    if (p.use_onecb) DS_TRY(p.onecb.create(dev, alloc, gpu::default_shader_dir()));
+    if (p.use_onecb)
+        DS_TRY(p.onecb.create(dev, alloc, dev.environment().shader_dir));
     reset();
     return {};
 }
@@ -653,7 +654,7 @@ Result<void> DsparkRuntime::append(uint32_t start, std::span<const float> hidden
         return fail(Err::FailedPrecondition,
                     "DSpark committed hidden positions are not contiguous");
     if (p.use_mega && !p.mega.valid())
-        DS_TRY(p.mega.create(*p.device, *p.allocator, gpu::default_shader_dir()));
+        DS_TRY(p.mega.create(*p.device, *p.allocator, p.device->environment().shader_dir));
     struct ResetRecording {
         Impl &p;
         ~ResetRecording() {
@@ -661,7 +662,7 @@ Result<void> DsparkRuntime::append(uint32_t start, std::span<const float> hidden
         }
     } reset_recording{p};
     if (p.use_onecb && !p.onecb.valid())
-        DS_TRY(p.onecb.create(*p.device, *p.allocator, gpu::default_shader_dir()));
+        DS_TRY(p.onecb.create(*p.device, *p.allocator, p.device->environment().shader_dir));
     p.recording = p.use_mega || p.use_onecb;
     const uint32_t count = uint32_t(hidden.size() / (3 * D));
     for (uint32_t at = 0; at < count; at += M) {
@@ -710,9 +711,9 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos, uint32_t token,
         return fail(Err::FailedPrecondition,
                     "DSpark draft needs committed main KV through position");
     if (p.use_mega && !p.mega.valid())
-        DS_TRY(p.mega.create(*p.device, *p.allocator, gpu::default_shader_dir()));
+        DS_TRY(p.mega.create(*p.device, *p.allocator, p.device->environment().shader_dir));
     if (p.use_onecb && !p.onecb.valid())
-        DS_TRY(p.onecb.create(*p.device, *p.allocator, gpu::default_shader_dir()));
+        DS_TRY(p.onecb.create(*p.device, *p.allocator, p.device->environment().shader_dir));
     p.observer = &probe;
     p.recording = p.use_mega || p.use_onecb;
     p.ops.clear();

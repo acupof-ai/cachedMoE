@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include "gpu/vulkan/moe_kernels.h"
 
 #include <algorithm>
@@ -28,12 +27,9 @@ std::string MoeSpec::name() const {
 }
 
 std::string default_shader_dir() {
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_SHADER_DIR")) return e;
-#if defined(CACHEDMOE_SHADER_DIR)
-    return CACHEDMOE_SHADER_DIR;
-#else
-    return "build/shaders";
-#endif
+    // Standalone benchmark calls are an independent setup epoch. Engine and
+    // DSpark always pass the already-owned directory from their device.
+    return configuration::RuntimeEnvironment::capture()->shader_dir;
 }
 
 uint64_t MoeRunner::bytes_dispatch_a() const {
@@ -212,8 +208,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     // issue, so hand it to the pipeline as a specialisation constant and the
     // loops fold away again. M > 1 (the verify batch) keeps the mask.
     // CACHEDMOE_MOE_STATIC_M1=0 is the A arm of the A/B; default on.
-    bool m1_default = true;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_STATIC_M1"); e && *e == '0') m1_default = false;
+    const bool m1_default = device.environment().moe.static_m1;
     const uint32_t static_m = (spec.m == 1 && m1_default) ? 1u : 0u;
     ps.extra = {spec.decode_mode, spec.h_precision, spec.rows_per_lane,
                 spec.x_mode, spec.h_quant, spec.fp8_slots, static_m};

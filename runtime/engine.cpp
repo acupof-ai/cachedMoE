@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include <thread>
 #include <chrono>
 #include "runtime/engine.h"
@@ -6,7 +5,6 @@
 #include "runtime/mask_wait.h"
 
 #include <algorithm>
-#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cerrno>
@@ -20,7 +18,7 @@
 #include "cpu/dequant.h"
 #include "core/wc_read.h"
 #include "core/log.h"
-#include "gpu/vulkan/moe_kernels.h"   // gpu::default_shader_dir
+#include "gpu/vulkan/moe_kernels.h"
 #include "gpu/vulkan/prefill_kernels.h"
 #include "runtime/engram_tables.h"
 #include "model/layout.h"
@@ -32,9 +30,6 @@
 #endif
 
 namespace cachedmoe::runtime {
-
-// See Engine::ms_eager_moe (Track LX): 0 on RADV, set by init_gpu.
-namespace { std::atomic<int> g_ms_eager_default{1}; std::atomic<int> g_shared_early_default{0}; }
 
 #if defined(__linux__)
 namespace {
@@ -84,9 +79,7 @@ std::string read_line(const std::string& path) {
 // it -- to the L3 domain of the CPU that services the amdgpu interrupt.
 // CACHEDMOE_CPU_AFFINITY: unset/"auto" = this; "off" = leave the scheduler alone;
 // anything else is a cpulist used verbatim.
-void pin_to_gpu_irq_ccd() {
-    const char* env = ::cachedmoe::environment::get("CACHEDMOE_CPU_AFFINITY");
-    const std::string mode = env ? env : "auto";
+void pin_to_gpu_irq_ccd(const std::string &mode) {
     if (mode == "off") return;
     cpu_set_t set;
     std::string list;
@@ -130,13 +123,8 @@ void pin_to_gpu_irq_ccd() {
 
 // --- H1a: the hard cap on the auto-sized cache (see runtime/engine.h) -------
 uint32_t auto_slot_cap() {
-    static const uint32_t v = [] {
-        const char* e = ::cachedmoe::environment::get("CACHEDMOE_CACHE_SLOT_CAP");
-        if (!e || !*e) return kAutoSlotCap;
-        const long long x = std::atoll(e);
-        return x < 0 ? kAutoSlotCap : static_cast<uint32_t>(x);   // 0 = no cap, deliberately
-    }();
-    return v;
+    static const uint32_t value = configuration::RuntimeEnvironment::capture()->cache_slot_cap;
+    return value;
 }
 
 uint64_t cap_auto_budget(uint64_t budget_bytes, uint64_t slot_bytes, uint32_t slot_cap) {
@@ -146,12 +134,8 @@ uint64_t cap_auto_budget(uint64_t budget_bytes, uint64_t slot_bytes, uint32_t sl
 }
 
 uint32_t cache_backoff_step() {
-    static const uint32_t v = [] {
-        const char* e = ::cachedmoe::environment::get("CACHEDMOE_CACHE_BACKOFF_SLOTS");
-        const long long x = (e && *e) ? std::atoll(e) : 0;
-        return x > 0 ? static_cast<uint32_t>(x) : kCacheBackoffSlots;
-    }();
-    return v;
+    static const uint32_t value = configuration::RuntimeEnvironment::capture()->cache_backoff_slots;
+    return value;
 }
 
 std::vector<uint32_t> cache_backoff_slots(uint32_t start, uint32_t step, uint32_t attempts,
@@ -338,35 +322,16 @@ uint64_t host_heap_headroom(const gpu::Device& d, uint64_t* budget_out, uint64_t
 
 Engine::~Engine() { shutdown(); }
 
-Engine::Engine() {
+Engine::Engine(std::shared_ptr<const configuration::RuntimeEnvironment> environment) {
     // Preserve configuration checks made before init (such as set_streams).
     // init resolves the supplied RuntimeConfig for the actual engine lifetime.
-    cfg_.gpu.apply_environment();
-    cfg_.decode.apply_environment();
+    cfg_.environment =
+        environment ? std::move(environment) : configuration::RuntimeEnvironment::capture();
+    cfg_.gpu.apply_environment(*cfg_.environment);
+    cfg_.decode.apply_environment(*cfg_.environment);
     streams_.push_back(std::make_unique<Stream>());
     cur_ = streams_[0].get();
 }
-
-namespace {
-
-// ';'-separated list, the way PATH is written on this platform. Empty entries
-// are dropped so a trailing ';' is not an error.
-std::vector<std::string> split_semis(const std::string& v) {
-    std::vector<std::string> out;
-    size_t i = 0;
-    while (i <= v.size()) {
-        const size_t j = v.find(';', i);
-        std::string part = v.substr(i, j == std::string::npos ? std::string::npos : j - i);
-        while (!part.empty() && (part.back() == ' ' || part.back() == '"')) part.pop_back();
-        while (!part.empty() && (part.front() == ' ' || part.front() == '"')) part.erase(part.begin());
-        if (!part.empty()) out.push_back(std::move(part));
-        if (j == std::string::npos) break;
-        i = j + 1;
-    }
-    return out;
-}
-
-}  // namespace
 
 Result<void> Engine::open_model_files() {
     // design §5.1 (v0.5): there are no repacked blobs. Every file the runtime
@@ -378,9 +343,8 @@ Result<void> Engine::open_model_files() {
     // over the environment so a bench cell can turn it on or off without
     // touching the shell it inherited.
     std::vector<std::string> mirrors = cfg_.model_mirrors;
-    if (mirrors.empty())
-        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MODEL_MIRRORS"); e && *e)
-            mirrors = split_semis(e);
+    if (mirrors.empty() && cfg_.environment->model_mirrors)
+        mirrors = *cfg_.environment->model_mirrors;
     for (const std::string& dir : mirrors) {
         if (auto r = shards_.open_mirror(dir, manifest_, cfg_.io.unbuffered); !r) {
             // A mirror is an optimisation, never a correctness input: if the
@@ -492,24 +456,18 @@ Result<void> Engine::configure_io_sources() {
     // CACHEDMOE_MIRROR_WEIGHTS=4.6;1.0 skips the probe: two seconds of startup is
     // two seconds, and an A/B that repeats a cell wants the same weights each
     // time rather than a fresh measurement's noise.
-    bool probed = false;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_WEIGHTS"); e && *e) {
-        const auto parts = split_semis(e);
-        for (size_t i = 0; i < parts.size() && i < weights.size(); ++i)
-            weights[i] = std::strtod(parts[i].c_str(), nullptr);
+    if (const auto &configured = cfg_.environment->mirror_weights; configured) {
+        for (size_t i = 0; i < configured->size() && i < weights.size(); ++i)
+            weights[i] = (*configured)[i];
     } else if (probe_idx != UINT32_MAX) {
-        uint32_t ms = 1000;
-        if (const char* e2 = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_PROBE_MS"); e2 && *e2)
-            ms = static_cast<uint32_t>(std::strtoul(e2, nullptr, 10));
+        const uint32_t ms = cfg_.environment->mirror_probe_ms;
         // Track D5: warm up before measuring. A USB4 NVMe enclosure that has
         // been idle answers its first read in ~1 s; an unwarmed 1 s window
         // therefore measured E: at 0.03 GB/s against its real 3.77, the router
         // gave it 0.0% of the bytes and the second source bought nothing
         // (docs/p4_dual_source.md §9.2). The same 1 s window on a warm drive
         // reads 3.74 -- so the number was not noisy, it was the wake-up.
-        uint32_t warmup = 1000;
-        if (const char* e3 = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_PROBE_WARMUP_MS"); e3 && *e3)
-            warmup = static_cast<uint32_t>(std::strtoul(e3, nullptr, 10));
+        const uint32_t warmup = cfg_.environment->mirror_probe_warmup_ms;
         if (ms) {
             const std::string name = manifest_.files()[probe_idx].path;
             for (size_t i = 0; i < roots.size(); ++i) {
@@ -521,11 +479,9 @@ Result<void> Engine::configure_io_sources() {
                          "(4 MiB, QD 8, random, {} ms after a {} ms warmup)",
                          roots[i], *g, ms, warmup);
             }
-            probed = true;
         }
     }
     for (double& w : weights) if (!(w > 0.0)) w = 1.0;
-    (void)probed;
 
     io_.set_sources(roots, weights);
 
@@ -534,10 +490,7 @@ Result<void> Engine::configure_io_sources() {
     // rather than vanishing as if it had never been asked for.
     // CACHEDMOE_MIRROR_HEALTH=0 skips it (for a deliberate negative test); the
     // default is on, because the whole point is that "it opened" is not enough.
-    bool gate = true;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_HEALTH"); e && *e)
-        gate = std::strtol(e, nullptr, 10) != 0;
-    if (gate) {
+    if (cfg_.environment->mirror_health) {
         for (size_t m = 1; m <= shards_.mirror_count(); ++m) {
             const uint32_t s = static_cast<uint32_t>(m);
             if (auto r = probe_mirror_health(s); !r) {
@@ -562,42 +515,57 @@ Result<void> Engine::configure_io_sources() {
     return {};
 }
 
+void Engine::resolve_startup_policy() {
+    const auto &environment = *cfg_.environment;
+    overlap_ = environment.overlap;
+    gate_probe_ = environment.gate_probe;
+    handoff_ = environment.prefill_handoff;
+    resident_only_ = environment.resident_only;
+    verify_first_ = environment.verify_first;
+    verify_draft_ = environment.verify_draft;
+    rr_queue_steps_ = environment.resident_queue_steps;
+    rr_outstanding_cap_ = environment.resident_queue_experts;
+    heat_order_.clear();
+}
+
+void Engine::ensure_heat_order() {
+    if (!heat_order_.empty())
+        return;
+    if (!cfg_.environment->heat_file.empty())
+        heat_order_ = store::static_heat_order(cfg_.environment->heat_file);
+    if (heat_order_.empty())
+        heat_order_ = store::static_heat_order();
+}
+
 Result<void> Engine::init(const RuntimeConfig& cfg) {
     shutdown();
     cfg_ = cfg;
-    cfg_.gpu.apply_environment();
-    cfg_.decode.apply_environment();
+    if (!cfg_.environment)
+        cfg_.environment = configuration::RuntimeEnvironment::capture();
+    cfg_.gpu.apply_environment(*cfg_.environment);
+    cfg_.decode.apply_environment(*cfg_.environment);
+    cfg_.io.environment = cfg_.environment;
+    cfg_.cache.environment = cfg_.environment;
+    resolve_startup_policy();
     log_info("GPU config: route {}, engram early {}, readout {}, ONECB {}, mega {}, "
              "profile {}, diagnostics {}, trim {}, pair dot {}, fold scale {}, ATTN_CM {}",
              cfg_.gpu.batch_gpu_route, cfg_.gpu.batch_engram_early, cfg_.gpu.spec_gpu_readout,
              cfg_.gpu.draft_onecb, cfg_.gpu.draft_mega, cfg_.gpu.draft_profile,
              cfg_.gpu.draft_diagnostics, cfg_.gpu.draft_trim_tail, cfg_.gpu.mgt_pair_dot,
              cfg_.gpu.mgt_fold_scale, cfg_.gpu.mgt_attn_cm);
-    mask_wait_tau_ = -1;
-    mask_wait_budget_experts_ = 8;
-    mask_wait_budget_ms_ = 20;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MASK_WAIT_TAU")) {
-        char* end = nullptr;
-        mask_wait_tau_ = std::strtod(e, &end);
-        if (end == e || *end || !std::isfinite(mask_wait_tau_) || mask_wait_tau_ < 0 || mask_wait_tau_ > 1)
-            return fail(Err::InvalidArgument, "CACHEDMOE_MASK_WAIT_TAU must be in [0,1]");
-        if (const char* budget = ::cachedmoe::environment::get("CACHEDMOE_MASK_WAIT_BUDGET")) {
-            char* middle = nullptr;
-            const auto n = std::strtoul(budget, &middle, 10);
-            if (middle == budget || *middle != ',' || n > UINT32_MAX)
-                return fail(Err::InvalidArgument, "CACHEDMOE_MASK_WAIT_BUDGET takes experts,milliseconds (0 means unlimited)");
-            char* tail = nullptr;
-            const auto ms = std::strtod(middle + 1, &tail);
-            if (tail == middle + 1 || *tail || !std::isfinite(ms) || ms < 0)
-                return fail(Err::InvalidArgument, "invalid weighted mask time budget");
-            mask_wait_budget_experts_ = uint32_t(n);
-            mask_wait_budget_ms_ = ms;
-        }
-        if (auto r = set_mask_wait(mask_wait_tau_, mask_wait_budget_experts_, mask_wait_budget_ms_); !r)
+    const auto &wait = cfg_.environment->mask_wait;
+    if (wait.error)
+        return std::unexpected(*wait.error);
+    mask_wait_tau_ = wait.tau;
+    mask_wait_budget_experts_ = wait.experts;
+    mask_wait_budget_ms_ = wait.milliseconds;
+    if (wait.enabled) {
+        if (auto r = set_mask_wait(wait.tau, wait.experts, wait.milliseconds); !r)
             return r;
-    } else log_info("weighted mask wait: off");
+    } else
+        log_info("weighted mask wait: off");
 #if defined(__linux__)
-    pin_to_gpu_irq_ccd();
+    pin_to_gpu_irq_ccd(cfg_.environment->cpu_affinity);
 #endif
 
     if (!cfg_.profile_jsonl.empty()) {
@@ -775,10 +743,7 @@ Result<void> Engine::build_expert_cache() {
     // driver refuses at the heap edge by itself, so it never needed this.
     uint64_t a_cap = 0;
     {
-        bool want_cap = false;
-        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PATH_A_CAP"))
-            want_cap = std::strcmp(e, "on") == 0 || std::strcmp(e, "1") == 0;
-        if (want_cap && b) {
+        if (cfg_.environment->path_a_cap && b) {
             if (auto t = alloc_a_.chosen_memory_type(); t) {
                 uint64_t hb = 0, hu = 0;
                 a_cap = heap_headroom(device_, t->heap_index, &hb, &hu);
@@ -830,13 +795,17 @@ Result<void> Engine::build_expert_cache() {
     // than from the hypothesis. What it would take is a placement preference
     // that is NOT also a pin -- e.g. taking the path-B victim only while its
     // last_use is within a bounded slack of the global LRU victim.
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_EVICT_PATH"); e && *e) {
-        if (*e == 'a' || *e == 'A')
-            store_.set_evict_path(store::ExpertStore::EvictPath::PreferA);
-        else if (*e == 'b' || *e == 'B')
-            store_.set_evict_path(store::ExpertStore::EvictPath::PreferB);
-        log_info("engine: evict path preference '{}'", e);
+    switch (cfg_.environment->evict_path) {
+    case configuration::EvictPath::PreferA:
+        store_.set_evict_path(store::ExpertStore::EvictPath::PreferA);
+        break;
+    case configuration::EvictPath::PreferB:
+        store_.set_evict_path(store::ExpertStore::EvictPath::PreferB);
+        break;
+    case configuration::EvictPath::None:
+        break;
     }
+
     log_info("engine: expert cache {} slots, {} ({} slabs on path A, {} on path B)",
              store_.slot_count(), human_bytes(store_.capacity_bytes()),
              raw->a_slabs(), raw->b_slabs());
@@ -862,7 +831,7 @@ Result<void> Engine::probe_submit() {
 Result<void> Engine::build_expert_cache_probed(bool backoff) {
     const uint64_t slot_bytes = layout::kExpertSlotBytes;
     const uint32_t want_slots = static_cast<uint32_t>(budget_slots(cache_budget_, slot_bytes));
-    const uint32_t step       = cache_backoff_step();
+    const uint32_t step = cfg_.environment->cache_backoff_slots;
     const std::vector<uint32_t> plan =
         backoff ? cache_backoff_slots(want_slots, step, kCacheBackoffTries)
                 : std::vector<uint32_t>{want_slots};
@@ -950,14 +919,11 @@ Result<void> Engine::init_gpu() {
     if (!ready_) return fail(Err::FailedPrecondition, "call init() first");
     if (gpu_ready_) return {};
 
-    if (auto r = device_.create(); !r) return r;
+    gpu::DeviceOptions device_options;
+    device_options.environment = cfg_.environment;
+    if (auto r = device_.create(device_options); !r)
+        return r;
     if (auto r = device_.caps().check_required(); !r) return r;
-    if (device_.caps().driver_id == VK_DRIVER_ID_MESA_RADV) {
-        g_ms_eager_default.store(0);
-        g_shared_early_default.store(1);
-        set_attn_ksplit_default(true);
-        set_attn_cm_default(true);
-    }
     if (auto r = cur_->timeline_.create(device_, 0); !r) return r;
     if (auto r = alloc_a_.init(device_, MemoryPath::DeviceLocalHostVisible); !r) return r;
     // Path B is optional: it only widens the expert cache. A machine that
@@ -1133,8 +1099,9 @@ Result<void> Engine::init_gpu() {
         // kAutoSlotCap is the Windows driver losing the device above 5,000
         // slots; RADV ran 5,500 clean, so there only an explicit
         // CACHEDMOE_CACHE_SLOT_CAP applies.
-        const char*    cap_env     = ::cachedmoe::environment::get("CACHEDMOE_CACHE_SLOT_CAP");
-        const uint32_t slot_cap    = (radv && !(cap_env && *cap_env)) ? 0 : auto_slot_cap();
+        const auto &environment = *cfg_.environment;
+        const uint32_t slot_cap =
+            (radv && !environment.cache_slot_cap_nonempty) ? 0 : environment.cache_slot_cap;
         applied_slot_cap_          = slot_cap;
         const uint64_t from_budget = cache_budget_;
         cache_budget_ = cap_auto_budget(cache_budget_, slot_bytes, slot_cap);
@@ -1182,78 +1149,49 @@ Result<void> Engine::init_gpu() {
         cur_->layer_.set_tracer(&tracer_);
     }
 
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_ROUTE_DUMP"); e && *e && !route_dump_) {
-        route_dump_ = std::fopen(e, "ab");
-        if (route_dump_) log_info("engine: routing dump -> {}", e);
-        else log_warn("engine: cannot open the routing dump '{}'", e);
+    const auto &environment = *cfg_.environment;
+    if (!environment.route_dump.empty() && !route_dump_) {
+        route_dump_ = std::fopen(environment.route_dump.c_str(), "ab");
+        if (route_dump_)
+            log_info("engine: routing dump -> {}", environment.route_dump);
+        else
+            log_warn("engine: cannot open the routing dump '{}'", environment.route_dump);
     }
-    if(const char* e=::cachedmoe::environment::get("CACHEDMOE_SPEC_DIAGNOSTICS");e && *e && !spec_diagnostics_) {
-        spec_diagnostics_=std::fopen(e,"ab");
-        if(!spec_diagnostics_)return fail(Err::Io,"cannot open speculative diagnostics");
+    if (!environment.spec_diagnostics.empty() && !spec_diagnostics_) {
+        spec_diagnostics_ = std::fopen(environment.spec_diagnostics.c_str(), "ab");
+        if (!spec_diagnostics_)
+            return fail(Err::Io, "cannot open speculative diagnostics");
     }
-    // docs/p4_hitrate.md §4: on unless CACHEDMOE_MOE_OVERLAP=0 (the A/B switch).
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_GATE_PROBE"); e && *e && *e != '0') gate_probe_ = true;
-    // Track Y (docs/p4_resident_routing.md): off | all | stall1 | verify.
-    // Anything else is off.
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
-        const std::string_view v{e};
-        if (v == "all") resident_only_ = ResidentOnly::All;
-        else if (v == "stall1") resident_only_ = ResidentOnly::Stall1;
-        else if (v == "verify") resident_only_ = ResidentOnly::Verify;
-        else if (v == "mask") resident_only_ = ResidentOnly::Mask;
-        else if (v != "off" && v != "0" && v != "")
-            log_warn("CACHEDMOE_ROUTE_RESIDENT_ONLY={}: expected off|all|stall1|verify|mask, "
-                     "using off", v);
-        if (resident_only_ != ResidentOnly::Off)
-            log_info("route: resident-only={} -- {}", resident_only_name(resident_only_),
-                     resident_only_ == ResidentOnly::Mask
-                         ? "initial cache only; no LRU eviction; skip miss computation without waiting or renormalising"
-                     : resident_only_ == ResidentOnly::All
-                         ? "a layer's non-resident experts are dropped and renormalised, "
-                           "never waited for"
-                     : resident_only_ == ResidentOnly::Verify
-                         ? "one decode step in five routes exactly (the DSpark block's "
-                           "first position); the other four drop and renormalise and "
-                           "never wait"
-                         : "a layer's non-resident experts are dropped and renormalised, "
-                           "except the single highest-weight one, which is fetched at P0");
-    }
+    if (!environment.resident_only_valid)
+        log_warn("CACHEDMOE_ROUTE_RESIDENT_ONLY: expected off|all|stall1|verify|mask, using off");
+    if (!environment.verify_first_valid)
+        log_warn("CACHEDMOE_VERIFY_FIRST: expected exact|stall1|all, keeping exact");
+    if (!environment.verify_draft_valid)
+        log_warn("CACHEDMOE_VERIFY_DRAFT: expected all|stall1|exact, keeping all");
+    if (!environment.resident_queue_steps_valid)
+        log_warn("CACHEDMOE_RESIDENT_QUEUE_STEPS: expected 1..1024, keeping {}", rr_queue_steps_);
     set_resident_only(resident_only_);
-    // `verify`'s two halves, for the sweep of docs/p4_resident_routing.md §10:
-    // what the block's first position does (`exact` = off, the default, or
-    // `stall1`) and what its four draft positions do (`all`, the default --
-    // never wait -- or `stall1`, one P0 fetch a layer). Anything else keeps the
-    // default.
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_VERIFY_FIRST"); e && *e) {
-        const std::string_view v{e};
-        if (v == "stall1") verify_first_ = ResidentOnly::Stall1;
-        else if (v == "all") verify_first_ = ResidentOnly::All;
-        else if (v != "exact" && v != "off")
-            log_warn("CACHEDMOE_VERIFY_FIRST={}: expected exact|stall1|all, keeping exact", v);
+    if (resident_only_ != ResidentOnly::Off) {
+        const char *description = nullptr;
+        if (resident_only_ == ResidentOnly::Mask)
+            description =
+                store_.fixed_cache()
+                    ? "fixed cache; skip misses without waiting or renormalising"
+                    : "dynamic LRU; fill misses asynchronously and skip their computation";
+        else if (resident_only_ == ResidentOnly::All)
+            description = "non-resident experts are dropped and renormalised, never waited for";
+        else if (resident_only_ == ResidentOnly::Verify)
+            description =
+                "block first position routes exactly; draft positions drop and renormalise";
+        else
+            description = "drop and renormalise except the highest-weight expert, fetched at P0";
+        log_info("route: resident-only={} -- {}", resident_only_name(resident_only_), description);
     }
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_VERIFY_DRAFT"); e && *e) {
-        const std::string_view v{e};
-        if (v == "stall1") verify_draft_ = ResidentOnly::Stall1;
-        else if (v == "exact" || v == "off") verify_draft_ = ResidentOnly::Off;
-        else if (v != "all")
-            log_warn("CACHEDMOE_VERIFY_DRAFT={}: expected all|stall1|exact, keeping all", v);
-    }
-    // Track Y step 3: the background miss window, in decode steps.
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
-        const int v = std::atoi(e);
-        if (v >= 1 && v <= 1024) rr_queue_steps_ = static_cast<uint32_t>(v);
-        else log_warn("CACHEDMOE_RESIDENT_QUEUE_STEPS={}: expected 1..1024, keeping {}", e,
-                      rr_queue_steps_);
-    }
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_RESIDENT_QUEUE_EXPERTS"); e && *e) {
-        const int v = std::atoi(e);
-        if (v >= 1 && v <= 4096) rr_outstanding_cap_ = static_cast<uint32_t>(v);
-    }
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
     if (cfg_.speculation.enabled) {
-        if (cfg_.speculation.max_draft < 1 || cfg_.speculation.max_draft > 5 ||
-            cfg_.speculation.accept_topk < 1 || cfg_.speculation.accept_topk > model_cfg_.text.vocab_size)
+        if (cfg_.speculation.max_draft < 1 ||
+            cfg_.speculation.max_draft > layout::kDsparkBlockSize ||
+            cfg_.speculation.accept_topk < 1 ||
+            cfg_.speculation.accept_topk > model_cfg_.text.vocab_size)
             return fail(Err::InvalidArgument, "DSpark requires draft length 1..5 and valid acceptance top-K");
         if(cfg_.speculation.min_confidence && !std::isfinite(*cfg_.speculation.min_confidence))
             return fail(Err::InvalidArgument,"DSpark confidence threshold must be finite");
@@ -1486,7 +1424,7 @@ void Engine::shutdown() {
 // process's and are never duplicated.
 Result<void> Engine::create_stream(Stream& s) {
     const TextConfig& c = model_cfg_.text;
-    const std::string dir = gpu::default_shader_dir();
+    const std::string dir = cfg_.environment->shader_dir;
     if (auto r = s.timeline_.create(device_, 0); !r) return r;
     if (auto r = s.attn_.create(device_, alloc_a_, dir); !r) return r;
     if (auto r = s.dec_.create(device_, alloc_a_, dir); !r) return r;
@@ -1693,8 +1631,8 @@ Result<Engine::HeatOrder> Engine::reheat(float decay) {
     // slot, so an evicted expert's heat is gone with it.
     std::vector<ExpertKey> order;
     order.reserve(want + out.free_slots);
-    const std::vector<ExpertKey>& heat_table =
-        heat_order_.empty() ? (heat_order_ = store::static_heat_order()) : heat_order_;
+    ensure_heat_order();
+    const std::vector<ExpertKey> &heat_table = heat_order_;
     for (const ExpertKey& k : heat_table) {
         if (order.size() >= size_t(want) + out.free_slots) break;
         if (!store_.resident(k)) order.push_back(k);
@@ -2857,7 +2795,8 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
 // warm pass's margin and l3_ppl's NLL bit-identical); elsewhere off until
 // measured. CACHEDMOE_SHARED_EARLY=0/1 overrides.
 bool Engine::shared_early_on() const {
-    const bool on = cfg_.decode.shared_early.value_or(g_shared_early_default.load() != 0);
+    const bool on = cfg_.decode.shared_early.value_or(device_.caps().driver_id ==
+                                                      configuration::kMesaRadvDriverId);
     // One stream by default: with two, the other stream's submits interleave
     // with this one's, and until 2026-10-01 nothing here had been measured. The
     // per-stream state it needs is per-stream already (`Stream::se_cmd_[2]`,
@@ -2870,7 +2809,8 @@ bool Engine::shared_early_on() const {
 }
 
 bool Engine::ms_eager_moe() const {
-    return cfg_.decode.eager_moe.value_or(g_ms_eager_default.load(std::memory_order_relaxed) != 0);
+    return cfg_.decode.eager_moe.value_or(device_.caps().driver_id !=
+                                          configuration::kMesaRadvDriverId);
 }
 
 
@@ -2906,7 +2846,7 @@ Result<void> Engine::init_batch(uint32_t m_cap) {
                     std::format("the batch scratch was built for M <= {}", batch_cap_));
     }
     const TextConfig& c = model_cfg_.text;
-    const std::string dir = gpu::default_shader_dir();
+    const std::string dir = cfg_.environment->shader_dir;
     gpu::MgtSpec mgt_spec;
     mgt_spec.pair_dot = cfg_.gpu.mgt_pair_dot;
     mgt_spec.fold_scale = cfg_.gpu.mgt_fold_scale;
@@ -3354,7 +3294,7 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
     } finish_route{*this, snapshot_guard, original_rope, original_rope_lat};
     if (gpu_route) {
         auto &runner = cur_->moe_.gpu_union();
-        if (auto r = runner.init_gpu_route(c.num_hidden_layers, gpu::default_shader_dir()); !r)
+        if (auto r = runner.init_gpu_route(c.num_hidden_layers, cfg_.environment->shader_dir); !r)
             return r;
         if (auto r = cur_->gpu_route_buffers_.initialize(alloc_a_, c); !r)
             return r;
@@ -3831,17 +3771,12 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
         if (auto r = begin_session_on(i, sc); !r) return r;
     state_.reset();
     produce_ced_ = true;
-    bool backfill = sc.backfill;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_BACKFILL"); e && *e) backfill = *e != '0';
+    const bool backfill = cfg_.environment->backfill.value_or(sc.backfill);
     // One heat order for the whole process: the startup P3 backfill and every
     // later reheat pass rank non-resident experts by the same table, so
     // `CACHEDMOE_HEAT_FILE` (tools/hitrate_bench.py --write-heat / --heat-recent)
     // steers both instead of only the first fill.
-    if (heat_order_.empty()) {
-        if (const char* hf = ::cachedmoe::environment::get("CACHEDMOE_HEAT_FILE"); hf && *hf)
-            heat_order_ = store::static_heat_order(hf);
-        if (heat_order_.empty()) heat_order_ = store::static_heat_order();
-    }
+    ensure_heat_order();
     if (store_.fixed_cache()) {
         auto warm=warm_cache_from_heat();if(!warm)return std::unexpected(warm.error());
         if(!store_.cache_frozen())return fail(Err::FailedPrecondition,"mask initial cache did not fully load; refusing partial fixed cache");
@@ -3856,11 +3791,15 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
              sc.engram_tables_dir.empty() ? std::string("derived from tokenizer.json")
                                           : sc.engram_tables_dir);
     if(cfg_.speculation.enabled){
-        if(auto r=init_batch(6);!r)return r;
+        if (auto r = init_batch(layout::kMoeBatchColumns); !r)
+            return r;
         for(uint32_t m=1;m<=cfg_.speculation.max_draft+1;++m)
             if(auto r=cur_->mgt_.ensure(m);!r)return r;
         if (cfg_.gpu.batch_gpu_route)
-            if(auto r=cur_->moe_.gpu_union().init_gpu_route(model_cfg_.text.num_hidden_layers,gpu::default_shader_dir());!r)return r;
+            if (auto r = cur_->moe_.gpu_union().init_gpu_route(model_cfg_.text.num_hidden_layers,
+                                                               cfg_.environment->shader_dir);
+                !r)
+                return r;
         if (cfg_.speculation.max_draft == layout::kDsparkBlockSize &&
             cfg_.gpu.draft_onecb && cfg_.gpu.batch_gpu_route && !cfg_.gpu.draft_mega &&
             !cfg_.speculation.min_confidence)
@@ -3952,13 +3891,15 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     const TextConfig& c = model_cfg_.text;
     const TimePoint t0 = Clock::now();
     gpu::PrefillRunner runner;
-    if (auto r = runner.create(device_, alloc_a_, gpu::default_shader_dir()); !r) return std::unexpected(r.error());
+    if (auto r = runner.create(device_, alloc_a_, cfg_.environment->shader_dir); !r)
+        return std::unexpected(r.error());
     const double runner_ms = ms_since(t0);
     gpu::PrefillConfig pc;
     pc.max_tokens = static_cast<uint32_t>(prompt.size());
     pc.transit_segments = cfg_.prefill_transit_segments;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_LDS"); e && *e == '0') pc.lds_gemm = false;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_READ_AHEAD"); e && *e == '0') pc.read_ahead_min_rows = 0;
+    pc.lds_gemm = cfg_.environment->prefill_lds;
+    if (!cfg_.environment->prefill_read_ahead)
+        pc.read_ahead_min_rows = 0;
     pc.replay     = replay;
     pc.probe_layers = bool(dspark_);
     gpu::Prefill pf;
@@ -4094,8 +4035,8 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
              res.wall_ms - tm.total, runner_ms, create_ms - runner_ms, teardown_ms, seed_ms, tm.experts_read, human_bytes(tm.expert_bytes), tm.dispatches,
              tm.submits, res.token);
     // CACHEDMOE_PF_OPS_JSON=FILE appends the per-op profile prefill_bench --ops-json writes
-    if (const char* f = ::cachedmoe::environment::get("CACHEDMOE_PF_OPS_JSON"))
-        if (FILE* fp = std::fopen(f, "ab")) {
+    if (const auto &f = cfg_.environment->prefill_ops_json; f)
+        if (FILE *fp = std::fopen(f->c_str(), "ab")) {
             std::fputs(tm.json(static_cast<uint32_t>(prompt.size()), "serve", "").c_str(), fp);
             std::fclose(fp);
         }
@@ -4411,7 +4352,9 @@ Result<GenerateResult> Engine::generate(std::span<const uint32_t> prompt,
         std::vector<uint32_t> ids(prompt.begin(),prompt.end());
         if(ids.empty() && state_)ids=state_->prompt_ids();
         if(ids.empty())return fail(Err::InvalidArgument,"speculative generation requires a prompt");
-        SessionConfig sc;sc.max_context=std::max<uint32_t>(4096,ids.size()+opts.max_tokens+6);
+        SessionConfig sc;
+        sc.max_context = std::max<uint32_t>(
+            SessionConfig{}.max_context, ids.size() + opts.max_tokens + layout::kMoeBatchColumns);
         if(auto r=begin_session(sc);!r)return std::unexpected(r.error());
         reset_context();
         auto first=gpu_prefill(ids,128);if(!first)return std::unexpected(first.error());
@@ -4475,11 +4418,7 @@ Result<double> Engine::measure_submit_overhead(uint32_t iterations) {
 // Nothing here is waited on; a refusal (nothing evictable, or the class already
 // saturated) is counted and dropped.
 Result<uint32_t> Engine::warm_cache_from_heat(std::chrono::seconds timeout) {
-    if (heat_order_.empty()) {
-        if (const char* hf = ::cachedmoe::environment::get("CACHEDMOE_HEAT_FILE"); hf && *hf)
-            heat_order_ = store::static_heat_order(hf);
-        if (heat_order_.empty()) heat_order_ = store::static_heat_order();
-    }
+    ensure_heat_order();
     if (auto s=store_.stats(); s.free==0 && s.filling==0) return s.resident;
     std::vector<ExpertKey> order = heat_order_;
     // QD 8, the depth docs/p4_resident_routing.md's time model assumes, rather

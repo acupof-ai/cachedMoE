@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include "store/slab.h"
 
 #include <algorithm>
@@ -43,6 +42,8 @@ Result<void> SlabPool::init(std::unique_ptr<SlabBacking> backing, const SlabConf
     reset();
     backing_    = std::move(backing);
     cfg_        = cfg;
+    if (!cfg_.environment)
+        cfg_.environment = configuration::RuntimeEnvironment::capture();
     slab_bytes_ = cfg.slot_bytes * cfg.slots_per_slab;
 
     // The 2 GiB Vulkan allocation cap of design §1.1 is the reason slabs exist;
@@ -83,7 +84,8 @@ Result<void> SlabPool::init(std::unique_ptr<SlabBacking> backing, const SlabConf
 // CACHEDMOE_PREFAULT=0 turns it off.
 void SlabPool::prefault() {
 #if defined(__linux__)
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PREFAULT"); e && *e == '0') return;
+    if (!cfg_.environment->prefault)
+        return;
     std::vector<std::pair<std::byte*, uint64_t>> spans;
     for (const SlabMemory& m : slabs_)
         if (m.host_ptr) spans.emplace_back(static_cast<std::byte*>(m.host_ptr), m.bytes);

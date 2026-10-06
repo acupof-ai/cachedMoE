@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include "gpu/vulkan/device.h"
 
 #include <cstdlib>
@@ -109,7 +108,7 @@ Result<VkInstance> create_instance(bool validation) {
     return inst;
 }
 
-DeviceCaps query_caps(VkPhysicalDevice pd) {
+DeviceCaps query_caps(VkPhysicalDevice pd, const configuration::RuntimeEnvironment &environment) {
     DeviceCaps c;
 
     VkPhysicalDeviceSubgroupSizeControlProperties sgc{
@@ -200,15 +199,14 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.subgroup_size_control = has_ext(ex, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
     c.cooperative_matrix    = has_ext(ex, "VK_KHR_cooperative_matrix");
     {
-        const char* dir = ::cachedmoe::environment::get("CACHEDMOE_PIPELINE_STATS");
-        c.pipeline_stats = dir && *dir && has_ext(ex, "VK_KHR_pipeline_executable_properties");
+        c.pipeline_stats = !environment.pipeline_stats_dir.empty() &&
+                           has_ext(ex, "VK_KHR_pipeline_executable_properties");
     }
     {
         // The extension can be advertised while performanceCounterQueryPools is
         // not supported, and requesting an unsupported feature fails device
         // creation -- so ask the driver, do not infer it from the name.
-        const char* on = ::cachedmoe::environment::get("CACHEDMOE_PERF_COUNTERS");
-        if (on && *on && *on != '0' && has_ext(ex, "VK_KHR_performance_query")) {
+        if (environment.perf_counters && has_ext(ex, "VK_KHR_performance_query")) {
             VkPhysicalDevicePerformanceQueryFeaturesKHR pq{
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR};
             VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &pq};
@@ -275,6 +273,7 @@ void Device::destroy() {
 }
 
 Result<std::vector<DeviceCaps>> Device::enumerate(bool validation) {
+    const auto environment = configuration::RuntimeEnvironment::capture();
     auto inst = create_instance(validation);
     if (!inst) return std::unexpected(inst.error());
     uint32_t n = 0;
@@ -283,7 +282,8 @@ Result<std::vector<DeviceCaps>> Device::enumerate(bool validation) {
     vkEnumeratePhysicalDevices(*inst, &n, devs.data());
     std::vector<DeviceCaps> out;
     out.reserve(n);
-    for (VkPhysicalDevice d : devs) out.push_back(query_caps(d));
+    for (VkPhysicalDevice d : devs)
+        out.push_back(query_caps(d, *environment));
     vkDestroyInstance(*inst, nullptr);
     if (out.empty()) return fail(Err::Unavailable, "no Vulkan physical devices");
     return out;
@@ -291,6 +291,8 @@ Result<std::vector<DeviceCaps>> Device::enumerate(bool validation) {
 
 Result<void> Device::create(const DeviceOptions& opts) {
     destroy();
+    environment_ =
+        opts.environment ? opts.environment : configuration::RuntimeEnvironment::capture();
     auto inst = create_instance(opts.enable_validation);
     if (!inst) return std::unexpected(inst.error());
     instance_ = *inst;
@@ -310,7 +312,7 @@ Result<void> Device::create(const DeviceOptions& opts) {
         pick = static_cast<uint32_t>(opts.physical_device_index);
     }
     physical_ = devs[pick];
-    caps_ = query_caps(physical_);
+    caps_ = query_caps(physical_, *environment_);
 
     auto fam = pick_compute_family(physical_, caps_.perf_counters);
     if (!fam) { destroy(); return std::unexpected(fam.error()); }

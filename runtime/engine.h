@@ -106,10 +106,11 @@ namespace cachedmoe::runtime {
 // 5,000 = 34 path-A slabs + 16 path-B slabs, which is the layout that ran four
 // clean turns on 2026-09-19. `CACHEDMOE_CACHE_SLOT_CAP` overrides it for a
 // different machine; 0 turns the cap off and puts you back on the arithmetic.
-inline constexpr uint32_t kAutoSlotCap = 5000;
+inline constexpr uint32_t kAutoSlotCap = configuration::kAutoSlotCap;
 
 // The cap in force: `CACHEDMOE_CACHE_SLOT_CAP` if set (0 = no cap), else
-// kAutoSlotCap. Read once per process.
+// kAutoSlotCap. This standalone compatibility helper uses a process epoch;
+// an Engine uses its own immutable startup snapshot.
 uint32_t auto_slot_cap();
 
 // Pure: the auto budget, capped. Returns `budget_bytes` unchanged when the cap
@@ -137,7 +138,7 @@ inline uint64_t budget_slots(uint64_t budget_bytes, uint64_t slot_bytes) {
 // request: they get the same probe, but a failure is fatal with the number to
 // try next, because silently handing back a smaller cache would corrupt every
 // A/B that pins the slot count.
-inline constexpr uint32_t kCacheBackoffSlots   = 200;
+inline constexpr uint32_t kCacheBackoffSlots = configuration::kCacheBackoffSlots;
 inline constexpr uint32_t kCacheBackoffTries   = 5;   // the first try included
 inline constexpr uint32_t kCacheBackoffFloor   = 200; // never probe below this
 
@@ -246,7 +247,7 @@ struct SessionConfig {
     // tools/oracle.py exported into it (EngramTables::load).
     std::string engram_tables_dir;
     // Positions the KV store is sized for; capped by kMaxIndexPositions.
-    uint32_t    max_context = 4096;
+    uint32_t max_context = configuration::facts::SESSION_CONTEXT;
     // design §9.6 P3 (Track R1, docs/p4_hitrate.md §5): fill the cache's free
     // slots in the background, hottest static experts first, while the drive
     // is not serving P0 misses. Also CACHEDMOE_BACKFILL=1/0.
@@ -374,125 +375,123 @@ class Engine {
 public:
     // Stream 0 exists from construction (without GPU resources) so that every
     // accessor that reaches through `cur_` is safe before init_gpu().
-    Engine();
-    ~Engine();
+  explicit Engine(std::shared_ptr<const configuration::RuntimeEnvironment> environment = {});
+  ~Engine();
 
-    Engine(const Engine&) = delete;
-    Engine& operator=(const Engine&) = delete;
+  Engine(const Engine &) = delete;
+  Engine &operator=(const Engine &) = delete;
 
-    // Brings up everything that does not need a GPU: config, manifest, files,
-    // I/O engine, expert store (host-backed), planner, profiler. This is what
-    // `cachedmoe bench nvme` and the storage tests exercise.
-    Result<void> init(const RuntimeConfig& cfg);
+  // Brings up everything that does not need a GPU: config, manifest, files,
+  // I/O engine, expert store (host-backed), planner, profiler. This is what
+  // `cachedmoe bench nvme` and the storage tests exercise.
+  Result<void> init(const RuntimeConfig &cfg);
 
-    // Adds the Vulkan device, both memory paths, the ~17.7 GB pinned set, the
-    // routed-expert slab pool, every pipeline, the KV store and the engram.
-    // Re-backs the ExpertStore onto GPU memory, so the host backing init()
-    // installed is only ever used by a no-GPU caller.
-    Result<void> init_gpu();
+  // Adds the Vulkan device, both memory paths, the ~17.7 GB pinned set, the
+  // routed-expert slab pool, every pipeline, the KV store and the engram.
+  // Re-backs the ExpertStore onto GPU memory, so the host backing init()
+  // installed is only ever used by a no-GPU caller.
+  Result<void> init_gpu();
 
-    void shutdown();
+  void shutdown();
 
-    // --- token loop (design §15 P2-P5) ------------------------------------
+  // --- token loop (design §15 P2-P5) ------------------------------------
 
-    // Loads the oracle's L3 export: the state every layer holds after the
-    // prompt (window KV; on the kv sources the compressed-KV cache, the index
-    // keys and the compressor state), the engram hash tables, and the
-    // reference trajectory and per-step tensors to check against. Seeds the
-    // prompt's state; nothing per step is seeded unless `set_produce_ced(false)`.
-    Result<void> load_decode_state(const std::string& dir);
-    const DecodeState* decode_state() const { return state_.get(); }
-    // Track Q: puts the loaded export's prefill state back into the KV store in
-    // place -- window rings, compressed and index-key caches, compressor carry
-    // -- so a second trajectory can start at decode_pos() again. Re-running
-    // positions on a used store is NOT that once the ring has wrapped (its
-    // other 127 slots hold the first run's tokens) or a ratio-2 group was
-    // left half full. The LRU clock `token_` is deliberately not rewound.
-    Result<void> reseed_decode_state();
+  // Loads the oracle's L3 export: the state every layer holds after the
+  // prompt (window KV; on the kv sources the compressed-KV cache, the index
+  // keys and the compressor state), the engram hash tables, and the
+  // reference trajectory and per-step tensors to check against. Seeds the
+  // prompt's state; nothing per step is seeded unless `set_produce_ced(false)`.
+  Result<void> load_decode_state(const std::string &dir);
+  const DecodeState *decode_state() const { return state_.get(); }
+  // Track Q: puts the loaded export's prefill state back into the KV store in
+  // place -- window rings, compressed and index-key caches, compressor carry
+  // -- so a second trajectory can start at decode_pos() again. Re-running
+  // positions on a used store is NOT that once the ring has wrapped (its
+  // other 127 slots hold the first run's tokens) or a ratio-2 group was
+  // left half full. The LRU clock `token_` is deliberately not rewound.
+  Result<void> reseed_decode_state();
 
-    // Encoder over the whole prompt, then decoder bounded replay over the last
-    // 128 tokens (design §11.1, §11.2).
-    // TODO(design §11, §9.7): implement in P5.
-    Result<void> prefill(std::span<const uint32_t> prompt);
+  // Encoder over the whole prompt, then decoder bounded replay over the last
+  // 128 tokens (design §11.1, §11.2).
+  // TODO(design §11, §9.7): implement in P5.
+  Result<void> prefill(std::span<const uint32_t> prompt);
 
-    // Prefill the slow way: the prompt through the DECODE path, one token at a
-    // time, teacher-forced. Not design §11 -- it is 64 forward passes where §11
-    // wants one chunked pass, so it is O(n) times too expensive and is not how
-    // a prompt will ever be consumed. What it is, is a way to have the prompt's
-    // state be OURS without the chunked kernels existing.
-    //
-    // It is exactly equivalent to the reference's chunked prefill at this
-    // geometry, and the equivalence is worth stating because it is not
-    // obvious:
-    //   * the window ring at n <= window puts token p in slot p, and the decode
-    //     top-k list marks every slot above p as -1, which is the causal window
-    //     `get_window_topk_idxs` builds for query p at start_pos 0;
-    //   * a ratio-2 group completes at odd p, pooling slots {0, 1} = tokens
-    //     {p-1, p}, writing cache row p / 2 and rotating at p + 1 - ratio --
-    //     the same group, row and position the chunked form gives group p / 2;
-    //   * query p sees compress_len = (p + 1) / ratio cache rows, which is what
-    //     the chunked form's per-query mask leaves it.
-    // Returns the token the last prompt position predicts, i.e. the input to
-    // decode step 0. `history()` and the KV store are left ready for it.
-    Result<DecodeStepResult> slow_prefill(std::span<const uint32_t> prompt);
+  // Prefill the slow way: the prompt through the DECODE path, one token at a
+  // time, teacher-forced. Not design §11 -- it is 64 forward passes where §11
+  // wants one chunked pass, so it is O(n) times too expensive and is not how
+  // a prompt will ever be consumed. What it is, is a way to have the prompt's
+  // state be OURS without the chunked kernels existing.
+  //
+  // It is exactly equivalent to the reference's chunked prefill at this
+  // geometry, and the equivalence is worth stating because it is not
+  // obvious:
+  //   * the window ring at n <= window puts token p in slot p, and the decode
+  //     top-k list marks every slot above p as -1, which is the causal window
+  //     `get_window_topk_idxs` builds for query p at start_pos 0;
+  //   * a ratio-2 group completes at odd p, pooling slots {0, 1} = tokens
+  //     {p-1, p}, writing cache row p / 2 and rotating at p + 1 - ratio --
+  //     the same group, row and position the chunked form gives group p / 2;
+  //   * query p sees compress_len = (p + 1) / ratio cache rows, which is what
+  //     the chunked form's per-query mask leaves it.
+  // Returns the token the last prompt position predicts, i.e. the input to
+  // decode step 0. `history()` and the KV store are left ready for it.
+  Result<DecodeStepResult> slow_prefill(std::span<const uint32_t> prompt);
 
-    // One decode step: forty layers, the head, the argmax. `state_step` selects
-    // which of the L3 export's per-step compressed KV / top-k lists to seed
-    // before running; -1 leaves whatever is in the KV store alone. It is
-    // IGNORED when `produce_ced()` is on, because then there is nothing to
-    // seed: design §7.4's kernels write both.
-    Result<DecodeStepResult> decode_step(uint32_t in_token, uint32_t position,
-                                         int32_t state_step);
+  // One decode step: forty layers, the head, the argmax. `state_step` selects
+  // which of the L3 export's per-step compressed KV / top-k lists to seed
+  // before running; -1 leaves whatever is in the KV store alone. It is
+  // IGNORED when `produce_ced()` is on, because then there is nothing to
+  // seed: design §7.4's kernels write both.
+  Result<DecodeStepResult> decode_step(uint32_t in_token, uint32_t position, int32_t state_step);
 
-    // Whether design §7.4's compressor and indexer run (the default whenever
-    // the state they carry forward is available), or the compressed KV and the
-    // top-k list are seeded per step from the export. The second is what
-    // docs/p2_decode.md called LOADED and exists only so the two can be
-    // compared; `status()` says which is in force.
-    void set_produce_ced(bool on) { produce_ced_ = on; }
-    bool produce_ced() const { return produce_ced_; }
+  // Whether design §7.4's compressor and indexer run (the default whenever
+  // the state they carry forward is available), or the compressed KV and the
+  // top-k list are seeded per step from the export. The second is what
+  // docs/p2_decode.md called LOADED and exists only so the two can be
+  // compared; `status()` says which is in force.
+  void set_produce_ced(bool on) { produce_ced_ = on; }
+  bool produce_ced() const { return produce_ced_; }
 
-    const KvStore& kv() const { return cur_->kvs_; }
-    // Track R2 (runtime/session.h): rollback, parking and window replay write
-    // the store between steps.
-    KvStore& kv_store() { return cur_->kvs_; }
-    const std::vector<uint32_t>& history() const { return cur_->history_; }
+  const KvStore &kv() const { return cur_->kvs_; }
+  // Track R2 (runtime/session.h): rollback, parking and window replay write
+  // the store between steps.
+  KvStore &kv_store() { return cur_->kvs_; }
+  const std::vector<uint32_t> &history() const { return cur_->history_; }
 
-    // What layer `l` actually read at the last step: its own window ring, and
-    // whichever layer's compressed plane and top-k list `shared_attn` pointed
-    // it at. A validator comparing against the oracle's per-layer export needs
-    // exactly this, because the oracle records what the layer SAW.
-    Result<KvLayerView> effective_kv(uint32_t l) const;
+  // What layer `l` actually read at the last step: its own window ring, and
+  // whichever layer's compressed plane and top-k list `shared_attn` pointed
+  // it at. A validator comparing against the oracle's per-layer export needs
+  // exactly this, because the oracle records what the layer SAW.
+  Result<KvLayerView> effective_kv(uint32_t l) const;
 
-    // The single-argument form of the old interface: the next step of the
-    // sequence this Engine is already decoding.
-    Result<SampleResult> decode_step();
+  // The single-argument form of the old interface: the next step of the
+  // sequence this Engine is already decoding.
+  Result<SampleResult> decode_step();
 
-    // Full loop. Without speculation this is `opts.max_tokens` decode steps
-    // starting from the loaded state, greedily or teacher-forced.
-    Result<GenerateResult> generate(std::span<const uint32_t> prompt,
-                                    const GenerateOptions& opts);
+  // Full loop. Without speculation this is `opts.max_tokens` decode steps
+  // starting from the loaded state, greedily or teacher-forced.
+  Result<GenerateResult> generate(std::span<const uint32_t> prompt, const GenerateOptions &opts);
 
-    // --- M1: one forward over M <= 6 consecutive tokens -------------------
-    //
-    // docs/p4_dspark_runtime.md §6.4. `forward_batch(p0, tokens)` appends
-    // `tokens` at positions p0 .. p0 + M - 1 to whatever the KV store already
-    // holds and runs ONE forward over all M through the gpu/shaders/mgt1_*
-    // kernels -- causal within the batch -- returning every position's logits
-    // row. It is the verify half of a speculative cycle; at M = 1 it is a
-    // second implementation of a decode step and the gate
-    // (`spec_forward.batch_matches_m1`) is exactly that comparison.
-    //
-    // What it does NOT do that `decode_step` does: sampling, the profiler's
-    // per-phase accounting, the MOE_OVERLAP split. Routing per position honours
-    // `set_resident_only` with the block phase taken from the position INSIDE
-    // the batch (mode `verify`: row 0 exact, rows 1.. resident-only), which is
-    // the shape a real verify batch has.
-    struct BatchRow {
-        uint32_t argmax = 0;
-        float    top1 = 0.0f, top2 = 0.0f;
-        gpu::MgtRankOut draft_rank{};
-    };
+  // --- M1: one forward over M <= 6 consecutive tokens -------------------
+  //
+  // docs/p4_dspark_runtime.md §6.4. `forward_batch(p0, tokens)` appends
+  // `tokens` at positions p0 .. p0 + M - 1 to whatever the KV store already
+  // holds and runs ONE forward over all M through the gpu/shaders/mgt1_*
+  // kernels -- causal within the batch -- returning every position's logits
+  // row. It is the verify half of a speculative cycle; at M = 1 it is a
+  // second implementation of a decode step and the gate
+  // (`spec_forward.batch_matches_m1`) is exactly that comparison.
+  //
+  // What it does NOT do that `decode_step` does: sampling, the profiler's
+  // per-phase accounting, the MOE_OVERLAP split. Routing per position honours
+  // `set_resident_only` with the block phase taken from the position INSIDE
+  // the batch (mode `verify`: row 0 exact, rows 1.. resident-only), which is
+  // the shape a real verify batch has.
+  struct BatchRow {
+      uint32_t argmax = 0;
+      float top1 = 0.0f, top2 = 0.0f;
+      gpu::MgtRankOut draft_rank{};
+  };
     // `logits`, when non-empty, must be [M][vocab] and receives every row.
     Result<void> forward_batch(uint32_t p0, std::span<const uint32_t> tokens,
                                std::span<BatchRow> rows, std::span<float> logits = {});
@@ -647,7 +646,7 @@ public:
     // while `Engine::forward_batch` does not exist.
     // Mask defaults to normal LRU / async P0, and computes only current hits.
     // Explicit fixed cache freezes the initial set; no weight renormalisation.
-    enum class ResidentOnly : uint8_t { Off = 0, All = 1, Stall1 = 2, Verify = 3, Mask = 4 };
+    using ResidentOnly = configuration::ResidentPolicy;
     // DSpark's block: one verify forward over [last accepted, 4 drafts].
     // `Verify` mode routes step `token_ % kVerifyBlock == 0` exactly and the
     // other four resident-only.
@@ -832,6 +831,8 @@ public:
 
 private:
     friend struct GpuRouteState;
+    void resolve_startup_policy();
+    void ensure_heat_order();
     Result<void> open_model_files();
     // Track D2: probes each read source and hands the mirror table to the
     // IoEngine. A no-op when no mirror was given.
@@ -1089,8 +1090,9 @@ private:
     // `CACHEDMOE_RESIDENT_QUEUE_STEPS` sets the window (default 2).
     struct RrMiss { ExpertKey key; uint64_t step; };
     std::deque<RrMiss>    rr_queue_;             // oldest at the front
-    uint32_t              rr_queue_steps_    = 2;
-    uint32_t              rr_outstanding_cap_ = 24;   // ~ one step's drive budget
+    uint32_t rr_queue_steps_ = configuration::kResidentQueueSteps;
+    uint32_t rr_outstanding_cap_ =
+        configuration::kResidentQueueExperts; // ~ one step's drive budget
     std::atomic<uint32_t> rr_outstanding_{0};
     std::atomic<uint64_t> rr_fetch_ns_{0};       // P3 submit -> settle, summed
     std::atomic<uint64_t> rr_fetch_done_{0};

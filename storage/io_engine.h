@@ -299,7 +299,7 @@ public:
     // needs no extra handle and no extra open. Sources with no registered file
     // are simply never poked.
     //
-    // `CACHEDMOE_MIRROR_KEEPALIVE_MS` sets the idle window (default 15 ms; 0 or
+    // `CACHEDMOE_MIRROR_KEEPALIVE_MS` sets the idle window (default off; 0 or
     // `off` disables). A poke is one 4 KiB read at a rotating offset, issued
     // straight to the backend: it is NOT an IoRequest, so it never enters a
     // priority queue, never touches `bytes_completed`, `busy_ns`, the latency
@@ -509,63 +509,63 @@ public:
         return inflight_class_[static_cast<uint8_t>(p)].load(std::memory_order_relaxed);
     }
 private:
-    static Tuning tuning_from_env(const IoConfig& cfg);
-    Tuning tune_{};
-    uint32_t p0_qd_tuned_ = 0;             // set_p0_depth(0, 0) restores these
-    uint64_t p0_inflight_tuned_ = 0;
-    uint32_t bg_chunk_bytes_ = 0;         // chunk size for P1-P3
-    std::vector<uint32_t> p0_lat_us_;     // one sample per completed P0, for p50/p95
-    uint32_t p0_outstanding_ = 0;         // P0 requests submitted but not finished
-    std::atomic<uint32_t> inflight_class_[kIoPriorityCount] = {};
-    std::atomic<bool> engram_wait_priority_{false};
-    std::atomic<uint32_t> engram_waiters_{0};
-    std::atomic<int64_t>  last_p0_ns_{INT64_MIN / 2};
+  static Tuning resolve_tuning(const IoConfig &cfg, const configuration::IoOverrides &overrides);
+  Tuning tune_{};
+  uint32_t p0_qd_tuned_ = 0; // set_p0_depth(0, 0) restores these
+  uint64_t p0_inflight_tuned_ = 0;
+  uint32_t bg_chunk_bytes_ = 0;     // chunk size for P1-P3
+  std::vector<uint32_t> p0_lat_us_; // one sample per completed P0, for p50/p95
+  uint32_t p0_outstanding_ = 0;     // P0 requests submitted but not finished
+  std::atomic<uint32_t> inflight_class_[kIoPriorityCount] = {};
+  std::atomic<bool> engram_wait_priority_{false};
+  std::atomic<uint32_t> engram_waiters_{0};
+  std::atomic<int64_t> last_p0_ns_{INT64_MIN / 2};
 
-    std::unique_ptr<Backend> backend_;
-    IoConfig   cfg_{};
-    Profiler*  profiler_ = nullptr;
+  std::unique_ptr<Backend> backend_;
+  IoConfig cfg_{};
+  Profiler *profiler_ = nullptr;
 
-    std::thread            thread_;
-    std::vector<std::thread> submit_workers_;
-    mutable std::mutex       sq_mutex_;
-    std::condition_variable  sq_cv_;
-    std::deque<PickedChunk>  submit_q_;
-    // Submit failures the backend reports synchronously. They are drained and
-    // turned into completions by the dispatcher, so request state stays
-    // single-threaded (storage/backend.h).
-    std::mutex                  fq_mutex_;
-    std::deque<ChunkCompletion> failed_q_;
-    std::atomic<bool>      running_{false};
-    std::atomic<bool>      stopping_{false};
+  std::thread thread_;
+  std::vector<std::thread> submit_workers_;
+  mutable std::mutex sq_mutex_;
+  std::condition_variable sq_cv_;
+  std::deque<PickedChunk> submit_q_;
+  // Submit failures the backend reports synchronously. They are drained and
+  // turned into completions by the dispatcher, so request state stays
+  // single-threaded (storage/backend.h).
+  std::mutex fq_mutex_;
+  std::deque<ChunkCompletion> failed_q_;
+  std::atomic<bool> running_{false};
+  std::atomic<bool> stopping_{false};
 
-    mutable std::mutex     mutex_;
-    std::condition_variable cv_;          // dispatcher wakes on new work
-    std::condition_variable idle_cv_;     // drain() waits on this
-    std::deque<std::shared_ptr<Pending>> queues_[kIoPriorityCount];
-    std::unordered_map<uint64_t, InflightChunk> chunk_owner_;  // chunk_id -> owner + charged bytes
-    uint64_t next_request_id_ = 1;
-    uint64_t next_chunk_id_   = 1;
-    uint32_t outstanding_requests_ = 0;
+  mutable std::mutex mutex_;
+  std::condition_variable cv_;      // dispatcher wakes on new work
+  std::condition_variable idle_cv_; // drain() waits on this
+  std::deque<std::shared_ptr<Pending>> queues_[kIoPriorityCount];
+  std::unordered_map<uint64_t, InflightChunk> chunk_owner_; // chunk_id -> owner + charged bytes
+  uint64_t next_request_id_ = 1;
+  uint64_t next_chunk_id_ = 1;
+  uint32_t outstanding_requests_ = 0;
 
-    std::atomic<uint32_t> inflight_ops_{0};
-    std::atomic<uint64_t> inflight_bytes_{0};
-    TimePoint busy_since_{};
-    bool      busy_ = false;
-    // Set when handle_completion() frees a queue slot, cleared by the next
-    // chunk that reaches the backend: the two ends of the refill gap.
-    TimePoint reaped_at_{};
-    bool      reap_pending_ = false;
+  std::atomic<uint32_t> inflight_ops_{0};
+  std::atomic<uint64_t> inflight_bytes_{0};
+  TimePoint busy_since_{};
+  bool busy_ = false;
+  // Set when handle_completion() frees a queue slot, cleared by the next
+  // chunk that reaches the backend: the two ends of the refill gap.
+  TimePoint reaped_at_{};
+  bool reap_pending_ = false;
 
-    // --- Track D6: the keep-alive slots ------------------------------------
-    // One per source. `file` and `buf` are written once (add_mirror, before any
-    // submit) and read on the dispatcher thread; `chunk_id` and `cursor` are
-    // touched only under src_mutex_.
-    struct KeepAliveSlot {
-        const File* file  = nullptr;
-        AlignedBuffer buf;                 // 4 KiB, sector-aligned, alive for the run
-        uint64_t chunk_id = 0;             // 0 = nothing of ours outstanding
-        uint64_t cursor   = 0;             // rotating offset, so it is never a cache hit
-    };
+  // --- Track D6: the keep-alive slots ------------------------------------
+  // One per source. `file` and `buf` are written once (add_mirror, before any
+  // submit) and read on the dispatcher thread; `chunk_id` and `cursor` are
+  // touched only under src_mutex_.
+  struct KeepAliveSlot {
+      const File *file = nullptr;
+      AlignedBuffer buf;     // 4 KiB, sector-aligned, alive for the run
+      uint64_t chunk_id = 0; // 0 = nothing of ours outstanding
+      uint64_t cursor = 0;   // rotating offset, so it is never a cache hit
+  };
     // Keep-alive chunk ids live in their own range so handle_completion can tell
     // them apart from a real chunk with one comparison and without a map lookup.
     // next_chunk_id_ counts one per 4 MiB chunk and will not reach 2^62.
@@ -600,8 +600,10 @@ private:
     std::vector<double>      src_weights_;
     std::unordered_map<const File*, std::array<const File*, kMaxIoSources>> alts_;
     bool     mirrors_on_    = false;
-    uint32_t route_classes_ = (1u << static_cast<uint8_t>(IoPriority::BlockingMiss)) |
-                              (1u << static_cast<uint8_t>(IoPriority::Backfill));
+    static constexpr uint32_t kDefaultRouteClasses =
+        (1u << static_cast<uint8_t>(IoPriority::BlockingMiss)) |
+        (1u << static_cast<uint8_t>(IoPriority::Backfill));
+    uint32_t route_classes_ = kDefaultRouteClasses;
     mutable std::mutex src_mutex_;
     SourceHealth src_health_;
     ThermalGate  thermal_;                        // under src_mutex_

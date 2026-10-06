@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include "gpu/vulkan/prefill_kernels.h"
 
 #include <cstring>
@@ -445,7 +444,7 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         }
         if (auto r = cmd.end(); !r) return r;
         if (auto r = submit_and_wait(device, cmd); !r) return r;
-        if (::cachedmoe::environment::get("CACHEDMOE_PF_CREATE_TRACE"))
+        if (device.environment().prefill_create_trace)
             std::fprintf(stderr, "create: %.2f GB of workspace, zeroed by the GPU in %.0f ms, %.0f ms in all\n",
                          total / 1e9, ms_since(ta), ms_since(tc0));
     }
@@ -460,7 +459,8 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
             if (b_.transit[t].valid())
                 pool.emplace_back([b = b_.transit[t]] { std::memset(b.host_ptr, 0, static_cast<size_t>(b.bytes)); });
         pool.clear();
-        if (::cachedmoe::environment::get("CACHEDMOE_PF_CREATE_TRACE")) std::fprintf(stderr, "create: transit touched in %.0f ms\n", ms_since(tt));
+        if (device.environment().prefill_create_trace)
+            std::fprintf(stderr, "create: transit touched in %.0f ms\n", ms_since(tt));
     }
     qp_ok_ = static_cast<bool>(qp_.create(device, 1024));   // a routed batch marks every dispatch
     return build_rope(static_cast<uint32_t>(N + 8));

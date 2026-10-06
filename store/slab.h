@@ -26,6 +26,7 @@
 #pragma once
 
 #include "core/namespace.h"
+#include "core/runtime_environment.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -72,6 +73,7 @@ struct SlabConfig {
     uint32_t slots_per_slab = 100;                        // design §5.3
     uint64_t slot_bytes     = layout::kExpertSlotBytes;   // 18,808,832 (payload + skew)
     uint64_t budget_bytes   = 2ull << 30;                 // total pool budget
+    std::shared_ptr<const configuration::RuntimeEnvironment> environment;
 };
 
 // Where one slot lives.

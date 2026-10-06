@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include "runtime/decode_layer.h"
 
 #include <algorithm>
@@ -17,21 +16,15 @@ namespace cachedmoe::runtime {
 namespace { std::atomic<int> g_attn_ksplit_default{0}; }
 void set_attn_ksplit_default(bool on) { g_attn_ksplit_default.store(on ? 1 : 0); }
 bool attn_ksplit_on() {
-    static const int env = [] {
-        const char* e = ::cachedmoe::environment::get("CACHEDMOE_ATTN_KSPLIT");
-        return (e && *e) ? (std::atoi(e) != 0 ? 1 : 0) : -1;
-    }();
-    return env >= 0 ? env != 0 : g_attn_ksplit_default.load() != 0;
+    static const auto override = configuration::RuntimeEnvironment::capture()->attn_ksplit;
+    return override.value_or(g_attn_ksplit_default.load() != 0);
 }
 
 namespace { std::atomic<int> g_attn_cm_default{0}; }
 void set_attn_cm_default(bool on) { g_attn_cm_default.store(on ? 1 : 0); }
 bool attn_cm_on() {
-    static const int env = [] {
-        const char* e = ::cachedmoe::environment::get("CACHEDMOE_ATTN_CM");
-        return (e && *e) ? (std::atoi(e) != 0 ? 1 : 0) : -1;
-    }();
-    return env >= 0 ? env != 0 : g_attn_cm_default.load() != 0;
+    static const auto override = configuration::RuntimeEnvironment::capture()->attn_cm;
+    return override.value_or(g_attn_cm_default.load() != 0);
 }
 
 Result<LayerWeights> LayerWeights::from_pinned(const store::PinnedStore& p, uint32_t layer) {
@@ -171,6 +164,11 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
 Result<void> DecodeLayer::create(gpu::Device& device, gpu::AttnRunner& runner,
                                  gpu::GpuScratch& scratch, const TextConfig& cfg) {
     device_ = &device;
+    const bool radv =
+        device.caps().driver_id == configuration::kMesaRadvDriverId; // VK_DRIVER_ID_MESA_RADV
+    attn_ksplit_ =
+        device.environment().attn_ksplit.value_or(radv || g_attn_ksplit_default.load() != 0);
+    attn_cm_ = device.environment().attn_cm.value_or(radv || g_attn_cm_default.load() != 0);
     runner_ = &runner;
     cfg_    = &cfg;
     hcdim_  = cfg.hc_mult * cfg.hidden_size;
@@ -555,7 +553,7 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     if (auto r = record_ced(cmd, st, 3); !r) return r;
 
     // 5. Sparse attention over the window plus the compressed picks.
-    if (attn_cm_on() && runner_->has_attn_cm()) {
+    if (attn_cm_ && runner_->has_attn_cm()) {
         const uint32_t n_kv = st.kv.n_kv;
         const gpu::AttnCmPush cp = runner_->attn_cm_push(
             n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim, c.num_attention_heads,
@@ -576,7 +574,7 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     }
 
     // 6-7. Output projection.
-    if (attn_ksplit_on()) {
+    if (attn_ksplit_) {
         // Split over K into fp32 partials, then one combine adds them (Track J,
         // docs/p2_attention.md §13). wo_a keeps its block-diagonal groups.
         gpu::KSplitPush ka{orows, ocols, ocols / 32, c.o_lora_rank, orows, 0};

@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include "runtime/moe_bridge.h"
 
 #include <algorithm>
@@ -119,11 +118,7 @@ Result<void> self_check() {
 // dispatch -- the biggest single item of GPU-idle gap in the batch.
 //
 // CACHEDMOE_MOE_WC_READ=0 goes back to plain memcpy (the A/B).
-void wc_read(void* dst, const void* src, size_t bytes) {
-    static const bool on = [] {
-        const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_WC_READ");
-        return !(e && *e == '0');
-    }();
+void wc_read(void *dst, const void *src, size_t bytes, bool on) {
     // Only the SOURCE has to be 32-byte aligned: `vmovntdqa` is the load, and
     // the store below is an unaligned one into ordinary cached memory.
     const uintptr_t sa = reinterpret_cast<uintptr_t>(src);
@@ -148,15 +143,6 @@ void wc_read(void* dst, const void* src, size_t bytes) {
                     static_cast<const std::byte*>(src) + n * 32, tail);
 }
 
-// Track BF: the union runner's shape knobs, so one binary can A/B them.
-uint32_t env_u32(const char* name, uint32_t dflt) {
-    const char* e = ::cachedmoe::environment::get(name);
-    if (!e || !*e) return dflt;
-    char* end = nullptr;
-    const unsigned long v = std::strtoul(e, &end, 10);
-    return (end && end != e) ? static_cast<uint32_t>(v) : dflt;
-}
-
 }  // namespace
 
 void debug_act_quant_to_fp16(const float* x, uint16_t* out, float* scratch, uint32_t n) {
@@ -173,6 +159,8 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     planner_ = &planner;
     pinned_ = &pinned;
     cfg_ = &cfg;
+    const auto &overrides = device.environment().moe;
+    wc_read_ = overrides.wc_read;
 
     gpu::MoeSpec spec;
     // The batch axis the kernels are specialised to: `m` is a specialisation
@@ -190,10 +178,10 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     spec.h_quant       = bc.h_quant;
     // Experiment knobs, the same shape as the union runner's below, so the
     // decode shape can be re-swept per driver instead of re-derived.
-    spec.lanes_per_row = env_u32("CACHEDMOE_MOE_L", spec.lanes_per_row);
-    spec.rows_per_lane = env_u32("CACHEDMOE_MOE_R", spec.rows_per_lane);
-    spec.x_mode        = env_u32("CACHEDMOE_MOE_XMODE", spec.x_mode);
-    spec.x_mode_b      = env_u32("CACHEDMOE_MOE_XMODE_B", spec.x_mode_b);
+    spec.lanes_per_row = overrides.lanes.value_or(spec.lanes_per_row);
+    spec.rows_per_lane = overrides.rows.value_or(spec.rows_per_lane);
+    spec.x_mode = overrides.xmode.value_or(spec.x_mode);
+    spec.x_mode_b = overrides.xmode_b.value_or(spec.x_mode_b);
     // The FP4 decode is compiler-specific. On the AMD proprietary driver the
     // constant table (DecodeMode 0) is the measured M = 1 champion; Mesa's ACO
     // (RADV) lowers the same `kE2M1[nib]` into a per-element branchy select
@@ -208,7 +196,7 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     // 0.621814, 59/64, both ways). See docs/build.md, "Linux".
     if (bc.decode_mode == 0 && device.caps().driver_id == VK_DRIVER_ID_MESA_RADV)
         spec.decode_mode = 3;
-    spec.decode_mode   = env_u32("CACHEDMOE_MOE_DEC", spec.decode_mode);
+    spec.decode_mode = overrides.decode.value_or(spec.decode_mode);
     // Dispatch B (w2) gets its own shape on RADV. With A at the decode champion
     // L32 R1, ACO's B reads w2 at ~152 GB/s; B alone at L16 R2 reads it at ~185
     // (kernel_bench "fp8 dec1 B": 0.807 -> 0.757 ms per 7-slot pair). Engine
@@ -226,12 +214,12 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
         spec.lanes_b = 16;
         spec.rows_b  = 2;
     }
-    spec.lanes_b       = env_u32("CACHEDMOE_MOE_LB", spec.lanes_b);
-    spec.rows_b        = env_u32("CACHEDMOE_MOE_RB", spec.rows_b);
+    spec.lanes_b = overrides.lanes_b.value_or(spec.lanes_b);
+    spec.rows_b = overrides.rows_b.value_or(spec.rows_b);
     // An experiment knob, not a setting: docs/p2_decode.md §8.2 uses it to
     // A/B the h quantisation's placement for bit-reproducibility.
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_HQUANT"); e && *e)
-        spec.h_quant = static_cast<uint32_t>(std::atoi(e));
+    if (overrides.hquant)
+        spec.h_quant = *overrides.hquant;
     spec.fp8_slots     = 1;          // slot 6 is the fp8 shared expert
 
     // One row of table: MoeDims::layer is fixed when a runner is created and
@@ -274,13 +262,13 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     // occupancy/working-set point. The knobs stay as env overrides so the next
     // person can re-run the sweep instead of re-deriving it.
     gpu::MoeSpec uspec = spec;
-    uspec.lanes_per_row = env_u32("CACHEDMOE_MOE_UNION_L", spec.lanes_per_row);
-    uspec.rows_per_lane = env_u32("CACHEDMOE_MOE_UNION_R", spec.rows_per_lane);
-    uspec.x_mode        = env_u32("CACHEDMOE_MOE_UNION_XMODE", spec.x_mode);
+    uspec.lanes_per_row = overrides.union_lanes.value_or(spec.lanes_per_row);
+    uspec.rows_per_lane = overrides.union_rows.value_or(spec.rows_per_lane);
+    uspec.x_mode = overrides.union_xmode.value_or(spec.x_mode);
     // Dispatch B's own shape is a 7-slot decode measurement; the union (~20
     // slots) was never measured with it, so it keeps following A.
-    uspec.lanes_b       = env_u32("CACHEDMOE_MOE_UNION_LB", 0);
-    uspec.rows_b        = env_u32("CACHEDMOE_MOE_UNION_RB", 0);
+    uspec.lanes_b = overrides.union_lanes_b.value_or(0);
+    uspec.rows_b = overrides.union_rows_b.value_or(0);
     if (auto r = union_runner_.create(device, alloc, shader_dir, uspec, du); !r) return r;
     union_ids_.assign(du.slots, 0);
     union_slot_of_.assign(size_t(cfg.n_routed_experts) + 1, ~0u);
@@ -312,7 +300,7 @@ uint32_t GpuMoeBridge::debug_check_x(const MoeCall& call, std::string* first) {
     const uint32_t dim = call.hidden;
     std::vector<float> xf(dim), scratch(dim);
     std::vector<uint16_t> q(dim);
-    wc_read(xf.data(), call.x, size_t(dim) * sizeof(float));
+    wc_read(xf.data(), call.x, size_t(dim) * sizeof(float), wc_read_);
     act_quant_to_fp16(xf.data(), q.data(), scratch.data(), dim);
     const uint16_t* g = runner_.x_fp16();
     uint32_t bad = 0;
@@ -433,7 +421,7 @@ Result<void> GpuMoeBridge::stage_input(const MoeCall& call, bool x_on_gpu) {
         // Copy x out of GPU-visible memory BEFORE computing over it: design
         // §3.3's uncached write-combining read, one memcpy instead of 5,120
         // loads (docs/p2_decode.md §3.3).
-        wc_read(xf_.data(), call.x, size_t(dim) * sizeof(float));
+        wc_read(xf_.data(), call.x, size_t(dim) * sizeof(float), wc_read_);
     }
     const TimePoint t1 = Clock::now();
 
@@ -517,7 +505,7 @@ Result<void> GpuMoeBridge::stage_batch(const BatchCall& call) {
         const float* xin = call.x + size_t(m) * dim;
         float*    xf = xf_batch_.data() + size_t(m) * dim;
         uint16_t* xq = xq_batch_.data() + size_t(m) * dim;
-        wc_read(xf, xin, size_t(dim) * sizeof(float));
+        wc_read(xf, xin, size_t(dim) * sizeof(float), wc_read_);
         act_quant_to_fp16(xf, xq, xf, dim);
         std::memcpy(runner_.x_fp16() + size_t(m) * dim, xq, size_t(dim) * sizeof(uint16_t));
     }
@@ -660,7 +648,7 @@ Result<void> GpuMoeBridge::stage_batch_union(const BatchCall& call) {
         const float* xin = call.x + size_t(m) * dim;
         float*    xf = xf_batch_.data() + size_t(m) * dim;
         uint16_t* xq = xq_batch_.data() + size_t(m) * dim;
-        wc_read(xf, xin, size_t(dim) * sizeof(float));
+        wc_read(xf, xin, size_t(dim) * sizeof(float), wc_read_);
         act_quant_to_fp16(xf, xq, xf, dim);
         std::memcpy(union_runner_.x_fp16() + size_t(m) * dim, xq,
                     size_t(dim) * sizeof(uint16_t));

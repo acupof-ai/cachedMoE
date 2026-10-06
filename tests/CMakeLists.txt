@@ -5,6 +5,7 @@ add_executable(cachedmoe_tests
     test_main.cpp
     test_core.cpp
     test_runtime_config.cpp
+    test_runtime_environment.cpp
     test_env_alias.cpp
     test_env_alias_other_tu.cpp
     test_state_paths.cpp
@@ -44,7 +45,7 @@ add_test(NAME cachedmoe_tests COMMAND cachedmoe_tests)
 foreach(_suite align layout types json profiler status bytes
                 dequant gate slab expert_store planner resident_route
                 io v41_config manifest block_info kvcache kvstore trace
-                cache_cap runtime_config decode_mode env_alias state_paths)
+                cache_cap runtime_config runtime_environment decode_mode env_alias state_paths)
     add_test(NAME "suite.${_suite}" COMMAND cachedmoe_tests "${_suite}.")
 endforeach()
 

@@ -17,6 +17,7 @@
 #pragma once
 
 #include "core/namespace.h"
+#include "core/runtime_facts.h"
 
 #include <cstdint>
 #include <format>
@@ -30,7 +31,7 @@
 namespace cachedmoe::runtime {
 
 struct KvGeometry {
-    uint32_t max_context   = 65536;
+    uint32_t max_context = configuration::facts::RUNTIME_CONTEXT;
     uint32_t window        = 128;     // sliding_window
     uint32_t latent_dim    = 512;     // head_dim, MQA over one KV head
     uint32_t layers        = 40;

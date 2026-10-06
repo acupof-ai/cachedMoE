@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include "storage/io_engine.h"
 
 #include <algorithm>
@@ -224,7 +223,7 @@ void IoEngine::runtime_shape(IoConfig& cfg) {
     // submitting, depth becomes worth having -- 24 chunks / 96 MiB is what a
     // layer's whole burst needs, and the pair is +4.4% tok/s on the 4-turn
     // chat where either alone is +2.4-2.9%. Only P0 gets this; P1-P3 keep the
-    // IoConfig defaults (IoEngine::tuning_from_env).
+    // IoConfig defaults (IoEngine::resolve_tuning).
     cfg.max_inflight_ops   = std::max(cfg.max_inflight_ops, 24u);
     cfg.max_inflight_bytes = std::max(cfg.max_inflight_bytes, 96u << 20);
 #if defined(__linux__)
@@ -252,7 +251,9 @@ void IoEngine::runtime_shape(IoConfig& cfg) {
 }
 
 void IoEngine::widen_for_env(IoConfig& cfg) {
-    const Tuning t = tuning_from_env(cfg);
+    if (!cfg.environment)
+        cfg.environment = configuration::RuntimeEnvironment::capture();
+    const Tuning t = resolve_tuning(cfg, cfg.environment->io);
     // The ring has to hold the engram class's depth too; P0 keeps the depth
     // it had rather than inherit the wider ring.
     if (t.engram_qd > cfg.max_inflight_ops) {
@@ -264,32 +265,23 @@ void IoEngine::widen_for_env(IoConfig& cfg) {
     if (t.p0_chunk_bytes > cfg.chunk_bytes)             cfg.chunk_bytes = t.p0_chunk_bytes;
 }
 
-IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
+IoEngine::Tuning IoEngine::resolve_tuning(const IoConfig &cfg,
+                                          const configuration::IoOverrides &overrides) {
     Tuning t;
     t.p0_qd             = cfg.p0_qd ? cfg.p0_qd : cfg.max_inflight_ops;
     t.p0_inflight_bytes = cfg.max_inflight_bytes;
     t.p0_chunk_bytes    = cfg.p0_chunk_bytes ? cfg.p0_chunk_bytes : cfg.chunk_bytes;
-    auto u32 = [](const char* name, uint32_t& dst) {
-        if (const char* e = ::cachedmoe::environment::get(name); e && *e) {
-            char* end = nullptr;
-            const unsigned long v = std::strtoul(e, &end, 10);
-            if (end != e) dst = static_cast<uint32_t>(v);
-        }
-    };
     t.bg_qd             = cfg.max_inflight_ops;
     t.bg_inflight_bytes = cfg.max_inflight_bytes;
-    u32("CACHEDMOE_IO_BG_CAP_BUSY", t.bg_cap_busy);
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_IO_BG_THROTTLE_P2"); e && *e)
-        t.throttle_engram = (*e != '0');
-    const uint32_t qd_before  = t.p0_qd;
-    const uint64_t byt_before = t.p0_inflight_bytes;
-    u32("CACHEDMOE_IO_P0_QD", t.p0_qd);
-    uint32_t mb = 0;
-    u32("CACHEDMOE_IO_P0_INFLIGHT_MB", mb);
-    if (mb) t.p0_inflight_bytes = uint64_t(mb) << 20;
-    mb = 0;
-    u32("CACHEDMOE_IO_P0_CHUNK_MB", mb);
-    if (mb) t.p0_chunk_bytes = uint64_t(mb) << 20;
+    if (overrides.bg_cap_busy)
+        t.bg_cap_busy = *overrides.bg_cap_busy;
+    t.throttle_engram = overrides.throttle_engram;
+    if (overrides.p0_qd)
+        t.p0_qd = *overrides.p0_qd;
+    if (overrides.p0_inflight_mb.value_or(0))
+        t.p0_inflight_bytes = uint64_t(*overrides.p0_inflight_mb) << 20;
+    if (overrides.p0_chunk_mb.value_or(0))
+        t.p0_chunk_bytes = static_cast<uint32_t>(uint64_t(*overrides.p0_chunk_mb) << 20);
     // widen_for_env raises the IoConfig -- and with it the backend's queue
     // depth -- to whatever P0 asked for. Only THEN do the background classes
     // have to be held to the ceiling they shipped with. An untouched runtime,
@@ -303,18 +295,19 @@ IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
     // shallower or deeper queue -- bench/nvme_bench, bench/io_dst_bench -- uses
     // P0 only, so this does not touch a measurement.
     const IoConfig d{};
-    (void)qd_before; (void)byt_before;
     if (t.bg_qd > d.max_inflight_ops)               t.bg_qd = d.max_inflight_ops;
     if (t.bg_inflight_bytes > d.max_inflight_bytes) t.bg_inflight_bytes = d.max_inflight_bytes;
-    u32("CACHEDMOE_IO_BG_QD", t.bg_qd);
+    if (overrides.bg_qd)
+        t.bg_qd = *overrides.bg_qd;
     t.engram_qd = cfg.engram_qd ? cfg.engram_qd : t.bg_qd;
-    u32("CACHEDMOE_IO_ENGRAM_QD", t.engram_qd);
-    u32("CACHEDMOE_IO_SUBMIT_THREADS", t.submit_threads);
+    if (overrides.engram_qd)
+        t.engram_qd = *overrides.engram_qd;
+    if (overrides.submit_threads)
+        t.submit_threads = *overrides.submit_threads;
     if (t.submit_threads == 0) t.submit_threads = 1;
     if (t.submit_threads > 16) t.submit_threads = 16;
     return t;
 }
-
 
 // --- Track D2: the second read source ---------------------------------------
 
@@ -328,10 +321,11 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
         if (weights[i] > 0.0) src_weights_[i] = weights[i];
     std::lock_guard lk(src_mutex_);
     // A fresh set of sources is a fresh verdict on each of them.
-    uint32_t budget = kDefaultSourceErrorBudget;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_ERROR_BUDGET"); e && *e)
-        budget = static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
-    src_health_ = SourceHealth(budget);
+    // A caller without start() is a standalone source-router setup epoch.
+    const auto environment =
+        cfg_.environment ? cfg_.environment : configuration::RuntimeEnvironment::capture();
+    const auto &overrides = environment->io;
+    src_health_ = SourceHealth(overrides.source_error_budget);
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
         src_outstanding_[i] = 0;
         src_inflight_[i]    = 0;
@@ -352,23 +346,12 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     // itself. kDefaultKeepAliveMs is the suggested window and, independently,
     // the floor above which an idle stretch is counted -- that measurement runs
     // in both arms.
-    int64_t ka_ms = 0;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_KEEPALIVE_MS"); e && *e) {
-        if (*e == 'o' || *e == 'O') ka_ms = 0;            // "off"
-        else ka_ms = std::strtoll(e, nullptr, 10);
-    }
-    if (ka_ms < 0) ka_ms = 0;
+    const int64_t ka_ms = overrides.keepalive_ms;
     ka_idle_ns_.store(mirrors_on_ ? ka_ms * 1000000 : 0, std::memory_order_relaxed);
-    static_split_ = 0.0;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_STATIC_SPLIT"); e && *e) {
-        const double f = std::strtod(e, nullptr);
-        if (f > 0.0 && f < 1.0) static_split_ = f;
-    }
-    // Track ST: on whenever there is a mirror; CACHEDMOE_MIRROR_STRIPE=0 routes
-    // whole requests again. Wins over the static split for P0 when both are
-    // set: striping routes every chunk, so there is no whole request to split.
-    stripe_ = mirrors_on_;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_STRIPE"); e && *e == '0') stripe_ = false;
+    static_split_ = overrides.static_split;
+    // Mirrors stripe chunks by default. CACHEDMOE_MIRROR_STRIPE=0 routes whole
+    // requests; this switch takes precedence over P0 static splitting.
+    stripe_ = mirrors_on_ && overrides.stripe;
     const int64_t now0 = mono_ns();
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
         ka_[i].chunk_id = 0;
@@ -382,12 +365,7 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     // idle backfill) goes too so that a quiet period fills slots from both
     // drives. P1/P2 stay on the primary: P1 is small and speculative, and P2's
     // 264 B engram rows are latency-bound, where the slower drive is a loss.
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_CLASSES"); e && *e) {
-        uint32_t m = 0;
-        for (const char* c = e; *c; ++c)
-            if (*c >= '0' && *c <= '3') m |= 1u << uint32_t(*c - '0');
-        if (m) route_classes_ = m;
-    }
+    route_classes_ = overrides.route_classes.value_or(kDefaultRouteClasses);
     if (mirrors_on_) {
         std::string w;
         for (size_t i = 0; i < src_roots_.size(); ++i)
@@ -407,8 +385,7 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     }
     // ThermalGate (source_router.h). Only mirrors are watched, and only when
     // their drive has a sensor; the same thread readmits a dropped mirror.
-    int hot = kDefaultMirrorHotC;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_HOT_C"); e && *e) hot = std::atoi(e);
+    const int hot = overrides.mirror_hot_c;
     thermal_ = ThermalGate{hot, hot - kMirrorCoolDropC, 0};
     bool watch = mirrors_on_ && kCanReopen;
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
@@ -637,12 +614,14 @@ Result<void> IoEngine::start(std::unique_ptr<Backend> backend, const IoConfig& c
     if (!backend) return fail(Err::InvalidArgument, "IoEngine needs a backend");
     backend_  = std::move(backend);
     cfg_      = cfg;
+    if (!cfg_.environment)
+        cfg_.environment = configuration::RuntimeEnvironment::capture();
     profiler_ = profiler;
     if (cfg_.chunk_bytes > backend_->caps().max_chunk_bytes)
         cfg_.chunk_bytes = backend_->caps().max_chunk_bytes;
     if (cfg_.max_inflight_ops > backend_->caps().max_queue_depth)
         cfg_.max_inflight_ops = backend_->caps().max_queue_depth;
-    tune_ = tuning_from_env(cfg_);
+    tune_ = resolve_tuning(cfg_, cfg_.environment->io);
     // P1-P3 keep the chunk size the config shipped with even when P0 widened it.
     bg_chunk_bytes_ = cfg_.chunk_bytes;
     if (tune_.p0_chunk_bytes > IoConfig{}.chunk_bytes && bg_chunk_bytes_ > IoConfig{}.chunk_bytes)

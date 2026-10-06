@@ -10,7 +10,9 @@
 
 #include "core/namespace.h"
 
-#include "core/env.h"
+#include "core/runtime_environment.h"
+#include "core/runtime_facts.h"
+#include <memory>
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
@@ -50,6 +52,7 @@ struct IoConfig {
     uint32_t completion_threads = 2;
     bool     unbuffered         = true;   // FILE_FLAG_NO_BUFFERING / O_DIRECT
     // When a P0 arrives, stop issuing new chunks from P1..P3 until it drains.
+    // Reserved API field: the dispatcher currently always preempts P1-P3.
     bool     preempt_on_blocking = true;
     // P0 (blocking miss) only; 0 = chunk_bytes / max_inflight_ops. The
     // CACHEDMOE_IO_P0_CHUNK_MB / _QD environment knobs override these.
@@ -58,6 +61,8 @@ struct IoConfig {
     // P2 (engram rows, 4 KiB random reads) only; 0 = the background classes'
     // depth. CACHEDMOE_IO_ENGRAM_QD overrides it.
     uint32_t engram_qd          = 0;
+    // Shared by pre-backend widening and post-capability derivation.
+    std::shared_ptr<const configuration::RuntimeEnvironment> environment;
 };
 
 struct CacheConfig {
@@ -66,9 +71,12 @@ struct CacheConfig {
     uint32_t slots_per_slab   = 100;
     uint64_t budget_bytes     = 2ull << 30;  // total slab-pool budget; the real run uses ~90 GB
     CachePolicy policy        = CachePolicy::Lru;
+    std::shared_ptr<const configuration::RuntimeEnvironment> environment;
 };
 
 struct PrefetchConfig {
+    // Reserved predictor API: depth/width are logged, but predictive prefetch
+    // is not implemented. This does not control the live P3 backfill API.
     // design §9.4: lookahead depth d and width K. d >= 3-4 from the T_layer /
     // T_io estimate; K is adapted online by measured precision.
     uint32_t lookahead_depth  = 4;
@@ -81,8 +89,9 @@ struct PrefetchConfig {
 
 struct SpeculationConfig {
     bool     enabled   = false;   // real three-stage MTP draft
-    uint32_t max_draft = 5;       // dspark_block_size
-    uint32_t accept_topk = 4;    // accept the unchanged main-path token in target top-K
+    uint32_t max_draft = configuration::facts::DRAFT_BLOCK_SIZE; // dspark_block_size
+    uint32_t accept_topk =
+        configuration::facts::ACCEPT_TOP_K; // accept the unchanged main-path token in target top-K
     // Experimental raw-score prefix policy; unset keeps fixed max_draft.
     // The draft has already run when this selects k, including k=0.
     std::optional<float> min_confidence;
@@ -104,36 +113,40 @@ struct GpuExecutionConfig {
     bool mgt_fold_scale = false;
     bool mgt_attn_cm = false;
 
-    void apply_environment() {
-        const auto exact_one = [](const char* key, bool& value) {
-            if (const char* e = ::cachedmoe::environment::get(key)) value = std::string_view(e) == "1";
-        };
-        const auto first_one = [](const char* key, bool& value) {
-            if (const char* e = ::cachedmoe::environment::get(key)) value = *e == '1';
-        };
-        const auto not_zero = [](const char* key, bool& value) {
-            if (const char* e = ::cachedmoe::environment::get(key)) value = *e != '0';
-        };
-        exact_one("CACHEDMOE_BATCH_GPU_ROUTE", batch_gpu_route);
-        not_zero("CACHEDMOE_BATCH_ENGRAM_EARLY", batch_engram_early);
-        not_zero("CACHEDMOE_SPEC_GPU_READOUT", spec_gpu_readout);
-        exact_one("CACHEDMOE_DSPARK_ONECB", draft_onecb);
-        exact_one("CACHEDMOE_DSPARK_MEGA", draft_mega);
-        exact_one("CACHEDMOE_DSPARK_PROFILE", draft_profile);
-        if (::cachedmoe::environment::get("CACHEDMOE_DSPARK_MEGA_DIAG")) draft_diagnostics = true;
-        not_zero("CACHEDMOE_DSPARK_TRIM_TAIL", draft_trim_tail);
-        first_one("CACHEDMOE_MGT_PAIR_DOT", mgt_pair_dot);
-        not_zero("CACHEDMOE_MGT_FOLD_SCALE", mgt_fold_scale);
-        not_zero("CACHEDMOE_MGT_ATTN_CM", mgt_attn_cm);
+    void apply_environment(const configuration::RuntimeEnvironment &environment) {
+        const auto &overrides = environment.gpu;
+        if (overrides.batch_gpu_route)
+            batch_gpu_route = *overrides.batch_gpu_route;
+        if (overrides.batch_engram_early)
+            batch_engram_early = *overrides.batch_engram_early;
+        if (overrides.spec_gpu_readout)
+            spec_gpu_readout = *overrides.spec_gpu_readout;
+        if (overrides.draft_onecb)
+            draft_onecb = *overrides.draft_onecb;
+        if (overrides.draft_mega)
+            draft_mega = *overrides.draft_mega;
+        if (overrides.draft_profile)
+            draft_profile = *overrides.draft_profile;
+        if (overrides.draft_diagnostics)
+            draft_diagnostics = *overrides.draft_diagnostics;
+        if (overrides.draft_trim_tail)
+            draft_trim_tail = *overrides.draft_trim_tail;
+        if (overrides.mgt_pair_dot)
+            mgt_pair_dot = *overrides.mgt_pair_dot;
+        if (overrides.mgt_fold_scale)
+            mgt_fold_scale = *overrides.mgt_fold_scale;
+        if (overrides.mgt_attn_cm)
+            mgt_attn_cm = *overrides.mgt_attn_cm;
     }
+    void apply_environment() { apply_environment(*configuration::RuntimeEnvironment::capture()); }
 };
 
 // Decode scheduling and diagnostics are fixed at engine startup. Platform
 // defaults remain optional so RADV-specific choices can be resolved after the
 // device is known, without polling process environment during a layer.
 struct DecodeExecutionConfig {
-    double gpu_wait_budget_seconds = 900;
-    double fence_spin_microseconds = 0;
+    double gpu_wait_budget_seconds = configuration::kGpuWaitSeconds;
+    double fence_spin_microseconds = configuration::kFenceSpinMicroseconds;
     std::optional<bool> shared_early;
     std::optional<bool> eager_moe;
     std::optional<bool> engram_deadline;
@@ -141,33 +154,33 @@ struct DecodeExecutionConfig {
     bool shared_early_check = false;
     bool dynamic_mask_lru = true;
 
-    void apply_environment() {
-        const auto positive = [](const char* key, double& value, double fallback) {
-            if (const char* e = ::cachedmoe::environment::get(key)) {
-                const double parsed = std::atof(e);
-                value = parsed > 0 ? parsed : fallback;
-            }
-        };
-        const auto optional_flag = [](const char* key, std::optional<bool>& value) {
-            if (const char* e = ::cachedmoe::environment::get(key))
-                value = *e ? std::optional<bool>(*e != '0') : std::nullopt;
-        };
-        positive("CACHEDMOE_GPU_WAIT_S", gpu_wait_budget_seconds, 900);
-        positive("CACHEDMOE_FENCE_SPIN_US", fence_spin_microseconds, 0);
-        optional_flag("CACHEDMOE_SHARED_EARLY", shared_early);
-        optional_flag("CACHEDMOE_MS_EAGER_MOE", eager_moe);
-        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_SHARED_EARLY_MS"))
-            shared_early_multistream = *e && *e != '0';
-        // This diagnostic used presence, including "0", in the old path.
-        if (::cachedmoe::environment::get("CACHEDMOE_SE_CHECK")) shared_early_check = true;
-        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MASK_DYNAMIC_LRU"))
-            dynamic_mask_lru = std::string_view(e) != "0";
-        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_IO_ENGRAM_DEADLINE"))
-            engram_deadline = std::string_view(e) == "1";
+    void apply_environment(const configuration::RuntimeEnvironment &environment) {
+        const auto &overrides = environment.decode;
+        if (overrides.gpu_wait_seconds)
+            gpu_wait_budget_seconds = *overrides.gpu_wait_seconds;
+        if (overrides.fence_spin_microseconds)
+            fence_spin_microseconds = *overrides.fence_spin_microseconds;
+        if (overrides.shared_early_present)
+            shared_early = overrides.shared_early;
+        if (overrides.eager_moe_present)
+            eager_moe = overrides.eager_moe;
+        if (overrides.shared_early_multistream)
+            shared_early_multistream = *overrides.shared_early_multistream;
+        if (overrides.shared_early_check)
+            shared_early_check = *overrides.shared_early_check;
+        if (overrides.dynamic_mask_lru)
+            dynamic_mask_lru = *overrides.dynamic_mask_lru;
+        if (overrides.engram_deadline)
+            engram_deadline = *overrides.engram_deadline;
     }
+    void apply_environment() { apply_environment(*configuration::RuntimeEnvironment::capture()); }
 };
 
 struct RuntimeConfig {
+    // CLI captures before validation; library callers may omit this and init
+    // captures once. Later mutations cannot affect this engine's resources.
+    std::shared_ptr<const configuration::RuntimeEnvironment> environment;
+
     // The checkpoint directory: the 48 original safetensors shards, config.json
     // and the deepmoe_manifest.json that tools/manifest.py writes beside them
     // (design §5.1 v0.5 -- there is no repack).
@@ -186,6 +199,8 @@ struct RuntimeConfig {
                                   // empty = off. runtime/trace.h has the format.
     std::string kvcache_dir;      // design §11.4 prefix KV persistence
 
+    // Reserved API fields; Engine currently selects dual-path GPU backing
+    // and its implemented bounded prefill independently of these placeholders.
     MemoryPath  memory_path = MemoryPath::Auto;
     PrefillMode prefill     = PrefillMode::BoundedReplay;
     // The GPU prefill's expert transit: segments of 64 slots (1.2 GB of pinned
@@ -200,12 +215,15 @@ struct RuntimeConfig {
     GpuExecutionConfig gpu;
     DecodeExecutionConfig decode;
 
-    uint32_t max_context = 65536;   // design §1.2 stage-one target
+    uint32_t max_context = configuration::facts::RUNTIME_CONTEXT; // design §1.2 stage-one target
+    // Reserved legacy sampler fields. GenerateRequest/GenerateOptions supply
+    // the sampling values that the implemented token loop actually consumes.
     uint64_t seed        = 0;       // Philox counter seed, decode is reproducible
     float    temperature = 0.0f;    // 0 = greedy; the speculation invariant of §10.2
 
     // Pin the I/O and planner threads to a few physical cores so they do not
     // fight the GPU for LPDDR bandwidth (design §8).
+    // Reserved; startup CPU_AFFINITY is the implemented affinity control.
     uint32_t io_core_mask = 0;      // 0 = let the OS decide
 };
 

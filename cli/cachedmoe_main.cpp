@@ -6,7 +6,6 @@
 //
 // Ownership/threading: one process, one Engine, main thread only. Nothing here
 // is a library; everything reusable lives in the modules.
-#include "core/env.h"
 #include <algorithm>
 #include <cstdio>
 #include <functional>
@@ -41,8 +40,10 @@ int cmd_serve(int argc, char** argv);   // cli/serve.cpp
 namespace {
 
 int usage(int code = 2) {
+    std::printf("cachedmoe -- MoE inference runtime for %.*s on Strix Halo\n",
+                int(configuration::facts::MODEL_NAME.size()),
+                configuration::facts::MODEL_NAME.data());
     std::puts(
-        "cachedmoe -- MoE inference runtime for DeepSeek-V4.1-Flash on Strix Halo\n"
         "\n"
         "usage:\n"
         "  cachedmoe info\n"
@@ -487,6 +488,7 @@ int run_gate_report(runtime::Engine& engine, const runtime::DecodeState& st, uin
 
 int cmd_run(int argc, char** argv) {
     RuntimeConfig cfg;
+    cfg.environment = configuration::RuntimeEnvironment::capture();
     cfg.cache.budget_bytes = 0;     // 0 = size it from the machine (see init_gpu)
     std::string prompt_ids_file;
     std::string state_dir = "tests/data/l3";
@@ -540,7 +542,7 @@ int cmd_run(int argc, char** argv) {
     if (!mask_cache.empty() && mask_cache != "dynamic" && mask_cache != "fixed") {
         std::fputs("--mask-cache takes dynamic|fixed\n", stderr); return 2;
     }
-    runtime::Engine engine;
+    runtime::Engine engine(cfg.environment);
     if (!mask_cache.empty()) engine.set_mask_cache_fixed(mask_cache == "fixed");
     if (auto r = engine.init(cfg); !r) {
         std::fprintf(stderr, "init failed: %s\n", r.error().str().c_str());
@@ -755,13 +757,14 @@ int cmd_run(int argc, char** argv) {
     std::fputs(engine.resident_route_report().c_str(), stdout);
     if (engine.gate_probe_on()) std::fputs(engine.gate_probe_report().c_str(), stdout);
     std::fputs(engine.profiler().summary().to_string().c_str(), stdout);
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_RUN_IO_REPORT"); e && std::string_view(e) == "1")
+    if (cfg.environment->run_io_report)
         std::fputs(engine.status().c_str(), stdout);
     return 0;
 }
 
 std::string model_dir_default() {
-    const char* e = ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR");
+    const auto environment = configuration::RuntimeEnvironment::capture();
+    const char *e = environment->model_dir ? environment->model_dir->c_str() : nullptr;
     return e ? std::string(e) : std::string();
 }
 

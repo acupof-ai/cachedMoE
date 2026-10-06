@@ -308,8 +308,12 @@ public:
     const Timing& timing() const { return timing_; }
 
 private:
-    Result<void> bind_shared(uint32_t layer);
-    void         set_page(uint32_t p) { page_ = p; runner_.set_table_layer(p); }
+  bool wc_read_ = true;
+  Result<void> bind_shared(uint32_t layer);
+  void set_page(uint32_t p) {
+      page_ = p;
+      runner_.set_table_layer(p);
+  }
     uint64_t*    page_table() {
         return runner_.pointer_table() + size_t(page_) * runner_.dims().experts_per_layer *
                                              kExpertPartCount;

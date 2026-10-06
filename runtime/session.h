@@ -48,6 +48,7 @@
 #pragma once
 
 #include "core/namespace.h"
+#include "core/runtime_facts.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -149,7 +150,8 @@ Result<ReplayStats> restore_context(Engine& e, const ParkedContext& p, uint32_t 
 struct KvDiskOptions {
     std::string dir;                     // empty = disabled
     std::string model_tag;               // model identity, e.g. the model directory
-    uint64_t    max_bytes = 4ull << 30;  // evict least-recently-written *.pkv past this
+    uint64_t max_bytes =
+        configuration::facts::KV_DISK_BYTES; // evict least-recently-written *.pkv past this
 };
 
 // Writes `p` atomically (`<name>.pkv.tmp` -> rename) and evicts old files past
@@ -167,7 +169,7 @@ bool drop_parked_context(const KvDiskOptions& opt, const std::string& name);
 struct GenerateRequest {
     std::vector<uint32_t> prompt_ids;
     DecodeMode            decode_mode = DecodeMode::Startup;
-    uint32_t              max_tokens = 256;
+    uint32_t max_tokens = configuration::facts::NATIVE_MAX_TOKENS;
     SamplingParams        sampling{};                // temperature <= 0: greedy
     std::vector<uint32_t> stop_ids{1};               // <｜end▁of▁sentence｜>
     bool                  reuse = true;              // allow KV continuation / rollback
@@ -328,7 +330,7 @@ Result<MultiStats> generate_multi(
 
 struct SessionPoolOptions {
     uint32_t      max_parked       = 8;
-    uint64_t      max_parked_bytes = 4ull << 30;
+    uint64_t max_parked_bytes = configuration::facts::PARKED_KV_BYTES;
     KvDiskOptions disk{};            // non-empty dir: save/load parked contexts
 };
 

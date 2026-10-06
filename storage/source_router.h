@@ -28,6 +28,7 @@
 #pragma once
 
 #include "core/namespace.h"
+#include "core/runtime_environment.h"
 
 #include <cstdint>
 #include <span>
@@ -85,7 +86,7 @@ inline uint32_t pick_source(std::span<const double> weights,
 // Source 0 is never dropped: it is the only copy the run is guaranteed to have,
 // and its failures are the run's failures -- reported by the read that failed,
 // not swallowed here.
-inline constexpr uint32_t kDefaultSourceErrorBudget = 3;
+inline constexpr uint32_t kDefaultSourceErrorBudget = configuration::kSourceErrorBudget;
 
 class SourceHealth {
 public:
@@ -141,7 +142,7 @@ private:
 // The router already chooses by candidate mask, so resting is the same one AND
 // as a drop, only it comes back. Source 0 is never rested: it is the copy the
 // run cannot do without.
-inline constexpr int kDefaultMirrorHotC = 80;
+inline constexpr int kDefaultMirrorHotC = configuration::kMirrorHotCelsius;
 inline constexpr int kMirrorCoolDropC   = 8;
 
 struct ThermalGate {

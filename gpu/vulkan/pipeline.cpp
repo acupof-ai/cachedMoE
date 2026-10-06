@@ -1,4 +1,3 @@
-#include "core/env.h"
 #include "gpu/vulkan/pipeline.h"
 
 #include <cstdio>
@@ -53,9 +52,10 @@ namespace {
 // internal representation (NIR, ACO IR, ISA on RADV) in `<dir>/<name>.txt`.
 // `tag` is the .spv's base name and the specialisation constants, which is
 // what tells two pipelines of one shader apart.
-void write_pipeline_stats(VkDevice d, VkPipeline pipe, const std::string& tag) {
-    const char* dir = ::cachedmoe::environment::get("CACHEDMOE_PIPELINE_STATS");
-    if (!dir || !*dir) return;
+void write_pipeline_stats(VkDevice d, VkPipeline pipe, const std::string &tag,
+                          const std::string &dir) {
+    if (dir.empty())
+        return;
     auto props = reinterpret_cast<PFN_vkGetPipelineExecutablePropertiesKHR>(
         vkGetDeviceProcAddr(d, "vkGetPipelineExecutablePropertiesKHR"));
     auto stats = reinterpret_cast<PFN_vkGetPipelineExecutableStatisticsKHR>(
@@ -247,7 +247,8 @@ Result<void> Pipeline::create(Device& device, const std::string& spv_path,
         tag += std::format(" m{} l{} r{} s{}", spec.m, spec.lanes_per_row, spec.rows_per_wg,
                            spec.subgroup_size);
         for (uint32_t v : spec.extra) tag += std::format(" {}", v);
-        write_pipeline_stats(device.handle(), pipeline_, tag);
+        write_pipeline_stats(device.handle(), pipeline_, tag,
+                             device.environment().pipeline_stats_dir);
     }
     valid_ = true;
     return {};

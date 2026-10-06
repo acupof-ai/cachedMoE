@@ -36,7 +36,6 @@
 // Ownership/threading: a reader thread owns stdin -- it answers `cancel` at once
 // and queues everything else -- and the main thread runs the engine. `emit` is
 // serialised by a mutex.
-#include "core/env.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -62,6 +61,7 @@
 
 #include "core/config.h"
 #include "core/gamemode.h"
+#include "cli/generate_options.h"
 #include "core/json.h"
 #include "core/state_paths.h"
 #include "core/json_write.h"
@@ -99,12 +99,8 @@ bool read_line(std::string& out) {
     }
 }
 
-std::vector<uint32_t> uint_array(const JsonValue& v) {
-    std::vector<uint32_t> out;
-    if (auto a = v.as_array(); a)
-        for (const JsonValue& x : **a)
-            if (auto u = x.as_uint(); u) out.push_back(static_cast<uint32_t>(*u));
-    return out;
+std::vector<uint32_t> uint_array(const JsonValue &v) {
+    return cli::token_ids(v);
 }
 
 std::string value_of(int argc, char** argv, int& i) {
@@ -166,8 +162,10 @@ struct Inbox {
 
 int cmd_serve(int argc, char** argv) {
     RuntimeConfig cfg;
+    cfg.environment = configuration::RuntimeEnvironment::capture();
     cfg.cache.budget_bytes = 0;
-    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR")) cfg.model_dir = e;
+    if (cfg.environment->model_dir)
+        cfg.model_dir = *cfg.environment->model_dir;
     runtime::SessionConfig sc;
     runtime::SessionOptions so;
     bool pf_min_set = false;
@@ -243,8 +241,10 @@ int cmd_serve(int argc, char** argv) {
         return 2;
     }
 #if defined(__linux__)
-    if(const char* e=::cachedmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE");e && *e=='1' && streams>1){
-        std::fprintf(stderr,"batch GPU routing requires --streams 1\n");return 2;
+    const auto& legacy_route_guard = cfg.environment->raw[configuration::Key::BATCH_GPU_ROUTE];
+    if (legacy_route_guard.present() && *legacy_route_guard.c_str() == '1' && streams > 1) {
+        std::fprintf(stderr, "batch GPU routing requires --streams 1\n");
+        return 2;
     }
     // The second read source as a helper, on by default for serve on Linux: the
     // same model directory name under /mnt/*/ or /mnt/*/models/ with the
@@ -255,9 +255,8 @@ int cmd_serve(int argc, char** argv) {
     // and rests it while its drive is hot. --mirror or
     // CACHEDMOE_MODEL_MIRRORS choose explicitly; CACHEDMOE_MIRROR_AUTO=0 turns the
     // search off (single-drive benchmarks).
-    if (cfg.model_mirrors.empty() && !::cachedmoe::environment::get("CACHEDMOE_MODEL_MIRRORS")) {
-        const char* a = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_AUTO");
-        if (!(a && *a == '0')) {
+    if (cfg.model_mirrors.empty() && !cfg.environment->model_mirrors) {
+        if (cfg.environment->mirror_auto) {
             namespace fs = std::filesystem;
             std::error_code ec;
             const fs::path own = fs::weakly_canonical(cfg.model_dir, ec);
@@ -291,8 +290,8 @@ int cmd_serve(int argc, char** argv) {
     // off, which is what a benchmark that wants a cold prefill should use.
     std::optional<state_paths::StateRoot> state_root;
     if (!kv_dir_given && !kv_disk_off) {
-        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_KV_DIR"); e && *e) po.disk.dir = e;
-        else if (e && !*e) po.disk.dir.clear();
+        if (const auto &directory = cfg.environment->kv_dir; directory)
+            po.disk.dir = *directory;
         else {
             // Per model directory, so two checkpoints do not fight over one file
             // and a stale one is a miss rather than a corrupt hit (the header
@@ -340,7 +339,7 @@ int cmd_serve(int argc, char** argv) {
     auto tok = text::Tokenizer::load(cfg.model_dir + "/tokenizer.json");
     if (!tok) { emit_error("tokenizer: " + tok.error().str()); return 1; }
     cfg.max_context = sc.max_context;   // what this server admits: the cache budget prices its prefill
-    runtime::Engine engine;
+    runtime::Engine engine(cfg.environment);
     if (auto r = engine.init(cfg); !r) { emit_error("init: " + r.error().str()); return 1; }
     if (auto r = engine.init_gpu(); !r) { emit_error("gpu init: " + r.error().str()); return 1; }
     if (!mask_cache.empty()) engine.set_mask_cache_fixed(mask_cache == "fixed");
@@ -476,7 +475,8 @@ int cmd_serve(int argc, char** argv) {
         const std::string session = doc->string_or("session", pool.active());
         // The GPU at full clock for exactly as long as a reply takes (core/gamemode.h).
         std::optional<GameModeScope> gpu_busy;
-        if (op == "generate" || op == "generate_multi" || op == "reheat") gpu_busy.emplace();
+        if (op == "generate" || op == "generate_multi" || op == "reheat")
+            gpu_busy.emplace(cfg.environment->gamemode);
         if (op == "quit") break;
         if (op == "set_spec_config") {
             // Normal adapters do not enable this control. The synchronous
@@ -663,13 +663,7 @@ int cmd_serve(int argc, char** argv) {
                     t.req.prompt_ids = uint_array(*ids);
                 else
                     t.req.prompt_ids = tok->encode(rv.string_or("text", ""));
-                t.req.max_tokens = static_cast<uint32_t>(rv.int_or("max_tokens", 256));
-                t.req.sampling.temperature = static_cast<float>(rv.double_or("temperature", 1.0));
-                t.req.sampling.top_p = static_cast<float>(rv.double_or("top_p", 0.95));
-                t.req.sampling.seed = static_cast<uint64_t>(rv.int_or("seed", 0));
-                if (const JsonValue* sp = rv.find("stop_ids"); sp && sp->is_array())
-                    t.req.stop_ids = uint_array(*sp);
-                t.req.reuse = rv.bool_or("reuse", true);
+                cli::apply_generate_options(rv, t.req);
                 turns.push_back(std::move(t));
                 ++idx;
             }
@@ -737,12 +731,7 @@ int cmd_serve(int argc, char** argv) {
             req.prompt_ids = uint_array(*ids);
         else
             req.prompt_ids = tok->encode(doc->string_or("text", ""));
-        req.max_tokens = static_cast<uint32_t>(doc->int_or("max_tokens", 256));
-        req.sampling.temperature = static_cast<float>(doc->double_or("temperature", 1.0));
-        req.sampling.top_p = static_cast<float>(doc->double_or("top_p", 0.95));
-        req.sampling.seed = static_cast<uint64_t>(doc->int_or("seed", 0));
-        if (const JsonValue* s = doc->find("stop_ids"); s && s->is_array()) req.stop_ids = uint_array(*s);
-        req.reuse = doc->bool_or("reuse", true);
+        cli::apply_generate_options(*doc, req);
         req.cancel = cancelled;
 
         auto st = pool.live().generate(

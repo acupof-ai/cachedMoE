@@ -7,6 +7,7 @@
 #pragma once
 
 #include "core/namespace.h"
+#include "core/runtime_facts.h"
 
 #include <cstdint>
 
@@ -34,7 +35,8 @@ inline constexpr float    kRmsNormEps        = 1e-20f;
 
 inline constexpr uint32_t kDsparkExperts     = 128;
 inline constexpr uint32_t kDsparkTopK        = 3;
-inline constexpr uint32_t kDsparkBlockSize   = 5;      // draft positions produced per cycle
+inline constexpr uint32_t kDsparkBlockSize =
+    configuration::facts::DRAFT_BLOCK_SIZE; // draft positions produced per cycle
 inline constexpr uint32_t kDsparkMarkovRank  = 256;
 inline constexpr uint32_t kDsparkCaptureWidth = kMtpBlocks * kHiddenSize;
 inline constexpr uint8_t kDsparkCaptureMask = (1u << kMtpBlocks) - 1;

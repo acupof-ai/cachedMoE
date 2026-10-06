@@ -27,6 +27,7 @@ Result<void> ExpertStore::init(std::unique_ptr<SlabBacking> backing,
         return fail(Err::InvalidArgument, "ExpertStore needs a non-empty (layer, expert) space");
 
     SlabConfig sc;
+    sc.environment = cache.environment;
     sc.slots_per_slab = cache.slots_per_slab;
     sc.slot_bytes     = layout::kExpertSlotBytes;
     sc.budget_bytes   = cache.budget_bytes;

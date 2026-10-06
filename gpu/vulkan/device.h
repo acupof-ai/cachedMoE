@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "core/status.h"
+#include "core/runtime_environment.h"
 
 #if defined(CACHEDMOE_ENABLE_VULKAN)
 #include <vulkan/vulkan.h>
@@ -115,6 +116,7 @@ struct DeviceOptions {
     bool     enable_validation = false;
     uint32_t preferred_subgroup_size = 32;   // design §7.1 prefers Wave32 for GEMV
     int32_t  physical_device_index = -1;     // -1 = first discrete/integrated GPU
+    std::shared_ptr<const configuration::RuntimeEnvironment> environment;
 };
 
 class Device {
@@ -133,6 +135,7 @@ public:
     bool valid() const { return valid_; }
 
     const DeviceCaps& caps() const { return caps_; }
+    const configuration::RuntimeEnvironment &environment() const { return *environment_; }
     uint32_t compute_queue_family() const { return compute_family_; }
 
     // Enumerates devices without creating one; this is what `cachedmoe info`
@@ -147,9 +150,10 @@ public:
 #endif
 
 private:
-    bool     valid_ = false;
-    DeviceCaps caps_{};
-    uint32_t compute_family_ = 0;
+  std::shared_ptr<const configuration::RuntimeEnvironment> environment_;
+  bool valid_ = false;
+  DeviceCaps caps_{};
+  uint32_t compute_family_ = 0;
 #if defined(CACHEDMOE_ENABLE_VULKAN)
     VkInstance       instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physical_ = VK_NULL_HANDLE;

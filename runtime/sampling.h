@@ -32,6 +32,7 @@
 #pragma once
 
 #include "core/namespace.h"
+#include "core/runtime_facts.h"
 
 #include <cstdint>
 #include <span>
@@ -42,8 +43,9 @@
 namespace cachedmoe::runtime {
 
 struct SamplingParams {
-    float    temperature = 1.0f;    // <= 0 means greedy (argmax)
-    float    top_p       = 0.95f;   // model README: 0.95 (or 1.0)
+    float temperature = static_cast<float>(
+        configuration::facts::SAMPLING_TEMPERATURE);               // <= 0 means greedy (argmax)
+    float top_p = static_cast<float>(configuration::facts::TOP_P); // model README: 0.95 (or 1.0)
     uint64_t seed        = 0;
     bool greedy() const { return !(temperature > 0.0f); }
 };

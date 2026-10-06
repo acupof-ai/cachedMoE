@@ -34,6 +34,7 @@
 #pragma once
 
 #include "core/namespace.h"
+#include "core/runtime_facts.h"
 
 #include <array>
 #include <cstdint>
@@ -115,7 +116,7 @@ struct DecodeScratch {
 // History: this was 4,096 (then 16,384) and doubled as the context cap, which
 // hid that sparse_attn was being handed window + n_cmp entries instead of
 // window + min(index_topk, n_cmp) -- Track P's fix in Engine::prepare_ced.
-inline constexpr uint32_t kMaxIndexPositions = 1u << 20;
+inline constexpr uint32_t kMaxIndexPositions = configuration::facts::MAX_CONTEXT;
 
 // Row stride of sparse_attn's [heads][stride] score plane. A top-k list is
 // window + min(index_topk, n_cmp) = 640 entries in V4.1; `record_attention`
@@ -244,7 +245,7 @@ struct BatchStep {
 void write_batch_window_lists(BatchScratch& b, uint32_t window, uint32_t p0, uint32_t m);
 
 // Track J's K-split wo_a / wo_b on the M=1 decode path (STATUS §7 item 6).
-// Engine::init_gpu turns it on for RADV, where it saves ~3.8 ms/token of
+// Device-specific startup resolution turns it on for RADV, where it saves ~3.8 ms/token of
 // attention (wo_a 194 -> 157 us, wo_b 252 -> 199 us); elsewhere the default is
 // off. CACHEDMOE_ATTN_KSPLIT=0/1 overrides either way. Its ~1e-7 re-association
 // once pushed suite.decode and suite.spec_forward under floors that turned out
@@ -254,7 +255,7 @@ bool attn_ksplit_on();
 
 // The M=1 attention as two cooperative-matrix GEMMs (decode_attn_cm.slang)
 // instead of sparse_attn's score + combine, on a device that has them.
-// Engine::init_gpu turns it on for RADV (149 -> 23.5 us a layer at the chat
+// Device-specific startup resolution turns it on for RADV (149 -> 23.5 us a layer at the chat
 // context's 640 entries; STATUS §7 0k); elsewhere the default is off.
 // CACHEDMOE_ATTN_CM=0/1 overrides either way.
 void set_attn_cm_default(bool on);
@@ -431,6 +432,7 @@ private:
     // The compressor's and the indexer's part of record_attention's wave `wave`.
     Result<void> record_ced(gpu::CommandBuffer& cmd, const LayerStep& s, uint32_t wave);
 
+    bool attn_ksplit_ = false, attn_cm_ = false;
     gpu::Device*      device_ = nullptr;
     gpu::AttnRunner*  runner_ = nullptr;
     const TextConfig* cfg_    = nullptr;

@@ -26,7 +26,7 @@
 // without it (Windows, or Linux without the package) just gets a no-op.
 // CACHEDMOE_GAMEMODE=0 turns it off.
 
-#include "core/env.h"
+#include "core/runtime_environment.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -38,10 +38,13 @@ namespace cachedmoe {
 
 class GameModeScope {
 public:
-    GameModeScope() {
-        Api& a = api();
-        if (a.start && a.start() == 0) active_ = true;
-    }
+  explicit GameModeScope(bool enabled = default_enabled()) {
+      if (!enabled)
+          return;
+      Api &a = api();
+      if (a.start && a.start() == 0)
+          active_ = true;
+  }
     ~GameModeScope() {
         if (active_) api().end();
     }
@@ -51,6 +54,10 @@ public:
     bool active() const { return active_; }
 
 private:
+  static bool default_enabled() {
+      static const bool enabled = configuration::RuntimeEnvironment::capture()->gamemode;
+      return enabled;
+  }
     struct Api {
         int (*start)() = nullptr;
         int (*end)() = nullptr;
@@ -59,7 +66,6 @@ private:
         static Api a = [] {
             Api r;
 #if defined(__linux__)
-            if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_GAMEMODE"); e && *e == '0') return r;
             void* h = dlopen("libgamemode.so.0", RTLD_NOW | RTLD_LOCAL);
             if (!h) return r;
             r.start = reinterpret_cast<int (*)()>(dlsym(h, "real_gamemode_request_start"));
