@@ -62,6 +62,7 @@
 #include "core/config.h"
 #include "core/gamemode.h"
 #include "cli/generate_options.h"
+#include "cli/kv_options.h"
 #include "core/json.h"
 #include "core/state_paths.h"
 #include "core/json_write.h"
@@ -179,8 +180,7 @@ int cmd_serve(int argc, char** argv) {
     uint32_t    streams = 1;     // Track MS: docs/p4_multistream.md
     bool        warm_cache = false;
     std::string ms_sched;
-    bool kv_disk_off = false;
-    bool kv_dir_given = false;
+    cli::KvCommandLineOptions kv_cli;
     for (int i = 2; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--model")                cfg.model_dir = value_of(argc, argv, i);
@@ -199,9 +199,11 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--reheat-decay")    { so.reheat_decay = static_cast<float>(std::atof(value_of(argc, argv, i).c_str())); engine_reheat = true; }
         else if (a == "--max-parked")      po.max_parked = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
         else if (a == "--park-budget-mb")  po.max_parked_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 20;
-        else if (a == "--kv-dir")          { po.disk.dir = value_of(argc, argv, i); kv_dir_given = true; }
+        else if (a == "--kv-dir")
+            kv_cli.set_directory(po.disk, value_of(argc, argv, i));
         else if (a == "--kv-max-gb")       po.disk.max_bytes = uint64_t(std::atoll(value_of(argc, argv, i).c_str())) << 30;
-        else if (a == "--no-kv-disk")      kv_disk_off = true;
+        else if (a == "--no-kv-disk")
+            kv_cli.disable();
         else if (a == "--profile")         cfg.profile_jsonl = value_of(argc, argv, i);
         else if (a == "--trace")           cfg.trace_file = value_of(argc, argv, i);
         else if (a == "--check-topk")      check_topk = true;
@@ -241,8 +243,9 @@ int cmd_serve(int argc, char** argv) {
         return 2;
     }
 #if defined(__linux__)
-    const auto& legacy_route_guard = cfg.environment->raw[configuration::Key::BATCH_GPU_ROUTE];
-    if (legacy_route_guard.present() && *legacy_route_guard.c_str() == '1' && streams > 1) {
+    GpuExecutionConfig startup_gpu = cfg.gpu;
+    startup_gpu.apply_environment(*cfg.environment);
+    if (startup_gpu.batch_gpu_route && streams > 1) {
         std::fprintf(stderr, "batch GPU routing requires --streams 1\n");
         return 2;
     }
@@ -288,30 +291,17 @@ int cmd_serve(int argc, char** argv) {
     // was the default. `CACHEDMOE_KV_DIR` overrides the directory (empty string
     // disables it), `--kv-dir` sets it explicitly and `--no-kv-disk` turns it
     // off, which is what a benchmark that wants a cold prefill should use.
-    std::optional<state_paths::StateRoot> state_root;
-    if (!kv_dir_given && !kv_disk_off) {
-        if (const auto &directory = cfg.environment->kv_dir; directory)
-            po.disk.dir = *directory;
-        else {
-            // Per model directory, so two checkpoints do not fight over one file
-            // and a stale one is a miss rather than a corrupt hit (the header
-            // carries the model tag as well).
-            auto selected = state_paths::application_root();
-            if (!selected) {
-                std::fprintf(stderr, "serve: state directory: %s\n",
-                             selected.error().str().c_str());
-                return 2;
-            }
-            state_root = *std::move(selected);
-            po.disk.dir = state_paths::model_kv_directory(*state_root, cfg.model_dir).string();
-            std::fprintf(stderr, "[INF] serve: state root %s (%s)%s\n",
-                         state_root->path.string().c_str(), state_root->source.c_str(),
-                         state_root->both_exist ? "; legacy deepmoe directory retained" : "");
-        }
+    auto selected_root = cli::resolve_kv_options(
+        po.disk, kv_cli.disabled, kv_cli.explicit_directory, *cfg.environment, cfg.model_dir);
+    if (!selected_root) {
+        std::fprintf(stderr, "serve: state directory: %s\n", selected_root.error().str().c_str());
+        return 2;
     }
-    // The disk cache stores the model identity in every file; a different
-    // checkpoint is a miss, not a corrupt hit.
-    if (!po.disk.dir.empty()) po.disk.model_tag = cfg.model_dir;
+    const auto state_root = *std::move(selected_root);
+    if (state_root)
+        std::fprintf(stderr, "[INF] serve: state root %s (%s)%s\n",
+                     state_root->path.string().c_str(), state_root->source.c_str(),
+                     state_root->both_exist ? "; legacy deepmoe directory retained" : "");
 
     // The protocol owns the real stdout; everything else printed to fd 1 goes
     // to stderr.

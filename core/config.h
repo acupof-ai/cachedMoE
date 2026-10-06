@@ -197,7 +197,6 @@ struct RuntimeConfig {
     std::string profile_jsonl;    // empty = no JSONL sink
     std::string trace_file;       // ADDITIVE (Track W): per-dispatch GPU trace,
                                   // empty = off. runtime/trace.h has the format.
-    std::string kvcache_dir;      // design §11.4 prefix KV persistence
 
     // Reserved API fields; Engine currently selects dual-path GPU backing
     // and its implemented bounded prefill independently of these placeholders.
