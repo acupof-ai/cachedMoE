@@ -126,6 +126,7 @@ def main() -> int:
         # STATUS 1.0's measured table is rendered from the ledger, never typed.
         ("tools/perf_ledger.py --check", [PY, str(ROOT / "tools" / "perf_ledger.py"), "--check"]),
         ("tools/web/test_server.py", [PY, str(ROOT / "tools" / "web" / "test_server.py")]),
+        ("tools/web/test_decode_modes.py", [PY, str(ROOT / "tools" / "web" / "test_decode_modes.py")]),
         ("tools/tests/test_mask_freeze_sim.py", [PY, str(ROOT / "tools" / "tests" / "test_mask_freeze_sim.py")]),
         ("tools/tests/test_repetition_metrics.py", [PY, str(ROOT / "tools" / "tests" / "test_repetition_metrics.py")]),
         ("tools/tests/test_thermal_guard.py", [PY, str(ROOT / "tools" / "tests" / "test_thermal_guard.py")]),

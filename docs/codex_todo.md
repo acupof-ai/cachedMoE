@@ -302,3 +302,15 @@ CPU 计算 miss 专家、部分专家、重新归一化、streams>1 的 GPU rout
   `101e686` 将closing标记与cancel/quit放在同一次io_lock内，之后拒绝新生成，15项检查通过。
 - C `performance_recovered_r2` 已开始四臂完整对照，使用上述真实时间标记版。
   原准备manifest与旧无marker二进制收据均备份，旧中断结果保留；完成前不判C/D。
+
+## 9. Codex 追加收据（2026-10-06，AC中断与网页显式模式）
+
+- C `performance_recovered_r2` 在10:15因AC从1变为0终止（rc99），ACPI随之变为balanced。
+  off八轮、mask五轮完成，tau两臂未开始；保留`ac_loss_receipt.json`和全部原始记录。
+  这不是C的完整速度判定，也不是温控首次暂停后主动停止。
+- 原计时版exe、测试exe与52个shader已复制至`frozen_runtime_de42061/`并逐文件核对SHA256。
+  C完整重测准备为`performance_recovered_r3/jobs.json`，D正式对比和trace也绑定该冻结版本。
+  只有AC恢复才能启动GPU；独立代码和文档工作继续，goal保持active。
+- `11af3d1`补齐B四样本标定、CPU边界与历次门禁收据；E仍按安全空间不足判SKIP。
+- `6171b71`补网页每轮显式`mask-spec`/`mask-plain`/`off-plain`选择、排队模式固定及实际模式历史。
+  新网页CPU11/11、原网页15/15通过；C++请求策略与GPU验收尚未完成，不宣称部署已生效。
