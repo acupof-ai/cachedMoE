@@ -1,17 +1,96 @@
 """Launcher defaults and engine-only safety checks; never launch a GPU engine."""
 import io
+import errno
 import json
 import os
 from pathlib import Path
 import signal
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/web"))
 import launch_guarded as launch
+
+
+class PortablePidfd(unittest.TestCase):
+    def test_builtins_are_preferred(self):
+        with patch.object(launch.os, "pidfd_open", return_value=99, create=True) as opening, \
+                patch.object(launch.signal, "pidfd_send_signal", create=True) as sending, \
+                patch.object(launch.ctypes, "CDLL") as load:
+            self.assertEqual(launch.pidfd_open(123), 99)
+            launch.pidfd_send_signal(99, signal.SIGSTOP)
+            opening.assert_called_once_with(123)
+            sending.assert_called_once_with(99, signal.SIGSTOP)
+            load.assert_not_called()
+
+    def test_missing_builtins_use_typed_libc_calls(self):
+        library = SimpleNamespace(pidfd_open=Mock(return_value=99),
+                                  pidfd_send_signal=Mock(return_value=0))
+        with patch.object(launch.os, "pidfd_open", None, create=True), \
+                patch.object(launch.signal, "pidfd_send_signal", None, create=True), \
+                patch.object(launch.ctypes, "CDLL", return_value=library) as load, \
+                patch.object(launch.os, "kill") as unbound:
+            self.assertEqual(launch.pidfd_open(123), 99)
+            self.assertIsNone(launch.pidfd_send_signal(99, signal.SIGSTOP))
+            library.pidfd_open.assert_called_once_with(123, 0)
+            library.pidfd_send_signal.assert_called_once_with(99, signal.SIGSTOP, None, 0)
+            self.assertEqual(library.pidfd_open.argtypes, [launch.ctypes.c_int, launch.ctypes.c_uint])
+            self.assertEqual(library.pidfd_send_signal.argtypes,
+                             [launch.ctypes.c_int, launch.ctypes.c_int,
+                              launch.ctypes.c_void_p, launch.ctypes.c_uint])
+            self.assertIs(library.pidfd_open.restype, launch.ctypes.c_int)
+            self.assertIs(library.pidfd_send_signal.restype, launch.ctypes.c_int)
+            self.assertEqual(load.call_count, 2)
+            load.assert_called_with(None, use_errno=True)
+            unbound.assert_not_called()
+
+    def test_libc_errno_keeps_lookup_and_permission_error_semantics(self):
+        for name, code, expected in (("pidfd_open", errno.ESRCH, ProcessLookupError),
+                                     ("pidfd_send_signal", errno.EPERM, PermissionError)):
+            def failure(*unused):
+                launch.ctypes.set_errno(code)
+                return -1
+            library = SimpleNamespace(**{name: Mock(side_effect=failure)})
+            with self.subTest(name=name), \
+                    patch.object(launch.os, "pidfd_open", None, create=True), \
+                    patch.object(launch.signal, "pidfd_send_signal", None, create=True), \
+                    patch.object(launch.ctypes, "CDLL", return_value=library), \
+                    patch.object(launch.os, "kill") as unbound:
+                with self.assertRaises(expected) as error:
+                    if name == "pidfd_open":
+                        launch.pidfd_open(123)
+                    else:
+                        launch.pidfd_send_signal(99, signal.SIGTERM)
+                self.assertEqual(error.exception.errno, code)
+                self.assertEqual(error.exception.filename, name)
+                unbound.assert_not_called()
+
+    def test_unavailable_libc_symbol_fails_closed(self):
+        with patch.object(launch.os, "pidfd_open", None, create=True), \
+                patch.object(launch.ctypes, "CDLL", return_value=SimpleNamespace()), \
+                patch.object(launch.os, "kill") as unbound:
+            with self.assertRaisesRegex(OSError, "unavailable in libc") as error:
+                launch.pidfd_open(123)
+            self.assertEqual(error.exception.errno, errno.ENOSYS)
+            unbound.assert_not_called()
+
+    def test_real_libc_fallback_binds_only_this_cpu_test_process(self):
+        with patch.object(launch.os, "pidfd_open", None, create=True), \
+                patch.object(launch.signal, "pidfd_send_signal", None, create=True):
+            launch.require_pidfd_support()
+
+    def test_preflight_failure_precedes_power_changes_and_child_launch(self):
+        with patch.object(launch, "require_pidfd_support", side_effect=OSError(errno.ENOSYS, "pidfd")), \
+                patch.object(launch.subprocess, "Popen") as start, \
+                patch.object(launch.subprocess, "run") as change:
+            with self.assertRaises(OSError):
+                launch.main([])
+            start.assert_not_called()
+            change.assert_not_called()
 
 
 class GuardedWeb(unittest.TestCase):
@@ -94,7 +173,7 @@ class GuardedWeb(unittest.TestCase):
                         dict(exe="/another/deepmoe")):
             with patch.object(child, "live", return_value=True), \
                     patch.object(launch, "process_details", return_value=details | changed), \
-                    patch.object(launch.signal, "pidfd_send_signal") as send:
+                    patch.object(launch, "pidfd_send_signal") as send:
                 with self.assertRaisesRegex(RuntimeError, "identity changed"):
                     child.send(signal.SIGSTOP)
                 send.assert_not_called()
@@ -103,7 +182,7 @@ class GuardedWeb(unittest.TestCase):
         child = launch.EngineChild(123, 100, 456, "/fake/deepmoe", 999)
         with patch.object(child, "live", return_value=True), \
                 patch.object(child, "matches", return_value=True), \
-                patch.object(launch.signal, "pidfd_send_signal") as send:
+                patch.object(launch, "pidfd_send_signal") as send:
             self.assertTrue(child.send(signal.SIGSTOP))
             send.assert_called_once_with(999, signal.SIGSTOP)
 
@@ -217,10 +296,10 @@ class StartupShutdownOwnership(unittest.TestCase):
 
         with patch.object(launch, "process_details", side_effect=details), \
                 patch.object(launch, "session_members", side_effect=lambda _: list(children.values())), \
-                patch.object(launch.os, "pidfd_open", side_effect=bind), \
+                patch.object(launch, "pidfd_open", side_effect=bind), \
                 patch.object(launch.os, "close"), \
                 patch.object(launch.OwnedProcess, "live", lambda process: process.pid in children), \
-                patch.object(launch.signal, "pidfd_send_signal", side_effect=send), \
+                patch.object(launch, "pidfd_send_signal", side_effect=send), \
                 patch.object(launch.time, "monotonic", side_effect=monotonic), \
                 patch.object(launch.time, "sleep"):
             owned = launch.OwnedSession(server, "/fake/deepmoe")
@@ -277,7 +356,7 @@ class StartupShutdownOwnership(unittest.TestCase):
                  self.details(103, birth=399)]
         with patch.object(launch, "process_details", return_value=leader), \
                 patch.object(launch, "session_members", return_value=wrong), \
-                patch.object(launch.os, "pidfd_open") as bind:
+                patch.object(launch, "pidfd_open") as bind:
             owned = launch.OwnedSession(server, "/fake/deepmoe")
             owned.discover()
             self.assertFalse(owned.children)
@@ -290,9 +369,9 @@ class StartupShutdownOwnership(unittest.TestCase):
         server = type("Server", (), dict(pid=100, poll=lambda _: None))()
         with patch.object(launch, "process_details", side_effect=lambda pid: leader if pid == 100 else reused), \
                 patch.object(launch, "session_members", return_value=[candidate]), \
-                patch.object(launch.os, "pidfd_open", return_value=999), \
+                patch.object(launch, "pidfd_open", return_value=999), \
                 patch.object(launch.os, "close") as close, \
-                patch.object(launch.signal, "pidfd_send_signal") as send:
+                patch.object(launch, "pidfd_send_signal") as send:
             owned = launch.OwnedSession(server, "/fake/deepmoe")
             owned.discover()
             self.assertFalse(owned.children)
@@ -304,7 +383,7 @@ class StartupShutdownOwnership(unittest.TestCase):
         server = type("Server", (), dict(pid=100, poll=lambda _: 130))()
         with patch.object(launch, "process_details", return_value=leader) as read, \
                 patch.object(launch, "session_members", return_value=[self.details(101)]), \
-                patch.object(launch.os, "pidfd_open") as bind:
+                patch.object(launch, "pidfd_open") as bind:
             owned = launch.OwnedSession(server, "/fake/deepmoe")
             read.return_value = leader | dict(start_ticks=500)
             with self.assertRaisesRegex(RuntimeError, "leader PID was reused"):
@@ -327,6 +406,7 @@ class StartupShutdownOwnership(unittest.TestCase):
         server = type("Server", (), dict(pid=100, returncode=1, poll=lambda _: None))()
         values = dict(ac=1, power_profile="performance", wall_time_s=1, **{"amdgpu:fake": 42})
         with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(launch, "require_pidfd_support"), \
                 patch.object(launch.Path, "is_file", return_value=True), \
                 patch.object(launch, "assert_idle"), \
                 patch.object(launch, "profile", return_value="performance"), \

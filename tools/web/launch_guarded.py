@@ -8,7 +8,9 @@ thermally guarded. Existing transcripts and the KV directory are preserved.
 from __future__ import annotations
 
 import argparse
+import ctypes
 from dataclasses import dataclass
+import errno
 import json
 import os
 from pathlib import Path
@@ -22,6 +24,51 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "bench"))
 from thermal_guard import (ProfileMonitor, ThermalLatch, assert_idle,
                            discover_sensors, guarded_temperatures, profile, sample)
+
+
+def libc_pidfd_call(name, argtypes, values):
+    """Keep pidfd binding on Python builds that omit the Linux APIs."""
+    if sys.platform != "linux":
+        raise OSError(errno.ENOSYS, "guarded launcher requires Linux pidfd support")
+    library = ctypes.CDLL(None, use_errno=True)
+    try:
+        function = getattr(library, name)
+    except AttributeError as error:
+        raise OSError(errno.ENOSYS, f"{name} is unavailable in libc; pidfd support is required") from error
+    function.argtypes = argtypes
+    function.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    result = function(*values)
+    if result < 0:
+        code = ctypes.get_errno() or errno.EIO
+        raise OSError(code, os.strerror(code), name)
+    return result
+
+
+def pidfd_open(pid):
+    builtin = getattr(os, "pidfd_open", None)
+    if callable(builtin):
+        return builtin(pid)
+    return libc_pidfd_call("pidfd_open", [ctypes.c_int, ctypes.c_uint], (pid, 0))
+
+
+def pidfd_send_signal(fd, signum):
+    builtin = getattr(signal, "pidfd_send_signal", None)
+    if callable(builtin):
+        return builtin(fd, signum)
+    libc_pidfd_call("pidfd_send_signal",
+                   [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint],
+                   (fd, signum, None, 0))
+
+
+def require_pidfd_support():
+    # Check the actual kernel/libc combination before launching children or
+    # changing power policy. Signal 0 probes only this process's bound pidfd.
+    fd = pidfd_open(os.getpid())
+    try:
+        pidfd_send_signal(fd, 0)
+    finally:
+        os.close(fd)
 
 
 def arguments(argv=None):
@@ -110,7 +157,7 @@ class EngineChild:
         if not self.matches():
             raise RuntimeError("engine child identity changed; refusing to signal a saved PID")
         try:
-            signal.pidfd_send_signal(self.pidfd, signum)
+            pidfd_send_signal(self.pidfd, signum)
             return True
         except ProcessLookupError:
             return False
@@ -137,7 +184,7 @@ def find_engine(server_pid, expected_exe):
         return None
     details = candidates[0]
     try:
-        fd = os.pidfd_open(details["pid"])
+        fd = pidfd_open(details["pid"])
     except ProcessLookupError:
         return None
     child = EngineChild(details["pid"], server_pid, details["start_ticks"], details["exe"], fd)
@@ -236,7 +283,7 @@ class OwnedSession:
             child = self.children.get(key)
             if child is None:
                 try:
-                    fd = os.pidfd_open(details["pid"])
+                    fd = pidfd_open(details["pid"])
                 except ProcessLookupError:
                     continue
                 child = OwnedProcess(details["pid"], details["start_ticks"], self.session,
@@ -294,7 +341,7 @@ def write_state(path, state):
 def bound_signal(child, signum):
     """Cleanup can outlive the parent; the held pidfd still pins its engine."""
     try:
-        signal.pidfd_send_signal(child.pidfd, signum)
+        pidfd_send_signal(child.pidfd, signum)
         return True
     except ProcessLookupError:
         return False
@@ -391,8 +438,7 @@ def main(argv=None):
         print(json.dumps(dict(command=command, env={k: v for k, v in env.items()
                          if k.startswith("DEEPMOE_")}, power_profile="performance"), indent=2))
         return 0
-    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
-        raise RuntimeError("this guarded launcher requires Linux pidfd support")
+    require_pidfd_support()
     assert_idle()
     if not (args.repo / "build/deepmoe").is_file():
         raise RuntimeError("build/deepmoe is unavailable")
