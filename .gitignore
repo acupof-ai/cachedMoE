@@ -101,3 +101,7 @@ bench/results/linux/prefill_ahead/engdbg/
 # DEEPMOE_PIPELINE_STATS dumps: one file per pipeline specialisation, machine output.
 bench/results/**/isa/
 bench/results/**/isa_dec3/
+
+# Mask quality runs contain frozen executables and large diagnostic traces.
+# Keep their compact decisions/receipts in docs; local raw evidence stays here.
+/bench/results/mask_quality/

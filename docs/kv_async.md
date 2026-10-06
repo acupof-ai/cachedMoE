@@ -31,6 +31,12 @@ returns a save error. A failed budget enforcement can leave the newly requested
 session active and retain extra parked sessions; it does not delete their data.
 Same-session coalescing carries save acknowledgements to the newer snapshot.
 
+Exit also propagates a failed required checkpoint through a nonzero `serve`
+status, after draining the writer and releasing GPU resources. The web bridge
+requires a successful engine exit; a timeout, forced kill or failed save is
+reported as a failed or unconfirmed KV drain instead of silently returning
+success. Ordinary round-end writes remain asynchronous.
+
 The `.pkv` layout and pack/unpack arithmetic are unchanged. The sliding-window
 ring is still restored by bounded replay, not saved. `--no-kv-disk` continues to
 disable persistence for clean-start benchmarks. Web use should omit that flag.
