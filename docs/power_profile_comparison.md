@@ -81,3 +81,17 @@ disk KV and 1M capacity. All six original files retain SHA256/mtime, without a
 browser refresh. Standard main CPU gates now pass 54/54, including the nine
 report/failure cases. [Web acceptance summary](power_profile_web_receipt.json).
 No speed default or draft-head change is selected; both owner tasks remain open.
+
+## v3 resumed on the other USB4 port
+
+The box initially cycled between USB4 and USB/UAS on domain1, then NVMe
+reappeared at PCIe 63:00.0 after a port rescan. The mirror is RO and all 48
+headers/sizes match. Six user files still retain hashes/mtimes; the previous
+web guard has stopped after losing its sensor, with drain unconfirmed.
+Fresh v3 measurement starts from `13c0d98`, with the same original workload
+and per-device thresholds, after verifying idle GPU ownership. Both NVMe
+Composite sensors are now mandatory at dual-drive startup. A source-dropped
+engine log also invalidates an arm independently of temperature availability.
+Related CPU cases pass 80 and the standard main gate passes 54/54.
+The 61 frozen inputs and actual HTTP configuration agree. Only the private
+benchmark engine runs; the user web will be restored after measurement.

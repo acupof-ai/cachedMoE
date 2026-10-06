@@ -683,3 +683,14 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] 六份旧文件SHA/mtime保持，未刷新浏览器。公开摘要`docs/power_profile_web_receipt.json`，
   完整本机收据`power_profiles_v2_prepared/web_restore_new_thermal_acceptance.json`。
 - 保留工作树继续§4.8/§4.9。外接盒散热/USB4连接检查问题已发出，等待答复；不是“全部任务完成”。
+
+## 25. 继续执行与双盘监督补强（2026-10-06）
+
+- 外接盒换到domain1后，曾约17秒在USB4与USB/UAS之间重连。新接口PCIe端口rescan已执行；
+  之后实际NVMe恢复为`63:00.0`，RO镜像48/48的大小/头部匹配，六份用户文件SHA/mtime仍一致。
+- [x] 生产网页与三臂启动前必须找到两块NVMe Composite传感器；缺失时拒绝启动，
+  不能以仅内盘温度代替双盘温控。默认所需读源数在RuntimeDefaults只有一处。
+- [x] 三臂除了READY初始读源数，还检查引擎source-dropped日志；温度仍可读的瞬时掉盘也使臂无效。
+- [x] 相关CPU80项、main标准门54/54通过；新原始目录`power_profiles_v3/`和`power_profiles_v3_prepared/`。
+- [ ] v3同引擎三臂完整测量继续；61项输入已冻结、实际API阈值/双盘配置匹配。
+  §4.8/§4.9未完成；原网页已停止，只有私有benchmark引擎在工作。

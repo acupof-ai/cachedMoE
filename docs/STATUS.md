@@ -30,7 +30,17 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
-**Owner follow-up (2026-10-06): power selection is pending.** The new three-mode
+**Current follow-up (2026-10-06, 20:26 +08:00): v3 is running.** The external
+NVMe reappears on USB4 domain1 / PCIe 63:00.0 after the port change/rescan;
+48 RO shard headers/sizes match. A fresh serial three-arm attempt uses the
+same engine/workload and original per-device thresholds. It freezes 61 inputs;
+actual API policy agrees. Dual-drive starts now require both NVMe Composite
+sensors, and a source-drop log invalidates an arm even if temperature remains
+readable. Related CPU checks pass 80 cases; standard main gates pass 54/54.
+The user web is stopped during this sole GPU benchmark. No complete power
+comparison or draft-head result exists yet.
+
+**Earlier follow-up (2026-10-06): power selection is pending.** The new three-mode
 web benchmark fixes dynamic 5,500 slots, dual source, k2/ONECB/CPU routing, disk
 KV and eight 512-token turns per arm. Before its first arm, the complete
 900-second cooldown fails the owner's <=60°C start gate: external NVMe minimum
