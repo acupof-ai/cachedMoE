@@ -438,14 +438,19 @@ class Serve:
             self.stream_q = None
 
     def close(self):
+        """Require a clean engine exit; a killed writer has no drain receipt."""
         try:
-            self.send({"op": "quit"})
-            self.p.wait(timeout=120)
-        except Exception:
-            try:
-                self.p.kill()
-            except Exception:
-                pass
+            if self.p.poll() is None:
+                self.send({"op": "quit"})
+            code = self.p.wait(timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print("web: engine shutdown failed; KV drain is unconfirmed: " + str(error),
+                  file=sys.stderr, flush=True)
+            self.p.kill()
+            self.p.wait(timeout=10)
+            raise RuntimeError("engine shutdown failed; KV drain is unconfirmed") from error
+        if code != 0:
+            raise RuntimeError(f"engine exited with {code}; KV drain failed or is unconfirmed")
 
 
 # --------------------------------------------------------------------------- chat state

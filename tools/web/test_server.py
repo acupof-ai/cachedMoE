@@ -10,6 +10,29 @@ import server
 
 
 class WebSettings(unittest.TestCase):
+    def test_shutdown_requires_successful_engine_exit(self):
+        serve = server.Serve.__new__(server.Serve)
+        serve.send = Mock()
+        serve.p = Mock()
+        serve.p.poll.return_value = None
+        serve.p.wait.return_value = 0
+        serve.close()
+        serve.send.assert_called_once_with({"op": "quit"})
+        serve.p.kill.assert_not_called()
+        serve.p.wait.return_value = 1
+        with self.assertRaisesRegex(RuntimeError, "KV drain"):
+            serve.close()
+
+    def test_shutdown_timeout_reports_unconfirmed_drain(self):
+        serve = server.Serve.__new__(server.Serve)
+        serve.send = Mock()
+        serve.p = Mock()
+        serve.p.poll.return_value = None
+        serve.p.wait.side_effect = [server.subprocess.TimeoutExpired("deepmoe", 120), -9]
+        with self.assertRaisesRegex(RuntimeError, "KV drain is unconfirmed"):
+            serve.close()
+        serve.p.kill.assert_called_once()
+
     def test_config_reports_active_speculation_and_current_power(self):
         bridge = SimpleNamespace(
             args=SimpleNamespace(resident_only="mask", mask_cache="dynamic"),
