@@ -128,6 +128,7 @@ def main() -> int:
         ("tools/web/test_server.py", [PY, str(ROOT / "tools" / "web" / "test_server.py")]),
         ("tools/tests/test_mask_freeze_sim.py", [PY, str(ROOT / "tools" / "tests" / "test_mask_freeze_sim.py")]),
         ("tools/tests/test_repetition_metrics.py", [PY, str(ROOT / "tools" / "tests" / "test_repetition_metrics.py")]),
+        ("tools/tests/test_thermal_guard.py", [PY, str(ROOT / "tools" / "tests" / "test_thermal_guard.py")]),
     ):
         t0 = time.time()
         rc, out = run(cmd)

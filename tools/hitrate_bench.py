@@ -25,6 +25,7 @@ import argparse
 from repetition_metrics import from_events
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -104,6 +105,10 @@ class BenchServer(chat.Server):
                 os.remove(p)
         self.events = open(os.path.join(out_dir, "events.jsonl"), "w", encoding="utf-8", newline="\n")
         self.t0 = time.time()
+        Path(out_dir, "clock.json").write_text(json.dumps(dict(
+            host_start_unix=self.t0,
+            host_s_origin="BenchServer event-log start",
+            clock="time.time; Unix seconds")) + "\n")
         self.log = open(os.path.join(out_dir, "serve.log"), "wb")
         provenance.write(out_dir, exe=cmd[0], env=env)
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -122,7 +127,9 @@ class BenchServer(chat.Server):
     def read_event(self):
         ev = super().read_event()
         rec = dict(ev)
-        rec["host_s"] = round(time.time() - self.t0, 4)
+        now = time.time()
+        rec["host_s"] = round(now - self.t0, 4)
+        rec["host_unix"] = now
         self.events.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self.events.flush()
         return ev

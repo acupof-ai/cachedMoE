@@ -48,6 +48,30 @@ def _read(p: str) -> str | None:
         return None
 
 
+def power_state() -> dict:
+    """Read the actual platform mode and clocks, independent of requested flags."""
+    state = dict(power_profile=None, platform_profile=None, ac_online=None,
+                 gpu_dpm=None, pp_dpm_sclk=None, pp_dpm_mclk=None,
+                 gpu_busy_percent=None, sampled_unix=time.time())
+    if not sys.platform.startswith("linux"):
+        return state
+    try:
+        state["power_profile"] = subprocess.check_output(
+            ["powerprofilesctl", "get"], text=True, timeout=2).strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    state["platform_profile"] = _read("/sys/firmware/acpi/platform_profile")
+    ac = _read("/sys/class/power_supply/AC0/online")
+    state["ac_online"] = int(ac) if ac in ("0", "1") else None
+    devices = sorted(Path("/sys/class/drm").glob("card*/device/power_dpm_force_performance_level"))
+    if devices:
+        device = devices[0].parent
+        state["gpu_dpm"] = _read(str(device / "power_dpm_force_performance_level"))
+        for name in ("pp_dpm_sclk", "pp_dpm_mclk", "gpu_busy_percent"):
+            state[name] = _read(str(device / name))
+    return state
+
+
 def disk_snapshot() -> dict:
     """Sectors read / written so far on every whole disk (/proc/diskstats)."""
     out = {"t": time.time()}
@@ -144,9 +168,8 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
         "env": {k: v for k, v in sorted(env.items()) if k.startswith("DEEPMOE_")},
     }
     if sys.platform.startswith("linux"):
-        out["gpu_dpm"] = next((v for v in (_read(p) for p in sorted(
-            str(x) for x in Path("/sys/class/drm").glob("card*/device/power_dpm_force_performance_level")))
-            if v), None)
+        out["power"] = power_state()
+        out["gpu_dpm"] = out["power"]["gpu_dpm"]
         out["idle"] = idle_check()
         out["disks_start"] = disk_snapshot()
         out["gamemode_lib"] = any(Path(d, "libgamemode.so.0").exists()
