@@ -30,7 +30,15 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
-**Current follow-up (2026-10-06, 20:26 +08:00): v3 is running.** The external
+**Current follow-up (2026-10-06): v4 is running after an owner-confirmed port change.**
+The v3 power-saver / balanced arms finish eight turns at 112.998 / 80.612 raw
+ms/token; performance finishes four before the owner changes the USB4 port.
+The incomplete comparison selects no default. V4 restarts the complete serial
+three-arm workload on the now stable original port, with 48/48 RO headers,
+61 frozen inputs and unchanged user files. Draft-head capture/offline tooling
+is in preparation; no FP8/subset result exists yet.
+
+**Earlier follow-up (2026-10-06, 20:26 +08:00): v3 started.** The external
 NVMe reappears on USB4 domain1 / PCIe 63:00.0 after the port change/rescan;
 48 RO shard headers/sizes match. A fresh serial three-arm attempt uses the
 same engine/workload and original per-device thresholds. It freezes 61 inputs;

@@ -93,5 +93,20 @@ and per-device thresholds, after verifying idle GPU ownership. Both NVMe
 Composite sensors are now mandatory at dual-drive startup. A source-dropped
 engine log also invalidates an arm independently of temperature availability.
 Related CPU cases pass 80 and the standard main gate passes 54/54.
-The 61 frozen inputs and actual HTTP configuration agree. Only the private
-benchmark engine runs; the user web will be restored after measurement.
+The 61 frozen inputs and actual HTTP configuration agree.
+
+At 20:51:50 the domain1 device disconnects and at 20:51:58 it appears on
+domain0. The owner confirms a manual port change during this measurement.
+Power-saver and balanced each finish eight turns; performance saves four
+complete turns before the interrupted fifth. The same-engine comparison is
+incomplete and selects no default. Power-saver / balanced raw decode costs
+are 112.998 / 80.612 ms per timed token; performance's four-turn 111.164 is
+partial and cannot be compared as an eight-turn result. Its partial cooling
+is 85.255 seconds, with 69.454 ms/token active estimate. Raw samples remain
+unchanged; `power_profiles_v3/partial_receipt.json` labels the scope.
+
+The owner authorizes a fresh v4 comparison on the now stable original port.
+Fresh mirror headers/sizes match 48/48; all six user files remain unchanged.
+The v4 run freezes 61 inputs from `334eef9`; actual API configuration agrees.
+No benchmark runs alongside the user web. Default selection and the ordered
+draft-head experiment still await the complete three-arm result.

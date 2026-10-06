@@ -694,3 +694,12 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] 相关CPU80项、main标准门54/54通过；新原始目录`power_profiles_v3/`和`power_profiles_v3_prepared/`。
 - [ ] v3同引擎三臂完整测量继续；61项输入已冻结、实际API阈值/双盘配置匹配。
   §4.8/§4.9未完成；原网页已停止，只有私有benchmark引擎在工作。
+
+## 26. v3 中断原因与 v4（2026-10-06）
+
+- owner 确认20:51手动换接口，导致v3第五轮performance中断；两个八轮完整臂保留，
+  performance仅四轮有效，不能补成三臂比较。原始数据与partial_receipt都保留，不改默认。
+- owner 已授权重测，并确认接稳。新目录`power_profiles_v4/`，原接口RO镜像48/48，
+  61输入逐hash冻结、实际API匹配；六份原网页文件SHA/mtime不变。
+- [ ] v4完整三臂测量；随后按§4.9执行。独立工作树准备只读hidden/既有verify矩阵捕获和CPU离线工具，
+  捕获每cycle严格仅一个target forward，不将准备中的工具写成已完成实验。
