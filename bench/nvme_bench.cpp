@@ -294,7 +294,7 @@ int main(int argc, char** argv) {
 
     bool created = false;
     if (o.file.empty()) {
-        o.file = temp_dir() + "/deepmoe_nvme_bench.bin";
+        o.file = temp_dir() + "/cachedmoe_nvme_bench.bin";
         created = true;
     }
 

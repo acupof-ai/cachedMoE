@@ -262,3 +262,24 @@ Optional
   -5~6%). Do not bother: STATUS §3 89 measured it end to end on two drives and it is a
   NO-GO -- expert gpu is flat and wall time is 0.8% worse. The system driver is what
   this instance uses.
+
+
+Canonical rename contract (2026-10-06; web remains STOPPED)
+-------------------------------------------------------
+Current launch commands use cachedmoe / CACHEDMOE_* and the tracked guarded
+launcher shown at the top. Linux build/deepmoe is a compatibility symlink, so
+idle detection includes both exact program names and checks live identity.
+Old commands and paths above are historical instance receipts, not a current
+launch profile or a request to remove user state.
+
+New default data uses cachedmoe under the platform cache root. If that root is
+absent and the legacy deepmoe root exists, reuse the old transcript+KV root;
+when both exist, choose cachedmoe and log the choice. Explicit --kv-dir is
+literal. No automatic copy, merge, overwrite or migration is performed.
+
+The new CPU reader loaded existing default/web .pkv files with matching model
+tag and unchanged SHA256, size and mtime (legacy_kv_reader_receipt.json). This
+is a CPU format/read check, not GPU restoration or a live web/API check.
+Live /api/config, session restore and launch identity still require final
+serial validation. Keep browser pages and user transcripts unchanged.
+See docs/rename_compatibility.md for the canonical/legacy boundaries.

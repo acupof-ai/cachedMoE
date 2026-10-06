@@ -174,9 +174,12 @@ def install_batched_decode(ref) -> None:
 
     Idempotent. Every replacement delegates to the reference for start_pos == 0.
     """
-    if getattr(ref, "_deepmoe_batched_decode", False):
+    # Keep an already patched legacy reference intact. The current marker
+    # takes precedence when a client explicitly supplies both names.
+    if getattr(ref, "_cachedmoe_batched_decode",
+               getattr(ref, "_deepmoe_batched_decode", False)):
         return
-    ref._deepmoe_batched_decode = True
+    ref._cachedmoe_batched_decode = True
 
     # -- Attention._window_kv ------------------------------------------------
     def _window_kv(self, x, freqs_cis, start_pos):

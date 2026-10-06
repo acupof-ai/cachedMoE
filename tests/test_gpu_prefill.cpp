@@ -934,7 +934,7 @@ CACHEDMOE_TEST(gpu_prefill, forty_layers) {
     }
 
     // --- hand it to the decode engine and decode eight steps --------------------------
-    const std::filesystem::path tmp = std::filesystem::temp_directory_path() / "deepmoe_prefill_handoff";
+    const std::filesystem::path tmp = std::filesystem::temp_directory_path() / "cachedmoe_prefill_handoff";
     std::filesystem::create_directories(tmp);
     REQUIRE_OK(gpu::Prefill::write_l3_dir(*out, c, l3_dir(), tmp.string()));
     prefill.destroy();
@@ -1222,7 +1222,7 @@ CACHEDMOE_TEST(gpu_prefill, longctx) {
     const bool from_ref = mode.starts_with("ref");
     const bool forced = mode.ends_with("forced");
     uint32_t first = greedy.empty() ? 0 : greedy[0];
-    const std::filesystem::path tmp = std::filesystem::temp_directory_path() / ("deepmoe_prefill_" + name);
+    const std::filesystem::path tmp = std::filesystem::temp_directory_path() / ("cachedmoe_prefill_" + name);
 
     if (!from_ref) {
         gpu::MemoryAllocator alloc;

@@ -16,7 +16,7 @@ anything — its §7 "不做" list exists so closed questions stay closed.
 
 ## Hard rules
 
-- **One GPU job at a time.** `deepmoe serve`, `ctest`, any bench — serialise them. The web UI's
+- **One GPU job at a time.** `cachedmoe serve`, `ctest`, any bench — serialise them. The web UI's
   engine counts as one: stop it (`tools/web/RUNNING.txt` has the launch command and how to find
   the live PIDs) before running anything else on the GPU, and start it again afterwards. Three
   concurrent engines froze the machine once.
@@ -30,24 +30,24 @@ anything — its §7 "不做" list exists so closed questions stay closed.
   2026-09-29: no repeated A/B). An effect near the ±3% jitter floor is judged on the
   machine-recorded per-op numbers, not by repeating whole runs. **Halve every predicted gain**
   before believing it.
-- Worktrees: one per track next to the checkout, `../deepmoe-<track>`; merge → verify → push →
+- Worktrees: one per track next to the checkout, `../cachedmoe-<track>`; merge → verify → push →
   **delete the worktree and branch**.
 
 ## Build and test
 
 ```bash
-export DEEPMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash" \
-       DEEPMOE_LONGCTX_DIR="$PWD/traces/longctx"
+export CACHEDMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash" \
+       CACHEDMOE_LONGCTX_DIR="$PWD/traces/longctx"
 cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/linux-clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-ctest --test-dir build -j 1 -LE "needs-model|needs-gpu"   # CPU gate, ~4 s, 25/25
-.venv/bin/python tests/run_all.py                          # 30/30 gates
+ctest --test-dir build -j 1 -LE "needs-model|needs-gpu"   # CPU gate
+.venv/bin/python tests/run_all.py                          # tools gates
 ctest --test-dir build -j 1                                # full, needs the checkpoint + GPU
 ```
 
 `slangc` comes from the `shader-slang` package. The second read source is
 `/mnt/deepmoe2/models/DeepSeek-V4.1-Flash`, mounted read-only; pass it as
-`DEEPMOE_MODEL_MIRRORS` (or `--mirror`) for the two-drive numbers, which are the default
+`CACHEDMOE_MODEL_MIRRORS` (or `--mirror`) for the two-drive numbers, which are the default
 reporting basis.
 
 - One worktree, one build directory, one toolchain cache — concurrent builds in a shared cache race.
@@ -62,16 +62,26 @@ reporting basis.
 ## Web chat UI
 
 `tools/web/server.py` on http://127.0.0.1:8080 (launch command + live PIDs in
-`tools/web/RUNNING.txt`; the desktop app can also start it from `.claude/launch.json`). It
-launches its own `deepmoe serve`, auto-detects the second read source on `E:`, keeps one named
-session per browser tab, and persists each transcript under
-`%LOCALAPPDATA%\deepmoe\web_chat\`. Context ceiling 524,280 tokens (indexer dispatch limit).
+`tools/web/RUNNING.txt`; the desktop app can also start it from `.Codex/launch.json`). It
+launches one `cachedmoe serve`, discovers matching checkpoint mirrors under Linux mount roots,
+and keeps one named session per browser tab. New state uses
+`$XDG_CACHE_HOME/cachedmoe` (normally `~/.cache/cachedmoe`) on Linux or
+`%LOCALAPPDATA%\cachedmoe` on Windows. An existing legacy `deepmoe` root is reused
+when the new root is absent; do not migrate, merge or delete user state. Explicit
+`--kv-dir` stays literal. Context ceiling 1,048,576 tokens (native checkpoint cap;
+index scores tile X/Z).
+
+See [rename compatibility](docs/rename_compatibility.md) for legacy environment,
+CMake, executable and source aliases. Use canonical names in new commands; keep
+historical receipts and checkpoint/mount paths verbatim. Final numerical checks
+must preserve the recorded Linux baseline in STATUS; new-executable GPU
+validation is still required before delivery.
 
 ## Where things are
 
 | | |
 |---|---|
-| `runtime/` | engine, token loop, sessions, KV store, streams (multi-stream decode), resident routing, speculation scaffolding |
+| `runtime/` | engine, token loop, sessions, KV store, streams (multi-stream decode), resident routing, DSpark speculation |
 | `store/`, `storage/` | expert slab pool + global-LRU planner; priority IO engine (P0 miss … P3 backfill), multi-source reads (`--mirror`) |
 | `gpu/vulkan`, `gpu/shaders` | runners and Slang kernels: MoE, attention, decode chain, prefill, DSpark draft |
 | `cpu/`, `text/`, `model/` | reference maths, tokenizer, manifest |

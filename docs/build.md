@@ -4,6 +4,10 @@
 原生 Linux 构建见下面的 [Linux 原生构建](#linux-原生构建2026-09-28-起的开发机) 一节；
 下面的 Windows 工具链表与 PowerShell 命令是之前的开发机，保留作为 Windows 路径的说明。
 
+当前命令使用 `cachedmoe`、`CACHEDMOE_*` 和 `../cachedmoe-<track>`。旧环境变量、
+CMake cache key、Linux可执行别名继续兼容；旧 Windows 绝对路径与测量记录不改写。
+详见 [改名兼容范围](rename_compatibility.md)。
+
 ## 工具链
 
 | 工具 | 版本 | 来源 | 位置 |
@@ -583,14 +587,14 @@ cachedmoe run --model DIR [--prompt-ids FILE] [--steps N]
 $env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 
 # 八步，12 GiB 的 routed-expert cache，逐 token 打印 design §13.1 的分解
-.\build\deepmoe.exe run --model D:\models\DeepSeek-V4.1-Flash `
+.\build\cachedmoe.exe run --model D:\models\DeepSeek-V4.1-Flash `
     --prompt-ids prompt_ids.txt --steps 8 --cache-gb 12
 
 # 教师强制（每步喂参考自己的输入 token），每步的误差因此是独立可归因的
-.\build\deepmoe.exe run --model D:\models\DeepSeek-V4.1-Flash --steps 8 --teacher-force
+.\build\cachedmoe.exe run --model D:\models\DeepSeek-V4.1-Flash --steps 8 --teacher-force
 
 # 四十行一层的版本 + JSONL 的 profile
-.\build\deepmoe.exe run --model D:\models\DeepSeek-V4.1-Flash --steps 8 `
+.\build\cachedmoe.exe run --model D:\models\DeepSeek-V4.1-Flash --steps 8 `
     --per-layer --profile run.jsonl
 ```
 
@@ -624,7 +628,7 @@ $env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 .venv\Scripts\python.exe tools\chat.py --script bench\results\chat\smoke_turns.json --transcript out.md --stats out.json
 ```
 
-`chat.py` 的选项：`--exe`（默认 `build\deepmoe.exe`）、`--think`、`--temp`、`--top-p`、`--max-tokens`、`--seed`、`--system`、
+`chat.py` 的选项：`--exe`（默认 `build\cachedmoe.exe`）、`--think`、`--temp`、`--top-p`、`--max-tokens`、`--seed`、`--system`、
 `--cache-gb`（0 = 自动）、`--max-context`（默认 4,096）、`--gpu-prefill-min`（0 = 关）、`--check-topk`、`--log`（serve 的 stderr，默认 `build\serve.log`）。
 会话内命令：`/reset /think /drop /temp X /top_p X /greedy /max N /seed N /system TEXT /stats /quit`。
 模型目录取 `CACHEDMOE_MODEL_DIR`（默认 `D:\models\DeepSeek-V4.1-Flash`）。

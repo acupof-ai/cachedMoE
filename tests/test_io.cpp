@@ -114,7 +114,7 @@ struct ScratchFile {
 
 Result<ScratchFile> make_scratch(const char* name, uint64_t bytes, bool unbuffered) {
     ScratchFile s;
-    s.path = temp_dir() + "/deepmoe_test_" + name + ".bin";
+    s.path = temp_dir() + "/cachedmoe_test_" + name + ".bin";
     (void)remove_file(s.path);
     FileFlags flags = FileFlags::Create | FileFlags::Write | FileFlags::Overlapped;
     if (unbuffered) flags = flags | FileFlags::Unbuffered;
@@ -474,7 +474,7 @@ CACHEDMOE_TEST(io, platform_backend_reads_a_real_unbuffered_file) {
     // The real thing: FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED + IOCP on
     // Windows (design §9.6), O_DIRECT + io_uring on Linux.
     const uint64_t kBytes = 8u << 20;
-    const std::string path = temp_dir() + "/deepmoe_test_real.bin";
+    const std::string path = temp_dir() + "/cachedmoe_test_real.bin";
     (void)remove_file(path);
 
     // Write the content buffered, then reopen unbuffered for the read.
@@ -550,7 +550,7 @@ CACHEDMOE_TEST(io, platform_backend_reads_a_real_unbuffered_file) {
 }
 
 CACHEDMOE_TEST(io, opening_a_missing_file_fails_cleanly) {
-    auto f = File::open_read(temp_dir() + "/deepmoe_does_not_exist_9f3a.bin", true);
+    auto f = File::open_read(temp_dir() + "/cachedmoe_does_not_exist_9f3a.bin", true);
     CHECK(!f);
     CHECK_EQ(f.error().code, Err::Io);
     CHECK(f.error().os_code != 0);

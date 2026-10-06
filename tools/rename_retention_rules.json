@@ -1,0 +1,523 @@
+{
+  "schema": 1,
+  "rules": [
+    {
+      "id": "history-STATUS.md",
+      "path_glob": "docs/STATUS.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Only the archival ledger and subsequent dated STATUS reports/plans preserve measured old names. Current instructions above the ledger remain reviewed individually.",
+      "after_marker": "### 1.0 Machine-recorded measurements (ledger)"
+    },
+    {
+      "id": "history-architecture.md",
+      "path_glob": "docs/architecture.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated architecture.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-design.md",
+      "path_glob": "docs/design.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated design.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-dspark_e2e_plan.md",
+      "path_glob": "docs/dspark_e2e_plan.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated dspark_e2e_plan.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-kernel_p1.md",
+      "path_glob": "docs/kernel_p1.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated kernel_p1.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-kernel_p2_moe.md",
+      "path_glob": "docs/kernel_p2_moe.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated kernel_p2_moe.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-mask_freeze.md",
+      "path_glob": "docs/mask_freeze.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated mask_freeze.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-mask_quality_plan.md",
+      "path_glob": "docs/mask_quality_plan.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated mask_quality_plan.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p2_attention.md",
+      "path_glob": "docs/p2_attention.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p2_attention.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p2_decode.md",
+      "path_glob": "docs/p2_decode.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p2_decode.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p3_chat.md",
+      "path_glob": "docs/p3_chat.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p3_chat.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p3_dspark.md",
+      "path_glob": "docs/p3_dspark.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p3_dspark.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p3_longctx.md",
+      "path_glob": "docs/p3_longctx.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p3_longctx.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p3_longctx_decode.md",
+      "path_glob": "docs/p3_longctx_decode.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p3_longctx_decode.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p3_prefill.md",
+      "path_glob": "docs/p3_prefill.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p3_prefill.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_cache_policy.md",
+      "path_glob": "docs/p4_cache_policy.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_cache_policy.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_dspark_runtime.md",
+      "path_glob": "docs/p4_dspark_runtime.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_dspark_runtime.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_dual_source.md",
+      "path_glob": "docs/p4_dual_source.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_dual_source.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_e_drive_diag.md",
+      "path_glob": "docs/p4_e_drive_diag.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_e_drive_diag.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_expert_patterns.md",
+      "path_glob": "docs/p4_expert_patterns.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_expert_patterns.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_hitrate.md",
+      "path_glob": "docs/p4_hitrate.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_hitrate.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_hostflag_gate.md",
+      "path_glob": "docs/p4_hostflag_gate.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_hostflag_gate.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_idle_prefetch.md",
+      "path_glob": "docs/p4_idle_prefetch.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_idle_prefetch.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_kv_ux.md",
+      "path_glob": "docs/p4_kv_ux.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_kv_ux.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_mgt1.md",
+      "path_glob": "docs/p4_mgt1.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_mgt1.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_multistream.md",
+      "path_glob": "docs/p4_multistream.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_multistream.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_p0_queue.md",
+      "path_glob": "docs/p4_p0_queue.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_p0_queue.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_prefill_speed.md",
+      "path_glob": "docs/p4_prefill_speed.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_prefill_speed.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_quant2.md",
+      "path_glob": "docs/p4_quant2.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_quant2.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_resident_routing.md",
+      "path_glob": "docs/p4_resident_routing.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_resident_routing.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_summary.md",
+      "path_glob": "docs/p4_summary.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_summary.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-p4_test_report.md",
+      "path_glob": "docs/p4_test_report.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated p4_test_report.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "history-plan_p5.md",
+      "path_glob": "docs/plan_p5.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_report_or_original_plan",
+      "reason": "Original dated plan_p5.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+    },
+    {
+      "id": "historical-machine-receipts",
+      "path_glob": "docs/*_receipt.json",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_machine_receipt",
+      "reason": "Recorded hashes, commands, tool paths and environments describe the original run; rewriting would falsify its receipt."
+    },
+    {
+      "id": "miss-mask-measurements",
+      "path_glob": "docs/miss_mask.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_mask_evidence",
+      "reason": "Validation and later dated mask experiments retain original input/command names and measurements.",
+      "line_min": 31
+    },
+    {
+      "id": "miss-mask-explicit-old-cache-key",
+      "path_glob": "docs/miss_mask.md",
+      "token_regex": "DEEPMOE_MASK_DYNAMIC_LRU",
+      "role": "documented_legacy_env_alias",
+      "reason": "The paragraph explicitly identifies the old dynamic-LRU environment alias; canonical lookup still accepts it."
+    },
+    {
+      "id": "dspark-measurements",
+      "path_glob": "docs/dspark_topk.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_dspark_evidence",
+      "reason": "Dated DSpark experiment commands, old worktree/source paths and numeric receipts retain their measured revision.",
+      "line_min": 15
+    },
+    {
+      "id": "build-actual-windows-paths",
+      "path_glob": "docs/build.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_windows_workspace",
+      "reason": "These are the actual old Windows workspace paths/dated P3 worktree commands, not current Linux defaults.",
+      "line_regex": "C:\\\\Users\\\\Asus\\\\code\\\\deepmoe|5d4c324|^cd \\.\\.\\\\deepmoe-r1|P3 \u8d77\u56db\u6761"
+    },
+    {
+      "id": "build-volume-label",
+      "path_glob": "docs/build.md",
+      "token_regex": "deepmoe2",
+      "role": "hardware_volume_label",
+      "reason": "The actual fstab/NTFS volume label names the mounted read-only mirror and is not application branding.",
+      "line_regex": "LABEL=deepmoe2"
+    },
+    {
+      "id": "cpp-env-family",
+      "path_glob": "core/env.h",
+      "token_regex": "DEEPMOE_",
+      "role": "legacy_environment_selection",
+      "reason": "The single legacy prefix is required to resolve old environment keys by canonical-presence semantics."
+    },
+    {
+      "id": "python-env-family",
+      "path_glob": "tools/runtime_env.py",
+      "token_regex": "DEEPMOE_",
+      "role": "legacy_environment_selection",
+      "reason": "The single legacy prefix is required to resolve old environment keys by canonical-presence semantics."
+    },
+    {
+      "id": "cmake-cache-family",
+      "path_glob": "cmake/cachedmoe_cache_compat.cmake",
+      "token_regex": "(?:-D)?DEEPMOE_",
+      "role": "legacy_cache_mapping",
+      "reason": "The legacy key family and old-D explanation implement reconfiguration of existing build caches."
+    },
+    {
+      "id": "cmake-core-alias",
+      "path_glob": "CMakeLists.txt",
+      "token_regex": "deepmoe_core",
+      "role": "legacy_library_artifact_alias",
+      "reason": "The old target/library filename is deliberately an alias or symlink to the canonical library."
+    },
+    {
+      "id": "cmake-executable-alias",
+      "path_glob": "CMakeLists.txt",
+      "token_regex": "deepmoe",
+      "role": "legacy_executable_artifact_alias",
+      "reason": "The old executable filename is deliberately generated as a compatibility alias.",
+      "line_regex": "cachedmoe_legacy_executable"
+    },
+    {
+      "id": "cmake-test-alias",
+      "path_glob": "tests/CMakeLists.txt",
+      "token_regex": "deepmoe_tests",
+      "role": "legacy_test_artifact_alias",
+      "reason": "The old test executable filename is deliberately generated as a compatibility alias.",
+      "line_regex": "cachedmoe_legacy_executable"
+    },
+    {
+      "id": "source-namespace-alias",
+      "path_glob": "core/namespace.h",
+      "token_regex": "deepmoe",
+      "role": "legacy_source_namespace_alias",
+      "reason": "This single namespace alias supports old source expressions after rebuilding; it promises no old binary ABI.",
+      "line_regex": "namespace deepmoe = cachedmoe"
+    },
+    {
+      "id": "runner-skips-test-alias",
+      "path_glob": "tests/run_all.py",
+      "token_regex": "deepmoe_tests",
+      "role": "test_alias_deduplication",
+      "reason": "The aggregate test executable and its legacy alias are both excluded from benchmark enumeration so tests run once."
+    },
+    {
+      "id": "live-process-aliases",
+      "path_glob": "tools/process_names.py",
+      "token_regex": "deepmoe(?:_tests|-tested)?",
+      "role": "legacy_process_identity",
+      "reason": "Idle/ownership checks recognize exact old executable/test/frozen names alongside canonical names; the alias is not an additional engine."
+    },
+    {
+      "id": "windows-oracle-process-alias",
+      "path_glob": "tools/oracle_longctx.py",
+      "token_regex": "deepmoe",
+      "role": "legacy_windows_process_detection",
+      "reason": "The Windows GPU-idle process query must recognize the old invoked executable alias as well as the canonical executable.",
+      "line_regex": "startswith"
+    },
+    {
+      "id": "fixture-test_runtime_env",
+      "path_glob": "tools/tests/test_runtime_env.py",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "runtime_alias_fixture",
+      "reason": "CPU vectors exercise old/new/empty precedence, legacy explicit argv layers and provenance; these literals are intentional test inputs."
+    },
+    {
+      "id": "fixture-test_cmake_rename",
+      "path_glob": "tools/tests/test_cmake_rename.py",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "cmake_alias_fixture",
+      "reason": "Real CPU configure fixtures exercise old cache keys, old include path, type preservation and repeated old-D updates."
+    },
+    {
+      "id": "fixture-test_process_names",
+      "path_glob": "tools/tests/test_process_names.py",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "process_alias_fixture",
+      "reason": "CPU exact-name fixtures distinguish legacy aliases from unrelated similarly named processes."
+    },
+    {
+      "id": "fixture-test_web_launch_guarded",
+      "path_glob": "tools/tests/test_web_launch_guarded.py",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "guard_legacy_identity_fixture",
+      "reason": "CPU fake-child fixtures check ownership/drain/late-exec safety for legacy invoked names without starting a GPU engine."
+    },
+    {
+      "id": "fixture-test_rename_audit",
+      "path_glob": "tools/tests/test_rename_audit.py",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "rename_audit_fixture",
+      "reason": "CPU synthetic repositories exercise historical/compatibility retention and rejection of live old defaults."
+    },
+    {
+      "id": "fixture-tools-tests-test_state_paths-py",
+      "path_glob": "tools/tests/test_state_paths.py",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "legacy_state_root_fixture",
+      "reason": "CPU temporary directories test old-only/both-root selection and prove state bytes remain unchanged."
+    },
+    {
+      "id": "fixture-tests-test_state_paths-cpp",
+      "path_glob": "tests/test_state_paths.cpp",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "legacy_state_root_fixture",
+      "reason": "CPU temporary directories test C++ old-only/both-root selection with no automatic migration."
+    },
+    {
+      "id": "cpp-runtime-alias-fixture",
+      "path_glob": "tests/test_env_alias.cpp",
+      "token_regex": "DEEPMOE_[A-Z0-9_]+",
+      "role": "runtime_alias_fixture",
+      "reason": "The old key explicitly tests C++ legacy lookup and parser preservation."
+    },
+    {
+      "id": "state-root-cpp",
+      "path_glob": "core/state_paths.cpp",
+      "token_regex": "deepmoe",
+      "role": "legacy_persisted_root_selection",
+      "reason": "The old directory is probed/reused when the canonical root is absent; user state is never silently migrated."
+    },
+    {
+      "id": "state-root-python",
+      "path_glob": "tools/state_paths.py",
+      "token_regex": "deepmoe",
+      "role": "legacy_persisted_root_selection",
+      "reason": "The old directory is probed/reused when the canonical root is absent; user state is never silently migrated."
+    },
+    {
+      "id": "hf-original-linear-marker",
+      "path_glob": "tools/dsref.py",
+      "token_regex": "ref\\._deepmoe_orig_linear",
+      "role": "hf_patch_original_callable_marker",
+      "reason": "Private marker stores the original upstream linear callable for the existing reference patch; it is not a runtime setting."
+    },
+    {
+      "id": "hf-batched-marker-fallback",
+      "path_glob": "tools/oracle_dspark.py",
+      "token_regex": "(?:ref\\.)?_deepmoe_batched_decode",
+      "role": "legacy_hf_patch_idempotency_marker",
+      "reason": "The explicit old-marker fallback detects a reference module patched earlier in the same process; the active marker is canonical."
+    },
+    {
+      "id": "readme-legacy-env",
+      "path_glob": "README.md",
+      "token_regex": "DEEPMOE_",
+      "role": "documented_environment_alias",
+      "reason": "The user-facing compatibility paragraph documents the accepted legacy environment family."
+    },
+    {
+      "id": "documented-old-state-AGENTS.md",
+      "path_glob": "AGENTS.md",
+      "token_regex": "deepmoe",
+      "role": "documented_legacy_state_root",
+      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent."
+    },
+    {
+      "id": "documented-old-state-CLAUDE.md",
+      "path_glob": "CLAUDE.md",
+      "token_regex": "deepmoe",
+      "role": "documented_legacy_state_root",
+      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent."
+    },
+    {
+      "id": "documented-old-state-tools-web-README.md",
+      "path_glob": "tools/web/README.md",
+      "token_regex": "deepmoe",
+      "role": "documented_legacy_state_root",
+      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent."
+    },
+    {
+      "id": "rename-interface-contract",
+      "path_glob": "docs/rename_compatibility.md",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "documented_legacy_interface",
+      "reason": "The table explicitly describes accepted legacy cache/env/module/executable/namespace names rather than new defaults."
+    },
+    {
+      "id": "audit-legacy-needle",
+      "path_glob": "tools/rename_audit.py",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "audit_detection_or_compatibility_literal",
+      "reason": "The audit must name the old spelling to locate and classify it, including its known compatibility wrapper filename."
+    },
+    {
+      "id": "audit-review-metadata",
+      "path_glob": "tools/rename_retention_rules.json",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "reviewed_retention_metadata",
+      "reason": "The reviewed rules contain exact old spellings solely as token-local audit matching metadata."
+    },
+    {
+      "id": "running-archival-instance",
+      "path_glob": "tools/web/RUNNING.txt",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "historical_stopped_instance",
+      "reason": "This section records stopped 2026-10-05 and earlier web instances. Its commands, PIDs and paths retain their original revision.",
+      "line_min": 15,
+      "line_max": 266
+    },
+    {
+      "id": "running-legacy-contract",
+      "path_glob": "tools/web/RUNNING.txt",
+      "token_regex": ".*(?i:deepmoe).*",
+      "role": "documented_legacy_launch_and_root",
+      "reason": "The appended canonical contract explicitly explains old executable aliases and old-root reuse; these are not active old defaults.",
+      "line_min": 267
+    },
+    {
+      "id": "state-root-header",
+      "path_glob": "core/state_paths.h",
+      "token_regex": "deepmoe",
+      "role": "legacy_persisted_root_selection",
+      "reason": "This single directory constant selects/reuses existing legacy user state without copying or migration.",
+      "line_regex": "kLegacyDirectory"
+    },
+    {
+      "id": "state-root-choice-log",
+      "path_glob": "cli/serve.cpp",
+      "token_regex": "deepmoe",
+      "role": "legacy_root_ambiguity_diagnostic",
+      "reason": "The diagnostic explicitly confirms the legacy directory remains intact when both roots exist.",
+      "line_regex": "legacy deepmoe directory retained"
+    }
+  ]
+}

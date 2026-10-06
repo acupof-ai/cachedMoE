@@ -62,6 +62,9 @@ python3 tools/manifest.py --src "$HOME/models/DeepSeek-V4.1-Flash"
 export CACHEDMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash"
 ```
 
+[Rename compatibility](docs/rename_compatibility.md) documents environment, build,
+executable, source and saved-state aliases.
+
 Runtime controls use `CACHEDMOE_*`. Legacy `DEEPMOE_*` aliases remain accepted;
 an explicitly present new value, including an empty one, wins. Conflicts warn
 once on stderr without printing values.

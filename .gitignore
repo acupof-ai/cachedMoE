@@ -98,7 +98,7 @@ bench/results/**/events.jsonl
 bench/results/**/profile.jsonl
 bench/results/**/*.bin
 bench/results/linux/prefill_ahead/engdbg/
-# DEEPMOE_PIPELINE_STATS dumps: one file per pipeline specialisation, machine output.
+# CACHEDMOE_PIPELINE_STATS dumps: one file per pipeline specialisation, machine output.
 bench/results/**/isa/
 bench/results/**/isa_dec3/
 

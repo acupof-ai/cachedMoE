@@ -50,7 +50,7 @@ endforeach()
 
 # The integration suite needs the real 510 GB checkpoint. It is registered
 # separately so `ctest -L needs-model` runs only it and `ctest -LE needs-model`
-# skips it outright; without DEEPMOE_MODEL_DIR the cases skip themselves and
+# skips it outright; without CACHEDMOE_MODEL_DIR the cases skip themselves and
 # say so, which ctest reports as "Skipped" rather than a pass (exit code 77,
 # see the end of this file).
 add_test(NAME "suite.integration" COMMAND cachedmoe_tests "integration.")
@@ -87,8 +87,8 @@ set_tests_properties("suite.gpu_layer" PROPERTIES
 # Track T's C(M) curve (docs/p4_mgt1.md §4): the per-layer cost of one verify
 # batch's non-MoE attention chain at M = 1/2/4/6. It is a workbench, not a
 # correctness gate -- 30 timed iterations x 4 batch sizes x 2 layers x 2 contexts
-# -- so it is registered as its own name. `DEEPMOE_MGT1_CSV=path` writes the
-# table; `DEEPMOE_MGT1_ITERS` sets the iterations.
+# -- so it is registered as its own name. `CACHEDMOE_MGT1_CSV=path` writes the
+# table; `CACHEDMOE_MGT1_ITERS` sets the iterations.
 add_test(NAME "bench.mgt1_m_curve" COMMAND cachedmoe_tests "mgt1.m_curve")
 set_tests_properties("bench.mgt1_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
@@ -121,7 +121,7 @@ set_tests_properties("suite.decode" PROPERTIES
 # M1's specified gate (bitwise-equal mgt1 vs M=1) is known NOT to hold -- see
 # docs/STATUS.md 3 -- so the gate case prints the cos / top-1 numbers as a WARN
 # and passes; it FAILS only below the regression floor (cos < 0.93 or
-# top-1 < 50/60). DEEPMOE_SPEC_STRICT=1 asserts the original bar instead.
+# top-1 < 50/60). CACHEDMOE_SPEC_STRICT=1 asserts the original bar instead.
 add_test(NAME "suite.spec_forward" COMMAND cachedmoe_tests "spec_forward.")
 set_tests_properties("suite.spec_forward" PROPERTIES
     LABELS "needs-model;needs-gpu"
@@ -198,7 +198,7 @@ add_test(NAME "suite.dspark_tree" COMMAND cachedmoe_tests "dspark_tree.")
 set_tests_properties("suite.dspark_tree" PROPERTIES LABELS "unit")
 
 # Track P: the C++ tokenizer against HF tokenizers' golden cases (needs
-# tokenizer.json from DEEPMOE_MODEL_DIR, nothing else), and the sampler against
+# tokenizer.json from CACHEDMOE_MODEL_DIR, nothing else), and the sampler against
 # the L3 export's recorded logits (no model, no GPU).
 add_test(NAME "suite.tokenizer" COMMAND cachedmoe_tests "tokenizer.")
 set_tests_properties("suite.tokenizer" PROPERTIES
@@ -216,7 +216,7 @@ set_tests_properties("suite.engram_tables" PROPERTIES
 
 # Track R2: the window ring rebuilt by replay -- rollback, park / restore, the
 # Session's rollback / cancel / named sessions -- on the L3 export and Track M's
-# 4K export (DEEPMOE_LONGCTX_DIR).
+# 4K export (CACHEDMOE_LONGCTX_DIR).
 add_test(NAME "suite.kv_replay" COMMAND cachedmoe_tests "kv_replay.")
 set_tests_properties("suite.kv_replay" PROPERTIES
     LABELS "needs-model;needs-gpu"

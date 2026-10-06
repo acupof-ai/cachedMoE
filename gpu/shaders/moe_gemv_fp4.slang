@@ -5,7 +5,7 @@
 // The real MoE kernels are moe_gateup.slang and moe_down.slang: they read the
 // weights through the buffer_device_address pointer table instead of a bound
 // descriptor (design §5.3), carry the specialisation constants of §7.1, and are
-// what bench/kernel_bench measures. This file stays because `deepmoe info` and
+// what bench/kernel_bench measures. This file stays because `cachedmoe info` and
 // docs/build.md use it to check the shader toolchain without a checkpoint, and
 // because it is 20 lines rather than 150.
 //

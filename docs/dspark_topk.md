@@ -1,12 +1,12 @@
 # DSpark main-path verification with top-K acceptance (2026-10-04)
 
-The checkpoint's three MTP stages now run in `deepmoe serve`, enabled by
+The checkpoint's three MTP stages now run in `cachedmoe serve`, enabled by
 `--dspark`. The requested rule is **keep the draft's original token when it is
 in the target row's top-K**; default K=4. This is approximate acceptance and
 does not preserve greedy output or the target sampling distribution.
 
 ```bash
-build/deepmoe serve --model "$HOME/models/DeepSeek-V4.1-Flash" \
+build/cachedmoe serve --model "$HOME/models/DeepSeek-V4.1-Flash" \
   --resident-only mask --dspark --spec-k 2 --spec-top-k 4
 ```
 

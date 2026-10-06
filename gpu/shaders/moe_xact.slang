@@ -40,7 +40,7 @@ float xa_scale(float amax) {
 // The subnormal branch is NOT attn_common's `(a + 1.5*2^14) - 1.5*2^14`:
 // Mesa's NIR folds `(a + c) - c` to `a` (an inexact algebraic rule the SPIR-V
 // here does not forbid), which on RADV returned the unrounded value -- measured
-// by DEEPMOE_SE_CHECK against the host, e.g. x = 2.0266e-5 -> 0x0154 instead of
+// by CACHEDMOE_SE_CHECK against the host, e.g. x = 2.0266e-5 -> 0x0154 instead of
 // 0x0180. Every step below is exact: a * 2^9 is a power-of-two scale, the
 // integer part and the remainder of a number < 8 are exact, and the tie rule
 // is written out.

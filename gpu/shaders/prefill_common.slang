@@ -121,7 +121,7 @@ float fp8_round(float v) {
     // Subnormal: a multiple of 2^-9 by an exact round-to-nearest-even written
     // out in integers. NOT `(a + 1.5*2^14) - 1.5*2^14`: Mesa's NIR folds that
     // to `a` on RADV (an inexact algebraic rule the SPIR-V does not forbid),
-    // which returned the unrounded value -- found by Track SE's DEEPMOE_SE_CHECK,
+    // which returned the unrounded value -- found by Track SE's CACHEDMOE_SE_CHECK,
     // docs/STATUS.md §7 0h. a * 512 < 8 is exact, so is its integer part and
     // the remainder.
     const float m  = a * 512.0f;

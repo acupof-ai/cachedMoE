@@ -34,7 +34,7 @@ std::string temp_path(const char* stem) {
 #else
     const char* base = "/tmp";
 #endif
-    return std::string(base) + "/deepmoe_" + stem + ".dmtrace";
+    return std::string(base) + "/cachedmoe_" + stem + ".dmtrace";
 }
 
 // A stamp callback over a fixed number of slots; slot i is `ticks[i]`.

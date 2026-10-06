@@ -579,7 +579,7 @@ CACHEDMOE_TEST(kv_replay, longctx) {
 #include <filesystem>
 CACHEDMOE_TEST(kvdisk, roundtrip) {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "deepmoe_kvdisk_roundtrip";
+    const fs::path dir = fs::temp_directory_path() / "cachedmoe_kvdisk_roundtrip";
     std::error_code ec;
     fs::remove_all(dir, ec);
     runtime::KvDiskOptions opt;
@@ -758,7 +758,7 @@ CACHEDMOE_TEST(kvdisk, async_coalesces_and_drains) {
 
 CACHEDMOE_TEST(kvdisk, async_reset_cannot_resurrect) {
     namespace fs = std::filesystem;
-    const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_async_reset";
+    const auto dir = fs::temp_directory_path() / "cachedmoe_kvdisk_async_reset";
     std::error_code ec; fs::remove_all(dir, ec);
     runtime::KvDiskOptions opt; opt.dir = dir.string(); opt.model_tag = "async-test";
     std::mutex mutex;
@@ -813,7 +813,7 @@ CACHEDMOE_TEST(kvdisk, async_failure_and_shutdown) {
 
 CACHEDMOE_TEST(kvdisk, queue_backpressure_preserves_all_sessions) {
     namespace fs = std::filesystem;
-    const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_backpressure";
+    const auto dir = fs::temp_directory_path() / "cachedmoe_kvdisk_backpressure";
     std::error_code ec;
     fs::remove_all(dir, ec);
     runtime::KvDiskOptions opt;
@@ -880,7 +880,7 @@ CACHEDMOE_TEST(kvdisk, required_save_returns_write_error) {
 
 CACHEDMOE_TEST(kvdisk, stale_snapshot_checks_transcript_prefix) {
     namespace fs = std::filesystem;
-    const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_stale_prefix";
+    const auto dir = fs::temp_directory_path() / "cachedmoe_kvdisk_stale_prefix";
     std::error_code ec;
     fs::remove_all(dir, ec);
     runtime::KvDiskOptions opt;

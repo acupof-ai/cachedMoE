@@ -26,7 +26,11 @@ The current local instance is described in [RUNNING.txt](RUNNING.txt).
 
 No CDN is required. Transcripts persist locally under
 `$XDG_CACHE_HOME/cachedmoe/web_chat` (normally `~/.cache/cachedmoe/web_chat`) on Linux,
-or `%LOCALAPPDATA%/cachedmoe/web_chat` on Windows. The session-name field selects a
+or `%LOCALAPPDATA%/cachedmoe/web_chat` on Windows. If the canonical root is absent
+and an old `deepmoe` root exists, the server reuses it for both transcript and KV;
+it does not migrate or merge files. When both roots exist, the canonical root wins
+and the selected path is logged. An explicit `--kv-dir` keeps its exact path.
+See [rename compatibility](../../docs/rename_compatibility.md). The session-name field selects a
 conversation. Reloading restores it. Different tabs should use different names.
 With disk KV enabled, completed decode turns now enqueue one batched background
 checkpoint. The live KV stays in memory. [Persistence details](../../docs/kv_async.md).

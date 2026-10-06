@@ -61,7 +61,7 @@
 //    counter into the operands with identical code in both arms, so the only
 //    difference between them is the FMA shape.
 //  - A claim about which instruction the compiler emitted is only believed from
-//    the ISA. Dump it with `DEEPMOE_PIPELINE_STATS=DIR build/model_probe` and
+//    the ISA. Dump it with `CACHEDMOE_PIPELINE_STATS=DIR build/model_probe` and
 //    read DIR/probe_occ_*.txt. That is how 0by established there is no `v_dot2`
 //    in mode 8, and how 0bx caught `RADV_DEBUG=llvm` silently falling back to
 //    ACO (both arms' ISA was byte for byte identical).

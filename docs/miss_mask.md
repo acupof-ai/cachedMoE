@@ -1,7 +1,7 @@
 # Miss masking with normal demand LRU (2026-10-04)
 
-`deepmoe serve --resident-only mask` (also `run` and
-`DEEPMOE_ROUTE_RESIDENT_ONLY=mask`) is an opt-in lossy mode. Default remains `off`.
+`cachedmoe serve --resident-only mask` (also `run` and
+`CACHEDMOE_ROUTE_RESIDENT_ONLY=mask`) is an opt-in lossy mode. Default remains `off`.
 
 2026-10-05: dynamic LRU is again mask's default. `--mask-cache fixed` freezes
 the initial set explicitly. The legacy env flag `DEEPMOE_MASK_DYNAMIC_LRU=0`
