@@ -26,6 +26,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("off", "plain", "spec", "spec5"), required=True)
     parser.add_argument("--spec-k", type=int, choices=(2, 3, 5), default=5)
+    parser.add_argument("--gpu-route", type=int, choices=(0, 1), default=1,
+                        help="validate the selected target routing policy")
+    parser.add_argument("--onecb", type=int, choices=(0, 1), default=1)
     parser.add_argument("--mask-cache", choices=("dynamic", "fixed"), default="fixed",
                         help="keep the historical fixed-cache longtest reproducible")
     parser.add_argument("--script", type=Path, required=True)
@@ -44,8 +47,8 @@ def main():
     for key in ("DEEPMOE_SPEC_DIAGNOSTICS", "DEEPMOE_ROUTE_DUMP"):
         env.pop(key, None)
     env.update(DEEPMOE_MASK_DYNAMIC_LRU="0" if args.mask_cache == "fixed" else "1", DEEPMOE_DSPARK_PROFILE="0",
-        DEEPMOE_DSPARK_ONECB="1" if speculative else "0",
-        DEEPMOE_BATCH_GPU_ROUTE="1" if speculative else "0",
+        DEEPMOE_DSPARK_ONECB=str(args.onecb) if speculative else "0",
+        DEEPMOE_BATCH_GPU_ROUTE=str(args.gpu_route) if speculative else "0",
         DEEPMOE_DSPARK_MEGA="0", DEEPMOE_MGT_PAIR_DOT="0",
         DEEPMOE_MGT_ATTN_CM="0", DEEPMOE_MGT_FOLD_SCALE="0")
     command = [sys.executable, str(ROOT / "tools/web/server.py"), "--exe", str(args.exe.resolve()),

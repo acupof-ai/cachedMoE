@@ -4,12 +4,34 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, mock_open, patch
 
 import server
 
 
 class WebSettings(unittest.TestCase):
+    def test_config_reports_active_speculation_and_current_power(self):
+        bridge = SimpleNamespace(
+            args=SimpleNamespace(resident_only="mask", mask_cache="dynamic"),
+            serve=SimpleNamespace(max_context=1 << 20, cmd=["deepmoe", "serve"],
+                ready={"speculation": {"enabled": True, "draft_tokens": 2,
+                                       "accept_top_k": 4}}),
+            prefill_ms_per_token=100)
+        with patch.object(server.subprocess, "check_output", return_value="performance\n"), \
+                patch("builtins.open", mock_open(read_data="performance\n")):
+            config = server.web_configuration(bridge)
+        self.assertEqual(config["resident_only"], "mask")
+        self.assertEqual(config["mask_cache"], "dynamic")
+        self.assertEqual(config["spec_k"], 2)
+        self.assertEqual(config["power_profile"], "performance")
+        self.assertEqual(config["platform_profile"], "performance")
+        bridge.serve.ready["speculation"]["enabled"] = False
+        with patch.object(server.subprocess, "check_output", side_effect=OSError), \
+                patch("builtins.open", side_effect=OSError):
+            plain = server.web_configuration(bridge)
+        self.assertEqual(plain["spec_k"], 0)
+        self.assertIsNone(plain["power_profile"])
+
     def test_effort_changes_prompt_and_survives_restart(self):
         enc = Mock()
         enc.encode_messages.side_effect = lambda messages, **settings: json.dumps([messages, settings])

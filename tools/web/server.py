@@ -249,6 +249,37 @@ def load_encoding():
 
 # --------------------------------------------------------------------------- serve
 
+def web_configuration(bridge):
+    """Expose the active launch policy and the host's current power mode."""
+    ready = bridge.serve.ready
+    spec = ready.get("speculation", {})
+    try:
+        profile = subprocess.check_output(
+            ["powerprofilesctl", "get"], text=True, timeout=2).strip()
+    except (OSError, subprocess.SubprocessError):
+        profile = None
+    platform = "/sys/firmware/acpi/platform_profile"
+    try:
+        with open(platform) as source:
+            platform_profile = source.read().strip()
+    except OSError:
+        platform_profile = None
+    return {
+        "max_context": bridge.serve.max_context,
+        "ceiling": K_MAX_INDEX_POSITIONS,
+        "ready": ready,
+        "prefill_ms_per_token": bridge.prefill_ms_per_token,
+        "kv_bytes_per_token": KV_BYTES_PER_TOKEN,
+        "model": MODEL,
+        "cmd": " ".join(bridge.serve.cmd),
+        "resident_only": bridge.args.resident_only,
+        "mask_cache": bridge.args.mask_cache,
+        "speculation": spec,
+        "spec_k": spec.get("draft_tokens") if spec.get("enabled") else 0,
+        "power_profile": profile,
+        "platform_profile": platform_profile,
+    }
+
 class Serve:
     """The `deepmoe serve` child: one writer, one reader thread, one turn in flight."""
 
@@ -769,16 +800,7 @@ class Handler(BaseHTTPRequestHandler):
                 with open(os.path.join(HERE, "index.html"), "rb") as f:
                     return self._send(200, f.read(), "text/html; charset=utf-8")
             if u.path == "/api/config":
-                b = self.bridge
-                return self._send(200, {
-                    "max_context": b.serve.max_context,
-                    "ceiling": K_MAX_INDEX_POSITIONS,
-                    "ready": b.serve.ready,
-                    "prefill_ms_per_token": b.prefill_ms_per_token,
-                    "kv_bytes_per_token": KV_BYTES_PER_TOKEN,
-                    "model": MODEL,
-                    "cmd": " ".join(b.serve.cmd),
-                })
+                return self._send(200, web_configuration(self.bridge))
             if u.path == "/api/gpu":
                 return self._send(200, self.gpumon.snapshot())
             if u.path == "/api/status":
