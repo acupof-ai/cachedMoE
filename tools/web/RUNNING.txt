@@ -6,17 +6,19 @@ commands, its %LOCALAPPDATA% paths and its eight restart logs were all Windows, 
 every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
-STATE: STOPPED for the sole serial power-profile benchmark v3 (2026-10-06).
-Private benchmark port 8081 is isolated from user transcripts/KV; user 8080 is down.
-The previous guarded web stopped after the port change removed its NVMe sensor;
-its shutdown was non-graceful, and six original files retain SHA/mtime.
-Do not start a second GPU engine. Raw/current benchmark identity is in
-bench/results/mask_quality/power_profiles_v3_prepared/launch_receipt.json;
-find the live child afresh. Restore the user launcher below after the benchmark.
-The accepted pre-benchmark policy follows; its PIDs are historical observations.
+STATE: STOPPED; owner requests CPU work only while cooling is unavailable (2026-10-06).
+The complete v4 same-engine three-arm comparison has ended normally and drained
+its private disk KV. Neither user 8080 nor private 8081 has a live engine/server.
+Six original user files retain SHA/size/mtime; browser pages were not refreshed.
+Balanced is selected by raw wall time for both short and sustained generation;
+see docs/power_profile_comparison.md. Do not start a GPU job or restore web during
+the current CPU-only stage. Draft-head native capture and later GPU gates remain
+pending in docs/codex_todo.md; prepared recipe and failed preflight are documented
+in docs/draft_head_screening.md. The launcher below is for later restoration.
+Its earlier acceptance PIDs and API observations below remain historical.
 Policy: dynamic mask; 5500 total slots; disk KV 4 GB; 1M capacity; dual RO sources;
 k2/top4, ONECB=1, GPU_ROUTE=0 (CPU routing), one main path per target forward.
-Power/thermal: AC + performance (comparison pending). GPU pauses/resumes at 85/77 C;
+Future power/thermal: AC + balanced (complete comparison selected). GPU pauses/resumes at 85/77 C;
 NVMe Composite at 80/72 C; start gates GPU <=60 C and NVMe <=65 C. Six configurable
 thresholds have one source in tools/runtime_defaults.py ThermalPolicy; actual values
 are logged and exposed by /api/config. Guard/server/engine identities at acceptance: 17397/17417/17418.

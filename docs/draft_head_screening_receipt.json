@@ -1,0 +1,156 @@
+{
+  "status": "CPU_PREPARATION_COMPLETE_GPU_CAPTURE_PENDING",
+  "source_commit": "59b2a5fd25819d8267026d4ccb468ec2ab776678",
+  "commits": [
+    "b60c119",
+    "8d28c5c",
+    "59b2a5f"
+  ],
+  "cpu_validation": {
+    "build_rc": 0,
+    "ctest_passed": 31,
+    "standard_gates_passed": 55,
+    "offline_reference_tests_passed": 11,
+    "production_factory_tests_passed": 17,
+    "shader_count": 52,
+    "shader_bytes_equal_to_main": true,
+    "logs": [
+      {
+        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_cpu_build_final.log",
+        "sha256": "537a4dbbd2ee1e4484f952ba03f06e8c41bc88f004be0b8b9d1f752461073a0c"
+      },
+      {
+        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_cpu_final.log",
+        "sha256": "597d603baf9a7f9c37e57eea84e9e98740b68825c1f172959afbec45cde26000"
+      },
+      {
+        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_tools_final.log",
+        "sha256": "1538235c1507ce744cf61a1aa8a15397e09fece61c46d5ad9ad9c9774f4c073c"
+      },
+      {
+        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_production_route_cpu.log",
+        "sha256": "becd575d0290462b1308c4976155374a83ce663d32387e41fe3b83c98e413620"
+      }
+    ],
+    "offline_reference_after_model_metadata_check": {
+      "passed": 11,
+      "log_sha256": "795bb78b800cff2cca287505f5bb96981159394a6aa811caff804859db1a7f56"
+    }
+  },
+  "native_gpu_observer": {
+    "case": "gpu_dspark.adaptive_zero_keeps_one_target_forward",
+    "passed": true,
+    "cpu_route_tested": false,
+    "gpu_route": 1,
+    "onecb": 1,
+    "cases": 1,
+    "skipped": 0,
+    "thermal_pauses": 0,
+    "wall_s": 16.10016102399095,
+    "tested_binary_sha256": "1ff5b4e480d1f973505d669aad0348ecd8b54d345c9ad2f7444b4c792cf40a93",
+    "observer_test_binary_unchanged": true
+  },
+  "failed_native_capture": {
+    "rc": 1,
+    "gpu_route": 1,
+    "outputs": 0,
+    "scope": "GPU initialized and pinned weights read, rejected before session/prefill/generation",
+    "error": "capture requires ONECB, CPU routing and dynamic mask policy",
+    "guard_now_before_gpu_initialization": true,
+    "raw_check_results_sha256": "48135f4500328f0059a33b3a53e04dc8c21d27b3701434c8ad705f7b2b39ba14"
+  },
+  "corrected_plan": {
+    "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/plan.json",
+    "sha256": "103ec6a4b6fad6a1f9b9561b1e4e564856fb4eb7357986ff83f900fd6cfefcd9",
+    "status": "PREPARED_NOT_RUN",
+    "gpu_route": 0,
+    "onecb": 1,
+    "dynamic_mask": true,
+    "k": 2,
+    "slots": 5500,
+    "target_forwards_per_cycle": 1
+  },
+  "cpu_weight_reference": {
+    "scope": "CPU weight quantization reference only; no hidden or acceptance evidence",
+    "model_tensor": "head.weight",
+    "source_dtype": "bf16",
+    "shape": [
+      129280,
+      5120
+    ],
+    "source_bytes": 1323827200,
+    "fp8_copy_bytes": 662430720,
+    "fp8_copy_slot_equivalents": 35.219131097560975,
+    "subset_copy_bytes": {
+      "16384": 167837696,
+      "32768": 335675392,
+      "65536": 671350784
+    },
+    "source_sha256": "68f446ddda4243d5c8d57d2a9729c125f7fb8b2ee050c78ac6ff5e0cacde6789",
+    "encoded_sha256": "541c716b2fc524f29d4acb13e610ad7eea92fb798f79e49f07fc4caecb79f94b",
+    "scale_sha256": "ee0a1fb166a52229b40a1a5cf05742ba2b6460229ed231d163bb195129ae4117",
+    "quantization": "E4M3FN RNE, per-row float32 amax/448; zero row scale=1",
+    "max_abs_weight_error": 0.04799109697341919,
+    "relative_squared_weight_error": 0.0007004865284966148,
+    "zero_rows": 0,
+    "elapsed_cpu_wall_s": 2.5749091200123075,
+    "threads": 8,
+    "torch_version": "2.14.0+cpu",
+    "helper_sha256": "bca4159fa834a830d8933c7cd1ad8325a69eb9249259daefbef528809dc16cb6",
+    "native_capture_complete": false,
+    "acceptance_estimated": false,
+    "gpu_screen_eligible": false,
+    "checkpoint_write": false,
+    "gpu_jobs": 0,
+    "frozen_helper_path": "bench/results/mask_quality/draft_head_cpu_weights/offline_helper_at_weight_check.py",
+    "quantize_rows_function_unchanged": true
+  },
+  "cpu_weight_reference_script": {
+    "path": "bench/results/mask_quality/draft_head_cpu_weights/weight_quant_reference.py",
+    "sha256": "eb867886c86b71f1eb40ae0270363f6cbaa182139b49d1794a39ae208054db50"
+  },
+  "corpus": {
+    "sources": [
+      {
+        "path": "/home/chenkailun/projects/cachedMoE/tests/data/longctx/prompts.json",
+        "sha256": "04de66717e65561f8b785a01fae17d2c0c16c48edd3be7f7d6acaab9205ad1ff"
+      },
+      {
+        "path": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/phase_a/validation/mmlu57/mask/answers.jsonl",
+        "sha256": "101497606dcdd0d0c1280b16e5808fb8d9da7b714ca1dabaa912936593fa9a7c"
+      },
+      {
+        "path": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/phase_a/validation/long_plain/turn0_events.jsonl",
+        "sha256": "66cc0ebf6306673d4af524eb5f6a2941bc697794e7a91bb4f9bfd493f6f60556"
+      },
+      {
+        "path": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/phase_a/validation/long_plain/turn1_events.jsonl",
+        "sha256": "40e9482bd7d2180ea3eff6635c1911fd6d60a90799375b4a2740f5fdbad48f04"
+      },
+      {
+        "path": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/phase_a/validation/long_plain/turn2_events.jsonl",
+        "sha256": "f6fc56add56a4a28770e31a830e22013e68211d781b90be500b4c8580c0dc189"
+      }
+    ],
+    "tokens": 23055,
+    "unique": 5123,
+    "capture_tokens_used": false,
+    "scope": "local mixed long-context fixture, prior MMLU57 questions/choices, prior dynamic-mask eight-turn outputs; not a representative training corpus",
+    "unseen_frequency_tie": "ID ascending"
+  },
+  "safety": {
+    "new_gpu_jobs_after_cpu_only_instruction": 0,
+    "web_stopped": true,
+    "active_power_profile": "balanced",
+    "original_user_files_unchanged": 6,
+    "checkpoint_writes": 0
+  },
+  "pending": [
+    "native 64-output k2 CPU-route capture",
+    "BF16 native top-1 agreement and candidate acceptance estimates",
+    "halved >=2ms/cycle and <=3pp acceptance gate",
+    "passing candidate only GPU implementation and numerical/quality gates",
+    "same-engine eight-turn comparison",
+    "balanced guarded web restore and actual API acceptance"
+  ]
+}

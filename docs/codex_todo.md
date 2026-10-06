@@ -400,6 +400,7 @@ CMake 选项 `CACHEDMOE_*`。
 - [ ] 结论写进 STATUS 和本文件 §0.1；需要改时更新网页启动器和监督脚本的默认，重启网页后核对 `/api/config`
   和 `powerprofilesctl get`。不刷新用户浏览器，不动 transcript。
   v4结论及共享balanced默认已写入；网页/API恢复在§4.9串行GPU步骤之后进行，暂不勾选此项。
+  最新owner要求暂做CPU工作；网页引擎也属于GPU作业，当前不启动。恢复/API验收继续待办。
 
 ### 4.9 P2：draft head FP8 / vocab 子集（owner 2026-10-06 批准，§4.8 之后做）
 
@@ -708,3 +709,37 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   61输入逐hash冻结、实际API匹配；六份原网页文件SHA/mtime不变。
 - [ ] v4完整三臂测量；随后按§4.9执行。独立工作树准备只读hidden/既有verify矩阵捕获和CPU离线工具，
   捕获每cycle严格仅一个target forward，不将准备中的工具写成已完成实验。
+
+## 27. §4.8 完整 v4 收据（2026-10-06）
+
+- [x] 同引擎三臂各八轮512输出全部完成；正常退出并排空私有disk KV，两源始终在线。
+  power-saver / balanced / performance 原始107.830 / 80.944 / 113.801ms/token；
+  全程、前两轮和末两轮都选balanced，不需要owner裁定短/长分歧。
+- [x] 三臂4096输出ID逐位一致，接受率85.8902%、命中91.4210%，0循环/加载失败。
+  performance的decode温控1567次、冷却176.603秒；其70.601ms/token active估算不用于默认决策。
+- [x] 共享电源默认改为balanced，实际本机profile也为balanced；报告和机器收据已push于3b7d763。
+  来源`power_profile_comparison.md`、`power_profile_result.json`及`power_profiles_v4/`原始数据。
+- [ ] 网页重启/API验收：owner最新要求暂做CPU工作，网页也计作GPU作业，保持停止。
+  本节完成测量/默认选择，不冒充网页已恢复；§4.8最后一项仍未勾。
+
+## 28. §4.9 CPU准备与原始失败收据（2026-10-06）
+
+- [x] 新capture工具与只读verify观察点已构建；每cycle检查一个target forward，
+  observer未设置时无额外读回。CPU CTest31/31、标准门55/55、离线参考11/11，52shader逐位不变。
+- [x] 先前GPU k=0 observer案例通过：两轮各单forward、argmax一致，0 skip/暂停。
+  此例是GPUroute=1；不将其写成CPUroute或64-token head捕获验收。
+- [x] 真实head的CPU行FP8校核：副本662,430,720 bytes，35.219槽等价；
+  权重平方误差/源能量0.07005%。仅权重误差，不是输出质量或接受率结果。
+  原BF16 target仍必须常驻，副本属于额外内存，未实际削减专家槽。
+- [x] 第一次native capture因route=1被工具拒绝：GPU初始化/pinned读取已发生，
+  但session/prefill/生成尚未开始，0输出、无hidden。原失败plan/log/thermal完整保留。
+- [x] 生产配置工厂默认路由修为统一CPUroute=0，17项配置CPU检查通过；显式实验覆盖保留。
+  捕获策略校核提前到init_gpu之前。新CPUroute计划/新目录/输入hash已准备，尚未执行。
+- [ ] 64-token k2实际捕获及CPU BF16逐位候选校核、FP8/16K/32K/64K接受率估算。
+  独立词频输入23,055 tokens、5,123 unique，语料代表性限制已记；没有合格候选或GO结论。
+- [ ] 原§4.9减半收益/接受率门、条件GPU实现、最终ID/off NLL/decode/DSpark质量门、八轮速度门。
+  全部保持未勾；top4接受器直接发草稿ID，不能凭target未改就宣称最终输出必然不变。
+- [ ] 双盘散热条件满足且CPU-only阶段结束后，再继续串行GPU任务及balanced网页恢复。
+  最新owner要求之后新GPU作业0；六份用户文件SHA/size/mtime不变，浏览器未刷新。
+- 报告`draft_head_screening.md`、机器收据`draft_head_screening_receipt.json`；
+  原始CPU/准备数据`draft_head_cpu_weights/`、`draft_head_cpu_route_prepared/`，旧失败`draft_head_prepared/`。
