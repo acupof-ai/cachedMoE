@@ -137,7 +137,12 @@ def main():
                     if fixed:
                         assert spec["miss_bytes"] == 0
                     submits = done["per_token_ms"]["submits"] * done["decode_steps"]
-                    assert abs(submits - spec["cycles"]) < 1e-4
+                    if args.gpu_route:
+                        assert abs(submits - spec["cycles"]) < 1e-4
+                    else:
+                        # CPU routing fences per layer; it still verifies the
+                        # main path in one forward_batch call per cycle.
+                        assert submits >= spec["cycles"]
                 status = rpc("/api/status?session=" + session)
                 assert status["cache_fixed"] == fixed and status["cache_frozen"] == fixed
                 assert "failed fills 0" in status["store"]
