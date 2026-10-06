@@ -22,8 +22,8 @@
 #include "cpu/dequant.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -97,7 +97,7 @@ struct Golden {
 };
 
 bool load_golden(Golden& g) {
-    const std::string path = std::string(DEEPMOE_TEST_DATA_DIR) + "/dspark/tree_golden.bin";
+    const std::string path = std::string(CACHEDMOE_TEST_DATA_DIR) + "/dspark/tree_golden.bin";
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     std::vector<char> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -184,7 +184,7 @@ Sub make_sub(const Case& c, uint32_t Kf, uint32_t K) {
 
 }  // namespace
 
-DEEPMOE_TEST(dspark_tree, exp_log_series_are_accurate) {
+CACHEDMOE_TEST(dspark_tree, exp_log_series_are_accurate) {
     for (double x : {-700.0, -40.0, -3.3, -0.7, 0.0, 1e-9, 0.5, 3.0, 40.0}) {
         CHECK(test::close(dm_exp(x), std::exp(x), 1e-13, 0.0));
     }
@@ -195,7 +195,7 @@ DEEPMOE_TEST(dspark_tree, exp_log_series_are_accurate) {
     CHECK(std::isinf(dm_log(0.0)) && dm_log(0.0) < 0);
 }
 
-DEEPMOE_TEST(dspark_tree, dot16_is_lane_ordered) {
+CACHEDMOE_TEST(dspark_tree, dot16_is_lane_ordered) {
     // A pattern whose value depends on the summation order in float32.
     std::vector<float> a(256), b(256);
     for (int i = 0; i < 256; ++i) {
@@ -210,7 +210,7 @@ DEEPMOE_TEST(dspark_tree, dot16_is_lane_ordered) {
     CHECK_EQ(dot16(a.data(), b.data(), 256), want);
 }
 
-DEEPMOE_TEST(dspark_tree, matches_python_bit_exactly) {
+CACHEDMOE_TEST(dspark_tree, matches_python_bit_exactly) {
     Golden g;
     REQUIRE(load_golden(g));
     REQUIRE(!g.cases.empty());
@@ -278,7 +278,7 @@ DEEPMOE_TEST(dspark_tree, matches_python_bit_exactly) {
 }
 
 // Not an assertion: the CPU cost of steps 2 and 4 (docs/p3_dspark.md §5), printed.
-DEEPMOE_TEST(dspark_tree, cpu_cost_microseconds) {
+CACHEDMOE_TEST(dspark_tree, cpu_cost_microseconds) {
     Golden g;
     REQUIRE(load_golden(g));
     const Case& c = g.cases[0];

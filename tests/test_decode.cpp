@@ -46,8 +46,8 @@
 #include "tests/l2_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -55,7 +55,7 @@ using namespace deepmoe::testing;
 
 namespace {
 
-std::string l3_dir() { return std::string(DEEPMOE_TEST_DATA_DIR) + "/l3"; }
+std::string l3_dir() { return std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3"; }
 
 // Spearman rank correlation between the reference's top-k ordering and ours.
 // Ours is taken from the same k ids, ranked by OUR logits -- the question is
@@ -217,10 +217,10 @@ struct DecodeRig {
 
 }  // namespace
 
-DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
+CACHEDMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
     if (skip_without_model("decode")) return;
     if (!std::fopen((l3_dir() + "/index.json").c_str(), "rb")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP decode: no L3 data in %s "
+        CACHEDMOE_SKIP_PRINTF("      SKIP decode: no L3 data in %s "
                     "(tools/oracle.py --level l3)\n", l3_dir().c_str());
         return;
     }
@@ -230,7 +230,7 @@ DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
     // on NVMe. A run sized for the whole working set would measure a machine
     // nobody has at 64K context.
     if (!rig.bring_up(8ull << 30)) {
-        DEEPMOE_SKIP_PRINTF("      SKIP decode: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP decode: %s\n", rig.why.c_str());
         return;
     }
     runtime::Engine& e = rig.engine;
@@ -250,7 +250,7 @@ DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
     // probe is what turns "the token is wrong" into "the stream is already off
     // at layer 13", which is the only way a forty-layer chain is debuggable.
     std::printf("    (a) one decode step at position %u, probed against L2\n", base);
-    auto l2 = load_l2(std::string(DEEPMOE_TEST_DATA_DIR) + "/l2");
+    auto l2 = load_l2(std::string(CACHEDMOE_TEST_DATA_DIR) + "/l2");
     uint32_t probed = 0, gate_exact = 0;
     double worst_ffn = 1.0, worst_moe = 1.0;
     if (l2) {
@@ -534,16 +534,16 @@ DEEPMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
 // L2's decode step and L3's step 0 are the same forward pass -- the model's
 // greedy continuation at position 64 happens to be the prompt's own next token
 // -- so the L2 golden applies directly.
-DEEPMOE_TEST(decode, engram_matches_the_l2_export) {
+CACHEDMOE_TEST(decode, engram_matches_the_l2_export) {
     if (skip_without_model("decode")) return;
-    auto set = load_l2(std::string(DEEPMOE_TEST_DATA_DIR) + "/l2");
+    auto set = load_l2(std::string(CACHEDMOE_TEST_DATA_DIR) + "/l2");
     if (!set) {
-        DEEPMOE_SKIP_PRINTF("      SKIP decode.engram: no L2 data (%s)\n", set.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP decode.engram: no L2 data (%s)\n", set.error().str().c_str());
         return;
     }
     auto tables = runtime::EngramTables::load(l3_dir());
     if (!tables) {
-        DEEPMOE_SKIP_PRINTF("      SKIP decode.engram: no L3 engram tables (%s)\n",
+        CACHEDMOE_SKIP_PRINTF("      SKIP decode.engram: no L3 engram tables (%s)\n",
                     tables.error().str().c_str());
         return;
     }
@@ -554,7 +554,7 @@ DEEPMOE_TEST(decode, engram_matches_the_l2_export) {
     // per-layer RNG seeded `10007 * layer_id`.
     auto state = runtime::DecodeState::load(l3_dir());
     if (!state) {
-        DEEPMOE_SKIP_PRINTF("      SKIP decode.engram: %s\n", state.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP decode.engram: %s\n", state.error().str().c_str());
         return;
     }
     std::vector<uint32_t> history = state->prompt_ids();
@@ -600,9 +600,9 @@ DEEPMOE_TEST(decode, engram_matches_the_l2_export) {
 // whenever they hold top_p of the mass. 200,000 draws from runtime/sampling's
 // nucleus and counter-based RNG must reproduce it.
 
-DEEPMOE_TEST(sampling, frequencies_match_top_p_softmax_on_l3_logits) {
+CACHEDMOE_TEST(sampling, frequencies_match_top_p_softmax_on_l3_logits) {
     auto st = runtime::DecodeState::load(l3_dir());
-    if (!st) { DEEPMOE_SKIP_PRINTF("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
+    if (!st) { CACHEDMOE_SKIP_PRINTF("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
     // The (record, top_p) whose nucleus is widest while still provably exact:
     // the informative case (a one-token nucleus would pass trivially). 0.95 is
     // the model README's value; 0.7 reaches into the flatter records.
@@ -692,9 +692,9 @@ DEEPMOE_TEST(sampling, frequencies_match_top_p_softmax_on_l3_logits) {
 // The GPU top-k's arithmetic (runtime::emulate_topk, which mirrors
 // gpu/shaders/sample_topk.slang float for float) gives the full-vocabulary
 // nucleus whenever it says it does, and says it does not when it cannot.
-DEEPMOE_TEST(sampling, topk_nucleus_equals_full_vocabulary_nucleus) {
+CACHEDMOE_TEST(sampling, topk_nucleus_equals_full_vocabulary_nucleus) {
     auto st = runtime::DecodeState::load(l3_dir());
-    if (!st) { DEEPMOE_SKIP_PRINTF("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
+    if (!st) { CACHEDMOE_SKIP_PRINTF("      SKIP sampling: %s\n", st.error().str().c_str()); return; }
     const uint32_t V = 129280;
     uint32_t exact_cases = 0, fallback_cases = 0;
     for (uint32_t r = 0; r <= st->steps(); ++r) {
@@ -763,7 +763,7 @@ DEEPMOE_TEST(sampling, topk_nucleus_equals_full_vocabulary_nucleus) {
 // Registered as `smoke.auto_cache` with LABELS "needs-model;needs-gpu", so
 // run_all.py on a GPU machine catches this class from now on. It takes the
 // whole pinned set and a full-size cache, so it is never part of a CPU run.
-DEEPMOE_TEST(smoke, auto_cache) {
+CACHEDMOE_TEST(smoke, auto_cache) {
     if (skip_without_model("smoke.auto_cache")) return;
     const char* dir = model_dir();
     RuntimeConfig cfg;
@@ -773,7 +773,7 @@ DEEPMOE_TEST(smoke, auto_cache) {
     runtime::Engine e;
     {
         auto r = e.init(cfg);
-        if (!r) { DEEPMOE_SKIP_PRINTF("      SKIP smoke.auto_cache: %s\n", r.error().str().c_str()); return; }
+        if (!r) { CACHEDMOE_SKIP_PRINTF("      SKIP smoke.auto_cache: %s\n", r.error().str().c_str()); return; }
     }
     // Not a SKIP: a refused init_gpu with an auto budget is exactly the failure
     // this case exists to catch. The back-off should have found a size.
@@ -794,7 +794,7 @@ DEEPMOE_TEST(smoke, auto_cache) {
     // tables come from the test export so this does not depend on the model dir
     // carrying them.
     runtime::SessionConfig sc;
-    sc.engram_tables_dir = std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
+    sc.engram_tables_dir = std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3";
     sc.max_context = 256;
     REQUIRE_OK(e.begin_session(sc));
     e.reset_context();

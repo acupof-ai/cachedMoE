@@ -65,10 +65,10 @@ Result<PfExpert> pf_load_expert(MemoryAllocator& alloc, const Manifest& manifest
     return out;
 }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> PrefillRunner::create(Device&, MemoryAllocator&, const std::string&, uint32_t) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void PrefillRunner::destroy() {}
 Result<uint32_t> PrefillRunner::kernel(const PfKernel&) { return fail(Err::Unavailable, "no vulkan"); }
@@ -206,7 +206,7 @@ Result<void> PrefillRunner::dispatch_now(uint32_t h, const void* push, uint32_t 
     return submit_and_wait(*device_, cmd);
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu
 
@@ -230,7 +230,7 @@ Result<void> PrefillRunner::dispatch_now(uint32_t h, const void* push, uint32_t 
 
 namespace deepmoe::gpu {
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 
 namespace {
 
@@ -1055,7 +1055,7 @@ Result<void> Prefill::op_index_score(uint64_t q, uint64_t keys, uint32_t g, uint
     return flush_one(*k, &p, sizeof(p), (g + 255) / 256, b);
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 std::vector<std::vector<uint8_t>> Prefill::candidate_blocks(uint32_t b, uint32_t pos0, uint32_t ratio,
                                                             uint32_t g, const float* scores,
@@ -1173,7 +1173,7 @@ std::string PrefillTimes::json(uint32_t n, std::string_view mode, std::string_vi
     return js + "]}\n";
 }
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> Prefill::engram_issue(uint32_t L, std::span<const uint32_t> prompt) {
     engram_ahead_.drop();
@@ -2367,7 +2367,7 @@ Result<void> Prefill::run_layer(uint32_t L, std::span<const uint32_t> prompt, Pr
 
 #undef PF_TRY
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 // --- the L3-format handoff directory ------------------------------------------------
 

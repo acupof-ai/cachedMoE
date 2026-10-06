@@ -65,7 +65,7 @@
 
 // The indexer's own wq_b is [4096 x 1280]: q_lora_rank, the same K as the main
 // wq_b, so the same small LDS budget (fp8_gemv.slang).
-#define DEEPMOE_GEMV_MAX_K 1280
+#define CACHEDMOE_GEMV_MAX_K 1280
 
 #include "fp8_gemv.slang"
 

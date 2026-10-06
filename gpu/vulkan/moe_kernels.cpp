@@ -29,8 +29,8 @@ std::string MoeSpec::name() const {
 
 std::string default_shader_dir() {
     if (const char* e = ::deepmoe::environment::get("CACHEDMOE_SHADER_DIR")) return e;
-#if defined(DEEPMOE_SHADER_DIR)
-    return DEEPMOE_SHADER_DIR;
+#if defined(CACHEDMOE_SHADER_DIR)
+    return CACHEDMOE_SHADER_DIR;
 #else
     return "build/shaders";
 #endif
@@ -71,11 +71,11 @@ uint16_t* MoeRunner::x_fp16()        { return static_cast<uint16_t*>(x_.host_ptr
 float*    MoeRunner::y()             { return static_cast<float*>(y_.host_ptr); }
 void*     MoeRunner::h()             { return h_.host_ptr; }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> MoeRunner::create(Device&, MemoryAllocator&, const std::string&,
                                const MoeSpec&, const MoeDims&) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void MoeRunner::destroy() {
     gpu_descriptors_.destroy();gpu_copy_.destroy();gpu_mean_.destroy();gpu_route_.destroy();gpu_up_.destroy();gpu_down_.destroy();gpu_hq_.destroy();
@@ -672,10 +672,10 @@ Result<MoeTiming> MoeRunner::run(uint32_t iterations, MoePhase phase) {
     return t;
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 Result<void> MoeRunner::init_gpu_route(uint32_t layers, const std::string &dir) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if (gpu_layers_) return {};
     if (spec_.x_mode == 6 || spec_.h_quant != 3)
         return fail(Err::Unavailable, "GPU union needs exact fp16 x and h_quant=3");
@@ -773,7 +773,7 @@ Result<void> MoeRunner::upload_snapshot(std::span<const uint64_t> table) {
 }
 Result<void> MoeRunner::record_gpu_copy(CommandBuffer &cmd, uint64_t src, uint64_t dst, uint32_t n,
                                         bool mean, uint32_t hidden) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if (mean && (!hidden || n % hidden))
         return fail(Err::InvalidArgument, "hidden mean requires complete rows");
     struct Push {
@@ -792,7 +792,7 @@ Result<void> MoeRunner::record_gpu_copy(CommandBuffer &cmd, uint64_t src, uint64
 Result<void> MoeRunner::record_gpu_route(CommandBuffer &cmd, uint32_t layer, uint32_t m,
                                          uint32_t topk, uint64_t ids, uint64_t weights, uint64_t x,
                                          uint64_t saved, uint32_t *, QueryPool *route_queries) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     // Each layer has immutable arguments. The routing dispatch selects from
     // the guarded snapshot and writes two VkDispatchIndirectCommand records.
     // Keep the indirect dependency before any dispatch consumes those counts.

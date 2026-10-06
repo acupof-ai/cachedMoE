@@ -41,14 +41,14 @@
 // KSplit + slice); stages 1, 2 are `ceil(rows / 256)` x M (gid.y = m); stages 3
 // and 4 are 1 x M.
 
-#define DEEPMOE_MGT1_MAX_K 1024
+#define CACHEDMOE_MGT1_MAX_K 1024
 #include "attn_common.slang"
 
 [vk::constant_id(11)] const uint FoldScale = 0;
 [vk::constant_id(12)] const uint PairDot = 0;
 
 static const uint kMaxM       = 6;
-static const uint kMaxBlocksS = DEEPMOE_MGT1_MAX_K / kBlockK;            // 32
+static const uint kMaxBlocksS = CACHEDMOE_MGT1_MAX_K / kBlockK;            // 32
 static const uint kColBlocks  = ((kMaxBlocksS + 31u) / 32u) * 32u;        // 32
 static const uint kXStride    = kBlockK / 2 + 1;                          // 17
 

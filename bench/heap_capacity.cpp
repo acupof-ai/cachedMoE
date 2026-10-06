@@ -364,7 +364,7 @@ void free_all(gpu::MemoryAllocator& alloc, std::vector<gpu::GpuBuffer>& live) {
 // the import stops being accepted, not another capacity sweep, and committing
 // 16 GiB to find that out is exactly the kind of thing the floor forbids.
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 
 const char* vk_result_name(VkResult r) {
     switch (r) {
@@ -509,7 +509,7 @@ void run_oversize_probe(gpu::Device& dev, const Options& o) {
     }
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 // A raw-read pass over one slab, to prove the last committed bytes are real and
 // still arrive at the ~216 GB/s of kernel_p1 §2.2 rather than through some
@@ -667,7 +667,7 @@ int main(int argc, char** argv) {
         std::puts(std::format("  freed; available physical is now {:.2f} GiB",
                               gib(mem_status().avail_phys)).c_str());
     }
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if (o.run_oversize && b_ok && !interrupted()) run_oversize_probe(dev, o);
 #endif
 

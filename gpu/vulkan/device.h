@@ -22,7 +22,7 @@
 
 #include "core/status.h"
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 #include <vulkan/vulkan.h>
 #endif
 
@@ -137,7 +137,7 @@ public:
     // prints and what tools/envcheck reports.
     static Result<std::vector<DeviceCaps>> enumerate(bool enable_validation = false);
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkInstance       instance() const { return instance_; }
     VkPhysicalDevice physical() const { return physical_; }
     VkDevice         handle()   const { return device_; }
@@ -148,7 +148,7 @@ private:
     bool     valid_ = false;
     DeviceCaps caps_{};
     uint32_t compute_family_ = 0;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkInstance       instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physical_ = VK_NULL_HANDLE;
     VkDevice         device_   = VK_NULL_HANDLE;

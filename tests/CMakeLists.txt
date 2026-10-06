@@ -35,7 +35,7 @@ add_executable(deepmoe_tests
 
 target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
 target_compile_definitions(deepmoe_tests PRIVATE
-    DEEPMOE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+    CACHEDMOE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
 
@@ -253,10 +253,10 @@ set_tests_properties("suite.trace" PROPERTIES LABELS "unit")
 #   deepmoe run --state traces/l3_64 --steps 80 --resident-only off --warm-cache
 #   tools/oracle_l3_ppl.py steps   --out traces/l3_64 --continuation cand.json
 find_package(Python3 COMPONENTS Interpreter QUIET)
-set(DEEPMOE_PYTHON "" CACHE FILEPATH
-    "python with torch/numpy for the tools/ oracles (default: .venv, then Python3)")
-if(DEEPMOE_PYTHON)
-    set(_l3ppl_py "${DEEPMOE_PYTHON}")
+cachedmoe_cache(PYTHON FILEPATH
+    "python with torch/numpy for the tools/ oracles (default: .venv, then Python3)" "")
+if(CACHEDMOE_PYTHON)
+    set(_l3ppl_py "${CACHEDMOE_PYTHON}")
 elseif(EXISTS "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
     set(_l3ppl_py "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
 elseif(EXISTS "${CMAKE_SOURCE_DIR}/.venv/bin/python")
@@ -279,14 +279,14 @@ endif()
 
 # Every suite that runs deepmoe_tests reports a skip by EXIT CODE, never by
 # matching its output: tests/test_framework.h run_all returns 77 when no case
-# failed and at least one printed a DEEPMOE_SKIP_PRINTF notice, and 1 when any
+# failed and at least one printed a CACHEDMOE_SKIP_PRINTF notice, and 1 when any
 # case failed. The SKIP_REGULAR_EXPRESSION this replaces won over a failure --
 # one skipping case hid every failing case in the same suite as "Skipped"
 # (verified with a two-line ctest project, 2026-09-28). bench.l3_ppl64 is a
 # Python driver that only prints its SKIP before doing anything, so it keeps
 # its regex.
-get_property(_deepmoe_all_tests DIRECTORY PROPERTY TESTS)
-foreach(_t IN LISTS _deepmoe_all_tests)
+get_property(_cachedmoe_all_tests DIRECTORY PROPERTY TESTS)
+foreach(_t IN LISTS _cachedmoe_all_tests)
     if(NOT _t STREQUAL "bench.l3_ppl64")
         set_tests_properties("${_t}" PROPERTIES SKIP_RETURN_CODE 77)
     endif()

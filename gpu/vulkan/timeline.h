@@ -59,14 +59,14 @@ public:
     // loop does not wait on the host -- that is the point of §7.1.
     Result<void> wait(TimelineValue v, std::chrono::nanoseconds timeout);
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkSemaphore handle() const { return semaphore_; }
 #endif
 
 private:
     Device* device_ = nullptr;
     bool    valid_  = false;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkSemaphore semaphore_ = VK_NULL_HANDLE;
 #endif
 };

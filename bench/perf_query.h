@@ -52,7 +52,7 @@
 
 namespace deepmoe::bench {
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 
 class PerfCounters {
 public:
@@ -295,6 +295,6 @@ private:
     PFN_vkReleaseProfilingLockKHR release_ = nullptr;
 };
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::bench

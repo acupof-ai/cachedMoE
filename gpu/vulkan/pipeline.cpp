@@ -27,7 +27,7 @@ Result<std::vector<uint32_t>> load_spirv(const std::string& path) {
 
 Pipeline::~Pipeline() { destroy(); }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Pipeline::Pipeline(Pipeline&& o) noexcept { device_ = o.device_; name_ = std::move(o.name_); valid_ = o.valid_; o.valid_ = false; }
 Pipeline& Pipeline::operator=(Pipeline&& o) noexcept {
@@ -41,7 +41,7 @@ Result<void> Pipeline::create(Device&, const std::string& spv_path,
     // Still validate the file, so a shader-only CI job catches a broken .spv
     // without a GPU.
     if (auto w = load_spirv(spv_path); !w) return std::unexpected(w.error());
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 
 #else
@@ -253,6 +253,6 @@ Result<void> Pipeline::create(Device& device, const std::string& spv_path,
     return {};
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu

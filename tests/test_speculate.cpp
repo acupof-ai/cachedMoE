@@ -32,7 +32,7 @@
 using namespace deepmoe;
 using cpu::dspark::kPositions;
 
-DEEPMOE_TEST(speculate, live_confidence_selects_only_a_contiguous_prefix_including_zero) {
+CACHEDMOE_TEST(speculate, live_confidence_selects_only_a_contiguous_prefix_including_zero) {
     std::array<float,5> c{3.f,1.f,-1.f,4.f,5.f};
     auto zero=runtime::draft_prefix_from_confidence(c,4.f);REQUIRE_OK(zero);CHECK_EQ(*zero,0u);
     auto two=runtime::draft_prefix_from_confidence(c,1.f);REQUIRE_OK(two);CHECK_EQ(*two,2u);
@@ -175,7 +175,7 @@ std::vector<uint32_t> make_truth(uint32_t n) {
 
 // The invariant: greedy speculation emits the non-speculative stream, for every
 // fixed k and every draft quality.
-DEEPMOE_TEST(speculate, greedy_reproduces_the_unspeculated_stream) {
+CACHEDMOE_TEST(speculate, greedy_reproduces_the_unspeculated_stream) {
     const auto truth = make_truth(400);
     const uint32_t p_start = 64;
 
@@ -223,7 +223,7 @@ DEEPMOE_TEST(speculate, greedy_reproduces_the_unspeculated_stream) {
 
 // The rollback shape: a snapshot every cycle, a restore only when something was
 // rejected, and the restored slots are exactly the rejected positions'.
-DEEPMOE_TEST(speculate, a_rejection_restores_exactly_the_rejected_slots) {
+CACHEDMOE_TEST(speculate, a_rejection_restores_exactly_the_rejected_slots) {
     const auto truth = make_truth(400);
     ReplayModel model(truth);
     model.hit_every = 3;
@@ -259,7 +259,7 @@ DEEPMOE_TEST(speculate, a_rejection_restores_exactly_the_rejected_slots) {
 }
 
 // k from the confidence head, and that it never asks for nothing.
-DEEPMOE_TEST(speculate, confidence_chooses_k_by_the_prefix_rule) {
+CACHEDMOE_TEST(speculate, confidence_chooses_k_by_the_prefix_rule) {
     const auto truth = make_truth(200);
     for (double theta : {0.3, 0.5, 0.7, 0.95}) {
         ReplayModel model(truth);
@@ -288,7 +288,7 @@ DEEPMOE_TEST(speculate, confidence_chooses_k_by_the_prefix_rule) {
 }
 
 // The cycle refuses rather than silently doing nothing when it is misconfigured.
-DEEPMOE_TEST(speculate, a_misconfigured_cycle_refuses) {
+CACHEDMOE_TEST(speculate, a_misconfigured_cycle_refuses) {
     const auto truth = make_truth(100);
     ReplayModel model(truth);
     std::vector<uint32_t> out;
@@ -311,7 +311,7 @@ DEEPMOE_TEST(speculate, a_misconfigured_cycle_refuses) {
     CHECK(std::string(runtime::spec_mode_name(runtime::SpecMode::Sample)) == "sample");
 }
 
-DEEPMOE_TEST(speculate, topk_accepts_only_original_prefix) {
+CACHEDMOE_TEST(speculate, topk_accepts_only_original_prefix) {
     // draft 1 is rank 2, draft 2 is rank 3, draft 3 is rank 1.
     std::array<uint32_t,3> path{1,2,3};
     std::array<float,16> matrix{4,3,2,1, 4,3,2,1, 1,2,3,4, 4,3,2,1};

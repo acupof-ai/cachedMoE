@@ -48,8 +48,8 @@
 #include "tests/l2_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -148,16 +148,16 @@ struct LayerRig {
 
 }  // namespace
 
-DEEPMOE_TEST(gpu_layer, decode_layer_vs_oracle) {
+CACHEDMOE_TEST(gpu_layer, decode_layer_vs_oracle) {
     if (skip_without_model("gpu_layer")) return;
-    auto set = load_l2(std::string(DEEPMOE_TEST_DATA_DIR) + "/l2");
+    auto set = load_l2(std::string(CACHEDMOE_TEST_DATA_DIR) + "/l2");
     if (!set) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer: no L2 data (%s)\n", set.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_layer: no L2 data (%s)\n", set.error().str().c_str());
         return;
     }
     LayerRig rig;
     if (!rig.bring_up(/*cache_slots=*/8)) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_layer: %s\n", rig.why.c_str());
         return;
     }
     const TextConfig& c = rig.config.text;
@@ -293,12 +293,12 @@ namespace {
 
 std::string mgt1_root() {
     if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MGT1_DIR")) return e;
-    return std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/mgt1";
+    return std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/mgt1";
 }
 std::string mgt1_state_dir(const std::string& ctx) {
-    if (ctx == "l3") return std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
+    if (ctx == "l3") return std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3";
     const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR");
-    return (e ? std::string(e) : std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/longctx") +
+    return (e ? std::string(e) : std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/longctx") +
            "/" + ctx;
 }
 bool mgt1_exists(const std::string& path) {
@@ -427,7 +427,7 @@ CedSrc ced_src(const TextConfig& c, uint32_t L) {
 // Track T's C(M) curve. Its own suite name so `ctest -R suite.gpu_layer` (which
 // substring-matches "gpu_layer.") does not pull 480 timed iteration groups into
 // a correctness run.
-DEEPMOE_TEST(mgt1, m_curve) {
+CACHEDMOE_TEST(mgt1, m_curve) {
     if (skip_without_model("gpu_layer")) return;
     const std::string root = mgt1_root();
     Mgt1Rig rig;
@@ -447,13 +447,13 @@ DEEPMOE_TEST(mgt1, m_curve) {
         if (!mgt1_ctx_wanted(ctx)) continue;
         const std::string sdir = mgt1_state_dir(ctx);
         if (!mgt1_exists(sdir + "/index.json")) {
-            DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1_m_curve %s: no state at %s\n", ctx.c_str(),
+            CACHEDMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1_m_curve %s: no state at %s\n", ctx.c_str(),
                         sdir.c_str());
             continue;
         }
         if (!up) {
             if (!rig.bring_up()) {
-                DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1_m_curve: %s\n", rig.why.c_str());
+                CACHEDMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1_m_curve: %s\n", rig.why.c_str());
                 return;
             }
             up = true;
@@ -552,12 +552,12 @@ DEEPMOE_TEST(mgt1, m_curve) {
 // wrong unit moves the answer far more than bf16 rounding, which the second
 // check pins by requiring the unrounded values to give a visibly different
 // answer.
-DEEPMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
+CACHEDMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
     if (skip_without_model("mgt1.gemv_bf16_activations_match_the_fp32_path")) return;
 
     gpu::Device device;
     if (auto r = device.create({}); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", r.error().str().c_str());
         return;
     }
     gpu::MemoryAllocator alloc;
@@ -577,13 +577,13 @@ DEEPMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
     store::PinnedStore pinned;
     {
         auto c = V41Config::load(store::ShardSet::join(dir, "config.json"));
-        if (!c) { DEEPMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", c.error().str().c_str()); return; }
+        if (!c) { CACHEDMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", c.error().str().c_str()); return; }
         cfg = std::move(*c);
         auto mf = Manifest::load(store::ShardSet::join(dir, layout::kManifestFile));
-        if (!mf) { DEEPMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", mf.error().str().c_str()); return; }
+        if (!mf) { CACHEDMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", mf.error().str().c_str()); return; }
         manifest = std::move(*mf);
         if (auto r = shards.open_all(dir, manifest, true); !r) {
-            DEEPMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", r.error().str().c_str());
+            CACHEDMOE_SKIP_PRINTF("      SKIP mgt1: %s\n", r.error().str().c_str());
             return;
         }
         IoConfig iocfg;
@@ -599,7 +599,7 @@ DEEPMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
     const uint32_t L = 0;
     auto names = store::pinned_layer_tensors(manifest, L);
     if (auto r = pinned.load(manifest, shards, io, names); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP mgt1: pinned: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP mgt1: pinned: %s\n", r.error().str().c_str());
         io.stop();
         return;
     }
@@ -685,7 +685,7 @@ DEEPMOE_TEST(mgt1, gemv_bf16_activations_match_the_fp32_path) {
     io.stop();
 }
 
-DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
+CACHEDMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
     if (skip_without_model("gpu_layer")) return;
     const std::string root = mgt1_root();
     Mgt1Rig rig;
@@ -694,14 +694,14 @@ DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
         if (!mgt1_ctx_wanted(ctx)) continue;
         const std::string sdir = mgt1_state_dir(ctx);
         if (!mgt1_exists(root + "/" + ctx + "/l2/index.json") || !mgt1_exists(sdir + "/index.json")) {
-            DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1 %s: no reference at %s or state at %s "
+            CACHEDMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1 %s: no reference at %s or state at %s "
                         "(CACHEDMOE_MGT1_DIR, CACHEDMOE_LONGCTX_DIR)\n", ctx.c_str(),
                         (root + "/" + ctx).c_str(), sdir.c_str());
             continue;
         }
         if (!up) {
             if (!rig.bring_up()) {
-                DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1: %s\n", rig.why.c_str());
+                CACHEDMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1: %s\n", rig.why.c_str());
                 return;
             }
             up = true;

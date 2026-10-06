@@ -213,7 +213,7 @@ private:
     CommandBuffer    own_cmd_{};
     bool             own_cmd_valid_ = false;
     GpuBuffer        table_{};
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     std::vector<VkDescriptorSet> sets_;
 #endif
 };

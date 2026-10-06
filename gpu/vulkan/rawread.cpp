@@ -20,17 +20,17 @@ uint64_t RawReadKernel::round_bytes(uint64_t bytes) const {
     return (bytes / gran) * gran;
 }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> RawReadKernel::create(Device&, MemoryAllocator&, const std::string&, uint32_t) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void RawReadKernel::destroy() {}
 Result<RawReadResult> RawReadKernel::run(const GpuBuffer&, uint64_t, uint32_t) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<RawReadResult> RawReadKernel::run_empty(const GpuBuffer&, uint32_t) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 
 #else
@@ -134,11 +134,11 @@ Result<RawReadResult> RawReadKernel::run(const GpuBuffer& src, uint64_t bytes, u
     return out;
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 namespace deepmoe::gpu {
 
 Result<RawReadResult> RawReadKernel::run_empty(const GpuBuffer& src, uint32_t dispatches) {

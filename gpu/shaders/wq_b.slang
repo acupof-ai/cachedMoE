@@ -21,7 +21,7 @@
 
 // The LDS budget for the staged activation: wq_b's K is q_lora_rank = 1280, and a
 // workgroup never stages more (fp8_gemv.slang).
-#define DEEPMOE_GEMV_MAX_K 1280
+#define CACHEDMOE_GEMV_MAX_K 1280
 
 #include "fp8_gemv.slang"
 

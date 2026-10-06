@@ -43,8 +43,8 @@
 #include "tests/l1_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -58,7 +58,7 @@ std::string join(const std::string& dir, const char* name) {
 }
 
 std::string data_path(const std::string& name) {
-    return std::string(DEEPMOE_TEST_DATA_DIR) + "/" + name;
+    return std::string(CACHEDMOE_TEST_DATA_DIR) + "/" + name;
 }
 
 // One routed expert's FFN, in fp32, straight out of an ExpertStore slot.
@@ -98,7 +98,7 @@ Result<std::vector<float>> expert_ffn_from_slot(const std::byte* base,
 
 // Fills (0, 0) through the real IoEngine and checks the slot byte for byte
 // against the oracle, then runs the FFN out of the slot's pointers.
-DEEPMOE_TEST(integration, fills_an_expert_slot_from_the_real_checkpoint) {
+CACHEDMOE_TEST(integration, fills_an_expert_slot_from_the_real_checkpoint) {
     if (skip_without_model("integration.fills_an_expert_slot_from_the_real_checkpoint")) return;
     const std::string dir = model_dir();
 
@@ -205,7 +205,7 @@ DEEPMOE_TEST(integration, fills_an_expert_slot_from_the_real_checkpoint) {
 // The same expert store, driven twice, at the other end of the model: the last
 // routed expert of the last layer, whose weights run is the last thing in its
 // shard and therefore the read that runs past EOF.
-DEEPMOE_TEST(integration, fills_the_last_expert_of_the_last_layer) {
+CACHEDMOE_TEST(integration, fills_the_last_expert_of_the_last_layer) {
     if (skip_without_model("integration.fills_the_last_expert_of_the_last_layer")) return;
     const std::string dir = model_dir();
 
@@ -267,7 +267,7 @@ DEEPMOE_TEST(integration, fills_the_last_expert_of_the_last_layer) {
 // really exist -- including the 43 experts whose weights run is the last thing
 // in its shard and therefore ends a few hundred bytes past EOF once widened to
 // a sector boundary (storage/backend.h ChunkRequest::min_bytes).
-DEEPMOE_TEST(integration, every_run_is_a_legal_unbuffered_read) {
+CACHEDMOE_TEST(integration, every_run_is_a_legal_unbuffered_read) {
     if (skip_without_model("integration.every_run_is_a_legal_unbuffered_read")) return;
     const std::string dir = model_dir();
 
@@ -331,7 +331,7 @@ DEEPMOE_TEST(integration, every_run_is_a_legal_unbuffered_read) {
 // whole IoEngine; (b) the P3 backfill fills only free slots, in heat order,
 // stamped older than any demand access, and a demand miss on a key it is still
 // filling joins that fill instead of reading it twice.
-DEEPMOE_TEST(integration, planner_wait_layer_is_lru_and_backfill_joins) {
+CACHEDMOE_TEST(integration, planner_wait_layer_is_lru_and_backfill_joins) {
     if (skip_without_model("integration.planner_wait_layer_is_lru_and_backfill_joins")) return;
     const std::string dir = model_dir();
     auto mf = Manifest::load(join(dir, layout::kManifestFile));
@@ -466,7 +466,7 @@ DEEPMOE_TEST(integration, planner_wait_layer_is_lru_and_backfill_joins) {
 // the order to the budget, and so passed only residents). The pass must select
 // NON-resident candidates, and must not evict more slots than it has candidates
 // for. This pins the planner half of that invariant.
-DEEPMOE_TEST(integration, a_backfill_order_of_resident_keys_fetches_nothing) {
+CACHEDMOE_TEST(integration, a_backfill_order_of_resident_keys_fetches_nothing) {
     if (skip_without_model("integration.a_backfill_order_of_resident_keys_fetches_nothing")) return;
     const std::string dir = model_dir();
     auto mf = Manifest::load(join(dir, layout::kManifestFile));

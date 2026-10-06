@@ -18,8 +18,8 @@
 #include "tests/l1_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -48,7 +48,7 @@ std::vector<uint8_t> short_window_bytes(const runtime::Engine& engine) {
 
 } // namespace
 
-DEEPMOE_TEST(decode_mode, strict_names_and_uninitialized_rejection) {
+CACHEDMOE_TEST(decode_mode, strict_names_and_uninitialized_rejection) {
     for (const auto mode : {DecodeMode::MaskSpec, DecodeMode::MaskPlain, DecodeMode::OffPlain}) {
         auto parsed = runtime::parse_decode_mode(runtime::decode_mode_name(mode));
         REQUIRE_OK(parsed);
@@ -65,7 +65,7 @@ DEEPMOE_TEST(decode_mode, strict_names_and_uninitialized_rejection) {
     CHECK(engine.available_decode_modes().empty());
 }
 
-DEEPMOE_TEST(decode_mode, inherited_policy_is_a_move_only_noop) {
+CACHEDMOE_TEST(decode_mode, inherited_policy_is_a_move_only_noop) {
     runtime::Engine engine;
     engine.set_resident_only(runtime::Engine::ResidentOnly::Verify);
     auto inherited = engine.request_decode_policy(DecodeMode::Startup);
@@ -79,7 +79,7 @@ DEEPMOE_TEST(decode_mode, inherited_policy_is_a_move_only_noop) {
     CHECK(engine.resident_only() == runtime::Engine::ResidentOnly::Verify);
 }
 
-DEEPMOE_TEST(decode_mode, stats_report_actual_policy_and_unset_metadata) {
+CACHEDMOE_TEST(decode_mode, stats_report_actual_policy_and_unset_metadata) {
     runtime::GenerateStats stats;
     auto unset = json_parse("{" + stats.json_fields() + "}");
     REQUIRE_OK(unset);
@@ -100,7 +100,7 @@ DEEPMOE_TEST(decode_mode, stats_report_actual_policy_and_unset_metadata) {
     CHECK(spec->bool_or("speculation_enabled", false));
 }
 
-DEEPMOE_TEST(decode_mode, exact_boundary_waits_for_capacity_not_all_fills) {
+CACHEDMOE_TEST(decode_mode, exact_boundary_waits_for_capacity_not_all_fills) {
     store::ExpertStore store;
     CacheConfig cache;
     cache.slots_per_slab = 4;
@@ -133,7 +133,7 @@ DEEPMOE_TEST(decode_mode, exact_boundary_waits_for_capacity_not_all_fills) {
     CHECK_EQ(store.completed_timeline(), 0ull);
 }
 
-DEEPMOE_TEST(decode_mode, exact_boundary_rechecks_completion_after_initial_snapshot) {
+CACHEDMOE_TEST(decode_mode, exact_boundary_rechecks_completion_after_initial_snapshot) {
     store::ExpertStore store;
     CacheConfig cache;
     cache.slots_per_slab = 1;
@@ -153,7 +153,7 @@ DEEPMOE_TEST(decode_mode, exact_boundary_rechecks_completion_after_initial_snaps
     CHECK_EQ(ready->waits, 0u);
 }
 
-DEEPMOE_TEST(decode_mode, exact_boundary_rejects_guards_without_clearing_them) {
+CACHEDMOE_TEST(decode_mode, exact_boundary_rejects_guards_without_clearing_them) {
     store::ExpertStore store;
     CacheConfig cache;
     cache.slots_per_slab = 1;
@@ -177,7 +177,7 @@ DEEPMOE_TEST(decode_mode, exact_boundary_rejects_guards_without_clearing_them) {
     CHECK_EQ(ready->waits, 0u);
 }
 
-DEEPMOE_TEST(decode_mode, exact_boundary_timeout_and_failed_fill) {
+CACHEDMOE_TEST(decode_mode, exact_boundary_timeout_and_failed_fill) {
     store::ExpertStore store;
     CacheConfig cache;
     cache.slots_per_slab = 1;
@@ -199,12 +199,12 @@ DEEPMOE_TEST(decode_mode, exact_boundary_timeout_and_failed_fill) {
     CHECK_EQ(store.stats().fills_failed, 1ull);
 }
 
-DEEPMOE_TEST(gpu_request_policy, retained_window_sessions_and_exact_plain) {
+CACHEDMOE_TEST(gpu_request_policy, retained_window_sessions_and_exact_plain) {
     if (skip_without_model("gpu_request_policy.retained_window_sessions_and_exact_plain")) return;
     ScopedFlag dynamic("CACHEDMOE_MASK_DYNAMIC_LRU", "1"), onecb("CACHEDMOE_DSPARK_ONECB", "1"),
                route("CACHEDMOE_BATCH_GPU_ROUTE", "0"), mega("CACHEDMOE_DSPARK_MEGA", "0"),
                wait("CACHEDMOE_MASK_WAIT_TAU", nullptr);
-    auto state = runtime::DecodeState::load(std::string(DEEPMOE_TEST_DATA_DIR) + "/l3");
+    auto state = runtime::DecodeState::load(std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3");
     REQUIRE_OK(state);
     REQUIRE(state->prompt_ids().size() >= 8);
     auto tokenizer = text::Tokenizer::load(std::string(model_dir()) + "/tokenizer.json");
@@ -224,7 +224,7 @@ DEEPMOE_TEST(gpu_request_policy, retained_window_sessions_and_exact_plain) {
     engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     runtime::SessionConfig session_config;
     session_config.max_context = 512;
-    session_config.engram_tables_dir = std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
+    session_config.engram_tables_dir = std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3";
     REQUIRE_OK(engine.begin_session(session_config));
     engine.set_mask_cache_fixed(true);
     CHECK(engine.available_decode_modes().empty());

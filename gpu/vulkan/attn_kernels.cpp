@@ -101,10 +101,10 @@ Result<GpuScratch::View> GpuScratch::alloc(uint64_t bytes, uint64_t align) {
     return v;
 }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> AttnRunner::create(Device&, MemoryAllocator&, const std::string&, const AttnSpec&) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void AttnRunner::destroy() {}
 uint32_t AttnRunner::rows_per_lane(AttnStage) const { return 1; }
@@ -385,6 +385,6 @@ Result<void> AttnRunner::dispatch_now(AttnStage s, const void* push, uint32_t pu
     return submit_and_wait(*device_, cmd);
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu

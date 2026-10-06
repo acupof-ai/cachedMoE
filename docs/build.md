@@ -31,8 +31,8 @@
 
 设计写的是 C++20，代码也按 C++20 写（除 `std::expected` 外不用 C++23 特性）。但
 `std::expected` 定义在 `<expected>` 里，libc++ 把整个头文件挡在 `_LIBCPP_STD_VER >= 23`
-之后，`-std=c++20` 下 `core/status.h` 直接编不过。因此 `cmake/deepmoe_options.cmake` 里
-`DEEPMOE_CXX_STANDARD = 23`。这是骨架阶段唯一被迫偏离设计文档的地方。
+之后，`-std=c++20` 下 `core/status.h` 直接编不过。因此 `cmake/cachedmoe_options.cmake` 里
+`CACHEDMOE_CXX_STANDARD = 23`。这是骨架阶段唯一被迫偏离设计文档的地方。
 
 另一个 libc++/mingw 的小坑：带 size 的对齐 `operator delete(void*, size_t, align_val_t)`
 在这个目标下没有声明，`core/align.h` 用的是两参数的 `operator delete(void*, align_val_t)`。
@@ -44,13 +44,13 @@ cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/zig-toolchain.cmake -D
 cmake --build build
 ```
 
-选项（`cmake/deepmoe_options.cmake`）：
+选项（`cmake/cachedmoe_options.cmake`）：
 
 | 选项 | 默认 | 作用 |
 |---|---|---|
-| `DEEPMOE_BUILD_TESTS` | ON | 构建 `deepmoe_tests` 并注册到 ctest |
-| `DEEPMOE_ENABLE_VULKAN` | ON | Vulkan 后端；关掉后 `gpu/` 各类返回 `Unavailable`，其余照常编译 |
-| `DEEPMOE_ENABLE_DIRECTSTORAGE` | OFF | DirectStorage 后端；还要 `dstorage.h` 在 include 路径上（SDK 不在仓库里，也不下载） |
+| `CACHEDMOE_BUILD_TESTS` | ON | 构建 `deepmoe_tests` 并注册到 ctest |
+| `CACHEDMOE_ENABLE_VULKAN` | ON | Vulkan 后端；关掉后 `gpu/` 各类返回 `Unavailable`，其余照常编译 |
+| `CACHEDMOE_ENABLE_DIRECTSTORAGE` | OFF | DirectStorage 后端；还要 `dstorage.h` 在 include 路径上（SDK 不在仓库里，也不下载） |
 
 产物：
 

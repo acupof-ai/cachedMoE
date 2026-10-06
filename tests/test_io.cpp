@@ -24,7 +24,7 @@
 using namespace deepmoe;
 using namespace deepmoe::storage;
 
-DEEPMOE_TEST(io, gpu_options_resolve_once_and_preserve_overrides) {
+CACHEDMOE_TEST(io, gpu_options_resolve_once_and_preserve_overrides) {
     test::ScopedEnvironment route("CACHEDMOE_BATCH_GPU_ROUTE"), early("CACHEDMOE_BATCH_ENGRAM_EARLY"),
       onecb("CACHEDMOE_DSPARK_ONECB"), readout("CACHEDMOE_SPEC_GPU_READOUT");
     route.set("1");
@@ -50,7 +50,7 @@ DEEPMOE_TEST(io, gpu_options_resolve_once_and_preserve_overrides) {
     CHECK(next.batch_gpu_route);
 }
 
-DEEPMOE_TEST(io, weighted_mask_rejects_invalid_limits_and_speculation) {
+CACHEDMOE_TEST(io, weighted_mask_rejects_invalid_limits_and_speculation) {
     test::ScopedEnvironment tau("CACHEDMOE_MASK_WAIT_TAU"), budget("CACHEDMOE_MASK_WAIT_BUDGET");
     budget.set(nullptr);
     RuntimeConfig cfg;
@@ -66,7 +66,7 @@ DEEPMOE_TEST(io, weighted_mask_rejects_invalid_limits_and_speculation) {
     CHECK_ERR(engine.init(cfg), Err::FailedPrecondition);
 }
 
-DEEPMOE_TEST(io, mask_cache_policy_default_and_explicit_override) {
+CACHEDMOE_TEST(io, mask_cache_policy_default_and_explicit_override) {
     test::ScopedEnvironment environment("CACHEDMOE_MASK_DYNAMIC_LRU");
     auto set = [&](const char* value) { environment.set(value); };
     runtime::Engine normal;
@@ -127,7 +127,7 @@ Result<ScratchFile> make_scratch(const char* name, uint64_t bytes, bool unbuffer
 
 }  // namespace
 
-DEEPMOE_TEST(io, chunk_planning) {
+CACHEDMOE_TEST(io, chunk_planning) {
     // design §9.6: an 18.8 MB expert is split into 4 MiB chunks.
     auto c = IoEngine::plan_chunks(0, layout::kExpertBytes, 4u << 20, 4096);
     REQUIRE_EQ(c.size(), 5u);
@@ -146,7 +146,7 @@ DEEPMOE_TEST(io, chunk_planning) {
     CHECK_EQ(c[4].bytes % 4096, 0u);
 }
 
-DEEPMOE_TEST(io, engram_wait_bypasses_async_p0_backlog) {
+CACHEDMOE_TEST(io, engram_wait_bypasses_async_p0_backlog) {
     const size_t bytes = 1u << 20;
     auto content = pattern_bytes(bytes);
     auto scratch = make_scratch("engramdeadline", bytes, false);
@@ -228,7 +228,7 @@ DEEPMOE_TEST(io, engram_wait_bypasses_async_p0_backlog) {
     engine.stop();
 }
 
-DEEPMOE_TEST(io, engram_wait_has_a_bounded_issue_window) {
+CACHEDMOE_TEST(io, engram_wait_has_a_bounded_issue_window) {
     const size_t bytes = 2u << 20;
     auto content = pattern_bytes(bytes);
     auto scratch = make_scratch("engramdeadlinecap", bytes, false);
@@ -272,7 +272,7 @@ DEEPMOE_TEST(io, engram_wait_has_a_bounded_issue_window) {
     engine.stop();
 }
 
-DEEPMOE_TEST(io, chunk_planning_edge_cases) {
+CACHEDMOE_TEST(io, chunk_planning_edge_cases) {
     CHECK(IoEngine::plan_chunks(0, 0, 4096, 4096).empty());
     CHECK(IoEngine::plan_chunks(0, 4096, 0, 4096).empty());
 
@@ -296,7 +296,7 @@ DEEPMOE_TEST(io, chunk_planning_edge_cases) {
     CHECK_EQ(e[0].bytes, 4096u);
 }
 
-DEEPMOE_TEST(io, fake_backend_round_trip) {
+CACHEDMOE_TEST(io, fake_backend_round_trip) {
     const size_t kFileBytes = 1u << 20;
     auto content = pattern_bytes(kFileBytes);
     auto scratch = make_scratch("fake_rt", kFileBytes, false);
@@ -345,7 +345,7 @@ DEEPMOE_TEST(io, fake_backend_round_trip) {
     engine.stop();
 }
 
-DEEPMOE_TEST(io, priority_ordering_and_preemption) {
+CACHEDMOE_TEST(io, priority_ordering_and_preemption) {
     // design §9.6: P0 preempts. With completions held, the engine fills its
     // queue from the lowest-numbered non-empty class only, so a P0 submitted
     // after a P3 is still issued first.
@@ -427,7 +427,7 @@ DEEPMOE_TEST(io, priority_ordering_and_preemption) {
     engine.stop();
 }
 
-DEEPMOE_TEST(io, submit_validation_and_cancel) {
+CACHEDMOE_TEST(io, submit_validation_and_cancel) {
     const size_t kFileBytes = 1u << 20;
     auto scratch = make_scratch("valid", kFileBytes, false);
     REQUIRE_OK(scratch);
@@ -470,7 +470,7 @@ DEEPMOE_TEST(io, submit_validation_and_cancel) {
     CHECK_ERR(engine.submit(good, {}), Err::FailedPrecondition);
 }
 
-DEEPMOE_TEST(io, platform_backend_reads_a_real_unbuffered_file) {
+CACHEDMOE_TEST(io, platform_backend_reads_a_real_unbuffered_file) {
     // The real thing: FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED + IOCP on
     // Windows (design §9.6), O_DIRECT + io_uring on Linux.
     const uint64_t kBytes = 8u << 20;
@@ -549,7 +549,7 @@ DEEPMOE_TEST(io, platform_backend_reads_a_real_unbuffered_file) {
     CHECK_OK(remove_file(path));
 }
 
-DEEPMOE_TEST(io, opening_a_missing_file_fails_cleanly) {
+CACHEDMOE_TEST(io, opening_a_missing_file_fails_cleanly) {
     auto f = File::open_read(temp_dir() + "/deepmoe_does_not_exist_9f3a.bin", true);
     CHECK(!f);
     CHECK_EQ(f.error().code, Err::Io);
@@ -564,7 +564,7 @@ DEEPMOE_TEST(io, opening_a_missing_file_fails_cleanly) {
 // throttled to IoEngine::kBackgroundOpsWhileBusy chunks while P0 work is recent,
 // and gets the whole queue depth back once the drive has been quiet for
 // kBackgroundQuiet.
-DEEPMOE_TEST(io, background_is_throttled_while_p0_is_recent) {
+CACHEDMOE_TEST(io, background_is_throttled_while_p0_is_recent) {
     const size_t kFileBytes = 4u << 20;
     auto content = pattern_bytes(kFileBytes);
     auto scratch = make_scratch("bgthrottle", kFileBytes, false);
@@ -605,7 +605,7 @@ DEEPMOE_TEST(io, background_is_throttled_while_p0_is_recent) {
 
 // STATUS §7 0v: the engram class runs at its own depth (IoConfig::engram_qd),
 // not the background classes' 8, and the backfill keeps 8.
-DEEPMOE_TEST(io, engram_rows_run_at_their_own_depth) {
+CACHEDMOE_TEST(io, engram_rows_run_at_their_own_depth) {
     const size_t kFileBytes = 1u << 20;
     auto content = pattern_bytes(kFileBytes);
     auto scratch = make_scratch("engramqd", kFileBytes, false);
@@ -672,7 +672,7 @@ DEEPMOE_TEST(io, engram_rows_run_at_their_own_depth) {
 // Dropping the divide moves that crossover from 3.6 queued runs to 0 -- every
 // request that finds D: non-empty goes to the USB drive, which is the mutation
 // this case is written against.
-DEEPMOE_TEST(io, source_router_respects_weights) {
+CACHEDMOE_TEST(io, source_router_respects_weights) {
     const double w[2] = {4.6, 1.0};
     constexpr uint64_t kRun = 9u << 20;      // one expert run
 
@@ -724,7 +724,7 @@ DEEPMOE_TEST(io, source_router_respects_weights) {
 // Degenerate inputs the runtime actually produces: one source, or a shard that
 // only the primary holds. Both have to come back as source 0, because that is
 // what makes "no mirror configured" byte-identical to the old behaviour.
-DEEPMOE_TEST(io, source_router_defaults_to_the_primary) {
+CACHEDMOE_TEST(io, source_router_defaults_to_the_primary) {
     const double w[2] = {4.6, 1.0};
     const uint64_t zero[2] = {0, 0};
     CHECK_EQ(pick_source(std::span<const double>(w, 1), std::span<const uint64_t>(zero, 1),
@@ -755,7 +755,7 @@ DEEPMOE_TEST(io, source_router_defaults_to_the_primary) {
 // eventually drop it on a long enough run for no reason. Deleting the reset in
 // note_success() (or counting `errors` instead of `consecutive`) is the
 // mutation this case is written against.
-DEEPMOE_TEST(io, source_health_drops_a_mirror_that_keeps_failing) {
+CACHEDMOE_TEST(io, source_health_drops_a_mirror_that_keeps_failing) {
     SourceHealth h(3);
     CHECK_EQ(h.live_mask(0b11), 0b11u);
 
@@ -811,7 +811,7 @@ DEEPMOE_TEST(io, source_health_drops_a_mirror_that_keeps_failing) {
 // A hot mirror rests at hot_c and comes back only at cool_c: in between it
 // stays whatever it was, so a drive sitting at the threshold does not flap in
 // and out of the router every second. The primary never rests.
-DEEPMOE_TEST(io, thermal_gate_rests_a_hot_mirror_with_hysteresis) {
+CACHEDMOE_TEST(io, thermal_gate_rests_a_hot_mirror_with_hysteresis) {
     ThermalGate t{80, 72, 0};
     CHECK(!t.update(1, 74));
     CHECK_EQ(t.live_mask(0b11), 0b11u);
@@ -850,7 +850,7 @@ DEEPMOE_TEST(io, thermal_gate_rests_a_hot_mirror_with_hysteresis) {
 //
 // Everything else in this test passes under that mutant; only the third block
 // notices, which is the point of writing it as its own block.
-DEEPMOE_TEST(io, keepalive_never_races_a_real_request) {
+CACHEDMOE_TEST(io, keepalive_never_races_a_real_request) {
     const int64_t ms = 1000000;
     const int64_t window = 15 * ms;
 
@@ -909,7 +909,7 @@ DEEPMOE_TEST(io, keepalive_never_races_a_real_request) {
 // not the run's bytes. A poke that landed in `bytes_completed` would inflate
 // `eff GB/s` and, worse, show up in the per-source byte split that every A/B
 // table in docs/p4_dual_source.md is read from.
-DEEPMOE_TEST(io, keepalive_is_off_without_a_second_source) {
+CACHEDMOE_TEST(io, keepalive_is_off_without_a_second_source) {
     const std::vector<std::byte> content = pattern_bytes(1u << 20);
     IoEngine engine;
     IoConfig cfg;
@@ -931,7 +931,7 @@ DEEPMOE_TEST(io, keepalive_is_off_without_a_second_source) {
     engine.stop();
 }
 
-DEEPMOE_TEST(io, no_mirror_leaves_the_stats_untouched) {
+CACHEDMOE_TEST(io, no_mirror_leaves_the_stats_untouched) {
     auto scratch = make_scratch("d2_nomirror", 4u << 20, false);
     REQUIRE(scratch.has_value());
     const std::vector<std::byte> content = pattern_bytes(4u << 20);
@@ -963,7 +963,7 @@ DEEPMOE_TEST(io, no_mirror_leaves_the_stats_untouched) {
 // cannot serve is now re-read from the primary: the caller sees the right
 // bytes, the mirror's error and failover counters say what happened, and a
 // failure on the PRIMARY is still reported (one retry, never a loop).
-DEEPMOE_TEST(io, mirror_error_is_reread_from_the_primary) {
+CACHEDMOE_TEST(io, mirror_error_is_reread_from_the_primary) {
     auto prim = make_scratch("lx_failover_p", 4u << 20, false);
     auto mirr = make_scratch("lx_failover_m", 4u << 20, false);
     REQUIRE(prim.has_value());
@@ -1020,7 +1020,7 @@ DEEPMOE_TEST(io, mirror_error_is_reread_from_the_primary) {
 // File::reopen keeps the handle's value and points it at whatever the path
 // names now -- a new inode, the way a remounted drive's file is one -- and
 // refuses, leaving the handle as it was, when that is not the same length.
-DEEPMOE_TEST(io, file_reopen_keeps_the_handle_and_reads_the_new_file) {
+CACHEDMOE_TEST(io, file_reopen_keeps_the_handle_and_reads_the_new_file) {
 #if !defined(_WIN32)
     constexpr uint64_t kBytes = 64 * 1024;
     auto a = make_scratch("reopen", kBytes, false);
@@ -1060,7 +1060,7 @@ DEEPMOE_TEST(io, file_reopen_keeps_the_handle_and_reads_the_new_file) {
 // re-pointed at a fresh open of its path -- the same handle value, so the
 // mirror table needs no change -- and it gets its whole error budget back. A
 // mirror whose file is gone stays out. (File::reopen is POSIX-only.)
-DEEPMOE_TEST(io, dropped_mirror_is_readmitted_when_it_answers_again) {
+CACHEDMOE_TEST(io, dropped_mirror_is_readmitted_when_it_answers_again) {
 #if !defined(_WIN32)
     auto prim = make_scratch("readmit_p", 2u << 20, false);
     auto mirr = make_scratch("readmit_m", 2u << 20, false);
@@ -1149,7 +1149,7 @@ DEEPMOE_TEST(io, dropped_mirror_is_readmitted_when_it_answers_again) {
 //
 // Mutation this pins: routing the request whole (the pre-ST behaviour) puts
 // all 16 chunks on one handle, and `per_file[1] == 0`.
-DEEPMOE_TEST(io, stripe_splits_one_p0_across_both_sources_by_weight) {
+CACHEDMOE_TEST(io, stripe_splits_one_p0_across_both_sources_by_weight) {
     auto prim = make_scratch("st_split_p", 2u << 20, false);
     auto mirr = make_scratch("st_split_m", 2u << 20, false);
     REQUIRE(prim.has_value());
@@ -1214,7 +1214,7 @@ DEEPMOE_TEST(io, stripe_splits_one_p0_across_both_sources_by_weight) {
 // Track ST: striping is the default with a mirror and never without one, and
 // it is a P0 policy -- the backfill keeps whole-request routing, and with
 // striping off (CACHEDMOE_MIRROR_STRIPE=0) a P0 does too.
-DEEPMOE_TEST(io, stripe_is_the_default_and_leaves_backfill_whole) {
+CACHEDMOE_TEST(io, stripe_is_the_default_and_leaves_backfill_whole) {
     auto prim = make_scratch("st_whole_p", 2u << 20, false);
     auto mirr = make_scratch("st_whole_m", 2u << 20, false);
     REQUIRE(prim.has_value());
@@ -1283,7 +1283,7 @@ DEEPMOE_TEST(io, stripe_is_the_default_and_leaves_backfill_whole) {
 // the right bytes, one failover is counted against the mirror, and no charge is
 // left behind (a leaked charge would make the router shun a drive forever).
 // A failure on the PRIMARY's own share is still an error the caller sees.
-DEEPMOE_TEST(io, striped_mirror_error_is_reread_from_the_primary) {
+CACHEDMOE_TEST(io, striped_mirror_error_is_reread_from_the_primary) {
     auto prim = make_scratch("st_fail_p", 2u << 20, false);
     auto mirr = make_scratch("st_fail_m", 2u << 20, false);
     REQUIRE(prim.has_value());
@@ -1369,7 +1369,7 @@ DEEPMOE_TEST(io, striped_mirror_error_is_reread_from_the_primary) {
 // four times the rate, because it divides ~4 windows of bytes by 1 window of
 // time. A local scratch file has no wake-up, so the two calls below measure the
 // same steady rate and must agree; only the mutant makes them diverge.
-DEEPMOE_TEST(io, probe_does_not_count_its_warmup) {
+CACHEDMOE_TEST(io, probe_does_not_count_its_warmup) {
     // Eight 4 MiB blocks is probe_source_gbps's own minimum.
     const uint64_t kBytes = 64u << 20;
     auto scratch = make_scratch("d5_probe", kBytes, false);

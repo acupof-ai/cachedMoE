@@ -18,7 +18,7 @@
 
 using namespace deepmoe;
 
-DEEPMOE_TEST(align, round_up_and_down) {
+CACHEDMOE_TEST(align, round_up_and_down) {
     CHECK_EQ(align_up(0), 0u);
     CHECK_EQ(align_up(1), 4096u);
     CHECK_EQ(align_up(4096), 4096u);
@@ -33,7 +33,7 @@ DEEPMOE_TEST(align, round_up_and_down) {
     CHECK(!is_pow2(4097));
 }
 
-DEEPMOE_TEST(align, page_span_counts_straddling_pages) {
+CACHEDMOE_TEST(align, page_span_counts_straddling_pages) {
     CHECK_EQ(page_span(0, 0), 0u);
     CHECK_EQ(page_span(0, 1), 1u);
     CHECK_EQ(page_span(0, 4096), 1u);
@@ -43,7 +43,7 @@ DEEPMOE_TEST(align, page_span_counts_straddling_pages) {
     CHECK_EQ(page_span(0, layout::kEngramRowBytes), 1u);
 }
 
-DEEPMOE_TEST(align, aligned_buffer_is_page_aligned_and_moves) {
+CACHEDMOE_TEST(align, aligned_buffer_is_page_aligned_and_moves) {
     AlignedBuffer b(10000);
     REQUIRE(static_cast<bool>(b));
     CHECK(is_aligned(b.data()));
@@ -56,7 +56,7 @@ DEEPMOE_TEST(align, aligned_buffer_is_page_aligned_and_moves) {
     CHECK(!static_cast<bool>(empty));
 }
 
-DEEPMOE_TEST(layout, constants_match_the_design_document) {
+CACHEDMOE_TEST(layout, constants_match_the_design_document) {
     namespace L = layout;
     // design §2.3: one routed expert is exactly 4590 x 4 KiB.
     CHECK_EQ(L::kExpertBytes, 18800640ull);
@@ -82,7 +82,7 @@ DEEPMOE_TEST(layout, constants_match_the_design_document) {
     CHECK_CLOSE(L::kRoutedExpertTotalBytes / 1e9, 288.8, 0.01);
 }
 
-DEEPMOE_TEST(types, expert_key_packs_and_orders) {
+CACHEDMOE_TEST(types, expert_key_packs_and_orders) {
     ExpertKey a{5, 300}, b{5, 301}, c{6, 0};
     CHECK(a < b);
     CHECK(b < c);
@@ -93,7 +93,7 @@ DEEPMOE_TEST(types, expert_key_packs_and_orders) {
     CHECK(h(a) != h(c));
 }
 
-DEEPMOE_TEST(json, parses_scalars_and_containers) {
+CACHEDMOE_TEST(json, parses_scalars_and_containers) {
     auto v = json_parse(R"({"a":1,"b":-2.5,"c":"hi","d":true,"e":null,"f":[1,2,3],"g":{"h":4}})");
     REQUIRE_OK(v);
     CHECK_EQ(v->int_or("a", -1), 1);
@@ -109,7 +109,7 @@ DEEPMOE_TEST(json, parses_scalars_and_containers) {
     CHECK_EQ(v->size(), 7u);
 }
 
-DEEPMOE_TEST(json, keeps_large_integers_exact) {
+CACHEDMOE_TEST(json, keeps_large_integers_exact) {
     // Manifest byte offsets exceed 2^53; going through a double would lose them.
     auto v = json_parse(R"({"offset":9007199254740993,"bytes":18800640})");
     REQUIRE_OK(v);
@@ -119,7 +119,7 @@ DEEPMOE_TEST(json, keeps_large_integers_exact) {
     CHECK_EQ(v->uint_at("bytes").value_or(0), 18800640ull);
 }
 
-DEEPMOE_TEST(json, generate_stats_preserves_decode_boundary_precision) {
+CACHEDMOE_TEST(json, generate_stats_preserves_decode_boundary_precision) {
     runtime::GenerateStats st;
     st.decode_steps = 3;
     st.decode_ms = 125.25;
@@ -134,7 +134,7 @@ DEEPMOE_TEST(json, generate_stats_preserves_decode_boundary_precision) {
     CHECK_EQ(doc->int_or("decode_steps", -1), 3);
 }
 
-DEEPMOE_TEST(json, generate_stats_distinguishes_unset_clock_from_unix_zero) {
+CACHEDMOE_TEST(json, generate_stats_distinguishes_unset_clock_from_unix_zero) {
     runtime::GenerateStats st;
     auto missing = json_parse("{" + st.json_fields() + "}");
     REQUIRE_OK(missing);
@@ -148,7 +148,7 @@ DEEPMOE_TEST(json, generate_stats_distinguishes_unset_clock_from_unix_zero) {
     CHECK_EQ(epoch->double_or("decode_finished_unix", -1), 0.0);
 }
 
-DEEPMOE_TEST(json, handles_escapes_and_unicode) {
+CACHEDMOE_TEST(json, handles_escapes_and_unicode) {
     // Written with explicit backslashes (not a raw string) so the \u escapes
     // reach the parser as escapes rather than as literal UTF-8.
     const char* doc = "{\"s\":\"a\\\"b\\\\c\\nd\\u00e9\\ud83d\\ude00\"}";
@@ -164,7 +164,7 @@ DEEPMOE_TEST(json, handles_escapes_and_unicode) {
     CHECK_OK(lone);
 }
 
-DEEPMOE_TEST(json, rejects_malformed_input) {
+CACHEDMOE_TEST(json, rejects_malformed_input) {
     CHECK_ERR(json_parse("{"), Err::Corrupt);
     CHECK_ERR(json_parse("{\"a\":}"), Err::Corrupt);
     CHECK_ERR(json_parse("{\"a\":1,}"), Err::Corrupt);      // no trailing commas
@@ -177,7 +177,7 @@ DEEPMOE_TEST(json, rejects_malformed_input) {
     CHECK_ERR(json_parse(deep), Err::Corrupt);
 }
 
-DEEPMOE_TEST(json, missing_and_mistyped_keys) {
+CACHEDMOE_TEST(json, missing_and_mistyped_keys) {
     auto v = json_parse(R"({"a":1,"s":"x"})");
     REQUIRE_OK(v);
     CHECK_ERR(v->int_at("nope"), Err::NotFound);
@@ -186,13 +186,13 @@ DEEPMOE_TEST(json, missing_and_mistyped_keys) {
     CHECK_EQ(v->string_or("nope", "dflt"), std::string("dflt"));
 }
 
-DEEPMOE_TEST(json, tolerates_a_utf8_bom) {
+CACHEDMOE_TEST(json, tolerates_a_utf8_bom) {
     auto v = json_parse("\xEF\xBB\xBF{\"a\":1}");
     REQUIRE_OK(v);
     CHECK_EQ(v->int_or("a", 0), 1);
 }
 
-DEEPMOE_TEST(profiler, token_record_accumulates_and_serialises) {
+CACHEDMOE_TEST(profiler, token_record_accumulates_and_serialises) {
     Profiler p;
     p.set_enabled(false);                    // no sink, in-memory summary only
     p.token_begin(7);
@@ -235,7 +235,7 @@ DEEPMOE_TEST(profiler, token_record_accumulates_and_serialises) {
     CHECK_EQ(p.summary().expert_hits, 2u);
 }
 
-DEEPMOE_TEST(profiler, scoped_phase_records_time) {
+CACHEDMOE_TEST(profiler, scoped_phase_records_time) {
     Profiler p;
     p.set_enabled(false);
     p.token_begin(0);
@@ -251,7 +251,7 @@ DEEPMOE_TEST(profiler, scoped_phase_records_time) {
     CHECK_EQ(r.phase_ns[static_cast<size_t>(Phase::CpuSync)], 0u);
 }
 
-DEEPMOE_TEST(status, error_formatting) {
+CACHEDMOE_TEST(status, error_formatting) {
     Status s{Err::Io, "ReadFile", 5};
     CHECK(s.str().find("io") != std::string::npos);
     CHECK(s.str().find("ReadFile") != std::string::npos);
@@ -264,7 +264,7 @@ DEEPMOE_TEST(status, error_formatting) {
     CHECK_EQ(*ok, 42);
 }
 
-DEEPMOE_TEST(bytes, human_and_readers) {
+CACHEDMOE_TEST(bytes, human_and_readers) {
     CHECK_EQ(human_bytes(512), std::string("512 B"));
     CHECK_EQ(human_bytes(4096), std::string("4.00 KiB"));
     CHECK_EQ(human_bytes(18800640), std::string("17.93 MiB"));
@@ -281,7 +281,7 @@ DEEPMOE_TEST(bytes, human_and_readers) {
 
 // The streamed middle must preserve unaligned heads/tails and never overwrite
 // the destination guards; batch index-list strides are not 32-byte aligned.
-DEEPMOE_TEST(bytes, wc_readback_handles_unaligned_heads_and_tails) {
+CACHEDMOE_TEST(bytes, wc_readback_handles_unaligned_heads_and_tails) {
     alignas(32) uint8_t src[1024], dst[1024], expected[1024];
     for (size_t i=0;i<sizeof src;++i) src[i]=uint8_t(i*37u+11u);
     for (size_t offset=0;offset<32;++offset)

@@ -6,10 +6,10 @@ namespace deepmoe::gpu {
 
 DescriptorPool::~DescriptorPool() { destroy(); }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> DescriptorPool::create(Device&, uint32_t, uint32_t) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void DescriptorPool::destroy() { device_ = nullptr; }
 void DescriptorPool::reset() {}
@@ -83,7 +83,7 @@ Result<VkDescriptorSet> DescriptorPool::allocate(const Pipeline& pipeline,
     return set;
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu
 
@@ -91,12 +91,12 @@ Result<VkDescriptorSet> DescriptorPool::allocate(const Pipeline& pipeline,
 namespace deepmoe::gpu {
 ArgumentPages::~ArgumentPages(){destroy();}
 void ArgumentPages::destroy(){descriptors_.destroy();if(allocator_&&buffer_.valid())allocator_->free(buffer_);allocator_=nullptr;buffer_={};used_=capacity_=0;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 sets_.clear();
 #endif
 }
 Result<void> ArgumentPages::create(Device& dev,MemoryAllocator& alloc,uint32_t capacity){
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if(valid())return fail(Err::AlreadyExists,"argument pages already created");
     VkPhysicalDeviceProperties props{};vkGetPhysicalDeviceProperties(dev.physical(),&props);
     stride_=std::max<uint64_t>(256,props.limits.minStorageBufferOffsetAlignment);
@@ -107,7 +107,7 @@ Result<void> ArgumentPages::create(Device& dev,MemoryAllocator& alloc,uint32_t c
     return fail(Err::Unavailable,"no Vulkan");
 #endif
 }
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 Result<VkDescriptorSet> ArgumentPages::snapshot(const Pipeline& pipe,const uint64_t* ptr){
     if(!valid()||used_>=capacity_)return fail(Err::ResourceExhausted,"immutable argument pages exhausted");
     const auto i=used_++;std::memcpy(static_cast<std::byte*>(buffer_.host_ptr)+i*stride_,ptr,256);

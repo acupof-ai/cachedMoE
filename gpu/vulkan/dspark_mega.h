@@ -33,7 +33,7 @@ class DsparkMegaRunner {
     DescriptorPool descriptors_;
     CommandPool pool_;
     GpuBuffer plan_, state_;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkDescriptorSet set_ = VK_NULL_HANDLE;
 #endif
 };

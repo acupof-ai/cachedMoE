@@ -21,7 +21,7 @@
 // workgroups each re-staging a 5120-wide activation is more L2 traffic, not
 // less. wq_a is also the generic fp8 GEMV of the family, so 8192 keeps it able
 // to run any K in the model (fp8_gemv.slang).
-#define DEEPMOE_GEMV_MAX_K 8192
+#define CACHEDMOE_GEMV_MAX_K 8192
 
 #include "fp8_gemv.slang"
 

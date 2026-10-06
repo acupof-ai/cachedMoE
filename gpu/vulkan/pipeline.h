@@ -57,7 +57,7 @@ public:
 
     const std::string& name() const { return name_; }
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkPipeline            handle() const { return pipeline_; }
     VkPipelineLayout      layout() const { return layout_; }
     VkDescriptorSetLayout set_layout() const { return set_layout_; }
@@ -67,7 +67,7 @@ private:
     Device*     device_ = nullptr;
     std::string name_;
     bool        valid_ = false;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkShaderModule        module_     = VK_NULL_HANDLE;
     VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout      layout_     = VK_NULL_HANDLE;
@@ -76,7 +76,7 @@ private:
 };
 
 // Reads a SPIR-V file into words, checking the 0x07230203 magic. Implemented
-// regardless of DEEPMOE_ENABLE_VULKAN so the build can validate shader output
+// regardless of CACHEDMOE_ENABLE_VULKAN so the build can validate shader output
 // without a GPU.
 Result<std::vector<uint32_t>> load_spirv(const std::string& path);
 

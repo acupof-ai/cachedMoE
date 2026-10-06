@@ -1,15 +1,15 @@
 cmake_minimum_required(VERSION 3.25)
-project(deepmoe LANGUAGES C CXX)
+project(cachedmoe LANGUAGES C CXX)
 
-include(cmake/deepmoe_options.cmake)
+include(cmake/cachedmoe_options.cmake)
 
-set(CMAKE_CXX_STANDARD ${DEEPMOE_CXX_STANDARD})
+set(CMAKE_CXX_STANDARD ${CACHEDMOE_CXX_STANDARD})
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-deepmoe_report()
+cachedmoe_report()
 
-if(DEEPMOE_ENABLE_VULKAN)
+if(CACHEDMOE_ENABLE_VULKAN)
     find_package(Vulkan REQUIRED)
 endif()
 
@@ -22,20 +22,21 @@ function(add_slang_shader target src)
     set(_mega_args "")
     set(_mega_memory_command "")
     if(name STREQUAL "dspark_mega" OR name STREQUAL "dspark_onecb")
-        find_program(DEEPMOE_FUSION_PYTHON python3 REQUIRED)
+        cachedmoe_resolve_cache(FUSION_PYTHON FILEPATH "Python interpreter for DSpark shader generation")
+        find_program(CACHEDMOE_FUSION_PYTHON python3 REQUIRED)
         file(GLOB _mega_sources "${CMAKE_SOURCE_DIR}/gpu/shaders/*.slang")
         if(NOT TARGET dspark_ops_generated)
         add_custom_command(
             OUTPUT "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/shaders"
-            COMMAND "${DEEPMOE_FUSION_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/fuse_dspark.py"
+            COMMAND "${CACHEDMOE_FUSION_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/fuse_dspark.py"
                     "${CMAKE_SOURCE_DIR}/gpu/shaders" "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
             DEPENDS "${CMAKE_SOURCE_DIR}/tools/fuse_dspark.py" ${_mega_sources}
             VERBATIM)
         add_custom_target(dspark_ops_generated DEPENDS "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang")
         endif()
         if(name STREQUAL "dspark_mega")
-        set(_mega_memory_command COMMAND "${DEEPMOE_FUSION_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/dspark_spirv_memory.py" "${out}")
+        set(_mega_memory_command COMMAND "${CACHEDMOE_FUSION_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/dspark_spirv_memory.py" "${out}")
         endif()
         list(APPEND _mega_args "${CMAKE_BINARY_DIR}/shaders/dspark_mega_ops.slang"
                               "${CMAKE_SOURCE_DIR}/tools/dspark_spirv_memory.py")
@@ -54,13 +55,13 @@ function(add_slang_shader target src)
 endfunction()
 
 set(_shader_dep_paths "${CMAKE_SOURCE_DIR}/gpu/shaders/dspark_plan_layout.h")
-foreach(_d IN LISTS DEEPMOE_SHADER_DEPS)
+foreach(_d IN LISTS CACHEDMOE_SHADER_DEPS)
     list(APPEND _shader_dep_paths "${CMAKE_SOURCE_DIR}/${_d}")
 endforeach()
 
 # Every kernel of design §7.14 is compiled and validated by the `shaders` target.
 set(_shader_targets "")
-foreach(_s IN LISTS DEEPMOE_SHADERS)
+foreach(_s IN LISTS CACHEDMOE_SHADERS)
     get_filename_component(_n "${_s}" NAME_WE)
     add_slang_shader("shader_${_n}" "${CMAKE_SOURCE_DIR}/${_s}")
     list(APPEND _shader_targets "shader_${_n}")
@@ -68,43 +69,44 @@ endforeach()
 add_custom_target(shaders ALL DEPENDS ${_shader_targets})
 
 # --- deepmoe_core: everything except the CLI and the benchmarks --------------
-set(_deepmoe_sources
-    ${DEEPMOE_CORE_SOURCES}
-    ${DEEPMOE_MODEL_SOURCES}
-    ${DEEPMOE_CPU_SOURCES}
-    ${DEEPMOE_STORAGE_SOURCES}
-    ${DEEPMOE_STORE_SOURCES}
-    ${DEEPMOE_GPU_SOURCES}
-    ${DEEPMOE_RUNTIME_SOURCES}
-    ${DEEPMOE_TEXT_SOURCES})
+set(_cachedmoe_sources
+    ${CACHEDMOE_CORE_SOURCES}
+    ${CACHEDMOE_MODEL_SOURCES}
+    ${CACHEDMOE_CPU_SOURCES}
+    ${CACHEDMOE_STORAGE_SOURCES}
+    ${CACHEDMOE_STORE_SOURCES}
+    ${CACHEDMOE_GPU_SOURCES}
+    ${CACHEDMOE_RUNTIME_SOURCES}
+    ${CACHEDMOE_TEXT_SOURCES})
 
 if(WIN32)
-    list(APPEND _deepmoe_sources ${DEEPMOE_STORAGE_WINDOWS_SOURCES})
+    list(APPEND _cachedmoe_sources ${CACHEDMOE_STORAGE_WINDOWS_SOURCES})
 else()
-    list(APPEND _deepmoe_sources ${DEEPMOE_STORAGE_LINUX_SOURCES})
+    list(APPEND _cachedmoe_sources ${CACHEDMOE_STORAGE_LINUX_SOURCES})
 endif()
 
-add_library(deepmoe_core STATIC ${_deepmoe_sources})
+add_library(deepmoe_core STATIC ${_cachedmoe_sources})
 target_include_directories(deepmoe_core PUBLIC "${CMAKE_SOURCE_DIR}")
-target_compile_features(deepmoe_core PUBLIC cxx_std_${DEEPMOE_CXX_STANDARD})
+target_compile_features(deepmoe_core PUBLIC cxx_std_${CACHEDMOE_CXX_STANDARD})
 # Where `shaders` drops the .spv files; the environment variable of the same
 # name overrides it so a relocated build tree still runs.
-target_compile_definitions(deepmoe_core PUBLIC DEEPMOE_SHADER_DIR="${CMAKE_BINARY_DIR}/shaders")
+target_compile_definitions(deepmoe_core PUBLIC CACHEDMOE_SHADER_DIR="${CMAKE_BINARY_DIR}/shaders")
 
-if(DEEPMOE_ENABLE_VULKAN)
+if(CACHEDMOE_ENABLE_VULKAN)
     target_link_libraries(deepmoe_core PUBLIC Vulkan::Vulkan)
-    target_compile_definitions(deepmoe_core PUBLIC DEEPMOE_ENABLE_VULKAN)
+    target_compile_definitions(deepmoe_core PUBLIC CACHEDMOE_ENABLE_VULKAN)
 endif()
-if(DEEPMOE_ENABLE_DIRECTSTORAGE)
-    target_compile_definitions(deepmoe_core PRIVATE DEEPMOE_ENABLE_DIRECTSTORAGE)
+if(CACHEDMOE_ENABLE_DIRECTSTORAGE)
+    target_compile_definitions(deepmoe_core PRIVATE CACHEDMOE_ENABLE_DIRECTSTORAGE)
     # Only switch the real backend on when the SDK header is actually reachable;
     # design §9.6 says do not vendor or download it.
     include(CheckIncludeFileCXX)
-    check_include_file_cxx("dstorage.h" DEEPMOE_HAVE_DSTORAGE_H)
-    if(DEEPMOE_HAVE_DSTORAGE_H)
-        target_compile_definitions(deepmoe_core PRIVATE DEEPMOE_HAVE_DSTORAGE_H)
+    cachedmoe_resolve_cache(HAVE_DSTORAGE_H INTERNAL "Have the DirectStorage SDK header")
+    check_include_file_cxx("dstorage.h" CACHEDMOE_HAVE_DSTORAGE_H)
+    if(CACHEDMOE_HAVE_DSTORAGE_H)
+        target_compile_definitions(deepmoe_core PRIVATE CACHEDMOE_HAVE_DSTORAGE_H)
     else()
-        message(STATUS "deepmoe: dstorage.h not found; the DirectStorage backend reports unavailable")
+        message(STATUS "cachedmoe: dstorage.h not found; the DirectStorage backend reports unavailable")
     endif()
 endif()
 if(NOT WIN32)
@@ -164,14 +166,14 @@ foreach(_probe dspark_grid_probe residency_probe sharing_probe capacity_probe ho
 endforeach()
 
 # --- environment self-check (design docs/build.md) ---------------------------
-if(DEEPMOE_ENABLE_VULKAN)
+if(CACHEDMOE_ENABLE_VULKAN)
     add_executable(envcheck tools/envcheck/vkinfo.cpp)
     target_link_libraries(envcheck PRIVATE Vulkan::Vulkan)
     add_dependencies(envcheck shader_moe_gemv_fp4)
 endif()
 
 # --- tests -------------------------------------------------------------------
-if(DEEPMOE_BUILD_TESTS)
+if(CACHEDMOE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()

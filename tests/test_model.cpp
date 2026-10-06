@@ -19,17 +19,17 @@
 using namespace deepmoe;
 
 // Set by tests/CMakeLists.txt so the test finds its data whatever the cwd is.
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 namespace {
 std::string data_path(const char* name) {
-    return std::string(DEEPMOE_TEST_DATA_DIR) + "/" + name;
+    return std::string(CACHEDMOE_TEST_DATA_DIR) + "/" + name;
 }
 }  // namespace
 
-DEEPMOE_TEST(v41_config, parses_the_real_config_json) {
+CACHEDMOE_TEST(v41_config, parses_the_real_config_json) {
     auto c = V41Config::load(data_path("v41_config.json"));
     REQUIRE_OK(c);
 
@@ -150,7 +150,7 @@ DEEPMOE_TEST(v41_config, parses_the_real_config_json) {
     CHECK(!t.is_engram_layer(13));
 }
 
-DEEPMOE_TEST(v41_config, agrees_with_the_hard_coded_layout) {
+CACHEDMOE_TEST(v41_config, agrees_with_the_hard_coded_layout) {
     // model/layout.h is what the kernels are compiled against; if the
     // checkpoint ever disagrees the runtime must refuse to start.
     auto c = V41Config::load(data_path("v41_config.json"));
@@ -173,7 +173,7 @@ DEEPMOE_TEST(v41_config, agrees_with_the_hard_coded_layout) {
     CHECK(r2.error().message.find("expert_dtype") != std::string::npos);
 }
 
-DEEPMOE_TEST(v41_config, rejects_a_truncated_or_wrong_config) {
+CACHEDMOE_TEST(v41_config, rejects_a_truncated_or_wrong_config) {
     CHECK_ERR(V41Config::parse("{}"), Err::Corrupt);                 // no quantization_config
     CHECK_ERR(V41Config::parse(R"({"quantization_config":{}})"), Err::Corrupt);  // no text_config
     // A text_config missing a required field names the field.
@@ -183,7 +183,7 @@ DEEPMOE_TEST(v41_config, rejects_a_truncated_or_wrong_config) {
     CHECK_ERR(V41Config::load("tests/data/definitely_not_here.json"), Err::Io);
 }
 
-DEEPMOE_TEST(manifest, parses_schema_v2) {
+CACHEDMOE_TEST(manifest, parses_schema_v2) {
     // The shape tools/manifest.py writes (design §5.1 v0.5): an address book
     // over the original shards, with sector-aligned runs and per-part skews.
     const std::string json = R"({
@@ -332,7 +332,7 @@ DEEPMOE_TEST(manifest, parses_schema_v2) {
     CHECK_EQ(m->file_bytes(), 970533624ull + 7389759032ull);
 }
 
-DEEPMOE_TEST(manifest, parses_a_slice_of_the_real_checkpoint) {
+CACHEDMOE_TEST(manifest, parses_a_slice_of_the_real_checkpoint) {
     // tests/data/manifest_v2_slice.json is a verbatim cut of the manifest
     // tools/manifest.py wrote for the real 48-shard D:\models checkpoint: all 48
     // file entries, a handful of tensors, three experts each from layers 0, 39
@@ -394,7 +394,7 @@ DEEPMOE_TEST(manifest, parses_a_slice_of_the_real_checkpoint) {
     CHECK_OK(m->validate());
 }
 
-DEEPMOE_TEST(manifest, catches_inconsistencies) {
+CACHEDMOE_TEST(manifest, catches_inconsistencies) {
     auto base = [](std::string_view experts, std::string_view tensors = R"("t": {
             "file": 0, "offset": 0, "bytes": 16, "dtype": "bf16", "shape": [8]})") {
         return std::string(R"({"version": 2, "alignment": 4096,
@@ -467,7 +467,7 @@ DEEPMOE_TEST(manifest, catches_inconsistencies) {
     CHECK_ERR(Manifest::load(data_path("no_such_manifest.json")), Err::Io);
 }
 
-DEEPMOE_TEST(manifest, expert_part_names_round_trip) {
+CACHEDMOE_TEST(manifest, expert_part_names_round_trip) {
     for (uint8_t i = 0; i < kExpertPartCount; ++i) {
         const auto p = static_cast<ExpertPart>(i);
         auto back = expert_part_from_string(expert_part_name(p));
@@ -479,7 +479,7 @@ DEEPMOE_TEST(manifest, expert_part_names_round_trip) {
     CHECK(!expert_part_from_string("").has_value());
 }
 
-DEEPMOE_TEST(manifest, align_read_widens_to_sectors) {
+CACHEDMOE_TEST(manifest, align_read_widens_to_sectors) {
     // The arithmetic every run in the manifest is built from.
     auto r = align_read(3, 4100, 8);
     CHECK_EQ(r.file, 3u);
@@ -501,7 +501,7 @@ DEEPMOE_TEST(manifest, align_read_widens_to_sectors) {
     CHECK_EQ(t.skew, 0u);
 }
 
-DEEPMOE_TEST(manifest, dtype_names_round_trip) {
+CACHEDMOE_TEST(manifest, dtype_names_round_trip) {
     CHECK_EQ(quant_from_string("fp4_e2m1"), QuantType::Fp4E2M1);
     CHECK_EQ(quant_from_string("fp4"), QuantType::Fp4E2M1);
     CHECK_EQ(quant_from_string("fp8_e4m3"), QuantType::Fp8E4M3);
@@ -514,7 +514,7 @@ DEEPMOE_TEST(manifest, dtype_names_round_trip) {
     CHECK_EQ(quant_bits(QuantType::Bf16), 16u);
 }
 
-DEEPMOE_TEST(block_info, derives_layer_roles_from_the_config) {
+CACHEDMOE_TEST(block_info, derives_layer_roles_from_the_config) {
     // Cross-check runtime/block.h against the real config.
     auto c = V41Config::load(data_path("v41_config.json"));
     REQUIRE_OK(c);
@@ -546,7 +546,7 @@ DEEPMOE_TEST(block_info, derives_layer_roles_from_the_config) {
     CHECK_EQ(b40.attn.compress_ratio, 0u);   // mtp blocks are window only
 }
 
-DEEPMOE_TEST(kvcache, geometry_matches_the_design_budget) {
+CACHEDMOE_TEST(kvcache, geometry_matches_the_design_budget) {
     auto c = V41Config::load(data_path("v41_config.json"));
     REQUIRE_OK(c);
     runtime::KvGeometry g;

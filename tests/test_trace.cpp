@@ -52,7 +52,7 @@ struct FakeGpu {
 
 }  // namespace
 
-DEEPMOE_TEST(trace, record_layout_is_32_bytes_at_fixed_offsets) {
+CACHEDMOE_TEST(trace, record_layout_is_32_bytes_at_fixed_offsets) {
     REQUIRE_EQ(sizeof(Record), size_t(32));
 
     Record r;
@@ -96,7 +96,7 @@ DEEPMOE_TEST(trace, record_layout_is_32_bytes_at_fixed_offsets) {
     CHECK_EQ(back.end_ns, r.end_ns);
 }
 
-DEEPMOE_TEST(trace, header_round_trips_and_rejects_a_foreign_file) {
+CACHEDMOE_TEST(trace, header_round_trips_and_rejects_a_foreign_file) {
     Header h;
     h.timestamp_period_ns = 10.0;
     h.record_count        = 1234;
@@ -128,7 +128,7 @@ DEEPMOE_TEST(trace, header_round_trips_and_rejects_a_foreign_file) {
 // Slot i gets tick `100 * i`, and the period is 10 ns, so dispatch d of the
 // token occupies [2000*d, 2000*d + 1000] ns and the gap to the previous one is
 // 1000 ns. Those are the three numbers tools/trace_timeline.py prints.
-DEEPMOE_TEST(trace, synthetic_token_resolves_to_busy_and_gap) {
+CACHEDMOE_TEST(trace, synthetic_token_resolves_to_busy_and_gap) {
     const std::string path = temp_path("synth");
     FakeGpu gpu;
     gpu.slots = 64;
@@ -179,7 +179,7 @@ DEEPMOE_TEST(trace, synthetic_token_resolves_to_busy_and_gap) {
     std::remove(path.c_str());
 }
 
-DEEPMOE_TEST(trace, a_pool_that_runs_out_is_flagged_not_silent) {
+CACHEDMOE_TEST(trace, a_pool_that_runs_out_is_flagged_not_silent) {
     const std::string path = temp_path("short");
     FakeGpu gpu;
     gpu.slots = 3;  // enough for one pair and one lone begin
@@ -206,7 +206,7 @@ DEEPMOE_TEST(trace, a_pool_that_runs_out_is_flagged_not_silent) {
     std::remove(path.c_str());
 }
 
-DEEPMOE_TEST(trace, a_wrapped_tick_counter_does_not_produce_a_negative_span) {
+CACHEDMOE_TEST(trace, a_wrapped_tick_counter_does_not_produce_a_negative_span) {
     const std::string path = temp_path("wrap");
     // 32 valid bits: begin near the top, end just past the wrap.
     FakeGpu gpu;
@@ -233,7 +233,7 @@ DEEPMOE_TEST(trace, a_wrapped_tick_counter_does_not_produce_a_negative_span) {
     std::remove(path.c_str());
 }
 
-DEEPMOE_TEST(trace, a_tracer_with_no_sink_is_a_null_test) {
+CACHEDMOE_TEST(trace, a_tracer_with_no_sink_is_a_null_test) {
     Tracer t;
     CHECK(!t.enabled());
     CHECK_EQ(open_dispatch(&t, 0, Cls::Attention, 0, "s"), kNoDispatch);

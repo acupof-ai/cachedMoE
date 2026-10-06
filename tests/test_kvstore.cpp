@@ -22,8 +22,8 @@
 #include "runtime/kvstore.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -31,7 +31,7 @@ using runtime::KvStoreConfig;
 
 namespace {
 
-std::string cfg_path() { return std::string(DEEPMOE_TEST_DATA_DIR) + "/v41_config.json"; }
+std::string cfg_path() { return std::string(CACHEDMOE_TEST_DATA_DIR) + "/v41_config.json"; }
 
 const float kMag[8] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f};
 
@@ -65,7 +65,7 @@ void quantise_row(const float* x, uint32_t n, uint32_t block, bool e8m0, uint16_
 
 bool skip_without_gpu(gpu::Device& dev) {
     if (auto r = dev.create(); !r) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu: kvstore needs a Vulkan device (%s)\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu: kvstore needs a Vulkan device (%s)\n", r.error().str().c_str());
         return true;
     }
     return false;
@@ -73,7 +73,7 @@ bool skip_without_gpu(gpu::Device& dev) {
 
 }  // namespace
 
-DEEPMOE_TEST(kvstore, accounting_per_source_planes) {
+CACHEDMOE_TEST(kvstore, accounting_per_source_planes) {
     auto c = V41Config::load(cfg_path());
     REQUIRE_OK(c);
     const TextConfig& t = c->text;
@@ -114,7 +114,7 @@ DEEPMOE_TEST(kvstore, accounting_per_source_planes) {
     CHECK(old.total_bytes(17074) > 870'000'000ull);
 }
 
-DEEPMOE_TEST(kvstore, fp4_packing_is_bit_exact) {
+CACHEDMOE_TEST(kvstore, fp4_packing_is_bit_exact) {
     std::mt19937 rng(1234);
     std::normal_distribution<float> nd(0.0f, 1.0f);
     uint32_t rows_ok = 0, rows = 0;
@@ -146,7 +146,7 @@ DEEPMOE_TEST(kvstore, fp4_packing_is_bit_exact) {
     CHECK(!runtime::pack_fp4_row(off.data(), 512, 16, false, nib.data(), sc.data()));
 }
 
-DEEPMOE_TEST(kvcache, geometry_counts_index_keys_on_kv_sources) {
+CACHEDMOE_TEST(kvcache, geometry_counts_index_keys_on_kv_sources) {
     auto c = V41Config::load(cfg_path());
     REQUIRE_OK(c);
     runtime::KvGeometry g;
@@ -156,7 +156,7 @@ DEEPMOE_TEST(kvcache, geometry_counts_index_keys_on_kv_sources) {
     CHECK_EQ(g.indexer_bytes(c->text), (3ull * 32768 + 65536) * 68);
 }
 
-DEEPMOE_TEST(gpu, kvstore_planes_growth_floor_and_packing) {
+CACHEDMOE_TEST(gpu, kvstore_planes_growth_floor_and_packing) {
     gpu::Device dev;
     if (skip_without_gpu(dev)) return;
     gpu::MemoryAllocator alloc;
@@ -295,7 +295,7 @@ DEEPMOE_TEST(gpu, kvstore_planes_growth_floor_and_packing) {
 // still round-trips its rows. A plane must lie wholly inside one slab, so a
 // plane address plus a row offset is still one address; the pack/unpack pair is
 // what proves it.
-DEEPMOE_TEST(gpu, kvstore_measured_bytes_and_64k_slabs) {
+CACHEDMOE_TEST(gpu, kvstore_measured_bytes_and_64k_slabs) {
     gpu::Device dev;
     if (skip_without_gpu(dev)) return;
     gpu::MemoryAllocator alloc;
@@ -435,7 +435,7 @@ DEEPMOE_TEST(gpu, kvstore_measured_bytes_and_64k_slabs) {
 // fix is a snapshot of the <= k slots it will write, and a restore when the
 // prefix is short -- which is only exact if the bytes come back unchanged AND a
 // slot nobody wrote is left alone.
-DEEPMOE_TEST(gpu, kvstore_ring_snapshot_restores_the_rejected_slots) {
+CACHEDMOE_TEST(gpu, kvstore_ring_snapshot_restores_the_rejected_slots) {
     gpu::Device dev;
     if (skip_without_gpu(dev)) return;
     gpu::MemoryAllocator alloc;
@@ -562,7 +562,7 @@ DEEPMOE_TEST(gpu, kvstore_ring_snapshot_restores_the_rejected_slots) {
 // `resolve_ring` calls, and this pins it against the definition: write every
 // position of a context of n tokens into slot `p % window` in order, then ask
 // what each slot holds.
-DEEPMOE_TEST(kvstore, ring_slot_positions_match_a_replayed_write_order) {
+CACHEDMOE_TEST(kvstore, ring_slot_positions_match_a_replayed_write_order) {
     for (uint32_t window : {1u, 2u, 8u, 128u}) {
         for (uint32_t n : {0u, 1u, 7u, 8u, 9u, 127u, 128u, 129u, 1000u}) {
             // The definition: every position below n, written in order.

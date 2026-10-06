@@ -17,8 +17,8 @@
 #include "tests/l2_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -35,19 +35,19 @@ struct Arm {
 
 } // namespace
 
-DEEPMOE_TEST(gpu_dspark, benchmark_switch_keeps_draft_bits_and_one_target_call) {
+CACHEDMOE_TEST(gpu_dspark, benchmark_switch_keeps_draft_bits_and_one_target_call) {
     if (skip_without_model("gpu_dspark.benchmark_switch_keeps_draft_bits_and_one_target_call"))
         return;
     ScopedFlag onecb("CACHEDMOE_DSPARK_ONECB", "1"), route("CACHEDMOE_BATCH_GPU_ROUTE", "1"),
                mega("CACHEDMOE_DSPARK_MEGA", "0"), dynamic("CACHEDMOE_MASK_DYNAMIC_LRU", "1"),
                wait("CACHEDMOE_MASK_WAIT_TAU", nullptr);
-    auto golden = load_l2(std::string(DEEPMOE_TEST_DATA_DIR) + "/dspark");
+    auto golden = load_l2(std::string(CACHEDMOE_TEST_DATA_DIR) + "/dspark");
     REQUIRE_OK(golden);
     const L2Step* step = nullptr;
     for (const auto& candidate : golden->steps)
         if (candidate.step == "golden_pos64") step = &candidate;
     REQUIRE(step);
-    auto state = runtime::DecodeState::load(std::string(DEEPMOE_TEST_DATA_DIR) + "/l3");
+    auto state = runtime::DecodeState::load(std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3");
     REQUIRE_OK(state);
     REQUIRE(state->prompt_ids().size() >= 8);
 
@@ -64,7 +64,7 @@ DEEPMOE_TEST(gpu_dspark, benchmark_switch_keeps_draft_bits_and_one_target_call) 
     engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     runtime::SessionConfig sc;
     sc.max_context = 256;
-    sc.engram_tables_dir = std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
+    sc.engram_tables_dir = std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3";
     REQUIRE_OK(engine.begin_session(sc));
 
     const std::array arms{Arm{5, true, true}, Arm{2, true, true}, Arm{5, true, false},

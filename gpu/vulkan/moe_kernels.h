@@ -264,7 +264,7 @@ private:
     Pipeline gpu_copy_,gpu_mean_,gpu_route_,gpu_up_,gpu_down_,gpu_hq_;
     GpuBuffer gpu_snapshot_,gpu_args_,gpu_indirect_;
     DescriptorPool gpu_descriptors_;uint32_t gpu_layers_=0;uint64_t gpu_table_stride_=0,gpu_arg_stride_=256;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     std::vector<VkDescriptorSet> gpu_route_sets_,gpu_up_sets_,gpu_down_sets_;
 #endif
 
@@ -307,7 +307,7 @@ private:
 
     GpuBuffer table_{}, ids_{}, list_{}, routew_{}, x_{}, h_{}, y_{};
     GpuBuffer list_alt_{}, list_sh_{};
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkDescriptorSet set_a_sh_ = VK_NULL_HANDLE;
     VkDescriptorSet set_hq_sh_ = VK_NULL_HANDLE;
     VkDescriptorSet set_xact_ = VK_NULL_HANDLE;
@@ -320,7 +320,7 @@ private:
 #endif
 };
 
-// Where the build put the .spv files: DEEPMOE_SHADER_DIR, overridable with the
+// Where the build put the .spv files: CACHEDMOE_SHADER_DIR, overridable with the
 // environment variable of the same name so a moved build tree still runs.
 std::string default_shader_dir();
 

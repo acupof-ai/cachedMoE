@@ -15,14 +15,14 @@
 #include "tests/test_framework.h"
 
 // Set by tests/CMakeLists.txt so the test finds its data whatever the cwd is.
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
 using namespace deepmoe::cpu;
 
-DEEPMOE_TEST(dequant, fp4_e2m1_table_is_exact) {
+CACHEDMOE_TEST(dequant, fp4_e2m1_table_is_exact) {
     // design appendix A: E2M1 takes {0, .5, 1, 1.5, 2, 3, 4, 6} with a sign bit.
     const float want[16] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f,
                             -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f};
@@ -35,7 +35,7 @@ DEEPMOE_TEST(dequant, fp4_e2m1_table_is_exact) {
     CHECK(!std::signbit(kFp4E2M1Table[0]));
 }
 
-DEEPMOE_TEST(dequant, fp8_e4m3_table_matches_the_ocp_spec) {
+CACHEDMOE_TEST(dequant, fp8_e4m3_table_matches_the_ocp_spec) {
     // 1-4-3, bias 7, no infinities, max magnitude 448, 0x7F/0xFF are the only NaNs.
     CHECK_EQ(fp8_e4m3_to_float(0x00), 0.0f);
     CHECK(std::signbit(fp8_e4m3_to_float(0x80)));
@@ -61,7 +61,7 @@ DEEPMOE_TEST(dequant, fp8_e4m3_table_matches_the_ocp_spec) {
     CHECK_EQ(nans, 2);
 }
 
-DEEPMOE_TEST(dequant, e8m0_scale) {
+CACHEDMOE_TEST(dequant, e8m0_scale) {
     CHECK_EQ(e8m0_to_float(127), 1.0f);
     CHECK_EQ(e8m0_to_float(128), 2.0f);
     CHECK_EQ(e8m0_to_float(126), 0.5f);
@@ -72,7 +72,7 @@ DEEPMOE_TEST(dequant, e8m0_scale) {
     CHECK_EQ(e8m0_scale(3.0f, 125), 0.75f);
 }
 
-DEEPMOE_TEST(dequant, fp4_low_nibble_is_the_even_element) {
+CACHEDMOE_TEST(dequant, fp4_low_nibble_is_the_even_element) {
     // design appendix A / PyTorch float4_e2m1fn_x2.
     std::vector<uint8_t> packed(16, 0);
     std::vector<uint8_t> scales(1, 127);           // 2^0
@@ -88,7 +88,7 @@ DEEPMOE_TEST(dequant, fp4_low_nibble_is_the_even_element) {
     CHECK_EQ(fp4_nibble(packed, 1), 5u);
 }
 
-DEEPMOE_TEST(dequant, fp4_row_applies_the_block_scale) {
+CACHEDMOE_TEST(dequant, fp4_row_applies_the_block_scale) {
     std::vector<uint8_t> packed(32, 0);            // 64 elements
     std::vector<uint8_t> scales{129, 125};         // 2^2 for block 0, 2^-2 for block 1
     for (auto& b : packed) b = static_cast<uint8_t>((2u << 4) | 2u);   // every element 1.0
@@ -98,7 +98,7 @@ DEEPMOE_TEST(dequant, fp4_row_applies_the_block_scale) {
     for (size_t i = 32; i < 64; ++i) CHECK_EQ(out[i], 0.25f);
 }
 
-DEEPMOE_TEST(dequant, fp4_row_rejects_bad_shapes) {
+CACHEDMOE_TEST(dequant, fp4_row_rejects_bad_shapes) {
     std::vector<uint8_t> packed(16), scales(1);
     std::vector<float> out(32);
     CHECK_ERR(dequant_fp4_row(packed, scales, 31, out), Err::InvalidArgument);  // not a multiple of 32
@@ -110,7 +110,7 @@ DEEPMOE_TEST(dequant, fp4_row_rejects_bad_shapes) {
     CHECK_ERR(dequant_fp4_row(packed, bad_scales, 32, out), Err::Corrupt);
 }
 
-DEEPMOE_TEST(dequant, fp8_row_uses_tiled_scales) {
+CACHEDMOE_TEST(dequant, fp8_row_uses_tiled_scales) {
     std::vector<uint8_t> bytes(64, 0x38);          // every element 1.0
     std::vector<uint8_t> scales{128, 127};         // block 0 -> x2, block 1 -> x1
     std::vector<float> out(64);
@@ -119,7 +119,7 @@ DEEPMOE_TEST(dequant, fp8_row_uses_tiled_scales) {
     for (size_t i = 32; i < 64; ++i) CHECK_EQ(out[i], 1.0f);
 }
 
-DEEPMOE_TEST(dequant, fp8_matrix_row_shares_a_scale_across_32_rows) {
+CACHEDMOE_TEST(dequant, fp8_matrix_row_shares_a_scale_across_32_rows) {
     // A [64, 32] fp8 matrix has a [2, 1] scale plane: rows 0..31 share one
     // exponent, rows 32..63 the other (design appendix A).
     const size_t rows = 64, K = 32;
@@ -135,7 +135,7 @@ DEEPMOE_TEST(dequant, fp8_matrix_row_shares_a_scale_across_32_rows) {
     CHECK_ERR(dequant_fp8_matrix_row(w, s, 64, rows, K, out), Err::OutOfRange);
 }
 
-DEEPMOE_TEST(dequant, bf16_and_fp16_round_trip) {
+CACHEDMOE_TEST(dequant, bf16_and_fp16_round_trip) {
     const float vals[] = {0.0f, 1.0f, -1.0f, 0.5f, 3.14159f, -2.71828f, 65504.0f, 1e-4f};
     for (float v : vals) {
         // bf16 keeps 8 mantissa bits: ~1e-2 relative.
@@ -154,7 +154,7 @@ DEEPMOE_TEST(dequant, bf16_and_fp16_round_trip) {
     CHECK_CLOSE(bf16_to_float(float_to_bf16(1e10f)), 1e10f, 1e-2);
 }
 
-DEEPMOE_TEST(dequant, gemv_fp4_reference_matches_a_hand_sum) {
+CACHEDMOE_TEST(dequant, gemv_fp4_reference_matches_a_hand_sum) {
     // 2 rows x 64 K. Row 0: all 1.0 at scale 2^0. Row 1: all 2.0 at scale 2^1.
     const size_t rows = 2, K = 64;
     std::vector<uint8_t> w(rows * K / 2);
@@ -171,7 +171,7 @@ DEEPMOE_TEST(dequant, gemv_fp4_reference_matches_a_hand_sum) {
     CHECK_CLOSE(y[1], 64 * 2.0 * 2.0 * 0.5, 1e-6);    // 128
 }
 
-DEEPMOE_TEST(dequant, gemv_dispatcher_falls_back_to_the_reference) {
+CACHEDMOE_TEST(dequant, gemv_dispatcher_falls_back_to_the_reference) {
     // gemv_fp4 tries AVX-512 first; that path is a documented stub, so the
     // dispatcher must silently produce the reference result rather than fail.
     const size_t rows = 1, K = 32;
@@ -186,7 +186,7 @@ DEEPMOE_TEST(dequant, gemv_dispatcher_falls_back_to_the_reference) {
     CHECK_ERR(gemv_fp4_avx512(w, s, x, GemvShape{rows, K, 1}, y), Err::Unimplemented);
 }
 
-DEEPMOE_TEST(dequant, gate_reproduces_the_reference_router_maths) {
+CACHEDMOE_TEST(dequant, gate_reproduces_the_reference_router_maths) {
     // design §2.4: scores = sqrt(softplus(xW)); top-k over (scores + bias);
     // weights normalise the *unbiased* scores and scale by 1.5.
     const uint32_t n = 4, K = 32;
@@ -215,7 +215,7 @@ DEEPMOE_TEST(dequant, gate_reproduces_the_reference_router_maths) {
     CHECK_EQ(g->k, 4u);              // `report` widened the result to top-4
 }
 
-DEEPMOE_TEST(dequant, gate_topk_is_deterministic_on_ties) {
+CACHEDMOE_TEST(dequant, gate_topk_is_deterministic_on_ties) {
     // The §10.2 speculation invariant needs bit-identical routing on re-run.
     std::vector<float> scores{1.0f, 1.0f, 1.0f, 1.0f};
     auto a = gate_topk(scores, {}, 2);
@@ -235,8 +235,8 @@ DEEPMOE_TEST(dequant, gate_topk_is_deterministic_on_ties) {
 // the FP4 table is cross-checked there against ml_dtypes.float4_e2m1fn. This
 // test is therefore pinned to the checkpoint's semantics rather than to our own
 // reading of the OCP spec -- which is the entire point of design §12's L0.
-DEEPMOE_TEST(dequant, matches_the_oracle_golden_tables) {
-    const std::string path = std::string(DEEPMOE_TEST_DATA_DIR) + "/l0_dequant.bin";
+CACHEDMOE_TEST(dequant, matches_the_oracle_golden_tables) {
+    const std::string path = std::string(CACHEDMOE_TEST_DATA_DIR) + "/l0_dequant.bin";
     std::FILE* f = std::fopen(path.c_str(), "rb");
     REQUIRE(f != nullptr);
 

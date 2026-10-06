@@ -28,7 +28,7 @@ struct BufferBinding {
     uint32_t binding = 0;
     uint64_t offset  = 0;
     uint64_t range   = 0;      // 0 means VK_WHOLE_SIZE
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkBuffer buffer = VK_NULL_HANDLE;
 #endif
 };
@@ -46,7 +46,7 @@ public:
     // Frees every set allocated so far. Only legal when nothing is in flight.
     void         reset();
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     // Allocates a set for `pipeline`'s layout and writes `bindings` into it.
     Result<VkDescriptorSet> allocate(const Pipeline& pipeline,
                                      const std::vector<BufferBinding>& bindings);
@@ -55,7 +55,7 @@ public:
 
 private:
     Device* device_ = nullptr;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 #endif
 };
@@ -72,13 +72,13 @@ public:
     void destroy();
     void reset(){used_=0;}
     bool valid()const{return buffer_.valid();}
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     Result<VkDescriptorSet> snapshot(const Pipeline&,const uint64_t*);
 #endif
 private:
     MemoryAllocator* allocator_=nullptr;GpuBuffer buffer_;DescriptorPool descriptors_;
     uint64_t stride_=256;uint32_t used_=0,capacity_=0;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     std::vector<VkDescriptorSet> sets_;
 #endif
 };

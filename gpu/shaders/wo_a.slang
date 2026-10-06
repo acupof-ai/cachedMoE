@@ -19,7 +19,7 @@
 // The LDS budget for the staged activation. wo_a's K is one group's 4096-wide
 // slice of o; like wq_a it is left at 8192, because the smaller budget buys
 // occupancy this kernel does not want (fp8_gemv.slang).
-#define DEEPMOE_GEMV_MAX_K 8192
+#define CACHEDMOE_GEMV_MAX_K 8192
 
 #include "fp8_gemv.slang"
 

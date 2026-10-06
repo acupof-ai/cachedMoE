@@ -36,7 +36,7 @@ struct DecodeEnvironment {
 
 } // namespace
 
-DEEPMOE_TEST(runtime_config, decode_defaults_and_api_overrides) {
+CACHEDMOE_TEST(runtime_config, decode_defaults_and_api_overrides) {
     DecodeEnvironment environment;
     DecodeExecutionConfig defaults;
     defaults.apply_environment();
@@ -62,7 +62,7 @@ DEEPMOE_TEST(runtime_config, decode_defaults_and_api_overrides) {
     CHECK(!explicit_config.dynamic_mask_lru);
 }
 
-DEEPMOE_TEST(runtime_config, legacy_environment_semantics) {
+CACHEDMOE_TEST(runtime_config, legacy_environment_semantics) {
     DecodeEnvironment environment;
     environment.set("CACHEDMOE_GPU_WAIT_S", "12.5");
     environment.set("CACHEDMOE_FENCE_SPIN_US", "3.25");
@@ -100,7 +100,7 @@ DEEPMOE_TEST(runtime_config, legacy_environment_semantics) {
 #endif
 }
 
-DEEPMOE_TEST(runtime_config, mask_policy_is_resolved_for_each_engine) {
+CACHEDMOE_TEST(runtime_config, mask_policy_is_resolved_for_each_engine) {
     DecodeEnvironment environment;
     environment.set("CACHEDMOE_MASK_DYNAMIC_LRU", "1");
     runtime::Engine dynamic;
@@ -117,7 +117,7 @@ DEEPMOE_TEST(runtime_config, mask_policy_is_resolved_for_each_engine) {
     CHECK(!frozen.store().fixed_cache());
 }
 
-DEEPMOE_TEST(runtime_config, spec_switch_rejects_invalid_or_uninitialized_engine) {
+CACHEDMOE_TEST(runtime_config, spec_switch_rejects_invalid_or_uninitialized_engine) {
     DecodeEnvironment environment;
     runtime::Engine engine;
     const auto before = engine.config();

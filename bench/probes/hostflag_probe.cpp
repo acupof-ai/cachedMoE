@@ -156,7 +156,7 @@ struct Harness {
     Gpu&                 g;
     gpu::Pipeline&       pipe;
     gpu::DescriptorPool& desc;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkDescriptorSet set = VK_NULL_HANDLE;
 #endif
     gpu::GpuBuffer ctl{}, out{}, scratch{};

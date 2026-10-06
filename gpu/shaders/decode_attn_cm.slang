@@ -78,18 +78,18 @@ struct CmPush {
     float softmax_scale;   // head_dim ** -0.5
     uint  s_split;         // score: slices of head_dim, partial S planes summed by softmax
     uint  pv_split;        // pv: slices of the list, partial O planes summed by finish
-#if defined(DEEPMOE_CM_BATCH)
+#if defined(CACHEDMOE_CM_BATCH)
     uint n_ovf, list_stride, part_stride; // verify overflow and per-query planes
 #endif
 };
 [[vk::push_constant]] CmPush pc;
 
-#if defined(DEEPMOE_CM_BATCH)
+#if defined(CACHEDMOE_CM_BATCH)
 static uint cm_query;
 #endif
 uint64_t cm_ptr(uint slot) {
     const uint64_t base = Ptr[slot];
-#if defined(DEEPMOE_CM_BATCH)
+#if defined(CACHEDMOE_CM_BATCH)
     const uint64_t m = cm_query;
     if (slot == kQ) return base + m * pc.n_heads * pc.head_dim * 2;
     if (slot == kTopIdx) return base + m * pc.list_stride * 4;
@@ -152,7 +152,7 @@ void stage_gather(uint gid, uint tid) {
                 [unroll] for (uint j = 0; j < 16; ++j)
                     v[w * 16 + j] = fp8_decode((b[j / 4] >> (8 * (j % 4))) & 0xFFu) * sc;
             }
-#if defined(DEEPMOE_CM_BATCH)
+#if defined(CACHEDMOE_CM_BATCH)
         } else if (idx >= 0 && uint(idx) < pc.n_win + pc.n_ovf) {
             const uint row = uint(idx) - pc.n_win;
             const uint64_t base = cm_ptr(10) + (uint64_t)row * pc.head_dim + d0;
@@ -322,7 +322,7 @@ void stage_finish(uint gid, uint tid) {
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void main(uint3 gid : SV_GroupID, uint tid : SV_GroupIndex) {
-#if defined(DEEPMOE_CM_BATCH)
+#if defined(CACHEDMOE_CM_BATCH)
     cm_query = gid.y;
 #endif
     if (Stage == 0)      stage_gather(gid.x, tid);

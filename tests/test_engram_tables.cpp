@@ -16,13 +16,13 @@
 #include "runtime/engram_tables.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
 
-DEEPMOE_TEST(engram_tables, numpy_rng_and_normaliser) {
+CACHEDMOE_TEST(engram_tables, numpy_rng_and_normaliser) {
     // numpy.random.default_rng(10007 * layer).integers(0, bound, 4, np.int64),
     // bound = (2**63 - 1) // 99092 // 2, printed by numpy 2.x.
     const int64_t bound = (INT64_MAX / 99092) / 2;
@@ -47,16 +47,16 @@ DEEPMOE_TEST(engram_tables, numpy_rng_and_normaliser) {
     CHECK_EQ(runtime::engram_normalize("\xEF\xAC\x81"), std::string("fi"));         // ligature
 }
 
-DEEPMOE_TEST(engram_tables, derived_equals_l3_export) {
+CACHEDMOE_TEST(engram_tables, derived_equals_l3_export) {
     const char* dir = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
-    if (!dir) { DEEPMOE_SKIP_PRINTF("      SKIP engram_tables: set CACHEDMOE_MODEL_DIR\n"); return; }
+    if (!dir) { CACHEDMOE_SKIP_PRINTF("      SKIP engram_tables: set CACHEDMOE_MODEL_DIR\n"); return; }
     auto cfg = V41Config::load(std::string(dir) + "/config.json");
     REQUIRE_OK(cfg);
     auto derived = runtime::derive_engram_tables(std::string(dir), cfg->text);
     REQUIRE_OK(derived);
-    auto exported = runtime::EngramTables::load(std::string(DEEPMOE_TEST_DATA_DIR) + "/l3");
+    auto exported = runtime::EngramTables::load(std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3");
     if (!exported) {
-        DEEPMOE_SKIP_PRINTF("      SKIP engram_tables: no L3 export (%s)\n", exported.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP engram_tables: no L3 export (%s)\n", exported.error().str().c_str());
         return;
     }
     CHECK_EQ(derived->compressed_vocab_size, exported->compressed_vocab_size);

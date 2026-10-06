@@ -130,7 +130,7 @@ private:
     DescriptorPool   descriptors_;
     CommandPool      pool_;
     GpuBuffer        table_{};
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkDescriptorSet  sets_[kBindings][static_cast<uint32_t>(DecodeStage::Count)]{};
 #endif
 };
@@ -292,7 +292,7 @@ public:
     uint64_t* slots(MgtStage s);
     Result<void> record(CommandBuffer& cmd, uint32_t m, MgtStage s, const void* push,
                         uint32_t push_bytes, uint32_t gx, uint32_t gy = 1);
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     Result<void> record_bound(CommandBuffer&, uint32_t, MgtStage, const void*, uint32_t,
                               uint32_t, uint32_t, VkDescriptorSet);
 #endif
@@ -320,7 +320,7 @@ private:
     struct PerM {
         bool ready = false;
         std::vector<Pipeline> pipes;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
         std::vector<VkDescriptorSet> sets;
 #endif
     };

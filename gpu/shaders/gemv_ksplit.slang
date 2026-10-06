@@ -57,7 +57,7 @@
 // The widest SLICE this .spv stages. Every caller keeps K / KSplit at or under
 // it: wo_b 8192/2, wq_a 5120/2, wkv 5120/2 or /4, wo_a 4096/1.
 // AttnRunner::create checks it.
-#define DEEPMOE_GEMV_MAX_K 4096
+#define CACHEDMOE_GEMV_MAX_K 4096
 
 #include "fp8_gemv.slang"
 

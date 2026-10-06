@@ -80,7 +80,7 @@ Result<void> fill(ExpertStore& s, ExpertKey k, TokenIndex token, Tier tier = Tie
 
 }  // namespace
 
-DEEPMOE_TEST(slab, pool_geometry_and_addressing) {
+CACHEDMOE_TEST(slab, pool_geometry_and_addressing) {
     SlabConfig cfg;
     cfg.slots_per_slab = 4;
     cfg.slot_bytes     = layout::kExpertSlotBytes;
@@ -108,7 +108,7 @@ DEEPMOE_TEST(slab, pool_geometry_and_addressing) {
     CHECK_ERR(pool.address(12), Err::OutOfRange);
 }
 
-DEEPMOE_TEST(slab, rejects_a_slab_over_the_two_gib_vulkan_limit) {
+CACHEDMOE_TEST(slab, rejects_a_slab_over_the_two_gib_vulkan_limit) {
     // design §1.1: maxMemoryAllocationSize is 2 GiB on gfx1151, which is the
     // entire reason slabs exist.
     SlabConfig cfg;
@@ -133,7 +133,7 @@ DEEPMOE_TEST(slab, rejects_a_slab_over_the_two_gib_vulkan_limit) {
     CHECK_ERR(p3.init(std::make_unique<HostSlabBacking>(), bad), Err::InvalidArgument);
 }
 
-DEEPMOE_TEST(expert_store, slot_state_machine) {
+CACHEDMOE_TEST(expert_store, slot_state_machine) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
     CHECK_EQ(s.slot_count(), 8u);
@@ -176,7 +176,7 @@ DEEPMOE_TEST(expert_store, slot_state_machine) {
     CHECK_ERR(s.evict_key(k), Err::NotFound);
 }
 
-DEEPMOE_TEST(expert_store, failed_fill_releases_the_slot) {
+CACHEDMOE_TEST(expert_store, failed_fill_releases_the_slot) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
     auto res = s.begin_fill(ExpertKey{1, 1});
@@ -190,7 +190,7 @@ DEEPMOE_TEST(expert_store, failed_fill_releases_the_slot) {
     CHECK_OK(s.begin_fill(ExpertKey{1, 1}));
 }
 
-DEEPMOE_TEST(expert_store, two_run_fill_publishes_every_part) {
+CACHEDMOE_TEST(expert_store, two_run_fill_publishes_every_part) {
     // design §5.1 (v0.5): a slot is filled by one IoRequest per run, and the
     // pointer table hands out slot_base + run.slot_offset + part.skew per part.
     ExpertStore s;
@@ -255,7 +255,7 @@ DEEPMOE_TEST(expert_store, two_run_fill_publishes_every_part) {
         CHECK_EQ(s.table_entry(k, static_cast<ExpertPart>(i)).value_or(1), kNoDeviceAddress);
 }
 
-DEEPMOE_TEST(expert_store, one_bad_run_fails_the_whole_fill) {
+CACHEDMOE_TEST(expert_store, one_bad_run_fails_the_whole_fill) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
     const ExpertEntry entry = two_run_entry();
@@ -280,7 +280,7 @@ DEEPMOE_TEST(expert_store, one_bad_run_fails_the_whole_fill) {
     CHECK_EQ(s.table_entry(k).value_or(1), kNoDeviceAddress);
 }
 
-DEEPMOE_TEST(expert_store, rejects_an_entry_that_does_not_fit_a_slot) {
+CACHEDMOE_TEST(expert_store, rejects_an_entry_that_does_not_fit_a_slot) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
     ExpertEntry big = two_run_entry();
@@ -297,7 +297,7 @@ DEEPMOE_TEST(expert_store, rejects_an_entry_that_does_not_fit_a_slot) {
     CHECK_EQ(s.free_slots(), 8u);
 }
 
-DEEPMOE_TEST(expert_store, exhaustion_and_range_checks) {
+CACHEDMOE_TEST(expert_store, exhaustion_and_range_checks) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(2, 1), 4, 8));
     CHECK_EQ(s.slot_count(), 2u);
@@ -309,7 +309,7 @@ DEEPMOE_TEST(expert_store, exhaustion_and_range_checks) {
     CHECK_ERR(s.table_entry(ExpertKey{0, 99}), Err::OutOfRange);
 }
 
-DEEPMOE_TEST(expert_store, timeline_guards_eviction) {
+CACHEDMOE_TEST(expert_store, timeline_guards_eviction) {
     // design §5.3: a resident slot may not be recycled while a submitted
     // command buffer can still read it.
     ExpertStore s;
@@ -334,7 +334,7 @@ DEEPMOE_TEST(expert_store, timeline_guards_eviction) {
     CHECK_EQ(s.completed_timeline(), 100u);
 }
 
-DEEPMOE_TEST(expert_store, pinned_slots_never_evict) {
+CACHEDMOE_TEST(expert_store, pinned_slots_never_evict) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
     auto res = s.begin_fill(ExpertKey{0, 0}, Tier::Pinned);
@@ -345,7 +345,7 @@ DEEPMOE_TEST(expert_store, pinned_slots_never_evict) {
     CHECK_EQ(s.stats().pinned, 1u);
 }
 
-DEEPMOE_TEST(expert_store, lookup_refreshes_lru_and_counts_stats) {
+CACHEDMOE_TEST(expert_store, lookup_refreshes_lru_and_counts_stats) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
     REQUIRE_OK(fill(s, ExpertKey{0, 0}, 5));
@@ -370,7 +370,7 @@ DEEPMOE_TEST(expert_store, lookup_refreshes_lru_and_counts_stats) {
     CHECK_EQ(s.stats().lookups, 2u);
 }
 
-DEEPMOE_TEST(expert_store, heat_ewma_tracks_near_misses) {
+CACHEDMOE_TEST(expert_store, heat_ewma_tracks_near_misses) {
     // design §9.3: a high-scoring expert that was not selected still warms up.
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(), 4, 8));
@@ -389,7 +389,7 @@ DEEPMOE_TEST(expert_store, heat_ewma_tracks_near_misses) {
     CHECK_CLOSE(s.slot_for(k)->heat, 0.0, 1e-9);
 }
 
-DEEPMOE_TEST(planner, lru_policy_picks_the_oldest) {
+CACHEDMOE_TEST(planner, lru_policy_picks_the_oldest) {
     auto policy = make_lru_policy();
     std::vector<ExpertSlot> c(4);
     for (uint32_t i = 0; i < 4; ++i) {
@@ -415,7 +415,7 @@ DEEPMOE_TEST(planner, lru_policy_picks_the_oldest) {
     CHECK(policy->choose_victims({}, 3).empty());
 }
 
-DEEPMOE_TEST(planner, lru_ties_break_deterministically) {
+CACHEDMOE_TEST(planner, lru_ties_break_deterministically) {
     auto policy = make_lru_policy();
     std::vector<ExpertSlot> c(3);
     for (uint32_t i = 0; i < 3; ++i) { c[i].slot = 2 - i; c[i].last_use_token = 7; }
@@ -427,7 +427,7 @@ DEEPMOE_TEST(planner, lru_ties_break_deterministically) {
     CHECK(a == b);
 }
 
-DEEPMOE_TEST(planner, policy_factory_falls_back_loudly) {
+CACHEDMOE_TEST(planner, policy_factory_falls_back_loudly) {
     CHECK(std::string(make_policy(CachePolicy::Lru)->name()) == "lru");
     // design §16: the unimplemented policies must not silently claim to be
     // themselves. Their names say what actually ran.
@@ -436,7 +436,7 @@ DEEPMOE_TEST(planner, policy_factory_falls_back_loudly) {
     CHECK(std::string(make_policy(CachePolicy::Lfu)->name()) == "lru");
 }
 
-DEEPMOE_TEST(planner, unimplemented_paths_report_themselves) {
+CACHEDMOE_TEST(planner, unimplemented_paths_report_themselves) {
     // design §16 forbids writing these before the P1 measurements; the point of
     // the test is that they fail loudly rather than pretending to work.
     Planner p;
@@ -448,7 +448,7 @@ DEEPMOE_TEST(planner, unimplemented_paths_report_themselves) {
     CHECK(empty->empty());
 }
 
-DEEPMOE_TEST(planner, expert_wait_counters_measure_joins_including_timeout) {
+CACHEDMOE_TEST(planner, expert_wait_counters_measure_joins_including_timeout) {
     Planner p;
     LayerPlan hit;
     REQUIRE_OK(p.wait_layer(hit));
@@ -483,7 +483,7 @@ Result<void> fill_stamped(ExpertStore& s, ExpertKey k, TokenIndex stamp) {
 
 }  // namespace
 
-DEEPMOE_TEST(expert_store, touch_oldest_stamp_and_the_guard_in_evict_lru) {
+CACHEDMOE_TEST(expert_store, touch_oldest_stamp_and_the_guard_in_evict_lru) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(4, 1)));
     for (uint16_t e = 0; e < 4; ++e) REQUIRE_OK(fill_stamped(s, ExpertKey{1, e}, 10 + e));
@@ -517,7 +517,7 @@ DEEPMOE_TEST(expert_store, touch_oldest_stamp_and_the_guard_in_evict_lru) {
 // the resident experts ordered by their decayed heat, so the test is that
 // decay + order really do put the turn that just ran on top, and that the order
 // is empty-safe and deterministic.
-DEEPMOE_TEST(expert_store, heat_decay_and_order_drive_the_reheat_pass) {
+CACHEDMOE_TEST(expert_store, heat_decay_and_order_drive_the_reheat_pass) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(4, 2), 2, 4));
     for (uint16_t e = 0; e < 4; ++e) REQUIRE_OK(fill(s, ExpertKey{0, e}, 1 + e));
@@ -609,7 +609,7 @@ DEEPMOE_TEST(expert_store, heat_decay_and_order_drive_the_reheat_pass) {
 // computes, the cache holds exactly what a global LRU over the prompt's routing
 // table -- walked token by token, layer by layer, in gate order -- would hold,
 // including what was resident before.
-DEEPMOE_TEST(planner, streamed_admission_is_the_lru_of_the_routing_table) {
+CACHEDMOE_TEST(planner, streamed_admission_is_the_lru_of_the_routing_table) {
     constexpr uint32_t kLayers = 4, kTopk = 3, kExperts = 12;
     for (uint32_t trial = 0; trial < 6; ++trial) {
         const uint32_t cap = 3 + trial;              // 3..8 slots
@@ -713,7 +713,7 @@ DEEPMOE_TEST(planner, streamed_admission_is_the_lru_of_the_routing_table) {
 // (suite.cache_cap)
 #include "runtime/engine.h"
 
-DEEPMOE_TEST(cache_cap, budget_is_capped) {
+CACHEDMOE_TEST(cache_cap, budget_is_capped) {
     const uint64_t slot = layout::kExpertSlotBytes;
     // The measured pair from 2026-09-19: the heap arithmetic lands at 5,100
     // slots / 89.3 GiB and this machine dies on the first submit above 5,000.
@@ -744,7 +744,7 @@ DEEPMOE_TEST(cache_cap, budget_is_capped) {
     }
 }
 
-DEEPMOE_TEST(cache_cap, backoff_plan_decreases) {
+CACHEDMOE_TEST(cache_cap, backoff_plan_decreases) {
     // Five attempts from the capped default, 200 slots apart.
     const std::vector<uint32_t> plan = runtime::cache_backoff_slots(5000, 200, 5);
     REQUIRE_EQ(plan.size(), size_t(5));
@@ -779,7 +779,7 @@ DEEPMOE_TEST(cache_cap, backoff_plan_decreases) {
 
 // An asynchronous masked miss can be requested again before its fill lands.
 // Its completion must not overwrite the newer demand stamp with the first one.
-DEEPMOE_TEST(expert_store, pending_demand_keeps_latest_lru_stamp) {
+CACHEDMOE_TEST(expert_store, pending_demand_keeps_latest_lru_stamp) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache()));
     const ExpertKey k{1, 0};
@@ -793,7 +793,7 @@ DEEPMOE_TEST(expert_store, pending_demand_keeps_latest_lru_stamp) {
     CHECK_EQ(s.slot_for(k)->last_use_token, 50u);
 }
 
-DEEPMOE_TEST(expert_store, refill_does_not_inherit_victim_lru_stamp) {
+CACHEDMOE_TEST(expert_store, refill_does_not_inherit_victim_lru_stamp) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(1, 1)));
     REQUIRE_OK(fill_stamped(s, ExpertKey{1, 0}, 100));
@@ -803,7 +803,7 @@ DEEPMOE_TEST(expert_store, refill_does_not_inherit_victim_lru_stamp) {
     CHECK_EQ(s.slot_for(ExpertKey{1, 1})->last_use_token, 10u);
 }
 
-DEEPMOE_TEST(expert_store, guarded_lookup_survives_admission_pressure) {
+CACHEDMOE_TEST(expert_store, guarded_lookup_survives_admission_pressure) {
     ExpertStore s;
     REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(), small_cache(2, 1)));
     const ExpertKey hit{1, 0}, pending{1, 1};
@@ -821,7 +821,7 @@ DEEPMOE_TEST(expert_store, guarded_lookup_survives_admission_pressure) {
     REQUIRE_OK(s.evict_lru()); CHECK(!s.resident(hit));
 }
 
-DEEPMOE_TEST(expert_store, pin_preserves_lru_and_prevents_recycling) {
+CACHEDMOE_TEST(expert_store, pin_preserves_lru_and_prevents_recycling) {
     ExpertStore s;REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(),small_cache(2,1)));
     CHECK_ERR(s.pin({1,0}),Err::NotFound);
     auto pending=s.begin_fill({1,0});REQUIRE_OK(pending);
@@ -834,7 +834,7 @@ DEEPMOE_TEST(expert_store, pin_preserves_lru_and_prevents_recycling) {
     CHECK_ERR(s.evict_lru(),Err::NotFound);
 }
 
-DEEPMOE_TEST(expert_store, snapshot_freezes_hits_and_defers_publish){
+CACHEDMOE_TEST(expert_store, snapshot_freezes_hits_and_defers_publish){
     ExpertStore s;REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(),small_cache(2,1),1,4));
     REQUIRE_OK(fill(s,{0,0},10));auto pending=s.begin_fill({0,1});REQUIRE(pending);
     auto snapshot=s.guarded_snapshot(7);REQUIRE(snapshot);
@@ -848,7 +848,7 @@ DEEPMOE_TEST(expert_store, snapshot_freezes_hits_and_defers_publish){
     CHECK(!s.guarded_snapshot(8)); // an already completed guard is invalid
 }
 
-DEEPMOE_TEST(expert_store, fixed_mask_retains_initial_slots) {
+CACHEDMOE_TEST(expert_store, fixed_mask_retains_initial_slots) {
     ExpertStore s;REQUIRE_OK(s.init(std::make_unique<HostSlabBacking>(),small_cache(2,1),1,4));
     s.set_fixed_cache(true);REQUIRE_OK(fill(s,{0,0},10));
     CHECK(!s.cache_frozen());CHECK_ERR(s.evict_lru(),Err::FailedPrecondition);

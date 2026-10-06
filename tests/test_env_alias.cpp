@@ -62,7 +62,7 @@ private:
 
 } // namespace
 
-DEEPMOE_TEST(env_alias, raw_presence_and_source_vectors) {
+CACHEDMOE_TEST(env_alias, raw_presence_and_source_vectors) {
     struct Case {
         const char* canonical;
         const char* legacy;
@@ -107,7 +107,7 @@ DEEPMOE_TEST(env_alias, raw_presence_and_source_vectors) {
     }
 }
 
-DEEPMOE_TEST(env_alias, warnings_once_across_tus_and_threads_without_values) {
+CACHEDMOE_TEST(env_alias, warnings_once_across_tus_and_threads_without_values) {
     test::ScopedEnvironment scope("CACHEDMOE_ENV_WARNING_ONCE");
     const auto names = environment::names(scope.key);
     test::ScopedEnvironment::write(names.legacy.c_str(), "secret-legacy-payload");
@@ -141,7 +141,7 @@ DEEPMOE_TEST(env_alias, warnings_once_across_tus_and_threads_without_values) {
     CHECK(conflict.find("secret-legacy-payload") == std::string::npos);
 }
 
-DEEPMOE_TEST(env_alias, scoped_override_isolates_and_restores_both_families) {
+CACHEDMOE_TEST(env_alias, scoped_override_isolates_and_restores_both_families) {
     test::ScopedEnvironment outer("CACHEDMOE_ENV_SCOPE");
     const auto names = environment::names(outer.key);
     test::ScopedEnvironment::write(names.canonical.c_str(), "new-original");
@@ -157,7 +157,7 @@ DEEPMOE_TEST(env_alias, scoped_override_isolates_and_restores_both_families) {
     CHECK_EQ(std::string(environment::raw_get(names.legacy.c_str())), "old-original");
 }
 
-DEEPMOE_TEST(env_alias, consumer_parsers_keep_empty_and_nonboolean_semantics) {
+CACHEDMOE_TEST(env_alias, consumer_parsers_keep_empty_and_nonboolean_semantics) {
     test::ScopedEnvironment onecb("CACHEDMOE_DSPARK_ONECB", "10");
     test::ScopedEnvironment trim("CACHEDMOE_DSPARK_TRIM_TAIL", "0x");
     test::ScopedEnvironment pair("CACHEDMOE_MGT_PAIR_DOT", "10");
@@ -179,7 +179,7 @@ DEEPMOE_TEST(env_alias, consumer_parsers_keep_empty_and_nonboolean_semantics) {
 #endif
 }
 
-DEEPMOE_TEST(env_alias, external_names_are_native) {
+CACHEDMOE_TEST(env_alias, external_names_are_native) {
     test::ScopedEnvironment native("ENV_ALIAS_NATIVE_FIXTURE", "native-value");
     const auto value = environment::lookup(native.key);
     CHECK_EQ(value.source, environment::Source::Native);

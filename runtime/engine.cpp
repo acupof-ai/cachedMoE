@@ -281,7 +281,7 @@ const char* resident_only_name(Engine::ResidentOnly m) {
 // process's, on RADV.
 uint64_t heap_headroom(const gpu::Device& d, uint32_t heap_index, uint64_t* budget_out,
                        uint64_t* usage_out) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     uint32_t n = 0;
     vkEnumerateDeviceExtensionProperties(d.physical(), nullptr, &n, nullptr);
     std::vector<VkExtensionProperties> ext(n);
@@ -307,7 +307,7 @@ uint64_t heap_headroom(const gpu::Device& d, uint32_t heap_index, uint64_t* budg
 }
 
 uint64_t host_heap_headroom(const gpu::Device& d, uint64_t* budget_out, uint64_t* usage_out) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     uint32_t n = 0;
     vkEnumerateDeviceExtensionProperties(d.physical(), nullptr, &n, nullptr);
     std::vector<VkExtensionProperties> ext(n);

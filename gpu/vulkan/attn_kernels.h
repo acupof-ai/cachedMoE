@@ -510,7 +510,7 @@ private:
     CommandPool      pool_;
     GpuBuffer        table_{};
     bool             has_attn_cm_ = false;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkDescriptorSet  sets_[static_cast<uint32_t>(AttnStage::Count)]{};
 #endif
 };

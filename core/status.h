@@ -75,7 +75,7 @@ inline std::unexpected<Status> unimplemented(std::string what) {
     return std::unexpected(Status{Err::Unimplemented, std::move(what)});
 }
 
-#define DEEPMOE_TRY(decl, expr)                                                \
+#define CACHEDMOE_TRY(decl, expr)                                                \
     auto&& _dm_tmp_##__LINE__ = (expr);                                        \
     if (!_dm_tmp_##__LINE__) return std::unexpected(_dm_tmp_##__LINE__.error());\
     decl = *std::move(_dm_tmp_##__LINE__)

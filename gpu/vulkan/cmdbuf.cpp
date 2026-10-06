@@ -29,12 +29,12 @@ const char* vk_result_name(int result) {
     }
 }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
-Result<void> CommandPool::create(Device&) { return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN"); }
+Result<void> CommandPool::create(Device&) { return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN"); }
 void CommandPool::destroy() {}
 void CommandPool::reset() {}
-Result<CommandBuffer> CommandPool::acquire() { return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN"); }
+Result<CommandBuffer> CommandPool::acquire() { return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN"); }
 Result<void> CommandBuffer::begin() { return fail(Err::Unavailable, "no vulkan"); }
 Result<void> CommandBuffer::end()   { return fail(Err::Unavailable, "no vulkan"); }
 Result<void> CommandBuffer::dispatch(uint32_t, uint32_t, uint32_t) { return fail(Err::Unavailable, "no vulkan"); }
@@ -275,13 +275,13 @@ Result<void> submit_and_wait(Device& device, const CommandBuffer& cmd) {
     return {};
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu
 
 namespace deepmoe::gpu {
 Result<void> CommandBuffer::indirect_barrier(){
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     b.srcStageMask=VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;b.srcAccessMask=VK_ACCESS_2_SHADER_WRITE_BIT;
     b.dstStageMask=VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
@@ -293,7 +293,7 @@ Result<void> CommandBuffer::indirect_barrier(){
 #endif
 }
 Result<void> CommandBuffer::dispatch_indirect(const GpuBuffer& b,uint64_t offset){
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if(!b.valid()||offset%4||offset+12>b.bytes)return fail(Err::InvalidArgument,"invalid indirect dispatch range");
     vkCmdDispatchIndirect(handle(),b.buffer,offset);return {};
 #else

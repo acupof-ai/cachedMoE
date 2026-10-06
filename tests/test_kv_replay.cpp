@@ -34,8 +34,8 @@
 #include "tests/test_framework.h"
 #include "text/tokenizer.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -51,7 +51,7 @@ bool exists(const std::string& p) {
 
 std::string longctx_root() {
     if (const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR")) return e;
-    return std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/longctx";
+    return std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/longctx";
 }
 
 bool bring_up(runtime::Engine& e, const std::string& state_dir, std::string& why) {
@@ -144,13 +144,13 @@ RingCmp ring_vs_export(const runtime::Engine& e, const runtime::DecodeState& st,
 
 }  // namespace
 
-DEEPMOE_TEST(kv_replay, l3_64) {
+CACHEDMOE_TEST(kv_replay, l3_64) {
     if (skip_without_model("kv_replay")) return;
-    const std::string l3 = std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
-    if (!exists(l3 + "/index.json")) { DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: no L3 export\n"); return; }
+    const std::string l3 = std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3";
+    if (!exists(l3 + "/index.json")) { CACHEDMOE_SKIP_PRINTF("      SKIP kv_replay: no L3 export\n"); return; }
     runtime::Engine e;
     std::string why;
-    if (!bring_up(e, l3, why)) { DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: %s\n", why.c_str()); return; }
+    if (!bring_up(e, l3, why)) { CACHEDMOE_SKIP_PRINTF("      SKIP kv_replay: %s\n", why.c_str()); return; }
     const runtime::DecodeState* st = e.decode_state();
     const uint32_t base = st->decode_pos();
     const std::vector<uint32_t>& ref = st->greedy_tokens();
@@ -434,16 +434,16 @@ DEEPMOE_TEST(kv_replay, l3_64) {
     }
 }
 
-DEEPMOE_TEST(kv_replay, longctx) {
+CACHEDMOE_TEST(kv_replay, longctx) {
     if (skip_without_model("kv_replay")) return;
     const std::string dir = longctx_root() + "/ctx4k";
     if (!exists(dir + "/index.json")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: no 4K export at %s (CACHEDMOE_LONGCTX_DIR)\n", dir.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP kv_replay: no 4K export at %s (CACHEDMOE_LONGCTX_DIR)\n", dir.c_str());
         return;
     }
     runtime::Engine e;
     std::string why;
-    if (!bring_up(e, dir, why)) { DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: %s\n", why.c_str()); return; }
+    if (!bring_up(e, dir, why)) { CACHEDMOE_SKIP_PRINTF("      SKIP kv_replay: %s\n", why.c_str()); return; }
     const runtime::DecodeState* st = e.decode_state();
     const uint32_t N = st->decode_pos();
     const std::vector<uint32_t>& ref = st->greedy_tokens();
@@ -577,7 +577,7 @@ DEEPMOE_TEST(kv_replay, longctx) {
 // Pure CPU: the SSD parked-context format round-trips, rejects a model-tag
 // mismatch, and drop removes the file. No checkpoint, no GPU. (suite.kvdisk)
 #include <filesystem>
-DEEPMOE_TEST(kvdisk, roundtrip) {
+CACHEDMOE_TEST(kvdisk, roundtrip) {
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path() / "deepmoe_kvdisk_roundtrip";
     std::error_code ec;
@@ -658,7 +658,7 @@ DEEPMOE_TEST(kvdisk, roundtrip) {
 // fail here. That is pinned by the signature itself (restore_or_cold returns
 // ReplayStats, not Result<ReplayStats>) plus the checks below, which require
 // that the cold callback ran and that the reason survived. (suite.kvdisk)
-DEEPMOE_TEST(kvdisk, restore_failure_degrades) {
+CACHEDMOE_TEST(kvdisk, restore_failure_degrades) {
     // (1) Allocation refused -- the D3 case, verbatim: path A is full because
     //     the expert cache took every slab, so the restore's submit is refused.
     int cold_calls = 0;
@@ -717,7 +717,7 @@ DEEPMOE_TEST(kvdisk, restore_failure_degrades) {
 }
 
 // The writer owns snapshots; disk I/O never borrows live GPU KV or blocks enqueue.
-DEEPMOE_TEST(kvdisk, async_coalesces_and_drains) {
+CACHEDMOE_TEST(kvdisk, async_coalesces_and_drains) {
     runtime::KvDiskOptions opt;
     std::mutex mutex;
     std::condition_variable cv;
@@ -756,7 +756,7 @@ DEEPMOE_TEST(kvdisk, async_coalesces_and_drains) {
     CHECK(stats.queued == 3 && stats.written == 2 && stats.coalesced == 1 && stats.errors == 0);
 }
 
-DEEPMOE_TEST(kvdisk, async_reset_cannot_resurrect) {
+CACHEDMOE_TEST(kvdisk, async_reset_cannot_resurrect) {
     namespace fs = std::filesystem;
     const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_async_reset";
     std::error_code ec; fs::remove_all(dir, ec);
@@ -794,7 +794,7 @@ DEEPMOE_TEST(kvdisk, async_reset_cannot_resurrect) {
     fs::remove_all(dir, ec);
 }
 
-DEEPMOE_TEST(kvdisk, async_failure_and_shutdown) {
+CACHEDMOE_TEST(kvdisk, async_failure_and_shutdown) {
     runtime::KvDiskOptions opt;
     uint32_t calls = 0;
     {
@@ -811,7 +811,7 @@ DEEPMOE_TEST(kvdisk, async_failure_and_shutdown) {
     CHECK(calls == 2);
 }
 
-DEEPMOE_TEST(kvdisk, queue_backpressure_preserves_all_sessions) {
+CACHEDMOE_TEST(kvdisk, queue_backpressure_preserves_all_sessions) {
     namespace fs = std::filesystem;
     const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_backpressure";
     std::error_code ec;
@@ -865,7 +865,7 @@ DEEPMOE_TEST(kvdisk, queue_backpressure_preserves_all_sessions) {
     fs::remove_all(dir, ec);
 }
 
-DEEPMOE_TEST(kvdisk, required_save_returns_write_error) {
+CACHEDMOE_TEST(kvdisk, required_save_returns_write_error) {
     runtime::KvDiskOptions opt;
     runtime::KvDiskWriter writer(opt, [](const auto&, const auto&, const auto&) -> Result<void> {
         return fail(Err::Io, "disk full");
@@ -878,7 +878,7 @@ DEEPMOE_TEST(kvdisk, required_save_returns_write_error) {
     CHECK(writer.stats().errors == 1);
 }
 
-DEEPMOE_TEST(kvdisk, stale_snapshot_checks_transcript_prefix) {
+CACHEDMOE_TEST(kvdisk, stale_snapshot_checks_transcript_prefix) {
     namespace fs = std::filesystem;
     const auto dir = fs::temp_directory_path() / "deepmoe_kvdisk_stale_prefix";
     std::error_code ec;

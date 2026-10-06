@@ -3,7 +3,7 @@
 // start making exceptions.
 //
 // Usage:
-//   DEEPMOE_TEST(suite_name, case_name) { CHECK(...); REQUIRE_OK(...); }
+//   CACHEDMOE_TEST(suite_name, case_name) { CHECK(...); REQUIRE_OK(...); }
 //   int main(int argc, char** argv) { return deepmoe::test::run_all(argc, argv); }
 //
 // CHECK   records a failure and continues.
@@ -11,7 +11,7 @@
 // REQUIRE_OK / CHECK_ERR are for Result<T>.
 //
 // Ownership/threading: the registry is a function-local static, filled at
-// static-init time by DEEPMOE_TEST. Tests run sequentially on one thread.
+// static-init time by CACHEDMOE_TEST. Tests run sequentially on one thread.
 #pragma once
 
 #include <cmath>
@@ -47,7 +47,7 @@ struct Context {
 };
 
 // A case that cannot run here (no checkpoint, no GPU, a missing golden) says
-// so through DEEPMOE_SKIP_PRINTF, which also counts it. run_all then exits
+// so through CACHEDMOE_SKIP_PRINTF, which also counts it. run_all then exits
 // with kSkipReturnCode when nothing FAILED but something skipped, and ctest
 // maps that code to "Skipped" (SKIP_RETURN_CODE in tests/CMakeLists.txt).
 // This replaced SKIP_REGULAR_EXPRESSION, which matched the output and so
@@ -131,7 +131,7 @@ inline bool close(double a, double b, double rel = 1e-6, double abs_tol = 1e-9) 
 
 }  // namespace deepmoe::test
 
-#define DEEPMOE_TEST(suite, name)                                                      \
+#define CACHEDMOE_TEST(suite, name)                                                      \
     static void dm_test_##suite##_##name(::deepmoe::test::Context& _ctx);               \
     static ::deepmoe::test::Registrar dm_reg_##suite##_##name(                          \
         #suite, #name, &dm_test_##suite##_##name);                                      \
@@ -214,4 +214,4 @@ inline bool close(double a, double b, double rel = 1e-6, double abs_tol = 1e-9) 
     } while (0)
 
 // printf that also counts a skip (see kSkipReturnCode above).
-#define DEEPMOE_SKIP_PRINTF(...) (::deepmoe::test::note_skip(), std::printf(__VA_ARGS__))
+#define CACHEDMOE_SKIP_PRINTF(...) (::deepmoe::test::note_skip(), std::printf(__VA_ARGS__))

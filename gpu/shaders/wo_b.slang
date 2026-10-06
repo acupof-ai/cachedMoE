@@ -13,7 +13,7 @@
 
 // The LDS budget for the staged activation: wo_b's K is the widest activation in the model = 8192, and a
 // workgroup never stages more (fp8_gemv.slang).
-#define DEEPMOE_GEMV_MAX_K 8192
+#define CACHEDMOE_GEMV_MAX_K 8192
 
 #include "fp8_gemv.slang"
 

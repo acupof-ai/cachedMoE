@@ -145,11 +145,11 @@ inline const char* model_dir() {
 #endif
 }
 
-// A skip is not a pass, and it must be loud: DEEPMOE_SKIP_PRINTF counts it and
+// A skip is not a pass, and it must be loud: CACHEDMOE_SKIP_PRINTF counts it and
 // run_all exits 77 (ctest SKIP_RETURN_CODE) unless a case failed.
 inline bool skip_without_model(const char* what) {
     if (model_dir()) return false;
-    DEEPMOE_SKIP_PRINTF("       SKIP %s: set CACHEDMOE_MODEL_DIR to the checkpoint "
+    CACHEDMOE_SKIP_PRINTF("       SKIP %s: set CACHEDMOE_MODEL_DIR to the checkpoint "
                 "directory (the one holding deepmoe_manifest.json) to run it\n", what);
     return true;
 }

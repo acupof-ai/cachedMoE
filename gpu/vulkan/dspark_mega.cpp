@@ -7,7 +7,7 @@ DsparkMegaRunner::~DsparkMegaRunner() {
     if(alloc_){if(plan_.valid())alloc_->free(plan_);if(state_.valid())alloc_->free(state_);}
 }
 Result<void> DsparkMegaRunner::create(Device& device,MemoryAllocator& alloc,const std::string& dir) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if(!device.caps().vulkan_memory_model)return fail(Err::Unavailable,"DSpark mega requires Vulkan device memory model");
     if(device.caps().driver_id!=VK_DRIVER_ID_MESA_RADV||device.caps().device_name.find("8060S")==std::string::npos)
         return fail(Err::Unavailable,"DSpark persistent grid is verified only on RADV Strix Halo 8060S");
@@ -26,7 +26,7 @@ Result<void> DsparkMegaRunner::create(Device& device,MemoryAllocator& alloc,cons
 #endif
 }
 Result<void> DsparkMegaRunner::run(std::span<const DsparkMegaOp> ops,uint32_t groups) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if(!valid()||ops.empty()||ops.size()>128||groups==0||groups>120)
         return fail(Err::InvalidArgument,"DSpark mega needs 1..128 phases and 1..120 resident workgroups");
     // Hardware-specific opt-in: Vulkan has no cooperative grid launch.

@@ -59,8 +59,8 @@
 #include "tests/l2_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -68,8 +68,8 @@ using namespace deepmoe::testing;
 
 namespace {
 
-std::string pf_dir() { return std::string(DEEPMOE_TEST_DATA_DIR) + "/prefill"; }
-std::string l3_dir() { return std::string(DEEPMOE_TEST_DATA_DIR) + "/l3"; }
+std::string pf_dir() { return std::string(CACHEDMOE_TEST_DATA_DIR) + "/prefill"; }
+std::string l3_dir() { return std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3"; }
 
 constexpr uint32_t kN = 64, kDim = 5120, kHc = 4, kHd = 512;
 
@@ -266,11 +266,11 @@ const std::vector<float>& rows_of(const L2Step& g, const std::string& name, bool
 
 }  // namespace
 
-DEEPMOE_TEST(gpu_prefill, stages) {
+CACHEDMOE_TEST(gpu_prefill, stages) {
     if (skip_without_model("gpu_prefill")) return;
     auto set = load_l2(pf_dir());
     if (!set) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: no prefill data (%s); run tools/oracle_prefill.py\n",
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: no prefill data (%s); run tools/oracle_prefill.py\n",
                     set.error().str().c_str());
         return;
     }
@@ -284,7 +284,7 @@ DEEPMOE_TEST(gpu_prefill, stages) {
     std::vector<uint32_t> layers;
     for (const L2Step& s : set->steps) if (s.layer < 40) layers.push_back(s.layer);
     if (!rig.up(layers, pc)) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", rig.why.c_str());
         return;
     }
     gpu::Prefill& P = rig.prefill;
@@ -784,11 +784,11 @@ HandoffAgreement compare_handoff(const gpu::PrefillHandoff& out, const runtime::
 
 }  // namespace
 
-DEEPMOE_TEST(gpu_prefill, forty_layers) {
+CACHEDMOE_TEST(gpu_prefill, forty_layers) {
     if (skip_without_model("gpu_prefill")) return;
     auto set = load_l2(pf_dir());
     if (!set || !std::fopen((l3_dir() + "/index.json").c_str(), "rb")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: needs tests/data/prefill and tests/data/l3\n");
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: needs tests/data/prefill and tests/data/l3\n");
         return;
     }
     const std::vector<uint32_t> prompt = prompt_ids(pf_dir());
@@ -805,11 +805,11 @@ DEEPMOE_TEST(gpu_prefill, forty_layers) {
         cfg.cache.budget_bytes = 8ull << 30;
         cfg.cache.slots_per_slab = 100;
         if (auto r = engine.init(cfg); !r) {
-            DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
             return;
         }
         if (auto r = engine.init_gpu(); !r) {
-            DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
             return;
         }
     }
@@ -980,10 +980,10 @@ DEEPMOE_TEST(gpu_prefill, forty_layers) {
 // more (the radix select), scores quantised so ties are common (the position
 // tie-break), a block mask with -inf blocks (and fewer live positions than k),
 // and a row of over 4,096 positions (several scan chunks).
-DEEPMOE_TEST(gpu_prefill, topk) {
+CACHEDMOE_TEST(gpu_prefill, topk) {
     gpu::Device dev;
     if (auto r = dev.create(); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill.topk: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill.topk: %s\n", r.error().str().c_str());
         return;
     }
     gpu::MemoryAllocator alloc;
@@ -1068,10 +1068,10 @@ DEEPMOE_TEST(gpu_prefill, topk) {
 // expert moves into one by prefill_elem's copy stage) and calls every fifth
 // expert cached (the read-ahead skips it), against the same prompt with no
 // read-ahead and no sink: the logits bit for bit.
-DEEPMOE_TEST(gpu_prefill, read_ahead) {
+CACHEDMOE_TEST(gpu_prefill, read_ahead) {
     if (skip_without_model("gpu_prefill")) return;
     if (!std::fopen((l3_dir() + "/index.json").c_str(), "rb")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: needs tests/data/prefill and tests/data/l3\n");
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: needs tests/data/prefill and tests/data/l3\n");
         return;
     }
     const std::vector<uint32_t> prompt = prompt_ids(pf_dir());
@@ -1083,11 +1083,11 @@ DEEPMOE_TEST(gpu_prefill, read_ahead) {
         cfg.cache.budget_bytes = 8ull << 30;
         cfg.cache.slots_per_slab = 100;
         if (auto r = engine.init(cfg); !r) {
-            DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
             return;
         }
         if (auto r = engine.init_gpu(); !r) {
-            DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
             return;
         }
     }
@@ -1178,16 +1178,16 @@ DEEPMOE_TEST(gpu_prefill, read_ahead) {
 // tokens and decodes from there with no reference to compare against -- an
 // engine sanity check at a context between 64 and the export's (a garbage
 // step shows as token 0 at margin 0).
-DEEPMOE_TEST(gpu_prefill, longctx) {
+CACHEDMOE_TEST(gpu_prefill, longctx) {
     const char* dir_env = ::deepmoe::environment::get("CACHEDMOE_PF_LONGCTX");
     if (!dir_env) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill.longctx: set CACHEDMOE_PF_LONGCTX=traces/longctx/ctx4k\n");
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill.longctx: set CACHEDMOE_PF_LONGCTX=traces/longctx/ctx4k\n");
         return;
     }
     if (skip_without_model("gpu_prefill")) return;
     const std::string dir = dir_env;
     const std::string name = std::filesystem::path(dir).filename().string();
-    const std::string small = std::string(DEEPMOE_TEST_DATA_DIR) + "/longctx/" + name;
+    const std::string small = std::string(CACHEDMOE_TEST_DATA_DIR) + "/longctx/" + name;
     const std::string mode = ::deepmoe::environment::get("CACHEDMOE_PF_DECODE") ? ::deepmoe::environment::get("CACHEDMOE_PF_DECODE") : "free";
     auto st = runtime::DecodeState::load(dir);
     REQUIRE_OK(st);
@@ -1210,11 +1210,11 @@ DEEPMOE_TEST(gpu_prefill, longctx) {
         cfg.cache.budget_bytes = 8ull << 30;
         cfg.cache.slots_per_slab = 100;
         if (auto r = engine.init(cfg); !r) {
-            DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
             return;
         }
         if (auto r = engine.init_gpu(); !r) {
-            DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
+            CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", r.error().str().c_str());
             return;
         }
     }
@@ -1341,10 +1341,10 @@ DEEPMOE_TEST(gpu_prefill, longctx) {
 // Determinism of the engram row reads at long context: the rows of layers 1
 // and 14 for a Track M prompt (CACHEDMOE_PF_LONGCTX), read three times, must be
 // byte-identical. Guards the host staging and the IoEngine under load.
-DEEPMOE_TEST(gpu_prefill, engram_repeat) {
+CACHEDMOE_TEST(gpu_prefill, engram_repeat) {
     const char* dir_env = ::deepmoe::environment::get("CACHEDMOE_PF_LONGCTX");
     if (!dir_env) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill.engram_repeat: set CACHEDMOE_PF_LONGCTX=traces/longctx/ctx4k\n");
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill.engram_repeat: set CACHEDMOE_PF_LONGCTX=traces/longctx/ctx4k\n");
         return;
     }
     if (skip_without_model("gpu_prefill")) return;
@@ -1356,7 +1356,7 @@ DEEPMOE_TEST(gpu_prefill, engram_repeat) {
     pc.transit_slots = 1;
     Rig rig;
     if (!rig.up({1, 14}, pc)) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", rig.why.c_str());
         return;
     }
     gpu::Prefill& P = rig.prefill;
@@ -1387,10 +1387,10 @@ DEEPMOE_TEST(gpu_prefill, engram_repeat) {
 // process (CACHEDMOE_PF_LONGCTX's, first CACHEDMOE_PF_TRUNCATE tokens if set,
 // CACHEDMOE_PF_REPLAY rows), every layer's stage outputs hashed; prints the first
 // (layer, stage) whose bytes differ.
-DEEPMOE_TEST(gpu_prefill, repeat) {
+CACHEDMOE_TEST(gpu_prefill, repeat) {
     const char* dir_env = ::deepmoe::environment::get("CACHEDMOE_PF_LONGCTX");
     if (!dir_env || !::deepmoe::environment::get("CACHEDMOE_PF_REPEAT")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill.repeat: set CACHEDMOE_PF_LONGCTX and CACHEDMOE_PF_REPEAT=1\n");
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill.repeat: set CACHEDMOE_PF_LONGCTX and CACHEDMOE_PF_REPEAT=1\n");
         return;
     }
     if (skip_without_model("gpu_prefill")) return;
@@ -1409,7 +1409,7 @@ DEEPMOE_TEST(gpu_prefill, repeat) {
     for (uint32_t L = 0; L < 40; ++L) layers[L] = L;
     Rig rig;
     if (!rig.up(layers, pc)) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill: %s\n", rig.why.c_str());
         return;
     }
     // four independent 64-bit lanes over whole words (the tensors are float /

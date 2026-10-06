@@ -67,8 +67,8 @@
 #include "tests/l2_golden.h"              // load_l2 / agree -- the index shape is shared
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -76,7 +76,7 @@ using namespace deepmoe::testing;
 
 namespace {
 
-std::string ds_dir() { return std::string(DEEPMOE_TEST_DATA_DIR) + "/dspark"; }
+std::string ds_dir() { return std::string(CACHEDMOE_TEST_DATA_DIR) + "/dspark"; }
 
 constexpr uint32_t kDim = 5120, kHeads = 64, kHeadDim = 512, kRope = 64;
 constexpr uint32_t kQLora = 1280, kOLora = 1024, kGroups = 8, kWin = 128;
@@ -273,11 +273,11 @@ Result<void> rope(Rig& rig, Buf& x, Buf& tab, Buf& y, uint32_t m, uint32_t rows_
 
 // ---------------------------------------------------------------------------
 
-DEEPMOE_TEST(gpu_dspark, golden_per_stage) {
+CACHEDMOE_TEST(gpu_dspark, golden_per_stage) {
     if (skip_without_model("gpu_dspark")) return;
     auto set = load_l2(ds_dir());
     if (!set) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_dspark: no DSpark data (%s). Run "
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_dspark: no DSpark data (%s). Run "
                     "`tools/oracle_dspark.py --out tests/data/dspark`\n",
                     set.error().str().c_str());
         return;
@@ -285,13 +285,13 @@ DEEPMOE_TEST(gpu_dspark, golden_per_stage) {
     const L2Step* gp = nullptr;
     for (const L2Step& s : set->steps) if (s.step == "golden_pos64") gp = &s;
     if (!gp) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_dspark: tests/data/dspark has no golden_pos64 record\n");
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_dspark: tests/data/dspark has no golden_pos64 record\n");
         return;
     }
     const L2Step& g = *gp;
     Rig rig;
     if (!rig.bring_up()) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_dspark: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_dspark: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t main_pos = static_cast<uint32_t>(set->cfg("golden_pos", 64));
@@ -560,7 +560,7 @@ DEEPMOE_TEST(gpu_dspark, golden_per_stage) {
 //     `accept_sampling_exact` actually relies on, and it does not depend on the
 //     mirror being right.
 // ============================================================================
-DEEPMOE_TEST(gpu_dspark, verify_rows_give_exact_acceptance_its_four_numbers) {
+CACHEDMOE_TEST(gpu_dspark, verify_rows_give_exact_acceptance_its_four_numbers) {
     struct VRig {
         gpu::Device          device;
         gpu::MemoryAllocator alloc;
@@ -591,7 +591,7 @@ DEEPMOE_TEST(gpu_dspark, verify_rows_give_exact_acceptance_its_four_numbers) {
     constexpr uint32_t kK = 16;
     VRig rig;
     if (!rig.bring_up(kM)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_dspark.verify_rows: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_dspark.verify_rows: %s\n", rig.why.c_str());
         return;
     }
 
@@ -761,7 +761,7 @@ DEEPMOE_TEST(gpu_dspark, verify_rows_give_exact_acceptance_its_four_numbers) {
     }
 }
 
-DEEPMOE_TEST(gpu_dspark, main_path_gpu_readout) {
+CACHEDMOE_TEST(gpu_dspark, main_path_gpu_readout) {
     gpu::Device device;
     REQUIRE(device.create({}));
     gpu::MemoryAllocator alloc;
@@ -877,9 +877,9 @@ DEEPMOE_TEST(gpu_dspark, main_path_gpu_readout) {
     std::printf("main-path readout: M=1..6 ranks/ties exact, %u nuclei exact, %u fallback cases\n",exact,fallback);
 }
 
-DEEPMOE_TEST(gpu_dspark, batch_cm_causal_rows_match_decode) {
+CACHEDMOE_TEST(gpu_dspark, batch_cm_causal_rows_match_decode) {
     gpu::Device device;REQUIRE(device.create({}));
-    if(!device.caps().cooperative_matrix){DEEPMOE_SKIP_PRINTF("no cooperative matrices\n");return;}
+    if(!device.caps().cooperative_matrix){CACHEDMOE_SKIP_PRINTF("no cooperative matrices\n");return;}
     gpu::MemoryAllocator alloc;REQUIRE(alloc.init(device,MemoryPath::DeviceLocalHostVisible));
     gpu::MgtSpec spec;spec.attn_cm=true;gpu::MgtRunner batch;
     REQUIRE(batch.create(device,alloc,gpu::default_shader_dir(),spec));
@@ -937,11 +937,11 @@ DEEPMOE_TEST(gpu_dspark, batch_cm_causal_rows_match_decode) {
     }
 }
 
-DEEPMOE_TEST(gpu_dspark, batch_engram_prefetch_planes) {
+CACHEDMOE_TEST(gpu_dspark, batch_engram_prefetch_planes) {
     if(skip_without_model("gpu_dspark.batch_engram_prefetch_planes"))return;
     Rig rig;REQUIRE(rig.bring_up());
     gpu::DecodeRunner dec;REQUIRE(dec.create(rig.device,rig.alloc,gpu::default_shader_dir()));
-    auto tables=runtime::EngramTables::load(std::string(DEEPMOE_TEST_DATA_DIR)+"/l3");REQUIRE(tables);
+    auto tables=runtime::EngramTables::load(std::string(CACHEDMOE_TEST_DATA_DIR)+"/l3");REQUIRE(tables);
     auto model=V41Config::load(std::string(model_dir())+"/config.json");REQUIRE(model);
     TextConfig cfg=model->text;
     runtime::EngramRunner eg;
@@ -976,7 +976,7 @@ DEEPMOE_TEST(gpu_dspark, batch_engram_prefetch_planes) {
     eg.destroy();CHECK(!eg.fetch(1,history,128));
 }
 
-DEEPMOE_TEST(gpu_dspark, batch_projection_fold_scale) {
+CACHEDMOE_TEST(gpu_dspark, batch_projection_fold_scale) {
     gpu::Device device;REQUIRE(device.create({}));
     gpu::MemoryAllocator alloc;REQUIRE(alloc.init(device,MemoryPath::DeviceLocalHostVisible));
     gpu::MgtRunner original,folded;gpu::MgtSpec spec;
@@ -1020,7 +1020,7 @@ DEEPMOE_TEST(gpu_dspark, batch_projection_fold_scale) {
     }
 }
 
-DEEPMOE_TEST(gpu_dspark, batch_projection_pair_dot) {
+CACHEDMOE_TEST(gpu_dspark, batch_projection_pair_dot) {
     gpu::Device device;REQUIRE(device.create({}));
     gpu::MemoryAllocator alloc;REQUIRE(alloc.init(device,MemoryPath::DeviceLocalHostVisible));
     gpu::MgtRunner original,folded;gpu::MgtSpec spec;
@@ -1069,7 +1069,7 @@ DEEPMOE_TEST(gpu_dspark, batch_projection_pair_dot) {
     }
 }
 
-DEEPMOE_TEST(gpu_dspark, full_runtime_chain) {
+CACHEDMOE_TEST(gpu_dspark, full_runtime_chain) {
     if (skip_without_model("gpu_dspark.full_runtime_chain")) return;
     auto set=load_l2(ds_dir()); REQUIRE(set);
     const L2Step* gold=nullptr;
@@ -1185,15 +1185,15 @@ DEEPMOE_TEST(gpu_dspark, full_runtime_chain) {
 
 }
 
-DEEPMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
+CACHEDMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
     if(skip_without_model("gpu_dspark.adaptive_zero_keeps_one_target_forward"))return;
-    auto state=runtime::DecodeState::load(std::string(DEEPMOE_TEST_DATA_DIR)+"/l3");REQUIRE(state);
+    auto state=runtime::DecodeState::load(std::string(CACHEDMOE_TEST_DATA_DIR)+"/l3");REQUIRE(state);
     RuntimeConfig cfg;cfg.model_dir=model_dir();cfg.cache.budget_bytes=512ull*layout::kExpertSlotBytes;
     cfg.cache.slots_per_slab=64;cfg.speculation.enabled=true;cfg.speculation.max_draft=5;
     cfg.speculation.min_confidence=1e6f;
     runtime::Engine engine;REQUIRE(engine.init(cfg));REQUIRE(engine.init_gpu());
     runtime::SessionConfig sc;sc.max_context=256;
-    sc.engram_tables_dir=std::string(DEEPMOE_TEST_DATA_DIR)+"/l3";
+    sc.engram_tables_dir=std::string(CACHEDMOE_TEST_DATA_DIR)+"/l3";
     REQUIRE(engine.begin_session(sc));engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     auto first=engine.feed(std::span(state->prompt_ids()).first(8));REQUIRE(first);
     uint32_t layers=0;const bool gpu_route=::deepmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE")&&std::string_view(::deepmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE"))=="1";
@@ -1212,15 +1212,15 @@ DEEPMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
     }
 }
 
-DEEPMOE_TEST(gpu_dspark, committed_prefix_survives_window_wrap) {
+CACHEDMOE_TEST(gpu_dspark, committed_prefix_survives_window_wrap) {
     if (skip_without_model("gpu_dspark.committed_prefix_survives_window_wrap")) return;
-    auto state=runtime::DecodeState::load(std::string(DEEPMOE_TEST_DATA_DIR)+"/l3");
+    auto state=runtime::DecodeState::load(std::string(CACHEDMOE_TEST_DATA_DIR)+"/l3");
     REQUIRE(state);REQUIRE(!state->prompt_ids().empty());
     RuntimeConfig cfg;cfg.model_dir=model_dir();cfg.speculation.enabled=true;
     cfg.cache.budget_bytes=2000ull*layout::kExpertSlotBytes;cfg.cache.slots_per_slab=100;
     runtime::Engine engine;REQUIRE(engine.init(cfg));REQUIRE(engine.init_gpu());
     runtime::SessionConfig sc;sc.max_context=512;
-    sc.engram_tables_dir=std::string(DEEPMOE_TEST_DATA_DIR)+"/l3";
+    sc.engram_tables_dir=std::string(CACHEDMOE_TEST_DATA_DIR)+"/l3";
     REQUIRE(engine.begin_session(sc));
     engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     std::vector<uint32_t> prompt(128);

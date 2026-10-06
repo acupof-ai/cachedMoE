@@ -1,7 +1,7 @@
 // Shared host/shader ABI. Keep field counts here so helper offsets cannot
 // drift from DsparkMegaOp when its immutable schedule changes.
-#ifndef DEEPMOE_DSPARK_PLAN_LAYOUT_H
-#define DEEPMOE_DSPARK_PLAN_LAYOUT_H
+#ifndef CACHEDMOE_DSPARK_PLAN_LAYOUT_H
+#define CACHEDMOE_DSPARK_PLAN_LAYOUT_H
 #define DM_DS_PLAN_HEADER_WORDS 4
 #define DM_DS_PLAN_PUSH_WORDS 16
 #define DM_DS_PLAN_PTR_WORDS 32

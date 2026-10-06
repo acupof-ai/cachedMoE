@@ -75,8 +75,8 @@
 #include "tests/l2_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -86,7 +86,7 @@ namespace {
 
 std::string l3_64_dir() {
     if (const char* e = ::deepmoe::environment::get("CACHEDMOE_L3_64_DIR"); e && *e) return e;
-    return std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/l3_64";
+    return std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/l3_64";
 }
 
 uint32_t env_u32(const char* name, uint32_t def) {
@@ -114,11 +114,11 @@ double row_nll(const float* lg, uint32_t vocab, uint32_t target) {
 
 }  // namespace
 
-DEEPMOE_TEST(spec_forward, batch_matches_m1) {
+CACHEDMOE_TEST(spec_forward, batch_matches_m1) {
     if (skip_without_model("spec_forward.batch_matches_m1")) return;
     const std::string dir = l3_64_dir();
     if (!file_exists(dir + "/index.json")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward: no 64-step export at %s "
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward: no 64-step export at %s "
                     "(tools/oracle_l3_ppl.py, or set CACHEDMOE_L3_64_DIR)\n", dir.c_str());
         return;
     }
@@ -129,19 +129,19 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
     cfg.cache.budget_bytes   = 0;       // as much as the machine gives
     cfg.cache.slots_per_slab = 100;
     if (auto r = engine.init(cfg); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward: %s\n", r.error().str().c_str());
         return;
     }
     if (auto r = engine.init_gpu(); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward: %s\n", r.error().str().c_str());
         return;
     }
     if (auto r = engine.load_decode_state(dir); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward: %s\n", r.error().str().c_str());
         return;
     }
     if (!engine.produce_ced()) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward: the export predates the prefill CED record\n");
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward: the export predates the prefill CED record\n");
         return;
     }
     // Both passes see the same cache, and a cold one would spend the whole test
@@ -304,11 +304,11 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
 // after the rollback (S2). S2's restored tail must equal S0's, S2's kept head
 // must equal S1's, and S1's tail must DIFFER from S0's -- without that last
 // one a rollback that restores nothing passes.
-DEEPMOE_TEST(spec_forward, a_rollback_restores_exactly_the_rejected_slots) {
+CACHEDMOE_TEST(spec_forward, a_rollback_restores_exactly_the_rejected_slots) {
     if (skip_without_model("spec_forward.a_rollback_restores_exactly_the_rejected_slots")) return;
     const std::string dir = l3_64_dir();
     if (!file_exists(dir + "/index.json")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward rollback: no export at %s\n", dir.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward rollback: no export at %s\n", dir.c_str());
         return;
     }
     runtime::Engine engine;
@@ -317,15 +317,15 @@ DEEPMOE_TEST(spec_forward, a_rollback_restores_exactly_the_rejected_slots) {
     cfg.cache.budget_bytes   = 0;       // as much as the machine gives
     cfg.cache.slots_per_slab = 100;
     if (auto r = engine.init(cfg); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward rollback: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward rollback: %s\n", r.error().str().c_str());
         return;
     }
     if (auto r = engine.init_gpu(); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward rollback: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward rollback: %s\n", r.error().str().c_str());
         return;
     }
     if (auto r = engine.load_decode_state(dir); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward rollback: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward rollback: %s\n", r.error().str().c_str());
         return;
     }
     (void)engine.warm_cache_from_heat();
@@ -391,11 +391,11 @@ DEEPMOE_TEST(spec_forward, a_rollback_restores_exactly_the_rejected_slots) {
 // expert union IS the gate's six plus the shared one, in gate order, so even
 // the MoE reduction is the same. Anything this finds is a difference between
 // the two kernel families or a wiring error in `Engine::run_layer_batch`.
-DEEPMOE_TEST(spec_forward, the_first_layer_the_two_paths_disagree_on) {
+CACHEDMOE_TEST(spec_forward, the_first_layer_the_two_paths_disagree_on) {
     if (skip_without_model("spec_forward.the_first_layer_the_two_paths_disagree_on")) return;
     const std::string dir = l3_64_dir();
     if (!file_exists(dir + "/index.json")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward bisect: no export at %s\n", dir.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward bisect: no export at %s\n", dir.c_str());
         return;
     }
     runtime::Engine engine;
@@ -404,15 +404,15 @@ DEEPMOE_TEST(spec_forward, the_first_layer_the_two_paths_disagree_on) {
     cfg.cache.budget_bytes   = 0;       // as much as the machine gives
     cfg.cache.slots_per_slab = 100;
     if (auto r = engine.init(cfg); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward bisect: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward bisect: %s\n", r.error().str().c_str());
         return;
     }
     if (auto r = engine.init_gpu(); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward bisect: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward bisect: %s\n", r.error().str().c_str());
         return;
     }
     if (auto r = engine.load_decode_state(dir); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP spec_forward bisect: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP spec_forward bisect: %s\n", r.error().str().c_str());
         return;
     }
     (void)engine.warm_cache_from_heat();
@@ -474,11 +474,11 @@ DEEPMOE_TEST(spec_forward, the_first_layer_the_two_paths_disagree_on) {
 // bytes the engine really read.
 //
 // It is a bench, not a gate: it asserts only that every M ran.
-DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
+CACHEDMOE_TEST(bench_spec, forward_batch_m_curve) {
     if (skip_without_model("bench_spec.forward_batch_m_curve")) return;
     const std::string dir = l3_64_dir();
     if (!file_exists(dir + "/index.json")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP bench_spec: no export at %s\n", dir.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP bench_spec: no export at %s\n", dir.c_str());
         return;
     }
     runtime::Engine engine;
@@ -494,15 +494,15 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
     const char* m_list = ::deepmoe::environment::get("CACHEDMOE_SPEC_MS");
     const uint32_t only_mode = env_u32("CACHEDMOE_SPEC_MODE", 2);   // 0 off, 1 verify, 2 both
     if (auto r = engine.init(cfg); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP bench_spec: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP bench_spec: %s\n", r.error().str().c_str());
         return;
     }
     if (auto r = engine.init_gpu(); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP bench_spec: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP bench_spec: %s\n", r.error().str().c_str());
         return;
     }
     if (auto r = engine.load_decode_state(dir); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP bench_spec: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP bench_spec: %s\n", r.error().str().c_str());
         return;
     }
     REQUIRE_OK(engine.init_batch(6));
@@ -603,7 +603,7 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
     engine.shutdown();
 }
 
-DEEPMOE_TEST(spec_forward, gpu_route_rejects_multiple_streams) {
+CACHEDMOE_TEST(spec_forward, gpu_route_rejects_multiple_streams) {
     test::ScopedEnvironment route("CACHEDMOE_BATCH_GPU_ROUTE", "1");
     runtime::Engine engine;
     CHECK_ERR(engine.set_streams(2),Err::FailedPrecondition);

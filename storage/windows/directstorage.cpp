@@ -2,7 +2,7 @@
 //
 // DirectStorage would let the runtime hand the drive a batch of reads whose
 // destinations are GPU resources, skipping the CPU entirely. It is behind
-// DEEPMOE_ENABLE_DIRECTSTORAGE and compiles only when <dstorage.h> is on the
+// CACHEDMOE_ENABLE_DIRECTSTORAGE and compiles only when <dstorage.h> is on the
 // include path -- the SDK is a NuGet package this repo deliberately does not
 // vendor or download. Without it the factory reports Unavailable and
 // make_default_backend falls back to IOCP, which is the P-1 baseline anyway.
@@ -14,13 +14,13 @@
 
 #include "storage/backend.h"
 
-#if defined(DEEPMOE_ENABLE_DIRECTSTORAGE) && defined(DEEPMOE_HAVE_DSTORAGE_H)
+#if defined(CACHEDMOE_ENABLE_DIRECTSTORAGE) && defined(CACHEDMOE_HAVE_DSTORAGE_H)
 #include <dstorage.h>
 #endif
 
 namespace deepmoe::storage {
 
-#if defined(DEEPMOE_ENABLE_DIRECTSTORAGE) && defined(DEEPMOE_HAVE_DSTORAGE_H)
+#if defined(CACHEDMOE_ENABLE_DIRECTSTORAGE) && defined(CACHEDMOE_HAVE_DSTORAGE_H)
 
 // TODO(design §9.6): implement.
 //   1. DStorageGetFactory -> IDStorageFactory, SetStagingBufferSize.
@@ -41,7 +41,7 @@ Result<std::unique_ptr<Backend>> make_directstorage_backend(const IoConfig&) {
 Result<std::unique_ptr<Backend>> make_directstorage_backend(const IoConfig&) {
     return fail(Err::Unavailable,
                 "DirectStorage is not compiled in "
-                "(needs -DDEEPMOE_ENABLE_DIRECTSTORAGE and dstorage.h on the include path)");
+                "(needs -DCACHEDMOE_ENABLE_DIRECTSTORAGE and dstorage.h on the include path)");
 }
 
 #endif

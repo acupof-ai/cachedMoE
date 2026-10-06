@@ -52,8 +52,8 @@
 #include "tests/l1_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -63,7 +63,7 @@ using namespace deepmoe::testing;
 namespace {
 
 std::string data_path(const std::string& name) {
-    return std::string(DEEPMOE_TEST_DATA_DIR) + "/" + name;
+    return std::string(CACHEDMOE_TEST_DATA_DIR) + "/" + name;
 }
 
 // Everything a GPU MoE case needs, brought up once and torn down in order.
@@ -158,7 +158,7 @@ Result<std::vector<float>> run_variant(Rig& rig, const gpu::MoeSpec& spec,
 
 // The headline case: expert (0, 0), every specialisation variant of design
 // §7.1, all against the one torch fp32 answer.
-DEEPMOE_TEST(gpu_moe, matches_the_oracle_across_every_variant) {
+CACHEDMOE_TEST(gpu_moe, matches_the_oracle_across_every_variant) {
     if (skip_without_model("gpu_moe.matches_the_oracle_across_every_variant")) return;
 
     auto golden = load_golden(data_path("l1_layer0_expert0.bin"));
@@ -167,7 +167,7 @@ DEEPMOE_TEST(gpu_moe, matches_the_oracle_across_every_variant) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/2)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -279,7 +279,7 @@ DEEPMOE_TEST(gpu_moe, matches_the_oracle_across_every_variant) {
 // The expert indirection list of design §7.9: two slots, only the second one is
 // in the compute list, so the answer must be the second slot's expert and the
 // first slot's expert must not contribute.
-DEEPMOE_TEST(gpu_moe, the_indirection_list_picks_the_expert) {
+CACHEDMOE_TEST(gpu_moe, the_indirection_list_picks_the_expert) {
     if (skip_without_model("gpu_moe.the_indirection_list_picks_the_expert")) return;
 
     auto golden = load_golden(data_path("l1_layer39_expert383.bin"));
@@ -288,7 +288,7 @@ DEEPMOE_TEST(gpu_moe, the_indirection_list_picks_the_expert) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/2)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey want{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -328,12 +328,12 @@ DEEPMOE_TEST(gpu_moe, the_indirection_list_picks_the_expert) {
 // design §12's 5e-3 int8 bar; this is the other golden, which does not. The
 // same two numbers come out of tools/oracle_shared.py's x_quant_study on the
 // CPU, which is what makes the per-row / residual comparison there trustworthy.
-DEEPMOE_TEST(gpu_moe, the_int8_x_pre_pass_is_expert_dependent) {
+CACHEDMOE_TEST(gpu_moe, the_int8_x_pre_pass_is_expert_dependent) {
     if (skip_without_model("gpu_moe.the_int8_x_pre_pass_is_expert_dependent")) return;
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/2)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const char* files[2] = {"l1_layer0_expert0.bin", "l1_layer39_expert383.bin"};
@@ -368,7 +368,7 @@ DEEPMOE_TEST(gpu_moe, the_int8_x_pre_pass_is_expert_dependent) {
 // The route weight of design §7.9 is applied inside dispatch A, and dispatch B
 // sums the slots with no atomics. Running the same expert in two slots at half
 // weight each must reproduce the single-slot answer.
-DEEPMOE_TEST(gpu_moe, route_weights_and_the_slot_reduction) {
+CACHEDMOE_TEST(gpu_moe, route_weights_and_the_slot_reduction) {
     if (skip_without_model("gpu_moe.route_weights_and_the_slot_reduction")) return;
 
     auto golden = load_golden(data_path("l1_layer0_expert0.bin"));
@@ -377,7 +377,7 @@ DEEPMOE_TEST(gpu_moe, route_weights_and_the_slot_reduction) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -601,7 +601,7 @@ void fill_table_with_shared(gpu::MoeRunner& runner, const ExpertStore& store,
 // column-indexing bug in the LDS x tile: every column would read the right
 // numbers by accident. Here column m is a different linear map of x, so any
 // confusion between columns shows up immediately.
-DEEPMOE_TEST(gpu_moe, the_verify_batch_computes_one_answer_per_column) {
+CACHEDMOE_TEST(gpu_moe, the_verify_batch_computes_one_answer_per_column) {
     if (skip_without_model("gpu_moe.the_verify_batch_computes_one_answer_per_column")) return;
 
     auto golden = load_golden(data_path("l1_layer0_expert0.bin"));
@@ -610,7 +610,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_computes_one_answer_per_column) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -771,7 +771,7 @@ struct FullRig {
 
 // A masked slot may have no resident table row and stale h from an earlier
 // call. Neither its weights nor its stale activation may be read by A/B.
-DEEPMOE_TEST(gpu_moe, masked_missing_slots_and_shared_only) {
+CACHEDMOE_TEST(gpu_moe, masked_missing_slots_and_shared_only) {
     if (skip_without_model("gpu_moe.masked_missing_slots_and_shared_only")) return;
     FullRig rig;
     REQUIRE(rig.bring_up(8));
@@ -819,7 +819,7 @@ DEEPMOE_TEST(gpu_moe, masked_missing_slots_and_shared_only) {
 
 }
 
-DEEPMOE_TEST(mgt1, moe_m_curve) {
+CACHEDMOE_TEST(mgt1, moe_m_curve) {
     if (skip_without_model("mgt1.moe_m_curve")) return;
 
 
@@ -833,7 +833,7 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
     constexpr uint32_t kUnion = kTopk;      // per column: its own six experts
     FullRig rig;
     if (!rig.bring_up(/*slots=*/kMaxM * kUnion + 4)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t layer = 0;
@@ -843,7 +843,7 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
         auto per = store::pinned_layer_tensors(rig.manifest, layer);
         names.insert(names.end(), per.begin(), per.end());
         auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
-        if (!r) { DEEPMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: pinned: %s\n", r.error().str().c_str()); return; }
+        if (!r) { CACHEDMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: pinned: %s\n", r.error().str().c_str()); return; }
     }
 
     runtime::GpuMoeBridge bridge;
@@ -865,7 +865,7 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
     for (uint32_t i = 0; i < kMaxM * kTopk; ++i) {
         const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(ids[i])};
         auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
-        if (!f) { DEEPMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: fetch: %s\n", f.error().str().c_str()); return; }
+        if (!f) { CACHEDMOE_SKIP_PRINTF("       SKIP mgt1.moe_m_curve: fetch: %s\n", f.error().str().c_str()); return; }
     }
     rig.io.drain();
 
@@ -911,14 +911,14 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
 //     worst case for the union: |union| = 6M) and overlapping ones (the real
 //     shape, docs/p3_dspark.md §12.6's ~26 of 36).
 // ============================================================================
-DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
+CACHEDMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
     if (skip_without_model("gpu_moe.the_verify_batch_runs_its_expert_union_once")) return;
 
     constexpr uint32_t kTopk = 6;
     constexpr uint32_t kM    = 6;
     FullRig rig;
     if (!rig.bring_up(/*slots=*/kM * kTopk + 4)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe.the_verify_batch_runs_its_expert_union_once: %s\n",
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe.the_verify_batch_runs_its_expert_union_once: %s\n",
                     rig.why.c_str());
         return;
     }
@@ -929,7 +929,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
         auto per = store::pinned_layer_tensors(rig.manifest, layer);
         names.insert(names.end(), per.begin(), per.end());
         auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
-        if (!r) { DEEPMOE_SKIP_PRINTF("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
+        if (!r) { CACHEDMOE_SKIP_PRINTF("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
     }
     runtime::GpuMoeBridge bridge;
     REQUIRE_OK(bridge.create(rig.device, rig.alloc, gpu::default_shader_dir(), rig.store,
@@ -967,7 +967,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
             const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(e)};
             auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
             if (!f) {
-                DEEPMOE_SKIP_PRINTF("       SKIP: expert %u would not fetch: %s\n", e,
+                CACHEDMOE_SKIP_PRINTF("       SKIP: expert %u would not fetch: %s\n", e,
                             f.error().str().c_str());
                 return;
             }
@@ -1163,7 +1163,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
 // The number that matters for docs/p4_dspark_runtime.md's arithmetic is
 // ms/token: at M = 1 the union path is the M = 1 path, and every column after
 // that should cost the incremental experts, not a whole token.
-DEEPMOE_TEST(mgt1, moe_union_m_curve) {
+CACHEDMOE_TEST(mgt1, moe_union_m_curve) {
     if (skip_without_model("mgt1.moe_union_m_curve")) return;
 
     const uint32_t iters = [] {
@@ -1175,7 +1175,7 @@ DEEPMOE_TEST(mgt1, moe_union_m_curve) {
     constexpr uint32_t kMaxM = 6;
     FullRig rig;
     if (!rig.bring_up(/*slots=*/kMaxM * kTopk + 4)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP mgt1.moe_union_m_curve: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP mgt1.moe_union_m_curve: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t layer = 0;
@@ -1185,7 +1185,7 @@ DEEPMOE_TEST(mgt1, moe_union_m_curve) {
         auto per = store::pinned_layer_tensors(rig.manifest, layer);
         names.insert(names.end(), per.begin(), per.end());
         auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
-        if (!r) { DEEPMOE_SKIP_PRINTF("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
+        if (!r) { CACHEDMOE_SKIP_PRINTF("       SKIP: pinned: %s\n", r.error().str().c_str()); return; }
     }
     runtime::GpuMoeBridge bridge;
     REQUIRE_OK(bridge.create(rig.device, rig.alloc, gpu::default_shader_dir(), rig.store,
@@ -1211,7 +1211,7 @@ DEEPMOE_TEST(mgt1, moe_union_m_curve) {
         for (uint32_t e : all) {
             const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(e)};
             auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
-            if (!f) { DEEPMOE_SKIP_PRINTF("       SKIP: fetch: %s\n", f.error().str().c_str()); return; }
+            if (!f) { CACHEDMOE_SKIP_PRINTF("       SKIP: fetch: %s\n", f.error().str().c_str()); return; }
         }
         rig.io.drain();
     }
@@ -1269,7 +1269,7 @@ DEEPMOE_TEST(mgt1, moe_union_m_curve) {
 // `route_weights()[m]` and y[m], all three. The `column pairing` block below
 // pins that (docs/p4_dspark_runtime.md: the appendix added 2026-09-17).
 // ============================================================================
-DEEPMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
+CACHEDMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
     if (skip_without_model("gpu_moe.the_verify_batch_takes_one_expert_set_per_column")) return;
 
     struct BatchRig {
@@ -1334,7 +1334,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
     constexpr uint32_t kTopk = 6;
     BatchRig rig;
     if (!rig.bring_up(/*slots=*/kM * kTopk + 4)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t layer = 0;
@@ -1347,7 +1347,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
         auto per = store::pinned_layer_tensors(rig.manifest, layer);
         names.insert(names.end(), per.begin(), per.end());
         auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, names);
-        if (!r) { DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: pinned: %s\n", r.error().str().c_str()); return; }
+        if (!r) { CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: pinned: %s\n", r.error().str().c_str()); return; }
     }
 
     // Three different expert sets, and three different activations, both
@@ -1376,7 +1376,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
     for (uint32_t i = 0; i < kM * kTopk; ++i) {
         const ExpertKey key{static_cast<uint16_t>(layer), static_cast<uint16_t>(ids[i])};
         auto f = rig.planner.fetch(key, IoPriority::BlockingMiss, 1, layer);
-        if (!f) { DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: fetch: %s\n", f.error().str().c_str()); return; }
+        if (!f) { CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: fetch: %s\n", f.error().str().c_str()); return; }
     }
     rig.io.drain();
     for (uint32_t i = 0; i < kM * kTopk; ++i) {
@@ -1584,13 +1584,13 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_takes_one_expert_set_per_column) {
 // design §7.9's fp8 shared expert, through the same two dispatches as the FP4
 // routed ones: one slot of the list carries kSlotFp8 and the kernel switches
 // weight format, scale layout and byte stride on it.
-DEEPMOE_TEST(gpu_moe, the_fp8_shared_expert_runs_in_the_same_dispatches) {
+CACHEDMOE_TEST(gpu_moe, the_fp8_shared_expert_runs_in_the_same_dispatches) {
     if (skip_without_model("gpu_moe.the_fp8_shared_expert_runs_in_the_same_dispatches")) return;
 
     auto golden = load_tri(data_path("l1_shared_layer0.bin"), "DMS1", /*has_expert=*/false,
                            /*extra_u64=*/6);
     if (!golden) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s (run tools/oracle_shared.py --shared 0)\n",
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s (run tools/oracle_shared.py --shared 0)\n",
                     golden.error().str().c_str());
         return;
     }
@@ -1598,7 +1598,7 @@ DEEPMOE_TEST(gpu_moe, the_fp8_shared_expert_runs_in_the_same_dispatches) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     SharedExpert shared;
@@ -1665,12 +1665,12 @@ DEEPMOE_TEST(gpu_moe, the_fp8_shared_expert_runs_in_the_same_dispatches) {
 // block-32 scale before w2. Two implementations must agree with each other and
 // with tools/oracle_shared.py's y_hq, and both must move AWAY from the
 // unquantised l1_*.bin golden -- that vector is the v0.5 answer.
-DEEPMOE_TEST(gpu_moe, the_fp8_h_quantisation_matches_the_reference) {
+CACHEDMOE_TEST(gpu_moe, the_fp8_h_quantisation_matches_the_reference) {
     if (skip_without_model("gpu_moe.the_fp8_h_quantisation_matches_the_reference")) return;
 
     auto tri = load_tri(data_path("l1q_layer0_expert0.bin"), "DMQ1", /*has_expert=*/true);
     if (!tri) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s (run tools/oracle_shared.py --expert 0:0)\n",
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s (run tools/oracle_shared.py --expert 0:0)\n",
                     tri.error().str().c_str());
         return;
     }
@@ -1678,7 +1678,7 @@ DEEPMOE_TEST(gpu_moe, the_fp8_h_quantisation_matches_the_reference) {
 
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};
@@ -1762,7 +1762,7 @@ DEEPMOE_TEST(gpu_moe, the_fp8_h_quantisation_matches_the_reference) {
 // answer. fp32 addition is not associative and the per-lane partials are summed
 // in a different order, so the claim is a bound, not bit-equality -- the test
 // measures which it is.
-DEEPMOE_TEST(gpu_moe, a_partial_dispatch_reduces_to_the_same_y) {
+CACHEDMOE_TEST(gpu_moe, a_partial_dispatch_reduces_to_the_same_y) {
     if (skip_without_model("gpu_moe.a_partial_dispatch_reduces_to_the_same_y")) return;
 
     auto golden = load_golden(data_path("l1_layer0_expert0.bin"));
@@ -1772,7 +1772,7 @@ DEEPMOE_TEST(gpu_moe, a_partial_dispatch_reduces_to_the_same_y) {
     constexpr uint32_t kSlots = 7;   // 6 routed + the shared-expert stand-in
     Rig rig;
     if (!rig.bring_up(kSlots)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     for (uint32_t e = 0; e < kSlots; ++e)
@@ -1881,7 +1881,7 @@ DEEPMOE_TEST(gpu_moe, a_partial_dispatch_reduces_to_the_same_y) {
 // (through the alternate slot list), the late slots' A and the one dispatch B in
 // the NEXT -- with the main list rewritten in between, as the engine does. y must
 // be bit-identical to the one-shot run, for every early/late partition shape.
-DEEPMOE_TEST(gpu_moe, gateup_split_across_submits_is_bit_identical) {
+CACHEDMOE_TEST(gpu_moe, gateup_split_across_submits_is_bit_identical) {
     if (skip_without_model("gpu_moe.gateup_split_across_submits_is_bit_identical")) return;
     auto golden = load_golden(data_path("l1_layer0_expert0.bin"));
     REQUIRE_OK(golden);
@@ -1889,7 +1889,7 @@ DEEPMOE_TEST(gpu_moe, gateup_split_across_submits_is_bit_identical) {
     constexpr uint32_t kSlots = 7;
     Rig rig;
     if (!rig.bring_up(kSlots)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     for (uint32_t e = 0; e < kSlots; ++e)
@@ -1961,17 +1961,17 @@ DEEPMOE_TEST(gpu_moe, gateup_split_across_submits_is_bit_identical) {
 // Mutation: put `float(half(h))` back in place of `f16_round(h)` in
 // moe_gateup.slang => 8 value words differ (on RADV; a driver that does not
 // fold passes either way).
-DEEPMOE_TEST(gpu_moe, hquant_2_and_3_write_identical_planes) {
+CACHEDMOE_TEST(gpu_moe, hquant_2_and_3_write_identical_planes) {
     if (skip_without_model("gpu_moe.hquant_2_and_3_write_identical_planes")) return;
     auto tri = load_tri(data_path("l1q_layer0_expert0.bin"), "DMQ1", /*has_expert=*/true);
     if (!tri) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", tri.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", tri.error().str().c_str());
         return;
     }
     const TriGolden& g = *tri;
     Rig rig;
     if (!rig.bring_up(/*slots=*/1)) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu_moe: %s\n", rig.why.c_str());
         return;
     }
     const ExpertKey key{static_cast<uint16_t>(g.layer), static_cast<uint16_t>(g.expert)};

@@ -33,15 +33,15 @@ using namespace deepmoe;
 
 namespace {
 
-// A skip goes through DEEPMOE_SKIP_PRINTF: run_all exits 77 and ctest reports
+// A skip goes through CACHEDMOE_SKIP_PRINTF: run_all exits 77 and ctest reports
 // the suite as skipped -- unless a case failed, which always wins.
 bool skip_without_gpu(gpu::Device& dev, const char* what) {
     if (auto r = dev.create(); !r) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu: %s needs a Vulkan device (%s)\n", what, r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu: %s needs a Vulkan device (%s)\n", what, r.error().str().c_str());
         return true;
     }
     if (auto r = dev.caps().check_required(); !r) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu: %s: %s\n", what, r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu: %s: %s\n", what, r.error().str().c_str());
         return true;
     }
     return false;
@@ -51,7 +51,7 @@ bool skip_without_gpu(gpu::Device& dev, const char* what) {
 
 // design §3.3: both paths must produce the (host_ptr, device_address) pair the
 // ExpertStore expects, and both must survive a CPU write followed by a GPU read.
-DEEPMOE_TEST(gpu, both_memory_paths_give_a_host_pointer_and_a_device_address) {
+CACHEDMOE_TEST(gpu, both_memory_paths_give_a_host_pointer_and_a_device_address) {
     gpu::Device dev;
     if (skip_without_gpu(dev, "memory paths")) return;
 
@@ -84,7 +84,7 @@ DEEPMOE_TEST(gpu, both_memory_paths_give_a_host_pointer_and_a_device_address) {
 
 // design §5.3: a slab may not exceed maxMemoryAllocationSize, and an import
 // must be rejected rather than silently misaligned.
-DEEPMOE_TEST(gpu, the_allocator_refuses_what_the_driver_cannot_do) {
+CACHEDMOE_TEST(gpu, the_allocator_refuses_what_the_driver_cannot_do) {
     gpu::Device dev;
     if (skip_without_gpu(dev, "allocator limits")) return;
 
@@ -127,7 +127,7 @@ DEEPMOE_TEST(gpu, the_allocator_refuses_what_the_driver_cannot_do) {
 // full device lifetime with one path B import, and a 32 MiB path A buffer
 // mapped while the previous ICD image is gone, which is how the address got
 // reused in the field.
-DEEPMOE_TEST(gpu, host_import_survives_device_churn) {
+CACHEDMOE_TEST(gpu, host_import_survives_device_churn) {
     constexpr int kRounds = 12;
     int imported = 0;
 #if defined(__linux__)
@@ -188,7 +188,7 @@ DEEPMOE_TEST(gpu, host_import_survives_device_churn) {
 
 // design §5.3 / architecture.md §1.3: the interface inversion. The ExpertStore
 // takes a SlabBacking from gpu/ and never learns which path it got.
-DEEPMOE_TEST(gpu, the_expert_store_runs_on_a_vulkan_slab_backing) {
+CACHEDMOE_TEST(gpu, the_expert_store_runs_on_a_vulkan_slab_backing) {
     gpu::Device dev;
     if (skip_without_gpu(dev, "vulkan slab backing")) return;
 
@@ -227,7 +227,7 @@ DEEPMOE_TEST(gpu, the_expert_store_runs_on_a_vulkan_slab_backing) {
 // design §7.1 / §7.8: the GPU must not run a MoE dispatch until the CPU has
 // host-signalled "the experts for this layer are resident". This is that
 // mechanism with nothing else attached.
-DEEPMOE_TEST(gpu, a_timeline_wait_gates_a_submission_until_the_host_signals) {
+CACHEDMOE_TEST(gpu, a_timeline_wait_gates_a_submission_until_the_host_signals) {
     gpu::Device dev;
     if (skip_without_gpu(dev, "timeline gating")) return;
 
@@ -241,7 +241,7 @@ DEEPMOE_TEST(gpu, a_timeline_wait_gates_a_submission_until_the_host_signals) {
     lspec.push_constant_size = 16;
     auto create = pipe.create(dev, gpu::default_shader_dir() + "/rawread.spv", lspec, {});
     if (!create) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu: timeline gating needs build/shaders/rawread.spv (%s)\n",
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu: timeline gating needs build/shaders/rawread.spv (%s)\n",
                     create.error().str().c_str());
         return;
     }
@@ -312,7 +312,7 @@ DEEPMOE_TEST(gpu, a_timeline_wait_gates_a_submission_until_the_host_signals) {
 
 // design §7.1 rule 2: the raw-read shader is the ceiling every GEMV is scored
 // against, so it has to work on a machine that has never seen the checkpoint.
-DEEPMOE_TEST(gpu, the_raw_read_ceiling_shader_runs) {
+CACHEDMOE_TEST(gpu, the_raw_read_ceiling_shader_runs) {
     gpu::Device dev;
     if (skip_without_gpu(dev, "raw read")) return;
 
@@ -321,7 +321,7 @@ DEEPMOE_TEST(gpu, the_raw_read_ceiling_shader_runs) {
     gpu::RawReadKernel raw;
     auto create = raw.create(dev, alloc, gpu::default_shader_dir(), /*groups=*/64);
     if (!create) {
-        DEEPMOE_SKIP_PRINTF("       SKIP gpu: raw read needs build/shaders/rawread.spv (%s)\n",
+        CACHEDMOE_SKIP_PRINTF("       SKIP gpu: raw read needs build/shaders/rawread.spv (%s)\n",
                     create.error().str().c_str());
         return;
     }

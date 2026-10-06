@@ -39,7 +39,7 @@
 //   1. **The LDS budget was wo_b's for everyone.** `gXQ` was sized for
 //      K = 8192 unconditionally, so wq_b -- whose K is 1280 -- reserved 16 KiB
 //      to use 2.5 KiB and ran at a third of the occupancy it could have.
-//      `DEEPMOE_GEMV_MAX_K` is now defined by the including shader. It is NOT
+//      `CACHEDMOE_GEMV_MAX_K` is now defined by the including shader. It is NOT
 //      simply "make it as small as K": wq_a and wo_a both measured slower with
 //      a tight budget (152 against 166 GB/s for wq_a), because more resident
 //      workgroups each re-staging a 4-5K-wide activation is more L2 traffic,
@@ -70,11 +70,11 @@
 // widest in the model) is the safe default. A dispatch whose pushed `k`
 // exceeds it would walk off gXQ, so the host side keeps the two in step:
 // gpu/vulkan/attn_kernels.cpp's kStages table carries the same number.
-#ifndef DEEPMOE_GEMV_MAX_K
-#define DEEPMOE_GEMV_MAX_K 8192
+#ifndef CACHEDMOE_GEMV_MAX_K
+#define CACHEDMOE_GEMV_MAX_K 8192
 #endif
 
-static const uint kMaxK      = DEEPMOE_GEMV_MAX_K;
+static const uint kMaxK      = CACHEDMOE_GEMV_MAX_K;
 static const uint kMaxBlocks = kMaxK / kBlockK;
 
 // **A 32-element block is 17 words in LDS, not 16.** Sixteen would be the
@@ -109,15 +109,15 @@ groupshared float gXS[kMaxBlocks];    // one power-of-two scale per 32 elements
 // busy instead of 40), K = 4096 gives 2, K >= 8192 gives 1 with all 256 busy
 // on one block apiece.
 //
-// `DEEPMOE_GEMV_STAGE_TPB_MAX` caps it, for the sweep in docs/p2_attention.md
+// `CACHEDMOE_GEMV_STAGE_TPB_MAX` caps it, for the sweep in docs/p2_attention.md
 // §13: sharing a block costs two workgroup barriers in `stage_amax`, and a
 // K-split multiplies the number of workgroups that pay them.
-#ifndef DEEPMOE_GEMV_STAGE_TPB_MAX
-#define DEEPMOE_GEMV_STAGE_TPB_MAX 8
+#ifndef CACHEDMOE_GEMV_STAGE_TPB_MAX
+#define CACHEDMOE_GEMV_STAGE_TPB_MAX 8
 #endif
 static const uint kStageRaw0 = kWg / kMaxBlocks;
-static const uint kStageRaw  = (kStageRaw0 < DEEPMOE_GEMV_STAGE_TPB_MAX)
-                             ? kStageRaw0 : DEEPMOE_GEMV_STAGE_TPB_MAX;
+static const uint kStageRaw  = (kStageRaw0 < CACHEDMOE_GEMV_STAGE_TPB_MAX)
+                             ? kStageRaw0 : CACHEDMOE_GEMV_STAGE_TPB_MAX;
 static const uint kStageTPB = (kStageRaw >= 8u) ? 8u
                             : ((kStageRaw >= 4u) ? 4u
                             : ((kStageRaw >= 2u) ? 2u : 1u));
@@ -135,7 +135,7 @@ float stage_amax(float a, uint tid, uint sub) {
     return m;
 }
 
-// `DEEPMOE_GEMV_FOLD_SCALE`: fold the weight's UE8M0 scale into the staged
+// `CACHEDMOE_GEMV_FOLD_SCALE`: fold the weight's UE8M0 scale into the staged
 // block factor, so the inner loop multiplies by one LDS float per block instead
 // of loading a scale byte and calling `ldexp` per lane per block per row.
 //
@@ -147,11 +147,11 @@ float stage_amax(float a, uint tid, uint sub) {
 // RowsPerLane` divides 32 at 32 lanes a row -- so one scale row per workgroup is
 // all the inner loop ever reads, and `srow` is its address (offset by the
 // slice's first block for a K-split).
-#ifndef DEEPMOE_GEMV_FOLD_SCALE
-#define DEEPMOE_GEMV_FOLD_SCALE 0
+#ifndef CACHEDMOE_GEMV_FOLD_SCALE
+#define CACHEDMOE_GEMV_FOLD_SCALE 0
 #endif
 float fold_scale(float s, uint64_t srow, uint blk) {
-#if DEEPMOE_GEMV_FOLD_SCALE
+#if CACHEDMOE_GEMV_FOLD_SCALE
     return ldexp(s, (int)load_u8(srow + blk) - 127);
 #else
     return s;
@@ -284,18 +284,18 @@ void read_x_block(uint blk, out float v[32]) {
 
 // One 32-element block: the weight's two 16-byte loads against the staged x.
 //
-// `DEEPMOE_GEMV_ACC` is how many accumulators the 32 multiply-adds are dealt
+// `CACHEDMOE_GEMV_ACC` is how many accumulators the 32 multiply-adds are dealt
 // across. At 1 -- the default, and what every number before §13 was measured
 // with -- it is one chain of 32 dependent FMAs, in this exact order. At 4 each
 // of the eight byte-words' four elements feeds its own accumulator, the chain
 // is eight deep, and the four meet in a balanced tree: the same sum,
 // re-associated. wo_b walks eight of these per lane per row, so the chain is
 // the one place its latency cannot be hidden by occupancy.
-#ifndef DEEPMOE_GEMV_ACC
-#define DEEPMOE_GEMV_ACC 1
+#ifndef CACHEDMOE_GEMV_ACC
+#define CACHEDMOE_GEMV_ACC 1
 #endif
 float block_dot(uint4 w0, uint4 w1, float x[32]) {
-#if DEEPMOE_GEMV_ACC >= 4
+#if CACHEDMOE_GEMV_ACC >= 4
     float q0 = 0.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;
     [unroll] for (uint j = 0; j < 4; ++j) {
         const uint sh = 8 * j;
@@ -347,7 +347,7 @@ void gemv8_rows(uint64_t wbase, uint64_t sbase, uint rowBase, uint k,
             const uint64_t rowoff = (uint64_t)row * (uint64_t)k;
             const uint4 w0 = load16(wbase + rowoff + (uint64_t)blk * 32);
             const uint4 w1 = load16(wbase + rowoff + (uint64_t)blk * 32 + 16);
-#if DEEPMOE_GEMV_FOLD_SCALE
+#if CACHEDMOE_GEMV_FOLD_SCALE
             acc[r] += block_dot(w0, w1, x) * xs;
 #else
             const int   e  = (int)load_u8(sbase + (uint64_t)(row >> 5) * scale_cols + blk) - 127;
@@ -383,7 +383,7 @@ void gemv8_rows_slice(uint64_t wbase, uint64_t sbase, uint rowBase, uint kfull,
             const uint64_t rowoff = (uint64_t)row * (uint64_t)kfull + (uint64_t)k0;
             const uint4 w0 = load16(wbase + rowoff + (uint64_t)blk * 32);
             const uint4 w1 = load16(wbase + rowoff + (uint64_t)blk * 32 + 16);
-#if DEEPMOE_GEMV_FOLD_SCALE
+#if CACHEDMOE_GEMV_FOLD_SCALE
             acc[r] += block_dot(w0, w1, x) * xs;
 #else
             const int   e  = (int)load_u8(sbase + (uint64_t)(row >> 5) * scale_cols

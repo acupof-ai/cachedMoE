@@ -13,7 +13,7 @@ DsparkOneCbRunner::~DsparkOneCbRunner() {
 }
 Result<void> DsparkOneCbRunner::create(Device &device, MemoryAllocator &alloc,
                                        const std::string &dir) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     device_ = &device;
     alloc_ = &alloc;
     for (uint32_t k = 15; k <= 26; ++k) {
@@ -67,7 +67,7 @@ Result<void> DsparkOneCbRunner::create(Device &device, MemoryAllocator &alloc,
 Result<void> DsparkOneCbRunner::run(std::span<const DsparkMegaOp> ops, DsparkRunner &ds,
                                     MgtRunner &mgt, std::span<const std::string> labels,
                                     bool profile) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if (!ready_ || ops.empty() || ops.size() > 128 ||
         (!labels.empty() && labels.size() != ops.size()))
         return fail(Err::InvalidArgument,

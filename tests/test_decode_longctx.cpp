@@ -65,8 +65,8 @@
 #define _fseeki64 fseeko
 #endif
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -76,10 +76,10 @@ namespace {
 
 std::string longctx_root() {
     if (const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR")) return e;
-    return std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/longctx";
+    return std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/longctx";
 }
 std::string small_dir(const std::string& name) {
-    return std::string(DEEPMOE_TEST_DATA_DIR) + "/longctx/" + name;
+    return std::string(CACHEDMOE_TEST_DATA_DIR) + "/longctx/" + name;
 }
 std::vector<std::string> export_names() {
     std::string list = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_NAMES") ? ::deepmoe::environment::get("CACHEDMOE_LONGCTX_NAMES")
@@ -319,20 +319,20 @@ struct KernelRig {
 }  // namespace
 
 // ============================================================================
-DEEPMOE_TEST(decode_longctx, indexer_vs_reference) {
+CACHEDMOE_TEST(decode_longctx, indexer_vs_reference) {
     KernelRig rig;
     bool rig_up = false;
     for (const std::string& name : export_names()) {
         const std::string big = longctx_root() + "/" + name;
         const std::string small = small_dir(name);
         if (!exists(big + "/index.json") || !exists(small + "/index.json")) {
-            DEEPMOE_SKIP_PRINTF("      SKIP decode_longctx %s: no export at %s (CACHEDMOE_LONGCTX_DIR)\n",
+            CACHEDMOE_SKIP_PRINTF("      SKIP decode_longctx %s: no export at %s (CACHEDMOE_LONGCTX_DIR)\n",
                         name.c_str(), big.c_str());
             continue;
         }
         if (!rig_up) {
             if (!rig.bring_up()) {
-                DEEPMOE_SKIP_PRINTF("      SKIP decode_longctx: no GPU (%s)\n", rig.why.c_str());
+                CACHEDMOE_SKIP_PRINTF("      SKIP decode_longctx: no GPU (%s)\n", rig.why.c_str());
                 return;
             }
             rig_up = true;
@@ -549,13 +549,13 @@ struct TopkRow {
 
 }  // namespace
 
-DEEPMOE_TEST(decode_longctx, engine_vs_reference) {
+CACHEDMOE_TEST(decode_longctx, engine_vs_reference) {
     if (skip_without_model("decode_longctx engine")) return;
     for (const std::string& name : export_names()) {
         const std::string big = longctx_root() + "/" + name;
         const std::string small = small_dir(name);
         if (!exists(big + "/index.json") || !exists(small + "/index.json")) {
-            DEEPMOE_SKIP_PRINTF("      SKIP decode_longctx %s: no export at %s\n", name.c_str(), big.c_str());
+            CACHEDMOE_SKIP_PRINTF("      SKIP decode_longctx %s: no export at %s\n", name.c_str(), big.c_str());
             continue;
         }
         runtime::Engine e;

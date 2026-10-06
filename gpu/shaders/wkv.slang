@@ -22,9 +22,9 @@
 
 // The LDS budget for the staged activation: wkv's K is the model dim = 5120, and a
 // workgroup never stages more (fp8_gemv.slang).
-#define DEEPMOE_GEMV_MAX_K 5120
+#define CACHEDMOE_GEMV_MAX_K 5120
 // 512 KV dims / 32 = 16 fp8 blocks; finish_body's per-block amax lives in LDS.
-#define DEEPMOE_WKV_MAX_BLOCKS 16
+#define CACHEDMOE_WKV_MAX_BLOCKS 16
 
 #include "fp8_gemv.slang"
 
@@ -84,7 +84,7 @@ void stage_gemv(uint gid, uint tid) {
 // the arithmetic per element is unchanged, and max does not care about order,
 // so the bytes are the same. Every thread of the workgroup must call this: it
 // has a barrier.
-groupshared uint gBlockAmax[DEEPMOE_WKV_MAX_BLOCKS];
+groupshared uint gBlockAmax[CACHEDMOE_WKV_MAX_BLOCKS];
 
 void finish_body(uint tid, float rs) {
     const uint blocks = pc.rows / kBlockK;          // 16

@@ -278,7 +278,7 @@ public:
 
     // Records one dispatch into a private command buffer, submits it and waits.
     // Tests and one-shot use only; the draft loop never waits on the host.
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     // The caller owns an immutable, layout-compatible 32-address descriptor.
     Result<void> record_bound(CommandBuffer&, DsparkStage, const void*, uint32_t,
                               uint32_t, VkDescriptorSet);
@@ -330,7 +330,7 @@ private:
     DescriptorPool   descriptors_;
     CommandPool      pool_;
     GpuBuffer        table_{};
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkDescriptorSet  sets_[static_cast<uint32_t>(DsparkStage::Count)]{};
 #endif
 };

@@ -6,10 +6,10 @@ namespace deepmoe::gpu {
 
 Timeline::~Timeline() { destroy(); }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> Timeline::create(Device&, TimelineValue) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void Timeline::destroy() { valid_ = false; }
 Result<TimelineValue> Timeline::value() const { return fail(Err::Unavailable, "no vulkan"); }
@@ -83,6 +83,6 @@ Result<void> Timeline::wait(TimelineValue v, std::chrono::nanoseconds timeout) {
     return {};
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu

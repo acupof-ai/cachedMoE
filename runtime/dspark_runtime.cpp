@@ -154,7 +154,7 @@ struct DsparkRuntime::Impl {
         timing[name] += std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     }
     template <class Record> Result<void> profiled(const std::string &name, Record record) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
         const auto start = Clock::now();
         auto cb = profile_pool.acquire();
         if (!cb) return std::unexpected(cb.error());

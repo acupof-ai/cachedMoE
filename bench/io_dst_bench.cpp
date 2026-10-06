@@ -251,7 +251,7 @@ Result<std::unique_ptr<Destination>> make_vulkan(gpu::MemoryAllocator& alloc, Me
 // completed slot off the queue and copies that slot out of the path B ring into
 // its path A slot. A slot is not handed back to the reader until its copy has
 // retired -- the "evictions of a slot with a pending copy must wait" rule.
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
 struct CopyRing {
     gpu::Device*       dev = nullptr;
     gpu::CommandPool   pool;
@@ -421,7 +421,7 @@ Result<Point> measure(const Setup& s, const std::string& kind,
     const uint64_t stride = align_up(group_bytes, kPageSize);
     std::unique_ptr<Destination> dst;
     bool staged = false;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     std::unique_ptr<VulkanDestination> stage_sink;
     CopyRing ring;
 #endif
@@ -438,7 +438,7 @@ Result<Point> measure(const Setup& s, const std::string& kind,
         if (!d) return std::unexpected(d.error());
         dst = std::move(*d);
     } else if (kind == "stage") {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
         if (!alloc_a || !alloc_b || !dev)
             return fail(Err::Unavailable, "stage needs both allocators and a device");
         auto sv = make_vulkan_v(*alloc_b, MemoryPath::ExternalMemoryHost, bufs, group_bytes);
@@ -493,7 +493,7 @@ Result<Point> measure(const Setup& s, const std::string& kind,
         const uint32_t slot = i % bufs;
         while (groups_open.load() >= depth && failures.load() == 0)
             std::this_thread::yield();
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
         // A slot whose copy has not retired is not reusable: the read would
         // overwrite bytes the GPU is still moving.
         if (staged) ring.take(slot);
@@ -518,14 +518,14 @@ Result<Point> measure(const Setup& s, const std::string& kind,
                 const double ms = std::chrono::duration<double, std::milli>(Clock::now() - g->t0).count();
                 { std::lock_guard<std::mutex> lk(lat_m); lat_ms.push_back(ms); }
                 groups_open.fetch_sub(1);
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
                 if (staged) ring.completed(slot);
 #else
                 (void)slot;
 #endif
             });
             if (!id) {
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
                 if (staged) ring.stop();
 #endif
                 engine.stop();
@@ -534,7 +534,7 @@ Result<Point> measure(const Setup& s, const std::string& kind,
         }
     }
     engine.drain();
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if (staged) ring.drain();
 #endif
     const double secs = std::chrono::duration<double>(Clock::now() - t0).count();
@@ -562,7 +562,7 @@ Result<Point> measure(const Setup& s, const std::string& kind,
         p.mirror_share = double(st.sources[1].bytes) / double(st.bytes_completed);
     p.qd_at_issue = st.p0_chunks_issued ? double(st.p0_qd_at_issue_sum) / double(st.p0_chunks_issued) : 0.0;
     p.submit_us = st.disp_submit_mean_us();
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     if (staged) {
         if (ring.failed) { ring.stop(); return std::unexpected(ring.err); }
         p.copies     = ring.copies;
@@ -623,7 +623,7 @@ void measure_copies(gpu::MemoryAllocator* alloc_a, gpu::MemoryAllocator* alloc_b
                               src_name, best, n / 1e9 / (best / 1e3)).c_str());
     }
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     // Track S1: the other half of the staging price. `submit` is a standalone
     // vkCmdCopyBuffer + vkQueueSubmit2 + vkQueueWaitIdle, which is what the
     // bench's `stage` rows pay; `record` is the same copy with the submit

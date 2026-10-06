@@ -64,16 +64,16 @@ Result<void> DeviceCaps::check_required() const {
     return {};
 }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Device::~Device() = default;
 void Device::destroy() { valid_ = false; }
 
 Result<void> Device::create(const DeviceOptions&) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<std::vector<DeviceCaps>> Device::enumerate(bool) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 
 #else
@@ -388,6 +388,6 @@ Result<void> Device::create(const DeviceOptions& opts) {
     return {};
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu

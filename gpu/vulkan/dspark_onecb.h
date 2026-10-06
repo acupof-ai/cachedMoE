@@ -26,7 +26,7 @@ class DsparkOneCbRunner {
     QueryPool queries_;
     GpuBuffer plan_, args_;
     uint64_t stride_ = 256;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkDescriptorSet helper_set_ = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, 128> arg_sets_{};
 #endif

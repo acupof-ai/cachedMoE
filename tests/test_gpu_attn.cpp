@@ -43,8 +43,8 @@
 #include "tests/l2_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -52,7 +52,7 @@ using namespace deepmoe::testing;
 
 // No checkpoint needed: exercise the former dispatch boundary and the native
 // 1M end, including all six independent causal verify rows and output guards.
-DEEPMOE_TEST(gpu_attn, indexer_1m_grid) {
+CACHEDMOE_TEST(gpu_attn, indexer_1m_grid) {
     gpu::Device device;
     REQUIRE_OK(device.create());
     gpu::MemoryAllocator alloc;
@@ -130,7 +130,7 @@ DEEPMOE_TEST(gpu_attn, indexer_1m_grid) {
 
 namespace {
 
-std::string l2_dir() { return std::string(DEEPMOE_TEST_DATA_DIR) + "/l2"; }
+std::string l2_dir() { return std::string(CACHEDMOE_TEST_DATA_DIR) + "/l2"; }
 
 // The P3 knobs, from the environment, so one binary can re-validate a sweep
 // point without a rebuild -- the same idea as VK_INSTANCE_LAYERS switching the
@@ -317,17 +317,17 @@ bool ok(const char* what, const Agreement& g, double cos_min, double rel_l2_max)
 
 // ---------------------------------------------------------------------------
 
-DEEPMOE_TEST(gpu_attn, l2_per_stage) {
+CACHEDMOE_TEST(gpu_attn, l2_per_stage) {
     if (skip_without_model("gpu_attn")) return;
     auto set = load_l2(l2_dir());
     if (!set) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn: no L2 data (%s). Run "
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_attn: no L2 data (%s). Run "
                     "`oracle.py --level l2 --out tests/data/l2`\n", set.error().str().c_str());
         return;
     }
     Rig rig;
     if (!rig.bring_up()) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_attn: %s\n", rig.why.c_str());
         return;
     }
 
@@ -394,7 +394,7 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
 
     // CACHEDMOE_SKIP_P3 leaves out every P3 stage (docs/p2_attention.md §13), so
     // this case can be pointed at an older shader directory through
-    // DEEPMOE_SHADER_DIR and the classic stages compared line for line. An old
+    // CACHEDMOE_SHADER_DIR and the classic stages compared line for line. An old
     // directory has no gemv_ksplit or sparse_attn_t, and its wkv.spv has no
     // stage 2, so the P3 dispatches would read slots the old shaders never
     // expected.
@@ -951,12 +951,12 @@ struct Lcg {
 
 }  // namespace
 
-DEEPMOE_TEST(gpu_attn, sparse_attn_long_context) {
+CACHEDMOE_TEST(gpu_attn, sparse_attn_long_context) {
     BareRig rig;
     // 32768 KV entries is 32 MB of compressed rows, 8 MB of scores and 8 MB of
     // P.V partials.
     if (!rig.bring_up(192ull << 20)) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn long context: %s\n", rig.why.c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_attn long context: %s\n", rig.why.c_str());
         return;
     }
     const uint32_t n_heads = 64, head_dim = 512, rope_dim = 64, n_win = 128;
@@ -1135,7 +1135,7 @@ DEEPMOE_TEST(gpu_attn, sparse_attn_long_context) {
 // agree on all 256 codes then `Fp8Arith` is a pure speed knob and cannot
 // change a single output bit. (NaN codes 0x7F/0xFF are included: both forms
 // produce +-480, which is what the table holds.)
-DEEPMOE_TEST(gpu_attn, fp8_arith_decode_matches_table) {
+CACHEDMOE_TEST(gpu_attn, fp8_arith_decode_matches_table) {
     size_t differ = 0;
     for (uint32_t b = 0; b < 256; ++b) {
         const uint32_t bits = ((b & 0x7Fu) << 20) + 0x3C000000u;
@@ -1163,13 +1163,13 @@ DEEPMOE_TEST(gpu_attn, fp8_arith_decode_matches_table) {
 // 39's block output -- so this checks the kernel against cpu/dequant.h rather
 // than against the reference model, which is still the thing that would catch a
 // wrong bf16 unpack or a broken reduction.
-DEEPMOE_TEST(gpu_attn, head_bf16_gemv) {
+CACHEDMOE_TEST(gpu_attn, head_bf16_gemv) {
     if (skip_without_model("gpu_attn head")) return;
     Rig rig;
-    if (!rig.bring_up()) { DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn: %s\n", rig.why.c_str()); return; }
+    if (!rig.bring_up()) { CACHEDMOE_SKIP_PRINTF("      SKIP gpu_attn: %s\n", rig.why.c_str()); return; }
 
     if (auto r = rig.pinned.load(rig.manifest, rig.shards, rig.io, {"head.weight"}); !r) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn head: %s\n", r.error().str().c_str());
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_attn head: %s\n", r.error().str().c_str());
         return;
     }
     const store::PinnedTensor* head = rig.pinned.find("head.weight");
@@ -1232,18 +1232,18 @@ DEEPMOE_TEST(gpu_attn, head_bf16_gemv) {
 //     the reference selects ALL of them. The comparison against `topk_idxs` is
 //     therefore real but degenerate; the radix select that runs when it is not
 //     degenerate is exercised by `gpu_attn.indexer_topk_select` below.
-DEEPMOE_TEST(gpu_attn, l2_compressor_indexer) {
+CACHEDMOE_TEST(gpu_attn, l2_compressor_indexer) {
     if (skip_without_model("gpu_attn 7.4")) return;
-    const std::string dir = std::string(DEEPMOE_TEST_DATA_DIR) + "/l2x";
+    const std::string dir = std::string(CACHEDMOE_TEST_DATA_DIR) + "/l2x";
     auto set = load_l2(dir);
     if (!set) {
-        DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn 7.4: no L2 extra data (%s). Run "
+        CACHEDMOE_SKIP_PRINTF("      SKIP gpu_attn 7.4: no L2 extra data (%s). Run "
                     "tools/oracle_l2_extra.py --out tests/data/l2x\n",
                     set.error().str().c_str());
         return;
     }
     Rig rig;
-    if (!rig.bring_up()) { DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn 7.4: %s\n", rig.why.c_str()); return; }
+    if (!rig.bring_up()) { CACHEDMOE_SKIP_PRINTF("      SKIP gpu_attn 7.4: %s\n", rig.why.c_str()); return; }
 
     Dims d;
     d.dim      = static_cast<uint32_t>(set->cfg("dim", 5120));
@@ -1555,10 +1555,10 @@ DEEPMOE_TEST(gpu_attn, l2_compressor_indexer) {
 // path entirely: four 8-bit histogram passes to find the key of the k-th
 // largest, then a chunked prefix sum to emit the winners in ascending position
 // order. This drives that path and checks it against a CPU stable sort.
-DEEPMOE_TEST(gpu_attn, indexer_topk_select) {
+CACHEDMOE_TEST(gpu_attn, indexer_topk_select) {
     if (skip_without_model("gpu_attn topk")) return;
     Rig rig;
-    if (!rig.bring_up()) { DEEPMOE_SKIP_PRINTF("      SKIP gpu_attn topk: %s\n", rig.why.c_str()); return; }
+    if (!rig.bring_up()) { CACHEDMOE_SKIP_PRINTF("      SKIP gpu_attn topk: %s\n", rig.why.c_str()); return; }
 
     constexpr uint32_t kN = 4096, kK = 512, kOffset = 128;
     gpu::GpuScratch& S = rig.scratch;

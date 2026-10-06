@@ -203,31 +203,31 @@ std::vector<uint32_t> MemoryAllocator::device_local_only_types() const {
     return out;
 }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<int32_t> MemoryAllocator::pick_type(uint32_t, uint32_t, uint32_t) const {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<GpuBuffer> MemoryAllocator::allocate(uint64_t, bool, bool) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<GpuBuffer> MemoryAllocator::allocate_from_type(uint64_t, uint32_t, bool, bool) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<GpuBuffer> MemoryAllocator::allocate_host_coherent(uint64_t) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<GpuBuffer> MemoryAllocator::import_host_memory(void*, uint64_t, bool) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<GpuBuffer> MemoryAllocator::allocate_imported(uint64_t, bool, bool) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<GpuBuffer> MemoryAllocator::allocate_slab(uint64_t) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 Result<std::unique_ptr<store::SlabBacking>> MemoryAllocator::make_slab_backing() {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void MemoryAllocator::free(GpuBuffer& buf) {
     if (buf.host_alloc) free_host_pages(HostAllocInfo{buf.host_alloc, buf.bytes, buf.large_pages, {}});
@@ -535,6 +535,6 @@ Result<std::unique_ptr<store::SlabBacking>> MemoryAllocator::make_slab_backing()
     return std::unique_ptr<store::SlabBacking>(new VulkanSlabBacking(*this));
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu

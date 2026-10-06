@@ -47,13 +47,13 @@ public:
     Result<CommandBuffer> acquire();
     void                  reset();
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkCommandPool handle() const { return pool_; }
 #endif
 
 private:
     Device* device_ = nullptr;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkCommandPool pool_ = VK_NULL_HANDLE;
 #endif
 };
@@ -82,14 +82,14 @@ public:
     // Seconds between two slots, using timestampPeriod.
     Result<double> elapsed_seconds(uint32_t first, uint32_t last) const;
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkQueryPool handle() const { return pool_; }
 #endif
 
 private:
     Device*  device_ = nullptr;
     uint32_t count_  = 0;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkQueryPool pool_ = VK_NULL_HANDLE;
 #endif
 };
@@ -112,7 +112,7 @@ public:
     // from the pointer table (design §5.3), so nothing is rebound per expert.
     Result<void> dispatch(uint32_t gx, uint32_t gy = 1, uint32_t gz = 1);
 
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     Result<void> bind(const Pipeline& pipeline, VkDescriptorSet set = VK_NULL_HANDLE);
     Result<void> push(const Pipeline& pipeline, const void* data, uint32_t bytes);
     Result<void> reset_queries(const QueryPool& q, uint32_t first, uint32_t count);

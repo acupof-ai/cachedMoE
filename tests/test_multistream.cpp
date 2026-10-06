@@ -40,8 +40,8 @@
 #include "tests/l1_golden.h"
 #include "tests/test_framework.h"
 
-#ifndef DEEPMOE_TEST_DATA_DIR
-#define DEEPMOE_TEST_DATA_DIR "tests/data"
+#ifndef CACHEDMOE_TEST_DATA_DIR
+#define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
 using namespace deepmoe;
@@ -94,7 +94,7 @@ bool bring_up(runtime::Engine& e, uint32_t streams, std::string& why) {
     if (auto r = e.init_gpu(); !r) { why = r.error().str(); return false; }
     if (auto r = e.set_streams(streams); !r) { why = r.error().str(); return false; }
     runtime::SessionConfig sc;
-    sc.engram_tables_dir = std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
+    sc.engram_tables_dir = std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3";
     sc.max_context = 256;
     if (auto r = e.begin_session(sc); !r) { why = r.error().str(); return false; }
     runtime::SamplingParams sp;
@@ -170,7 +170,7 @@ void run_case(::deepmoe::test::Context& _ctx, runtime::Engine::MsSched sched,
     runtime::Engine e;
     std::string why;
     if (!bring_up(e, 2, why)) {
-        DEEPMOE_SKIP_PRINTF("SKIP multistream: %s\n", why.c_str());
+        CACHEDMOE_SKIP_PRINTF("SKIP multistream: %s\n", why.c_str());
         return;
     }
     e.set_ms_sched(sched);
@@ -213,14 +213,14 @@ void run_case(::deepmoe::test::Context& _ctx, runtime::Engine::MsSched sched,
 
 }  // namespace
 
-DEEPMOE_TEST(multistream, no_cross_contamination) {
+CACHEDMOE_TEST(multistream, no_cross_contamination) {
     run_case(_ctx, runtime::Engine::MsSched::Pipeline, "pipeline");
 }
 
-DEEPMOE_TEST(multistream, interleave_matches_pipeline) {
+CACHEDMOE_TEST(multistream, interleave_matches_pipeline) {
     run_case(_ctx, runtime::Engine::MsSched::Interleave, "interleave");
 }
 
-DEEPMOE_TEST(multistream, pingpong_matches_interleave) {
+CACHEDMOE_TEST(multistream, pingpong_matches_interleave) {
     run_case(_ctx, runtime::Engine::MsSched::PingPong, "pingpong");
 }

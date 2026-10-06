@@ -71,10 +71,10 @@ const char* mgt_stage_name(MgtStage s) {
     return "?";
 }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> DecodeRunner::create(Device&, MemoryAllocator&, const std::string&, const AttnSpec&) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void DecodeRunner::destroy() {
     pages_.destroy();immutable_=false;}
@@ -89,7 +89,7 @@ Result<void> DecodeRunner::make(DecodeStage, const std::string&, uint32_t) {
     return fail(Err::Unavailable, "no vulkan");
 }
 Result<void> MgtRunner::create(Device&, MemoryAllocator&, const std::string&, const MgtSpec&) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void MgtRunner::destroy() {
     pages_.destroy();immutable_=false;}
@@ -445,7 +445,7 @@ Result<void> MgtRunner::dispatch_now(uint32_t m, MgtStage s, const void* push,
     return submit_and_wait(*device_, cmd);
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu
 

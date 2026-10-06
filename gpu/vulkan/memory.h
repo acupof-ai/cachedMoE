@@ -48,7 +48,7 @@ struct GpuBuffer {
     void*         host_alloc  = nullptr;
     bool          large_pages = false;
     bool          imported    = false;
-#if defined(DEEPMOE_ENABLE_VULKAN)
+#if defined(CACHEDMOE_ENABLE_VULKAN)
     VkBuffer       buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
 #endif
@@ -130,7 +130,7 @@ public:
 
 private:
     // `require` / `prefer` are VkMemoryPropertyFlags, spelled as uint32_t so the
-    // header still compiles with DEEPMOE_ENABLE_VULKAN off.
+    // header still compiles with CACHEDMOE_ENABLE_VULKAN off.
     Result<int32_t> pick_type(uint32_t type_bits, uint32_t require, uint32_t prefer) const;
 
     Device*    device_ = nullptr;

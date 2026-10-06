@@ -27,11 +27,11 @@ std::string DsparkSpec::name() const {
                        subgroup_size, heads_per_wg);
 }
 
-#if !defined(DEEPMOE_ENABLE_VULKAN)
+#if !defined(CACHEDMOE_ENABLE_VULKAN)
 
 Result<void> DsparkRunner::create(Device&, MemoryAllocator&, const std::string&,
                                   const DsparkSpec&) {
-    return fail(Err::Unavailable, "built without DEEPMOE_ENABLE_VULKAN");
+    return fail(Err::Unavailable, "built without CACHEDMOE_ENABLE_VULKAN");
 }
 void DsparkRunner::destroy() {}
 uint64_t* DsparkRunner::slots(DsparkStage) { return nullptr; }
@@ -209,6 +209,6 @@ Result<void> DsparkRunner::dispatch_now(DsparkStage s, const void* push, uint32_
     return submit_and_wait(*device_, cmd);
 }
 
-#endif  // DEEPMOE_ENABLE_VULKAN
+#endif  // CACHEDMOE_ENABLE_VULKAN
 
 }  // namespace deepmoe::gpu
