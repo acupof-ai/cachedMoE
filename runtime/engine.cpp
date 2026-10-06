@@ -2105,8 +2105,9 @@ Result<Engine::DecodePolicyGuard> Engine::request_decode_policy(DecodeMode mode)
         rr_demand_.clear();
         rr_.bg_stale += discarded;
         constexpr auto kBoundaryFillTimeout = std::chrono::seconds(5);
+        const auto before = decode_boundary_capacity(store_);
         auto boundary = settle_decode_boundary(store_, model_cfg_.text.num_experts_per_tok,
-                                               kBoundaryFillTimeout);
+                                               kBoundaryFillTimeout, before);
         if (!boundary) return std::unexpected(boundary.error());
         if (boundary->waits || discarded)
             log_info("off-plain boundary: before [{}], after [{}], waits {}, {} ms, "

@@ -129,8 +129,8 @@ DEEPMOE_TEST(decode_mode, exact_boundary_waits_for_capacity_not_all_fills) {
     }
     std::thread completion([&] {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        store.finish_fill(slots[0], true);
-        store.finish_fill(slots[1], true);
+        store.finish_fill(slots[2], true);
+        store.finish_fill(slots[3], true);
     });
     auto boundary = runtime::settle_decode_boundary(store, 2, std::chrono::seconds(1));
     completion.join();
@@ -140,7 +140,29 @@ DEEPMOE_TEST(decode_mode, exact_boundary_waits_for_capacity_not_all_fills) {
     CHECK_EQ(boundary->after.available(), 2u);
     CHECK_EQ(boundary->after.filling, 2u);
     CHECK_EQ(store.stats().filling, 2u);
+    CHECK(store.slot_info(slots[0])->state == SlotState::Filling);
+    CHECK(store.slot_info(slots[1])->state == SlotState::Filling);
     CHECK_EQ(store.completed_timeline(), 0ull);
+}
+
+DEEPMOE_TEST(decode_mode, exact_boundary_rechecks_completion_after_initial_snapshot) {
+    store::ExpertStore store;
+    CacheConfig cache;
+    cache.slots_per_slab = 1;
+    cache.budget_bytes = layout::kExpertSlotBytes;
+    REQUIRE_OK(store.init(std::make_unique<store::HostSlabBacking>(), cache, 1, 1));
+    auto fill = store.begin_fill({0, 0});
+    REQUIRE_OK(fill);
+    const auto before = runtime::decode_boundary_capacity(store);
+    CHECK_EQ(before.filling, 1u);
+    REQUIRE_OK(store.finish_fill(fill->slot, true));
+    // The last fill completes between capacity inspection and the search for
+    // a key to wait on. Even a zero remaining budget must accept the capacity.
+    auto ready = runtime::settle_decode_boundary(store, 1, std::chrono::milliseconds(0), before);
+    REQUIRE_OK(ready);
+    CHECK_EQ(ready->before.filling, 1u);
+    CHECK_EQ(ready->after.evictable, 1u);
+    CHECK_EQ(ready->waits, 0u);
 }
 
 DEEPMOE_TEST(decode_mode, exact_boundary_rejects_guards_without_clearing_them) {
