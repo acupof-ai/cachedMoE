@@ -1,7 +1,7 @@
-"""Align host decode intervals with a supervisor's absolute cooling intervals.
+"""Align engine decode intervals with absolute cooling intervals.
 
-The host receives `done` shortly after the engine finishes decoding. This is a
-host boundary estimate, not a GPU timestamp. Raw wall time is always retained.
+Prefer the engine's recorded decode end. Old logs use the host done receipt
+as an explicitly labelled estimate. Neither boundary is a GPU timestamp.
 """
 from __future__ import annotations
 
@@ -117,6 +117,27 @@ def coverage_for_windows(timestamps, windows, tolerance_s=THERMAL_COVERAGE_TOLER
                 first_sample_unix=first, last_sample_unix=last, windows=checked)
 
 
+def decode_window(event, host_start=None):
+    """Use the decode end captured before checkpointing or done delivery."""
+    host_end = event.get("host_unix")
+    if host_end is None and host_start is not None and "host_s" in event:
+        host_end = host_start + event["host_s"]
+    marker = event.get("decode_finished_unix")
+    end = marker if marker is not None else host_end
+    if isinstance(end, bool) or end is None:
+        raise ValueError("decode event has no absolute engine or host clock")
+    end = float(end)
+    seconds = float(event.get("decode_ms", 0)) / 1000
+    if not math.isfinite(end) or not math.isfinite(seconds) or seconds < 0 or end < seconds:
+        raise ValueError("invalid decode interval")
+    delay_ms = None
+    if marker is not None and host_end is not None:
+        delay_ms = 1000 * (float(host_end) - end)
+        if not math.isfinite(delay_ms) or delay_ms < -1000 * THERMAL_COVERAGE_TOLERANCE_S:
+            raise ValueError("engine decode end is after the host receipt")
+    return end - seconds, end, marker is not None, delay_ms
+
+
 def decode_events_timing(done, host_start=None, thermal_log=None):
     """Shared accounting for already parsed completed turns."""
     raw = sum(float(ev.get("decode_ms", 0)) for ev in done)
@@ -126,19 +147,18 @@ def decode_events_timing(done, host_start=None, thermal_log=None):
                   thermal_pause_ms=None, active_decode_ms=None, active_ms_per_token=None,
                   timing_alignment="unavailable", alignment_error=None,
                   thermal_coverage=None,
+                  engine_decode_boundaries=False, host_receipt_delay_ms=None,
                   thermal_log=str(Path(thermal_log).resolve()) if thermal_log else None)
     if not thermal_log:
         return result
-    if any("host_unix" not in ev and (host_start is None or "host_s" not in ev) for ev in done):
-        result["alignment_error"] = "decode events have no absolute host clock"
+    try:
+        boundaries = [decode_window(ev, host_start) for ev in done]
+    except (TypeError, ValueError) as error:
+        result["alignment_error"] = str(error)
         return result
-    windows = []
-    for ev in done:
-        end = float(ev.get("host_unix", (host_start or 0) + ev.get("host_s", 0)))
-        seconds = float(ev.get("decode_ms", 0)) / 1000
-        if seconds < 0:
-            raise ValueError("negative decode time")
-        windows.append((end - seconds, end))
+    windows = [(begin, end) for begin, end, _, _ in boundaries]
+    result["engine_decode_boundaries"] = bool(boundaries) and all(b[2] for b in boundaries)
+    result["host_receipt_delay_ms"] = [b[3] for b in boundaries]
     try:
         samples, partial = _thermal_rows(thermal_log)
         coverage = coverage_for_windows([now for now, _ in samples], windows)
@@ -156,7 +176,9 @@ def decode_events_timing(done, host_start=None, thermal_log=None):
     active = max(0.0, raw - cooling)
     result.update(thermal_pause_ms=cooling, active_decode_ms=active,
                   active_ms_per_token=active / steps if steps else None,
-                  timing_alignment="host done receipt minus engine decode_ms")
+                  timing_alignment="engine decode end minus engine decode_ms"
+                  if result["engine_decode_boundaries"] else
+                  "host done receipt estimate minus engine decode_ms (legacy or mixed logs)")
     return result
 
 

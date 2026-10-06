@@ -97,6 +97,45 @@ class ThermalPolicy(unittest.TestCase):
 
 
 class ThermalAccounting(unittest.TestCase):
+    def test_engine_end_excludes_pause_after_decode_and_delayed_done(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events, thermal = root / "events.jsonl", root / "thermal.jsonl"
+            turn = dict(event="done", host_unix=120, decode_finished_unix=110,
+                        decode_ms=10000, decode_steps=10)
+            events.write_text(json.dumps(turn) + "\n")
+            thermal.write_text("".join(
+                json.dumps(dict(wall_time_s=100 + n / 20,
+                                paused=110 <= 100 + n / 20 < 119)) + "\n"
+                for n in range(401)))
+            result = decode_timing(events, thermal_log=thermal)
+            self.assertEqual(result["active_decode_ms"], 10000)
+            self.assertEqual(result["thermal_pause_ms"], 0)
+            self.assertTrue(result["engine_decode_boundaries"])
+            self.assertEqual(result["host_receipt_delay_ms"], [10000])
+            self.assertIn("engine decode end", result["timing_alignment"])
+            # Old logs remain explicitly estimated; they cannot retrospectively
+            # recover the engine boundary from the delayed receipt alone.
+            turn.pop("decode_finished_unix")
+            events.write_text(json.dumps(turn) + "\n")
+            legacy = decode_timing(events, thermal_log=thermal)
+            self.assertEqual(legacy["active_decode_ms"], 1000)
+            self.assertFalse(legacy["engine_decode_boundaries"])
+            self.assertIn("estimate", legacy["timing_alignment"])
+
+    def test_invalid_engine_clock_does_not_fall_back_to_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for marker in (True, float("nan"), 120.5):
+                with self.subTest(marker=marker):
+                    events, thermal = self.coverage_fixture(root, [(110, False), (120, False)])
+                    turn = json.loads(events.read_text())
+                    turn["decode_finished_unix"] = marker
+                    events.write_text(json.dumps(turn) + "\n")
+                    result = decode_timing(events, thermal_log=thermal)
+                    self.assertIsNone(result["active_decode_ms"])
+                    self.assertIsNotNone(result["alignment_error"])
+
     def test_bench_clock_origin_matches_logged_event(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(provenance, "write"):
             root = Path(tmp)

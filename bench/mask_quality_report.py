@@ -20,7 +20,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from repetition_metrics import metrics
-from thermal_metrics import decode_events_timing, interval_overlap, pause_intervals
+from thermal_metrics import decode_events_timing, decode_window, interval_overlap, pause_intervals
 
 STAGES = ("draft_ms", "verify_ms", "commit_ms", "cpu_ms")
 QUALITY_BOOLEANS = ("chinese64_no_loop", "long512_no_loop",
@@ -68,12 +68,13 @@ def timing_for_turn(turn, host_start, pauses):
     raw, steps = float(turn.get("decode_ms", 0)), int(turn.get("decode_steps", 0))
     if not math.isfinite(raw) or raw < 0 or steps < 0:
         raise ValueError("invalid decode counters")
-    end = turn.get("host_unix")
-    if end is None and host_start is not None and "host_s" in turn:
-        end = host_start + turn["host_s"]
     cooling = None
-    if pauses is not None and end is not None:
-        cooling = 1000 * interval_overlap(float(end) - raw / 1000, float(end), pauses)
+    if pauses is not None:
+        try:
+            begin, end, _, _ = decode_window(turn, host_start)
+            cooling = 1000 * interval_overlap(begin, end, pauses)
+        except (TypeError, ValueError):
+            pass  # Aggregate accounting retains the alignment error.
     active = None if cooling is None else max(0.0, raw - cooling)
     return dict(raw_decode_ms=raw, decode_steps=steps,
                 raw_ms_per_token=raw / steps if steps else None,

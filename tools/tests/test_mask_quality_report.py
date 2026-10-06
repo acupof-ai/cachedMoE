@@ -22,6 +22,24 @@ def save(path, value):
 
 
 class QualityReportTests(unittest.TestCase):
+    def test_engine_decode_boundary_is_used_for_aggregate_and_each_turn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thermal = root / "thermal.jsonl"
+            thermal.write_text("".join(
+                json.dumps(dict(wall_time_s=100 + n / 20,
+                                paused=110 <= 100 + n / 20 < 119)) + "\n"
+                for n in range(401)))
+            turn = dict(label="delayed", seed=1, generated=11, decode_steps=10,
+                        decode_ms=10000, decode_finished_unix=110, host_unix=120,
+                        token_ids=list(range(11)))
+            save(root / "turns.json", [turn])
+            arm = build_report(["off=" + str(root)], thermal_log=thermal)["arms"][0]
+            self.assertEqual(arm["timing"]["thermal_pause_ms"], 0)
+            self.assertEqual(arm["timing"]["active_ms_per_token"], 1000)
+            self.assertTrue(arm["timing"]["engine_decode_boundaries"])
+            self.assertEqual(arm["turns"][0]["timing"]["active_ms_per_token"], 1000)
+
     def test_complete_cycle_includes_uncovered_time(self):
         turn = dict(speculation=dict(cycles=2, verified=4, accepted=2, tokens=4,
             draft_ms=100, verify_ms=600, commit_ms=50, cpu_ms=50,
