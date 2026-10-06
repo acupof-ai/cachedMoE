@@ -94,8 +94,9 @@ class QualityReportTests(unittest.TestCase):
             root = Path(tmp)
             thermal = root / "thermal.jsonl"
             thermal.write_text("".join(json.dumps(dict(wall_time_s=t, paused=p)) + "\n"
-                for t, p in [(101, True), (105, False), (113, True), (117, False),
-                             (127, True), (129, False)]))
+                for t, p in [(100 + n / 20,
+                    101 <= 100 + n / 20 < 105 or 113 <= 100 + n / 20 < 117 or
+                    127 <= 100 + n / 20 < 129) for n in range(621)]))
             save(root / "clock.json", dict(host_start_unix=100))
             arm = root / "off"
             arm.mkdir()
@@ -121,6 +122,7 @@ class QualityReportTests(unittest.TestCase):
             self.assertEqual(cell["timing"]["raw_decode_ms"], 15000)
             self.assertEqual(cell["timing"]["thermal_pause_ms"], 6000)
             self.assertEqual(cell["timing"]["active_ms_per_token"], 600)
+            self.assertTrue(cell["timing"]["thermal_coverage"]["complete"])
             self.assertEqual([r["timing"]["thermal_pause_ms"] for r in cell["turns"]], [4000, 2000])
             self.assertTrue(cell["repetition_vs_off"]["passed"])
             self.assertFalse(report["arms"][1]["complete"])
@@ -147,7 +149,8 @@ class QualityReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             thermal = root / "thermal.jsonl"
-            thermal.write_text(json.dumps(dict(wall_time_s=1, paused=False)) + "\n")
+            thermal.write_text("".join(json.dumps(dict(wall_time_s=9 + n / 20, paused=False)) + "\n"
+                                       for n in range(101)))
             records = []
             for index, (name, k, mode, cost) in enumerate([
                     ("off", 0, "off", 1000), ("k2", 2, "mask", 700),
@@ -175,6 +178,32 @@ class QualityReportTests(unittest.TestCase):
             report = build_report([str(root)])
             self.assertEqual(report["D_selection"]["selected"], "k3")
             self.assertIsNone(report["D_selection"]["selected_quality"]["passed"])
+
+            # A stale log must not turn the same candidates into default picks
+            # or leave adjusted per-turn figures looking valid.
+            thermal.write_text(json.dumps(dict(wall_time_s=1, paused=False)) + "\n")
+            incomplete = build_report([str(root)])
+            self.assertIsNone(incomplete["D_selection"]["selected"])
+            for cell in incomplete["arms"]:
+                self.assertIsNotNone(cell["timing"]["raw_ms_per_token"])
+                self.assertIsNone(cell["timing"]["active_ms_per_token"])
+                self.assertIn("ends before", cell["timing"]["alignment_error"])
+                self.assertIsNone(cell["turns"][0]["timing"]["active_ms_per_token"])
+
+    def test_standalone_turn_file_cannot_bypass_thermal_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thermal = root / "thermal.jsonl"
+            thermal.write_text(json.dumps(dict(wall_time_s=1, paused=False)) + "\n")
+            turn = dict(label="web", seed=1, generated=8, decode_steps=7,
+                        decode_ms=700, host_unix=10, token_ids=list(range(8)))
+            save(root / "turns.json", [turn])
+            report = build_report(["off=" + str(root)], thermal_log=thermal)
+            arm = report["arms"][0]
+            self.assertEqual(arm["timing"]["raw_ms_per_token"], 100)
+            self.assertIsNone(arm["timing"]["active_ms_per_token"])
+            self.assertIsNone(arm["turns"][0]["timing"]["active_ms_per_token"])
+            self.assertIn("ends before", arm["timing"]["alignment_error"])
 
     def test_cli_refuses_existing_output_before_reading_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -20,7 +20,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from repetition_metrics import metrics
-from thermal_metrics import decode_timing, interval_overlap, pause_intervals
+from thermal_metrics import decode_events_timing, interval_overlap, pause_intervals
 
 STAGES = ("draft_ms", "verify_ms", "commit_ms", "cpu_ms")
 QUALITY_BOOLEANS = ("chinese64_no_loop", "long512_no_loop",
@@ -296,28 +296,26 @@ def load_arm(directory, name, record=None, *, comparison_root=None,
     if clock.exists():
         paths.append(clock)
     thermal = thermal_log or record.get("decode_timing", {}).get("thermal_log")
-    pauses, alignment_error = None, None
+    pauses = None
     if thermal:
         paths.append(Path(thermal))
         try:
             pauses = pause_intervals(thermal)
-        except (OSError, ValueError) as error:
-            alignment_error = str(error)
+        except (OSError, ValueError):
+            pass  # shared accounting below retains the alignment error
     turn_timing = [timing_for_turn(row, host_start, pauses) for row in turns]
-    raw = sum(t["raw_decode_ms"] for t in turn_timing)
-    steps = sum(t["decode_steps"] for t in turn_timing)
-    aligned = bool(turn_timing) and all(t["active_decode_ms"] is not None for t in turn_timing)
-    active = sum(t["active_decode_ms"] for t in turn_timing) if aligned else None
-    timing = dict(raw_decode_ms=raw, decode_steps=steps,
-                  raw_ms_per_token=raw / steps if steps else None,
-                  thermal_pause_ms=raw - active if aligned else None,
-                  active_decode_ms=active,
-                  active_ms_per_token=active / steps if aligned and steps else None,
-                  timing_alignment="host done receipt minus engine decode_ms" if aligned else "unavailable",
-                  thermal_log=str(thermal) if thermal else None, alignment_error=alignment_error)
-    if events.exists() and not partial and alignment_error is None:
-        # Use the shared implementation as the aggregate accounting authority.
-        timing.update(decode_timing(events, clock, thermal))
+    # The shared implementation also checks log coverage, including standalone
+    # web turn files. An incomplete recording cannot validate either aggregate
+    # speed or a per-turn adjusted figure.
+    timing = decode_events_timing(turns, host_start, thermal)
+    coverage = timing.get("thermal_coverage")
+    for index, row in enumerate(turn_timing):
+        if timing["active_decode_ms"] is None:
+            row.update(thermal_pause_ms=None, active_decode_ms=None, active_ms_per_token=None)
+        if timing.get("alignment_error"):
+            row["alignment_error"] = timing["alignment_error"]
+        if coverage and len(coverage["windows"]) == len(turn_timing):
+            row["thermal_coverage"] = coverage["windows"][index]
     status_path = directory / "status.json"
     if not status_path.exists() and isinstance(document, list) and turns:
         status_path = directory / f"turn{len(turns)-1}_status.json"
@@ -377,6 +375,7 @@ def load_arm(directory, name, record=None, *, comparison_root=None,
                        timing=turn_timing[i], repetition=row.get("repetition"),
                        cycle=cycle_report([row], turn_timing[i], common_fraction))
                   for i, row in enumerate(turns)]
+    steps = timing["decode_steps"]
     hit_rate = (sum(float(r.get("decode_hit_rate", 0)) * int(r.get("decode_steps", 0))
                     for r in turns) / steps if steps else None)
     return dict(name=name, directory=str(directory), complete=complete,

@@ -142,8 +142,11 @@ class ThermalAccounting(unittest.TestCase):
                               json.dumps(dict(event="done", host_unix=130, decode_ms=5000,
                                               decode_steps=5)) + "\n")
             clock.write_text(json.dumps(dict(host_start_unix=100)))
-            samples = [(101, True), (105, False), (113, True), (117, False),
-                       (127, True), (129, False)]
+            samples = [(100 + n / 20,
+                        101 <= 100 + n / 20 < 105 or
+                        113 <= 100 + n / 20 < 117 or
+                        127 <= 100 + n / 20 < 129)
+                       for n in range(621)]
             thermal.write_text("".join(json.dumps(dict(wall_time_s=t, paused=p)) + "\n"
                                        for t, p in samples))
             result = decode_timing(events, clock, thermal)
@@ -151,6 +154,67 @@ class ThermalAccounting(unittest.TestCase):
             self.assertEqual(result["thermal_pause_ms"], 6000)
             self.assertEqual(result["active_ms_per_token"], 600)
             self.assertEqual(result["raw_ms_per_token"], 1000)
+            self.assertTrue(result["thermal_coverage"]["complete"])
+
+    def coverage_fixture(self, root, samples):
+        events, thermal = root / "events.jsonl", root / "thermal.jsonl"
+        events.write_text(json.dumps(dict(event="done", host_unix=120, decode_ms=10000,
+                                          decode_steps=10)) + "\n")
+        thermal.write_text("".join(json.dumps(dict(wall_time_s=t, paused=p)) + "\n"
+                                   for t, p in samples))
+        return events, thermal
+
+    def test_empty_old_or_truncated_log_cannot_claim_active_speed(self):
+        fixtures = [([], "no complete samples"),
+                    ([(1, False)], "ends before"),
+                    ([(110 + n / 20, False) for n in range(81)], "ends before"),
+                    ([(115 + n / 20, False) for n in range(101)], "starts after")]
+        with tempfile.TemporaryDirectory() as tmp:
+            for samples, expected in fixtures:
+                with self.subTest(expected=expected, sample_count=len(samples)):
+                    events, thermal = self.coverage_fixture(Path(tmp), samples)
+                    result = decode_timing(events, thermal_log=thermal)
+                    self.assertEqual(result["raw_decode_ms"], 10000)
+                    self.assertEqual(result["raw_ms_per_token"], 1000)
+                    self.assertIsNone(result["active_ms_per_token"])
+                    self.assertFalse(result["thermal_coverage"]["complete"])
+                    self.assertIn(expected, result["alignment_error"])
+
+    def test_interior_sampling_gap_is_reported_not_filled(self):
+        samples = [(110 + n / 20, False) for n in range(201)
+                   if not 114 < 110 + n / 20 < 116]
+        with tempfile.TemporaryDirectory() as tmp:
+            events, thermal = self.coverage_fixture(Path(tmp), samples)
+            result = decode_timing(events, thermal_log=thermal)
+        self.assertIsNone(result["active_decode_ms"])
+        self.assertIn("sampling gap", result["alignment_error"])
+        self.assertEqual(result["thermal_coverage"]["windows"][0]["maximum_sample_gap_s"], 2)
+        self.assertEqual(result["thermal_coverage"]["windows"][0]["maximum_gap_interval"], [114, 116])
+
+    def test_live_log_may_end_one_sample_before_done_with_explicit_tolerance(self):
+        samples = [(110 + n / 20, 113 <= 110 + n / 20 < 117) for n in range(200)]
+        with tempfile.TemporaryDirectory() as tmp:
+            events, thermal = self.coverage_fixture(Path(tmp), samples)
+            # The next write can be incomplete while the caller reads the log.
+            with thermal.open("a") as stream:
+                stream.write('{"wall_time_s":')
+            result = decode_timing(events, thermal_log=thermal)
+        self.assertEqual(result["active_decode_ms"], 6000)
+        self.assertEqual(result["active_ms_per_token"], 600)
+        coverage = result["thermal_coverage"]
+        self.assertTrue(coverage["complete"])
+        self.assertTrue(coverage["partial_final_line"])
+        self.assertEqual(coverage["tolerance_s"], .25)
+        self.assertAlmostEqual(coverage["windows"][0]["missing_end_s"], .05)
+
+    def test_invalid_legacy_record_preserves_raw_and_explains_alignment_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            events, thermal = self.coverage_fixture(Path(tmp), [])
+            thermal.write_text('{"elapsed_s":10,"amdgpu":80}\n')
+            result = decode_timing(events, thermal_log=thermal)
+        self.assertEqual(result["raw_ms_per_token"], 1000)
+        self.assertIsNone(result["active_ms_per_token"])
+        self.assertIn("no absolute timestamps", result["alignment_error"])
 
     def test_missing_clock_cannot_claim_adjusted_speed(self):
         with tempfile.TemporaryDirectory() as tmp:
