@@ -340,6 +340,7 @@ Engine::Engine() {
     // Preserve configuration checks made before init (such as set_streams).
     // init resolves the supplied RuntimeConfig for the actual engine lifetime.
     cfg_.gpu.apply_environment();
+    cfg_.decode.apply_environment();
     streams_.push_back(std::make_unique<Stream>());
     cur_ = streams_[0].get();
 }
@@ -563,6 +564,7 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     shutdown();
     cfg_ = cfg;
     cfg_.gpu.apply_environment();
+    cfg_.decode.apply_environment();
     log_info("GPU config: route {}, engram early {}, readout {}, ONECB {}, mega {}, "
              "profile {}, diagnostics {}, trim {}, pair dot {}, fold scale {}, ATTN_CM {}",
              cfg_.gpu.batch_gpu_route, cfg_.gpu.batch_engram_early, cfg_.gpu.spec_gpu_readout,
@@ -1838,13 +1840,8 @@ Result<void> Engine::cmd_submit(TimelineValue wait_value) {
 // 102 s. The budget is now DEEPMOE_GPU_WAIT_S (default 900 s), the wait is
 // taken in slices so a slow machine says so instead of looking hung, and the
 // failure names what it waited for and for how long.
-double Engine::gpu_wait_budget_s() {
-    static const double v = [] {
-        const char* e = std::getenv("DEEPMOE_GPU_WAIT_S");
-        const double x = e ? std::atof(e) : 0.0;
-        return x > 0.0 ? x : 900.0;
-    }();
-    return v;
+double Engine::gpu_wait_budget_s() const {
+    return cfg_.decode.gpu_wait_budget_seconds;
 }
 
 // Track G (docs/plan_p5.md (g)): the fence wake-up.
@@ -1863,13 +1860,8 @@ double Engine::gpu_wait_budget_s() {
 // a budget in microseconds, default 0 = off (park immediately, the old
 // behaviour); the spin always falls back to the blocking wait when the budget
 // runs out, so no run can hang on it that would not have hung before.
-double Engine::fence_spin_us() {
-    static const double v = [] {
-        const char* e = std::getenv("DEEPMOE_FENCE_SPIN_US");
-        const double x = e ? std::atof(e) : 0.0;
-        return x > 0.0 ? x : 0.0;
-    }();
-    return v;
+double Engine::fence_spin_us() const {
+    return cfg_.decode.fence_spin_microseconds;
 }
 
 // Track MS: the eviction guard with more than one stream in flight.
@@ -2001,8 +1993,7 @@ void Engine::read_timestamps(DecodeStepResult& res) {
 void Engine::set_resident_only(ResidentOnly m) {
     resident_only_ = m;
     if (!mask_cache_explicit_) {
-        const char* dynamic = std::getenv("DEEPMOE_MASK_DYNAMIC_LRU");
-        mask_cache_fixed_ = dynamic && std::string_view(dynamic) == "0";
+        mask_cache_fixed_ = !cfg_.decode.dynamic_mask_lru;
     }
     store_.set_fixed_cache(m == ResidentOnly::Mask && mask_cache_fixed_);
     // Dynamic masking can outrun demand IO. Letting P2 jump the P0 backlog
@@ -2011,8 +2002,8 @@ void Engine::set_resident_only(ResidentOnly m) {
     // cache has no new P0 demand and can retain it. The demand loads themselves
     // remain asynchronous in either case.
     bool enabled = m == ResidentOnly::Mask && mask_cache_fixed_;
-    if (const char* e = std::getenv("DEEPMOE_IO_ENGRAM_DEADLINE"))
-        enabled = m == ResidentOnly::Mask && std::string_view(e) == "1";
+    if (cfg_.decode.engram_deadline)
+        enabled = m == ResidentOnly::Mask && *cfg_.decode.engram_deadline;
     io_.set_engram_wait_priority(enabled);
     log_info("engram wait priority: {}", enabled ? "on" : "off");
 }
@@ -2591,7 +2582,7 @@ Result<void> Engine::layer_moe(Stream& s, uint32_t L, bool& apply_post) {
         // done by now in all but a pathological case, and this wait proves it
         // before the list is rewritten for the late slots.
         if (auto r = cmd_wait(); !r) return r;
-        if (lc.shared_early && std::getenv("DEEPMOE_SE_CHECK")) {
+        if (lc.shared_early && cfg_.decode.shared_early_check) {
             std::string first;
             const uint32_t bad = cur_->moe_.debug_check_x(call, &first);
             if (bad) log_warn("SE check (split): layer {} token {}: {} x elements differ; {}", L,
@@ -2608,8 +2599,7 @@ Result<void> Engine::layer_moe(Stream& s, uint32_t L, bool& apply_post) {
         if (staged) {
             if (auto r = cur_->moe_.stage_rows(call, std::span<const uint32_t>(all, n_all)); !r) return r;
         } else if (lc.shared_early) {
-            static const bool se_check = std::getenv("DEEPMOE_SE_CHECK") != nullptr;
-            if (se_check) {
+            if (cfg_.decode.shared_early_check) {
                 if (auto r = cmd_wait(); !r) return r;
                 std::string first;
                 const uint32_t bad = cur_->moe_.debug_check_x(call, &first);
@@ -2719,12 +2709,7 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
 // warm pass's margin and l3_ppl's NLL bit-identical); elsewhere off until
 // measured. DEEPMOE_SHARED_EARLY=0/1 overrides.
 bool Engine::shared_early_on() const {
-    static const int env = [] {
-        const char* e = std::getenv("DEEPMOE_SHARED_EARLY");
-        if (!e || !*e) return -1;
-        return *e == '0' ? 0 : 1;
-    }();
-    const bool on = env >= 0 ? env != 0 : g_shared_early_default.load() != 0;
+    const bool on = cfg_.decode.shared_early.value_or(g_shared_early_default.load() != 0);
     // One stream by default: with two, the other stream's submits interleave
     // with this one's, and until 2026-10-01 nothing here had been measured. The
     // per-stream state it needs is per-stream already (`Stream::se_cmd_[2]`,
@@ -2733,21 +2718,11 @@ bool Engine::shared_early_on() const {
     // with no wait behind the gate's, which is the same shape as the eager MoE
     // submit that raced under `--streams 2` on RADV (0h). Opt in with
     // `DEEPMOE_SHARED_EARLY_MS=1` to measure it; see STATUS §3 92.
-    static const bool ms = [] {
-        const char* e = std::getenv("DEEPMOE_SHARED_EARLY_MS");
-        return e && *e && *e != '0';
-    }();
-    return on && (ms || streams_.size() == 1);
+    return on && (cfg_.decode.shared_early_multistream || streams_.size() == 1);
 }
 
-bool Engine::ms_eager_moe() {
-    static const int env = [] {
-        const char* e = std::getenv("DEEPMOE_MS_EAGER_MOE");
-        if (!e || !*e) return -1;
-        return (*e == '0') ? 0 : 1;
-    }();
-    if (env >= 0) return env != 0;
-    return g_ms_eager_default.load(std::memory_order_relaxed) != 0;
+bool Engine::ms_eager_moe() const {
+    return cfg_.decode.eager_moe.value_or(g_ms_eager_default.load(std::memory_order_relaxed) != 0);
 }
 
 

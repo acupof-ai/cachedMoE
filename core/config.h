@@ -3,9 +3,9 @@
 // field here with the design's starting guess as the default, so that P-1/P1
 // results land in one place.
 //
-// Ownership/threading: a plain value struct. The Engine takes a copy at
-// construction and treats it as immutable afterwards; nothing reads it on a hot
-// path.
+// Ownership/threading: a plain value struct. Engine copies it at init and
+// resolves environment overrides before decode starts. Hot paths read the
+// resolved fields, rather than inspecting the process environment.
 #pragma once
 
 #include <cstdint>
@@ -125,6 +125,45 @@ struct GpuExecutionConfig {
     }
 };
 
+// Decode scheduling and diagnostics are fixed at engine startup. Platform
+// defaults remain optional so RADV-specific choices can be resolved after the
+// device is known, without polling process environment during a layer.
+struct DecodeExecutionConfig {
+    double gpu_wait_budget_seconds = 900;
+    double fence_spin_microseconds = 0;
+    std::optional<bool> shared_early;
+    std::optional<bool> eager_moe;
+    std::optional<bool> engram_deadline;
+    bool shared_early_multistream = false;
+    bool shared_early_check = false;
+    bool dynamic_mask_lru = true;
+
+    void apply_environment() {
+        const auto positive = [](const char* key, double& value, double fallback) {
+            if (const char* e = std::getenv(key)) {
+                const double parsed = std::atof(e);
+                value = parsed > 0 ? parsed : fallback;
+            }
+        };
+        const auto optional_flag = [](const char* key, std::optional<bool>& value) {
+            if (const char* e = std::getenv(key))
+                value = *e ? std::optional<bool>(*e != '0') : std::nullopt;
+        };
+        positive("DEEPMOE_GPU_WAIT_S", gpu_wait_budget_seconds, 900);
+        positive("DEEPMOE_FENCE_SPIN_US", fence_spin_microseconds, 0);
+        optional_flag("DEEPMOE_SHARED_EARLY", shared_early);
+        optional_flag("DEEPMOE_MS_EAGER_MOE", eager_moe);
+        if (const char* e = std::getenv("DEEPMOE_SHARED_EARLY_MS"))
+            shared_early_multistream = *e && *e != '0';
+        // This diagnostic used presence, including "0", in the old path.
+        if (std::getenv("DEEPMOE_SE_CHECK")) shared_early_check = true;
+        if (const char* e = std::getenv("DEEPMOE_MASK_DYNAMIC_LRU"))
+            dynamic_mask_lru = std::string_view(e) != "0";
+        if (const char* e = std::getenv("DEEPMOE_IO_ENGRAM_DEADLINE"))
+            engram_deadline = std::string_view(e) == "1";
+    }
+};
+
 struct RuntimeConfig {
     // The checkpoint directory: the 48 original safetensors shards, config.json
     // and the deepmoe_manifest.json that tools/manifest.py writes beside them
@@ -156,6 +195,7 @@ struct RuntimeConfig {
     PrefetchConfig    prefetch;
     SpeculationConfig speculation;
     GpuExecutionConfig gpu;
+    DecodeExecutionConfig decode;
 
     uint32_t max_context = 65536;   // design §1.2 stage-one target
     uint64_t seed        = 0;       // Philox counter seed, decode is reproducible

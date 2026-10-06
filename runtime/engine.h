@@ -841,7 +841,7 @@ private:
     // Multi-stream: submit a layer's MoE as soon as it is recorded instead of
     // letting the next layer's attention carry it. Costs one submit a layer
     // (~0.15 ms) and buys the other stream's stall window a GPU dispatch.
-    static bool ms_eager_moe();
+    bool ms_eager_moe() const;
     // The M > 1 twin of `run_layer`. `st` carries everything the batch decided
     // once (p0, m, the list index, the ced sources); this fills in the layer.
     Result<void> run_layer_batch(uint32_t L, uint32_t p0, uint32_t m, bool& apply_post);
@@ -868,7 +868,7 @@ private:
     // Track SE (docs/STATUS.md §7 0h): DEEPMOE_SHARED_EARLY.
     bool shared_early_on() const;
     // The wall-clock budget one GPU fence wait gets (DEEPMOE_GPU_WAIT_S, 900 s).
-    static double gpu_wait_budget_s();
+    double gpu_wait_budget_s() const;
     Result<void> cmd_flush(TimelineValue wait_value) {
         if (auto r = cmd_submit(wait_value); !r) return r;
         return cmd_wait();
@@ -930,7 +930,7 @@ private:
     // submitted until layer L+1 has bound and recorded its attention chain.
     bool                 gate_probe_ = false;
     // Track G: DEEPMOE_FENCE_SPIN_US, and how often the spin caught the signal.
-    static double        fence_spin_us();
+    double               fence_spin_us() const;
     GateSeg              gp_hit_{}, gp_miss_{};
     SamplingParams       sampling_{};
     bool                 check_topk_ = false;
