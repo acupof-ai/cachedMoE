@@ -30,6 +30,16 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Owner follow-up (2026-10-06): power selection is pending.** The new three-mode
+web benchmark fixes dynamic 5,500 slots, dual source, k2/ONECB/CPU routing, disk
+KV and eight 512-token turns per arm. Before its first arm, the complete
+900-second cooldown fails the owner's <=60°C start gate: external NVMe minimum
+60.85°C, with no pending startup IO. No arms or output tokens ran, so this is a
+preflight block, not a profile speed verdict. The original performance web
+policy is restored and five transcripts are unchanged. Draft-only FP8/subset
+experiments are authorized but wait for the ordered power comparison.
+[Method and current receipts](power_profile_comparison.md).
+
 **It speaks.** A `cachedmoe serve` process keeps the pinned set, expert cache, and KV resident;
 `tools/chat.py` starts a conversation and streams tokens, with each new turn prefilling only the added portion.
 Current short-decode reference matching is **6/8**, or **7/8 with the engine's

@@ -629,3 +629,17 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   60°C门不放宽；80/72温控持续。已请求外接盒辅助散热，当前没有有效速度结果或新默认。
 - 原脚本/输入逐hash冻结在 `power_profiles_prepared/input_snapshot/`。CPU报告门新增短/长winner分歧检查，
   原始reader在进程中已加载，不把后处理修正追溯成已运行的新源；会保留旧报告并只重算raw数据，不重跑GPU。
+
+## 21. Codex 追加收据（2026-10-06，电源比较冷启动门阻塞）
+
+- 第一臂冷却完整等待900.289秒，11889份样本；外置NVMe最低60.85°C，未达§4.8的≤60°C。
+  GPU/内盘最低44/31.85°C；三臂完成0，生成0，属于PREFLIGHT_BLOCKED，不是电源模式NO-GO。
+- 启动2076次IO全部完成、context0；APST参数0、外盘runtime active只读记录，未改稳定性设置。
+  已请求外接盒增加散热；清单的60°C门没有放宽。
+- 临时引擎正常退出，KV必要写盘排空，web server rc0；用户网页已恢复原performance策略，
+  实际 `/api/config` 验dynamic5500/k2/top4/ONECB/CPUroute/双盘/diskKV/1M；5份transcript hash/mtime未改，未刷新浏览器。
+- 新报告工具CPU门4/4，初始driver commit `d73bb7f`、报告校核 `5387be7`；工作树保留，尚未合入main。
+  原始输入、失败冷却、恢复收据在 `bench/results/mask_quality/power_profiles_prepared/`，
+  原始thermal与临时engine日志在 `power_profiles_v1/`。测量样本为空，不更新默认或填造ms/token。
+- §4.8未完成；§4.9按owner顺序依赖仍未启动，不宣称离线/FP8质量或速度通过。
+  待外盘散热达标（或owner明确修改起跑条件）后继续，使用新输出目录；本次未开始任何配置测量。
