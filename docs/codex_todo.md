@@ -91,7 +91,7 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 - [ ] 执行 `phase_a/validation/additional/run_checks.py` 的 decode 与 longctx 门禁（尚未启动）。
 - [x] mask 的 MMLU 与续轮重复门失败，不能设置为新的质量合格默认值。
 - [x] `docs/miss_mask.md` 已记录矩阵、分段计时和质量结果；STATUS 待最终决策更新。
-- [ ] **A 未通过（MMLU 46/57、续轮重复 .118 > 1.5×off）。按方案此时应停下请 owner 决定，
+- [x] **A 未通过（MMLU 46/57、续轮重复 .118 > 1.5×off）。按方案此时应停下请 owner 决定，
   而不是直接进入 C。** C 已经开跑，结果可以保留作为数据，但在 owner 决定前不得据此改默认或改网页。
   - [x] owner 2026-10-06 已决定：接受当前质量，动态 mask + 投机作网页默认，C 继续（见 §0）。
     STATUS 里要如实写 A 的两项未达标及 owner 接受。
@@ -148,9 +148,13 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 已有现场数据在 `phase_e_memory_live.json`；prefill transit 在 decode 前已释放，
 Engram 全量 scale 默认没有常驻，也没有可再释放一次的整套 host 权重副本。
 
-- [ ] 从最终构建的 status 补完整内存账，避免把共享 UMA 的 RSS/GTT/cache 重复相加。
-- [ ] 只有确证可安全腾出 ≥150槽（约3GB）才改分配，并验证 prefill/长上下文。
+- [x] 从最终构建的 status 补完整内存账，避免把共享 UMA 的 RSS/GTT/cache 重复相加。
+  收据：`phase_e_accounting.json`、`miss_mask.md` 的 Phase E。A 99.8408 GiB、B 64 KiB；
+  5100 槽占89.3372 GiB，pinned reserve 10.4658 GiB（payload 9.1704 GiB、padding 1.2954 GiB）。
+  KV/decode scratch 0.00346/0.03125 GiB；这些是同一分配账的组成，不能再加 RSS/GTT。
+- [x] 只有确证可安全腾出 ≥150槽（约3GB）才改分配，并验证 prefill/长上下文。
   没有足够安全空间则按方案跳过，记录依据。
+  决策：SKIP。padding 与 scratch 不足3GB，且没有证明能安全挪作完整专家槽；未修改分配。
 
 ## 3. 收尾与交付
 
@@ -186,7 +190,10 @@ mask 只比 off 快约 4%（历史 +43%）。
 
 - [ ] 在 performance 模式下同会话连续跑 off 与动态 mask 八轮（已有脚本，每配置一次），
   看能否回到 ~77ms/token。provenance 写 `powerprofilesctl get`、GPU 时钟/DPM 状态。
-- [ ] 若 performance 下仍慢，按提交二分（`41cc44c` → `4a262da`），以 per-op 的 `expert_hit_ms`/`hot_gemv_ms` 判断。
+- [x] 若 performance 下仍慢，按提交二分（`41cc44c` → `4a262da`），以 per-op 的 `expert_hit_ms`/`hot_gemv_ms` 判断。
+  收据：条件未触发，SKIP 二分。performance 七轮 mask attention/MoE/tail 为
+  31.147/24.566/6.649 ms/token，历史八轮为31.853/24.896/6.734；指定算子退化已消失。
+  原八轮对照尚未完整，墙钟受温控暂停污染，不能从这些算子数推断最终速度。
 - [ ] 查清前，C 的「比 off 快 ≥20%」门和 D 的 k 选择都不判；温控仍按 80/72，
   若 performance 下温度无法跑完，写明并请 owner 决定测速用哪个模式。
   （owner 已定 performance，见 §0。）
@@ -226,3 +233,35 @@ mask 只比 off 快约 4%（历史 +43%）。
 预测预取（含 CPU 预测预取）、非 LRU 淘汰、reheat、resident-only 默认、固定 cache 默认、自动冻结、
 mega kernel、host-flag、champion port、CM attention、scale-fold、pair-dot、MTP unpin、缩小 draft attention、
 CPU 计算 miss 专家、部分专家、重新归一化、streams>1 的 GPU route。
+
+## 5. Codex 追加收据（2026-10-06 00:23）
+
+- 已遵守 §0 的新决定：九份监督脚本的未来默认值改为 performance；旧脚本及 hash 保存在
+  `bench/results/mask_quality/profile_supervisor_legacy/`，历史 power-saver 结果仍按原模式标注。
+- P0 的第一次 performance 对照在旧 `stop_on_pause` 开关下提前终止，不作为速度结果。
+  `p0_power_resume/` 正在同一引擎/PID/default session 连续运行 off/mask 八轮；
+  80/72°C 暂停恢复，逐样本保存实际 power profile、ACPI 和 GPU 时钟。
+- D 尚未启动。已补独立 `k2_onecb_cpu_route`：ONECB=1、GPU_ROUTE=0，另保留0/0和1/1，
+  以及 k3/k5。所有配置 performance，保留384个 MTP pin，不改变主模型 LRU。
+- 草稿单线程 union 的旧逐算子数据已复核：三个阶段合计0.02445/0.02841 ms每周期，
+  最大0.03066/0.03855 ms，来源 `union_profile_receipt.json`。主模型 union 尚未隔离计时。
+- GPU 路由状态抽取和热路径配置整理目前只有未应用草案；本轮测量的源码和二进制没有改动。
+
+## 6. Codex 追加收据（2026-10-06，继续执行）
+
+- `p0_power_resume` 已结束：off 八轮完整，mask 七轮完整，第八轮被旧1500秒墙钟预算中断。
+  243次暂停累计994.673秒。89°C均是旧慢采样首次触发暂停时的温度；停止后的后续采样GPU最高72°C。
+  旧逻辑还等待未达到80°C的NVMe降到72°C。详见原始 `thermal_analysis.json` 与 `evidence_audit/`。
+- `9f61ab3` 增加逐传感器80/72锁存、50ms温控采样、AC检查和实际电源模式记录；
+  执行预算与冷却墙钟分开，保存绝对暂停区间。13项CPU测试通过，含真实普通进程组暂停恢复。
+  新报告同时保留原墙钟与扣暂停的active时间；后者使用host done边界估计，不能冒充GPU计时。
+- C 的 `phase_c/performance_recovered` 已启动：同一个冻结 `4079180` 引擎、default session，
+  依次 off/mask/tau.20/tau.10 各八轮，performance、双盘5500槽；KV重置，专家cache延续。
+  二进制hash、shader来源和新温控协议另存，完成前不判C/D。
+- `b154180` 抽离GPU route state/finish，`60d0458` 移除decode热路径8键/9处getenv；
+  新CPU配置suite与最终GPU对拍尚待统一构建执行。路由数学、union和fence顺序保留。
+- `64b0443` 为主模型union增加测试专用计时点，生产未传observer时无额外query；
+  `34eede7` 命名测试ABI尺寸，后续ONECB/union测试格式提交经可执行token核对不变。
+  主模型union实测尚待执行；不改变单线程kernel。
+- `2d7e786` 的网页配置API显式报告mask/cache/spec-k及当前实际电源模式，CPU网页检查8项通过。
+  网页仍停止，后续按D结果恢复；用户transcript和浏览器页未动。

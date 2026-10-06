@@ -6,6 +6,12 @@
 > 绕过 P0 后的排队和缓存追赶，不是 SSD 设备读取突然慢六倍。恢复历史 NLL
 > 并不代表全部质量门通过。未执行、止损和按规则跳过的事项须分开记录。
 
+> 2026-10-06 owner 决定优先于下文的旧电源和默认值规则：所有后续作业与网页使用
+> performance，80/72°C 温控暂停后继续并记录。owner 接受 A 的 MMLU46/57 和续轮重复
+> .118 作为网页基线，默认动态 mask + 投机；D 完成前用 k2，ONECB 开，GPU route
+> 由分开测量决定。C 仍须通过原质量/速度门，GO 后也只作为显式选项。
+> 详见 [codex_todo.md §0](codex_todo.md#0-owner-决定2026-10-06优先于下文任何旧表述)。
+
 背景来源：`docs/miss_mask.md`、`docs/mask_freeze.md`、`docs/dspark_topk.md` §17–19、
 `docs/STATUS.md` §3 第 21/23/35/38–40/47/51 行。
 
