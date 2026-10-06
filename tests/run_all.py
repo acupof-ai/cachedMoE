@@ -143,6 +143,8 @@ def main() -> int:
         ("tools/tests/test_thermal_guard.py", [PY, str(ROOT / "tools" / "tests" / "test_thermal_guard.py")]),
         ("tools/tests/test_web_launch_guarded.py", [PY, str(ROOT / "tools" / "tests" / "test_web_launch_guarded.py")]),
         ("tools/tests/test_mask_quality_report.py", [PY, str(ROOT / "tools" / "tests" / "test_mask_quality_report.py")]),
+        ("bench/test_power_profile_report.py", [PY, str(ROOT / "bench" / "test_power_profile_report.py")]),
+        ("bench/test_power_profile_compare.py", [PY, str(ROOT / "bench" / "test_power_profile_compare.py")]),
         ("tests/test_spec_compare.py", [PY, str(ROOT / "tests" / "test_spec_compare.py")]),
         ("tests/test_serve_decode_clock.py", [PY, str(ROOT / "tests" / "test_serve_decode_clock.py")]),
     ):
