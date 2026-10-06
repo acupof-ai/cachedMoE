@@ -249,6 +249,38 @@ def load_encoding():
 
 # --------------------------------------------------------------------------- serve
 
+DECODE_MODES = ("mask-spec", "mask-plain", "off-plain")
+
+
+def decode_mode_capabilities(ready):
+    """Use the engine's policy; older engines expose no selectable modes."""
+    policy = ready.get("decode_modes") or {}
+    if not isinstance(policy, dict):
+        policy = {}
+    available = policy.get("available", [])
+    if not isinstance(available, list):
+        available = []
+    default = policy.get("default")
+    return {
+        "available": [mode for mode in DECODE_MODES if mode in available],
+        "default": default if default in DECODE_MODES else None,
+    }
+
+
+def request_decode_mode(body, ready):
+    """Capture a supported default at submission, before this turn queues."""
+    policy = decode_mode_capabilities(ready)
+    if "decode_mode" not in body:
+        default = policy["default"]
+        return default if default in policy["available"] else None
+    mode = body["decode_mode"]
+    if not isinstance(mode, str) or mode not in DECODE_MODES:
+        raise ValueError("decode_mode must be mask-spec, mask-plain, or off-plain")
+    if mode not in policy["available"]:
+        raise ValueError(f"decode_mode {mode} is unavailable for this engine")
+    return mode
+
+
 def web_configuration(bridge):
     """Expose the active launch policy and the host's current power mode."""
     ready = bridge.serve.ready
@@ -274,7 +306,9 @@ def web_configuration(bridge):
         "cmd": " ".join(bridge.serve.cmd),
         "resident_only": bridge.args.resident_only,
         "mask_cache": bridge.args.mask_cache,
+        "decode_modes": decode_mode_capabilities(ready),
         "speculation": spec,
+        "speculation_resources_resident": bool(spec.get("enabled")),
         "spec_k": spec.get("draft_tokens") if spec.get("enabled") else 0,
         "power_profile": profile,
         "platform_profile": platform_profile,
@@ -595,7 +629,7 @@ class ChatState:
 class Job:
     def __init__(self, session, body):
         self.session = session
-        self.body = body
+        self.body = dict(body)
         self.out: queue.Queue = queue.Queue()
         self.cancelled = False
         self.started = False
@@ -637,6 +671,9 @@ class Bridge:
     # -- queue -------------------------------------------------------------
     def submit(self, session, body):
         job = Job(session, body)
+        mode = request_decode_mode(job.body, self.serve.ready)
+        if mode is not None:
+            job.body["decode_mode"] = mode
         with self.jobs_cv:
             self.jobs.append(job)
             pos = len(self.jobs) - 1
@@ -719,6 +756,8 @@ class Bridge:
                "temperature": float(b.get("temperature", 1.0)),
                "top_p": float(b.get("top_p", 0.95)),
                "seed": seed, "stop_ids": STOP_IDS, "session": job.session}
+        if "decode_mode" in b:
+            req["decode_mode"] = b["decode_mode"]
 
         q = serve.begin_turn()
         try:
@@ -765,6 +804,8 @@ class Bridge:
                                        "prefill_tokens": ev.get("prefill_tokens"),
                                        "prefill_mode": ev.get("prefill_mode"),
                                        "reused": ev.get("reused_tokens"), "generated": ev.get("generated"),
+                                       "decode_mode": ev.get("decode_mode"),
+                                       "speculation_enabled": ev.get("speculation_enabled"),
                                        "finish": ev.get("finish"), "context": ev.get("context"), "seed": seed}
                         st.save()
                     ev["seed"] = seed
@@ -859,6 +900,10 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/preview":
                 return self._preview(body)
             if u.path == "/api/chat":
+                try:
+                    request_decode_mode(body, self.bridge.serve.ready)
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
                 return self._chat(body)
             if u.path == "/api/cancel":
                 hit = self.bridge.cancel(body.get("session", "default"))

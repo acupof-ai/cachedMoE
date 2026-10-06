@@ -95,6 +95,10 @@ footer{border-top:1px solid var(--line);background:var(--card);padding:9px 14px}
   <label>top_p <input id="topp" type="number" step="0.01" min="0" max="1" value="0.95"></label>
   <label>Max tokens <input id="maxtok" type="number" min="1" max="8192" value="1024"></label>
   <label>Seed <input id="seed" size="6" placeholder="Random"></label>
+  <label>Decode <select id="decode_mode" disabled>
+    <option value="">Engine default</option>
+  </select></label>
+  <small>Applies to new computation. Start a new chat for an exact history.</small>
   <label><input id="think" type="checkbox"> Thinking</label>
   <label>effort <select id="effort" disabled>
     <option value="50">Low · 50</option><option value="75" selected>High · 75</option>
@@ -113,7 +117,8 @@ footer{border-top:1px solid var(--line);background:var(--card);padding:9px 14px}
   <span>Disk wait <b id="s_stall">–</b></span>
   <span>First token <b id="s_ttft">–</b></span>
   <span>Prefill <b id="s_pf">–</b></span>
-  <span>Speculation <b id="s_spec">–</b></span>
+  <span>Resident DSpark <b id="s_spec">–</b></span>
+  <span>Last turn <b id="s_mode">–</b></span>
   <span id="s_q"></span>
 </div>
 
@@ -341,12 +346,32 @@ function hms(s){
 }
 
 // ---------- config ----------
+function decodeModeLabel(mode){
+  return {"mask-spec":"Mask + speculation", "mask-plain":"Mask · plain",
+    "off-plain":"Off · plain"}[mode] || "Engine default";
+}
+function decodeModeSummary(result){
+  const spec = result.speculation_enabled;
+  return decodeModeLabel(result.decode_mode) + " / speculation "
+    + (spec === true ? "on" : spec === false ? "off" : "unknown");
+}
+function configureDecodeModes(policy){
+  const select = $("decode_mode");
+  const available = policy.available || [];
+  select.replaceChildren();
+  for (const mode of available) select.add(new Option(decodeModeLabel(mode), mode));
+  const selectable = available.includes(policy.default);
+  if (!selectable) select.add(new Option(decodeModeLabel(policy.default), policy.default || ""));
+  select.value = policy.default || "";
+  select.disabled = !selectable;
+}
 async function loadConfig(){
   CFG = await (await fetch("/api/config")).json();
   $("s_ctx").textContent = "0 / " + CFG.max_context.toLocaleString();
   const spec = CFG.ready.speculation || {};
   $("s_spec").textContent = spec.enabled
     ? "k=" + spec.draft_tokens + " / top-K=" + spec.accept_top_k : "Off";
+  configureDecodeModes(CFG.decode_modes || {});
   note("Engine ready: max context " + CFG.max_context.toLocaleString()
      + "; capacity limit " + CFG.ceiling.toLocaleString() + " token");
   refreshStatus();
@@ -469,10 +494,12 @@ async function loadHistory(){
       } else if (m.role === "assistant"){
         assistant().finish(m.reasoning_content || "", m.content || "");
         const s = m.stat;
+        if (s) $("s_mode").textContent = decodeModeSummary(s);
         if (s) statline("TTFT " + ((s.ttft_ms||0)/1000).toFixed(1) + " s | Prefill " + (s.prefill_tokens ?? "–")
           + " tok (" + (s.prefill_mode || "–") + ", reused " + (s.reused ?? "–") + ") | Decode " + (s.generated ?? "–")
           + " tok " + (s.tok_s||0).toFixed(2) + " tok/s hit " + (s.hit||0).toFixed(3)
-          + " | Disk wait " + (s.stall||0).toFixed(0) + " ms/tok | " + (s.finish || "–") + " | ctx " + (s.context ?? "–"));
+          + " | Disk wait " + (s.stall||0).toFixed(0) + " ms/tok | " + (s.finish || "–") + " | ctx " + (s.context ?? "–")
+          + " | " + decodeModeSummary(s));
       }
     }
     if (msgs.length) note("Restored " + msgs.filter(m => m.role === "user").length + " turns");
@@ -486,6 +513,15 @@ async function loadHistory(){
 }
 
 // ---------- send ----------
+function chatRequest(text, thinking, effort){
+  const request = {session:$("sess").value, text,
+    temperature:parseFloat($("temp").value), top_p:parseFloat($("topp").value),
+    max_tokens:parseInt($("maxtok").value,10), seed:$("seed").value || null,
+    think:thinking, reasoning_effort:effort};
+  const select = $("decode_mode");
+  if (!select.disabled) request.decode_mode = select.value;
+  return request;
+}
 async function send(){
   if (running) return;
   const text = $("box").value;
@@ -508,15 +544,13 @@ async function send(){
   let noteEl = null, body = null, t0 = performance.now(), first = null;
   const prog = $("prog"), bar = prog.firstElementChild;
   const perTok = $("hover").checked, thinking = $("think").checked;
+  const request = chatRequest(text, thinking, effort);
 
   abort = new AbortController();
   try{
     const res = await fetch("/api/chat", {method:"POST", signal:abort.signal,
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({session:$("sess").value, text,
-        temperature:parseFloat($("temp").value), top_p:parseFloat($("topp").value),
-        max_tokens:parseInt($("maxtok").value,10), seed:$("seed").value || null,
-        think:thinking, reasoning_effort:effort})});
+      body: JSON.stringify(request)});
     if (!res.ok){ const error = await res.json(); throw new Error(error.error || "Request failed"); }
     const rd = res.body.getReader(), dec = new TextDecoder();
     let buf = "";
@@ -575,12 +609,13 @@ async function send(){
           $("s_stall").textContent = (pt.nvme_stall||0).toFixed(0) + " ms";
           $("s_ttft").textContent = ((ev.ttft_ms||0)/1000).toFixed(1) + " s";
           $("s_ctx").textContent = (ev.context||0).toLocaleString() + " / " + CFG.max_context.toLocaleString();
+          $("s_mode").textContent = decodeModeSummary(ev);
           statline("TTFT " + ((ev.ttft_ms||0)/1000).toFixed(1) + " s | Prefill "
             + ev.prefill_tokens + " tok (" + ev.prefill_mode + ", reused " + ev.reused_tokens + ") "
             + (ev.prefill_tok_s||0).toFixed(2) + " tok/s | Decode " + ev.generated + " tok "
             + (ev.tok_s||0).toFixed(2) + " tok/s hit " + (ev.decode_hit_rate||0).toFixed(3)
             + " | Disk wait " + (pt.nvme_stall||0).toFixed(0) + " ms/tok | " + ev.finish
-            + " | ctx " + ev.context + " | seed " + ev.seed);
+            + " | ctx " + ev.context + " | seed " + ev.seed + " | " + decodeModeSummary(ev));
         }
         else if (ev.event === "error"){
           prog.style.display = "none";
@@ -612,6 +647,7 @@ $("newconv").onclick = async () => {
   await fetch("/api/reset", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({session:$("sess").value})});
   log.innerHTML = "";
+  $("s_mode").textContent = "–";
   note("Context cleared (expert cache stays warm)");
   refreshStatus();
 };
