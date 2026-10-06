@@ -13,6 +13,10 @@
    默认值改为 `performance`；provenance 记 `powerprofilesctl get`。power-saver 下已有的速度数只作参考，
    需要速度结论的配置在 performance 下补测一次。
    温控 80°C 暂停/72°C 恢复和 AC 检查保持不变；若 performance 下频繁热暂停，记录暂停次数后照常跑完。
+   **§4.8 更新收据（2026-10-06）：未来默认 balanced。** 完整v4三臂原始墙钟
+   80.944 / 107.830 / 113.801 ms/token（balanced / power-saver / performance），
+   前两轮与后两轮也均由balanced胜出。按§0.5/§4.8规则替换暂定performance默认；
+   原文及历史结果保留，当前温控仍按§0.7六项设备阈值。来源`docs/power_profile_comparison.md`。
 2. **网页默认：动态 mask + 投机。** owner 接受 A 当前质量（MMLU 46/57、续轮重复 .118）作为默认。
    - k 由 D 决定：在 performance 下测 k2/k3/k5（mask），选 ms/token 最低且无循环/重复门不失败的 k。
    - D 完成前网页先用 mask + k=2，不用 k=5。
@@ -381,20 +385,21 @@ CMake 选项 `CACHEDMOE_*`。
 问题：80/72 温控下，performance 的冷却暂停可能把墙钟拖得比 power-saver 还慢。
 已有数字不是同条件（A 是 power-saver plain mask，C r4 是 performance 同引擎多臂），不能直接下结论。
 
-- [ ] 配置固定为当前网页默认：动态 mask、5500 槽、双盘 48/48、k=2、ONECB1、GPU route 0、磁盘 KV 开、AC。
+- [x] 配置固定为当前网页默认：动态 mask、5500 槽、双盘 48/48、k=2、ONECB1、GPU route 0、磁盘 KV 开、AC。
   用网页同一套启动参数和 `web_longtest.py`（或等价脚本）跑**八轮、每轮 512 token**，同一 prompt 集、seed 和顺序。
-- [ ] 三臂：power-saver、balanced、performance，每臂只跑一次。同一引擎进程中途切
+- [x] 三臂：power-saver、balanced、performance，每臂只跑一次。同一引擎进程中途切
   `powerprofilesctl`；每臂开始前等 GPU 和 NVMe 降到 ≤60°C 再开始，避免上一臂余热影响下一臂。
   （owner 2026-10-06 晚改为 GPU ≤60°C、NVMe ≤65°C，见 §0.7。）
   KV 每臂重置；专家 cache 按固定顺序延续，并在报告里写明顺序。
-- [ ] 温控照常生效（按 §0.7：GPU 85/77、NVMe 80/72），网页实际就是这样跑的。**主指标是原始墙钟 ms/token（含暂停）**，
+- [x] 温控照常生效（按 §0.7：GPU 85/77、NVMe 80/72），网页实际就是这样跑的。**主指标是原始墙钟 ms/token（含暂停）**，
   不用扣除暂停后的 active 估算做决定，active 只作附表。
-- [ ] 每臂报：总 ms/token、第 1–2 轮与第 7–8 轮各自 ms/token（区分短对话和持续生成）、暂停次数与冷却秒数、
+- [x] 每臂报：总 ms/token、第 1–2 轮与第 7–8 轮各自 ms/token（区分短对话和持续生成）、暂停次数与冷却秒数、
   GPU/NVMe 峰值温度、GPU 平均频率（`pp_dpm_sclk` 或 amdgpu 传感器）、接受率、命中、四项重复指标。
-- [ ] 决策：原始 ms/token 最低者为默认；与最快者差距 ≤3% 的取更低功耗的那个。
+- [x] 决策：原始 ms/token 最低者为默认；与最快者差距 ≤3% 的取更低功耗的那个。
   若短对话最快和持续生成最快不是同一模式，两组数都写清楚，交 owner 决定，不自行做按长度切换。
 - [ ] 结论写进 STATUS 和本文件 §0.1；需要改时更新网页启动器和监督脚本的默认，重启网页后核对 `/api/config`
   和 `powerprofilesctl get`。不刷新用户浏览器，不动 transcript。
+  v4结论及共享balanced默认已写入；网页/API恢复在§4.9串行GPU步骤之后进行，暂不勾选此项。
 
 ### 4.9 P2：draft head FP8 / vocab 子集（owner 2026-10-06 批准，§4.8 之后做）
 

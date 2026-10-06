@@ -338,8 +338,9 @@ def thermal_transition(child, values, latch, paused, force_hold=False):
 
 
 def power_valid(values):
-    return (values["ac"] == 1 and values["power_profile"] == "performance" and
-            values.get("platform_profile", "performance") == "performance")
+    expected = runtime_defaults.DEFAULT_POWER_PROFILE
+    return (values["ac"] == 1 and values["power_profile"] == expected and
+            values.get("platform_profile", expected) == expected)
 
 
 def write_state(path, state):
@@ -447,7 +448,8 @@ def main(argv=None):
     command, env = launch_configuration(args)
     if args.dry_run:
         print(json.dumps(dict(command=command, env=runtime_env.raw_controls(env),
-                              power_profile="performance", thermal_thresholds=args.thermal_policy.record()), indent=2))
+                              power_profile=runtime_defaults.DEFAULT_POWER_PROFILE,
+                              thermal_thresholds=args.thermal_policy.record()), indent=2))
         return 0
     require_pidfd_support()
     assert_idle()
@@ -458,7 +460,7 @@ def main(argv=None):
     args.state_dir.mkdir(parents=True, exist_ok=True)
     sensors = discover_sensors(required_nvme=runtime_defaults.PRODUCTION_READ_SOURCES)
     original = profile()
-    subprocess.run(["powerprofilesctl", "set", "performance"], check=True)
+    subprocess.run(["powerprofilesctl", "set", runtime_defaults.DEFAULT_POWER_PROFILE], check=True)
     stopping = False
 
     def request_stop(signum, frame):
@@ -469,7 +471,7 @@ def main(argv=None):
     server, child, owned, paused = None, None, None, False
     latch, failure, clean = ThermalLatch(policy=args.thermal_policy), None, False
     state = dict(guard_pid=os.getpid(), server_pid=None, engine_pid=None, paused=False,
-                 profile="performance", original_profile=original, command=command,
+                 profile=runtime_defaults.DEFAULT_POWER_PROFILE, original_profile=original, command=command,
                  spec_k=args.spec_k, gpu_route=bool(args.gpu_route), stopped=False,
                  thermal_thresholds=args.thermal_policy.record())
     with (args.state_dir / "web.log").open("a") as log, \
@@ -478,13 +480,13 @@ def main(argv=None):
             print("web thermal thresholds:", args.thermal_policy.record(), file=log, flush=True)
             values = sample(sensors, monitor)
             if not power_valid(values):
-                raise RuntimeError("web engine requires AC and performance profile")
+                raise RuntimeError("web engine requires AC and " + runtime_defaults.DEFAULT_POWER_PROFILE + " profile")
             cold_deadline = time.monotonic() + 900
             while not args.thermal_policy.cold(guarded_temperatures(values)):
                 if stopping or time.monotonic() > cold_deadline:
                     raise RuntimeError("web cold-start thresholds not met")
                 if not power_valid(values):
-                    raise RuntimeError("AC or performance profile changed during cold start")
+                    raise RuntimeError("AC or selected power profile changed during cold start")
                 values.update(phase="cold_start", thermal_thresholds=args.thermal_policy.record())
                 thermal.write(json.dumps(values) + "\n")
                 thermal.flush()
@@ -509,7 +511,7 @@ def main(argv=None):
                 values = sample(sensors, monitor)
                 if not power_valid(values):
                     paused = thermal_transition(child, values, latch, paused, force_hold=True)
-                    raise RuntimeError("AC or performance profile changed; stopping web engine")
+                    raise RuntimeError("AC or selected power profile changed; stopping web engine")
                 before = paused
                 paused = thermal_transition(child, values, latch, paused)
                 values.update(paused=paused, latched_sensors=sorted(latch.hot), engine_pid=state["engine_pid"],

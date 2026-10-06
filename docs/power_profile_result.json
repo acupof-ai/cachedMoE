@@ -1,0 +1,1214 @@
+{
+  "all_arms_complete": true,
+  "graceful_shutdown": true,
+  "output_ids_equal_across_profiles": true,
+  "default": "balanced",
+  "owner_decision_required": false,
+  "quality": {
+    "acceptance": 0.8589018302828619,
+    "hit_rate": 0.914210134375,
+    "load_failures": 0,
+    "loops": 0
+  },
+  "raw_source": "bench/results/mask_quality/power_profiles_v4/report.json",
+  "rankings": {
+    "all": {
+      "fastest": "balanced",
+      "selected": "balanced",
+      "costs": {
+        "power-saver": 107.82950821917808,
+        "balanced": 80.94428683953032,
+        "performance": 113.80113586105676
+      }
+    },
+    "first_two": {
+      "fastest": "balanced",
+      "selected": "balanced",
+      "costs": {
+        "power-saver": 88.89116340508807,
+        "balanced": 73.68765459882583,
+        "performance": 105.76165430528377
+      }
+    },
+    "last_two": {
+      "fastest": "balanced",
+      "selected": "balanced",
+      "costs": {
+        "power-saver": 118.06305753424657,
+        "balanced": 81.55566418786692,
+        "performance": 116.76769354207437
+      }
+    }
+  },
+  "arms": {
+    "power-saver": {
+      "groups": {
+        "all": {
+          "timing": {
+            "raw_decode_ms": 440807.0296,
+            "decode_steps": 4088,
+            "raw_ms_per_token": 107.82950821917808,
+            "thermal_pause_ms": 0.0,
+            "active_decode_ms": 440807.0296,
+            "active_ms_per_token": 107.82950821917808,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791291399.4623797,
+                  "end_unix": 1791291443.3537006,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07705283164978027,
+                  "maximum_gap_interval": [
+                    1791291430.0311792,
+                    1791291430.108232
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291457.5525615,
+                  "end_unix": 1791291504.5080094,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07696747779846191,
+                  "maximum_gap_interval": [
+                    1791291484.9943068,
+                    1791291485.0712743
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291513.581916,
+                  "end_unix": 1791291565.3682523,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07884645462036133,
+                  "maximum_gap_interval": [
+                    1791291520.031195,
+                    1791291520.1100414
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291578.2171252,
+                  "end_unix": 1791291632.6777804,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07776856422424316,
+                  "maximum_gap_interval": [
+                    1791291600.029916,
+                    1791291600.1076846
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291647.4282234,
+                  "end_unix": 1791291707.109532,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07689738273620605,
+                  "maximum_gap_interval": [
+                    1791291669.9953542,
+                    1791291670.0722516
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291715.7897356,
+                  "end_unix": 1791291779.1612513,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07802391052246094,
+                  "maximum_gap_interval": [
+                    1791291775.0287259,
+                    1791291775.1067498
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291788.6762016,
+                  "end_unix": 1791291850.3931782,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.0770106315612793,
+                  "maximum_gap_interval": [
+                    1791291829.992029,
+                    1791291830.0690396
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291863.007938,
+                  "end_unix": 1791291921.951406,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08009505271911621,
+                  "maximum_gap_interval": [
+                    1791291871.2499323,
+                    1791291871.3300273
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              84.41829681396484,
+              88.70577812194824,
+              76.4467716217041,
+              78.88078689575195,
+              86.48562431335449,
+              95.40414810180664,
+              109.54904556274414,
+              79.58006858825684
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 440.8070294857025,
+            "decode_cooling_s": 0.0,
+            "pause_entries_in_decode": 0,
+            "peak_c": {
+              "nvme:hwmon4": 57.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 72.0
+            },
+            "mean_gpu_clock_mhz": 945.2946084352802,
+            "clock_observed_s": 440.8070294857025
+          }
+        },
+        "first_two": {
+          "timing": {
+            "raw_decode_ms": 90846.769,
+            "decode_steps": 1022,
+            "raw_ms_per_token": 88.89116340508807,
+            "thermal_pause_ms": 0.0,
+            "active_decode_ms": 90846.769,
+            "active_ms_per_token": 88.89116340508807,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791291399.4623797,
+                  "end_unix": 1791291443.3537006,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07705283164978027,
+                  "maximum_gap_interval": [
+                    1791291430.0311792,
+                    1791291430.108232
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291457.5525615,
+                  "end_unix": 1791291504.5080094,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07696747779846191,
+                  "maximum_gap_interval": [
+                    1791291484.9943068,
+                    1791291485.0712743
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              84.41829681396484,
+              88.70577812194824
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 90.84676885604858,
+            "decode_cooling_s": 0.0,
+            "pause_entries_in_decode": 0,
+            "peak_c": {
+              "nvme:hwmon4": 53.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 72.0
+            },
+            "mean_gpu_clock_mhz": 1265.6170374239364,
+            "clock_observed_s": 90.84676885604858
+          }
+        },
+        "last_two": {
+          "timing": {
+            "raw_decode_ms": 120660.4448,
+            "decode_steps": 1022,
+            "raw_ms_per_token": 118.06305753424657,
+            "thermal_pause_ms": 0.0,
+            "active_decode_ms": 120660.4448,
+            "active_ms_per_token": 118.06305753424657,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791291788.6762016,
+                  "end_unix": 1791291850.3931782,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.0770106315612793,
+                  "maximum_gap_interval": [
+                    1791291829.992029,
+                    1791291830.0690396
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791291863.007938,
+                  "end_unix": 1791291921.951406,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08009505271911621,
+                  "maximum_gap_interval": [
+                    1791291871.2499323,
+                    1791291871.3300273
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              109.54904556274414,
+              79.58006858825684
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 120.66044473648071,
+            "decode_cooling_s": 0.0,
+            "pause_entries_in_decode": 0,
+            "peak_c": {
+              "nvme:hwmon4": 56.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 70.0
+            },
+            "mean_gpu_clock_mhz": 777.5803193467767,
+            "clock_observed_s": 120.66044473648071
+          }
+        }
+      },
+      "whole_arm_thermal": {
+        "decode_wall_s": 539.4312474727631,
+        "decode_cooling_s": 0.0,
+        "pause_entries_in_decode": 0,
+        "peak_c": {
+          "nvme:hwmon4": 57.85,
+          "nvme:hwmon13": 74.85,
+          "amdgpu:hwmon5": 72.0
+        },
+        "mean_gpu_clock_mhz": 1206.131477835946,
+        "clock_observed_s": 539.4312474727631
+      },
+      "generated": 4096,
+      "decode_steps": 4088,
+      "cycles": 1507,
+      "verified": 3005,
+      "accepted": 2581,
+      "acceptance": 0.8589018302828619,
+      "decode_hit_rate": 0.914210134375,
+      "total_engine_ms_per_output": 131.44006970214843,
+      "request_wall_ms_per_output": 131.6796835162677,
+      "repetition": [
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.1100196463654224,
+          "distinct_2": 0.6281800391389433,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.07269155206286837,
+          "distinct_2": 0.7710371819960861,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8786692759295499,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.09233791748526522,
+          "distinct_2": 0.7025440313111546,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.09823182711198428,
+          "distinct_2": 0.7514677103718199,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8845401174168297,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8923679060665362,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.18271119842829076,
+          "distinct_2": 0.649706457925636,
+          "no_loop": true
+        }
+      ],
+      "stage_ms_per_cycle": {
+        "draft_ms": 30.48741585932316,
+        "verify_ms": 259.48959880557396,
+        "commit_ms": 1.4848195056403453,
+        "cpu_ms": 0.14449087524883875
+      }
+    },
+    "balanced": {
+      "groups": {
+        "all": {
+          "timing": {
+            "raw_decode_ms": 330900.2446,
+            "decode_steps": 4088,
+            "raw_ms_per_token": 80.94428683953032,
+            "thermal_pause_ms": 0.0,
+            "active_decode_ms": 330900.2446,
+            "active_ms_per_token": 80.94428683953032,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791292002.4378743,
+                  "end_unix": 1791292038.8396823,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07511353492736816,
+                  "maximum_gap_interval": [
+                    1791292032.088192,
+                    1791292032.1633055
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292052.737007,
+                  "end_unix": 1791292091.643982,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07992911338806152,
+                  "maximum_gap_interval": [
+                    1791292060.04602,
+                    1791292060.1259491
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292100.451681,
+                  "end_unix": 1791292144.2379003,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.09120011329650879,
+                  "maximum_gap_interval": [
+                    1791292135.7048345,
+                    1791292135.7960346
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292157.0690658,
+                  "end_unix": 1791292198.011073,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.09126543998718262,
+                  "maximum_gap_interval": [
+                    1791292168.113676,
+                    1791292168.2049415
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292212.5465837,
+                  "end_unix": 1791292255.1672754,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.10900759696960449,
+                  "maximum_gap_interval": [
+                    1791292230.5605643,
+                    1791292230.6695719
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292263.5319161,
+                  "end_unix": 1791292308.4245706,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08801889419555664,
+                  "maximum_gap_interval": [
+                    1791292265.1212919,
+                    1791292265.2093108
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292315.9618342,
+                  "end_unix": 1791292358.7927227,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08808779716491699,
+                  "maximum_gap_interval": [
+                    1791292329.4169724,
+                    1791292329.5050602
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292371.3607504,
+                  "end_unix": 1791292411.8797507,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08319377899169922,
+                  "maximum_gap_interval": [
+                    1791292392.9417665,
+                    1791292393.0249603
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              70.79219818115234,
+              76.71284675598145,
+              73.84252548217773,
+              74.1567611694336,
+              78.76133918762207,
+              74.4466781616211,
+              105.59940338134766,
+              82.04030990600586
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 330.9002447128296,
+            "decode_cooling_s": 0.0,
+            "pause_entries_in_decode": 0,
+            "peak_c": {
+              "nvme:hwmon4": 59.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 80.0
+            },
+            "mean_gpu_clock_mhz": 1599.020815496565,
+            "clock_observed_s": 330.9002447128296
+          }
+        },
+        "first_two": {
+          "timing": {
+            "raw_decode_ms": 75308.783,
+            "decode_steps": 1022,
+            "raw_ms_per_token": 73.68765459882583,
+            "thermal_pause_ms": 0.0,
+            "active_decode_ms": 75308.783,
+            "active_ms_per_token": 73.68765459882583,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791292002.4378743,
+                  "end_unix": 1791292038.8396823,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07511353492736816,
+                  "maximum_gap_interval": [
+                    1791292032.088192,
+                    1791292032.1633055
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292052.737007,
+                  "end_unix": 1791292091.643982,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.07992911338806152,
+                  "maximum_gap_interval": [
+                    1791292060.04602,
+                    1791292060.1259491
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              70.79219818115234,
+              76.71284675598145
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 75.3087830543518,
+            "decode_cooling_s": 0.0,
+            "pause_entries_in_decode": 0,
+            "peak_c": {
+              "nvme:hwmon4": 56.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 80.0
+            },
+            "mean_gpu_clock_mhz": 1938.9984256806317,
+            "clock_observed_s": 75.3087830543518
+          }
+        },
+        "last_two": {
+          "timing": {
+            "raw_decode_ms": 83349.8888,
+            "decode_steps": 1022,
+            "raw_ms_per_token": 81.55566418786692,
+            "thermal_pause_ms": 0.0,
+            "active_decode_ms": 83349.8888,
+            "active_ms_per_token": 81.55566418786692,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791292315.9618342,
+                  "end_unix": 1791292358.7927227,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08808779716491699,
+                  "maximum_gap_interval": [
+                    1791292329.4169724,
+                    1791292329.5050602
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292371.3607504,
+                  "end_unix": 1791292411.8797507,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08319377899169922,
+                  "maximum_gap_interval": [
+                    1791292392.9417665,
+                    1791292393.0249603
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              105.59940338134766,
+              82.04030990600586
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 83.3498888015747,
+            "decode_cooling_s": 0.0,
+            "pause_entries_in_decode": 0,
+            "peak_c": {
+              "nvme:hwmon4": 59.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 78.0
+            },
+            "mean_gpu_clock_mhz": 1464.9672526424395,
+            "clock_observed_s": 83.3498888015747
+          }
+        }
+      },
+      "whole_arm_thermal": {
+        "decode_wall_s": 421.03527092933655,
+        "decode_cooling_s": 0.0,
+        "pause_entries_in_decode": 0,
+        "peak_c": {
+          "nvme:hwmon4": 59.85,
+          "nvme:hwmon13": 74.85,
+          "amdgpu:hwmon5": 80.0
+        },
+        "mean_gpu_clock_mhz": 1764.8370131108604,
+        "clock_observed_s": 421.03527092933655
+      },
+      "generated": 4096,
+      "decode_steps": 4088,
+      "cycles": 1507,
+      "verified": 3005,
+      "accepted": 2581,
+      "acceptance": 0.8589018302828619,
+      "decode_hit_rate": 0.914210134375,
+      "total_engine_ms_per_output": 102.55821052246094,
+      "request_wall_ms_per_output": 102.77461865916848,
+      "repetition": [
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.1100196463654224,
+          "distinct_2": 0.6281800391389433,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.07269155206286837,
+          "distinct_2": 0.7710371819960861,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8786692759295499,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.09233791748526522,
+          "distinct_2": 0.7025440313111546,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.09823182711198428,
+          "distinct_2": 0.7514677103718199,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8845401174168297,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8923679060665362,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.18271119842829076,
+          "distinct_2": 0.649706457925636,
+          "no_loop": true
+        }
+      ],
+      "stage_ms_per_cycle": {
+        "draft_ms": 24.390510510948907,
+        "verify_ms": 193.091497213006,
+        "commit_ms": 1.0311580856005307,
+        "cpu_ms": 0.1444003503649635
+      }
+    },
+    "performance": {
+      "groups": {
+        "all": {
+          "timing": {
+            "raw_decode_ms": 465219.0434,
+            "decode_steps": 4088,
+            "raw_ms_per_token": 113.80113586105676,
+            "thermal_pause_ms": 176602.55813598633,
+            "active_decode_ms": 288616.4852640137,
+            "active_ms_per_token": 70.6009014833693,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791292519.7497303,
+                  "end_unix": 1791292568.7915192,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08502602577209473,
+                  "maximum_gap_interval": [
+                    1791292536.5729387,
+                    1791292536.6579647
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292582.622006,
+                  "end_unix": 1791292641.668628,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08724808692932129,
+                  "maximum_gap_interval": [
+                    1791292597.2424204,
+                    1791292597.3296685
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292650.4470274,
+                  "end_unix": 1791292710.22466,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08408164978027344,
+                  "maximum_gap_interval": [
+                    1791292685.6270666,
+                    1791292685.7111483
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292722.954763,
+                  "end_unix": 1791292781.3226647,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.09002280235290527,
+                  "maximum_gap_interval": [
+                    1791292750.7209287,
+                    1791292750.8109515
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292795.874602,
+                  "end_unix": 1791292855.6346486,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.0893099308013916,
+                  "maximum_gap_interval": [
+                    1791292853.9645653,
+                    1791292854.0538752
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292863.8515139,
+                  "end_unix": 1791292923.739983,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.10900020599365234,
+                  "maximum_gap_interval": [
+                    1791292880.0826082,
+                    1791292880.1916084
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292933.348471,
+                  "end_unix": 1791292995.2017376,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.11096453666687012,
+                  "maximum_gap_interval": [
+                    1791292980.0534413,
+                    1791292980.1644058
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791293007.5567,
+                  "end_unix": 1791293065.040016,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08205986022949219,
+                  "maximum_gap_interval": [
+                    1791293018.1685266,
+                    1791293018.2505865
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              56.439876556396484,
+              68.36295127868652,
+              54.74662780761719,
+              51.47242546081543,
+              54.83531951904297,
+              53.098440170288086,
+              76.44009590148926,
+              54.229736328125
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 465.2190434932709,
+            "decode_cooling_s": 176.60255813598633,
+            "pause_entries_in_decode": 1567,
+            "peak_c": {
+              "nvme:hwmon4": 57.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 89.0
+            },
+            "mean_gpu_clock_mhz": 2515.5991238778247,
+            "clock_observed_s": 465.2190434932709
+          }
+        },
+        "first_two": {
+          "timing": {
+            "raw_decode_ms": 108088.41070000001,
+            "decode_steps": 1022,
+            "raw_ms_per_token": 105.76165430528377,
+            "thermal_pause_ms": 38977.63276100159,
+            "active_decode_ms": 69110.77793899842,
+            "active_ms_per_token": 67.62307039040941,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791292519.7497303,
+                  "end_unix": 1791292568.7915192,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08502602577209473,
+                  "maximum_gap_interval": [
+                    1791292536.5729387,
+                    1791292536.6579647
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791292582.622006,
+                  "end_unix": 1791292641.668628,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08724808692932129,
+                  "maximum_gap_interval": [
+                    1791292597.2424204,
+                    1791292597.3296685
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              56.439876556396484,
+              68.36295127868652
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 108.0884108543396,
+            "decode_cooling_s": 38.97763276100159,
+            "pause_entries_in_decode": 393,
+            "peak_c": {
+              "nvme:hwmon4": 54.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 88.0
+            },
+            "mean_gpu_clock_mhz": 2504.7020760085193,
+            "clock_observed_s": 108.0884108543396
+          }
+        },
+        "last_two": {
+          "timing": {
+            "raw_decode_ms": 119336.5828,
+            "decode_steps": 1022,
+            "raw_ms_per_token": 116.76769354207437,
+            "thermal_pause_ms": 48378.69167327881,
+            "active_decode_ms": 70957.8911267212,
+            "active_ms_per_token": 69.43042184610684,
+            "timing_alignment": "engine decode end minus engine decode_ms",
+            "alignment_error": null,
+            "thermal_coverage": {
+              "complete": true,
+              "tolerance_s": 0.25,
+              "sample_count": 25373,
+              "first_sample_unix": 1791291327.0682569,
+              "last_sample_unix": 1791293065.2836008,
+              "windows": [
+                {
+                  "begin_unix": 1791292933.348471,
+                  "end_unix": 1791292995.2017376,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.11096453666687012,
+                  "maximum_gap_interval": [
+                    1791292980.0534413,
+                    1791292980.1644058
+                  ],
+                  "errors": []
+                },
+                {
+                  "begin_unix": 1791293007.5567,
+                  "end_unix": 1791293065.040016,
+                  "covered": true,
+                  "missing_start_s": 0.0,
+                  "missing_end_s": 0.0,
+                  "maximum_sample_gap_s": 0.08205986022949219,
+                  "maximum_gap_interval": [
+                    1791293018.1685266,
+                    1791293018.2505865
+                  ],
+                  "errors": []
+                }
+              ],
+              "partial_final_line": false
+            },
+            "engine_decode_boundaries": true,
+            "host_receipt_delay_ms": [
+              76.44009590148926,
+              54.229736328125
+            ],
+            "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/power_profiles_v4/thermal_measurement.jsonl"
+          },
+          "thermal": {
+            "decode_wall_s": 119.33658266067505,
+            "decode_cooling_s": 48.37869167327881,
+            "pause_entries_in_decode": 403,
+            "peak_c": {
+              "nvme:hwmon4": 57.85,
+              "nvme:hwmon13": 74.85,
+              "amdgpu:hwmon5": 89.0
+            },
+            "mean_gpu_clock_mhz": 2521.83635464847,
+            "clock_observed_s": 119.33658266067505
+          }
+        }
+      },
+      "whole_arm_thermal": {
+        "decode_wall_s": 557.0726034641266,
+        "decode_cooling_s": 179.1752734184265,
+        "pause_entries_in_decode": 1586,
+        "peak_c": {
+          "nvme:hwmon4": 57.85,
+          "nvme:hwmon13": 74.85,
+          "amdgpu:hwmon5": 89.0
+        },
+        "mean_gpu_clock_mhz": 2556.0124980937076,
+        "clock_observed_s": 557.0726034641266
+      },
+      "generated": 4096,
+      "decode_steps": 4088,
+      "cycles": 1507,
+      "verified": 3005,
+      "accepted": 2581,
+      "acceptance": 0.8589018302828619,
+      "decode_hit_rate": 0.914210134375,
+      "total_engine_ms_per_output": 135.74214787597657,
+      "request_wall_ms_per_output": 135.91881934553385,
+      "repetition": [
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.1100196463654224,
+          "distinct_2": 0.6281800391389433,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.07269155206286837,
+          "distinct_2": 0.7710371819960861,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8786692759295499,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.09233791748526522,
+          "distinct_2": 0.7025440313111546,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.09823182711198428,
+          "distinct_2": 0.7514677103718199,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8845401174168297,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.0137524557956778,
+          "distinct_2": 0.8923679060665362,
+          "no_loop": true
+        },
+        {
+          "tokens": 512,
+          "longest_same_token_run": 1,
+          "short_period_loop": false,
+          "first_short_period": null,
+          "repeated_4gram_fraction": 0.18271119842829076,
+          "distinct_2": 0.649706457925636,
+          "no_loop": true
+        }
+      ],
+      "stage_ms_per_cycle": {
+        "draft_ms": 34.759533072329134,
+        "verify_ms": 271.477203251493,
+        "commit_ms": 1.225381788984738,
+        "cpu_ms": 0.11532201061712011
+      }
+    }
+  },
+  "thermal_thresholds": {
+    "gpu_pause_c": 85.0,
+    "gpu_resume_c": 77.0,
+    "gpu_start_c": 60.0,
+    "nvme_pause_c": 80.0,
+    "nvme_resume_c": 72.0,
+    "nvme_start_c": 65.0
+  }
+}

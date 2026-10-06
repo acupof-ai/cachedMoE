@@ -152,7 +152,7 @@ def finish(server, controller, owned, out, original_profile, complete, failure):
         if server:
             if controller:
                 controller.phase = "shutdown"
-            subprocess.run(["powerprofilesctl", "set", "performance"], check=True)
+            subprocess.run(["powerprofilesctl", "set", runtime_defaults.DEFAULT_POWER_PROFILE], check=True)
             time.sleep(1.2)
             if controller:
                 controller.stop.set()

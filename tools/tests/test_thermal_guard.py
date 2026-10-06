@@ -344,7 +344,7 @@ class ThermalFailureReceipts(unittest.TestCase):
     @staticmethod
     def reading(temperature=42, timestamp=100):
         return {"amdgpu:fake": temperature, "ac": 1,
-                "power_profile": "performance", "wall_time_s": timestamp}
+                "power_profile": guard.runtime_defaults.DEFAULT_POWER_PROFILE, "wall_time_s": timestamp}
 
     def run_mock_job(self, root, samples, child):
         # Every external action is mocked. These cases cannot spawn a process,

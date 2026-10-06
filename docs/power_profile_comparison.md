@@ -1,7 +1,39 @@
 # Power-profile comparison
 
+**Select balanced for future web/benchmark defaults.** The complete v4 run has
+the same raw winner for all eight turns, the first two and the last two. It
+shuts down normally with disk-KV drain and no source drop or IO/load failures.
+All 4,096 output IDs match across the three modes; no turn loops. Acceptance
+is 85.8902% and decode hit rate 91.4210% in every arm.
+
+| Mode | All raw ms/token | First two | Last two | Decode pauses | Decode cooling, s | Mean decode GPU MHz | GPU peak, C |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| power-saver | 107.830 | 88.891 | 118.063 | 0 | 0 | 945 | 72 |
+| balanced | **80.944** | **73.688** | **81.556** | 0 | 0 | 1,599 | 80 |
+| performance | 113.801 | 105.762 | 116.768 | 1,567 | 176.603 | 2,516 | 89 |
+
+Balanced reduces raw decode cost by 28.9% against performance (1.406x throughput)
+and 24.9% against power-saver (1.332x). Performance's active estimate is 70.601
+ms/token, but cooling consumes 38.0% of decode wall time. The 85 C trigger is a
+pause threshold, not a temperature cap; GPU work in flight can overshoot it.
+The complete arm, including prefill/gaps, has 1,586 pauses / 179.175 s cooling.
+External NVMe peaks at 74.85 C in all arms; internal peaks are
+57.85 / 59.85 / 57.85 C. All cold starts meet GPU 60 / NVMe 65 C.
+
+Repetition is identical across modes: maximum same-token run 1, no short-period
+loop, per-turn repeated-4gram fraction .01375–.18271 and distinct-2 .62818–.89237.
+The primary denominator excludes each turn's initial prefill output: 4,088 timed
+steps for 4,096 outputs. Request/total-engine timing, individual repetition metrics,
+per-cycle draft/verify/commit/CPU costs and telemetry are in
+[the complete result](power_profile_result.json), with full raw data under
+`bench/results/mask_quality/power_profiles_v4/` and its prepared receipt directory.
+Future automatic power defaults have one authority,
+`runtime_defaults.DEFAULT_POWER_PROFILE`; explicit profiles and historical results
+keep their meaning. Default-policy CPU gates include a balanced-policy mock.
+Web/API acceptance will be recorded after the ordered draft-head GPU work.
+
 The owner authorized a fresh comparison after the previous power-saver and
-performance numbers used different workloads. No new speed conclusion exists.
+performance numbers used different workloads. The earlier attempts follow.
 The **v1** first arm's cold-start gate was blocked after 900.289 seconds: the external
 NVMe's minimum was 60.85°C, above the required 60°C. No measured arms or generated
 tokens ran. The temporary engine shut down normally and drained KV; the user
@@ -108,5 +140,5 @@ unchanged; `power_profiles_v3/partial_receipt.json` labels the scope.
 The owner authorizes a fresh v4 comparison on the now stable original port.
 Fresh mirror headers/sizes match 48/48; all six user files remain unchanged.
 The v4 run freezes 61 inputs from `334eef9`; actual API configuration agrees.
-No benchmark runs alongside the user web. Default selection and the ordered
-draft-head experiment still await the complete three-arm result.
+No benchmark runs alongside the user web. V4 subsequently completes; the
+decision and measurements are at the top of this report.

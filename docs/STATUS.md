@@ -30,7 +30,21 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
-**Current follow-up (2026-10-06): v4 is running after an owner-confirmed port change.**
+**Current default (2026-10-06): balanced wins the complete power comparison.**
+Same-engine dual-drive k2 web workload, eight 512-output turns per mode:
+balanced **80.944 raw ms/token**, power-saver 107.830, performance 113.801.
+Balanced also wins first/last two turns; no owner tie decision is required.
+All 4,096 IDs, acceptance 85.8902% and hit rate 91.4210% agree across modes;
+no loops or load failures. Performance has 1,567 decode pauses / 176.603 s
+cooling, explaining its 70.601 active estimate versus 113.801 raw cost.
+The shared future power default is balanced; old receipts remain literal.
+Normal benchmark shutdown drains private disk KV; 61 inputs and six user files
+remain unchanged. [Complete comparison and result](power_profile_comparison.md).
+Draft-head capture/offline tools compile, CPU gates pass 55/55; their GPU
+capture and quantization screening are next. User web remains stopped for
+these serialized GPU jobs and will be restored with balanced afterwards.
+
+**Earlier follow-up (2026-10-06): v4 started after an owner-confirmed port change.**
 The v3 power-saver / balanced arms finish eight turns at 112.998 / 80.612 raw
 ms/token; performance finishes four before the owner changes the USB4 port.
 The incomplete comparison selects no default. V4 restarts the complete serial

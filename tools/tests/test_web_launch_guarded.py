@@ -148,7 +148,17 @@ class GuardedWeb(unittest.TestCase):
             self.assertEqual(launch.main(["--dry-run"]), 0)
             start.assert_not_called()
             setting.assert_not_called()
-            self.assertEqual(json.loads(output.getvalue())["power_profile"], "performance")
+            self.assertEqual(json.loads(output.getvalue())["power_profile"],
+                             launch.runtime_defaults.DEFAULT_POWER_PROFILE)
+
+    def test_selected_balanced_policy_controls_validation_and_dry_run(self):
+        with patch.object(launch.runtime_defaults, "DEFAULT_POWER_PROFILE", "balanced"), \
+                patch("sys.stdout", io.StringIO()) as output:
+            self.assertTrue(launch.power_valid(dict(ac=1, power_profile="balanced",
+                                                   platform_profile="balanced")))
+            self.assertFalse(launch.power_valid(dict(ac=1, power_profile="performance")))
+            self.assertEqual(launch.main(["--dry-run"]), 0)
+            self.assertEqual(json.loads(output.getvalue())["power_profile"], "balanced")
 
     def test_temperature_signals_only_bound_engine(self):
         signals = []
@@ -171,9 +181,11 @@ class GuardedWeb(unittest.TestCase):
         with patch.object(launch.EngineChild, "send", return_value=True) as signal_engine:
             child = launch.EngineChild(123, 100, 456, "/fake/deepmoe", 999)
             latch = launch.ThermalLatch(80, 72)
-            for invalid in ({"ac": 0, "power_profile": "performance"},
-                            {"ac": 1, "power_profile": "power-saver"},
-                            {"ac": 1, "power_profile": "performance", "platform_profile": "balanced"}):
+            selected = launch.runtime_defaults.DEFAULT_POWER_PROFILE
+            other = "power-saver" if selected != "power-saver" else "performance"
+            for invalid in ({"ac": 0, "power_profile": selected},
+                            {"ac": 1, "power_profile": other},
+                            {"ac": 1, "power_profile": selected, "platform_profile": other}):
                 values = {"amdgpu:fake": 42, "nvme:fake": 50} | invalid
                 self.assertFalse(launch.power_valid(values))
                 self.assertTrue(launch.thermal_transition(child, values, latch, False,
@@ -236,7 +248,8 @@ class GuardedWeb(unittest.TestCase):
                 return server.returncode is None
 
         values = [{"amdgpu:fake": temp, "nvme:fake": 74.85,
-                   "ac": 1, "power_profile": "performance"} for temp in (80, 72)]
+                   "ac": 1, "power_profile": launch.runtime_defaults.DEFAULT_POWER_PROFILE}
+                  for temp in (80, 72)]
         with patch.object(launch, "sample", side_effect=values), \
                 patch.object(launch.time, "sleep"):
             clean = launch.shutdown(server, Child(), False, launch.ThermalLatch(80, 72), {}, None,
@@ -419,7 +432,8 @@ class StartupShutdownOwnership(unittest.TestCase):
                 pass
 
         server = type("Server", (), dict(pid=100, returncode=1, poll=lambda _: None))()
-        values = dict(ac=1, power_profile="performance", wall_time_s=1, **{"amdgpu:fake": 42})
+        values = dict(ac=1, power_profile=launch.runtime_defaults.DEFAULT_POWER_PROFILE,
+                      wall_time_s=1, **{"amdgpu:fake": 42})
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(launch, "require_pidfd_support"), \
                 patch.object(launch.Path, "is_file", return_value=True), \

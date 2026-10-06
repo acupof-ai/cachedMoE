@@ -207,7 +207,7 @@ def run_job(job, base, env, sensors, policy=None):
     thermal_path = base / f"{name}_thermal.jsonl"
     if log_path.exists() or thermal_path.exists():
         raise RuntimeError(f"refusing to repeat existing configuration: {name}")
-    target = job.get("profile", "performance")
+    target = job.get("profile", runtime_defaults.DEFAULT_POWER_PROFILE)
     subprocess.run(["powerprofilesctl", "set", target], check=True)
     assert_idle()
     with ProfileMonitor() as monitor:
@@ -338,7 +338,8 @@ def main():
             if result["rc"]:
                 return result["rc"]
     finally:
-        receipt = dict(original=original, final=None, requested_default="performance")
+        receipt = dict(original=original, final=None,
+                       requested_default=runtime_defaults.DEFAULT_POWER_PROFILE)
         try:
             receipt["final"] = profile()
         except Exception as error:

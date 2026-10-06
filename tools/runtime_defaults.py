@@ -33,6 +33,7 @@ ACCEPT_TOP_K = runtime_facts.ACCEPT_TOP_K
 DRAFT_BLOCK_SIZE = runtime_facts.DRAFT_BLOCK_SIZE
 PRODUCTION_READ_SOURCES = 2
 PRODUCTION_DRAFT_TOKENS = 2
+DEFAULT_POWER_PROFILE = "balanced"  # Owner TODO 4.8: fastest complete raw-wall arm.
 KV_DISK_GB = runtime_facts.KV_DISK_BYTES // (1 << 30)
 WEB_PORT = 8080
 KV_BYTES_PER_TOKEN = 3200
