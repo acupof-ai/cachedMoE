@@ -161,8 +161,10 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
     config = launch_config or runtime_defaults.resolve_launch(exe, env, shader_dir=shader_dir)
     env = config.environment
     exe = Path(config.exe)
-    sdir = Path(config.shader_dir)
-    spv = sorted(sdir.glob("*.spv")) if sdir.is_dir() else []
+    # An empty native shader directory is not an instruction to hash Python's
+    # working directory. Keep it observable without inventing resolved files.
+    sdir = Path(config.shader_dir) if config.shader_dir else None
+    spv = sorted(sdir.glob("*.spv")) if sdir is not None and sdir.is_dir() else []
     h = hashlib.sha256()
     for p in spv:
         h.update(p.name.encode())
@@ -179,7 +181,8 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
         "exe": str(exe),
         "exe_resolved": str(exe.resolve()),
         "exe_sha": _file_sha(exe),
-        "shaders": {"dir": str(sdir), "count": len(spv), "sha": h.hexdigest()[:16] if spv else None},
+        "shaders": {"dir": str(sdir) if sdir is not None else "", "count": len(spv),
+                    "sha": h.hexdigest()[:16] if spv else None},
         "env": runtime_env.raw_controls(dict(sorted(env.items()))),
         "env_effective": {
             key: {"value": selected.value, "source": selected.source,

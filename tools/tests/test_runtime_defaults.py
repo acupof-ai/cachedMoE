@@ -98,9 +98,23 @@ class LaunchConfiguration(unittest.TestCase):
                 patch.object(provenance, "idle_check", return_value={}), \
                 patch.object(provenance, "disk_snapshot", return_value={}), \
                 redirect_stderr(io.StringIO()):
-            recorded = provenance.write(folder, launch_config=config)
+            # Path("") would glob this unrelated file from the current working
+            # directory. An empty raw directory must not claim it was loaded.
+            unrelated = Path(folder) / "unrelated.spv"
+            unrelated.write_bytes(b"cpu-only unrelated shader fixture")
+            previous = os.getcwd()
+            os.chdir(folder)
+            try:
+                recorded = provenance.write(folder, launch_config=config)
+                normal = provenance.capture(launch_config=defaults.resolve_launch(
+                    "/unused/engine", {}, shader_dir=folder))
+            finally:
+                os.chdir(previous)
         self.assertEqual(recorded["launch"]["shader_dir"], "")
         self.assertEqual(recorded["env_effective"]["CACHEDMOE_SHADER_DIR"]["value"], "")
+        self.assertEqual(recorded["shaders"], {"dir": "", "count": 0, "sha": None})
+        self.assertEqual(normal["shaders"]["count"], 1)
+        self.assertIsNotNone(normal["shaders"]["sha"])
         self.assertEqual(defaults.resolve_launch("/unused/engine", {}).shader_dir, "/unused/shaders")
         self.assertEqual(defaults.resolve_launch("/unused/engine", env, shader_dir="/explicit").shader_dir,
                          "/explicit")
