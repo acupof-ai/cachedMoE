@@ -1,7 +1,7 @@
 {
   "schema": "cachedmoe.mask_quality.public_receipt.v1",
   "as_of": "2026-10-06",
-  "scope": "Curated aggregate evidence before trace closure, merge, full rename and web restoration. Raw result paths are local and gitignored; no prompts, transcripts or token IDs are included.",
+  "scope": "Curated aggregate evidence after C/D and verify-trace closure. Owner main was merged into the worktree and main fast-forwarded; main-directory validation/push, full rename and web restoration remain pending. Raw result paths are local and gitignored; no prompts, transcripts or token IDs are included.",
   "decisions": {
     "A": "RECOVERY PASS; original MMLU and follow-up repetition gates FAIL; owner accepts existing quality",
     "B": "CALIBRATION PASS; all C/D outputs reported",
@@ -669,7 +669,8 @@
     "mirror_shards_each": 48
   },
   "pending_at_receipt": [
-    "merge into main and post-merge verification/push",
+    "main-directory verification and push",
+    "owned worktree/branch cleanup after delivery",
     "full compatible rename in a new worktree after the current branch merges",
     "web restoration and live policy verification"
   ],
@@ -761,6 +762,45 @@
     "D_trace_analysis_hashes": {
       "path": "bench/results/mask_quality/phase_d/diagnostics/fresh_trace_analysis_hashes.json",
       "sha256": "a964e7b18aa7c24f0fadc026a09b4ab02348f828fb393920e6428b57f646560d"
+    },
+    "owner_main_merge_cpu": {
+      "path": "bench/results/mask_quality/post_main_merge_cpu.log",
+      "sha256": "b03b4942d07d121c11b860155785daf71fb9bdecbbaf6f6d1dad3c63adfa9b05"
+    },
+    "owner_main_merge_tools": {
+      "path": "bench/results/mask_quality/post_main_merge_tools.log",
+      "sha256": "a836b2fc3ad6b8c590316323060b7eaf246859083da7f0c6000a287a02dd8c71"
+    },
+    "owner_main_merge_hashes": {
+      "path": "bench/results/mask_quality/post_main_merge_shader_receipt.json",
+      "sha256": "061892c96e39ee605af0e961bf125b139ad6ad1f3f61197e68d97d2a5ac5910a"
     }
+  },
+  "delivery": {
+    "source_refs": [
+      "owner_main_merge_cpu",
+      "owner_main_merge_tools",
+      "owner_main_merge_hashes"
+    ],
+    "owner_main_commit": "0f637f911b1e5a9cc387ca44c34f8033b91f5626",
+    "integration_commit": "0ed4cb484e3041d2e5287bd8c8f221c216fe5a87",
+    "integration_direction": "Owner main display-name changes merged into mask-quality, then main fast-forwarded to that integration commit",
+    "worktree_after_owner_merge": {
+      "cpu_ctest_passed": 27,
+      "cpu_ctest_total": 27,
+      "tool_gates_passed": 41,
+      "tool_gates_total": 41,
+      "unchanged_shader_count": 52,
+      "unchanged_executable_count": 2,
+      "runtime_sha256": "df31600193795909c64ed313512ab9381d403ad2e7c837d0433af53d0606e5c7",
+      "tests_sha256": "3b55080167b87fff628f9f6e7ea5f2fc3a08c49ed13363dbdbb97cc314e9bb00",
+      "scope": "Read existing logs and independently compared all 54 current worktree files with their frozen hashes; no new GPU run"
+    },
+    "main_fast_forward_complete": true,
+    "main_directory_validation": "IN PROGRESS; not inferred from the worktree checks",
+    "pushed": false,
+    "own_worktree_deleted": false,
+    "full_compatible_rename_completed": false,
+    "web_restored": false
   }
 }

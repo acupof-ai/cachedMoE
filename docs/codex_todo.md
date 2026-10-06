@@ -24,6 +24,12 @@
 
 ## 当前现场
 
+2026-10-06追加现场：C/D正式对照与GPU trace均已结束；`0ed4cb4`已把owner main `0f637f9`
+展示名改动合入本工作树，合入后CPU27/27、工具41/41，52 SPIR-V与两个exe hash不变。
+本地main已fast-forward到同一`0ed4cb4`，main目录正串行验证；推送、own worktree/branch清理、
+完整兼容改名和网页恢复仍待完成。
+下文现场描述保留其原始时点，不当作当前正在运行的作业。
+
 - 主仓库：`/home/chenkailun/projects/cachedMoE`，main 已推到 `41cc44c`。
 - 当前工作树：`/home/chenkailun/projects/deepmoe-mask-quality`，分支 `codex/mask-quality`。
   **在这里继续，勿新开重复工作树。** 构建目录是该工作树的 `build/`。
@@ -109,12 +115,14 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 已知“霓”与英文周期 2 判失败，历史正常输出判通过。
 短周期定义为滚动 128 token 内周期 ≤8、至少四轮且至少 16 token；同 token 连串 >3 另行判失败。
 
-- [ ] 将标定与边界测试收据写进报告；最终所有候选输出均列四项重复指标。
+- [x] 将标定与边界测试收据写进报告；最终所有候选输出均列四项重复指标。
   - [x] 标定与边界测试收据已写入 `miss_mask.md` 的 Phase B（`11af3d1`）。四个已知输出
     判定正确；来源 `phase_b_calibration.json`、`cpu_final.log`、`tools_final.log`。
     首次工具门禁32/33的失败保留，最终25/25与33/33另列，未冒充首次全过。
-  - [ ] C/D 最终所有候选逐轮列出最长连串、短周期、重复4-gram和distinct-2；原合并条目暂不关闭。
+  - [x] C/D 最终所有候选逐轮列出最长连串、短周期、重复4-gram和distinct-2；原合并条目暂不关闭。
     C r4的32轮已在 `phase_c/performance_recovered_r4/final_report.json` 完整列出；本项仍等D全部候选。
+    最终追加收据：C32轮、D40轮共72输出四项均齐全，独立读取 `phase_d/final_report_r1.json`
+    的逐轮candidate字段核对；D五臂全失败严格重复门，指标齐全不代表质量通过。B合并条目结案。
 
 ### C：加权部分 miss 等待，GPU 未验证
 
@@ -191,8 +199,15 @@ Engram 全量 scale 默认没有常驻，也没有可再释放一次的整套 ho
 
 ## 3. 收尾与交付
 
-- [ ] 提交本方案和简洁结论报告、机器收据。原始大数据保持 gitignored。
+- [x] 提交本方案和简洁结论报告、机器收据。原始大数据保持 gitignored。
+  收据：方案 `mask_quality_plan.md`、报告 `miss_mask.md` / `dspark_topk.md` / STATUS，
+  公开聚合机器收据 `mask_quality_receipt.json` 已提交；C NO-GO、D无合格候选、E按规则SKIP明确保留。
+  源报告 `phase_c/performance_recovered_r4/`、`phase_d/final_report_r1.json` 与trace归因仍在主raw目录，未加入Git。
 - [ ] 合回 main，验证、推送，再删除**本任务自己的**工作树与分支；不得删用户 untracked 数据。
+  追加进度：owner main→工作树合并 `0ed4cb4` 已完成，合入后CPU27/27、工具41/41，
+  52 shader及runtime/tests两个exe逐位不变；`post_main_merge_{cpu,tools}.log` 与
+  `post_main_merge_shader_receipt.json` 已核实。main已fast-forward到`0ed4cb4`，main目录验证/推送仍交付中，本合并条目保持未勾；
+  尚未推送、删own工作树或宣称网页恢复，不动owner untracked副本。
 - [ ] 更新本清单为最终未完成事项；先核对主仓库同名 untracked 副本是否有用户新编辑，再合并。
 - [ ] 用主仓库 `build/web_mask/launch.py` 恢复网页（磁盘KV开启、1M上下文、5500槽、双盘、80/72温控），
   验证 `/api/config` 与引擎日志。用户 transcript 不动，浏览器页不刷新。

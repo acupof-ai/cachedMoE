@@ -45,6 +45,14 @@ gates**; its fixed binary/shader receipt is recorded separately from numerical
 validation. Sources: `final_web_policy/recovered_boundary/{cpu_all.log,tools_all.log}`
 and `frozen_web_boundary_df316001/receipt.json` under the same raw root.
 
+**Local delivery is in progress.** `0ed4cb4` merges the owner's main display-name
+changes (`0f637f9`) into the mask-quality worktree. Its subsequent CPU CTest
+passes **27/27** and tool gates **41/41**; all **52 shaders and both executables**
+retain their frozen hashes. Main has fast-forwarded to the same commit; its
+own directory validation is now in progress. Push, owned-worktree cleanup,
+full compatible rename and web restoration remain pending. Sources under the raw root:
+`post_main_merge_{cpu,tools}.log` and `post_main_merge_shader_receipt.json`.
+
 **Current audit (2026-10-06): Phase C is NO-GO; Phase D has no eligible candidate.**
 Restoring strict P0 priority recovers dynamic-mask l3 NLL **.835581**. Phase A
 plain mask still fails generated-answer MMLU57 (**46/57**, required 48) and the
@@ -110,8 +118,11 @@ The owner's **k2/top-4/ONECB on/CPU route** baseline is retained; it is not a
 D-qualified default. [Curated aggregate receipt](mask_quality_receipt.json);
 source: `bench/results/mask_quality/phase_d/final_report_r1.json` and
 `phase_d/same_engine_fresh/check_results.json` under the same raw root.
-The GPU verify trace is complete: CPU outside-span cost is 10.039 ms/cycle; the GPU arm is dominated by 190.661 ms/cycle of Engram issue/landing. Host residual is below .003 ms/cycle. [Accounting and limits](dspark_topk.md#21-新双盘-k2-verify-tracehost账与异步等待2026-10-06). Merge,
-post-merge verification/push, full compatible rename and web restoration remain
+The GPU verify trace is complete: CPU outside-span cost is 10.039 ms/cycle; the
+GPU arm is dominated by 190.661 ms/cycle of Engram issue/landing. Host residual
+is below .003 ms/cycle. [Accounting and limits](dspark_topk.md#21-新双盘-k2-verify-tracehost账与异步等待2026-10-06).
+Local owner-main integration has passed its CPU/tool/hash checks above and main
+has fast-forwarded. Main-directory validation/push, full compatible rename and web restoration remain
 unfinished.
 
 ### 1.0 Machine-recorded measurements (ledger)
@@ -832,6 +843,14 @@ steps, and the reference continuation has to be produced step by step.**
 ---
 
 ## 7. Next, in order
+
+0ch. **2026-10-06：owner main展示名已合入工作树并复验；本地main交付仍在整合。**
+   `0ed4cb4`合入owner main `0f637f9`；CPU27/27、工具41/41，52 shader和runtime/tests两个exe
+   与冻结收据逐位相同。来源主raw `post_main_merge_{cpu,tools}.log`、`post_main_merge_shader_receipt.json`。
+   Phase B最终C32/D40输出逐轮四指标齐全；方案、简洁报告与公开聚合机器收据已提交。
+   C/D与trace已结案，main已fast-forward到`0ed4cb4`；main目录验证/推送、own工作树清理、
+   完整兼容改名和网页恢复仍待完成。
+   没有把owner接受的k2基线升级成D质量合格默认；以下条目保留其历史交付时点。
 
 0cg. **2026-10-06：新双盘verify trace的约10ms host账已对上。**
    CPU route wall减span10.038604ms = record+final fence减span9.576974 +其余host .459017 +残差 .002613。
