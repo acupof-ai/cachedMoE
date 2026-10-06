@@ -6,7 +6,7 @@
 // Two of the inputs a decode step needs are not produced by any kernel that
 // exists: the compressed KV and the indexer's top-k list (design §7.4). Until
 // the compressor and the indexer are written, ANY caller that wants to run the
-// forty layers -- the test, `deepmoe run`, a benchmark -- has to load them, so
+// forty layers -- the test, `cachedmoe run`, a benchmark -- has to load them, so
 // the loader belongs next to the engine that consumes them rather than inside a
 // test binary. Everything here is labelled as LOADED in the Engine's status
 // line and in docs/p2_decode.md, and it all goes away when §7.4 lands.

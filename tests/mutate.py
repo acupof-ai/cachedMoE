@@ -296,7 +296,7 @@ def build(root: Path, build_dir: Path) -> tuple[bool, str]:
 
 
 def test_binary(build_dir: Path) -> Path:
-    exe = build_dir / "tests" / ("deepmoe_tests.exe" if os.name == "nt" else "deepmoe_tests")
+    exe = build_dir / "tests" / ("cachedmoe_tests.exe" if os.name == "nt" else "cachedmoe_tests")
     return exe
 
 
@@ -325,7 +325,7 @@ def main() -> int:
     root, build_dir = ROOT, Path(a.build_dir)
 
     if a.copy:
-        tmp = Path(tempfile.mkdtemp(prefix="deepmoe-mutate-"))
+        tmp = Path(tempfile.mkdtemp(prefix="cachedmoe-mutate-"))
         print(f"cloning the tree into {tmp} (this takes a while)")
         shutil.copytree(ROOT, tmp / "src",
                         ignore=shutil.ignore_patterns("build", ".git", ".zig-cache", "traces"))

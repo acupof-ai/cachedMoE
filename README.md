@@ -72,7 +72,7 @@ Start **one** of these clients:
 ```bash
 python3 tools/web/launch_guarded.py   # web policy for this machine; requires AC and its mirror
 python3 tools/chat.py                # terminal chat
-./build/deepmoe serve --model "$CACHEDMOE_MODEL_DIR"   # JSON-lines protocol
+./build/cachedmoe serve --model "$CACHEDMOE_MODEL_DIR"   # JSON-lines protocol
 ```
 
 The guarded Linux web launcher uses the matching checkpoint mirror at

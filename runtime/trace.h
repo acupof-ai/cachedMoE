@@ -20,7 +20,7 @@
 // synthetic token), and the only thing GPU validation adds is whether the
 // query slots carry sensible ticks.
 //
-// Opt in with `deepmoe run --trace FILE` / `deepmoe serve --trace FILE`. Off,
+// Opt in with `cachedmoe run --trace FILE` / `cachedmoe serve --trace FILE`. Off,
 // `Tracer::enabled()` is false and every hook is a null test.
 //
 // FILE FORMAT (little-endian, version 1) -- also documented in

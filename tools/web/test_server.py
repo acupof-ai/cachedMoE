@@ -35,7 +35,7 @@ class WebSettings(unittest.TestCase):
 
     def test_shutdown_timeout_reports_unconfirmed_drain(self):
         serve = self.bare_serve()
-        serve.p.wait.side_effect = [server.subprocess.TimeoutExpired("deepmoe", 120), -9]
+        serve.p.wait.side_effect = [server.subprocess.TimeoutExpired("cachedmoe", 120), -9]
         with self.assertRaisesRegex(RuntimeError, "KV drain is unconfirmed"):
             serve.close()
         serve.p.kill.assert_called_once()
@@ -109,7 +109,7 @@ class WebSettings(unittest.TestCase):
         self.assertEqual(close_errors, [])
         self.assertEqual(operations, ["cancel", "quit"])
         self.assertEqual(locked, [True, True])
-        self.assertEqual(worker_errors, ["deepmoe serve is closing"])
+        self.assertEqual(worker_errors, ["cachedmoe serve is closing"])
         serve.p.kill.assert_not_called()
 
     def test_broken_shutdown_pipe_keeps_failed_drain_status(self):
@@ -134,7 +134,7 @@ class WebSettings(unittest.TestCase):
     def test_config_reports_active_speculation_and_current_power(self):
         bridge = SimpleNamespace(
             args=SimpleNamespace(resident_only="mask", mask_cache="dynamic"),
-            serve=SimpleNamespace(max_context=1 << 20, cmd=["deepmoe", "serve"],
+            serve=SimpleNamespace(max_context=1 << 20, cmd=["cachedmoe", "serve"],
                 ready={"speculation": {"enabled": True, "draft_tokens": 2,
                                        "accept_top_k": 4}}),
             prefill_ms_per_token=100)
@@ -217,7 +217,7 @@ class WebSettings(unittest.TestCase):
                     handler._preview.assert_not_called()
 
     def test_1m_context_passes_to_engine(self):
-        args = SimpleNamespace(exe="deepmoe", max_context=1 << 20, cache_slots=5500,
+        args = SimpleNamespace(exe="cachedmoe", max_context=1 << 20, cache_slots=5500,
             cache_gb=0, gpu_prefill_min=16, gpu_prefill_speedup=None, kv_dir="",
             no_kv_disk=True, kv_max_gb=0, max_parked=0, resident_only="mask",
             dspark=True, spec_k=5, spec_top_k=4, mirror=[], no_mirror_auto=True,
@@ -232,7 +232,7 @@ class WebSettings(unittest.TestCase):
         self.assertEqual(server.K_MAX_INDEX_POSITIONS, 1 << 20)
 
     def test_speculation_is_explicit_and_passes_length(self):
-        args = SimpleNamespace(exe="deepmoe", max_context=4096, cache_slots=5500,
+        args = SimpleNamespace(exe="cachedmoe", max_context=4096, cache_slots=5500,
             cache_gb=0, gpu_prefill_min=16, gpu_prefill_speedup=None, kv_dir="",
             no_kv_disk=True, kv_max_gb=0, max_parked=0, resident_only="mask",
             dspark=False, spec_k=5, spec_top_k=4, mirror=["/mirror"], no_mirror_auto=True,

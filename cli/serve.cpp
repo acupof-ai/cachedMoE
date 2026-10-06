@@ -1,4 +1,4 @@
-// `deepmoe serve`: one long-running Engine behind line-delimited JSON on
+// `cachedmoe serve`: one long-running Engine behind line-delimited JSON on
 // stdin/stdout (Track P, docs/p3_chat.md §1; Track R2, docs/p4_kv_ux.md §4).
 //
 // Requests, one JSON object per line:

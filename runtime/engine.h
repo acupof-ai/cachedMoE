@@ -380,7 +380,7 @@ public:
 
     // Brings up everything that does not need a GPU: config, manifest, files,
     // I/O engine, expert store (host-backed), planner, profiler. This is what
-    // `deepmoe bench nvme` and the storage tests exercise.
+    // `cachedmoe bench nvme` and the storage tests exercise.
     Result<void> init(const RuntimeConfig& cfg);
 
     // Adds the Vulkan device, both memory paths, the ~17.7 GB pinned set, the
@@ -782,7 +782,7 @@ public:
     // which is what docs/p2_decode.md §5 compares the measured token against.
     Result<double> measure_submit_overhead(uint32_t iterations = 64);
 
-    // One line per subsystem, for `deepmoe info` and the benchmark header.
+    // One line per subsystem, for `cachedmoe info` and the benchmark header.
     std::string status() const;
     std::string engram_status() const;
 

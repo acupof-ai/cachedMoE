@@ -68,7 +68,7 @@ foreach(_s IN LISTS CACHEDMOE_SHADERS)
 endforeach()
 add_custom_target(shaders ALL DEPENDS ${_shader_targets})
 
-# --- deepmoe_core: everything except the CLI and the benchmarks --------------
+# --- cachedmoe_core: everything except the CLI and the benchmarks --------------
 set(_cachedmoe_sources
     ${CACHEDMOE_CORE_SOURCES}
     ${CACHEDMOE_MODEL_SOURCES}
@@ -85,75 +85,103 @@ else()
     list(APPEND _cachedmoe_sources ${CACHEDMOE_STORAGE_LINUX_SOURCES})
 endif()
 
-add_library(deepmoe_core STATIC ${_cachedmoe_sources})
-target_include_directories(deepmoe_core PUBLIC "${CMAKE_SOURCE_DIR}")
-target_compile_features(deepmoe_core PUBLIC cxx_std_${CACHEDMOE_CXX_STANDARD})
+add_library(cachedmoe_core STATIC ${_cachedmoe_sources})
+add_library(deepmoe_core ALIAS cachedmoe_core)  # Legacy source target name.
+if(UNIX)
+    add_custom_target(cachedmoe_core_legacy_alias ALL
+        COMMAND "${CMAKE_COMMAND}" -E rm -f "$<TARGET_LINKER_FILE_DIR:cachedmoe_core>/${CMAKE_STATIC_LIBRARY_PREFIX}deepmoe_core${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        COMMAND "${CMAKE_COMMAND}" -E create_symlink "$<TARGET_LINKER_FILE_NAME:cachedmoe_core>" "$<TARGET_LINKER_FILE_DIR:cachedmoe_core>/${CMAKE_STATIC_LIBRARY_PREFIX}deepmoe_core${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        DEPENDS cachedmoe_core
+        VERBATIM)
+endif()
+target_include_directories(cachedmoe_core PUBLIC "${CMAKE_SOURCE_DIR}")
+target_compile_features(cachedmoe_core PUBLIC cxx_std_${CACHEDMOE_CXX_STANDARD})
 # Where `shaders` drops the .spv files; the environment variable of the same
 # name overrides it so a relocated build tree still runs.
-target_compile_definitions(deepmoe_core PUBLIC CACHEDMOE_SHADER_DIR="${CMAKE_BINARY_DIR}/shaders")
+target_compile_definitions(cachedmoe_core PUBLIC CACHEDMOE_SHADER_DIR="${CMAKE_BINARY_DIR}/shaders")
 
 if(CACHEDMOE_ENABLE_VULKAN)
-    target_link_libraries(deepmoe_core PUBLIC Vulkan::Vulkan)
-    target_compile_definitions(deepmoe_core PUBLIC CACHEDMOE_ENABLE_VULKAN)
+    target_link_libraries(cachedmoe_core PUBLIC Vulkan::Vulkan)
+    target_compile_definitions(cachedmoe_core PUBLIC CACHEDMOE_ENABLE_VULKAN)
 endif()
 if(CACHEDMOE_ENABLE_DIRECTSTORAGE)
-    target_compile_definitions(deepmoe_core PRIVATE CACHEDMOE_ENABLE_DIRECTSTORAGE)
+    target_compile_definitions(cachedmoe_core PRIVATE CACHEDMOE_ENABLE_DIRECTSTORAGE)
     # Only switch the real backend on when the SDK header is actually reachable;
     # design §9.6 says do not vendor or download it.
     include(CheckIncludeFileCXX)
     cachedmoe_resolve_cache(HAVE_DSTORAGE_H INTERNAL "Have the DirectStorage SDK header")
     check_include_file_cxx("dstorage.h" CACHEDMOE_HAVE_DSTORAGE_H)
     if(CACHEDMOE_HAVE_DSTORAGE_H)
-        target_compile_definitions(deepmoe_core PRIVATE CACHEDMOE_HAVE_DSTORAGE_H)
+        target_compile_definitions(cachedmoe_core PRIVATE CACHEDMOE_HAVE_DSTORAGE_H)
     else()
         message(STATUS "cachedmoe: dstorage.h not found; the DirectStorage backend reports unavailable")
     endif()
 endif()
 if(NOT WIN32)
     find_package(Threads REQUIRED)
-    target_link_libraries(deepmoe_core PUBLIC Threads::Threads)
+    target_link_libraries(cachedmoe_core PUBLIC Threads::Threads)
 endif()
 
 # --- CLI ---------------------------------------------------------------------
-add_executable(deepmoe cli/deepmoe_main.cpp cli/serve.cpp)
-target_link_libraries(deepmoe PRIVATE deepmoe_core)
-add_dependencies(deepmoe shaders)
+add_executable(cachedmoe cli/cachedmoe_main.cpp cli/serve.cpp)
+target_link_libraries(cachedmoe PRIVATE cachedmoe_core)
+add_dependencies(cachedmoe shaders)
+
+# Keep old invocations on the same executable. Regenerate links on every build,
+# including upgrades whose old artifact was a regular file.
+function(cachedmoe_legacy_executable target legacy)
+    set(alias_path "$<TARGET_FILE_DIR:${target}>/${legacy}${CMAKE_EXECUTABLE_SUFFIX}")
+    if(UNIX)
+        add_custom_target(${target}_legacy_alias ALL
+            COMMAND "${CMAKE_COMMAND}" -E rm -f "${alias_path}"
+            COMMAND "${CMAKE_COMMAND}" -E create_symlink "$<TARGET_FILE_NAME:${target}>" "${alias_path}"
+            DEPENDS ${target}
+            VERBATIM)
+    else()
+        add_custom_target(${target}_legacy_alias ALL
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:${target}>" "${alias_path}"
+            DEPENDS ${target}
+            VERBATIM)
+    endif()
+    add_custom_target(${legacy} DEPENDS ${target}_legacy_alias)
+endfunction()
+cachedmoe_legacy_executable(cachedmoe deepmoe)
 
 # --- benchmarks (design §9.2, P-1) ------------------------------------------
 add_executable(nvme_bench bench/nvme_bench.cpp)
-target_link_libraries(nvme_bench PRIVATE deepmoe_core)
+target_link_libraries(nvme_bench PRIVATE cachedmoe_core)
 
 # Track Q2 E1: the same IoEngine reads, varying only the destination memory.
 add_executable(io_dst_bench bench/io_dst_bench.cpp)
-target_link_libraries(io_dst_bench PRIVATE deepmoe_core)
+target_link_libraries(io_dst_bench PRIVATE cachedmoe_core)
 add_dependencies(io_dst_bench shaders)
 
 add_executable(bw_matrix bench/bw_matrix.cpp)
-target_link_libraries(bw_matrix PRIVATE deepmoe_core)
+target_link_libraries(bw_matrix PRIVATE cachedmoe_core)
 add_dependencies(bw_matrix shaders)
 
 # design §3.3 / §5.3: the *allocatable* ceiling on both heaps at the current
 # BIOS setting, as opposed to the heap sizes the driver reports.
 add_executable(heap_capacity bench/heap_capacity.cpp)
-target_link_libraries(heap_capacity PRIVATE deepmoe_core)
+target_link_libraries(heap_capacity PRIVATE cachedmoe_core)
 add_dependencies(heap_capacity shaders)
 
 # design §7.1 rule 2 / §7.9: effective GB/s of the two MoE dispatches against
 # the raw-read ceiling, over the real checkpoint's experts (P1).
 add_executable(kernel_bench bench/kernel_bench.cpp)
-target_link_libraries(kernel_bench PRIVATE deepmoe_core)
+target_link_libraries(kernel_bench PRIVATE cachedmoe_core)
 add_dependencies(kernel_bench shaders)
 
 # design 7.1 rule 2 / 7.2-7.8: effective GB/s of the attention-path kernels on
 # the real checkpoint (P2).
 add_executable(attn_bench bench/attn_bench.cpp)
-target_link_libraries(attn_bench PRIVATE deepmoe_core)
+target_link_libraries(attn_bench PRIVATE cachedmoe_core)
 add_dependencies(attn_bench shaders)
 
 # design 7.13 / docs/p3_prefill.md: the prefill GEMM choice and a whole prefill's
 # wall time (P3, Track L).
 add_executable(prefill_bench bench/prefill_bench.cpp)
-target_link_libraries(prefill_bench PRIVATE deepmoe_core)
+target_link_libraries(prefill_bench PRIVATE cachedmoe_core)
 add_dependencies(prefill_bench shaders)
 
 # --- Track W: the P5 feasibility probes (docs/plan_p5.md §5) -----------------
@@ -161,7 +189,7 @@ add_dependencies(prefill_bench shaders)
 # They are built here, and run by the GPU owner on a quiet machine.
 foreach(_probe dspark_grid_probe residency_probe sharing_probe capacity_probe hostflag_probe model_probe)
     add_executable(${_probe} bench/probes/${_probe}.cpp)
-    target_link_libraries(${_probe} PRIVATE deepmoe_core)
+    target_link_libraries(${_probe} PRIVATE cachedmoe_core)
     add_dependencies(${_probe} shaders)
 endforeach()
 

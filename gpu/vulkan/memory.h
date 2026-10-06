@@ -86,7 +86,7 @@ public:
     MemoryPath   path() const { return path_; }
 
     // Which memory type index the chosen path resolves to, and how big its
-    // heap is. `deepmoe info` prints this; P-1 records it per VGM setting.
+    // heap is. `cachedmoe info` prints this; P-1 records it per VGM setting.
     Result<MemoryTypeInfo> chosen_memory_type() const;
 
     // A general buffer. `host_visible` maps it; `device_address` enables

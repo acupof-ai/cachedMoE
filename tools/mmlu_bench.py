@@ -47,7 +47,7 @@ def main():
     ap.add_argument('--spec-k', type=int, default=2)
     ap.add_argument('--spec-top-k', type=int, default=4)
     ap.add_argument('--cache-slots', type=int, default=0)
-    ap.add_argument('--exe', default=str(Path(chat.REPO) / 'build/deepmoe'),
+    ap.add_argument('--exe', default=str(Path(chat.REPO) / 'build/cachedmoe'),
                     help='engine from the isolated worktree under evaluation')
     args = ap.parse_args()
     sample = json.loads(Path(args.sample).read_text())

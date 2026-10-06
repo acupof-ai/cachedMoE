@@ -106,7 +106,7 @@ def stage_bytes(man: dict[str, int], name: str, layer: int, has_se: bool) -> int
 
 
 def capture(model_dir: str, warm: int, out: Path, extra_env: dict[str, str]) -> None:
-    exe = ROOT / "build" / ("deepmoe.exe" if os.name == "nt" else "deepmoe")
+    exe = ROOT / "build" / ("cachedmoe.exe" if os.name == "nt" else "cachedmoe")
     cmd = [str(exe), "run", "--model", model_dir, "--steps", "1", "--warm", str(warm),
            "--trace", str(out)]
     env = dict(os.environ)
@@ -115,7 +115,7 @@ def capture(model_dir: str, warm: int, out: Path, extra_env: dict[str, str]) -> 
     r = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if r.returncode != 0 or not out.exists():
         sys.stderr.write(r.stdout[-3000:] + r.stderr[-3000:])
-        raise SystemExit(f"deepmoe run failed ({r.returncode})")
+        raise SystemExit(f"cachedmoe run failed ({r.returncode})")
 
 
 def hot_step(trace_path: Path, man: dict[str, int], bw: float, last: int = 10) -> dict:
@@ -216,8 +216,8 @@ def chat_budget(run_dir: Path, disk_gbs: float) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--trace", type=Path, help="an existing `deepmoe run --trace` file")
-    ap.add_argument("--capture", action="store_true", help="run `deepmoe run --warm` and trace it")
+    ap.add_argument("--trace", type=Path, help="an existing `cachedmoe run --trace` file")
+    ap.add_argument("--capture", action="store_true", help="run `cachedmoe run --warm` and trace it")
     ap.add_argument("--warm", type=int, default=20)
     ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for --capture")
     ap.add_argument("--model", default=DEFAULT_MODEL)

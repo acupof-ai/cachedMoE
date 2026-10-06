@@ -23,6 +23,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import runtime_env
+from process_names import is_engine_comm
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "bench"))
@@ -106,7 +107,7 @@ def launch_configuration(args, inherited=None):
                CACHEDMOE_SPEC_GPU_READOUT="1", CACHEDMOE_MGT_PAIR_DOT="0",
                CACHEDMOE_MGT_ATTN_CM="0", CACHEDMOE_MGT_FOLD_SCALE="0")
     command = [sys.executable, str(args.repo / "tools/web/server.py"),
-               "--exe", str(args.repo / "build/deepmoe"),
+               "--exe", str(args.repo / "build/cachedmoe"),
                "--resident-only", "mask", "--mask-cache", "dynamic",
                "--cache-slots", "5500", "--max-context", "1048576",
                "--gpu-prefill-min", "16", "--mirror",
@@ -141,6 +142,9 @@ class EngineChild:
     exe: str
     pidfd: int
 
+    def __post_init__(self):
+        self.exe = str(Path(self.exe).resolve())
+
     def live(self):
         poller = select.poll()
         poller.register(self.pidfd, select.POLLIN)
@@ -150,7 +154,7 @@ class EngineChild:
         details = process_details(self.pid)
         return bool(details and details["state"] != "Z" and
                     details["ppid"] == self.parent and details["start_ticks"] == self.start_ticks and
-                    details["comm"] == "deepmoe" and details["exe"] == self.exe)
+                    is_engine_comm(details["comm"]) and details["exe"] == self.exe)
 
     def send(self, signum):
         if not self.live():
@@ -170,6 +174,7 @@ class EngineChild:
 
 
 def find_engine(server_pid, expected_exe):
+    expected_exe = str(Path(expected_exe).resolve())
     children = Path(f"/proc/{server_pid}/task/{server_pid}/children")
     try:
         pids = [int(value) for value in children.read_text().split()]
@@ -179,7 +184,7 @@ def find_engine(server_pid, expected_exe):
     for pid in pids:
         details = process_details(pid)
         if details and details["ppid"] == server_pid and details["state"] != "Z" and \
-                details["comm"] == "deepmoe" and details["exe"] == str(expected_exe):
+                is_engine_comm(details["comm"]) and details["exe"] == expected_exe:
             candidates.append(details)
     if len(candidates) > 1:
         raise RuntimeError("web server has more than one engine child")
@@ -235,7 +240,7 @@ class OwnedProcess:
         return True
 
     def is_engine(self):
-        return bool(self.observations and self.observations[-1]["comm"] == "deepmoe" and
+        return bool(self.observations and is_engine_comm(self.observations[-1]["comm"]) and
                     self.observations[-1]["exe"] == self.expected_engine)
 
     def send(self, signum):
@@ -264,7 +269,7 @@ class OwnedSession:
         self.server = server
         self.session = server.pid
         self.start_ticks = leader["start_ticks"]
-        self.expected_engine = str(expected_engine)
+        self.expected_engine = str(Path(expected_engine).resolve())
         self.children = {}
         self.closed = False
 
@@ -436,6 +441,7 @@ def shutdown(server, child, paused, latch, sensors, monitor, log, thermal, owned
 
 def main(argv=None):
     args = arguments(argv)
+    expected_exe = (args.repo / "build/cachedmoe").resolve()
     command, env = launch_configuration(args)
     if args.dry_run:
         print(json.dumps(dict(command=command, env=runtime_env.raw_controls(env),
@@ -443,8 +449,8 @@ def main(argv=None):
         return 0
     require_pidfd_support()
     assert_idle()
-    if not (args.repo / "build/deepmoe").is_file():
-        raise RuntimeError("build/deepmoe is unavailable")
+    if not expected_exe.is_file():
+        raise RuntimeError("build/cachedmoe is unavailable")
     if not Path("/mnt/deepmoe2/models/DeepSeek-V4.1-Flash/deepmoe_manifest.json").is_file():
         raise RuntimeError("the requested second checkpoint read source is unavailable")
     args.state_dir.mkdir(parents=True, exist_ok=True)
@@ -472,13 +478,13 @@ def main(argv=None):
             assert_idle()
             server = subprocess.Popen(command, cwd=args.repo, env=env, stdin=subprocess.DEVNULL,
                                       stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            owned = OwnedSession(server, args.repo / "build/deepmoe")
+            owned = OwnedSession(server, expected_exe)
             state["server_pid"] = server.pid
             startup_deadline = time.monotonic() + 180
             next_state = 0
             while server.poll() is None and not stopping:
                 if child is None:
-                    child = find_engine(server.pid, args.repo / "build/deepmoe")
+                    child = find_engine(server.pid, expected_exe)
                     if child:
                         state.update(engine_pid=child.pid, engine_start_ticks=child.start_ticks)
                     elif time.monotonic() > startup_deadline:
@@ -514,7 +520,7 @@ def main(argv=None):
             try:
                 if server:
                     if owned is None and child is None:
-                        child = find_engine(server.pid, args.repo / "build/deepmoe")
+                        child = find_engine(server.pid, expected_exe)
                     clean = shutdown(server, child, paused, latch, sensors, monitor, log, thermal, owned)
                     if not clean and failure is None:
                         failure = "web shutdown failed; see web.log"

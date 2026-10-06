@@ -13,7 +13,7 @@ static const char* heapFlags(VkMemoryHeapFlags f) {
 
 int main() {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    app.pApplicationName = "deepmoe-smoke";
+    app.pApplicationName = "cachedmoe-smoke";
     app.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &app;

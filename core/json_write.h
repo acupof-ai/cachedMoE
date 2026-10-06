@@ -1,5 +1,5 @@
 // The writing half of core/json.h: just enough to emit one-line JSON events
-// (`deepmoe serve`, `deepmoe tokenize`). Strings are expected to be UTF-8 and
+// (`cachedmoe serve`, `cachedmoe tokenize`). Strings are expected to be UTF-8 and
 // pass through unescaped apart from what JSON requires.
 //
 // Ownership/threading: pure functions.

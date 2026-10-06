@@ -5,8 +5,11 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -106,6 +109,7 @@ class GuardedWeb(unittest.TestCase):
                                ("--spec-top-k", "4"), ("--kv-max-gb", "4")):
             self.assertEqual(command[command.index(flag) + 1], expected)
         self.assertIn("--dspark", command)
+        self.assertEqual(command[command.index("--exe") + 1], "/tmp/deepmoe-test/build/cachedmoe")
         self.assertEqual(command[command.index("--kv-dir") + 1], "/tmp/deepmoe-test/build/web_mask/kv")
         self.assertEqual(env["CACHEDMOE_DSPARK_ONECB"], "1")
         self.assertEqual(env["CACHEDMOE_BATCH_GPU_ROUTE"], "0")
@@ -426,6 +430,66 @@ class StartupShutdownOwnership(unittest.TestCase):
             self.assertFalse(receipt["shutdown_graceful"])
             self.assertEqual(receipt["kv_drain_status"], "unconfirmed")
             self.assertTrue(receipt["shutdown_owned_processes"]["children"][0]["live"])
+
+
+@unittest.skipUnless(sys.platform == "linux", "Linux comm and pidfd fixture")
+class ExecutableAliases(unittest.TestCase):
+    def test_real_cpu_executable_symlink_comm_and_pidfd(self):
+        # The temporary engine-named image is a copy of sleep, never the GPU
+        # executable. The legacy symlink changes comm but not /proc/exe.
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "cachedmoe"
+            shutil.copy2(shutil.which("sleep"), exe)
+            alias = Path(tmp) / "deepmoe"
+            alias.symlink_to(exe.name)
+            for selected in (exe, alias):
+                with self.subTest(selected=selected.name):
+                    process = subprocess.Popen([str(selected), "10"])
+                    child = None
+                    try:
+                        deadline = time.monotonic() + 1
+                        while child is None and time.monotonic() < deadline:
+                            child = launch.find_engine(os.getpid(), selected)
+                            time.sleep(.01)
+                        self.assertIsNotNone(child)
+                        details = launch.process_details(process.pid)
+                        self.assertEqual(details["comm"], selected.name)
+                        self.assertEqual(details["exe"], str(exe.resolve()))
+                        self.assertEqual(child.exe, str(exe.resolve()))
+                        self.assertTrue(child.send(signal.SIGSTOP))
+                        deadline = time.monotonic() + 1
+                        while time.monotonic() < deadline:
+                            if launch.process_details(process.pid)["state"] == "T":
+                                break
+                            time.sleep(.01)
+                        self.assertEqual(launch.process_details(process.pid)["state"], "T")
+                        self.assertTrue(child.send(signal.SIGCONT))
+                    finally:
+                        process.kill()
+                        process.wait(timeout=2)
+                        if child:
+                            child.close()
+
+    def test_owned_session_normalizes_alias_without_relaxing_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "cachedmoe"
+            exe.touch()
+            alias = Path(tmp) / "deepmoe"
+            alias.symlink_to(exe.name)
+            leader = StartupShutdownOwnership.details(100, parent=os.getpid(), birth=400)
+            server = SimpleNamespace(pid=100)
+            with patch.object(launch, "process_details", return_value=leader):
+                owned = launch.OwnedSession(server, alias)
+            self.assertEqual(owned.expected_engine, str(exe.resolve()))
+            for comm in ("cachedmoe", "deepmoe"):
+                details = StartupShutdownOwnership.details(101, comm=comm, exe=str(exe))
+                process = launch.OwnedProcess(101, 401, 100, 999, owned.expected_engine, [])
+                self.assertTrue(process.observe(details))
+                self.assertTrue(process.is_engine())
+                process.observations[-1]["exe"] = "/wrong/cachedmoe"
+                self.assertFalse(process.is_engine())
+                self.assertFalse(process.observe(details | dict(session=101)))
+                self.assertFalse(process.observe(details | dict(start_ticks=402)))
 
 
 if __name__ == "__main__":

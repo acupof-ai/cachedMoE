@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Track D2: ABAB over `--mirror` off/on (docs/p4_dual_source.md).
 
-One `deepmoe serve` process per cell, arms alternated off/on/off/on..., so a
+One `cachedmoe serve` process per cell, arms alternated off/on/off/on..., so a
 warming drive or a background process moves both arms the same way. Each cell is
 a tools/hitrate_bench.py run of one chat script.
 
@@ -146,7 +146,7 @@ def main() -> int:
     ap.add_argument("--pairs", type=int, default=3)
     ap.add_argument("--cache-slots", type=int, default=5100)
     ap.add_argument("--max-context", type=int, default=4096)
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
     ap.add_argument("--env", action="append", default=[])
     ap.add_argument("--arm-env", action="store_true",
                     help="both arms run WITH --mirror; the arms differ only by "
@@ -156,7 +156,7 @@ def main() -> int:
     ap.add_argument("--on-env", action="append", default=[],
                     help="env for the on arm only")
     ap.add_argument("--serve-arg", action="append", default=[],
-                    help="extra `deepmoe serve` arg, added to BOTH arms (keep the A/B symmetric); "
+                    help="extra `cachedmoe serve` arg, added to BOTH arms (keep the A/B symmetric); "
                          "e.g. --serve-arg=--no-kv-disk so cell N's .pkv cannot leak into cell N+1")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)

@@ -422,7 +422,7 @@ CACHEDMOE_TEST(decode, forty_layers_against_the_l3_oracle) {
                 // already 0.92 at p0 -- and it is largest where the context is
                 // thinnest, which is where a gate near-tie is likeliest to go
                 // the other way (the same discrete effect as the layer-2 row
-                // in section (a)). `deepmoe run --slow-prefill` prints all
+                // in section (a)). `cachedmoe run --slow-prefill` prints all
                 // forty layers of it.
                 if (L == c.num_hidden_layers - 1) {
                     std::printf("      L%u window KV by prompt position:", L);

@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+from process_names import GPU_COMM_PATTERN
 
 class ThermalLatch:
     def __init__(self, pause=80.0, resume=72.0):
@@ -146,7 +147,7 @@ def guarded_temperatures(values):
 
 
 def assert_idle():
-    result = subprocess.run(["pgrep", "-x", "deepmoe|deepmoe-tested|deepmoe_tests"],
+    result = subprocess.run(["pgrep", "-x", GPU_COMM_PATTERN],
                             capture_output=True, text=True)
     if result.returncode != 1:
         raise RuntimeError(f"another GPU engine/test is present: {result.stdout.strip()}")

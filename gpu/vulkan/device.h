@@ -28,7 +28,7 @@
 
 namespace deepmoe::gpu {
 
-// Reported even when Vulkan is compiled out, so `deepmoe info` and the design
+// Reported even when Vulkan is compiled out, so `cachedmoe info` and the design
 // docs share one vocabulary.
 struct HeapInfo {
     uint64_t bytes        = 0;
@@ -133,7 +133,7 @@ public:
     const DeviceCaps& caps() const { return caps_; }
     uint32_t compute_queue_family() const { return compute_family_; }
 
-    // Enumerates devices without creating one; this is what `deepmoe info`
+    // Enumerates devices without creating one; this is what `cachedmoe info`
     // prints and what tools/envcheck reports.
     static Result<std::vector<DeviceCaps>> enumerate(bool enable_validation = false);
 

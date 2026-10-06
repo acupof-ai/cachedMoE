@@ -247,7 +247,7 @@ constexpr VkBufferUsageFlags kSlabUsage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
 // same process can come back with the same value after the first one (and, on
 // Linux, the ICD library it pointed into) is gone. The cache then "hit" and
 // returned a pointer into code that was no longer mapped -- in the
-// deepmoe_tests all-suites run on RADV the address had been reused by a
+// cachedmoe_tests all-suites run on RADV the address had been reused by a
 // /dev/dri/renderD128 buffer mapping and the process jumped into GPU memory
 // (SIGSEGV SEGV_ACCERR, 2026-09-28, STATUS §7 0h). Imports are a handful per
 // process; vkGetDeviceProcAddr costs nothing next to them.

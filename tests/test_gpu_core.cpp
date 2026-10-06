@@ -116,7 +116,7 @@ CACHEDMOE_TEST(gpu, the_allocator_refuses_what_the_driver_cannot_do) {
     }
 }
 
-// A process that brings devices up and down -- deepmoe_tests running every
+// A process that brings devices up and down -- cachedmoe_tests running every
 // suite, a tool that re-inits -- must not carry a Vulkan function pointer from
 // one device to the next. memory.cpp used to cache the
 // vkGetMemoryHostPointerPropertiesEXT pointer in a static keyed on the VkDevice

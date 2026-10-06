@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_EXE = os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe")
+DEFAULT_EXE = os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe")
 DEFAULT_MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
 
 TOPIC = [

@@ -48,14 +48,14 @@ cmake --build build
 
 | 选项 | 默认 | 作用 |
 |---|---|---|
-| `CACHEDMOE_BUILD_TESTS` | ON | 构建 `deepmoe_tests` 并注册到 ctest |
+| `CACHEDMOE_BUILD_TESTS` | ON | 构建 `cachedmoe_tests` 并注册到 ctest |
 | `CACHEDMOE_ENABLE_VULKAN` | ON | Vulkan 后端；关掉后 `gpu/` 各类返回 `Unavailable`，其余照常编译 |
 | `CACHEDMOE_ENABLE_DIRECTSTORAGE` | OFF | DirectStorage 后端；还要 `dstorage.h` 在 include 路径上（SDK 不在仓库里，也不下载） |
 
 产物：
 
 ```
-build/deepmoe.exe              CLI: info / bench nvme / run / tokenize / serve
+build/cachedmoe.exe              CLI: info / bench nvme / run / tokenize / serve
 build/nvme_bench.exe           design §9.2.1 Q6/Q7 微基准
 build/bw_matrix.exe            design §8.0 / §3.3 带宽矩阵（CPU / GPU / 并发 × 两条路径）
 build/kernel_bench.exe         design §7.9.1（--p1）/ §7.9.2（默认）MoE kernel sweep
@@ -65,7 +65,7 @@ build/heap_capacity.exe        design §9.2.2 两条路径的实际可分配上�
 build/prefill_bench.exe        design §7.13 prefill 的 GEMM 选择与 TTFT 分解（Track L）
 build/tests/dspark_bench.exe   design §7.12 DSpark 草稿链的 T_draft（Track K）
 build/envcheck.exe             环境自检
-build/tests/deepmoe_tests.exe  单元测试
+build/tests/cachedmoe_tests.exe  单元测试
 build/shaders/*.spv            gpu/shaders/*.slang 全部（decode / MoE / DSpark / prefill / 采样），每个都过 spirv-val
 ```
 
@@ -84,9 +84,9 @@ cmake --build build 2>&1 | grep -vE 'warning:|note:|_Nullable|_Nonnull|In file i
 ## 测试
 
 ```powershell
-.\build\tests\deepmoe_tests.exe            # 全部
-.\build\tests\deepmoe_tests.exe io         # 只跑名字含 "io" 的用例
-.\build\tests\deepmoe_tests.exe --list
+.\build\tests\cachedmoe_tests.exe            # 全部
+.\build\tests\cachedmoe_tests.exe io         # 只跑名字含 "io" 的用例
+.\build\tests\cachedmoe_tests.exe --list
 ctest --test-dir build --output-on-failure  # 整体 + 按 suite 各注册一遍
 ```
 
@@ -123,7 +123,7 @@ ctest --test-dir build -j 1 -L "needs-model|needs-gpu" -E '^bench\.'   # 模型 
 外接的 J.ZAO 2 TB NVMe（USB4 盒，ASM2464PD，NTFS 用内核 `ntfs3` 只读挂载，`/etc/fstab` 里 `LABEL=deepmoe2 → /mnt/deepmoe2`，`nofail`）
 留作第二读源 / 备份：它会过热、USB4 链路大约每 1–1.5 小时断一次。Python 工具的 Linux 默认路径已改到内置盘。
 两块盘一起读（`--mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash`，或 `CACHEDMOE_MODEL_MIRRORS`）对话 **+9%**（5.27 → 5.74 tok/s，STATUS §7 0h）；
-web UI 和 `deepmoe serve` 都会自动探测并带上它（`CACHEDMOE_MIRROR_AUTO=0` 关掉，单盘基准用）。外接盘中途掉线时，在飞的读自动改读内置盘，连错三次后整块盘退出路由，对话不中断。
+web UI 和 `cachedmoe serve` 都会自动探测并带上它（`CACHEDMOE_MIRROR_AUTO=0` 关掉，单盘基准用）。外接盘中途掉线时，在飞的读自动改读内置盘，连错三次后整块盘退出路由，对话不中断。
 
 **和 Windows 开发机不同的三件事**（相信 STATUS.md 里任何一个 Windows 数之前先看这里）：
 
@@ -164,7 +164,7 @@ web UI 和 `deepmoe serve` 都会自动探测并带上它（`CACHEDMOE_MIRROR_AU
 7. **CPU 亲和性**：amdgpu 中断落在一个 CCD 上（本机 CPU 29 → CCD1 = 8–15,24–31），引擎线程在另一个 CCD 时热步慢 ~15%。
    `Engine::init` 默认把线程绑到中断所在的 L3 域；`CACHEDMOE_CPU_AFFINITY=off` 关闭，或给一个 cpulist。
 8. **GPU 时钟与 GameMode**：RADV 的自动 DPM 在 GPU 空闲 ≳2 ms（等 NVMe）后把 sclk 降到 600 MHz，紧接着的 MoE dispatch 慢 ~3 倍
-   （`bench/results/linux/perf/idle_ramp.txt`）。`deepmoe serve` 在每个 generate / reheat 请求期间持有一个 Feral GameMode 请求
+   （`bench/results/linux/perf/idle_ramp.txt`）。`cachedmoe serve` 在每个 generate / reheat 请求期间持有一个 Feral GameMode 请求
    （`core/gamemode.h`，`dlopen("libgamemode.so.0")`，没有就是空操作；`CACHEDMOE_GAMEMODE=0` 关掉），
    请求结束或进程死掉时 gamemoded 把 `power_dpm_force_performance_level` 还原成 `auto`。需要的系统配置（本机已配）：
    `pacman -S gamemode`，用户在 `gamemode` 组；**`/etc/gamemode.ini`**（GameMode 只从 /etc 读 `[gpu]`）：
@@ -427,7 +427,7 @@ uv run python tools/oracle_l2_extra.py --model D:\models\DeepSeek-V4.1-Flash --o
 .venv\Scripts\python.exe tools\dspark_tree.py lossless
 .venv\Scripts\python.exe tools\dspark_tree.py golden       # -> tests/data/dspark/tree_golden.bin
 
-# tokenizer 对 HF tokenizers 的全量对照（需要 build/deepmoe.exe；--quick 跳过码点扫描与语料）
+# tokenizer 对 HF tokenizers 的全量对照（需要 build/cachedmoe.exe；--quick 跳过码点扫描与语料）
 .venv\Scripts\python.exe tools\tokenizer_golden.py [--write-golden] [--quick]
 # checkpoint 自带的 encoding/test_encoding.py（无 pytest 的 50 行 shim；不往模型目录写任何东西）
 .venv\Scripts\python.exe tools\encoding_check.py
@@ -543,7 +543,7 @@ ctest --test-dir build -R suite.tokenizer --output-on-failure   # 纯 CPU，但�
 # 例：从 GPU prefill 出发的 17K 自由运行（design §12.1 (c)）
 $env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 $env:CACHEDMOE_PF_LONGCTX='C:\Users\Asus\code\deepmoe\traces\longctx\ctx16k'; $env:CACHEDMOE_PF_DECODE='free'
-.\build\tests\deepmoe_tests.exe gpu_prefill.longctx
+.\build\tests\cachedmoe_tests.exe gpu_prefill.longctx
 ```
 
 | suite | 它验的是什么 |
@@ -562,10 +562,10 @@ $env:CACHEDMOE_PF_LONGCTX='C:\Users\Asus\code\deepmoe\traces\longctx\ctx16k'; $e
 
 按标签筛选：`ctest -L needs-model` 只跑需要 checkpoint 的，`ctest -LE needs-model` 完全不跑。
 
-## 跑一个 token：`deepmoe run`（design §7.16、[p2_decode.md](p2_decode.md)）
+## 跑一个 token：`cachedmoe run`（design §7.16、[p2_decode.md](p2_decode.md)）
 
 ```powershell
-deepmoe run --model DIR [--prompt-ids FILE] [--steps N]
+cachedmoe run --model DIR [--prompt-ids FILE] [--steps N]
             [--state DIR] [--teacher-force] [--per-layer]
             [--cache-gb N] [--profile FILE.jsonl] [--chunk-kb N] [--qd N]
             [--slow-prefill] [--loaded-ced] [--warm K] [--determinism N]
@@ -577,7 +577,7 @@ deepmoe run --model DIR [--prompt-ids FILE] [--steps N]
 `--warm K`（同一位置先跑 K 遍再计时，热步地板）、`--determinism N`（每层四个张量 + 全部 logits 的哈希）、
 `--gate-report`（逐层把 gate 的差拆成"输入漂移 / kernel / 近似平局"）、`--topk-report`（每步每个 index source 的列表合法性与对参考的重叠）。
 长上下文：`--state traces/longctx/ctx4k`（或 `ctx16k`），design §7.16.5 (f) 的逐步时间就是
-`deepmoe run --state <dir> --warm 3 --steps 8 --cache-gb 24`。
+`cachedmoe run --state <dir> --warm 3 --steps 8 --cache-gb 24`。
 
 ```powershell
 $env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
@@ -595,7 +595,7 @@ $env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 ```
 
 - **`--prompt-ids` 是一个 token id 的文件**（`tests/data/l3/index.json` 的 `prompt_ids` 就是一份现成的）。
-  文本转 id 用 `deepmoe tokenize --model DIR --in cases.json --out ids.jsonl`（C++ tokenizer，对 HF 100%），或直接用 `serve`。
+  文本转 id 用 `cachedmoe tokenize --model DIR --in cases.json --out ids.jsonl`（C++ tokenizer，对 HF 100%），或直接用 `serve`。
 - **`--state` 是 oracle 的导出**（默认 `tests/data/l3`；长上下文是 `traces/longctx/<name>`）。v0.9 起它只提供 **prompt 的状态**
   （window KV、四个 kv source 的压缩 KV cache / index key / compressor 状态），每步的压缩 KV 与 top-k 由 design §7.4 的 kernel 算，
   导出里的那份只拿来比对（`--loaded-ced` 才加载它们）。`--slow-prefill` 时连 prompt 状态也是自己的，
@@ -614,7 +614,7 @@ $env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
   （`--warm K`）——否则量到的是 NVMe。submit 的往返在同一个二进制的不同次运行之间能在 0.13–0.75 ms 之间动，
   **所以读分解的形状，不要读第三位数字**；机器上别的东西醒来时热步会从 81.5 跳到 89–91 ms（submit 翻倍、GPU 时间不动）。
 
-## 对话：`deepmoe serve` 与 `tools/chat.py`（design §15.1.1、[p3_chat.md](p3_chat.md)）
+## 对话：`cachedmoe serve` 与 `tools/chat.py`（design §15.1.1、[p3_chat.md](p3_chat.md)）
 
 ```powershell
 # 交互对话（默认温度 1.0 / top_p 0.95，模型 README 的默认值）
@@ -632,7 +632,7 @@ $env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 它起的是：
 
 ```powershell
-deepmoe serve --model DIR [--cache-gb N] [--max-context 4096] [--engram-tables tests/data/l3]
+cachedmoe serve --model DIR [--cache-gb N] [--max-context 4096] [--engram-tables tests/data/l3]
               [--gpu-prefill-min N] [--replay 128] [--check-topk] [--profile F.jsonl]
 ```
 

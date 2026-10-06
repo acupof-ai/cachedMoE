@@ -2,7 +2,7 @@
 """Validate the C++ tokenizer (text/tokenizer.cpp) against HF `tokenizers`, and
 write the golden file tests/test_tokenizer.cpp checks.
 
-    .venv/Scripts/python.exe tools/tokenizer_golden.py [--exe build/deepmoe.exe]
+    .venv/Scripts/python.exe tools/tokenizer_golden.py [--exe build/cachedmoe.exe]
         [--write-golden] [--quick]
 
 Case sets (docs/p3_chat.md §3.3):
@@ -169,7 +169,7 @@ def run_cpp(exe, texts):
         r = subprocess.run([exe, "tokenize", "--model", MODEL, "--in", inp, "--out", outp],
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode != 0:
-            raise SystemExit(f"deepmoe tokenize failed: {r.stderr}")
+            raise SystemExit(f"cachedmoe tokenize failed: {r.stderr}")
         sys.stderr.write("  c++: " + r.stderr.strip().splitlines()[-1] + "\n")
         with open(outp, encoding="utf-8") as f:
             return [json.loads(line) for line in f]
@@ -177,7 +177,7 @@ def run_cpp(exe, texts):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
     ap.add_argument("--write-golden", action="store_true")
     ap.add_argument("--quick", action="store_true", help="skip the code point sweep and the corpus")
     ap.add_argument("--fuzz", type=int, default=20000)

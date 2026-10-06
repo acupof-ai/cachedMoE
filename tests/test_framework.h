@@ -4,7 +4,7 @@
 //
 // Usage:
 //   CACHEDMOE_TEST(suite_name, case_name) { CHECK(...); REQUIRE_OK(...); }
-//   int main(int argc, char** argv) { return deepmoe::test::run_all(argc, argv); }
+//   int main(int argc, char** argv) { return cachedmoe::test::run_all(argc, argv); }
 //
 // CHECK   records a failure and continues.
 // REQUIRE records a failure and returns from the case.

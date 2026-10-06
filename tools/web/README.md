@@ -7,7 +7,7 @@ python3 tools/web/server.py --max-context 1048576
 
 Open <http://127.0.0.1:8080/> after the engine reports ready. The default UI language
 is English. Generated text follows the prompt's language. The server starts one
-`deepmoe serve` process and queues requests; do not start another GPU job beside it.
+`cachedmoe serve` process and queues requests; do not start another GPU job beside it.
 The current local instance is described in [RUNNING.txt](RUNNING.txt).
 
 ## Controls and display
@@ -25,8 +25,8 @@ The current local instance is described in [RUNNING.txt](RUNNING.txt).
   first-token latency, prefill, actual speculation settings, and hardware telemetry.
 
 No CDN is required. Transcripts persist locally under
-`$XDG_CACHE_HOME/deepmoe/web_chat` (normally `~/.cache/deepmoe/web_chat`) on Linux,
-or `%LOCALAPPDATA%/deepmoe/web_chat` on Windows. The session-name field selects a
+`$XDG_CACHE_HOME/cachedmoe/web_chat` (normally `~/.cache/cachedmoe/web_chat`) on Linux,
+or `%LOCALAPPDATA%/cachedmoe/web_chat` on Windows. The session-name field selects a
 conversation. Reloading restores it. Different tabs should use different names.
 With disk KV enabled, completed decode turns now enqueue one batched background
 checkpoint. The live KV stays in memory. [Persistence details](../../docs/kv_async.md).
@@ -47,7 +47,7 @@ checkpoint. The live KV stays in memory. [Persistence details](../../docs/kv_asy
 | `--no-kv-disk` | Disable saved KV for a clean-start run |
 | `--max-parked N` | Number of sessions parked in memory before disk parking |
 | `--think` | Enable thinking for new sessions |
-| `--exe PATH` | Engine executable; normally `build/deepmoe` on Linux |
+| `--exe PATH` | Engine executable; normally `build/cachedmoe` on Linux |
 | `--host 127.0.0.1` / `--port 8080` | Listening address and port |
 | `--log PATH` | Engine log file |
 

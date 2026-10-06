@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scripted `deepmoe serve` session exercising Track R2's serve UX (docs/p4_kv_ux.md §7.1):
+"""Scripted `cachedmoe serve` session exercising Track R2's serve UX (docs/p4_kv_ux.md §7.1):
 KV continuation, rollback to a diverging prompt's common prefix, cancel mid-generation,
 THREE named sessions with LRU parking (--max-parked 1, so the third one evicts the least
 recently used parked session to the SSD cache and coming back reads it from there), and the engram tables derived at startup.
@@ -7,7 +7,7 @@ recently used parked session to the SSD cache and coming back reads it from ther
 Every step is timed and the run ends with a table the doc quotes: wall time, what the
 turn reused, what it re-prefilled, and what the window replay cost.
 
-    .venv/Scripts/python.exe tools/serve_demo.py [--exe build/deepmoe.exe] [--cache-gb 16]
+    .venv/Scripts/python.exe tools/serve_demo.py [--exe build/cachedmoe.exe] [--cache-gb 16]
         [--max-parked 1] [--log build/serve_demo.log] [--out events.jsonl]
 """
 import argparse
@@ -114,7 +114,7 @@ def table():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
     ap.add_argument("--cache-gb", type=int, default=16)
     ap.add_argument("--max-parked", type=int, default=1,
                     help="parked sessions kept in memory; with three sessions, 1 means the third "

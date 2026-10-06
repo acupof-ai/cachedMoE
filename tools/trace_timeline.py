@@ -129,7 +129,7 @@ class Trace:
         """The records of `token`, split into one list per forward pass.
 
         `Tracer::token_begin` keys on the decode POSITION, and the warm-up of
-        `deepmoe run --warm N` decodes the same position N times. So one token
+        `cachedmoe run --warm N` decodes the same position N times. So one token
         id can carry N+1 passes, and reading them as one token gives nonsense
         (every pass's `seq` starts at 0 again, so sorting by seq interleaves
         them: the gaps come out as the whole inter-pass wait). Split on the

@@ -87,7 +87,7 @@ bool has_ext(const std::vector<VkExtensionProperties>& list, const char* name) {
 
 Result<VkInstance> create_instance(bool validation) {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    app.pApplicationName = "deepmoe";
+    app.pApplicationName = "cachedmoe";
     app.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -138,7 +138,7 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.max_compute_workgroup_invocations = p.limits.maxComputeWorkGroupInvocations;
     c.timestamp_period_ns = p.limits.timestampPeriod;
     // Report the timestamp width of the family a compute queue would come from,
-    // so `deepmoe info` says the same thing the benchmarks see.
+    // so `cachedmoe info` says the same thing the benchmarks see.
     {
         uint32_t nq = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(pd, &nq, nullptr);

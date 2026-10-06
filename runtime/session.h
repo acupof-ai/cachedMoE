@@ -225,7 +225,7 @@ struct GenerateStats {
     double prefill_hit_rate() const {
         return prefill_requests ? double(prefill_hits) / double(prefill_requests) : 0.0;
     }
-    // One line of JSON fields (no braces), for `deepmoe serve`'s done event.
+    // One line of JSON fields (no braces), for `cachedmoe serve`'s done event.
     std::string json_fields() const;
 };
 

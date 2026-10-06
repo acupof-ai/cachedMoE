@@ -1,4 +1,4 @@
-"""Drive `deepmoe serve` through a two-topic conversation and watch the reheat pass.
+"""Drive `cachedmoe serve` through a two-topic conversation and watch the reheat pass.
 
 docs/p4_hitrate.md section 7. This is the G1-style probe for the per-turn reheat:
 one serve process, --cache-slots small enough that the cache is genuinely full,
@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_EXE = os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe")
+DEFAULT_EXE = os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe")
 DEFAULT_MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
 
 

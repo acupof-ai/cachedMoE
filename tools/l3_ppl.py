@@ -3,7 +3,7 @@
 
 What it measures
 ----------------
-`deepmoe run --state <64-step export> --teacher-force` forces the reference's
+`cachedmoe run --state <64-step export> --teacher-force` forces the reference's
 own greedy continuation through the engine and, at every one of the 64
 positions, takes the negative log-probability the engine's head assigns to the
 reference's next token. `exp(mean NLL)` is the perplexity Track Y's bars are
@@ -70,7 +70,7 @@ def _f(pattern: str, text: str, group: int = 1, cast=float):
 
 
 def parse_run(out: str) -> dict:
-    """Everything the table needs out of one `deepmoe run` transcript."""
+    """Everything the table needs out of one `cachedmoe run` transcript."""
     r: dict = {}
     r["nll"] = _f(r"teacher-forced NLL ([0-9.]+) over (\d+) steps", out)
     r["nll_steps"] = _f(r"teacher-forced NLL [0-9.]+ over (\d+) steps", out, 1, int)
@@ -110,7 +110,7 @@ def run_mode(exe: str, model: str, state: str, steps: int, mode: str,
             f.write(out)
     if p.returncode != 0:
         print(out[-4000:], file=sys.stderr)
-        raise SystemExit(f"`deepmoe run --resident-only {mode}` exited {p.returncode}")
+        raise SystemExit(f"`cachedmoe run --resident-only {mode}` exited {p.returncode}")
     r = parse_run(out)
     r["mode"] = mode
     r["seconds"] = time.perf_counter() - t0
@@ -125,7 +125,7 @@ def main() -> int:
     p.add_argument("--state", default=os.path.join("traces", "l3_64"),
                    help="the >= 64-step export (tools/oracle_l3_ppl.py)")
     p.add_argument("--model", default=runtime_env.getenv("CACHEDMOE_MODEL_DIR") or DEFAULT_MODEL)
-    p.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
+    p.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
     p.add_argument("--steps", type=int, default=64)
     p.add_argument("--modes", default="off,all,stall1")
     p.add_argument("--free-run", default="",

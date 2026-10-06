@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""A local web chat UI for DeepSeek-V4.1-Flash over `deepmoe serve`.
+"""A local web chat UI for DeepSeek-V4.1-Flash over `cachedmoe serve`.
 
     .venv\\Scripts\\python.exe tools\\web\\server.py [--port 8080] [--max-context 1048576]
         [--cache-gb N | --cache-slots N] [--kv-dir DIR] [--kv-max-gb N]
-        [--exe build\\deepmoe.exe] [--think] [--log build\\web_serve.log]
+        [--exe build\\cachedmoe.exe] [--think] [--log build\\web_serve.log]
 
 Then open http://127.0.0.1:8080 .
 
 What this is
 ------------
-`deepmoe serve` (docs/p3_chat.md §1) is one long-running engine behind
+`cachedmoe serve` (docs/p3_chat.md §1) is one long-running engine behind
 line-delimited JSON on stdin/stdout.  This process launches it as a child, keeps
 the chat state that `tools/chat.py` keeps (the same `encoding/encoding.py`
 renderer imported read-only from the checkpoint, so a reply here and a reply in
@@ -111,7 +111,7 @@ def reasoning_effort(value):
 def find_mirrors(model_dir: str):
     """Track D5: the same checkpoint on another drive, if one is plugged in.
 
-    The engine default stays OFF -- `deepmoe serve` without `--mirror` is the
+    The engine default stays OFF -- `cachedmoe serve` without `--mirror` is the
     single-drive path, word for word. This is the web UI's default, and only
     the web UI's, because it is the one process that is expected to be running
     when the user walks up to the machine.
@@ -320,7 +320,7 @@ def web_configuration(bridge):
     }
 
 class Serve:
-    """The `deepmoe serve` child: one writer, one reader thread, one turn in flight."""
+    """The `cachedmoe serve` child: one writer, one reader thread, one turn in flight."""
 
     @staticmethod
     def command(args):
@@ -390,7 +390,7 @@ class Serve:
         line = self.p.stdout.readline()
         if not line:
             self.dead = True
-            raise RuntimeError("deepmoe serve exited (see the --log file)")
+            raise RuntimeError("cachedmoe serve exited (see the --log file)")
         return json.loads(line.decode("utf-8"))
 
     def _read_ready(self):
@@ -437,9 +437,9 @@ class Serve:
     def send(self, obj):
         with self.io_lock:
             if self.closing:
-                raise RuntimeError("deepmoe serve is closing")
+                raise RuntimeError("cachedmoe serve is closing")
             if self.dead:
-                raise RuntimeError("deepmoe serve is gone")
+                raise RuntimeError("cachedmoe serve is gone")
             self._write_unlocked(obj)
 
     def rpc(self, obj, timeout=600):
@@ -833,7 +833,7 @@ class Handler(BaseHTTPRequestHandler):
     bridge: Bridge = None        # set on the class before serve_forever
     gpumon: GpuMon = None
     protocol_version = "HTTP/1.1"
-    server_version = "deepmoe-web"
+    server_version = "cachedmoe-web"
 
     def log_message(self, fmt, *a):
         if runtime_env.getenv("CACHEDMOE_WEB_VERBOSE"):
@@ -990,8 +990,8 @@ class Handler(BaseHTTPRequestHandler):
 # --------------------------------------------------------------------------- main
 
 def main():
-    ap = argparse.ArgumentParser(description="local web chat UI for `deepmoe serve`")
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
+    ap = argparse.ArgumentParser(description="local web chat UI for `cachedmoe serve`")
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--max-context", type=int, default=K_MAX_INDEX_POSITIONS)
@@ -1015,7 +1015,7 @@ def main():
                     help="accept a draft token when it is in the target row's top K")
     ap.add_argument("--mirror", action="append", default=[],
                     help="a second read source holding the same checkpoint "
-                         "(repeatable); passed through to `deepmoe serve`. "
+                         "(repeatable); passed through to `cachedmoe serve`. "
                          "Given explicitly, it replaces the auto-detection.")
     ap.add_argument("--no-mirror-auto", action="store_true",
                     help="do not look for the same checkpoint on another drive "
@@ -1039,7 +1039,7 @@ def main():
     except Exception:
         pass
     enc = load_encoding()
-    print(f"starting deepmoe serve (log: {args.log}) ...", flush=True)
+    print(f"starting cachedmoe serve (log: {args.log}) ...", flush=True)
     serve = Serve(args)
     r = serve.ready
     print(f"ready in {r['load_s']:.1f} s | expert cache {r['cache_gb']:.1f} GiB "
@@ -1058,7 +1058,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        print("\nstopping deepmoe serve ...", flush=True)
+        print("\nstopping cachedmoe serve ...", flush=True)
         serve.close()
     return 0
 

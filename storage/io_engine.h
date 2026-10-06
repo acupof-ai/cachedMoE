@@ -498,7 +498,7 @@ public:
     // a raised P0 depth has to be reflected there before the backend is made.
     // Call this on the IoConfig once, before make_default_backend().
     static void widen_for_env(IoConfig& cfg);
-    // The whole shape `deepmoe serve` runs with -- Track Q2's queue depth, the
+    // The whole shape `cachedmoe serve` runs with -- Track Q2's queue depth, the
     // Linux P0 chunking, then widen_for_env -- for the engine and for the
     // benches that stand in for it (prefill_bench). Before make_default_backend().
     static void runtime_shape(IoConfig& cfg);

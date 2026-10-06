@@ -6,7 +6,7 @@ hand. `capture()` collects them; tools/hitrate_bench.py writes the result to
 <run>/provenance.json before the first request, and tools/perf_report.py
 --record copies it into the ledger next to the numbers.
 
-    python tools/provenance.py [--exe build/deepmoe]     # print it for the current tree
+    python tools/provenance.py [--exe build/cachedmoe]     # print it for the current tree
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+from process_names import is_gpu_process
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -128,11 +129,15 @@ def idle_check(seconds: float = 1.0) -> dict:
         if v is not None:
             busy.append(int(v))
         time.sleep(0.05)
-    top = []
+    top, gpu_processes = [], []
     try:
         ps = subprocess.run(["ps", "-eo", "pcpu,comm", "--sort=-pcpu", "--no-headers"],
                             capture_output=True, text=True).stdout.splitlines()
         me = {"ps", "python", "python3"}
+        for line in ps:
+            pc, _, comm = line.strip().partition(" ")
+            if is_gpu_process(comm.strip()):
+                gpu_processes.append(f"{comm.strip()} {pc}%")
         for line in ps:
             pc, _, comm = line.strip().partition(" ")
             if comm.strip() in me:
@@ -144,14 +149,15 @@ def idle_check(seconds: float = 1.0) -> dict:
         pass
     return {"gpu_busy_mean": round(sum(busy) / len(busy), 1) if busy else None,
             "gpu_busy_max": max(busy) if busy else None,
-            "loadavg": (_read("/proc/loadavg") or "").split()[:3], "top_cpu": top}
+            "loadavg": (_read("/proc/loadavg") or "").split()[:3], "top_cpu": top,
+            "gpu_processes": gpu_processes}
 
 
 def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = None,
             shader_dir: str | os.PathLike | None = None) -> dict:
     """`env` is the environment the engine runs with (default: this process's)."""
     env = dict(os.environ if env is None else env)
-    exe = Path(exe) if exe else ROOT / "build" / ("deepmoe.exe" if os.name == "nt" else "deepmoe")
+    exe = Path(exe) if exe else ROOT / "build" / ("cachedmoe.exe" if os.name == "nt" else "cachedmoe")
     sdir = Path(shader_dir or runtime_env.getenv("CACHEDMOE_SHADER_DIR", environ=env)
                 or exe.parent / "shaders")
     spv = sorted(sdir.glob("*.spv")) if sdir.is_dir() else []
@@ -168,6 +174,7 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
         "dirty": dirty,
         "diff_sha": _sha(_git("diff", "HEAD").encode()) if dirty else None,
         "exe": str(exe),
+        "exe_resolved": str(exe.resolve()),
         "exe_sha": _file_sha(exe),
         "shaders": {"dir": str(sdir), "count": len(spv), "sha": h.hexdigest()[:16] if spv else None},
         "env": runtime_env.raw_controls(dict(sorted(env.items()))),

@@ -6,7 +6,14 @@ commands, its %LOCALAPPDATA% paths and its eight restart logs were all Windows, 
 every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
-STATE: RUNNING (2026-10-05, restored after adaptive-freeze evaluation).
+STATE: STOPPED for mask-quality and compatible rename (2026-10-06).
+
+Current start (after validation):
+  python3 tools/web/launch_guarded.py --repo "$PWD" --state-dir "$PWD/build/web_mask" --spec-k 2 --gpu-route 0
+Current live identity: pgrep -ax cachedmoe; pgrep -af tools/web/launch_guarded.py
+Stop the verified launcher with SIGINT and wait for KV drain. Never signal saved PIDs.
+
+HISTORICAL INSTANCE (2026-10-05, stopped before the current work):
 Engine includes native 1M index-score tiling from 3ba80ab, web settings e6580e4,
 dynamic mask defaults from 8f594f8, real expert-wait counters from 45ee3ab,
 English separated thinking/answer UI from 039e042, and batched async disk KV.

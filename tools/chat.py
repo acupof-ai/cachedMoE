@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Terminal chat with DeepSeek-V4.1-Flash over `deepmoe serve` (Track P,
+"""Terminal chat with DeepSeek-V4.1-Flash over `cachedmoe serve` (Track P,
 docs/p3_chat.md).
 
     .venv/Scripts/python.exe tools/chat.py [--think] [--temp 1.0] [--top-p 0.95]
@@ -320,7 +320,7 @@ def run_script(chat, server, script, transcript_path, stats_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
     ap.add_argument("--think", action="store_true")
     ap.add_argument("--temp", type=float, default=1.0)
     ap.add_argument("--top-p", type=float, default=0.95)
@@ -349,7 +349,7 @@ def main():
         os.system("")   # enable ANSI escapes on the Windows console
 
     enc = load_encoding()
-    print(f"starting deepmoe serve (log: {args.log}) ...", flush=True)
+    print(f"starting cachedmoe serve (log: {args.log}) ...", flush=True)
     server = Server(args)
     r = server.ready
     print(f"ready in {r['load_s']:.1f} s: expert cache {r['cache_gb']:.1f} GiB ({r['cache_slots']} slots), "

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Expert-cache hit-rate and stall bench over `deepmoe serve` (Track R1,
+"""Expert-cache hit-rate and stall bench over `cachedmoe serve` (Track R1,
 docs/p4_hitrate.md).
 
     .venv/Scripts/python.exe tools/hitrate_bench.py --script bench/results/hitrate/long_turns.json \
-        --out bench/results/hitrate/auto [--cache-gb N] [--exe build/deepmoe.exe] \
+        --out bench/results/hitrate/auto [--cache-gb N] [--exe build/cachedmoe.exe] \
         [--shader-dir build/shaders] [--serve-arg=--gpu-prefill-min --serve-arg=256] [--env K=V]
 
 One serve process runs a chat.py-format script (the same renderer, the same KV
@@ -260,7 +260,7 @@ def main() -> int:
     ap.add_argument("--idle-s", type=float, default=0.0,
                     help="seconds to wait after ready before the first request (the P3 backfill's idle time)")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "deepmoe.exe" if os.name == "nt" else "deepmoe"))
+    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
     ap.add_argument("--shader-dir", default="")
     ap.add_argument("--require-sources", type=int, default=0,
                     help="refuse the run unless this many sources survive the health gate")

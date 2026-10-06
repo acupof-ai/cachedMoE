@@ -1,7 +1,7 @@
 # One test binary, registered with ctest both as a whole and per suite so a
 # failure names the area rather than just "tests failed".
 
-add_executable(deepmoe_tests
+add_executable(cachedmoe_tests
     test_main.cpp
     test_core.cpp
     test_runtime_config.cpp
@@ -33,17 +33,18 @@ add_executable(deepmoe_tests
     test_multistream.cpp
     test_trace.cpp)
 
-target_link_libraries(deepmoe_tests PRIVATE deepmoe_core)
-target_compile_definitions(deepmoe_tests PRIVATE
+target_link_libraries(cachedmoe_tests PRIVATE cachedmoe_core)
+cachedmoe_legacy_executable(cachedmoe_tests deepmoe_tests)
+target_compile_definitions(cachedmoe_tests PRIVATE
     CACHEDMOE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
-add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
+add_test(NAME cachedmoe_tests COMMAND cachedmoe_tests)
 
 foreach(_suite align layout types json profiler status bytes
                 dequant gate slab expert_store planner resident_route
                 io v41_config manifest block_info kvcache kvstore trace
                 cache_cap runtime_config decode_mode env_alias)
-    add_test(NAME "suite.${_suite}" COMMAND deepmoe_tests "${_suite}.")
+    add_test(NAME "suite.${_suite}" COMMAND cachedmoe_tests "${_suite}.")
 endforeach()
 
 # The integration suite needs the real 510 GB checkpoint. It is registered
@@ -51,33 +52,33 @@ endforeach()
 # skips it outright; without DEEPMOE_MODEL_DIR the cases skip themselves and
 # say so, which ctest reports as "Skipped" rather than a pass (exit code 77,
 # see the end of this file).
-add_test(NAME "suite.integration" COMMAND deepmoe_tests "integration.")
+add_test(NAME "suite.integration" COMMAND cachedmoe_tests "integration.")
 set_tests_properties("suite.integration" PROPERTIES
     LABELS "needs-model"
     SKIP_RETURN_CODE 77)
 
 # Track MS (docs/p4_multistream.md): two decode streams in one engine, and the
 # claim that they cannot see each other.
-add_test(NAME "suite.multistream" COMMAND deepmoe_tests "multistream.")
+add_test(NAME "suite.multistream" COMMAND cachedmoe_tests "multistream.")
 set_tests_properties("suite.multistream" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
 
 # The Vulkan plumbing of design §3.3 / §5.3 / §7.1. Needs a GPU but no weights.
-add_test(NAME "suite.gpu" COMMAND deepmoe_tests "gpu.")
+add_test(NAME "suite.gpu" COMMAND cachedmoe_tests "gpu.")
 set_tests_properties("suite.gpu" PROPERTIES
     LABELS "needs-gpu"
     SKIP_RETURN_CODE 77)
 
 # The design §7.2-§7.8 attention kernels against the oracle's L2 tensors. Same
 # gate as gpu_moe, plus tests/data/l2 must exist.
-add_test(NAME "suite.gpu_attn" COMMAND deepmoe_tests "gpu_attn.")
+add_test(NAME "suite.gpu_attn" COMMAND cachedmoe_tests "gpu_attn.")
 set_tests_properties("suite.gpu_attn" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
 
 # One whole decoder layer, chained, against the oracle's block output.
-add_test(NAME "suite.gpu_layer" COMMAND deepmoe_tests "gpu_layer.")
+add_test(NAME "suite.gpu_layer" COMMAND cachedmoe_tests "gpu_layer.")
 set_tests_properties("suite.gpu_layer" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
@@ -87,14 +88,14 @@ set_tests_properties("suite.gpu_layer" PROPERTIES
 # correctness gate -- 30 timed iterations x 4 batch sizes x 2 layers x 2 contexts
 # -- so it is registered as its own name. `DEEPMOE_MGT1_CSV=path` writes the
 # table; `DEEPMOE_MGT1_ITERS` sets the iterations.
-add_test(NAME "bench.mgt1_m_curve" COMMAND deepmoe_tests "mgt1.m_curve")
+add_test(NAME "bench.mgt1_m_curve" COMMAND cachedmoe_tests "mgt1.m_curve")
 set_tests_properties("bench.mgt1_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
     SKIP_RETURN_CODE 77)
 
 # Track T / DSpark's MoE(M): one layer's MoE with a different expert set a
 # column, experts resident so it is the kernel's cost (docs/p4_mgt1.md §4).
-add_test(NAME "bench.mgt1_moe_m_curve" COMMAND deepmoe_tests "mgt1.moe_m_curve")
+add_test(NAME "bench.mgt1_moe_m_curve" COMMAND cachedmoe_tests "mgt1.moe_m_curve")
 set_tests_properties("bench.mgt1_moe_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
     SKIP_RETURN_CODE 77)
@@ -102,14 +103,14 @@ set_tests_properties("bench.mgt1_moe_m_curve" PROPERTIES
 # Track F1: the same batch as ONE dispatch over the columns' expert union
 # (docs/p4_dspark_runtime.md §2.2 plan C, no new kernel). Per column against the
 # per-column path, and the per-layer cost of both.
-add_test(NAME "bench.mgt1_moe_union_m_curve" COMMAND deepmoe_tests "mgt1.moe_union_m_curve")
+add_test(NAME "bench.mgt1_moe_union_m_curve" COMMAND cachedmoe_tests "mgt1.moe_union_m_curve")
 set_tests_properties("bench.mgt1_moe_union_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
     SKIP_RETURN_CODE 77)
 
 # The whole decode step -- forty layers, the head and the argmax -- against the
 # oracle's L3 tokens. Needs the ~17.7 GB pinned set and tests/data/l3.
-add_test(NAME "suite.decode" COMMAND deepmoe_tests "decode.")
+add_test(NAME "suite.decode" COMMAND cachedmoe_tests "decode.")
 set_tests_properties("suite.decode" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
@@ -120,37 +121,37 @@ set_tests_properties("suite.decode" PROPERTIES
 # docs/STATUS.md 3 -- so the gate case prints the cos / top-1 numbers as a WARN
 # and passes; it FAILS only below the regression floor (cos < 0.93 or
 # top-1 < 50/60). DEEPMOE_SPEC_STRICT=1 asserts the original bar instead.
-add_test(NAME "suite.spec_forward" COMMAND deepmoe_tests "spec_forward.")
+add_test(NAME "suite.spec_forward" COMMAND cachedmoe_tests "spec_forward.")
 set_tests_properties("suite.spec_forward" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
 
 # M1: what a verify forward costs in the engine at M = 1..6, against the same
 # positions as sequential decode steps. A bench, not a gate.
-add_test(NAME "bench.spec_forward_m_curve" COMMAND deepmoe_tests "bench_spec.")
+add_test(NAME "bench.spec_forward_m_curve" COMMAND cachedmoe_tests "bench_spec.")
 set_tests_properties("bench.spec_forward_m_curve" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
     SKIP_RETURN_CODE 77)
 
 # Long-context decode (4K / 17K) against Track M's exports, tie-aware. The
 # kernel case needs a GPU and traces/longctx; the engine case the model too.
-add_test(NAME "suite.decode_longctx" COMMAND deepmoe_tests "decode_longctx.")
+add_test(NAME "suite.decode_longctx" COMMAND cachedmoe_tests "decode_longctx.")
 set_tests_properties("suite.decode_longctx" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
 
 # The design §7.9 kernels on the real checkpoint. Same gate, and it additionally
 # skips itself when there is no usable Vulkan device.
-add_test(NAME "suite.gpu_moe" COMMAND deepmoe_tests "gpu_moe.")
+add_test(NAME "suite.gpu_moe" COMMAND cachedmoe_tests "gpu_moe.")
 set_tests_properties("suite.gpu_moe" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
 
 # Everything else must keep passing on a machine with no weights at all.
-foreach(_t deepmoe_tests align layout types json profiler status bytes
+foreach(_t cachedmoe_tests align layout types json profiler status bytes
            dequant gate slab expert_store planner resident_route io v41_config
            manifest block_info kvcache kvstore runtime_config decode_mode env_alias)
-    if(_t STREQUAL "deepmoe_tests")
+    if(_t STREQUAL "cachedmoe_tests")
         set_tests_properties("${_t}" PROPERTIES LABELS "unit;needs-model")
     else()
         set_tests_properties("suite.${_t}" PROPERTIES LABELS "unit")
@@ -160,17 +161,17 @@ endforeach()
 # Track F1: the speculative cycle's arithmetic -- position alignment, acceptance,
 # which ring slots a rejection undoes, and design §10.2's invariant at the loop
 # level. No GPU, no checkpoint.
-add_test(NAME "suite.speculate" COMMAND deepmoe_tests "speculate.")
+add_test(NAME "suite.speculate" COMMAND cachedmoe_tests "speculate.")
 set_tests_properties("suite.speculate" PROPERTIES LABELS "unit")
 
-add_test(NAME "suite.gpu_request_policy" COMMAND deepmoe_tests "gpu_request_policy.")
+add_test(NAME "suite.gpu_request_policy" COMMAND cachedmoe_tests "gpu_request_policy.")
 set_tests_properties("suite.gpu_request_policy" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
 
 # The design §7.12 DSpark draft kernels against tools/oracle_dspark.py's golden
 # draft cycle. Needs the ~2 GB of mtp + head weights and tests/data/dspark.
-add_test(NAME "suite.gpu_dspark" COMMAND deepmoe_tests "gpu_dspark.")
+add_test(NAME "suite.gpu_dspark" COMMAND cachedmoe_tests "gpu_dspark.")
 set_tests_properties("suite.gpu_dspark" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
@@ -179,35 +180,35 @@ set_tests_properties("suite.gpu_dspark" PROPERTIES
 # here rather than in the top-level CMakeLists.txt so the DSpark track touches
 # only its own lines; it builds with the tests.
 add_executable(dspark_bench "${CMAKE_SOURCE_DIR}/bench/dspark_bench.cpp")
-target_link_libraries(dspark_bench PRIVATE deepmoe_core)
+target_link_libraries(dspark_bench PRIVATE cachedmoe_core)
 add_dependencies(dspark_bench shaders)
 
 # The batched prefill kernels of docs/p3_prefill.md against tools/oracle_prefill.py's
 # start_pos == 0 tensors, then a whole forty-layer GPU prefill handed to the decode
 # engine (Track L). Needs tests/data/prefill and tests/data/l3.
-add_test(NAME "suite.gpu_prefill" COMMAND deepmoe_tests "gpu_prefill.")
+add_test(NAME "suite.gpu_prefill" COMMAND cachedmoe_tests "gpu_prefill.")
 set_tests_properties("suite.gpu_prefill" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
 
 # Track K2: the CPU half of DSpark tree sampling (cpu/dspark_tree) bit-exact against
 # tools/dspark_tree.py's golden cycles. No model, no GPU.
-add_test(NAME "suite.dspark_tree" COMMAND deepmoe_tests "dspark_tree.")
+add_test(NAME "suite.dspark_tree" COMMAND cachedmoe_tests "dspark_tree.")
 set_tests_properties("suite.dspark_tree" PROPERTIES LABELS "unit")
 
 # Track P: the C++ tokenizer against HF tokenizers' golden cases (needs
 # tokenizer.json from DEEPMOE_MODEL_DIR, nothing else), and the sampler against
 # the L3 export's recorded logits (no model, no GPU).
-add_test(NAME "suite.tokenizer" COMMAND deepmoe_tests "tokenizer.")
+add_test(NAME "suite.tokenizer" COMMAND cachedmoe_tests "tokenizer.")
 set_tests_properties("suite.tokenizer" PROPERTIES
     LABELS "needs-model"
     SKIP_RETURN_CODE 77)
-add_test(NAME "suite.sampling" COMMAND deepmoe_tests "sampling.")
+add_test(NAME "suite.sampling" COMMAND cachedmoe_tests "sampling.")
 set_tests_properties("suite.sampling" PROPERTIES LABELS "unit")
 
 # Track R2: the engram hash constants derived from tokenizer.json + config.json at
 # startup, against the L3 export's (the RNG / normaliser case needs nothing).
-add_test(NAME "suite.engram_tables" COMMAND deepmoe_tests "engram_tables.")
+add_test(NAME "suite.engram_tables" COMMAND cachedmoe_tests "engram_tables.")
 set_tests_properties("suite.engram_tables" PROPERTIES
     LABELS "needs-model"
     SKIP_RETURN_CODE 77)
@@ -215,11 +216,11 @@ set_tests_properties("suite.engram_tables" PROPERTIES
 # Track R2: the window ring rebuilt by replay -- rollback, park / restore, the
 # Session's rollback / cancel / named sessions -- on the L3 export and Track M's
 # 4K export (DEEPMOE_LONGCTX_DIR).
-add_test(NAME "suite.kv_replay" COMMAND deepmoe_tests "kv_replay.")
+add_test(NAME "suite.kv_replay" COMMAND cachedmoe_tests "kv_replay.")
 set_tests_properties("suite.kv_replay" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
-add_test(NAME "suite.kvdisk" COMMAND deepmoe_tests "kvdisk.")
+add_test(NAME "suite.kvdisk" COMMAND cachedmoe_tests "kvdisk.")
 set_tests_properties("suite.kvdisk" PROPERTIES LABELS "unit")
 
 # H1a: the auto cache-size cap and the probe's back-off plan, as pure functions.
@@ -233,7 +234,7 @@ set_tests_properties("suite.cache_cap" PROPERTIES LABELS "unit")
 # and the FIRST submit returned VK_ERROR_OUT_OF_DEVICE_MEMORY. Nothing in the
 # CPU suite can see that, so it is registered here for run_all.py on a GPU
 # machine. Needs the real checkpoint AND a device.
-add_test(NAME "smoke.auto_cache" COMMAND deepmoe_tests "smoke.auto_cache")
+add_test(NAME "smoke.auto_cache" COMMAND cachedmoe_tests "smoke.auto_cache")
 set_tests_properties("smoke.auto_cache" PROPERTIES
     LABELS "needs-model;needs-gpu"
     SKIP_RETURN_CODE 77)
@@ -242,15 +243,15 @@ set_tests_properties("smoke.auto_cache" PROPERTIES
 set_tests_properties("suite.trace" PROPERTIES LABELS "unit")
 
 # Track Y step 4 (docs/p4_resident_routing.md §9): the >= 64-step teacher-forced
-# PPL harness. `tools/l3_ppl.py` runs `deepmoe run --teacher-force` once per
+# PPL harness. `tools/l3_ppl.py` runs `cachedmoe run --teacher-force` once per
 # routing mode, SERIALLY (one engine at a time on this machine), and prints
 # NLL / PPL / top-1 / served / gate-mass-lost plus the verdict against the
 # 1.05x / 1.30x bars. Its oracle set is ~6 MB and regenerable, so it lives in
 # the .gitignore'd traces/ rather than tests/data; without it -- or without a
-# build of `deepmoe` -- the driver prints "SKIP l3_ppl" and ctest reports a skip.
+# build of `cachedmoe` -- the driver prints "SKIP l3_ppl" and ctest reports a skip.
 #
 #   tools/oracle_l3_ppl.py prefill --out traces/l3_64
-#   deepmoe run --state traces/l3_64 --steps 80 --resident-only off --warm-cache
+#   cachedmoe run --state traces/l3_64 --steps 80 --resident-only off --warm-cache
 #   tools/oracle_l3_ppl.py steps   --out traces/l3_64 --continuation cand.json
 find_package(Python3 COMPONENTS Interpreter QUIET)
 cachedmoe_cache(PYTHON FILEPATH
@@ -268,7 +269,7 @@ if(_l3ppl_py)
     add_test(NAME "bench.l3_ppl64"
              COMMAND "${_l3ppl_py}" "${CMAKE_SOURCE_DIR}/tools/l3_ppl.py"
                      --state "${CMAKE_SOURCE_DIR}/traces/l3_64"
-                     --exe $<TARGET_FILE:deepmoe>
+                     --exe $<TARGET_FILE:cachedmoe>
                      --steps 64)
     set_tests_properties("bench.l3_ppl64" PROPERTIES
         LABELS "needs-model;needs-gpu;bench"
@@ -277,7 +278,7 @@ if(_l3ppl_py)
         SKIP_REGULAR_EXPRESSION "SKIP l3_ppl")
 endif()
 
-# Every suite that runs deepmoe_tests reports a skip by EXIT CODE, never by
+# Every suite that runs cachedmoe_tests reports a skip by EXIT CODE, never by
 # matching its output: tests/test_framework.h run_all returns 77 when no case
 # failed and at least one printed a CACHEDMOE_SKIP_PRINTF notice, and 1 when any
 # case failed. The SKIP_REGULAR_EXPRESSION this replaces won over a failure --

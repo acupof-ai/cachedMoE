@@ -7,7 +7,7 @@
 // marks / every Unicode space, samples of the code point sweep, and the head of
 // every corpus file. That script also runs the full sets (1.5 M characters of
 // corpus, 2.5 M characters covering every scalar value, 20,000 fuzz strings)
-// through `deepmoe tokenize` and requires 100% id equality; this test is the
+// through `cachedmoe tokenize` and requires 100% id equality; this test is the
 // committed, model-dir-only subset of it.
 //
 // Needs tokenizer.json from CACHEDMOE_MODEL_DIR (it is not copied into the repo).

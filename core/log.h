@@ -21,7 +21,7 @@ namespace detail {
 inline std::atomic<int> g_log_level{static_cast<int>(LogLevel::Info)};
 inline std::mutex       g_log_mutex;
 // Where Info/Debug/Trace go. Null = stdout, which is the default and what
-// the one-shot commands want. `deepmoe serve` OWNS stdout -- the NDJSON
+// the one-shot commands want. `cachedmoe serve` OWNS stdout -- the NDJSON
 // protocol is duplicated off fd 1 and fd 1 is then pointed at stderr -- and a
 // FILE* stdout pointed at a pipe is BLOCK buffered, so before Track PF every
 // log_info a serve session wrote sat in an unflushed 4 KiB buffer and

@@ -1,8 +1,8 @@
-// deepmoe CLI.
+// cachedmoe CLI.
 //
-//   deepmoe info                     Vulkan heaps/limits, CPU features, layout budget
-//   deepmoe bench nvme [options]     the P-1 NVMe micro-benchmark (design §9.2 Q6/Q7)
-//   deepmoe run --model DIR ...      the token loop (stub until P2/P3)
+//   cachedmoe info                     Vulkan heaps/limits, CPU features, layout budget
+//   cachedmoe bench nvme [options]     the P-1 NVMe micro-benchmark (design §9.2 Q6/Q7)
+//   cachedmoe run --model DIR ...      the token loop (stub until P2/P3)
 //
 // Ownership/threading: one process, one Engine, main thread only. Nothing here
 // is a library; everything reusable lives in the modules.
@@ -42,21 +42,21 @@ namespace {
 
 int usage(int code = 2) {
     std::puts(
-        "deepmoe -- MoE inference runtime for DeepSeek-V4.1-Flash on Strix Halo\n"
+        "cachedmoe -- MoE inference runtime for DeepSeek-V4.1-Flash on Strix Halo\n"
         "\n"
         "usage:\n"
-        "  deepmoe info\n"
+        "  cachedmoe info\n"
         "      Vulkan devices, heaps and the capabilities of design section 1.1,\n"
         "      CPU features, and the per-token byte budget of section 2.3.\n"
         "\n"
-        "  deepmoe bench nvme [--file PATH] [--size-gb N] [--chunk-kb N,N,...]\n"
+        "  cachedmoe bench nvme [--file PATH] [--size-gb N] [--chunk-kb N,N,...]\n"
         "                     [--qd N,N,...] [--pattern seq|rand|both] [--keep]\n"
         "      Sequential and random read throughput against chunk size x queue\n"
         "      depth, through storage/IoEngine (design section 9.2, Q6/Q7).\n"
         "      Delegates to the nvme_bench executable when it is on PATH; the\n"
         "      same sweep is available directly as `nvme_bench`.\n"
         "\n"
-        "  deepmoe run --model DIR [--prompt-ids FILE] [--steps N]\n"
+        "  cachedmoe run --model DIR [--prompt-ids FILE] [--steps N]\n"
         "              [--state DIR] [--teacher-force] [--per-layer]\n"
         "              [--cache-gb N] [--profile FILE.jsonl] [--chunk-kb N] [--qd N]\n"
         "      Decode N tokens and print the section 13.1 per-token breakdown.\n"
@@ -68,7 +68,7 @@ int usage(int code = 2) {
         "      --cache-gb 0 (the default) sizes the routed-expert cache from the\n"
         "      machine. See docs/p2_decode.md.\n"
         "\n"
-        "  deepmoe serve --model DIR [--cache-gb N | --cache-slots N] [--max-context N]\n"
+        "  cachedmoe serve --model DIR [--cache-gb N | --cache-slots N] [--max-context N]\n"
         "                [--engram-tables DIR] [--gpu-prefill-min N] [--replay N]\n"
         "                [--no-rollback] [--max-parked N] [--park-budget-mb N]\n"
         "                [--kv-dir DIR] [--kv-max-gb N] [--engram-scales-resident]\n"
@@ -84,7 +84,7 @@ int usage(int code = 2) {
         "      sessions, drop, tokenize, detokenize, status. See cli/serve.cpp,\n"
         "      docs/p3_chat.md and docs/p4_kv_ux.md; tools/chat.py is the client.\n"
         "\n"
-        "  deepmoe tokenize --model DIR --in CASES.json --out IDS.jsonl\n"
+        "  cachedmoe tokenize --model DIR --in CASES.json --out IDS.jsonl\n"
         "      Encode every {\"text\": ...} of CASES.json (a JSON array, or an\n"
         "      object with a \"cases\" array) with the C++ tokenizer and write one\n"
         "      line per case: ids, decode, decode with specials skipped, and the\n"
@@ -103,7 +103,7 @@ std::string_view arg_value(int argc, char** argv, int& i, std::string_view name)
 }
 
 int cmd_info() {
-    std::puts("== deepmoe environment ==\n");
+    std::puts("== cachedmoe environment ==\n");
 
     // GPU (design §1.1)
     auto devices = gpu::Device::enumerate();
@@ -153,7 +153,7 @@ int cmd_info() {
 
 int cmd_bench(int argc, char** argv) {
     if (argc < 3 || std::strcmp(argv[2], "nvme") != 0) {
-        std::fputs("only `deepmoe bench nvme` exists; run `bw_matrix` for the memory matrix\n", stderr);
+        std::fputs("only `cachedmoe bench nvme` exists; run `bw_matrix` for the memory matrix\n", stderr);
         return 2;
     }
     // The sweep lives in bench/nvme_bench.cpp so it can be run standalone on a
@@ -169,7 +169,7 @@ int cmd_bench(int argc, char** argv) {
 }
 
 // A whitespace- or comma-separated list of token ids. There is no tokenizer in
-// the runtime yet (design §15 P0), so a prompt reaches `deepmoe run` as ids --
+// the runtime yet (design §15 P0), so a prompt reaches `cachedmoe run` as ids --
 // which is also what makes a run reproducible against tools/oracle.py.
 Result<std::vector<uint32_t>> read_prompt_ids(const std::string& path) {
     std::FILE* f = std::fopen(path.c_str(), "rb");

@@ -26,7 +26,7 @@ namespace deepmoe::testing {
 // index-offset 64-bit words, XOR-accumulated, with the byte length folded into
 // the seed. Not cryptographic -- the oracle records a SHA-256 per part as well.
 // This exists so a test can say "these are the oracle's bytes" without linking
-// a crypto library into deepmoe_tests.
+// a crypto library into cachedmoe_tests.
 inline uint64_t block_hash64(const void* data, size_t bytes) {
     const auto* p = static_cast<const uint8_t*>(data);
     uint64_t h = 0xCBF29CE484222325ull ^ static_cast<uint64_t>(bytes);

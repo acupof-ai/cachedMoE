@@ -81,6 +81,7 @@ import torch
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+from process_names import is_gpu_process
 
 import corpus as corpus_mod  # noqa: E402
 import dsref  # noqa: E402
@@ -330,8 +331,7 @@ HEAVY_PY = ("oracle", "route_trace", "cache_sim", "dsref", "prefill", "dspark")
 
 def other_processes() -> tuple[list[str], list[str]]:
     """-> (heavy python oracles, GPU / benchmark processes), excluding ourselves."""
-    ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -match "
-          "'^(python|deepmoe|bench|vulkaninfo)' } | ForEach-Object { [string]$_.ProcessId + "
+    ps = ("Get-CimInstance Win32_Process | ForEach-Object { [string]$_.ProcessId + "
           "[char]9 + $_.Name + [char]9 + $_.CommandLine }")
     cmd = (["powershell", "-NoProfile", "-Command", ps] if os.name == "nt"
            else ["ps", "-eo", "pid=,comm=,args="])
@@ -342,8 +342,7 @@ def other_processes() -> tuple[list[str], list[str]]:
         return [], [f"(process scan failed: {exc})"]
     if os.name != "nt":
         lines = ["\t".join(ln.split(None, 2)) for ln in lines
-                 if ln.split(None, 2)[1:2] and
-                 ln.split(None, 2)[1].startswith(("python", "deepmoe", "bench", "vulkaninfo"))]
+                 if ln.split(None, 2)[1:2]]
     me = os.getpid()
     heavy, gpu = [], []
     for ln in lines:
@@ -352,6 +351,9 @@ def other_processes() -> tuple[list[str], list[str]]:
             continue
         pid, name = parts[0], parts[1]
         cmd = parts[2] if len(parts) > 2 else ""
+        if not (name.lower().startswith(("python", "cachedmoe", "deepmoe", "bench", "vulkaninfo"))
+                or is_gpu_process(name)):
+            continue
         if pid.strip() == str(me) or "oracle_longctx" in cmd:
             continue
         if name.lower().startswith("python"):

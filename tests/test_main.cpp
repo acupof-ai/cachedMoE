@@ -1,8 +1,8 @@
 // Entry point for the whole test binary.
 //
-//   deepmoe_tests            run everything
-//   deepmoe_tests io         run cases whose "suite.name" contains "io"
-//   deepmoe_tests --list     print case names
+//   cachedmoe_tests            run everything
+//   cachedmoe_tests io         run cases whose "suite.name" contains "io"
+//   cachedmoe_tests --list     print case names
 #include "core/log.h"
 #include "tests/test_framework.h"
 
