@@ -36,7 +36,11 @@ KV and eight 512-token turns per arm. Before its first arm, the complete
 900-second cooldown fails the owner's <=60°C start gate: external NVMe minimum
 60.85°C, with no pending startup IO. No arms or output tokens ran, so this is a
 preflight block, not a profile speed verdict. The original performance web
-policy is restored and five transcripts are unchanged. Draft-only FP8/subset
+policy was restored and five transcripts were unchanged. The owner later
+authorized GPU 85/77°C and NVMe 80/72°C, with cold gates of 60/65°C.
+The fresh v2 three-arm comparison is running; its policy is shared, configurable
+and logged. CPU checks pass 73/73 and main tools checks 52/52. No new power
+winner or default is established yet. Draft-only FP8/subset
 experiments are authorized but wait for the ordered power comparison.
 [Method and current receipts](power_profile_comparison.md).
 
