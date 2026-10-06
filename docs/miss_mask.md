@@ -401,9 +401,78 @@ real ordinary-process stop/resume test. The thermal threshold is a trigger,
 not a claim that already submitted GPU work can be instantly preempted.
 
 New benchmarks retain raw wall time and also subtract the intersection of
-cooling intervals with each decode interval. Absolute BenchServer timestamps
-anchor this estimate; it uses the host receipt of `done` minus engine
-`decode_ms`, rather than GPU timestamps. Prefill cooling is excluded from the
-decode adjustment. The new Phase C four-arm run uses one frozen `4079180`
-engine and default session in off/mask/tau.20/tau.10 order, with KV reset and
-expert residency carried between arms. Its outcome remains pending.
+cooling intervals with each decode interval. The current anchor is the engine's
+`decode_finished_unix`, recorded at the end of `decode_ms` before reheat or KV
+checkpoint work; the interval starts at that end minus `decode_ms`. Phase C r4
+uses the frozen executable SHA-256 `b07f2480c8464681...`, built from `de42061`,
+with all 52 recorded shaders. Host `done` receipt anchors in older logs remain
+legacy estimates. Prefill cooling is excluded from the decode adjustment;
+per-stage timers retain their original values without cooling subtraction.
+Active time estimates CPU suspension within the engine interval, and does not
+measure GPU compute time. Suspending the CPU cannot cancel submitted GPU work.
+
+## Completed performance comparison: Phase C NO-GO (2026-10-06)
+
+**Weighted waits close NO-GO.** Both candidates fail the strict repetition gate
+and fall short of the required 20% observed throughput gain over off. The four
+arms each completed eight turns, with supervisor rc=0, in one engine (PID
+3641973), session `default`, in off/mask/tau.20/tau.10 order. KV resets between
+arms; the dynamic 5,500-slot expert cache carries between them. Speculation is
+off, with zero MTP pins. The runtime confirms both read sources and all 48
+mirror shards. AC and both power profiles remain performance throughout.
+
+The following values weight each turn by its timed `decode_steps`; the 32
+outputs contain 9,003 timed decode tokens. Gains are `off_ms / arm_ms - 1`.
+
+| Arm | Raw ms/token | Active estimate ms/token | Raw throughput gain | Active estimate gain |
+|---|---:|---:|---:|---:|
+| off | 197.219643 | 120.249564 | — | — |
+| mask | 179.840496 | 80.264076 | 9.66% | 49.82% |
+| tau .20 | 168.678853 | 86.390295 | 16.92% | 39.19% |
+| tau .10 | 179.090454 | 111.956500 | 10.12% | 7.41% |
+
+Raw time ranks tau .20 fastest; the active estimate ranks mask fastest. This
+protocol difference is retained, and the larger estimated gain does not replace
+the observed speed gate. Mask attention/MoE/tail average
+31.115/24.729/6.723 ms/token, close to the earlier 31.853/24.896/6.734. These
+original per-op counters support closing the GPU compute regression and its
+conditional source bisect; they are not independently cooling-adjusted stages.
+
+All 32 outputs have longest same-token run one and no detected short-period
+loop. Across them, repeated-fourgram fractions range from 0 to .178674 and
+distinct-2 from .613181 to .971831. The stricter 1.5-times-off repetition gate
+still fails: tau .20's third turn has .004016 repeated fourgrams versus off's
+zero; tau .10's third/fourth turns have .003311/.006734 versus zero. The mask
+control also fails on its fourth turn (.003534 versus zero). A zero off value
+requires zero candidate repetition under the unchanged rule. Every turn's
+four metrics remain in the raw report; no qualitative loop claim replaces this
+arithmetic gate. Final cumulative reserve/submit/IO/failed-fill counters are
+all zero, including startup, and neither source was dropped.
+
+The supervisor reports 1,850.350 s wall, 1,109.604 s active and 740.746 s
+cooling, with 4,263 pauses. The saved absolute pause intervals sum to 741.236 s;
+their endpoint accounting differs by .490079 s from the supervisor accumulator.
+Decode adjustments use interval intersections; the job totals above retain the
+supervisor's definitions. All 27,849 thermal samples report AC=1 and performance.
+GPU/NVMe peaks are 84.0/74.85°C. The 80°C threshold triggers CPU suspension and
+does not preempt queued GPU work. All 11,139 paused samples report GPU busy
+above zero (maximum 62%); this is a sampled counter fact with possible windowing
+or lag, not proof of uninterrupted GPU execution throughout each pause. Every
+decode window has complete thermal coverage and an engine end marker.
+
+The earlier cold 5,100-slot, power-saver NLL screens remain historical evidence:
+off .622784, tau .20 .626679 (1.006254 times off), tau .10 .623711 (1.001488
+times off); prior Chinese64 screens also remain under their original protocol.
+They do not qualify the new performance configuration's missing quality gates.
+After the decided NO-GO, new performance Chinese64, the three matched 512-token
+quality cases and MMLU57 are skipped by the stop rule. They are not recorded as
+passes. No weighted-wait web option is added; the owner's dynamic-mask plus
+speculation policy and the pending Phase D selection remain unchanged.
+
+Sources under `bench/results/mask_quality/`:
+`phase_c/performance_recovered_r4/{final_report.json,decision_receipt.json,check_results.json}`,
+each arm's `turns.json`/status and `arms/serve.log`, the recorded thermal JSONL,
+and the frozen binary/shader manifest. The report SHA-256 is
+`fdd52c0c8469e9e390e77a120b046eb8e9d1b9628625d8180fba5f6753d06afd`.
+Prior screens are `phase_c/nll_{off,tau20,tau10}.json` and
+`phase_c/conversation/`; interrupted comparisons contribute no speed average.

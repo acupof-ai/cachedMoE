@@ -114,8 +114,11 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
     判定正确；来源 `phase_b_calibration.json`、`cpu_final.log`、`tools_final.log`。
     首次工具门禁32/33的失败保留，最终25/25与33/33另列，未冒充首次全过。
   - [ ] C/D 最终所有候选逐轮列出最长连串、短周期、重复4-gram和distinct-2；原合并条目暂不关闭。
+    C r4的32轮已在 `phase_c/performance_recovered_r4/final_report.json` 完整列出；本项仍等D全部候选。
 
 ### C：加权部分 miss 等待，GPU 未验证
+
+2026-10-06 r4追加状态：完整对照结束，C结案NO-GO；后续三类候选质量作业按止损跳过，详见下方收据。
 
 已提交实验开关 `33962a2`，默认关闭；仅 plain decode，拒绝投机/批验证。
 按原始 gate 权重选择 miss；P0/LRU 不变、不重新归一化。支持每 token 专家数/时间预算。
@@ -129,12 +132,21 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
   mass lost .016；tau.20 `.626679`，served .896，mass lost .0687。NLL/off 均 ≤1.007。
   l3 的 tok/s 含 prefill 且在 power-saver 下，不能当速度结论。）
 - [x] off 必须 `.622784`；tau0 无限预算核对 off 等价性（两者逐位一致）。
-- [ ] 候选 NLL/off ≤1.10 才继续长生成、中文64、MMLU和八轮速度。
+- [x] 候选 NLL/off ≤1.10 才继续长生成、中文64、MMLU和八轮速度。
   已经判失败的配置按止损规则停止，写明省略哪些测试及理由，不冒充完成。
-- [ ] 最好候选同工作负载带 off/全 mask 对照，**三者同一会话、同一电源模式、连续跑**，
+  收据：旧power-saver/5100槽NLL筛查通过；r4完整八轮后两候选均判NO-GO。
+  按止损跳过后续performance中文64、三组匹配512输出、MMLU57；历史筛查保留原scope，不写全质量通过。
+- [x] 最好候选同工作负载带 off/全 mask 对照，**三者同一会话、同一电源模式、连续跑**，
   provenance 写电源模式。速度 ≥20% 且全部质量通过才 GO；
   质量通过但速度 <10% 则 NO-GO。GO 才添加网页显式选项，是否默认仍由 owner 决定。
-- [ ] 报告写 `miss_mask.md` / STATUS；NO-GO 不进默认，可移除没有价值的运行时策略。
+  收据：`performance_recovered_r4` rc0，四臂各8/8，同PID3641973/default session、performance/AC、
+  双盘48/48、动态5500槽。tau.20实际raw增益16.92%/active估算39.19%；tau.10为10.12%/7.41%。
+  两候选均失败严格重复门，且raw增益未达20%，C结案NO-GO；没有据active估算提升默认。
+- [x] 报告写 `miss_mask.md` / STATUS；NO-GO 不进默认，可移除没有价值的运行时策略。
+  收据：C结案及完整对照已写 `miss_mask.md`；`final_report.json`、`decision_receipt.json` 与
+  `check_results.json` 在 `phase_c/performance_recovered_r4/`。冻结b07f二进制来源 `de42061`，
+  engine decode边界/温控覆盖完整，加载失败0；不添加weighted-wait网页选项。
+  本勾选为C实验/判定结案；STATUS统一汇总、D、网页GPU验收和合并发布仍在§3等后续项中待完成。
 
 ### D：重新选 k，未启动
 
@@ -187,6 +199,8 @@ Strata 可选 DeepMoE 文本后端 [PR #943](https://github.com/Niko1221/Strata/
 
 ### 4.1 P0：速度回退未解释（新发现）
 
+2026-10-06 r4追加状态：完整双盘八轮performance对照已完成，计算回退归因与本节验收结案。
+
 同为动态 mask、双盘、5500 槽、八轮 plain：
 
 | | ms/token | tok/s | 命中 | nvme_stall | expert_hit_ms | hot_gemv_ms |
@@ -198,17 +212,25 @@ IO 没变，变慢的是 GPU 计算（+40~50%）。最可能是 power-saver/DPM�
 历史数据大概率在 performance 下测。同会话 512 token 网页测：off 8.52/9.13/8.34，mask 10.19/8.91/7.84，
 mask 只比 off 快约 4%（历史 +43%）。
 
-- [ ] 在 performance 模式下同会话连续跑 off 与动态 mask 八轮（已有脚本，每配置一次），
+- [x] 在 performance 模式下同会话连续跑 off 与动态 mask 八轮（已有脚本，每配置一次），
   看能否回到 ~77ms/token。provenance 写 `powerprofilesctl get`、GPU 时钟/DPM 状态。
+  收据：C r4同引擎完整off/mask八轮，raw为197.219643/179.840496ms/token，扣CPU暂停的
+  active估算120.249564/80.264076；两种口径单独保留，raw包含热暂停。
+  mask原始attention/MoE/tail为31.115/24.729/6.723ms/token，计算回退已消失；不做逐stage冷却扣减。
+  来源 `phase_c/performance_recovered_r4/{final_report.json,check_results.json}` 与每臂 `turns.json`。
 - [x] 若 performance 下仍慢，按提交二分（`41cc44c` → `4a262da`），以 per-op 的 `expert_hit_ms`/`hot_gemv_ms` 判断。
   收据：条件未触发，SKIP 二分。performance 七轮 mask attention/MoE/tail 为
   31.147/24.566/6.649 ms/token，历史八轮为31.853/24.896/6.734；指定算子退化已消失。
   原八轮对照尚未完整，墙钟受温控暂停污染，不能从这些算子数推断最终速度。
   追加来源：`p0_power_resume/thermal_analysis.json`、`evidence_audit/audit_20261006T092538.json`。
   仅关闭条件二分；§4.1完整八轮与C/D的速度决策仍保持未完成。
-- [ ] 查清前，C 的「比 off 快 ≥20%」门和 D 的 k 选择都不判；温控仍按 80/72，
+- [x] 查清前，C 的「比 off 快 ≥20%」门和 D 的 k 选择都不判；温控仍按 80/72，
   若 performance 下温度无法跑完，写明并请 owner 决定测速用哪个模式。
   （owner 已定 performance，见 §0。）
+  收据：r4在performance/AC、80/72继续协议下完整结束；监督wall/active/cooling为
+  1850.350/1109.604/740.746秒、4263暂停，GPU/NVMe峰值84.0/74.85°C。
+  active仅是CPU暂停估算，暂停不取消已提交GPU任务；原始与估算排名有差异，C两者公开且按规则NO-GO。
+  §4.1对照/归因结案，D可继续；这不代表D的k选择已完成。
 
 ### 4.2 P1：双盘 GPU route 让 verify 变慢（原 #4，被删）
 
