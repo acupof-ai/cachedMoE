@@ -32,15 +32,54 @@ Anything with no source is marked `not measured`.
 
 **It speaks.** A `deepmoe serve` process keeps the pinned set, expert cache, and KV resident;
 `tools/chat.py` starts a conversation and streams tokens, with each new turn prefilling only the added portion.
-Correctness against the fp32 reference is 8/8 at each of the 64 token / 4K / 17K contexts.
+Current short-decode reference matching is **6/8**, or **7/8 with the engine's
+own prefill**. At 4K and 16K (17,010 prompt tokens), teacher-forced and
+free-running checks each match **8/8**. Off64 reproduces the printed platform
+NLL **.622784**. These results preserve the current baseline; they do not meet
+the strict short-decode 8/8 + 8/8 requirement. Numerical validation belongs to
+`3c3a2c6` / executable `d4bf3184...`, with nine successful jobs, ten registered
+cases and no skips; the later clock-only build is recorded separately.
+Source: `bench/results/mask_quality/final_validation_summary.json`.
+The later per-turn web-boundary build passes **27/27 CPU CTest and 41/41 tool
+gates**; its fixed binary/shader receipt is recorded separately from numerical
+validation. Sources: `final_web_policy/recovered_boundary/{cpu_all.log,tools_all.log}`
+and `frozen_web_boundary_df316001/receipt.json` under the same raw root.
 
-**Latest mask quality audit:** dynamic-mask P0 priority now recovers the
-historical l3 NLL **.835581**, with off unchanged at **.622784**. Plain mask
-still fails the generated MMLU gate (**46/57**, required 48) and one long-output
-repetition ratio. Its new dual-source eight-turn baseline is **110.142 ms/token**.
-Weighted-wait and speculation decisions are still pending; these are not new
-qualified defaults. [Evidence and protocol](miss_mask.md#quality-recovery-phase-a-and-repetition-gates-2026-10-05),
-[remaining work](codex_todo.md).
+**Current audit (2026-10-06): Phase C is NO-GO; Phase D remains in progress.**
+Restoring strict P0 priority recovers dynamic-mask l3 NLL **.835581**. Phase A
+plain mask still fails generated-answer MMLU57 (**46/57**, required 48) and the
+follow-up repetition gate (**.117878 versus off .049116**, 2.40 times).
+Its **110.142 ms/token** eight-turn result used **power-saver** and remains a
+historical measurement. The owner accepts this quality for the web baseline:
+performance mode, dynamic mask plus speculation, interim k2/ONECB on, and GPU
+routing off until D determines an independent benefit. This is an explicit
+owner decision, not a newly passed quality gate or a claim that the web service
+has been restored. [Recovery evidence](miss_mask.md#quality-recovery-phase-a-and-repetition-gates-2026-10-05),
+[owner policy and remaining work](codex_todo.md).
+
+The completed C r4 performance comparison used one engine/session, four arms
+of eight turns, dynamic 5,500 slots, speculation off and both 48-shard sources.
+Each configuration ran once under AC, performance and the 80/72°C pause/resume
+protocol. Values are weighted by timed decode steps:
+
+| Arm | Raw ms/token | Active estimate ms/token | Raw gain over off | Active estimate gain |
+|---|---:|---:|---:|---:|
+| off | 197.219643 | 120.249564 | — | — |
+| mask | 179.840496 | 80.264076 | 9.66% | 49.82% |
+| tau .20 | 168.678853 | 86.390295 | 16.92% | 39.19% |
+| tau .10 | 179.090454 | 111.956500 | 10.12% | 7.41% |
+
+Both weighted-wait candidates fail the strict repetition gate and the observed
+20% speed threshold, so the remaining candidate quality runs are skipped and
+no weighted-wait web option is added. All 32 outputs avoid detected short-period
+loops; this does not pass the stricter repetition gate. Raw time ranks tau .20
+fastest, while the active estimate ranks mask fastest. Active subtracts CPU
+suspension overlapping the engine decode interval; it is not GPU compute time,
+and stage timers are not cooling-adjusted. CPU suspension cannot cancel already
+submitted GPU work. Mask attention/MoE/tail **31.115/24.729/6.723 ms/token**
+restore the historical compute level, so the conditional source bisect is SKIP.
+[Completed result and thermal definitions](miss_mask.md#completed-performance-comparison-phase-c-no-go-2026-10-06);
+raw sources: `bench/results/mask_quality/phase_c/performance_recovered_r4/{final_report.json,decision_receipt.json,check_results.json}`.
 
 ### 1.0 Machine-recorded measurements (ledger)
 
@@ -760,6 +799,27 @@ steps, and the reference continuation has to be produced step by step.**
 ---
 
 ## 7. Next, in order
+
+0ce. **2026-10-06：C完整performance对照NO-GO；当前质量/默认规则由owner覆盖，D仍待结案。**
+   C r4同引擎/default session、动态5500槽、spec off、双盘48/48，四臂各8/8且rc0；
+   raw/active估算及排名差异见§1。tau.20和tau.10均失败严格重复门，raw加速16.92%/10.12%未达20%。
+   后续performance中文64、匹配三组512输出与MMLU57按止损SKIP，不冒充质量通过，不添加weighted-wait网页选项。
+   完整mask原始attention/MoE/tail恢复到31.115/24.729/6.723ms/token，TODO§4.1计算回退结案，条件源码二分SKIP。
+   监督wall/active/cooling为1850.350/1109.604/740.746秒、4263暂停，GPU/NVMe峰值84.0/74.85°C。
+   active是engine边界内CPU暂停估算，不能作为GPU计算真值或逐stage扣减；80°C触发暂停，不取消已提交GPU任务。
+   当前数值门保留short decode **6/8 + own-prefill 7/8**，longctx4K/16K teacher/free各8/8；off64打印NLL **.622784**。
+   来源 `final_validation_summary.json`（数值引擎3c3a2c6/d4bf，九项成功作业、十个case、零skip）与
+   `phase_c/performance_recovered_r4/`（计时引擎de42061/b07f），均在 `bench/results/mask_quality/`。
+   后续网页切换边界固定df316001构建CPU27/27、工具41/41；原7个CPU边界case与1项GPU功能验收
+   见 `final_web_policy/recovered_boundary/`，这是实现验证，不冒充本分支合并/完整改名后的最终门禁。
+   owner接受A的46/57及续轮重复.118，指定performance、动态mask+spec、D前k2/ONECB on；
+   GPU route按D独立raw与active收益决定。D尚在运行，未判最终k/route或宣称网页恢复。
+   GPU路由/ONECB状态与启动配置整理、ABI具名常量和风格收据见TODO§4.4；profiling正常路径默认off，
+   隔离fixture on/off开销+4.131%，未证明<1%；union保留串行，不把单层估算写成完整cycle实测。
+   Phase B已知输出标定完成，最终候选指标仍等D；E扩容与原DSpark Phase5按规则SKIP，Phase4仍NO-GO，不重开。
+   下一步为D结案、恢复网页/合并验证发布，随后按owner§4.7在新工作树完成程序/CMake/env/namespace/数据路径兼容改名。
+   [C证据](miss_mask.md#completed-performance-comparison-phase-c-no-go-2026-10-06)、[模式语义](web_decode_modes.md)、
+   [接续清单与owner规则](codex_todo.md)。以下0cd等条目保留其历史配置与当时状态。
 
 0cd. **2026-10-05：网页英文默认、思考与正文分栏；decode KV 按轮后台批量落盘，Strata 后端 PR。**
    网页和 README/网页文档改为英文，思考生成时独立展开、正文开始后收起；保留 token hover、历史和取消。真实短 demo 截图显示10.04 tok/s，明确不是8轮基准；README主要数字仍为精确双盘9.20/单盘7.61与实验动态mask长期9.52。

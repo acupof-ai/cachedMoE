@@ -1,8 +1,8 @@
-# deepMoE
+# cachedMoE
 
 **Run DeepSeek-V4.1-Flash on a single 128 GB AMD Strix Halo PC.**
 
-deepMoE is a C++20 inference engine with Vulkan and Slang kernels. It runs the
+cachedMoE is a C++20 inference engine with Vulkan and Slang kernels. It runs the
 **552B MoE model, plus 196B Engram parameters**, from its **510 GB native FP4/FP8
 checkpoint**. Dense weights stay resident; a bounded expert cache streams the
 remaining weights from NVMe. No re-quantisation, shard conversion, or repacking.
@@ -10,8 +10,8 @@ remaining weights from NVMe. No re-quantisation, shard conversion, or repacking.
 [Quick start](#quick-start) · [Performance](#measured-performance) ·
 [Web chat](tools/web/README.md) · [Technical status](docs/STATUS.md) · [MIT license](LICENSE)
 
-<p align="center"><img src="docs/img/web_ui.jpg" width="900" alt="English deepMoE chat with a separate thought process and answer"><br>
-<sub>Live short demo: dynamic mask, DSpark k=5 / top-K=4, two drives. The 10.04 tok/s display is this demo, not the eight-turn benchmark.</sub></p>
+<p align="center"><img src="docs/img/web_ui.jpg" width="900" alt="English cachedMoE chat with a separate thought process and answer"><br>
+<sub>Historical short demo: dynamic mask, DSpark k=5 / top-K=4, two drives. The 10.04 tok/s display belongs to that demo; it is neither the eight-turn benchmark nor the current default configuration.</sub></p>
 
 ## What it does
 
@@ -65,51 +65,75 @@ export DEEPMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash"
 Start **one** of these clients:
 
 ```bash
-python3 tools/web/server.py          # http://127.0.0.1:8080
+python3 tools/web/launch_guarded.py   # web policy for this machine; requires AC and its mirror
 python3 tools/chat.py                # terminal chat
 ./build/deepmoe serve --model "$DEEPMOE_MODEL_DIR"   # JSON-lines protocol
 ```
 
-The web UI defaults to English. Model replies follow your prompt's language.
-The initial engine load takes time; wait for its ready message. Use automatic
-cache sizing first. Explicit cache budgets depend on the machine's memory layout.
+The guarded Linux web launcher uses the matching checkpoint mirror at
+`/mnt/deepmoe2/models/DeepSeek-V4.1-Flash`, performance power mode and thermal
+pause/resume at 80/72°C. For a manual exact-routing server, use
+`python3 tools/web/server.py`. The web UI defaults to English; model replies
+follow your prompt's language.
+The initial engine load takes time; wait for its ready message. The guarded
+recipe uses this machine's 5,500 total slots. For another memory layout, start
+the manual server with automatic cache sizing before choosing an explicit budget.
 
 ## Measured performance
 
-These measurements use Linux/RADV on a 128 GB Strix Halo PC. They describe
-particular workloads, not a guaranteed rate for every prompt. The two-drive
-results use an identical read-only mirror, with all 48 shards available.
+These historical measurements use Linux/RADV on a 128 GB Strix Halo PC. They
+describe particular workloads, not a guaranteed rate for every prompt. The
+two-drive results use an identical read-only mirror, with all 48 shards available.
 
 | Mode and workload | Decode throughput | Conditions and evidence |
 |---|---:|---|
 | Exact routing, eight conversation turns | **9.20 tok/s** | Two drives, clean start without saved KV; [status ledger, run 29](docs/STATUS.md) |
 | Exact routing, same eight turns | **7.61 tok/s** | One drive, clean start; [status ledger, run 28](docs/STATUS.md) |
-| Dynamic mask + DSpark, eight long turns | **9.52 tok/s** | Two drives, 5,500 cache slots, five draft tokens, target top-4 acceptance; 2,353 timed decode tokens; [long-run report](docs/mask_freeze.md) |
-| Dynamic mask + DSpark, short instrumented run | **13.40 tok/s** | Two drives, same cache and speculation settings, 31 timed decode tokens; [trace report](docs/mask_async.md) |
+| Dynamic mask + DSpark, eight long turns | **9.52 tok/s** | Historical power-saver run, two drives, 5,500 total cache slots, five draft tokens, target top-4 acceptance; 2,353 timed decode tokens; [long-run report](docs/mask_freeze.md) |
+| Dynamic mask + DSpark, short instrumented run | **13.40 tok/s** | Historical power-saver run, two drives, same cache and speculation settings, 31 timed decode tokens; [trace report](docs/mask_async.md) |
 
 The short and long speculative runs are different workloads. They do not establish
-a speedup over exact routing at equal quality. Prompt processing is separate from
+a speedup over exact routing at equal quality. They predate the P0-priority quality
+repair and the current performance-mode selection. The later **110.142 ms/token**
+plain-mask result also used power-saver; it is historical evidence, not the new
+performance baseline. Current comparison costs and thermal qualifications are
+in [STATUS](docs/STATUS.md#1-todays-numbers). Prompt processing is separate from
 decode: an earlier exact GPU-prefill benchmark measured about **29 s at 4K** and
 **45 s at 17K** tokens under its recorded cache and disk conditions. Follow-up
 prefix reuse can reduce the work. See [STATUS](docs/STATUS.md) for attribution.
 
 ### Quality and experimental modes
 
-Exact routing remains the engine default. On the Linux reference trace, the
+The CLI starts with exact routing and speculation off when their flags are
+omitted. On the Linux reference trace, the
 current exact-path 64-step NLL is **0.622784**. The strict decode comparison is
 currently **6/8**, or **7/8 with the engine's own prefill**; this is not a claim of
 bitwise equality with the entire reference implementation.
 
 `--resident-only mask --mask-cache dynamic` skips unavailable routed experts while
 normal asynchronous loading and LRU updates continue. This changes the model's
-output. The latest dynamic mask + DSpark run scored **48/57** on a small MMLU
-screen (invalid answers counted wrong), but cold-cache mask NLL was **1.360084**.
-That screen is not a full MMLU benchmark or a general quality guarantee.
+output. Restoring strict P0 priority recovered mask NLL **0.835581** from the
+earlier **1.360084** regression, with exact NLL unchanged. The latest Phase A
+plain-mask screen scored **46/57** on generated-answer MMLU57, with two invalid
+answers counted wrong. A follow-up output repeated fourgrams at **0.117878**
+versus exact routing's **0.049116**. Both the 48/57 threshold and the 1.5-times
+repetition gate failed. The earlier k5 score of 48/57 belongs to its historical
+configuration. These small screens are not a full MMLU benchmark.
 
-`--dspark --spec-k 5 --spec-top-k 4` verifies the root and **one five-token draft
-path** together. Top-K acceptance is approximate; it does not preserve the target
-sampling distribution. It is off unless requested. Fixed-cache mask has produced
+The owner accepts the current Phase A quality as the web baseline and selected
+dynamic mask plus speculation. Before Phase D finishes, the guarded launcher
+uses **k=2, top-K=4, ONECB on and GPU routing off**; its final k/routing choice is
+pending. This acceptance does not turn failed quality gates into passes.
+[Recovery evidence and policy](docs/miss_mask.md), [owner decision](docs/codex_todo.md).
+
+`--dspark --spec-k 2 --spec-top-k 4` verifies the root and **one two-token draft
+path** in one target forward. A main-path draft token is accepted when it is in
+that target row's top-K. This approximate rule does not preserve the target
+sampling distribution. Fixed-cache mask has produced
 repetitive output; its roughly 18 tok/s result is excluded from the table above.
+Weighted partial-miss waits closed **NO-GO**: both candidates failed repetition
+and the required observed 20% speed gain. They add no web option or default.
+[Completed comparison](docs/miss_mask.md#completed-performance-comparison-phase-c-no-go-2026-10-06).
 
 The context capacity is **1,048,576 tokens**. A full 1M-token prompt has not passed
 an end-to-end quality test, and GPU prefill also needs enough working memory.
@@ -119,7 +143,7 @@ include the quality gates, cycle costs, and unsuccessful experiments.
 ## Web chat
 
 ```bash
-python3 tools/web/server.py --max-context 1048576
+python3 tools/web/launch_guarded.py
 ```
 
 Open <http://127.0.0.1:8080/>. Enable **Thinking** to choose low (50), high (75),
@@ -127,19 +151,19 @@ maximum (100), or a custom effort from 1 to 100. Thinking streams into its own
 panel; the answer appears below it. Completed panels collapse and remain available
 in restored conversation history. **Ctrl+Enter** sends; **Stop** cancels.
 
+Use **Decode** to select dynamic mask with speculation, dynamic mask with plain
+decoding, or exact plain decoding for the next queued turn. Only the main path
+is verified; each speculative cycle has one target forward. Existing KV is
+reused when switching modes, so start **New chat** for a wholly exact history.
+[Per-turn mode behavior and validation](docs/web_decode_modes.md).
+
 The page has no CDN dependency. Conversations are stored locally, and requests
 share one queued engine. A second read source is detected when its matching
 manifest is present, or can be supplied with `--mirror`. Completed decode turns enqueue batched disk KV
 checkpoints in the background when disk KV is enabled; [details](docs/kv_async.md).
 
-For experimental dynamic mask and speculation:
-
-```bash
-python3 tools/web/server.py --resident-only mask --mask-cache dynamic \
-  --dspark --spec-k 5 --spec-top-k 4
-```
-
-Read the quality limits above before using this mode. Full configuration:
+The guarded launcher selects the interim mask/speculation policy described
+above; the final Phase D choice is pending. Full configuration:
 [web documentation](tools/web/README.md).
 
 ## Development and validation
