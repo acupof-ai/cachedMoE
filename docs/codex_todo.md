@@ -19,6 +19,8 @@
    - ONECB 开；GPU route 按 §4.2 的 D 结果决定，无收益则关。
    - 网页仍保留 `off`/plain 显式选项。
 3. 以上不影响 C：C 继续，按原门判断，GO 也只加显式选项，不改默认。
+4. **项目全面改名为 cachedMoE。** 展示名已在 main `0f637f9` 改完；程序名、CMake、namespace、
+   环境变量、数据路径全部改，旧名保留兼容。步骤和约束见 §4.7。
 
 ## 当前现场
 
@@ -235,6 +237,48 @@ mask 只比 off 快约 4%（历史 +43%）。
 预测预取（含 CPU 预测预取）、非 LRU 淘汰、reheat、resident-only 默认、固定 cache 默认、自动冻结、
 mega kernel、host-flag、champion port、CM attention、scale-fold、pair-dot、MTP unpin、缩小 draft attention、
 CPU 计算 miss 专家、部分专家、重新归一化、streams>1 的 GPU route。
+
+### 4.7 P2：全面改名 deepmoe → cachedMoE（owner 2026-10-06）
+
+现状：README、AGENTS/CLAUDE、文档、注释、网页标题已在 main `0f637f9` 改成 cachedMoE。
+剩余约 290 个文件：`DEEPMOE_*` 178 个不同变量（1800+ 处）、`namespace deepmoe` 171 个文件、
+可执行文件 `build/deepmoe`、`project(deepmoe)`、`cmake/deepmoe_options.cmake`、网页/KV 数据目录。
+
+**时机：** 等当前 GPU 作业结束、本分支在途改动全部提交并合回 main 之后再开始；
+单独开 `../cachedmoe-rename` 工作树，改名期间不做别的功能改动，避免和其他分支大面积冲突。
+
+**命名：** 展示名 `cachedMoE`；程序、namespace、目录用小写 `cachedmoe`；环境变量 `CACHEDMOE_*`；
+CMake 选项 `CACHEDMOE_*`。
+
+按以下顺序，每步一个 commit：
+
+- [ ] **环境变量**：加一个统一的读取函数，先读 `CACHEDMOE_X`，没有再读 `DEEPMOE_X`；
+  两者都设且不同时以新名为准并打印一次警告。C++、Python 工具、bench、网页都走这个规则。
+  文档和脚本里的写法全部换成新名。旧名只在兼容函数和一条说明里出现。
+- [ ] **CMake**：`project(cachedmoe)`、`cmake/cachedmoe_options.cmake`、选项改 `CACHEDMOE_*`；
+  已有 build 目录里旧缓存变量 `DEEPMOE_*` 仍能生效（读到就映射并提示）。
+- [ ] **可执行文件**：产物改为 `build/cachedmoe`，构建时同时生成 `build/deepmoe` 符号链接；
+  网页 `server.py`、`launch.py`、`launch_guarded.py`、`RUNNING.txt`、bench 和 tests 默认用新名。
+- [ ] **C++ namespace**：`deepmoe` → `cachedmoe`，纯机械替换，单独 commit，不夹带格式或逻辑改动。
+- [ ] **数据路径**：网页 transcript、KV 目录等改到 `cachedmoe` 下。新目录不存在而旧目录存在时继续用旧目录
+  或原子迁移；**不得删除或覆盖用户已有 transcript 和 KV 快照**，迁移前先备份并记录。
+- [ ] **工作规则**：AGENTS.md / CLAUDE.md 的工作树命名改成 `../cachedmoe-<track>`，构建、测试命令用新变量名。
+
+**不改：**
+
+- checkpoint 里的 `deepmoe_manifest.json`：checkpoint 不许写，只有这一个文件是已批准的例外。
+  继续读这个文件名；不要在 checkpoint 里新建 `cachedmoe_manifest.json`。
+- 二进制格式的 magic（trace、KV 快照、缓存文件等）：保持原值，否则旧数据读不了。
+- `tests/data/` 的 tokenizer golden 数据，以及 `tools/oracle_dspark.py` 里引用固定 git 版本的原文。
+- STATUS 历史记录、过去报告里的旧名、外部 Strata PR 标题。
+
+**验收（全部在 performance 模式、一次一个 GPU 任务）：**
+
+- [ ] 全新 build 目录和已有 build 目录都能构建；52 个 SPIR-V shader hash 与改名前一致。
+- [ ] CPU 25/25、`tests/run_all.py` 全过；l3 off NLL 逐位 `.622784`；`suite.decode` 不低于改名前。
+- [ ] 只设旧 `DEEPMOE_*` 变量、只设新变量、两者都设，三种情况各跑一次 CPU 门，行为一致。
+- [ ] 网页用新程序名恢复，`/api/config` 正常，旧 transcript 和 KV 快照能打开。
+- [ ] `rg -i deepmoe` 剩余命中逐条列进报告，每条写明为什么保留。
 
 ## 5. Codex 追加收据（2026-10-06 00:23）
 
