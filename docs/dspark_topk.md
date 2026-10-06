@@ -933,3 +933,78 @@ raw 归档 `bench/results/adaptive_mask/`，工作树路径只表示执行时来
 修正计数，没有新增 kernel 加速。长测9.52的上下文、union及接受率边界
 与固定cache18不同，说明与限制见 [报告](mask_async.md) 和
 [收据](mask_async_receipt.json)。
+
+## 20. D：同一引擎五臂长测，重复质量未通过（2026-10-06）
+
+**没有合格赢家。** 五臂都完整跑完8轮、无短周期循环、无加载失败，但都未通过
+与 C/off 匹配的严格四元重复门。保留 owner 指定的临时 **k=2、ONECB=1** 基线；
+它没有因此获得最终默认资格。GPU route 的独立判定为 **NO-GO，采用 CPU route**：
+配对 k2 中 GPU 的 raw/active 成本分别高 **9.69% / 25.25%**，未满足二者都降低
+超过3%的条件。**默认候选必须 ONECB=1**；串行臂只用于比较。完整质量结果仍未补齐。
+
+来源：[最终报告](/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/phase_d/final_report_r1.json)
+（SHA256 `99e8c66f6413803412b45a07f97829ccb9783ad0ad3183bba1c6f4f90ae751fd`）、
+[实际比较记录](/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/phase_d/same_engine_fresh/arms/comparison.json)、
+[监督收据](/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/phase_d/same_engine_fresh/check_results.json)。
+冻结时钟版引擎 `b07f2480…`、52个shader `185109f0…`；同一个 PID **3701458**、
+default session，按下表顺序运行，臂间重置KV并保留专家缓存。双盘实际48/48、
+动态5500槽、AC在线、performance/platform performance、80/72°C温控；8轮输入、
+T=1/top-p=.95/seed41001～41008一致。top-K=4、主路径=1，正式长测不开 profiling
+或 per-op trace。监督 rc0，作业 wall **2137.537 s**，扣CPU暂停估算为
+**1271.703 s**，暂停 **865.834 s**；这些作业时间包含启动与prefill。
+
+| 臂 | ONECB / route | raw ms/decode输出 | active估算 ms/decode输出 | 命中率 | 接受/验证（比例） |
+|---|---|---:|---:|---:|---:|
+| k2_gpu | 1 / GPU | 145.491 | 85.091 | .90282 | 1369/1636（.83680） |
+| k2_onecb_cpu_route | 1 / CPU | 132.634 | 67.936 | .91835 | 1344/1606（.83686） |
+| k2_serial | 0 / CPU | 156.207 | 84.394 | .91536 | 1441/1728（.83391） |
+| k3_best | 1 / CPU | 161.270 | 74.258 | .90664 | 1543/2007（.76881） |
+| k5_best | 1 / CPU | 167.004 | 82.089 | .90149 | 1733/2943（.58885） |
+
+以下均为 **ms/cycle**。stage是原始wall计时，暂停可能发生在任一stage内，不能
+逐stage扣除或把raw draft劣化全归为kernel变慢。active只扣记录到的CPU暂停，
+已经提交的GPU工作仍可继续；它不是GPU时间戳。未覆盖项为完整cycle减四stage。
+
+| 臂 | cycles | raw cycle | active估算 cycle | draft | verify | commit | CPU | 未覆盖 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| k2_gpu | 819 | 387.975 | 226.910 | 50.915 | 333.812 | 1.980 | .192 | 1.076 |
+| k2_onecb_cpu_route | 804 | 353.856 | 181.248 | 42.171 | 308.937 | 1.487 | .269 | .991 |
+| k2_serial | 866 | 415.230 | 224.337 | 65.472 | 339.216 | 8.971 | .379 | 1.192 |
+| k3_best | 670 | 531.470 | 244.717 | 51.080 | 476.003 | 1.169 | .135 | 3.083 |
+| k5_best | 592 | 654.759 | 321.839 | 46.763 | 603.003 | 2.429 | .178 | 2.385 |
+
+| 臂 | resident routed union项/cycle | miss GB/cycle | 固定2.25输出：raw / active ms/输出 | 接受/验证=.60：raw / active ms/输出 |
+|---|---:|---:|---:|---:|
+| k2_gpu | 465.093 | .847982 | 172.433 / 100.849 | 176.470 / 103.210 |
+| k2_onecb_cpu_route | 472.189 | .786836 | 157.269 / 80.555 | 160.953 / 82.441 |
+| k2_serial | 471.939 | .816990 | 184.547 / 99.705 | 188.979 / 102.100 |
+| k3_best | 571.363 | 1.084091 | 236.209 / 108.763 | 189.993 / 87.483 |
+| k5_best | 746.529 | 1.464515 | 291.004 / 143.039 | 164.398 / 80.808 |
+
+union按层累加；miss是planner计数（GB=10⁹字节），不是硬件访存或完成IO计数。
+两种归一化都复用实测cycle成本；.60是总接受/总验证比例，分母为
+`1 + .60 × 实测验证数/cycle`，未加独立逐位置接受假设，也未模拟新路由。
+保留实测停止边界修正后，.60的raw/active成本依次为 **176.863/103.439、
+161.226/82.582、189.477/102.369、190.501/87.717、164.677/80.945 ms/输出**。
+这说明扩大k的收益依赖接受率；不能把观察到的更高输出/cycle当作算子降本。
+
+严格门逐轮要求重复四元片段占比≤同label/seed的 C/off 的1.5倍；off为0时只容0。
+下表保留全部失败行，数值为 **候选百分比 / 允许上限百分比**；轮号从1起。
+
+| 臂 | 未通过的轮与占比/上限 |
+|---|---|
+| k2_gpu | 第4轮 en follow-up：.3584 / 0 |
+| k2_onecb_cpu_route | 第4轮 en follow-up：.3571 / 0 |
+| k2_serial | 第3轮 en explain：2.0958 / 0 |
+| k3_best | 第2轮 zh follow-up：11.9048 / 2.1739；第5轮 code：21.7002 / 15.1478 |
+| k5_best | 第3轮 en explain：.3165 / 0；第4轮 en follow-up：1.6835 / 0；第5轮 code：19.4631 / 15.1478 |
+
+40个输出的 `no_loop=true` 与上述严格门失败可以同时成立。五臂的 failed-fill、
+IO failed、P0 reserve/submit/IO 失败 **before、after与差值全0**，sources无DROPPED；
+这些加载结果已验证。未生成质量赢家收据；本轮没有新增l3、MMLU57或3×512质量结论。
+
+D的384个MTP pin包含在总5500槽内，target可用 **5116**；C/plain无MTP pin。
+C动态mask参考为 raw/active **179.840 / 80.264 ms/decode输出**，跨 C/D 的
+速度或命中率差无法单独归因于投机或pin成本。D固定顺序、缓存续用与输出轨迹变化
+也限制归因。新的 GPU route trace / single-target-call 诊断仍在运行，剩余差额
+及draft内部耗时的定位留待实际诊断收据；本节不据stage wall值补推它们。
