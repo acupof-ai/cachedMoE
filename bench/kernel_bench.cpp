@@ -21,6 +21,7 @@
 //
 // Usage:
 //   kernel_bench --model-dir D:\models\DeepSeek-V4.1-Flash --csv out.csv
+#include "core/env.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -70,19 +71,13 @@ struct Options {
 };
 
 const char* env(const char* name) {
-#if defined(_MSC_VER)
-    static std::string v; char* b = nullptr; size_t n = 0;
-    if (_dupenv_s(&b, &n, name) == 0 && b) { v = b; free(b); return v.c_str(); }
-    return nullptr;
-#else
-    return std::getenv(name);
-#endif
+    return ::deepmoe::environment::get(name);
 }
 
 int usage() {
     std::puts(
         "kernel_bench -- design section 7.9 MoE kernels vs the raw-read ceiling\n"
-        "  --model-dir DIR   checkpoint directory (default: $DEEPMOE_MODEL_DIR)\n"
+        "  --model-dir DIR   checkpoint directory (default: $CACHEDMOE_MODEL_DIR)\n"
         "  --csv PATH        write the table as CSV\n"
         "  --iters N         timed A+B iterations per variant (default 32)\n"
         "  --layer-cycle N   distinct layers of experts to rotate over (default 4)\n"
@@ -179,7 +174,7 @@ Result<SharedExpert> load_shared_expert(gpu::MemoryAllocator& alloc, const Manif
 int main(int argc, char** argv) {
     set_log_level(LogLevel::Warn);
     Options o;
-    if (const char* e = env("DEEPMOE_MODEL_DIR")) o.model_dir = e;
+    if (const char* e = env("CACHEDMOE_MODEL_DIR")) o.model_dir = e;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a = argv[i];
         auto next = [&]() -> std::string {
@@ -201,7 +196,7 @@ int main(int argc, char** argv) {
         else return usage();
     }
     if (o.model_dir.empty()) {
-        std::fputs("no checkpoint: pass --model-dir or set DEEPMOE_MODEL_DIR\n", stderr);
+        std::fputs("no checkpoint: pass --model-dir or set CACHEDMOE_MODEL_DIR\n", stderr);
         return 2;
     }
     if (o.layer_cycle == 0) o.layer_cycle = 1;

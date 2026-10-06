@@ -3,7 +3,8 @@
 // reference's own `NgramHashState` (Track R2, docs/p4_kv_ux.md §5).
 //
 // `engram_tables.rng` needs nothing; `engram_tables.derived_equals_l3_export`
-// needs tokenizer.json from DEEPMOE_MODEL_DIR and config.json beside it.
+// needs tokenizer.json from CACHEDMOE_MODEL_DIR and config.json beside it.
+#include "core/env.h"
 #include <algorithm>
 #include <climits>
 #include <cstdio>
@@ -47,8 +48,8 @@ DEEPMOE_TEST(engram_tables, numpy_rng_and_normaliser) {
 }
 
 DEEPMOE_TEST(engram_tables, derived_equals_l3_export) {
-    const char* dir = std::getenv("DEEPMOE_MODEL_DIR");
-    if (!dir) { DEEPMOE_SKIP_PRINTF("      SKIP engram_tables: set DEEPMOE_MODEL_DIR\n"); return; }
+    const char* dir = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
+    if (!dir) { DEEPMOE_SKIP_PRINTF("      SKIP engram_tables: set CACHEDMOE_MODEL_DIR\n"); return; }
     auto cfg = V41Config::load(std::string(dir) + "/config.json");
     REQUIRE_OK(cfg);
     auto derived = runtime::derive_engram_tables(std::string(dir), cfg->text);

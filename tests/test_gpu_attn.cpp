@@ -13,8 +13,9 @@
 // real IoEngine into GPU-addressable memory, and are reached by
 // buffer_device_address exactly as the runtime will reach them.
 //
-// Gated on DEEPMOE_MODEL_DIR, on tests/data/l2 existing, and on a working
+// Gated on CACHEDMOE_MODEL_DIR, on tests/data/l2 existing, and on a working
 // Vulkan device; a skip is a pass.
+#include "core/env.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -138,16 +139,16 @@ std::string l2_dir() { return std::string(DEEPMOE_TEST_DATA_DIR) + "/l2"; }
 gpu::AttnSpec env_spec() {
     gpu::AttnSpec sp;
     auto num = [](const char* n, uint32_t& v) {
-        if (const char* e = std::getenv(n)) v = static_cast<uint32_t>(std::atoi(e));
+        if (const char* e = ::deepmoe::environment::get(n)) v = static_cast<uint32_t>(std::atoi(e));
     };
-    num("DEEPMOE_FP8_ARITH", sp.fp8_arith_decode);
-    num("DEEPMOE_TILE_HEADS", sp.tile_heads_per_wg);
-    num("DEEPMOE_PV_HEADS", sp.pv_heads_per_wg);
-    num("DEEPMOE_KSPLIT_WQA", sp.ksplit_wq_a);
-    num("DEEPMOE_KSPLIT_WKV", sp.ksplit_wkv);
-    num("DEEPMOE_KSPLIT_WOA", sp.ksplit_wo_a);
-    num("DEEPMOE_KSPLIT_WOB", sp.ksplit_wo_b);
-    num("DEEPMOE_KSPLIT_ROWS", sp.rows_per_lane_ksplit);
+    num("CACHEDMOE_FP8_ARITH", sp.fp8_arith_decode);
+    num("CACHEDMOE_TILE_HEADS", sp.tile_heads_per_wg);
+    num("CACHEDMOE_PV_HEADS", sp.pv_heads_per_wg);
+    num("CACHEDMOE_KSPLIT_WQA", sp.ksplit_wq_a);
+    num("CACHEDMOE_KSPLIT_WKV", sp.ksplit_wkv);
+    num("CACHEDMOE_KSPLIT_WOA", sp.ksplit_wo_a);
+    num("CACHEDMOE_KSPLIT_WOB", sp.ksplit_wo_b);
+    num("CACHEDMOE_KSPLIT_ROWS", sp.rows_per_lane_ksplit);
     return sp;
 }
 
@@ -391,13 +392,13 @@ DEEPMOE_TEST(gpu_attn, l2_per_stage) {
     REQUIRE(bPartD.v.valid());
     REQUIRE(bCmPart.v.valid());
 
-    // DEEPMOE_SKIP_P3 leaves out every P3 stage (docs/p2_attention.md §13), so
+    // CACHEDMOE_SKIP_P3 leaves out every P3 stage (docs/p2_attention.md §13), so
     // this case can be pointed at an older shader directory through
     // DEEPMOE_SHADER_DIR and the classic stages compared line for line. An old
     // directory has no gemv_ksplit or sparse_attn_t, and its wkv.spv has no
     // stage 2, so the P3 dispatches would read slots the old shaders never
     // expected.
-    const bool p3 = std::getenv("DEEPMOE_SKIP_P3") == nullptr;
+    const bool p3 = ::deepmoe::environment::get("CACHEDMOE_SKIP_P3") == nullptr;
     uint32_t layers_checked = 0;
     for (const L2Step& g : set->steps) {
         const uint32_t L = g.layer;

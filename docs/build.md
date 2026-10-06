@@ -110,7 +110,7 @@ ctest --test-dir build --output-on-failure  # 整体 + 按 suite 各注册一遍
 cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/linux-clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build -j 1 -LE "needs-model|needs-gpu"          # CPU 闸
-export DEEPMOE_MODEL_DIR=$HOME/models/DeepSeek-V4.1-Flash DEEPMOE_LONGCTX_DIR=$PWD/traces/longctx
+export CACHEDMOE_MODEL_DIR=$HOME/models/DeepSeek-V4.1-Flash CACHEDMOE_LONGCTX_DIR=$PWD/traces/longctx
 ctest --test-dir build -j 1 -L "needs-model|needs-gpu" -E '^bench\.'   # 模型 + GPU
 ```
 
@@ -122,8 +122,8 @@ ctest --test-dir build -j 1 -L "needs-model|needs-gpu" -E '^bench\.'   # 模型 
 `l3_ppl` off 与外接盘逐位同（0.639409）。`nvme_bench` 4 MiB 随机读最好 **4.87 GB/s**（外接 3.69），engram 4 KiB QD48 0.616 GB/s（外接 0.472）。
 外接的 J.ZAO 2 TB NVMe（USB4 盒，ASM2464PD，NTFS 用内核 `ntfs3` 只读挂载，`/etc/fstab` 里 `LABEL=deepmoe2 → /mnt/deepmoe2`，`nofail`）
 留作第二读源 / 备份：它会过热、USB4 链路大约每 1–1.5 小时断一次。Python 工具的 Linux 默认路径已改到内置盘。
-两块盘一起读（`--mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash`，或 `DEEPMOE_MODEL_MIRRORS`）对话 **+9%**（5.27 → 5.74 tok/s，STATUS §7 0h）；
-web UI 和 `deepmoe serve` 都会自动探测并带上它（`DEEPMOE_MIRROR_AUTO=0` 关掉，单盘基准用）。外接盘中途掉线时，在飞的读自动改读内置盘，连错三次后整块盘退出路由，对话不中断。
+两块盘一起读（`--mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash`，或 `CACHEDMOE_MODEL_MIRRORS`）对话 **+9%**（5.27 → 5.74 tok/s，STATUS §7 0h）；
+web UI 和 `deepmoe serve` 都会自动探测并带上它（`CACHEDMOE_MIRROR_AUTO=0` 关掉，单盘基准用）。外接盘中途掉线时，在飞的读自动改读内置盘，连错三次后整块盘退出路由，对话不中断。
 
 **和 Windows 开发机不同的三件事**（相信 STATUS.md 里任何一个 Windows 数之前先看这里）：
 
@@ -136,7 +136,7 @@ web UI 和 `deepmoe serve` 都会自动探测并带上它（`DEEPMOE_MIRROR_AUTO
    现在系统内存 124 GB，Vulkan heap 1 = 75 GiB「device-local」+ heap 0 = 37.5 GiB host，两个都是 GTT；
    auto 缓存按两堆之和算，5,499 槽 / 96.3 GiB，GTT 峰值 ~105 GiB。上面三行是改之前的状态。
    实际上 RADV 从不拒绝 path A：超出显存堆的部分被 TTM 挪进 GTT，path B 不会被用到。
-   强行启用 path B（`DEEPMOE_PATH_A_CAP=on`）会让热步慢 6 倍（userptr 拖慢每次提交），见 STATUS §7 0h。
+   强行启用 path B（`CACHEDMOE_PATH_A_CAP=on`）会让热步慢 6 倍（userptr 拖慢每次提交），见 STATUS §7 0h。
 2. **path A 不能 O_DIRECT**：RADV 的 `vkMapMemory`（设备本地可见类型）是 DRM BO 的 `VM_PFNMAP` 映射，
    `get_user_pages` 拒绝它，io_uring 读直接 `-EFAULT`（os 14）。Windows 允许（代价就是 Track Q2 的 704 µs）。
    `storage/linux/io_uring.cpp` 现在按 `/proc/self/maps` 识别 `/dev/dri/` 映射，读进主机中转缓冲再 `memcpy`；
@@ -150,22 +150,22 @@ web UI 和 `deepmoe serve` 都会自动探测并带上它（`DEEPMOE_MIRROR_AUTO
    MoE 7 槽一对（带 fp8 共享专家）只有 40% 读带宽。`runtime/moe_bridge.cpp` 在 RADV（`DeviceCaps::driver_id == VK_DRIVER_ID_MESA_RADV`）
    上默认 `decode_mode = 1`：热步 ~117 → ~81 ms，NLL 逐位不变。`prefill_gemm` 反过来是表更快，保持原样。
    **2026-09-29 起 RADV 默认 `decode_mode = 3`**（`moe_common.slang` 的 `fp4_pair_bits`：nibble 直接移进 fp16 位模式 = 值 × 2⁻¹⁴，
-   2¹⁴ 并进块的 ldexp）：MoE 7 槽一对 0.848 → 0.710 ms，NLL 仍逐位不变。`DEEPMOE_MOE_DEC=1` 退回。
+   2¹⁴ 并进块的 ldexp）：MoE 7 槽一对 0.848 → 0.710 ms，NLL 仍逐位不变。`CACHEDMOE_MOE_DEC=1` 退回。
 5. **NLL 基准**：`l3_ppl --modes off` 在这台 Linux 上是 **0.621814 / top-1 59/64**（2026-09-28 起 `wo_a`/`wo_b` K-split 在 RADV 默认开；
    `decode_mode` 3 与 1 逐位相同。K-split 之前是 0.639409 / 58/64——attention 的 `fp8_round` 改成精确舍入之后，
    Mesa 会把原来的 `(a+M)-M` 折叠掉；改之前是 0.623007 / 60/64；dispatch B 走 L16 R2 之前是 0.601884；
-   旧形状 `DEEPMOE_MOE_LB=32 DEEPMOE_MOE_RB=1` 是 0.601884 / 62/64；Windows 是 0.630051 / 61/64，编译器不同）。
+   旧形状 `CACHEDMOE_MOE_LB=32 CACHEDMOE_MOE_RB=1` 是 0.601884 / 62/64；Windows 是 0.630051 / 61/64，编译器不同）。
 6. **外接模型盘**会掉线：一次在持续读中过热（00:39），一次在 75 °C 时 Thunderbolt 链路直接断开（02:53，重连后先协商成 x1 2.5 GT/s，
    后来回到 x4 16 GT/s），重连后控制器名会变（`nvme1` → `nvme2`），挂载点要按新分区重挂；`/etc/fstab` 已改只读挂载，掉线后的恢复步骤见项目记忆 `external-nvme-overheats`。
-   实验开关：`DEEPMOE_MOE_L` / `_R` / `_XMODE` / `_DEC`（主 MoE runner 的形状与解码，默认值不变）、
-   `DEEPMOE_MOE_LB` / `_RB` / `_XMODE_B`（dispatch B 单独的形状，RADV 默认 L16 R2）、
-   `DEEPMOE_SHARED_EARLY`（共享专家提前派发，RADV 默认开）、`DEEPMOE_SE_CHECK`（逐层比对 GPU/主机的 act_quant）、
-   `DEEPMOE_PATH_A_CAP`（path A 上限，默认关，NO-GO）。
+   实验开关：`CACHEDMOE_MOE_L` / `_R` / `_XMODE` / `_DEC`（主 MoE runner 的形状与解码，默认值不变）、
+   `CACHEDMOE_MOE_LB` / `_RB` / `_XMODE_B`（dispatch B 单独的形状，RADV 默认 L16 R2）、
+   `CACHEDMOE_SHARED_EARLY`（共享专家提前派发，RADV 默认开）、`CACHEDMOE_SE_CHECK`（逐层比对 GPU/主机的 act_quant）、
+   `CACHEDMOE_PATH_A_CAP`（path A 上限，默认关，NO-GO）。
 7. **CPU 亲和性**：amdgpu 中断落在一个 CCD 上（本机 CPU 29 → CCD1 = 8–15,24–31），引擎线程在另一个 CCD 时热步慢 ~15%。
-   `Engine::init` 默认把线程绑到中断所在的 L3 域；`DEEPMOE_CPU_AFFINITY=off` 关闭，或给一个 cpulist。
+   `Engine::init` 默认把线程绑到中断所在的 L3 域；`CACHEDMOE_CPU_AFFINITY=off` 关闭，或给一个 cpulist。
 8. **GPU 时钟与 GameMode**：RADV 的自动 DPM 在 GPU 空闲 ≳2 ms（等 NVMe）后把 sclk 降到 600 MHz，紧接着的 MoE dispatch 慢 ~3 倍
    （`bench/results/linux/perf/idle_ramp.txt`）。`deepmoe serve` 在每个 generate / reheat 请求期间持有一个 Feral GameMode 请求
-   （`core/gamemode.h`，`dlopen("libgamemode.so.0")`，没有就是空操作；`DEEPMOE_GAMEMODE=0` 关掉），
+   （`core/gamemode.h`，`dlopen("libgamemode.so.0")`，没有就是空操作；`CACHEDMOE_GAMEMODE=0` 关掉），
    请求结束或进程死掉时 gamemoded 把 `power_dpm_force_performance_level` 还原成 `auto`。需要的系统配置（本机已配）：
    `pacman -S gamemode`，用户在 `gamemode` 组；**`/etc/gamemode.ini`**（GameMode 只从 /etc 读 `[gpu]`）：
    `[gpu] apply_gpu_optimisations=accept-responsibility`、`gpu_device=1`、`amd_performance_level=high`；
@@ -183,7 +183,7 @@ zig c++ -target x86_64-linux-gnu -std=c++23 -I. -c storage/linux/io_uring.cpp -o
 ## 基准
 
 ```powershell
-$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
+$env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 
 # NVMe 微基准（Q6/Q7）→ design §9.2.1
 .\build\nvme_bench.exe --reads 48 --csv bench\results\nvme_q6_q7.csv
@@ -514,7 +514,7 @@ ctest --test-dir build --output-on-failure
 需要真 checkpoint 的那几条默认**自动跳过**并说明原因。要跑它们：
 
 ```powershell
-$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'; ctest --test-dir build --output-on-failure
+$env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'; ctest --test-dir build --output-on-failure
 
 # 只跑其中一个 suite
 ctest --test-dir build -R suite.gpu_moe   --output-on-failure   # §7.9 / §7.9.2 / §7.9.3
@@ -524,25 +524,25 @@ ctest --test-dir build -R suite.decode    --output-on-failure   # 四十层，�
 ctest --test-dir build -R suite.decode_longctx --output-on-failure   # 4K / 17K（需要 traces/longctx）
 ctest --test-dir build -R prefill         --output-on-failure   # GPU prefill 逐 stage + 64 token 进引擎
 ctest --test-dir build -L unit            --output-on-failure   # 纯 CPU、不要模型：含 sampling / dspark_tree
-ctest --test-dir build -R suite.tokenizer --output-on-failure   # 纯 CPU，但要 DEEPMOE_MODEL_DIR 下的 tokenizer.json
+ctest --test-dir build -R suite.tokenizer --output-on-failure   # 纯 CPU，但要 CACHEDMOE_MODEL_DIR 下的 tokenizer.json
 ```
 
 **长上下文与 prefill 测试的环境变量**：
 
 | 变量 | 谁读 | 作用 |
 |---|---|---|
-| `DEEPMOE_LONGCTX_DIR` | `suite.decode_longctx` | Track M 导出的目录，默认 `<repo>/traces/longctx`。**在 worktree 或仓库外的 build 里跑时必须给**（`traces/` 不入库，worktree 里没有它），例如 `C:\Users\Asus\code\deepmoe\traces\longctx`；没有就 SKIP 并说明 |
-| `DEEPMOE_PF_LONGCTX` | `gpu_prefill.longctx` / `.engram_repeat` / `.repeat` | 一个导出目录，如 `traces/longctx/ctx4k`（或 `ctx16k`）；不给就 SKIP。它打开"对 4K / 17K 导出做 GPU prefill、比交接、再 decode" |
-| `DEEPMOE_PF_DECODE` | `gpu_prefill.longctx` | `free`（默认，从我们的 prefill 状态自由运行，即盐值检索）/ `forced`（教师强制）/ `none` / `ref-free` / `ref-forced`（不 prefill，从导出自己的状态跑同样的步，是引擎的基线）；**一个进程一种模式**（同位置跑第二遍会在奇数 N 上把 ratio-2 的组与第一遍的状态池化） |
-| `DEEPMOE_PF_REPLAY` | 同上 | replay 长度；不给是 oracle 模式（`128` = 生产模式） |
-| `DEEPMOE_PF_TRUNCATE` | 同上 | 只 prefill 前 n 个 token（在 64 与导出长度之间找问题用） |
-| `DEEPMOE_PF_REPEAT` | `gpu_prefill.repeat` | `1` 时同进程 prefill 两遍、逐 stage 哈希比对 |
-| `DEEPMOE_PF_COOP_MOE` / `DEEPMOE_PF_COOP_DENSE` | prefill | cooperative matrix 的行数门槛（默认 expert 16 行、dense 64 行） |
+| `CACHEDMOE_LONGCTX_DIR` | `suite.decode_longctx` | Track M 导出的目录，默认 `<repo>/traces/longctx`。**在 worktree 或仓库外的 build 里跑时必须给**（`traces/` 不入库，worktree 里没有它），例如 `C:\Users\Asus\code\deepmoe\traces\longctx`；没有就 SKIP 并说明 |
+| `CACHEDMOE_PF_LONGCTX` | `gpu_prefill.longctx` / `.engram_repeat` / `.repeat` | 一个导出目录，如 `traces/longctx/ctx4k`（或 `ctx16k`）；不给就 SKIP。它打开"对 4K / 17K 导出做 GPU prefill、比交接、再 decode" |
+| `CACHEDMOE_PF_DECODE` | `gpu_prefill.longctx` | `free`（默认，从我们的 prefill 状态自由运行，即盐值检索）/ `forced`（教师强制）/ `none` / `ref-free` / `ref-forced`（不 prefill，从导出自己的状态跑同样的步，是引擎的基线）；**一个进程一种模式**（同位置跑第二遍会在奇数 N 上把 ratio-2 的组与第一遍的状态池化） |
+| `CACHEDMOE_PF_REPLAY` | 同上 | replay 长度；不给是 oracle 模式（`128` = 生产模式） |
+| `CACHEDMOE_PF_TRUNCATE` | 同上 | 只 prefill 前 n 个 token（在 64 与导出长度之间找问题用） |
+| `CACHEDMOE_PF_REPEAT` | `gpu_prefill.repeat` | `1` 时同进程 prefill 两遍、逐 stage 哈希比对 |
+| `CACHEDMOE_PF_COOP_MOE` / `CACHEDMOE_PF_COOP_DENSE` | prefill | cooperative matrix 的行数门槛（默认 expert 16 行、dense 64 行） |
 
 ```powershell
 # 例：从 GPU prefill 出发的 17K 自由运行（design §12.1 (c)）
-$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
-$env:DEEPMOE_PF_LONGCTX='C:\Users\Asus\code\deepmoe\traces\longctx\ctx16k'; $env:DEEPMOE_PF_DECODE='free'
+$env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
+$env:CACHEDMOE_PF_LONGCTX='C:\Users\Asus\code\deepmoe\traces\longctx\ctx16k'; $env:CACHEDMOE_PF_DECODE='free'
 .\build\tests\deepmoe_tests.exe gpu_prefill.longctx
 ```
 
@@ -553,8 +553,8 @@ $env:DEEPMOE_PF_LONGCTX='C:\Users\Asus\code\deepmoe\traces\longctx\ctx16k'; $env
 | `suite.gpu_attn` | §7.2–§7.11 的十二个 stage 逐个对 `tests/data/l2/`（design §7.15.1）。需要先跑 `oracle.py --level l2` |
 | `suite.gpu_layer` | 一整层 decoder 链起来，只有 block 输入与 prefill 的 KV 是 golden；**故意只给八个槽的 cache**，所以六个 expert 每层都真的从 NVMe 取回来（design §7.15.3） |
 | `suite.decode` | **四十层 + engram + head + 采样，八步，对 `tests/data/l3/`**（design §7.16.1 / §7.16.5）。需要先跑 `oracle.py --level l3`。含慢 prefill，二十多分钟 |
-| `suite.decode_longctx` | 4K / 17K：indexer kernel 在参考输入上 tie-aware（含 candidate block）、引擎从导出状态逐层逐步、8 步教师强制 + 8 步自由运行、loaded-CED 对照、每步 KV 字节（design §12.1）。需要 `DEEPMOE_LONGCTX_DIR` |
-| `suite.gpu_prefill` | prefill 逐 stage 对 `tests/data/prefill/`（110 项）、64 token 四十层进引擎；`DEEPMOE_PF_LONGCTX` 时 4K / 17K 的交接与之后的 decode（design §7.13.4） |
+| `suite.decode_longctx` | 4K / 17K：indexer kernel 在参考输入上 tie-aware（含 candidate block）、引擎从导出状态逐层逐步、8 步教师强制 + 8 步自由运行、loaded-CED 对照、每步 KV 字节（design §12.1）。需要 `CACHEDMOE_LONGCTX_DIR` |
+| `suite.gpu_prefill` | prefill 逐 stage 对 `tests/data/prefill/`（110 项）、64 token 四十层进引擎；`CACHEDMOE_PF_LONGCTX` 时 4K / 17K 的交接与之后的 decode（design §7.13.4） |
 | `suite.gpu_dspark` | DSpark 草稿 kernel 逐阶段对 `tests/data/dspark/`（design §7.12） |
 | `suite.dspark_tree` | 纯 CPU：`cpu/dspark_tree` 对 `tests/data/dspark/tree_golden.bin` 逐位，外加 CPU 代价（design §10.1.2） |
 | `suite.tokenizer` | 纯 CPU（要 checkpoint 的 `tokenizer.json`）：909 个黄金用例的 id / decode / 流式 decode |
@@ -580,7 +580,7 @@ deepmoe run --model DIR [--prompt-ids FILE] [--steps N]
 `deepmoe run --state <dir> --warm 3 --steps 8 --cache-gb 24`。
 
 ```powershell
-$env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
+$env:CACHEDMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 
 # 八步，12 GiB 的 routed-expert cache，逐 token 打印 design §13.1 的分解
 .\build\deepmoe.exe run --model D:\models\DeepSeek-V4.1-Flash `
@@ -627,7 +627,7 @@ $env:DEEPMOE_MODEL_DIR='D:\models\DeepSeek-V4.1-Flash'
 `chat.py` 的选项：`--exe`（默认 `build\deepmoe.exe`）、`--think`、`--temp`、`--top-p`、`--max-tokens`、`--seed`、`--system`、
 `--cache-gb`（0 = 自动）、`--max-context`（默认 4,096）、`--gpu-prefill-min`（0 = 关）、`--check-topk`、`--log`（serve 的 stderr，默认 `build\serve.log`）。
 会话内命令：`/reset /think /drop /temp X /top_p X /greedy /max N /seed N /system TEXT /stats /quit`。
-模型目录取 `DEEPMOE_MODEL_DIR`（默认 `D:\models\DeepSeek-V4.1-Flash`）。
+模型目录取 `CACHEDMOE_MODEL_DIR`（默认 `D:\models\DeepSeek-V4.1-Flash`）。
 
 它起的是：
 
@@ -668,7 +668,7 @@ git worktree list
 ```
 
 - **每个 worktree 自己的 build 目录**，包括 `build/shaders`：kernel 是运行时从那里加载的，共用 build 目录等于共用 kernel（p2_decode.md §11.2）。
-- **`traces/` 与 `reports/` 不入库，worktree 里没有**：长上下文测试给 `DEEPMOE_LONGCTX_DIR` / `DEEPMOE_PF_LONGCTX` 指回主仓库的
+- **`traces/` 与 `reports/` 不入库，worktree 里没有**：长上下文测试给 `CACHEDMOE_LONGCTX_DIR` / `CACHEDMOE_PF_LONGCTX` 指回主仓库的
   `C:\Users\Asus\code\deepmoe\traces\longctx`；`tests/data/` 是入库的，每个 worktree 都有。`.venv` 也只在主仓库，用它的绝对路径。
 - **zig 的全局缓存是共享的**：`zig c++` 第一次为一个目标编译 libc++ 等运行时时写 `%LOCALAPPDATA%\zig`，所有 worktree 共用这一份。
   **几个 worktree 同时做第一次构建会在这个缓存上竞争**——撞上时构建会在缓存里的文件上失败。办法：新开 worktree 时先让**一个** worktree

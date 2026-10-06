@@ -25,7 +25,7 @@
 // trajectory being decoded, so tokens past the first mismatch are not
 // evidence about anything. The test says so rather than counting them.
 //
-// Gated on DEEPMOE_MODEL_DIR, on tests/data/l3, and on a Vulkan device. It
+// Gated on CACHEDMOE_MODEL_DIR, on tests/data/l3, and on a Vulkan device. It
 // loads the whole ~17.7 GB pinned set, so it is tagged `needs-model` and takes
 // minutes.
 #include <algorithm>
@@ -203,7 +203,7 @@ struct DecodeRig {
 
     bool bring_up(uint64_t cache_bytes) {
         const char* dir = model_dir();
-        if (!dir) { why = "no DEEPMOE_MODEL_DIR"; return false; }
+        if (!dir) { why = "no CACHEDMOE_MODEL_DIR"; return false; }
         RuntimeConfig cfg;
         cfg.model_dir          = dir;
         cfg.cache.budget_bytes = cache_bytes;
@@ -783,7 +783,7 @@ DEEPMOE_TEST(smoke, auto_cache) {
                 e.store().capacity_bytes() / double(1ull << 30));
     CHECK(slots > 0);
     // The cap, observed end to end rather than as arithmetic. With the cap off
-    // (DEEPMOE_CACHE_SLOT_CAP=0, or RADV, where the engine bounds auto by the
+    // (CACHEDMOE_CACHE_SLOT_CAP=0, or RADV, where the engine bounds auto by the
     // GTT heaps instead and applies no cap) this is the probe's business alone,
     // so only assert it when the cap is in force. It used to read
     // auto_slot_cap() here, which is the Windows rule: on RADV it failed

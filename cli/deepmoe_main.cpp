@@ -6,6 +6,7 @@
 //
 // Ownership/threading: one process, one Engine, main thread only. Nothing here
 // is a library; everything reusable lives in the modules.
+#include "core/env.h"
 #include <algorithm>
 #include <cstdio>
 #include <functional>
@@ -559,7 +560,7 @@ int cmd_run(int argc, char** argv) {
     }
     if (loaded_ced) engine.set_produce_ced(false);
     // Track Y (docs/p4_resident_routing.md). The flag wins over
-    // DEEPMOE_ROUTE_RESIDENT_ONLY, which Engine::load already read.
+    // CACHEDMOE_ROUTE_RESIDENT_ONLY, which Engine::load already read.
     if (!resident_only.empty()) {
         if (resident_only == "all")      engine.set_resident_only(runtime::Engine::ResidentOnly::All);
         else if (resident_only == "stall1") engine.set_resident_only(runtime::Engine::ResidentOnly::Stall1);
@@ -754,13 +755,13 @@ int cmd_run(int argc, char** argv) {
     std::fputs(engine.resident_route_report().c_str(), stdout);
     if (engine.gate_probe_on()) std::fputs(engine.gate_probe_report().c_str(), stdout);
     std::fputs(engine.profiler().summary().to_string().c_str(), stdout);
-    if (const char* e = std::getenv("DEEPMOE_RUN_IO_REPORT"); e && std::string_view(e) == "1")
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_RUN_IO_REPORT"); e && std::string_view(e) == "1")
         std::fputs(engine.status().c_str(), stdout);
     return 0;
 }
 
 std::string model_dir_default() {
-    const char* e = std::getenv("DEEPMOE_MODEL_DIR");
+    const char* e = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
     return e ? std::string(e) : std::string();
 }
 
@@ -774,7 +775,7 @@ int cmd_tokenize(int argc, char** argv) {
         else { std::fprintf(stderr, "unknown option %.*s\n", static_cast<int>(a.size()), a.data()); return usage(); }
     }
     if (model.empty() || in.empty() || out.empty()) {
-        std::fputs("tokenize needs --model DIR (or DEEPMOE_MODEL_DIR), --in and --out\n", stderr);
+        std::fputs("tokenize needs --model DIR (or CACHEDMOE_MODEL_DIR), --in and --out\n", stderr);
         return 2;
     }
     const TimePoint t0 = Clock::now();

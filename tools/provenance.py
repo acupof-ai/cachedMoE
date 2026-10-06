@@ -19,6 +19,10 @@ import sys
 import time
 from pathlib import Path
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -148,7 +152,8 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
     """`env` is the environment the engine runs with (default: this process's)."""
     env = dict(os.environ if env is None else env)
     exe = Path(exe) if exe else ROOT / "build" / ("deepmoe.exe" if os.name == "nt" else "deepmoe")
-    sdir = Path(shader_dir or env.get("DEEPMOE_SHADER_DIR") or exe.parent / "shaders")
+    sdir = Path(shader_dir or runtime_env.getenv("CACHEDMOE_SHADER_DIR", environ=env)
+                or exe.parent / "shaders")
     spv = sorted(sdir.glob("*.spv")) if sdir.is_dir() else []
     h = hashlib.sha256()
     for p in spv:
@@ -165,7 +170,13 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
         "exe": str(exe),
         "exe_sha": _file_sha(exe),
         "shaders": {"dir": str(sdir), "count": len(spv), "sha": h.hexdigest()[:16] if spv else None},
-        "env": {k: v for k, v in sorted(env.items()) if k.startswith("DEEPMOE_")},
+        "env": runtime_env.raw_controls(dict(sorted(env.items()))),
+        "env_effective": {
+            key: {"value": selected.value, "source": selected.source,
+                  "selected_key": selected.selected_key}
+            for key, selected in runtime_env.effective_controls(
+                dict(sorted(env.items())), warn=True).items()
+        },
     }
     if sys.platform.startswith("linux"):
         out["power"] = power_state()

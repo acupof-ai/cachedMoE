@@ -242,7 +242,7 @@ public:
     // Declares the read sources. `roots[0]` is the primary model directory and
     // must always be present; every further entry is a mirror holding
     // byte-identical copies of some or all of the same shards. `weights` are
-    // GB/s (measured by probe_source_gbps or DEEPMOE_MIRROR_WEIGHTS) and only
+    // GB/s (measured by probe_source_gbps or CACHEDMOE_MIRROR_WEIGHTS) and only
     // their ratio matters. With fewer than two roots the router stays off and
     // submit() is byte-for-byte the function it was before.
     //
@@ -260,7 +260,7 @@ public:
     // until readmit_source brings it back. Source 0 is ignored -- the
     // primary is the correctness source and has nothing to fall back to. Used
     // by the runtime's startup health probe; the engine itself calls it after
-    // `DEEPMOE_MIRROR_ERROR_BUDGET` (default 3) CONSECUTIVE failed reads from
+    // `CACHEDMOE_MIRROR_ERROR_BUDGET` (default 3) CONSECUTIVE failed reads from
     // one source, which is what a drive falling off the bus looks like.
     void drop_source(uint32_t src);
     bool source_dropped(uint32_t src) const;
@@ -272,7 +272,7 @@ public:
     // each mirror's NVMe temperature sensor, and a watcher thread reads it once
     // a second -- off the dispatcher, since an NVMe hwmon read is an admin
     // command -- and takes the mirror out of the router while it is at or above
-    // DEEPMOE_MIRROR_HOT_C (default 80; 0 = off) until it cools by 8 C.
+    // CACHEDMOE_MIRROR_HOT_C (default 80; 0 = off) until it cools by 8 C.
     bool source_resting(uint32_t src) const;
     // A dropped mirror back in the router once its drive answers again. The
     // USB4 box falls off the bus every hour or so and systemd remounts it a few
@@ -297,7 +297,7 @@ public:
     // needs no extra handle and no extra open. Sources with no registered file
     // are simply never poked.
     //
-    // `DEEPMOE_MIRROR_KEEPALIVE_MS` sets the idle window (default 15 ms; 0 or
+    // `CACHEDMOE_MIRROR_KEEPALIVE_MS` sets the idle window (default 15 ms; 0 or
     // `off` disables). A poke is one 4 KiB read at a rotating offset, issued
     // straight to the backend: it is NOT an IoRequest, so it never enters a
     // priority queue, never touches `bytes_completed`, `busy_ns`, the latency
@@ -307,7 +307,7 @@ public:
     uint64_t keepalive_reads(uint32_t src) const;
 
     // --- Track D6: the static-split arm ------------------------------------
-    // `DEEPMOE_MIRROR_STATIC_SPLIT=f` routes P0 by cumulative bytes toward a
+    // `CACHEDMOE_MIRROR_STATIC_SPLIT=f` routes P0 by cumulative bytes toward a
     // fixed share `f` for the mirrors instead of by outstanding bytes. The
     // weighted least-outstanding-bytes rule is a closed loop -- a source that
     // answers slowly keeps its bytes outstanding longer and is therefore
@@ -316,7 +316,7 @@ public:
     // split and lets the stall say whether that split was worth having.
     double static_split() const { return static_split_; }
 
-    // --- Track ST: chunk-level striping (off: DEEPMOE_MIRROR_STRIPE=0) -------
+    // --- Track ST: chunk-level striping (off: CACHEDMOE_MIRROR_STRIPE=0) -------
     // The router above sends a WHOLE request to one source. An expert is two
     // runs, and the 17.7 MB weights run is five 4 MiB chunks, so a layer with
     // one miss -- the common case, 1.16 experts per miss-layer on the Linux
@@ -454,16 +454,16 @@ public:
 
     // Track Q1 knobs (docs/p4_p0_queue.md). All default to today's behaviour,
     // so an A/B is an environment variable and not a rebuild.
-    //   DEEPMOE_IO_BG_CAP_BUSY   non-P0 chunks allowed in flight while P0 work
+    //   CACHEDMOE_IO_BG_CAP_BUSY   non-P0 chunks allowed in flight while P0 work
     //                            is recent (default kBackgroundOpsWhileBusy = 1)
-    //   DEEPMOE_IO_BG_THROTTLE_P2  1 = the engram class yields too (default 0)
-    //   DEEPMOE_IO_P0_QD         chunk queue depth used while the head of the
+    //   CACHEDMOE_IO_BG_THROTTLE_P2  1 = the engram class yields too (default 0)
+    //   CACHEDMOE_IO_P0_QD         chunk queue depth used while the head of the
     //                            queue is a P0 (default = cfg.max_inflight_ops)
-    //   DEEPMOE_IO_P0_INFLIGHT_MB in-flight byte ceiling for the same case
-    //   DEEPMOE_IO_P0_CHUNK_MB   chunk size for P0 requests (default = cfg)
-    //   DEEPMOE_IO_ENGRAM_QD     queue depth of the engram class (default =
+    //   CACHEDMOE_IO_P0_INFLIGHT_MB in-flight byte ceiling for the same case
+    //   CACHEDMOE_IO_P0_CHUNK_MB   chunk size for P0 requests (default = cfg)
+    //   CACHEDMOE_IO_ENGRAM_QD     queue depth of the engram class (default =
     //                            cfg.engram_qd, else the background depth)
-    //   DEEPMOE_IO_SUBMIT_THREADS  how many threads call Backend::submit.
+    //   CACHEDMOE_IO_SUBMIT_THREADS  how many threads call Backend::submit.
     //                            1 (the default before Track Q2) means the
     //                            dispatcher does it inline; N > 1 starts N
     //                            submitter threads and the dispatcher only

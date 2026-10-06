@@ -1,3 +1,4 @@
+#include "core/env.h"
 #include "store/slab.h"
 
 #include <algorithm>
@@ -79,10 +80,10 @@ Result<void> SlabPool::init(std::unique_ptr<SlabBacking> backing, const SlabConf
 // 10.5 ms per miss against 5.4 ms once every slot had been filled once (the
 // 8-turn chat, ~27 s per run; STATUS §7 0h). Touch one byte per page here, from
 // several threads, so the kernel does that work at startup and in parallel.
-// DEEPMOE_PREFAULT=0 turns it off.
+// CACHEDMOE_PREFAULT=0 turns it off.
 void SlabPool::prefault() {
 #if defined(__linux__)
-    if (const char* e = std::getenv("DEEPMOE_PREFAULT"); e && *e == '0') return;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PREFAULT"); e && *e == '0') return;
     std::vector<std::pair<std::byte*, uint64_t>> spans;
     for (const SlabMemory& m : slabs_)
         if (m.host_ptr) spans.emplace_back(static_cast<std::byte*>(m.host_ptr), m.bytes);

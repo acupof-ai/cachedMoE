@@ -50,7 +50,7 @@ Two gaps:
 
 Usage
 -----
-    uv run python tools/oracle_shared.py --model "$DEEPMOE_MODEL_DIR" \\
+    uv run python tools/oracle_shared.py --model "$CACHEDMOE_MODEL_DIR" \\
         --shared 0 --expert 0:0 --expert 39:383 --out tests/data
 """
 

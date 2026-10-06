@@ -88,11 +88,11 @@ struct DeviceCaps {
     bool storage_buffer_8bit    = false;
     bool storage_buffer_16bit   = false;   // half-typed storage buffers (fp16 activations, §6)
     // VK_KHR_pipeline_executable_properties, enabled only when
-    // DEEPMOE_PIPELINE_STATS names a directory: every pipeline then writes the
+    // CACHEDMOE_PIPELINE_STATS names a directory: every pipeline then writes the
     // driver's statistics (VGPRs, SGPRs, LDS, instructions, waves per SIMD) and
     // its ISA there (gpu/vulkan/pipeline.cpp). Off, it changes nothing.
     bool pipeline_stats         = false;
-    // VK_KHR_performance_query, enabled only when DEEPMOE_PERF_COUNTERS is set.
+    // VK_KHR_performance_query, enabled only when CACHEDMOE_PERF_COUNTERS is set.
     // It gives the hardware counters (SQ instruction classes, VALU/SALU busy,
     // VRAM read/write size, L0/L1/L2 hit ratio) the GEMM attribution of
     // docs/STATUS.md needs. RADV reports counters only while the profiling lock

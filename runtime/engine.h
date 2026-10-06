@@ -102,11 +102,11 @@ namespace deepmoe::runtime {
 // the measured number is a hard cap applied AFTER it.
 //
 // 5,000 = 34 path-A slabs + 16 path-B slabs, which is the layout that ran four
-// clean turns on 2026-09-19. `DEEPMOE_CACHE_SLOT_CAP` overrides it for a
+// clean turns on 2026-09-19. `CACHEDMOE_CACHE_SLOT_CAP` overrides it for a
 // different machine; 0 turns the cap off and puts you back on the arithmetic.
 inline constexpr uint32_t kAutoSlotCap = 5000;
 
-// The cap in force: `DEEPMOE_CACHE_SLOT_CAP` if set (0 = no cap), else
+// The cap in force: `CACHEDMOE_CACHE_SLOT_CAP` if set (0 = no cap), else
 // kAutoSlotCap. Read once per process.
 uint32_t auto_slot_cap();
 
@@ -139,7 +139,7 @@ inline constexpr uint32_t kCacheBackoffSlots   = 200;
 inline constexpr uint32_t kCacheBackoffTries   = 5;   // the first try included
 inline constexpr uint32_t kCacheBackoffFloor   = 200; // never probe below this
 
-// `DEEPMOE_CACHE_BACKOFF_SLOTS` if set and > 0, else kCacheBackoffSlots.
+// `CACHEDMOE_CACHE_BACKOFF_SLOTS` if set and > 0, else kCacheBackoffSlots.
 uint32_t cache_backoff_step();
 
 // Pure: the slot counts an auto-sized cache tries, in order, first one first.
@@ -247,7 +247,7 @@ struct SessionConfig {
     uint32_t    max_context = 4096;
     // design §9.6 P3 (Track R1, docs/p4_hitrate.md §5): fill the cache's free
     // slots in the background, hottest static experts first, while the drive
-    // is not serving P0 misses. Also DEEPMOE_BACKFILL=1/0.
+    // is not serving P0 misses. Also CACHEDMOE_BACKFILL=1/0.
     bool        backfill = false;
 };
 
@@ -629,7 +629,7 @@ public:
     // background fetcher at P3, which evicts the LRU to admit them so the cache
     // still tracks the conversation.
     //
-    // Set by `DEEPMOE_ROUTE_RESIDENT_ONLY=off|all` at load, or by this setter
+    // Set by `CACHEDMOE_ROUTE_RESIDENT_ONLY=off|all` at load, or by this setter
     // (the `--resident-only` CLI flag), which wins over the environment.
     // `Stall1` is the middle ground: a layer may block on at most ONE expert --
     // the highest-gate-weight missing one, a single P0 fetch of about 4 ms --
@@ -756,7 +756,7 @@ public:
     Profiler&               profiler()       { return profiler_; }
     store::ExpertStore&     store()          { return store_; }
     // The slot cap the auto budget actually applied in init_gpu (0 = none):
-    // auto_slot_cap() on Windows, none on RADV unless DEEPMOE_CACHE_SLOT_CAP
+    // auto_slot_cap() on Windows, none on RADV unless CACHEDMOE_CACHE_SLOT_CAP
     // is set. Only meaningful after an auto-sized init_gpu.
     uint32_t                applied_slot_cap() const { return applied_slot_cap_; }
     store::Planner&         planner()        { return planner_; }
@@ -796,7 +796,7 @@ public:
     // between layers whose experts were all resident ("hit") and layers that
     // had to fetch ("miss") -- a miss layer's `plan_wait` is NVMe, not gate.
     //
-    // Off unless DEEPMOE_GATE_PROBE=1. The probe is six Clock::now() calls a
+    // Off unless CACHEDMOE_GATE_PROBE=1. The probe is six Clock::now() calls a
     // layer, which is why it may be left compiled in.
     struct GateSeg {
         double   fence_us = 0.0;   // (i)   host blocked in cmd_wait
@@ -902,9 +902,9 @@ private:
     Result<void> cmd_submit(TimelineValue wait_value);  // 0 = no gate
     // Wait for fence value `target` (0 = the last submit).
     Result<void> cmd_wait(uint64_t target = 0);
-    // Track SE (docs/STATUS.md §7 0h): DEEPMOE_SHARED_EARLY.
+    // Track SE (docs/STATUS.md §7 0h): CACHEDMOE_SHARED_EARLY.
     bool shared_early_on() const;
-    // The wall-clock budget one GPU fence wait gets (DEEPMOE_GPU_WAIT_S, 900 s).
+    // The wall-clock budget one GPU fence wait gets (CACHEDMOE_GPU_WAIT_S, 900 s).
     double gpu_wait_budget_s() const;
     Result<void> cmd_flush(TimelineValue wait_value) {
         if (auto r = cmd_submit(wait_value); !r) return r;
@@ -967,7 +967,7 @@ private:
     // round trip, because the buffer that carries layer L's MoE is not
     // submitted until layer L+1 has bound and recorded its attention chain.
     bool                 gate_probe_ = false;
-    // Track G: DEEPMOE_FENCE_SPIN_US, and how often the spin caught the signal.
+    // Track G: CACHEDMOE_FENCE_SPIN_US, and how often the spin caught the signal.
     double               fence_spin_us() const;
     GateSeg              gp_hit_{}, gp_miss_{};
     SamplingParams       sampling_{};
@@ -1031,7 +1031,7 @@ private:
     bool       ready_ = false;
     bool       gpu_ready_ = false;
 
-    // docs/p4_hitrate.md §1: `DEEPMOE_ROUTE_DUMP=FILE` appends one fixed-size
+    // docs/p4_hitrate.md §1: `CACHEDMOE_ROUTE_DUMP=FILE` appends one fixed-size
     // record per decode step (prefill-by-decode steps included) -- the step's
     // LRU clock, its position, the forty layers' top-6 in gate order and each
     // layer's measured hit count -- so tools/hitrate_sim.py can replay exactly
@@ -1047,7 +1047,7 @@ private:
     // Whether the serve loop reheats the cache after every turn (§7).
     bool                  reheat_on_ = false;
     uint32_t              reheat_turn_ = 0;
-    // The non-resident ranking the whole process uses: DEEPMOE_HEAT_FILE if one
+    // The non-resident ranking the whole process uses: CACHEDMOE_HEAT_FILE if one
     // was given, else store/static_heat.inc. Read once, by both the startup P3
     // backfill and every reheat pass (docs/p4_hitrate.md).
     mutable std::vector<ExpertKey> heat_order_;
@@ -1066,7 +1066,7 @@ private:
     uint32_t           mask_wait_budget_experts_ = 8; // zero means unlimited
     double             mask_wait_budget_ms_ = 20; // zero means unlimited
     // What `Verify` does at the block's first position and at its four draft
-    // positions (DEEPMOE_VERIFY_FIRST / DEEPMOE_VERIFY_DRAFT).
+    // positions (CACHEDMOE_VERIFY_FIRST / CACHEDMOE_VERIFY_DRAFT).
     ResidentOnly       verify_first_ = ResidentOnly::Off;
     ResidentOnly       verify_draft_ = ResidentOnly::All;
     ResidentRouteStats rr_{};
@@ -1084,7 +1084,7 @@ private:
     // drive at once. Step 2 handed every miss straight to the IoEngine, whose
     // P3 queue is unbounded: the mean P3 latency was 5,594 ms against a 100 ms
     // step, so the drive was saturated with demand 56 steps out of date.
-    // `DEEPMOE_RESIDENT_QUEUE_STEPS` sets the window (default 2).
+    // `CACHEDMOE_RESIDENT_QUEUE_STEPS` sets the window (default 2).
     struct RrMiss { ExpertKey key; uint64_t step; };
     std::deque<RrMiss>    rr_queue_;             // oldest at the front
     uint32_t              rr_queue_steps_    = 2;

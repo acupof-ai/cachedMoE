@@ -15,6 +15,10 @@ from pathlib import Path
 import re
 import sys
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import chat
@@ -81,6 +85,29 @@ def save_json(path, value):
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
+def startup_environment(inherited, requested):
+    """Initialize the complete resource set and validate effective CLI aliases."""
+    startup = dict(CACHEDMOE_DSPARK_ONECB="1", CACHEDMOE_BATCH_GPU_ROUTE="1",
+                   CACHEDMOE_DSPARK_MEGA="0", CACHEDMOE_DSPARK_PROFILE="0",
+                   CACHEDMOE_DSPARK_TRIM_TAIL="1", CACHEDMOE_SPEC_GPU_READOUT="1",
+                   CACHEDMOE_MASK_DYNAMIC_LRU="1", CACHEDMOE_IO_ENGRAM_DEADLINE="0",
+                   CACHEDMOE_SPEC_DIAGNOSTICS="")
+    env = dict(inherited)
+    runtime_env.apply_overrides(env, startup)
+    overrides = {}
+    for item in requested:
+        if "=" not in item:
+            raise ValueError("--env requires KEY=VALUE")
+        key, value = item.split("=", 1)
+        overrides[key] = value
+    runtime_env.apply_overrides(env, overrides)
+    for key, expected in startup.items():
+        selected = runtime_env.resolve(key, env)
+        if key != "CACHEDMOE_SPEC_DIAGNOSTICS" and selected.value != expected:
+            raise ValueError(f"{key} must be {expected} for complete startup resources")
+    return env
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", type=Path, required=True)
@@ -90,7 +117,7 @@ def main():
     parser.add_argument("--power-profile", choices=("performance", "power-saver"), required=True)
     parser.add_argument("--arms", default="k2_gpu,k2_onecb_cpu_route,k2_serial,k3_best,k5_best")
     parser.add_argument("--best-route", choices=("auto", "gpu", "cpu"), default="auto")
-    parser.add_argument("--thermal-log", default=os.environ.get("DEEPMOE_THERMAL_LOG"))
+    parser.add_argument("--thermal-log", default=runtime_env.getenv("CACHEDMOE_THERMAL_LOG"))
     parser.add_argument("--env", action="append", default=[])
     parser.add_argument("--serve-arg", action="append", default=[])
     args = parser.parse_args()
@@ -107,29 +134,19 @@ def main():
             parser.error("both k2 ONECB route controls must precede automatic _best arms")
     if provenance.power_state()["power_profile"] != args.power_profile:
         parser.error("actual power profile differs from the requested profile")
-    runtime_env = dict(os.environ)
     # Use the complete resource set at startup. The setter selects arms only
     # after initialization and never lazily builds a measured arm's pipelines.
-    startup = dict(DEEPMOE_DSPARK_ONECB="1", DEEPMOE_BATCH_GPU_ROUTE="1",
-                   DEEPMOE_DSPARK_MEGA="0", DEEPMOE_DSPARK_PROFILE="0",
-                   DEEPMOE_DSPARK_TRIM_TAIL="1", DEEPMOE_SPEC_GPU_READOUT="1",
-                   DEEPMOE_MASK_DYNAMIC_LRU="1", DEEPMOE_IO_ENGRAM_DEADLINE="0",
-                   DEEPMOE_SPEC_DIAGNOSTICS="")
-    runtime_env.update(startup)
-    for item in args.env:
-        if "=" not in item:
-            parser.error("--env requires KEY=VALUE")
-        key, value = item.split("=", 1)
-        if key in startup and key != "DEEPMOE_SPEC_DIAGNOSTICS" and value != startup[key]:
-            parser.error(f"{key} must be {startup[key]} for complete startup resources")
-        runtime_env[key] = value
+    try:
+        engine_env = startup_environment(os.environ, args.env)
+    except ValueError as exc:
+        parser.error(str(exc))
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     server_args = argparse.Namespace(
         exe=str(args.exe.resolve()), max_context=4096, cache_gb=0, cache_slots=5500,
         shader_dir=args.shader_dir, require_sources=2,
-        env=[f"{key}={value}" for key, value in runtime_env.items()
-             if os.environ.get(key) != value],
+        env=[f"{key}={value}" for key, value in engine_env.items()
+             if runtime_env.is_control(key) or os.environ.get(key) != value],
         serve_arg=["--resident-only", "mask", "--mask-cache", "dynamic",
                    "--gpu-prefill-min", "16", "--dspark", "--spec-k", "5",
                    "--spec-top-k", "4", "--allow-spec-switch", *args.serve_arg])

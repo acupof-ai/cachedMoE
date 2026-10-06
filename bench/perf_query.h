@@ -2,13 +2,13 @@
 // behind docs/STATUS.md's "the GEMM sits at ~1/3 of the mma peak, and we do not
 // know which third is missing".
 //
-// The extension is env-gated in gpu/vulkan/device.cpp (DEEPMOE_PERF_COUNTERS),
+// The extension is env-gated in gpu/vulkan/device.cpp (CACHEDMOE_PERF_COUNTERS),
 // so nothing here runs unless a bench asks for it. Three RADV facts shape the
 // API:
 //
 //   * counters are only answered on the general (graphics) queue family --
 //     radv_perfcounter.c returns 0 counters for anything else -- so
-//     DEEPMOE_PERF_COUNTERS also makes Device pick that family instead of the
+//     CACHEDMOE_PERF_COUNTERS also makes Device pick that family instead of the
 //     async compute engine. A counter run's *times* are therefore not
 //     comparable with the platform's numbers; its counts and ratios are.
 //   * a set of counters may need several passes, and the driver's multi-pass
@@ -22,7 +22,7 @@
 //     2,691,312 / 2,898,336 on three identical runs and 3,312,384 on a fourth,
 //     and LDS Instructions as 998,400 / 1,152,000 / 1,152,000 (STATUS §7 0bq).
 //     The largest read is the honest one -- it is the only one divisible into a
-//     whole number per wave. So every group runs DEEPMOE_PERF_REPEAT times
+//     whole number per wave. So every group runs CACHEDMOE_PERF_REPEAT times
 //     (default 3) and `Value::value` is the maximum, with `lo` kept so the
 //     caller can see how far it moved. Waves is exact, GPU active cycles move
 //     +-2% and VRAM read size +-10%, both of which are real machine noise
@@ -38,6 +38,7 @@
 // not read off directly.
 #pragma once
 
+#include "core/env.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -122,11 +123,11 @@ public:
         // counter slots are shared in ways the count does not capture: 13
         // counters it called one pass returned zeros for five of them, four at
         // a time still lost VALU Instructions and VALU Busy, and one at a time
-        // read fine. So cap the group size too: DEEPMOE_PERF_GROUP, default 1,
+        // read fine. So cap the group size too: CACHEDMOE_PERF_GROUP, default 1,
         // is the only size this machine was measured to be honest at
         // (docs/STATUS.md). A replay of a sub-ms kernel is free.
         size_t cap = 1;
-        if (const char* g = std::getenv("DEEPMOE_PERF_GROUP"); g && *g)
+        if (const char* g = ::deepmoe::environment::get("CACHEDMOE_PERF_GROUP"); g && *g)
             cap = std::max(1, std::atoi(g));
         std::vector<uint32_t> cur;
         for (uint32_t c : sel_) {
@@ -141,7 +142,7 @@ public:
         }
         if (!cur.empty())
             if (auto r = add_group(cur); !r) return r;
-        if (const char* r = std::getenv("DEEPMOE_PERF_REPEAT"); r && *r)
+        if (const char* r = ::deepmoe::environment::get("CACHEDMOE_PERF_REPEAT"); r && *r)
             repeats_ = uint32_t(std::max(1, std::atoi(r)));
         return {};
     }

@@ -1,6 +1,8 @@
 // storage/: chunk planning, priority ordering and preemption against a fake
 // backend (design §9.6), plus one real unbuffered round trip through the
 // platform backend (IOCP on Windows, io_uring on Linux).
+#include "tests/env_guard.h"
+#include "core/env.h"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -23,23 +25,8 @@ using namespace deepmoe;
 using namespace deepmoe::storage;
 
 DEEPMOE_TEST(io, gpu_options_resolve_once_and_preserve_overrides) {
-    struct Env {
-        const char* key;
-        std::string saved;
-        bool present;
-        explicit Env(const char* name)
-            : key(name), saved(std::getenv(name) ? std::getenv(name) : ""),
-              present(std::getenv(name) != nullptr) {}
-        void set(const char* value) {
-#ifdef _WIN32
-            _putenv_s(key, value ? value : "");
-#else
-            if (value) setenv(key, value, 1); else unsetenv(key);
-#endif
-        }
-        ~Env() { set(present ? saved.c_str() : nullptr); }
-    } route("DEEPMOE_BATCH_GPU_ROUTE"), early("DEEPMOE_BATCH_ENGRAM_EARLY"),
-      onecb("DEEPMOE_DSPARK_ONECB"), readout("DEEPMOE_SPEC_GPU_READOUT");
+    test::ScopedEnvironment route("CACHEDMOE_BATCH_GPU_ROUTE"), early("CACHEDMOE_BATCH_ENGRAM_EARLY"),
+      onecb("CACHEDMOE_DSPARK_ONECB"), readout("CACHEDMOE_SPEC_GPU_READOUT");
     route.set("1");
     early.set("0");
     onecb.set("1");
@@ -64,18 +51,7 @@ DEEPMOE_TEST(io, gpu_options_resolve_once_and_preserve_overrides) {
 }
 
 DEEPMOE_TEST(io, weighted_mask_rejects_invalid_limits_and_speculation) {
-    struct Env {
-        const char* key; std::string value; bool present;
-        explicit Env(const char* k): key(k), value(std::getenv(k) ? std::getenv(k) : ""), present(std::getenv(k) != nullptr) {}
-        void set(const char* v) {
-#ifdef _WIN32
-            _putenv_s(key, v ? v : "");
-#else
-            if (v) setenv(key, v, 1); else unsetenv(key);
-#endif
-        }
-        ~Env() {set(present ? value.c_str() : nullptr);}
-    } tau("DEEPMOE_MASK_WAIT_TAU"), budget("DEEPMOE_MASK_WAIT_BUDGET");
+    test::ScopedEnvironment tau("CACHEDMOE_MASK_WAIT_TAU"), budget("CACHEDMOE_MASK_WAIT_BUDGET");
     budget.set(nullptr);
     RuntimeConfig cfg;
     runtime::Engine engine;
@@ -91,18 +67,8 @@ DEEPMOE_TEST(io, weighted_mask_rejects_invalid_limits_and_speculation) {
 }
 
 DEEPMOE_TEST(io, mask_cache_policy_default_and_explicit_override) {
-    const char* name = "DEEPMOE_MASK_DYNAMIC_LRU";
-    const char* old = std::getenv(name);
-    const bool had_old = old != nullptr;
-    const std::string saved = old ? old : "";
-    auto set = [&](const char* value) {
-#ifdef _WIN32
-        _putenv_s(name, value ? value : "");
-#else
-        if (value) setenv(name, value, 1); else unsetenv(name);
-#endif
-    };
-    set(nullptr);
+    test::ScopedEnvironment environment("CACHEDMOE_MASK_DYNAMIC_LRU");
+    auto set = [&](const char* value) { environment.set(value); };
     runtime::Engine normal;
     normal.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     CHECK(!normal.store().fixed_cache());
@@ -121,7 +87,6 @@ DEEPMOE_TEST(io, mask_cache_policy_default_and_explicit_override) {
     CHECK(!normal.store().fixed_cache());
     normal.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     CHECK(normal.store().fixed_cache());
-    set(had_old ? saved.c_str() : nullptr);
 }
 
 namespace {
@@ -899,7 +864,7 @@ DEEPMOE_TEST(io, keepalive_never_races_a_real_request) {
     CHECK(keepalive_due(s, 900 * ms, window));   // long past it
 
     // --- off is off ---------------------------------------------------------
-    // `DEEPMOE_MIRROR_KEEPALIVE_MS=0` has to be byte-for-byte the old engine,
+    // `CACHEDMOE_MIRROR_KEEPALIVE_MS=0` has to be byte-for-byte the old engine,
     // so the disabled path answers false however idle the source is.
     CHECK(!keepalive_due(s, 900 * ms, 0));
     CHECK(!keepalive_due(s, 900 * ms, -1));
@@ -952,7 +917,7 @@ DEEPMOE_TEST(io, keepalive_is_off_without_a_second_source) {
 
     // One root is the ordinary single-drive run: there is no mirror to keep
     // awake, and the primary -- the drive the decode is already hammering -- is
-    // never poked. `DEEPMOE_MIRROR_KEEPALIVE_MS` cannot change that, which is
+    // never poked. `CACHEDMOE_MIRROR_KEEPALIVE_MS` cannot change that, which is
     // what makes the no-mirror path still byte-for-byte what it was.
     engine.set_sources({"/models"}, {4.8});
     CHECK(!engine.mirrors_enabled());
@@ -1248,7 +1213,7 @@ DEEPMOE_TEST(io, stripe_splits_one_p0_across_both_sources_by_weight) {
 
 // Track ST: striping is the default with a mirror and never without one, and
 // it is a P0 policy -- the backfill keeps whole-request routing, and with
-// striping off (DEEPMOE_MIRROR_STRIPE=0) a P0 does too.
+// striping off (CACHEDMOE_MIRROR_STRIPE=0) a P0 does too.
 DEEPMOE_TEST(io, stripe_is_the_default_and_leaves_backfill_whole) {
     auto prim = make_scratch("st_whole_p", 2u << 20, false);
     auto mirr = make_scratch("st_whole_m", 2u << 20, false);
@@ -1257,7 +1222,7 @@ DEEPMOE_TEST(io, stripe_is_the_default_and_leaves_backfill_whole) {
     const std::vector<std::byte> content = pattern_bytes(2u << 20);
     constexpr uint32_t kBytes = 1u << 20;
     AlignedBuffer b(kBytes);
-    const char* env = std::getenv("DEEPMOE_MIRROR_STRIPE");
+    const char* env = ::deepmoe::environment::get("CACHEDMOE_MIRROR_STRIPE");
     const bool stripe_off_env = env && *env == '0';
     {
         IoEngine engine;

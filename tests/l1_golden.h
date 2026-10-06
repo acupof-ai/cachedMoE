@@ -9,6 +9,7 @@
 // Ownership/threading: plain value types and pure functions.
 #pragma once
 
+#include "core/env.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -131,15 +132,16 @@ inline Compare compare(const std::vector<float>& got, const std::vector<float>& 
     return c;
 }
 
-// DEEPMOE_MODEL_DIR, or null when the checkpoint is not on this machine.
+// CACHEDMOE_MODEL_DIR, or null when the checkpoint is not on this machine.
 inline const char* model_dir() {
 #if defined(_MSC_VER)
     static std::string v;
-    char* buf = nullptr; size_t n = 0;
-    if (_dupenv_s(&buf, &n, "DEEPMOE_MODEL_DIR") == 0 && buf) { v = buf; free(buf); return v.c_str(); }
+    if (const char* value = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR")) {
+        v = value; return v.c_str();
+    }
     return nullptr;
 #else
-    return std::getenv("DEEPMOE_MODEL_DIR");
+    return ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
 #endif
 }
 
@@ -147,7 +149,7 @@ inline const char* model_dir() {
 // run_all exits 77 (ctest SKIP_RETURN_CODE) unless a case failed.
 inline bool skip_without_model(const char* what) {
     if (model_dir()) return false;
-    DEEPMOE_SKIP_PRINTF("       SKIP %s: set DEEPMOE_MODEL_DIR to the checkpoint "
+    DEEPMOE_SKIP_PRINTF("       SKIP %s: set CACHEDMOE_MODEL_DIR to the checkpoint "
                 "directory (the one holding deepmoe_manifest.json) to run it\n", what);
     return true;
 }

@@ -44,7 +44,7 @@ No FMA: numpy never fuses, and the C++ file is compiled with contraction off.
 CLI
 ---
     dspark_tree.py golden  --traces traces/dspark_tree --out tests/data/dspark
-    dspark_tree.py analyse --traces traces/dspark_tree --model "$DEEPMOE_MODEL_DIR"
+    dspark_tree.py analyse --traces traces/dspark_tree --model "$CACHEDMOE_MODEL_DIR"
     dspark_tree.py bench   (Python CPU time of steps 2 and 4)
     dspark_tree.py lossless (empirical losslessness of accept_sampling)
 """

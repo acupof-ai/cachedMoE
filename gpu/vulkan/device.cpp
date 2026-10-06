@@ -1,3 +1,4 @@
+#include "core/env.h"
 #include "gpu/vulkan/device.h"
 
 #include <cstdlib>
@@ -199,14 +200,14 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.subgroup_size_control = has_ext(ex, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
     c.cooperative_matrix    = has_ext(ex, "VK_KHR_cooperative_matrix");
     {
-        const char* dir = std::getenv("DEEPMOE_PIPELINE_STATS");
+        const char* dir = ::deepmoe::environment::get("CACHEDMOE_PIPELINE_STATS");
         c.pipeline_stats = dir && *dir && has_ext(ex, "VK_KHR_pipeline_executable_properties");
     }
     {
         // The extension can be advertised while performanceCounterQueryPools is
         // not supported, and requesting an unsupported feature fails device
         // creation -- so ask the driver, do not infer it from the name.
-        const char* on = std::getenv("DEEPMOE_PERF_COUNTERS");
+        const char* on = ::deepmoe::environment::get("CACHEDMOE_PERF_COUNTERS");
         if (on && *on && *on != '0' && has_ext(ex, "VK_KHR_performance_query")) {
             VkPhysicalDevicePerformanceQueryFeaturesKHR pq{
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR};
@@ -244,7 +245,7 @@ Result<uint32_t> pick_compute_family(VkPhysicalDevice pd, bool want_general) {
     // RADV answers VK_KHR_performance_query only on the general (graphics)
     // family -- radv_perfcounter.c returns 0 counters for any other queue -- so
     // a counter run has to give up the async compute engine. Only
-    // DEEPMOE_PERF_COUNTERS asks for this: the queue swap is itself a
+    // CACHEDMOE_PERF_COUNTERS asks for this: the queue swap is itself a
     // perturbation, so times taken under the counters are not comparable with
     // the platform's own numbers, and the counts and ratios are what to read.
     if (want_general)

@@ -202,7 +202,7 @@ struct AttnSpec {
     uint32_t ksplit_wo_b = 8;
 };
 
-// The widest K slice gemv_ksplit.slang stages, i.e. its `DEEPMOE_GEMV_MAX_K`.
+// The widest K slice gemv_ksplit.slang stages, i.e. its `CACHEDMOE_GEMV_MAX_K`.
 // A caller must keep `k / ksplit(stage)` at or under it.
 inline constexpr uint32_t kGemvKSplitMaxSlice = 4096;
 

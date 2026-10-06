@@ -27,7 +27,7 @@
 //       The same trajectory again under the other two schedules, which are
 //       different orders of the same work.
 //
-// Needs DEEPMOE_MODEL_DIR and tests/data/l3 (the engram tables).
+// Needs CACHEDMOE_MODEL_DIR and tests/data/l3 (the engram tables).
 #include <cstdio>
 #include <cstring>
 #include <array>

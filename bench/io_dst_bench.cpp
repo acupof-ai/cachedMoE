@@ -35,7 +35,7 @@
 // same shard on the second drive) and --route, the same reads go through the
 // runtime's own router three ways:
 //   single   primary only, no router (today's single-drive run)
-//   whole    DEEPMOE_MIRROR_STRIPE=0: each request goes whole to one drive
+//   whole    CACHEDMOE_MIRROR_STRIPE=0: each request goes whole to one drive
 //   stripe   the runtime's default with a mirror: each chunk is routed on its own
 // The decode's shape is one expert fill at a time -- its 17,698,816 B weights
 // run and 1,110,016 B scales run together -- so the verdict run is
@@ -50,6 +50,7 @@
 // vkCmdCopyBuffer from path B (both as a standalone submit and as recorded
 // work, so a copy folded into an existing command buffer can be priced too).
 // --gpu-copy is a synonym for adding `stage` to --dst.
+#include "core/env.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -677,7 +678,7 @@ void measure_copies(gpu::MemoryAllocator* alloc_a, gpu::MemoryAllocator* alloc_b
 int usage() {
     std::puts(
         "io_dst_bench -- Track Q2 E1: does the destination memory cost the drive its speed?\n"
-        "  --file PATH     file to read (default: a shard under DEEPMOE_MODEL_DIR)\n"
+        "  --file PATH     file to read (default: a shard under CACHEDMOE_MODEL_DIR)\n"
         "  --req-kb LIST   request size(s) in KiB, one group per read (default 9184;\n"
         "                  17284,1084 = one expert: weights run + scales run)\n"
         "  --chunk-kb LIST chunk size(s) in KiB (default 4096, the runtime's P0 chunk)\n"
@@ -731,8 +732,8 @@ int main(int argc, char** argv) {
         else { std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data()); return usage(); }
     }
     if (o.file.empty()) {
-        const char* md = std::getenv("DEEPMOE_MODEL_DIR");
-        if (!md) { std::fputs("no --file and no DEEPMOE_MODEL_DIR\n", stderr); return 2; }
+        const char* md = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
+        if (!md) { std::fputs("no --file and no CACHEDMOE_MODEL_DIR\n", stderr); return 2; }
         o.file = std::string(md) + "/model-00020-of-00048.safetensors";
     }
     {

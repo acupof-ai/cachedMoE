@@ -1,3 +1,4 @@
+#include "core/env.h"
 #include "gpu/vulkan/pipeline.h"
 
 #include <cstdio>
@@ -47,13 +48,13 @@ Result<void> Pipeline::create(Device&, const std::string& spv_path,
 
 namespace {
 
-// DEEPMOE_PIPELINE_STATS: the driver's own account of one pipeline -- its
+// CACHEDMOE_PIPELINE_STATS: the driver's own account of one pipeline -- its
 // statistics as one line of `<dir>/index.tsv`, and statistics plus every
 // internal representation (NIR, ACO IR, ISA on RADV) in `<dir>/<name>.txt`.
 // `tag` is the .spv's base name and the specialisation constants, which is
 // what tells two pipelines of one shader apart.
 void write_pipeline_stats(VkDevice d, VkPipeline pipe, const std::string& tag) {
-    const char* dir = std::getenv("DEEPMOE_PIPELINE_STATS");
+    const char* dir = ::deepmoe::environment::get("CACHEDMOE_PIPELINE_STATS");
     if (!dir || !*dir) return;
     auto props = reinterpret_cast<PFN_vkGetPipelineExecutablePropertiesKHR>(
         vkGetDeviceProcAddr(d, "vkGetPipelineExecutablePropertiesKHR"));

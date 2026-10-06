@@ -7,14 +7,14 @@ docs/p4_hitrate.md).
         [--shader-dir build/shaders] [--serve-arg=--gpu-prefill-min --serve-arg=256] [--env K=V]
 
 One serve process runs a chat.py-format script (the same renderer, the same KV
-continuation), with `--profile` and `DEEPMOE_ROUTE_DUMP` on. The out directory gets
+continuation), with `--profile` and `CACHEDMOE_ROUTE_DUMP` on. The out directory gets
 
     events.jsonl    every protocol event, with the host's receive time
     profile.jsonl   the engine's design 13.1 record, one line per decode step
     route.bin       the engine's routing dump (runtime/engine.h), one record per step
     turns.json      chat.py's per-turn stats plus the step layout of each request
     transcript.md   the conversation
-    provenance.json commit, dirty files, exe / shader hashes, DEEPMOE_* env (tools/provenance.py)
+    provenance.json commit, dirty files, exe / shader hashes, CACHEDMOE_* env (tools/provenance.py)
 
 `tools/hitrate_sim.py OUT` turns them into the per-128-step curve and replays the
 same routing through tools/cache_sim.py's LRU.
@@ -29,6 +29,10 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
 
 sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -90,15 +94,13 @@ class BenchServer(chat.Server):
         if not any(a.startswith("--kv-dir") for a in args.serve_arg):
             cmd += ["--no-kv-disk"]
         env = dict(os.environ)
-        env["DEEPMOE_ROUTE_DUMP"] = os.path.join(out_dir, "route.bin")
+        runtime_env.set_value(env, "CACHEDMOE_ROUTE_DUMP", os.path.join(out_dir, "route.bin"))
         # The bench runs what serve runs: a second copy of the model found under
         # /mnt is read striped (the owner, 2026-09-29: the headline number is the
-        # two-drive one). --env DEEPMOE_MIRROR_AUTO=0 is the single-drive cell.
+        # two-drive one). --env CACHEDMOE_MIRROR_AUTO=0 is the single-drive cell.
         if args.shader_dir:
-            env["DEEPMOE_SHADER_DIR"] = args.shader_dir
-        for kv in args.env:
-            k, v = kv.split("=", 1)
-            env[k] = v
+            runtime_env.set_value(env, "CACHEDMOE_SHADER_DIR", args.shader_dir)
+        runtime_env.apply_overrides(env, dict(kv.split("=", 1) for kv in args.env))
         for f in ("profile.jsonl", "route.bin", "events.jsonl"):
             p = os.path.join(out_dir, f)
             if os.path.exists(p):
@@ -136,7 +138,7 @@ class BenchServer(chat.Server):
 
 
 def write_heat_from_route(route_path: str, out_path: str, recent: int = 0) -> int:
-    """Turn a run's route.bin into a DEEPMOE_HEAT_FILE for the next round."""
+    """Turn a run's route.bin into a CACHEDMOE_HEAT_FILE for the next round."""
     sys.path.insert(0, os.path.join(REPO, "tools"))
     import hitrate_sim  # noqa: E402
     import numpy as np  # noqa: E402
@@ -186,6 +188,17 @@ def round_stats(events_path: str) -> dict:
     }
 
 
+def auto_tune_controls(requested, heat, inherited=None):
+    values = list(requested)
+    env = dict(os.environ if inherited is None else inherited)
+    runtime_env.apply_overrides(env, dict(kv.split("=", 1) for kv in values))
+    if not runtime_env.resolve("BACKFILL", env).present:
+        values.append("CACHEDMOE_BACKFILL=1")
+    if heat:
+        values.append("CACHEDMOE_HEAT_FILE=" + heat)
+    return values
+
+
 def auto_tune(args, script: dict, cargs, enc) -> int:
     """N fresh-server rounds; each round feeds the previous round's route heat."""
     curve = []
@@ -195,11 +208,7 @@ def auto_tune(args, script: dict, cargs, enc) -> int:
         os.makedirs(out_r, exist_ok=True)
         ra = argparse.Namespace(**vars(args))
         ra.out = out_r
-        ra.env = list(args.env)
-        if not any(k.startswith("DEEPMOE_BACKFILL=") for k in ra.env):
-            ra.env.append("DEEPMOE_BACKFILL=1")
-        if heat:
-            ra.env.append("DEEPMOE_HEAT_FILE=" + heat)
+        ra.env = auto_tune_controls(args.env, heat)
         server = BenchServer(ra, out_r)
         c = chat.Chat(server, enc, cargs)
         try:
@@ -269,8 +278,8 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=1, help="run the script this many times back to back")
     ap.add_argument("--auto-tune", type=int, default=0,
                     help="run N fresh-server rounds; each round generates a heat file from its route dump")
-    ap.add_argument("--heat-file", default="", help="initial DEEPMOE_HEAT_FILE for auto-tune round 0")
-    ap.add_argument("--write-heat", default="", help="write this run's route heat to a DEEPMOE_HEAT_FILE")
+    ap.add_argument("--heat-file", default="", help="initial CACHEDMOE_HEAT_FILE for auto-tune round 0")
+    ap.add_argument("--write-heat", default="", help="write this run's route heat to a CACHEDMOE_HEAT_FILE")
     args = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")

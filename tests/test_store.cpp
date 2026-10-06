@@ -732,7 +732,7 @@ DEEPMOE_TEST(cache_cap, budget_is_capped) {
     // Exactly at the cap: also untouched.
     const uint64_t exact = uint64_t(runtime::kAutoSlotCap) * slot;
     CHECK_EQ(runtime::cap_auto_budget(exact, slot, runtime::kAutoSlotCap), exact);
-    // Cap off (DEEPMOE_CACHE_SLOT_CAP=0) hands the arithmetic back untouched,
+    // Cap off (CACHEDMOE_CACHE_SLOT_CAP=0) hands the arithmetic back untouched,
     // and a zero slot size cannot divide, so it is a no-op too.
     CHECK_EQ(runtime::cap_auto_budget(derived, slot, 0), derived);
     CHECK_EQ(runtime::cap_auto_budget(derived, 0, runtime::kAutoSlotCap), derived);

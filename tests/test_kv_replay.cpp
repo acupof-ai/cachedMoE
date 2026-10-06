@@ -15,8 +15,9 @@
 //                        133-token rollback (full 128-token replay) followed by
 //                        re-feeding the dropped prompt and decoding.
 //
-// Needs DEEPMOE_MODEL_DIR, tests/data/l3, and DEEPMOE_LONGCTX_DIR (default
+// Needs CACHEDMOE_MODEL_DIR, tests/data/l3, and CACHEDMOE_LONGCTX_DIR (default
 // <repo>/traces/longctx) for the second case.
+#include "core/env.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -49,7 +50,7 @@ bool exists(const std::string& p) {
 }
 
 std::string longctx_root() {
-    if (const char* e = std::getenv("DEEPMOE_LONGCTX_DIR")) return e;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR")) return e;
     return std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/longctx";
 }
 
@@ -437,7 +438,7 @@ DEEPMOE_TEST(kv_replay, longctx) {
     if (skip_without_model("kv_replay")) return;
     const std::string dir = longctx_root() + "/ctx4k";
     if (!exists(dir + "/index.json")) {
-        DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: no 4K export at %s (DEEPMOE_LONGCTX_DIR)\n", dir.c_str());
+        DEEPMOE_SKIP_PRINTF("      SKIP kv_replay: no 4K export at %s (CACHEDMOE_LONGCTX_DIR)\n", dir.c_str());
         return;
     }
     runtime::Engine e;

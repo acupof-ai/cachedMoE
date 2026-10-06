@@ -130,7 +130,7 @@ public:
     // recorded for this layer afterwards (stage_rows, record_gateup,
     // record_down), and writes the shared row there.
     Result<void> record_shared_early(gpu::CommandBuffer& cmd, uint32_t layer, uint64_t x_addr);
-    // Debug (DEEPMOE_SE_CHECK): how many of x's fp16 elements the GPU's
+    // Debug (CACHEDMOE_SE_CHECK): how many of x's fp16 elements the GPU's
     // act_quant wrote differently from the host's, and the first one.
     uint32_t debug_check_x(const MoeCall& call, std::string* first);
     // Back to page 0, which every other caller of the runner assumes.

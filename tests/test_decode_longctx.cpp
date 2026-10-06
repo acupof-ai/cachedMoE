@@ -30,8 +30,9 @@
 //     reads; (e) a control pass with the reference's compressed KV and top-k
 //     loaded, which separates indexer drift from the rest.
 //
-// Data: DEEPMOE_LONGCTX_DIR (default <repo>/traces/longctx), the committed
-// subset in tests/data/longctx, DEEPMOE_LONGCTX_NAMES (default "ctx4k,ctx16k").
+// Data: CACHEDMOE_LONGCTX_DIR (default <repo>/traces/longctx), the committed
+// subset in tests/data/longctx, CACHEDMOE_LONGCTX_NAMES (default "ctx4k,ctx16k").
+#include "core/env.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -74,14 +75,14 @@ using namespace deepmoe::testing;
 namespace {
 
 std::string longctx_root() {
-    if (const char* e = std::getenv("DEEPMOE_LONGCTX_DIR")) return e;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR")) return e;
     return std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/longctx";
 }
 std::string small_dir(const std::string& name) {
     return std::string(DEEPMOE_TEST_DATA_DIR) + "/longctx/" + name;
 }
 std::vector<std::string> export_names() {
-    std::string list = std::getenv("DEEPMOE_LONGCTX_NAMES") ? std::getenv("DEEPMOE_LONGCTX_NAMES")
+    std::string list = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_NAMES") ? ::deepmoe::environment::get("CACHEDMOE_LONGCTX_NAMES")
                                                             : "ctx4k,ctx16k";
     std::vector<std::string> out;
     size_t a = 0;
@@ -325,7 +326,7 @@ DEEPMOE_TEST(decode_longctx, indexer_vs_reference) {
         const std::string big = longctx_root() + "/" + name;
         const std::string small = small_dir(name);
         if (!exists(big + "/index.json") || !exists(small + "/index.json")) {
-            DEEPMOE_SKIP_PRINTF("      SKIP decode_longctx %s: no export at %s (DEEPMOE_LONGCTX_DIR)\n",
+            DEEPMOE_SKIP_PRINTF("      SKIP decode_longctx %s: no export at %s (CACHEDMOE_LONGCTX_DIR)\n",
                         name.c_str(), big.c_str());
             continue;
         }

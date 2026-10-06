@@ -10,7 +10,7 @@ regression usually trips them:
      editing a list here;
   2. the CPU suites that need only the checkpoint's METADATA (tokenizer.json,
      config.json) and no GPU: `suite.tokenizer`, `suite.engram_tables`. They
-     run when DEEPMOE_MODEL_DIR is set and are reported as skipped otherwise;
+     run when CACHEDMOE_MODEL_DIR is set and are reported as skipped otherwise;
   3. the Python tools' own self-tests -- today `tools/trace_timeline.py
      --self-test`, which parses a synthetic trace and so catches a drift
      between the reader and runtime/trace.h without a GPU;
@@ -33,6 +33,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = sys.executable
@@ -105,10 +109,10 @@ def main() -> int:
         rows.append((name, detail, f"{time.time() - t0:.1f}s", rc == 0))
 
     # --- 2. the metadata-only suites --------------------------------------
-    have_model = bool(os.environ.get("DEEPMOE_MODEL_DIR"))
+    have_model = bool(runtime_env.getenv("CACHEDMOE_MODEL_DIR"))
     for name in METADATA_SUITES:
         if not have_model:
-            rows.append((name, "skipped: set DEEPMOE_MODEL_DIR", "", True))
+            rows.append((name, "skipped: set CACHEDMOE_MODEL_DIR", "", True))
             continue
         t0 = time.time()
         rc, out = run(["ctest", "--test-dir", str(build), "-R", f"^{re.escape(name)}$",
@@ -121,6 +125,7 @@ def main() -> int:
 
     # --- 3. the Python tools' self-tests ----------------------------------
     for label, cmd in (
+        ("tools/tests/test_runtime_env.py", [PY, str(ROOT / "tools" / "tests" / "test_runtime_env.py")]),
         ("tools/trace_timeline.py", [PY, str(ROOT / "tools" / "trace_timeline.py"), "--self-test"]),
         ("tests/mutate.py --list", [PY, str(ROOT / "tests" / "mutate.py"), "--list"]),
         # STATUS 1.0's measured table is rendered from the ledger, never typed.

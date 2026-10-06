@@ -10,7 +10,8 @@
 // through `deepmoe tokenize` and requires 100% id equality; this test is the
 // committed, model-dir-only subset of it.
 //
-// Needs tokenizer.json from DEEPMOE_MODEL_DIR (it is not copied into the repo).
+// Needs tokenizer.json from CACHEDMOE_MODEL_DIR (it is not copied into the repo).
+#include "core/env.h"
 #include <cstdio>
 #include <cstdlib>
 #include <format>
@@ -32,8 +33,8 @@ namespace {
 const text::Tokenizer* shared_tokenizer(std::string& why) {
     static std::string err;
     static text::Tokenizer* tok = [&]() -> text::Tokenizer* {
-        const char* dir = std::getenv("DEEPMOE_MODEL_DIR");
-        if (!dir) { err = "set DEEPMOE_MODEL_DIR"; return nullptr; }
+        const char* dir = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
+        if (!dir) { err = "set CACHEDMOE_MODEL_DIR"; return nullptr; }
         auto t = text::Tokenizer::load(std::string(dir) + "/tokenizer.json");
         if (!t) { err = t.error().str(); return nullptr; }
         return new text::Tokenizer(std::move(*t));

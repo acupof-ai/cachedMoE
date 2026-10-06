@@ -1,3 +1,4 @@
+#include "core/env.h"
 #include "runtime/moe_bridge.h"
 
 #include <algorithm>
@@ -117,10 +118,10 @@ Result<void> self_check() {
 // host time an M=5 batch spends between its attention fence and its MoE
 // dispatch -- the biggest single item of GPU-idle gap in the batch.
 //
-// DEEPMOE_MOE_WC_READ=0 goes back to plain memcpy (the A/B).
+// CACHEDMOE_MOE_WC_READ=0 goes back to plain memcpy (the A/B).
 void wc_read(void* dst, const void* src, size_t bytes) {
     static const bool on = [] {
-        const char* e = std::getenv("DEEPMOE_MOE_WC_READ");
+        const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_WC_READ");
         return !(e && *e == '0');
     }();
     // Only the SOURCE has to be 32-byte aligned: `vmovntdqa` is the load, and
@@ -149,7 +150,7 @@ void wc_read(void* dst, const void* src, size_t bytes) {
 
 // Track BF: the union runner's shape knobs, so one binary can A/B them.
 uint32_t env_u32(const char* name, uint32_t dflt) {
-    const char* e = std::getenv(name);
+    const char* e = ::deepmoe::environment::get(name);
     if (!e || !*e) return dflt;
     char* end = nullptr;
     const unsigned long v = std::strtoul(e, &end, 10);
@@ -189,10 +190,10 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     spec.h_quant       = bc.h_quant;
     // Experiment knobs, the same shape as the union runner's below, so the
     // decode shape can be re-swept per driver instead of re-derived.
-    spec.lanes_per_row = env_u32("DEEPMOE_MOE_L", spec.lanes_per_row);
-    spec.rows_per_lane = env_u32("DEEPMOE_MOE_R", spec.rows_per_lane);
-    spec.x_mode        = env_u32("DEEPMOE_MOE_XMODE", spec.x_mode);
-    spec.x_mode_b      = env_u32("DEEPMOE_MOE_XMODE_B", spec.x_mode_b);
+    spec.lanes_per_row = env_u32("CACHEDMOE_MOE_L", spec.lanes_per_row);
+    spec.rows_per_lane = env_u32("CACHEDMOE_MOE_R", spec.rows_per_lane);
+    spec.x_mode        = env_u32("CACHEDMOE_MOE_XMODE", spec.x_mode);
+    spec.x_mode_b      = env_u32("CACHEDMOE_MOE_XMODE_B", spec.x_mode_b);
     // The FP4 decode is compiler-specific. On the AMD proprietary driver the
     // constant table (DecodeMode 0) is the measured M = 1 champion; Mesa's ACO
     // (RADV) lowers the same `kE2M1[nib]` into a per-element branchy select
@@ -207,7 +208,7 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     // 0.621814, 59/64, both ways). See docs/build.md, "Linux".
     if (bc.decode_mode == 0 && device.caps().driver_id == VK_DRIVER_ID_MESA_RADV)
         spec.decode_mode = 3;
-    spec.decode_mode   = env_u32("DEEPMOE_MOE_DEC", spec.decode_mode);
+    spec.decode_mode   = env_u32("CACHEDMOE_MOE_DEC", spec.decode_mode);
     // Dispatch B (w2) gets its own shape on RADV. With A at the decode champion
     // L32 R1, ACO's B reads w2 at ~152 GB/s; B alone at L16 R2 reads it at ~185
     // (kernel_bench "fp8 dec1 B": 0.807 -> 0.757 ms per 7-slot pair). Engine
@@ -218,18 +219,18 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     // near-tie positions flip -- PPL 1.021x off, inside the harness's 1.05x
     // bar; L16 R4 lands on the identical 0.623007 and L32 R2 on the identical
     // 0.601884, i.e. the number follows the lane count and nothing else.
-    // STATUS §7 0h. DEEPMOE_MOE_LB / DEEPMOE_MOE_RB override (LB=32 RB=1 is
+    // STATUS §7 0h. CACHEDMOE_MOE_LB / CACHEDMOE_MOE_RB override (LB=32 RB=1 is
     // the old shape).
     if (spec.lanes_b == 0 && spec.rows_b == 0 && spec.lanes_per_row == 32 &&
         spec.rows_per_lane == 1 && device.caps().driver_id == VK_DRIVER_ID_MESA_RADV) {
         spec.lanes_b = 16;
         spec.rows_b  = 2;
     }
-    spec.lanes_b       = env_u32("DEEPMOE_MOE_LB", spec.lanes_b);
-    spec.rows_b        = env_u32("DEEPMOE_MOE_RB", spec.rows_b);
+    spec.lanes_b       = env_u32("CACHEDMOE_MOE_LB", spec.lanes_b);
+    spec.rows_b        = env_u32("CACHEDMOE_MOE_RB", spec.rows_b);
     // An experiment knob, not a setting: docs/p2_decode.md §8.2 uses it to
     // A/B the h quantisation's placement for bit-reproducibility.
-    if (const char* e = std::getenv("DEEPMOE_MOE_HQUANT"); e && *e)
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_HQUANT"); e && *e)
         spec.h_quant = static_cast<uint32_t>(std::atoi(e));
     spec.fp8_slots     = 1;          // slot 6 is the fp8 shared expert
 
@@ -273,13 +274,13 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     // occupancy/working-set point. The knobs stay as env overrides so the next
     // person can re-run the sweep instead of re-deriving it.
     gpu::MoeSpec uspec = spec;
-    uspec.lanes_per_row = env_u32("DEEPMOE_MOE_UNION_L", spec.lanes_per_row);
-    uspec.rows_per_lane = env_u32("DEEPMOE_MOE_UNION_R", spec.rows_per_lane);
-    uspec.x_mode        = env_u32("DEEPMOE_MOE_UNION_XMODE", spec.x_mode);
+    uspec.lanes_per_row = env_u32("CACHEDMOE_MOE_UNION_L", spec.lanes_per_row);
+    uspec.rows_per_lane = env_u32("CACHEDMOE_MOE_UNION_R", spec.rows_per_lane);
+    uspec.x_mode        = env_u32("CACHEDMOE_MOE_UNION_XMODE", spec.x_mode);
     // Dispatch B's own shape is a 7-slot decode measurement; the union (~20
     // slots) was never measured with it, so it keeps following A.
-    uspec.lanes_b       = env_u32("DEEPMOE_MOE_UNION_LB", 0);
-    uspec.rows_b        = env_u32("DEEPMOE_MOE_UNION_RB", 0);
+    uspec.lanes_b       = env_u32("CACHEDMOE_MOE_UNION_LB", 0);
+    uspec.rows_b        = env_u32("CACHEDMOE_MOE_UNION_RB", 0);
     if (auto r = union_runner_.create(device, alloc, shader_dir, uspec, du); !r) return r;
     union_ids_.assign(du.slots, 0);
     union_slot_of_.assign(size_t(cfg.n_routed_experts) + 1, ~0u);

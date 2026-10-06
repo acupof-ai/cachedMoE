@@ -1,6 +1,7 @@
 // Same-engine benchmark controls must change only request-boundary policy.
 // The real draft is compared bit for bit on a common golden KV state, then
 // every arm runs a cycle and proves that verification calls the target once.
+#include "tests/env_guard.h"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -25,22 +26,7 @@ using namespace deepmoe::testing;
 
 namespace {
 
-struct ScopedFlag {
-    const char* name;
-    std::string value;
-    bool present;
-    ScopedFlag(const char* key, const char* forced)
-        : name(key), value(std::getenv(key) ? std::getenv(key) : ""),
-          present(std::getenv(key) != nullptr) { set(forced); }
-    void set(const char* v) {
-#ifdef _WIN32
-        _putenv_s(name, v ? v : "");
-#else
-        if (v) setenv(name, v, 1); else unsetenv(name);
-#endif
-    }
-    ~ScopedFlag() { set(present ? value.c_str() : nullptr); }
-};
+using ScopedFlag = test::ScopedEnvironment;
 
 struct Arm {
     uint32_t k;
@@ -52,9 +38,9 @@ struct Arm {
 DEEPMOE_TEST(gpu_dspark, benchmark_switch_keeps_draft_bits_and_one_target_call) {
     if (skip_without_model("gpu_dspark.benchmark_switch_keeps_draft_bits_and_one_target_call"))
         return;
-    ScopedFlag onecb("DEEPMOE_DSPARK_ONECB", "1"), route("DEEPMOE_BATCH_GPU_ROUTE", "1"),
-               mega("DEEPMOE_DSPARK_MEGA", "0"), dynamic("DEEPMOE_MASK_DYNAMIC_LRU", "1"),
-               wait("DEEPMOE_MASK_WAIT_TAU", nullptr);
+    ScopedFlag onecb("CACHEDMOE_DSPARK_ONECB", "1"), route("CACHEDMOE_BATCH_GPU_ROUTE", "1"),
+               mega("CACHEDMOE_DSPARK_MEGA", "0"), dynamic("CACHEDMOE_MASK_DYNAMIC_LRU", "1"),
+               wait("CACHEDMOE_MASK_WAIT_TAU", nullptr);
     auto golden = load_l2(std::string(DEEPMOE_TEST_DATA_DIR) + "/dspark");
     REQUIRE_OK(golden);
     const L2Step* step = nullptr;

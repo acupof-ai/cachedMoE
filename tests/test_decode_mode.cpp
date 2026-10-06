@@ -1,6 +1,7 @@
 // Request policies share startup resources and may change only at a completed
 // request boundary. CPU cases cover parsing/metadata; the model fixture covers
 // actual routing, retained KV, cancellation and named-session replay.
+#include "tests/env_guard.h"
 #include <array>
 #include <bit>
 #include <chrono>
@@ -27,23 +28,7 @@ using runtime::DecodeMode;
 
 namespace {
 
-struct ScopedFlag {
-    const char* key;
-    std::string saved;
-    bool present;
-
-    ScopedFlag(const char* name, const char* value)
-        : key(name), saved(std::getenv(name) ? std::getenv(name) : ""),
-          present(std::getenv(name) != nullptr) { set(value); }
-    void set(const char* value) {
-#ifdef _WIN32
-        _putenv_s(key, value ? value : "");
-#else
-        if (value) setenv(key, value, 1); else unsetenv(key);
-#endif
-    }
-    ~ScopedFlag() { set(present ? saved.c_str() : nullptr); }
-};
+using ScopedFlag = test::ScopedEnvironment;
 
 // This comparison is deliberately short (< window), so position and ring slot
 // coincide. Includes every layer's FP8 values and scales, not just token IDs.
@@ -216,9 +201,9 @@ DEEPMOE_TEST(decode_mode, exact_boundary_timeout_and_failed_fill) {
 
 DEEPMOE_TEST(gpu_request_policy, retained_window_sessions_and_exact_plain) {
     if (skip_without_model("gpu_request_policy.retained_window_sessions_and_exact_plain")) return;
-    ScopedFlag dynamic("DEEPMOE_MASK_DYNAMIC_LRU", "1"), onecb("DEEPMOE_DSPARK_ONECB", "1"),
-               route("DEEPMOE_BATCH_GPU_ROUTE", "0"), mega("DEEPMOE_DSPARK_MEGA", "0"),
-               wait("DEEPMOE_MASK_WAIT_TAU", nullptr);
+    ScopedFlag dynamic("CACHEDMOE_MASK_DYNAMIC_LRU", "1"), onecb("CACHEDMOE_DSPARK_ONECB", "1"),
+               route("CACHEDMOE_BATCH_GPU_ROUTE", "0"), mega("CACHEDMOE_DSPARK_MEGA", "0"),
+               wait("CACHEDMOE_MASK_WAIT_TAU", nullptr);
     auto state = runtime::DecodeState::load(std::string(DEEPMOE_TEST_DATA_DIR) + "/l3");
     REQUIRE_OK(state);
     REQUIRE(state->prompt_ids().size() >= 8);

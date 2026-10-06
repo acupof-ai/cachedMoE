@@ -36,6 +36,7 @@
 //   prefill_bench --section prefill --n 64,512,4096 --ids ids.txt [--replay 128,0]
 //                 [--coop-min -1,16,0] [--coop-dense -1,64] [--transit 32] [--ring 2] [--handoff-dir dir]
 //                 [--ops-json ops.jsonl]   (every op's time, FLOPs and bytes: tools/prefill_model.py)
+#include "core/env.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -97,7 +98,7 @@ struct Options {
     // section coopgeo: comma-separated case-insensitive substrings of the
     // VK_KHR_performance_query counter names to collect around each variant
     // (bench/perf_query.h). "list" only prints what the driver has. Needs
-    // DEEPMOE_PERF_COUNTERS=1, and costs one workload re-run a counter pass.
+    // CACHEDMOE_PERF_COUNTERS=1, and costs one workload re-run a counter pass.
     std::string perf_counters;
     // PrefillConfig::attn_pv_dim_tiles, swept in ONE process so the A/B sees
     // the same machine (docs/p4_prefill_speed.md §3.1).
@@ -107,13 +108,7 @@ struct Options {
 };
 
 const char* env(const char* name) {
-#if defined(_MSC_VER)
-    static std::string v; char* b = nullptr; size_t n = 0;
-    if (_dupenv_s(&b, &n, name) == 0 && b) { v = b; free(b); return v.c_str(); }
-    return nullptr;
-#else
-    return std::getenv(name);
-#endif
+    return ::deepmoe::environment::get(name);
 }
 
 struct Csv {
@@ -181,11 +176,11 @@ struct Rig {
     }
     // serve's second read source (runtime/engine.cpp configure_io_sources
     // without the health and thermal gates: a bench is minutes long and watched):
-    // DEEPMOE_MODEL_MIRRORS=dir[;dir], weights probed unless
-    // DEEPMOE_MIRROR_WEIGHTS=4.6;3.7 gives them, striping at its default.
+    // CACHEDMOE_MODEL_MIRRORS=dir[;dir], weights probed unless
+    // CACHEDMOE_MIRROR_WEIGHTS=4.6;3.7 gives them, striping at its default.
     std::string mirror_label;
     Result<void> open_mirrors(const std::string& dir, const IoConfig& cfg) {
-        const char* e = std::getenv("DEEPMOE_MODEL_MIRRORS");
+        const char* e = ::deepmoe::environment::get("CACHEDMOE_MODEL_MIRRORS");
         if (!e || !*e) return {};
         std::vector<std::string> roots{dir};
         for (std::string_view rest = e; !rest.empty();) {
@@ -197,7 +192,7 @@ struct Rig {
             roots.emplace_back(part);
         }
         std::vector<double> weights(roots.size(), 0.0);
-        if (const char* w = std::getenv("DEEPMOE_MIRROR_WEIGHTS"); w && *w) {
+        if (const char* w = ::deepmoe::environment::get("CACHEDMOE_MIRROR_WEIGHTS"); w && *w) {
             size_t i = 0;
             for (std::string_view rest = w; !rest.empty() && i < weights.size(); ++i) {
                 const size_t semi = rest.find(';');
@@ -557,7 +552,7 @@ int run_coopgeo(const Options& o) {
     Csv csv;
     csv.open(o.csv);
     // Hardware counters (bench/perf_query.h): off unless --perf-counters names
-    // some and DEEPMOE_PERF_COUNTERS is set.
+    // some and CACHEDMOE_PERF_COUNTERS is set.
     bench::PerfCounters pc;
     {
         std::vector<std::string> want;
@@ -587,9 +582,9 @@ int run_coopgeo(const Options& o) {
     const Shape shapes[] = {{"w1", 2304, 5120}, {"w2", 5120, 2304}, {"wq_b", 32768, 1280},
                             {"wo_b", 5120, 8192}, {"wo_a.g", 1024, 4096}, {"eng.wkv", 25600, 6144},
                             {"pv", 512, 2176}};   // the band attention's P.V: G [E][D] contracted over E
-    // DEEPMOE_PF_LDS_WT=1 adds every LDS variant a second time reading W stored
+    // CACHEDMOE_PF_LDS_WT=1 adds every LDS variant a second time reading W stored
     // [K][R] (LdsWt, the P.V's layout) from a transposed copy: same products.
-    const bool wt_too = env("DEEPMOE_PF_LDS_WT") != nullptr;
+    const bool wt_too = env("CACHEDMOE_PF_LDS_WT") != nullptr;
     // lds: prefill_gemm_lds.slang with tt = its 16-token tiles per wave (LdsWn)
     // and rt = its 16-row tiles per wave (LdsWm); a workgroup is 2 x 2 waves.
     struct Geo { uint32_t tt, rt, tb, rb; bool lds = false; bool wt = false; };
@@ -599,7 +594,7 @@ int run_coopgeo(const Options& o) {
             for (uint32_t tb : {0u, 256u})
                 for (uint32_t rb : {0u, 2048u})
                     geos.push_back({tt, rt, tb, rb});
-    if (const char* g = env("DEEPMOE_PF_GEO")) {
+    if (const char* g = env("CACHEDMOE_PF_GEO")) {
         // "tt,rt,tb,rb;tt,rt,tb,rb;..."
         geos.clear();
         std::string s = g;
@@ -614,8 +609,8 @@ int run_coopgeo(const Options& o) {
         }
     }
     {
-        // "wm,wn;..." -- DEEPMOE_PF_LDS_GEO= (empty) runs none.
-        const char* l = env("DEEPMOE_PF_LDS_GEO");
+        // "wm,wn;..." -- CACHEDMOE_PF_LDS_GEO= (empty) runs none.
+        const char* l = env("CACHEDMOE_PF_LDS_GEO");
         std::string s = l ? l : "1,1;2,2;2,4;4,2;4,4";
         size_t p = 0;
         while (p < s.size()) {
@@ -748,8 +743,8 @@ int run_coopgeo(const Options& o) {
 }
 
 // --- section `elem`: prefill_elem s4 (mhc_post) in isolation --------------------
-// DEEPMOE_PF_ELEM_SPV=name[,name...] selects the .spv variants (default the
-// production one), DEEPMOE_PF_ELEM_CHUNK=c1[,c2...] their elements per thread.
+// CACHEDMOE_PF_ELEM_SPV=name[,name...] selects the .spv variants (default the
+// production one), CACHEDMOE_PF_ELEM_CHUNK=c1[,c2...] their elements per thread.
 int run_elem(const Options& o) {
     Rig rig;
     if (auto r = rig.up(o.model_dir); !r) {
@@ -763,8 +758,8 @@ int run_elem(const Options& o) {
         if (!e) return; out.clear(); std::string s = e; size_t p = 0;
         while (p <= s.size()) { size_t q = s.find(',', p); if (q == std::string::npos) q = s.size(); out.push_back(s.substr(p, q - p)); p = q + 1; }
     };
-    list_s(env("DEEPMOE_PF_ELEM_SPV"), spvs);
-    if (const char* e = env("DEEPMOE_PF_ELEM_CHUNK")) { std::vector<std::string> cs; list_s(e, cs); chunks.clear(); for (const std::string& c : cs) chunks.push_back(static_cast<uint32_t>(std::atoi(c.c_str()))); }
+    list_s(env("CACHEDMOE_PF_ELEM_SPV"), spvs);
+    if (const char* e = env("CACHEDMOE_PF_ELEM_CHUNK")) { std::vector<std::string> cs; list_s(e, cs); chunks.clear(); for (const std::string& c : cs) chunks.push_back(static_cast<uint32_t>(std::atoi(c.c_str()))); }
     for (uint32_t n : o.ns) {
         gpu::GpuBuffer h = must_alloc(rig.alloc, uint64_t(n) * hc * d * 4), out = must_alloc(rig.alloc, uint64_t(n) * hc * d * 4);
         gpu::GpuBuffer a = must_alloc(rig.alloc, uint64_t(n) * d * 4), cf = must_alloc(rig.alloc, uint64_t(n) * 24 * 4);
@@ -834,7 +829,7 @@ int run_prefill(const Options& o) {
     const TextConfig& c = cfgj->text;
     auto tables = runtime::EngramTables::load(o.l3);
     if (!tables) { std::fprintf(stderr, "engram tables (%s): %s\n", o.l3.c_str(), tables.error().str().c_str()); return 1; }
-    if (env("DEEPMOE_PF_ENGRAM_SCALES")) {  // §7 0as: scale planes resident, one read a row
+    if (env("CACHEDMOE_PF_ENGRAM_SCALES")) {  // §7 0as: scale planes resident, one read a row
         std::vector<int64_t> layers;
         for (const auto& e : rig.manifest.engram()) layers.push_back(e.layer);
         const auto t0 = std::chrono::steady_clock::now();
@@ -883,22 +878,22 @@ int run_prefill(const Options& o) {
             pc.max_tokens = n;
             pc.replay = replay ? replay : n;
             pc.tile = o.tiles.empty() ? 8 : o.tiles[0];
-            if (const char* e = env("DEEPMOE_PF_ADAPTIVE_TILE")) pc.adaptive_moe_tile = std::atoi(e) != 0;
+            if (const char* e = env("CACHEDMOE_PF_ADAPTIVE_TILE")) pc.adaptive_moe_tile = std::atoi(e) != 0;
             pc.transit_slots = o.transit;
             pc.transit_segments = o.ring;
-            if (const char* e = env("DEEPMOE_PF_ENGRAM_AHEAD")) pc.engram_ahead = std::atoi(e) != 0;   // §7 0ax
-            if (const char* e = env("DEEPMOE_PF_FUSE_FP4")) pc.fuse_fp4 = std::atoi(e) != 0;           // §7 0ba
-            if (const char* e = env("DEEPMOE_PF_AHEAD_TAIL")) pc.read_ahead_tail = std::atoi(e) != 0;  // §7 0bj
-            if (const char* e = env("DEEPMOE_PF_FP4_WM")) pc.fp4_wm = static_cast<uint32_t>(std::atoi(e));
+            if (const char* e = env("CACHEDMOE_PF_ENGRAM_AHEAD")) pc.engram_ahead = std::atoi(e) != 0;   // §7 0ax
+            if (const char* e = env("CACHEDMOE_PF_FUSE_FP4")) pc.fuse_fp4 = std::atoi(e) != 0;           // §7 0ba
+            if (const char* e = env("CACHEDMOE_PF_AHEAD_TAIL")) pc.read_ahead_tail = std::atoi(e) != 0;  // §7 0bj
+            if (const char* e = env("CACHEDMOE_PF_FP4_WM")) pc.fp4_wm = static_cast<uint32_t>(std::atoi(e));
             pc.coopmat_min_rows = cmin;
             pc.coopmat_dense_min_rows = cden;
-            if (const char* e = env("DEEPMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
-            if (const char* e = env("DEEPMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
-            if (const char* e = env("DEEPMOE_PF_ATTN_DV")) pc.attn_pv_dim_tiles = static_cast<uint32_t>(std::atoi(e));
+            if (const char* e = env("CACHEDMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
+            if (const char* e = env("CACHEDMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
+            if (const char* e = env("CACHEDMOE_PF_ATTN_DV")) pc.attn_pv_dim_tiles = static_cast<uint32_t>(std::atoi(e));
             if (dv) pc.attn_pv_dim_tiles = dv;
             if (ctt) pc.coop_tok_tiles = ctt;
-            if (const char* e = env("DEEPMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
-            if (const char* e = env("DEEPMOE_PF_LDS")) pc.lds_gemm = *e != '0';
+            if (const char* e = env("CACHEDMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
+            if (const char* e = env("CACHEDMOE_PF_LDS")) pc.lds_gemm = *e != '0';
             gpu::Prefill pf;
             if (auto r = pf.create(rig.device, rig.alloc, rig.runner, rig.manifest, rig.shards, rig.io,
                                    rig.pinned, c, &*tables, pc); !r) {
@@ -952,8 +947,8 @@ int run_prefill(const Options& o) {
                 std::vector<std::pair<std::string, gpu::PrefillTimes::Op>> ops(t.per_op.begin(), t.per_op.end());
                 std::sort(ops.begin(), ops.end(),
                           [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
-                // DEEPMOE_PF_ALLOPS=1 prints the whole profile, not just the top 14.
-                const size_t show = env("DEEPMOE_PF_ALLOPS") ? ops.size() : std::min<size_t>(ops.size(), 14);
+                // CACHEDMOE_PF_ALLOPS=1 prints the whole profile, not just the top 14.
+                const size_t show = env("CACHEDMOE_PF_ALLOPS") ? ops.size() : std::min<size_t>(ops.size(), 14);
                 {   // the drives against the GPU, phase by phase (§7 0av)
                     double pre = 0, moe = 0, post = 0; uint64_t bpre = 0, bmoe = 0, bpost = 0;
                     for (const auto& l : t.layers) {
@@ -1033,7 +1028,7 @@ int run_prefill(const Options& o) {
 int main(int argc, char** argv) {
     set_log_level(LogLevel::Warn);
     Options o;
-    if (const char* e = env("DEEPMOE_MODEL_DIR")) o.model_dir = e;
+    if (const char* e = env("CACHEDMOE_MODEL_DIR")) o.model_dir = e;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a = argv[i];
         auto next = [&]() -> std::string {
@@ -1074,7 +1069,7 @@ int main(int argc, char** argv) {
         else if (a == "--coop-tt") o.coop_tt = list(next());
         else { std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data()); return 2; }
     }
-    if (o.model_dir.empty()) { std::fputs("set --model-dir or DEEPMOE_MODEL_DIR\n", stderr); return 2; }
+    if (o.model_dir.empty()) { std::fputs("set --model-dir or CACHEDMOE_MODEL_DIR\n", stderr); return 2; }
     if (o.section == "gemm") return run_gemm(o);
     if (o.section == "prefill") return run_prefill(o);
     if (o.section == "coopgeo") return run_coopgeo(o);

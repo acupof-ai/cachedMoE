@@ -2,7 +2,7 @@
 
 The ledger is appended to only by `tools/perf_report.py --record LABEL`, which
 copies each number from the run's own files and the run's provenance.json (what
-commit, which files dirty, which binary and shaders, which DEEPMOE_* switches).
+commit, which files dirty, which binary and shaders, which CACHEDMOE_* switches).
 This script rewrites the block between
 
     <!-- perf-ledger:begin -->
@@ -23,6 +23,10 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
 
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER = ROOT / "bench" / "results" / "perf_ledger.jsonl"
@@ -46,10 +50,11 @@ def code(p: dict) -> str:
 
 
 def switches(p: dict) -> str:
-    env = {k: v for k, v in p.get("env", {}).items()
-           if k not in ("DEEPMOE_ROUTE_DUMP", "DEEPMOE_MODEL_DIR", "DEEPMOE_SHADER_DIR",
-                        "DEEPMOE_LONGCTX_DIR")}
-    s = " ".join(f"{k.removeprefix('DEEPMOE_')}={v}" for k, v in env.items())
+    excluded = {"ROUTE_DUMP", "MODEL_DIR", "SHADER_DIR", "LONGCTX_DIR"}
+    env = runtime_env.effective_controls(p.get("env", {}))
+    s = " ".join(f"{k.removeprefix(runtime_env.CANONICAL_PREFIX)}={selected.value}"
+                 for k, selected in env.items()
+                 if k.removeprefix(runtime_env.CANONICAL_PREFIX) not in excluded)
     return s or "–"
 
 

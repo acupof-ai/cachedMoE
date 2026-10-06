@@ -44,10 +44,10 @@ decoded, which is what the full decoder forward gives.
 
 Usage
 -----
-    uv run python tools/route_trace.py --model "$DEEPMOE_MODEL_DIR" \\
+    uv run python tools/route_trace.py --model "$CACHEDMOE_MODEL_DIR" \\
         --verify --out traces/smoke
 
-    uv run python tools/route_trace.py --model "$DEEPMOE_MODEL_DIR" \\
+    uv run python tools/route_trace.py --model "$CACHEDMOE_MODEL_DIR" \\
         --tokens 20000 --out traces/mixed        # resumable; re-run to continue
 """
 

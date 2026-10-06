@@ -31,7 +31,7 @@ def read_trace(path):
         if len(row['target_routes']) != 40 * (k + 1) * 6:
             raise ValueError('invalid main route geometry')
         if len(row['draft_routes']) != 45 or (k and not row['draft_routes_valid']):
-            raise ValueError('draft routes unavailable; collect with DEEPMOE_DSPARK_MEGA=0')
+            raise ValueError('draft routes unavailable; collect with CACHEDMOE_DSPARK_MEGA=0')
         if any(not math.isfinite(x) for x in row['confidence']):
             raise ValueError('nonfinite confidence')
         if any(not 0 <= e < 384 for e in row['target_routes']) or any(not 0 <= e < 128 for e in row['draft_routes']):

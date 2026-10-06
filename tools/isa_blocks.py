@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static instruction mix per basic block of a DEEPMOE_PIPELINE_STATS ISA dump.
+"""Static instruction mix per basic block of a CACHEDMOE_PIPELINE_STATS ISA dump.
 
 The hardware instruction counters on this machine under-report (STATUS §7 0bq), so
 "how many instructions does this kernel issue" is answered here instead: static

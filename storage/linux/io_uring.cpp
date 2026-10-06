@@ -4,7 +4,7 @@
 // read path there.
 //
 // Ownership/threading: one ring. `submit` may be called from several threads at
-// once -- IoEngine's submit pool does exactly that when DEEPMOE_IO_SUBMIT_THREADS
+// once -- IoEngine's submit pool does exactly that when CACHEDMOE_IO_SUBMIT_THREADS
 // > 1 (on Linux the default is the dispatcher alone, io_engine.h says why) --
 // so the SQ producer side is serialised by `sq_mutex_`; the SQ
 // ring is single-producer and two unserialised writers overwrite each other's

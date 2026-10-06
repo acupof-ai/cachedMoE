@@ -5,6 +5,8 @@ add_executable(deepmoe_tests
     test_main.cpp
     test_core.cpp
     test_runtime_config.cpp
+    test_env_alias.cpp
+    test_env_alias_other_tu.cpp
     test_dequant.cpp
     test_store.cpp
     test_resident_route.cpp
@@ -40,7 +42,7 @@ add_test(NAME deepmoe_tests COMMAND deepmoe_tests)
 foreach(_suite align layout types json profiler status bytes
                 dequant gate slab expert_store planner resident_route
                 io v41_config manifest block_info kvcache kvstore trace
-                cache_cap runtime_config decode_mode)
+                cache_cap runtime_config decode_mode env_alias)
     add_test(NAME "suite.${_suite}" COMMAND deepmoe_tests "${_suite}.")
 endforeach()
 
@@ -147,7 +149,7 @@ set_tests_properties("suite.gpu_moe" PROPERTIES
 # Everything else must keep passing on a machine with no weights at all.
 foreach(_t deepmoe_tests align layout types json profiler status bytes
            dequant gate slab expert_store planner resident_route io v41_config
-           manifest block_info kvcache kvstore runtime_config decode_mode)
+           manifest block_info kvcache kvstore runtime_config decode_mode env_alias)
     if(_t STREQUAL "deepmoe_tests")
         set_tests_properties("${_t}" PROPERTIES LABELS "unit;needs-model")
     else()

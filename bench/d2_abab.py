@@ -114,7 +114,7 @@ def run_cell(args, arm, script, i):
     if args.arm_env or arm == "on":
         cmd += ["--serve-arg=--mirror", f"--serve-arg={args.mirror}"]
         if args.weights:
-            cmd += ["--env", f"DEEPMOE_MIRROR_WEIGHTS={args.weights}"]
+            cmd += ["--env", f"CACHEDMOE_MIRROR_WEIGHTS={args.weights}"]
     for e in (args.off_env if arm == "off" else args.on_env):
         cmd += ["--env", e]
     for e in args.env:
@@ -142,7 +142,7 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--script", action="append", required=True)
     ap.add_argument("--mirror", required=True)
-    ap.add_argument("--weights", default="", help="DEEPMOE_MIRROR_WEIGHTS, e.g. 4.6;1.0")
+    ap.add_argument("--weights", default="", help="CACHEDMOE_MIRROR_WEIGHTS, e.g. 4.6;1.0")
     ap.add_argument("--pairs", type=int, default=3)
     ap.add_argument("--cache-slots", type=int, default=5100)
     ap.add_argument("--max-context", type=int, default=4096)
@@ -152,7 +152,7 @@ def main() -> int:
                     help="both arms run WITH --mirror; the arms differ only by "
                          "--off-env/--on-env (Track D6)")
     ap.add_argument("--off-env", action="append", default=[],
-                    help="env for the off arm only, e.g. DEEPMOE_MIRROR_KEEPALIVE_MS=0")
+                    help="env for the off arm only, e.g. CACHEDMOE_MIRROR_KEEPALIVE_MS=0")
     ap.add_argument("--on-env", action="append", default=[],
                     help="env for the on arm only")
     ap.add_argument("--serve-arg", action="append", default=[],

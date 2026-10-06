@@ -17,7 +17,8 @@
 //   * that every specialisation variant of design §7.1 computes the same thing;
 //   * that the expert indirection list of design §7.9 selects the right expert.
 //
-// Gated on DEEPMOE_MODEL_DIR and on a working Vulkan device; a skip is a pass.
+// Gated on CACHEDMOE_MODEL_DIR and on a working Vulkan device; a skip is a pass.
+#include "core/env.h"
 #include <bit>
 #include <algorithm>
 #include <cmath>
@@ -823,7 +824,7 @@ DEEPMOE_TEST(mgt1, moe_m_curve) {
 
 
     const uint32_t iters = [] {
-        if (const char* e = std::getenv("DEEPMOE_MOE_M_ITERS"); e && *e)
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_M_ITERS"); e && *e)
             return uint32_t(std::strtoul(e, nullptr, 10));
         return 10u;
     }();
@@ -1017,7 +1018,7 @@ DEEPMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
         CHECK(spread / ymax > 0.05);
     }
 
-    if (std::getenv("DEEPMOE_TEST_GPU_ROUTE")) {
+    if (::deepmoe::environment::get("CACHEDMOE_TEST_GPU_ROUTE")) {
         constexpr auto kColumns = layout::kMoeBatchColumns;
         constexpr auto kGateRecords = layout::kGateRecordCount;
         constexpr auto kAddressWords = layout::kExpertAddressWords;
@@ -1166,7 +1167,7 @@ DEEPMOE_TEST(mgt1, moe_union_m_curve) {
     if (skip_without_model("mgt1.moe_union_m_curve")) return;
 
     const uint32_t iters = [] {
-        if (const char* e = std::getenv("DEEPMOE_MOE_M_ITERS"); e && *e)
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_M_ITERS"); e && *e)
             return uint32_t(std::strtoul(e, nullptr, 10));
         return 10u;
     }();

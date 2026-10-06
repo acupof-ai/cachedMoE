@@ -352,7 +352,7 @@ struct PrefillConfig {
     // The cooperative-matrix GEMM on prefill_gemm_lds.slang -- four waves
     // sharing LDS tiles, 128 rows x 64 tokens a workgroup (64 x 64 when the
     // rows only divide by 64) -- instead of prefill_coopmat stage 0, whenever
-    // the shape tiles. Bit for bit the same result. DEEPMOE_PF_LDS=0 = stage 0.
+    // the shape tiles. Bit for bit the same result. CACHEDMOE_PF_LDS=0 = stage 0.
     bool     lds_gemm = true;
     // wo_a (and any grouped linear) on cooperative matrix instead of the
     // tiled GEMV. false = the pre-F3 path, which is the reference.

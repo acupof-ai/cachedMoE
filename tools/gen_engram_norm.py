@@ -21,6 +21,11 @@ import sys
 
 from tokenizers import Regex, Tokenizer, normalizers
 
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 SBASE, LBASE, VBASE, TBASE, TCOUNT, NCOUNT = 0xAC00, 0x1100, 0x1161, 0x11A7, 28, 588
 
 
@@ -34,7 +39,7 @@ def hangul(cp):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default=os.environ.get("DEEPMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))))
+    ap.add_argument("--model", default=runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))))
     args = ap.parse_args()
     core = normalizers.Sequence([normalizers.NFKC(), normalizers.NFD(), normalizers.StripAccents(),
                                  normalizers.Lowercase()])

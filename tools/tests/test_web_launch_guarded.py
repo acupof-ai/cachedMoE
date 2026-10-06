@@ -97,9 +97,9 @@ class GuardedWeb(unittest.TestCase):
     def test_default_command_and_environment_are_explicit(self):
         args = launch.arguments(["--repo", "/tmp/deepmoe-test"])
         command, env = launch.launch_configuration(args, {
-            "DEEPMOE_SPEC_DIAGNOSTICS": "stale.jsonl", "DEEPMOE_MASK_WAIT_TAU": ".20",
-            "DEEPMOE_MASK_WAIT_BUDGET": "8,20", "DEEPMOE_DSPARK_MEGA_DIAG": "1",
-            "DEEPMOE_MODEL_MIRRORS": "/tmp/old-mirror", "KEEP_ME": "yes"})
+            "CACHEDMOE_SPEC_DIAGNOSTICS": "stale.jsonl", "CACHEDMOE_MASK_WAIT_TAU": ".20",
+            "CACHEDMOE_MASK_WAIT_BUDGET": "8,20", "CACHEDMOE_DSPARK_MEGA_DIAG": "1",
+            "CACHEDMOE_MODEL_MIRRORS": "/tmp/old-mirror", "KEEP_ME": "yes"})
         for flag, expected in (("--resident-only", "mask"), ("--mask-cache", "dynamic"),
                                ("--cache-slots", "5500"), ("--max-context", "1048576"),
                                ("--gpu-prefill-min", "16"), ("--spec-k", "2"),
@@ -107,12 +107,12 @@ class GuardedWeb(unittest.TestCase):
             self.assertEqual(command[command.index(flag) + 1], expected)
         self.assertIn("--dspark", command)
         self.assertEqual(command[command.index("--kv-dir") + 1], "/tmp/deepmoe-test/build/web_mask/kv")
-        self.assertEqual(env["DEEPMOE_DSPARK_ONECB"], "1")
-        self.assertEqual(env["DEEPMOE_BATCH_GPU_ROUTE"], "0")
-        self.assertEqual(env["DEEPMOE_DSPARK_PROFILE"], "0")
+        self.assertEqual(env["CACHEDMOE_DSPARK_ONECB"], "1")
+        self.assertEqual(env["CACHEDMOE_BATCH_GPU_ROUTE"], "0")
+        self.assertEqual(env["CACHEDMOE_DSPARK_PROFILE"], "0")
         self.assertEqual(env["KEEP_ME"], "yes")
-        for key in ("DEEPMOE_SPEC_DIAGNOSTICS", "DEEPMOE_MASK_WAIT_TAU",
-                    "DEEPMOE_MASK_WAIT_BUDGET", "DEEPMOE_DSPARK_MEGA_DIAG", "DEEPMOE_MODEL_MIRRORS"):
+        for key in ("CACHEDMOE_SPEC_DIAGNOSTICS", "CACHEDMOE_MASK_WAIT_TAU",
+                    "CACHEDMOE_MASK_WAIT_BUDGET", "CACHEDMOE_DSPARK_MEGA_DIAG", "CACHEDMOE_MODEL_MIRRORS"):
             self.assertNotIn(key, env)
 
     def test_selected_d_configuration_and_existing_state_dir(self):
@@ -120,7 +120,7 @@ class GuardedWeb(unittest.TestCase):
         command, env = launch.launch_configuration(args, {})
         self.assertEqual(command[command.index("--spec-k") + 1], "5")
         self.assertEqual(command[command.index("--kv-dir") + 1], "/tmp/existing/kv")
-        self.assertEqual(env["DEEPMOE_BATCH_GPU_ROUTE"], "1")
+        self.assertEqual(env["CACHEDMOE_BATCH_GPU_ROUTE"], "1")
 
     def test_unsupported_spec_size_is_rejected(self):
         with patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):

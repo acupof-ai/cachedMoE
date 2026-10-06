@@ -11,6 +11,10 @@ import os
 from pathlib import Path
 import sys
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import chat
@@ -31,7 +35,7 @@ def main():
     parser.add_argument("--shader-dir", required=True)
     parser.add_argument("--power-profile", choices=("performance", "power-saver"), required=True)
     parser.add_argument("--arms", default="off,mask")
-    parser.add_argument("--thermal-log", default=os.environ.get("DEEPMOE_THERMAL_LOG"))
+    parser.add_argument("--thermal-log", default=runtime_env.getenv("CACHEDMOE_THERMAL_LOG"))
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)

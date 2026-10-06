@@ -11,10 +11,10 @@
 // If the manifest's run/skew arithmetic is wrong by one byte, this is the test
 // that says so.
 //
-// It needs the checkpoint, so it is gated on DEEPMOE_MODEL_DIR:
+// It needs the checkpoint, so it is gated on CACHEDMOE_MODEL_DIR:
 //
 //   ctest --test-dir build                       # skips, and says why
-//   DEEPMOE_MODEL_DIR=D:\models\DeepSeek-V4.1-Flash ctest --test-dir build
+//   CACHEDMOE_MODEL_DIR=D:\models\DeepSeek-V4.1-Flash ctest --test-dir build
 //
 // A skip is a pass. A machine that has the weights must not be able to leave
 // this test silently unrun, so the skip prints a line naming the variable.

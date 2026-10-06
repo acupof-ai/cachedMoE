@@ -205,7 +205,7 @@ inline bool keepalive_due(const KeepAliveState& s, int64_t now_ns, int64_t idle_
 // endpoint's status.json.
 struct SourceStats {
     std::string root;              // the model directory this source reads from
-    double   weight   = 1.0;       // GB/s, measured or DEEPMOE_MIRROR_WEIGHTS
+    double   weight   = 1.0;       // GB/s, measured or CACHEDMOE_MIRROR_WEIGHTS
     uint64_t requests = 0;         // routed requests that have completed
     uint64_t bytes    = 0;         // bytes those requests moved
     uint64_t lat_ns_sum = 0;       // submit -> last chunk, summed
@@ -216,7 +216,7 @@ struct SourceStats {
     uint32_t readmits = 0;         // times it answered again and came back
     uint64_t failovers = 0;        // of those errors, re-read from the primary
     // Track ST: chunks this source served as one share of a STRIPED P0 request
-    // (DEEPMOE_MIRROR_STRIPE). For a striped request `requests` counts each
+    // (CACHEDMOE_MIRROR_STRIPE). For a striped request `requests` counts each
     // source that carried at least one chunk, `bytes` is that source's share
     // and the latencies run from submit to that source's LAST chunk -- so the
     // slower drive's tail is visible per source instead of being averaged away.

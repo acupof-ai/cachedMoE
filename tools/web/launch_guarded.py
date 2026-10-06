@@ -20,6 +20,10 @@ import subprocess
 import sys
 import time
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import runtime_env
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "bench"))
 from thermal_guard import (ProfileMonitor, ThermalLatch, assert_idle,
@@ -88,20 +92,19 @@ def arguments(argv=None):
 
 
 def launch_configuration(args, inherited=None):
-    env = dict(os.environ if inherited is None else inherited)
-    for key in ("DEEPMOE_SPEC_DIAGNOSTICS", "DEEPMOE_DSPARK_MEGA_DIAG",
-                "DEEPMOE_MASK_WAIT_TAU", "DEEPMOE_MASK_WAIT_BUDGET",
-                "DEEPMOE_THERMAL_LOG", "DEEPMOE_IO_ENGRAM_DEADLINE",
-                "DEEPMOE_MODEL_MIRRORS"):
-        env.pop(key, None)
-    env.update(DEEPMOE_MODEL_DIR=str(Path.home() / "models/DeepSeek-V4.1-Flash"),
-               DEEPMOE_SHADER_DIR=str(args.repo / "build/shaders"),
-               DEEPMOE_MIRROR_AUTO="0",
-               DEEPMOE_MASK_DYNAMIC_LRU="1", DEEPMOE_DSPARK_PROFILE="0",
-               DEEPMOE_DSPARK_ONECB="1", DEEPMOE_BATCH_GPU_ROUTE=str(args.gpu_route),
-               DEEPMOE_DSPARK_MEGA="0", DEEPMOE_DSPARK_TRIM_TAIL="1",
-               DEEPMOE_SPEC_GPU_READOUT="1", DEEPMOE_MGT_PAIR_DOT="0",
-               DEEPMOE_MGT_ATTN_CM="0", DEEPMOE_MGT_FOLD_SCALE="0")
+    # This is a controlled production launch. Shell benchmark switches must
+    # not change the selected policy, including through a legacy alias.
+    source = os.environ if inherited is None else inherited
+    env = {key: value for key, value in source.items()
+           if not runtime_env.is_control(key)}
+    env.update(CACHEDMOE_MODEL_DIR=str(Path.home() / "models/DeepSeek-V4.1-Flash"),
+               CACHEDMOE_SHADER_DIR=str(args.repo / "build/shaders"),
+               CACHEDMOE_MIRROR_AUTO="0",
+               CACHEDMOE_MASK_DYNAMIC_LRU="1", CACHEDMOE_DSPARK_PROFILE="0",
+               CACHEDMOE_DSPARK_ONECB="1", CACHEDMOE_BATCH_GPU_ROUTE=str(args.gpu_route),
+               CACHEDMOE_DSPARK_MEGA="0", CACHEDMOE_DSPARK_TRIM_TAIL="1",
+               CACHEDMOE_SPEC_GPU_READOUT="1", CACHEDMOE_MGT_PAIR_DOT="0",
+               CACHEDMOE_MGT_ATTN_CM="0", CACHEDMOE_MGT_FOLD_SCALE="0")
     command = [sys.executable, str(args.repo / "tools/web/server.py"),
                "--exe", str(args.repo / "build/deepmoe"),
                "--resident-only", "mask", "--mask-cache", "dynamic",
@@ -435,8 +438,8 @@ def main(argv=None):
     args = arguments(argv)
     command, env = launch_configuration(args)
     if args.dry_run:
-        print(json.dumps(dict(command=command, env={k: v for k, v in env.items()
-                         if k.startswith("DEEPMOE_")}, power_profile="performance"), indent=2))
+        print(json.dumps(dict(command=command, env=runtime_env.raw_controls(env),
+                              power_profile="performance"), indent=2))
         return 0
     require_pidfd_support()
     assert_idle()

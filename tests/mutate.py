@@ -46,6 +46,10 @@ import tempfile
 import time
 from pathlib import Path
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 
@@ -159,7 +163,7 @@ MUTATIONS = [
     ("io", [("storage/io_engine.cpp",
              "    stripe_ = mirrors_on_;\n",
              "    stripe_ = false;\n")],
-     "route whole requests unless DEEPMOE_MIRROR_STRIPE asks for chunks",
+     "route whole requests unless CACHEDMOE_MIRROR_STRIPE asks for chunks",
      "caught", False),
 
     # --- a readmitted mirror starts from a whole error budget, on fresh handles
@@ -313,11 +317,11 @@ def main() -> int:
         w = max(len(r[2]) for r in rows)
         for suite, edits, label, expect, needs in rows:
             print(f"  {label:<{w}}  {suite:<16} {expect:<10} "
-                  f"{'needs DEEPMOE_MODEL_DIR' if needs else ''}")
+                  f"{'needs CACHEDMOE_MODEL_DIR' if needs else ''}")
         print(f"\n{len(rows)} mutations")
         return 0
 
-    have_model = bool(os.environ.get("DEEPMOE_MODEL_DIR"))
+    have_model = bool(runtime_env.getenv("CACHEDMOE_MODEL_DIR"))
     root, build_dir = ROOT, Path(a.build_dir)
 
     if a.copy:
@@ -359,7 +363,7 @@ def main() -> int:
     results = []
     for suite, edits, label, expect, needs in rows:
         if needs and not have_model:
-            results.append((label, suite, "skipped", "no DEEPMOE_MODEL_DIR", True))
+            results.append((label, suite, "skipped", "no CACHEDMOE_MODEL_DIR", True))
             continue
 
         applied = True
@@ -416,7 +420,7 @@ def main() -> int:
     ran = len(results) - len(skipped)
     print(f"\n{ran - len(bad)}/{ran} mutations behaved as expected"
           + (f" -- unexpected: {', '.join(bad)}" if bad else "")
-          + (f"\n{len(skipped)} skipped (set DEEPMOE_MODEL_DIR to run them)" if skipped else ""))
+          + (f"\n{len(skipped)} skipped (set CACHEDMOE_MODEL_DIR to run them)" if skipped else ""))
     return 1 if bad else 0
 
 

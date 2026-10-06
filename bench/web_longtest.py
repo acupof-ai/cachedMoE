@@ -16,10 +16,28 @@ import time
 import urllib.error
 import urllib.request
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import provenance
 from repetition_metrics import from_events
+
+
+def run_environment(args, out, speculative, inherited=None):
+    source = os.environ if inherited is None else inherited
+    env = runtime_env.canonicalized(source)
+    env["XDG_CACHE_HOME"] = str(out / "session_state")
+    runtime_env.clear(env, "SPEC_DIAGNOSTICS", "ROUTE_DUMP")
+    env.update(CACHEDMOE_MASK_DYNAMIC_LRU="0" if args.mask_cache == "fixed" else "1",
+               CACHEDMOE_DSPARK_PROFILE="0",
+               CACHEDMOE_DSPARK_ONECB=str(args.onecb) if speculative else "0",
+               CACHEDMOE_BATCH_GPU_ROUTE=str(args.gpu_route) if speculative else "0",
+               CACHEDMOE_DSPARK_MEGA="0", CACHEDMOE_MGT_PAIR_DOT="0",
+               CACHEDMOE_MGT_ATTN_CM="0", CACHEDMOE_MGT_FOLD_SCALE="0")
+    return env
 
 
 def main():
@@ -42,15 +60,7 @@ def main():
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     script = json.loads(args.script.read_text())
-    env = dict(os.environ)
-    env["XDG_CACHE_HOME"] = str(out / "session_state")
-    for key in ("DEEPMOE_SPEC_DIAGNOSTICS", "DEEPMOE_ROUTE_DUMP"):
-        env.pop(key, None)
-    env.update(DEEPMOE_MASK_DYNAMIC_LRU="0" if args.mask_cache == "fixed" else "1", DEEPMOE_DSPARK_PROFILE="0",
-        DEEPMOE_DSPARK_ONECB=str(args.onecb) if speculative else "0",
-        DEEPMOE_BATCH_GPU_ROUTE=str(args.gpu_route) if speculative else "0",
-        DEEPMOE_DSPARK_MEGA="0", DEEPMOE_MGT_PAIR_DOT="0",
-        DEEPMOE_MGT_ATTN_CM="0", DEEPMOE_MGT_FOLD_SCALE="0")
+    env = run_environment(args, out, speculative)
     command = [sys.executable, str(ROOT / "tools/web/server.py"), "--exe", str(args.exe.resolve()),
         "--resident-only", "off" if args.mode == "off" else "mask", "--mask-cache", args.mask_cache,
         "--cache-slots", "5500", "--max-context", "4096",

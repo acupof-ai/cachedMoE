@@ -8,6 +8,7 @@
 // resolved fields, rather than inspecting the process environment.
 #pragma once
 
+#include "core/env.h"
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
@@ -49,11 +50,11 @@ struct IoConfig {
     // When a P0 arrives, stop issuing new chunks from P1..P3 until it drains.
     bool     preempt_on_blocking = true;
     // P0 (blocking miss) only; 0 = chunk_bytes / max_inflight_ops. The
-    // DEEPMOE_IO_P0_CHUNK_MB / _QD environment knobs override these.
+    // CACHEDMOE_IO_P0_CHUNK_MB / _QD environment knobs override these.
     uint32_t p0_chunk_bytes     = 0;
     uint32_t p0_qd              = 0;
     // P2 (engram rows, 4 KiB random reads) only; 0 = the background classes'
-    // depth. DEEPMOE_IO_ENGRAM_QD overrides it.
+    // depth. CACHEDMOE_IO_ENGRAM_QD overrides it.
     uint32_t engram_qd          = 0;
 };
 
@@ -103,25 +104,25 @@ struct GpuExecutionConfig {
 
     void apply_environment() {
         const auto exact_one = [](const char* key, bool& value) {
-            if (const char* e = std::getenv(key)) value = std::string_view(e) == "1";
+            if (const char* e = ::deepmoe::environment::get(key)) value = std::string_view(e) == "1";
         };
         const auto first_one = [](const char* key, bool& value) {
-            if (const char* e = std::getenv(key)) value = *e == '1';
+            if (const char* e = ::deepmoe::environment::get(key)) value = *e == '1';
         };
         const auto not_zero = [](const char* key, bool& value) {
-            if (const char* e = std::getenv(key)) value = *e != '0';
+            if (const char* e = ::deepmoe::environment::get(key)) value = *e != '0';
         };
-        exact_one("DEEPMOE_BATCH_GPU_ROUTE", batch_gpu_route);
-        not_zero("DEEPMOE_BATCH_ENGRAM_EARLY", batch_engram_early);
-        not_zero("DEEPMOE_SPEC_GPU_READOUT", spec_gpu_readout);
-        exact_one("DEEPMOE_DSPARK_ONECB", draft_onecb);
-        exact_one("DEEPMOE_DSPARK_MEGA", draft_mega);
-        exact_one("DEEPMOE_DSPARK_PROFILE", draft_profile);
-        if (std::getenv("DEEPMOE_DSPARK_MEGA_DIAG")) draft_diagnostics = true;
-        not_zero("DEEPMOE_DSPARK_TRIM_TAIL", draft_trim_tail);
-        first_one("DEEPMOE_MGT_PAIR_DOT", mgt_pair_dot);
-        not_zero("DEEPMOE_MGT_FOLD_SCALE", mgt_fold_scale);
-        not_zero("DEEPMOE_MGT_ATTN_CM", mgt_attn_cm);
+        exact_one("CACHEDMOE_BATCH_GPU_ROUTE", batch_gpu_route);
+        not_zero("CACHEDMOE_BATCH_ENGRAM_EARLY", batch_engram_early);
+        not_zero("CACHEDMOE_SPEC_GPU_READOUT", spec_gpu_readout);
+        exact_one("CACHEDMOE_DSPARK_ONECB", draft_onecb);
+        exact_one("CACHEDMOE_DSPARK_MEGA", draft_mega);
+        exact_one("CACHEDMOE_DSPARK_PROFILE", draft_profile);
+        if (::deepmoe::environment::get("CACHEDMOE_DSPARK_MEGA_DIAG")) draft_diagnostics = true;
+        not_zero("CACHEDMOE_DSPARK_TRIM_TAIL", draft_trim_tail);
+        first_one("CACHEDMOE_MGT_PAIR_DOT", mgt_pair_dot);
+        not_zero("CACHEDMOE_MGT_FOLD_SCALE", mgt_fold_scale);
+        not_zero("CACHEDMOE_MGT_ATTN_CM", mgt_attn_cm);
     }
 };
 
@@ -140,26 +141,26 @@ struct DecodeExecutionConfig {
 
     void apply_environment() {
         const auto positive = [](const char* key, double& value, double fallback) {
-            if (const char* e = std::getenv(key)) {
+            if (const char* e = ::deepmoe::environment::get(key)) {
                 const double parsed = std::atof(e);
                 value = parsed > 0 ? parsed : fallback;
             }
         };
         const auto optional_flag = [](const char* key, std::optional<bool>& value) {
-            if (const char* e = std::getenv(key))
+            if (const char* e = ::deepmoe::environment::get(key))
                 value = *e ? std::optional<bool>(*e != '0') : std::nullopt;
         };
-        positive("DEEPMOE_GPU_WAIT_S", gpu_wait_budget_seconds, 900);
-        positive("DEEPMOE_FENCE_SPIN_US", fence_spin_microseconds, 0);
-        optional_flag("DEEPMOE_SHARED_EARLY", shared_early);
-        optional_flag("DEEPMOE_MS_EAGER_MOE", eager_moe);
-        if (const char* e = std::getenv("DEEPMOE_SHARED_EARLY_MS"))
+        positive("CACHEDMOE_GPU_WAIT_S", gpu_wait_budget_seconds, 900);
+        positive("CACHEDMOE_FENCE_SPIN_US", fence_spin_microseconds, 0);
+        optional_flag("CACHEDMOE_SHARED_EARLY", shared_early);
+        optional_flag("CACHEDMOE_MS_EAGER_MOE", eager_moe);
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_SHARED_EARLY_MS"))
             shared_early_multistream = *e && *e != '0';
         // This diagnostic used presence, including "0", in the old path.
-        if (std::getenv("DEEPMOE_SE_CHECK")) shared_early_check = true;
-        if (const char* e = std::getenv("DEEPMOE_MASK_DYNAMIC_LRU"))
+        if (::deepmoe::environment::get("CACHEDMOE_SE_CHECK")) shared_early_check = true;
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MASK_DYNAMIC_LRU"))
             dynamic_mask_lru = std::string_view(e) != "0";
-        if (const char* e = std::getenv("DEEPMOE_IO_ENGRAM_DEADLINE"))
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_IO_ENGRAM_DEADLINE"))
             engram_deadline = std::string_view(e) == "1";
     }
 };
@@ -172,7 +173,7 @@ struct RuntimeConfig {
     // Track D2 (docs/p4_dual_source.md): further directories holding
     // byte-identical copies of the same shards, on other physical drives.
     // Empty (the default) is the single-drive run, unchanged down to the byte.
-    // Filled from --mirror DIR or DEEPMOE_MODEL_MIRRORS (';'-separated).
+    // Filled from --mirror DIR or CACHEDMOE_MODEL_MIRRORS (';'-separated).
     std::vector<std::string> model_mirrors;
     // Hold every engram layer's scale plane (8 B a row, 3.07 GB a layer) in
     // host memory, so a row is one 4 KiB read instead of two (STATUS §7 0as).

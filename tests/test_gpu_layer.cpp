@@ -10,7 +10,8 @@
 // pre/post/comb handoff of design §2.4 given to the wrong sublayer, a missing
 // barrier, the two mega_mhc halves stepping on each other's address table.
 //
-// Gated on DEEPMOE_MODEL_DIR, on tests/data/l2, and on a Vulkan device.
+// Gated on CACHEDMOE_MODEL_DIR, on tests/data/l2, and on a Vulkan device.
+#include "core/env.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -272,7 +273,7 @@ DEEPMOE_TEST(gpu_layer, decode_layer_vs_oracle) {
 // Track T: the verify batch, one layer at a time (docs/p4_mgt1.md).
 //
 // For each probe layer, each M in {2, 4, 6} and each context (the L3 prompt's
-// 64 tokens; 4K with DEEPMOE_LONGCTX_DIR), from the export's prefill state and
+// 64 tokens; 4K with CACHEDMOE_LONGCTX_DIR), from the export's prefill state and
 // with the reference batch's own block input at that layer:
 //
 //   (1) M one-token steps through the M = 1 DecodeLayer, one position after
@@ -284,19 +285,19 @@ DEEPMOE_TEST(gpu_layer, decode_layer_vs_oracle) {
 // equivalence the batch has to have -- and (2) with the reference's generalised
 // batch (tools/oracle_dspark.py --mgt1), per stage.
 //
-// Data: DEEPMOE_MGT1_DIR (default <repo>/traces/mgt1), written by
-// `tools/oracle_dspark.py --mgt1`; the 4K state from DEEPMOE_LONGCTX_DIR.
+// Data: CACHEDMOE_MGT1_DIR (default <repo>/traces/mgt1), written by
+// `tools/oracle_dspark.py --mgt1`; the 4K state from CACHEDMOE_LONGCTX_DIR.
 // ============================================================================
 
 namespace {
 
 std::string mgt1_root() {
-    if (const char* e = std::getenv("DEEPMOE_MGT1_DIR")) return e;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MGT1_DIR")) return e;
     return std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/mgt1";
 }
 std::string mgt1_state_dir(const std::string& ctx) {
     if (ctx == "l3") return std::string(DEEPMOE_TEST_DATA_DIR) + "/l3";
-    const char* e = std::getenv("DEEPMOE_LONGCTX_DIR");
+    const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR");
     return (e ? std::string(e) : std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/longctx") +
            "/" + ctx;
 }
@@ -306,7 +307,7 @@ bool mgt1_exists(const std::string& path) {
     return f != nullptr;
 }
 bool mgt1_ctx_wanted(const std::string& ctx) {
-    const char* e = std::getenv("DEEPMOE_MGT1_CTX");
+    const char* e = ::deepmoe::environment::get("CACHEDMOE_MGT1_CTX");
     const std::string list = e ? e : "l3,ctx4k";
     return list.find(ctx) != std::string::npos;
 }
@@ -432,12 +433,12 @@ DEEPMOE_TEST(mgt1, m_curve) {
     Mgt1Rig rig;
     bool up = false;
     const uint32_t iters = [] {
-        if (const char* e = std::getenv("DEEPMOE_MGT1_ITERS"); e && *e)
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MGT1_ITERS"); e && *e)
             return uint32_t(std::strtoul(e, nullptr, 10));
         return 30u;
     }();
     std::string csv;
-    if (const char* out = std::getenv("DEEPMOE_MGT1_CSV"); out && *out) {
+    if (const char* out = ::deepmoe::environment::get("CACHEDMOE_MGT1_CSV"); out && *out) {
         csv = "context,layer,ratio,m,iters,ms_per_layer,ms_per_token\n";
         std::printf("    M-curve: %u timed iterations a case, CSV -> %s\n", iters, out);
     }
@@ -530,10 +531,10 @@ DEEPMOE_TEST(mgt1, m_curve) {
         }
     }
     if (!csv.empty()) {
-        if (std::FILE* f = std::fopen(std::getenv("DEEPMOE_MGT1_CSV"), "wb")) {
+        if (std::FILE* f = std::fopen(::deepmoe::environment::get("CACHEDMOE_MGT1_CSV"), "wb")) {
             std::fwrite(csv.data(), 1, csv.size(), f);
             std::fclose(f);
-            std::printf("    wrote %s\n", std::getenv("DEEPMOE_MGT1_CSV"));
+            std::printf("    wrote %s\n", ::deepmoe::environment::get("CACHEDMOE_MGT1_CSV"));
         } else {
             _ctx.fail(__FILE__, __LINE__, "cannot write the M-curve CSV");
         }
@@ -694,7 +695,7 @@ DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
         const std::string sdir = mgt1_state_dir(ctx);
         if (!mgt1_exists(root + "/" + ctx + "/l2/index.json") || !mgt1_exists(sdir + "/index.json")) {
             DEEPMOE_SKIP_PRINTF("      SKIP gpu_layer mgt1 %s: no reference at %s or state at %s "
-                        "(DEEPMOE_MGT1_DIR, DEEPMOE_LONGCTX_DIR)\n", ctx.c_str(),
+                        "(CACHEDMOE_MGT1_DIR, CACHEDMOE_LONGCTX_DIR)\n", ctx.c_str(),
                         (root + "/" + ctx).c_str(), sdir.c_str());
             continue;
         }
@@ -717,7 +718,7 @@ DEEPMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
         const uint32_t qrows = c.num_attention_heads * c.head_dim;
         std::printf("    context %s: prefill %u tokens, batch at %u\n", ctx.c_str(), p0, p0);
 
-        const char* lenv = std::getenv("DEEPMOE_MGT1_LAYERS");
+        const char* lenv = ::deepmoe::environment::get("CACHEDMOE_MGT1_LAYERS");
         std::vector<uint32_t> layers = {0u, 2u, 14u, 20u, 24u};
         if (lenv) {
             layers.clear();

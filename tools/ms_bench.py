@@ -26,6 +26,11 @@ import subprocess
 import sys
 import time
 
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "tools"))
@@ -51,11 +56,9 @@ class Server:
             cmd += ["--ms-sched", args.sched]
         cmd += args.serve_arg
         env = dict(os.environ)
-        for kv in args.env:
-            k, v = kv.split("=", 1)
-            env[k] = v
+        runtime_env.apply_overrides(env, dict(kv.split("=", 1) for kv in args.env))
         if args.route_dump:
-            env["DEEPMOE_ROUTE_DUMP"] = os.path.join(out_dir, "route.bin")
+            runtime_env.set_value(env, "CACHEDMOE_ROUTE_DUMP", os.path.join(out_dir, "route.bin"))
         for f in ("profile.jsonl", "route.bin", "events.jsonl"):
             p = os.path.join(out_dir, f)
             if os.path.exists(p):

@@ -244,7 +244,7 @@ void write_batch_window_lists(BatchScratch& b, uint32_t window, uint32_t p0, uin
 // Track J's K-split wo_a / wo_b on the M=1 decode path (STATUS §7 item 6).
 // Engine::init_gpu turns it on for RADV, where it saves ~3.8 ms/token of
 // attention (wo_a 194 -> 157 us, wo_b 252 -> 199 us); elsewhere the default is
-// off. DEEPMOE_ATTN_KSPLIT=0/1 overrides either way. Its ~1e-7 re-association
+// off. CACHEDMOE_ATTN_KSPLIT=0/1 overrides either way. Its ~1e-7 re-association
 // once pushed suite.decode and suite.spec_forward under floors that turned out
 // to sit inside the spread of equally-right arithmetic (STATUS §7 0j).
 void set_attn_ksplit_default(bool on);
@@ -254,7 +254,7 @@ bool attn_ksplit_on();
 // instead of sparse_attn's score + combine, on a device that has them.
 // Engine::init_gpu turns it on for RADV (149 -> 23.5 us a layer at the chat
 // context's 640 entries; STATUS §7 0k); elsewhere the default is off.
-// DEEPMOE_ATTN_CM=0/1 overrides either way.
+// CACHEDMOE_ATTN_CM=0/1 overrides either way.
 void set_attn_cm_default(bool on);
 bool attn_cm_on();
 

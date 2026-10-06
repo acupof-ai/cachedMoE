@@ -17,7 +17,7 @@
 // 64 teacher-forced positions, the reference's own greedy continuation. Pass A
 // runs them one `decode_step` at a time and keeps every position's logit row;
 // pass B re-seeds the same prefill state and runs them in blocks of
-// `DEEPMOE_SPEC_BLOCK` (default 5) through `forward_batch`.
+// `CACHEDMOE_SPEC_BLOCK` (default 5) through `forward_batch`.
 //
 // What was measured (2026-09-18, traces/l3_64, --warm-cache, resident-only off)
 // ---------------------------------------------------------------------------
@@ -46,16 +46,18 @@
 //
 // This test therefore does NOT fail on that gate. It prints the two numbers as
 // a WARN and enforces a regression floor instead: cos >= 0.88 and top-1
-// >= 47/60 (the spread of equally-right arithmetic, below). DEEPMOE_SPEC_STRICT=1 asserts the original, unreachable bar.
+// >= 47/60 (the spread of equally-right arithmetic, below). CACHEDMOE_SPEC_STRICT=1 asserts the original, unreachable bar.
 //
 // The consequence is not this test's to draw but it is worth writing down here:
 // design §10.2's speculation invariant -- temperature 0, spec on and spec off
 // give the same token stream -- cannot hold with this verify forward, because
 // the verify row's argmax is not the M = 1 argmax at 6 of 60 positions.
 //
-// Gated on DEEPMOE_MODEL_DIR, on a 64-step export (DEEPMOE_L3_64_DIR, default
+// Gated on CACHEDMOE_MODEL_DIR, on a 64-step export (CACHEDMOE_L3_64_DIR, default
 // <repo>/traces/l3_64) and on a Vulkan device. It loads the ~17.7 GB pinned set
 // and runs 128 forward passes, so it is `needs-model` and takes minutes.
+#include "tests/env_guard.h"
+#include "core/env.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -83,12 +85,12 @@ using namespace deepmoe::testing;
 namespace {
 
 std::string l3_64_dir() {
-    if (const char* e = std::getenv("DEEPMOE_L3_64_DIR"); e && *e) return e;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_L3_64_DIR"); e && *e) return e;
     return std::string(DEEPMOE_TEST_DATA_DIR) + "/../../traces/l3_64";
 }
 
 uint32_t env_u32(const char* name, uint32_t def) {
-    const char* e = std::getenv(name);
+    const char* e = ::deepmoe::environment::get(name);
     if (!e || !*e) return def;
     const int v = std::atoi(e);
     return v > 0 ? static_cast<uint32_t>(v) : def;
@@ -117,7 +119,7 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
     const std::string dir = l3_64_dir();
     if (!file_exists(dir + "/index.json")) {
         DEEPMOE_SKIP_PRINTF("      SKIP spec_forward: no 64-step export at %s "
-                    "(tools/oracle_l3_ppl.py, or set DEEPMOE_L3_64_DIR)\n", dir.c_str());
+                    "(tools/oracle_l3_ppl.py, or set CACHEDMOE_L3_64_DIR)\n", dir.c_str());
         return;
     }
 
@@ -150,11 +152,11 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
     const runtime::DecodeState* st = engine.decode_state();
     const uint32_t base  = st->decode_pos();
     const uint32_t vocab = engine.model().text.vocab_size;
-    const uint32_t block = std::min<uint32_t>(env_u32("DEEPMOE_SPEC_BLOCK", 5), 6);
+    const uint32_t block = std::min<uint32_t>(env_u32("CACHEDMOE_SPEC_BLOCK", 5), 6);
     // Teacher forcing: position base + s is fed greedy_tokens[s]. The last
     // record has no input after it, so the run is `steps` positions long.
     const uint32_t steps =
-        std::min<uint32_t>(env_u32("DEEPMOE_SPEC_STEPS", 64),
+        std::min<uint32_t>(env_u32("CACHEDMOE_SPEC_STEPS", 64),
                            static_cast<uint32_t>(st->greedy_tokens().size()) - 1);
     REQUIRE(steps >= block);
     std::printf("      %u teacher-forced positions from %u, blocks of %u, vocab %u\n", steps, base,
@@ -178,9 +180,9 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
 
     // The control. Every number below is a difference between two runs, so it is
     // worth nothing until the SAME run twice is known to give zero. Off by
-    // default because it doubles the test's time; DEEPMOE_SPEC_CONTROL=1 turns
+    // default because it doubles the test's time; CACHEDMOE_SPEC_CONTROL=1 turns
     // it on and it prints the bar the comparison is measured against.
-    if (env_u32("DEEPMOE_SPEC_CONTROL", 0)) {
+    if (env_u32("CACHEDMOE_SPEC_CONTROL", 0)) {
         REQUIRE_OK(engine.reseed_decode_state());
         uint32_t identical = 0;
         for (uint32_t s = 0; s < steps; ++s) {
@@ -197,7 +199,7 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
         CHECK(identical == steps);
     }
 
-    if(std::getenv("DEEPMOE_TEST_BATCH_MASK"))engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    if(::deepmoe::environment::get("CACHEDMOE_TEST_BATCH_MASK"))engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     // --- pass B: the same positions, in blocks, through forward_batch ---------
     REQUIRE_OK(engine.reseed_decode_state());
     std::vector<float> got(size_t(block) * vocab);
@@ -263,8 +265,8 @@ DEEPMOE_TEST(spec_forward, batch_matches_m1) {
     // bar the measurement supports: the batch is the same MODEL -- its
     // teacher-forced perplexity over the same targets is within 5% of the
     // M = 1 path's -- and nothing is structurally broken. Set
-    // DEEPMOE_SPEC_STRICT=1 to assert the original bar instead.
-    if (env_u32("DEEPMOE_SPEC_STRICT", 0)) {
+    // CACHEDMOE_SPEC_STRICT=1 to assert the original bar instead.
+    if (env_u32("CACHEDMOE_SPEC_STRICT", 0)) {
         CHECK(worst_cos >= 0.9999);
         CHECK(top1_same == counted);
     }
@@ -484,13 +486,13 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
     cfg.model_dir            = model_dir();
     cfg.cache.budget_bytes   = 0;       // as much as the machine gives
     cfg.cache.slots_per_slab = 100;
-    // Track BF. DEEPMOE_SPEC_TRACE=FILE turns the per-dispatch trace on (the
-    // batched path stamps since Track BF); DEEPMOE_SPEC_MS / DEEPMOE_SPEC_MODE
+    // Track BF. CACHEDMOE_SPEC_TRACE=FILE turns the per-dispatch trace on (the
+    // batched path stamps since Track BF); CACHEDMOE_SPEC_MS / CACHEDMOE_SPEC_MODE
     // cut the sweep down to the one cell an A/B needs, because the full
     // 2 x 6 + 2 sweep is minutes and an attribution run wants one M.
-    if (const char* tf = std::getenv("DEEPMOE_SPEC_TRACE")) cfg.trace_file = tf;
-    const char* m_list = std::getenv("DEEPMOE_SPEC_MS");
-    const uint32_t only_mode = env_u32("DEEPMOE_SPEC_MODE", 2);   // 0 off, 1 verify, 2 both
+    if (const char* tf = ::deepmoe::environment::get("CACHEDMOE_SPEC_TRACE")) cfg.trace_file = tf;
+    const char* m_list = ::deepmoe::environment::get("CACHEDMOE_SPEC_MS");
+    const uint32_t only_mode = env_u32("CACHEDMOE_SPEC_MODE", 2);   // 0 off, 1 verify, 2 both
     if (auto r = engine.init(cfg); !r) {
         DEEPMOE_SKIP_PRINTF("      SKIP bench_spec: %s\n", r.error().str().c_str());
         return;
@@ -508,7 +510,7 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
         std::printf("      warm: %u experts resident\n", *w);
     const runtime::DecodeState* st = engine.decode_state();
     const uint32_t base = st->decode_pos();
-    const uint32_t steps = std::min<uint32_t>(env_u32("DEEPMOE_SPEC_STEPS", 60),
+    const uint32_t steps = std::min<uint32_t>(env_u32("CACHEDMOE_SPEC_STEPS", 60),
                                               static_cast<uint32_t>(st->greedy_tokens().size()) - 1);
     // `verify` as well as `off`, because the whole point of the resident-only
     // draft rows is that a verify batch never waits on the drive.
@@ -602,10 +604,7 @@ DEEPMOE_TEST(bench_spec, forward_batch_m_curve) {
 }
 
 DEEPMOE_TEST(spec_forward, gpu_route_rejects_multiple_streams) {
-    const char* previous=std::getenv("DEEPMOE_BATCH_GPU_ROUTE");
-    const bool had=previous!=nullptr;const std::string saved=previous?previous:"";
-    struct Restore {bool had;std::string value;~Restore(){if(had)setenv("DEEPMOE_BATCH_GPU_ROUTE",value.c_str(),1);else unsetenv("DEEPMOE_BATCH_GPU_ROUTE");}} restore{had,saved};
-    setenv("DEEPMOE_BATCH_GPU_ROUTE","1",1);
+    test::ScopedEnvironment route("CACHEDMOE_BATCH_GPU_ROUTE", "1");
     runtime::Engine engine;
     CHECK_ERR(engine.set_streams(2),Err::FailedPrecondition);
     CHECK_EQ(engine.streams(),1u);

@@ -261,7 +261,7 @@ def print_gate(t: Trace, token: int, recs=None) -> int:
     of the first MoE dispatch. That interval is the host round trip -- fence
     wake, read top-k, planner, stage, record, submit -- and this prints it per
     layer so it can be read against the host-clock breakdown that
-    DEEPMOE_GATE_PROBE=1 prints.
+    CACHEDMOE_GATE_PROBE=1 prints.
     """
     rows = [r for r in (t.records if recs is None else recs) if r.token == token]
     if not rows:

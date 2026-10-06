@@ -36,6 +36,7 @@
 // Ownership/threading: a reader thread owns stdin -- it answers `cancel` at once
 // and queues everything else -- and the main thread runs the engine. `emit` is
 // serialised by a mutex.
+#include "core/env.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -165,7 +166,7 @@ struct Inbox {
 int cmd_serve(int argc, char** argv) {
     RuntimeConfig cfg;
     cfg.cache.budget_bytes = 0;
-    if (const char* e = std::getenv("DEEPMOE_MODEL_DIR")) cfg.model_dir = e;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR")) cfg.model_dir = e;
     runtime::SessionConfig sc;
     runtime::SessionOptions so;
     bool pf_min_set = false;
@@ -237,11 +238,11 @@ int cmd_serve(int argc, char** argv) {
         std::fputs("--mask-cache takes dynamic|fixed\n", stderr); return 2;
     }
     if (cfg.model_dir.empty()) {
-        std::fputs("serve needs --model DIR (or DEEPMOE_MODEL_DIR)\n", stderr);
+        std::fputs("serve needs --model DIR (or CACHEDMOE_MODEL_DIR)\n", stderr);
         return 2;
     }
 #if defined(__linux__)
-    if(const char* e=std::getenv("DEEPMOE_BATCH_GPU_ROUTE");e && *e=='1' && streams>1){
+    if(const char* e=::deepmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE");e && *e=='1' && streams>1){
         std::fprintf(stderr,"batch GPU routing requires --streams 1\n");return 2;
     }
     // The second read source as a helper, on by default for serve on Linux: the
@@ -251,10 +252,10 @@ int cmd_serve(int argc, char** argv) {
     // a helper: the engine probes it before trusting it, re-reads any failed
     // mirror read from the primary, drops it after three consecutive errors
     // and rests it while its drive is hot. --mirror or
-    // DEEPMOE_MODEL_MIRRORS choose explicitly; DEEPMOE_MIRROR_AUTO=0 turns the
+    // CACHEDMOE_MODEL_MIRRORS choose explicitly; CACHEDMOE_MIRROR_AUTO=0 turns the
     // search off (single-drive benchmarks).
-    if (cfg.model_mirrors.empty() && !std::getenv("DEEPMOE_MODEL_MIRRORS")) {
-        const char* a = std::getenv("DEEPMOE_MIRROR_AUTO");
+    if (cfg.model_mirrors.empty() && !::deepmoe::environment::get("CACHEDMOE_MODEL_MIRRORS")) {
+        const char* a = ::deepmoe::environment::get("CACHEDMOE_MIRROR_AUTO");
         if (!(a && *a == '0')) {
             namespace fs = std::filesystem;
             std::error_code ec;
@@ -271,7 +272,7 @@ int cmd_serve(int argc, char** argv) {
                     // stderr, not log_info: stdout is still the NDJSON protocol
                     // channel here -- the logger is re-pointed further down.
                     std::fprintf(stderr, "[INF] serve: mirror auto-detected: %s "
-                                         "(DEEPMOE_MIRROR_AUTO=0 turns this off)\n",
+                                         "(CACHEDMOE_MIRROR_AUTO=0 turns this off)\n",
                                  cand.string().c_str());
                     break;
                 }
@@ -284,11 +285,11 @@ int cmd_serve(int argc, char** argv) {
     // process that comes back to the same conversation rebuilt its whole prompt
     // every time -- 4,133 tokens at ~24 ms each, 101.6 s -- and the parked
     // context is already being written at shutdown, so the only thing missing
-    // was the default. `DEEPMOE_KV_DIR` overrides the directory (empty string
+    // was the default. `CACHEDMOE_KV_DIR` overrides the directory (empty string
     // disables it), `--kv-dir` sets it explicitly and `--no-kv-disk` turns it
     // off, which is what a benchmark that wants a cold prefill should use.
     if (!kv_dir_given && !kv_disk_off) {
-        if (const char* e = std::getenv("DEEPMOE_KV_DIR"); e && *e) po.disk.dir = e;
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_KV_DIR"); e && *e) po.disk.dir = e;
         else if (e && !*e) po.disk.dir.clear();
         else {
             // Per model directory, so two checkpoints do not fight over one file
@@ -345,7 +346,7 @@ int cmd_serve(int argc, char** argv) {
     if (!mask_cache.empty()) engine.set_mask_cache_fixed(mask_cache == "fixed");
     engine.set_check_topk(check_topk);
     engine.set_reheat(engine_reheat);
-    // Track Y. The flag wins over DEEPMOE_ROUTE_RESIDENT_ONLY, which the load read.
+    // Track Y. The flag wins over CACHEDMOE_ROUTE_RESIDENT_ONLY, which the load read.
     if (cfg.speculation.enabled && streams != 1) { std::fprintf(stderr,"DSpark requires --streams 1\n"); return 2; }
     if (!resident_only.empty()) {
         if (resident_only == "all")      engine.set_resident_only(runtime::Engine::ResidentOnly::All);

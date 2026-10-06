@@ -59,15 +59,20 @@ env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
   modelscope download --model deepseek-ai/DeepSeek-V4.1-Flash \
     --local_dir "$HOME/models/DeepSeek-V4.1-Flash"
 python3 tools/manifest.py --src "$HOME/models/DeepSeek-V4.1-Flash"
-export DEEPMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash"
+export CACHEDMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash"
 ```
+
+Runtime controls use `CACHEDMOE_*`. Legacy `DEEPMOE_*` aliases remain accepted;
+an explicitly present new value, including an empty one, wins. Conflicts warn
+once on stderr without printing values.
+
 
 Start **one** of these clients:
 
 ```bash
 python3 tools/web/launch_guarded.py   # web policy for this machine; requires AC and its mirror
 python3 tools/chat.py                # terminal chat
-./build/deepmoe serve --model "$DEEPMOE_MODEL_DIR"   # JSON-lines protocol
+./build/deepmoe serve --model "$CACHEDMOE_MODEL_DIR"   # JSON-lines protocol
 ```
 
 The guarded Linux web launcher uses the matching checkpoint mirror at

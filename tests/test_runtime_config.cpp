@@ -1,5 +1,6 @@
 // Startup configuration must remain stable when a benchmark changes the
 // environment before creating its next engine. No GPU or checkpoint needed.
+#include "tests/env_guard.h"
 #include <array>
 #include <cstdlib>
 #include <string>
@@ -13,36 +14,18 @@ using namespace deepmoe;
 
 namespace {
 
-struct ScopedEnvironment {
-    const char* key;
-    std::string saved;
-    bool present;
-
-    explicit ScopedEnvironment(const char* name)
-        : key(name), saved(std::getenv(name) ? std::getenv(name) : ""),
-          present(std::getenv(name) != nullptr) {
-        set(nullptr);
-    }
-    void set(const char* value) {
-#ifdef _WIN32
-        _putenv_s(key, value ? value : "");
-#else
-        if (value) setenv(key, value, 1); else unsetenv(key);
-#endif
-    }
-    ~ScopedEnvironment() { set(present ? saved.c_str() : nullptr); }
-};
+using ScopedEnvironment = test::ScopedEnvironment;
 
 struct DecodeEnvironment {
     std::array<ScopedEnvironment, 8> values{{
-        ScopedEnvironment("DEEPMOE_GPU_WAIT_S"),
-        ScopedEnvironment("DEEPMOE_FENCE_SPIN_US"),
-        ScopedEnvironment("DEEPMOE_SHARED_EARLY"),
-        ScopedEnvironment("DEEPMOE_MS_EAGER_MOE"),
-        ScopedEnvironment("DEEPMOE_SHARED_EARLY_MS"),
-        ScopedEnvironment("DEEPMOE_SE_CHECK"),
-        ScopedEnvironment("DEEPMOE_MASK_DYNAMIC_LRU"),
-        ScopedEnvironment("DEEPMOE_IO_ENGRAM_DEADLINE"),
+        ScopedEnvironment("CACHEDMOE_GPU_WAIT_S"),
+        ScopedEnvironment("CACHEDMOE_FENCE_SPIN_US"),
+        ScopedEnvironment("CACHEDMOE_SHARED_EARLY"),
+        ScopedEnvironment("CACHEDMOE_MS_EAGER_MOE"),
+        ScopedEnvironment("CACHEDMOE_SHARED_EARLY_MS"),
+        ScopedEnvironment("CACHEDMOE_SE_CHECK"),
+        ScopedEnvironment("CACHEDMOE_MASK_DYNAMIC_LRU"),
+        ScopedEnvironment("CACHEDMOE_IO_ENGRAM_DEADLINE"),
     }};
 
     void set(std::string_view name, const char* value) {
@@ -81,14 +64,14 @@ DEEPMOE_TEST(runtime_config, decode_defaults_and_api_overrides) {
 
 DEEPMOE_TEST(runtime_config, legacy_environment_semantics) {
     DecodeEnvironment environment;
-    environment.set("DEEPMOE_GPU_WAIT_S", "12.5");
-    environment.set("DEEPMOE_FENCE_SPIN_US", "3.25");
-    environment.set("DEEPMOE_SHARED_EARLY", "0x");
-    environment.set("DEEPMOE_MS_EAGER_MOE", "true");
-    environment.set("DEEPMOE_SHARED_EARLY_MS", "yes");
-    environment.set("DEEPMOE_SE_CHECK", "0"); // Presence, not Boolean parsing.
-    environment.set("DEEPMOE_MASK_DYNAMIC_LRU", "0x"); // Only exact "0" freezes.
-    environment.set("DEEPMOE_IO_ENGRAM_DEADLINE", "1x"); // Only exact "1" enables.
+    environment.set("CACHEDMOE_GPU_WAIT_S", "12.5");
+    environment.set("CACHEDMOE_FENCE_SPIN_US", "3.25");
+    environment.set("CACHEDMOE_SHARED_EARLY", "0x");
+    environment.set("CACHEDMOE_MS_EAGER_MOE", "true");
+    environment.set("CACHEDMOE_SHARED_EARLY_MS", "yes");
+    environment.set("CACHEDMOE_SE_CHECK", "0"); // Presence, not Boolean parsing.
+    environment.set("CACHEDMOE_MASK_DYNAMIC_LRU", "0x"); // Only exact "0" freezes.
+    environment.set("CACHEDMOE_IO_ENGRAM_DEADLINE", "1x"); // Only exact "1" enables.
     DecodeExecutionConfig resolved;
     resolved.apply_environment();
     CHECK_EQ(resolved.gpu_wait_budget_seconds, 12.5);
@@ -98,8 +81,8 @@ DEEPMOE_TEST(runtime_config, legacy_environment_semantics) {
     CHECK(resolved.dynamic_mask_lru && resolved.engram_deadline == false);
 
     for (const char* invalid : {"invalid", "nan", "-1", "0"}) {
-        environment.set("DEEPMOE_GPU_WAIT_S", invalid);
-        environment.set("DEEPMOE_FENCE_SPIN_US", invalid);
+        environment.set("CACHEDMOE_GPU_WAIT_S", invalid);
+        environment.set("CACHEDMOE_FENCE_SPIN_US", invalid);
         DecodeExecutionConfig fallback;
         fallback.apply_environment();
         CHECK_EQ(fallback.gpu_wait_budget_seconds, 900.0);
@@ -107,8 +90,8 @@ DEEPMOE_TEST(runtime_config, legacy_environment_semantics) {
     }
 #ifndef _WIN32
     // Windows _putenv_s removes an empty variable; Linux can preserve it.
-    environment.set("DEEPMOE_SHARED_EARLY", "");
-    environment.set("DEEPMOE_MS_EAGER_MOE", "");
+    environment.set("CACHEDMOE_SHARED_EARLY", "");
+    environment.set("CACHEDMOE_MS_EAGER_MOE", "");
     DecodeExecutionConfig platform_defaults;
     platform_defaults.shared_early = true;
     platform_defaults.eager_moe = false;
@@ -119,14 +102,14 @@ DEEPMOE_TEST(runtime_config, legacy_environment_semantics) {
 
 DEEPMOE_TEST(runtime_config, mask_policy_is_resolved_for_each_engine) {
     DecodeEnvironment environment;
-    environment.set("DEEPMOE_MASK_DYNAMIC_LRU", "1");
+    environment.set("CACHEDMOE_MASK_DYNAMIC_LRU", "1");
     runtime::Engine dynamic;
-    environment.set("DEEPMOE_MASK_DYNAMIC_LRU", "0");
+    environment.set("CACHEDMOE_MASK_DYNAMIC_LRU", "0");
     dynamic.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     CHECK(!dynamic.store().fixed_cache());
 
     runtime::Engine frozen;
-    environment.set("DEEPMOE_MASK_DYNAMIC_LRU", "1");
+    environment.set("CACHEDMOE_MASK_DYNAMIC_LRU", "1");
     frozen.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     CHECK(frozen.store().fixed_cache());
     frozen.set_mask_cache_fixed(false); // Explicit runtime control still wins.

@@ -1,3 +1,4 @@
+#include "core/env.h"
 #include "gpu/vulkan/moe_kernels.h"
 
 #include <algorithm>
@@ -27,14 +28,7 @@ std::string MoeSpec::name() const {
 }
 
 std::string default_shader_dir() {
-#if defined(_MSC_VER)
-    size_t n = 0; char* buf = nullptr;
-    if (_dupenv_s(&buf, &n, "DEEPMOE_SHADER_DIR") == 0 && buf) {
-        std::string v(buf); free(buf); return v;
-    }
-#else
-    if (const char* e = std::getenv("DEEPMOE_SHADER_DIR")) return e;
-#endif
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_SHADER_DIR")) return e;
 #if defined(DEEPMOE_SHADER_DIR)
     return DEEPMOE_SHADER_DIR;
 #else
@@ -217,9 +211,9 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     // specialised on M == 1 the count is 1 for every dispatch it can ever
     // issue, so hand it to the pipeline as a specialisation constant and the
     // loops fold away again. M > 1 (the verify batch) keeps the mask.
-    // DEEPMOE_MOE_STATIC_M1=0 is the A arm of the A/B; default on.
+    // CACHEDMOE_MOE_STATIC_M1=0 is the A arm of the A/B; default on.
     bool m1_default = true;
-    if (const char* e = std::getenv("DEEPMOE_MOE_STATIC_M1"); e && *e == '0') m1_default = false;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_STATIC_M1"); e && *e == '0') m1_default = false;
     const uint32_t static_m = (spec.m == 1 && m1_default) ? 1u : 0u;
     ps.extra = {spec.decode_mode, spec.h_precision, spec.rows_per_lane,
                 spec.x_mode, spec.h_quant, spec.fp8_slots, static_m};

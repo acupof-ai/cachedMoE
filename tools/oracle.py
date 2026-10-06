@@ -64,9 +64,9 @@ to be right about:
 
 Usage
 -----
-    uv run python tools/oracle.py --model "$DEEPMOE_MODEL_DIR" \\
+    uv run python tools/oracle.py --model "$CACHEDMOE_MODEL_DIR" \\
         --level l0 --out tests/data
-    uv run python tools/oracle.py --model "$DEEPMOE_MODEL_DIR" \\
+    uv run python tools/oracle.py --model "$CACHEDMOE_MODEL_DIR" \\
         --level l1 --expert 0:0 --expert 39:383 --out tests/data
 """
 

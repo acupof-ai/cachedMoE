@@ -20,6 +20,11 @@ import threading
 import time
 
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 class ThermalLatch:
     def __init__(self, pause=80.0, resume=72.0):
         if not math.isfinite(pause) or not math.isfinite(resume) or resume >= pause:
@@ -207,7 +212,9 @@ def run_job(job, base, env, sensors):
         print("START", name, flush=True)
         try:
             with log_path.open("w") as log, thermal_path.open("w") as thermal:
-                child_env = env | job.get("env", {}) | {"DEEPMOE_THERMAL_LOG": str(thermal_path)}
+                child_env = dict(env)
+                runtime_env.apply_overrides(child_env, job.get("env", {}))
+                runtime_env.set_value(child_env, "CACHEDMOE_THERMAL_LOG", str(thermal_path))
                 child = subprocess.Popen(job["command"], env=child_env, stdout=log,
                                          stderr=subprocess.STDOUT, start_new_session=True)
                 while child.poll() is None:
@@ -286,11 +293,11 @@ def main():
     base = args.plan.resolve().parent
     os.chdir(plan["cwd"])
     env = dict(os.environ)
-    env.setdefault("DEEPMOE_MODEL_DIR", str(Path.home() / "models/DeepSeek-V4.1-Flash"))
-    env.setdefault("DEEPMOE_LONGCTX_DIR", str(Path.cwd() / "traces/longctx"))
-    env.update(DEEPMOE_MIRROR_AUTO="0", DEEPMOE_DSPARK_MEGA="0")
-    env.update(plan.get("env", {}))
-    env.pop("DEEPMOE_MODEL_MIRRORS", None)
+    runtime_env.setdefault(env, "CACHEDMOE_MODEL_DIR", str(Path.home() / "models/DeepSeek-V4.1-Flash"))
+    runtime_env.setdefault(env, "CACHEDMOE_LONGCTX_DIR", str(Path.cwd() / "traces/longctx"))
+    runtime_env.apply_overrides(env, dict(CACHEDMOE_MIRROR_AUTO="0", CACHEDMOE_DSPARK_MEGA="0"))
+    runtime_env.apply_overrides(env, plan.get("env", {}))
+    runtime_env.clear(env, "CACHEDMOE_MODEL_MIRRORS")
     sensors = discover_sensors()
     results, original = [], profile()
 

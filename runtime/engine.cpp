@@ -1,3 +1,4 @@
+#include "core/env.h"
 #include <thread>
 #include <chrono>
 #include "runtime/engine.h"
@@ -81,10 +82,10 @@ std::string read_line(const std::string& path) {
 //
 // So pin the calling thread -- before IoEngine starts, so its threads inherit
 // it -- to the L3 domain of the CPU that services the amdgpu interrupt.
-// DEEPMOE_CPU_AFFINITY: unset/"auto" = this; "off" = leave the scheduler alone;
+// CACHEDMOE_CPU_AFFINITY: unset/"auto" = this; "off" = leave the scheduler alone;
 // anything else is a cpulist used verbatim.
 void pin_to_gpu_irq_ccd() {
-    const char* env = std::getenv("DEEPMOE_CPU_AFFINITY");
+    const char* env = ::deepmoe::environment::get("CACHEDMOE_CPU_AFFINITY");
     const std::string mode = env ? env : "auto";
     if (mode == "off") return;
     cpu_set_t set;
@@ -116,7 +117,7 @@ void pin_to_gpu_irq_ccd() {
                  cpu, list);
     }
     if (!parse_cpulist(list, set)) {
-        log_warn("engine: DEEPMOE_CPU_AFFINITY='{}' is not a cpulist; not pinning", list);
+        log_warn("engine: CACHEDMOE_CPU_AFFINITY='{}' is not a cpulist; not pinning", list);
         return;
     }
     if (sched_setaffinity(0, sizeof set, &set) != 0)
@@ -130,7 +131,7 @@ void pin_to_gpu_irq_ccd() {
 // --- H1a: the hard cap on the auto-sized cache (see runtime/engine.h) -------
 uint32_t auto_slot_cap() {
     static const uint32_t v = [] {
-        const char* e = std::getenv("DEEPMOE_CACHE_SLOT_CAP");
+        const char* e = ::deepmoe::environment::get("CACHEDMOE_CACHE_SLOT_CAP");
         if (!e || !*e) return kAutoSlotCap;
         const long long x = std::atoll(e);
         return x < 0 ? kAutoSlotCap : static_cast<uint32_t>(x);   // 0 = no cap, deliberately
@@ -146,7 +147,7 @@ uint64_t cap_auto_budget(uint64_t budget_bytes, uint64_t slot_bytes, uint32_t sl
 
 uint32_t cache_backoff_step() {
     static const uint32_t v = [] {
-        const char* e = std::getenv("DEEPMOE_CACHE_BACKOFF_SLOTS");
+        const char* e = ::deepmoe::environment::get("CACHEDMOE_CACHE_BACKOFF_SLOTS");
         const long long x = (e && *e) ? std::atoll(e) : 0;
         return x > 0 ? static_cast<uint32_t>(x) : kCacheBackoffSlots;
     }();
@@ -378,7 +379,7 @@ Result<void> Engine::open_model_files() {
     // touching the shell it inherited.
     std::vector<std::string> mirrors = cfg_.model_mirrors;
     if (mirrors.empty())
-        if (const char* e = std::getenv("DEEPMOE_MODEL_MIRRORS"); e && *e)
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MODEL_MIRRORS"); e && *e)
             mirrors = split_semis(e);
     for (const std::string& dir : mirrors) {
         if (auto r = shards_.open_mirror(dir, manifest_, cfg_.io.unbuffered); !r) {
@@ -488,17 +489,17 @@ Result<void> Engine::configure_io_sources() {
         weights.push_back(0.0);
     }
 
-    // DEEPMOE_MIRROR_WEIGHTS=4.6;1.0 skips the probe: two seconds of startup is
+    // CACHEDMOE_MIRROR_WEIGHTS=4.6;1.0 skips the probe: two seconds of startup is
     // two seconds, and an A/B that repeats a cell wants the same weights each
     // time rather than a fresh measurement's noise.
     bool probed = false;
-    if (const char* e = std::getenv("DEEPMOE_MIRROR_WEIGHTS"); e && *e) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_WEIGHTS"); e && *e) {
         const auto parts = split_semis(e);
         for (size_t i = 0; i < parts.size() && i < weights.size(); ++i)
             weights[i] = std::strtod(parts[i].c_str(), nullptr);
     } else if (probe_idx != UINT32_MAX) {
         uint32_t ms = 1000;
-        if (const char* e2 = std::getenv("DEEPMOE_MIRROR_PROBE_MS"); e2 && *e2)
+        if (const char* e2 = ::deepmoe::environment::get("CACHEDMOE_MIRROR_PROBE_MS"); e2 && *e2)
             ms = static_cast<uint32_t>(std::strtoul(e2, nullptr, 10));
         // Track D5: warm up before measuring. A USB4 NVMe enclosure that has
         // been idle answers its first read in ~1 s; an unwarmed 1 s window
@@ -507,7 +508,7 @@ Result<void> Engine::configure_io_sources() {
         // (docs/p4_dual_source.md §9.2). The same 1 s window on a warm drive
         // reads 3.74 -- so the number was not noisy, it was the wake-up.
         uint32_t warmup = 1000;
-        if (const char* e3 = std::getenv("DEEPMOE_MIRROR_PROBE_WARMUP_MS"); e3 && *e3)
+        if (const char* e3 = ::deepmoe::environment::get("CACHEDMOE_MIRROR_PROBE_WARMUP_MS"); e3 && *e3)
             warmup = static_cast<uint32_t>(std::strtoul(e3, nullptr, 10));
         if (ms) {
             const std::string name = manifest_.files()[probe_idx].path;
@@ -531,10 +532,10 @@ Result<void> Engine::configure_io_sources() {
     // Track D4: the gate runs after set_sources so a mirror that fails it still
     // appears in status.json -- marked DROPPED, with the reason in the log --
     // rather than vanishing as if it had never been asked for.
-    // DEEPMOE_MIRROR_HEALTH=0 skips it (for a deliberate negative test); the
+    // CACHEDMOE_MIRROR_HEALTH=0 skips it (for a deliberate negative test); the
     // default is on, because the whole point is that "it opened" is not enough.
     bool gate = true;
-    if (const char* e = std::getenv("DEEPMOE_MIRROR_HEALTH"); e && *e)
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_HEALTH"); e && *e)
         gate = std::strtol(e, nullptr, 10) != 0;
     if (gate) {
         for (size_t m = 1; m <= shards_.mirror_count(); ++m) {
@@ -575,16 +576,16 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     mask_wait_tau_ = -1;
     mask_wait_budget_experts_ = 8;
     mask_wait_budget_ms_ = 20;
-    if (const char* e = std::getenv("DEEPMOE_MASK_WAIT_TAU")) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MASK_WAIT_TAU")) {
         char* end = nullptr;
         mask_wait_tau_ = std::strtod(e, &end);
         if (end == e || *end || !std::isfinite(mask_wait_tau_) || mask_wait_tau_ < 0 || mask_wait_tau_ > 1)
-            return fail(Err::InvalidArgument, "DEEPMOE_MASK_WAIT_TAU must be in [0,1]");
-        if (const char* budget = std::getenv("DEEPMOE_MASK_WAIT_BUDGET")) {
+            return fail(Err::InvalidArgument, "CACHEDMOE_MASK_WAIT_TAU must be in [0,1]");
+        if (const char* budget = ::deepmoe::environment::get("CACHEDMOE_MASK_WAIT_BUDGET")) {
             char* middle = nullptr;
             const auto n = std::strtoul(budget, &middle, 10);
             if (middle == budget || *middle != ',' || n > UINT32_MAX)
-                return fail(Err::InvalidArgument, "DEEPMOE_MASK_WAIT_BUDGET takes experts,milliseconds (0 means unlimited)");
+                return fail(Err::InvalidArgument, "CACHEDMOE_MASK_WAIT_BUDGET takes experts,milliseconds (0 means unlimited)");
             char* tail = nullptr;
             const auto ms = std::strtod(middle + 1, &tail);
             if (tail == middle + 1 || *tail || !std::isfinite(ms) || ms < 0)
@@ -632,7 +633,7 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     if (auto r = open_model_files(); !r) return r;
 
     // The IO shape serve runs with (Track Q2's depth, Linux's 1 MiB x 8 P0,
-    // the DEEPMOE_IO_* knobs), shared with the benches that stand in for it.
+    // the CACHEDMOE_IO_* knobs), shared with the benches that stand in for it.
     storage::IoEngine::runtime_shape(cfg_.io);
     auto backend = storage::make_default_backend(cfg_.io);
     if (!backend) return std::unexpected(backend.error());
@@ -763,7 +764,7 @@ Result<void> Engine::build_expert_cache() {
     if (!a) return std::unexpected(a.error());
     std::unique_ptr<store::SlabBacking> b;
     if (auto rb = alloc_b_.make_slab_backing(); rb) b = std::move(*rb);
-    // Path A cap (DEEPMOE_PATH_A_CAP=on), measured with the prefill reserve
+    // Path A cap (CACHEDMOE_PATH_A_CAP=on), measured with the prefill reserve
     // above still held, so the reserve is what the post-cache allocations (KV,
     // prefill workspace, scratch) get back. DEFAULT OFF, and NO-GO on Linux
     // (STATUS §7 0h, 2026-09-28): RADV over-commits path A and TTM moves ~24 GB
@@ -775,7 +776,7 @@ Result<void> Engine::build_expert_cache() {
     uint64_t a_cap = 0;
     {
         bool want_cap = false;
-        if (const char* e = std::getenv("DEEPMOE_PATH_A_CAP"))
+        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PATH_A_CAP"))
             want_cap = std::strcmp(e, "on") == 0 || std::strcmp(e, "1") == 0;
         if (want_cap && b) {
             if (auto t = alloc_a_.chosen_memory_type(); t) {
@@ -829,7 +830,7 @@ Result<void> Engine::build_expert_cache() {
     // than from the hypothesis. What it would take is a placement preference
     // that is NOT also a pin -- e.g. taking the path-B victim only while its
     // last_use is within a bounded slack of the global LRU victim.
-    if (const char* e = std::getenv("DEEPMOE_EVICT_PATH"); e && *e) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_EVICT_PATH"); e && *e) {
         if (*e == 'a' || *e == 'A')
             store_.set_evict_path(store::ExpertStore::EvictPath::PreferA);
         else if (*e == 'b' || *e == 'B')
@@ -1131,8 +1132,8 @@ Result<void> Engine::init_gpu() {
         const uint64_t slot_bytes  = layout::kExpertSlotBytes;
         // kAutoSlotCap is the Windows driver losing the device above 5,000
         // slots; RADV ran 5,500 clean, so there only an explicit
-        // DEEPMOE_CACHE_SLOT_CAP applies.
-        const char*    cap_env     = std::getenv("DEEPMOE_CACHE_SLOT_CAP");
+        // CACHEDMOE_CACHE_SLOT_CAP applies.
+        const char*    cap_env     = ::deepmoe::environment::get("CACHEDMOE_CACHE_SLOT_CAP");
         const uint32_t slot_cap    = (radv && !(cap_env && *cap_env)) ? 0 : auto_slot_cap();
         applied_slot_cap_          = slot_cap;
         const uint64_t from_budget = cache_budget_;
@@ -1145,14 +1146,14 @@ Result<void> Engine::init_gpu() {
             log_info("engine: RADV: no auto slot cap, budget from the GTT heaps -> {} slots ({})",
                      budget_slots(from_budget, slot_bytes), human_bytes(from_budget));
         } else if (slot_cap == 0) {
-            log_warn("engine: auto slot cap DISABLED (DEEPMOE_CACHE_SLOT_CAP=0); the budget-derived "
+            log_warn("engine: auto slot cap DISABLED (CACHEDMOE_CACHE_SLOT_CAP=0); the budget-derived "
                      "{} slots ({}) are what this run will try to allocate -- above 5,000 slots "
                      "this machine has lost the device on the first submit (STATUS §3 row 59)",
                      budget_slots(from_budget, slot_bytes), human_bytes(from_budget));
         } else if (cache_budget_ < from_budget) {
             log_info("engine: auto slot cap {} applied: budget-derived {} slots ({}) -> {} slots "
                      "({}). --cache-slots / --cache-gb bypass this cap and own the risk; "
-                     "DEEPMOE_CACHE_SLOT_CAP changes it",
+                     "CACHEDMOE_CACHE_SLOT_CAP changes it",
                      slot_cap, budget_slots(from_budget, slot_bytes), human_bytes(from_budget),
                      budget_slots(cache_budget_, slot_bytes), human_bytes(cache_budget_));
         } else {
@@ -1181,28 +1182,28 @@ Result<void> Engine::init_gpu() {
         cur_->layer_.set_tracer(&tracer_);
     }
 
-    if (const char* e = std::getenv("DEEPMOE_ROUTE_DUMP"); e && *e && !route_dump_) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_ROUTE_DUMP"); e && *e && !route_dump_) {
         route_dump_ = std::fopen(e, "ab");
         if (route_dump_) log_info("engine: routing dump -> {}", e);
         else log_warn("engine: cannot open the routing dump '{}'", e);
     }
-    if(const char* e=std::getenv("DEEPMOE_SPEC_DIAGNOSTICS");e && *e && !spec_diagnostics_) {
+    if(const char* e=::deepmoe::environment::get("CACHEDMOE_SPEC_DIAGNOSTICS");e && *e && !spec_diagnostics_) {
         spec_diagnostics_=std::fopen(e,"ab");
         if(!spec_diagnostics_)return fail(Err::Io,"cannot open speculative diagnostics");
     }
-    // docs/p4_hitrate.md §4: on unless DEEPMOE_MOE_OVERLAP=0 (the A/B switch).
-    if (const char* e = std::getenv("DEEPMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
-    if (const char* e = std::getenv("DEEPMOE_GATE_PROBE"); e && *e && *e != '0') gate_probe_ = true;
+    // docs/p4_hitrate.md §4: on unless CACHEDMOE_MOE_OVERLAP=0 (the A/B switch).
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_GATE_PROBE"); e && *e && *e != '0') gate_probe_ = true;
     // Track Y (docs/p4_resident_routing.md): off | all | stall1 | verify.
     // Anything else is off.
-    if (const char* e = std::getenv("DEEPMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
         const std::string_view v{e};
         if (v == "all") resident_only_ = ResidentOnly::All;
         else if (v == "stall1") resident_only_ = ResidentOnly::Stall1;
         else if (v == "verify") resident_only_ = ResidentOnly::Verify;
         else if (v == "mask") resident_only_ = ResidentOnly::Mask;
         else if (v != "off" && v != "0" && v != "")
-            log_warn("DEEPMOE_ROUTE_RESIDENT_ONLY={}: expected off|all|stall1|verify|mask, "
+            log_warn("CACHEDMOE_ROUTE_RESIDENT_ONLY={}: expected off|all|stall1|verify|mask, "
                      "using off", v);
         if (resident_only_ != ResidentOnly::Off)
             log_info("route: resident-only={} -- {}", resident_only_name(resident_only_),
@@ -1224,32 +1225,32 @@ Result<void> Engine::init_gpu() {
     // `stall1`) and what its four draft positions do (`all`, the default --
     // never wait -- or `stall1`, one P0 fetch a layer). Anything else keeps the
     // default.
-    if (const char* e = std::getenv("DEEPMOE_VERIFY_FIRST"); e && *e) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_VERIFY_FIRST"); e && *e) {
         const std::string_view v{e};
         if (v == "stall1") verify_first_ = ResidentOnly::Stall1;
         else if (v == "all") verify_first_ = ResidentOnly::All;
         else if (v != "exact" && v != "off")
-            log_warn("DEEPMOE_VERIFY_FIRST={}: expected exact|stall1|all, keeping exact", v);
+            log_warn("CACHEDMOE_VERIFY_FIRST={}: expected exact|stall1|all, keeping exact", v);
     }
-    if (const char* e = std::getenv("DEEPMOE_VERIFY_DRAFT"); e && *e) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_VERIFY_DRAFT"); e && *e) {
         const std::string_view v{e};
         if (v == "stall1") verify_draft_ = ResidentOnly::Stall1;
         else if (v == "exact" || v == "off") verify_draft_ = ResidentOnly::Off;
         else if (v != "all")
-            log_warn("DEEPMOE_VERIFY_DRAFT={}: expected all|stall1|exact, keeping all", v);
+            log_warn("CACHEDMOE_VERIFY_DRAFT={}: expected all|stall1|exact, keeping all", v);
     }
     // Track Y step 3: the background miss window, in decode steps.
-    if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
         const int v = std::atoi(e);
         if (v >= 1 && v <= 1024) rr_queue_steps_ = static_cast<uint32_t>(v);
-        else log_warn("DEEPMOE_RESIDENT_QUEUE_STEPS={}: expected 1..1024, keeping {}", e,
+        else log_warn("CACHEDMOE_RESIDENT_QUEUE_STEPS={}: expected 1..1024, keeping {}", e,
                       rr_queue_steps_);
     }
-    if (const char* e = std::getenv("DEEPMOE_RESIDENT_QUEUE_EXPERTS"); e && *e) {
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_RESIDENT_QUEUE_EXPERTS"); e && *e) {
         const int v = std::atoi(e);
         if (v >= 1 && v <= 4096) rr_outstanding_cap_ = static_cast<uint32_t>(v);
     }
-    if (const char* e = std::getenv("DEEPMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
     if (cfg_.speculation.enabled) {
         if (cfg_.speculation.max_draft < 1 || cfg_.speculation.max_draft > 5 ||
             cfg_.speculation.accept_topk < 1 || cfg_.speculation.accept_topk > model_cfg_.text.vocab_size)
@@ -1839,7 +1840,7 @@ Result<void> Engine::cmd_submit(TimelineValue wait_value) {
 // indistinguishable from a wedged device at the semaphore, and 120 s of queueing
 // is ordinary when several builds share this APU -- which is how a 64-step
 // window replay died as `timeline wait for 5579 timed out` after running for
-// 102 s. The budget is now DEEPMOE_GPU_WAIT_S (default 900 s), the wait is
+// 102 s. The budget is now CACHEDMOE_GPU_WAIT_S (default 900 s), the wait is
 // taken in slices so a slow machine says so instead of looking hung, and the
 // failure names what it waited for and for how long.
 double Engine::gpu_wait_budget_s() const {
@@ -1858,7 +1859,7 @@ double Engine::gpu_wait_budget_s() const {
 //
 // The trade is not free: the host arrives at this fence about 2 ms before the
 // GPU finishes the layer's attention chain, so a spin long enough to catch the
-// signal burns a core for ~85% of the step. DEEPMOE_FENCE_SPIN_US is therefore
+// signal burns a core for ~85% of the step. CACHEDMOE_FENCE_SPIN_US is therefore
 // a budget in microseconds, default 0 = off (park immediately, the old
 // behaviour); the spin always falls back to the blocking wait when the budget
 // runs out, so no run can hang on it that would not have hung before.
@@ -1931,13 +1932,13 @@ Result<void> Engine::cmd_wait(uint64_t target) {
             warned = true;
             log_warn("engine: still waiting for GPU fence {} after {:.0f} s (token {}, {} submits "
                      "this step) -- the queue is shared; giving it {:.0f} s "
-                     "(DEEPMOE_GPU_WAIT_S)", want, waited, cur_->token_, cur_->submits_, budget_s);
+                     "(CACHEDMOE_GPU_WAIT_S)", want, waited, cur_->token_, cur_->submits_, budget_s);
         }
         if (waited >= budget_s) {
             r = fail(Err::Cancelled,
                      std::format("the GPU did not signal fence {} within {:.0f} s (token {}, "
                                  "{} submits this step). A queued submission and a wedged device "
-                                 "look the same here: raise DEEPMOE_GPU_WAIT_S if the machine is "
+                                 "look the same here: raise CACHEDMOE_GPU_WAIT_S if the machine is "
                                  "shared", want, waited, cur_->token_, cur_->submits_));
             break;
         }
@@ -2848,13 +2849,13 @@ Result<void> Engine::run_layer(uint32_t L, uint32_t position, bool& apply_post,
 // suite.multistream's Pipeline/Interleave cases (`ring comp_1.2.0 timeout` ->
 // VK_ERROR_DEVICE_LOST), and passes bit-identically with it off; RADV_DEBUG=hang
 // (syncshaders) also hides it. Root cause not found (docs/STATUS.md §7 0h), so
-// on RADV the default is off; DEEPMOE_MS_EAGER_MOE=1 turns it back on.
+// on RADV the default is off; CACHEDMOE_MS_EAGER_MOE=1 turns it back on.
 
 // Track SE (docs/STATUS.md §7 0h): the shared expert's act_quant + dispatch A
 // submitted right behind the gate, so it runs in the host round trip. RADV
 // default ON (hot step ~77.2 -> ~74.3 ms over three alternating pairs, every
 // warm pass's margin and l3_ppl's NLL bit-identical); elsewhere off until
-// measured. DEEPMOE_SHARED_EARLY=0/1 overrides.
+// measured. CACHEDMOE_SHARED_EARLY=0/1 overrides.
 bool Engine::shared_early_on() const {
     const bool on = cfg_.decode.shared_early.value_or(g_shared_early_default.load() != 0);
     // One stream by default: with two, the other stream's submits interleave
@@ -2864,7 +2865,7 @@ bool Engine::shared_early_on() const {
     // shared buffer but submission order -- shared-early issues an extra submit
     // with no wait behind the gate's, which is the same shape as the eager MoE
     // submit that raced under `--streams 2` on RADV (0h). Opt in with
-    // `DEEPMOE_SHARED_EARLY_MS=1` to measure it; see STATUS §3 92.
+    // `CACHEDMOE_SHARED_EARLY_MS=1` to measure it; see STATUS §3 92.
     return on && (cfg_.decode.shared_early_multistream || streams_.size() == 1);
 }
 
@@ -2885,7 +2886,7 @@ bool Engine::ms_eager_moe() const {
 //
 // The union has no MOE_OVERLAP split: starting on the resident half would need
 // a second union table. Engram now uses independent per-row planes/bindings
-// and one submission; DEEPMOE_BATCH_ENGRAM_EARLY=0 retains the old row fences.
+// and one submission; CACHEDMOE_BATCH_ENGRAM_EARLY=0 retains the old row fences.
 Result<void> Engine::init_batch(uint32_t m_cap) {
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     // Track MS: the M > 1 runner, its 128 MB scratch and its tail buffers are
@@ -3831,13 +3832,13 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     state_.reset();
     produce_ced_ = true;
     bool backfill = sc.backfill;
-    if (const char* e = std::getenv("DEEPMOE_BACKFILL"); e && *e) backfill = *e != '0';
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_BACKFILL"); e && *e) backfill = *e != '0';
     // One heat order for the whole process: the startup P3 backfill and every
     // later reheat pass rank non-resident experts by the same table, so
-    // `DEEPMOE_HEAT_FILE` (tools/hitrate_bench.py --write-heat / --heat-recent)
+    // `CACHEDMOE_HEAT_FILE` (tools/hitrate_bench.py --write-heat / --heat-recent)
     // steers both instead of only the first fill.
     if (heat_order_.empty()) {
-        if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
+        if (const char* hf = ::deepmoe::environment::get("CACHEDMOE_HEAT_FILE"); hf && *hf)
             heat_order_ = store::static_heat_order(hf);
         if (heat_order_.empty()) heat_order_ = store::static_heat_order();
     }
@@ -3956,8 +3957,8 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     gpu::PrefillConfig pc;
     pc.max_tokens = static_cast<uint32_t>(prompt.size());
     pc.transit_segments = cfg_.prefill_transit_segments;
-    if (const char* e = std::getenv("DEEPMOE_PF_LDS"); e && *e == '0') pc.lds_gemm = false;
-    if (const char* e = std::getenv("DEEPMOE_PF_READ_AHEAD"); e && *e == '0') pc.read_ahead_min_rows = 0;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_LDS"); e && *e == '0') pc.lds_gemm = false;
+    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_READ_AHEAD"); e && *e == '0') pc.read_ahead_min_rows = 0;
     pc.replay     = replay;
     pc.probe_layers = bool(dspark_);
     gpu::Prefill pf;
@@ -3997,7 +3998,7 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     gpu::PfExpertSink sink;
     sink.reserve = [&](uint32_t layer, uint32_t expert, uint32_t pos, uint32_t rank) {
         gpu::PfExpertSink::Dest d;
-        if (!handoff_) return d;   // DEEPMOE_PREFILL_HANDOFF=0: the transit, as before
+        if (!handoff_) return d;   // CACHEDMOE_PREFILL_HANDOFF=0: the transit, as before
         const TokenIndex stamp = stamp_base + (uint64_t(pos) * n_layers + layer) * k6 + rank;
         const TimelineValue guard = ++guard_clock_;
         auto a = planner_.admit_streamed({static_cast<uint16_t>(layer), static_cast<uint16_t>(expert)},
@@ -4092,8 +4093,8 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
              tm.gate, tm.shared_expert, tm.expert_io, tm.expert_gpu, tm.head, tm.host,
              res.wall_ms - tm.total, runner_ms, create_ms - runner_ms, teardown_ms, seed_ms, tm.experts_read, human_bytes(tm.expert_bytes), tm.dispatches,
              tm.submits, res.token);
-    // DEEPMOE_PF_OPS_JSON=FILE appends the per-op profile prefill_bench --ops-json writes
-    if (const char* f = std::getenv("DEEPMOE_PF_OPS_JSON"))
+    // CACHEDMOE_PF_OPS_JSON=FILE appends the per-op profile prefill_bench --ops-json writes
+    if (const char* f = ::deepmoe::environment::get("CACHEDMOE_PF_OPS_JSON"))
         if (FILE* fp = std::fopen(f, "ab")) {
             std::fputs(tm.json(static_cast<uint32_t>(prompt.size()), "serve", "").c_str(), fp);
             std::fclose(fp);
@@ -4475,7 +4476,7 @@ Result<double> Engine::measure_submit_overhead(uint32_t iterations) {
 // saturated) is counted and dropped.
 Result<uint32_t> Engine::warm_cache_from_heat(std::chrono::seconds timeout) {
     if (heat_order_.empty()) {
-        if (const char* hf = std::getenv("DEEPMOE_HEAT_FILE"); hf && *hf)
+        if (const char* hf = ::deepmoe::environment::get("CACHEDMOE_HEAT_FILE"); hf && *hf)
             heat_order_ = store::static_heat_order(hf);
         if (heat_order_.empty()) heat_order_ = store::static_heat_order();
     }
@@ -4610,11 +4611,11 @@ std::string Engine::gate_probe_report() const {
             host - g.fence_us / n);
     };
     std::string out = "gate round trip, host clock, us per layer-step "
-                      "(DEEPMOE_GATE_PROBE):\n";
+                      "(CACHEDMOE_GATE_PROBE):\n";
     out += row("hit", gp_hit_);
     out += row("miss", gp_miss_);
     if (cur_->spin_hits_ + cur_->spin_misses_)
-        out += std::format("  DEEPMOE_FENCE_SPIN_US={:.0f}: the spin caught the signal "
+        out += std::format("  CACHEDMOE_FENCE_SPIN_US={:.0f}: the spin caught the signal "
                            "{} of {} times\n", fence_spin_us(), cur_->spin_hits_,
                            cur_->spin_hits_ + cur_->spin_misses_);
     out += "  (i) blocked in cmd_wait; (ii) verify + top-k, already host-coherent; "

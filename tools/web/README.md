@@ -1,7 +1,7 @@
 # Local web chat
 
 ```bash
-export DEEPMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash"
+export CACHEDMOE_MODEL_DIR="$HOME/models/DeepSeek-V4.1-Flash"
 python3 tools/web/server.py --max-context 1048576
 ```
 

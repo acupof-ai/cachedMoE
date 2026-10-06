@@ -36,6 +36,10 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_env
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from trace_timeline import Trace  # noqa: E402
@@ -45,7 +49,7 @@ EXPERT_MAT = 5_898_240 + 368_640          # model/layout.h: one fp4 matrix + its
 EXPERT_SLOT = 18_808_832                  # one routed expert as read from disk
 TOPK = 6
 LEDGER = ROOT / "bench" / "results" / "perf_ledger.jsonl"
-DEFAULT_MODEL = (os.environ.get("DEEPMOE_MODEL_DIR")
+DEFAULT_MODEL = (runtime_env.getenv("CACHEDMOE_MODEL_DIR")
                  or os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))
 
 # stage name -> the manifest tensor prefixes (under layers.L.) it streams.
@@ -105,7 +109,8 @@ def capture(model_dir: str, warm: int, out: Path, extra_env: dict[str, str]) -> 
     exe = ROOT / "build" / ("deepmoe.exe" if os.name == "nt" else "deepmoe")
     cmd = [str(exe), "run", "--model", model_dir, "--steps", "1", "--warm", str(warm),
            "--trace", str(out)]
-    env = dict(os.environ, **extra_env)
+    env = dict(os.environ)
+    runtime_env.apply_overrides(env, extra_env)
     print("capturing:", " ".join(cmd), file=sys.stderr)
     r = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if r.returncode != 0 or not out.exists():
@@ -238,7 +243,9 @@ def main() -> int:
     if a.capture:
         trace = Path(tempfile.mkdtemp()) / "hot.bin"
         env = dict(kv.split("=", 1) for kv in a.env)
-        hot_prov = provenance.capture(env=dict(os.environ, **env))
+        hot_env = dict(os.environ)
+        runtime_env.apply_overrides(hot_env, env)
+        hot_prov = provenance.capture(env=hot_env)
         capture(a.model, a.warm, trace, env)
     if trace:
         h = hot_step(trace, man, a.bw)

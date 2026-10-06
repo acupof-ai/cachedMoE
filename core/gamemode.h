@@ -22,8 +22,9 @@
 //
 // Loaded with dlopen, so nothing links against libgamemode and a machine
 // without it (Windows, or Linux without the package) just gets a no-op.
-// DEEPMOE_GAMEMODE=0 turns it off.
+// CACHEDMOE_GAMEMODE=0 turns it off.
 
+#include "core/env.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -56,14 +57,14 @@ private:
         static Api a = [] {
             Api r;
 #if defined(__linux__)
-            if (const char* e = std::getenv("DEEPMOE_GAMEMODE"); e && *e == '0') return r;
+            if (const char* e = ::deepmoe::environment::get("CACHEDMOE_GAMEMODE"); e && *e == '0') return r;
             void* h = dlopen("libgamemode.so.0", RTLD_NOW | RTLD_LOCAL);
             if (!h) return r;
             r.start = reinterpret_cast<int (*)()>(dlsym(h, "real_gamemode_request_start"));
             r.end   = reinterpret_cast<int (*)()>(dlsym(h, "real_gamemode_request_end"));
             if (!r.start || !r.end) r = Api{};
             else std::fprintf(stderr, "[INF] gamemode: GPU work runs inside a GameMode request "
-                                      "(DEEPMOE_GAMEMODE=0 turns this off)\n");
+                                      "(CACHEDMOE_GAMEMODE=0 turns this off)\n");
 #endif
             return r;
         }();

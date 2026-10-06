@@ -1,3 +1,4 @@
+#include "core/env.h"
 #include "runtime/decode_layer.h"
 
 #include <algorithm>
@@ -17,7 +18,7 @@ namespace { std::atomic<int> g_attn_ksplit_default{0}; }
 void set_attn_ksplit_default(bool on) { g_attn_ksplit_default.store(on ? 1 : 0); }
 bool attn_ksplit_on() {
     static const int env = [] {
-        const char* e = std::getenv("DEEPMOE_ATTN_KSPLIT");
+        const char* e = ::deepmoe::environment::get("CACHEDMOE_ATTN_KSPLIT");
         return (e && *e) ? (std::atoi(e) != 0 ? 1 : 0) : -1;
     }();
     return env >= 0 ? env != 0 : g_attn_ksplit_default.load() != 0;
@@ -27,7 +28,7 @@ namespace { std::atomic<int> g_attn_cm_default{0}; }
 void set_attn_cm_default(bool on) { g_attn_cm_default.store(on ? 1 : 0); }
 bool attn_cm_on() {
     static const int env = [] {
-        const char* e = std::getenv("DEEPMOE_ATTN_CM");
+        const char* e = ::deepmoe::environment::get("CACHEDMOE_ATTN_CM");
         return (e && *e) ? (std::atoi(e) != 0 ? 1 : 0) : -1;
     }();
     return env >= 0 ? env != 0 : g_attn_cm_default.load() != 0;

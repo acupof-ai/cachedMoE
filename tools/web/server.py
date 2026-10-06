@@ -60,6 +60,11 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import runtime_env
+
 sys.dont_write_bytecode = True
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -79,7 +84,7 @@ def _state_home():
     return os.path.join(home, ".cache") if home != "~" else HERE
 
 REPO = os.path.dirname(os.path.dirname(HERE))
-MODEL = os.environ.get("DEEPMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
+MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
 
 # runtime/decode_layer.h: native checkpoint context, tiled index-score grid.
 K_MAX_INDEX_POSITIONS = 1 << 20           # 1,048,576
@@ -831,7 +836,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "deepmoe-web"
 
     def log_message(self, fmt, *a):
-        if os.environ.get("DEEPMOE_WEB_VERBOSE"):
+        if runtime_env.getenv("CACHEDMOE_WEB_VERBOSE"):
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % a))
 
     # -- helpers -----------------------------------------------------------
