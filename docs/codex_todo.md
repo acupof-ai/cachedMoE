@@ -21,6 +21,11 @@
 3. 以上不影响 C：C 继续，按原门判断，GO 也只加显式选项，不改默认。
 4. **项目全面改名为 cachedMoE。** 展示名已在 main `0f637f9` 改完；程序名、CMake、namespace、
    环境变量、数据路径全部改，旧名保留兼容。步骤和约束见 §4.7。
+5. **（2026-10-06 晚）重新比较电源模式，§0.1 的 performance 默认暂定。** C r4 在 performance 下
+   热暂停 4263 次、冷却占墙钟 40%，动态 mask 实际 ~180ms/token；A 在 power-saver 下 110ms/token、0 暂停。
+   用 §4.8 的实测决定网页和测速的默认电源模式。结果出来前网页保持现状。
+6. **批准 draft head 的 FP8 / vocab 子集实验。** 这是“不重新量化”硬规则的**唯一例外**，
+   只限 DSpark draft 的 head；目标模型的权重、head 和输出数学一律不动。步骤和门槛见 §4.9。
 
 ## 当前现场
 
@@ -311,7 +316,8 @@ mask 只比 off 快约 4%（历史 +43%）。
   收据：旧serial校准是 -3.33%，不等于开销；同状态ONECB fixture on/off为 +4.131%。
   处理为生产draft profiling默认off，主模型测试observer为空时不录额外query；不声称已达到<1%。
   来源 `final_review/onecb_serial.log`、`final_validation_summary.json` 的profiling段与 `core/config.h`。
-- [ ] draft head 约 10ms：FP8 head / vocab 子集只有估算，不实现，等 owner 决定。
+- [x] draft head 约 10ms：FP8 head / vocab 子集只有估算，不实现，等 owner 决定。
+  owner 2026-10-06 已批准实验，见 §0.6 和 §4.9。
 
 ### 4.6 不做（已关闭，勿重开）
 
@@ -360,6 +366,52 @@ CMake 选项 `CACHEDMOE_*`。
 - [x] 只设旧 `DEEPMOE_*` 变量、只设新变量、两者都设，三种情况各跑一次 CPU 门，行为一致。
 - [x] 网页用新程序名恢复，`/api/config` 正常，旧 transcript 和 KV 快照能打开。
 - [x] `rg -i deepmoe` 剩余命中逐条列进报告，每条写明为什么保留。
+
+### 4.8 P1：电源模式实测比较（owner 2026-10-06，先于 §4.9 做）
+
+问题：80/72 温控下，performance 的冷却暂停可能把墙钟拖得比 power-saver 还慢。
+已有数字不是同条件（A 是 power-saver plain mask，C r4 是 performance 同引擎多臂），不能直接下结论。
+
+- [ ] 配置固定为当前网页默认：动态 mask、5500 槽、双盘 48/48、k=2、ONECB1、GPU route 0、磁盘 KV 开、AC。
+  用网页同一套启动参数和 `web_longtest.py`（或等价脚本）跑**八轮、每轮 512 token**，同一 prompt 集、seed 和顺序。
+- [ ] 三臂：power-saver、balanced、performance，每臂只跑一次。同一引擎进程中途切
+  `powerprofilesctl`；每臂开始前等 GPU 和 NVMe 降到 ≤60°C 再开始，避免上一臂余热影响下一臂。
+  KV 每臂重置；专家 cache 按固定顺序延续，并在报告里写明顺序。
+- [ ] 80/72 温控照常生效，网页实际就是这样跑的。**主指标是原始墙钟 ms/token（含暂停）**，
+  不用扣除暂停后的 active 估算做决定，active 只作附表。
+- [ ] 每臂报：总 ms/token、第 1–2 轮与第 7–8 轮各自 ms/token（区分短对话和持续生成）、暂停次数与冷却秒数、
+  GPU/NVMe 峰值温度、GPU 平均频率（`pp_dpm_sclk` 或 amdgpu 传感器）、接受率、命中、四项重复指标。
+- [ ] 决策：原始 ms/token 最低者为默认；与最快者差距 ≤3% 的取更低功耗的那个。
+  若短对话最快和持续生成最快不是同一模式，两组数都写清楚，交 owner 决定，不自行做按长度切换。
+- [ ] 结论写进 STATUS 和本文件 §0.1；需要改时更新网页启动器和监督脚本的默认，重启网页后核对 `/api/config`
+  和 `powerprofilesctl get`。不刷新用户浏览器，不动 transcript。
+
+### 4.9 P2：draft head FP8 / vocab 子集（owner 2026-10-06 批准，§4.8 之后做）
+
+现状：draft head 是 bf16、约 1.32 GB，带宽利用率约 64%，每 cycle 约 8.4ms（profile 下 10.0ms）。
+tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生候选，target verify 决定输出，
+所以 **draft head 变化只能影响接受率和速度，不应改变任何最终 token**；这一点必须实测证明。
+
+范围约束：
+
+- 只改 draft head 的副本。若 draft 与 target 共享同一个 head 张量，新建 draft 专用副本，target 继续读原 bf16。
+  副本占用的内存要计入槽位账（约 18.8MB/槽），写明少了多少槽及其命中代价。
+- 不写 checkpoint：FP8/子集权重在加载时由 bf16 现场生成，或放在 checkpoint 外的派生缓存，记录生成方式和 hash。
+- 默认关闭，用显式开关；GO 后才考虑默认值，由 owner 定。
+
+步骤（先离线，后 GPU，每步一个 commit）：
+
+- [ ] **离线估算**：在一次短运行（64 token、k=2）里导出 draft 最终 hidden，用 CPU 分别算 bf16、FP8（per-row scale）、
+  vocab 子集（按语料词频取前 N，N=16K/32K/64K）的 top-1/top-4，对比 bf16 的一致率，
+  并用已记录的 target token 估算接受率变化。子集外的 token 记为 draft 必然不中。
+- [ ] **预期收益先算再减半**：FP8 字节减半、子集按 N/129280 缩小，按实测带宽换算每 cycle 省的 ms，减半后
+  **≥2ms/cycle 且估算接受率下降 ≤3 个百分点**才进入 GPU 实现；否则 NO-GO，写明数字。
+- [ ] **GPU 实现**（只做通过离线门的那一种，或两者组合）：新 kernel 与 bf16 版并存，micro-bench 报带宽利用率和 ms。
+- [ ] **正确性**：同 prompt 下开关前后最终输出 token 逐位相同（target verify 不变）；l3 off NLL `.622784` 不变；
+  `suite.decode`、DSpark golden 不低于当前基线。
+- [ ] **速度**：同引擎、同电源模式（用 §4.8 的结论）、八轮 k=2，与 bf16 head 对照，各跑一次。
+  按同接受率换算 cycle 成本；墙钟 ms/token 提升 <3% 判 NO-GO，开关保留默认关或删除。
+- [ ] 结论写进 `dspark_topk.md` 与 STATUS；GO 才让 owner 决定是否进网页默认。
 
 ## 5. Codex 追加收据（2026-10-06 00:23）
 
