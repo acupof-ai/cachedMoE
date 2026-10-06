@@ -492,6 +492,10 @@ public:
       float top1 = 0.0f, top2 = 0.0f;
       gpu::MgtRankOut draft_rank{};
   };
+    // Offline draft-head validation only. Copy already-computed verify logits
+    // after its fence; an unset observer adds no readback or target forward.
+    std::function<void(std::span<const uint32_t>, std::span<const BatchRow>,
+                       std::span<const float>)> spec_verify_probe;
     // `logits`, when non-empty, must be [M][vocab] and receives every row.
     Result<void> forward_batch(uint32_t p0, std::span<const uint32_t> tokens,
                                std::span<BatchRow> rows, std::span<float> logits = {});

@@ -4749,6 +4749,15 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         return std::unexpected(verify.error());
     }
     out.cycle.verify_ms = ms_since(tv);
+    if (spec_verify_probe) {
+        std::vector<float> observed;
+        if (gpu_readout) {
+            observed.resize(size_t(k + 1) * V);
+            wc_readback(observed.data(), cur_->blogits_.host_ptr, observed.size() * sizeof(float));
+        }
+        spec_verify_probe(input, rows, gpu_readout ? std::span<const float>(observed)
+                                                  : std::span<const float>(matrix));
+    }
     out.cycle.union_experts = batch_union_;
     out.cycle.miss_bytes = batch_miss_bytes_;
     for (const auto &t : cur_->timings_) {

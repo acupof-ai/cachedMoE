@@ -1199,6 +1199,17 @@ CACHEDMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
     uint32_t layers=0;const bool gpu_route=::cachedmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE")&&std::string_view(::cachedmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE"))=="1";
     if(!gpu_route)engine.batch_probe=[&](uint32_t,const auto&){++layers;};
     uint32_t root=first->token;
+    uint32_t observed = 0;
+    engine.spec_verify_probe = [&](std::span<const uint32_t> input,
+                                   std::span<const runtime::Engine::BatchRow> rows,
+                                   std::span<const float> logits) {
+        ++observed;
+        const uint32_t vocab = engine.model().text.vocab_size;
+        CHECK_EQ(input.size(), size_t(1)); // adaptive k=0 still verifies its root once
+        CHECK_EQ(logits.size(), size_t(vocab));
+        const auto best = std::max_element(logits.begin(), logits.end());
+        CHECK_EQ(uint32_t(best - logits.begin()), rows[0].argmax);
+    };
     for(uint32_t i=0;i<2;++i) {
         const uint32_t before=engine.context_length();layers=0;const auto calls=engine.batch_forward_calls();
         auto cycle=engine.speculative_step(root,6);REQUIRE(cycle);
@@ -1210,6 +1221,7 @@ CACHEDMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
         CHECK_EQ(engine.dspark_runtime()->next_position(),before+1);
         CHECK(cycle->cycle.draft_ms>0);root=cycle->rows.back().token;
     }
+    CHECK_EQ(observed, 2u);
 }
 
 CACHEDMOE_TEST(gpu_dspark, committed_prefix_survives_window_wrap) {

@@ -151,6 +151,10 @@ cachedmoe_legacy_executable(cachedmoe deepmoe)
 add_executable(nvme_bench bench/nvme_bench.cpp)
 target_link_libraries(nvme_bench PRIVATE cachedmoe_core)
 
+add_executable(draft_head_capture bench/draft_head_capture.cpp)
+target_link_libraries(draft_head_capture PRIVATE cachedmoe_core)
+add_dependencies(draft_head_capture shaders)
+
 # Track Q2 E1: the same IoEngine reads, varying only the destination memory.
 add_executable(io_dst_bench bench/io_dst_bench.cpp)
 target_link_libraries(io_dst_bench PRIVATE cachedmoe_core)
