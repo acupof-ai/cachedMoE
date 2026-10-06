@@ -127,15 +127,18 @@ class ProfileMonitor:
         return dict(power_profile=self.value, power_profile_sample_unix=self.sample_unix)
 
 
-def discover_sensors():
+def discover_sensors(*, required_nvme=0, root=Path("/sys/class/hwmon")):
     sensors = {}
-    for name in Path("/sys/class/hwmon").glob("hwmon*/name"):
+    for name in Path(root).glob("hwmon*/name"):
         kind = name.read_text().strip()
         node = name.parent / "temp1_input"
         if node.exists() and kind in ("amdgpu", "nvme", "k10temp"):
             sensors[f"{kind}:{name.parent.name}"] = node
     if not any(k.startswith("amdgpu:") for k in sensors):
         raise RuntimeError("GPU temperature sensor unavailable")
+    nvme = {p.resolve() for k, p in sensors.items() if k.startswith("nvme:")}
+    if len(nvme) < required_nvme:
+        raise RuntimeError(f"requires {required_nvme} NVMe Composite sensors; found {len(nvme)}")
     return sensors
 
 

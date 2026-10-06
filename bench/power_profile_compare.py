@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import socket
@@ -40,7 +41,7 @@ class ThermalController:
         self.server, self.out = server, out
         self.expected_engine = expected_engine
         self.child = None
-        self.sensors = discover_sensors()
+        self.sensors = discover_sensors(required_nvme=runtime_defaults.PRODUCTION_READ_SOURCES)
         self.policy = policy
         self.latch = ThermalLatch(policy=policy)
         self.paused = False
@@ -192,6 +193,13 @@ def finish(server, controller, owned, out, original_profile, complete, failure):
     return receipt
 
 
+def validate_storage_health(log_path):
+    # A transient transport failure can leave temperature sysfs readable. The
+    # initial READY source count is not proof that both sources stayed healthy.
+    if re.search(r"source \d+ .* dropped after", log_path.read_text()):
+        raise RuntimeError("checkpoint read source dropped; dual-drive arm is invalid")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch-repo", type=Path, required=True)
@@ -202,6 +210,7 @@ def main():
     args = parser.parse_args()
     policy = thermal_policy(args)
     assert_idle()
+    discover_sensors(required_nvme=runtime_defaults.PRODUCTION_READ_SOURCES)
     with socket.socket() as port_probe:
         if port_probe.connect_ex(("127.0.0.1", args.port)) == 0:
             raise RuntimeError("temporary HTTP port is already occupied")
@@ -257,7 +266,7 @@ def main():
                     if time.monotonic() > deadline:
                         raise RuntimeError("temporary web startup timed out")
                     time.sleep(.5)
-            if (ready["ready"]["sources"] != 2 or ready["ready"]["cache_slots"] != 5500
+            if (ready["ready"]["sources"] != runtime_defaults.PRODUCTION_READ_SOURCES or ready["ready"]["cache_slots"] != 5500
                     or not ready["ready"]["kv_disk"] or ready["max_context"] != runtime_defaults.MAX_CONTEXT
                     or ready["mask_cache"] != "dynamic" or ready["spec_k"] != 2):
                 raise RuntimeError("live policy differs from owner experiment")
@@ -312,6 +321,7 @@ def main():
                         raise RuntimeError("turn did not produce all 512 outputs; incomplete arm")
                     if controller.child.pid != engine_pid:
                         raise RuntimeError("engine identity changed between arms")
+                    validate_storage_health(out / "engine.log")
                     status = rpc("/api/status?session=" + session)
                     if (status["cache_fixed"] or status["cache_frozen"]
                             or "failed fills 0" not in status["store"]
@@ -330,6 +340,7 @@ def main():
             time.sleep(.2)
             data = (out / "thermal.jsonl").read_bytes()
             (out / "thermal_measurement.jsonl").write_bytes(data[:data.rfind(b"\n") + 1])
+            validate_storage_health(out / "engine.log")
             save(out / "report.json", report(out))
             complete = True
     except BaseException as error:

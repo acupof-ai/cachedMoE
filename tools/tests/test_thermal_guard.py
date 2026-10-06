@@ -57,6 +57,22 @@ class ThermalPolicy(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             policy.cold({"nvme:fake": 40})
 
+    def test_dual_nvme_discovery_rejects_missing_external_temperature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index, name in enumerate(("amdgpu", "nvme")):
+                node = root / f"hwmon{index}"
+                node.mkdir()
+                (node / "name").write_text(name)
+                (node / "temp1_input").write_text("42000")
+            with self.assertRaisesRegex(RuntimeError, "requires 2.*found 1"):
+                guard.discover_sensors(required_nvme=2, root=root)
+            node = root / "hwmon2"
+            node.mkdir()
+            (node / "name").write_text("nvme")
+            (node / "temp1_input").write_text("63000")
+            self.assertEqual(len(guard.discover_sensors(required_nvme=2, root=root)), 3)
+
     def test_custom_policy_and_invalid_thresholds(self):
         parser = guard.argparse.ArgumentParser()
         guard.add_thermal_arguments(parser)

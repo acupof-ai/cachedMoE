@@ -78,6 +78,15 @@ class FailureReceipts(unittest.TestCase):
             owned.close()
             parent.stdout.close()
 
+    def test_source_drop_invalidates_arm_even_if_temperature_is_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "engine.log"
+            log.write_text("[INF] engine: mirror holds 48 of 48 shards\n")
+            compare.validate_storage_health(log)
+            log.write_text("[WRN] IoEngine: source 1 '/mnt/mirror' dropped after 3 consecutive I/O errors\n")
+            with self.assertRaisesRegex(RuntimeError, "dual-drive arm is invalid"):
+                compare.validate_storage_health(log)
+
     def test_cleanup_only_failure_cannot_return_success(self):
         self.cleanup_case(primary=None, clean=False)
 

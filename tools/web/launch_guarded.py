@@ -456,9 +456,9 @@ def main(argv=None):
     if not Path(runtime_defaults.mirror_directory(), "deepmoe_manifest.json").is_file():
         raise RuntimeError("the requested second checkpoint read source is unavailable")
     args.state_dir.mkdir(parents=True, exist_ok=True)
+    sensors = discover_sensors(required_nvme=runtime_defaults.PRODUCTION_READ_SOURCES)
     original = profile()
     subprocess.run(["powerprofilesctl", "set", "performance"], check=True)
-    sensors = discover_sensors()
     stopping = False
 
     def request_stop(signum, frame):
