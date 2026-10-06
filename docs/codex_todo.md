@@ -203,7 +203,9 @@ Engram 全量 scale 默认没有常驻，也没有可再释放一次的整套 ho
   收据：方案 `mask_quality_plan.md`、报告 `miss_mask.md` / `dspark_topk.md` / STATUS，
   公开聚合机器收据 `mask_quality_receipt.json` 已提交；C NO-GO、D无合格候选、E按规则SKIP明确保留。
   源报告 `phase_c/performance_recovered_r4/`、`phase_d/final_report_r1.json` 与trace归因仍在主raw目录，未加入Git。
-- [ ] 合回 main，验证、推送，再删除**本任务自己的**工作树与分支；不得删用户 untracked 数据。
+- [x] 合回 main，验证、推送，再删除**本任务自己的**工作树与分支；不得删用户 untracked 数据。
+  收据：51e8451 已合并并推送；main 构建、CPU27/27、工具41/41、52shader逐位一致。
+  原始输入及两套54文件工具链均留在主仓库，随后仅删除本任务干净工作树。
   追加进度：owner main→工作树合并 `0ed4cb4` 已完成，合入后CPU27/27、工具41/41，
   52 shader及runtime/tests两个exe逐位不变；`post_main_merge_{cpu,tools}.log` 与
   `post_main_merge_shader_receipt.json` 已核实。main已fast-forward到`0ed4cb4`，main目录验证/推送仍交付中，本合并条目保持未勾；
@@ -479,3 +481,10 @@ CMake 选项 `CACHEDMOE_*`。
   变更后完整工具41/41通过。原C/D/trace输入与收据保留，不回填新源hash，也不重跑GPU。
 - `623a744`、`a120e35`与本次trace报告记录D失败判定和curated机器收据；
   当前所有必要GPU作业已结束，准备保留owner main展示名后合并、验证、push，再单独执行§4.7。
+
+## 14. Codex 追加收据（2026-10-06，main交付）
+
+- main 实际构建、27/27 CPU、41/41 工具通过；52 SPIR-V 与冻结测量版逐位相同。
+  实收据 `bench/results/mask_quality/main_delivery_receipt.json`，51e8451 已 push。
+- 原始 C/D/trace、输入备份、数值门与网页边界工具链全部保留。主仓库 untracked 数据未删。
+- §4.7 六步兼容改名开始；网页仍停止，改名验收后恢复，无浏览器刷新。
