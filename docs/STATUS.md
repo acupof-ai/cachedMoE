@@ -45,14 +45,15 @@ gates**; its fixed binary/shader receipt is recorded separately from numerical
 validation. Sources: `final_web_policy/recovered_boundary/{cpu_all.log,tools_all.log}`
 and `frozen_web_boundary_df316001/receipt.json` under the same raw root.
 
-**Current audit (2026-10-06): Phase C is NO-GO; Phase D remains in progress.**
+**Current audit (2026-10-06): Phase C is NO-GO; Phase D has no eligible candidate.**
 Restoring strict P0 priority recovers dynamic-mask l3 NLL **.835581**. Phase A
 plain mask still fails generated-answer MMLU57 (**46/57**, required 48) and the
 follow-up repetition gate (**.117878 versus off .049116**, 2.40 times).
 Its **110.142 ms/token** eight-turn result used **power-saver** and remains a
 historical measurement. The owner accepts this quality for the web baseline:
-performance mode, dynamic mask plus speculation, interim k2/ONECB on, and GPU
-routing off until D determines an independent benefit. This is an explicit
+performance mode, dynamic mask plus speculation, k2/ONECB on and CPU routing.
+D's independent route comparison favors CPU, while every D candidate fails the
+strict repetition gate. Retaining this owner baseline is an explicit
 owner decision, not a newly passed quality gate or a claim that the web service
 has been restored. [Recovery evidence](miss_mask.md#quality-recovery-phase-a-and-repetition-gates-2026-10-05),
 [owner policy and remaining work](codex_todo.md).
@@ -80,6 +81,38 @@ submitted GPU work. Mask attention/MoE/tail **31.115/24.729/6.723 ms/token**
 restore the historical compute level, so the conditional source bisect is SKIP.
 [Completed result and thermal definitions](miss_mask.md#completed-performance-comparison-phase-c-no-go-2026-10-06);
 raw sources: `bench/results/mask_quality/phase_c/performance_recovered_r4/{final_report.json,decision_receipt.json,check_results.json}`.
+
+**Phase D completes NO-ELIGIBLE-CANDIDATE.** Five arms each finish eight turns,
+supervisor rc=0, in one D engine/session. C and D are separate processes despite
+using the same frozen `de42061`/`b07f` binary and eight-turn script. D pins 384
+MTP experts inside 5,500 total slots, leaving 5,116 target slots; C has no MTP
+pins. The expert cache carries across each run's fixed arm order, with KV reset
+between arms. These resource, cache and output differences do not establish an
+equal-quality C/D speedup.
+
+| D arm | Raw ms/token | Active estimate ms/token |
+|---|---:|---:|
+| k2 ONECB, GPU route | 145.490523 | 85.091234 |
+| k2 ONECB, CPU route | 132.634144 | 67.936284 |
+| k2 serial, CPU route | 156.207434 | 84.394201 |
+| k3 ONECB, CPU route | 161.270413 | 74.257562 |
+| k5 ONECB, CPU route | 167.004420 | 82.089017 |
+
+All 40 outputs avoid detected exact loops, but every arm fails the strict
+1.5-times-off repetition gate. No candidate qualifies and no fresh winner NLL,
+Chinese64, three-output 512-token or MMLU57 run is inferred; those jobs are
+skipped after the decided failure. The independent no-loop k2 controls choose
+CPU routing: GPU cost is **9.69% higher raw**, **25.25% higher in the active
+estimate**, rather than the required >3% reduction in both. All arm loading
+failure deltas are zero. Full cycle costs, accepted/verified counts, original
+stage timers and common-acceptance arithmetic remain in the raw report.
+The owner's **k2/top-4/ONECB on/CPU route** baseline is retained; it is not a
+D-qualified default. [Curated aggregate receipt](mask_quality_receipt.json);
+source: `bench/results/mask_quality/phase_d/final_report_r1.json` and
+`phase_d/same_engine_fresh/check_results.json` under the same raw root.
+The GPU verify trace has completed collection; attribution is pending. Merge,
+post-merge verification/push, full compatible rename and web restoration remain
+unfinished.
 
 ### 1.0 Machine-recorded measurements (ledger)
 
@@ -799,6 +832,20 @@ steps, and the reference continuation has to be produced step by step.**
 ---
 
 ## 7. Next, in order
+
+0cf. **2026-10-06：D五臂完整结束，严格重复门全部失败，无合格候选；CPU路由独立判定通过。**
+   同一D引擎/session、五臂各8/8、rc0，双盘48/48、动态5500总槽含384 MTP pin；C/D不是同PID。
+   raw/active估算表见§1。全40输出无精确短周期loop，但每臂失败1.5×off重复门；无合格赢家，
+   fresh winner NLL/中文64/三组512/MMLU按止损SKIP，不用缺失质量冒充通过。
+   k2 ONECB控制独立选择CPU路由：GPU raw/active成本比CPU高9.69%/25.25%，未满足两者均下降>3%的规则。
+   正式五臂加载失败delta均0；完整cycle、四项原始stage及余项、accepted/verified和归一化算术见raw报告，
+   不把归一化当新路径实测，不把C/D不同pin/cache/output条件说成等质量加速。
+   owner授权的动态mask+k2/top4/ONECB on/CPU route基线保留，**不是D质量合格默认值**。
+   `phase_d/final_report_r1.json` 与 `phase_d/same_engine_fresh/check_results.json` 在主raw目录；
+   [公开小型收据](mask_quality_receipt.json)只含聚合指标与源hash，没有prompt/token/transcript。
+   GPU verify trace采集已rc0，归因待完成；合main、验证/push、清理本工作树、网页恢复验收仍待完成。
+   按owner§4.7在当前分支合main之后开独立工作树完成兼容改名及门禁；当前未完成这些交付动作。
+   以下0ce及更早条目保留当时的进行中状态。
 
 0ce. **2026-10-06：C完整performance对照NO-GO；当前质量/默认规则由owner覆盖，D仍待结案。**
    C r4同引擎/default session、动态5500槽、spec off、双盘48/48，四臂各8/8且rc0；

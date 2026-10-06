@@ -121,10 +121,16 @@ repetition gate failed. The earlier k5 score of 48/57 belongs to its historical
 configuration. These small screens are not a full MMLU benchmark.
 
 The owner accepts the current Phase A quality as the web baseline and selected
-dynamic mask plus speculation. Before Phase D finishes, the guarded launcher
-uses **k=2, top-K=4, ONECB on and GPU routing off**; its final k/routing choice is
-pending. This acceptance does not turn failed quality gates into passes.
+dynamic mask plus speculation. Phase D completed five eight-turn arms, but all
+failed the strict repetition gate, so it selected **no qualified candidate**.
+The owner-authorized baseline remains **k=2, top-K=4, ONECB on and GPU routing
+off**. The independent route comparison favors CPU routing; its k2 raw/active
+estimate costs are **132.634/67.936 ms/token**, versus GPU routing's
+**145.491/85.091**. These are observed costs, not an equal-quality speedup or a
+D-qualified default. Fresh winner quality runs were skipped after the decided
+failure. This acceptance does not turn failed quality gates into passes.
 [Recovery evidence and policy](docs/miss_mask.md), [owner decision](docs/codex_todo.md).
+[Curated evidence receipt](docs/mask_quality_receipt.json).
 
 `--dspark --spec-k 2 --spec-top-k 4` verifies the root and **one two-token draft
 path** in one target forward. A main-path draft token is accepted when it is in
@@ -162,8 +168,10 @@ share one queued engine. A second read source is detected when its matching
 manifest is present, or can be supplied with `--mirror`. Completed decode turns enqueue batched disk KV
 checkpoints in the background when disk KV is enabled; [details](docs/kv_async.md).
 
-The guarded launcher selects the interim mask/speculation policy described
-above; the final Phase D choice is pending. Full configuration:
+The guarded launcher selects the owner-retained mask/speculation policy described
+above. Trace attribution, merge, full compatible rename and web restoration
+remain separate tasks; the instructions do not claim the local service is running.
+Full configuration:
 [web documentation](tools/web/README.md).
 
 ## Development and validation

@@ -1,0 +1,519 @@
+{
+  "schema": "cachedmoe.mask_quality.public_receipt.v1",
+  "as_of": "2026-10-06",
+  "scope": "Curated aggregate evidence before trace closure, merge, full rename and web restoration. Raw result paths are local and gitignored; no prompts, transcripts or token IDs are included.",
+  "decisions": {
+    "A": "RECOVERY PASS; original MMLU and follow-up repetition gates FAIL; owner accepts existing quality",
+    "B": "CALIBRATION PASS; all C/D outputs reported",
+    "C": "NO-GO",
+    "D": "NO-ELIGIBLE-CANDIDATE",
+    "D_independent_route": "cpu",
+    "E": "SKIP allocation changes"
+  },
+  "owner_policy": {
+    "routing": "dynamic mask",
+    "speculation": true,
+    "draft_tokens": 2,
+    "accept_top_k": 4,
+    "onecb": true,
+    "gpu_route": false,
+    "status": "Owner-authorized baseline retained; not a D-qualified default",
+    "power_profile": "performance",
+    "ac_required": true,
+    "thermal_pause_c": 80,
+    "thermal_resume_c": 72,
+    "explicit_modes": [
+      "mask-spec",
+      "mask-plain",
+      "off-plain"
+    ],
+    "source": "docs/codex_todo.md §0 (2026-10-06)"
+  },
+  "timing_definition": {
+    "raw": "Observed engine decode wall time, weighted by timed decode steps; includes thermal pauses",
+    "active_estimate": "Raw time minus saved CPU-suspension interval overlaps with engine decode windows; not GPU compute time",
+    "stages": "Original stage timers are not independently cooling-adjusted",
+    "cross_phase": "C and D use separate processes. Same script/seeds and binary do not establish same output, same cache state or equal-quality speedup",
+    "normalized_costs": "Common acceptance arithmetic is in the D raw report; it does not simulate changed route unions or independent per-position acceptance"
+  },
+  "phases": {
+    "A": {
+      "source_refs": [
+        "A_matrix",
+        "A_mmlu",
+        "A_long_mask",
+        "A_long_off",
+        "A_eight_turns"
+      ],
+      "repair_commit": "ce589e8",
+      "p0_timing_commit": "c59fc95",
+      "mask_nll": 0.835581,
+      "off_nll_printed": 0.622784,
+      "served_fraction": 0.8135,
+      "lost_gate_mass": 0.1694,
+      "mmlu": {
+        "correct": 46,
+        "total": 57,
+        "invalid": 2,
+        "required_correct": 48,
+        "passed": false
+      },
+      "follow_up_repetition": {
+        "mask_repeat4": 0.11787819253438114,
+        "off_repeat4": 0.04911591355599214,
+        "max_ratio": 1.5,
+        "passed": false
+      },
+      "historical_eight_turns": {
+        "profile": "power-saver",
+        "turns": 8,
+        "raw_ms_per_token": 110.141547575,
+        "scope": "Historical plain-mask quality workload; not performance-mode selection"
+      }
+    },
+    "B": {
+      "source_refs": [
+        "B_calibration",
+        "B_cpu",
+        "B_tools"
+      ],
+      "definition": {
+        "window": 128,
+        "max_period": 8,
+        "min_cycles": 4,
+        "min_loop_tokens": 16,
+        "max_same_token_run": 3
+      },
+      "calibration_no_loop_results": [
+        false,
+        true,
+        true,
+        false
+      ],
+      "expected_no_loop_results": [
+        false,
+        true,
+        true,
+        false
+      ],
+      "cpu_cases_passed": 25,
+      "tool_gates_passed": 33,
+      "initial_tool_run": "32/33; suite.io failed and was not called a full pass",
+      "final_candidate_outputs_reported": {
+        "C": 32,
+        "D": 40
+      }
+    },
+    "C": {
+      "source_refs": [
+        "C_report",
+        "C_decision",
+        "C_supervisor"
+      ],
+      "engine_pid": 3641973,
+      "session": "default",
+      "total_slots": 5500,
+      "mtp_pins": 0,
+      "speculation": false,
+      "supervisor": {
+        "rc": 0,
+        "profile": "performance",
+        "elapsed_s": 1850.350091133,
+        "active_elapsed_s": 1109.603998517,
+        "thermal_paused_s": 740.746092616,
+        "thermal_pauses": 4263,
+        "ac_changed": false,
+        "scope": "Whole supervised job, including loading/prefill; active_elapsed_s excludes CPU suspension and is not GPU compute time",
+        "gpu_peak_c": 84.0,
+        "nvme_peak_c": 74.85
+      },
+      "arms": {
+        "off": {
+          "raw_ms_per_token": 197.219643127,
+          "active_estimate_ms_per_token": 120.249563666,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": true,
+          "failed_turns_1based": [],
+          "no_load_failures": true,
+          "load_failure_scope": "end cumulative counters include startup"
+        },
+        "mask": {
+          "raw_ms_per_token": 179.840495504,
+          "active_estimate_ms_per_token": 80.264075869,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": false,
+          "failed_turns_1based": [
+            4
+          ],
+          "no_load_failures": true,
+          "load_failure_scope": "end cumulative counters include startup"
+        },
+        "tau0.20": {
+          "raw_ms_per_token": 168.678853105,
+          "active_estimate_ms_per_token": 86.390294991,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": false,
+          "failed_turns_1based": [
+            3
+          ],
+          "no_load_failures": true,
+          "load_failure_scope": "end cumulative counters include startup"
+        },
+        "tau0.10": {
+          "raw_ms_per_token": 179.090453712,
+          "active_estimate_ms_per_token": 111.956500165,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": false,
+          "failed_turns_1based": [
+            3,
+            4
+          ],
+          "no_load_failures": true,
+          "load_failure_scope": "end cumulative counters include startup"
+        }
+      },
+      "verdict": "NO-GO",
+      "required_observed_speed_gain": 0.2,
+      "skipped_after_decided_failure": [
+        "fresh performance Chinese64",
+        "three matched 512-token quality outputs",
+        "MMLU57"
+      ],
+      "quality_scope": "Earlier 5100-slot power-saver NLL/Chinese64 screens remain historical; fresh full quality was not passed"
+    },
+    "D": {
+      "source_refs": [
+        "D_report",
+        "D_supervisor"
+      ],
+      "engine_pid": 3701458,
+      "session": "default",
+      "total_slots": 5500,
+      "mtp_pins": 384,
+      "target_slots": 5116,
+      "supervisor": {
+        "rc": 0,
+        "profile": "performance",
+        "elapsed_s": 2137.536964221,
+        "active_elapsed_s": 1271.702553903,
+        "thermal_paused_s": 865.834410318,
+        "thermal_pauses": 5802,
+        "ac_changed": false,
+        "scope": "Whole supervised job, including loading/prefill; active_elapsed_s excludes CPU suspension and is not GPU compute time",
+        "gpu_peak_c": 85.0,
+        "nvme_peak_c": 74.85
+      },
+      "arms": {
+        "k2_gpu": {
+          "raw_ms_per_token": 145.490522711,
+          "active_estimate_ms_per_token": 85.091233614,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": false,
+          "failed_turns_1based": [
+            4
+          ],
+          "no_load_failures": true,
+          "load_failure_scope": "arm counter delta",
+          "draft_tokens": 2,
+          "onecb": true,
+          "gpu_route": true,
+          "cycles": 819,
+          "accepted": 1369,
+          "verified": 1636,
+          "accepted_fraction": 0.836797066,
+          "raw_cycle_ms": 387.974727228,
+          "active_estimate_cycle_ms": 226.909956305,
+          "raw_components_ms": {
+            "draft_ms": 50.914734908,
+            "verify_ms": 333.811521429,
+            "commit_ms": 1.980189779,
+            "cpu_ms": 0.192416183
+          },
+          "uncovered_raw_cycle_ms": 1.075864929
+        },
+        "k2_onecb_cpu_route": {
+          "raw_ms_per_token": 132.634144005,
+          "active_estimate_ms_per_token": 67.936284056,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": false,
+          "failed_turns_1based": [
+            4
+          ],
+          "no_load_failures": true,
+          "load_failure_scope": "arm counter delta",
+          "draft_tokens": 2,
+          "onecb": true,
+          "gpu_route": false,
+          "cycles": 804,
+          "accepted": 1344,
+          "verified": 1606,
+          "accepted_fraction": 0.836861768,
+          "raw_cycle_ms": 353.85601852,
+          "active_estimate_cycle_ms": 181.247922015,
+          "raw_components_ms": {
+            "draft_ms": 42.171086654,
+            "verify_ms": 308.937328806,
+            "commit_ms": 1.48721451,
+            "cpu_ms": 0.269310576
+          },
+          "uncovered_raw_cycle_ms": 0.991077974
+        },
+        "k2_serial": {
+          "raw_ms_per_token": 156.207433506,
+          "active_estimate_ms_per_token": 84.394201338,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": false,
+          "failed_turns_1based": [
+            3
+          ],
+          "no_load_failures": true,
+          "load_failure_scope": "arm counter delta",
+          "draft_tokens": 2,
+          "onecb": false,
+          "gpu_route": false,
+          "cycles": 866,
+          "accepted": 1441,
+          "verified": 1728,
+          "accepted_fraction": 0.833912037,
+          "raw_cycle_ms": 415.230383291,
+          "active_estimate_cycle_ms": 224.336549054,
+          "raw_components_ms": {
+            "draft_ms": 65.472241767,
+            "verify_ms": 339.215824284,
+            "commit_ms": 8.971039211,
+            "cpu_ms": 0.379309148
+          },
+          "uncovered_raw_cycle_ms": 1.191968881
+        },
+        "k3_best": {
+          "raw_ms_per_token": 161.270413089,
+          "active_estimate_ms_per_token": 74.257561937,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": false,
+          "failed_turns_1based": [
+            2,
+            5
+          ],
+          "no_load_failures": true,
+          "load_failure_scope": "arm counter delta",
+          "draft_tokens": 3,
+          "onecb": true,
+          "gpu_route": false,
+          "cycles": 670,
+          "accepted": 1543,
+          "verified": 2007,
+          "accepted_fraction": 0.768809168,
+          "raw_cycle_ms": 531.470256866,
+          "active_estimate_cycle_ms": 244.717457846,
+          "raw_components_ms": {
+            "draft_ms": 51.080000478,
+            "verify_ms": 476.003299701,
+            "commit_ms": 1.168914376,
+            "cpu_ms": 0.135203781
+          },
+          "uncovered_raw_cycle_ms": 3.08283853
+        },
+        "k5_best": {
+          "raw_ms_per_token": 167.004420293,
+          "active_estimate_ms_per_token": 82.089017044,
+          "completed_turns": 8,
+          "no_exact_loop": true,
+          "strict_repetition_passed": false,
+          "failed_turns_1based": [
+            3,
+            4,
+            5
+          ],
+          "no_load_failures": true,
+          "load_failure_scope": "arm counter delta",
+          "draft_tokens": 5,
+          "onecb": true,
+          "gpu_route": false,
+          "cycles": 592,
+          "accepted": 1733,
+          "verified": 2943,
+          "accepted_fraction": 0.58885491,
+          "raw_cycle_ms": 654.758884291,
+          "active_estimate_cycle_ms": 321.838865808,
+          "raw_components_ms": {
+            "draft_ms": 46.763231267,
+            "verify_ms": 603.00319375,
+            "commit_ms": 2.429436157,
+            "cpu_ms": 0.178048931
+          },
+          "uncovered_raw_cycle_ms": 2.384974186
+        }
+      },
+      "route": {
+        "verdict": "PASS",
+        "selected": "cpu",
+        "rule": "GPU requires >3% lower raw AND active-estimate cost on no-loop k2 ONECB controls",
+        "gpu_over_cpu_raw_cost": 1.096931139,
+        "gpu_over_cpu_active_estimate_cost": 1.252515277
+      },
+      "default_selection": "NO-ELIGIBLE-CANDIDATE",
+      "qualified_winner": null,
+      "fresh_winner_quality_jobs": "SKIP: all candidates fail the strict repetition gate; missing quality is not a pass",
+      "trace": {
+        "source_refs": [
+          "D_trace_collection"
+        ],
+        "collection_returncode": 0,
+        "attribution": "PENDING at this receipt; not inferred from collection success"
+      }
+    },
+    "E": {
+      "source_refs": [
+        "E_accounting"
+      ],
+      "verdict": "SKIP allocation changes",
+      "verified_safe_reclaim_at_least_150_slots": false,
+      "accounting_slots": 5100,
+      "mtp_pins": 0,
+      "slot_bytes": 18808832,
+      "pinned_padding_bytes": 1390910016,
+      "decode_scratch_bytes": 33554432,
+      "decision": "SKIP allocation changes: no verified safe >=150-slot reclaim; pinned padding and scratch total below 3 GB; transit already released",
+      "lifetime": "Prefill transit/runner already destroyed; bootstrap host expert store already reset, not all host weights"
+    }
+  },
+  "code_validation": {
+    "source_refs": [
+      "numerical_validation",
+      "web_cpu",
+      "web_tools",
+      "web_boundary",
+      "web_binary"
+    ],
+    "numerical_commit": "3c3a2c6f37caa4f8573691e3b3d76361b02535ac",
+    "numerical_engine_sha256": "d4bf3184a38856600712397b6a2c0a2c5bcfe1791ee1b4fb314c61a87ba878cc",
+    "successful_validation_jobs": 9,
+    "registered_cases_passed": 10,
+    "skips": 0,
+    "classification": "Eight model/GPU jobs plus one CPU preflight rejection; job count is not a GPU kernel test count",
+    "short_decode_reference_matches": [
+      6,
+      7
+    ],
+    "short_decode_total_each": 8,
+    "longctx_4k_16k_teacher_free_matches": 8,
+    "longctx_total_each": 8,
+    "strict_short_decode_8_plus_8_passed": false,
+    "off64_printed_nll": 0.622784,
+    "web_boundary_cpu_cases": 7,
+    "web_boundary_gpu_fixtures": 1,
+    "latest_cpu_ctest": {
+      "passed": 27,
+      "total": 27
+    },
+    "latest_tool_gates": {
+      "passed": 41,
+      "total": 41
+    },
+    "post_merge_or_rename_final_validation": false
+  },
+  "frozen_C_D_runtime": {
+    "source_commit": "de420612771390229d315f9a842a427d3b38da3d",
+    "engine_sha256": "b07f2480c846468157b79855c85b9af111a97d756c25863f9837c49f3355a93a",
+    "shader_count": 52,
+    "shader_aggregate_sha256": "185109f030e455f6fbd6dbea95e153a28f64bab7217df82f15ec9c1da2c10a2e",
+    "two_sources_each": true,
+    "mirror_shards_each": 48
+  },
+  "pending_at_receipt": [
+    "GPU-route verify trace attribution (collection completed rc=0)",
+    "merge into main and post-merge verification/push",
+    "full compatible rename in a new worktree after the current branch merges",
+    "web restoration and live policy verification"
+  ],
+  "sources": {
+    "A_matrix": {
+      "path": "bench/results/mask_quality/phase_a_matrix.json",
+      "sha256": "d2d89cf7cbd4d78ef6d0a93a89c0958b607b55a44d9760ece899e512b7f7de5f"
+    },
+    "A_mmlu": {
+      "path": "bench/results/mask_quality/phase_a/validation/mmlu57/mask/summary.json",
+      "sha256": "882676d3fd40541f233cf311065e2730a708bafd058301ac2b56d9b6cedd220f"
+    },
+    "A_long_mask": {
+      "path": "bench/results/mask_quality/phase_a/validation/long_plain/turns.json",
+      "sha256": "4e4ad4b9e10048d23531d31c221d0ccbf1fc66053b1c0b54e48fffc4b2c4a420"
+    },
+    "A_long_off": {
+      "path": "bench/results/mask_quality/phase_a/validation/long_off/turns.json",
+      "sha256": "05d3677fbe8d348b8b9352b38cabfd7f7b6bc00fb04dfdfe73f86fbd70401e2a"
+    },
+    "A_eight_turns": {
+      "path": "bench/results/mask_quality/phase_a/validation/long8_plain/turns.json",
+      "sha256": "75e8e7f7181f75f363bca9363427c7fe1cc2a624a66e12c8603afbca5dbd7f80"
+    },
+    "B_calibration": {
+      "path": "bench/results/mask_quality/phase_b_calibration.json",
+      "sha256": "7d78554b6f11063a11db73070b7881f35be5cff35bd095c75423618616ff2a0d"
+    },
+    "B_cpu": {
+      "path": "bench/results/mask_quality/cpu_final.log",
+      "sha256": "ea50b9bfb403ec78fc4029a0017d2572a21b51d36f94ffccd2d5df34b146e7fa"
+    },
+    "B_tools": {
+      "path": "bench/results/mask_quality/tools_final.log",
+      "sha256": "404228920f489f1dd57c64bac1488b0dbcbb591f544bf9ac11ea5c8fb1ea2bc3"
+    },
+    "C_report": {
+      "path": "bench/results/mask_quality/phase_c/performance_recovered_r4/final_report.json",
+      "sha256": "fdd52c0c8469e9e390e77a120b046eb8e9d1b9628625d8180fba5f6753d06afd"
+    },
+    "C_decision": {
+      "path": "bench/results/mask_quality/phase_c/performance_recovered_r4/decision_receipt.json",
+      "sha256": "67fd5124a24357997fd513cbcf2f830362472a229690d493f6f61ce70ac27f7f"
+    },
+    "C_supervisor": {
+      "path": "bench/results/mask_quality/phase_c/performance_recovered_r4/check_results.json",
+      "sha256": "1112ccc2647e8036461038fc42f1ae9696faf5e929235336615d085da1c18df8"
+    },
+    "D_report": {
+      "path": "bench/results/mask_quality/phase_d/final_report_r1.json",
+      "sha256": "99e8c66f6413803412b45a07f97829ccb9783ad0ad3183bba1c6f4f90ae751fd"
+    },
+    "D_supervisor": {
+      "path": "bench/results/mask_quality/phase_d/same_engine_fresh/check_results.json",
+      "sha256": "09c3f23ac01aff879dfc9d807eba1d9a7a9a40c1d1684bb3bad87c5241fcb5fa"
+    },
+    "E_accounting": {
+      "path": "bench/results/mask_quality/phase_e_accounting.json",
+      "sha256": "2ca0db4febd61649e1068f085e05b5f5f13caa415b01792adbf6ff1d6e978618"
+    },
+    "numerical_validation": {
+      "path": "bench/results/mask_quality/final_validation_summary.json",
+      "sha256": "7ea3dad6ee1037921a116712984e6a95fab8e1e3eeccc633bf60f4701ddaa4ac"
+    },
+    "web_cpu": {
+      "path": "bench/results/mask_quality/final_web_policy/recovered_boundary/cpu_all.log",
+      "sha256": "cd6af43405e142b602423baf53d5ad020783767e6b5a35525c2a00989ba97d99"
+    },
+    "web_tools": {
+      "path": "bench/results/mask_quality/final_web_policy/recovered_boundary/tools_all.log",
+      "sha256": "5ac2b783f19ebabf2ba1b45ea5dc32f4afb17c5d317f9c930b389939c7851c2a"
+    },
+    "web_boundary": {
+      "path": "bench/results/mask_quality/final_web_policy/recovered_boundary/validation_receipt.json",
+      "sha256": "92f2a80beadf2a5eeaeb74343cff37079fed8edfefeb0d11c48f4569c3f96430"
+    },
+    "web_binary": {
+      "path": "bench/results/mask_quality/frozen_web_boundary_df316001/receipt.json",
+      "sha256": "ec832459c6e2278c26559579d280bd4628a288f8de3bb84a25883309fd07d349"
+    },
+    "D_trace_collection": {
+      "path": "bench/results/mask_quality/phase_d/diagnostics/check_results.json",
+      "sha256": "d3490f8c0e94bd04f363427a7f1f4ad4bdf6789658d850e1530cd5bfa911f481"
+    }
+  }
+}
