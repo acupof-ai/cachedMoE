@@ -110,7 +110,7 @@ The owner's **k2/top-4/ONECB on/CPU route** baseline is retained; it is not a
 D-qualified default. [Curated aggregate receipt](mask_quality_receipt.json);
 source: `bench/results/mask_quality/phase_d/final_report_r1.json` and
 `phase_d/same_engine_fresh/check_results.json` under the same raw root.
-The GPU verify trace has completed collection; attribution is pending. Merge,
+The GPU verify trace is complete: CPU outside-span cost is 10.039 ms/cycle; the GPU arm is dominated by 190.661 ms/cycle of Engram issue/landing. Host residual is below .003 ms/cycle. [Accounting and limits](dspark_topk.md#21-新双盘-k2-verify-tracehost账与异步等待2026-10-06). Merge,
 post-merge verification/push, full compatible rename and web restoration remain
 unfinished.
 
@@ -832,6 +832,15 @@ steps, and the reference continuation has to be produced step by step.**
 ---
 
 ## 7. Next, in order
+
+0cg. **2026-10-06：新双盘verify trace的约10ms host账已对上。**
+   CPU route wall减span10.038604ms = record+final fence减span9.576974 +其余host .459017 +残差 .002613。
+   GPU route本次span外194.729531ms中Engram issue/landing190.660680；这不是专家wait或纯SSD时间。
+   GPU/CPU分别1/41 submits，但每cycle都恰好1 target forward；29region均40层+head、时间戳完整。
+   初始热度、接受率、union与暂停不同，不能据此把差额归因成路由kernel变慢。
+   专家wait/加载失败0，9暂停/.733s，AC1/performance；draft未GPU profiling，不能冒充31ms kernel回归结论。
+   测量/归因关闭；不改IO优先级或kernel。收据见 `dspark_topk.md` §21和 `mask_quality_receipt.json`。
+   以下0cf及更早条目保留其当时pending状态。
 
 0cf. **2026-10-06：D五臂完整结束，严格重复门全部失败，无合格候选；CPU路由独立判定通过。**
    同一D引擎/session、五臂各8/8、rc0，双盘48/48、动态5500总槽含384 MTP pin；C/D不是同PID。

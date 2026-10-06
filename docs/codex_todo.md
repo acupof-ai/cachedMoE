@@ -250,7 +250,10 @@ mask 只比 off 快约 4%（历史 +43%）。
 
 - [x] D 里 GPU_ROUTE 开/关分开测；双盘下若仍无收益，只保留 ONECB，GPU route 默认关，记为 NO-GO。
   收据：正式D两个k2 ONECB控制均8/8；独立raw/active双3%门选CPU，GPUroute结案NO-GO，见§D追加。
-- [ ] 查 +13ms 来源（双盘时 snapshot/union 与 IO 完成的同步点），只查不改，结论写进 `dspark_topk.md`。
+- [x] 查 +13ms 来源（双盘时 snapshot/union 与 IO 完成的同步点），只查不改，结论写进 `dspark_topk.md`。
+  收据：新双盘32输出trace已完成，CPU约10.039ms由host区间对上、未覆盖.002613ms；
+  GPU组190.661ms Engram issue/landing是本次主项，缓存热度/union/接受率不同不作旧+13ms完整因果归因。
+  29个target regions每cycle单forward，专家wait/加载失败0；详 `dspark_topk.md` §21和新分析hash收据。
 
 ### 4.3 P1：网页投机配置
 
@@ -451,3 +454,13 @@ CMake 选项 `CACHEDMOE_*`。
 - 新双盘k2 GPU/CPU短trace已监督rc0，55.861秒wall、55.129 active、.733秒冷却；
   每臂32输出、拆分收据已生成。当前仅说明采集结束，额外verify耗时归因待独立分析。
 - Strata PR #943最新只读核对仍OPEN，无comments/reviews；原题与兼容接口保留，维护者合并待外部处理。
+
+
+## 12. Codex 追加收据（2026-10-06，trace结案）
+
+- 新verify trace完成独立host分区核对，残差GPU/CPU .002337/.002613ms；嵌套桶不重复相加。
+  mask专家miss异步不等，Engram保留精确数据依赖。温控9暂停/.733s、AC/performance，所有目标时间戳有效。
+- `f368b2e`修掉CPU控制loop可绕过GPU双3%门的selector边界，8项CPU测试；
+  变更后完整工具41/41通过。原C/D/trace输入与收据保留，不回填新源hash，也不重跑GPU。
+- `623a744`、`a120e35`与本次trace报告记录D失败判定和curated机器收据；
+  当前所有必要GPU作业已结束，准备保留owner main展示名后合并、验证、push，再单独执行§4.7。

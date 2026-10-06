@@ -363,11 +363,246 @@
       "qualified_winner": null,
       "fresh_winner_quality_jobs": "SKIP: all candidates fail the strict repetition gate; missing quality is not a pass",
       "trace": {
+        "status": "COMPLETE: collected and host-accounted; diagnostic only",
         "source_refs": [
-          "D_trace_collection"
+          "D_trace_analysis",
+          "D_trace_analysis_hashes"
         ],
-        "collection_returncode": 0,
-        "attribution": "PENDING at this receipt; not inferred from collection success"
+        "engine_pid": 3751491,
+        "whole_job": {
+          "rc": 0,
+          "failure": null,
+          "wall_s": 55.86122154298937,
+          "active_s": 55.128556925978046,
+          "pause_s": 0.7326646170113236
+        },
+        "trace_partition": {
+          "target_regions": 29,
+          "records": 28063,
+          "all_combined_records_consumed": true,
+          "exact_file_order_record_match": true
+        },
+        "arms": [
+          {
+            "name": "k2_gpu",
+            "cycles": 15,
+            "actual_target_forward_calls": 15,
+            "target_calls_per_cycle": 1,
+            "batch_M_histogram": {
+              "2": 1,
+              "3": 14
+            },
+            "queue_submissions_per_target_histogram": {
+              "1": 15
+            },
+            "initial_store": "expert store: 5500 slots (384 resident, 0 filling, 5116 free, 384 pinned)",
+            "final_store": "expert store: 5500 slots (3681 resident, 17 filling, 1802 free, 384 pinned)",
+            "accepted": 16,
+            "drafted": 29,
+            "union_experts": 5886,
+            "miss_bytes": 20915421184,
+            "decode_hit_rate": 0.818181818,
+            "load_failures": {
+              "p0_reserve": 0,
+              "p0_submit": 0,
+              "p0_io": 0,
+              "fill": 0
+            },
+            "expert_io_wait": {
+              "calls": 0,
+              "miss_joins": 0,
+              "ms": 0
+            },
+            "costs": {
+              "draft_ms": {
+                "total_ms": 328.507831,
+                "mean_ms": 21.900522066666667
+              },
+              "verify_ms": {
+                "total_ms": 4519.505193,
+                "mean_ms": 301.3003462
+              },
+              "cpu_ms": {
+                "total_ms": 4.009842,
+                "mean_ms": 0.26732279999999997
+              },
+              "commit_ms": {
+                "total_ms": 12.85354,
+                "mean_ms": 0.8569026666666667
+              }
+            },
+            "verify_gpu": {
+              "cycles": 15,
+              "mean_busy_ms": {
+                "attention": 39.149285133333336,
+                "ced": 1.2667207333333332,
+                "engram": 4.358566866666666,
+                "moe": 50.770367533333335,
+                "tail": 9.336229333333334
+              },
+              "mean_cross_submit_gap_ms": 0.0,
+              "mean_same_submit_gap_ms": 1.6896455333333342,
+              "mean_span_ms": 106.57081513333334
+            },
+            "verify_host_mean_ms": {
+              "setup_snapshot": 0.30708573333333333,
+              "input_ced_engram_issue": 0.329971,
+              "record_layers_tail": 191.9815756,
+              "submit_fence": 107.6241,
+              "queue_submit": 0.078304,
+              "fence_wait": 107.54022073333333,
+              "engram_issue_land": 190.66067966666665,
+              "finish_routes": 0.9108962666666667,
+              "trace_readout": 0.14438053333333334,
+              "route_index_validation": 0.025451466666666665,
+              "route_hidden_carry": 0.037974933333333336,
+              "route_readback": 0.14834313333333335,
+              "route_classify": 0.12480753333333335,
+              "route_planner": 0.5457326
+            },
+            "verify_host_unbucketed_mean_ms": 0.0023370666666551188,
+            "verify_wall_outside_gpu_span_ms": 194.72953106666665,
+            "outside_gpu_span_decomposition_ms": {
+              "setup_snapshot": 0.30708573333333333,
+              "engram_issue_land": 190.66067966666665,
+              "other_input_and_record": 1.6508669333333614,
+              "submit_fence_minus_gpu_span": 1.053284866666658,
+              "finish_routes": 0.9108962666666667,
+              "trace_readout": 0.14438053333333334,
+              "unbucketed": 0.0023370666666551188
+            }
+          },
+          {
+            "name": "k2_onecb_cpu_route",
+            "cycles": 14,
+            "actual_target_forward_calls": 14,
+            "target_calls_per_cycle": 1,
+            "batch_M_histogram": {
+              "1": 1,
+              "2": 1,
+              "3": 12
+            },
+            "queue_submissions_per_target_histogram": {
+              "41": 14
+            },
+            "initial_store": "expert store: 5500 slots (3698 resident, 0 filling, 1802 free, 384 pinned)",
+            "final_store": "expert store: 5500 slots (4164 resident, 0 filling, 1336 free, 384 pinned)",
+            "accepted": 17,
+            "drafted": 25,
+            "union_experts": 6179,
+            "miss_bytes": 8764915712,
+            "decode_hit_rate": 0.929872084,
+            "load_failures": {
+              "p0_reserve": 0,
+              "p0_submit": 0,
+              "p0_io": 0,
+              "fill": 0
+            },
+            "expert_io_wait": {
+              "calls": 0,
+              "miss_joins": 0,
+              "ms": 0
+            },
+            "costs": {
+              "draft_ms": {
+                "total_ms": 327.062396,
+                "mean_ms": 23.361599714285713
+              },
+              "verify_ms": {
+                "total_ms": 2566.131752,
+                "mean_ms": 183.29512514285713
+              },
+              "cpu_ms": {
+                "total_ms": 2.349531,
+                "mean_ms": 0.16782364285714285
+              },
+              "commit_ms": {
+                "total_ms": 12.569077,
+                "mean_ms": 0.8977912142857143
+              }
+            },
+            "verify_gpu": {
+              "cycles": 14,
+              "mean_busy_ms": {
+                "attention": 41.04158957142858,
+                "ced": 1.3635617142857144,
+                "engram": 4.4962259285714286,
+                "moe": 58.89839792857142,
+                "tail": 9.73921942857143
+              },
+              "mean_cross_submit_gap_ms": 56.15822707142856,
+              "mean_same_submit_gap_ms": 1.5592993571428546,
+              "mean_span_ms": 173.256521
+            },
+            "verify_host_mean_ms": {
+              "setup_snapshot": 0.0028875714285714286,
+              "input_ced_engram_issue": 0.3347857142857143,
+              "record_layers_tail": 162.264564,
+              "submit_fence": 20.568930857142856,
+              "queue_submit": 0.7529833571428571,
+              "fence_wait": 162.80889842857144,
+              "engram_issue_land": 16.024379714285715,
+              "finish_routes": 0.0012042142857142857,
+              "trace_readout": 0.12013935714285714,
+              "route_index_validation": 0,
+              "route_hidden_carry": 0,
+              "route_readback": 0,
+              "route_classify": 0,
+              "route_planner": 0
+            },
+            "verify_host_unbucketed_mean_ms": 0.002613428571407894,
+            "verify_wall_outside_gpu_span_ms": 10.038604142857139,
+            "outside_gpu_span_decomposition_ms": {
+              "record_plus_final_fence_minus_full_gpu_span": 9.57697385714286,
+              "other_host_envelopes": 0.45901685714285717,
+              "unbucketed": 0.002613428571407894
+            }
+          }
+        ],
+        "host_bucket_definition": {
+          "disjoint": [
+            "setup_snapshot",
+            "input_ced_engram_issue",
+            "record_layers_tail",
+            "submit_fence",
+            "finish_routes",
+            "trace_readout"
+          ],
+          "nested": [
+            "queue_submit",
+            "fence_wait",
+            "engram_issue_land",
+            "route_index_validation",
+            "route_hidden_carry",
+            "route_readback",
+            "route_classify",
+            "route_planner"
+          ],
+          "frozen_source_lines": {
+            "setup_snapshot": 3261,
+            "input_ced_engram_issue": 3332,
+            "record_layers_tail": 3376,
+            "submit_fence": 3381,
+            "finish_routes": 3395,
+            "trace_readout": 3424
+          },
+          "note": "queue_submit/fence_wait accumulate across all submissions; Engram issue+record joins lie inside input/record envelopes; route sub-buckets lie inside finish_routes. Never sum nested values with their parents."
+        },
+        "limitations": [
+          "Same prompt and seed, one PID; expert residency carries across reset. Second arm begins much warmer.",
+          "Accepted paths, target union sizes, miss demand, and acceptance rates differ; arm deltas do not causally isolate routing or kernels.",
+          "CPU-route decode overlaps cooling. Pauses are removed only from complete absolute decode windows, not GPU stage timestamps or per-cycle fields, whose absolute host boundaries were not recorded.",
+          "Draft GPU profiling is off. ONECB record_submit and wall.draft are host wall measurements, not kernel times.",
+          "Shared optional binary geometry describes the last observed stage, not per-arm dispatch geometry.",
+          "This 32-output-token diagnostic is not the formal eight-turn performance/quality selection run."
+        ],
+        "conclusions": [
+          "The earlier approximately 10ms outside-GPU-span envelope is present in this fresh CPU-route arm: 10.038604ms/cycle. Its measured host wall is nearly fully accounted for; residual 0.002613ms/cycle.",
+          "Fresh GPU-route wall is 301.300346ms versus GPU span 106.570815ms. Outside span 194.729531ms is dominated by the measured Engram issue/landing bucket, 190.660680ms. This is host asynchronous-read join/record work, not MoE expert wait (all expert wait counters zero).",
+          "GPU route uses one queue submission versus 41 for CPU routing; target remains one main-path batch forward per cycle in both arms.",
+          "Raw diagnostic draft means are 21.900522ms/cycle GPU-route and 23.361600ms/cycle CPU-route (CPU positive-k only 25.158612ms). They are host wall observations with zero GPU-profiled draft cycles; no draft-kernel regression conclusion is supported.",
+          "Full host accounting does not make this a controlled route A/B: acceptance, union demand, carried cache and thermal pauses differ. Use formal candidate and quality gates to choose a policy."
+        ]
       }
     },
     "E": {
@@ -418,7 +653,12 @@
       "passed": 41,
       "total": 41
     },
-    "post_merge_or_rename_final_validation": false
+    "post_merge_or_rename_final_validation": false,
+    "latest_tools_after_route_selector": {
+      "passed": 41,
+      "total": 41,
+      "source": "bench/results/mask_quality/final_web_policy/recovered_boundary/tools_after_route_selector.log"
+    }
   },
   "frozen_C_D_runtime": {
     "source_commit": "de420612771390229d315f9a842a427d3b38da3d",
@@ -429,7 +669,6 @@
     "mirror_shards_each": 48
   },
   "pending_at_receipt": [
-    "GPU-route verify trace attribution (collection completed rc=0)",
     "merge into main and post-merge verification/push",
     "full compatible rename in a new worktree after the current branch merges",
     "web restoration and live policy verification"
@@ -514,6 +753,14 @@
     "D_trace_collection": {
       "path": "bench/results/mask_quality/phase_d/diagnostics/check_results.json",
       "sha256": "d3490f8c0e94bd04f363427a7f1f4ad4bdf6789658d850e1530cd5bfa911f481"
+    },
+    "D_trace_analysis": {
+      "path": "bench/results/mask_quality/phase_d/diagnostics/fresh_trace_analysis.json",
+      "sha256": "e6861cbb4407b1f68a0bf28296fcf9e4fd1c8c63ccbd05b0590969cb31ca4177"
+    },
+    "D_trace_analysis_hashes": {
+      "path": "bench/results/mask_quality/phase_d/diagnostics/fresh_trace_analysis_hashes.json",
+      "sha256": "a964e7b18aa7c24f0fadc026a09b4ab02348f828fb393920e6428b57f646560d"
     }
   }
 }

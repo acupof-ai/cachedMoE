@@ -1006,5 +1006,43 @@ IO failed、P0 reserve/submit/IO 失败 **before、after与差值全0**，source
 D的384个MTP pin包含在总5500槽内，target可用 **5116**；C/plain无MTP pin。
 C动态mask参考为 raw/active **179.840 / 80.264 ms/decode输出**，跨 C/D 的
 速度或命中率差无法单独归因于投机或pin成本。D固定顺序、缓存续用与输出轨迹变化
-也限制归因。新的 GPU route trace / single-target-call 诊断仍在运行，剩余差额
-及draft内部耗时的定位留待实际诊断收据；本节不据stage wall值补推它们。
+也限制归因。新的 GPU route trace / single-target-call 诊断已完成，见§21。
+本节stage wall值保持原口径，不据此补推draft kernel耗时。
+
+
+## 21. 新双盘 k2 verify trace：host账与异步等待（2026-10-06）
+
+冻结b07引擎，同PID3751491/default session、相同中文prompt/seed；ONECB1，route1→0，
+各32输出。GPU route开始时只有384个MTP resident、5116个free，CPU组继承已升温cache。
+这组用于拆账；接受路径、union、miss量和温控不同，不作路由kernel的因果A/B或新速度排名。
+
+| 每cycle均值 | GPU route | CPU route |
+|---|---:|---:|
+| cycles / target calls | 15 / 15 | 14 / 14 |
+| queue submits / target | 1 | 41 |
+| draft host wall ms | 21.901 | 23.362 |
+| verify wall ms | 301.300 | 183.295 |
+| target GPU span ms | 106.571 | 173.257 |
+| wall减GPU span ms | 194.730 | 10.039 |
+| host未覆盖残差 ms | .002337 | .002613 |
+
+CPU组约10ms已对上：record+final fence减完整GPU span **9.576974ms**，其它顶层host区间
+**.459017ms**，残差 **.002613ms**。这是跨41次submit的区间差，span包含submit间空隙；
+不能把它解释成一个额外10ms kernel，也无法用未记录的每cycle绝对时钟精确扣除冷却。
+
+GPU组span外194.729531ms主要是 **Engram issue/landing 190.660680ms**；其它input/record
+1.650867、submit/fence减span1.053285、setup .307086、route finish .910896、trace .144381、
+残差 .002337ms。Engram桶含发起异步读取、等待数据落地及录制，是主模型Engram依赖，
+不是MoE专家阻塞，也不是纯SSD设备时间。六个顶层host桶互斥；Engram、queue/fence、
+route细项嵌套在父桶内，不可重复相加。这也不能证明旧+13ms全部来自同一因素。
+
+29个target region/28063 records逐条与combined文件顺序匹配，每region40层+head、flags0；
+**每cycle恰好一个主路径target forward**，queue submit数与forward数不同。
+专家wait calls/joins/ms及加载失败before/after均0；mask的专家miss仍异步，Engram保留精确依赖。
+监督rc0，55.861s wall/55.129 active/.733 cooling、9次暂停；GPU最高80°C，NVMe49.85/74.85°C，
+AC1/performance稳定。CPU组decode重叠冷却663.847ms，所有stage表保留raw；不逐stage扣暂停。
+Draft GPU profiling关闭，上表是host wall（CPU正k均值25.159ms），不能与旧31ms kernel地板等同比较。
+
+来源 `phase_d/diagnostics/{fresh_trace_analysis.json,fresh_trace_analysis_hashes.json}`、
+拆分 `run/partition_receipt.json`、每臂 `timing.json/spec.jsonl/target_verify.bin` 与监督收据。
+GPUroute不设默认的决策沿用§20完整八轮结果；本项仅关闭测量/归因，不改优先级或kernel。
