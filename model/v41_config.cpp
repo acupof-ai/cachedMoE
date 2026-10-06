@@ -32,11 +32,12 @@ Result<RopeScaling> parse_rope(const JsonValue& text) {
     RopeScaling rs;
     const JsonValue* n = text.find("rope_scaling");
     if (!n || n->is_null()) return rs;
-    rs.type   = n->string_or("rope_type", n->string_or("type", ""));
-    rs.factor = n->double_or("factor", 1.0);
-    rs.beta_fast = n->double_or("beta_fast", 32.0);
-    rs.beta_slow = n->double_or("beta_slow", 1.0);
-    rs.original_max_position = static_cast<uint32_t>(n->int_or("original_max_position_embeddings", 0));
+    rs.type = n->string_or("rope_type", n->string_or("type", rs.type));
+    rs.factor = n->double_or("factor", rs.factor);
+    rs.beta_fast = n->double_or("beta_fast", rs.beta_fast);
+    rs.beta_slow = n->double_or("beta_slow", rs.beta_slow);
+    rs.original_max_position = static_cast<uint32_t>(
+        n->int_or("original_max_position_embeddings", rs.original_max_position));
     return rs;
 }
 
@@ -45,10 +46,10 @@ Result<QuantConfig> parse_quant(const JsonValue& root) {
     const JsonValue* n = root.find("quantization_config");
     if (!n || n->is_null())
         return fail(Err::Corrupt, "config.json has no quantization_config (design §6 requires native FP4/FP8)");
-    q.quant_method      = n->string_or("quant_method", "");
-    q.activation_scheme = n->string_or("activation_scheme", "");
-    q.scale_fmt         = n->string_or("scale_fmt", "");
-    q.expert_dtype      = n->string_or("expert_dtype", "");
+    q.quant_method = n->string_or("quant_method", q.quant_method);
+    q.activation_scheme = n->string_or("activation_scheme", q.activation_scheme);
+    q.scale_fmt = n->string_or("scale_fmt", q.scale_fmt);
+    q.expert_dtype = n->string_or("expert_dtype", q.expert_dtype);
     auto blocks = n->int_array_at("weight_block_size");
     if (blocks && blocks->size() == 2) {
         q.weight_block_m = static_cast<uint32_t>((*blocks)[0]);
@@ -63,7 +64,7 @@ Result<TextConfig> parse_text(const JsonValue& root) {
     const JsonValue& t = **tp;
 
     TextConfig c;
-    c.model_type = t.string_or("model_type", "");
+    c.model_type = t.string_or("model_type", c.model_type);
 
 #define REQ_U32(field) { auto r = req_u32(t, #field); if (!r) return std::unexpected(r.error()); c.field = *r; }
 #define REQ_F64(field) { auto r = req_f64(t, #field); if (!r) return std::unexpected(r.error()); c.field = *r; }
@@ -86,11 +87,11 @@ Result<TextConfig> parse_text(const JsonValue& root) {
     REQ_U32(max_position_embeddings)
     REQ_F64(rope_theta)
 
-    c.attention_bias    = t.bool_or("attention_bias", false);
-    c.attention_dropout = t.double_or("attention_dropout", 0.0);
-    c.initializer_range = t.double_or("initializer_range", 0.0);
-    c.use_cache         = t.bool_or("use_cache", true);
-    c.tie_word_embeddings = t.bool_or("tie_word_embeddings", false);
+    c.attention_bias = t.bool_or("attention_bias", c.attention_bias);
+    c.attention_dropout = t.double_or("attention_dropout", c.attention_dropout);
+    c.initializer_range = t.double_or("initializer_range", c.initializer_range);
+    c.use_cache = t.bool_or("use_cache", c.use_cache);
+    c.tie_word_embeddings = t.bool_or("tie_word_embeddings", c.tie_word_embeddings);
 
     auto rs = parse_rope(t);
     if (!rs) return std::unexpected(rs.error());
@@ -102,23 +103,26 @@ Result<TextConfig> parse_text(const JsonValue& root) {
     REQ_STR(scoring_func)
     REQ_STR(topk_method)
     REQ_F64(routed_scaling_factor)
-    c.norm_topk_prob = t.bool_or("norm_topk_prob", true);
+    c.norm_topk_prob = t.bool_or("norm_topk_prob", c.norm_topk_prob);
 
     REQ_U32(sliding_window)
     c.compress_ratios        = opt_int_array(t, "compress_ratios");
-    c.compress_rope_theta    = t.double_or("compress_rope_theta", 0.0);
+    c.compress_rope_theta = t.double_or("compress_rope_theta", c.compress_rope_theta);
     c.kv_source_layer_ids    = opt_int_array(t, "kv_source_layer_ids");
     c.index_source_layer_ids = opt_int_array(t, "index_source_layer_ids");
     REQ_U32(index_n_heads)
     REQ_U32(index_head_dim)
     REQ_U32(index_topk)
-    c.candidate_source_layer_id = static_cast<uint32_t>(t.int_or("candidate_source_layer_id", 0));
-    c.candidate_topk_blocks     = static_cast<uint32_t>(t.int_or("candidate_topk_blocks", 0));
-    c.candidate_block_size      = static_cast<uint32_t>(t.int_or("candidate_block_size", 0));
+    c.candidate_source_layer_id =
+        static_cast<uint32_t>(t.int_or("candidate_source_layer_id", c.candidate_source_layer_id));
+    c.candidate_topk_blocks =
+        static_cast<uint32_t>(t.int_or("candidate_topk_blocks", c.candidate_topk_blocks));
+    c.candidate_block_size =
+        static_cast<uint32_t>(t.int_or("candidate_block_size", c.candidate_block_size));
 
     REQ_U32(hc_mult)
     REQ_U32(hc_sinkhorn_iters)
-    c.hc_eps = t.double_or("hc_eps", 0.0);
+    c.hc_eps = t.double_or("hc_eps", c.hc_eps);
 
     c.engram_layer_ids      = opt_int_array(t, "engram_layer_ids");
     c.engram_num_embeddings = opt_int_array(t, "engram_num_embeddings");
@@ -126,12 +130,14 @@ Result<TextConfig> parse_text(const JsonValue& root) {
     { auto r = t.uint_at("engram_vocab_size"); if (!r) return std::unexpected(r.error()); c.engram_vocab_size = *r; }
     REQ_U32(engram_n_heads)
     REQ_U32(engram_head_dim)
-    c.engram_pad_token_id = static_cast<uint32_t>(t.int_or("engram_pad_token_id", 0));
+    c.engram_pad_token_id =
+        static_cast<uint32_t>(t.int_or("engram_pad_token_id", c.engram_pad_token_id));
     REQ_U32(engram_compressed_vocab_size)
 
     REQ_U32(num_nextn_predict_layers)
     REQ_U32(dspark_block_size)
-    c.dspark_noise_token_id   = static_cast<uint32_t>(t.int_or("dspark_noise_token_id", 0));
+    c.dspark_noise_token_id =
+        static_cast<uint32_t>(t.int_or("dspark_noise_token_id", c.dspark_noise_token_id));
     c.dspark_target_layer_ids = opt_int_array(t, "dspark_target_layer_ids");
     REQ_U32(dspark_markov_rank)
     REQ_U32(dspark_n_routed_experts)
@@ -145,16 +151,17 @@ Result<TextConfig> parse_text(const JsonValue& root) {
 
 VisionConfig parse_vision(const JsonValue& n) {
     VisionConfig v;
-    v.model_type           = n.string_or("model_type", "");
-    v.num_hidden_layers    = static_cast<uint32_t>(n.int_or("num_hidden_layers", 0));
-    v.hidden_size          = static_cast<uint32_t>(n.int_or("hidden_size", 0));
-    v.num_attention_heads  = static_cast<uint32_t>(n.int_or("num_attention_heads", 0));
-    v.intermediate_size    = static_cast<uint32_t>(n.int_or("intermediate_size", 0));
-    v.patch_size           = static_cast<uint32_t>(n.int_or("patch_size", 0));
-    v.rope_theta           = n.double_or("rope_theta", 0.0);
-    v.downsample_ratio     = static_cast<uint32_t>(n.int_or("downsample_ratio", 0));
-    v.max_image_tokens     = static_cast<uint32_t>(n.int_or("max_image_tokens", 0));
-    v.min_pixels           = static_cast<uint64_t>(n.int_or("min_pixels", 0));
+    v.model_type = n.string_or("model_type", v.model_type);
+    v.num_hidden_layers = static_cast<uint32_t>(n.int_or("num_hidden_layers", v.num_hidden_layers));
+    v.hidden_size = static_cast<uint32_t>(n.int_or("hidden_size", v.hidden_size));
+    v.num_attention_heads =
+        static_cast<uint32_t>(n.int_or("num_attention_heads", v.num_attention_heads));
+    v.intermediate_size = static_cast<uint32_t>(n.int_or("intermediate_size", v.intermediate_size));
+    v.patch_size = static_cast<uint32_t>(n.int_or("patch_size", v.patch_size));
+    v.rope_theta = n.double_or("rope_theta", v.rope_theta);
+    v.downsample_ratio = static_cast<uint32_t>(n.int_or("downsample_ratio", v.downsample_ratio));
+    v.max_image_tokens = static_cast<uint32_t>(n.int_or("max_image_tokens", v.max_image_tokens));
+    v.min_pixels = static_cast<uint64_t>(n.int_or("min_pixels", v.min_pixels));
     return v;
 }
 
@@ -191,12 +198,12 @@ Result<V41Config> V41Config::parse(std::string_view json_text) {
             for (const JsonValue& e : **arr)
                 if (auto s = e.as_string()) c.architectures.emplace_back(*s);
     }
-    c.model_type     = doc->string_or("model_type", "");
-    c.dtype          = doc->string_or("dtype", doc->string_or("torch_dtype", ""));
-    c.bos_token_id   = doc->int_or("bos_token_id", -1);
-    c.eos_token_id   = doc->int_or("eos_token_id", -1);
-    c.pad_token_id   = doc->int_or("pad_token_id", -1);
-    c.image_token_id = doc->int_or("image_token_id", -1);
+    c.model_type = doc->string_or("model_type", c.model_type);
+    c.dtype = doc->string_or("dtype", doc->string_or("torch_dtype", c.dtype));
+    c.bos_token_id = doc->int_or("bos_token_id", c.bos_token_id);
+    c.eos_token_id = doc->int_or("eos_token_id", c.eos_token_id);
+    c.pad_token_id = doc->int_or("pad_token_id", c.pad_token_id);
+    c.image_token_id = doc->int_or("image_token_id", c.image_token_id);
 
     auto q = parse_quant(*doc);
     if (!q) return std::unexpected(q.error());

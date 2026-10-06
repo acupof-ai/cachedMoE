@@ -6,6 +6,7 @@
 
 #include "core/json.h"
 #include "core/log.h"
+#include "model/layout.h"
 
 #if !defined(_WIN32)
 // MSVC/mingw spelling of the 64-bit seek; POSIX has fseeko with a 64-bit off_t.
@@ -116,9 +117,9 @@ Result<DecodeState> DecodeState::load(const std::string& dir) {
     s.prompt_ids_  = uint_array(*doc, "prompt_ids");
     s.greedy_      = uint_array(*doc, "greedy_tokens");
     if (const JsonValue* c = doc->find("config")) {
-        s.layers_   = static_cast<uint32_t>(c->int_or("n_layers", 40));
-        s.window_   = static_cast<uint32_t>(c->int_or("window_size", 128));
-        s.head_dim_ = static_cast<uint32_t>(c->int_or("head_dim", 512));
+        s.layers_ = static_cast<uint32_t>(c->int_or("n_layers", layout::kNumLayers));
+        s.window_ = static_cast<uint32_t>(c->int_or("window_size", s.window_));
+        s.head_dim_ = static_cast<uint32_t>(c->int_or("head_dim", s.head_dim_));
     }
     if (s.prompt_ids_.empty() || s.steps_ == 0 || s.layers_ == 0)
         return fail(Err::Corrupt, "L3 index.json is missing prompt_ids / steps / layers");

@@ -5,6 +5,13 @@
 // number in design §2.1 is asserted against the file, not against a constant
 // copied into the test.
 #include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <optional>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -13,6 +20,7 @@
 #include "model/manifest.h"
 #include "model/v41_config.h"
 #include "runtime/block.h"
+#include "runtime/decode_state.h"
 #include "runtime/kvcache.h"
 #include "tests/test_framework.h"
 
@@ -27,6 +35,71 @@ namespace {
 std::string data_path(const char* name) {
     return std::string(CACHEDMOE_TEST_DATA_DIR) + "/" + name;
 }
+
+std::string config_fixture() {
+    std::ifstream file(data_path("v41_config.json"), std::ios::binary);
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+// The selected fields are scalar metadata. Edit the copied fixture, never the
+// checked-in reference or a checkpoint, so missing keys exercise the parser.
+bool edit_scalar(std::string &json, const std::string &key,
+                 const std::optional<std::string> &value) {
+    const std::regex scalar("\"" + key + "\"\\s*:\\s*[^,}\\n]+");
+    std::smatch match;
+    if (!std::regex_search(json, match, scalar))
+        return false;
+    size_t first = static_cast<size_t>(match.position());
+    size_t last = first + static_cast<size_t>(match.length());
+    if (value) {
+        json.replace(first, last - first, "\"" + key + "\":" + *value);
+        return true;
+    }
+    while (last < json.size() && std::isspace(static_cast<unsigned char>(json[last])))
+        ++last;
+    if (last < json.size() && json[last] == ',') {
+        ++last;
+    } else {
+        while (first && std::isspace(static_cast<unsigned char>(json[first - 1])))
+            --first;
+        if (first && json[first - 1] == ',')
+            --first;
+    }
+    json.erase(first, last - first);
+    return true;
+}
+
+struct ExportFixture {
+    std::filesystem::path directory;
+    bool valid = false;
+
+    ExportFixture() {
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        directory = std::filesystem::temp_directory_path() /
+                    ("cachedmoe_metadata_export_" + std::to_string(stamp));
+        std::error_code error;
+        valid = std::filesystem::create_directory(directory, error) && !error;
+        if (valid) {
+            std::ofstream file(directory / "empty.bin", std::ios::binary);
+            valid = file.good();
+        }
+    }
+    ~ExportFixture() {
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+    }
+    bool write_index(const std::optional<std::string> &config) const {
+        std::ofstream file(directory / "index.json");
+        file << R"({"prefill_len":1,"steps_exported":1,"prompt_ids":[11],)";
+        if (config)
+            file << "\"config\":" << *config << ',';
+        file << R"("steps":[{"step":"prefill","file":"empty.bin","tensors":[],)"
+                R"("data_offset":0},{"step":"0","file":"empty.bin","tensors":[],)"
+                R"("data_offset":0}]})";
+        return file.good();
+    }
+};
+
 }  // namespace
 
 CACHEDMOE_TEST(v41_config, parses_the_real_config_json) {
@@ -181,6 +254,83 @@ CACHEDMOE_TEST(v41_config, rejects_a_truncated_or_wrong_config) {
     CHECK(!r);
     CHECK(r.error().message.find("hidden_size") != std::string::npos);
     CHECK_ERR(V41Config::load("tests/data/definitely_not_here.json"), Err::Io);
+}
+
+CACHEDMOE_TEST(v41_config, missing_optional_metadata_uses_value_type_defaults) {
+    std::string json = config_fixture();
+    REQUIRE(!json.empty());
+    for (const char *key : {"bos_token_id", "eos_token_id", "quant_method", "use_cache",
+                            "norm_topk_prob", "attention_bias", "attention_dropout", "factor",
+                            "beta_fast", "beta_slow", "patch_size"}) {
+        REQUIRE(edit_scalar(json, key, std::nullopt));
+    }
+    auto parsed = V41Config::parse(json);
+    REQUIRE_OK(parsed);
+    const V41Config defaults;
+    CHECK_EQ(parsed->bos_token_id, defaults.bos_token_id);
+    CHECK_EQ(parsed->eos_token_id, defaults.eos_token_id);
+    CHECK_EQ(parsed->quantization.quant_method, defaults.quantization.quant_method);
+    CHECK_EQ(parsed->text.use_cache, defaults.text.use_cache);
+    CHECK_EQ(parsed->text.norm_topk_prob, defaults.text.norm_topk_prob);
+    CHECK_EQ(parsed->text.attention_bias, defaults.text.attention_bias);
+    CHECK_EQ(parsed->text.attention_dropout, defaults.text.attention_dropout);
+    CHECK_EQ(parsed->text.rope_scaling.factor, defaults.text.rope_scaling.factor);
+    CHECK_EQ(parsed->text.rope_scaling.beta_fast, defaults.text.rope_scaling.beta_fast);
+    CHECK_EQ(parsed->text.rope_scaling.beta_slow, defaults.text.rope_scaling.beta_slow);
+    CHECK(parsed->has_vision);
+    CHECK_EQ(parsed->vision.patch_size, defaults.vision.patch_size);
+}
+
+CACHEDMOE_TEST(v41_config, optional_zero_false_and_explicit_metadata_override_defaults) {
+    std::string json = config_fixture();
+    REQUIRE(!json.empty());
+    REQUIRE(edit_scalar(json, "bos_token_id", "77"));
+    REQUIRE(edit_scalar(json, "eos_token_id", "null"));
+    REQUIRE(edit_scalar(json, "quant_method", "\"fixture-quant\""));
+    REQUIRE(edit_scalar(json, "use_cache", "false"));
+    REQUIRE(edit_scalar(json, "norm_topk_prob", "false"));
+    REQUIRE(edit_scalar(json, "attention_bias", "true"));
+    REQUIRE(edit_scalar(json, "factor", "2.5"));
+    REQUIRE(edit_scalar(json, "beta_fast", "7.0"));
+    REQUIRE(edit_scalar(json, "beta_slow", "0.0"));
+    REQUIRE(edit_scalar(json, "patch_size", "99"));
+    auto parsed = V41Config::parse(json);
+    REQUIRE_OK(parsed);
+    CHECK_EQ(parsed->bos_token_id, 77);
+    CHECK_EQ(parsed->eos_token_id, V41Config{}.eos_token_id);
+    CHECK_EQ(parsed->quantization.quant_method, std::string("fixture-quant"));
+    CHECK(!parsed->text.use_cache);
+    CHECK(!parsed->text.norm_topk_prob);
+    CHECK(parsed->text.attention_bias);
+    CHECK_EQ(parsed->text.rope_scaling.factor, 2.5);
+    CHECK_EQ(parsed->text.rope_scaling.beta_fast, 7.0);
+    CHECK_EQ(parsed->text.rope_scaling.beta_slow, 0.0);
+    CHECK_EQ(parsed->vision.patch_size, 99u);
+}
+
+CACHEDMOE_TEST(v41_config, legacy_export_geometry_defaults_and_presence_remain_distinct) {
+    ExportFixture fixture;
+    REQUIRE(fixture.valid);
+    const std::string directory = fixture.directory.string();
+    // Absent config must retain layers=0 and fail, not inherit the model's 40.
+    REQUIRE(fixture.write_index(std::nullopt));
+    CHECK_ERR(runtime::DecodeState::load(directory), Err::Corrupt);
+    REQUIRE(fixture.write_index("{}"));
+    auto defaults = runtime::DecodeState::load(directory);
+    REQUIRE_OK(defaults);
+    const runtime::DecodeState initial;
+    CHECK_EQ(defaults->layers(), layout::kNumLayers);
+    CHECK_EQ(defaults->window(), initial.window());
+    CHECK_EQ(defaults->head_dim(), initial.head_dim());
+
+    REQUIRE(fixture.write_index(R"({"n_layers":2,"window_size":4,"head_dim":16})"));
+    auto explicit_values = runtime::DecodeState::load(directory);
+    REQUIRE_OK(explicit_values);
+    CHECK_EQ(explicit_values->layers(), 2u);
+    CHECK_EQ(explicit_values->window(), 4u);
+    CHECK_EQ(explicit_values->head_dim(), 16u);
+    REQUIRE(fixture.write_index(R"({"n_layers":0})"));
+    CHECK_ERR(runtime::DecodeState::load(directory), Err::Corrupt);
 }
 
 CACHEDMOE_TEST(manifest, parses_schema_v2) {
