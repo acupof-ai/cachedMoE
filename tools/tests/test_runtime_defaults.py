@@ -29,6 +29,23 @@ from tools.web import launch_guarded
 
 
 class LaunchConfiguration(unittest.TestCase):
+    def test_changed_bench_entrypoints_work_without_pythonpath(self):
+        # Importing these in this test process could hide a missing bootstrap:
+        # each real script starts independently from an unrelated directory.
+        scripts = ("config_sweep", "d2_abab", "one_config", "reheat_ab", "reheat_probe",
+                   "route_compare", "spec_compare", "thermal_guard", "web_longtest")
+        env = dict(os.environ)
+        env.pop("PYTHONPATH", None)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        with tempfile.TemporaryDirectory() as folder:
+            for script in scripts:
+                with self.subTest(script=script):
+                    child = subprocess.run([sys.executable, str(ROOT / "bench" / (script + ".py")),
+                                            "--help"], cwd=folder, env=env,
+                                           capture_output=True, text=True, timeout=5)
+                    self.assertEqual(child.returncode, 0, child.stderr)
+                    self.assertIn("usage:", child.stdout)
+
     def test_import_spellings_and_api_copies_have_one_authority(self):
         self.assertIs(defaults, importlib.import_module("tools.runtime_defaults"))
         for order in ("tools.runtime_defaults, runtime_defaults", "runtime_defaults, tools.runtime_defaults"):
