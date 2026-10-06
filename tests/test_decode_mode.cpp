@@ -142,6 +142,9 @@ DEEPMOE_TEST(decode_mode, exact_boundary_waits_for_capacity_not_all_fills) {
     CHECK_EQ(store.stats().filling, 2u);
     CHECK(store.slot_info(slots[0])->state == SlotState::Filling);
     CHECK(store.slot_info(slots[1])->state == SlotState::Filling);
+    // Broad slack around the 5 ms completion. Waiting the full 1 s budget
+    // on the unfinished first slot must fail even if capacity is found later.
+    CHECK(boundary->elapsed_ms < 500);
     CHECK_EQ(store.completed_timeline(), 0ull);
 }
 
