@@ -226,8 +226,9 @@ def profile_controls(name, *, speculative=True, onecb=None, gpu_route=None, mask
     else:
         if onecb is not None:
             controls["DSPARK_ONECB"] = str(onecb)
-        if gpu_route is not None:
-            controls["BATCH_GPU_ROUTE"] = str(gpu_route)
+        if "BATCH_GPU_ROUTE" in controls:
+            controls["BATCH_GPU_ROUTE"] = str(
+                profile_default(name, "gpu_route") if gpu_route is None else gpu_route)
     return {runtime_env.aliases(key)[0]: value for key, value in controls.items()}
 
 

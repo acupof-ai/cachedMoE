@@ -29,6 +29,16 @@ from tools.web import launch_guarded
 
 
 class LaunchConfiguration(unittest.TestCase):
+    def test_production_factory_uses_its_cpu_route_default(self):
+        inherited = {"CACHEDMOE_BATCH_GPU_ROUTE": "1", "DEEPMOE_BATCH_GPU_ROUTE": "1"}
+        for options, expected in (({}, "0"), ({"gpu_route": 1}, "1"),
+                                  ({"speculative": False, "gpu_route": 1}, "0")):
+            with self.subTest(options=options):
+                env = defaults.profile_environment("production", inherited, **options)
+                self.assertEqual(env["CACHEDMOE_BATCH_GPU_ROUTE"], expected)
+                self.assertNotIn("DEEPMOE_BATCH_GPU_ROUTE", env)
+        self.assertEqual(defaults.profile_controls("longtest")["CACHEDMOE_BATCH_GPU_ROUTE"], "1")
+
     def test_changed_bench_entrypoints_work_without_pythonpath(self):
         # Importing these in this test process could hide a missing bootstrap:
         # each real script starts independently from an unrelated directory.
