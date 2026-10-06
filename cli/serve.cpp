@@ -730,13 +730,18 @@ int cmd_serve(int argc, char** argv) {
             std::fprintf(stderr, "serve: kv-disk snapshot failed: %s\n", saved.error().str().c_str());
         emit("{\"event\":\"done\",\"session\":" + json_quote(session) + "," + st->json_fields() + "}");
     }
+    int shutdown_status = 0;
     if (!po.disk.dir.empty()) {
-        if (auto pr = pool.park_active(); !pr)
+        if (auto pr = pool.park_active(); !pr) {
             std::fprintf(stderr, "serve: kv-disk save failed: %s\n", pr.error().str().c_str());
+            shutdown_status = 1;
+        }
     }
+    // Drain and release GPU resources even after a required save failed;
+    // callers must still be able to distinguish that failure from success.
     pool.flush_disk();
     // The reader may still be blocked on stdin; it owns nothing the engine needs.
     reader.detach();
     engine.shutdown();
-    return 0;
+    return shutdown_status;
 }
