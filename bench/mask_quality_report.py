@@ -436,14 +436,17 @@ def build_report(inputs, *, baseline_name="off", quality=None, thermal_log=None,
                 arm["repetition_vs_off"]["passed"] is True and
                 arm["failures"]["no_load_failures"] is True and
                 arm["timing"]["active_ms_per_token"] is not None]
-    selected = min(eligible, key=lambda arm: arm["timing"]["active_ms_per_token"]) if eligible else None
+    selected = min(eligible, key=lambda arm: arm["timing"]["raw_ms_per_token"]) if eligible else None
+    adjusted = min(eligible, key=lambda arm: arm["timing"]["active_ms_per_token"]) if eligible else None
     paths = {Path(p) for arm in arms for p in arm["inputs"]}
     paths.update(Path(c["path"]) for c in comparisons)
     return dict(schema=1, baseline=baseline_name, arms=arms,
                 comparisons=[{key: c.get(key) for key in ("path", "engine_pid", "order",
                     "cache_carries_between_arms", "route_selection")} for c in comparisons],
                 D_selection=dict(selected=selected["name"] if selected else None,
-                    rule="owner: dynamic mask + speculation, minimum active ms/token among complete "
+                    adjusted_selected=adjusted["name"] if adjusted else None,
+                    rankings_agree=selected is adjusted if eligible else None,
+                    rule="owner: dynamic mask + speculation, minimum measured raw ms/token among complete "
                          "performance arms passing loop/repetition/load gates",
                     selected_quality=selected["quality"] if selected else None,
                     scope="speed/repetition selection does not claim missing MMLU/long-context gates passed",

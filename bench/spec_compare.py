@@ -38,7 +38,7 @@ def choose_route(results, forced="auto"):
     wanted = ("k2_gpu", "k2_onecb_cpu_route")
     if not all(name in controls for name in wanted):
         raise ValueError("automatic route choice needs both completed k2 ONECB controls first")
-    eligible = []
+    eligible, raw_costs = [], {}
     for name in wanted:
         row = controls[name]
         cost = row["decode_timing"]["active_ms_per_token"]
@@ -46,8 +46,12 @@ def choose_route(results, forced="auto"):
             raise ValueError("automatic route choice requires aligned thermal timing")
         if row["decode_timing"].get("engine_decode_boundaries") is not True:
             raise ValueError("automatic route choice requires recorded engine decode boundaries")
+        raw = row["decode_timing"].get("raw_ms_per_token")
+        if raw is None or raw <= 0:
+            raise ValueError("automatic route choice requires measured raw decode timing")
         if row["repetition"]["no_loop"]:
             eligible.append((name, cost))
+            raw_costs[name] = raw
     if not eligible:
         raise ValueError("both k2 route controls looped; stop before testing longer drafts")
     costs = dict(eligible)
@@ -55,9 +59,11 @@ def choose_route(results, forced="auto"):
     # carries per-op evidence and common-acceptance cycle costs for review.
     use_gpu = "k2_gpu" in costs and (
         "k2_onecb_cpu_route" not in costs or
-        costs["k2_gpu"] < .97 * costs["k2_onecb_cpu_route"])
-    return use_gpu, dict(rule="no loop; GPU needs >3% lower active ms/token",
-                         active_costs=costs, route="gpu" if use_gpu else "cpu")
+        costs["k2_gpu"] < .97 * costs["k2_onecb_cpu_route"] and
+        raw_costs["k2_gpu"] < .97 * raw_costs["k2_onecb_cpu_route"])
+    return use_gpu, dict(rule="no loop; GPU needs >3% lower raw and adjusted ms/token",
+                         active_costs=costs, raw_costs=raw_costs,
+                         route="gpu" if use_gpu else "cpu")
 
 
 def spec_totals(events_path):
