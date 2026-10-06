@@ -26,7 +26,8 @@ sys.path.insert(0, str(ROOT / "tools/web"))
 import runtime_defaults
 import launch_guarded as web_guard
 from repetition_metrics import metrics
-from thermal_guard import ProfileMonitor, ThermalLatch, assert_idle, discover_sensors, sample, add_thermal_arguments, thermal_policy
+from thermal_guard import (ProfileMonitor, ThermalLatch, assert_idle, discover_sensors,
+                           sample, add_thermal_arguments, thermal_policy)
 from power_profile_report import PROFILES, report
 
 
@@ -72,6 +73,9 @@ class ThermalController:
                     self.stop.wait(.05)
         except Exception as error:
             self.error = error
+            save(self.out / "controller_failure.json",
+                 dict(error=exception_record(error), last_sample=self.latest,
+                      failed_unix=time.time(), arm=self.label, phase=self.phase))
             if self.child and self.child.live():
                 web_guard.bound_signal(self.child, signal.SIGSTOP)
                 self.paused = True
@@ -103,6 +107,89 @@ class ThermalController:
                 print("COOLING", target, web_guard.guarded_temperatures(values or {}), flush=True)
                 announced = time.monotonic()
             time.sleep(.2)
+
+
+def exception_record(error):
+    if error is None:
+        return None
+    return dict(type=type(error).__name__, message=str(error),
+                cause=exception_record(error.__cause__))
+
+
+def abort_owned(server, controller, owned):
+    """Emergency cleanup after a failed guarded drain; never claim KV was saved."""
+    if controller:
+        controller.stop.set()
+        controller.thread.join(timeout=3)
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if owned:
+                owned.discover()
+            children = owned.live_children() if owned else []
+            child = controller.child if controller else None
+            if child and child.live() and all(p.pidfd != child.pidfd for p in children):
+                children.append(child)
+            if server.poll() is None:
+                server.send_signal(signum)
+            if not children and server.poll() is not None:
+                server.wait()
+                return
+            for child in children:
+                web_guard.bound_signal(child, signum)
+                if signum == signal.SIGTERM:
+                    web_guard.bound_signal(child, signal.SIGCONT)
+            time.sleep(.05)
+    raise RuntimeError("owned temporary process survived emergency cleanup")
+
+
+def finish(server, controller, owned, out, original_profile, complete, failure):
+    """Keep the experiment's original error and restore power even on cleanup failure."""
+    clean = server is None
+    cleanup_error = restore_error = emergency_error = None
+    try:
+        if server:
+            if controller:
+                controller.phase = "shutdown"
+            subprocess.run(["powerprofilesctl", "set", "performance"], check=True)
+            time.sleep(1.2)
+            if controller:
+                controller.stop.set()
+                controller.thread.join(timeout=3)
+            with (out / "shutdown.log").open("w") as log, \
+                    (out / "shutdown_thermal.jsonl").open("w") as thermal, ProfileMonitor() as monitor:
+                clean = web_guard.shutdown(server, controller.child if controller else None,
+                    controller.paused if controller else False,
+                    controller.latch if controller else ThermalLatch(),
+                    discover_sensors(), monitor, log, thermal, owned)
+    except Exception as error:
+        cleanup_error = exception_record(error)
+        try:
+            abort_owned(server, controller, owned)
+        except Exception as error:
+            emergency_error = exception_record(error)
+    finally:
+        if controller and controller.child:
+            controller.child.close()
+        if owned:
+            owned.close()
+        try:
+            subprocess.run(["powerprofilesctl", "set", original_profile], check=True)
+        except Exception as error:
+            restore_error = exception_record(error)
+        receipt = dict(all_arms_complete=complete, graceful_shutdown=clean,
+                       server_rc=server.returncode if server else None,
+                       experiment_error=exception_record(failure), cleanup_error=cleanup_error,
+                       emergency_cleanup_error=emergency_error,
+                       controller_error=exception_record(controller.error) if controller else None,
+                       profile_restore_error=restore_error, original_profile=original_profile,
+                       completed_unix=time.time())
+        save(out / "completion.json", receipt)
+    # An existing primary exception continues out of main. Cleanup evidence
+    # remains separate, so a removed drive cannot look like an output-length bug.
+    if failure is None and (not clean or cleanup_error or restore_error):
+        raise RuntimeError("temporary web cleanup failed; see completion.json")
+    return receipt
 
 
 def main():
@@ -149,6 +236,7 @@ def main():
 
     server = controller = owned = None
     complete = False
+    failure = None
     try:
         subprocess.run(["powerprofilesctl", "set", PROFILES[0]], check=True)
         with (out / "web.log").open("x") as log:
@@ -217,6 +305,7 @@ def main():
                                     print("PROGRESS", mode, index + 1, len(token_ids), flush=True)
                             if event["event"] == "done":
                                 done = event
+                    controller.check()
                     controller.phase = "between_turns"
                     request_wall_ms = (time.time() - begin) * 1000
                     if not done or done["generated"] != len(token_ids) or len(token_ids) != 512:
@@ -243,31 +332,11 @@ def main():
             (out / "thermal_measurement.jsonl").write_bytes(data[:data.rfind(b"\n") + 1])
             save(out / "report.json", report(out))
             complete = True
+    except BaseException as error:
+        failure = error
+        raise
     finally:
-        if server:
-            # Existing shutdown logic requires its production profile; use it
-            # only after measurement, and record the unmeasured transition.
-            if controller:
-                controller.phase = "shutdown"
-            subprocess.run(["powerprofilesctl", "set", "performance"], check=True)
-            time.sleep(1.2)
-            if controller:
-                controller.stop.set()
-                controller.thread.join(timeout=3)
-            with (out / "shutdown.log").open("w") as log, \
-                    (out / "shutdown_thermal.jsonl").open("w") as thermal, ProfileMonitor() as monitor:
-                clean = web_guard.shutdown(server, controller.child if controller else None,
-                    controller.paused if controller else False, controller.latch if controller else ThermalLatch(),
-                    discover_sensors(), monitor, log, thermal, owned)
-            if controller and controller.child:
-                controller.child.close()
-            if owned:
-                owned.close()
-            save(out / "completion.json", dict(all_arms_complete=complete, graceful_shutdown=clean,
-                                               server_rc=server.returncode, completed_unix=time.time()))
-            if not clean:
-                raise RuntimeError("temporary web shutdown did not drain cleanly")
-        subprocess.run(["powerprofilesctl", "set", original_profile], check=True)
+        finish(server, controller, owned, out, original_profile, complete, failure)
     return 0
 
 

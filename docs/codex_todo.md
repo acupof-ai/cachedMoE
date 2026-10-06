@@ -661,3 +661,16 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] 网页命令显式携带实际策略，state、thermal、结果 provenance 和 `/api/config` 报告实际值；直接裸跑server不声称有监督器。
 - [x] 温控、网页监督器、配置和三臂报告 CPU 检查73项通过；旧80/72行为测试改为显式旧策略，旧结果不改。
 - [ ] 新目录`power_profiles_v2`按§4.8执行；只在正常停网页并排空KV后启动，恢复时核对新阈值API。
+
+## 23. §4.8 v2 被 USB4 掉线中断（2026-10-06）
+
+- `bfb7fa0` 新阈值下实际API/manifest匹配，61项冻结输入未变；八轮首臂只完成3轮各512输出，
+  第4轮prefill时内核PCIe Link Down、Ugreen设备断开，引擎镜像源连续3次IO错误被移除。
+  0完整臂，不能选电源默认；§4.8/§4.9继续未完成。原始数据保留`power_profiles_v2/`。
+- 断开前GPU67、内盘49.85、外盘74.85°C，0温控暂停。已证实链路丢失，温度/线材因果未证实。
+- [x] 之前授权的PCIe端口rescan恢复NVMe枚举和既有RO挂载；APST等稳定性设置不改。
+- [x] 修复监督脚本错误遮蔽：HTTP EOF后先查controller；primary/controller/cleanup分别记收据，
+  清理失败也恢复原电源；紧急清理只用拥有的进程身份。77项CPU检查及新增真实CPU所属进程清理通过。
+- 临时benchmark退出为非graceful，私有KV排空不能确认；用户原网页已先正常排空，六份原文件保持不变。
+- [ ] 等盒子散热/USB4连接检查后，完整双盘长测用新目录；保留失败样本，不将三轮补充成已完成臂。
+- [ ] 恢复新温控网页并核对日志/state/API，不刷新浏览器、不改transcript。

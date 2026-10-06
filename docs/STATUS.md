@@ -38,9 +38,13 @@ KV and eight 512-token turns per arm. Before its first arm, the complete
 preflight block, not a profile speed verdict. The original performance web
 policy was restored and five transcripts were unchanged. The owner later
 authorized GPU 85/77°C and NVMe 80/72°C, with cold gates of 60/65°C.
-The fresh v2 three-arm comparison is running; its policy is shared, configurable
-and logged. CPU checks pass 73/73 and main tools checks 52/52. No new power
-winner or default is established yet. Draft-only FP8/subset
+The v2 three-arm attempt is interrupted by a proved USB4 Link Down during
+turn four: only three power-saver turns complete, no eligible arm or ranking.
+External NVMe was 74.85°C, below its pause threshold; the root cause is unproven.
+A PCIe rescan restores enumeration and the RO mount. Physical cooling/connection
+checking is pending. Shared, configurable policy gates pass 73/73; the corrected
+fault receipts pass 77/77 plus one CPU-owned process case. Main tools pass 52/52.
+The incomplete data changes no power default. Draft-only FP8/subset
 experiments are authorized but wait for the ordered power comparison.
 [Method and current receipts](power_profile_comparison.md).
 

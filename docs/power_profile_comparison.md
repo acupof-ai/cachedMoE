@@ -42,9 +42,38 @@ reprocessed without another GPU run if needed, retaining original reports.
 The cold-start samples record APST disabled and the external drive active.
 This might affect idle heat, but no causal test or storage power-policy change
 was made. The owner subsequently replaced the NVMe cold gate with <=65°C in TODO §0.7.
-The new `power_profiles_v2/` comparison is running from `bfb7fa0` after a normal
+The new `power_profiles_v2/` comparison ran from `bfb7fa0` after a normal
 web shutdown and disk-KV drain. Its 48 primary/mirror shard headers and sizes
 match, the mirror is RO, and all six original web files have unchanged hashes
 and mtimes. Related CPU gates pass 73/73; the main tools gate passes 52/52.
 No power winner has been selected. The ordered FP8/vocabulary-subset stage
-has not begun; the web will resume with the new per-device guard.
+has not begun.
+
+## v2 interrupted by USB4 link loss
+
+At 2026-10-06 19:41:01 +08:00 the kernel reports PCIe `Link Down`, followed by
+the Ugreen USB4 device/retimer disconnect. The engine drops mirror source 1
+after three IO errors. The fourth turn had only begun prefill. Three turns
+completed 512 outputs each (raw decode 84.202/91.648/105.677 ms per timed token),
+but no complete arm exists. These partial values cannot select a power default.
+The last sensor sample is GPU 67°C, internal NVMe 49.85°C, external NVMe 74.85°C;
+no thermal pause triggered. The observed link loss is proved; whether enclosure
+heat, the cable or another transport fault caused it remains unproven.
+
+The original v2 harness stops the removed-sensor engine, terminates the HTTP
+reader, then forces cleanup of the remaining owned child. Its shutdown receipt
+is explicitly **not graceful**, so private benchmark KV drain is unconfirmed.
+The user web had already drained normally before this run; its six files
+remain unchanged. The sensor error could be hidden behind an incomplete-output
+error and then a cleanup error. The corrected harness keeps primary/controller/
+cleanup errors separately, restores the previous power profile even on failure,
+and tests owned emergency cleanup using a CPU-only parent/child. Related CPU
+checks pass 77/77 plus the additional owned-process case (five failure cases).
+
+The previously authorized PCIe-port rescan restores NVMe enumeration and the
+system's existing read-only mount. APST and other storage-stability settings
+stay unchanged. Physical enclosure cooling/USB4 connection checking is requested
+before a new complete comparison. Future measured attempts use a fresh directory;
+the v1 cold-start block and v2 invalid hardware-interrupted samples are retained.
+The web is being restored with the new threshold provenance; no speed default
+or draft-head change is selected.
