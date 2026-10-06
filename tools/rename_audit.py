@@ -64,6 +64,8 @@ def disposition(path, line, number, match, token, rules):
         if (fnmatchcase(path, rule['path_glob'])
                 and re.fullmatch(rule['token_regex'], token)
                 and ('line_regex' not in rule or re.search(rule['line_regex'], line))
+                and ('reviewed_line_sha256' not in rule
+                     or hashlib.sha256(line.encode()).hexdigest() in rule['reviewed_line_sha256'])
                 and number >= rule.get('line_min', 1)
                 and (rule.get('line_max') is None or number <= rule['line_max'])):
             return rule.get('status', 'RETAIN'), rule['role'], rule['reason'], rule['id']
@@ -125,8 +127,15 @@ def load_rules(path):
         re.compile(rule['token_regex'])
         if 'line_regex' in rule:
             re.compile(rule['line_regex'])
-        if 'after_marker' in rule and not rule['after_marker']:
-            raise ValueError('retention section marker must be nonempty')
+        if 'reviewed_line_sha256' in rule:
+            hashes = rule['reviewed_line_sha256']
+            if (not isinstance(hashes, list) or not hashes
+                    or any(not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value)
+                           for value in hashes) or len(hashes) != len(set(hashes))):
+                raise ValueError('reviewed lines need unique SHA-256 hashes')
+        for key in ('after_marker', 'until_marker'):
+            if key in rule and (not isinstance(rule[key], str) or not rule[key]):
+                raise ValueError('retention section marker must be a nonempty string')
     return rules
 
 
@@ -135,17 +144,23 @@ def file_rules(text, rules):
     lines = text.split('\n')
     selected = []
     for rule in rules:
-        marker = rule.get('after_marker')
-        if marker is None:
-            selected.append(rule)
-        elif marker in lines:
-            selected.append(dict(rule, line_min=lines.index(marker) + 2))
+        first = rule.get('after_marker')
+        last = rule.get('until_marker')
+        if ((first is not None and first not in lines)
+                or (last is not None and last not in lines)):
+            continue
+        scoped = dict(rule)
+        if first is not None:
+            scoped['line_min'] = lines.index(first) + 2
+        if last is not None:
+            scoped['line_max'] = lines.index(last)
+        selected.append(scoped)
     return selected
 
 
 def audit(repo, ref, rules):
     commit = git(repo, 'rev-parse', f'{ref or "HEAD"}^{{commit}}').decode().strip()
-    status = git(repo, 'status', '--porcelain').decode().splitlines()
+    repo_status = git(repo, 'status', '--porcelain').decode().splitlines()
     source = blobs(repo, commit) if ref else working_files(repo)
     fingerprints = []
     hits, path_hits, skipped = [], [], []
@@ -175,13 +190,13 @@ def audit(repo, ref, rules):
             for match in OLD.finditer(line):
                 start, end = token_span(line, match)
                 token = line[start:end]
-                status, role, reason, rule_id = disposition(path, line, number, match, token, scoped_rules)
+                hit_status, role, reason, rule_id = disposition(path, line, number, match, token, scoped_rules)
                 hits.append(dict(path=path, line=number,
                                  column=len(line[:match.start()].encode('utf-8')) + 1,
                                  character_column=match.start() + 1,
                                  exact_match=match.group(), exact_token=token,
                                  token_character_columns=[start + 1, end + 1],
-                                 text=line, status=status, role=role, reason=reason,
+                                 text=line, status=hit_status, role=role, reason=reason,
                                  rule_id=rule_id, source_blob=oid, source_sha256=file_sha,
                                  line_sha256=hashlib.sha256(line.encode()).hexdigest()))
     fingerprint = hashlib.sha256(json.dumps(fingerprints, separators=(",", ":")).encode()).hexdigest()
@@ -194,7 +209,7 @@ def audit(repo, ref, rules):
             raise RuntimeError("working tree changed during audit; retry after edits finish")
     return dict(created_utc=datetime.now(timezone.utc).isoformat(), repo=str(repo),
                 source_commit=commit, snapshot='committed Git tree' if ref else 'tracked and nonignored current tree',
-                working_tree_status=status if not ref else [], source_fingerprint_sha256=fingerprint,
+                working_tree_status=repo_status if not ref else [], source_fingerprint_sha256=fingerprint,
                 column_definition='one-based UTF-8 byte column, as rg JSON submatch.start+1; character_column is also retained',
                 counts=dict(text_files=text_files, content_hits=len(hits),
                             by_status=dict(Counter(row['status'] for row in hits)),
@@ -219,7 +234,8 @@ def main():
         raise RuntimeError('refusing to overwrite an existing audit receipt')
     rules = load_rules(args.rules)
     report = audit(args.repo.resolve(), args.ref, rules)
-    destination.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+    with destination.open('x', encoding='utf-8') as output:
+        output.write(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps(dict(source_commit=report['source_commit'], **report['counts']), ensure_ascii=False))
     return int(report['counts']['by_status'].get('NEEDS_REVIEW', 0) > 0
                or report['counts']['unreviewed_filenames'] > 0)

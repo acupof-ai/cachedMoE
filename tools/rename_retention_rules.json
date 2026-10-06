@@ -7,147 +7,489 @@
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
       "reason": "Only the archival ledger and subsequent dated STATUS reports/plans preserve measured old names. Current instructions above the ledger remain reviewed individually.",
-      "after_marker": "### 1.0 Machine-recorded measurements (ledger)"
+      "after_marker": "### 1.0 Machine-recorded measurements (ledger)",
+      "reviewed_line_sha256": [
+        "05c3adc8cc9a48fac6d7771f4b1a1dfe0c36ecc75830b9b139db42c82776f60d",
+        "063ddff250eecb992526e39e2737e4f37394d41d35788fb615e37ad44a791a45",
+        "08e8184e87f4f85914fb8be29146d620b97ba126befad1b52a980cd8f1b5402b",
+        "0a7c4d12bbe76ecc353990800e20e8d1c911357bcf3ab518f5ebf4a283de5a02",
+        "0c0e84c3a9e1cc1feee60da3f5a4b8d527008604b177829f99e658f966d95ad7",
+        "105772330c54a8ebaa318ea82ad1bbec6d538930839e34d2ffa19615d6fdc1c5",
+        "12103f2546f5df5ccf66d3dc75163c53a0140c92f3b2f8ed4446875e28234ee9",
+        "170ad50bb10f86884ef75827e30655889db4dace3c11edc3a8fcd92d70ab1cf9",
+        "1b41029b6cc44dc52f298975fb49803d54db58ee3ab8e5914023b828b5aa40b9",
+        "1c785a6f87b11fc9738f2281130e23402422d9f4988d657aba9cbc30656dbaa5",
+        "1df68d34c1c49be25033784fd12a27b245857008751a6da99856954ec59ec939",
+        "1e0c8737bbd4a65257d83d85f1c656ffdc51e4384e31603254e3460a8528fb7b",
+        "208212f1074535557237b156ba9c9fb11cb8b7c74048558a7f8536481d2674b1",
+        "218d18841e47655579b703998a40c0f7782ddb282a1f9da6474a4065e43d721f",
+        "22e445703286b5c44e0716e33d23200f9e41ec363cac16fcca3176844f4c4782",
+        "23bb448bb3c03bbd9d70bc5ed145dc208a99698f521514e3c56480cd34ec2fe7",
+        "2aaf021212a2a5f60f79e72c4209c5862198372f51f855e41edda9a9586282b5",
+        "2de2539fa180959542bb3b90ecdd69dc9dd942138e976a865f3c493621fd75e1",
+        "301d14365fbe69fc949405dc6c773d94336023818c6411e37e4c31127446b7eb",
+        "34303714ce758baad0dc4ac41b9f60a8be0476da16148575e31b7381d15e7c15",
+        "36ddf3d898189089ce2b7b0903361a9420d8cd371aa45397a8ce9d94a73af03f",
+        "3af15f87bb5969a66684ff374ee7b22b4006f06d327fcd13960dbff4271fa9bb",
+        "3f76c156529c8f43fdbf8acc7fc33c908eac1451f396f7a288aa575135a71c0e",
+        "425bb1bb031f66cbc6c2d56061fff217e1130a6c8dd5e47e82822e1ec3b1374d",
+        "42afe1928ea2416d3ced5d3f14549ea5b8cea0ba52e2d740726b5f540c508a3b",
+        "438e5035075783cbe751f45deea614b4d04f761dd15862e1ff28671365166445",
+        "46180fc293f5e1bd1901317a1503bd4bc1601df51d3ffcf211ddda7ac79eb644",
+        "4a0f56c7e3b51883bbb483c9f23ecc04355be0511d7a8f2a401332f5cf5ec725",
+        "4a57fd72970c8aa85a9fc5e367f1af74a3a9107f0cd9d0e4feec838095d52586",
+        "52d6d6f433b05e0888112081e4ed1b71960d6628c8ec826dc8505066f0b4e2b0",
+        "531b01d02c2472f9fdc9937b48f9e901944dfd53046412a8bd53179bda97f223",
+        "538e615b1384caee9cc0a323c39eaaa1bed0a322f0e2120d34dac088dac50dbf",
+        "54badfcd92aa1e603e18e280cae77406ef50f18e33e6a351c89feb20ae40e0a5",
+        "5586b922ec0d05e9ba4266b2065427fa052b7929aee12d3dc618ccbf3f5caf58",
+        "56edeb41f219dd40f289caf69c3011afb99b102504ad311e8b24d6272662ef47",
+        "5a8268a90e3bd915cf2810c076d59d3559416e4e73ce8a5d5cb351810769eefc",
+        "5db1d55ae5e3675eb39327538291c2eab0bc6446aeb89b9d40eaac3f46e136b7",
+        "647220c998444db577aabe4ebc64b44f2486a276a15a6d41f3e0f6150b26dfa3",
+        "66ed93325da2d813e6e2b4d827b8852bf063347ac30422a18a931de319177ecc",
+        "68960dc0217240316ec0e841d46f1b557deabced9806ba40d9777ff8673ef336",
+        "68daf0220fec7b4f84f111fa58b2a7232b8d9435979c2ffdf335ad7551b23fe5",
+        "697259df7f85311677f9fa6dc8bb9022ae0ec4f64ae6c1bd6cf47ed6c6e3625b",
+        "6d905e6df11b0a4b70ae337126bea3a1be9d1565fae72a82f74f8fc31d3f4a8a",
+        "6e878ab6668cd9d2043866792fbe1db895298eaf44ab48444ff628ba7bac97b6",
+        "74c3469fc7d73ce270d66825008cb3f9cb7025f40036a6509d1e4b5848f55748",
+        "78bca535231c82e172c17e12e647f22d54e4fe2a70ad972dc187298ce93da184",
+        "79c43dc32b2bc8c58937f97580861dc064c07d1ebd94c9c523da4a8f7f23b7f9",
+        "7de0aae3635a8e0a11a54e0dc0304e32be5db774e23fa81adbc4ac6519e54e1d",
+        "821f38cecd68ed79925e3fa55fdd044c0d7e926298ce19dcd39a35ecc98c1a87",
+        "83dd945871824564801ce7399e06e512b1c5b8b17f69a7ac4c721a49373c65f0",
+        "83ebbf0394031e4c64ca1dc36b1cfef10d91cfda60602795f729ddc27ac551b3",
+        "84881055609b33d477a494c2bef139d9cd8e6e01ad6e140ea9b8c0aeb43391b3",
+        "88b42635c3f7d774d06fc406e7fd3e3bb7a70bcfdbb55954e0f129f39ed8d304",
+        "8e686fab1665ad121458add4dac42ae258a6b40faf834c7372aa00c18e8c0175",
+        "90637e987bcb6d1614793e70eee7aad295e99412f7f82cfc874f729bf881cf06",
+        "906c991c954b4627fc8293644a4e386ce649a8d03c53b776a1cbe5670fcbc34f",
+        "92374507e0392bbf74b341ca86db3fd1b718f7e4f88d0a55119fc7a7f9a95f05",
+        "934cf7d4524bdda19d34190f5cdc6763f2819a5684a34d0ef7b033a3bd71f32b",
+        "9379b0331f89ce43ae20eb8384aed7542df780d2fd50fda80f0e65065b81964f",
+        "93ee2e7f988e6f0f70fd40b4bb40dcb831d47ee6e586d42f4a2b3e34f8b22d89",
+        "954ae2bfa164cd5b0dabb65bbb72a1d828e84d02459a81093be4c5024d485c27",
+        "9589452f3d5595f40deeedb01c094dc01b823ea34e9585a54bdc2ada8c58fd91",
+        "984766e13e6d0a2a878b5217f07f61456210e4a698c41ee990e7ca934e70d9ec",
+        "9aaa88345ecaa453fc07930016bf92ad2a7f97587faba5f320f7b1b94a7da3af",
+        "9c6596716ef5945294281dc7ef60d684092a101116ff3902d8692e79614aa64f",
+        "9c7a7722055fde93f448cd03ad0946191521c9baf83e6540861f8cc31570c792",
+        "9ecbf1dc4efa3eb169f7305812ff98e8458bd7c8552b75494da3abb43b3f2222",
+        "9f3ed331be673219fb4b0da9d29bff7158dadd9c6039a15be1a5234fa93e0c0a",
+        "a0c288e889439a049d80e4197e8be29017bd5757edfcbe46438008017b4e5258",
+        "a2a8457013a8d68ebbf5d283767371ee9d077319854699c734171dff8a59c31b",
+        "aaa6f0194c5046edbe9fa93dbf39a25bd3173a5a1bf45e9689eede8489c16adc",
+        "abc8e32a09a7e40ff68b74f223c02328ed97db5d7112e8de95d4c135ca374c40",
+        "ae1e74612ae387c61b9e314e9a2a7b0d9e23eae31eccbab249bcc024b6538bd3",
+        "b4e57314049fd59d09bfbbe9e5a58686881d0857cc08ccb8d9a2c6a42d60b7ee",
+        "b56abb4110e80022845eaa124129a82a6bf8de0371df045cb0b3c536e67de11d",
+        "b5d9d2e76d2b677b5980c485256140bfbc13d5d3d4d921394f0c3a6e79e98681",
+        "b631af44e32d2164fdf534043cbf156e8e8030a4b2166e6214e5afd1510e4b16",
+        "b6adb543caa14c4a9f7f82026ae392a0988bca2b9f9fae2633f4ca7c833225f3",
+        "b8b5c04ecbfcd6e17f9196255ae7d271b0e634de8bec1a1da963fbcabb2de6e6",
+        "bee46f886efd9540bd1f4ea93206de92c71e45996918ee4962e60c058f4d4ad9",
+        "bf3b6bde513dc4534723e7301fab8edb1f9ebc5c7294a0938aa4a93bf2266a9e",
+        "c09ac80b298b2f90e2bf81db77cb155ade733f363d8f7ba66731ca625165c5ca",
+        "c26b47e569c8d9b56c6b825606133a02caeea873f7f156e6dd56b7e1699fb0e3",
+        "c7d986011805635d8ffdba9019d84f75d7157774d6b8013b8676c6849d463999",
+        "c9a57d8d3c2a7a1d2f41f27a64c427d6847be071f404f07102e56179827a4da8",
+        "cc326187c25b9e6509b9ecaadc2ff888dbd2203f343ac1e8678d1fd7a5f1f207",
+        "cd59002d1e883be7ed08438ecee97def444bd3da2d52f03a6663e1d46204b10b",
+        "d07850d059e7bf384a1bbb45f33d55338368c5859f785dedd02b1c14e9f6b5a8",
+        "d1fae3cd7d25dbacd5dfece74c132a625ec072ce39e0efcfc7657eddc60318b8",
+        "d23930764fcc4af6f5aa7706b7d6f4a09b9b0e6239a06e7ab1ad1e50dcec3e38",
+        "d7b50303233913e4ae7c1bdd6c554bdd8e1e1a9846374c668b807359a0f5c2f8",
+        "daf269c4f4fe7293dea3b1acb9339493116492e02a81c0e2aa86b89b7402df7f",
+        "dda25a5433eb9aa46ab6be1169d3fe2735002a854d8e7fdbaa1b6361e329e9c9",
+        "defab454b101ee70663d5d85d790e25b4b4d91c45b767c35c431a3ca46dac641",
+        "e3a7085ee3c1d0654a8bb747e18c2ae44b6cbdbe2296e8bd75ac6743f8ef97a3",
+        "e7b450683b1ffd75b34e89c5dc97d04d126aa354eef319194eca80e1f1a1bb26",
+        "e9472f6da69f7c5cad0c5853ba9fc3f4f164a3192e281ab0b333d31a125122dd",
+        "ebb6b3a0aa54da2d6d7d7998585a240e1837dd8e80e27096e15d6c183e0b5ba1",
+        "ed626f19fc50e11feb38f7cc5b422819a7297293ff893fc3ab0df2c3115bca03",
+        "ee42861101ed39b34bf75ee60acb4eee760ac8daac3140a570c076dde05bdc8a",
+        "ee92d3e94868beb5ddae8d3fc37dba7acc7fe5c5c5a8b9e7f8f2ad2b25d948d6",
+        "ef478d655bb5fb6f04a5abd9907f129dca4c9fe08a588955a75e4cb43df8e1f1",
+        "f71bdda845f1228441ad3fc634931414e536db3399ff84fd51b8c77f3a51c447",
+        "f9a2c743e4f9d7feaab243022391f7e600eb65b76f123477b8fafb81701af39d",
+        "faafebd623698321311c343dfb992e2821bea84d5cd3b69e4bd057a280e70aea",
+        "fb57403887cdae39424fdf4d367a30bef0afcda57a35a5542d0fd92cc279d701",
+        "fc95c183b287d293b9973f5de5add336ca9df54e0f2a4a33c0dc9cc12a6bcfa3",
+        "fd7488e96b103b864b4c789c89e402f33acf969b774ceddaa3e956c97f338116"
+      ]
     },
     {
       "id": "history-architecture.md",
       "path_glob": "docs/architecture.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated architecture.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated architecture.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "0707a07cf8fad3b1221fd74136903ed1d7b2397c5af62a0bc60b214309b68a42",
+        "311842cd27f4fce79149bdc96eda7eeab6549d87328554c743dbb50bca86dd4d",
+        "4fca762b902a256c37d29c409a32ad2d1b7f6732dfc2a9b3f28ab2ff71a03395",
+        "58fa56b2147044d6227d235c778d863958f5aa6215fa00bfa721464da97d1691",
+        "660ab98c116b386d71b4cb93ec439afbedaa9070c9fefb4bdfc0ab992a4f357d",
+        "778811497471a3151b256190cdda2ecfa09864f8d122d4be59960bf0663267d4",
+        "92ebdc665901eef453c0de5ac7abded97ea9832495fe159dcb91165f475d2ca3",
+        "f8a53418374ff42833b8ff33a2f2c0e961bbc5014bae2306e96e0ea65e61dabc"
+      ]
     },
     {
       "id": "history-design.md",
       "path_glob": "docs/design.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated design.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated design.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "0a051396441741bde2419e93480034b1a5d41c12b0b2d2af2ec31207f013c9f2",
+        "1b4bd2658248296a18696dba8ef92f61bc9474cf8dfeb78c4baa13f8a7d3e90a",
+        "28f7ddec85075eb6ab47947638262d3dd76108c598fc311bac1be758333d2351",
+        "2abe0c6f7f4e04ab6817e55f9aae95884a657fb6c8953e6f26fbf11c80eb042b",
+        "3c7f406975183c9c7c94d1be5df3e38a3c97040c7d3e9abfba66dfe5e3fe423d",
+        "4ce9e35ad8a929194f19ca115f4bb796d9390d234fc4fc370c2d774f50bc7b85",
+        "4f0f8cc44a858c12135b922ccaac5f574b26b6a52273158158c9b7574ac8b56a",
+        "5083715c878591977c7e5bee189799efca5030cb8127e9db77f703f7a25eedb6",
+        "545aa8755c38a95fcb10a12544123e8cc8d5400a9bd616c91c559d8f167b72dc",
+        "55acbae573df45c6ad9c6a0fa165b8745a24b4b4485a9acdb6179bed41f26d6c",
+        "64b01319857ae9a6169cf4d1b48d5b026f96d1bb1dbf3a1208aef4aa5ac0ac92",
+        "7255b24ae89129b2d6efb526b19871ece1548286b0a5fb675b55aa884c6c7043",
+        "8cc59d095ce2152c7c3f0401a16455adc66fca2ab3d7796268fc8742d6c633dc",
+        "90f0ab8a7da3bada9980030b7ece8e912fd3bb2d7d794755464ef2cab5761654",
+        "979a94808d9e43788b750f3e95670972bbaf6ceacd96ae324af9d8017fe16cef",
+        "9f5483c7457690363536eafb906899b4bf9da50d279bed50b55294fccd8286c6",
+        "a0c8e80c9c736164ebe346d5dc969e6e776577da0f7174cc5816e0407bbce4c0",
+        "a5b15ed58f4a2a76b9e00ac2c25b9efb6f19dcded77cb5ebc45b33b5201bc0c7",
+        "a86957a0655c0ef0fca6b9214abd447d9b08fa45e5cda9fa9cc1e30d3d99a5b1",
+        "aa777de6347b274b02aabed22ecc5ab8afee69bb4f272113c15b4e4bbf1e611d",
+        "b09146069671b9134aefd912b3e41061359512fe1b6ea2a8880e856c8372dc68",
+        "bbdf6328e0880e2c4063bd6b94d95a0927850849b305adb7f556720d0f20ec66",
+        "c1acedf8f8184a093cc6ed4fe66e2d87931095ddf1df0e0f86d31d7d4823420d",
+        "c47a1acfc9c8f65f9f349934934320585ba3ac33b7caa57e9206d1cff6f1482c",
+        "c635339b651748f1c824940d6ebff3cff320785266f0761865c9d8b7ba16c482",
+        "d713ab1b936e95be0d7c5aeebe223df6f1fb77fb4fc5051b2aaaa070c7af47db",
+        "dbeb9a9989974906fb7100b9d8020fd48795473e5bbfdc4ed9bf09f4ec3878ed",
+        "ec8761a6cd1ef7364461cc60567f0ac2d6d61e67a258130e4ba061a23f1deb0f",
+        "ef43ef03113802a5438b24ac0c0dbb082f28295949d3737232d1cd2ace6c3b19",
+        "f275af11def69430f1bed66d67bdaa4e763de2706ccbc19243957c2cbf1f247f",
+        "f4966a86409f08b24c1355f2e3f0b607958c9d0076a1fc4fa141c95b864c96d2",
+        "fd13311224968a7e3f6dc99ba48b9de65dcd0043059586685a01ad9148897523"
+      ]
     },
     {
       "id": "history-dspark_e2e_plan.md",
       "path_glob": "docs/dspark_e2e_plan.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated dspark_e2e_plan.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated dspark_e2e_plan.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "0438999c6f79ac6aa5792b84ce58d6d5096cd6101812ab79e539ac32f04286a5",
+        "0b2b9dcaefcd322008ceb8a6dc07fb1baf2ae9dbf7cd3f6f2a1a3b20f615ad13",
+        "2cc6405f5e75d388fe8145dc4e9bee8b9eaa80ff1fd3e4027189bd844c75e253",
+        "777c9fb6c93c884256cc3d993dfcd6af3d96a2f76e37781363b7812c96aba061",
+        "c13119dc5be0ac6d208a498bce3f878b3c16852144d205180c3878ea3175c356",
+        "e4cfd4b2bb7e292ebff71429c6afbfd83368fa398b4b4b5b2471dc7c54c798db",
+        "fd804308d0fdd9f8f7437dcac6fb6d97fc7601506ba9210a3321ab5290869399",
+        "ffacfa0f89083d117181fea49fe9b267dae888eff47fa6e6459d08add28c9ef0"
+      ]
     },
     {
       "id": "history-kernel_p1.md",
       "path_glob": "docs/kernel_p1.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated kernel_p1.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated kernel_p1.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "49bf98d68022f4fe42c90dbda6d6e43a85afada2767df13a6ad471f3f104af8f",
+        "eb634f5a17af6fab575b49e4703967ff4099171a5071f9947f425f505dedd53f"
+      ]
     },
     {
       "id": "history-kernel_p2_moe.md",
       "path_glob": "docs/kernel_p2_moe.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated kernel_p2_moe.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated kernel_p2_moe.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "eb634f5a17af6fab575b49e4703967ff4099171a5071f9947f425f505dedd53f",
+        "f41e84f2da916a151e9e596c41ec51582568d590f382f22b6ffc4b5e207ac641"
+      ]
     },
     {
       "id": "history-mask_freeze.md",
       "path_glob": "docs/mask_freeze.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated mask_freeze.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated mask_freeze.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "3456ecb289f761550388944d23bd8dd709b5909053b2c6002c3f21bbf3beee92",
+        "ae5b581983fff6c4161d42e6cb30a7823c2925e080219a29d71e7166d6b17ca8"
+      ]
     },
     {
       "id": "history-mask_quality_plan.md",
       "path_glob": "docs/mask_quality_plan.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated mask_quality_plan.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated mask_quality_plan.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "26a274715a0b49a2475cd5609ff00206827adbd8b5056d46e5e8ecd114070f86",
+        "675de3c96d136e7afbecf998ab72d47dafa979db082cf01d77c303872e8b1620",
+        "6d08e3854a5980796804a3c627053514f4ec65c0de47b9adaffefb8dc491eef6",
+        "9e472370203ae9f224d32bd3b161d098ba3b7d36270b1be6eb1927b9c7a35bc4"
+      ]
     },
     {
       "id": "history-p2_attention.md",
       "path_glob": "docs/p2_attention.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p2_attention.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p2_attention.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "214aaa48d1b692b0d3eca1b8fe14b5368621ca841cacf48a700d9c7f428091de",
+        "24ca94e3d596626e72cb7cf7339074429ce27a6b77db28221af417becbadc7ac",
+        "2751f4a616a71f1018d29b78f918e8890c4f140a78363c2fecac478b56ed1d7a",
+        "8fcda15db53fab3e22536f1aec0b1da7a9126e439431ddb1a94cfb49bf712c7d",
+        "a9554c76accd80789e1f42a6aa6ce16253ed21d727d7eace157707b677c7cf08",
+        "c564d24c286e8c739e99e18f6fe1c500e4728b4723dc16b9627d6926cde866a3",
+        "da9136c70a607a7d2d68c3972e2e9f464caee0e801fb8e2bb4ef114bc2f0e408",
+        "f3abaf7499c5f46b7c095e88b81573f82698d4465fb1649aec701d2ffe8b8c21"
+      ]
     },
     {
       "id": "history-p2_decode.md",
       "path_glob": "docs/p2_decode.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p2_decode.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p2_decode.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "0dddc51a3925a59fc3e3dd2bf73f764d189882437163ac397dcee95fdc2de145",
+        "3b2474258d9ad5ee438c75b9656ae6d8d224874fa243baf956c56f161fa3e2d0",
+        "653e0c4b666ed8d821dbe0cb22694d757d521f8f4d2203507bf23e447e1b3608",
+        "6e314e366df37663e6afd7e9819a582aa59d1d3c1b5a1029adcf2ff456bedd5a",
+        "720f0fa7aa3c5250a53f48e1d02f46f96c498468a74fdcef61b490b28e091ec9",
+        "769ce9f9a9e205afe752a320bd729978f7541b42606b9ea5c0ec1f0eab29215d",
+        "a3bba5b316634be4370f7f986dc71f2096a3a3c8fd247a2dcfebf10ab2c67128",
+        "a6494bd77288cc1b0f20a3df5be30c0653c5f6e638b0ed9a54acd3292035bb52",
+        "ef655bae5a8fd96f3b613c5859e976d24334f96467c3cdcda8342dfaf6cc8971",
+        "f4e2c396b7ef759a240cbfc570396bc1eb958fd9c482da8dc2b5999c91b3f94f",
+        "fde24617ad98c5119e684459937cd4813c31cceaab73906e7b86daf5f5e48100"
+      ]
     },
     {
       "id": "history-p3_chat.md",
       "path_glob": "docs/p3_chat.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p3_chat.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p3_chat.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "2fceef5b8bf7eeda4d92f0e8b17e192e76cdc5c5517a2ef83964697c566a65dc",
+        "37953bea20d96eba2ac793e97b967219dcc1c73fd42456107cf19442dadf8c60",
+        "496e047f6c2383f659dd6bb69bdc03c8e5edcd9c023c418f4dae9a56e3c0bd20",
+        "60c8b2f090c2f01aede2d16fb0c979d09ca5cbd8e22e84558b559e8118429694",
+        "6124abdaf9feb3408d2e67516847ff400414d730d02cc963cc9328eafa664b30",
+        "657b02ae4a9d44df1b37c28441dc09b9c554692f1a359ac74b894da8395ef741",
+        "bd570364c4c73c719f888a1ea7a12b49a90fe3cf88cdb6e64726e1c0eb8d3ea0",
+        "c3c065b15b44364aa9cf04bb2a0371c23a7ce9f3945bd167605b8ac83e89c427",
+        "c4549442112223c88a328dbf92ed4355533d031bce5935cd96684c0988203253"
+      ]
     },
     {
       "id": "history-p3_dspark.md",
       "path_glob": "docs/p3_dspark.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p3_dspark.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p3_dspark.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "b4d3fb89dcaffb614ddfe197db0baef91904524d98251e24cf2fd6281f05398a",
+        "cdf63a448c95de5659ede3451535d6b8d8ca67012535dfb7e48877497ff1487e"
+      ]
     },
     {
       "id": "history-p3_longctx.md",
       "path_glob": "docs/p3_longctx.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p3_longctx.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p3_longctx.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "589b47c641e92b761f4367f60a1105d46595e3d2c65700fa61247f41357a0a33"
+      ]
     },
     {
       "id": "history-p3_longctx_decode.md",
       "path_glob": "docs/p3_longctx_decode.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p3_longctx_decode.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p3_longctx_decode.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "38b2879669358fe7d3b80ed106adadeecbf6a924b41b56f1aeb312eac06f2f02",
+        "72e31315fc4e39a1f6d75c817287092c3a69e71db83a5058e4058cf226668fb5",
+        "8803369ae101f226b2969b8fb7c613ba2469f96545dc7253a01dec800360488d",
+        "89fdb066a118d4a05aa8b3871cb9cdf9f35025433eb2b40bec00d0a81aea1784",
+        "ed6d2e768fb856d6cf4ce5e716f5b9efeef0657a7636117f7c46632a1dfc449d"
+      ]
     },
     {
       "id": "history-p3_prefill.md",
       "path_glob": "docs/p3_prefill.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p3_prefill.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p3_prefill.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "5081aa6724cc1cfc307cd963f6cc01bad313c00d4aee2d998bf6172c23145590",
+        "6c6ebdc697506e61172305abf43d98b52d58bb4853c045b6bd06866352137171",
+        "791be6daf35236f9a51fc94cc8df9b3578ad9b7684ca59928fc8840708a9966b",
+        "b246af1eb0ec2ac6a0e13eb814a84c007d8cab13af2bbef60a8a675e2b000317",
+        "ce569f7ece4ea064b954d9109f19e19aa6958de02813673659114d022eff18f5"
+      ]
     },
     {
       "id": "history-p4_cache_policy.md",
       "path_glob": "docs/p4_cache_policy.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_cache_policy.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_cache_policy.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "32c1b9eb3e9990db4342a3b185e5a6ad193147d39ff71a6efddc1c9ef767a9c2",
+        "cde32e9ca06f09785484afe83a5f7560e937373a420c292efdda2579294bfe4b"
+      ]
     },
     {
       "id": "history-p4_dspark_runtime.md",
       "path_glob": "docs/p4_dspark_runtime.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_dspark_runtime.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_dspark_runtime.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "04459a259c6cab817ee1490cb804238074e4e8f6ee279b60324c33e4b92c8a61",
+        "0460d9c05598338a6c29429fcf0c96bc100242a204e4bbec2a29c34a19427fdb",
+        "1748212353ed215b5fa36ae994befdfce12300f2bfbcfc105e94bf1e4188d11d",
+        "1c1cb9589eae4b8607cec0c65cd286680a186e2c8bd26fdea2840cd9fb777936",
+        "1d6cf7dad4eadc4ab615dea89e6ad1adb1d868e66b20662999f85f6902668342",
+        "2108c1e61b0dcc34f517211c2fc6f4ce53ad9aec64bc6b35b8053e6230e22b09",
+        "5dfa6f07da995b142972618880cdfdca7489d56f9f3a2ea38da474eba5c682d0",
+        "6c4039f66524f21dc206a9427ad254024478e4d018c08596f1b6eceefe924a41",
+        "72ff30d41f68feec49c202c494acd6baf86cc29e75c2928923aa931a049033b8",
+        "7fdf68ca7dacb047f0792e0ba9a7862d1ccb336f7ca39a3ceae1227547410e98",
+        "848ccd5c82a20b1f3356cf6a3f8c588f0e0fcf6002050a66452ec902766d8952",
+        "9b9b9f2ee84c44ca3a0c30286cd862659f3f4e4b0a84c924b36b2f4afdc2922e",
+        "aeba35d6e9ddb6ca88a9dfbe1d9fe1a9c42676a406ad81c76c62f0efd1db60d2",
+        "b4a404889b202d24179c801a277a2391c61099e1d0142c19ed41f4457a4be08b",
+        "b6d68588bd9b6934611316b3ef62764640cb137148a4eb5effdff927d616c2ea",
+        "b81be548052d0f044a8de6c45e3d486d3fd00e8b7c355f193b109be57e2376fd",
+        "bd4b66594c33281b08f3fdcddba06bce8ec60d207f3bca84848a3e90f831b029",
+        "dcce6e792bb01d34b9bbb04cb9419d58f1cf868b1eff4d563e8ec14f07829bfa",
+        "fa5da02e1163948bfaee7b5ac3d8a19e24194dbc1ef3b7949ce794103a7af7a0"
+      ]
     },
     {
       "id": "history-p4_dual_source.md",
       "path_glob": "docs/p4_dual_source.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_dual_source.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_dual_source.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "05835be9c75b235ed14a7feaf24e264a51a1c9dc00b1cee60d6e83086b6c7da7",
+        "0814c1cd32485c9ec75c646f58b77662fb3fb0b63bca7b7d46f70033573bd355",
+        "08b67138733a70bdce0773bb03ec565d3e99b5532b67040c80786b1bd4944ca4",
+        "0adaded3269cf079c6d501336bda02726e6b500c265b55861491b174b4a8d935",
+        "0aecf9ce0026b14cba4ebca6d781ae168574761e21a4e70118559cd72e1bd822",
+        "11e63e4afe492682b036c5db64be2c938fc0dfd08b50caf2e60fe19ac86c4703",
+        "1b4277b286203f5f668367e57e435a00472ea78992373b3ab837f28081b3d599",
+        "1f56619757c5bdb9658b338c432b2a2e7ab3d24901008dc839da61eab90aa764",
+        "2e365552dbee2b4c61793790ae34dc54d2514e6c5279ba590aa2186290d53eca",
+        "2fa6d0c58b9d2a74b7c508ed7cf84a8ccac4ec9f78ca28850f093e18fdded9c8",
+        "3009c7f2144815beebaf3f923e116dc208196e2087b6bc0b49964800fc6ce690",
+        "557f0983edd32e682fa9de3c8b1418e2c54b37635a4038256ad00e701125114f",
+        "7b8d6ab50216e96b739b58caf47f271bd486fd31526a1d110da37a344cdbe479",
+        "7cd69a02947cb91e26be637d4e171b20aff286efc38f8ec86c19b6a89fde2ad1",
+        "82b9146276140b7d3a7898c7d16fa2283195a9776d20b44eee00e5f269be323f",
+        "930c1a0f58071051e9f113c3736e9404786fba7b76fde17d0bc4f718a2210ed7",
+        "97cd6884f4ab627c6d6c07adba2e11b226fdd69138b5ee014c75426a51f4655d",
+        "9c7f0ef49d7fc8b208dfaed4fc98dd040faaee0bbfefaae3e4723978ce32f778",
+        "a13a1818030974826768e379ce1064495aadf223d00bb209f1e8b1d3e9111f7a",
+        "ac05050bad4938386cf12013cf093fe807b482bce1b651b3597acf087b16f8d7",
+        "b23da04508d35c5bf7faa07f04e835c57abf68439c2434ccded029f247d80d31",
+        "b7c1da2a53c7860062464029b22cbd6940acb4ec15ff697b01b34383d8033dfc",
+        "dc2138ca568f75d30aa7d47a773653e3156bdf8fa37d0b95ea837ff05cef6bc6",
+        "dc4823424c1978110d09bfeeedb2b9b2c8c102d5907df150b15626261dbe0c17",
+        "dd020e4d1b00de202540debeff183be5fcc076465125ea53fb1e92384653ff5b",
+        "e115c7b1be1898ff408876bd66c540b9a84c673c3b77a92701c5d0d3de1d73a6",
+        "f0e7c6a201a8f972ed01e6e26d17cb274bab2fab92be144f4b0fa4a6a3c6115e",
+        "fbd091670dab0dcecdd32188183a9a5403db6025d87f30a9c9c647710e6cb864"
+      ]
     },
     {
       "id": "history-p4_e_drive_diag.md",
       "path_glob": "docs/p4_e_drive_diag.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_e_drive_diag.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_e_drive_diag.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "119936ad3810a9da15fa081b11c8547639d32e82805a6db1f9e1482c20167019",
+        "466adf2030fc9b1fee97a7bea6bbde5dad5045f6977e860cb9707771831342b9",
+        "49addb729dc28b257417261f4049d1121620792b8b1fe4f94b2c9e7c4b0dcff3",
+        "4f413e23da4937afa482b874167d564801627cc46fcd81b2ca0ab753832b0219",
+        "75181d7e8b27aba217448c45d521a9b1962b5787c29b512b0045ff7c11d912be",
+        "8e0ed74973109896dc40c30942a0bc6db2c06834a08ab19d38abbf08492dac03",
+        "8e1ba2f0787c0500b6d9c8aa2514f370c394be24644db2da4167077713e1f1ad",
+        "d720f75c53564a00ba93cdfedc5e24a5a49cbc885e2e93eb86e79e1aca16c926"
+      ]
     },
     {
       "id": "history-p4_expert_patterns.md",
       "path_glob": "docs/p4_expert_patterns.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_expert_patterns.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_expert_patterns.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "1a792024cbc0544f337adf46ebb49bb48d9a467d8b67ddd77bb2bdc7716e5bb6"
+      ]
     },
     {
       "id": "history-p4_hitrate.md",
       "path_glob": "docs/p4_hitrate.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_hitrate.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_hitrate.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "03111e9fd6aefee14a91c086171900d2044af834a6bd49c91096868f412505de",
+        "09ffaf52605970d8699d17f1bce2da964cd0e810ccf7b3635bd3ac818e8fce8e",
+        "0bd4843a17179f7b617e98531c9a36fd252b4d3f405914c9b77d12c82d10661e",
+        "0c0c4f8926c57c6f739bfc3c970f12f9be5d7d5cae1634f781f084a5f067e94f",
+        "1bf047d0baae6da1a618f311922f4be6c0b6cea93df94d7a385418a131007135",
+        "2108c1e61b0dcc34f517211c2fc6f4ce53ad9aec64bc6b35b8053e6230e22b09",
+        "2274b4092e05ff542bd3177f4c947109f5cf03a590b8c0c5e388d81ef3f3e65c",
+        "24f8a6237f142ad70d5c447846cf844d58f2095824f4291f0fa7fe2a41b7fae4",
+        "334271b1fdca47dd818842f1d2804a5a810424d416092c0d36b902bb3f0e57df",
+        "34a5b1e6ce6aec9b4b12aa4c9260f2a6bcf97e964f26cd49509200a73939f57b",
+        "3bacd671e44e42d861376806c6a3b7906fcb2cc768f7943dff45a1e3c1defd1a",
+        "3e2db5e8d1f2816a5268dea1a4d94bf8a5f9d57b822b0dc6bf5dfb6a826044e6",
+        "4e4ff03cf0070667af0d060d1d4e4c061c4d228f6a7717a13acca9e434caa6a1",
+        "4f17786850287e3fdfb3cc74be8c207442c1187bea9485eea0cf45002abcf982",
+        "51cf0df6b214548ae4776d640c1502472440322eea80ab39f7f5c9768deaa8fe",
+        "59787bca170466a9a6d84c88246fb412727242ee33504e600acf473ffb7ebb87",
+        "798f4d612f00f7577f83e98f4d2a48cf71cc8c2c8a98ac51f88d69a5b7e8a2fd",
+        "7c77ffd09440ecd25102e4a42d6f32bcc044b9c040a261bfb48c6dcf86df5291",
+        "7dbf863515d2d912fcde825c6d3fd004d93b1b62039812aa718b7f38ab55af16",
+        "87340f2e9c3da6cf1384f0a503643427874c80d1706523e80e1046386441392b",
+        "8b895b9aed606233b805550ec8716c71687174f6781b6bd48772375282baeeab",
+        "93c304b89b49ca19e0249d5dfaab989d4919841953c9fcea0a7cdc9c4c7787b2",
+        "95aaa4ba480b6812159c636f11f01ad1033e886a60ecdc741bcb4646266d8a1e",
+        "98f66a14e44bc8da01da2a52118821b7892417cf1c0756bd07318be61acd1582",
+        "9e6a1cdb40a355a50d8dd36b13fce34cf5bd244f64dacd10db23120355abd4a9",
+        "9fd335c29e9e163a63e66b068c17907b62ce73652503a6e291ad7801d752050c",
+        "aa9412adf77af936eb5441e2ed0f985b5a03ce52ff937daebc30781fe6b529b0",
+        "ab5a63ea228e72b3a3fdd3a2cf9b289fd0ae918ca602d954657ef2bdf4f18991",
+        "adb5784e9739c274d074ed15d05fe539b01493381c9189e9698068a138439475",
+        "b175c767b8ab4d8284f15a2422ca0fd45a83d6fd44ea6928614d16d4c7e6caf7",
+        "b4adf269d7e98d2f299c40659e852b1172510d3dfced42d22f2cba1ecaf6ef6d",
+        "cd0324359cc81cb5fde48c690463ef879b20e515cc472f640c6de97e00a0b58f",
+        "d1e11a9f951ee613229fa52a9f486bb4bcaffbd93dae828ef1f2fe1c97eda84f",
+        "eed54a79df71419be35679d6fd1ab26bf6cb7fc80506bd7fd6b127c429347892",
+        "ff1846fe777472e7573b377342b8698291f4d6c6d2f6479551c8f25e6578a621"
+      ]
     },
     {
       "id": "history-p4_hostflag_gate.md",
@@ -161,42 +503,123 @@
       "path_glob": "docs/p4_idle_prefetch.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_idle_prefetch.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_idle_prefetch.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "23570b4c210ab9ad2115f5832b8db2a498f58d91d4fc92abf8f903e88f95dc1a",
+        "5e45c5ca36094ccb93174219bfe192065f3ff377b88120b454bee81f4c02428e",
+        "f54d86b9784c60fb5be8ba74b0d84287b6c082293310598b10b24af670a6d408"
+      ]
     },
     {
       "id": "history-p4_kv_ux.md",
       "path_glob": "docs/p4_kv_ux.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_kv_ux.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_kv_ux.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "0540430582c199f090c3016b395a7762dd7c585d9d461497a1dcf810e61a22ff",
+        "159a4134bb7a9e5d9d99b9a67bb7b0836968b8040c00e42156334fafb3055a5d",
+        "2108c1e61b0dcc34f517211c2fc6f4ce53ad9aec64bc6b35b8053e6230e22b09",
+        "2cbbb58d527fdef7329821ddc63bc77481f9e363461e6e21f012117bfd8d898a",
+        "2ccc53f87702e7e4be4e2d85f1ae58ed9a7d4e937db92daa1ae73ab29077edf8",
+        "3a0fcaf0a266c3eed00b147524db16312a61ce686820d9b193aa0fbc6ed21418",
+        "3d68cf1cc031feb2c741ca626d5b974478a096efbe2fa006a3fff3d06bf2eec6",
+        "40826ddd4ea50da774bf97eedf0e969f133b1218b54494779f0211c2fde80f2b",
+        "88d5d1c60bdac7cc238e0121c8ee3daab8382ba1b03fdb43ef1b35390ad94052",
+        "dc55eec0d1773e6135c7877748dc54cc86720ba1d593333a9a41fc30399a46e5",
+        "de08fd00c91952aa3a2512e0f2078955a3f53c3b910f453cc855de20b3147cd2",
+        "ff51a6e59cf1334128133f7b6070ef6a1017ffb552d35822cc994fc2fe049897"
+      ]
     },
     {
       "id": "history-p4_mgt1.md",
       "path_glob": "docs/p4_mgt1.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_mgt1.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_mgt1.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "053b47faa54395189cda02ee36ee744a091aab03f1048e302f6723781bf65ef9",
+        "13c3e4a9bd39bacc3795d19cc19687819702dd43f27f0a7b565fb3afe94df4d7",
+        "19d08f6ca0ceba741f4a337825be8f3fa0bc8f62c733dcc96fa4293006eb55e5",
+        "1bdd11467dc9be866dc3c5e2224310fa5e2fff23aa9235ecb619bde28438bf42",
+        "2108c1e61b0dcc34f517211c2fc6f4ce53ad9aec64bc6b35b8053e6230e22b09",
+        "3611b3d10ba1a32226302517d3493fd674836175029a0bb82bb3fa7363d3f8ef",
+        "7006b4a34e7f4746b2c4b0ba0cd5bea9a328ac298f81d3cd74f0e526cc8ba969",
+        "849afa45e78713e77053f8f1f66f11a3b2d01a1552fe80aac9a535e96974df5f",
+        "96e078c550425a8b7e0f7508b6b7656aa11995c8557a27edb2fad1f73034c4f8",
+        "e62883591c591f20474e412ee8ac20bda7f266d2909ec16cd36739b5cf76e638",
+        "f1270d15f97b6a75a65bda4cae7717a4e03eb4fd347e14dfdafd1e2fcb1a4ddb"
+      ]
     },
     {
       "id": "history-p4_multistream.md",
       "path_glob": "docs/p4_multistream.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_multistream.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_multistream.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "0fcc90b7b700766852f4fdd3de54ec1fa34e3ada22179ff0b11a77589f075023",
+        "33e2ae191f8d7fada6e29a5284d7fd1eff39c066fddcf131569046eaf9da5366",
+        "ac2f8831e4157fac598150be0c4b7f6573b7cddee2571019bff614007097e190",
+        "e1ebe08d7e801d099a1e507dce1a508d383040ddf080af76b81eee08907c9c03",
+        "f16f3e918e65fe9c60b01ce1811e92ea2d1f3f885e534bb2b73af77e2dc741b4"
+      ]
     },
     {
       "id": "history-p4_p0_queue.md",
       "path_glob": "docs/p4_p0_queue.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_p0_queue.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_p0_queue.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "03726f9b2a41a0c0774b3572a81cf87fa472a8e30b1b91cf1e8fdd82c4701e87",
+        "060b8d389cec8ef3bf8672264211115ce5d622e809d57a81107a9d6ea2076ed7",
+        "066eae51a1b1ca4518a804d19c8bc72a34028a9262db947f154a5070d70c98d7",
+        "1eebb44a7a557f67421b46151a5c6f46f4cdda48b109a83cccbad17e4cf062ac",
+        "23981588a969b6defcef0e0f80552131eb528385375a1f627a6267c6b19282a9",
+        "313962c277e265ed66740b32e9614d7e3deeafe5b6fd51823aca42d89b0fb4ff",
+        "3afdb2308512d97d66dbbf09a6e1ea87663ea01e11de8c0a4f47bb7a65ee72e5",
+        "3f244d03c9768340162afc33761133594a83c09bffee9fa5c5e45570229f09a0",
+        "41c57e6fe19cc4a40a80e79607f6d279c9ef70b4e51a2f9efabb27ce57a4e140",
+        "4408031db7bc50d31de58736dd8dc748078fbbcdd5b7bd43102b2caf228580a2",
+        "4e12aeafd0c3e8558e5a85f22e10a2d06e19ac4c9fd2e03df75ec2b293a979a8",
+        "584805f0a3a129cae4f13a22e6cd0c52d71c500ca45d72dacfbd197b420f3579",
+        "5955dc41bc4e0082bd5f65cdaccfd1981113ffd502134ebcb2f16ed9130d2651",
+        "59ab0c4f7bf78474759f57f33643854124aa276147e13bbf107d093f044ca9f4",
+        "60dab57c09c67b6a808b7d3a07f8ce991fd0e2c5908464031808599d1569b99b",
+        "64042f4f909da1d9c4e6a6dd012e019a26a0aab99f6426f756b9dc0ec982df2c",
+        "6d046de964b498e3e4d24de0fb77df340ff077d0f6fe115b5b7e84a197dc6e53",
+        "7e22a917be51404746ec24ef23084277630e9f97d6087b35c6a649f4e2b7eeb4",
+        "8cb2bf01ba160b563670134876c1ffcecf83b854aafc145c895bdea47ef446ec",
+        "8f29dfcd3cf0e253d741783d70da56604fb2ee199d746f8867b4e0aaadb9e8df",
+        "971dd40e1a35c3f66c8d7a33e42beb677fd748e9132e0369a67e1c398c690a36",
+        "b126a3f8281d79c7e98fc10b72b44705a05562bf7a2cc4ccbb8b00ee610ecb9c",
+        "e18bd0fbb768e6bbede067a945040182472f151330156eb64ac8ddaaa1e48b4b",
+        "f3d1628b3ad351ff8f403761da56e208c09625eddec4604d2f63764fc6727afb"
+      ]
     },
     {
       "id": "history-p4_prefill_speed.md",
       "path_glob": "docs/p4_prefill_speed.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_prefill_speed.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_prefill_speed.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "27f31a96a5f450130f3b7cac6466a003ee6c754684db1a4c618ccfa127ea14d6",
+        "38c2ea1cbe2fe5d0b08e36f2b842ec490c94263565e35745a62719d43eb58330",
+        "5a95317c137f57af137ed81d8672b646974f1670cc2ab28e59e4278deaae9c9f",
+        "6b7b0dbc5c999d5f0007af52ddcd8f117b5d2fd3b7d7efe1c17e87b54da4de00",
+        "7566713aa0f91fc6acbd2be63f7cfaefa2b7b29ef690aa14aa5ad505a2f69a20",
+        "86fc435bde6fa55ab4ed3f0e71a62e1cba669969263ca22a0ace5c741cf9a046",
+        "8ae82c4f40472f6ca34abb2b2ab1bb606fc0f54b21646dec6f8f402097a04524",
+        "9c84cba9aaca0830b6e75fc064dfa033be82b933b2974cc4626329c0a49c2198",
+        "a141823c682c12e05f894b4d565abd1894c20dcad80337c8a150ca218c9b545f",
+        "b5b0fdfbce19c335bd6508b86b280ed70ed773adecec09278ba58af5696c5a82",
+        "cdf751e8f3229072a399b3be1af1ed34b2bcc57f702cc6a65de39860e9553a36",
+        "d530d39e4de156c9a510397c426f29ef2e18ac97fc07a9e8abadb6626ed42ed7",
+        "e864bfa16b8d5b57c0c2b16106da689ad02d137540496fb2f5de0ec06a31bc5f",
+        "e967536966178ba3d0ed4f6d16bd142d740cf33897c372cf8b10378a29ecc8f6"
+      ]
     },
     {
       "id": "history-p4_quant2.md",
@@ -210,35 +633,176 @@
       "path_glob": "docs/p4_resident_routing.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_resident_routing.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_resident_routing.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "22e6ecbe2d5b6134e3b55fa560c84b1e3d00b02f61887a22bcff75655e17e106",
+        "24b4cdf796580ce671b9b154fe81cf8f6179a084c8f9d3caff58ef15311468a3",
+        "2bd31f63a0eb0abd7fa98a6f06d71340ff19d7e6ba2e6fbfe7716ca59e8fe140",
+        "4772fded001bda2e32982666334ea5887d5e7ead4e0f56c988b3f6c5a99a72ee",
+        "9759db5e759dde9754a0f8bcc908177a12c9de25827cf688648d03dd378ed7cb",
+        "a6910ea98fdde577664b540115d7d46357eaa63ed564dcfb4451e77df7158290",
+        "a999bd089b4e1b25a1b6a79573767a89b7536cee7f26c3398b2aa9fe18b63315",
+        "af6d6056ac23c5744f55048cf73cbb3f29d0de068d0a7fe2402e5ecdef7f14c5",
+        "b1d72d5a0637929bf1d02a920475d1ba22bd43441d37dab41e1b4876c7352970",
+        "dad4bd0aad3a79a6940d5b383d3ef05ddbb72734dfa10124c1d45ba6b57b84b3",
+        "deb9d38b8ddefeb45f23ac442ed7188e344c65f85b8b0ce2738e5c037316d6e6",
+        "df9fd40d3ee5d3ebc89bae73387d0a11f2927d4f951f2921798a6f4493add69e",
+        "e6261ddd8af235b043b6af814c68627e48b3e5e8804a3ca1842ce30eb00a7e68",
+        "fab5183a65c7fad59e53dd3a2ada7df775c5bb8dc3b3bb356b473edb5a3fff6e",
+        "fcca0c30d80e7e127db79b1b0877cde8fd37b81dd59e8fb4fcf988b78a382ea4",
+        "fd4ac7cdc0f910729d402c9e22d86a94aa3b04ddcbfdcc7c3fa509d3ed8d6871"
+      ]
     },
     {
       "id": "history-p4_summary.md",
       "path_glob": "docs/p4_summary.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_summary.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_summary.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "15062a2ddbccdca1fad32f50baec41a621e3f0ab425a55f82fe5facafd6362f6",
+        "2108c1e61b0dcc34f517211c2fc6f4ce53ad9aec64bc6b35b8053e6230e22b09",
+        "31d14e5b750f74c03caf6a21be12a05ef066fcec14a053fbb1b7d982e0e1df91",
+        "522abed0afed98194a355f9824ccc48bc7e65b97327d8bff4d81ba9a8e74df8c",
+        "88d5d1c60bdac7cc238e0121c8ee3daab8382ba1b03fdb43ef1b35390ad94052"
+      ]
     },
     {
       "id": "history-p4_test_report.md",
       "path_glob": "docs/p4_test_report.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated p4_test_report.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated p4_test_report.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "08b5af5df3a6d2a91600e822114657e303fda05b9d8f060330b16bc59aefdab3",
+        "2ebef9c18cc9a186311f0c87ccebbad9241c4275554a8080204e5fb1c787e067",
+        "df17f971ad59a3e92156cda62fc8cab252b13c74f815afba0261467d95e450e3",
+        "ebe3b9e68f4d41cdc5e9a7ea76bddcc56a932def5a9526b865ef6ac450e5d06d"
+      ]
     },
     {
       "id": "history-plan_p5.md",
       "path_glob": "docs/plan_p5.md",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_report_or_original_plan",
-      "reason": "Original dated plan_p5.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately."
+      "reason": "Original dated plan_p5.md report/plan and its recorded commands preserve the measured revision and ledger; canonical usage is documented separately.",
+      "reviewed_line_sha256": [
+        "00f68b1080de5b94f9dd3224628352a65843ac38d9b4118d9a86019eb530be93",
+        "13f625fbcf952cf0f02d3a29e91caa27fb2b561b275a3396ad38b0dfd09986fa",
+        "1f793c5a90b0c398ec45a8e48f7b3509083d8d05c4c71408c4671a21dbd0ed67",
+        "2108c1e61b0dcc34f517211c2fc6f4ce53ad9aec64bc6b35b8053e6230e22b09",
+        "41b0954b97a8a861ac15220aad459e5cb47e0c646ef67592e5933413f5af3711",
+        "8924de9c7136776083c28cef7de08c2683f4098735c6d27de37a2ce4b08d1e6f",
+        "9725259d6e540b604df051ba238d43ca5df912ff3e0990ade15c9bb7b1f398a0",
+        "a31f30605362e9ad68f963b9e89fffb91d967edd77f38694d22f0dad6b0a434d",
+        "a6070f7da927a2134fad3d4ab9e53b8c18c64660e7b9f241f42808101afe5682",
+        "d1fa6346c48dbe8a4bd0de71cd95105940ef6a48afc9452c5af112b7a4fc9715",
+        "da6192040262e539e9f07eaa73b881af7d28925ff0c62140617a44730d4014bd",
+        "e737f50c9948dfce8bc446c52a50ee433f3f1277d45c4fc29a86e65151b9c2e8",
+        "f4f2cfe9230ace6c33d8db7e46348b02c2b0ce7947a281e12db6a30ae17e8af5",
+        "fcdfcab20d0084e7b9db5d70803b34395acb503d5bd5b4d6e5f864483be166eb"
+      ]
     },
     {
       "id": "historical-machine-receipts",
       "path_glob": "docs/*_receipt.json",
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_machine_receipt",
-      "reason": "Recorded hashes, commands, tool paths and environments describe the original run; rewriting would falsify its receipt."
+      "reason": "Recorded hashes, commands, tool paths and environments describe the original run; rewriting would falsify its receipt.",
+      "reviewed_line_sha256": [
+        "0059f3bbb179541b2fe567f69ed1d3d6c51572a4431dd86ef8bc9961cda0d14f",
+        "01aec26fc595551efa8f8db36d2f7056658b213186b3d7d8ec8e230645784dff",
+        "01f8ea24fdba8bc7365f4f90a93ab14850cfa949012579f85ae8f4ae7f9a9bab",
+        "04271c7566c07debaf31ba365d704104bf555e175f28051992d9ddd8a3844596",
+        "0645a005536cecffe4da81a75e5223a19a32694a249be9d397e440ff1017b30b",
+        "0755d5873bfbae006d5bff6331b9630b4083f515bc92c290df4490e21553ca4f",
+        "078488a98defb8ce3db7cea9979024779b4209148d433a17517db1c816b13672",
+        "079b9625b3a4eec9611e69a826749619302a15def1212ed3cf0c89b5ad99a378",
+        "0837d43ffd12f728d80f6782987e40c820ff76cff0a4bc653887172969dd7cdc",
+        "0969760c8261cd7769e0ff6af11cc0d11021a6f52796382ab21dde49339bebe6",
+        "0b06e9163380d0ada91fd74899dc1ee4bc16cd9ddb56571f2418962e95771090",
+        "14f0c457d5bc6218623accb67bc5e40b6ba56a66e15ea86929c8b073d4e2c38d",
+        "1c10f535b270bede46fcf78189559c8d93f222e31b1f1c84f45f9aeab1975d0d",
+        "1ee890c948ca72fbbfba16ee375e7e9d5d12d99203acabcd83787b7af78027d4",
+        "201153003087cd69293ca61cc2f531d3617437b7eac99661a03fb7af4397306e",
+        "21a78259d41676e2949fefabe46d09524aef0c29953d100581f2dc83c5d036f1",
+        "21f433d830d9cb22421a6b67b470ff9ffa9b20050dc6b3e051643f1e8bd5dbc9",
+        "263676d6162c308940999d2ea50d266c26e4088587800c2127d0def1bd59d6ab",
+        "2663181eadaa4efdc141dfe724a6f4694de6a1a68797bfe84ed7ec95ba9fcd45",
+        "2726c2127e814c702ae9f747ae2b8cf077add79e3b1479fa305523cdd974a64b",
+        "2c9619cf235a2913ba2f912bc82402b9b1965effde5b9ff14e80cdb89fca26ff",
+        "2dfd9f1cfea5bb2254fa95f27fa0063c680eebb896f899b3ed63c1b903dee77a",
+        "2e8a46db9eb2f582c41a13bdac271f89ac1cd1a82aad8c0a99158bbdd4fb33ed",
+        "37bf7eb66ae9af16cba501b71f353c3139d5d301382dffc14521c10b4bd5a764",
+        "37e2ca07dd84d4ac04b58b3649bb0037d66aa2d6d33527047466b0cb09efd5fd",
+        "388ff0b92b291ae375073b0219384506513bb19a43066ce799f80cdaa9f5181b",
+        "3fc810cac76c9854f7aff23f2f47095f38c592acab61bc98b6b52ae01c07ab42",
+        "41f33d903e699cf97b0334f300b298036937cb053af5e0cd2a83d73dda165ea6",
+        "43e28b55d36767ecd8794180266cbae0f948e90c10065d89f07c7a415ae11713",
+        "45a663d9254cf53378fbeb8228dce9cdb427941a4427258e350789d8b6fa8e46",
+        "45a7481b3e2506cd3bdf3b5e414a2a9f7c9209e057049cbf9abf73e332386787",
+        "49cc2a396ff8aef5aae0b8f686beb4b7b62d7a94f0632f524f85bf6330c8a820",
+        "4c310f86a3502bd9ae56be815dd35ba7f3cc239a479f93a513573db760d1e3e1",
+        "526c3d3e7a81d3bc8026c5c891a55d830d534f8f313b1a0f84aa1f0fba38bcc8",
+        "5f10eed6f8162c6e493a010b43800370f49965d76a631ff26ca0d2ed290a6298",
+        "5f8d473110c020bca48b0154f3ab03e83fdc2a8f3aa0c06bce5fcdcebae2aa44",
+        "60c0ebf7871050a3aa37f07c30e64e6d7e0139eb9fd48f38de69a331cd4fc4a3",
+        "62e41d151dd95316530db20c2193f7df83551c40d99d61822e999b8498963dbc",
+        "6600a31ef71621369337454d14e960e953f1f634b0b03ec0454316c23b3eadb9",
+        "762cef4c9ff7f65008ceb4d8fa476a923911910292509df46bd75039554b8018",
+        "762f9f6b6575ef3c0c273357ae15d3558a27f604514828acb7339b68e103ddc5",
+        "775eb0b612fa24ce71c6b71d9370e08db0ac464c90fdf8c0ea2ddd860d767e7c",
+        "7d95fdfc7f0fc1449ba209e6745e8e3650837a89e01ef0efdc7a0b8bc9bbebfe",
+        "7d985597254d32481cf6d063b80dba74b813d86f5983cdcc98e8df209b031527",
+        "801c5c24f571f3ff9e6dd9bd55fae423e85cfe8a89e252d5c894cc70bf5d40a5",
+        "804506465b11009c991173af3609ac0f2f04516bb0b820c33f27391d536a88ae",
+        "8192c5b54949e325f36706e29c9497ee86f0823dd2e8ed2a8223006f58337894",
+        "8416307b46cd0ac2dee1609740b5de526ba7878f850291a734abf808c71ceb45",
+        "8471d831f0f872bd176e9e57bfd703d7a6e521372c272474b8ac2c6c6db6d6a1",
+        "8632c77df73d6d73033b73bd6354c7d8e79d55e3e98cd9e85d11b63c49ddba9a",
+        "86747069e857ee4d813b9a608e174f39525408db9f07b06c2eb4a1d1a6f8380a",
+        "8956e1981017a8f412919fa2db8084ca31509a8f8c365ad8bdccab233a0e97a6",
+        "8d4f0f13120aa6ae2fdcde27fb83bf49b27c4705ec34c9f943abbd0847300ba2",
+        "98a2a8d4e310456a43a04f73a587ced69bd5507cc00f1b24ef1f3d94cd6823bd",
+        "98be427341967d07f0aee87cf8c4a4440b08822ac1f6c75ca65d3f575719b3fe",
+        "a04ebcc20541af3bb449e30387eb6ecf72350464c81cc96b382a8008eba79519",
+        "a589572235cfa9125ddd12fdabc9b2f740a1e172a8b17ecd5ba204f31cd47ef5",
+        "a944753922d102b523e1545306122ede66f6a4ac1eeace47c9d37334c69cd68a",
+        "a9ca379d789deffddb3ee356d59657cb1d0e74a4ffe85db009cfe0e771894bc9",
+        "abcccf68f3d0e1810b9e33df6befcd3acdcf0c3bb266a9128d445c116227937c",
+        "ae09b1e1f2e23890155c5bdf85d6c021068c84e7c9310c23abbc2089e0c9b0ab",
+        "af88f912d0a4e2d31aebce6556bf94b0abeafaf32d1df3e3d159409ce2aa9d3f",
+        "b2d7e90b446a6139aa014dac646abe3e5fa5e03b0debc8a96234a87c9a19a872",
+        "b52ca66e44df817d340e0ef43e8f2f9f14cfd003b64e0b49b6fe190947f8d781",
+        "b6ba096b501ce20369b2db2f4ef97aae90253ef7bed02c022828c2c3d19e3180",
+        "b70b73d46e2a2f99aee51188a3feb309c423084b349d614f0f9294ddefe64d95",
+        "ba084520eeb461863b9489d9ec366a3c654e8da2d4255f718dc326efb282c9f8",
+        "bd74e23c61db172f105d71e84c2feb7bce2482b580cb63476d5447f9c1832306",
+        "be1406b7959f306191ced18e4b0cb328bee423159310d108a3957758e0864278",
+        "c57f32fca30e42766ee2ee226e353c68b27dd8d59d98b7485388c297d7a05bbd",
+        "cce148a5a19afdcd44a84632d8f5e818c810d2b98a90965a1d217045bd5d6d97",
+        "cee0bf760b7dc3768f486f4fbd14572cc9a3347f57168fc9a467969f1996a099",
+        "d1e8afe8eae3409d83d0c90193b3a8fa507ebd9f892df9c8c188dbc48386d54f",
+        "d3749f552503008c99876dee21fd2ffa05bec44cf5e18842319b21e84c158b8c",
+        "d530f6ee89118b7b120920efcd460cce30f2e126da7c54b86175c7fd5228c573",
+        "d6092c740c3aa4200c392d96199756ca50357916ab545100e579603cabc2c516",
+        "d6813f53885f3cb14bf4b690ba24b5beb66e83a703e6d1d5361fddf82153cf12",
+        "d72aa4753230665a185892215e50c01f5da298ad844474dfc954dd092cfb5fc2",
+        "daf6473a92793708e173ecbc030bd6a6186aee597e5edfda84dcd497f5fb126c",
+        "df5c98f3c128c6b64572579520fc8cfa544c3ac71e27f47f4be5fb9e299b3d46",
+        "e05003383e477ee4de4088836c953a2a0ae05ddd6fafcaf5fd4c68fc12363ba1",
+        "e08f1501eb04a00e4b7a24f403327d3ec714cb2ac0eafe4608d9a4994973ea2a",
+        "e5b74d557e8d00985f0c2565b00c7cdb030844183cb600bf78686bbb1ad9b566",
+        "e5d9421a913b3aabd125d26ce2183d844d0d23c38da9feebd6b69d57e4de750f",
+        "e9c1d9798794f59edb164acbebaf32bd8b11abb6f8d35ea51dd9c7f19088a0ad",
+        "ea559a8a44cd4d4e0f7c67d22423c64792b9f03c3016d1aef76fa9494df356d7",
+        "ec4e3ad79ac7388ff57f4d8f1238d965cfff09cea18b33979fae0a5f45b77cac",
+        "f21727c5bbf24759418b0af1c412e3d6d26ce0f66d00d4c4870917534043c29f",
+        "f3369c0f5ea27deb8e9a7eebcddd20fc81fbed9f1ce3ee40a7db361f9c73202d",
+        "f8f28c40bf47120e229dc680616827b0a862321431ac99c79bb154815a13184d",
+        "fad0b248dd06e9ee4cffa0b2efc17a6c401ff97a11761a595c3225de3470bb82",
+        "fe9bbe8bd1763c03d3d2928e381b5619e3cf89c86104b3095813ce10d98a4ba2"
+      ]
     },
     {
       "id": "miss-mask-measurements",
@@ -246,7 +810,14 @@
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_mask_evidence",
       "reason": "Validation and later dated mask experiments retain original input/command names and measurements.",
-      "line_min": 31
+      "line_min": 31,
+      "reviewed_line_sha256": [
+        "0746610a8498f0d9b079722ab1b6bb3b0a01fdbb7d032528f369399b16a7d031",
+        "2adbf2b7a88bdcfdc423d81984f2863997611286223a20670c7aad5f0505fe0a",
+        "67836f494a862ee1c974810ab363984a95a037abf8df6c589167750c435580a2",
+        "b13187fc17aca6d89294db7567f3f5392f8a1eb94a17ef3574ae124240c037b8",
+        "ff096bfd04de166e6ea229bef22f1cd543c633f27806690ce026ab514053070f"
+      ]
     },
     {
       "id": "miss-mask-explicit-old-cache-key",
@@ -261,7 +832,33 @@
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_dspark_evidence",
       "reason": "Dated DSpark experiment commands, old worktree/source paths and numeric receipts retain their measured revision.",
-      "line_min": 15
+      "line_min": 15,
+      "reviewed_line_sha256": [
+        "04d728b461354de22d3806aaf5b97aa7f29eea8536722134278c7f3e9cbd9374",
+        "07cc360fda3a8e08c78c7b7747aa4eda4d5049fdc5aeb7ddc0c16771fc438bbd",
+        "09cb1d19742940e5545cae3fccbd5f71661d8b8c49d0603d1af79c5ea3755e65",
+        "0acf0271be4347d9eafa26b501604717a0cfdcfed7f11ffc2f3d95796bfcd8ca",
+        "1054f9d63c2f803f70de66060e6a8668e5d77b34619b8ad9a940deb56db25718",
+        "14cee189fa21635cf35c7b82c1cfaedddbf121ee393b6629fad6d24cfd0e9fef",
+        "17484b0beb82faed60ebe692ddde6660d4ec858a2771b4a0a3ae21168277b2b0",
+        "1bded366d441e2c1dab60f87f9c208f8de8586e21af74a36b9de6ddfc303b76b",
+        "2b69f52db39f02263fbdb7dfc0eacc9b7ca873425ccfb9221f96a8560ae16b27",
+        "2bd61da6c9b9e6f5a6d97b09b40e622aeef6c6cb1350d06819f85f9d53609eb4",
+        "3b8e72c24789e9345ad424917c69fc6abdaf40cc640040ee83e9cfc6e8bd1678",
+        "43f5c94c4697648db7f7fbbe8194a492fc5fa59f344d23a0d38c6a9e77ae6418",
+        "5523fa672a5d20e4bc82aa3ff3a10dc86508a6dc0fb96b393dd511f1e038a079",
+        "6d784e890927e088e5e7f7d18c8defcc79b33d23f6a8801f768b6d7926bd2b1d",
+        "6e52e98a0cabaf5efbb9fd2f1a09c8ae48ac9b57e569beebbf815d09ae9120c1",
+        "6fac055346a3d12e4ea2a86ae7096d97b678623a527dd6f6c25c64a3bfb39d91",
+        "71a255b9864ae5a9bb7ee065a9663887ff21f7c1d8b43ceb0fd967052db864f2",
+        "72c0ec9b1d1751f0ed1d7d01330bb9069ed5e0156c2ce23fefeb92e8b0ec1002",
+        "87c457aabc6c09a91dea9385fa4ef24513d7988e4ad893027aa2722eccd45c73",
+        "9dd64188caf89c96f058008e344272cb0251cee723e425b27fe51923206d25a8",
+        "b1803fa2b85469d642d92ead452c543a1db11d30ca7ea6825802b2f82dbbce2c",
+        "b7c663feed425469f98dc4dfbadd9f5b3be8c2bd474625fd06e53c79a73df38d",
+        "e295ee94241e17d13aac5d25361c1fcff2b35969ab3eb103e4e79da74066579c",
+        "eaf73407c5c048e235a3958abbcb965c6882443882417a5ad2649172910cb35e"
+      ]
     },
     {
       "id": "build-actual-windows-paths",
@@ -442,35 +1039,64 @@
       "path_glob": "README.md",
       "token_regex": "DEEPMOE_",
       "role": "documented_environment_alias",
-      "reason": "The user-facing compatibility paragraph documents the accepted legacy environment family."
+      "reason": "The user-facing compatibility paragraph documents the accepted legacy environment family.",
+      "line_regex": "^Runtime\\ controls\\ use\\ `CACHEDMOE_\\*`\\.\\ Legacy\\ `DEEPMOE_\\*`\\ aliases\\ remain\\ accepted;$"
     },
     {
       "id": "documented-old-state-AGENTS.md",
       "path_glob": "AGENTS.md",
       "token_regex": "deepmoe",
       "role": "documented_legacy_state_root",
-      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent."
+      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent.",
+      "line_regex": "^`%LOCALAPPDATA%\\\\cachedmoe`\\ on\\ Windows\\.\\ An\\ existing\\ legacy\\ `deepmoe`\\ root\\ is\\ reused$"
     },
     {
       "id": "documented-old-state-CLAUDE.md",
       "path_glob": "CLAUDE.md",
       "token_regex": "deepmoe",
       "role": "documented_legacy_state_root",
-      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent."
+      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent.",
+      "line_regex": "^`%LOCALAPPDATA%\\\\cachedmoe`\\ on\\ Windows\\.\\ An\\ existing\\ legacy\\ `deepmoe`\\ root\\ is\\ reused$"
     },
     {
       "id": "documented-old-state-tools-web-README.md",
       "path_glob": "tools/web/README.md",
       "token_regex": "deepmoe",
       "role": "documented_legacy_state_root",
-      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent."
+      "reason": "The explicit legacy-root explanation describes reuse of existing user state when the canonical root is absent.",
+      "line_regex": "^and\\ an\\ old\\ `deepmoe`\\ root\\ exists,\\ the\\ server\\ reuses\\ it\\ for\\ both\\ transcript\\ and\\ KV;$"
     },
     {
-      "id": "rename-interface-contract",
+      "id": "rename-interface-contract-env",
       "path_glob": "docs/rename_compatibility.md",
-      "token_regex": ".*(?i:deepmoe).*",
+      "token_regex": "DEEPMOE_X",
       "role": "documented_legacy_interface",
-      "reason": "The table explicitly describes accepted legacy cache/env/module/executable/namespace names rather than new defaults."
+      "reason": "The table explicitly describes accepted legacy cache/env/module/executable/namespace names rather than new defaults.",
+      "line_regex": "^\\|\\ Runtime\\ environment\\ \\|\\ Read\\ `CACHEDMOE_X`\\ first;\\ only\\ absence\\ falls\\ back\\ to\\ `DEEPMOE_X`\\.\\ Empty\\ values\\ are\\ present\\.\\ Existing\\ consumer\\ parsing\\ stays\\ unchanged\\.\\ \\|$"
+    },
+    {
+      "id": "rename-interface-contract-module",
+      "path_glob": "docs/rename_compatibility.md",
+      "token_regex": "deepmoe_options\\.cmake",
+      "role": "documented_legacy_interface",
+      "reason": "The table explicitly describes accepted legacy cache/env/module/executable/namespace names rather than new defaults.",
+      "line_regex": "^\\|\\ CMake\\ module\\ \\|\\ `cmake/deepmoe_options\\.cmake`\\ includes\\ the\\ canonical\\ options\\ module\\.\\ Old\\ internal\\ list\\ names\\ and\\ compile\\ macros\\ are\\ not\\ separate\\ settings\\.\\ \\|$"
+    },
+    {
+      "id": "rename-interface-contract-program",
+      "path_glob": "docs/rename_compatibility.md",
+      "token_regex": "deepmoe",
+      "role": "documented_legacy_interface",
+      "reason": "The table explicitly describes accepted legacy cache/env/module/executable/namespace names rather than new defaults.",
+      "line_regex": "^\\|\\ Linux\\ artifacts\\ \\|\\ `build/deepmoe`\\ resolves\\ to\\ `cachedmoe`;\\ old\\ test/library\\ aliases\\ refer\\ to\\ canonical\\ artifacts\\.\\ Process\\ checks\\ accept\\ both\\ exact\\ names\\ and\\ retain\\ ownership\\ checks\\.\\ \\|$"
+    },
+    {
+      "id": "rename-interface-contract-namespace",
+      "path_glob": "docs/rename_compatibility.md",
+      "token_regex": "deepmoe",
+      "role": "documented_legacy_interface",
+      "reason": "The table explicitly describes accepted legacy cache/env/module/executable/namespace names rather than new defaults.",
+      "line_regex": "^\\|\\ C\\+\\+\\ source\\ \\|\\ `namespace\\ deepmoe\\ =\\ cachedmoe`\\ supports\\ old\\ source\\ references\\.\\ Rebuild\\ objects;\\ this\\ is\\ not\\ compatibility\\ with\\ old\\ binary\\ ABI\\.\\ \\|$"
     },
     {
       "id": "audit-legacy-needle",
@@ -492,8 +1118,8 @@
       "token_regex": ".*(?i:deepmoe).*",
       "role": "historical_stopped_instance",
       "reason": "This section records stopped 2026-10-05 and earlier web instances. Its commands, PIDs and paths retain their original revision.",
-      "line_min": 15,
-      "line_max": 266
+      "after_marker": "HISTORICAL INSTANCE (2026-10-05, stopped before the current work):",
+      "until_marker": "Canonical rename contract (2026-10-06; web remains STOPPED)"
     },
     {
       "id": "running-legacy-contract",
@@ -501,7 +1127,7 @@
       "token_regex": ".*(?i:deepmoe).*",
       "role": "documented_legacy_launch_and_root",
       "reason": "The appended canonical contract explicitly explains old executable aliases and old-root reuse; these are not active old defaults.",
-      "line_min": 267
+      "line_regex": "^launcher shown at the top\\. Linux build/deepmoe is a compatibility symlink, so$|^absent and the legacy deepmoe root exists, reuse the old transcript\\+KV root;$"
     },
     {
       "id": "state-root-header",

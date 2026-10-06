@@ -30,7 +30,7 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
-**It speaks.** A `deepmoe serve` process keeps the pinned set, expert cache, and KV resident;
+**It speaks.** A `cachedmoe serve` process keeps the pinned set, expert cache, and KV resident;
 `tools/chat.py` starts a conversation and streams tokens, with each new turn prefilling only the added portion.
 Current short-decode reference matching is **6/8**, or **7/8 with the engine's
 own prefill**. At 4K and 16K (17,010 prompt tokens), teacher-forced and
@@ -45,13 +45,18 @@ gates**; its fixed binary/shader receipt is recorded separately from numerical
 validation. Sources: `final_web_policy/recovered_boundary/{cpu_all.log,tools_all.log}`
 and `frozen_web_boundary_df316001/receipt.json` under the same raw root.
 
-**Local delivery is in progress.** `0ed4cb4` merges the owner's main display-name
-changes (`0f637f9`) into the mask-quality worktree. Its subsequent CPU CTest
-passes **27/27** and tool gates **41/41**; all **52 shaders and both executables**
-retain their frozen hashes. Main has fast-forwarded to the same commit; its
-own directory validation is now in progress. Push, owned-worktree cleanup,
-full compatible rename and web restoration remain pending. Sources under the raw root:
-`post_main_merge_{cpu,tools}.log` and `post_main_merge_shader_receipt.json`.
+**Mask-quality delivery is on main and pushed.** Main `a016a78` includes the
+owner's display-name changes and the completed C/D decisions. Its directory
+build, **27/27 CPU suites, 41/41 tool gates and 52 unchanged shaders** are
+recorded in `bench/results/mask_quality/main_delivery_receipt.json`.
+The six compatible rename steps are separately committed through `f3149a6`
+in the rename worktree. Stage5/6 builds pass **29/29 CPU suites**; Stage5 has
+**46/46 tool gates**, with model metadata suites skipped in that invocation.
+Two existing legacy KV snapshots were read by the renamed library without
+changing their hashes, sizes or mtimes. These are CPU and format checks;
+the final configuration refactor, new-executable numerical checks, merge/push
+and live web restoration are still pending. Receipts are under
+`bench/results/mask_quality/rename_prepared/`.
 
 **Current audit (2026-10-06): Phase C is NO-GO; Phase D has no eligible candidate.**
 Restoring strict P0 priority recovers dynamic-mask l3 NLL **.835581**. Phase A
@@ -121,9 +126,9 @@ source: `bench/results/mask_quality/phase_d/final_report_r1.json` and
 The GPU verify trace is complete: CPU outside-span cost is 10.039 ms/cycle; the
 GPU arm is dominated by 190.661 ms/cycle of Engram issue/landing. Host residual
 is below .003 ms/cycle. [Accounting and limits](dspark_topk.md#21-新双盘-k2-verify-tracehost账与异步等待2026-10-06).
-Local owner-main integration has passed its CPU/tool/hash checks above and main
-has fast-forwarded. Main-directory validation/push, full compatible rename and web restoration remain
-unfinished.
+Main delivery is complete. The compatible rename is committed in its separate
+worktree; final configuration cleanup, serial numerical validation and web
+restoration remain unfinished as described above.
 
 ### 1.0 Machine-recorded measurements (ledger)
 

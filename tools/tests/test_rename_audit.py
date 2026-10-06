@@ -61,14 +61,54 @@ class RenameAudit(unittest.TestCase):
         self.assertEqual(by_path["tests/data/golden.json"]["status"], "RETAIN")
 
     def test_shipped_rules_do_not_exempt_current_status_instructions(self):
+        historical_line = next(line for line in (ROOT / "docs" / "STATUS.md")
+                               .read_text(encoding="utf-8").splitlines()
+                               if "all `DEEPMOE_*` switches" in line)
         self.write("docs/STATUS.md", "Current usage: deepmoe serve\n\n"
                    "### 1.0 Machine-recorded measurements (ledger)\n"
-                   "Old measurement: deepmoe run\n")
+                   "Old measurement: deepmoe run\n" + historical_line + "\n")
         self.commit()
         rules = audit.load_rules(audit.DEFAULT_RULES)
         result = audit.audit(self.repo, "HEAD", rules)
         self.assertEqual([hit["status"] for hit in result["hits"]],
-                         ["NEEDS_REVIEW", "RETAIN"])
+                         ["NEEDS_REVIEW", "NEEDS_REVIEW", "RETAIN"])
+
+    def test_shipped_current_docs_rules_cannot_hide_bad_launches(self):
+        names = ("AGENTS.md", "CLAUDE.md", "README.md", "tools/web/README.md",
+                 "docs/rename_compatibility.md", "tools/web/RUNNING.txt")
+        for name in names:
+            self.write(name, "Run deepmoe serve\n")
+        self.commit()
+        result = audit.audit(self.repo, "HEAD", audit.load_rules(audit.DEFAULT_RULES))
+        self.assertEqual(len(result["hits"]), len(names))
+        self.assertTrue(all(hit["status"] == "NEEDS_REVIEW" for hit in result["hits"]))
+
+    def test_running_archive_is_bounded_by_headings(self):
+        self.write("tools/web/RUNNING.txt", "Current: deepmoe serve\n"
+                   "HISTORICAL INSTANCE (2026-10-05, stopped before the current work):\n"
+                   "Measured: deepmoe serve\n"
+                   "Canonical rename contract (2026-10-06; web remains STOPPED)\n"
+                   "New launch: deepmoe serve\n")
+        self.commit()
+        result = audit.audit(self.repo, "HEAD", audit.load_rules(audit.DEFAULT_RULES))
+        self.assertEqual([hit["status"] for hit in result["hits"]],
+                         ["NEEDS_REVIEW", "RETAIN", "NEEDS_REVIEW"])
+
+    def test_known_compatibility_line_cannot_exempt_an_added_occurrence(self):
+        self.write("AGENTS.md", "`%LOCALAPPDATA%\\cachedmoe` on Windows. "
+                   "An existing legacy `deepmoe` root is reused; Run deepmoe serve\n")
+        self.commit()
+        result = audit.audit(self.repo, "HEAD", audit.load_rules(audit.DEFAULT_RULES))
+        self.assertEqual(len(result["hits"]), 2)
+        self.assertTrue(all(hit["status"] == "NEEDS_REVIEW" for hit in result["hits"]))
+
+    def test_archival_rules_do_not_exempt_new_current_usage(self):
+        for name in ("docs/miss_mask.md", "docs/dspark_topk.md", "docs/p3_chat.md"):
+            self.write(name, "\n" * 40 + "Current usage: DEEPMOE_GPU_WAIT_S=900 deepmoe serve\n")
+        self.commit()
+        result = audit.audit(self.repo, "HEAD", audit.load_rules(audit.DEFAULT_RULES))
+        self.assertEqual(len(result["hits"]), 6)
+        self.assertTrue(all(hit["status"] == "NEEDS_REVIEW" for hit in result["hits"]))
 
     def test_reviewed_rule_is_constrained_to_exact_token_and_line(self):
         self.write("compat.h", "namespace deepmoe = cachedmoe;\nuse deepmoe here\n")
@@ -92,6 +132,11 @@ class RenameAudit(unittest.TestCase):
         self.assertNotEqual(committed["source_fingerprint_sha256"],
                             current["source_fingerprint_sha256"])
         self.assertEqual({hit["path"] for hit in current["hits"]}, {"live.py", "pending.py"})
+        expected = subprocess.check_output(["git", "-C", str(self.repo), "status", "--porcelain"],
+                                           text=True).splitlines()
+        self.assertIsInstance(current["working_tree_status"], list)
+        self.assertEqual(current["working_tree_status"], expected)
+        self.assertEqual(committed["working_tree_status"], [])
 
     def test_current_snapshot_refuses_concurrent_content_change(self):
         self.write("live.py", "cachedmoe\n")
