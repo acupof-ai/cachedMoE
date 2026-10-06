@@ -354,7 +354,7 @@ prompts are ~40% code and the salt head. It is not a position effect, since the 
 
 1. **Fidelity vs intent for the stale index keys (§5.3).** Replicating `shared_attn.index_k`
    is required for L3 agreement. It also means layers 2–19 attend to a poorly chosen set on
-   half of all positions. Should deepMoE keep an option to use each source's own keys, and
+   half of all positions. Should cachedMoE keep an option to use each source's own keys, and
    evaluate it only as "different model, measured"? The data to judge it is here: own-key
    top-k vs reference, per step.
 2. **Top-k tie semantics (§4.3).** Design §7.4's radix select was validated against a CPU

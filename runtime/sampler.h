@@ -58,7 +58,7 @@ public:
 
 // Greedy argmax over an fp32 logit vector. Implemented: it is the whole of
 // temperature-0 decoding, which is what every correctness test uses. `margin`
-// is top1 - top2, the quantity design §12 L3 records when deepMoE and the fp32
+// is top1 - top2, the quantity design §12 L3 records when cachedMoE and the fp32
 // oracle disagree.
 inline Result<SampleResult> argmax(std::span<const float> logits) {
     if (logits.empty()) return fail(Err::InvalidArgument, "empty logit vector");

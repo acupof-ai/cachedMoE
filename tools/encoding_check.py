@@ -2,7 +2,7 @@
 """Run the checkpoint's own prompt-encoding tests (encoding/test_encoding.py,
 including the encoding/tests input -> output fixtures) without pytest.
 
-deepMoE renders prompts with the official encoding.py, imported read-only by
+cachedMoE renders prompts with the official encoding.py, imported read-only by
 tools/chat.py (docs/p3_chat.md §4), so "passing encoding/tests" means that
 module passes its own suite in this environment. The .venv has no pytest and
 there is no network, so this provides the three pieces of pytest the file uses

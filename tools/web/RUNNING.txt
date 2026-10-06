@@ -1,4 +1,4 @@
-deepMoE web UI -- the running instance
+cachedMoE web UI -- the running instance
 =====================================
 
 Machine x, Linux. The Windows section this file used to carry is gone: its launch

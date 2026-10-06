@@ -1,4 +1,4 @@
-# STATUS -- where deepMoE is today
+# STATUS -- where cachedMoE is today
 
 Local decode of DeepSeek-V4.1-Flash (a 552B backbone + 196B of Engram, 16B activated in decode,
 510 GB of weights) on one Strix Halo (Ryzen AI Max+ 395 / Radeon 8060S / 128 GB LPDDR5X / NVMe).

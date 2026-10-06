@@ -46,7 +46,7 @@ std::string DeviceCaps::to_string() const {
 Result<void> DeviceCaps::check_required() const {
     std::string missing;
     // design §1.1 / §5.3 / §7.1: without these the whole memory and dispatch
-    // model of deepMoE has no implementation.
+    // model of cachedMoE has no implementation.
     if (!external_memory_host)  missing += "  VK_EXT_external_memory_host (design §3.3 path B)\n";
     if (!timeline_semaphore)    missing += "  VK_KHR_timeline_semaphore (design §7.1 expert readiness)\n";
     if (!buffer_device_address) missing += "  VK_KHR_buffer_device_address (design §5.3 pointer table)\n";

@@ -2,7 +2,7 @@
 // next to the ORIGINAL safetensors shards (design §5.1, v0.5).
 //
 // There is no repack. The 510 GB checkpoint stays as the 48 shards ModelScope
-// shipped and this file is the only thing deepMoE adds. The manifest answers,
+// shipped and this file is the only thing cachedMoE adds. The manifest answers,
 // for every tensor: which shard, at what absolute byte offset, how many bytes,
 // what dtype and shape, and where its block scales live.
 //

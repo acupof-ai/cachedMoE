@@ -49,7 +49,7 @@ inline Result<ByteSpan> subspan(ByteSpan s, size_t off, size_t n) {
     return s.subspan(off, n);
 }
 
-// Formats a byte count the way every deepMoE report does.
+// Formats a byte count the way every cachedMoE report does.
 inline std::string human_bytes(uint64_t b) {
     static const char* unit[] = {"B", "KiB", "MiB", "GiB", "TiB"};
     double v = static_cast<double>(b);

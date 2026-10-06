@@ -1,5 +1,5 @@
 // A small read-only JSON DOM. Written in-tree rather than vendored, because the
-// only JSON deepMoE reads is config.json and manifest.json (design §2.1, §5.1)
+// only JSON cachedMoE reads is config.json and manifest.json (design §2.1, §5.1)
 // and the rule is "no third-party deps".
 //
 // Not a general-purpose parser: no comments, no trailing commas, no duplicate
