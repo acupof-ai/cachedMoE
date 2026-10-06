@@ -19,7 +19,7 @@ No shader, target-head tensor, acceptance rule or default numerical path changed
 The existing adaptive-k=0 GPU case passed with the observer: two cycles, one
 forward each, recorded argmax equal to the existing GPU result, zero skips or
 thermal pauses. **That test used GPU routing (route=1), not the production CPU
-route.** Its tested engine/test binary remains unchanged. The later native
+route.** Its tested worktree engine/test binary remains unchanged. The later native
 capture initialized the GPU and read pinned weights, then rejected route=1
 before session creation, prefill or generation: **zero output tokens, no hidden
 capture**. Both original logs and the failed plan are preserved.

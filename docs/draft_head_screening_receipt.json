@@ -152,5 +152,27 @@
     "passing candidate only GPU implementation and numerical/quality gates",
     "same-engine eight-turn comparison",
     "balanced guarded web restore and actual API acceptance"
-  ]
+  ],
+  "main_validation": {
+    "source_commit": "c557263",
+    "build_rc": 0,
+    "ctest_passed": 31,
+    "standard_gates_passed": 55,
+    "logs": [
+      {
+        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_build.log",
+        "sha256": "75491c5a0c6d68fd9a0fb82183dd6eac97a937fad4b7bc82936f4367e3348475"
+      },
+      {
+        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_cpu.log",
+        "sha256": "714fa84b1983da2b7d4c79b0e64c6e182a31f9d3d0ecbfd6fea4296bec90ddc2"
+      },
+      {
+        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_tools.log",
+        "sha256": "301c76d5977366cfd95059d38366734958f925b4a9c283ca03d6a17d0b89eeed"
+      }
+    ],
+    "gpu_jobs": 0,
+    "web_started": false
+  }
 }

@@ -1046,3 +1046,23 @@ Draft GPU profiling关闭，上表是host wall（CPU正k均值25.159ms），不�
 来源 `phase_d/diagnostics/{fresh_trace_analysis.json,fresh_trace_analysis_hashes.json}`、
 拆分 `run/partition_receipt.json`、每臂 `timing.json/spec.jsonl/target_verify.bin` 与监督收据。
 GPUroute不设默认的决策沿用§20完整八轮结果；本项仅关闭测量/归因，不改优先级或kernel。
+
+## 22. 电源长测完成；draft head 暂做CPU工作（2026-10-06）
+
+§4.8同引擎双盘三臂各8×512全部完成：balanced原始 **80.944ms/token**，
+power-saver107.830、performance113.801；短/长两组也都选balanced。
+三臂4096ID逐位一致、接受率85.8902%、命中91.4210%，无循环或加载失败。
+performance的70.601 active估算不用于默认决策；其decode冷却176.603秒。
+完整报告 [power_profile_comparison.md](power_profile_comparison.md)。
+
+§4.9目前只完成工具和CPU权重参考：FP8行缩放副本662.431MB，35.219槽等价，
+原target BF16仍需常驻。真实权重平方误差比0.07005%，**不是接受率/输出质量结果**。
+64-output捕获第一次因route=1在session/prefill/生成前被拒绝，0输出、无hidden；
+先前k=0 observer的GPUroute=1案例通过，不能代替生产CPUroute的head捕获。
+配置工厂的生产默认已统一为route=0，准备新目录重做捕获，旧失败保留。
+
+owner要求散热暂不可增加，先做CPU工作；之后新GPU作业0，网页保持停止。
+实际main构建、CPU31/31、标准55/55通过，52shader未变。没有合格head候选，
+减半收益/接受率、条件GPU实现、最终ID/NLL/decode/DSpark和八轮速度门仍待执行。
+当前top4接受器直接输出接受的草稿ID，不能将target head未改推断成最终ID必然不变。
+[准备情况与后续命令](draft_head_screening.md)，[机器收据](draft_head_screening_receipt.json)。
