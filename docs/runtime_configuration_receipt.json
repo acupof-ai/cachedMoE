@@ -1,0 +1,145 @@
+{
+  "schema": "cachedmoe.configuration.receipt.v1",
+  "source_commit": "43a2ab9bae460cc0fb8c1f2d14bf9f5775304301",
+  "status": "SOURCE_AND_CPU_ACCEPTED_GPU_MAIN_DELIVERY_PENDING",
+  "coverage": {
+    "native_environment_keys": 87,
+    "native_files_in_scope_audit": 127,
+    "python_files": 75,
+    "python_parser_default_sites": 433,
+    "python_configuration_calls": 113,
+    "typed_shared_facts": 15,
+    "optional_model_fallback_sites": 39
+  },
+  "ownership": {
+    "shared_facts": "core/runtime_facts.def",
+    "native_option_defaults": "core/config.h",
+    "native_environment": "core/runtime_environment.h",
+    "python_launch_and_ui": "tools/runtime_defaults.py",
+    "model_optional_defaults": "model/v41_config.h"
+  },
+  "validation": {
+    "build_rc": 0,
+    "cpu_prefix_modes": {
+      "old": {
+        "suites": 31,
+        "rc": 0
+      },
+      "new": {
+        "suites": 31,
+        "rc": 0
+      },
+      "both": {
+        "suites": 31,
+        "rc": 0
+      }
+    },
+    "tools_gates": 52,
+    "model_metadata_enabled": true,
+    "shader_count": 52,
+    "all_shader_bytes_unchanged": true,
+    "executable_sha256": "20e358f6d234a0cb93d6281535c8c9424af8879072d03b51cdd2ee92339f65d3",
+    "tests_sha256": "02ba9b09e421547e24672b9bd98197811fb53323363bf411ccda7dceff889e3b",
+    "legacy_kv_positions": [
+      396,
+      4710
+    ],
+    "legacy_kv_files_unchanged": true,
+    "qualified_legacy_source_client_compiled": true,
+    "independent_reviews_no_open_blockers": true,
+    "ignored_web_launcher_delegates_to_tracked_policy": true
+  },
+  "observable_corrections": [
+    "exact-one CLI GPU route guard matches engine",
+    "disk KV disable wins in either argument order",
+    "accepted no-op run KV option removed",
+    "benchmark entry points work without PYTHONPATH",
+    "final model selection reaches encoder and provenance",
+    "empty shader path remains empty and does not hash cwd"
+  ],
+  "limits": [
+    "New executable GPU numerical acceptance pending; no new numerical pass claimed",
+    "Existing main directory build, push and live web restoration pending",
+    "GPU preflight AC=0 and external read-only mirror device unavailable",
+    "Current mask quality baseline and prior C/D NO-GO decisions are unchanged",
+    "Reserved public unsupported fields and distinct format/layout/experiment defaults remain documented"
+  ],
+  "raw_receipts": [
+    {
+      "path": "bench/results/mask_quality/rename_prepared/cpp_configuration_delivery_r2.json",
+      "sha256": "13a170b4ae064d58f146708675a4a9c6c4099af3716043b3418c5ea0dcb6f558"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/config_prepared/postimplementation_inventory_final.json",
+      "sha256": "d1c46729b8054fc832052545b08301cf9c02483aab7a25520ba9c6b08226a2a2"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_configuration_default_delta_r2.json",
+      "sha256": "6dbad4de764b317dc886d20fd50de156acce683a1aadc8bee73710c4466a970a"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_configuration_metadata_delta.json",
+      "sha256": "b527df60bf8d22abedbce0b9d5f02cdb7c68d2922ce89d9b76c08c70f20f6ec2"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_configuration_scope_audit_r3.json",
+      "sha256": "639263fb5093f97e6429ed82c35a6dbbe5265d4e298aa936205480ac12875e43"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/config_prepared/shader_empty_metadata_delta.json",
+      "sha256": "c66e1d4db97e1526163d96ee05345223d46145d40e7153e6b08d9bc23a7f8b67"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/config_prepared/shader_empty_provenance_scan_delta.json",
+      "sha256": "b5f5a58b0470fdfdc2ff1fdff4698cc426fe1ffccbeceae93d4d9aba1fc70b95"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/evidence_audit_stage6/cpp_config_review_4ede40d.json",
+      "sha256": "7ea2eddc94a59b67134055adaf20225a24865ca3924a147dd085de554b6b3fc1"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/evidence_audit_stage6/python_config_review_a6e9bbb.json",
+      "sha256": "c998b63df3cbf3b8a8793ba1982cdb4d47265dcd6c0cca7157abc7219a636484"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/evidence_audit_stage6/config_increment_review_596a7f1.json",
+      "sha256": "5bb965ebd43356f8e8615ed91fdfcf235ee976cefbfd645b42d2142306352972"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/evidence_audit_stage6/config_metadata_review_43a2ab9.json",
+      "sha256": "6e8f783f004a6602c1a525480fd8c461b0da220a5e5a3e5de8e57c802e9e896d"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/build_after_scope_audit_receipt.json",
+      "sha256": "55b68f1735640470679fc640f93e712baf7f335e9e0d7a936459bfc0a304500d"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/cpu_alias_gate_final_receipt.json",
+      "sha256": "e71ee54800fbc6799fb9435b5e211925f261f4dffdd782595a453fb23562400e"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/tools_all_final_receipt.json",
+      "sha256": "4ce6e3f1c994050bf793215e2af08bc5c09f4e99c7e6f6a11eb418a49f5b7cd5"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/binary_shader_legacy_final_receipt.json",
+      "sha256": "62d0d97a96bdaec0777c328022405e5c1632d3e7fb5af72b05d8456db05af179"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/native_cli_policy_receipt.json",
+      "sha256": "e55e0e4cc182a24b4d8d56ddba3ed775e8ad1f0d2677961d6eae1b97320ce372"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/remaining_scope_docs_worktree.json",
+      "sha256": "6319a197a8645a8606a0464e2068c0e70dac3ce9242c5973db597c7957244786"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/hardware_unavailable_preflight.json",
+      "sha256": "22b4e68e0fe6fd6173cc0c43ac96ada5852bffee820e9007ca2b85d613b598ba"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/web_launcher_compatibility/receipt.json",
+      "sha256": "f2cacaf2d9cdcd25501e0a52f9962f454cc5de331073dbe904fd6b0f10a2ed3e"
+    }
+  ]
+}

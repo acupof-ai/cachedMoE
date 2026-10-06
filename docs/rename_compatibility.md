@@ -5,12 +5,13 @@ Historical reports, owner requirements and frozen commands keep their original
 names. Renaming does not alter checkpoint files, shader entry points, numeric
 constants or persisted format magic.
 
-The first five rename commits are complete through `de74684`. Stage5 validation
-passed 29 CPU suites, 46 tool gates, five real CLI root-selection cases and the
-two real legacy KV reads below; all 52 SPIR-V files remained byte-identical.
-Stage6 source validation has passed the build, 29 CPU suites and the same
-52 shader hashes. Its documentation commit, final settings audit, new-executable
-GPU numerical checks, live web restoration and delivery are still pending.
+All six rename commits are complete through `f3149a6`. Configuration cleanup
+through `43a2ab9` passes the build, three prefix combinations of 31 CPU suites
+and 52 tool gates with model metadata enabled. The 52 SPIR-V files remain
+byte-identical. Actual CLI guards and legacy source/KV readers also pass.
+New-executable GPU numerical checks, the existing main build, live web
+restoration and final delivery are still pending. GPU work requires AC and
+the disconnected read-only mirror. See [configuration scope](runtime_configuration.md).
 
 | Interface | Compatibility rule |
 |---|---|
@@ -30,7 +31,7 @@ The actual CPU KV reader linked against the renamed library loaded two existing
 legacy snapshots with model-tag validation: `default` has 396 positions and four
 planes; `web` has 4,710 positions and four planes. File SHA-256, size and mtime
 were unchanged. The local raw evidence is
-`bench/results/mask_quality/rename_prepared/legacy_kv_reader_receipt.json`.
+`bench/results/mask_quality/rename_prepared/final_config_validation/binary_shader_legacy_final_receipt.json`.
 This proves CPU format/read compatibility. GPU restoration, current web/API
 configuration and session continuation still need final serial validation.
 

@@ -333,17 +333,17 @@ CMake 选项 `CACHEDMOE_*`。
 
 按以下顺序，每步一个 commit：
 
-- [ ] **环境变量**：加一个统一的读取函数，先读 `CACHEDMOE_X`，没有再读 `DEEPMOE_X`；
+- [x] **环境变量**：加一个统一的读取函数，先读 `CACHEDMOE_X`，没有再读 `DEEPMOE_X`；
   两者都设且不同时以新名为准并打印一次警告。C++、Python 工具、bench、网页都走这个规则。
   文档和脚本里的写法全部换成新名。旧名只在兼容函数和一条说明里出现。
-- [ ] **CMake**：`project(cachedmoe)`、`cmake/cachedmoe_options.cmake`、选项改 `CACHEDMOE_*`；
+- [x] **CMake**：`project(cachedmoe)`、`cmake/cachedmoe_options.cmake`、选项改 `CACHEDMOE_*`；
   已有 build 目录里旧缓存变量 `DEEPMOE_*` 仍能生效（读到就映射并提示）。
-- [ ] **可执行文件**：产物改为 `build/cachedmoe`，构建时同时生成 `build/deepmoe` 符号链接；
+- [x] **可执行文件**：产物改为 `build/cachedmoe`，构建时同时生成 `build/deepmoe` 符号链接；
   网页 `server.py`、`launch.py`、`launch_guarded.py`、`RUNNING.txt`、bench 和 tests 默认用新名。
-- [ ] **C++ namespace**：`deepmoe` → `cachedmoe`，纯机械替换，单独 commit，不夹带格式或逻辑改动。
-- [ ] **数据路径**：网页 transcript、KV 目录等改到 `cachedmoe` 下。新目录不存在而旧目录存在时继续用旧目录
+- [x] **C++ namespace**：`deepmoe` → `cachedmoe`，纯机械替换，单独 commit，不夹带格式或逻辑改动。
+- [x] **数据路径**：网页 transcript、KV 目录等改到 `cachedmoe` 下。新目录不存在而旧目录存在时继续用旧目录
   或原子迁移；**不得删除或覆盖用户已有 transcript 和 KV 快照**，迁移前先备份并记录。
-- [ ] **工作规则**：AGENTS.md / CLAUDE.md 的工作树命名改成 `../cachedmoe-<track>`，构建、测试命令用新变量名。
+- [x] **工作规则**：AGENTS.md / CLAUDE.md 的工作树命名改成 `../cachedmoe-<track>`，构建、测试命令用新变量名。
 
 **不改：**
 
@@ -357,7 +357,7 @@ CMake 选项 `CACHEDMOE_*`。
 
 - [ ] 全新 build 目录和已有 build 目录都能构建；52 个 SPIR-V shader hash 与改名前一致。
 - [ ] CPU 25/25、`tests/run_all.py` 全过；l3 off NLL 逐位 `.622784`；`suite.decode` 不低于改名前。
-- [ ] 只设旧 `DEEPMOE_*` 变量、只设新变量、两者都设，三种情况各跑一次 CPU 门，行为一致。
+- [x] 只设旧 `DEEPMOE_*` 变量、只设新变量、两者都设，三种情况各跑一次 CPU 门，行为一致。
 - [ ] 网页用新程序名恢复，`/api/config` 正常，旧 transcript 和 KV 快照能打开。
 - [ ] `rg -i deepmoe` 剩余命中逐条列进报告，每条写明为什么保留。
 
@@ -488,3 +488,25 @@ CMake 选项 `CACHEDMOE_*`。
   实收据 `bench/results/mask_quality/main_delivery_receipt.json`，51e8451 已 push。
 - 原始 C/D/trace、输入备份、数值门与网页边界工具链全部保留。主仓库 untracked 数据未删。
 - §4.7 六步兼容改名开始；网页仍停止，改名验收后恢复，无浏览器刷新。
+
+## 15. Codex 追加收据（2026-10-06，配置唯一来源与删除式整理）
+
+- 六步兼容改名分别提交，源实现到 `43a2ab9`。原生87键的解析与owned快照集中，
+  75个Python文件/433个parser defaults/113处配置调用均有逐项清单，热路径不再读取环境。
+- 15项C++/Python事实共享一份typed定义；回放128、RADV16/会话512阈值分别命名，
+  39处模型可选字段fallback读字段本身默认。模型shape与实验工作量不因同值而混合。
+- 修复两项真实CLI问题并单独提交：GPU route检查与引擎同一exact-one解析；
+  no-KV在两种参数顺序都有效。删除从未生效的run缓存开关。
+- Python最终启动环境、encoder、provenance一致；空shader目录原样保留，
+  不把cwd里的无关SPV计入。两项独立review发现均关闭。
+- 最终真实构建通过；旧/新/混合前缀分别31/31 CPU；工具52/52，元数据suite实际执行，
+  原漏label的3组unit已纳入。15事实由实际C++ header reader对拍，不只比手写字典。
+- 52 SPIR-V逐个hash不变；新library读旧default/web KV（396/4710 positions），
+  原文件hash/mtime/size未改；旧namespace qualified client实际编译通过。
+- 配置说明：`docs/runtime_configuration.md`。机器证据：
+  `bench/results/mask_quality/rename_prepared/final_config_validation/`及各source delta/review收据。
+- 主目录旧的ignored `build/web_mask/launch.py`已备份，改为调用tracked温控启动器，
+  不再复制电源/k/route等设置；dry-run通过，未启动服务，聊天与KV目录未改。
+- 尚未关闭：已有main build/合入推送清理、改名后GPU数值门及网页恢复。
+  本次preflight实际AC=0、外置NVMe未枚举；已请求接电/插盘，GPU未启动，网页仍停止。
+  此处CPU/格式验收不当作新GPU数值验收；owner接受的mask质量限制与C/D NO-GO保持。

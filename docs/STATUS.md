@@ -45,18 +45,24 @@ gates**; its fixed binary/shader receipt is recorded separately from numerical
 validation. Sources: `final_web_policy/recovered_boundary/{cpu_all.log,tools_all.log}`
 and `frozen_web_boundary_df316001/receipt.json` under the same raw root.
 
-**Mask-quality delivery is on main and pushed.** Main `a016a78` includes the
+**The earlier mask-quality delivery is on main and pushed.** Main `a016a78` includes the
 owner's display-name changes and the completed C/D decisions. Its directory
 build, **27/27 CPU suites, 41/41 tool gates and 52 unchanged shaders** are
 recorded in `bench/results/mask_quality/main_delivery_receipt.json`.
-The six compatible rename steps are separately committed through `f3149a6`
-in the rename worktree. Stage5/6 builds pass **29/29 CPU suites**; Stage5 has
-**46/46 tool gates**, with model metadata suites skipped in that invocation.
-Two existing legacy KV snapshots were read by the renamed library without
-changing their hashes, sizes or mtimes. These are CPU and format checks;
-the final configuration refactor, new-executable numerical checks, merge/push
-and live web restoration are still pending. Receipts are under
-`bench/results/mask_quality/rename_prepared/`.
+The six compatible rename steps and configuration cleanup are committed through
+`43a2ab9` in the rename worktree. The final build passes; old-only, new-only
+and mixed environment prefixes each pass **31/31 CPU suites**. The tools gate
+passes **52/52**, including checkpoint metadata and the three previously
+unlabelled unit suites. All **52 shaders remain byte-identical**. The renamed
+library reads two existing legacy KV snapshots without changing their hashes,
+sizes or mtimes. The audit covers 87 native environment keys, 75 Python files,
+15 typed shared facts and 39 optional model-metadata fallback sites.
+[Configuration authorities and scope](runtime_configuration.md).
+These are CPU and format checks; the new executable's numerical validation,
+existing-main-directory build, merge/push and live web restoration remain
+pending. The GPU preflight found AC=0 and no external mirror device, so no new
+GPU jobs were started. Receipts are under
+`bench/results/mask_quality/rename_prepared/final_config_validation/`.
 
 **Current audit (2026-10-06): Phase C is NO-GO; Phase D has no eligible candidate.**
 Restoring strict P0 priority recovers dynamic-mask l3 NLL **.835581**. Phase A
@@ -126,9 +132,10 @@ source: `bench/results/mask_quality/phase_d/final_report_r1.json` and
 The GPU verify trace is complete: CPU outside-span cost is 10.039 ms/cycle; the
 GPU arm is dominated by 190.661 ms/cycle of Engram issue/landing. Host residual
 is below .003 ms/cycle. [Accounting and limits](dspark_topk.md#21-新双盘-k2-verify-tracehost账与异步等待2026-10-06).
-Main delivery is complete. The compatible rename is committed in its separate
-worktree; final configuration cleanup, serial numerical validation and web
-restoration remain unfinished as described above.
+The earlier main delivery is complete. Compatible rename and configuration
+source cleanup pass the CPU gates in their separate worktree; final main
+delivery, serial numerical validation and web restoration remain unfinished
+as described above.
 
 ### 1.0 Machine-recorded measurements (ledger)
 
