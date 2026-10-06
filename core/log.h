@@ -6,6 +6,8 @@
 // The level is a relaxed atomic, so filtering costs one load on the hot path.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <atomic>
 #include <cstdio>
 #include <format>
@@ -13,7 +15,7 @@
 #include <string_view>
 #include <utility>
 
-namespace deepmoe {
+namespace cachedmoe {
 
 enum class LogLevel : int { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4, Off = 5 };
 
@@ -78,4 +80,4 @@ template <class... Args> void log_info (std::format_string<Args...> f, Args&&...
 template <class... Args> void log_warn (std::format_string<Args...> f, Args&&... a) { log(LogLevel::Warn,  f, std::forward<Args>(a)...); }
 template <class... Args> void log_error(std::format_string<Args...> f, Args&&... a) { log(LogLevel::Error, f, std::forward<Args>(a)...); }
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

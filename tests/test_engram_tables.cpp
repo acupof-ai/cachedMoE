@@ -20,7 +20,7 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 CACHEDMOE_TEST(engram_tables, numpy_rng_and_normaliser) {
     // numpy.random.default_rng(10007 * layer).integers(0, bound, 4, np.int64),
@@ -48,7 +48,7 @@ CACHEDMOE_TEST(engram_tables, numpy_rng_and_normaliser) {
 }
 
 CACHEDMOE_TEST(engram_tables, derived_equals_l3_export) {
-    const char* dir = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
+    const char* dir = ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR");
     if (!dir) { CACHEDMOE_SKIP_PRINTF("      SKIP engram_tables: set CACHEDMOE_MODEL_DIR\n"); return; }
     auto cfg = V41Config::load(std::string(dir) + "/config.json");
     REQUIRE_OK(cfg);

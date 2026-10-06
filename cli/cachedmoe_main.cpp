@@ -34,7 +34,7 @@
 #include "storage/backend.h"
 #include "text/tokenizer.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 int cmd_serve(int argc, char** argv);   // cli/serve.cpp
 
@@ -755,13 +755,13 @@ int cmd_run(int argc, char** argv) {
     std::fputs(engine.resident_route_report().c_str(), stdout);
     if (engine.gate_probe_on()) std::fputs(engine.gate_probe_report().c_str(), stdout);
     std::fputs(engine.profiler().summary().to_string().c_str(), stdout);
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_RUN_IO_REPORT"); e && std::string_view(e) == "1")
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_RUN_IO_REPORT"); e && std::string_view(e) == "1")
         std::fputs(engine.status().c_str(), stdout);
     return 0;
 }
 
 std::string model_dir_default() {
-    const char* e = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
+    const char* e = ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR");
     return e ? std::string(e) : std::string();
 }
 

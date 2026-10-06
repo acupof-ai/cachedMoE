@@ -9,7 +9,7 @@
 #include "core/align.h"
 #include "cpu/dequant.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // --- geometry ---------------------------------------------------------------------
 
@@ -843,4 +843,4 @@ Result<void> KvStore::restore_ring(const RingSnapshot& s) {
     return {};
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

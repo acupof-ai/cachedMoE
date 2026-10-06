@@ -12,8 +12,8 @@
 #include "store/slab.h"
 #include "tests/test_framework.h"
 
-using namespace deepmoe;
-using namespace deepmoe::store;
+using namespace cachedmoe;
+using namespace cachedmoe::store;
 
 namespace {
 

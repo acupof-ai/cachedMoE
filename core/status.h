@@ -5,12 +5,14 @@
 // boundary -- every fallible API returns Result<T>.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <expected>
 #include <string>
 #include <string_view>
 #include <utility>
 
-namespace deepmoe {
+namespace cachedmoe {
 
 enum class Err {
     Ok = 0,
@@ -80,4 +82,4 @@ inline std::unexpected<Status> unimplemented(std::string what) {
     if (!_dm_tmp_##__LINE__) return std::unexpected(_dm_tmp_##__LINE__.error());\
     decl = *std::move(_dm_tmp_##__LINE__)
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

@@ -29,7 +29,7 @@
 #include "runtime/speculate.h"
 #include "tests/test_framework.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 using cpu::dspark::kPositions;
 
 CACHEDMOE_TEST(speculate, live_confidence_selects_only_a_contiguous_prefix_including_zero) {

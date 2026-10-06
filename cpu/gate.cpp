@@ -9,7 +9,7 @@
 #include "cpu/dequant.h"
 #include "cpu/gemv_avx512.h"
 
-namespace deepmoe::cpu {
+namespace cachedmoe::cpu {
 
 float sqrt_softplus(float v) noexcept {
     // softplus(v) computed the stable way, then sqrt. Negative inputs give a
@@ -86,4 +86,4 @@ Result<GateResult> gate_lookahead(std::span<const uint16_t>, std::span<const flo
     return unimplemented("cpu::gate_lookahead (design §9.4, gated on Q4)");
 }
 
-}  // namespace deepmoe::cpu
+}  // namespace cachedmoe::cpu

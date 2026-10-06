@@ -6,7 +6,7 @@
 #include <format>
 #include <limits>
 
-namespace deepmoe::cpu {
+namespace cachedmoe::cpu {
 
 bool e8m0_is_nan(uint8_t e) noexcept { return e == 0xFF; }
 
@@ -241,4 +241,4 @@ Result<void> dequant_fp8_matrix_row(std::span<const uint8_t> weights,
                            scales.subspan(scale_row * kblocks, kblocks), K, out, 32);
 }
 
-}  // namespace deepmoe::cpu
+}  // namespace cachedmoe::cpu

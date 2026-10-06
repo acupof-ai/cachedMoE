@@ -11,6 +11,8 @@
 // thread, so both are mutex-guarded.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -20,7 +22,7 @@
 
 #include "storage/backend.h"
 
-namespace deepmoe::test {
+namespace cachedmoe::test {
 
 struct SubmitRecord {
     uint64_t chunk_id;
@@ -113,4 +115,4 @@ private:
     std::vector<const storage::File*> fail_files_;
 };
 
-}  // namespace deepmoe::test
+}  // namespace cachedmoe::test

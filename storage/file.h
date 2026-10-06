@@ -15,13 +15,15 @@
 // file pointer.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 
 #include "core/bytes.h"
 #include "core/status.h"
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 
 #if defined(_WIN32)
 using NativeHandle = void*;                       // HANDLE
@@ -125,4 +127,4 @@ Result<void> remove_file(const std::string& path);
 // Directory for scratch files; honours TEMP/TMPDIR. Used by nvme_bench.
 std::string temp_dir();
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage

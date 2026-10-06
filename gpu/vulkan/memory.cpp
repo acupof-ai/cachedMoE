@@ -27,7 +27,7 @@
 #include <windows.h>
 #endif
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // --- host page allocation (path B) ------------------------------------------
 
@@ -537,4 +537,4 @@ Result<std::unique_ptr<store::SlabBacking>> MemoryAllocator::make_slab_backing()
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

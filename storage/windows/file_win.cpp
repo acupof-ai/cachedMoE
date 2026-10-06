@@ -22,7 +22,7 @@
 
 #include "core/align.h"
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 namespace {
 
 HANDLE H(NativeHandle h) { return static_cast<HANDLE>(h); }
@@ -208,6 +208,6 @@ Result<void> File::set_size(uint64_t bytes) {
     return {};
 }
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage
 
 #endif  // _WIN32

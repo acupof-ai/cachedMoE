@@ -37,6 +37,8 @@
 // between threads. StreamDecoder is a small per-stream value.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -48,7 +50,7 @@
 
 #include "core/status.h"
 
-namespace deepmoe::text {
+namespace cachedmoe::text {
 
 class Tokenizer {
 public:
@@ -112,4 +114,4 @@ void utf8_append(std::string& out, char32_t cp);
 std::string utf8_lossy(std::string_view bytes, bool hold_incomplete = false,
                        size_t* held = nullptr);
 
-}  // namespace deepmoe::text
+}  // namespace cachedmoe::text

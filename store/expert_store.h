@@ -31,6 +31,8 @@
 // (finish_run from a completion callback) and the GPU submit thread (lookup).
 #pragma once
 
+#include "core/namespace.h"
+
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -46,7 +48,7 @@
 #include "model/manifest.h"
 #include "store/slab.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 // One sector-aligned read that has to land in a slot before it is Resident.
 // A copy of the manifest's Run with the destination resolved (design §5.1).
@@ -336,4 +338,4 @@ private:
     mutable ExpertStoreStats stats_{};
 };
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

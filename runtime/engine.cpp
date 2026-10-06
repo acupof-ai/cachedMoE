@@ -31,7 +31,7 @@
 #include <cstdio>
 #endif
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // See Engine::ms_eager_moe (Track LX): 0 on RADV, set by init_gpu.
 namespace { std::atomic<int> g_ms_eager_default{1}; std::atomic<int> g_shared_early_default{0}; }
@@ -85,7 +85,7 @@ std::string read_line(const std::string& path) {
 // CACHEDMOE_CPU_AFFINITY: unset/"auto" = this; "off" = leave the scheduler alone;
 // anything else is a cpulist used verbatim.
 void pin_to_gpu_irq_ccd() {
-    const char* env = ::deepmoe::environment::get("CACHEDMOE_CPU_AFFINITY");
+    const char* env = ::cachedmoe::environment::get("CACHEDMOE_CPU_AFFINITY");
     const std::string mode = env ? env : "auto";
     if (mode == "off") return;
     cpu_set_t set;
@@ -131,7 +131,7 @@ void pin_to_gpu_irq_ccd() {
 // --- H1a: the hard cap on the auto-sized cache (see runtime/engine.h) -------
 uint32_t auto_slot_cap() {
     static const uint32_t v = [] {
-        const char* e = ::deepmoe::environment::get("CACHEDMOE_CACHE_SLOT_CAP");
+        const char* e = ::cachedmoe::environment::get("CACHEDMOE_CACHE_SLOT_CAP");
         if (!e || !*e) return kAutoSlotCap;
         const long long x = std::atoll(e);
         return x < 0 ? kAutoSlotCap : static_cast<uint32_t>(x);   // 0 = no cap, deliberately
@@ -147,7 +147,7 @@ uint64_t cap_auto_budget(uint64_t budget_bytes, uint64_t slot_bytes, uint32_t sl
 
 uint32_t cache_backoff_step() {
     static const uint32_t v = [] {
-        const char* e = ::deepmoe::environment::get("CACHEDMOE_CACHE_BACKOFF_SLOTS");
+        const char* e = ::cachedmoe::environment::get("CACHEDMOE_CACHE_BACKOFF_SLOTS");
         const long long x = (e && *e) ? std::atoll(e) : 0;
         return x > 0 ? static_cast<uint32_t>(x) : kCacheBackoffSlots;
     }();
@@ -379,7 +379,7 @@ Result<void> Engine::open_model_files() {
     // touching the shell it inherited.
     std::vector<std::string> mirrors = cfg_.model_mirrors;
     if (mirrors.empty())
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MODEL_MIRRORS"); e && *e)
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MODEL_MIRRORS"); e && *e)
             mirrors = split_semis(e);
     for (const std::string& dir : mirrors) {
         if (auto r = shards_.open_mirror(dir, manifest_, cfg_.io.unbuffered); !r) {
@@ -493,13 +493,13 @@ Result<void> Engine::configure_io_sources() {
     // two seconds, and an A/B that repeats a cell wants the same weights each
     // time rather than a fresh measurement's noise.
     bool probed = false;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_WEIGHTS"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_WEIGHTS"); e && *e) {
         const auto parts = split_semis(e);
         for (size_t i = 0; i < parts.size() && i < weights.size(); ++i)
             weights[i] = std::strtod(parts[i].c_str(), nullptr);
     } else if (probe_idx != UINT32_MAX) {
         uint32_t ms = 1000;
-        if (const char* e2 = ::deepmoe::environment::get("CACHEDMOE_MIRROR_PROBE_MS"); e2 && *e2)
+        if (const char* e2 = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_PROBE_MS"); e2 && *e2)
             ms = static_cast<uint32_t>(std::strtoul(e2, nullptr, 10));
         // Track D5: warm up before measuring. A USB4 NVMe enclosure that has
         // been idle answers its first read in ~1 s; an unwarmed 1 s window
@@ -508,7 +508,7 @@ Result<void> Engine::configure_io_sources() {
         // (docs/p4_dual_source.md §9.2). The same 1 s window on a warm drive
         // reads 3.74 -- so the number was not noisy, it was the wake-up.
         uint32_t warmup = 1000;
-        if (const char* e3 = ::deepmoe::environment::get("CACHEDMOE_MIRROR_PROBE_WARMUP_MS"); e3 && *e3)
+        if (const char* e3 = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_PROBE_WARMUP_MS"); e3 && *e3)
             warmup = static_cast<uint32_t>(std::strtoul(e3, nullptr, 10));
         if (ms) {
             const std::string name = manifest_.files()[probe_idx].path;
@@ -535,7 +535,7 @@ Result<void> Engine::configure_io_sources() {
     // CACHEDMOE_MIRROR_HEALTH=0 skips it (for a deliberate negative test); the
     // default is on, because the whole point is that "it opened" is not enough.
     bool gate = true;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_HEALTH"); e && *e)
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_HEALTH"); e && *e)
         gate = std::strtol(e, nullptr, 10) != 0;
     if (gate) {
         for (size_t m = 1; m <= shards_.mirror_count(); ++m) {
@@ -576,12 +576,12 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     mask_wait_tau_ = -1;
     mask_wait_budget_experts_ = 8;
     mask_wait_budget_ms_ = 20;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MASK_WAIT_TAU")) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MASK_WAIT_TAU")) {
         char* end = nullptr;
         mask_wait_tau_ = std::strtod(e, &end);
         if (end == e || *end || !std::isfinite(mask_wait_tau_) || mask_wait_tau_ < 0 || mask_wait_tau_ > 1)
             return fail(Err::InvalidArgument, "CACHEDMOE_MASK_WAIT_TAU must be in [0,1]");
-        if (const char* budget = ::deepmoe::environment::get("CACHEDMOE_MASK_WAIT_BUDGET")) {
+        if (const char* budget = ::cachedmoe::environment::get("CACHEDMOE_MASK_WAIT_BUDGET")) {
             char* middle = nullptr;
             const auto n = std::strtoul(budget, &middle, 10);
             if (middle == budget || *middle != ',' || n > UINT32_MAX)
@@ -776,7 +776,7 @@ Result<void> Engine::build_expert_cache() {
     uint64_t a_cap = 0;
     {
         bool want_cap = false;
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PATH_A_CAP"))
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PATH_A_CAP"))
             want_cap = std::strcmp(e, "on") == 0 || std::strcmp(e, "1") == 0;
         if (want_cap && b) {
             if (auto t = alloc_a_.chosen_memory_type(); t) {
@@ -830,7 +830,7 @@ Result<void> Engine::build_expert_cache() {
     // than from the hypothesis. What it would take is a placement preference
     // that is NOT also a pin -- e.g. taking the path-B victim only while its
     // last_use is within a bounded slack of the global LRU victim.
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_EVICT_PATH"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_EVICT_PATH"); e && *e) {
         if (*e == 'a' || *e == 'A')
             store_.set_evict_path(store::ExpertStore::EvictPath::PreferA);
         else if (*e == 'b' || *e == 'B')
@@ -1133,7 +1133,7 @@ Result<void> Engine::init_gpu() {
         // kAutoSlotCap is the Windows driver losing the device above 5,000
         // slots; RADV ran 5,500 clean, so there only an explicit
         // CACHEDMOE_CACHE_SLOT_CAP applies.
-        const char*    cap_env     = ::deepmoe::environment::get("CACHEDMOE_CACHE_SLOT_CAP");
+        const char*    cap_env     = ::cachedmoe::environment::get("CACHEDMOE_CACHE_SLOT_CAP");
         const uint32_t slot_cap    = (radv && !(cap_env && *cap_env)) ? 0 : auto_slot_cap();
         applied_slot_cap_          = slot_cap;
         const uint64_t from_budget = cache_budget_;
@@ -1182,21 +1182,21 @@ Result<void> Engine::init_gpu() {
         cur_->layer_.set_tracer(&tracer_);
     }
 
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_ROUTE_DUMP"); e && *e && !route_dump_) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_ROUTE_DUMP"); e && *e && !route_dump_) {
         route_dump_ = std::fopen(e, "ab");
         if (route_dump_) log_info("engine: routing dump -> {}", e);
         else log_warn("engine: cannot open the routing dump '{}'", e);
     }
-    if(const char* e=::deepmoe::environment::get("CACHEDMOE_SPEC_DIAGNOSTICS");e && *e && !spec_diagnostics_) {
+    if(const char* e=::cachedmoe::environment::get("CACHEDMOE_SPEC_DIAGNOSTICS");e && *e && !spec_diagnostics_) {
         spec_diagnostics_=std::fopen(e,"ab");
         if(!spec_diagnostics_)return fail(Err::Io,"cannot open speculative diagnostics");
     }
     // docs/p4_hitrate.md §4: on unless CACHEDMOE_MOE_OVERLAP=0 (the A/B switch).
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_GATE_PROBE"); e && *e && *e != '0') gate_probe_ = true;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_OVERLAP"); e && *e == '0') overlap_ = false;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_GATE_PROBE"); e && *e && *e != '0') gate_probe_ = true;
     // Track Y (docs/p4_resident_routing.md): off | all | stall1 | verify.
     // Anything else is off.
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_ROUTE_RESIDENT_ONLY"); e && *e) {
         const std::string_view v{e};
         if (v == "all") resident_only_ = ResidentOnly::All;
         else if (v == "stall1") resident_only_ = ResidentOnly::Stall1;
@@ -1225,14 +1225,14 @@ Result<void> Engine::init_gpu() {
     // `stall1`) and what its four draft positions do (`all`, the default --
     // never wait -- or `stall1`, one P0 fetch a layer). Anything else keeps the
     // default.
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_VERIFY_FIRST"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_VERIFY_FIRST"); e && *e) {
         const std::string_view v{e};
         if (v == "stall1") verify_first_ = ResidentOnly::Stall1;
         else if (v == "all") verify_first_ = ResidentOnly::All;
         else if (v != "exact" && v != "off")
             log_warn("CACHEDMOE_VERIFY_FIRST={}: expected exact|stall1|all, keeping exact", v);
     }
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_VERIFY_DRAFT"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_VERIFY_DRAFT"); e && *e) {
         const std::string_view v{e};
         if (v == "stall1") verify_draft_ = ResidentOnly::Stall1;
         else if (v == "exact" || v == "off") verify_draft_ = ResidentOnly::Off;
@@ -1240,17 +1240,17 @@ Result<void> Engine::init_gpu() {
             log_warn("CACHEDMOE_VERIFY_DRAFT={}: expected all|stall1|exact, keeping all", v);
     }
     // Track Y step 3: the background miss window, in decode steps.
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_RESIDENT_QUEUE_STEPS"); e && *e) {
         const int v = std::atoi(e);
         if (v >= 1 && v <= 1024) rr_queue_steps_ = static_cast<uint32_t>(v);
         else log_warn("CACHEDMOE_RESIDENT_QUEUE_STEPS={}: expected 1..1024, keeping {}", e,
                       rr_queue_steps_);
     }
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_RESIDENT_QUEUE_EXPERTS"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_RESIDENT_QUEUE_EXPERTS"); e && *e) {
         const int v = std::atoi(e);
         if (v >= 1 && v <= 4096) rr_outstanding_cap_ = static_cast<uint32_t>(v);
     }
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PREFILL_HANDOFF"); e && *e == '0') handoff_ = false;
     if (cfg_.speculation.enabled) {
         if (cfg_.speculation.max_draft < 1 || cfg_.speculation.max_draft > 5 ||
             cfg_.speculation.accept_topk < 1 || cfg_.speculation.accept_topk > model_cfg_.text.vocab_size)
@@ -3832,13 +3832,13 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     state_.reset();
     produce_ced_ = true;
     bool backfill = sc.backfill;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_BACKFILL"); e && *e) backfill = *e != '0';
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_BACKFILL"); e && *e) backfill = *e != '0';
     // One heat order for the whole process: the startup P3 backfill and every
     // later reheat pass rank non-resident experts by the same table, so
     // `CACHEDMOE_HEAT_FILE` (tools/hitrate_bench.py --write-heat / --heat-recent)
     // steers both instead of only the first fill.
     if (heat_order_.empty()) {
-        if (const char* hf = ::deepmoe::environment::get("CACHEDMOE_HEAT_FILE"); hf && *hf)
+        if (const char* hf = ::cachedmoe::environment::get("CACHEDMOE_HEAT_FILE"); hf && *hf)
             heat_order_ = store::static_heat_order(hf);
         if (heat_order_.empty()) heat_order_ = store::static_heat_order();
     }
@@ -3957,8 +3957,8 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
     gpu::PrefillConfig pc;
     pc.max_tokens = static_cast<uint32_t>(prompt.size());
     pc.transit_segments = cfg_.prefill_transit_segments;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_LDS"); e && *e == '0') pc.lds_gemm = false;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_READ_AHEAD"); e && *e == '0') pc.read_ahead_min_rows = 0;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_LDS"); e && *e == '0') pc.lds_gemm = false;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_READ_AHEAD"); e && *e == '0') pc.read_ahead_min_rows = 0;
     pc.replay     = replay;
     pc.probe_layers = bool(dspark_);
     gpu::Prefill pf;
@@ -4094,7 +4094,7 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
              res.wall_ms - tm.total, runner_ms, create_ms - runner_ms, teardown_ms, seed_ms, tm.experts_read, human_bytes(tm.expert_bytes), tm.dispatches,
              tm.submits, res.token);
     // CACHEDMOE_PF_OPS_JSON=FILE appends the per-op profile prefill_bench --ops-json writes
-    if (const char* f = ::deepmoe::environment::get("CACHEDMOE_PF_OPS_JSON"))
+    if (const char* f = ::cachedmoe::environment::get("CACHEDMOE_PF_OPS_JSON"))
         if (FILE* fp = std::fopen(f, "ab")) {
             std::fputs(tm.json(static_cast<uint32_t>(prompt.size()), "serve", "").c_str(), fp);
             std::fclose(fp);
@@ -4476,7 +4476,7 @@ Result<double> Engine::measure_submit_overhead(uint32_t iterations) {
 // saturated) is counted and dropped.
 Result<uint32_t> Engine::warm_cache_from_heat(std::chrono::seconds timeout) {
     if (heat_order_.empty()) {
-        if (const char* hf = ::deepmoe::environment::get("CACHEDMOE_HEAT_FILE"); hf && *hf)
+        if (const char* hf = ::cachedmoe::environment::get("CACHEDMOE_HEAT_FILE"); hf && *hf)
             heat_order_ = store::static_heat_order(hf);
         if (heat_order_.empty()) heat_order_ = store::static_heat_order();
     }
@@ -4679,10 +4679,10 @@ std::string Engine::status() const {
     return s;
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime
 
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 std::optional<uint32_t> Engine::draft_layer_slot(uint32_t layer) const {
     const auto &targets = model_cfg_.text.dspark_target_layer_ids;
     const auto it = std::find(targets.begin(), targets.end(), int64_t(layer));
@@ -5059,4 +5059,4 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
     }
     return out;
 }
-} // namespace deepmoe::runtime
+} // namespace cachedmoe::runtime

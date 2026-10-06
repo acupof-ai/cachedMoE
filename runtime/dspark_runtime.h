@@ -1,4 +1,6 @@
 #pragma once
+
+#include "core/namespace.h"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -13,7 +15,7 @@
 #include "gpu/vulkan/dspark_kernels.h"
 #include "gpu/vulkan/decode_kernels.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 // Real checkpoint draft chain. It owns only draft scratch/KV; weights and the
 // pinned MTP experts belong to the engine. One chain produces a [5,vocab] matrix.
 class DsparkRuntime {
@@ -54,4 +56,4 @@ class DsparkRuntime {
     struct Impl;
     std::unique_ptr<Impl> p_;
 };
-} // namespace deepmoe::runtime
+} // namespace cachedmoe::runtime

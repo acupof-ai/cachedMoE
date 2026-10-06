@@ -33,6 +33,8 @@
 // and the KV store, and records from the single GPU submit thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -52,7 +54,7 @@
 #include "runtime/trace.h"
 #include "store/pinned.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // The device addresses of one layer's pinned weights. Resolved once per layer,
 // not per token: the whole point of the pinned set is that these never move.
@@ -449,4 +451,4 @@ private:
     trace::Tracer*    tracer_ = nullptr;   // ADDITIVE (Track W)
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

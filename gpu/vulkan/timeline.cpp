@@ -2,7 +2,7 @@
 
 #include <format>
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 Timeline::~Timeline() { destroy(); }
 
@@ -85,4 +85,4 @@ Result<void> Timeline::wait(TimelineValue v, std::chrono::nanoseconds timeout) {
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

@@ -8,6 +8,8 @@
 // resolved fields, rather than inspecting the process environment.
 #pragma once
 
+#include "core/namespace.h"
+
 #include "core/env.h"
 #include <cstdint>
 #include <cstdlib>
@@ -18,7 +20,7 @@
 
 #include "core/types.h"
 
-namespace deepmoe {
+namespace cachedmoe {
 
 // design §3.3: the two unified-memory paths. P-1 picks one by measured
 // bandwidth x capacity; the ExpertStore exposes the same (host_ptr, dev_addr)
@@ -104,13 +106,13 @@ struct GpuExecutionConfig {
 
     void apply_environment() {
         const auto exact_one = [](const char* key, bool& value) {
-            if (const char* e = ::deepmoe::environment::get(key)) value = std::string_view(e) == "1";
+            if (const char* e = ::cachedmoe::environment::get(key)) value = std::string_view(e) == "1";
         };
         const auto first_one = [](const char* key, bool& value) {
-            if (const char* e = ::deepmoe::environment::get(key)) value = *e == '1';
+            if (const char* e = ::cachedmoe::environment::get(key)) value = *e == '1';
         };
         const auto not_zero = [](const char* key, bool& value) {
-            if (const char* e = ::deepmoe::environment::get(key)) value = *e != '0';
+            if (const char* e = ::cachedmoe::environment::get(key)) value = *e != '0';
         };
         exact_one("CACHEDMOE_BATCH_GPU_ROUTE", batch_gpu_route);
         not_zero("CACHEDMOE_BATCH_ENGRAM_EARLY", batch_engram_early);
@@ -118,7 +120,7 @@ struct GpuExecutionConfig {
         exact_one("CACHEDMOE_DSPARK_ONECB", draft_onecb);
         exact_one("CACHEDMOE_DSPARK_MEGA", draft_mega);
         exact_one("CACHEDMOE_DSPARK_PROFILE", draft_profile);
-        if (::deepmoe::environment::get("CACHEDMOE_DSPARK_MEGA_DIAG")) draft_diagnostics = true;
+        if (::cachedmoe::environment::get("CACHEDMOE_DSPARK_MEGA_DIAG")) draft_diagnostics = true;
         not_zero("CACHEDMOE_DSPARK_TRIM_TAIL", draft_trim_tail);
         first_one("CACHEDMOE_MGT_PAIR_DOT", mgt_pair_dot);
         not_zero("CACHEDMOE_MGT_FOLD_SCALE", mgt_fold_scale);
@@ -141,26 +143,26 @@ struct DecodeExecutionConfig {
 
     void apply_environment() {
         const auto positive = [](const char* key, double& value, double fallback) {
-            if (const char* e = ::deepmoe::environment::get(key)) {
+            if (const char* e = ::cachedmoe::environment::get(key)) {
                 const double parsed = std::atof(e);
                 value = parsed > 0 ? parsed : fallback;
             }
         };
         const auto optional_flag = [](const char* key, std::optional<bool>& value) {
-            if (const char* e = ::deepmoe::environment::get(key))
+            if (const char* e = ::cachedmoe::environment::get(key))
                 value = *e ? std::optional<bool>(*e != '0') : std::nullopt;
         };
         positive("CACHEDMOE_GPU_WAIT_S", gpu_wait_budget_seconds, 900);
         positive("CACHEDMOE_FENCE_SPIN_US", fence_spin_microseconds, 0);
         optional_flag("CACHEDMOE_SHARED_EARLY", shared_early);
         optional_flag("CACHEDMOE_MS_EAGER_MOE", eager_moe);
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_SHARED_EARLY_MS"))
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_SHARED_EARLY_MS"))
             shared_early_multistream = *e && *e != '0';
         // This diagnostic used presence, including "0", in the old path.
-        if (::deepmoe::environment::get("CACHEDMOE_SE_CHECK")) shared_early_check = true;
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MASK_DYNAMIC_LRU"))
+        if (::cachedmoe::environment::get("CACHEDMOE_SE_CHECK")) shared_early_check = true;
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MASK_DYNAMIC_LRU"))
             dynamic_mask_lru = std::string_view(e) != "0";
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_IO_ENGRAM_DEADLINE"))
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_IO_ENGRAM_DEADLINE"))
             engram_deadline = std::string_view(e) == "1";
     }
 };
@@ -207,4 +209,4 @@ struct RuntimeConfig {
     uint32_t io_core_mask = 0;      // 0 = let the OS decide
 };
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

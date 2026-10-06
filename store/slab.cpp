@@ -11,7 +11,7 @@
 
 #include "core/log.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 Result<SlabMemory> HostSlabBacking::allocate(uint64_t bytes) {
     auto buf = std::make_unique<AlignedBuffer>();
@@ -83,7 +83,7 @@ Result<void> SlabPool::init(std::unique_ptr<SlabBacking> backing, const SlabConf
 // CACHEDMOE_PREFAULT=0 turns it off.
 void SlabPool::prefault() {
 #if defined(__linux__)
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PREFAULT"); e && *e == '0') return;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PREFAULT"); e && *e == '0') return;
     std::vector<std::pair<std::byte*, uint64_t>> spans;
     for (const SlabMemory& m : slabs_)
         if (m.host_ptr) spans.emplace_back(static_cast<std::byte*>(m.host_ptr), m.bytes);
@@ -127,4 +127,4 @@ Result<SlotAddress> SlabPool::address(uint32_t slot) const {
     return a;
 }
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

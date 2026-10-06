@@ -13,7 +13,7 @@
 #include <cstring>
 #include <format>
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 namespace {
 constexpr uint32_t D = layout::kHiddenSize, H = layout::kHcMult;
 constexpr uint32_t M = layout::kDsparkBlockSize, V = layout::kVocabSize;
@@ -982,4 +982,4 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos, uint32_t token,
     return out;
 }
 #undef DS_TRY
-} // namespace deepmoe::runtime
+} // namespace cachedmoe::runtime

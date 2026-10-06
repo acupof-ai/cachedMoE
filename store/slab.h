@@ -25,6 +25,8 @@
 // ExpertStore's job, not the pool's -- the pool only hands out geometry.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -35,7 +37,7 @@
 #include "core/types.h"
 #include "model/layout.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 // A contiguous allocation that can be addressed by the CPU, the GPU, or both.
 // `host_ptr` is null for a GPU-only allocation; `device_address` is 0 when the
@@ -114,4 +116,4 @@ private:
     uint32_t                slot_count_ = 0;
 };
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

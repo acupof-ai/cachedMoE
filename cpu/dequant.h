@@ -12,6 +12,8 @@
 // from any thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -20,7 +22,7 @@
 
 #include "core/status.h"
 
-namespace deepmoe::cpu {
+namespace cachedmoe::cpu {
 
 // --- element decoders --------------------------------------------------------
 
@@ -147,4 +149,4 @@ Result<void> dequant_fp8_matrix_row(std::span<const uint8_t> weights,
                                     size_t row, size_t rows, size_t K,
                                     std::span<float> out);
 
-}  // namespace deepmoe::cpu
+}  // namespace cachedmoe::cpu

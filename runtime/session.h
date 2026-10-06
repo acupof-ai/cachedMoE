@@ -47,6 +47,8 @@
 // cancel callback may be backed by an atomic set from another thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
@@ -66,7 +68,7 @@
 #include "runtime/sampling.h"
 #include "text/tokenizer.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // --- window replay, rollback, parking (Track R2) ------------------------------------
 
@@ -425,4 +427,4 @@ private:
     uint32_t               evicted_ = 0;
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

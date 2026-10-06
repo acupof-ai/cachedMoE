@@ -6,7 +6,7 @@
 #include "core/json.h"
 #include "model/layout.h"
 
-namespace deepmoe {
+namespace cachedmoe {
 namespace {
 
 // Required-key readers: any miss aborts the parse with the offending key name.
@@ -299,4 +299,4 @@ std::string V41Config::summary() const {
         text.engram_layer_ids.size(), text.num_nextn_predict_layers, text.dspark_block_size);
 }
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

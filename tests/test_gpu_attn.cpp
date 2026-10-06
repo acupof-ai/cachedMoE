@@ -47,8 +47,8 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::testing;
 
 // No checkpoint needed: exercise the former dispatch boundary and the native
 // 1M end, including all six independent causal verify rows and output guards.
@@ -139,7 +139,7 @@ std::string l2_dir() { return std::string(CACHEDMOE_TEST_DATA_DIR) + "/l2"; }
 gpu::AttnSpec env_spec() {
     gpu::AttnSpec sp;
     auto num = [](const char* n, uint32_t& v) {
-        if (const char* e = ::deepmoe::environment::get(n)) v = static_cast<uint32_t>(std::atoi(e));
+        if (const char* e = ::cachedmoe::environment::get(n)) v = static_cast<uint32_t>(std::atoi(e));
     };
     num("CACHEDMOE_FP8_ARITH", sp.fp8_arith_decode);
     num("CACHEDMOE_TILE_HEADS", sp.tile_heads_per_wg);
@@ -398,7 +398,7 @@ CACHEDMOE_TEST(gpu_attn, l2_per_stage) {
     // directory has no gemv_ksplit or sparse_attn_t, and its wkv.spv has no
     // stage 2, so the P3 dispatches would read slots the old shaders never
     // expected.
-    const bool p3 = ::deepmoe::environment::get("CACHEDMOE_SKIP_P3") == nullptr;
+    const bool p3 = ::cachedmoe::environment::get("CACHEDMOE_SKIP_P3") == nullptr;
     uint32_t layers_checked = 0;
     for (const L2Step& g : set->steps) {
         const uint32_t L = g.layer;

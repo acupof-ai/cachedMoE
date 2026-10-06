@@ -8,7 +8,7 @@
 #include <cstring>
 #include <format>
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 Result<uint32_t> draft_prefix_from_confidence(std::span<const float> confidence,float minimum) {
     if(confidence.size()>5 || !std::isfinite(minimum))
@@ -322,9 +322,9 @@ void emulate_verify_row(std::span<const float> logits, std::span<const int32_t> 
     }
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 Result<uint32_t> accept_topk_prefix(std::span<const uint32_t> draft,
                                    std::span<const float> matrix,uint32_t vocab,uint32_t topk) {
     if(!vocab || !topk || topk>vocab || matrix.size()!=(draft.size()+1)*vocab)

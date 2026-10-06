@@ -2,6 +2,8 @@
 // Its completed GPU fence retires guards, but does not retire disk fills.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <algorithm>
 #include <chrono>
 #include <format>
@@ -9,7 +11,7 @@
 
 #include "store/expert_store.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 struct DecodeBoundaryCapacity {
     uint32_t free = 0, filling = 0, pinned = 0, evictable = 0, guarded = 0;
@@ -110,4 +112,4 @@ inline Result<DecodeBoundaryWait> settle_decode_boundary(
     return settle_decode_boundary(store, required, timeout, decode_boundary_capacity(store));
 }
 
-} // namespace deepmoe::runtime
+} // namespace cachedmoe::runtime

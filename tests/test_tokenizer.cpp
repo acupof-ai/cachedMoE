@@ -26,14 +26,14 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 
 const text::Tokenizer* shared_tokenizer(std::string& why) {
     static std::string err;
     static text::Tokenizer* tok = [&]() -> text::Tokenizer* {
-        const char* dir = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
+        const char* dir = ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR");
         if (!dir) { err = "set CACHEDMOE_MODEL_DIR"; return nullptr; }
         auto t = text::Tokenizer::load(std::string(dir) + "/tokenizer.json");
         if (!t) { err = t.error().str(); return nullptr; }

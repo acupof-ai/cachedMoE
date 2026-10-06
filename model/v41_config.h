@@ -7,13 +7,15 @@
 // stored copy without touching the filesystem.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
 #include "core/status.h"
 
-namespace deepmoe {
+namespace cachedmoe {
 
 // config.json -> quantization_config (design §6)
 struct QuantConfig {
@@ -158,4 +160,4 @@ struct V41Config {
     std::string summary() const;
 };
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

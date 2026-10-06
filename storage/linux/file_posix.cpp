@@ -16,7 +16,7 @@
 
 #include "core/align.h"
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 namespace {
 
 std::unexpected<Status> errno_err(std::string what) {
@@ -170,6 +170,6 @@ Result<void> File::set_size(uint64_t bytes) {
     return {};
 }
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage
 
 #endif  // !_WIN32

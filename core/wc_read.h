@@ -1,4 +1,6 @@
 #pragma once
+
+#include "core/namespace.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -6,7 +8,7 @@
 #include <immintrin.h>
 #endif
 
-namespace deepmoe {
+namespace cachedmoe {
 // Copy a GPU-written coherent, write-combining mapping into cached host RAM.
 // Ordinary scalar reads issue an uncached transaction for every element;
 // streaming loads gather whole WC cache lines. Source must be GPU-idle.

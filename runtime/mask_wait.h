@@ -1,10 +1,12 @@
 #pragma once
+
+#include "core/namespace.h"
 #include <algorithm>
 #include <array>
 #include <span>
 #include <vector>
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 // Original gate weights, no renormalisation. Return the smallest descending
 // miss prefix that bounds the lost mass. tau=1 is the existing all-mask mode.
 inline std::vector<uint32_t> mask_wait_candidates(std::span<const float> weights,
@@ -28,4 +30,4 @@ inline std::vector<uint32_t> mask_wait_candidates(std::span<const float> weights
     miss.resize(n);
     return miss;
 }
-} // namespace deepmoe::runtime
+} // namespace cachedmoe::runtime

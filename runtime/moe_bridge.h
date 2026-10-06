@@ -51,6 +51,8 @@
 // its runner. Single-threaded, on the GPU submit thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -66,7 +68,7 @@
 #include "store/pinned.h"
 #include "store/planner.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // The staging activation conversion, exposed so a validator can reproduce the
 // bytes the kernel will read (moe_bridge.cpp's act_quant_to_fp16).
@@ -343,4 +345,4 @@ private:
     std::vector<uint32_t>     union_slot_of_;  // expert id -> slot, ~0u when absent
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

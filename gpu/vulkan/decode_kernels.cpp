@@ -3,7 +3,7 @@
 #include <cstring>
 #include <format>
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 const char* decode_stage_name(DecodeStage s) {
     switch (s) {
@@ -447,9 +447,9 @@ Result<void> MgtRunner::dispatch_now(uint32_t m, MgtStage s, const void* push,
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 Result<void> DecodeRunner::begin_immutable(){if(!pages_.valid()){if(auto r=pages_.create(*device_,*alloc_,32);!r)return r;}pages_.reset();immutable_=true;return {};}
 Result<void> MgtRunner::begin_immutable(){if(!pages_.valid()){if(auto r=pages_.create(*device_,*alloc_,2048);!r)return r;}pages_.reset();immutable_=true;return {};}
 }

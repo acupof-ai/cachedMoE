@@ -13,6 +13,8 @@
 // pool and query pool. One instance is driven from one thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 
@@ -23,7 +25,7 @@
 #include "gpu/vulkan/memory.h"
 #include "gpu/vulkan/pipeline.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 struct RawReadResult {
     uint64_t bytes    = 0;
@@ -72,4 +74,4 @@ private:
     QueryPool       queries_;
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

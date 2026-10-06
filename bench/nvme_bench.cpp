@@ -39,8 +39,8 @@
 #include "storage/file.h"
 #include "storage/io_engine.h"
 
-using namespace deepmoe;
-using namespace deepmoe::storage;
+using namespace cachedmoe;
+using namespace cachedmoe::storage;
 
 namespace {
 

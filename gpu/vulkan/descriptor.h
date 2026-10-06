@@ -12,6 +12,8 @@
 // submit thread; nothing is updated while a command buffer is in flight.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <vector>
 
@@ -20,7 +22,7 @@
 #include "gpu/vulkan/pipeline.h"
 #include "gpu/vulkan/memory.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // One storage-buffer binding. `buffer` may be VK_NULL_HANDLE only if the shader
 // never touches that binding (Slang still emits the layout entry).
@@ -60,9 +62,9 @@ private:
 #endif
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 // Pointer-table pages are immutable from recording until the fence. Reuse
 // only after completion; compatible layouts are one storage binding, 64 B push.
 class ArgumentPages {

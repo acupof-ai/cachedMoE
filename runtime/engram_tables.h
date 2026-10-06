@@ -24,6 +24,8 @@
 // Ownership/threading: pure functions; no state.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -34,7 +36,7 @@
 #include "runtime/engram.h"
 #include "text/tokenizer.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // NFKC + NFD + StripAccents + Lowercase + the three whitespace rules of
 // `build_compressed_token_map`, over valid UTF-8.
@@ -47,4 +49,4 @@ Result<EngramTables> derive_engram_tables(const text::Tokenizer& tok, const Text
 // Loads `<model_dir>/tokenizer.json` and derives from it.
 Result<EngramTables> derive_engram_tables(const std::string& model_dir, const TextConfig& cfg);
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

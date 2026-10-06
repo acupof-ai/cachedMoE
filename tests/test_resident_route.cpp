@@ -13,8 +13,8 @@
 
 #include "tests/test_framework.h"
 
-using namespace deepmoe;
-using namespace deepmoe::runtime;
+using namespace cachedmoe;
+using namespace cachedmoe::runtime;
 
 CACHEDMOE_TEST(resident_route, request_boundary_wait_policy_rejects_invalid_numbers) {
     Engine engine;
@@ -37,15 +37,15 @@ CACHEDMOE_TEST(resident_route, weighted_mask_wait_endpoints_and_weight_order) {
     const std::array<float, 6> w{.1f, .3f, .2f, .2f, .1f, .1f};
     const std::array<float, 6> zero{};
     const std::array<float, 6> kept{.1f, 0, 0, .2f, .1f, .1f};
-    CHECK(deepmoe::runtime::mask_wait_candidates(w, zero, 1).empty());
-    const auto exact = deepmoe::runtime::mask_wait_candidates(w, kept, 0);
+    CHECK(cachedmoe::runtime::mask_wait_candidates(w, zero, 1).empty());
+    const auto exact = cachedmoe::runtime::mask_wait_candidates(w, kept, 0);
     REQUIRE_EQ(exact.size(), 2u);
     CHECK_EQ(exact[0], 1u); CHECK_EQ(exact[1], 2u);
-    const auto partial = deepmoe::runtime::mask_wait_candidates(w, kept, .25);
+    const auto partial = cachedmoe::runtime::mask_wait_candidates(w, kept, .25);
     REQUIRE_EQ(partial.size(), 1u); CHECK_EQ(partial[0], 1u);
-    const auto shared = deepmoe::runtime::mask_wait_candidates(w, zero, .99);
+    const auto shared = cachedmoe::runtime::mask_wait_candidates(w, zero, .99);
     REQUIRE_EQ(shared.size(), 1u); CHECK_EQ(shared[0], 1u);
-    const auto ties = deepmoe::runtime::mask_wait_candidates(w, zero, .49);
+    const auto ties = cachedmoe::runtime::mask_wait_candidates(w, zero, .49);
     REQUIRE_EQ(ties.size(), 3u); CHECK_EQ(ties[1], 2u); CHECK_EQ(ties[2], 3u);
 }
 

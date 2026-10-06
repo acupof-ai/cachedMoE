@@ -12,7 +12,7 @@
 #include "cpu/dequant.h"
 #include "model/layout.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 void debug_act_quant_to_fp16(const float* x, uint16_t* out, float* scratch, uint32_t n);
 
@@ -121,7 +121,7 @@ Result<void> self_check() {
 // CACHEDMOE_MOE_WC_READ=0 goes back to plain memcpy (the A/B).
 void wc_read(void* dst, const void* src, size_t bytes) {
     static const bool on = [] {
-        const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_WC_READ");
+        const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_WC_READ");
         return !(e && *e == '0');
     }();
     // Only the SOURCE has to be 32-byte aligned: `vmovntdqa` is the load, and
@@ -150,7 +150,7 @@ void wc_read(void* dst, const void* src, size_t bytes) {
 
 // Track BF: the union runner's shape knobs, so one binary can A/B them.
 uint32_t env_u32(const char* name, uint32_t dflt) {
-    const char* e = ::deepmoe::environment::get(name);
+    const char* e = ::cachedmoe::environment::get(name);
     if (!e || !*e) return dflt;
     char* end = nullptr;
     const unsigned long v = std::strtoul(e, &end, 10);
@@ -230,7 +230,7 @@ Result<void> GpuMoeBridge::create(gpu::Device& device, gpu::MemoryAllocator& all
     spec.rows_b        = env_u32("CACHEDMOE_MOE_RB", spec.rows_b);
     // An experiment knob, not a setting: docs/p2_decode.md §8.2 uses it to
     // A/B the h quantisation's placement for bit-reproducibility.
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_HQUANT"); e && *e)
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_HQUANT"); e && *e)
         spec.h_quant = static_cast<uint32_t>(std::atoi(e));
     spec.fp8_slots     = 1;          // slot 6 is the fp8 shared expert
 
@@ -796,4 +796,4 @@ std::vector<uint64_t> GpuMoeBridge::snapshot_with_shared(std::span<const uint64_
     return out;
 }
 
-} // namespace deepmoe::runtime
+} // namespace cachedmoe::runtime

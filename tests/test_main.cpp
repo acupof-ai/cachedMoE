@@ -8,6 +8,6 @@
 
 int main(int argc, char** argv) {
     // Tests assert on return values, not on log output; keep the noise down.
-    deepmoe::set_log_level(deepmoe::LogLevel::Warn);
-    return deepmoe::test::run_all(argc, argv);
+    cachedmoe::set_log_level(cachedmoe::LogLevel::Warn);
+    return cachedmoe::test::run_all(argc, argv);
 }

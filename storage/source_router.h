@@ -27,11 +27,13 @@
 // test that fails when that happens.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 #include <string>
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 
 // More than this is not useful: the machine has two drives, and the third and
 // fourth entries exist only so a future NAS/second-USB experiment does not need
@@ -255,4 +257,4 @@ struct SourceStats {
     }
 };
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage

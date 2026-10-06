@@ -12,7 +12,7 @@
 #define _fseeki64 fseeko
 #endif
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 namespace {
 
@@ -277,4 +277,4 @@ Result<void> DecodeState::seed_step(KvStore& kv, uint32_t s) const {
     return {};
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

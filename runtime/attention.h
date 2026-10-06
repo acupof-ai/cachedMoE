@@ -16,6 +16,8 @@
 // token.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 
@@ -24,7 +26,7 @@
 #include "model/v41_config.h"
 #include "runtime/kvcache.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 struct AttentionLayerInfo {
     uint32_t layer = 0;
@@ -71,4 +73,4 @@ public:
     virtual Result<void> record(uint32_t layer, uint32_t position) = 0;
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

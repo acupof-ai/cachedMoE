@@ -60,6 +60,8 @@
 
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <map>
@@ -68,7 +70,7 @@
 
 #include "core/status.h"
 
-namespace deepmoe::trace {
+namespace cachedmoe::trace {
 
 inline constexpr uint32_t kNoDispatch = ~0u;
 inline constexpr uint16_t kNoLayer    = 0xffffu;
@@ -230,4 +232,4 @@ struct File {
 };
 Result<File> read_file(const std::string& path);
 
-}  // namespace deepmoe::trace
+}  // namespace cachedmoe::trace

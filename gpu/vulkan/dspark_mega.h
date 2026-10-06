@@ -1,4 +1,6 @@
 #pragma once
+
+#include "core/namespace.h"
 #include <array>
 #include <cstddef>
 #include <span>
@@ -6,7 +8,7 @@
 #include "gpu/vulkan/descriptor.h"
 #include "gpu/vulkan/memory.h"
 #include "gpu/shaders/dspark_plan_layout.h"
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 // Immutable schedule: every phase sees its own arguments and addresses.
 struct DsparkMegaOp {
     uint32_t kind = 0, gx = 1, gy = 1, reserved = 0;
@@ -37,4 +39,4 @@ class DsparkMegaRunner {
     VkDescriptorSet set_ = VK_NULL_HANDLE;
 #endif
 };
-} // namespace deepmoe::gpu
+} // namespace cachedmoe::gpu

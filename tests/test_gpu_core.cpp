@@ -29,7 +29,7 @@
 #include <unistd.h>
 #endif
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 

@@ -72,7 +72,7 @@
 #include <windows.h>
 #endif
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 

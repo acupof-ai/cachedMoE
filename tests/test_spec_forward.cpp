@@ -79,18 +79,18 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::testing;
 
 namespace {
 
 std::string l3_64_dir() {
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_L3_64_DIR"); e && *e) return e;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_L3_64_DIR"); e && *e) return e;
     return std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/l3_64";
 }
 
 uint32_t env_u32(const char* name, uint32_t def) {
-    const char* e = ::deepmoe::environment::get(name);
+    const char* e = ::cachedmoe::environment::get(name);
     if (!e || !*e) return def;
     const int v = std::atoi(e);
     return v > 0 ? static_cast<uint32_t>(v) : def;
@@ -199,7 +199,7 @@ CACHEDMOE_TEST(spec_forward, batch_matches_m1) {
         CHECK(identical == steps);
     }
 
-    if(::deepmoe::environment::get("CACHEDMOE_TEST_BATCH_MASK"))engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
+    if(::cachedmoe::environment::get("CACHEDMOE_TEST_BATCH_MASK"))engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     // --- pass B: the same positions, in blocks, through forward_batch ---------
     REQUIRE_OK(engine.reseed_decode_state());
     std::vector<float> got(size_t(block) * vocab);
@@ -490,8 +490,8 @@ CACHEDMOE_TEST(bench_spec, forward_batch_m_curve) {
     // batched path stamps since Track BF); CACHEDMOE_SPEC_MS / CACHEDMOE_SPEC_MODE
     // cut the sweep down to the one cell an A/B needs, because the full
     // 2 x 6 + 2 sweep is minutes and an attribution run wants one M.
-    if (const char* tf = ::deepmoe::environment::get("CACHEDMOE_SPEC_TRACE")) cfg.trace_file = tf;
-    const char* m_list = ::deepmoe::environment::get("CACHEDMOE_SPEC_MS");
+    if (const char* tf = ::cachedmoe::environment::get("CACHEDMOE_SPEC_TRACE")) cfg.trace_file = tf;
+    const char* m_list = ::cachedmoe::environment::get("CACHEDMOE_SPEC_MS");
     const uint32_t only_mode = env_u32("CACHEDMOE_SPEC_MODE", 2);   // 0 off, 1 verify, 2 both
     if (auto r = engine.init(cfg); !r) {
         CACHEDMOE_SKIP_PRINTF("      SKIP bench_spec: %s\n", r.error().str().c_str());

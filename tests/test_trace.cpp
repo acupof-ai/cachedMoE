@@ -24,8 +24,8 @@
 
 namespace {
 
-using namespace deepmoe;
-using namespace deepmoe::trace;
+using namespace cachedmoe;
+using namespace cachedmoe::trace;
 
 std::string temp_path(const char* stem) {
 #if defined(_WIN32)
@@ -108,7 +108,7 @@ CACHEDMOE_TEST(trace, header_round_trips_and_rejects_a_foreign_file) {
     REQUIRE(back.has_value());
     CHECK_EQ(back->version, 1u);
     CHECK_EQ(back->record_bytes, 32u);
-    CHECK(deepmoe::test::close(back->timestamp_period_ns, 10.0));
+    CHECK(cachedmoe::test::close(back->timestamp_period_ns, 10.0));
     CHECK_EQ(back->record_count, 1234u);
     CHECK_EQ(back->name_count, 7u);
 

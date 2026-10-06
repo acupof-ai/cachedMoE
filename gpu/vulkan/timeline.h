@@ -16,6 +16,8 @@
 // is needed.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <chrono>
 #include <cstdint>
 
@@ -23,7 +25,7 @@
 #include "core/types.h"
 #include "gpu/vulkan/device.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // Values are laid out so a token's layer waits are contiguous and monotonic
 // across tokens: token T, layer L -> T * kValuesPerToken + L + 1.
@@ -71,4 +73,4 @@ private:
 #endif
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

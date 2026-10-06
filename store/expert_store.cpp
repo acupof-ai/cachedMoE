@@ -6,7 +6,7 @@
 #include "core/align.h"
 #include "core/log.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 std::string ExpertStoreStats::to_string() const {
     return std::format(
@@ -590,4 +590,4 @@ void ExpertStore::reset_stats() {
     stats_.free     = static_cast<uint32_t>(free_list_.size());
 }
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

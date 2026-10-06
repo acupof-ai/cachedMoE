@@ -12,6 +12,8 @@
 // between threads.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -21,7 +23,7 @@
 
 #include "core/status.h"
 
-namespace deepmoe {
+namespace cachedmoe {
 
 class JsonValue;
 using JsonObject = std::map<std::string, JsonValue, std::less<>>;
@@ -90,4 +92,4 @@ Result<JsonValue> json_parse(std::string_view text);
 // Reads the file then parses it. Errors carry the path.
 Result<JsonValue> json_parse_file(const std::string& path);
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

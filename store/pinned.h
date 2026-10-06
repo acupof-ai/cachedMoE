@@ -33,6 +33,8 @@
 // safe; every lookup afterwards is const and lock free.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -46,7 +48,7 @@
 #include "store/shard_set.h"
 #include "store/slab.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 // One tensor, and its block-scale plane when it has one. Addresses point at the
 // payload, i.e. the skew has already been added.
@@ -145,4 +147,4 @@ std::vector<std::string> pinned_global_tensors(const Manifest& manifest);
 // Sum of `bytes` over a name list, scales included: what `load` will read.
 uint64_t pinned_bytes(const Manifest& manifest, const std::vector<std::string>& names);
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

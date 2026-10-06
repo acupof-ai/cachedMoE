@@ -53,6 +53,8 @@
 // between steps, on the engine thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -62,7 +64,7 @@
 #include "gpu/vulkan/memory.h"
 #include "model/v41_config.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 struct KvStoreConfig {
     static constexpr uint32_t kNoPlane = 0xFFFFFFFFu;
@@ -380,4 +382,4 @@ private:
     std::vector<int64_t>  slot_pos_;     // [window]
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

@@ -20,6 +20,8 @@
 // and the activations to whoever allocated them.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -43,7 +45,7 @@
 #include "storage/io_engine.h"
 #include "store/shard_set.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // --- weight / activation formats, mirroring prefill_common.slang -------------
 enum PfWeightFmt : uint32_t { kPfFp8 = 0, kPfBf16 = 1, kPfFp32 = 2, kPfFp4 = 3 };
@@ -446,13 +448,13 @@ struct PrefillProbe {
     const float* gate_weights = nullptr;
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 
-namespace deepmoe::store { class PinnedStore; }
-namespace deepmoe { struct TextConfig; }
-namespace deepmoe::runtime { struct EngramTables; }
+namespace cachedmoe::store { class PinnedStore; }
+namespace cachedmoe { struct TextConfig; }
+namespace cachedmoe::runtime { struct EngramTables; }
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // ADDITIVE (Track R1, docs/p4_hitrate.md §3; docs/p3_prefill.md §3.4 / §8.3
 // item 3): where the routed experts this prefill streams come from and go to.
@@ -739,4 +741,4 @@ private:
     std::vector<float>    probe_wts_;
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

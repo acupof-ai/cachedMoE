@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -8,7 +10,7 @@
 #include <string_view>
 #include <unordered_set>
 
-namespace deepmoe::environment {
+namespace cachedmoe::environment {
 
 enum class Source { Absent, Native, Canonical, Legacy };
 
@@ -85,4 +87,4 @@ inline Value lookup(const char* name) {
 // Preserve consumer parsing (exact-one, first-one, not-zero, empty/presence).
 inline const char* get(const char* name) { return lookup(name).value; }
 
-} // namespace deepmoe::environment
+} // namespace cachedmoe::environment

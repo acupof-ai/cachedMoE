@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 
 Result<void> remove_file(const std::string& path) {
     if (std::remove(path.c_str()) == 0) return {};
@@ -25,4 +25,4 @@ std::string temp_dir() {
 #endif
 }
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage

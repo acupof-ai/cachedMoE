@@ -10,6 +10,8 @@
 // no global state; a caller may run several rows in parallel.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -17,7 +19,7 @@
 #include "core/status.h"
 #include "core/types.h"
 
-namespace deepmoe::cpu {
+namespace cachedmoe::cpu {
 
 // Row-major [rows, K] weights with the checkpoint's native quantisation, a
 // dense fp32 activation, and an fp32 accumulator per row (design §6: decode to
@@ -86,4 +88,4 @@ Result<void> gemv_fp4(std::span<const uint8_t> weights,
                       GemvShape shape,
                       std::span<float> y);
 
-}  // namespace deepmoe::cpu
+}  // namespace cachedmoe::cpu

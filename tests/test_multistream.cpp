@@ -44,8 +44,8 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::testing;
 
 namespace {
 
@@ -163,7 +163,7 @@ bool same(const std::vector<Step>& x, const std::vector<Step>& y, std::string& w
     return true;
 }
 
-void run_case(::deepmoe::test::Context& _ctx, runtime::Engine::MsSched sched,
+void run_case(::cachedmoe::test::Context& _ctx, runtime::Engine::MsSched sched,
               const char* name) {
     if (skip_without_model("multistream")) return;
     constexpr uint32_t kSteps = 6;

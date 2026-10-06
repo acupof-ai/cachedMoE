@@ -16,6 +16,8 @@
 // Device itself is only mutated during setup and teardown.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -26,7 +28,7 @@
 #include <vulkan/vulkan.h>
 #endif
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // Reported even when Vulkan is compiled out, so `cachedmoe info` and the design
 // docs share one vocabulary.
@@ -156,4 +158,4 @@ private:
 #endif
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

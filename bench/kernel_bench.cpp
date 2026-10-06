@@ -51,7 +51,7 @@
 #include "store/planner.h"
 #include "store/shard_set.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 
@@ -71,7 +71,7 @@ struct Options {
 };
 
 const char* env(const char* name) {
-    return ::deepmoe::environment::get(name);
+    return ::cachedmoe::environment::get(name);
 }
 
 int usage() {

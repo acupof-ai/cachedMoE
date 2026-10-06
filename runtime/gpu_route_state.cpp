@@ -10,7 +10,7 @@
 #include "model/layout.h"
 #include "runtime/engine.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 namespace {
 double ms_since(TimePoint start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
@@ -168,4 +168,4 @@ Result<void> GpuRouteState::finish(Engine& engine, uint32_t p0, uint32_t M) {
     return {};
 }
 
-} // namespace deepmoe::runtime
+} // namespace cachedmoe::runtime

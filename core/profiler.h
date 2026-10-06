@@ -17,6 +17,8 @@
 // is taken on the hot path.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -29,7 +31,7 @@
 #include "core/status.h"
 #include "core/types.h"
 
-namespace deepmoe {
+namespace cachedmoe {
 
 using Clock    = std::chrono::steady_clock;
 using Nanos    = std::chrono::nanoseconds;
@@ -230,4 +232,4 @@ private:
     TimePoint t0_;
 };
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

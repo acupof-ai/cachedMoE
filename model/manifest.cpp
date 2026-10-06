@@ -8,7 +8,7 @@
 #include "core/json.h"
 #include "model/layout.h"
 
-namespace deepmoe {
+namespace cachedmoe {
 
 QuantType quant_from_string(std::string_view s) {
     if (s == "fp4_e2m1" || s == "fp4" || s == "e2m1")   return QuantType::Fp4E2M1;
@@ -504,4 +504,4 @@ uint64_t Manifest::file_bytes() const {
     return n;
 }
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

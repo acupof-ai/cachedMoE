@@ -21,6 +21,8 @@
 // whoever allocated them.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -33,7 +35,7 @@
 #include "gpu/vulkan/memory.h"
 #include "gpu/vulkan/pipeline.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 enum class DecodeStage : uint32_t {
     EngramGemv = 0,   // §7.10: the 6144 -> 25600 fp8 GEMV over 24 hashed rows
@@ -330,4 +332,4 @@ private:
     GpuBuffer        table_{};
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

@@ -22,13 +22,15 @@
 // Ownership/threading: pure functions over caller-owned vectors.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <numbers>
 #include <vector>
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 struct RopeConfig {
     uint32_t rope_head_dim = 64;
@@ -96,4 +98,4 @@ inline RopeConfig rope_for_layer(uint32_t compress_ratio, uint32_t rope_head_dim
     return c;
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

@@ -6,9 +6,11 @@
 // Ownership/threading: constants only.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 
-namespace deepmoe::layout {
+namespace cachedmoe::layout {
 
 // --- topology (design §2.1) --------------------------------------------------
 inline constexpr uint32_t kHiddenSize        = 5120;
@@ -133,4 +135,4 @@ inline constexpr uint64_t kHotBytesPerToken = 8'500'000'000ull;
 // manifest's `files` array.
 inline constexpr const char* kManifestFile = "deepmoe_manifest.json";
 
-}  // namespace deepmoe::layout
+}  // namespace cachedmoe::layout

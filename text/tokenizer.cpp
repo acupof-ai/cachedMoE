@@ -7,7 +7,7 @@
 
 #include "core/json.h"
 
-namespace deepmoe::text {
+namespace cachedmoe::text {
 namespace {
 
 #include "text/unicode_tables.inc"
@@ -593,4 +593,4 @@ std::string utf8_lossy(std::string_view s, bool hold_incomplete, size_t* held) {
     return out;
 }
 
-}  // namespace deepmoe::text
+}  // namespace cachedmoe::text

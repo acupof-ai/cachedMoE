@@ -31,6 +31,8 @@
 //     fires; the ExpertStore guarantees this by holding the slot in Filling.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -54,7 +56,7 @@
 #include "storage/file.h"
 #include "storage/source_router.h"
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 
 using IoRequestId = uint64_t;
 
@@ -618,4 +620,4 @@ private:
     IoStats            stats_{};
 };
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage

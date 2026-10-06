@@ -2,7 +2,7 @@
 
 #include <memory>
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 namespace {
 
 class NullPredictor final : public Predictor {
@@ -27,4 +27,4 @@ Result<std::unique_ptr<Predictor>> make_gate_predictor(std::span<const GateWeigh
     return unimplemented("store::make_gate_predictor (design §9.4, gated on Q4/Q5)");
 }
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

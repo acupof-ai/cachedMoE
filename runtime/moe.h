@@ -14,6 +14,8 @@
 // on by the submit thread (design §7.8 -- a counter, not a fence).
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 
@@ -22,7 +24,7 @@
 #include "gpu/vulkan/timeline.h"
 #include "store/planner.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // The host-coherent block the gate kernel writes (design §7.8).
 struct RouterReadback {
@@ -54,4 +56,4 @@ public:
     virtual Result<store::LayerPlan> resolve_routing(uint32_t layer, TokenIndex token) = 0;
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

@@ -38,8 +38,8 @@
 
 #include "bench/probes/probe_common.h"
 
-using namespace deepmoe;
-using namespace deepmoe::probe;
+using namespace cachedmoe;
+using namespace cachedmoe::probe;
 
 namespace {
 

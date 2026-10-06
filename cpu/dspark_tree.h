@@ -19,6 +19,8 @@
 // build() on the path/accept calls.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -27,7 +29,7 @@
 
 #include "core/status.h"
 
-namespace deepmoe::cpu::dspark {
+namespace cachedmoe::cpu::dspark {
 
 inline constexpr uint32_t kPositions = 5;       // dspark_block_size
 inline constexpr uint32_t kRank      = 256;     // dspark_markov_rank
@@ -133,4 +135,4 @@ Accept accept_sampling_exact(const Lattice& lat, const Path& path, uint32_t k,
                              std::span<const double, kPositions> u_acc,
                              std::span<const double, kPositions + 1> u_res) noexcept;
 
-}  // namespace deepmoe::cpu::dspark
+}  // namespace cachedmoe::cpu::dspark

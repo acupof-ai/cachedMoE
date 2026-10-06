@@ -14,6 +14,8 @@
 // static-init time by CACHEDMOE_TEST. Tests run sequentially on one thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -23,7 +25,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace deepmoe::test {
+namespace cachedmoe::test {
 
 struct Case {
     const char* suite;
@@ -129,13 +131,13 @@ inline bool close(double a, double b, double rel = 1e-6, double abs_tol = 1e-9) 
     return m > 0 && d / m <= rel;
 }
 
-}  // namespace deepmoe::test
+}  // namespace cachedmoe::test
 
 #define CACHEDMOE_TEST(suite, name)                                                      \
-    static void dm_test_##suite##_##name(::deepmoe::test::Context& _ctx);               \
-    static ::deepmoe::test::Registrar dm_reg_##suite##_##name(                          \
+    static void dm_test_##suite##_##name(::cachedmoe::test::Context& _ctx);               \
+    static ::cachedmoe::test::Registrar dm_reg_##suite##_##name(                          \
         #suite, #name, &dm_test_##suite##_##name);                                      \
-    static void dm_test_##suite##_##name(::deepmoe::test::Context& _ctx)
+    static void dm_test_##suite##_##name(::cachedmoe::test::Context& _ctx)
 
 #define DM_UNUSED_CTX() (void)_ctx
 
@@ -150,8 +152,8 @@ inline bool close(double a, double b, double rel = 1e-6, double abs_tol = 1e-9) 
     } while (0)
 
 #define DM_CMP_MSG(kind, a, b)                                                          \
-    (std::string(kind " failed: " #a " == " #b " (") + ::deepmoe::test::show(_a) +       \
-     " vs " + ::deepmoe::test::show(_b) + ")")
+    (std::string(kind " failed: " #a " == " #b " (") + ::cachedmoe::test::show(_a) +       \
+     " vs " + ::cachedmoe::test::show(_b) + ")")
 
 #define CHECK_EQ(a, b)                                                                  \
     do {                                                                                \
@@ -171,7 +173,7 @@ inline bool close(double a, double b, double rel = 1e-6, double abs_tol = 1e-9) 
 #define CHECK_CLOSE(a, b, rel)                                                          \
     do {                                                                                \
         const double _a = static_cast<double>(a), _b = static_cast<double>(b);            \
-        if (!::deepmoe::test::close(_a, _b, rel))                                        \
+        if (!::cachedmoe::test::close(_a, _b, rel))                                        \
             _ctx.fail(__FILE__, __LINE__,                                                \
                       std::format("CHECK_CLOSE failed: " #a " ~ " #b " ({} vs {}, rel {})",\
                                   _a, _b, rel));                                         \
@@ -214,4 +216,4 @@ inline bool close(double a, double b, double rel = 1e-6, double abs_tol = 1e-9) 
     } while (0)
 
 // printf that also counts a skip (see kSkipReturnCode above).
-#define CACHEDMOE_SKIP_PRINTF(...) (::deepmoe::test::note_skip(), std::printf(__VA_ARGS__))
+#define CACHEDMOE_SKIP_PRINTF(...) (::cachedmoe::test::note_skip(), std::printf(__VA_ARGS__))

@@ -5,7 +5,7 @@
 #include <limits>
 #include <numeric>
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 namespace {
 
 // Sorted (logit desc, id asc) candidates with their unnormalised weights ->
@@ -165,4 +165,4 @@ TopKLogits emulate_topk(std::span<const float> logits, uint32_t k, float tempera
     return tk;
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

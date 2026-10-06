@@ -3,7 +3,7 @@
 #include "gpu/vulkan/dspark_kernels.h"
 #include "runtime/rope.h"
 #include "bench/probes/probe_common.h"
-using namespace deepmoe;
+using namespace cachedmoe;
 int main(int argc,char**argv) {
     probe::Gpu g; auto r=g.create(); if(!r){std::fprintf(stderr,"%s\n",r.error().str().c_str());return 1;}
     if(probe::has_flag(argc,argv,"--rope")||probe::has_flag(argc,argv,"--pipeline-only")) {

@@ -6,11 +6,13 @@
 // copyable and small enough to sit in an atomic where needed.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <compare>
 #include <cstdint>
 #include <string_view>
 
-namespace deepmoe {
+namespace cachedmoe {
 
 // --- weight element formats (design §6) -------------------------------------
 enum class QuantType : uint8_t {
@@ -127,4 +129,4 @@ constexpr std::string_view io_priority_name(IoPriority p) noexcept {
     return "?";
 }
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

@@ -20,6 +20,8 @@
 // into the caller's command buffer on the GPU submit thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <memory>
 
@@ -31,7 +33,7 @@
 #include "runtime/engram.h"
 #include "runtime/moe.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // Which optional pieces this layer carries; derived from config.json.
 struct BlockInfo {
@@ -71,4 +73,4 @@ public:
     virtual Result<void> record_prefill(uint32_t tokens) = 0;
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

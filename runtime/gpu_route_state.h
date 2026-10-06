@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <vector>
 
@@ -9,7 +11,7 @@
 #include "model/v41_config.h"
 #include "runtime/decode_layer.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 class Engine;
 
@@ -37,4 +39,4 @@ struct GpuRouteState {
     Result<void> finish(Engine& engine, uint32_t first_position, uint32_t rows);
 };
 
-} // namespace deepmoe::runtime
+} // namespace cachedmoe::runtime

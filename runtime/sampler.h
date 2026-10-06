@@ -9,6 +9,8 @@
 // advanced once per sampled position on the engine thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -16,7 +18,7 @@
 #include "core/status.h"
 #include "core/types.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 struct SamplerConfig {
     float    temperature = 0.0f;   // 0 = argmax; the speculation invariant of §10.2
@@ -76,4 +78,4 @@ inline Result<SampleResult> argmax(std::span<const float> logits) {
     return r;
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

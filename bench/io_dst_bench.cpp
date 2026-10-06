@@ -89,8 +89,8 @@
 #include "storage/file.h"
 #include "storage/io_engine.h"
 
-using namespace deepmoe;
-using namespace deepmoe::storage;
+using namespace cachedmoe;
+using namespace cachedmoe::storage;
 
 namespace {
 
@@ -732,7 +732,7 @@ int main(int argc, char** argv) {
         else { std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data()); return usage(); }
     }
     if (o.file.empty()) {
-        const char* md = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
+        const char* md = ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR");
         if (!md) { std::fputs("no --file and no CACHEDMOE_MODEL_DIR\n", stderr); return 2; }
         o.file = std::string(md) + "/model-00020-of-00048.safetensors";
     }

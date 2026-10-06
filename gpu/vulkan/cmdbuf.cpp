@@ -3,7 +3,7 @@
 
 #include <format>
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 CommandPool::~CommandPool() { destroy(); }
 QueryPool::~QueryPool() { destroy(); }
@@ -277,9 +277,9 @@ Result<void> submit_and_wait(Device& device, const CommandBuffer& cmd) {
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 Result<void> CommandBuffer::indirect_barrier(){
 #if defined(CACHEDMOE_ENABLE_VULKAN)
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};

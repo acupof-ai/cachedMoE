@@ -12,7 +12,7 @@
 #include <cpuid.h>
 #endif
 
-namespace deepmoe::cpu {
+namespace cachedmoe::cpu {
 namespace {
 
 Result<void> check_shape(GemvShape s, size_t x_len, size_t y_len) {
@@ -178,4 +178,4 @@ Result<void> gemv_fp4(std::span<const uint8_t> weights,
     return gemv_fp4_ref(weights, scales, x, shape, y);
 }
 
-}  // namespace deepmoe::cpu
+}  // namespace cachedmoe::cpu

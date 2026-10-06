@@ -31,13 +31,15 @@
 // Ownership/threading: pure functions over caller-owned spans.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 #include <vector>
 
 #include "core/status.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 struct SamplingParams {
     float    temperature = 1.0f;    // <= 0 means greedy (argmax)
@@ -100,4 +102,4 @@ inline constexpr uint32_t kTopKThreads       = 256;
 inline constexpr uint32_t kTopKHeaderWords   = 8;
 inline constexpr uint32_t kTopKDefaultK      = 1024;
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

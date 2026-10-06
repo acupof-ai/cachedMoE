@@ -1,6 +1,6 @@
 #include "gpu/vulkan/dspark_onecb.h"
 #include <cstring>
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 DsparkOneCbRunner::~DsparkOneCbRunner() {
     pool_.destroy();
     descriptors_.destroy();
@@ -133,4 +133,4 @@ Result<void> DsparkOneCbRunner::run(std::span<const DsparkMegaOp> ops, DsparkRun
     return fail(Err::Unavailable, "no Vulkan");
 #endif
 }
-} // namespace deepmoe::gpu
+} // namespace cachedmoe::gpu

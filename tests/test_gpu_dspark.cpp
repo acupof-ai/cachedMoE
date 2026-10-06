@@ -71,8 +71,8 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::testing;
 
 namespace {
 
@@ -1081,7 +1081,7 @@ CACHEDMOE_TEST(gpu_dspark, full_runtime_chain) {
     runtime::Engine engine;
     REQUIRE(engine.init(cfg)); REQUIRE(engine.init_gpu());
     auto& draft=*engine.dspark_runtime();
-    const bool onecb=::deepmoe::environment::get("CACHEDMOE_DSPARK_TEST_ONECB")!=nullptr;
+    const bool onecb=::cachedmoe::environment::get("CACHEDMOE_DSPARK_TEST_ONECB")!=nullptr;
     draft.set_onecb(false);
     auto set_fused=[&](bool enabled){if(onecb)draft.set_onecb(enabled);else draft.set_mega(enabled);};
     std::printf("draft comparison path=%s\n",onecb?"onecb":"mega");
@@ -1196,7 +1196,7 @@ CACHEDMOE_TEST(gpu_dspark, adaptive_zero_keeps_one_target_forward) {
     sc.engram_tables_dir=std::string(CACHEDMOE_TEST_DATA_DIR)+"/l3";
     REQUIRE(engine.begin_session(sc));engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     auto first=engine.feed(std::span(state->prompt_ids()).first(8));REQUIRE(first);
-    uint32_t layers=0;const bool gpu_route=::deepmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE")&&std::string_view(::deepmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE"))=="1";
+    uint32_t layers=0;const bool gpu_route=::cachedmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE")&&std::string_view(::cachedmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE"))=="1";
     if(!gpu_route)engine.batch_probe=[&](uint32_t,const auto&){++layers;};
     uint32_t root=first->token;
     for(uint32_t i=0;i<2;++i) {

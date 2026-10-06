@@ -58,7 +58,7 @@
 #include "store/pinned.h"
 #include "store/shard_set.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 

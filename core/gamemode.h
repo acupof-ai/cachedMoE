@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/namespace.h"
+
 // Feral GameMode around the GPU-heavy work of a long-lived process.
 //
 // Why (docs/STATUS.md §7 0h, bench/results/linux/perf/): a chat decode waits on
@@ -32,7 +34,7 @@
 #include <dlfcn.h>
 #endif
 
-namespace deepmoe {
+namespace cachedmoe {
 
 class GameModeScope {
 public:
@@ -57,7 +59,7 @@ private:
         static Api a = [] {
             Api r;
 #if defined(__linux__)
-            if (const char* e = ::deepmoe::environment::get("CACHEDMOE_GAMEMODE"); e && *e == '0') return r;
+            if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_GAMEMODE"); e && *e == '0') return r;
             void* h = dlopen("libgamemode.so.0", RTLD_NOW | RTLD_LOCAL);
             if (!h) return r;
             r.start = reinterpret_cast<int (*)()>(dlsym(h, "real_gamemode_request_start"));
@@ -73,4 +75,4 @@ private:
     bool active_ = false;
 };
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

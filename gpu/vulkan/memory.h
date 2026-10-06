@@ -24,6 +24,8 @@
 // IoEngine completion threads and read by the GPU.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -35,7 +37,7 @@
 #include "gpu/vulkan/device.h"
 #include "store/slab.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 struct GpuBuffer {
     uint64_t      bytes    = 0;
@@ -140,4 +142,4 @@ private:
     std::vector<GpuBuffer> owned_;
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

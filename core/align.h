@@ -6,12 +6,14 @@
 // Ownership/threading: pure functions, no state.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <new>
 
-namespace deepmoe {
+namespace cachedmoe {
 
 inline constexpr uint64_t kPageSize   = 4096;  // NVMe/DirectIO granularity used everywhere
 inline constexpr uint64_t kSlabAlign  = 4096;
@@ -82,4 +84,4 @@ private:
     size_t     a_ = kPageSize;
 };
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

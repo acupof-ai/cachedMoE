@@ -52,6 +52,8 @@
 // afterwards, so it is shared freely between the planner, I/O and GPU threads.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -63,7 +65,7 @@
 #include "core/types.h"
 #include "model/layout.h"
 
-namespace deepmoe {
+namespace cachedmoe {
 
 // One of the six tensors of a routed expert. The order is the manifest's
 // "expert_parts" array and the order of ExpertStore's pointer-table stride.
@@ -239,4 +241,4 @@ const char* quant_to_string(QuantType q);
 // The aligned read covering [off, off + bytes) in `file`.
 AlignedRead align_read(uint32_t file, uint64_t off, uint64_t bytes);
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

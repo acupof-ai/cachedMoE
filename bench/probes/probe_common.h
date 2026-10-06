@@ -16,6 +16,8 @@
 // Ownership/threading: one instance, one thread, RAII teardown in reverse.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -32,7 +34,7 @@
 #include "gpu/vulkan/moe_kernels.h"
 #include "gpu/vulkan/pipeline.h"
 
-namespace deepmoe::probe {
+namespace cachedmoe::probe {
 
 // Device + allocator + command pool + a two-slot query pool: everything a
 // probe needs before it can dispatch anything.
@@ -126,4 +128,4 @@ inline bool has_flag(int argc, char** argv, const char* flag) {
     return false;
 }
 
-}  // namespace deepmoe::probe
+}  // namespace cachedmoe::probe

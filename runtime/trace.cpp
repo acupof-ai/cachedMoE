@@ -6,7 +6,7 @@
 
 #include "core/dispatch_count.h"
 
-namespace deepmoe::trace {
+namespace cachedmoe::trace {
 namespace {
 
 constexpr char kMagic[8] = {'D', 'M', 'T', 'R', 'A', 'C', 'E', '1'};
@@ -311,4 +311,4 @@ Result<File> read_file(const std::string& path) {
     return out;
 }
 
-}  // namespace deepmoe::trace
+}  // namespace cachedmoe::trace

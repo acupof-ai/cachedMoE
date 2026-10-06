@@ -10,7 +10,7 @@
 
 #include "core/profiler.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 std::string MoeSpec::name() const {
     static const char* kXMode[] = {"glob", "lds", "ldsf16", "ldsi8", "gf16", "gi8", "prei8"};
@@ -28,7 +28,7 @@ std::string MoeSpec::name() const {
 }
 
 std::string default_shader_dir() {
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_SHADER_DIR")) return e;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_SHADER_DIR")) return e;
 #if defined(CACHEDMOE_SHADER_DIR)
     return CACHEDMOE_SHADER_DIR;
 #else
@@ -213,7 +213,7 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
     // loops fold away again. M > 1 (the verify batch) keeps the mask.
     // CACHEDMOE_MOE_STATIC_M1=0 is the A arm of the A/B; default on.
     bool m1_default = true;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_STATIC_M1"); e && *e == '0') m1_default = false;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_STATIC_M1"); e && *e == '0') m1_default = false;
     const uint32_t static_m = (spec.m == 1 && m1_default) ? 1u : 0u;
     ps.extra = {spec.decode_mode, spec.h_precision, spec.rows_per_lane,
                 spec.x_mode, spec.h_quant, spec.fp8_slots, static_m};
@@ -854,4 +854,4 @@ Result<void> MoeRunner::record_gpu_route(CommandBuffer &cmd, uint32_t layer, uin
 #endif
 #undef ROUTE_TRY
 }
-} // namespace deepmoe::gpu
+} // namespace cachedmoe::gpu

@@ -26,7 +26,7 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
+using namespace cachedmoe;
 using runtime::KvStoreConfig;
 
 namespace {

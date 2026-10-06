@@ -69,20 +69,20 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::testing;
 
 namespace {
 
 std::string longctx_root() {
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR")) return e;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_LONGCTX_DIR")) return e;
     return std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/longctx";
 }
 std::string small_dir(const std::string& name) {
     return std::string(CACHEDMOE_TEST_DATA_DIR) + "/longctx/" + name;
 }
 std::vector<std::string> export_names() {
-    std::string list = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_NAMES") ? ::deepmoe::environment::get("CACHEDMOE_LONGCTX_NAMES")
+    std::string list = ::cachedmoe::environment::get("CACHEDMOE_LONGCTX_NAMES") ? ::cachedmoe::environment::get("CACHEDMOE_LONGCTX_NAMES")
                                                             : "ctx4k,ctx16k";
     std::vector<std::string> out;
     size_t a = 0;

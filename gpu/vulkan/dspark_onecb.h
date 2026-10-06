@@ -1,9 +1,11 @@
 #pragma once
+
+#include "core/namespace.h"
 #include <map>
 #include "gpu/vulkan/dspark_mega.h"
 #include "gpu/vulkan/dspark_kernels.h"
 #include "gpu/vulkan/decode_kernels.h"
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 // Independent pipelines, immutable arguments, one queue submission. No grid
 // synchronisation or persistent kernel; the device schedules each dispatch.
 class DsparkOneCbRunner {
@@ -31,4 +33,4 @@ class DsparkOneCbRunner {
     std::array<VkDescriptorSet, 128> arg_sets_{};
 #endif
 };
-} // namespace deepmoe::gpu
+} // namespace cachedmoe::gpu

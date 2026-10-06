@@ -26,9 +26,9 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::cpu;
-using namespace deepmoe::cpu::dspark;
+using namespace cachedmoe;
+using namespace cachedmoe::cpu;
+using namespace cachedmoe::cpu::dspark;
 
 namespace {
 

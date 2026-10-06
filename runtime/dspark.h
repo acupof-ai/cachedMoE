@@ -20,6 +20,8 @@
 // never sees it.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -29,7 +31,7 @@
 #include "core/types.h"
 #include "runtime/kvcache.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // One draft block's output: kDsparkBlockSize candidate tokens with the
 // per-position acceptance probability from the confidence head.
@@ -71,4 +73,4 @@ public:
     virtual Result<void> rollback(KvCache& kv, const KvSnapshot& snap) = 0;
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

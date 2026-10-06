@@ -19,6 +19,8 @@
 // between measurement points.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -29,7 +31,7 @@
 #include "core/status.h"
 #include "storage/file.h"
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 
 // One 4 KiB-aligned transfer. The engine never issues a chunk larger than
 // BackendCaps::max_chunk_bytes.
@@ -105,4 +107,4 @@ Result<std::unique_ptr<Backend>> make_io_uring_backend(const IoConfig& cfg);
 // present, else IOCP on Windows, else io_uring on Linux.
 Result<std::unique_ptr<Backend>> make_default_backend(const IoConfig& cfg);
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage

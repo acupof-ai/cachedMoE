@@ -3,7 +3,7 @@
 #include <cstring>
 #include <format>
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 const char* dspark_stage_name(DsparkStage s) {
     switch (s) {
@@ -211,4 +211,4 @@ Result<void> DsparkRunner::dispatch_now(DsparkStage s, const void* push, uint32_
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

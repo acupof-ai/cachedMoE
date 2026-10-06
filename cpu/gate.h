@@ -11,6 +11,8 @@
 // small fixed-size value, no allocation on the prediction path.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <cstdint>
 #include <span>
@@ -19,7 +21,7 @@
 #include "core/types.h"
 #include "model/layout.h"
 
-namespace deepmoe::cpu {
+namespace cachedmoe::cpu {
 
 inline constexpr uint32_t kMaxTopK  = 16;   // top-16 is what the planner wants for heat (design §7.8)
 inline constexpr uint32_t kMaxHeat  = 16;
@@ -67,4 +69,4 @@ Result<GateResult> gate_lookahead(std::span<const uint16_t> w,
                                   std::span<const float>    residual_hc,  // [hc_mult][hidden]
                                   uint32_t n_experts, uint32_t K, uint32_t width);
 
-}  // namespace deepmoe::cpu
+}  // namespace cachedmoe::cpu

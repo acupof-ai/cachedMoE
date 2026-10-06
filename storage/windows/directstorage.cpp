@@ -18,7 +18,7 @@
 #include <dstorage.h>
 #endif
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 
 #if defined(CACHEDMOE_ENABLE_DIRECTSTORAGE) && defined(CACHEDMOE_HAVE_DSTORAGE_H)
 
@@ -46,6 +46,6 @@ Result<std::unique_ptr<Backend>> make_directstorage_backend(const IoConfig&) {
 
 #endif
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage
 
 #endif  // _WIN32

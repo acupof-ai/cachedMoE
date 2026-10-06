@@ -17,7 +17,7 @@
 #include "tests/env_guard.h"
 #include "tests/test_framework.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 const char* env_alias_other_tu(const char* key);
 
 namespace {

@@ -21,6 +21,8 @@
 // pinned region) and never copies them.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -30,7 +32,7 @@
 #include "core/status.h"
 #include "core/types.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 // One layer's prediction: `width` expert ids with their predicted scores,
 // best first.
@@ -92,4 +94,4 @@ Result<std::unique_ptr<Predictor>> make_gate_predictor(std::span<const GateWeigh
 // it is the honest baseline: demand-only paging, the h=0.30 row of design §3.1.
 std::unique_ptr<Predictor> make_null_predictor();
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

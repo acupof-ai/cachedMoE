@@ -32,6 +32,8 @@
 // Ownership/threading: single-threaded, on the engine thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 #include <string>
@@ -41,7 +43,7 @@
 #include "cpu/dspark_tree.h"
 #include "gpu/vulkan/dspark_kernels.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // Keep the drafted tokens unchanged; stop at the first token outside its row top-K.
 Result<uint32_t> accept_topk_prefix(std::span<const uint32_t> draft,
@@ -235,4 +237,4 @@ uint32_t verify_hash3(uint32_t a, uint32_t b, uint32_t c);
 float    verify_u01(uint32_t h);
 float    verify_gumbel(uint32_t seed, uint32_t row, uint32_t id);
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

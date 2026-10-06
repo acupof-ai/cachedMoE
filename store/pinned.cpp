@@ -14,7 +14,7 @@
 #include <windows.h>
 #endif
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 uint64_t available_commit_bytes() {
 #if defined(_WIN32)
@@ -285,4 +285,4 @@ uint64_t pinned_bytes(const Manifest& manifest, const std::vector<std::string>& 
     return n;
 }
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

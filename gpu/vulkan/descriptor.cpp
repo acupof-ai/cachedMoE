@@ -2,7 +2,7 @@
 
 #include <format>
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 DescriptorPool::~DescriptorPool() { destroy(); }
 
@@ -85,10 +85,10 @@ Result<VkDescriptorSet> DescriptorPool::allocate(const Pipeline& pipeline,
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 
 #include <cstring>
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 ArgumentPages::~ArgumentPages(){destroy();}
 void ArgumentPages::destroy(){descriptors_.destroy();if(allocator_&&buffer_.valid())allocator_->free(buffer_);allocator_=nullptr;buffer_={};used_=capacity_=0;
 #if defined(CACHEDMOE_ENABLE_VULKAN)

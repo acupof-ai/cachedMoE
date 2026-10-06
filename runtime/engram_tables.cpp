@@ -8,7 +8,7 @@
 
 #include "model/layout.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 namespace {
 
 #include "runtime/engram_norm.inc"
@@ -325,4 +325,4 @@ Result<EngramTables> derive_engram_tables(const std::string& model_dir, const Te
     return derive_engram_tables(*tok, cfg);
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

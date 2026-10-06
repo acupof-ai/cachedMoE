@@ -22,7 +22,7 @@
 #include "core/align.h"
 #include "core/log.h"
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 
 namespace {
 // The engine already stamps Clock::now() in half a dozen places; the router's
@@ -270,7 +270,7 @@ IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
     t.p0_inflight_bytes = cfg.max_inflight_bytes;
     t.p0_chunk_bytes    = cfg.p0_chunk_bytes ? cfg.p0_chunk_bytes : cfg.chunk_bytes;
     auto u32 = [](const char* name, uint32_t& dst) {
-        if (const char* e = ::deepmoe::environment::get(name); e && *e) {
+        if (const char* e = ::cachedmoe::environment::get(name); e && *e) {
             char* end = nullptr;
             const unsigned long v = std::strtoul(e, &end, 10);
             if (end != e) dst = static_cast<uint32_t>(v);
@@ -279,7 +279,7 @@ IoEngine::Tuning IoEngine::tuning_from_env(const IoConfig& cfg) {
     t.bg_qd             = cfg.max_inflight_ops;
     t.bg_inflight_bytes = cfg.max_inflight_bytes;
     u32("CACHEDMOE_IO_BG_CAP_BUSY", t.bg_cap_busy);
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_IO_BG_THROTTLE_P2"); e && *e)
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_IO_BG_THROTTLE_P2"); e && *e)
         t.throttle_engram = (*e != '0');
     const uint32_t qd_before  = t.p0_qd;
     const uint64_t byt_before = t.p0_inflight_bytes;
@@ -329,7 +329,7 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     std::lock_guard lk(src_mutex_);
     // A fresh set of sources is a fresh verdict on each of them.
     uint32_t budget = kDefaultSourceErrorBudget;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_ERROR_BUDGET"); e && *e)
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_ERROR_BUDGET"); e && *e)
         budget = static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
     src_health_ = SourceHealth(budget);
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
@@ -353,14 +353,14 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     // the floor above which an idle stretch is counted -- that measurement runs
     // in both arms.
     int64_t ka_ms = 0;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_KEEPALIVE_MS"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_KEEPALIVE_MS"); e && *e) {
         if (*e == 'o' || *e == 'O') ka_ms = 0;            // "off"
         else ka_ms = std::strtoll(e, nullptr, 10);
     }
     if (ka_ms < 0) ka_ms = 0;
     ka_idle_ns_.store(mirrors_on_ ? ka_ms * 1000000 : 0, std::memory_order_relaxed);
     static_split_ = 0.0;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_STATIC_SPLIT"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_STATIC_SPLIT"); e && *e) {
         const double f = std::strtod(e, nullptr);
         if (f > 0.0 && f < 1.0) static_split_ = f;
     }
@@ -368,7 +368,7 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     // whole requests again. Wins over the static split for P0 when both are
     // set: striping routes every chunk, so there is no whole request to split.
     stripe_ = mirrors_on_;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_STRIPE"); e && *e == '0') stripe_ = false;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_STRIPE"); e && *e == '0') stripe_ = false;
     const int64_t now0 = mono_ns();
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
         ka_[i].chunk_id = 0;
@@ -382,7 +382,7 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     // idle backfill) goes too so that a quiet period fills slots from both
     // drives. P1/P2 stay on the primary: P1 is small and speculative, and P2's
     // 264 B engram rows are latency-bound, where the slower drive is a loss.
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_CLASSES"); e && *e) {
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_CLASSES"); e && *e) {
         uint32_t m = 0;
         for (const char* c = e; *c; ++c)
             if (*c >= '0' && *c <= '3') m |= 1u << uint32_t(*c - '0');
@@ -408,7 +408,7 @@ void IoEngine::set_sources(const std::vector<std::string>& roots,
     // ThermalGate (source_router.h). Only mirrors are watched, and only when
     // their drive has a sensor; the same thread readmits a dropped mirror.
     int hot = kDefaultMirrorHotC;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MIRROR_HOT_C"); e && *e) hot = std::atoi(e);
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_HOT_C"); e && *e) hot = std::atoi(e);
     thermal_ = ThermalGate{hot, hot - kMirrorCoolDropC, 0};
     bool watch = mirrors_on_ && kCanReopen;
     for (uint32_t i = 0; i < kMaxIoSources; ++i) {
@@ -1661,4 +1661,4 @@ void IoEngine::dispatcher() {
     idle_cv_.notify_all();
 }
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage

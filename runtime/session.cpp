@@ -10,7 +10,7 @@
 #include "core/json_write.h"
 #include "core/log.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 namespace {
 
 double ms_since(TimePoint t0) {
@@ -890,7 +890,7 @@ Result<void> SessionPool::enforce_budget() {
     return {};
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime
 
 // --- disk session/prefix cache (design §11.4, Track R2) ----------------------
 // Appended as a second block in the same namespace so the existing translation
@@ -901,7 +901,7 @@ Result<void> SessionPool::enforce_budget() {
 #include <system_error>
 #include <utility>
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 namespace {
 
 uint64_t fnv1a_tag(std::string_view s) {
@@ -1078,4 +1078,4 @@ bool drop_parked_context(const KvDiskOptions& opt, const std::string& name) {
     return std::filesystem::remove(std::filesystem::path(opt.dir) / session_file_name(name), ec);
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

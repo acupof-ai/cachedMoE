@@ -5,13 +5,15 @@
 // Ownership/threading: pure functions.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <span>
 #include <string>
 #include <string_view>
 
-namespace deepmoe {
+namespace cachedmoe {
 
 // `s` as a quoted JSON string.
 inline std::string json_quote(std::string_view s) {
@@ -60,4 +62,4 @@ inline std::string json_number(double d) {
     return buf;
 }
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

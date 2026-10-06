@@ -12,13 +12,13 @@
 #include "runtime/rope.h"
 #include "core/wc_read.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 namespace { std::atomic<int> g_attn_ksplit_default{0}; }
 void set_attn_ksplit_default(bool on) { g_attn_ksplit_default.store(on ? 1 : 0); }
 bool attn_ksplit_on() {
     static const int env = [] {
-        const char* e = ::deepmoe::environment::get("CACHEDMOE_ATTN_KSPLIT");
+        const char* e = ::cachedmoe::environment::get("CACHEDMOE_ATTN_KSPLIT");
         return (e && *e) ? (std::atoi(e) != 0 ? 1 : 0) : -1;
     }();
     return env >= 0 ? env != 0 : g_attn_ksplit_default.load() != 0;
@@ -28,7 +28,7 @@ namespace { std::atomic<int> g_attn_cm_default{0}; }
 void set_attn_cm_default(bool on) { g_attn_cm_default.store(on ? 1 : 0); }
 bool attn_cm_on() {
     static const int env = [] {
-        const char* e = ::deepmoe::environment::get("CACHEDMOE_ATTN_CM");
+        const char* e = ::cachedmoe::environment::get("CACHEDMOE_ATTN_CM");
         return (e && *e) ? (std::atoi(e) != 0 ? 1 : 0) : -1;
     }();
     return env >= 0 ? env != 0 : g_attn_cm_default.load() != 0;
@@ -1536,4 +1536,4 @@ public:
 
 std::unique_ptr<MoeBridge> make_null_moe_bridge() { return std::make_unique<NullMoeBridge>(); }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

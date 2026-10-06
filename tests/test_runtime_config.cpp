@@ -10,7 +10,7 @@
 #include "runtime/engine.h"
 #include "tests/test_framework.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 

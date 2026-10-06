@@ -2,7 +2,7 @@
 
 #include <format>
 
-namespace deepmoe {
+namespace cachedmoe {
 
 std::string TokenRecord::to_jsonl() const {
     std::string s = std::format(
@@ -131,4 +131,4 @@ TokenRecord Profiler::token_end() {
     return r;
 }
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

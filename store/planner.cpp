@@ -11,7 +11,7 @@
 #include "core/log.h"
 #include "model/layout.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 std::string PlannerStats::to_string() const {
     return std::format(
@@ -577,4 +577,4 @@ void Planner::reset_stats() {
     stats_ = PlannerStats{};
 }
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

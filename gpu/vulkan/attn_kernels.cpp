@@ -6,7 +6,7 @@
 #include "core/align.h"
 #include "core/log.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 const char* attn_stage_name(AttnStage s) {
     switch (s) {
@@ -387,4 +387,4 @@ Result<void> AttnRunner::dispatch_now(AttnStage s, const void* push, uint32_t pu
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

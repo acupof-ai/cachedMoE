@@ -18,7 +18,7 @@
 #include <immintrin.h>
 #endif
 
-namespace deepmoe::cpu::dspark {
+namespace cachedmoe::cpu::dspark {
 namespace {
 
 constexpr double kLn2      = 0.6931471805599453;
@@ -418,4 +418,4 @@ Accept accept_sampling_exact(const Lattice& lat, const Path& path, uint32_t k,
     return r;
 }
 
-}  // namespace deepmoe::cpu::dspark
+}  // namespace cachedmoe::cpu::dspark

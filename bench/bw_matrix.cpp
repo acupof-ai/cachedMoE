@@ -44,7 +44,7 @@
 #include "gpu/vulkan/moe_kernels.h"
 #include "gpu/vulkan/rawread.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 

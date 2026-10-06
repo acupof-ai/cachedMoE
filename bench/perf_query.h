@@ -38,6 +38,8 @@
 // not read off directly.
 #pragma once
 
+#include "core/namespace.h"
+
 #include "core/env.h"
 #include <algorithm>
 #include <cstdio>
@@ -50,7 +52,7 @@
 #include "gpu/vulkan/cmdbuf.h"
 #include "gpu/vulkan/device.h"
 
-namespace deepmoe::bench {
+namespace cachedmoe::bench {
 
 #if defined(CACHEDMOE_ENABLE_VULKAN)
 
@@ -127,7 +129,7 @@ public:
         // is the only size this machine was measured to be honest at
         // (docs/STATUS.md). A replay of a sub-ms kernel is free.
         size_t cap = 1;
-        if (const char* g = ::deepmoe::environment::get("CACHEDMOE_PERF_GROUP"); g && *g)
+        if (const char* g = ::cachedmoe::environment::get("CACHEDMOE_PERF_GROUP"); g && *g)
             cap = std::max(1, std::atoi(g));
         std::vector<uint32_t> cur;
         for (uint32_t c : sel_) {
@@ -142,7 +144,7 @@ public:
         }
         if (!cur.empty())
             if (auto r = add_group(cur); !r) return r;
-        if (const char* r = ::deepmoe::environment::get("CACHEDMOE_PERF_REPEAT"); r && *r)
+        if (const char* r = ::cachedmoe::environment::get("CACHEDMOE_PERF_REPEAT"); r && *r)
             repeats_ = uint32_t(std::max(1, std::atoi(r)));
         return {};
     }
@@ -297,4 +299,4 @@ private:
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::bench
+}  // namespace cachedmoe::bench

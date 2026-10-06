@@ -32,6 +32,8 @@
 // Called from the GPU submit thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <cstdint>
 #include <map>
@@ -53,7 +55,7 @@
 #include "store/pinned.h"
 #include "store/shard_set.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // The constant tables `NgramHashState` derives; see the header note.
 struct EngramTables {
@@ -188,4 +190,4 @@ private:
     gpu::Device*          device_ = nullptr;
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

@@ -16,6 +16,8 @@
 // there is one pool; the planner never touches it.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -27,7 +29,7 @@
 #include "gpu/vulkan/pipeline.h"
 #include "gpu/vulkan/timeline.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 class CommandBuffer;
 
@@ -158,4 +160,4 @@ Result<void> submit(Device& device, const Submission& s);
 // decode loop never waits on the host (design §7.1).
 Result<void> submit_and_wait(Device& device, const CommandBuffer& cmd);
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

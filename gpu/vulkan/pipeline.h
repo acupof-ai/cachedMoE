@@ -12,6 +12,8 @@
 // thread; VkPipeline is immutable and safe to bind from any recording thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -19,7 +21,7 @@
 #include "core/status.h"
 #include "gpu/vulkan/device.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // design §7.1 knobs. `subgroup_size` is applied through
 // VK_EXT_subgroup_size_control, the rest through specialisation constants.
@@ -97,4 +99,4 @@ inline constexpr const char* kDecodeKernels[] = {
     "moe_gemv_fp4",  // the standalone FP4 GEMV template / benchmark
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

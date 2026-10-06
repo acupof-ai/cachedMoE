@@ -32,7 +32,7 @@
 #include "core/log.h"
 #include "storage/backend.h"
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 namespace {
 
 struct IocpOp {
@@ -237,6 +237,6 @@ Result<std::unique_ptr<Backend>> make_default_backend(const IoConfig& cfg) {
     return make_iocp_backend(cfg);
 }
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage
 
 #endif  // _WIN32

@@ -72,7 +72,7 @@
 #include "store/pinned.h"
 #include "store/shard_set.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 
@@ -108,7 +108,7 @@ struct Options {
 };
 
 const char* env(const char* name) {
-    return ::deepmoe::environment::get(name);
+    return ::cachedmoe::environment::get(name);
 }
 
 struct Csv {
@@ -180,7 +180,7 @@ struct Rig {
     // CACHEDMOE_MIRROR_WEIGHTS=4.6;3.7 gives them, striping at its default.
     std::string mirror_label;
     Result<void> open_mirrors(const std::string& dir, const IoConfig& cfg) {
-        const char* e = ::deepmoe::environment::get("CACHEDMOE_MODEL_MIRRORS");
+        const char* e = ::cachedmoe::environment::get("CACHEDMOE_MODEL_MIRRORS");
         if (!e || !*e) return {};
         std::vector<std::string> roots{dir};
         for (std::string_view rest = e; !rest.empty();) {
@@ -192,7 +192,7 @@ struct Rig {
             roots.emplace_back(part);
         }
         std::vector<double> weights(roots.size(), 0.0);
-        if (const char* w = ::deepmoe::environment::get("CACHEDMOE_MIRROR_WEIGHTS"); w && *w) {
+        if (const char* w = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_WEIGHTS"); w && *w) {
             size_t i = 0;
             for (std::string_view rest = w; !rest.empty() && i < weights.size(); ++i) {
                 const size_t semi = rest.find(';');

@@ -9,6 +9,8 @@
 // Ownership/threading: plain value types and pure functions.
 #pragma once
 
+#include "core/namespace.h"
+
 #include "core/env.h"
 #include <cmath>
 #include <cstdio>
@@ -20,7 +22,7 @@
 #include "model/manifest.h"
 #include "tests/test_framework.h"
 
-namespace deepmoe::testing {
+namespace cachedmoe::testing {
 
 // The same 64-bit block checksum tools/oracle.py computes: SplitMix64 over
 // index-offset 64-bit words, XOR-accumulated, with the byte length folded into
@@ -136,12 +138,12 @@ inline Compare compare(const std::vector<float>& got, const std::vector<float>& 
 inline const char* model_dir() {
 #if defined(_MSC_VER)
     static std::string v;
-    if (const char* value = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR")) {
+    if (const char* value = ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR")) {
         v = value; return v.c_str();
     }
     return nullptr;
 #else
-    return ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR");
+    return ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR");
 #endif
 }
 
@@ -154,4 +156,4 @@ inline bool skip_without_model(const char* what) {
     return true;
 }
 
-}  // namespace deepmoe::testing
+}  // namespace cachedmoe::testing

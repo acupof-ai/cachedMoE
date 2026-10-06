@@ -63,8 +63,8 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::testing;
 
 namespace {
 
@@ -217,28 +217,28 @@ GBuf take(gpu::Prefill& p, uint64_t bytes) {
 // thresholds (PrefillConfig::coopmat_min_rows / coopmat_dense_min_rows; -1 =
 // tiled only, 0 = cooperative matrix everywhere it applies) for an A/B run.
 void apply_kernel_env(gpu::PrefillConfig& pc) {
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_COOP_MOE"))
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_COOP_MOE"))
         pc.coopmat_min_rows = static_cast<uint32_t>(std::atoi(e));
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_COOP_DENSE"))
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_COOP_DENSE"))
         pc.coopmat_dense_min_rows = static_cast<uint32_t>(std::atoi(e));
     // CACHEDMOE_PF_ATTN=legacy: the per-(head, query) band attention instead of
     // the cooperative-matrix one; CACHEDMOE_PF_ATTN_HT: its head tiles per workgroup.
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_ATTN")) pc.attn_coop = std::string(e) != "legacy";
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_ATTN_HT")) pc.attn_head_tiles = static_cast<uint32_t>(std::atoi(e));
     // docs/p4_prefill_speed.md §3: CACHEDMOE_PF_ATTN_DV the P.V dim tiles (1 =
     // the Track S geometry), CACHEDMOE_PF_COOP_TT the coopmat token tiles (2 =
     // Track S's), CACHEDMOE_PF_GATE=host the host gate top-6. Each one alone
     // restores that part of the pre-F3 arithmetic, which is what attributes a
     // handoff change to a kernel.
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_ATTN_DV"))
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_ATTN_DV"))
         pc.attn_pv_dim_tiles = static_cast<uint32_t>(std::atoi(e));
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_COOP_TT"))
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_COOP_TT"))
         pc.coop_tok_tiles = static_cast<uint32_t>(std::atoi(e));
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_WOA_COOP"))
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_GATE")) pc.gate_topk_gpu = std::string(e) != "host";
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_WOA_COOP"))
         pc.coop_grouped_dense = std::string(e) != "0";
     // CACHEDMOE_PF_MAX_ROWS=0: every all-rows pass as one submit (PrefillConfig::max_rows_per_submit).
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_PF_MAX_ROWS"))
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_PF_MAX_ROWS"))
         pc.max_rows_per_submit = static_cast<uint32_t>(std::atoi(e));
     const std::string attn = pc.attn_coop ? std::format("coopmat, {} head tiles", pc.attn_head_tiles) : "legacy";
     std::printf("    kernels: MoE coopmat at n >= %d, dense coopmat at n >= %d (-1 = never), attention %s,"
@@ -1179,7 +1179,7 @@ CACHEDMOE_TEST(gpu_prefill, read_ahead) {
 // engine sanity check at a context between 64 and the export's (a garbage
 // step shows as token 0 at margin 0).
 CACHEDMOE_TEST(gpu_prefill, longctx) {
-    const char* dir_env = ::deepmoe::environment::get("CACHEDMOE_PF_LONGCTX");
+    const char* dir_env = ::cachedmoe::environment::get("CACHEDMOE_PF_LONGCTX");
     if (!dir_env) {
         CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill.longctx: set CACHEDMOE_PF_LONGCTX=traces/longctx/ctx4k\n");
         return;
@@ -1188,12 +1188,12 @@ CACHEDMOE_TEST(gpu_prefill, longctx) {
     const std::string dir = dir_env;
     const std::string name = std::filesystem::path(dir).filename().string();
     const std::string small = std::string(CACHEDMOE_TEST_DATA_DIR) + "/longctx/" + name;
-    const std::string mode = ::deepmoe::environment::get("CACHEDMOE_PF_DECODE") ? ::deepmoe::environment::get("CACHEDMOE_PF_DECODE") : "free";
+    const std::string mode = ::cachedmoe::environment::get("CACHEDMOE_PF_DECODE") ? ::cachedmoe::environment::get("CACHEDMOE_PF_DECODE") : "free";
     auto st = runtime::DecodeState::load(dir);
     REQUIRE_OK(st);
     std::vector<uint32_t> prompt = prompt_ids(dir);
-    const uint32_t truncate = ::deepmoe::environment::get("CACHEDMOE_PF_TRUNCATE")
-                                  ? static_cast<uint32_t>(std::atoi(::deepmoe::environment::get("CACHEDMOE_PF_TRUNCATE"))) : 0;
+    const uint32_t truncate = ::cachedmoe::environment::get("CACHEDMOE_PF_TRUNCATE")
+                                  ? static_cast<uint32_t>(std::atoi(::cachedmoe::environment::get("CACHEDMOE_PF_TRUNCATE"))) : 0;
     if (truncate && truncate < prompt.size()) prompt.resize(truncate);
     const bool truncated = truncate && truncate == prompt.size();
     const uint32_t N = static_cast<uint32_t>(prompt.size());
@@ -1235,7 +1235,7 @@ CACHEDMOE_TEST(gpu_prefill, longctx) {
         REQUIRE_OK(runner.create(engine.device(), alloc, gpu::default_shader_dir()));
         gpu::PrefillConfig pc;
         pc.max_tokens = N;
-        pc.replay = ::deepmoe::environment::get("CACHEDMOE_PF_REPLAY") ? static_cast<uint32_t>(std::atoi(::deepmoe::environment::get("CACHEDMOE_PF_REPLAY"))) : 0;
+        pc.replay = ::cachedmoe::environment::get("CACHEDMOE_PF_REPLAY") ? static_cast<uint32_t>(std::atoi(::cachedmoe::environment::get("CACHEDMOE_PF_REPLAY"))) : 0;
         if (pc.replay == 0) pc.replay = N;
         apply_kernel_env(pc);
         gpu::Prefill prefill;
@@ -1342,7 +1342,7 @@ CACHEDMOE_TEST(gpu_prefill, longctx) {
 // and 14 for a Track M prompt (CACHEDMOE_PF_LONGCTX), read three times, must be
 // byte-identical. Guards the host staging and the IoEngine under load.
 CACHEDMOE_TEST(gpu_prefill, engram_repeat) {
-    const char* dir_env = ::deepmoe::environment::get("CACHEDMOE_PF_LONGCTX");
+    const char* dir_env = ::cachedmoe::environment::get("CACHEDMOE_PF_LONGCTX");
     if (!dir_env) {
         CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill.engram_repeat: set CACHEDMOE_PF_LONGCTX=traces/longctx/ctx4k\n");
         return;
@@ -1388,20 +1388,20 @@ CACHEDMOE_TEST(gpu_prefill, engram_repeat) {
 // CACHEDMOE_PF_REPLAY rows), every layer's stage outputs hashed; prints the first
 // (layer, stage) whose bytes differ.
 CACHEDMOE_TEST(gpu_prefill, repeat) {
-    const char* dir_env = ::deepmoe::environment::get("CACHEDMOE_PF_LONGCTX");
-    if (!dir_env || !::deepmoe::environment::get("CACHEDMOE_PF_REPEAT")) {
+    const char* dir_env = ::cachedmoe::environment::get("CACHEDMOE_PF_LONGCTX");
+    if (!dir_env || !::cachedmoe::environment::get("CACHEDMOE_PF_REPEAT")) {
         CACHEDMOE_SKIP_PRINTF("      SKIP gpu_prefill.repeat: set CACHEDMOE_PF_LONGCTX and CACHEDMOE_PF_REPEAT=1\n");
         return;
     }
     if (skip_without_model("gpu_prefill")) return;
     std::vector<uint32_t> prompt = prompt_ids(dir_env);
-    if (const char* t = ::deepmoe::environment::get("CACHEDMOE_PF_TRUNCATE"))
+    if (const char* t = ::cachedmoe::environment::get("CACHEDMOE_PF_TRUNCATE"))
         if (uint32_t n = static_cast<uint32_t>(std::atoi(t)); n && n < prompt.size()) prompt.resize(n);
     const uint32_t N = static_cast<uint32_t>(prompt.size());
     REQUIRE(N > 0);
     gpu::PrefillConfig pc;
     pc.max_tokens = N;
-    pc.replay = ::deepmoe::environment::get("CACHEDMOE_PF_REPLAY") ? static_cast<uint32_t>(std::atoi(::deepmoe::environment::get("CACHEDMOE_PF_REPLAY"))) : N;
+    pc.replay = ::cachedmoe::environment::get("CACHEDMOE_PF_REPLAY") ? static_cast<uint32_t>(std::atoi(::cachedmoe::environment::get("CACHEDMOE_PF_REPLAY"))) : N;
     if (pc.replay == 0) pc.replay = N;
     pc.probe_layers = true;
     apply_kernel_env(pc);

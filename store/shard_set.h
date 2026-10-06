@@ -16,6 +16,8 @@
 // startup.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <format>
 #include <string>
 #include <vector>
@@ -24,7 +26,7 @@
 #include "model/manifest.h"
 #include "storage/file.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 class ShardSet {
 public:
@@ -155,4 +157,4 @@ private:
     std::vector<Mirror>        mirrors_;
 };
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

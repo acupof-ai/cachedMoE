@@ -16,7 +16,7 @@
 #include "runtime/kvcache.h"
 #include "tests/test_framework.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 // Set by tests/CMakeLists.txt so the test finds its data whatever the cwd is.
 #ifndef CACHEDMOE_TEST_DATA_DIR

@@ -9,7 +9,7 @@
 
 #include "core/log.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 std::string DeviceCaps::to_string() const {
     std::string s = std::format("{}  api {}.{}.{}  driver {}\n",
@@ -200,14 +200,14 @@ DeviceCaps query_caps(VkPhysicalDevice pd) {
     c.subgroup_size_control = has_ext(ex, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
     c.cooperative_matrix    = has_ext(ex, "VK_KHR_cooperative_matrix");
     {
-        const char* dir = ::deepmoe::environment::get("CACHEDMOE_PIPELINE_STATS");
+        const char* dir = ::cachedmoe::environment::get("CACHEDMOE_PIPELINE_STATS");
         c.pipeline_stats = dir && *dir && has_ext(ex, "VK_KHR_pipeline_executable_properties");
     }
     {
         // The extension can be advertised while performanceCounterQueryPools is
         // not supported, and requesting an unsupported feature fails device
         // creation -- so ask the driver, do not infer it from the name.
-        const char* on = ::deepmoe::environment::get("CACHEDMOE_PERF_COUNTERS");
+        const char* on = ::cachedmoe::environment::get("CACHEDMOE_PERF_COUNTERS");
         if (on && *on && *on != '0' && has_ext(ex, "VK_KHR_performance_query")) {
             VkPhysicalDevicePerformanceQueryFeaturesKHR pq{
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR};
@@ -390,4 +390,4 @@ Result<void> Device::create(const DeviceOptions& opts) {
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

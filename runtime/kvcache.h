@@ -16,6 +16,8 @@
 // on the engine thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <format>
 #include <string>
@@ -25,7 +27,7 @@
 #include "core/types.h"
 #include "model/v41_config.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 struct KvGeometry {
     uint32_t max_context   = 65536;
@@ -128,4 +130,4 @@ private:
     bool       ready_ = false;
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

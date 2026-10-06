@@ -20,6 +20,8 @@
 // docs/architecture.md) drives background prefetch and backfill between tokens.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -39,7 +41,7 @@
 #include "store/expert_store.h"
 #include "store/shard_set.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 // What the gate kernel produced for one layer (design §7.8).
 struct RouteDecision {
@@ -285,4 +287,4 @@ private:
     void backfill_pump(const std::shared_ptr<Backfill>& b);
 };
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

@@ -57,7 +57,7 @@
 #define __NR_io_uring_enter 426
 #endif
 
-namespace deepmoe::storage {
+namespace cachedmoe::storage {
 namespace {
 
 int sys_io_uring_setup(unsigned entries, struct io_uring_params* p) {
@@ -493,6 +493,6 @@ Result<std::unique_ptr<Backend>> make_default_backend(const IoConfig& cfg) {
     return make_io_uring_backend(cfg);
 }
 
-}  // namespace deepmoe::storage
+}  // namespace cachedmoe::storage
 
 #endif  // __linux__

@@ -9,7 +9,7 @@
 #include "core/json.h"
 #include "core/log.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 namespace {
 
@@ -420,4 +420,4 @@ Result<void> EngramRunner::run(uint32_t layer, std::span<const uint32_t> history
     return gpu::submit_and_wait(*device_, cmd_);
 }
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

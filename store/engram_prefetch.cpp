@@ -1,6 +1,6 @@
 #include "store/engram_prefetch.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 // TODO(design §7.10): the implementation needs (a) the exact compressed-vocab
 // mapping and multiply-XOR hash from inference/model.py, verified against the
@@ -13,4 +13,4 @@ make_engram_prefetcher(storage::IoEngine&,
     return unimplemented("store::make_engram_prefetcher (design §7.10)");
 }
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

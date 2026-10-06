@@ -13,6 +13,8 @@
 // Ownership/threading: plain value types, loaded once per test.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -25,7 +27,7 @@
 #include "core/json.h"
 #include "core/status.h"
 
-namespace deepmoe::testing {
+namespace cachedmoe::testing {
 
 struct L2Tensor {
     std::string        dtype;
@@ -199,4 +201,4 @@ inline Agreement agree(const std::vector<float>& a, const std::vector<float>& b)
     return agree(a.data(), b.data(), a.size() < b.size() ? a.size() : b.size());
 }
 
-}  // namespace deepmoe::testing
+}  // namespace cachedmoe::testing

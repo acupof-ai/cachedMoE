@@ -38,8 +38,8 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::testing;
 
 namespace {
 
@@ -50,7 +50,7 @@ bool exists(const std::string& p) {
 }
 
 std::string longctx_root() {
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR")) return e;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_LONGCTX_DIR")) return e;
     return std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/longctx";
 }
 

@@ -16,6 +16,8 @@
 // thread; completions land on the IoEngine dispatcher thread.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -28,7 +30,7 @@
 #include "model/layout.h"
 #include "storage/io_engine.h"
 
-namespace deepmoe::store {
+namespace cachedmoe::store {
 
 // The 24 rows one token needs from one engram layer.
 struct EngramRows {
@@ -82,4 +84,4 @@ make_engram_prefetcher(storage::IoEngine& io,
                        std::span<const storage::File* const> engram_files,
                        const EngramPrefetchConfig& cfg);
 
-}  // namespace deepmoe::store
+}  // namespace cachedmoe::store

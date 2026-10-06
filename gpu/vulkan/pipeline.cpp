@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <format>
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 Result<std::vector<uint32_t>> load_spirv(const std::string& path) {
     std::FILE* f = std::fopen(path.c_str(), "rb");
@@ -54,7 +54,7 @@ namespace {
 // `tag` is the .spv's base name and the specialisation constants, which is
 // what tells two pipelines of one shader apart.
 void write_pipeline_stats(VkDevice d, VkPipeline pipe, const std::string& tag) {
-    const char* dir = ::deepmoe::environment::get("CACHEDMOE_PIPELINE_STATS");
+    const char* dir = ::cachedmoe::environment::get("CACHEDMOE_PIPELINE_STATS");
     if (!dir || !*dir) return;
     auto props = reinterpret_cast<PFN_vkGetPipelineExecutablePropertiesKHR>(
         vkGetDeviceProcAddr(d, "vkGetPipelineExecutablePropertiesKHR"));
@@ -255,4 +255,4 @@ Result<void> Pipeline::create(Device& device, const std::string& spv_path,
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

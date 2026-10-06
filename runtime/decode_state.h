@@ -29,6 +29,8 @@
 // Ownership/threading: a plain value type, loaded once before the token loop.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <map>
 #include <span>
@@ -40,7 +42,7 @@
 #include "core/types.h"
 #include "runtime/kvstore.h"
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // One tensor out of the export, always widened to fp32 (`bf16` was the dtype
 // the reference held; widening is lossless).
@@ -147,4 +149,4 @@ private:
     std::vector<RefLogits> logits_;
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

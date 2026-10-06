@@ -5,6 +5,8 @@
 // it points into; the callers are single-threaded parsers.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -13,7 +15,7 @@
 
 #include "core/status.h"
 
-namespace deepmoe {
+namespace cachedmoe {
 
 using ByteSpan  = std::span<const std::byte>;
 using MutBytes  = std::span<std::byte>;
@@ -60,4 +62,4 @@ inline std::string human_bytes(uint64_t b) {
     return buf;
 }
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

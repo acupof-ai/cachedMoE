@@ -31,10 +31,12 @@
 // drive.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <span>
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 struct ResidentRoute {
     uint32_t kept      = 0;      // how many of the top-k were resident
@@ -117,4 +119,4 @@ struct ResidentRouteStats {
     double served_frac() const { return requested ? double(served) / double(requested) : 0.0; }
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

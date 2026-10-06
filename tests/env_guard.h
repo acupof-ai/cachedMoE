@@ -1,11 +1,13 @@
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdlib>
 #include <string>
 
 #include "core/env.h"
 
-namespace deepmoe::test {
+namespace cachedmoe::test {
 
 // Tests must isolate both aliases: an inherited canonical value must not
 // override a deliberate legacy fixture, and both original values are restored.
@@ -51,4 +53,4 @@ private:
     Snapshot canonical_, legacy_;
 };
 
-} // namespace deepmoe::test
+} // namespace cachedmoe::test

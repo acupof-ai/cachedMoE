@@ -21,6 +21,8 @@
 // activations to whoever allocated them.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -32,7 +34,7 @@
 #include "gpu/vulkan/memory.h"
 #include "gpu/vulkan/pipeline.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // Long index-score grids use Z for position tiles; Y stays the verify row.
 // Must match the flattening stride in indexer.slang / mgt1_idx.slang.
@@ -522,4 +524,4 @@ private:
 inline constexpr uint32_t kAttnSlotsPerStage = 32;
 inline constexpr uint32_t kAttnStageStride   = kAttnSlotsPerStage * sizeof(uint64_t);
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

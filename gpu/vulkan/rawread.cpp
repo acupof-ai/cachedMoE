@@ -6,7 +6,7 @@
 
 #include "core/profiler.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 namespace {
 // One workgroup iteration is 1024 uint4 = 16 KiB, so a dispatch covers
@@ -136,10 +136,10 @@ Result<RawReadResult> RawReadKernel::run(const GpuBuffer& src, uint64_t bytes, u
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 
 #if defined(CACHEDMOE_ENABLE_VULKAN)
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 Result<RawReadResult> RawReadKernel::run_empty(const GpuBuffer& src, uint32_t dispatches) {
     if (!device_ || !pipeline_.valid()) return fail(Err::FailedPrecondition, "rawread is not created");
@@ -187,5 +187,5 @@ Result<RawReadResult> RawReadKernel::run_empty(const GpuBuffer& src, uint32_t di
     return out;
 }
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 #endif

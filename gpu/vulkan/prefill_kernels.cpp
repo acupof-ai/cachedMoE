@@ -10,7 +10,7 @@
 #include "core/align.h"
 #include "cpu/dequant.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 void pf_act_quant_host(const float* x, uint32_t n, uint32_t k, uint16_t* q16, float* scales) {
     const uint32_t blocks = k / 32;
@@ -208,7 +208,7 @@ Result<void> PrefillRunner::dispatch_now(uint32_t h, const void* push, uint32_t 
 
 #endif  // CACHEDMOE_ENABLE_VULKAN
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 
 // =============================================================================
 // Prefill -- docs/p3_prefill.md §2
@@ -228,7 +228,7 @@ Result<void> PrefillRunner::dispatch_now(uint32_t h, const void* push, uint32_t 
 #include "runtime/rope.h"
 #include "store/pinned.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 #if defined(CACHEDMOE_ENABLE_VULKAN)
 
@@ -445,7 +445,7 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
         }
         if (auto r = cmd.end(); !r) return r;
         if (auto r = submit_and_wait(device, cmd); !r) return r;
-        if (::deepmoe::environment::get("CACHEDMOE_PF_CREATE_TRACE"))
+        if (::cachedmoe::environment::get("CACHEDMOE_PF_CREATE_TRACE"))
             std::fprintf(stderr, "create: %.2f GB of workspace, zeroed by the GPU in %.0f ms, %.0f ms in all\n",
                          total / 1e9, ms_since(ta), ms_since(tc0));
     }
@@ -460,7 +460,7 @@ Result<void> Prefill::create(Device& device, MemoryAllocator& alloc, PrefillRunn
             if (b_.transit[t].valid())
                 pool.emplace_back([b = b_.transit[t]] { std::memset(b.host_ptr, 0, static_cast<size_t>(b.bytes)); });
         pool.clear();
-        if (::deepmoe::environment::get("CACHEDMOE_PF_CREATE_TRACE")) std::fprintf(stderr, "create: transit touched in %.0f ms\n", ms_since(tt));
+        if (::cachedmoe::environment::get("CACHEDMOE_PF_CREATE_TRACE")) std::fprintf(stderr, "create: transit touched in %.0f ms\n", ms_since(tt));
     }
     qp_ok_ = static_cast<bool>(qp_.create(device, 1024));   // a routed batch marks every dispatch
     return build_rope(static_cast<uint32_t>(N + 8));
@@ -1120,9 +1120,9 @@ void Prefill::topk_rows(uint32_t b, uint32_t pos0, uint32_t kv_pos0, uint32_t n_
     }
 }
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 // Bytes every NVMe namespace has delivered since boot (/proc/diskstats field
 // 6, 512-byte sectors): sampled at the layer's phase boundaries.
@@ -2522,4 +2522,4 @@ Result<void> Prefill::write_l3_dir(const PrefillHandoff& h, const TextConfig& cf
     return {};
 }
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

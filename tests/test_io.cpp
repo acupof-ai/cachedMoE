@@ -21,8 +21,8 @@
 #include "tests/fake_backend.h"
 #include "tests/test_framework.h"
 
-using namespace deepmoe;
-using namespace deepmoe::storage;
+using namespace cachedmoe;
+using namespace cachedmoe::storage;
 
 CACHEDMOE_TEST(io, gpu_options_resolve_once_and_preserve_overrides) {
     test::ScopedEnvironment route("CACHEDMOE_BATCH_GPU_ROUTE"), early("CACHEDMOE_BATCH_ENGRAM_EARLY"),
@@ -1222,7 +1222,7 @@ CACHEDMOE_TEST(io, stripe_is_the_default_and_leaves_backfill_whole) {
     const std::vector<std::byte> content = pattern_bytes(2u << 20);
     constexpr uint32_t kBytes = 1u << 20;
     AlignedBuffer b(kBytes);
-    const char* env = ::deepmoe::environment::get("CACHEDMOE_MIRROR_STRIPE");
+    const char* env = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_STRIPE");
     const bool stripe_off_env = env && *env == '0';
     {
         IoEngine engine;

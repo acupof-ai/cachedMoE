@@ -52,8 +52,8 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::testing;
 
 namespace {
 
@@ -292,12 +292,12 @@ CACHEDMOE_TEST(gpu_layer, decode_layer_vs_oracle) {
 namespace {
 
 std::string mgt1_root() {
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MGT1_DIR")) return e;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MGT1_DIR")) return e;
     return std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/mgt1";
 }
 std::string mgt1_state_dir(const std::string& ctx) {
     if (ctx == "l3") return std::string(CACHEDMOE_TEST_DATA_DIR) + "/l3";
-    const char* e = ::deepmoe::environment::get("CACHEDMOE_LONGCTX_DIR");
+    const char* e = ::cachedmoe::environment::get("CACHEDMOE_LONGCTX_DIR");
     return (e ? std::string(e) : std::string(CACHEDMOE_TEST_DATA_DIR) + "/../../traces/longctx") +
            "/" + ctx;
 }
@@ -307,7 +307,7 @@ bool mgt1_exists(const std::string& path) {
     return f != nullptr;
 }
 bool mgt1_ctx_wanted(const std::string& ctx) {
-    const char* e = ::deepmoe::environment::get("CACHEDMOE_MGT1_CTX");
+    const char* e = ::cachedmoe::environment::get("CACHEDMOE_MGT1_CTX");
     const std::string list = e ? e : "l3,ctx4k";
     return list.find(ctx) != std::string::npos;
 }
@@ -433,12 +433,12 @@ CACHEDMOE_TEST(mgt1, m_curve) {
     Mgt1Rig rig;
     bool up = false;
     const uint32_t iters = [] {
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MGT1_ITERS"); e && *e)
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MGT1_ITERS"); e && *e)
             return uint32_t(std::strtoul(e, nullptr, 10));
         return 30u;
     }();
     std::string csv;
-    if (const char* out = ::deepmoe::environment::get("CACHEDMOE_MGT1_CSV"); out && *out) {
+    if (const char* out = ::cachedmoe::environment::get("CACHEDMOE_MGT1_CSV"); out && *out) {
         csv = "context,layer,ratio,m,iters,ms_per_layer,ms_per_token\n";
         std::printf("    M-curve: %u timed iterations a case, CSV -> %s\n", iters, out);
     }
@@ -531,10 +531,10 @@ CACHEDMOE_TEST(mgt1, m_curve) {
         }
     }
     if (!csv.empty()) {
-        if (std::FILE* f = std::fopen(::deepmoe::environment::get("CACHEDMOE_MGT1_CSV"), "wb")) {
+        if (std::FILE* f = std::fopen(::cachedmoe::environment::get("CACHEDMOE_MGT1_CSV"), "wb")) {
             std::fwrite(csv.data(), 1, csv.size(), f);
             std::fclose(f);
-            std::printf("    wrote %s\n", ::deepmoe::environment::get("CACHEDMOE_MGT1_CSV"));
+            std::printf("    wrote %s\n", ::cachedmoe::environment::get("CACHEDMOE_MGT1_CSV"));
         } else {
             _ctx.fail(__FILE__, __LINE__, "cannot write the M-curve CSV");
         }
@@ -718,7 +718,7 @@ CACHEDMOE_TEST(gpu_layer, mgt1_layer_batch_vs_steps) {
         const uint32_t qrows = c.num_attention_heads * c.head_dim;
         std::printf("    context %s: prefill %u tokens, batch at %u\n", ctx.c_str(), p0, p0);
 
-        const char* lenv = ::deepmoe::environment::get("CACHEDMOE_MGT1_LAYERS");
+        const char* lenv = ::cachedmoe::environment::get("CACHEDMOE_MGT1_LAYERS");
         std::vector<uint32_t> layers = {0u, 2u, 14u, 20u, 24u};
         if (lenv) {
             layers.clear();

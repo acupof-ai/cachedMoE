@@ -19,8 +19,8 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::cpu;
+using namespace cachedmoe;
+using namespace cachedmoe::cpu;
 
 CACHEDMOE_TEST(dequant, fp4_e2m1_table_is_exact) {
     // design appendix A: E2M1 takes {0, .5, 1, 1.5, 2, 3, 4, 6} with a sign bit.

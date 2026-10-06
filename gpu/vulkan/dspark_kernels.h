@@ -52,6 +52,8 @@
 // allocated them.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -64,7 +66,7 @@
 #include "gpu/vulkan/memory.h"
 #include "gpu/vulkan/pipeline.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 
 enum class DsparkStage : uint32_t {
     // --- dspark_gemv.slang ---------------------------------------------------
@@ -335,4 +337,4 @@ private:
 #endif
 };
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

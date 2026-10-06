@@ -1,7 +1,7 @@
 #include "gpu/vulkan/dspark_mega.h"
 #include <cstring>
 #include <format>
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 DsparkMegaRunner::~DsparkMegaRunner() {
     pool_.destroy();descriptors_.destroy();pipe_.destroy();
     if(alloc_){if(plan_.valid())alloc_->free(plan_);if(state_.valid())alloc_->free(state_);}

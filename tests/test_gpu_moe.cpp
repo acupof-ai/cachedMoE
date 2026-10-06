@@ -56,9 +56,9 @@
 #define CACHEDMOE_TEST_DATA_DIR "tests/data"
 #endif
 
-using namespace deepmoe;
-using namespace deepmoe::store;
-using namespace deepmoe::testing;
+using namespace cachedmoe;
+using namespace cachedmoe::store;
+using namespace cachedmoe::testing;
 
 namespace {
 
@@ -824,7 +824,7 @@ CACHEDMOE_TEST(mgt1, moe_m_curve) {
 
 
     const uint32_t iters = [] {
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_M_ITERS"); e && *e)
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_M_ITERS"); e && *e)
             return uint32_t(std::strtoul(e, nullptr, 10));
         return 10u;
     }();
@@ -1018,7 +1018,7 @@ CACHEDMOE_TEST(gpu_moe, the_verify_batch_runs_its_expert_union_once) {
         CHECK(spread / ymax > 0.05);
     }
 
-    if (::deepmoe::environment::get("CACHEDMOE_TEST_GPU_ROUTE")) {
+    if (::cachedmoe::environment::get("CACHEDMOE_TEST_GPU_ROUTE")) {
         constexpr auto kColumns = layout::kMoeBatchColumns;
         constexpr auto kGateRecords = layout::kGateRecordCount;
         constexpr auto kAddressWords = layout::kExpertAddressWords;
@@ -1167,7 +1167,7 @@ CACHEDMOE_TEST(mgt1, moe_union_m_curve) {
     if (skip_without_model("mgt1.moe_union_m_curve")) return;
 
     const uint32_t iters = [] {
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MOE_M_ITERS"); e && *e)
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MOE_M_ITERS"); e && *e)
             return uint32_t(std::strtoul(e, nullptr, 10));
         return 10u;
     }();

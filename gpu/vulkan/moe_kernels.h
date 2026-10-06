@@ -15,6 +15,8 @@
 // pool and every small buffer; the expert slabs belong to the ExpertStore.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -28,7 +30,7 @@
 #include "model/layout.h"
 #include "gpu/shaders/dspark_plan_layout.h"
 
-namespace deepmoe::gpu {
+namespace cachedmoe::gpu {
 static_assert(layout::kMoeBatchColumns == DM_ROUTE_MAX_COLUMNS);
 static_assert(layout::kGateRecordCount == DM_ROUTE_GATE_RECORDS);
 static_assert(layout::kExpertAddressWords == DM_ROUTE_ADDRESS_WORDS);
@@ -324,4 +326,4 @@ private:
 // environment variable of the same name so a moved build tree still runs.
 std::string default_shader_dir();
 
-}  // namespace deepmoe::gpu
+}  // namespace cachedmoe::gpu

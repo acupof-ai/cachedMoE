@@ -70,7 +70,7 @@
 #include "runtime/session.h"
 #include "text/tokenizer.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 namespace {
 
@@ -166,7 +166,7 @@ struct Inbox {
 int cmd_serve(int argc, char** argv) {
     RuntimeConfig cfg;
     cfg.cache.budget_bytes = 0;
-    if (const char* e = ::deepmoe::environment::get("CACHEDMOE_MODEL_DIR")) cfg.model_dir = e;
+    if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_MODEL_DIR")) cfg.model_dir = e;
     runtime::SessionConfig sc;
     runtime::SessionOptions so;
     bool pf_min_set = false;
@@ -242,7 +242,7 @@ int cmd_serve(int argc, char** argv) {
         return 2;
     }
 #if defined(__linux__)
-    if(const char* e=::deepmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE");e && *e=='1' && streams>1){
+    if(const char* e=::cachedmoe::environment::get("CACHEDMOE_BATCH_GPU_ROUTE");e && *e=='1' && streams>1){
         std::fprintf(stderr,"batch GPU routing requires --streams 1\n");return 2;
     }
     // The second read source as a helper, on by default for serve on Linux: the
@@ -254,8 +254,8 @@ int cmd_serve(int argc, char** argv) {
     // and rests it while its drive is hot. --mirror or
     // CACHEDMOE_MODEL_MIRRORS choose explicitly; CACHEDMOE_MIRROR_AUTO=0 turns the
     // search off (single-drive benchmarks).
-    if (cfg.model_mirrors.empty() && !::deepmoe::environment::get("CACHEDMOE_MODEL_MIRRORS")) {
-        const char* a = ::deepmoe::environment::get("CACHEDMOE_MIRROR_AUTO");
+    if (cfg.model_mirrors.empty() && !::cachedmoe::environment::get("CACHEDMOE_MODEL_MIRRORS")) {
+        const char* a = ::cachedmoe::environment::get("CACHEDMOE_MIRROR_AUTO");
         if (!(a && *a == '0')) {
             namespace fs = std::filesystem;
             std::error_code ec;
@@ -289,7 +289,7 @@ int cmd_serve(int argc, char** argv) {
     // disables it), `--kv-dir` sets it explicitly and `--no-kv-disk` turns it
     // off, which is what a benchmark that wants a cold prefill should use.
     if (!kv_dir_given && !kv_disk_off) {
-        if (const char* e = ::deepmoe::environment::get("CACHEDMOE_KV_DIR"); e && *e) po.disk.dir = e;
+        if (const char* e = ::cachedmoe::environment::get("CACHEDMOE_KV_DIR"); e && *e) po.disk.dir = e;
         else if (e && !*e) po.disk.dir.clear();
         else {
             // Per model directory, so two checkpoints do not fight over one file

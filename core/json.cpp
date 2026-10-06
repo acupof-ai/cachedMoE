@@ -6,7 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace deepmoe {
+namespace cachedmoe {
 namespace {
 
 constexpr int kMaxDepth = 64;
@@ -364,4 +364,4 @@ Result<JsonValue> json_parse_file(const std::string& path) {
     return v;
 }
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

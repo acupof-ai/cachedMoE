@@ -43,6 +43,8 @@
 // which in one line, and docs/p2_decode.md §9 says it at length.
 #pragma once
 
+#include "core/namespace.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -86,9 +88,9 @@
 #include "store/planner.h"
 #include "store/shard_set.h"
 
-namespace deepmoe::gpu { struct PrefillHandoff; }
+namespace cachedmoe::gpu { struct PrefillHandoff; }
 
-namespace deepmoe::runtime {
+namespace cachedmoe::runtime {
 
 // --- H1a: the auto cache size never exceeds the measured safe slot count -----
 //
@@ -1114,4 +1116,4 @@ private:
     void advance_store_guard(const Stream& me, TimelineValue mine);
 };
 
-}  // namespace deepmoe::runtime
+}  // namespace cachedmoe::runtime

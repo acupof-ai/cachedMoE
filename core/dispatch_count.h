@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/namespace.h"
+
 // Workgroups and dispatches recorded on this thread since the last reset.
 // gpu::CommandBuffer::dispatch adds to it and trace::Tracer reads it around
 // every traced region, so the trace knows each stage's dispatch geometry
@@ -8,7 +10,7 @@
 
 #include <cstdint>
 
-namespace deepmoe {
+namespace cachedmoe {
 
 struct DispatchCount {
     uint64_t groups     = 0;
@@ -16,4 +18,4 @@ struct DispatchCount {
 };
 inline thread_local DispatchCount g_dispatch_count;
 
-}  // namespace deepmoe
+}  // namespace cachedmoe

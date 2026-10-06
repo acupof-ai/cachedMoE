@@ -16,7 +16,7 @@
 #include "runtime/session.h"
 #include "tests/test_framework.h"
 
-using namespace deepmoe;
+using namespace cachedmoe;
 
 CACHEDMOE_TEST(align, round_up_and_down) {
     CHECK_EQ(align_up(0), 0u);
