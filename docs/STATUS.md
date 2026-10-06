@@ -50,18 +50,23 @@ owner's display-name changes and the completed C/D decisions. Its directory
 build, **27/27 CPU suites, 41/41 tool gates and 52 unchanged shaders** are
 recorded in `bench/results/mask_quality/main_delivery_receipt.json`.
 The six compatible rename steps and configuration cleanup are committed through
-`43a2ab9` in the rename worktree. The final build passes; old-only, new-only
-and mixed environment prefixes each pass **31/31 CPU suites**. The tools gate
-passes **52/52**, including checkpoint metadata and the three previously
-unlabelled unit suites. All **52 shaders remain byte-identical**. The renamed
-library reads two existing legacy KV snapshots without changing their hashes,
-sizes or mtimes. The audit covers 87 native environment keys, 75 Python files,
-15 typed shared facts and 39 optional model-metadata fallback sites.
+`43a2ab9`; they were locally fast-forwarded to main at `bec29fd`. Both the fresh
+worktree build and the existing main-directory build pass. In each directory,
+old-only, new-only and mixed environment prefixes each pass **31/31 CPU suites**,
+and the tools gate passes **52/52**, including checkpoint metadata and the three
+previously unlabelled unit suites. All **52 shaders remain byte-identical**.
+The main library reads two existing legacy KV snapshots without changing their
+hashes, sizes or mtimes; its old namespace client and five actual CLI policy
+cases pass. Old artifact names resolve to the three canonical build artifacts.
+The audit covers 87 native environment keys, 75 Python files, 15 typed shared
+facts and 39 optional model-metadata fallback sites.
 [Configuration authorities and scope](runtime_configuration.md).
-These are CPU and format checks; the new executable's numerical validation,
-existing-main-directory build, merge/push and live web restoration remain
-pending. The GPU preflight found AC=0 and no external mirror device, so no new
-GPU jobs were started. Receipts are under
+These are CPU and format checks. The actual main executable's GPU numerical
+validation, push, own-worktree cleanup and live web restoration remain pending.
+The preflight found AC=0 and no external mirror device, so the nine GPU jobs
+remain prepared only. The web launcher dry-run selects the canonical executable
+and tracked launch policy; it does not start a service. All 11 owner untracked
+result directories are preserved. Receipts are under
 `bench/results/mask_quality/rename_prepared/final_config_validation/`.
 
 **Current audit (2026-10-06): Phase C is NO-GO; Phase D has no eligible candidate.**

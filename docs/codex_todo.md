@@ -355,11 +355,11 @@ CMake 选项 `CACHEDMOE_*`。
 
 **验收（全部在 performance 模式、一次一个 GPU 任务）：**
 
-- [ ] 全新 build 目录和已有 build 目录都能构建；52 个 SPIR-V shader hash 与改名前一致。
+- [x] 全新 build 目录和已有 build 目录都能构建；52 个 SPIR-V shader hash 与改名前一致。
 - [ ] CPU 25/25、`tests/run_all.py` 全过；l3 off NLL 逐位 `.622784`；`suite.decode` 不低于改名前。
 - [x] 只设旧 `DEEPMOE_*` 变量、只设新变量、两者都设，三种情况各跑一次 CPU 门，行为一致。
 - [ ] 网页用新程序名恢复，`/api/config` 正常，旧 transcript 和 KV 快照能打开。
-- [ ] `rg -i deepmoe` 剩余命中逐条列进报告，每条写明为什么保留。
+- [x] `rg -i deepmoe` 剩余命中逐条列进报告，每条写明为什么保留。
 
 ## 5. Codex 追加收据（2026-10-06 00:23）
 
@@ -510,3 +510,22 @@ CMake 选项 `CACHEDMOE_*`。
 - 尚未关闭：已有main build/合入推送清理、改名后GPU数值门及网页恢复。
   本次preflight实际AC=0、外置NVMe未枚举；已请求接电/插盘，GPU未启动，网页仍停止。
   此处CPU/格式验收不当作新GPU数值验收；owner接受的mask质量限制与C/D NO-GO保持。
+
+## 16. Codex 追加收据（2026-10-06，实际main目录验收）
+
+- 本地main已fast-forward到`bec29fd`；已有build的170步完成，旧程序/library/tests
+  三个入口均为正确的canonical产物符号链接。原11个owner untracked结果目录全部保留。
+- 实际main的旧/新/混合前缀各31/31 CPU；工具52/52（checkpoint元数据启用），
+  52 SPIR-V与冻结版逐个hash相同。不是拿worktree的通过代替main验收。
+- main实际binary的5个CLI边界例全部通过；旧namespace client实际编译；
+  旧default/web KV读取396/4710 positions且hash/mtime/size均未改。
+- committed-tree逐命中审计`remaining_committed_cpu_delivery.json`覆盖4842处内容，
+  全部有RETAIN角色/理由，0 NEEDS_REVIEW；旧module文件名另列兼容理由。
+- ignored启动器在main重新dry-run通过，指向tracked温控入口和新程序；未启动网页。
+- 最终9项GPU验收计划已改为实际main路径，之前未执行的准备版完整备份。
+  验收适配器拒绝skip、0/wrong case数、NLL不足64步、baseline漂移及非48/48镜像；
+  9+6个CPU适配器边界例通过，包括防止短decode/longctx以宽松退出码掩盖退化。
+  这些只验证验收脚本，不代表GPU已运行。
+- 仍待实际硬件：AC=0、外置NVMe未枚举。新binary数值门、push/own工作树清理、
+  网页/API/旧session继续生成验收保持未勾；不刷新浏览器，不重跑C/D已关闭方向。
+  本段追加当前事实，不覆盖§15及更早时点的快照。

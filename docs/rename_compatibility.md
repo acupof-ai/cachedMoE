@@ -9,9 +9,13 @@ All six rename commits are complete through `f3149a6`. Configuration cleanup
 through `43a2ab9` passes the build, three prefix combinations of 31 CPU suites
 and 52 tool gates with model metadata enabled. The 52 SPIR-V files remain
 byte-identical. Actual CLI guards and legacy source/KV readers also pass.
-New-executable GPU numerical checks, the existing main build, live web
-restoration and final delivery are still pending. GPU work requires AC and
-the disconnected read-only mirror. See [configuration scope](runtime_configuration.md).
+The local main fast-forward at `bec29fd` and its existing directory build also
+pass, with three prefix combinations of 31 CPU suites and 52 tool gates.
+The actual main executable passes the five CLI policy cases, three artifact
+symlinks, old-source compilation and two legacy KV reads. New-executable GPU
+numerical checks, push, own-worktree cleanup and live web restoration remain
+pending. GPU work requires AC and the disconnected read-only mirror.
+See [configuration scope](runtime_configuration.md).
 
 | Interface | Compatibility rule |
 |---|---|

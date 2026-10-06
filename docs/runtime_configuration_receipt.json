@@ -1,7 +1,7 @@
 {
   "schema": "cachedmoe.configuration.receipt.v1",
   "source_commit": "43a2ab9bae460cc0fb8c1f2d14bf9f5775304301",
-  "status": "SOURCE_AND_CPU_ACCEPTED_GPU_MAIN_DELIVERY_PENDING",
+  "status": "SOURCE_CPU_AND_MAIN_BUILD_ACCEPTED_GPU_PUSH_WEB_PENDING",
   "coverage": {
     "native_environment_keys": 87,
     "native_files_in_scope_audit": 127,
@@ -47,7 +47,35 @@
     "legacy_kv_files_unchanged": true,
     "qualified_legacy_source_client_compiled": true,
     "independent_reviews_no_open_blockers": true,
-    "ignored_web_launcher_delegates_to_tracked_policy": true
+    "ignored_web_launcher_delegates_to_tracked_policy": true,
+    "main_directory": {
+      "local_merge_commit": "bec29fd5e6722e2be2dfbfe62ba12d03b470a32e",
+      "existing_build_rc": 0,
+      "cpu_prefix_modes": {
+        "old": 31,
+        "new": 31,
+        "both": 31
+      },
+      "tools_gates": 52,
+      "model_metadata_enabled": true,
+      "shader_count": 52,
+      "all_shader_bytes_unchanged": true,
+      "executable_sha256": "e6a9cce4f7dab48c293a3b1ce6797fedda4aebd9b4d30a30a931c8fdbe83556a",
+      "tests_sha256": "0ca97b13c3887849cf7971cd8b750b48a1f77f37a07db93497b25036c8b79322",
+      "legacy_artifact_symlinks_verified": 3,
+      "latest_cli_policy_cases": 5,
+      "legacy_kv_positions": [
+        396,
+        4710
+      ],
+      "legacy_kv_files_unchanged": true,
+      "qualified_legacy_source_client_compiled": true,
+      "web_launcher_dry_run_rc": 0,
+      "live_web_started": false,
+      "owner_untracked_directories_preserved": 11,
+      "committed_rename_audit_unreviewed_hits": 0,
+      "prepared_acceptance_adapter_cpu_cases": 15
+    }
   },
   "observable_corrections": [
     "exact-one CLI GPU route guard matches engine",
@@ -58,9 +86,9 @@
     "empty shader path remains empty and does not hash cwd"
   ],
   "limits": [
-    "New executable GPU numerical acceptance pending; no new numerical pass claimed",
-    "Existing main directory build, push and live web restoration pending",
-    "GPU preflight AC=0 and external read-only mirror device unavailable",
+    "New actual-main executable GPU numerical acceptance pending; no new numerical pass claimed",
+    "Local main fast-forward and existing build accepted; push, own-worktree cleanup and live web restoration pending",
+    "GPU preflight AC=0 and external read-only mirror device unavailable; nine main jobs remain prepared only",
     "Current mask quality baseline and prior C/D NO-GO decisions are unchanged",
     "Reserved public unsupported fields and distinct format/layout/experiment defaults remain documented"
   ],
@@ -140,6 +168,54 @@
     {
       "path": "bench/results/mask_quality/rename_prepared/web_launcher_compatibility/receipt.json",
       "sha256": "f2cacaf2d9cdcd25501e0a52f9962f454cc5de331073dbe904fd6b0f10a2ed3e"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_local_merge_receipt.json",
+      "sha256": "be2ea048df7041f40c0bac5298926fdce79dd8b27cc2b1b8632d55b0469f625b"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_existing_build_receipt.json",
+      "sha256": "5f9d8a72f24e6872f56c5888e64e252c83161eca1a0e621ae257449d8c4672c4"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_cpu_alias_gate_receipt.json",
+      "sha256": "b8af8c2710b7c2ff469dee17694f1e3ef9d32ca15daf354f2212947111b2bb07"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_tools_all_receipt.json",
+      "sha256": "7c9c05613f15d9440f3b6c3e708930271178423ffd357c41b4985f6bf306ba1d"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_binary_shader_legacy_receipt.json",
+      "sha256": "49c5bf121ab8c71e924bd6e33b27ec7fc93dee38f64902a1c404bd8d08ae5ed7"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_native_cli_policy_receipt.json",
+      "sha256": "8fd0bc131b80761d2fcec3e7163d4dcff6e21b58462726c2148ef3a89c61c8a3"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_web_launcher_dry_run.json",
+      "sha256": "db17d08f49bfc052d61e473de280d2ef4189c17fe7b8b8521092070438d3cbf5"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_gpu_plan_preparation_receipt.json",
+      "sha256": "7a599aea63ed1611709c4de29d6d1b97c536e16743a1a687ac97f50bc4b79f16"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_gpu_acceptance_adapter_cpu_receipt.json",
+      "sha256": "081a2d1306170b3d8e28589cba62ed3203f0193d825a0c8e631044c138a9cadb"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_gpu_acceptance_adapter_decode_delta_receipt.json",
+      "sha256": "44f54eaafb07febcf567c6042764bd340fc82eaef27cb7de6f356605230262ac"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/remaining_main_docs_delta_worktree.json",
+      "sha256": "240236ee9ff22685125189b1b3852d48e5cb194b1af4a72bafe623ba35e004ab"
+    },
+    {
+      "path": "bench/results/mask_quality/rename_prepared/final_config_validation/main_gpu_prepared_source_freeze.json",
+      "sha256": "b82ece086d1149520ca761299897295a93ab639c19e2da51a5eed0418a60ee50"
     }
   ]
 }
