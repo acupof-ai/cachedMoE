@@ -82,6 +82,28 @@ class LaunchConfiguration(unittest.TestCase):
                          defaults.model_fallback())
         self.assertEqual(defaults.resolve_launch("engine", {}, model="").model, "")
 
+    def test_shader_presence_empty_matches_native_raw_path_and_receipt(self):
+        # Native coverage: paths_preserve_raw_empty in
+        # tests/test_runtime_environment.cpp asserts this same environment.
+        env = {"CACHEDMOE_SHADER_DIR": "", "DEEPMOE_SHADER_DIR": "/ignored-old"}
+        with redirect_stderr(io.StringIO()):
+            config = defaults.resolve_launch("/unused/engine", env)
+        self.assertEqual(config.shader_dir, "")
+        self.assertEqual(config.environment, env)
+        self.assertEqual(config.receipt()["shader_dir"], "")
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(provenance, "_git", return_value=""), \
+                patch.object(provenance, "power_state", return_value={"gpu_dpm": "auto"}), \
+                patch.object(provenance, "idle_check", return_value={}), \
+                patch.object(provenance, "disk_snapshot", return_value={}), \
+                redirect_stderr(io.StringIO()):
+            recorded = provenance.write(folder, launch_config=config)
+        self.assertEqual(recorded["launch"]["shader_dir"], "")
+        self.assertEqual(recorded["env_effective"]["CACHEDMOE_SHADER_DIR"]["value"], "")
+        self.assertEqual(defaults.resolve_launch("/unused/engine", {}).shader_dir, "/unused/shaders")
+        self.assertEqual(defaults.resolve_launch("/unused/engine", env, shader_dir="/explicit").shader_dir,
+                         "/explicit")
+
     def test_bench_env_and_native_last_cli_model_override_reach_encoder_and_provenance(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)

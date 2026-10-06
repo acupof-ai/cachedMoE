@@ -126,7 +126,15 @@ def resolve_launch(exe=None, environ=None, *, model=None, shader_dir=None, repo=
     model_value = model if model is not None else (selected.value if selected.present else model_fallback())
     source = "explicit-cli" if model is not None else selected.source if selected.present else "default"
     exe = str(exe) if exe is not None else executable(repo)
-    shaders = shader_dir or runtime_env.getenv("SHADER_DIR", environ=env) or str(Path(exe).parent / "shaders")
+    selected_shaders = runtime_env.resolve("SHADER_DIR", env)
+    # The child receives the original environment. A present empty directory
+    # is meaningful to the native parser, so metadata must retain it too.
+    if shader_dir:
+        shaders = shader_dir
+    elif selected_shaders.present:
+        shaders = selected_shaders.value
+    else:
+        shaders = str(Path(exe).parent / "shaders")
     return LaunchConfig(exe, model_value, str(shaders), MappingProxyType(env), source)
 
 
