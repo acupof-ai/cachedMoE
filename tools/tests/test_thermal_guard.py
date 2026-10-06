@@ -120,6 +120,8 @@ class ThermalAccounting(unittest.TestCase):
                 self.assertGreaterEqual(event["host_unix"], server.t0)
             finally:
                 server.close()
+                server.p.stdin.close()
+                server.p.stdout.close()
                 server.events.close()
                 server.log.close()
 
