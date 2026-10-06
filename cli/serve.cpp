@@ -171,6 +171,7 @@ int cmd_serve(int argc, char** argv) {
     bool check_topk = false;
     bool engine_reheat = false;
     bool allow_route_switch = false;
+    bool allow_spec_switch = false;
     std::string resident_only;   // Track Y: docs/p4_resident_routing.md
     std::string mask_cache;
     uint32_t    streams = 1;     // Track MS: docs/p4_multistream.md
@@ -216,6 +217,7 @@ int cmd_serve(int argc, char** argv) {
         else if (a == "--resident-only")   resident_only = value_of(argc, argv, i);
         else if (a == "--mask-cache")      mask_cache = value_of(argc, argv, i);
         else if (a == "--allow-route-switch") allow_route_switch = true;
+        else if (a == "--allow-spec-switch") allow_spec_switch = true;
         // Track MS (docs/p4_multistream.md): decode streams inside this one
         // engine process, and how a multi-stream round is scheduled.
         else if (a == "--streams")         streams = uint32_t(std::atoi(value_of(argc, argv, i).c_str()));
@@ -461,6 +463,39 @@ int cmd_serve(int argc, char** argv) {
         std::optional<GameModeScope> gpu_busy;
         if (op == "generate" || op == "generate_multi" || op == "reheat") gpu_busy.emplace();
         if (op == "quit") break;
+        if (op == "set_spec_config") {
+            // Normal adapters do not enable this control. The synchronous
+            // loop is between requests; Engine additionally checks its fence
+            // and requires an empty context after reset.
+            if (!allow_spec_switch || session != pool.active() || pool.active() != "default") {
+                emit_error("spec switching requires --allow-spec-switch in the default session");
+                continue;
+            }
+            const auto* k_value = doc->find("draft_tokens");
+            const auto* onecb_value = doc->find("onecb");
+            const auto* route_value = doc->find("gpu_route");
+            if (!k_value || !onecb_value || !route_value) {
+                emit_error("set_spec_config requires draft_tokens, onecb and gpu_route");
+                continue;
+            }
+            auto k = k_value->as_uint();
+            auto onecb = onecb_value->as_bool();
+            auto route = route_value->as_bool();
+            if (!k || !onecb || !route || *k < 1 || *k > layout::kDsparkBlockSize) {
+                emit_error("set_spec_config requires k in 1..5 and Boolean ONECB/GPU route");
+                continue;
+            }
+            if (auto r = engine.set_spec_config(uint32_t(*k), *onecb, *route); !r) {
+                emit_error(r.error().str());
+                continue;
+            }
+            emit(std::format("{{\"event\":\"spec_config\",\"session\":\"default\","
+                             "\"draft_tokens\":{},\"onecb\":{},\"gpu_route\":{},"
+                             "\"accept_top_k\":{},\"main_paths\":1}}",
+                             *k, *onecb ? "true" : "false", *route ? "true" : "false",
+                             engine.config().speculation.accept_topk));
+            continue;
+        }
         if (op == "set_decode_route") {
             // The synchronous request loop reaches here after the previous
             // generation's final fence. This opt-in is for same-engine A/B

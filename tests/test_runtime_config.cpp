@@ -133,3 +133,16 @@ DEEPMOE_TEST(runtime_config, mask_policy_is_resolved_for_each_engine) {
     frozen.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     CHECK(!frozen.store().fixed_cache());
 }
+
+DEEPMOE_TEST(runtime_config, spec_switch_rejects_invalid_or_uninitialized_engine) {
+    DecodeEnvironment environment;
+    runtime::Engine engine;
+    const auto before = engine.config();
+    CHECK_ERR(engine.set_spec_config(0, true, true), Err::InvalidArgument);
+    CHECK_ERR(engine.set_spec_config(layout::kDsparkBlockSize + 1, false, false),
+              Err::InvalidArgument);
+    CHECK_ERR(engine.set_spec_config(2, true, true), Err::FailedPrecondition);
+    CHECK_EQ(engine.config().speculation.max_draft, before.speculation.max_draft);
+    CHECK_EQ(engine.config().gpu.draft_onecb, before.gpu.draft_onecb);
+    CHECK_EQ(engine.config().gpu.batch_gpu_route, before.gpu.batch_gpu_route);
+}

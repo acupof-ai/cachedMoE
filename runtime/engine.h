@@ -657,6 +657,10 @@ public:
     // comparisons; no GPU route or pipeline configuration changes here.
     Result<void> set_mask_wait(std::optional<double> tau, uint32_t expert_budget = 8,
                                double time_budget_ms = 20);
+    // Benchmark-only request boundary control. Start with k=5, ONECB and GPU
+    // routing enabled so every resource is built before the measured arms.
+    // The caller must reset the live context before changing these options.
+    Result<void> set_spec_config(uint32_t draft_tokens, bool onecb, bool gpu_route);
     ResidentOnly resident_only() const { return resident_only_; }
     const ResidentRouteStats& resident_route_stats() const { return rr_; }
     void reset_resident_route_stats() { rr_ = {}; }
@@ -906,6 +910,7 @@ private:
     store::PinnedStore  pinned_;
 
     std::unique_ptr<DsparkRuntime> dspark_;
+    bool spec_switch_resources_ready_ = false;
     gpu::Device          device_;
     gpu::MemoryAllocator alloc_a_, alloc_b_;
     // Track MS: the per-sequence half, one per stream. `cur_` is the stream

@@ -22,6 +22,7 @@ add_executable(deepmoe_tests
     test_dspark_tree.cpp
     test_speculate.cpp
     test_spec_forward.cpp
+    test_spec_switch.cpp
     test_tokenizer.cpp
     test_engram_tables.cpp
     test_kvstore.cpp

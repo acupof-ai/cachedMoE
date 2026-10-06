@@ -1422,6 +1422,7 @@ void Engine::shutdown() {
     if (io_.running()) io_.drain();
     state_.reset();
     dspark_.reset();
+    spec_switch_resources_ready_ = false;
     for (auto& up : streams_) {
         Stream& s = *up;
         s.engram_.destroy();
@@ -2027,6 +2028,35 @@ Result<void> Engine::set_mask_wait(std::optional<double> tau, uint32_t expert_bu
     mask_wait_budget_ms_ = time_budget_ms;
     log_info("weighted mask wait: tau {}, budget {} experts / {} ms per token (0=unlimited)",
              mask_wait_tau_, expert_budget, time_budget_ms);
+    return {};
+}
+
+Result<void> Engine::set_spec_config(uint32_t draft_tokens, bool onecb, bool gpu_route) {
+    if (draft_tokens < 1 || draft_tokens > layout::kDsparkBlockSize)
+        return fail(Err::InvalidArgument, "spec draft length must be 1..5");
+    if (!gpu_ready_ || !dspark_ || !cfg_.speculation.enabled || !spec_switch_resources_ready_)
+        return fail(Err::FailedPrecondition,
+                    "spec switching requires startup k=5, ONECB and GPU routing enabled");
+    if (streams_.size() != 1 || current_stream() != 0 ||
+        resident_only_ != ResidentOnly::Mask || mask_cache_fixed_ || mask_wait_tau_ >= 0)
+        return fail(Err::FailedPrecondition,
+                    "spec switching requires single-stream dynamic mask without weighted waits");
+    if (context_length() != 0 || spec_inflight_ || cur_->tok_open_ || gpu_route_.enabled)
+        return fail(Err::FailedPrecondition,
+                    "reset the context after the completed request before switching spec options");
+    if (auto completed = cur_->fence_.value(); !completed)
+        return std::unexpected(completed.error());
+    else if (*completed < cur_->fence_value_)
+        return fail(Err::FailedPrecondition, "spec switching requires the final GPU fence");
+
+    // No pipelines, weights or expert-cache slots change here. DSpark moves
+    // its already allocated ring representation when ONECB changes.
+    dspark_->set_onecb(onecb);
+    cfg_.speculation.max_draft = draft_tokens;
+    cfg_.gpu.draft_onecb = onecb;
+    cfg_.gpu.batch_gpu_route = gpu_route;
+    gpu_route_.logged = false;
+    reset_resident_route_stats();
     return {};
 }
 
@@ -3639,6 +3669,10 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
             if(auto r=cur_->mgt_.ensure(m);!r)return r;
         if (cfg_.gpu.batch_gpu_route)
             if(auto r=cur_->moe_.gpu_union().init_gpu_route(model_cfg_.text.num_hidden_layers,gpu::default_shader_dir());!r)return r;
+        if (cfg_.speculation.max_draft == layout::kDsparkBlockSize &&
+            cfg_.gpu.draft_onecb && cfg_.gpu.batch_gpu_route && !cfg_.gpu.draft_mega &&
+            !cfg_.speculation.min_confidence)
+            spec_switch_resources_ready_ = true;
     }
     return {};
 }
