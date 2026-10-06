@@ -114,11 +114,13 @@ ReplayStats restore_or_cold(std::string_view what,
 // What rolling the engine's context back to `keep` tokens would replay.
 // `replay_max` bounds it (<= window); fewer replayed positions leave the
 // oldest part of the next steps' window masked instead.
-ReplayPlan plan_rollback(Engine& e, uint32_t keep, uint32_t replay_max = 128);
+ReplayPlan plan_rollback(
+    Engine& e, uint32_t keep, uint32_t replay_max = configuration::facts::PREFILL_REPLAY);
 
 // Keeps the first `keep` tokens (even, <= context_length()) and leaves the
 // store ready for a step at `keep`.
-Result<ReplayStats> rollback_context(Engine& e, uint32_t keep, uint32_t replay_max = 128);
+Result<ReplayStats> rollback_context(
+    Engine& e, uint32_t keep, uint32_t replay_max = configuration::facts::PREFILL_REPLAY);
 
 // A context without its window: the token ids and the packed non-SWA state.
 struct ParkedContext {
@@ -139,7 +141,9 @@ inline size_t common_context_prefix(std::span<const uint32_t> history,
 }
 // Replaces the engine's context with `p`: store cleared, non-SWA state
 // unpacked, window rebuilt by replaying the last <= replay_max tokens.
-Result<ReplayStats> restore_context(Engine& e, const ParkedContext& p, uint32_t replay_max = 128);
+Result<ReplayStats> restore_context(
+    Engine& e, const ParkedContext& p,
+    uint32_t replay_max = configuration::facts::PREFILL_REPLAY);
 
 // --- disk session/prefix cache (design §11.4) --------------------------------
 // Saves a parked context's non-SWA state (token ids + KvPacked) under
@@ -246,7 +250,7 @@ struct SessionOptions {
     // decode cache, so it no longer "warms nothing" (+72%/+49%/+17% tok/s at
     // 512/1,024/2,048). Below 512 the expert streaming still costs more than
     // the decode path saves, so the threshold stays where §6 put it.
-    uint32_t gpu_prefill_min = 512;
+    uint32_t gpu_prefill_min = configuration::facts::SESSION_GPU_PREFILL_MIN;
     // How much faster a GPU-prefilled token is than a decode-path one. Used to
     // decide whether to THROW AWAY a KV reuse and re-prefill the whole prompt
     // on the GPU: a reuse of r out of p costs (p - r) decode tokens against
@@ -254,7 +258,7 @@ struct SessionOptions {
     // ~24 ms/token GPU = 7.6x; 6.0 is that with margin, so the rule only fires
     // when it wins clearly. <= 1 disables the rule (reuse always kept).
     float    gpu_prefill_speedup = 6.0f;
-    uint32_t replay = 128;
+    uint32_t replay = configuration::facts::PREFILL_REPLAY;
     // A progress callback (and a cancel check) every this many prefill tokens.
     uint32_t progress_every = 16;
     // Track R2: roll back to a diverging prompt's common prefix instead of

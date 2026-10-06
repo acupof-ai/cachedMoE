@@ -378,10 +378,10 @@ int cmd_serve(int argc, char** argv) {
     // chat prompts: 29-64-token first turns went 14-21 s -> 11-16 s TTFT and the
     // 8-turn chat 4.78 -> 4.95 tok/s end to end (ABAB, STATUS §7 0h). The 512
     // default is the Windows measurement and stays there.
-    constexpr uint32_t kDriverMesaRadv = 3;   // VK_DRIVER_ID_MESA_RADV
-    if (!pf_min_set && engine.device().caps().driver_id == kDriverMesaRadv) {
-        so.gpu_prefill_min = 16;
-        log_info("serve: RADV: gpu_prefill_min 16 (--gpu-prefill-min overrides)");
+    if (!pf_min_set && engine.device().caps().driver_id == configuration::kMesaRadvDriverId) {
+        so.gpu_prefill_min = configuration::facts::RADV_GPU_PREFILL_MIN;
+        log_info("serve: RADV: gpu_prefill_min {} (--gpu-prefill-min overrides)",
+                 so.gpu_prefill_min);
     }
     runtime::SessionPool pool(engine, *tok, so, po);
     if (!po.disk.dir.empty()) {

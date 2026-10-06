@@ -569,7 +569,9 @@ public:
     // (sampled per `set_sampling` from the handoff's host logits). The prefill's
     // buffers are allocated for the call and freed after it, so path A needs
     // room beside the expert cache (serve --cache-gb).
-    Result<DecodeStepResult> gpu_prefill(std::span<const uint32_t> prompt, uint32_t replay = 128);
+    Result<DecodeStepResult> gpu_prefill(
+        std::span<const uint32_t> prompt,
+        uint32_t replay = configuration::facts::PREFILL_REPLAY);
 
     void set_sampling(const SamplingParams& p) { sampling_ = p; }
     const SamplingParams& sampling() const { return sampling_; }

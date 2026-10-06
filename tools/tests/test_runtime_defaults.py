@@ -48,6 +48,7 @@ class LaunchConfiguration(unittest.TestCase):
 
     def test_import_spellings_and_api_copies_have_one_authority(self):
         self.assertIs(defaults, importlib.import_module("tools.runtime_defaults"))
+        self.assertEqual(defaults.GPU_PREFILL_MIN, defaults.runtime_facts.RADV_GPU_PREFILL_MIN)
         for order in ("tools.runtime_defaults, runtime_defaults", "runtime_defaults, tools.runtime_defaults"):
             code = (f"import sys; sys.path[:0]={[str(ROOT), str(ROOT / 'tools')]!r}; "
                     f"import {order}; "

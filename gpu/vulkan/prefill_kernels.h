@@ -35,6 +35,7 @@
 #include <tuple>
 #include <vector>
 
+#include "core/runtime_facts.h"
 #include "core/status.h"
 #include "gpu/vulkan/cmdbuf.h"
 #include "gpu/vulkan/descriptor.h"
@@ -254,7 +255,7 @@ inline constexpr uint32_t kPfTransitSegmentsMax = 8;   // 512 slots, 9.6 GB of t
 struct PrefillConfig {
     // Decoder rows (design §11.2's bounded replay). >= the prompt length is the
     // oracle mode, which is exactly `inference/model.py`.
-    uint32_t replay = 128;
+    uint32_t replay = configuration::facts::PREFILL_REPLAY;
     uint32_t query_block = 512;
     uint32_t tile = 8;
     // Use the smallest of 4/8/16 that covers a routed expert's rows, capped
