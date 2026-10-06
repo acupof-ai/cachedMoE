@@ -265,3 +265,20 @@ CPU 计算 miss 专家、部分专家、重新归一化、streams>1 的 GPU rout
   主模型union实测尚待执行；不改变单线程kernel。
 - `2d7e786` 的网页配置API显式报告mask/cache/spec-k及当前实际电源模式，CPU网页检查8项通过。
   网页仍停止，后续按D结果恢复；用户transcript和浏览器页未动。
+
+## 7. Codex 追加收据（2026-10-06，恢复执行）
+
+- `phase_c/performance_recovered` 以 SIGINT 结束（rc99），off 八轮完成、mask 四轮完成，
+  tau 两臂未开始。保留原始文件与 interruption receipt；这不是完整四臂速度结论。
+  `performance_recovered_r2` 将用同一新引擎重测完整四臂，避免跨引擎复用旧 off。
+- `5d757af` 在网页关闭时先取消生成，再排队 quit，等待必要 KV 保存；CPU 网页10项通过。
+  `3c3a2c6` 注册投机配置选择测试（4项通过）。
+- 新构建来源 `3c3a2c6`，exe SHA256 `d4bf3184a3885660…`，52 shaders；
+  串行 CPU CTest 26/26、工具门禁38/38通过，收据在 `final_review/`。
+- 最终 GPU 前六项实际执行通过：27组路由/量化/hidden mean、ONECB 对 serial、
+  k=0 单次 target、KV 窗口回绕、多 streams 拒绝、新增同引擎投机配置切换。
+  后者验证各路径草稿前缀逐位一致、每轮 target calls=1；窗口测试一次热暂停后正常继续。
+- off NLL 准备脚本错误传入了仅 serve 支持的 `--cache-slots`，未开始数值测试。
+  原失败保留；纠正后只执行剩余 off64/decode/longctx，不重复已经通过的六项。
+- `c39ea20` 修复温控异常退出后的失败收据：终态读数失败仍保留清理与失败原因，
+  未知 AC/末尾样本记 null，不伪造成功。17项 CPU 温控检查通过。
