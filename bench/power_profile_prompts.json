@@ -1,0 +1,67 @@
+{
+  "description": "Owner §4.8: eight web turns per profile, each 512 outputs; fixed prompts/seeds/order, isolated named session. First three use existing long web prompts.",
+  "turns": [
+    {
+      "label": "zh_thinking",
+      "text": "请用中文写一份详细的高性能 HIP 算子设计说明，讨论 GEMM、attention、MoE、RMSNorm 各组件的 tile 大小和流水线深度。逐项解释寄存器、LDS、占用率和访存的约束，给出选择步骤、计算例子和如何验证性能的方法。请充分展开，至少两千字。",
+      "think": true,
+      "seed": 51001,
+      "max_tokens": 512
+    },
+    {
+      "label": "zh_followup",
+      "text": "接着详细讨论小批量 decode 和批量验证的差别。给出一个具体的矩阵形状示例，逐步计算权重访问量、激活复用、tile 选择、同步开销和流水线深度，并解释性能低于预测时应如何定位。请充分展开，不要只列结论。",
+      "think": true,
+      "seed": 51002,
+      "max_tokens": 512
+    },
+    {
+      "label": "en_chat",
+      "text": "Write a detailed engineering guide to measuring a GPU inference runtime. Explain how to distinguish memory bandwidth, arithmetic throughput, kernel launch latency, synchronization and data transfer limits. Include concrete worked examples, an experiment plan, sources of measurement bias and how to assess answer quality. Expand each topic with several paragraphs rather than a short summary.",
+      "think": false,
+      "reset": true,
+      "seed": 51003,
+      "max_tokens": 512
+    },
+    {
+      "label": "zh_io",
+      "text": "请用中文写一份至少两千字的工程说明：比较单盘、双盘和内存缓存对MoE推理的影响。给出每token激活专家数、专家权重大小、读取带宽、排队时间、命中率和prefill/decode差别的算例，逐步推导并讨论温控。",
+      "think": true,
+      "reset": true,
+      "seed": 51004,
+      "max_tokens": 512
+    },
+    {
+      "label": "zh_io_followup",
+      "text": "继续详细展开上一份说明：解释异步换入、LRU淘汰、命中时机与批量验证如何共同影响输出质量。逐项列出观测指标，设计至少六个对照实验，给出示例数据表和判断方法。至少两千字。",
+      "think": true,
+      "reset": false,
+      "seed": 51005,
+      "max_tokens": 512
+    },
+    {
+      "label": "en_code",
+      "text": "Write a detailed tutorial of at least 1500 words on implementing a concurrent disk-backed LRU cache. Include a complete Python example with bounded queue backpressure, atomic snapshot saving, generation counters, cancellation and recovery. Explain failure cases, invariants and a comprehensive test plan.",
+      "think": false,
+      "reset": true,
+      "seed": 51006,
+      "max_tokens": 512
+    },
+    {
+      "label": "en_code_followup",
+      "text": "Continue the tutorial with a detailed design review. Explain race conditions between eviction and saving, stale snapshots, error propagation, shutdown, fairness and performance measurement. Include worked examples, a timeline of operations and at least ten meaningful test scenarios. Expand each topic in detail, at least 1500 words.",
+      "think": false,
+      "reset": false,
+      "seed": 51007,
+      "max_tokens": 512
+    },
+    {
+      "label": "zh_system",
+      "text": "请写一份至少两千字的推理服务系统设计说明。详细讨论多轮会话KV缓存、磁盘持久化、提示词共同前缀校验、GPU同步、草稿模型和主模型验证、流式输出、取消与温控。逐项给出数据结构、流程、错误处理、性能指标和可复现实验方法。",
+      "think": true,
+      "reset": true,
+      "seed": 51008,
+      "max_tokens": 512
+    }
+  ]
+}
