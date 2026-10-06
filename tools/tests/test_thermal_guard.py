@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +13,7 @@ sys.path[:0] = [str(ROOT / "bench"), str(ROOT / "tools")]
 import thermal_guard as guard
 from thermal_metrics import decode_timing, interval_overlap, pause_intervals
 import provenance
+from hitrate_bench import BenchServer
 
 
 class ThermalPolicy(unittest.TestCase):
@@ -95,6 +97,32 @@ class ThermalPolicy(unittest.TestCase):
 
 
 class ThermalAccounting(unittest.TestCase):
+    def test_bench_clock_origin_matches_logged_event(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(provenance, "write"):
+            root = Path(tmp)
+            # This stand-in only speaks a ready/quit protocol. It cannot
+            # initialise Vulkan or read any model data.
+            executable = root / "protocol_stub.py"
+            executable.write_text(f"#!{sys.executable}\n" +
+                                  "import json,sys\n" +
+                                  "print(json.dumps({'event':'ready'}),flush=True)\n" +
+                                  "for line in sys.stdin:\n" +
+                                  " if json.loads(line).get('op')=='quit': break\n")
+            executable.chmod(0o700)
+            args = SimpleNamespace(exe=str(executable), require_sources=0, max_context=64,
+                                   cache_gb=0, shader_dir=None, env=[], serve_arg=[])
+            server = BenchServer(args, root)
+            try:
+                clock = json.loads((root / "clock.json").read_text())
+                event = json.loads((root / "events.jsonl").read_text())
+                self.assertEqual(clock["host_start_unix"], server.t0)
+                self.assertEqual(event["host_s"], round(event["host_unix"] - server.t0, 4))
+                self.assertGreaterEqual(event["host_unix"], server.t0)
+            finally:
+                server.close()
+                server.events.close()
+                server.log.close()
+
     def test_overlap_unions_pauses_and_clips_boundaries(self):
         self.assertEqual(interval_overlap(10, 20, [(5, 11), (12, 14), (13, 16), (19, 30)]), 6)
         self.assertEqual(interval_overlap(10, 20, [(1, 2), (25, 30)]), 0)
