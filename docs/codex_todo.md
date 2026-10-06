@@ -150,15 +150,26 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 
 ### D：重新选 k，未启动
 
-- [ ] 复用 A 的八轮 plain；同双盘5500总槽、同脚本/seed/单会话测 k2/k3/k5。
-- [ ] k2 再测 ONECB+GPU_ROUTE 同时关闭的一格；每配置只跑一次。
-- [ ] 报 ms/token、draft/verify/commit/CPU 每周期、接受率、union、命中和重复指标。
+- [x] 复用 A 的八轮 plain；同双盘5500总槽、同脚本/seed/单会话测 k2/k3/k5。
+- [x] k2 再测 ONECB+GPU_ROUTE 同时关闭的一格；每配置只跑一次。
+- [x] 报 ms/token、draft/verify/commit/CPU 每周期、接受率、union、命中和重复指标。
   用相同接受率换算 cycle 成本；不要把接受率变化称作 kernel 加速。
-- [ ] 标明 384 个 MTP pin 在5500槽内（主模型可替换槽5116），命中差只是不同生成路由的观测，
+- [x] 标明 384 个 MTP pin 在5500槽内（主模型可替换槽5116），命中差只是不同生成路由的观测，
   不能完全归因于 pin。
-- [ ] 只对最有希望且未被重复门判失败的候选补全部质量门；最快且合格才可作为网页默认。
+- [x] 只对最有希望且未被重复门判失败的候选补全部质量门；最快且合格才可作为网页默认。
   若 plain 最快就关投机；若无 mask 配置合格，明确说明，不选一个伪“通过”配置。
 - [ ] 写进 `docs/dspark_topk.md` 与 STATUS，完成后按决策恢复网页。
+
+收据（2026-10-06）：五臂各8/8同PID3701458/default session，performance/AC、双盘48/48，
+KV重置而专家cache按固定顺序延续；plain参照复用完整C r4 performance矩阵，不把旧A power-saver速度混入。
+ONECB+GPU/ONECB+CPU/serial/k3/k5的raw成本依次145.491/132.634/156.207/161.270/167.004ms/token，
+active估算85.091/67.936/84.394/74.258/82.089；C/D不同PID且MTP pin容量不同，不称等质量加速。
+40轮无精确循环、加载失败delta全0，但五臂全失败严格重复门，决策NO-ELIGIBLE-CANDIDATE，
+未生成winner。后续winner中文64、三组512、MMLU57按已决定的质量失败SKIP，未冒充完成。
+独立GPUroute无收益：k2 raw/active成本比CPU高9.69%/25.25%，保留ONECB、route默认关。
+owner已经授权的mask+k2基线保留，不升级成D质量合格默认。来源 `phase_d/final_report_r1.json`、
+`quality_skip_receipt.json`、`same_engine_fresh/check_results.json`；细表与归一化在 `dspark_topk.md` §20。
+最终STATUS/机器收据及网页恢复仍按各自条目结案。
 
 ### E：可选内存账，未结案
 
@@ -237,7 +248,8 @@ mask 只比 off 快约 4%（历史 +43%）。
 `final_dual`：verify 169.7 → 182.8ms/周期（+13ms），同接受率周期 211.3 vs 211.8，无收益；
 按 `dspark_e2e_plan.md` §8 是 >189 档。
 
-- [ ] D 里 GPU_ROUTE 开/关分开测；双盘下若仍无收益，只保留 ONECB，GPU route 默认关，记为 NO-GO。
+- [x] D 里 GPU_ROUTE 开/关分开测；双盘下若仍无收益，只保留 ONECB，GPU route 默认关，记为 NO-GO。
+  收据：正式D两个k2 ONECB控制均8/8；独立raw/active双3%门选CPU，GPUroute结案NO-GO，见§D追加。
 - [ ] 查 +13ms 来源（双盘时 snapshot/union 与 IO 完成的同步点），只查不改，结论写进 `dspark_topk.md`。
 
 ### 4.3 P1：网页投机配置
@@ -426,3 +438,16 @@ CMake 选项 `CACHEDMOE_*`。
   D五臂串行测量继续，期间不启动第二个GPU任务。
 - README/STATUS最新说明在 `f127018`：旧截图与power-saver速度保持历史标记；
   A质量由owner接受，未写成全部质量门通过；C NO-GO、D/改名/网页恢复仍分别待结案。
+
+
+## 11. Codex 追加收据（2026-10-06，D完整判定）
+
+- D五臂完整监督rc0，wall/active/cooling为2137.537/1271.703/865.834秒。
+  五臂全strict-repeat失败，原始与估算控制组排名保留；没有伪造qualified winner。
+- `0bd3d42` 强制报告实际ONECB1、formal route、完整比较后才可能选默认，16项CPU检查通过。
+  最新完整工具门禁41/41在 `final_web_policy/recovered_boundary/tools_after_policy_report.log`。
+- C/D每轮正式7个输入在 `input_snapshot/receipt.json` 中按hash备份，以便合并/改名后审计。
+  冻结b07测试工具链与df316001网页边界实现另存，未覆盖任何历史原始结果。
+- 新双盘k2 GPU/CPU短trace已监督rc0，55.861秒wall、55.129 active、.733秒冷却；
+  每臂32输出、拆分收据已生成。当前仅说明采集结束，额外verify耗时归因待独立分析。
+- Strata PR #943最新只读核对仍OPEN，无comments/reviews；原题与兼容接口保留，维护者合并待外部处理。
