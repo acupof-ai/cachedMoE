@@ -75,5 +75,9 @@ system's existing read-only mount. APST and other storage-stability settings
 stay unchanged. Physical enclosure cooling/USB4 connection checking is requested
 before a new complete comparison. Future measured attempts use a fresh directory;
 the v1 cold-start block and v2 invalid hardware-interrupted samples are retained.
-The web is being restored with the new threshold provenance; no speed default
-or draft-head change is selected.
+The web is restored and API/state/log agree on the new per-device thresholds,
+performance, dynamic 5,500 slots, dual 48/48 sources, k2/top4/ONECB/CPU routing,
+disk KV and 1M capacity. All six original files retain SHA256/mtime, without a
+browser refresh. Standard main CPU gates now pass 54/54, including the nine
+report/failure cases. [Web acceptance summary](power_profile_web_receipt.json).
+No speed default or draft-head change is selected; both owner tasks remain open.

@@ -673,4 +673,13 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   清理失败也恢复原电源；紧急清理只用拥有的进程身份。77项CPU检查及新增真实CPU所属进程清理通过。
 - 临时benchmark退出为非graceful，私有KV排空不能确认；用户原网页已先正常排空，六份原文件保持不变。
 - [ ] 等盒子散热/USB4连接检查后，完整双盘长测用新目录；保留失败样本，不将三轮补充成已完成臂。
-- [ ] 恢复新温控网页并核对日志/state/API，不刷新浏览器、不改transcript。
+- [x] 恢复新温控网页并核对日志/state/API，不刷新浏览器、不改transcript。
+
+## 24. 新温控网页恢复与CPU集成收据（2026-10-06）
+
+- [x] main 标准CPU门54/54，含新三臂报告与失败处理9个CPU案例。没有改动引擎、权重或shader。
+- [x] 实际8080 API/state/log共同确认GPU85/77、NVMe80/72、起跑60/65；performance未改变。
+  动态mask5500、双盘48/48、k2/top4、ONECB1/CPU路由、磁盘KV和1M容量均保持。
+- [x] 六份旧文件SHA/mtime保持，未刷新浏览器。公开摘要`docs/power_profile_web_receipt.json`，
+  完整本机收据`power_profiles_v2_prepared/web_restore_new_thermal_acceptance.json`。
+- 保留工作树继续§4.8/§4.9。外接盒散热/USB4连接检查问题已发出，等待答复；不是“全部任务完成”。

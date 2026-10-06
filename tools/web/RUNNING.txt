@@ -6,14 +6,18 @@ commands, its %LOCALAPPDATA% paths and its eight restart logs were all Windows, 
 every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
-STATE: LIVE, restored and verified on 2026-10-06 after rename/configuration gates.
+STATE: LIVE, restored and verified on 2026-10-06 after the USB4-interrupted power comparison.
 Policy: dynamic mask; 5500 total slots; disk KV 4 GB; 1M capacity; dual RO sources;
 k2/top4, ONECB=1, GPU_ROUTE=0 (CPU routing), one main path per target forward.
-Power/thermal: AC + performance; verified engine pauses at GPU/NVMe 80 C,
-resumes at 72 C. Guard/server/engine identities at acceptance: 4067391/4067417/4067418.
+Power/thermal: AC + performance (comparison pending). GPU pauses/resumes at 85/77 C;
+NVMe Composite at 80/72 C; start gates GPU <=60 C and NVMe <=65 C. Six configurable
+thresholds have one source in tools/runtime_defaults.py ThermalPolicy; actual values
+are logged and exposed by /api/config. Guard/server/engine identities at acceptance: 17397/17417/17418.
 These PIDs are observations, never signal targets without fresh ownership checks.
-Actual /api/config, four old histories, 24-token speculative smoke and disk save pass.
-Browser not refreshed; old transcripts/KV preserved. Receipt: docs/web_restore_receipt.json.
+Actual /api/config/state/log agree on the new thresholds and served policy; six old
+transcript/KV files retain hashes and mtimes. Browser not refreshed. Current receipt:
+docs/power_profile_web_receipt.json. The earlier numerical/smoke acceptance remains
+in docs/web_restore_receipt.json; this restart is not a new speed/quality measurement.
 
 Current restart (after stopping the owned live instance):
   python3 tools/web/launch_guarded.py --repo "$PWD" --state-dir "$PWD/build/web_mask" --spec-k 2 --gpu-route 0

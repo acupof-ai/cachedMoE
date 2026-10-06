@@ -1,0 +1,38 @@
+{
+  "status": "NEW_THERMAL_POLICY_WEB_RESTORED",
+  "checked_unix": 1791287402.6430318,
+  "source_commit_at_launch": "7d10832",
+  "power_profile": "performance",
+  "thermal_guard": {
+    "enabled": true,
+    "thresholds": {
+      "gpu_pause_c": 85.0,
+      "gpu_resume_c": 77.0,
+      "gpu_start_c": 60.0,
+      "nvme_pause_c": 80.0,
+      "nvme_resume_c": 72.0,
+      "nvme_start_c": 65.0
+    }
+  },
+  "policy": {
+    "mask_cache": "dynamic",
+    "cache_slots": 5500,
+    "read_sources": 2,
+    "speculation": {
+      "enabled": true,
+      "draft_tokens": 2,
+      "accept_top_k": 4,
+      "confidence_min": null,
+      "main_paths": 1,
+      "mtp_pinned_experts": 384
+    },
+    "kv_disk": true,
+    "max_context": 1048576
+  },
+  "original_files_unchanged": 6,
+  "browser_refreshed": false,
+  "power_default_changed": false,
+  "cpu_gates": "54/54",
+  "pending": "\u00a74.8 complete three arms after physical USB4 cooling/connection check; then \u00a74.9",
+  "raw_acceptance": "bench/results/mask_quality/power_profiles_v2_prepared/web_restore_new_thermal_acceptance.json"
+}

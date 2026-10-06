@@ -44,7 +44,11 @@ External NVMe was 74.85°C, below its pause threshold; the root cause is unprove
 A PCIe rescan restores enumeration and the RO mount. Physical cooling/connection
 checking is pending. Shared, configurable policy gates pass 73/73; the corrected
 fault receipts pass 77/77 plus one CPU-owned process case. Main tools pass 52/52.
-The incomplete data changes no power default. Draft-only FP8/subset
+The incomplete data changes no power default. The web is restored with the
+new GPU/NVMe thresholds, verified through actual API/state/log; all six old
+files retain hash/mtime and browser pages were not refreshed. Standard main
+CPU gates pass 54/54, including the nine report/failure cases.
+[New web thermal policy receipt](power_profile_web_receipt.json). Draft-only FP8/subset
 experiments are authorized but wait for the ordered power comparison.
 [Method and current receipts](power_profile_comparison.md).
 
