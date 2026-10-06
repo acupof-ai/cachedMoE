@@ -6,11 +6,15 @@ Confidence is available after draft execution, so every policy pays draft cost.
 Only prefixes of recorded proposals can be evaluated. Alternative histories and
 later routes are unknown after a policy changes an emitted token.
 """
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_defaults
 import argparse
 from collections import Counter
 import json
 import math
-from pathlib import Path
 import statistics
 
 
@@ -104,7 +108,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cycles', nargs='?')
     parser.add_argument('--plain-ms-per-token', type=float)
-    parser.add_argument('--accept-top-k', type=int, default=4)
+    parser.add_argument('--accept-top-k', type=int, default=runtime_defaults.ACCEPT_TOP_K)
     parser.add_argument('--out')
     parser.add_argument('--self-test', action='store_true')
     args = parser.parse_args()

@@ -14,11 +14,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+import runtime_defaults
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools"))
 import chat
-from hitrate_bench import BenchServer, capture_status, round_stats
+from hitrate_bench import bench_configuration, BenchServer, capture_status, round_stats
 import provenance
 from thermal_metrics import decode_timing
 
@@ -55,14 +55,16 @@ def main():
         parser.error("each configuration runs once")
     assert power_state()["power_profile"] == args.power_profile
     server_args = argparse.Namespace(
-        exe=str(args.exe.resolve()), max_context=4096, cache_gb=0, cache_slots=5500,
+        exe=str(args.exe.resolve()), max_context=runtime_defaults.BENCH_CONTEXT, cache_gb=0,
+        cache_slots=runtime_defaults.CACHE_SLOTS,
         shader_dir=args.shader_dir, require_sources=2, env=[],
         serve_arg=["--resident-only", "off", "--mask-cache", "dynamic",
-                   "--gpu-prefill-min", "16", "--allow-route-switch"])
+                   "--gpu-prefill-min", str(runtime_defaults.GPU_PREFILL_MIN), "--allow-route-switch"])
     script = json.loads(args.script.read_text())
-    server = BenchServer(server_args, str(out))
+    config = bench_configuration(server_args, str(out))
+    enc = chat.load_encoding(config.model)
+    server = BenchServer(server_args, str(out), config=config)
     pid = server.p.pid
-    enc = chat.load_encoding()
     results = []
     try:
         for name, request in policies:
@@ -80,9 +82,10 @@ def main():
             assert server.read_event()["event"] == "reset"
             begin = power_state()
             assert begin["power_profile"] == args.power_profile
-            provenance.write(arm, exe=args.exe, env=os.environ, shader_dir=args.shader_dir)
-            options = argparse.Namespace(think=False, temp=1., top_p=.95,
-                                         max_tokens=256, seed=None, system="")
+            provenance.write(arm, launch_config=server.config)
+            options = argparse.Namespace(think=False, temp=runtime_defaults.REQUEST_DEFAULTS["temperature"],
+                                         top_p=runtime_defaults.REQUEST_DEFAULTS["top_p"],
+                                         max_tokens=runtime_defaults.runtime_facts.NATIVE_MAX_TOKENS, seed=None, system="")
             client = chat.Chat(server, enc, options)
             print("ARM", name, "PID", pid, "POWER", begin, flush=True)
             chat.run_script(client, server, script, arm / "transcript.md", arm / "turns.json")

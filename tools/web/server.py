@@ -64,6 +64,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import runtime_env
+import runtime_defaults
+import provenance
 import state_paths
 
 sys.dont_write_bytecode = True
@@ -71,28 +73,24 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 REPO = os.path.dirname(os.path.dirname(HERE))
-MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
 
 # runtime/decode_layer.h: native checkpoint context, tiled index-score grid.
-K_MAX_INDEX_POSITIONS = 1 << 20           # 1,048,576
+K_MAX_INDEX_POSITIONS = runtime_defaults.MAX_CONTEXT
 # The live bf16 KV a position costs: (head_dim + index_dim) * 2 B per compressed
 # row, summed over the four kv sources at their ratios (2,2,2,1) -- 2,560 + 640.
 # docs/design.md §11's 894 B/token is the PACKED (.pkv) form of the same state.
-KV_BYTES_PER_TOKEN = 3200
+KV_BYTES_PER_TOKEN = runtime_defaults.KV_BYTES_PER_TOKEN
 # Prefill on the decode path, measured (docs/p4_kv_ux.md §8, p4_prefill_speed.md
 # §1.2: 4,133 tokens in 101.6 s). Only a seed: the real rate is measured live
 # from the `prefill` events and fed back to the UI.
-PREFILL_MS_PER_TOKEN = 24.0
+PREFILL_MS_PER_TOKEN = runtime_defaults.PREFILL_MS_PER_TOKEN
 
 EOS_TEXT = "<\uff5cend\u2581of\u2581sentence\uff5c>"
 STOP_IDS = [1]
 
 
-def reasoning_effort(value):
-    """V4.1's native reasoning budget; reject bools/floats rather than coerce."""
-    if type(value) is not int or not 1 <= value <= 100:
-        raise ValueError("Reasoning effort must be an integer from 1 to 100")
-    return value
+# Keep the existing public helper, with validation defined once for API and UI.
+reasoning_effort = runtime_defaults.reasoning_effort
 
 
 def find_mirrors(model_dir: str):
@@ -232,11 +230,10 @@ class GpuMon:
                 "hist": [[s["busy"], s["mhz"], s["disk"]] for s in hist]}
 
 
-def load_encoding():
-    """The checkpoint's own prompt renderer, exactly as tools/chat.py imports it."""
-    sys.path.insert(0, os.path.join(MODEL, "encoding"))
-    import encoding  # noqa: E402
-    return encoding
+def load_encoding(model=None):
+    model = runtime_defaults.model_directory() if model is None else model
+    return runtime_defaults.load_encoding(model)
+
 
 
 # --------------------------------------------------------------------------- serve
@@ -276,25 +273,20 @@ def request_decode_mode(body, ready):
 def web_configuration(bridge):
     """Expose the active launch policy and the host's current power mode."""
     ready = bridge.serve.ready
+    policy = runtime_defaults.request_policy()
     spec = ready.get("speculation", {})
-    try:
-        profile = subprocess.check_output(
-            ["powerprofilesctl", "get"], text=True, timeout=2).strip()
-    except (OSError, subprocess.SubprocessError):
-        profile = None
-    platform = "/sys/firmware/acpi/platform_profile"
-    try:
-        with open(platform) as source:
-            platform_profile = source.read().strip()
-    except OSError:
-        platform_profile = None
+    # This remains a live read. Configuration uniqueness does not cache power.
+    power = provenance.power_state()
     return {
         "max_context": bridge.serve.max_context,
         "ceiling": K_MAX_INDEX_POSITIONS,
         "ready": ready,
         "prefill_ms_per_token": bridge.prefill_ms_per_token,
         "kv_bytes_per_token": KV_BYTES_PER_TOKEN,
-        "model": MODEL,
+        "model": bridge.serve.config.model,
+        "request_defaults": policy["defaults"],
+        "request_constraints": policy["constraints"],
+        "effort_presets": policy["effort_presets"],
         "cmd": " ".join(bridge.serve.cmd),
         "resident_only": bridge.args.resident_only,
         "mask_cache": bridge.args.mask_cache,
@@ -302,16 +294,17 @@ def web_configuration(bridge):
         "speculation": spec,
         "speculation_resources_resident": bool(spec.get("enabled")),
         "spec_k": spec.get("draft_tokens") if spec.get("enabled") else 0,
-        "power_profile": profile,
-        "platform_profile": platform_profile,
+        "power_profile": power["power_profile"],
+        "platform_profile": power["platform_profile"],
     }
 
 class Serve:
     """The `cachedmoe serve` child: one writer, one reader thread, one turn in flight."""
 
     @staticmethod
-    def command(args):
-        cmd = [args.exe, "serve", "--model", MODEL, "--max-context", str(args.max_context)]
+    def command(args, config=None):
+        config = config or runtime_defaults.resolve_launch(args.exe, model=getattr(args, "model", None))
+        cmd = [config.exe, "serve", "--model", config.model, "--max-context", str(args.max_context)]
         if args.cache_slots:
             cmd += ["--cache-slots", str(args.cache_slots)]
         elif args.cache_gb:
@@ -347,7 +340,7 @@ class Serve:
         # `--no-mirror-auto` is the way back.
         mirrors = list(args.mirror)
         if not mirrors and not args.no_mirror_auto:
-            mirrors = find_mirrors(MODEL)
+            mirrors = find_mirrors(config.model)
             for d in mirrors:
                 print(f"web: second read source auto-detected: {d} "
                       f"(--no-mirror-auto turns this off)", flush=True)
@@ -355,14 +348,15 @@ class Serve:
             cmd += ["--mirror", d]
         return cmd
 
-    def __init__(self, args):
+    def __init__(self, args, config=None):
         self.io_lock = threading.Lock()          # one writer, including shutdown
         self.closing = False
-        cmd = self.command(args)
+        self.config = config or runtime_defaults.resolve_launch(args.exe, model=getattr(args, "model", None))
+        cmd = self.command(args, self.config)
         self.cmd = cmd
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=self.log, bufsize=0)
+                                  stderr=self.log, bufsize=0, env=self.config.environment)
         self.rpc_lock = threading.Lock()         # one non-generate round trip at a time
         self.rpc_q: queue.Queue = queue.Queue()
         self.stream_q: queue.Queue | None = None  # the in-flight turn's event sink
@@ -502,7 +496,7 @@ class ChatState:
         self.enc = enc
         self.system = system
         self.think = False
-        self.reasoning_effort = 75
+        self.reasoning_effort = runtime_defaults.REQUEST_DEFAULTS["reasoning_effort"]
         self.drop_thinking = True
         self.lock = threading.Lock()
         self.path = path     # where the transcript lives across page reloads / restarts
@@ -542,7 +536,8 @@ class ChatState:
             self.ctx_ids = d.get("ctx_ids", [])
             self.ctx_text = d.get("ctx_text", "")
             self.think = bool(d.get("think", self.think))
-            self.reasoning_effort = reasoning_effort(d.get("reasoning_effort", 75))
+            self.reasoning_effort = reasoning_effort(
+                d.get("reasoning_effort", runtime_defaults.REQUEST_DEFAULTS["reasoning_effort"]))
             # Older servers put a cancelled, unclosed thinking completion in content.
             # Reclassify only the last turn when the exact rendered prefix proves its mode.
             if self.think and len(self.messages) >= 2 and self.ctx_text:
@@ -744,9 +739,9 @@ class Bridge:
         seed = b.get("seed")
         seed = int(seed) if seed not in (None, "") else random.randrange(1 << 62)
         req = {"op": "generate", "prompt_ids": ids,
-               "max_tokens": int(b.get("max_tokens", 1024)),
-               "temperature": float(b.get("temperature", 1.0)),
-               "top_p": float(b.get("top_p", 0.95)),
+               "max_tokens": int(b.get("max_tokens", runtime_defaults.REQUEST_DEFAULTS["max_tokens"])),
+               "temperature": float(b.get("temperature", runtime_defaults.REQUEST_DEFAULTS["temperature"])),
+               "top_p": float(b.get("top_p", runtime_defaults.REQUEST_DEFAULTS["top_p"])),
                "seed": seed, "stop_ids": STOP_IDS, "session": job.session}
         if "decode_mode" in b:
             req["decode_mode"] = b["decode_mode"]
@@ -822,8 +817,10 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "cachedmoe-web"
 
+    verbose = False             # captured once at startup
+
     def log_message(self, fmt, *a):
-        if runtime_env.getenv("CACHEDMOE_WEB_VERBOSE"):
+        if self.verbose:
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % a))
 
     # -- helpers -----------------------------------------------------------
@@ -978,8 +975,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser(description="local web chat UI for `cachedmoe serve`")
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
-    ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
+    ap.add_argument("--model", default=None)
+    ap.add_argument("--port", type=int, default=runtime_defaults.WEB_PORT)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--max-context", type=int, default=K_MAX_INDEX_POSITIONS)
     ap.add_argument("--cache-gb", type=int, default=0)
@@ -996,9 +994,10 @@ def main():
     ap.add_argument("--mask-cache", choices=("dynamic", "fixed"), default="dynamic",
                     help="mask cache policy; fixed freezes the initial experts (experimental)")
     ap.add_argument("--dspark", action="store_true", help="enable DSpark main-path speculation")
-    ap.add_argument("--spec-k", type=int, choices=range(1, 6), default=5,
+    ap.add_argument("--spec-k", type=int, choices=range(1, runtime_defaults.DRAFT_BLOCK_SIZE + 1),
+                    default=runtime_defaults.DRAFT_BLOCK_SIZE,
                     help="draft tokens per cycle (native block size 5)")
-    ap.add_argument("--spec-top-k", type=int, default=4,
+    ap.add_argument("--spec-top-k", type=int, default=runtime_defaults.ACCEPT_TOP_K,
                     help="accept a draft token when it is in the target row's top K")
     ap.add_argument("--mirror", action="append", default=[],
                     help="a second read source holding the same checkpoint "
@@ -1025,9 +1024,11 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
-    enc = load_encoding()
+    config = runtime_defaults.resolve_launch(args.exe, model=args.model)
+    enc = load_encoding(config.model)
+    Handler.verbose = bool(runtime_env.getenv("WEB_VERBOSE", environ=config.environment))
     print(f"starting cachedmoe serve (log: {args.log}) ...", flush=True)
-    serve = Serve(args)
+    serve = Serve(args, config=config)
     r = serve.ready
     print(f"ready in {r['load_s']:.1f} s | expert cache {r['cache_gb']:.1f} GiB "
           f"({r['cache_slots']} slots) | max_context {serve.max_context} "

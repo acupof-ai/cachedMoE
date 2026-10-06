@@ -18,11 +18,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+import runtime_defaults
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools"))
 import chat
-from hitrate_bench import BenchServer, capture_status, round_stats
+from hitrate_bench import bench_configuration, BenchServer, capture_status, round_stats
 import provenance
 from thermal_metrics import decode_timing
 
@@ -87,20 +87,9 @@ def save_json(path, value):
 
 def startup_environment(inherited, requested):
     """Initialize the complete resource set and validate effective CLI aliases."""
-    startup = dict(CACHEDMOE_DSPARK_ONECB="1", CACHEDMOE_BATCH_GPU_ROUTE="1",
-                   CACHEDMOE_DSPARK_MEGA="0", CACHEDMOE_DSPARK_PROFILE="0",
-                   CACHEDMOE_DSPARK_TRIM_TAIL="1", CACHEDMOE_SPEC_GPU_READOUT="1",
-                   CACHEDMOE_MASK_DYNAMIC_LRU="1", CACHEDMOE_IO_ENGRAM_DEADLINE="0",
-                   CACHEDMOE_SPEC_DIAGNOSTICS="")
-    env = dict(inherited)
-    runtime_env.apply_overrides(env, startup)
-    overrides = {}
-    for item in requested:
-        if "=" not in item:
-            raise ValueError("--env requires KEY=VALUE")
-        key, value = item.split("=", 1)
-        overrides[key] = value
-    runtime_env.apply_overrides(env, overrides)
+    startup = runtime_defaults.profile_controls("spec-resources")
+    env = runtime_defaults.profile_environment(
+        "spec-resources", inherited, overrides=runtime_defaults.parse_environment(requested))
     for key, expected in startup.items():
         selected = runtime_env.resolve(key, env)
         if key != "CACHEDMOE_SPEC_DIAGNOSTICS" and selected.value != expected:
@@ -143,21 +132,23 @@ def main():
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     server_args = argparse.Namespace(
-        exe=str(args.exe.resolve()), max_context=4096, cache_gb=0, cache_slots=5500,
+        exe=str(args.exe.resolve()), max_context=runtime_defaults.BENCH_CONTEXT, cache_gb=0,
+        cache_slots=runtime_defaults.CACHE_SLOTS,
         shader_dir=args.shader_dir, require_sources=2,
         env=[f"{key}={value}" for key, value in engine_env.items()
              if runtime_env.is_control(key) or os.environ.get(key) != value],
         serve_arg=["--resident-only", "mask", "--mask-cache", "dynamic",
-                   "--gpu-prefill-min", "16", "--dspark", "--spec-k", "5",
-                   "--spec-top-k", "4", "--allow-spec-switch", *args.serve_arg])
+                   "--gpu-prefill-min", str(runtime_defaults.GPU_PREFILL_MIN), "--dspark", "--spec-k", str(runtime_defaults.DRAFT_BLOCK_SIZE),
+                   "--spec-top-k", str(runtime_defaults.ACCEPT_TOP_K), "--allow-spec-switch", *args.serve_arg])
     script = json.loads(args.script.read_text())
-    encoding = chat.load_encoding()
-    server = BenchServer(server_args, str(out))
+    config = bench_configuration(server_args, str(out))
+    encoding = chat.load_encoding(config.model)
+    server = BenchServer(server_args, str(out), config=config)
     pid = server.p.pid
     results, route_selection = [], None
     try:
         ready = server.ready.get("speculation", {})
-        if not ready.get("enabled") or ready.get("draft_tokens") != 5:
+        if not ready.get("enabled") or ready.get("draft_tokens") != runtime_defaults.DRAFT_BLOCK_SIZE:
             raise RuntimeError("startup did not initialize k=5 DSpark")
         for name, k, variant in policies:
             onecb, route = variant != "serial", variant == "gpu"
@@ -177,18 +168,19 @@ def main():
             if policy.get("event") != "spec_config" or any(
                     policy.get(key) != request[key] for key in ("draft_tokens", "onecb", "gpu_route")):
                 raise RuntimeError(policy)
-            if policy.get("main_paths") != 1 or policy.get("accept_top_k") != 4:
+            if policy.get("main_paths") != 1 or policy.get("accept_top_k") != runtime_defaults.ACCEPT_TOP_K:
                 raise RuntimeError("verification policy changed")
             start_power = provenance.power_state()
             if start_power["power_profile"] != args.power_profile:
                 raise RuntimeError("power profile changed between arms")
-            provenance.write(arm, exe=args.exe, env=runtime_env, shader_dir=args.shader_dir)
+            provenance.write(arm, launch_config=server.config)
             save_json(arm / "startup.json", dict(ready=server.ready, policy=policy,
                                                 command=server.cmd, engine_pid=pid))
             status_before = capture_status(server, str(arm))
             save_json(arm / "status_before.json", status_before)
-            options = argparse.Namespace(think=False, temp=1., top_p=.95,
-                                         max_tokens=256, seed=None, system="")
+            options = argparse.Namespace(think=False, temp=runtime_defaults.REQUEST_DEFAULTS["temperature"],
+                                         top_p=runtime_defaults.REQUEST_DEFAULTS["top_p"],
+                                         max_tokens=runtime_defaults.runtime_facts.NATIVE_MAX_TOKENS, seed=None, system="")
             client = chat.Chat(server, encoding, options)
             print("ARM", name, "PID", pid, "POLICY", policy, flush=True)
             chat.run_script(client, server, script, arm / "transcript.md", arm / "turns.json")

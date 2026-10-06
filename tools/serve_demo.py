@@ -21,15 +21,15 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import runtime_env
+import runtime_defaults
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
 
 
 class Server:
     def __init__(self, args):
-        cmd = [args.exe, "serve", "--model", MODEL, "--max-context", "8192",
+        self.config = runtime_defaults.resolve_launch(args.exe)
+        cmd = [self.config.exe, "serve", "--model", self.config.model, "--max-context", "8192",
                "--max-parked", str(args.max_parked)]
         if args.cache_gb:
             cmd += ["--cache-gb", str(args.cache_gb)]
@@ -45,7 +45,7 @@ class Server:
         self.log = open(args.log, "ab")
         self.out = open(args.out, "w", encoding="utf-8") if args.out else None
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=self.log, bufsize=0)
+                                  stderr=self.log, bufsize=0, env=self.config.environment)
         self.t0 = time.time()
 
     def send(self, obj):
@@ -114,7 +114,7 @@ def table():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
+    ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
     ap.add_argument("--cache-gb", type=int, default=16)
     ap.add_argument("--max-parked", type=int, default=1,
                     help="parked sessions kept in memory; with three sessions, 1 means the third "

@@ -39,9 +39,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+import runtime_defaults
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools"))
 from trace_timeline import Trace  # noqa: E402
 import provenance  # noqa: E402
 
@@ -49,8 +49,7 @@ EXPERT_MAT = 5_898_240 + 368_640          # model/layout.h: one fp4 matrix + its
 EXPERT_SLOT = 18_808_832                  # one routed expert as read from disk
 TOPK = 6
 LEDGER = ROOT / "bench" / "results" / "perf_ledger.jsonl"
-DEFAULT_MODEL = (runtime_env.getenv("CACHEDMOE_MODEL_DIR")
-                 or os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))
+DEFAULT_MODEL = runtime_defaults.model_directory(empty_fallback=True, windows=False)
 
 # stage name -> the manifest tensor prefixes (under layers.L.) it streams.
 STAGE_TENSORS = {
@@ -106,7 +105,7 @@ def stage_bytes(man: dict[str, int], name: str, layer: int, has_se: bool) -> int
 
 
 def capture(model_dir: str, warm: int, out: Path, extra_env: dict[str, str]) -> None:
-    exe = ROOT / "build" / ("cachedmoe.exe" if os.name == "nt" else "cachedmoe")
+    exe = Path(runtime_defaults.executable(ROOT))
     cmd = [str(exe), "run", "--model", model_dir, "--steps", "1", "--warm", str(warm),
            "--trace", str(out)]
     env = dict(os.environ)

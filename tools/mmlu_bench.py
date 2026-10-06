@@ -6,11 +6,15 @@ Exact GPU prefill of all but the final prompt token, then extend by that token
 through single-position forward so the answer distribution exercises miss mask.
 Expert cache stays warm between questions; KV resets. This is a zero-shot sample, not the canonical full 5-shot score.
 """
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runtime_defaults
 import argparse
 import json
 import math
 import re
-from pathlib import Path
 import time
 
 import chat
@@ -45,14 +49,13 @@ def main():
                     help='generate Answer: X, so speculative acceptance participates in the answer')
     ap.add_argument('--max-tokens', type=int, default=16)
     ap.add_argument('--spec-k', type=int, default=2)
-    ap.add_argument('--spec-top-k', type=int, default=4)
+    ap.add_argument('--spec-top-k', type=int, default=runtime_defaults.ACCEPT_TOP_K)
     ap.add_argument('--cache-slots', type=int, default=0)
-    ap.add_argument('--exe', default=str(Path(chat.REPO) / 'build/cachedmoe'),
+    ap.add_argument('--exe', default=runtime_defaults.executable(chat.REPO, windows=False),
                     help='engine from the isolated worktree under evaluation')
     args = ap.parse_args()
     sample = json.loads(Path(args.sample).read_text())
     rows = sample['rows'][:args.limit or None]
-    enc = chat.load_encoding()
     summaries = []
     for mode in args.modes.split(','):
         speculative = mode.endswith('-spec')
@@ -62,12 +65,14 @@ def main():
         out = Path(args.out) / mode
         out.mkdir(parents=True, exist_ok=True)
         opts = argparse.Namespace(exe=args.exe,
-            max_context=4096, cache_gb=0, cache_slots=args.cache_slots, shader_dir='', env=[], require_sources=args.require_sources,
+            max_context=runtime_defaults.BENCH_CONTEXT, cache_gb=0, cache_slots=args.cache_slots, shader_dir='', env=[], require_sources=args.require_sources,
             serve_arg=['--resident-only', resident_mode, '--gpu-prefill-min', '1',
                        '--gpu-prefill-speedup', '0'])
         if speculative:
             opts.serve_arg += ['--dspark', '--spec-k', str(args.spec_k), '--spec-top-k', str(args.spec_top_k)]
-        server = hitrate_bench.BenchServer(opts, str(out))
+        config = hitrate_bench.bench_configuration(opts, str(out))
+        enc = chat.load_encoding(config.model)
+        server = hitrate_bench.BenchServer(opts, str(out), config=config)
         server.send({'op': 'score_tokens', 'token_ids': [0]})
         if server.read_event().get('event') != 'error':
             server.close()

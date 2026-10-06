@@ -86,6 +86,7 @@ import time
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import runtime_defaults
 
 import oracle  # noqa: E402
 
@@ -525,7 +526,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("phase", choices=["prefill", "steps", "greedy"])
-    p.add_argument("--model", default=(r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
+    p.add_argument("--model", default=runtime_defaults.model_fallback())
     p.add_argument("--manifest", default=None)
     p.add_argument("--out", default="traces/l3_64")
     p.add_argument("--prompt-tokens", type=int, default=64)

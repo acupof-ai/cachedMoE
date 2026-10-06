@@ -24,6 +24,10 @@ import re
 import statistics
 import subprocess
 import sys
+
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runtime_defaults
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -145,8 +149,8 @@ def main() -> int:
     ap.add_argument("--weights", default="", help="CACHEDMOE_MIRROR_WEIGHTS, e.g. 4.6;1.0")
     ap.add_argument("--pairs", type=int, default=3)
     ap.add_argument("--cache-slots", type=int, default=5100)
-    ap.add_argument("--max-context", type=int, default=4096)
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
+    ap.add_argument("--max-context", type=int, default=runtime_defaults.BENCH_CONTEXT)
+    ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
     ap.add_argument("--env", action="append", default=[])
     ap.add_argument("--arm-env", action="store_true",
                     help="both arms run WITH --mirror; the arms differ only by "

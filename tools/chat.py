@@ -36,25 +36,25 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import runtime_env
+import runtime_defaults
 
 sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
 
 DIM, RESET_C, CYAN, YELLOW = "\033[2m", "\033[0m", "\033[36m", "\033[33m"
 
 
-def load_encoding():
-    sys.path.insert(0, os.path.join(MODEL, "encoding"))
-    import encoding  # noqa: E402
-    return encoding
+def load_encoding(model=None):
+    model = runtime_defaults.model_directory() if model is None else model
+    return runtime_defaults.load_encoding(model)
+
 
 
 class Server:
-    def __init__(self, args):
-        exe = args.exe
-        cmd = [exe, "serve", "--model", MODEL, "--max-context", str(args.max_context)]
+    def __init__(self, args, config=None):
+        self.config = config or runtime_defaults.resolve_launch(args.exe, model=getattr(args, "model", None))
+        exe = self.config.exe
+        cmd = [exe, "serve", "--model", self.config.model, "--max-context", str(args.max_context)]
         if getattr(args, "cache_slots", 0):
             cmd += ["--cache-slots", str(args.cache_slots)]
         elif args.cache_gb:
@@ -69,7 +69,7 @@ class Server:
                 cmd += ["--kv-max-gb", str(args.kv_max_gb)]
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=self.log, bufsize=0)
+                                  stderr=self.log, bufsize=0, env=self.config.environment)
         self.ready = self.read_event()
         if self.ready.get("event") != "ready":
             raise SystemExit(f"server did not start: {self.ready}")
@@ -320,16 +320,17 @@ def run_script(chat, server, script, transcript_path, stats_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
+    ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
+    ap.add_argument("--model", default=None)
     ap.add_argument("--think", action="store_true")
-    ap.add_argument("--temp", type=float, default=1.0)
-    ap.add_argument("--top-p", type=float, default=0.95)
-    ap.add_argument("--max-tokens", type=int, default=1024)
+    ap.add_argument("--temp", type=float, default=runtime_defaults.REQUEST_DEFAULTS["temperature"])
+    ap.add_argument("--top-p", type=float, default=runtime_defaults.REQUEST_DEFAULTS["top_p"])
+    ap.add_argument("--max-tokens", type=int, default=runtime_defaults.REQUEST_DEFAULTS["max_tokens"])
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--system", default="")
     ap.add_argument("--cache-gb", type=int, default=0)
     ap.add_argument("--cache-slots", type=int, default=0, help="expert cache slots (5711 ~ 100 GiB)")
-    ap.add_argument("--max-context", type=int, default=4096)
+    ap.add_argument("--max-context", type=int, default=runtime_defaults.BENCH_CONTEXT)
     ap.add_argument("--gpu-prefill-min", type=int, default=0)
     ap.add_argument("--check-topk", action="store_true")
     ap.add_argument("--kv-dir", default="", help="directory for the SSD parked-session/prefix KV cache")
@@ -348,9 +349,10 @@ def main():
     if os.name == "nt":
         os.system("")   # enable ANSI escapes on the Windows console
 
-    enc = load_encoding()
+    config = runtime_defaults.resolve_launch(args.exe, model=args.model)
+    enc = load_encoding(config.model)
     print(f"starting cachedmoe serve (log: {args.log}) ...", flush=True)
-    server = Server(args)
+    server = Server(args, config=config)
     r = server.ready
     print(f"ready in {r['load_s']:.1f} s: expert cache {r['cache_gb']:.1f} GiB ({r['cache_slots']} slots), "
           f"context {r['max_context']}", flush=True)

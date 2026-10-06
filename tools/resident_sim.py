@@ -37,6 +37,11 @@ Usage:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runtime_defaults
+
 import argparse
 import glob
 import json
@@ -48,7 +53,7 @@ import numpy as np
 EXPERT_BYTES = 18_800_640
 N_ROUTED_PER_LAYER = 384
 TOPK = 6                       # config.json text_config.num_experts_per_tok
-DSPARK_BLOCK = 5               # config.json text_config.dspark_block_size
+DSPARK_BLOCK = runtime_defaults.DRAFT_BLOCK_SIZE               # config.json text_config.dspark_block_size
 
 
 # --------------------------------------------------------------------------- #
@@ -402,7 +407,7 @@ def main():
                    help="experts the drive lands per 80 ms step (4.5 GB/s / 18.8 MB)")
     p.add_argument("--queue-cap", type=int, default=2048)
     p.add_argument("--accepted-per-block", type=float, default=3.7)
-    p.add_argument("--model-config", default=r"D:\models\DeepSeek-V4.1-Flash\config.json")
+    p.add_argument("--model-config", default=runtime_defaults.model_fallback(windows=True) + r"\config.json")
     p.add_argument("--out", default=None, help="directory for the JSON results")
     p.add_argument("--tag", default="resident_sim")
     args = p.parse_args()

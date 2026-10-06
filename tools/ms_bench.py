@@ -30,18 +30,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+import runtime_defaults
 
 sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO, "tools"))
 import chat  # noqa: E402
+
+
+def launch_configuration(args, out_dir, inherited=None):
+    env = dict(os.environ if inherited is None else inherited)
+    runtime_env.apply_overrides(env, runtime_defaults.parse_environment(args.env))
+    if args.route_dump:
+        runtime_env.set_value(env, "ROUTE_DUMP", os.path.join(out_dir, "route.bin"))
+    return runtime_defaults.resolve_launch(
+        args.exe, env, model=runtime_defaults.cli_value(args.serve_arg, "--model"))
 
 
 class Server:
     """chat.Server's protocol, with a free-form command line and an event log."""
 
-    def __init__(self, args, out_dir, n_streams):
-        cmd = [args.exe, "serve", "--model", chat.MODEL,
+    def __init__(self, args, out_dir, n_streams, config=None):
+        self.config = config or launch_configuration(args, out_dir)
+        env = self.config.environment
+        cmd = [self.config.exe, "serve", "--model", self.config.model,
                "--max-context", str(args.max_context),
                "--engram-tables", os.path.join(REPO, "tests", "data", "l3"),
                "--profile", os.path.join(out_dir, "profile.jsonl"),
@@ -55,10 +66,6 @@ class Server:
         if args.sched in ("pipeline", "interleave", "pingpong"):
             cmd += ["--ms-sched", args.sched]
         cmd += args.serve_arg
-        env = dict(os.environ)
-        runtime_env.apply_overrides(env, dict(kv.split("=", 1) for kv in args.env))
-        if args.route_dump:
-            runtime_env.set_value(env, "CACHEDMOE_ROUTE_DUMP", os.path.join(out_dir, "route.bin"))
         for f in ("profile.jsonl", "route.bin", "events.jsonl"):
             p = os.path.join(out_dir, f)
             if os.path.exists(p):
@@ -155,10 +162,10 @@ def main() -> int:
     ap.add_argument("--script", action="append", required=True,
                     help="one chat script per stream; repeat the flag")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
+    ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
     ap.add_argument("--cache-gb", type=int, default=0)
     ap.add_argument("--cache-slots", type=int, default=0)
-    ap.add_argument("--max-context", type=int, default=4096)
+    ap.add_argument("--max-context", type=int, default=runtime_defaults.BENCH_CONTEXT)
     ap.add_argument("--turns", type=int, default=0, help="only the first N turns of each script")
     ap.add_argument("--warm-cache", action="store_true")
     ap.add_argument("--route-dump", action="store_true")
@@ -181,8 +188,9 @@ def main() -> int:
     os.makedirs(args.out, exist_ok=True)
     scripts = [json.load(open(p, encoding="utf-8")) for p in args.script]
     n = len(scripts)
-    enc = chat.load_encoding()
-    server = Server(args, args.out, n)
+    config = launch_configuration(args, args.out)
+    enc = chat.load_encoding(config.model)
+    server = Server(args, args.out, n, config=config)
     print("ready: " + json.dumps(server.ready), flush=True)
     convs = [Conversation(server, enc, sc, os.path.basename(p))
              for sc, p in zip(scripts, args.script)]

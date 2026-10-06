@@ -4,10 +4,14 @@
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_defaults
+
 import argparse
 import json
 import os
-import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config_sweep as cs  # noqa: E402
@@ -20,7 +24,7 @@ def main() -> int:
     ap.add_argument("--slots", type=int, default=4500)
     ap.add_argument("--tokens", type=int, default=24)
     ap.add_argument("--turns", type=int, default=4)
-    ap.add_argument("--max-context", type=int, default=4096)
+    ap.add_argument("--max-context", type=int, default=runtime_defaults.BENCH_CONTEXT)
     ap.add_argument("--reheat", action="store_true")
     ap.add_argument("--out", default="")
     args = ap.parse_args()

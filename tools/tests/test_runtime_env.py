@@ -139,7 +139,7 @@ class RuntimeEnvironment(unittest.TestCase):
             env.update(controls)
             child = subprocess.run([sys.executable, "-c",
                                     f"import sys; sys.path.insert(0, {str(ROOT / 'tools')!r}); "
-                                    "import chat; print(repr(chat.MODEL))"],
+                                    "import runtime_defaults; print(repr(runtime_defaults.resolve_launch().model))"],
                                    env=env, capture_output=True, text=True)
             self.assertEqual(child.returncode, 0, child.stderr)
             self.assertEqual(child.stdout.strip(), repr(expected))

@@ -5,11 +5,15 @@ LRU is a fixed-route, synchronous-fill sensitivity model. It omits background
 fills, execution guards, and the change in routing caused by a different mask.
 It is not an engine replay or a speed/quality prediction.
 """
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_defaults
 import argparse
 from collections import OrderedDict, Counter
 import json
 import math
-from pathlib import Path
 
 EXPERT_BYTES = 18_800_640
 
@@ -201,7 +205,7 @@ def self_test():
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('trace',nargs='?');ap.add_argument('--out');ap.add_argument('--accept-top-k',type=int,default=4)
+    ap.add_argument('trace',nargs='?');ap.add_argument('--out');ap.add_argument('--accept-top-k',type=int,default=runtime_defaults.ACCEPT_TOP_K)
     ap.add_argument('--self-test',action='store_true')
     ap.add_argument('--verify-trace',help='target --trace binary from the same job')
     args=ap.parse_args()

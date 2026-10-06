@@ -8,7 +8,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import Mock, patch
 
 import server
 
@@ -38,12 +38,12 @@ def bridge_without_worker(policy):
 class DecodeModes(unittest.TestCase):
     def test_config_separates_resident_resources_and_selectable_modes(self):
         bridge = SimpleNamespace(
-            serve=SimpleNamespace(ready=ready(), max_context=64, cmd=["mock"]),
+            serve=SimpleNamespace(config=SimpleNamespace(model="/selected/model"), ready=ready(), max_context=64, cmd=["mock"]),
             args=SimpleNamespace(resident_only="mask", mask_cache="dynamic"),
             prefill_ms_per_token=100,
         )
         with patch.object(server.subprocess, "check_output", return_value="performance"), \
-                patch("builtins.open", mock_open(read_data="performance")):
+                patch.object(server.provenance, "_read", return_value="performance"):
             config = server.web_configuration(bridge)
         self.assertEqual(config["decode_modes"], ready()["decode_modes"])
         self.assertTrue(config["speculation_resources_resident"])

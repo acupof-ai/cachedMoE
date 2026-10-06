@@ -39,13 +39,12 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import runtime_env
+import runtime_defaults
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO, "tools"))
 sys.dont_write_bytecode = True
 
-MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
+MODEL = runtime_defaults.model_directory()
 
 
 def fnv64(ids):
@@ -177,7 +176,7 @@ def run_cpp(exe, texts):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
+    ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
     ap.add_argument("--write-golden", action="store_true")
     ap.add_argument("--quick", action="store_true", help="skip the code point sweep and the corpus")
     ap.add_argument("--fuzz", type=int, default=20000)

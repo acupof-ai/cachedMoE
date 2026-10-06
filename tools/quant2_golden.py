@@ -41,13 +41,14 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import runtime_defaults
 
 import quant2_common as q2                                     # noqa: E402
 from quant2_l1 import SCHEMES                                  # noqa: E402
 
 MAGIC = 0x51_32_47_31                                          # "Q2G1"
 VERSION = 1
-MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))
+MODEL = runtime_defaults.model_fallback()
 DIM, INTER = 5120, 2304
 
 # A slice, not a whole expert: a full 2-bit expert is 9.95 MB and the directory

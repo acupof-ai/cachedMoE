@@ -42,7 +42,7 @@ class WebSettings(unittest.TestCase):
 
     def test_constructor_initializes_closing_before_launch(self):
         serve = server.Serve.__new__(server.Serve)
-        args = SimpleNamespace(log=None, max_context=64)
+        args = SimpleNamespace(exe="mock-no-process", log=None, max_context=64)
 
         def start(*unused, **kwargs):
             self.assertFalse(serve.closing)
@@ -134,12 +134,12 @@ class WebSettings(unittest.TestCase):
     def test_config_reports_active_speculation_and_current_power(self):
         bridge = SimpleNamespace(
             args=SimpleNamespace(resident_only="mask", mask_cache="dynamic"),
-            serve=SimpleNamespace(max_context=1 << 20, cmd=["cachedmoe", "serve"],
+            serve=SimpleNamespace(config=SimpleNamespace(model="/selected/model"), max_context=1 << 20, cmd=["cachedmoe", "serve"],
                 ready={"speculation": {"enabled": True, "draft_tokens": 2,
                                        "accept_top_k": 4}}),
             prefill_ms_per_token=100)
         with patch.object(server.subprocess, "check_output", return_value="performance\n"), \
-                patch("builtins.open", mock_open(read_data="performance\n")):
+                patch.object(server.provenance, "_read", return_value="performance"):
             config = server.web_configuration(bridge)
         self.assertEqual(config["resident_only"], "mask")
         self.assertEqual(config["mask_cache"], "dynamic")
@@ -148,7 +148,7 @@ class WebSettings(unittest.TestCase):
         self.assertEqual(config["platform_profile"], "performance")
         bridge.serve.ready["speculation"]["enabled"] = False
         with patch.object(server.subprocess, "check_output", side_effect=OSError), \
-                patch("builtins.open", side_effect=OSError):
+                patch.object(server.provenance, "_read", return_value=None):
             plain = server.web_configuration(bridge)
         self.assertEqual(plain["spec_k"], 0)
         self.assertIsNone(plain["power_profile"])

@@ -5,9 +5,13 @@ All demand misses are admitted instantly, as in the existing cache simulator.
 This omits asynchronous fill lag and output feedback. Wait counts identify
 candidates; elapsed-time estimates are bounds, not predicted GPU throughput.
 """
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import runtime_defaults
 import argparse
 import json
-from pathlib import Path
 import numpy as np
 from cache_sim import LRU
 from mask_freeze_sim import weighted_trace
@@ -56,7 +60,7 @@ def scan(ids, weights, capacity, taus):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--trace', required=True, type=Path)
-    p.add_argument('--slots', type=int, default=5500)
+    p.add_argument('--slots', type=int, default=runtime_defaults.CACHE_SLOTS)
     p.add_argument('--taus', default='1,.30,.20,.15,.10,.05')
     p.add_argument('--json', required=True, type=Path)
     args = p.parse_args()

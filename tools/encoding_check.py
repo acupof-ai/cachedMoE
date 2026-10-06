@@ -14,7 +14,6 @@ written under the model directory (bytecode writing is disabled).
 from __future__ import annotations
 
 import importlib.util
-import itertools
 import os
 import re
 import sys
@@ -24,10 +23,10 @@ import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import runtime_env
+import runtime_defaults
 
 sys.dont_write_bytecode = True
-MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
+MODEL = runtime_defaults.model_directory()
 
 
 class _Raises:

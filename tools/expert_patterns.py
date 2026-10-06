@@ -1,4 +1,4 @@
-﻿import json, os, sys, math
+﻿import json, os, sys
 import numpy as np
 import state_paths
 REPO = state_paths.windows_checkout_path("build", "p4-integ")

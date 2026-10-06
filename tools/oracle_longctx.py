@@ -81,13 +81,14 @@ import torch
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+import runtime_defaults
 from process_names import is_gpu_process
 
 import corpus as corpus_mod  # noqa: E402
 import dsref  # noqa: E402
 import oracle  # noqa: E402
 
-DEFAULT_MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))
+DEFAULT_MODEL = runtime_defaults.model_fallback()
 DEFAULT_TRACES = os.path.join(REPO, "traces", "longctx")
 DEFAULT_DATA = os.path.join(REPO, "tests", "data", "longctx")
 PROBE_LAYERS = (0, 2, 13, 14, 20, 39)

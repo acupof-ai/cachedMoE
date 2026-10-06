@@ -53,17 +53,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import struct
 import sys
+
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runtime_defaults
 import time
 
 import numpy as np
 
 sys.dont_write_bytecode = True
 
-P_BLOCK = 5
+P_BLOCK = runtime_defaults.DRAFT_BLOCK_SIZE
 LANES = 16
 LN2 = 0.6931471805599453
 SQRT_HALF = 0.7071067811865476
@@ -571,7 +574,7 @@ def _lse_f64(B: np.ndarray) -> np.ndarray:
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TRACES = os.path.join(REPO, "traces", "dspark_tree")
-DEFAULT_MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))
+DEFAULT_MODEL = runtime_defaults.model_fallback()
 KS = (4, 8, 16, 32)
 KV = 32
 

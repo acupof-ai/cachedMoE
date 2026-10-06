@@ -20,11 +20,11 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import runtime_env
+import runtime_defaults
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_EXE = os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe")
-DEFAULT_MODEL = runtime_env.getenv("CACHEDMOE_MODEL_DIR", (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash")))
+DEFAULT_EXE = runtime_defaults.executable(REPO)
+DEFAULT_MODEL = runtime_defaults.model_directory()
 
 
 class Server:
@@ -67,7 +67,7 @@ def main() -> int:
     ap.add_argument("--exe", default=DEFAULT_EXE)
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--cache-slots", type=int, default=3000)
-    ap.add_argument("--max-context", type=int, default=4096)
+    ap.add_argument("--max-context", type=int, default=runtime_defaults.BENCH_CONTEXT)
     ap.add_argument("--tokens", type=int, default=24, help="tokens per turn")
     ap.add_argument("--decay", type=float, default=0.5)
     ap.add_argument("--prompt-a", default="Explain how a Vulkan timeline semaphore orders "

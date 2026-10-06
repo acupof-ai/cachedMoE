@@ -91,9 +91,9 @@ footer{border-top:1px solid var(--line);background:var(--card);padding:9px 14px}
 <header>
   <b>cachedMoE</b>
   <label>Session <input id="sess" size="10" value="web"></label>
-  <label>Temperature <input id="temp" type="number" step="0.05" min="0" max="2" value="1.0"></label>
-  <label>top_p <input id="topp" type="number" step="0.01" min="0" max="1" value="0.95"></label>
-  <label>Max tokens <input id="maxtok" type="number" min="1" max="8192" value="1024"></label>
+  <label>Temperature <input id="temp" type="number" disabled></label>
+  <label>top_p <input id="topp" type="number" disabled></label>
+  <label>Max tokens <input id="maxtok" type="number" disabled></label>
   <label>Seed <input id="seed" size="6" placeholder="Random"></label>
   <label>Decode <select id="decode_mode" disabled>
     <option value="">Engine default</option>
@@ -101,11 +101,9 @@ footer{border-top:1px solid var(--line);background:var(--card);padding:9px 14px}
   <small>Applies to new computation. Start a new chat for an exact history.</small>
   <label><input id="think" type="checkbox"> Thinking</label>
   <label>effort <select id="effort" disabled>
-    <option value="50">Low · 50</option><option value="75" selected>High · 75</option>
-    <option value="100">Max · 100</option><option value="custom">Custom</option>
   </select></label>
   <label id="effort_custom_label" hidden>Budget <input id="effort_custom" type="number"
-    min="1" max="100" step="1" value="75" size="3" disabled></label>
+    size="3" disabled></label>
   <label><input id="hover" type="checkbox"> Token probabilities</label>
   <button id="newconv">New chat</button>
 </header>
@@ -365,6 +363,25 @@ function configureDecodeModes(policy){
   select.value = policy.default || "";
   select.disabled = !selectable;
 }
+function configureRequestPolicy(config){
+  const controls = {temperature:"temp", top_p:"topp", max_tokens:"maxtok",
+                    reasoning_effort:"effort_custom"};
+  for (const [key, id] of Object.entries(controls)){
+    const input = $(id), bounds = config.request_constraints[key];
+    for (const attribute of ["min", "max", "step"]) input[attribute] = bounds[attribute];
+    input.value = config.request_defaults[key];
+    input.disabled = false;
+  }
+  const select = $("effort");
+  select.replaceChildren();
+  for (const preset of config.effort_presets) select.add(new Option(preset.label, preset.value));
+  select.add(new Option("Custom", "custom"));
+  select.value = String(config.request_defaults.reasoning_effort);
+  if (!config.effort_presets.some(p => p.value === config.request_defaults.reasoning_effort))
+    select.value = "custom";
+  updateEffort();
+  $("send").disabled = false;
+}
 async function loadConfig(){
   CFG = await (await fetch("/api/config")).json();
   $("s_ctx").textContent = "0 / " + CFG.max_context.toLocaleString();
@@ -372,6 +389,7 @@ async function loadConfig(){
   $("s_spec").textContent = spec.enabled
     ? "k=" + spec.draft_tokens + " / top-K=" + spec.accept_top_k : "Off";
   configureDecodeModes(CFG.decode_modes || {});
+  configureRequestPolicy(CFG);
   note("Engine ready: max context " + CFG.max_context.toLocaleString()
      + "; capacity limit " + CFG.ceiling.toLocaleString() + " token");
   refreshStatus();
@@ -451,6 +469,7 @@ function schedulePreview(){
   previewTimer = setTimeout(preview, n > 200000 ? 900 : 350);
 }
 async function preview(){
+  if (!CFG) return;
   const text = $("box").value;
   if (!text.trim()){ $("count").textContent = "0 characters"; $("count").className=""; lastPreview=null; return; }
   try{
@@ -504,8 +523,8 @@ async function loadHistory(){
     }
     if (msgs.length) note("Restored " + msgs.filter(m => m.role === "user").length + " turns");
     if (typeof h.think === "boolean") $("think").checked = h.think;
-    const effort = h.reasoning_effort || 75;
-    $("effort").value = [50,75,100].includes(effort) ? String(effort) : "custom";
+    const effort = h.reasoning_effort ?? CFG.request_defaults.reasoning_effort;
+    $("effort").value = CFG.effort_presets.some(p => p.value === effort) ? String(effort) : "custom";
     $("effort_custom").value = effort;
     updateEffort();
   }catch(e){ note("Could not load history: " + e, true); }
@@ -523,12 +542,13 @@ function chatRequest(text, thinking, effort){
   return request;
 }
 async function send(){
-  if (running) return;
+  if (running || !CFG) return;
   const text = $("box").value;
   if (!text.trim()) return;
   const effort = effortValue();
-  if (!Number.isInteger(effort) || effort < 1 || effort > 100){
-    note("Reasoning effort must be an integer from 1 to 100", true); return;
+  const bounds = CFG.request_constraints.reasoning_effort;
+  if (!Number.isInteger(effort) || effort < bounds.min || effort > bounds.max){
+    note(`Reasoning effort must be an integer from ${bounds.min} to ${bounds.max}`, true); return;
   }
   if (lastPreview && lastPreview.over) return;
   if (lastPreview && lastPreview.to_prefill >= 20000 &&
@@ -661,16 +681,15 @@ function effortValue(){
   return Number($("effort").value === "custom" ? $("effort_custom").value : $("effort").value);
 }
 function updateEffort(){
-  $("effort").disabled = !$("think").checked;
+  $("effort").disabled = !CFG || !$("think").checked;
   $("effort_custom_label").hidden = $("effort").value !== "custom";
-  $("effort_custom").disabled = !$("think").checked;
+  $("effort_custom").disabled = !CFG || !$("think").checked;
 }
 $("think").addEventListener("change", () => { updateEffort(); schedulePreview(); });
 $("effort").addEventListener("change", () => { updateEffort(); schedulePreview(); });
 $("effort_custom").addEventListener("input", schedulePreview);
 setInterval(() => { if (!running) refreshStatus(); }, 5000);
-loadConfig();
-loadHistory();
+loadConfig().then(loadHistory).catch(e => note("Configuration unavailable: " + e.message, true));
 </script>
 </body>
 </html>

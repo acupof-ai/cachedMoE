@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+import runtime_defaults
 from process_names import is_gpu_process
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,12 +155,13 @@ def idle_check(seconds: float = 1.0) -> dict:
 
 
 def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = None,
-            shader_dir: str | os.PathLike | None = None) -> dict:
+            shader_dir: str | os.PathLike | None = None,
+            launch_config: runtime_defaults.LaunchConfig | None = None) -> dict:
     """`env` is the environment the engine runs with (default: this process's)."""
-    env = dict(os.environ if env is None else env)
-    exe = Path(exe) if exe else ROOT / "build" / ("cachedmoe.exe" if os.name == "nt" else "cachedmoe")
-    sdir = Path(shader_dir or runtime_env.getenv("CACHEDMOE_SHADER_DIR", environ=env)
-                or exe.parent / "shaders")
+    config = launch_config or runtime_defaults.resolve_launch(exe, env, shader_dir=shader_dir)
+    env = config.environment
+    exe = Path(config.exe)
+    sdir = Path(config.shader_dir)
     spv = sorted(sdir.glob("*.spv")) if sdir.is_dir() else []
     h = hashlib.sha256()
     for p in spv:
@@ -173,6 +175,7 @@ def capture(exe: str | os.PathLike | None = None, env: dict[str, str] | None = N
         "commit": _git("rev-parse", "--short=10", "HEAD").strip() or None,
         "dirty": dirty,
         "diff_sha": _sha(_git("diff", "HEAD").encode()) if dirty else None,
+        "launch": config.receipt(),
         "exe": str(exe),
         "exe_resolved": str(exe.resolve()),
         "exe_sha": _file_sha(exe),

@@ -49,16 +49,15 @@ import sys
 import time
 from collections import OrderedDict
 
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import runtime_defaults
 import state_paths
 
-import quant2_common as q2                                     # noqa: E402
 from quant2_l1 import SCHEMES                                  # noqa: E402
 from quant2_l3 import torch_uniform_quantise                   # noqa: E402
 
-MODEL = (r"D:\models\DeepSeek-V4.1-Flash" if os.name == "nt" else os.path.expanduser("~/models/DeepSeek-V4.1-Flash"))
+MODEL = runtime_defaults.model_fallback()
 
 PROMPTS = {
     "en_tech": "The expert cache holds about thirty percent of the routed "

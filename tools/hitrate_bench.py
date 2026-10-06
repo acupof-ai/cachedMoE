@@ -33,10 +33,10 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+import runtime_defaults
 
 sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO, "tools"))
 import chat  # noqa: E402
 import provenance  # noqa: E402
 
@@ -73,13 +73,31 @@ def wait_cool_for_dual_run():
         time.sleep(2)
 
 
+def bench_configuration(args, out_dir, inherited=None):
+    """Resolve final environment and model before loading a renderer or engine."""
+    env = dict(os.environ if inherited is None else inherited)
+    runtime_env.set_value(env, "CACHEDMOE_ROUTE_DUMP", os.path.join(out_dir, "route.bin"))
+    # The bench runs what serve runs: a second copy of the model found under
+    # /mnt is read striped (the owner, 2026-09-29: the headline number is the
+    # two-drive one). --env CACHEDMOE_MIRROR_AUTO=0 is the single-drive cell.
+    if args.shader_dir:
+        runtime_env.set_value(env, "CACHEDMOE_SHADER_DIR", args.shader_dir)
+    runtime_env.apply_overrides(env, runtime_defaults.parse_environment(args.env))
+    override = runtime_defaults.cli_value(args.serve_arg, "--model")
+    model = override if override is not None else getattr(args, "model", None)
+    return runtime_defaults.resolve_launch(args.exe, env, model=model)
+
+
 class BenchServer(chat.Server):
     """chat.Server with a free-form command line, extra environment and an event log."""
 
-    def __init__(self, args, out_dir):
+    def __init__(self, args, out_dir, config=None):
         if getattr(args, "require_sources", 0) == 2:
             wait_cool_for_dual_run()
-        cmd = [args.exe, "serve", "--model", chat.MODEL, "--max-context", str(args.max_context),
+        self.config = config or bench_configuration(args, out_dir)
+        env = self.config.environment
+        cmd = [self.config.exe, "serve", "--model", self.config.model,
+               "--max-context", str(args.max_context),
                "--engram-tables", os.path.join(REPO, "tests", "data", "l3"),
                "--profile", os.path.join(out_dir, "profile.jsonl")]
         if getattr(args, "cache_slots", 0):
@@ -87,20 +105,9 @@ class BenchServer(chat.Server):
         elif args.cache_gb:
             cmd += ["--cache-gb", str(args.cache_gb)]
         cmd += args.serve_arg
-        # Every run starts empty. serve's disk prefix cache would restore the
-        # last run's final context at startup and replay it into the expert
-        # cache -- a warm start that depends on what ran before -- and write
-        # this run's over the user's own session at exit (STATUS 0s).
+        # Bench runs start with empty KV; explicit --kv-dir remains an opt-in.
         if not any(a.startswith("--kv-dir") for a in args.serve_arg):
             cmd += ["--no-kv-disk"]
-        env = dict(os.environ)
-        runtime_env.set_value(env, "CACHEDMOE_ROUTE_DUMP", os.path.join(out_dir, "route.bin"))
-        # The bench runs what serve runs: a second copy of the model found under
-        # /mnt is read striped (the owner, 2026-09-29: the headline number is the
-        # two-drive one). --env CACHEDMOE_MIRROR_AUTO=0 is the single-drive cell.
-        if args.shader_dir:
-            runtime_env.set_value(env, "CACHEDMOE_SHADER_DIR", args.shader_dir)
-        runtime_env.apply_overrides(env, dict(kv.split("=", 1) for kv in args.env))
         for f in ("profile.jsonl", "route.bin", "events.jsonl"):
             p = os.path.join(out_dir, f)
             if os.path.exists(p):
@@ -112,7 +119,7 @@ class BenchServer(chat.Server):
             host_s_origin="BenchServer event-log start",
             clock="time.time; Unix seconds")) + "\n")
         self.log = open(os.path.join(out_dir, "serve.log"), "wb")
-        provenance.write(out_dir, exe=cmd[0], env=env)
+        provenance.write(out_dir, launch_config=self.config)
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=self.log, bufsize=0, env=env)
         self.cmd = cmd
@@ -139,7 +146,6 @@ class BenchServer(chat.Server):
 
 def write_heat_from_route(route_path: str, out_path: str, recent: int = 0) -> int:
     """Turn a run's route.bin into a CACHEDMOE_HEAT_FILE for the next round."""
-    sys.path.insert(0, os.path.join(REPO, "tools"))
     import hitrate_sim  # noqa: E402
     import numpy as np  # noqa: E402
     _step, _pos, ids, _hits = hitrate_sim.load_route(route_path)
@@ -199,7 +205,7 @@ def auto_tune_controls(requested, heat, inherited=None):
     return values
 
 
-def auto_tune(args, script: dict, cargs, enc) -> int:
+def auto_tune(args, script: dict, cargs) -> int:
     """N fresh-server rounds; each round feeds the previous round's route heat."""
     curve = []
     heat = args.heat_file
@@ -209,7 +215,9 @@ def auto_tune(args, script: dict, cargs, enc) -> int:
         ra = argparse.Namespace(**vars(args))
         ra.out = out_r
         ra.env = auto_tune_controls(args.env, heat)
-        server = BenchServer(ra, out_r)
+        config = bench_configuration(ra, out_r)
+        enc = chat.load_encoding(config.model)
+        server = BenchServer(ra, out_r, config=config)
         c = chat.Chat(server, enc, cargs)
         try:
             chat.run_script(c, server, script, os.path.join(out_r, "transcript.md"),
@@ -260,7 +268,8 @@ def main() -> int:
     ap.add_argument("--idle-s", type=float, default=0.0,
                     help="seconds to wait after ready before the first request (the P3 backfill's idle time)")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--exe", default=os.path.join(REPO, "build", "cachedmoe.exe" if os.name == "nt" else "cachedmoe"))
+    ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
+    ap.add_argument("--model", default=None)
     ap.add_argument("--shader-dir", default="")
     ap.add_argument("--require-sources", type=int, default=0,
                     help="refuse the run unless this many sources survive the health gate")
@@ -269,7 +278,7 @@ def main() -> int:
                     help="expert cache slots passed to serve (5711 ~ 100 GiB)")
     ap.add_argument("--heat-recent", type=int, default=0,
                     help="auto-tune/--write-heat: use only the last N routing records (0 = all)")
-    ap.add_argument("--max-context", type=int, default=4096)
+    ap.add_argument("--max-context", type=int, default=runtime_defaults.BENCH_CONTEXT)
     ap.add_argument("--serve-arg", action="append", default=[])
     ap.add_argument("--env", action="append", default=[])
     ap.add_argument("--max-turns", type=int, default=0,
@@ -290,8 +299,9 @@ def main() -> int:
     if os.path.exists(os.path.join(args.out, "turns.json")):
         sys.exit(f"{args.out} already holds a run (turns.json); give a fresh --out")
     os.makedirs(args.out, exist_ok=True)
-    enc = chat.load_encoding()
-    server = BenchServer(args, args.out)
+    config = bench_configuration(args, args.out)
+    enc = chat.load_encoding(config.model)
+    server = BenchServer(args, args.out, config=config)
     print(f"ready: {json.dumps(server.ready)}", flush=True)
     if args.idle_s:
         time.sleep(args.idle_s)
@@ -322,7 +332,9 @@ def main() -> int:
                        "env": args.env, "status": rstatus,
                        "repetition": from_events(os.path.join(args.out, "events.jsonl"))}, f, indent=1)
         return 0
-    cargs = argparse.Namespace(think=False, temp=1.0, top_p=0.95, max_tokens=256, seed=None, system="")
+    cargs = argparse.Namespace(think=False, temp=runtime_defaults.REQUEST_DEFAULTS["temperature"],
+                             top_p=runtime_defaults.REQUEST_DEFAULTS["top_p"],
+                             max_tokens=runtime_defaults.runtime_facts.NATIVE_MAX_TOKENS, seed=None, system="")
     with open(args.script, encoding="utf-8") as f:
         script = json.load(f)
     if args.max_turns:
@@ -330,7 +342,7 @@ def main() -> int:
     if args.auto_tune > 0:
         server.close()
         server.events.close()
-        return auto_tune(args, script, cargs, enc)
+        return auto_tune(args, script, cargs)
     c = chat.Chat(server, enc, cargs)
     if args.repeat > 1:
         turns = []

@@ -127,6 +127,7 @@ def main() -> int:
     for label, cmd in (
         ("tools/tests/test_runtime_env.py", [PY, str(ROOT / "tools" / "tests" / "test_runtime_env.py")]),
         ("tools/tests/test_runtime_facts.py", [PY, str(ROOT / "tools" / "tests" / "test_runtime_facts.py")]),
+        ("tools/tests/test_runtime_defaults.py", [PY, str(ROOT / "tools" / "tests" / "test_runtime_defaults.py")]),
         ("tools/tests/test_cmake_rename.py", [PY, str(ROOT / "tools" / "tests" / "test_cmake_rename.py")]),
         ("tools/tests/test_process_names.py", [PY, str(ROOT / "tools" / "tests" / "test_process_names.py")]),
         ("tools/tests/test_state_paths.py", [PY, str(ROOT / "tools" / "tests" / "test_state_paths.py")]),

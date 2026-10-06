@@ -23,6 +23,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import runtime_env
+import runtime_defaults
 from process_names import is_engine_comm
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -80,9 +81,9 @@ def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=ROOT)
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument("--spec-k", type=int, choices=(2, 3, 5), default=2)
-    parser.add_argument("--gpu-route", type=int, choices=(0, 1), default=0)
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--spec-k", type=int, choices=(2, 3, 5), default=runtime_defaults.profile_default("production", "spec_k"))
+    parser.add_argument("--gpu-route", type=int, choices=(0, 1), default=runtime_defaults.profile_default("production", "gpu_route"))
+    parser.add_argument("--port", type=int, default=runtime_defaults.WEB_PORT)
     parser.add_argument("--dry-run", action="store_true", help="print configuration without starting anything")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -96,24 +97,19 @@ def launch_configuration(args, inherited=None):
     # This is a controlled production launch. Shell benchmark switches must
     # not change the selected policy, including through a legacy alias.
     source = os.environ if inherited is None else inherited
-    env = {key: value for key, value in source.items()
-           if not runtime_env.is_control(key)}
-    env.update(CACHEDMOE_MODEL_DIR=str(Path.home() / "models/DeepSeek-V4.1-Flash"),
-               CACHEDMOE_SHADER_DIR=str(args.repo / "build/shaders"),
-               CACHEDMOE_MIRROR_AUTO="0",
-               CACHEDMOE_MASK_DYNAMIC_LRU="1", CACHEDMOE_DSPARK_PROFILE="0",
-               CACHEDMOE_DSPARK_ONECB="1", CACHEDMOE_BATCH_GPU_ROUTE=str(args.gpu_route),
-               CACHEDMOE_DSPARK_MEGA="0", CACHEDMOE_DSPARK_TRIM_TAIL="1",
-               CACHEDMOE_SPEC_GPU_READOUT="1", CACHEDMOE_MGT_PAIR_DOT="0",
-               CACHEDMOE_MGT_ATTN_CM="0", CACHEDMOE_MGT_FOLD_SCALE="0")
+    env = runtime_defaults.profile_environment("production", source, gpu_route=args.gpu_route)
+    env.update(CACHEDMOE_MODEL_DIR=runtime_defaults.model_fallback(windows=False),
+               CACHEDMOE_SHADER_DIR=runtime_defaults.resolve_launch(
+                   runtime_defaults.executable(args.repo, windows=False), env).shader_dir)
     command = [sys.executable, str(args.repo / "tools/web/server.py"),
-               "--exe", str(args.repo / "build/cachedmoe"),
+               "--exe", runtime_defaults.executable(args.repo, windows=False),
                "--resident-only", "mask", "--mask-cache", "dynamic",
-               "--cache-slots", "5500", "--max-context", "1048576",
-               "--gpu-prefill-min", "16", "--mirror",
-               "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
-               "--kv-dir", str(args.state_dir / "kv"), "--kv-max-gb", "4",
-               "--dspark", "--spec-k", str(args.spec_k), "--spec-top-k", "4",
+               "--cache-slots", str(runtime_defaults.CACHE_SLOTS),
+               "--max-context", str(runtime_defaults.MAX_CONTEXT),
+               "--gpu-prefill-min", str(runtime_defaults.GPU_PREFILL_MIN), "--mirror",
+               runtime_defaults.mirror_directory(),
+               "--kv-dir", str(args.state_dir / "kv"), "--kv-max-gb", str(runtime_defaults.KV_DISK_GB),
+               "--dspark", "--spec-k", str(args.spec_k), "--spec-top-k", str(runtime_defaults.ACCEPT_TOP_K),
                "--port", str(args.port), "--log", str(args.state_dir / "engine.log")]
     return command, env
 
@@ -441,7 +437,7 @@ def shutdown(server, child, paused, latch, sensors, monitor, log, thermal, owned
 
 def main(argv=None):
     args = arguments(argv)
-    expected_exe = (args.repo / "build/cachedmoe").resolve()
+    expected_exe = Path(runtime_defaults.executable(args.repo, windows=False)).resolve()
     command, env = launch_configuration(args)
     if args.dry_run:
         print(json.dumps(dict(command=command, env=runtime_env.raw_controls(env),
@@ -450,8 +446,8 @@ def main(argv=None):
     require_pidfd_support()
     assert_idle()
     if not expected_exe.is_file():
-        raise RuntimeError("build/cachedmoe is unavailable")
-    if not Path("/mnt/deepmoe2/models/DeepSeek-V4.1-Flash/deepmoe_manifest.json").is_file():
+        raise RuntimeError(f"engine is unavailable: {expected_exe}")
+    if not Path(runtime_defaults.mirror_directory(), "deepmoe_manifest.json").is_file():
         raise RuntimeError("the requested second checkpoint read source is unavailable")
     args.state_dir.mkdir(parents=True, exist_ok=True)
     original = profile()

@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import runtime_env
+import runtime_defaults
 from process_names import GPU_COMM_PATTERN
 
 class ThermalLatch:
@@ -294,9 +295,9 @@ def main():
     base = args.plan.resolve().parent
     os.chdir(plan["cwd"])
     env = dict(os.environ)
-    runtime_env.setdefault(env, "CACHEDMOE_MODEL_DIR", str(Path.home() / "models/DeepSeek-V4.1-Flash"))
+    runtime_env.setdefault(env, "CACHEDMOE_MODEL_DIR", runtime_defaults.model_fallback(windows=False))
     runtime_env.setdefault(env, "CACHEDMOE_LONGCTX_DIR", str(Path.cwd() / "traces/longctx"))
-    runtime_env.apply_overrides(env, dict(CACHEDMOE_MIRROR_AUTO="0", CACHEDMOE_DSPARK_MEGA="0"))
+    runtime_env.apply_overrides(env, runtime_defaults.profile_controls("thermal"))
     runtime_env.apply_overrides(env, plan.get("env", {}))
     runtime_env.clear(env, "CACHEDMOE_MODEL_MIRRORS")
     sensors = discover_sensors()
