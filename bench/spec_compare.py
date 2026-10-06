@@ -38,7 +38,7 @@ def choose_route(results, forced="auto"):
     wanted = ("k2_gpu", "k2_onecb_cpu_route")
     if not all(name in controls for name in wanted):
         raise ValueError("automatic route choice needs both completed k2 ONECB controls first")
-    eligible, raw_costs = [], {}
+    costs, raw_costs, no_loop = {}, {}, {}
     for name in wanted:
         row = controls[name]
         cost = row["decode_timing"]["active_ms_per_token"]
@@ -49,20 +49,20 @@ def choose_route(results, forced="auto"):
         raw = row["decode_timing"].get("raw_ms_per_token")
         if raw is None or raw <= 0:
             raise ValueError("automatic route choice requires measured raw decode timing")
-        if row["repetition"]["no_loop"]:
-            eligible.append((name, cost))
-            raw_costs[name] = raw
-    if not eligible:
+        # Preserve both measured controls, even when one fails the loop gate.
+        # A failed control cannot remove the paired cost threshold.
+        costs[name] = cost
+        raw_costs[name] = raw
+        no_loop[name] = row["repetition"]["no_loop"] is True
+    if not any(no_loop.values()):
         raise ValueError("both k2 route controls looped; stop before testing longer drafts")
-    costs = dict(eligible)
     # Inside the documented ±3% floor, retain CPU routing. The report still
     # carries per-op evidence and common-acceptance cycle costs for review.
-    use_gpu = "k2_gpu" in costs and (
-        "k2_onecb_cpu_route" not in costs or
+    use_gpu = (no_loop["k2_gpu"] and
         costs["k2_gpu"] < .97 * costs["k2_onecb_cpu_route"] and
         raw_costs["k2_gpu"] < .97 * raw_costs["k2_onecb_cpu_route"])
-    return use_gpu, dict(rule="no loop; GPU needs >3% lower raw and adjusted ms/token",
-                         active_costs=costs, raw_costs=raw_costs,
+    return use_gpu, dict(rule="GPU must not loop and needs >3% lower paired raw and adjusted ms/token",
+                         active_costs=costs, raw_costs=raw_costs, no_loop=no_loop,
                          route="gpu" if use_gpu else "cpu")
 
 

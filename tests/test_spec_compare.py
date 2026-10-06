@@ -52,6 +52,30 @@ class SpecCompareTests(unittest.TestCase):
         self.assertFalse(use_gpu)
         self.assertEqual(receipt["raw_costs"]["k2_gpu"], 110)
 
+    def test_looping_cpu_cannot_bypass_paired_raw_and_active_benefit(self):
+        for raw, active in ((120, 120), (120, 90), (90, 120), (97, 97)):
+            with self.subTest(raw=raw, active=active):
+                gpu = row("k2_gpu", active)
+                gpu["decode_timing"]["raw_ms_per_token"] = raw
+                use_gpu, receipt = bench.choose_route(
+                    [gpu, row("k2_onecb_cpu_route", 100, False)])
+                self.assertFalse(use_gpu)
+                self.assertEqual(receipt["route"], "cpu")
+                self.assertEqual(receipt["active_costs"],
+                                 {"k2_gpu": active, "k2_onecb_cpu_route": 100})
+                self.assertEqual(receipt["raw_costs"],
+                                 {"k2_gpu": raw, "k2_onecb_cpu_route": 100})
+                self.assertEqual(receipt["no_loop"],
+                                 {"k2_gpu": True, "k2_onecb_cpu_route": False})
+
+    def test_failed_gpu_control_costs_remain_visible(self):
+        use_gpu, receipt = bench.choose_route(
+            [row("k2_gpu", 80, False), row("k2_onecb_cpu_route", 100)])
+        self.assertFalse(use_gpu)
+        self.assertEqual(receipt["active_costs"]["k2_gpu"], 80)
+        self.assertEqual(receipt["raw_costs"]["k2_gpu"], 80)
+        self.assertFalse(receipt["no_loop"]["k2_gpu"])
+
     def test_spec_totals_excludes_non_done_events(self):
         with tempfile.TemporaryDirectory() as folder:
             events = Path(folder) / "events.jsonl"
