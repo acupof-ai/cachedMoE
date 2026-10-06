@@ -3861,8 +3861,9 @@ Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, u
         return std::unexpected(r.error());
     const double create_ms = ms_since(t0);
     if(dspark_) pf.probe=[&](const gpu::PrefillProbe& b) {
-        if(b.layer<37 || !b.block_in)return;
-        const uint32_t first=b.rows>128?b.rows-128:0;
+        if (!draft_layer_slot(b.layer) || !b.block_in) return;
+        const uint32_t first = b.rows > layout::kSlidingWindow
+                                   ? b.rows - layout::kSlidingWindow : 0;
         for(uint32_t j=first;j<b.rows;++j) capture_draft_hidden(b.layer,b.row0+j,b.block_in+size_t(j)*c.hc_mult*c.hidden_size);
     };
 
