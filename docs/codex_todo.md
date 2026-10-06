@@ -407,3 +407,22 @@ CMake 选项 `CACHEDMOE_*`。
 - `11af3d1`补齐B四样本标定、CPU边界与历次门禁收据；E仍按安全空间不足判SKIP。
 - `6171b71`补网页每轮显式`mask-spec`/`mask-plain`/`off-plain`选择、排队模式固定及实际模式历史。
   新网页CPU11/11、原网页15/15通过；C++请求策略与GPU验收尚未完成，不宣称部署已生效。
+
+
+## 10. Codex 追加收据（2026-10-06，网页模式验收与双盘恢复）
+
+- `0fe94ac` 实现每轮 C++ decode policy，`c1e173d`/`2678a79` 修复 mask 切 off 的缓存边界。
+  显式 off 在 fence 后清除尚未提交的旧 background 意图，只等足够槽可用；已提交 IO 继续。
+  512槽压力 fixture 实测 evictable 3→6，filling 125→122，384个MTP pin与guard/timeline不变。
+  这证明只等3个完成，不是排空122个在途填充；该小缓存测试不是生产P0零失败或速度验收。
+- `final_web_policy/recovered_boundary/validation_receipt.json` 的真实 GPU case rc0：精确feed/KV逐位、
+  129 plain steps、命名session恢复、每投机cycle单target、错误/取消恢复全部通过。
+  `complete_validation_receipt.json` 补最新CPU CTest27/27、工具41/41（串行执行）；
+  54个测试版本文件备份在 `frozen_web_boundary_df316001/receipt.json`。
+  `b6401f4` 说明每轮模式、旧KV复用和新chat精确历史；网页仍未部署，待D、合并及改名后恢复。
+- 外接盒在USB4已授权时仍缺NVMe端点；owner授权重扫描后已恢复PCIe NVMe，镜像ntfs3只读挂载。
+  C r3启动前缺源失败独立保留，不混入速度；r4实际两源48/48、完整32轮、加载失败0。
+  C r4 NO-GO及跳过后续质量作业见 `phase_c/performance_recovered_r4/decision_receipt.json`，
+  D五臂串行测量继续，期间不启动第二个GPU任务。
+- README/STATUS最新说明在 `f127018`：旧截图与power-saver速度保持历史标记；
+  A质量由owner接受，未写成全部质量门通过；C NO-GO、D/改名/网页恢复仍分别待结案。
