@@ -1,8 +1,12 @@
 """CPU gates for profile selection and thermal accounting."""
 import math
+import json
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
-from power_profile_report import select_profile, thermal_summary
+from power_profile_report import PROFILES, report, select_profile, thermal_summary
 
 
 class PowerProfileReportTests(unittest.TestCase):
@@ -29,6 +33,23 @@ class PowerProfileReportTests(unittest.TestCase):
         self.assertEqual(result["pause_entries_in_decode"], 1)
         self.assertEqual(result["mean_gpu_clock_mhz"], 1250)
         self.assertEqual(result["peak_c"]["amdgpu:test"], 52)
+
+    def test_short_and_sustained_disagreement_requires_owner(self):
+        raw = ((102, 85, 110), (100, 100, 100), (110, 90, 95))
+        reductions = [dict(groups={name: dict(timing=dict(raw_ms_per_token=value,
+                                                           active_ms_per_token=1))
+                                  for name, value in zip(("all", "first_two", "last_two"), costs)})
+                      for costs in raw]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            for mode in PROFILES:
+                (out / mode).mkdir()
+                (out / mode / "turns.json").write_text(json.dumps([]))
+            with patch("power_profile_report.arm_report", side_effect=reductions):
+                result = report(out)
+        self.assertEqual(result["default_candidate"], "power-saver")
+        self.assertTrue(result["owner_decision_required"])
+        self.assertFalse(result["default_change_authorized"])
 
 
 if __name__ == "__main__":

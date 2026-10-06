@@ -32,13 +32,14 @@ def thermal_summary(rows, turns):
     for left, right in zip(rows, rows[1:]):
         begin, end = left["wall_time_s"], right["wall_time_s"]
         dt = sum(max(0., min(end, b) - max(begin, a)) for a, b in windows)
+        current = bool(left["paused"])
+        entering_pause = current and not previous_paused
+        previous_paused = current
         if not dt:
             continue
         total += dt
-        current = bool(left["paused"])
         paused += dt if current else 0.
-        pauses += int(current and not previous_paused)
-        previous_paused = current
+        pauses += int(entering_pause)
         for key, value in left.items():
             if key.startswith(("amdgpu:", "nvme:")):
                 peaks[key] = max(peaks.get(key, value), value)

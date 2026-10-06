@@ -616,3 +616,16 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   38-position后台KV已落盘并由实际library的CPU reader读回。这里只验部署和持久化，不作性能/质量跑分。
 - 收据 `docs/web_restore_receipt.json`；原始live配置、状态、日志与thermal已在final_config_validation按hash冻结。
   原A质量例外、C/D NO-GO、E/Phase4/5条件SKIP保持；draft FP8 head仍按原文等owner决定，不新增实验。
+
+## 20. Codex 追加收据（2026-10-06，新owner任务开始）
+
+- owner `1db5c99` 新增§4.8/4.9；独立工作树 `../cachedmoe-power-draft`、分支 `codex/power-draft`。
+  先电源三臂，再做draft-only离线筛选；不重开旧C/D/union/target量化方向。
+- `d73bb7f`新增实际网页同参数的三臂driver、八轮512-token固定prompt和原始墙钟报告。
+  同一engine、KV逐臂reset、专家cache按power-saver→balanced→performance延续，diskKV开启。
+  临时端口8081和私有KV/transcript；原网页已正常退出，原6份state文件备份，5份transcript未改。
+- 准备时镜像48/48尺寸/header核对、AC=1、只读挂载；真实engine已ready，两源/dynamic5500/k2/ONECB1/CPUroute0/1M一致。
+- 第一臂尚未开始：GPU约48°C、内盘约33°C，外置NVMe空闲61.85°C，仍等所有设备≤60°C。
+  60°C门不放宽；80/72温控持续。已请求外接盒辅助散热，当前没有有效速度结果或新默认。
+- 原脚本/输入逐hash冻结在 `power_profiles_prepared/input_snapshot/`。CPU报告门新增短/长winner分歧检查，
+  原始reader在进程中已加载，不把后处理修正追溯成已运行的新源；会保留旧报告并只重算raw数据，不重跑GPU。
