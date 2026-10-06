@@ -275,7 +275,7 @@ class Chat:
 
 def run_script(chat, server, script, transcript_path, stats_path):
     turns = script["turns"]
-    md = ["# deepMoE chat transcript", "",
+    md = ["# cachedMoE chat transcript", "",
           f"server: {json.dumps(server.ready)}", ""]
     all_stats = []
     for i, t in enumerate(turns):

@@ -114,7 +114,7 @@ mtp blocks; `kv_source_layer_ids = [2, 8, 14, 20]`,
   index keys; 20/24/28/32/36 re-run the indexer with their own queries.
 
 **`model.py` has no bounded replay.** Its prefill runs every layer over every
-token; design §11.2's replay is a deepMoE production approximation, and the
+token; design §11.2's replay is a cachedMoE production approximation, and the
 oracle mode is the reference. What each decoder layer contributes to the state
 decode needs:
 

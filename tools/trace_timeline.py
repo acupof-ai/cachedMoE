@@ -80,7 +80,7 @@ class Trace:
         magic, self.version, self.record_bytes, self.period_ns, n_rec, n_name = \
             struct.unpack_from(HEADER_FMT, blob, 0)
         if magic != MAGIC:
-            raise SystemExit(f"not a deepMoE trace: magic {magic!r}")
+            raise SystemExit(f"not a cachedMoE trace: magic {magic!r}")
         if self.version != 1:
             raise SystemExit(f"trace version {self.version}, this reader knows 1")
         if self.record_bytes != RECORD_SIZE:

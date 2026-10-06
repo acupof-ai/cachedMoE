@@ -45,7 +45,7 @@ L1 kernel   One routed expert's FFN, in fp32, for a seeded random x:
             tests/data/l1_*.bin for the C++ integration test to reproduce from
             an ExpertStore slot filled by the real IoEngine.
 
-L2 layer    one real layer vs deepMoE's per-layer output (cosine >= 0.999).
+L2 layer    one real layer vs cachedMoE's per-layer output (cosine >= 0.999).
 L3 e2e      full-model fp32 greedy decode, token-for-token agreement.
 
 The details section 2.4 says are easy to get wrong, and which this script exists
@@ -495,7 +495,7 @@ def level1_kernel(args: argparse.Namespace) -> int:
 # residual stream, every Linear output and the attention inputs are **bf16**,
 # while the mHC coefficients, the gate and the expert accumulation are fp32.
 # This export keeps exactly that and records the storage dtype per tensor: a
-# tensor written as "bf16" held a bf16 value in the reference, and deepMoE's
+# tensor written as "bf16" held a bf16 value in the reference, and cachedMoE's
 # fp32 residual stream is therefore *more* precise than what produced it. That
 # is the source of most of the tolerance in tests/test_gpu_attn.cpp, and it is
 # why the exported `block_in` is the right thing to feed a kernel: it is the
@@ -1596,7 +1596,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--l3-topk", type=int, default=64,
                    help="how much of each step's logit vector to store")
     p.add_argument("--l3-engram-threads", type=int, default=32)
-    p.add_argument("--compare", default=None, help=".npy produced by deepMoE to compare against")
+    p.add_argument("--compare", default=None, help=".npy produced by cachedMoE to compare against")
     p.add_argument("--prompts", default=None, help="one prompt per line, for --level l3")
     p.add_argument("--max-tokens", type=int, default=64)
     p.add_argument("--prefill-mode", choices=["oracle", "bounded-replay"], default="oracle",

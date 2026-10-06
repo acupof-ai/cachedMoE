@@ -1,8 +1,8 @@
-# deepMoE
+# cachedMoE
 
 **Run DeepSeek-V4.1-Flash on a single 128 GB AMD Strix Halo PC.**
 
-deepMoE is a C++20 inference engine with Vulkan and Slang kernels. It runs the
+cachedMoE is a C++20 inference engine with Vulkan and Slang kernels. It runs the
 **552B MoE model, plus 196B Engram parameters**, from its **510 GB native FP4/FP8
 checkpoint**. Dense weights stay resident; a bounded expert cache streams the
 remaining weights from NVMe. No re-quantisation, shard conversion, or repacking.
@@ -10,7 +10,7 @@ remaining weights from NVMe. No re-quantisation, shard conversion, or repacking.
 [Quick start](#quick-start) · [Performance](#measured-performance) ·
 [Web chat](tools/web/README.md) · [Technical status](docs/STATUS.md) · [MIT license](LICENSE)
 
-<p align="center"><img src="docs/img/web_ui.jpg" width="900" alt="English deepMoE chat with a separate thought process and answer"><br>
+<p align="center"><img src="docs/img/web_ui.jpg" width="900" alt="English cachedMoE chat with a separate thought process and answer"><br>
 <sub>Live short demo: dynamic mask, DSpark k=5 / top-K=4, two drives. The 10.04 tok/s display is this demo, not the eight-turn benchmark.</sub></p>
 
 ## What it does

@@ -362,7 +362,7 @@ uv run python tools/manifest.py --src D:\models\DeepSeek-V4.1-Flash
 ```
 
 它读 `model.safetensors.index.json` 与 48 个分片 header，校验大小与 `total_size`，把
-`deepmoe_manifest.json` 写进**同一个目录**（这是 deepMoE 往 checkpoint 目录里写的唯一文件；
+`deepmoe_manifest.json` 写进**同一个目录**（这是 cachedMoE 往 checkpoint 目录里写的唯一文件；
 原始分片只读）。实测 **0.9 s**，输出 9.9 MB。常用选项：
 
 | 选项 | 作用 |

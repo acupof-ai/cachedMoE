@@ -74,7 +74,7 @@ def default_sources(repo_dir: str, model_dir: str) -> list[Source]:
     for name in ("docs/design.md", "docs/architecture.md", "docs/build.md", "README.md"):
         p = os.path.join(repo_dir, name)
         if os.path.isfile(p):
-            out.append(Source(p, "zh", "deepMoE repo (MIT)"))
+            out.append(Source(p, "zh", "cachedMoE repo (MIT)"))
 
     # English technical prose (the checkpoint's own documentation, MIT).
     for name in ("README.md", "inference/README.md", "encoding/README.md",
@@ -87,12 +87,12 @@ def default_sources(repo_dir: str, model_dir: str) -> list[Source]:
         out.append(Source(p, "en", "DeepSeek-V4.1-Flash tech report (MIT)"))
 
     # Code: C++ from this repo, Python from the reference implementation and stdlib.
-    add(os.path.join(repo_dir, "core", "*.h"), "code", "deepMoE repo (MIT)")
-    add(os.path.join(repo_dir, "core", "*.cpp"), "code", "deepMoE repo (MIT)")
-    add(os.path.join(repo_dir, "storage", "*.cpp"), "code", "deepMoE repo (MIT)")
-    add(os.path.join(repo_dir, "store", "*.cpp"), "code", "deepMoE repo (MIT)")
-    add(os.path.join(repo_dir, "model", "*.cpp"), "code", "deepMoE repo (MIT)")
-    add(os.path.join(repo_dir, "gpu", "vulkan", "*.cpp"), "code", "deepMoE repo (MIT)")
+    add(os.path.join(repo_dir, "core", "*.h"), "code", "cachedMoE repo (MIT)")
+    add(os.path.join(repo_dir, "core", "*.cpp"), "code", "cachedMoE repo (MIT)")
+    add(os.path.join(repo_dir, "storage", "*.cpp"), "code", "cachedMoE repo (MIT)")
+    add(os.path.join(repo_dir, "store", "*.cpp"), "code", "cachedMoE repo (MIT)")
+    add(os.path.join(repo_dir, "model", "*.cpp"), "code", "cachedMoE repo (MIT)")
+    add(os.path.join(repo_dir, "gpu", "vulkan", "*.cpp"), "code", "cachedMoE repo (MIT)")
     add(os.path.join(model_dir, "inference", "*.py"), "code",
         "DeepSeek reference implementation (MIT)")
     add(os.path.join(model_dir, "encoding", "*.py"), "code",

@@ -1,8 +1,8 @@
-# deepMoE announcement copy
+# cachedMoE announcement copy
 
 ## Project introduction
 
-deepMoE runs DeepSeek-V4.1-Flash on a single 128 GB AMD Strix Halo PC. The C++20
+cachedMoE runs DeepSeek-V4.1-Flash on a single 128 GB AMD Strix Halo PC. The C++20
 engine uses Vulkan and Slang to compute native FP4/FP8 weights, with an NVMe-backed
 expert cache instead of fitting the entire 510 GB checkpoint in memory.
 

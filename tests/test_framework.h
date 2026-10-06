@@ -1,4 +1,4 @@
-// A ~150-line test framework. No network fetch, no submodule: deepMoE has no
+// A ~150-line test framework. No network fetch, no submodule: cachedMoE has no
 // third-party dependencies (design §14) and a unit test harness is not where to
 // start making exceptions.
 //

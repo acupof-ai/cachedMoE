@@ -12,7 +12,7 @@
 // submit info, not as a mid-buffer host round trip.
 //
 // Ownership/threading: a CommandPool is owned by one thread and is NOT
-// thread-safe, per the Vulkan spec. deepMoE has a single GPU submit thread, so
+// thread-safe, per the Vulkan spec. cachedMoE has a single GPU submit thread, so
 // there is one pool; the planner never touches it.
 #pragma once
 

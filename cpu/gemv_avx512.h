@@ -1,7 +1,7 @@
 // CPU GEMV: the scalar fp32 reference (implemented, this is the L1 oracle
 // comparand of design §12) and the AVX-512/VNNI paths of design §8.5 (stubs).
 //
-// The CPU's job in deepMoE is I/O and prediction, not bulk GEMV (design §8);
+// The CPU's job in cachedMoE is I/O and prediction, not bulk GEMV (design §8);
 // these kernels exist as the A/B reference for the Vulkan kernels, as the
 // lookahead gate evaluator (§9.4), and as the P6 "CPU takes some experts"
 // execution body.

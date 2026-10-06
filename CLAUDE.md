@@ -1,4 +1,4 @@
-# deepMoE — working rules
+# cachedMoE — working rules
 
 Strix Halo runtime for DeepSeek-V4.1-Flash (552B MoE, 510 GB, native FP4/FP8, no
 re-quantisation). C++20 + Vulkan/Slang. Repo: `git@github.com:acupof-ai/cachedMoE.git`.
