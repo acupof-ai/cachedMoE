@@ -1,6 +1,7 @@
 """Launcher defaults and engine-only safety checks; never launch a GPU engine."""
 import io
 import json
+import os
 from pathlib import Path
 import signal
 import sys
@@ -160,6 +161,191 @@ class GuardedWeb(unittest.TestCase):
                                 log, io.StringIO())
         self.assertFalse(clean)
         self.assertIn("KV drain is not confirmed", log.getvalue())
+
+
+class StartupShutdownOwnership(unittest.TestCase):
+    @staticmethod
+    def details(pid, *, comm="deepmoe", exe="/fake/deepmoe", parent=100, birth=401,
+                session=100, group=100):
+        return dict(pid=pid, state="S", ppid=parent, start_ticks=birth, comm=comm, exe=exe,
+                    session=session, process_group=group)
+
+    def shutdown_fixture(self, preexec=False, fork_during_cleanup=False, ignore_term=False):
+        # Model the fork/exec race entirely in Python objects. All proc reads,
+        # pidfds, clocks and signals are mocked; no child process is started.
+        children, signals, opens = {}, [], []
+        leader = self.details(100, comm="python", exe="/fake/python",
+                              parent=os.getpid(), birth=400)
+        if preexec:
+            children[101] = self.details(101, comm="python", exe="/fake/python")
+
+        class Server:
+            pid, returncode = 100, None
+            def poll(self):
+                return self.returncode
+            def send_signal(self, signum):
+                signals.append(("http", signum))
+                children[101] = StartupShutdownOwnership.details(101, parent=1)
+                self.returncode = 130
+
+        server = Server()
+
+        def details(pid):
+            if pid == 100:
+                return leader if server.returncode is None else None
+            return children.get(pid)
+
+        def bind(pid):
+            opens.append(pid)
+            return pid + 1000
+
+        def send(fd, signum):
+            pid = fd - 1000
+            signals.append((pid, signum))
+            if signum in (signal.SIGTERM, signal.SIGKILL):
+                if ignore_term and signum == signal.SIGTERM:
+                    return
+                children.pop(pid, None)
+                if fork_during_cleanup and pid == 101:
+                    children[102] = self.details(102, parent=1, birth=402)
+
+        tick = 0
+        def monotonic():
+            nonlocal tick
+            tick += .5
+            return tick
+
+        with patch.object(launch, "process_details", side_effect=details), \
+                patch.object(launch, "session_members", side_effect=lambda _: list(children.values())), \
+                patch.object(launch.os, "pidfd_open", side_effect=bind), \
+                patch.object(launch.os, "close"), \
+                patch.object(launch.OwnedProcess, "live", lambda process: process.pid in children), \
+                patch.object(launch.signal, "pidfd_send_signal", side_effect=send), \
+                patch.object(launch.time, "monotonic", side_effect=monotonic), \
+                patch.object(launch.time, "sleep"):
+            owned = launch.OwnedSession(server, "/fake/deepmoe")
+            log = io.StringIO()
+            clean = launch.shutdown(server, None, False, launch.ThermalLatch(), {}, None,
+                                    log, io.StringIO(), owned)
+            receipt = owned.receipt()
+            owned.close()
+        return clean, signals, opens, receipt, children, log.getvalue()
+
+    def test_engine_appearing_after_final_discovery_is_bound_and_cleaned(self):
+        clean, signals, opens, receipt, children, log = self.shutdown_fixture()
+        self.assertFalse(clean)
+        self.assertEqual(opens, [101])
+        self.assertEqual(signals[0], ("http", signal.SIGINT))
+        self.assertIn((101, signal.SIGTERM), signals)
+        self.assertNotIn(("http", signal.SIGSTOP), signals)
+        self.assertFalse(children)
+        self.assertFalse(receipt["children"][0]["live"])
+        self.assertEqual(receipt["children"][0]["start_ticks"], 401)
+        self.assertIn("KV drain not confirmed", log)
+
+    def test_preexec_child_stays_bound_across_exec_and_parent_exit(self):
+        clean, signals, opens, receipt, children, _ = self.shutdown_fixture(preexec=True)
+        self.assertFalse(clean)
+        self.assertEqual(opens, [101])
+        self.assertFalse(children)
+        observations = receipt["children"][0]["observations"]
+        self.assertEqual([row["comm"] for row in observations], ["python", "deepmoe"])
+        self.assertEqual(observations[-1]["ppid"], 1)
+        self.assertIn((101, signal.SIGTERM), signals)
+
+    def test_new_owned_child_during_cleanup_is_also_bound_and_reaped(self):
+        clean, signals, opens, receipt, children, _ = self.shutdown_fixture(fork_during_cleanup=True)
+        self.assertFalse(clean)
+        self.assertEqual(opens, [101, 102])
+        self.assertFalse(children)
+        self.assertIn((102, signal.SIGTERM), signals)
+        self.assertEqual(len(receipt["children"]), 2)
+        self.assertTrue(all(not row["live"] for row in receipt["children"]))
+
+    def test_owned_child_ignoring_term_is_killed_without_claiming_kv_drain(self):
+        clean, signals, _, receipt, children, log = self.shutdown_fixture(ignore_term=True)
+        self.assertFalse(clean)
+        self.assertFalse(children)
+        self.assertIn((101, signal.SIGKILL), signals)
+        self.assertFalse(receipt["children"][0]["live"])
+        self.assertIn("KV drain not confirmed", log)
+
+    def test_other_session_group_or_older_birth_is_never_bound(self):
+        leader = self.details(100, parent=os.getpid(), birth=400)
+        server = type("Server", (), dict(pid=100, poll=lambda _: None))()
+        wrong = [self.details(101, session=200), self.details(102, group=200),
+                 self.details(103, birth=399)]
+        with patch.object(launch, "process_details", return_value=leader), \
+                patch.object(launch, "session_members", return_value=wrong), \
+                patch.object(launch.os, "pidfd_open") as bind:
+            owned = launch.OwnedSession(server, "/fake/deepmoe")
+            owned.discover()
+            self.assertFalse(owned.children)
+            bind.assert_not_called()
+
+    def test_birth_change_between_scan_and_pidfd_bind_is_rejected(self):
+        leader = self.details(100, parent=os.getpid(), birth=400)
+        candidate = self.details(101)
+        reused = candidate | dict(start_ticks=402)
+        server = type("Server", (), dict(pid=100, poll=lambda _: None))()
+        with patch.object(launch, "process_details", side_effect=lambda pid: leader if pid == 100 else reused), \
+                patch.object(launch, "session_members", return_value=[candidate]), \
+                patch.object(launch.os, "pidfd_open", return_value=999), \
+                patch.object(launch.os, "close") as close, \
+                patch.object(launch.signal, "pidfd_send_signal") as send:
+            owned = launch.OwnedSession(server, "/fake/deepmoe")
+            owned.discover()
+            self.assertFalse(owned.children)
+            close.assert_called_once_with(999)
+            send.assert_not_called()
+
+    def test_reused_session_leader_cannot_adopt_new_children(self):
+        leader = self.details(100, parent=os.getpid(), birth=400)
+        server = type("Server", (), dict(pid=100, poll=lambda _: 130))()
+        with patch.object(launch, "process_details", return_value=leader) as read, \
+                patch.object(launch, "session_members", return_value=[self.details(101)]), \
+                patch.object(launch.os, "pidfd_open") as bind:
+            owned = launch.OwnedSession(server, "/fake/deepmoe")
+            read.return_value = leader | dict(start_ticks=500)
+            with self.assertRaisesRegex(RuntimeError, "leader PID was reused"):
+                owned.discover()
+            bind.assert_not_called()
+
+    def test_cleanup_exception_still_writes_failed_state_receipt(self):
+        class Monitor:
+            def __enter__(self):
+                return self
+            def __exit__(self, *unused):
+                pass
+
+        class Owned:
+            def receipt(self):
+                return dict(children=[dict(pid=101, live=True)])
+            def close(self):
+                pass
+
+        server = type("Server", (), dict(pid=100, returncode=1, poll=lambda _: None))()
+        values = dict(ac=1, power_profile="performance", wall_time_s=1, **{"amdgpu:fake": 42})
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(launch.Path, "is_file", return_value=True), \
+                patch.object(launch, "assert_idle"), \
+                patch.object(launch, "profile", return_value="performance"), \
+                patch.object(launch.subprocess, "run"), \
+                patch.object(launch.subprocess, "Popen", return_value=server), \
+                patch.object(launch.signal, "signal"), \
+                patch.object(launch, "discover_sensors", return_value={}), \
+                patch.object(launch, "ProfileMonitor", Monitor), \
+                patch.object(launch, "OwnedSession", return_value=Owned()), \
+                patch.object(launch, "find_engine", return_value=None), \
+                patch.object(launch, "sample", side_effect=[values, RuntimeError("sensor failed")]), \
+                patch.object(launch, "shutdown", side_effect=RuntimeError("cleanup did not finish")):
+            self.assertEqual(launch.main(["--state-dir", tmp]), 1)
+            receipt = json.loads((Path(tmp) / "state.json").read_text())
+            self.assertEqual(receipt["failure"], "sensor failed")
+            self.assertEqual(receipt["shutdown_error"], "cleanup did not finish")
+            self.assertFalse(receipt["shutdown_graceful"])
+            self.assertEqual(receipt["kv_drain_status"], "unconfirmed")
+            self.assertTrue(receipt["shutdown_owned_processes"]["children"][0]["live"])
 
 
 if __name__ == "__main__":

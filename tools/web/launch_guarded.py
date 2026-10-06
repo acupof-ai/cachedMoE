@@ -72,9 +72,14 @@ def process_details(pid):
     root = Path(f"/proc/{pid}")
     try:
         fields = (root / "stat").read_text().rsplit(") ", 1)[1].split()
-        return dict(pid=pid, state=fields[0], ppid=int(fields[1]), start_ticks=int(fields[19]),
-                    comm=(root / "comm").read_text().strip(), exe=str((root / "exe").readlink()))
-    except (FileNotFoundError, ProcessLookupError):
+        details = dict(pid=pid, state=fields[0], ppid=int(fields[1]),
+                       process_group=int(fields[2]), session=int(fields[3]),
+                       start_ticks=int(fields[19]), comm=(root / "comm").read_text().strip())
+        # A fast startup failure can already be a zombie, but its unreaped
+        # stat still identifies the session that this Popen created.
+        details["exe"] = None if fields[0] == "Z" else str((root / "exe").readlink())
+        return details
+    except (FileNotFoundError, ProcessLookupError, PermissionError):
         return None
 
 
@@ -142,6 +147,131 @@ def find_engine(server_pid, expected_exe):
     return child
 
 
+def session_members(session):
+    """Find current members of this launch's new session/process group."""
+    members = []
+    for entry in Path("/proc").glob("[0-9]*/stat"):
+        details = process_details(int(entry.parent.name))
+        if details and details["session"] == session and details["process_group"] == session:
+            members.append(details)
+    return members
+
+
+@dataclass
+class OwnedProcess:
+    pid: int
+    start_ticks: int
+    session: int
+    pidfd: int
+    expected_engine: str
+    observations: list
+
+    def live(self):
+        poller = select.poll()
+        poller.register(self.pidfd, select.POLLIN)
+        return not poller.poll(0)
+
+    def observe(self, details):
+        if (not details or details["state"] == "Z" or
+                details["start_ticks"] != self.start_ticks or
+                details["session"] != self.session or details["process_group"] != self.session):
+            return False
+        identity = {key: details[key] for key in ("comm", "exe", "ppid")}
+        if not identity["comm"] or not identity["exe"]:
+            return False
+        if not self.observations or any(self.observations[-1][key] != value
+                                        for key, value in identity.items()):
+            self.observations.append(dict(observed_unix=time.time(), **identity))
+        return True
+
+    def is_engine(self):
+        return bool(self.observations and self.observations[-1]["comm"] == "deepmoe" and
+                    self.observations[-1]["exe"] == self.expected_engine)
+
+    def send(self, signum):
+        if not self.live():
+            return False
+        if not self.observe(process_details(self.pid)) or not self.is_engine():
+            raise RuntimeError("owned child is not the verified engine; refusing thermal signal")
+        return bound_signal(self, signum)
+
+    def close(self):
+        os.close(self.pidfd)
+
+
+class OwnedSession:
+    """Bind this launch's children before or after exec, including orphans.
+
+    Normal thermal signals still require the engine's comm and executable.
+    Shutdown also tracks pre-exec children: aborting Serve's constructor must
+    not leave a child that execs the engine after its parent has exited.
+    """
+    def __init__(self, server, expected_engine):
+        leader = process_details(server.pid)
+        if (not leader or leader["ppid"] != os.getpid() or
+                leader["session"] != server.pid or leader["process_group"] != server.pid):
+            raise RuntimeError("web Popen did not create the expected owned session")
+        self.server = server
+        self.session = server.pid
+        self.start_ticks = leader["start_ticks"]
+        self.expected_engine = str(expected_engine)
+        self.children = {}
+        self.closed = False
+
+    def discover(self):
+        if self.closed:
+            return
+        exited_before_scan = self.server.poll() is not None
+        members = session_members(self.session)
+        leader = process_details(self.session)
+        if leader and leader["start_ticks"] != self.start_ticks:
+            self.closed = True
+            raise RuntimeError("owned session leader PID was reused; refusing discovery")
+        for details in members:
+            if (details["pid"] == self.session or details["state"] == "Z" or
+                    details["session"] != self.session or details["process_group"] != self.session or
+                    details["start_ticks"] < self.start_ticks):
+                continue
+            key = (details["pid"], details["start_ticks"])
+            child = self.children.get(key)
+            if child is None:
+                try:
+                    fd = os.pidfd_open(details["pid"])
+                except ProcessLookupError:
+                    continue
+                child = OwnedProcess(details["pid"], details["start_ticks"], self.session,
+                                     fd, self.expected_engine, [])
+                # PID/exec can change between the scan and pidfd_open. Bind
+                # only the same birth in our session; record the actual image.
+                if not child.observe(process_details(child.pid)):
+                    child.close()
+                    continue
+                self.children[key] = child
+            else:
+                child.observe(details)
+        if exited_before_scan and not self.live_children():
+            # No member can fork after the last owned process exits. Do not
+            # later adopt an unrelated session if its numeric ID is reused.
+            self.closed = True
+
+    def live_children(self):
+        return [child for child in self.children.values() if child.live()]
+
+    def engine(self):
+        return next((child for child in self.live_children() if child.is_engine()), None)
+
+    def receipt(self):
+        return dict(session=self.session, server_start_ticks=self.start_ticks,
+                    children=[dict(pid=child.pid, start_ticks=child.start_ticks,
+                                   session=child.session, live=child.live(),
+                                   observations=child.observations)
+                              for child in self.children.values()])
+
+    def close(self):
+        for child in self.children.values():
+            child.close()
+
+
 def thermal_transition(child, values, latch, paused, force_hold=False):
     should_pause = latch.update(guarded_temperatures(values)) or force_hold
     if child and should_pause != paused:
@@ -170,15 +300,21 @@ def bound_signal(child, signum):
         return False
 
 
-def shutdown(server, child, paused, latch, sensors, monitor, log, thermal):
+def shutdown(server, child, paused, latch, sensors, monitor, log, thermal, owned=None):
     """Let Serve.close send quit and wait for KV writes, retaining thermal control."""
     clean = True
+    if owned:
+        owned.discover()
     if server.poll() is None:
         server.send_signal(signal.SIGINT)
     deadline = time.monotonic() + 180
     error_logged = False
     while server.poll() is None and time.monotonic() < deadline:
         try:
+            if owned:
+                owned.discover()
+                if child is None:
+                    child = owned.engine()
             values = sample(sensors, monitor)
             paused = thermal_transition(child, values, latch, paused, not power_valid(values))
             values.update(paused=paused, shutdown=True, latched_sensors=sorted(latch.hot))
@@ -204,30 +340,43 @@ def shutdown(server, child, paused, latch, sensors, monitor, log, thermal):
         except subprocess.TimeoutExpired:
             server.kill()
             server.wait()
-    if child and child.live():
-        # A web exit should reap its engine. An orphan requires an explicit
-        # failure receipt; never silently treat forced termination as KV drain.
-        deadline = time.monotonic() + 2
-        while child.live() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        if child.live():
-            print("ERROR: engine survived web exit; forced cleanup, KV drain not confirmed",
-                  file=log, flush=True)
-            clean = False
-            # Ownership may have changed to init after the parent's exit. The
-            # held pidfd still identifies the original engine, unlike a PID.
-            bound_signal(child, signal.SIGTERM)
-            bound_signal(child, signal.SIGCONT)
+    def survivors():
+        remaining = []
+        if owned:
+            # The HTTP process can already be gone, so use the original
+            # session rather than /proc/<parent>/children. This also captures
+            # a still-pre-exec child that appears during shutdown.
+            owned.discover()
+            remaining = owned.live_children()
+        if child and child.live() and all(process.pid != child.pid for process in remaining):
+            remaining.append(child)
+        return remaining
+
+    deadline = time.monotonic() + 2
+    while survivors() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if survivors():
+        print("ERROR: owned child survived web exit; forced cleanup, KV drain not confirmed",
+              file=log, flush=True)
+        clean = False
+        for signum in (signal.SIGTERM, signal.SIGKILL):
+            signalled = set()
             deadline = time.monotonic() + 5
-            while child.live() and time.monotonic() < deadline:
+            while time.monotonic() < deadline:
+                remaining = survivors()
+                if not remaining:
+                    break
+                for process in remaining:
+                    if process.pidfd not in signalled:
+                        # Descriptors bind identities verified in our session,
+                        # including pre-exec children. No saved PID is used.
+                        bound_signal(process, signum)
+                        if signum == signal.SIGTERM:
+                            bound_signal(process, signal.SIGCONT)
+                        signalled.add(process.pidfd)
                 time.sleep(0.05)
-            if child.live():
-                bound_signal(child, signal.SIGKILL)
-                deadline = time.monotonic() + 5
-                while child.live() and time.monotonic() < deadline:
-                    time.sleep(0.05)
-                if child.live():
-                    raise RuntimeError("owned engine did not exit after SIGKILL")
+        if survivors():
+            raise RuntimeError("owned child did not exit after SIGKILL")
     if server.returncode != 0:
         print(f"ERROR: web process exited with {server.returncode}; KV drain is not confirmed",
               file=log, flush=True)
@@ -260,7 +409,7 @@ def main(argv=None):
         stopping = True
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
-    server, child, paused = None, None, False
+    server, child, owned, paused = None, None, None, False
     latch, failure, clean = ThermalLatch(), None, False
     state = dict(guard_pid=os.getpid(), server_pid=None, engine_pid=None, paused=False,
                  profile="performance", original_profile=original, command=command,
@@ -274,6 +423,7 @@ def main(argv=None):
             assert_idle()
             server = subprocess.Popen(command, cwd=args.repo, env=env, stdin=subprocess.DEVNULL,
                                       stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            owned = OwnedSession(server, args.repo / "build/deepmoe")
             state["server_pid"] = server.pid
             startup_deadline = time.monotonic() + 180
             next_state = 0
@@ -311,15 +461,27 @@ def main(argv=None):
             failure = str(error)
             print(f"ERROR: guarded web launcher: {failure}", file=log, flush=True)
         finally:
-            if server:
-                if child is None:
-                    child = find_engine(server.pid, args.repo / "build/deepmoe")
-                clean = shutdown(server, child, paused, latch, sensors, monitor, log, thermal)
-                if not clean and failure is None:
-                    failure = "web shutdown failed; see web.log"
+            shutdown_error = None
+            try:
+                if server:
+                    if owned is None and child is None:
+                        child = find_engine(server.pid, args.repo / "build/deepmoe")
+                    clean = shutdown(server, child, paused, latch, sensors, monitor, log, thermal, owned)
+                    if not clean and failure is None:
+                        failure = "web shutdown failed; see web.log"
+            except Exception as error:
+                shutdown_error = str(error)
+                clean = False
+                if failure is None:
+                    failure = f"web shutdown failed: {error}"
+                print(f"ERROR: web cleanup failed; KV drain is unconfirmed: {error}", file=log, flush=True)
+            state["shutdown_owned_processes"] = owned.receipt() if owned else None
             if child:
                 child.close()
+            if owned:
+                owned.close()
             state.update(stopped=True, paused=False, failure=failure,
+                         shutdown_error=shutdown_error,
                          shutdown_graceful=clean,
                          kv_drain_status="web quit requested; no forced cleanup" if clean else "unconfirmed",
                          server_returncode=server.returncode if server else None,
