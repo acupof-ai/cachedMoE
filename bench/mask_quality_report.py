@@ -435,7 +435,41 @@ def build_report(inputs, *, baseline_name="off", quality=None, thermal_log=None,
         arm["quality"] = quality_gates((quality or {}).get(arm["name"]))
         if "tau" in arm["name"] or arm["policy"].get("tau") is not None:
             arm["C_decision"] = c_decision(arm, baseline)
+    # A comparison is one experiment. A fast early arm is not a winner before
+    # the remaining listed arms have completed, including the control arms.
+    comparisons_complete = bool(comparisons)
+    for comparison in comparisons:
+        directory = Path(comparison["path"]).parent
+        listed = comparison.get("order", [])
+        completed = {Path(arm["directory"]).name: arm["complete"]
+                     for arm in arms if Path(arm["directory"]).parent == directory}
+        comparisons_complete &= bool(listed) and all(completed.get(name, False) for name in listed)
+    for arm in arms:
+        comparison = next((row for row in comparisons
+            if Path(arm["directory"]).parent == Path(row["path"]).parent), None)
+        route = (comparison or {}).get("route_selection") or {}
+        selected_route = route.get("route")
+        policy = arm["policy"]
+        # ONECB is mandatory for defaults; the serial arm remains a control.
+        # Require the actual per-arm policy and the separate formal route
+        # decision. Startup defaults or missing fields cannot fill these in.
+        policy_known = (type(policy.get("draft_tokens")) is int and
+                        policy["draft_tokens"] == arm["spec_k"] and
+                        type(policy.get("onecb")) is bool and
+                        type(policy.get("gpu_route")) is bool and
+                        type(policy.get("accept_top_k")) is int and
+                        policy["accept_top_k"] == 4 and
+                        type(policy.get("main_paths")) is int and policy["main_paths"] == 1)
+        arm["default_policy_gate"] = dict(
+            policy_known=policy_known, onecb_required=policy.get("onecb") is True,
+            formal_route=selected_route,
+            route_matches=policy_known and selected_route in ("cpu", "gpu") and
+                          policy["gpu_route"] == (selected_route == "gpu"),
+            comparisons_complete=comparisons_complete)
     eligible = [arm for arm in arms if arm["spec_k"] and arm["resident_mode"] == "mask" and
+                arm["default_policy_gate"]["comparisons_complete"] and
+                arm["default_policy_gate"]["onecb_required"] and
+                arm["default_policy_gate"]["route_matches"] and
                 arm["timing"].get("engine_decode_boundaries") is True and
                 arm["mask_dynamic"] and arm["complete"] and
                 arm["performance_verified"] is True and arm["no_loop"] is True and
@@ -453,7 +487,8 @@ def build_report(inputs, *, baseline_name="off", quality=None, thermal_log=None,
                     adjusted_selected=adjusted["name"] if adjusted else None,
                     rankings_agree=selected is adjusted if eligible else None,
                     rule="owner: dynamic mask + speculation, minimum measured raw ms/token among complete "
-                         "performance arms passing loop/repetition/load gates",
+                         "performance arms passing loop/repetition/load gates; ONECB on and the separately "
+                         "selected formal route required; all listed comparison arms must finish",
                     selected_quality=selected["quality"] if selected else None,
                     scope="speed/repetition selection does not claim missing MMLU/long-context gates passed",
                     provisional_before_completed_D="mask+k2, ONECB on; GPU route determined independently"),

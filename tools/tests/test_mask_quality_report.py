@@ -184,43 +184,53 @@ class QualityReportTests(unittest.TestCase):
             self.assertIsNone(arm["timing"]["active_ms_per_token"])
             self.assertTrue(arm["failures"]["no_load_failures"])
 
+    def make_D_comparison(self, root):
+        thermal = root / "thermal.jsonl"
+        thermal.write_text("".join(json.dumps(dict(wall_time_s=9 + n / 20, paused=False)) + "\n"
+                                   for n in range(141)))
+        records = []
+        configurations = [("off", 0, "off", 1000, True, False),
+            ("k2", 2, "mask", 700, True, False),
+            ("k3", 3, "mask", 600, True, False),
+            ("exact_spec", 2, "off", 100, True, False),
+            ("serial", 2, "mask", 40, False, False),
+            ("gpu_control", 2, "mask", 60, True, True)]
+        for index, (name, k, mode, cost, onecb, gpu_route) in enumerate(configurations):
+            arm = root / name
+            arm.mkdir()
+            turn = dict(event="done", label="matched", seed=1, generated=8,
+                        decode_steps=7, decode_ms=cost, host_unix=10 + index,
+                        decode_finished_unix=10 + index)
+            if k:
+                turn["speculation"] = dict(cycles=3, verified=k * 3, accepted=4,
+                    tokens=7, draft_ms=cost / 4, verify_ms=cost / 2,
+                    commit_ms=cost / 16, cpu_ms=cost / 16)
+            events = [dict(event="token", id=i) for i in range(8)] + [turn]
+            (arm / "events.jsonl").write_text("".join(json.dumps(r) + "\n" for r in events))
+            save(arm / "turns.json", dict(turns=[turn]))
+            save(arm / "startup.json", dict(command=["--resident-only", mode,
+                                                    "--mask-cache", "dynamic"]))
+            status = ZERO_STATUS | dict(cache_fixed=False, cache_frozen=False)
+            records.append(dict(name=name, turns=1,
+                policy=dict(draft_tokens=k, onecb=onecb, gpu_route=gpu_route,
+                            accept_top_k=4, main_paths=1),
+                start_power=dict(power_profile="performance"),
+                end_power=dict(power_profile="performance"),
+                status_before=status, status_after=status,
+                decode_timing=dict(thermal_log=str(thermal))))
+        comparison = dict(order=[r["name"] for r in records], results=records,
+                          route_selection=dict(route="cpu"))
+        save(root / "comparison.json", comparison)
+        return comparison, thermal
+
     def test_D_selects_mask_speculation_and_preserves_missing_quality(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            thermal = root / "thermal.jsonl"
-            thermal.write_text("".join(json.dumps(dict(wall_time_s=9 + n / 20, paused=False)) + "\n"
-                                       for n in range(101)))
-            records = []
-            for index, (name, k, mode, cost) in enumerate([
-                    ("off", 0, "off", 1000), ("k2", 2, "mask", 700),
-                    ("k3", 3, "mask", 600), ("exact_spec", 2, "off", 100)]):
-                arm = root / name
-                arm.mkdir()
-                turn = dict(event="done", label="matched", seed=1, generated=8,
-                            decode_steps=7, decode_ms=cost, host_unix=10 + index,
-                            decode_finished_unix=10 + index)
-                if k:
-                    turn["speculation"] = dict(cycles=3, verified=k * 3, accepted=4,
-                        tokens=7, draft_ms=cost / 4, verify_ms=cost / 2,
-                        commit_ms=cost / 16, cpu_ms=cost / 16)
-                events = [dict(event="token", id=i) for i in range(8)] + [turn]
-                (arm / "events.jsonl").write_text("".join(json.dumps(r) + "\n" for r in events))
-                save(arm / "turns.json", dict(turns=[turn]))
-                save(arm / "startup.json", dict(command=["--resident-only", mode,
-                                                        "--mask-cache", "dynamic"]))
-                status = ZERO_STATUS | dict(cache_fixed=False, cache_frozen=False)
-                records.append(dict(name=name, turns=1, policy=dict(draft_tokens=k),
-                    start_power=dict(power_profile="performance"),
-                    end_power=dict(power_profile="performance"),
-                    status_before=status, status_after=status,
-                    decode_timing=dict(thermal_log=str(thermal))))
-            save(root / "comparison.json", dict(order=[r["name"] for r in records], results=records))
+            _, thermal = self.make_D_comparison(root)
             report = build_report([str(root)])
             self.assertEqual(report["D_selection"]["selected"], "k3")
             self.assertIsNone(report["D_selection"]["selected_quality"]["passed"])
-
-            # A stale log must not turn the same candidates into default picks
-            # or leave adjusted per-turn figures looking valid.
+            # A stale log must not leave either selection or adjusted costs valid.
             thermal.write_text(json.dumps(dict(wall_time_s=1, paused=False)) + "\n")
             incomplete = build_report([str(root)])
             self.assertIsNone(incomplete["D_selection"]["selected"])
@@ -229,6 +239,51 @@ class QualityReportTests(unittest.TestCase):
                 self.assertIsNone(cell["timing"]["active_ms_per_token"])
                 self.assertIn("ends before", cell["timing"]["alignment_error"])
                 self.assertIsNone(cell["turns"][0]["timing"]["active_ms_per_token"])
+
+    def test_D_serial_fastest_is_preserved_only_as_control(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            comparison, _ = self.make_D_comparison(root)
+            comparison["results"][-1]["policy"]["gpu_route"] = False
+            save(root / "comparison.json", comparison)
+            report = build_report([str(root)])
+            serial = next(a for a in report["arms"] if a["name"] == "serial")
+            self.assertFalse(serial["default_policy_gate"]["onecb_required"])
+            self.assertLess(serial["timing"]["raw_ms_per_token"], 600 / 7)
+            self.assertEqual(report["D_selection"]["selected"], "gpu_control")
+
+    def test_D_faster_nonselected_route_stays_control(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_D_comparison(root)
+            report = build_report([str(root)])
+            gpu = next(a for a in report["arms"] if a["name"] == "gpu_control")
+            self.assertFalse(gpu["default_policy_gate"]["route_matches"])
+            self.assertLess(gpu["timing"]["raw_ms_per_token"], 600 / 7)
+            self.assertEqual(report["D_selection"]["selected"], "k3")
+
+    def test_D_incomplete_control_blocks_early_winner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            comparison, _ = self.make_D_comparison(root)
+            comparison["order"].append("not_finished")
+            save(root / "comparison.json", comparison)
+            report = build_report([str(root)])
+            self.assertIsNone(report["D_selection"]["selected"])
+            self.assertFalse(report["arms"][1]["default_policy_gate"]["comparisons_complete"])
+
+    def test_D_unknown_policy_or_route_cannot_select_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            comparison, _ = self.make_D_comparison(root)
+            comparison["route_selection"] = None
+            save(root / "comparison.json", comparison)
+            self.assertIsNone(build_report([str(root)])["D_selection"]["selected"])
+            comparison["route_selection"] = dict(route="cpu")
+            for record in comparison["results"]:
+                record["policy"].pop("onecb")
+            save(root / "comparison.json", comparison)
+            self.assertIsNone(build_report([str(root)])["D_selection"]["selected"])
 
     def test_standalone_turn_file_cannot_bypass_thermal_coverage(self):
         with tempfile.TemporaryDirectory() as tmp:
