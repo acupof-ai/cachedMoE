@@ -88,7 +88,9 @@ T=0/T=1 中文 64 token 均无循环；off/mask 的三组各 512 token 也无短
 
 - [x] MMLU57 **46/57、2 invalid，不达48/57**。八轮 plain **110.142ms/token，9.079226tok/s**，
   served `.9390`、mass lost `.0483`、八轮无循环、P0失败0。全部 A 作业热暂停0。
-- [ ] 执行 `phase_a/validation/additional/run_checks.py` 的 decode 与 longctx 门禁（尚未启动）。
+- [x] 执行 `phase_a/validation/additional/run_checks.py` 的 decode 与 longctx 门禁（尚未启动）。
+  收据：旧脚本未再启动，改用同覆盖的新80/72监督 `final_review_remaining/jobs.json`。
+  decode两个case与longctx两个case均rc0；短decode保留当前6/8、7/8基线，ctx4k/ctx16k均8/8。
 - [x] mask 的 MMLU 与续轮重复门失败，不能设置为新的质量合格默认值。
 - [x] `docs/miss_mask.md` 已记录矩阵、分段计时和质量结果；STATUS 待最终决策更新。
 - [x] **A 未通过（MMLU 46/57、续轮重复 .118 > 1.5×off）。按方案此时应停下请 owner 决定，
@@ -282,3 +284,21 @@ CPU 计算 miss 专家、部分专家、重新归一化、streams>1 的 GPU rout
   原失败保留；纠正后只执行剩余 off64/decode/longctx，不重复已经通过的六项。
 - `c39ea20` 修复温控异常退出后的失败收据：终态读数失败仍保留清理与失败原因，
   未知 AC/末尾样本记 null，不伪造成功。17项 CPU 温控检查通过。
+
+## 8. Codex 追加收据（2026-10-06，完整数值门与计时）
+
+- `final_review/` 前六项与 `final_review_remaining/` 后三项实际完成，无skip。
+  off为打印精度的 `.622784 / 64`，自动缓存实际5100槽；不是声称内部double完整精度已导出。
+  short decode仍为loaded 6/8、own-prefill 7/8，与方案所列当前基线一致；
+  4K/16K free与teacher均8/8。case通过与严格逐token8/8分开记录。
+- `de42061` 在真正decode结束点记录Unix时间（17位有效数），先于reheat与KV checkpoint。
+  `4228778`/`a5133cd` 使用该边界并拒绝用legacy host估计选择新默认；
+  覆盖不足的温控日志保留raw、active记null。新JSON两个C++case实际通过。
+- 计时版exe SHA256 `b07f2480c8464681…`，52shader不变；工具门禁39/39。
+  热计时23项、投机选择6项、报告11项CPU检查通过。
+- `023eb6f` 保留实际raw端到端成本作D选择，并另报扣CPU暂停的active估算排名。
+  GPU route须在raw和active都超过3%收益；SIGSTOP不能撤回已提交的GPU工作。
+- `a9e1027` 修复网页启动期退出发现late engine的竞态，19项CPU检查通过；
+  `101e686` 将closing标记与cancel/quit放在同一次io_lock内，之后拒绝新生成，15项检查通过。
+- C `performance_recovered_r2` 已开始四臂完整对照，使用上述真实时间标记版。
+  原准备manifest与旧无marker二进制收据均备份，旧中断结果保留；完成前不判C/D。
