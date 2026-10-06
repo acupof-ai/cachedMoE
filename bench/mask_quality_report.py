@@ -2,8 +2,9 @@
 """Report existing mask-quality experiments without starting an engine.
 
 Inputs are comparison roots, individual arm directories, or web_longtest
-directories. Cooling-adjusted time uses host receipt boundaries; it is not a
-GPU timestamp. A quality file maps arm names to explicit gate evidence:
+directories. Cooling-adjusted time prefers the engine's recorded decode end;
+old logs retain a host estimate. Neither is a GPU timestamp. A quality file
+maps arm names to explicit gate evidence:
 off_nll, nll, chinese64_no_loop, long512_no_loop, long512_repeat_vs_off,
 mmlu_correct, mmlu_n, decode_baseline, and longctx_baseline.
 """
@@ -239,6 +240,9 @@ def c_decision(arm, baseline):
         verdict = "PENDING"
     elif quality["passed"] is False or arm["repetition_vs_off"]["passed"] is False:
         verdict = "NO-GO: quality gate failed"
+    elif (timing.get("engine_decode_boundaries") is not True or
+          control.get("engine_decode_boundaries") is not True):
+        verdict = "PENDING"
     elif speedup is not None and speedup < 1.10:
         verdict = "NO-GO: speedup below 10%"
     elif speedup is not None and speedup < 1.20:
@@ -426,6 +430,7 @@ def build_report(inputs, *, baseline_name="off", quality=None, thermal_log=None,
         if "tau" in arm["name"] or arm["policy"].get("tau") is not None:
             arm["C_decision"] = c_decision(arm, baseline)
     eligible = [arm for arm in arms if arm["spec_k"] and arm["resident_mode"] == "mask" and
+                arm["timing"].get("engine_decode_boundaries") is True and
                 arm["mask_dynamic"] and arm["complete"] and
                 arm["performance_verified"] is True and arm["no_loop"] is True and
                 arm["repetition_vs_off"]["passed"] is True and
@@ -445,7 +450,8 @@ def build_report(inputs, *, baseline_name="off", quality=None, thermal_log=None,
                     provisional_before_completed_D="mask+k2, ONECB on; GPU route determined independently"),
                 inputs=[dict(path=str(p), sha256=hashlib.sha256(p.read_bytes()).hexdigest())
                         for p in sorted(paths) if p.exists()],
-                limitations=["Active time subtracts cooling using host receipt boundaries, not GPU stamps.",
+                limitations=["Active time subtracts CPU suspension from the engine decode interval; submitted GPU work can continue.",
+                    "Old logs use host receipt estimates and cannot select a new default.",
                     "Raw stage timers retain cooling; no unsupported per-stage subtraction is made.",
                     "Common acceptance costs are arithmetic comparisons; generated routes/unions can differ.",
                     "Missing quality evidence stays pending; C requires all gates and >=20% speedup.",

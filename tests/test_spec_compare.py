@@ -11,7 +11,8 @@ spec.loader.exec_module(bench)
 
 
 def row(name, cost, valid=True):
-    return dict(name=name, decode_timing=dict(active_ms_per_token=cost),
+    return dict(name=name, decode_timing=dict(active_ms_per_token=cost,
+                                             engine_decode_boundaries=True),
                 repetition=dict(no_loop=valid))
 
 
@@ -37,6 +38,12 @@ class SpecCompareTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bench.choose_route([row("k2_gpu", None), row("k2_onecb_cpu_route", 100)])
         self.assertFalse(bench.choose_route([], "cpu")[0])
+
+    def test_host_estimate_cannot_choose_route(self):
+        controls = [row("k2_gpu", 90), row("k2_onecb_cpu_route", 100)]
+        controls[0]["decode_timing"]["engine_decode_boundaries"] = False
+        with self.assertRaisesRegex(ValueError, "engine decode boundaries"):
+            bench.choose_route(controls)
 
     def test_spec_totals_excludes_non_done_events(self):
         with tempfile.TemporaryDirectory() as folder:

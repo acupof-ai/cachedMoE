@@ -79,11 +79,12 @@ class QualityReportTests(unittest.TestCase):
 
     def test_missing_quality_never_becomes_GO(self):
         arm = dict(complete=True, performance_verified=True,
-            timing=dict(active_ms_per_token=80, raw_ms_per_token=100),
+            timing=dict(active_ms_per_token=80, raw_ms_per_token=100, engine_decode_boundaries=True),
             quality=quality_gates({}), repetition_vs_off=dict(passed=True),
             failures=dict(no_load_failures=True))
         baseline = dict(complete=True, performance_verified=True,
-                        timing=dict(active_ms_per_token=120, raw_ms_per_token=150))
+                        timing=dict(active_ms_per_token=120, raw_ms_per_token=150,
+                                    engine_decode_boundaries=True))
         self.assertEqual(c_decision(arm, baseline)["verdict"], "PENDING")
         evidence = dict(off_nll=.622784, nll=.623711, mmlu_n=57, mmlu_correct=48,
             chinese64_no_loop=True, long512_no_loop=True, long512_repeat_vs_off=True,
@@ -176,7 +177,8 @@ class QualityReportTests(unittest.TestCase):
                 arm = root / name
                 arm.mkdir()
                 turn = dict(event="done", label="matched", seed=1, generated=8,
-                            decode_steps=7, decode_ms=cost, host_unix=10 + index)
+                            decode_steps=7, decode_ms=cost, host_unix=10 + index,
+                            decode_finished_unix=10 + index)
                 if k:
                     turn["speculation"] = dict(cycles=3, verified=k * 3, accepted=4,
                         tokens=7, draft_ms=cost / 4, verify_ms=cost / 2,

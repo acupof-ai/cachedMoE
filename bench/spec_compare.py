@@ -44,6 +44,8 @@ def choose_route(results, forced="auto"):
         cost = row["decode_timing"]["active_ms_per_token"]
         if cost is None:
             raise ValueError("automatic route choice requires aligned thermal timing")
+        if row["decode_timing"].get("engine_decode_boundaries") is not True:
+            raise ValueError("automatic route choice requires recorded engine decode boundaries")
         if row["repetition"]["no_loop"]:
             eligible.append((name, cost))
     if not eligible:
