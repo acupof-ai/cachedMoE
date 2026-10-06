@@ -27,7 +27,7 @@
       "mask-plain",
       "off-plain"
     ],
-    "source": "docs/codex_todo.md §0 (2026-10-06)"
+    "source": "docs/codex_todo.md \u00a70 (2026-10-06)"
   },
   "timing_definition": {
     "raw": "Observed engine decode wall time, weighted by timed decode steps; includes thermal pauses",
@@ -802,5 +802,28 @@
     "own_worktree_deleted": false,
     "full_compatible_rename_completed": false,
     "web_restored": false
+  },
+  "delivery_update": {
+    "schema": "cachedmoe.actual_main_delivery_update.v1",
+    "verified_local_commit": "e5131abbb3caf16d2c8887a5c0d45bb3992ccfa9",
+    "verified_remote_main_commit": "a016a78aa38a99b230e6138184d1130eae2e5b0a",
+    "status": "CPU_AND_FORMAT_ACCEPTED_GPU_PUSH_WEB_PENDING",
+    "goal_complete": false,
+    "references": [
+      {
+        "path": "bench/results/mask_quality/rename_prepared/final_config_validation/goal_completion_audit_e5131ab.json",
+        "sha256": "1d51351d357cf06ec1f0e72b560d9542e8d0108bcb7248534b25c954dc171fdb"
+      },
+      {
+        "path": "docs/runtime_configuration_receipt.json",
+        "sha256": "f1ba75b3e84aaf429cc8b62fe624b16cd907b8fda29e92180d841048da845279"
+      }
+    ],
+    "remaining": [
+      "Actual-main numerical gates on AC and full read-only mirror",
+      "Push accepted main and clean only owned worktree/branch",
+      "Restore guarded web and verify actual API/old-session continuation without refreshing browser"
+    ],
+    "scope": "All prior measured phases, original failures, owner exceptions and historical pending_at_receipt remain unchanged. Current source/CPU acceptance does not imply current GPU or live web acceptance."
   }
 }

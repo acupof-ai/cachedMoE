@@ -210,7 +210,7 @@ Engram 全量 scale 默认没有常驻，也没有可再释放一次的整套 ho
   52 shader及runtime/tests两个exe逐位不变；`post_main_merge_{cpu,tools}.log` 与
   `post_main_merge_shader_receipt.json` 已核实。main已fast-forward到`0ed4cb4`，main目录验证/推送仍交付中，本合并条目保持未勾；
   尚未推送、删own工作树或宣称网页恢复，不动owner untracked副本。
-- [ ] 更新本清单为最终未完成事项；先核对主仓库同名 untracked 副本是否有用户新编辑，再合并。
+- [x] 更新本清单为最终未完成事项；先核对主仓库同名 untracked 副本是否有用户新编辑，再合并。
 - [ ] 用主仓库 `build/web_mask/launch.py` 恢复网页（磁盘KV开启、1M上下文、5500槽、双盘、80/72温控），
   验证 `/api/config` 与引擎日志。用户 transcript 不动，浏览器页不刷新。
 - [ ] 完成当前 goal 前确认以上必要项已处理；NO-GO / 按决策跳过必须有证据。
@@ -529,3 +529,12 @@ CMake 选项 `CACHEDMOE_*`。
 - 仍待实际硬件：AC=0、外置NVMe未枚举。新binary数值门、push/own工作树清理、
   网页/API/旧session继续生成验收保持未勾；不刷新浏览器，不重跑C/D已关闭方向。
   本段追加当前事实，不覆盖§15及更早时点的快照。
+
+## 17. Codex 追加收据（2026-10-06，最终待交付项审计）
+
+- 阶段25份与配置31份原始引用均按SHA复核；A/B、C/D止损与独立路由选择、E容量边界已核对。
+  完成审计为`rename_prepared/final_config_validation/goal_completion_audit_e5131ab.json`。
+- 当前只剩：①接AC/恢复完整只读双盘后跑新main的9项数值验收；②通过后push并清理本任务工作树/分支；
+  ③温控恢复网页并实际验证API、旧聊天和KV续接，不刷新浏览器。此三项仍未完成。
+- 最终清单已核对主目录同名tracked文件与工作树，没有用户新编辑被覆盖；原11个untracked结果目录仍在。
+  当前remote main仍`a016a78`，8080拒绝连接，AC=0且无外置NVMe；目标未标为完成。
