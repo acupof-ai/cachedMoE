@@ -91,7 +91,7 @@ def main() -> int:
     if not build.exists():
         print(f"no build directory at {build}. Configure it first:\n"
               "  cmake -S . -B build -G Ninja "
-              "-DCMAKE_TOOLCHAIN_FILE=cmake/zig-toolchain.cmake -DCMAKE_BUILD_TYPE=Release",
+              "-DCMAKE_TOOLCHAIN_FILE=cmake/linux-clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release",
               file=sys.stderr)
         return 1
 
@@ -126,6 +126,7 @@ def main() -> int:
     # --- 3. the Python tools' self-tests ----------------------------------
     for label, cmd in (
         ("tools/tests/test_runtime_env.py", [PY, str(ROOT / "tools" / "tests" / "test_runtime_env.py")]),
+        ("tools/tests/test_runtime_facts.py", [PY, str(ROOT / "tools" / "tests" / "test_runtime_facts.py")]),
         ("tools/tests/test_cmake_rename.py", [PY, str(ROOT / "tools" / "tests" / "test_cmake_rename.py")]),
         ("tools/tests/test_process_names.py", [PY, str(ROOT / "tools" / "tests" / "test_process_names.py")]),
         ("tools/tests/test_state_paths.py", [PY, str(ROOT / "tools" / "tests" / "test_state_paths.py")]),
