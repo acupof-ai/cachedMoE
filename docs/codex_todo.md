@@ -810,3 +810,14 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - `37e6367`离线/真实测量，`d5f0ef8`显式GPU副本，`80c5a04`默认布局隔离/比较控制，`8157f73`门槛判定分别提交；`b3986c5`实际main验收和网页恢复已push，origin SHA完全一致。
 - own工作树`../cachedmoe-power-draft`及`codex/power-draft`分支已删除，只剩主工作树；主目录11份原有未追踪结果目录保留。原始GPU/CPU/失败/温控/配置收据均在main结果目录。
 - 本轮§4.8/§4.9按owner门槛结案：balanced默认已验收；FP8生产质量NO-GO、候选完整速度条件SKIP、子集NO-GO。不把未通过项、未测长期命中成本或上游Strata等待合并写成完成/GO。
+
+## 35. 受控草稿对照与当前 verify 拆解（2026-10-07）
+
+- [x] 对照工具区分 exact-target 质量和 frozen-cache 成本；后者核对逐槽专家/pin 映射，IO 排空后测量，拒绝部分缓存、失败或替换。默认动态 LRU 不变。
+- [x] exact-target：native64 输出；FP8 第22输出76111→104505，按首次差异取消。差异前两行 target routes 一致，候选分别 rank3/rank0，均被 top4 接受；明确 FP8 最终ID门不通过。
+- [x] 冻结控制：5400槽全程同映射/同5400 fills，64最终ID一致、35/54接受和28cycle相同。raw66.523251→71.453364ms/token，温控69.833→509.486ms；active估算不当生产赢家，5500→5400长期成本仍未测。
+- [x] balanced 双盘当前动态 trace：25 target/64输出，0加载失败/热暂停；verify201.262970ms，GPUbusy124.064133、跨提交gap74.875007，Engram host62.179328ms嵌套其中，专家阻塞等待0。不把 record/fence/Engram 重复相加。
+- [x] 未关闭的 MoE 数组宽度探针：6→3列、同3 live/12 FP4专家/3层，逐位一致，1.875508489→1.796428236ms/层；40层减半1.581605ms<2ms入口，止损，不加默认内核。不重开§4.6关闭项。
+- [x] 代码/测试和实验记录分开提交；报告`verify_control.md`和`verify_control_receipt.json`保留原混杂实验历史，不覆盖旧收据。
+- [ ] 实际main最终验收、push、恢复balanced网页、六份原用户文件核对、own工作树清理；完成后追加交付收据。
+- 后续有边界的开放工作：真正限制 prefill activation workspace；须保留绝对位置/KV/CED/compressor/Engram连续状态，不把简单分段喂入冒充正确分块。M3常量循环尚未测，不把本次数组宽度止损扩成全部MoE无空间。

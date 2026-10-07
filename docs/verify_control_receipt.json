@@ -1,0 +1,238 @@
+{
+  "exact_target": {
+    "verdict": "CONTROLLED_FINAL_IDS_FAIL",
+    "first_difference": {
+      "turn": 0,
+      "first_difference": {
+        "position": 21,
+        "reference": 76111,
+        "candidate": 104505
+      },
+      "expected_count": 64,
+      "actual_count": 26
+    },
+    "target_mode": "off-spec",
+    "root_and_first_draft_routes_different": {
+      "0": 0,
+      "1": 0
+    },
+    "cycle_position": 48,
+    "native_draft": [
+      101132,
+      303,
+      76111
+    ],
+    "fp8_draft": [
+      101132,
+      303,
+      104505
+    ],
+    "native_ranks": [
+      0,
+      3
+    ],
+    "fp8_ranks": [
+      0,
+      0
+    ],
+    "both_accepted": 2,
+    "load_failures": 0,
+    "production_speed_test": false
+  },
+  "frozen_cache": {
+    "verdict": "CONTROLLED_FINAL_IDS_PASS",
+    "cache": {
+      "slot_sha256": "80046ddcd1d04294f5a6d3f1fc475592735c258181f854e0f291fec0114a1321",
+      "resident": 5400,
+      "fills_started": 5400
+    },
+    "outputs": 64,
+    "accepted": 35,
+    "verified": 54,
+    "cycles": 28,
+    "production_speed_test": false,
+    "native_bf16": {
+      "raw_ms_per_token": 66.52325079365079,
+      "active_ms_per_token_estimate": 65.41478983750116,
+      "decode_pause_ms": 69.83304023742676,
+      "raw_ms_per_cycle": 149.6773142857143,
+      "active_ms_per_cycle_estimate": 147.18327713437762
+    },
+    "row_fp8": {
+      "raw_ms_per_token": 71.45336412698413,
+      "active_ms_per_token_estimate": 63.36628161229693,
+      "decode_pause_ms": 509.48619842529297,
+      "raw_ms_per_cycle": 160.77006928571427,
+      "active_ms_per_cycle_estimate": 142.5741336276681
+    },
+    "different_cycle_fields": {
+      "accepted": 0,
+      "emitted": 0,
+      "tokens": 1,
+      "target_rank": 1,
+      "draft_routes": 0,
+      "target_routes": 1
+    },
+    "mean_ms_per_cycle": {
+      "native_bf16": {
+        "draft_ms": 19.383639285714285,
+        "verify_ms": 128.50859878571427,
+        "commit_ms": 0.7948138214285715,
+        "cpu_ms": 0.12717014285714284
+      },
+      "row_fp8": {
+        "draft_ms": 14.247388964285715,
+        "verify_ms": 144.8585625357143,
+        "commit_ms": 0.7047258928571428,
+        "cpu_ms": 0.12375760714285713
+      }
+    }
+  },
+  "balanced_eight_turn_host": {
+    "cycles": 814,
+    "turns": 8,
+    "mean_cycle_ms": {
+      "draft_ms": 26.51457831695332,
+      "verify_ms": 200.5336072972973,
+      "commit_ms": 0.9984664656019656,
+      "cpu_ms": 0.1448783144963145
+    },
+    "accounted_cycle_ms": 228.1915303943489,
+    "verify_fraction": 0.87879513736003,
+    "expert_io_wait_ms": 0,
+    "load_failures": {
+      "p0_reserve": 0,
+      "p0_submit": 0,
+      "p0_io": 0,
+      "fill": 0
+    },
+    "mean_verify_host_ms": {
+      "engram_issue_land": 23.342305527027026,
+      "fence_wait": 168.6252708636364,
+      "finish_routes": 0.00216704914004914,
+      "input_ced_engram_issue": 0.47602220270270273,
+      "queue_submit": 1.419121757985258,
+      "record_layers_tail": 186.0854645995086,
+      "route_classify": 0.0,
+      "route_hidden_carry": 0.0,
+      "route_index_validation": 0.0,
+      "route_planner": 0.0,
+      "route_readback": 0.0,
+      "setup_snapshot": 0.0034108906633906633,
+      "submit_fence": 13.961787262899263,
+      "trace_readout": 0.0014057088452088453
+    },
+    "host_timers_are_additive": false,
+    "nested_timers": [
+      "record_layers_tail includes layer fences and Engram waits",
+      "fence_wait accumulates waits inside and outside record_layers_tail",
+      "engram_issue_land overlaps record_layers_tail"
+    ],
+    "production_speed_winner": false,
+    "sources": {
+      "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/draft_head_fp8_e2e/diagnostics.jsonl": "34f455a61864a7e4505d9f466cc328c44175572a43a06ada9b816041dee96bb8",
+      "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/draft_head_fp8_e2e/native_bf16/events.jsonl": "13a0fa608eb9c3df45812ae392c6527d689568c70b73a95d38c6bce423814f3a"
+    }
+  },
+  "current_dynamic_verify_trace": {
+    "cycles": 25,
+    "turns": 1,
+    "mean_cycle_ms": {
+      "draft_ms": 22.181075999999997,
+      "verify_ms": 201.2629704,
+      "commit_ms": 0.83885628,
+      "cpu_ms": 0.12556979999999998
+    },
+    "accounted_cycle_ms": 224.40847248,
+    "verify_fraction": 0.8968599455082392,
+    "expert_io_wait_ms": 0,
+    "load_failures": {
+      "p0_reserve": 0,
+      "p0_submit": 0,
+      "p0_io": 0,
+      "fill": 0
+    },
+    "mean_verify_host_ms": {
+      "engram_issue_land": 62.179327560000004,
+      "fence_wait": 129.72073588,
+      "finish_routes": 0.0019252800000000001,
+      "input_ced_engram_issue": 0.31574552,
+      "queue_submit": 0.9344162800000001,
+      "record_layers_tail": 188.21710248,
+      "route_classify": 0.0,
+      "route_hidden_carry": 0.0,
+      "route_index_validation": 0.0,
+      "route_planner": 0.0,
+      "route_readback": 0.0,
+      "setup_snapshot": 0.003998359999999999,
+      "submit_fence": 12.57144368,
+      "trace_readout": 0.14979912
+    },
+    "host_timers_are_additive": false,
+    "nested_timers": [
+      "record_layers_tail includes layer fences and Engram waits",
+      "fence_wait accumulates waits inside and outside record_layers_tail",
+      "engram_issue_land overlaps record_layers_tail"
+    ],
+    "production_speed_winner": false,
+    "dispatch_trace": {
+      "cycles": 25,
+      "mean_busy_ms": {
+        "attention": 45.66789600000001,
+        "ced": 1.5067753599999998,
+        "engram": 4.72724064,
+        "moe": 61.26139196,
+        "tail": 10.90082864
+      },
+      "mean_cross_submit_gap_ms": 74.8750068,
+      "mean_same_submit_gap_ms": 1.5882135600000031,
+      "mean_span_ms": 200.52735296
+    },
+    "sources": {
+      "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/compare_verify_trace/diagnostics.jsonl": "f9a75535a65f41e93f55a7582756efe2556ade03f1ecc30b605f3c3419048abf",
+      "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/compare_verify_trace/events.jsonl": "d3c36ec57b0319a8ac13720b5ebaaa78a143bfcb8354ea90c18fb645e5859388",
+      "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/compare_verify_trace/trace.bin": "acda64dbd5269b4a25390fce2a9163ff5babd62a2239ec428290ef4cffed400b"
+    }
+  },
+  "width_probe": {
+    "widths": [
+      6,
+      3
+    ],
+    "live_columns": 3,
+    "resident_fp4_slots": 12,
+    "layer_cycle": 3,
+    "iterations": 8,
+    "gpu_ms": [
+      1.875508489,
+      1.796428236
+    ],
+    "bitwise_equal": true,
+    "predicted_cycle_saved_ms": 3.163210120000004,
+    "halved_cycle_saved_ms": 1.581605060000002,
+    "entry_floor_ms": 2,
+    "decision": "NO_GO_BELOW_ENTRY_FLOOR",
+    "limitations": [
+      "resident primary-drive weights; timed region contains no expert IO",
+      "no FP8 shared expert in this small probe",
+      "extrapolation is not an end-to-end speed result",
+      "unchanged dynamic trip-count; constant-loop variants were not tested"
+    ]
+  },
+  "decisions": {
+    "fp8_default": false,
+    "dynamic_lru_default": true,
+    "width_specialization_default": false,
+    "production_speed_go": false
+  },
+  "sources": {
+    "bench/results/mask_quality/compare_control_exact_target/comparison.json": "e707b93683309929f12af409bc510f64ce8fd3c9dcc413f10e69386e173217fc",
+    "bench/results/mask_quality/compare_control_exact_target/diagnostics.jsonl": "258bd171fa06e0dbd18bafac85de2f6c1df62966c5de28ef7340805fd1b061e9",
+    "bench/results/mask_quality/compare_control_frozen_cache/comparison.json": "cc8697f02cf917582fba99d0b5df73f200d38b27c677991c637cf50cac8ffd32",
+    "bench/results/mask_quality/compare_control_frozen_cache/diagnostics.jsonl": "7b908df98183edaa24ad4849b546e218652c5ac56c84a06b3d4ec46ad0e26ac9",
+    "bench/results/mask_quality/compare_verify_trace/verify_cost.json": "c12876e1faabaa93f1724069069768694f4a7c10138bd145cea6eb3042c8ce94",
+    "bench/results/mask_quality/verify_width_probe_prepared/width_probe.log": "8a8fb0d222017e4317e81a2cb1b8a2b8eaf5562362b687251c846a88eee3c6cf",
+    "bench/results/mask_quality/verify_width_probe_prepared/check_results.json": "481dd57ec4bd26149f1d1920101d6838b0f7e483830593b4db1ad4470e7f617f",
+    "bench/results/mask_quality/compare_control_prepared/check_results.json": "5a9388d94a14eacac2e2f2fb2315c84a3b9ce5d593455e2663a6a211fc42a709"
+  }
+}

@@ -30,6 +30,17 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Controlled follow-up (2026-10-07): FP8 final-ID failure is now isolated.**
+Exact-target k2/top4 changes output22 despite identical target routes before
+that token; candidates rank3/rank0 both pass the relaxed acceptor. Frozen-cache
+control keeps all5400 expert slots and fills identical:64 IDs and35/54 acceptance
+match, but raw66.523251→71.453364ms/token includes different cooling. No new
+production speed GO. Fresh balanced dual-drive verify:201.262970ms/cycle,
+GPUbusy124.064133, cross-submit gaps74.875007; nested Engram host62.179328,
+expert blocking IO wait0, zero failures/thermal pauses. MoE array width6→3
+passes bitwise probe but saves only1.581605ms/cycle after halving, below2ms;
+no runtime default change. [Report and next boundaries](verify_control.md).
+
 **Current default (2026-10-06): balanced wins the complete power comparison.**
 Same-engine dual-drive k2 web workload, eight 512-output turns per mode:
 balanced **80.944 raw ms/token**, power-saver 107.830, performance 113.801.
