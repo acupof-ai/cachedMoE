@@ -145,6 +145,7 @@ def main() -> int:
         ("tools/tests/test_mask_quality_report.py", [PY, str(ROOT / "tools" / "tests" / "test_mask_quality_report.py")]),
         ("bench/test_power_profile_report.py", [PY, str(ROOT / "bench" / "test_power_profile_report.py")]),
         ("bench/test_power_profile_compare.py", [PY, str(ROOT / "bench" / "test_power_profile_compare.py")]),
+        ("bench/test_draft_head_compare.py", [PY, str(ROOT / "bench" / "test_draft_head_compare.py")]),
         ("bench/test_draft_head_offline.py", [PY, str(ROOT / "bench" / "test_draft_head_offline.py")]),
         ("tests/test_spec_compare.py", [PY, str(ROOT / "tests" / "test_spec_compare.py")]),
         ("tests/test_serve_decode_clock.py", [PY, str(ROOT / "tests" / "test_serve_decode_clock.py")]),

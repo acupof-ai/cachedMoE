@@ -521,6 +521,10 @@ Result<void> DsparkRuntime::create(gpu::Device &dev, gpu::MemoryAllocator &alloc
     DS_TRY(p.ds.create(dev, alloc, dev.environment().shader_dir));
     DS_TRY(p.mgt.create(dev, alloc, dev.environment().shader_dir, spec));
     DS_TRY(p.mgt.ensure(M));
+    if (options.draft_head_fp8) {
+        // Prepare both head formats for every suffix length before benchmarks.
+        for (uint32_t rows = 1; rows < M; ++rows) DS_TRY(p.mgt.ensure(rows));
+    }
     DS_TRY(p.scratch.create(alloc, 32ull << 20));
 #define BUF(name, bytes)                                                                           \
     {                                                                                              \

@@ -325,7 +325,7 @@ Result<void> MgtRunner::create(Device& device, MemoryAllocator& alloc,
     alloc_  = &alloc;
     spec_   = spec;
     dir_    = shader_dir;
-    const uint32_t n = static_cast<uint32_t>(MgtStage::Count);
+    const uint32_t n = stage_count();
     auto t = alloc.allocate(uint64_t(n) * kAttnStageStride, true, false);
     if (!t) { destroy(); return std::unexpected(t.error()); }
     table_ = *t;
@@ -387,7 +387,7 @@ Result<void> MgtRunner::ensure(uint32_t m) {
         return fail(Err::InvalidArgument, std::format("M = {} is outside 1..{}", m, kMgtMaxM));
     PerM& pm = per_m_[m];
     if (pm.ready) return {};
-    const uint32_t n = static_cast<uint32_t>(MgtStage::Count);
+    const uint32_t n = stage_count();
     pm.pipes.clear();
     pm.pipes.resize(n);
     pm.sets.assign(n, VK_NULL_HANDLE);
@@ -398,7 +398,7 @@ Result<void> MgtRunner::ensure(uint32_t m) {
 }
 
 uint64_t* MgtRunner::slots(MgtStage s) {
-    if (!table_.host_ptr) return nullptr;
+    if (!table_.host_ptr || static_cast<uint32_t>(s) >= stage_count()) return nullptr;
     return reinterpret_cast<uint64_t*>(static_cast<std::byte*>(table_.host_ptr) +
                                        uint64_t(static_cast<uint32_t>(s)) * kAttnStageStride);
 }

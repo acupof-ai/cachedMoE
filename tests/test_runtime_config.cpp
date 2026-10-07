@@ -129,3 +129,9 @@ CACHEDMOE_TEST(runtime_config, spec_switch_rejects_invalid_or_uninitialized_engi
     CHECK_EQ(engine.config().gpu.draft_onecb, before.gpu.draft_onecb);
     CHECK_EQ(engine.config().gpu.batch_gpu_route, before.gpu.batch_gpu_route);
 }
+
+CACHEDMOE_TEST(runtime_config, head_switch_requires_initialized_copy_resources) {
+    runtime::Engine engine;
+    CHECK(!engine.set_draft_head_fp8(false));
+    CHECK(!engine.set_draft_head_fp8(true));
+}

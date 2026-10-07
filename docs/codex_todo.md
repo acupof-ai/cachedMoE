@@ -768,3 +768,12 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - 真实64输出逐位相同，25cycle和38/49接受不变；每cycle一次target，target BF16未改。
 - CPU31/31、工具55/55。一次质量启动被并行CPU CTest的idle检查拒绝，0GPU输出；旧日志保留。
 - off NLL/decode/DSpark及八轮速度仍待完成，不能把短门写成GO或网页默认。
+
+## 31. §4.9 默认布局与数值门（2026-10-07）
+
+- off teacher-force NLL 保持 0.622784；decode loaded 6/8、own-prefill 7/8 保持当前基线，未冒称 strict 8/8。
+- DSpark per-stage、ONECB full runtime、mega full runtime 已通过。原候选 mega 的一次失败及 main 控制通过都保留，原因未证实。
+- FP8 1～5 行 serial/ONECB 共10个组合逐位一致。关闭 FP8 时不分配新增 stage，保持默认参数布局。
+- CPU 31/31，tools 56/56。证据：`bench/results/mask_quality/draft_head_fp8_default_layout_gates/`。
+- 同引擎八轮驱动及受控空上下文 head 切换已准备；两臂都固定5400槽，隔离 head 成本，不把它写成对5500槽默认的完整增益。
+- 最终 ID 若发生差异立即取消候选臂；八轮结果和默认判定仍待完成。

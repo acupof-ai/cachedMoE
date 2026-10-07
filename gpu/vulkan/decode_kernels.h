@@ -315,6 +315,10 @@ public:
 private:
     ArgumentPages pages_;bool immutable_=false;
 
+    // The optional last pipeline must not change default tables/pool capacity.
+    uint32_t stage_count() const {
+        return static_cast<uint32_t>(spec_.draft_head_fp8 ? MgtStage::Count : MgtStage::DraftHeadFp8);
+    }
     Result<void> make(uint32_t m, MgtStage s);
 
     Device*          device_ = nullptr;

@@ -1,4 +1,5 @@
 #include "core/env.h"
+#include "tests/env_guard.h"
 #include "core/wc_read.h"
 #include "cpu/dequant.h"
 // The design §7.12 DSpark draft kernels against tools/oracle_dspark.py's golden
@@ -1154,7 +1155,7 @@ CACHEDMOE_TEST(gpu_dspark, full_runtime_chain) {
     for(uint32_t rows=1;rows<5;++rows) {
         for(bool mega:{false,true}) {
             set_fused(mega);
-            auto prefix=draft.draft(64,input,rows);REQUIRE(prefix);
+            auto prefix=draft.draft(64,input,rows);REQUIRE_OK(prefix);
             CHECK_EQ(prefix->logits.size(),size_t(rows)*kVocab);
             CHECK(std::equal(prefix->logits.begin(),prefix->logits.end(),plain->logits.begin()));
             CHECK(std::equal(prefix->tokens.begin(),prefix->tokens.begin()+rows,plain->tokens.begin()));
@@ -1273,4 +1274,57 @@ CACHEDMOE_TEST(gpu_dspark, committed_prefix_survives_window_wrap) {
     auto reset=engine.feed(std::span(prompt).first(4));REQUIRE(reset);
     auto fresh=engine.speculative_step(reset->token,2);REQUIRE(fresh);
     CHECK(engine.context_length()==4+fresh->rows.size());
+}
+
+CACHEDMOE_TEST(gpu_dspark, fp8_head_prefixes_match_serial_and_onecb) {
+    if (skip_without_model("gpu_dspark.fp8_head_prefixes_match_serial_and_onecb")) return;
+    test::ScopedEnvironment fp8("CACHEDMOE_DSPARK_HEAD_FP8", "1");
+    test::ScopedEnvironment mega("CACHEDMOE_DSPARK_MEGA", "0");
+    test::ScopedEnvironment onecb("CACHEDMOE_DSPARK_ONECB", "0");
+    auto golden = load_l2(ds_dir());
+    REQUIRE_OK(golden);
+    const L2Step *state = nullptr;
+    for (const auto &candidate : golden->steps)
+        if (candidate.step == "golden_pos64") state = &candidate;
+    REQUIRE(state);
+    RuntimeConfig cfg;
+    cfg.model_dir = model_dir();
+    cfg.cache.budget_bytes = 512ull * layout::kExpertSlotBytes;
+    cfg.cache.slots_per_slab = 64;
+    cfg.speculation.enabled = true;
+    runtime::Engine engine;
+    REQUIRE_OK(engine.init(cfg));
+    REQUIRE_OK(engine.init_gpu());
+    auto &draft = *engine.dspark_runtime();
+    std::array<std::span<const float>, layout::kMtpBlocks> rings;
+    for (uint32_t stage = 0; stage < rings.size(); ++stage)
+        rings[stage] = std::span(state->f(std::format("s{}.sparse_kv", stage))).first(kWin * kHeadDim);
+    REQUIRE_OK(draft.seed_window(64, rings));
+    REQUIRE_OK(draft.append(64, state->f("main_hidden")));
+    const auto root = uint32_t(state->f("draft_ids")[0]);
+    REQUIRE_OK(draft.set_head_fp8(false));
+    auto native = draft.draft(64, root);
+    REQUIRE_OK(native);
+    REQUIRE_OK(draft.set_head_fp8(true));
+    auto quantized = draft.draft(64, root);
+    REQUIRE_OK(quantized);
+    uint32_t strong = 0;
+    for (uint32_t row = 0; row < layout::kDsparkBlockSize; ++row) {
+        if (native->confidence[row] <= 1.0f) continue; // Existing low-margin fifth row may flip.
+        ++strong;
+        CHECK_EQ(native->tokens[row], uint32_t(state->f("draft_ids")[row + 1]));
+        CHECK_EQ(quantized->tokens[row], native->tokens[row]);
+    }
+    CHECK_EQ(strong, 4u);
+    for (uint32_t rows = 1; rows <= layout::kDsparkBlockSize; ++rows) {
+        for (const bool fused : {false, true}) {
+            draft.set_onecb(fused);
+            auto prefix = draft.draft(64, root, rows);
+            REQUIRE_OK(prefix);
+            CHECK_EQ(prefix->logits.size(), size_t(rows) * kVocab);
+            CHECK(std::equal(prefix->logits.begin(), prefix->logits.end(), quantized->logits.begin()));
+            CHECK(std::equal(prefix->tokens.begin(), prefix->tokens.begin() + rows, quantized->tokens.begin()));
+            std::printf("FP8 prefix rows=%u ONECB=%u bit-identical\n", rows, fused);
+        }
+    }
 }

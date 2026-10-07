@@ -98,8 +98,9 @@ class BenchServer(chat.Server):
         env = self.config.environment
         cmd = [self.config.exe, "serve", "--model", self.config.model,
                "--max-context", str(args.max_context),
-               "--engram-tables", os.path.join(REPO, "tests", "data", "l3"),
-               "--profile", os.path.join(out_dir, "profile.jsonl")]
+               "--engram-tables", os.path.join(REPO, "tests", "data", "l3")]
+        if getattr(args, "profile", True):
+            cmd += ["--profile", os.path.join(out_dir, "profile.jsonl")]
         if getattr(args, "cache_slots", 0):
             cmd += ["--cache-slots", str(args.cache_slots)]
         elif args.cache_gb:

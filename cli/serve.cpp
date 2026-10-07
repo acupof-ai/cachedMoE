@@ -468,6 +468,23 @@ int cmd_serve(int argc, char** argv) {
         if (op == "generate" || op == "generate_multi" || op == "reheat")
             gpu_busy.emplace(cfg.environment->gamemode);
         if (op == "quit") break;
+        if (op == "set_draft_head") {
+            if (!allow_spec_switch || session != pool.active() || pool.active() != "default") {
+                emit_error("head switching requires --allow-spec-switch in the default session");
+                continue;
+            }
+            const auto *value = doc->find("fp8");
+            if (!value) { emit_error("set_draft_head requires Boolean fp8"); continue; }
+            const auto fp8 = value->as_bool();
+            if (!fp8) { emit_error("set_draft_head requires Boolean fp8"); continue; }
+            if (auto r = engine.set_draft_head_fp8(*fp8); !r) {
+                emit_error(r.error().str());
+                continue;
+            }
+            emit(std::format(R"({{"event":"draft_head","fp8":{},"target_bf16":true}})",
+                             *fp8 ? "true" : "false"));
+            continue;
+        }
         if (op == "set_spec_config") {
             // Normal adapters do not enable this control. The synchronous
             // loop is between requests; Engine additionally checks its fence

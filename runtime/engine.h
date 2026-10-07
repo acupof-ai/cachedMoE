@@ -701,6 +701,8 @@ public:
     // routing enabled so every resource is built before the measured arms.
     // The caller must reset the live context before changing these options.
     Result<void> set_spec_config(uint32_t draft_tokens, bool onecb, bool gpu_route);
+    // Explicit benchmark switch; copy allocation/cache reservation stay fixed.
+    Result<void> set_draft_head_fp8(bool enabled);
     ResidentOnly resident_only() const { return resident_only_; }
     const ResidentRouteStats& resident_route_stats() const { return rr_; }
     void reset_resident_route_stats() { rr_ = {}; }

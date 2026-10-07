@@ -2106,6 +2106,19 @@ Result<void> Engine::set_mask_wait(std::optional<double> tau, uint32_t expert_bu
     return {};
 }
 
+Result<void> Engine::set_draft_head_fp8(bool enabled) {
+    if (!gpu_ready_ || !dspark_ || !cfg_.gpu.draft_head_fp8)
+        return fail(Err::FailedPrecondition, "draft head switching requires startup FP8 resources");
+    if (streams_.size() != 1 || current_stream() != 0 || context_length() != 0 ||
+        spec_inflight_ || cur_->tok_open_ || gpu_route_.enabled)
+        return fail(Err::FailedPrecondition, "reset the completed single-stream request before head switching");
+    auto completed = cur_->fence_.value();
+    if (!completed) return std::unexpected(completed.error());
+    if (*completed < cur_->fence_value_)
+        return fail(Err::FailedPrecondition, "draft head switching requires the final GPU fence");
+    return dspark_->set_head_fp8(enabled);
+}
+
 Result<void> Engine::set_spec_config(uint32_t draft_tokens, bool onecb, bool gpu_route) {
     if (draft_tokens < 1 || draft_tokens > layout::kDsparkBlockSize)
         return fail(Err::InvalidArgument, "spec draft length must be 1..5");
