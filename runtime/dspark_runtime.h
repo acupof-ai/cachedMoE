@@ -38,6 +38,8 @@ class DsparkRuntime {
                         const GpuExecutionConfig & = {});
     void reset();
     Result<void> set_profile(bool enabled);
+    // Benchmark switch between completed cycles; allocation and cache size stay fixed.
+    Result<void> set_head_fp8(bool enabled);
     void set_onecb(bool enabled);
     void set_mega(bool enabled, uint32_t groups = 120);
     uint32_t next_position() const;

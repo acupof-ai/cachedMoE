@@ -47,6 +47,7 @@ inline constexpr uint32_t kResidentQueueExperts = 24;
     X(CPU_AFFINITY)                                                                                \
     X(DSPARK_MEGA)                                                                                 \
     X(DSPARK_MEGA_DIAG)                                                                            \
+    X(DSPARK_HEAD_FP8)                                                                             \
     X(DSPARK_ONECB)                                                                                \
     X(DSPARK_PROFILE)                                                                              \
     X(DSPARK_TRIM_TAIL)                                                                            \
@@ -228,7 +229,7 @@ inline std::vector<std::string> semicolon_list(std::string_view value) {
 
 struct GpuOverrides {
     std::optional<bool> batch_gpu_route, batch_engram_early, spec_gpu_readout;
-    std::optional<bool> draft_onecb, draft_mega, draft_profile, draft_diagnostics, draft_trim_tail;
+    std::optional<bool> draft_head_fp8, draft_onecb, draft_mega, draft_profile, draft_diagnostics, draft_trim_tail;
     std::optional<bool> mgt_pair_dot, mgt_fold_scale, mgt_attn_cm;
 };
 struct DecodeOverrides {
@@ -324,6 +325,7 @@ inline void RuntimeEnvironment::resolve_gpu_decode() {
     gpu.batch_gpu_route = parse::exact_one(r[Key::BATCH_GPU_ROUTE]);
     gpu.batch_engram_early = parse::not_zero(r[Key::BATCH_ENGRAM_EARLY]);
     gpu.spec_gpu_readout = parse::not_zero(r[Key::SPEC_GPU_READOUT]);
+    gpu.draft_head_fp8 = parse::exact_one(r[Key::DSPARK_HEAD_FP8]);
     gpu.draft_onecb = parse::exact_one(r[Key::DSPARK_ONECB]);
     gpu.draft_mega = parse::exact_one(r[Key::DSPARK_MEGA]);
     gpu.draft_profile = parse::exact_one(r[Key::DSPARK_PROFILE]);

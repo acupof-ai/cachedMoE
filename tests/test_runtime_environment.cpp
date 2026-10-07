@@ -33,7 +33,7 @@ static_assert(static_cast<uint8_t>(configuration::ResidentPolicy::Mask) == 4);
 } // namespace
 
 CACHEDMOE_TEST(runtime_environment, all_production_keys_have_one_registry_entry) {
-    CHECK_EQ(configuration::kKeyNames.size(), 87u);
+    CHECK_EQ(configuration::kKeyNames.size(), 88u);
     std::set<std::string_view> unique;
     for (const auto name : configuration::kKeyNames) {
         CHECK(name.starts_with("CACHEDMOE_"));
@@ -287,4 +287,33 @@ CACHEDMOE_TEST(runtime_environment,
     CHECK_EQ(request.sampling.temperature, 0.0f);
     CHECK_EQ(request.sampling.seed, 19u);
     CHECK(!request.reuse);
+}
+
+CACHEDMOE_TEST(runtime_environment, draft_fp8_is_startup_only_and_rejects_unsupported_modes) {
+    EnvironmentSnapshot raw;
+    GpuExecutionConfig defaults;
+    defaults.apply_environment(RuntimeEnvironment(raw));
+    CHECK(!defaults.draft_head_fp8);
+    raw.set(Key::DSPARK_HEAD_FP8, "1");
+    auto environment = std::make_shared<RuntimeEnvironment>(raw);
+    GpuExecutionConfig captured;
+    captured.apply_environment(*environment);
+    CHECK(captured.draft_head_fp8);
+    raw.set(Key::DSPARK_HEAD_FP8, "0");
+    CHECK(captured.draft_head_fp8);
+    GpuExecutionConfig later;
+    later.apply_environment(RuntimeEnvironment(raw));
+    CHECK(!later.draft_head_fp8);
+    RuntimeConfig cfg;
+    cfg.environment = environment;
+    runtime::Engine no_spec;
+    auto rejected = no_spec.init(cfg);
+    CHECK(!rejected);
+    CHECK(rejected.error().message.find("requires speculation") != std::string::npos);
+    cfg.speculation.enabled = true;
+    cfg.gpu.draft_mega = true;
+    runtime::Engine mega;
+    auto unsupported = mega.init(cfg);
+    CHECK(!unsupported);
+    CHECK(unsupported.error().message.find("non-mega") != std::string::npos);
 }

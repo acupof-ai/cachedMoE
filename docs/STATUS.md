@@ -44,8 +44,9 @@ remain unchanged. [Complete comparison and result](power_profile_comparison.md).
 GPU work. The production CPU-route capture completes 64 outputs / 25 cycles;
 CPU BF16 agrees 100%, FP8 acceptance estimate drops 0 points. All vocabulary
 subsets fail the 3-point loss gate. Fresh unprofiled balanced head: 8.903326 ms,
-148.689 GB/s; halved FP8 prediction 2.224093 ms. Actual FP8 kernel speed,
-final-ID identity, numerical gates and copy/cache accounting remain pending.
+148.689 GB/s; halved FP8 prediction 2.224093 ms. FP8 kernel measures 3.539821ms / 187.137GB/s; the 64-output IDs remain identical
+at equal memory budget (copy reservation reduces the existing slab pool from
+5500 to 5400 slots). Off NLL/decode/DSpark and eight-turn gates remain pending.
 Web stays stopped for serial GPU work. [Evidence and remaining gates](draft_head_screening.md).
 
 **Earlier follow-up (2026-10-06): v4 started after an owner-confirmed port change.**

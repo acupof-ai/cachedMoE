@@ -41,6 +41,7 @@ int main(int argc, char **argv) try {
     RuntimeConfig cfg;
     fs::path prompt_path, out;
     uint32_t slots = 0;
+    std::string head_mode;
     for (int i = 1; i < argc; i += 2) {
         if (i + 1 == argc)
             throw std::runtime_error("each option requires a value");
@@ -50,8 +51,11 @@ int main(int argc, char **argv) try {
         else if (key == "--prompt-ids") prompt_path = value;
         else if (key == "--out") out = value;
         else if (key == "--slots") slots = std::stoul(value);
+        else if (key == "--head") head_mode = value;
         else throw std::runtime_error("unknown option: " + key);
     }
+    if (!head_mode.empty() && head_mode != "native" && head_mode != "fp8")
+        throw std::runtime_error("head must be native or fp8");
     if (cfg.model_dir.empty() || cfg.model_mirrors.size() != 1 || slots == 0 ||
         prompt_path.empty() || out.empty())
         throw std::runtime_error("require --model --mirror --slots --prompt-ids --out");
@@ -91,6 +95,7 @@ int main(int argc, char **argv) try {
     // Resolve policy once through Engine::init, then reject wrong configurations
     // before creating the GPU device or reading the pinned weight payloads.
     require(engine.init_gpu());
+    if (!head_mode.empty()) require(engine.dspark_runtime()->set_head_fp8(head_mode == "fp8"));
     engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
     runtime::SessionConfig session;
     session.max_context = cfg.max_context;

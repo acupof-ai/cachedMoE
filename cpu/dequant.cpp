@@ -1,5 +1,6 @@
 #include "cpu/dequant.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -64,6 +65,25 @@ uint8_t fp8_encode_rn(float v) noexcept {
         mag = (static_cast<uint32_t>(ee) << 3) | keep;
     }
     return static_cast<uint8_t>(sign | mag);
+}
+
+Result<float> quantize_bf16_row_fp8(std::span<const uint16_t> source,
+                                    std::span<uint8_t> destination) {
+    if (source.empty() || source.size() != destination.size())
+        return fail(Err::InvalidArgument, "FP8 row spans must have equal nonzero size");
+    float amax = 0.0f;
+    for (const auto bits : source) {
+        const float value = bf16_to_float(bits);
+        if (!std::isfinite(value))
+            return fail(Err::InvalidArgument, "FP8 source row contains nonfinite weights");
+        amax = std::max(amax, std::fabs(value));
+    }
+    const float scale = amax == 0.0f ? 1.0f : amax / kFp8E4M3Max;
+    if (scale == 0.0f)
+        return fail(Err::InvalidArgument, "FP8 row scale underflows float32");
+    for (size_t i = 0; i < source.size(); ++i)
+        destination[i] = fp8_encode_rn(bf16_to_float(source[i]) / scale);
+    return scale;
 }
 
 float act_quant_block(const float* v, size_t n, uint8_t* bytes, float* out_dequant) {

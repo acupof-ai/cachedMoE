@@ -13,6 +13,33 @@ This passes the 2 ms estimate gate; it is not measured FP8 speed. The capture
 uses profiling only for correctness and is not a speed result. Target math,
 final-token identity, actual FP8 speed and the copy's cache bill remain gates.
 
+## GPU candidate (2026-10-07)
+
+The row-FP8 kernel measures **3.539821 ms** / **187.137 effective GB/s** on the
+same two captured rows: 5.363506 ms below the native head. Conversion bytes and
+float32 scales have exactly the CPU-reference hashes. GPU-vs-CPU FP8 logit
+maximum error is 0.0000153, RMS 0.00000160; both row argmax IDs agree.
+
+`CACHEDMOE_DSPARK_HEAD_FP8=1` opts into a startup-only copy and pipeline.
+The default is off; mega + FP8 and FP8 without speculation are rejected before
+GPU initialization. ONECB snapshots the FP8 head's pointers with all other
+operations; each candidate cycle still calls the target exactly once.
+
+The **actual cache bill is 100 slots**, not the theoretical ceiling of 36:
+the existing pool allocates 100-slot slabs. Reserve one 1,880,883,200-byte slab
+from the same budget, leaving 5400 total / 5016 main-model slots after MTP pins.
+The 662,430,720-byte copy leaves 1,218,452,480 bytes unused in that reservation.
+Target BF16 stays resident. This rounding is explicit at startup; default
+allocation is unchanged. Short whole-store hits are 85.388% native and 85.400%
+FP8; these include draft accesses and do not establish a long-run hit cost.
+
+Full native-5500 vs FP8-5400 64-output captures have identical IDs, 25 cycles,
+38/49 accepted and one target forward/cycle. Both are instrumented correctness
+runs, not a throughput comparison. CPU CTest 31/31 and tools 55/55 pass.
+Off NLL, decode/DSpark baseline checks and the conditional same-engine eight-turn
+comparison remain pending. The first quality-launch preflight refused to run
+beside CPU CTest; it generated no output and its original log is preserved.
+
 The complete power comparison selects **balanced**: 80.944 raw ms/token versus
 113.801 for performance. That selection includes thermal pauses. See
 [the power report](power_profile_comparison.md).

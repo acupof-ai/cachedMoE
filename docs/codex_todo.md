@@ -422,7 +422,7 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   并用已记录的 target token 估算接受率变化。子集外的 token 记为 draft 必然不中。
 - [x] **预期收益先算再减半**：FP8 字节减半、子集按 N/129280 缩小，按实测带宽换算每 cycle 省的 ms，减半后
   **≥2ms/cycle 且估算接受率下降 ≤3 个百分点**才进入 GPU 实现；否则 NO-GO，写明数字。
-- [ ] **GPU 实现**（只做通过离线门的那一种，或两者组合）：新 kernel 与 bf16 版并存，micro-bench 报带宽利用率和 ms。
+- [x] **GPU 实现**（只做通过离线门的那一种，或两者组合）：新 kernel 与 bf16 版并存，micro-bench 报带宽利用率和 ms。
 - [ ] **正确性**：同 prompt 下开关前后最终输出 token 逐位相同（target verify 不变）；l3 off NLL `.622784` 不变；
   `suite.decode`、DSpark golden 不低于当前基线。
 - [ ] **速度**：同引擎、同电源模式（用 §4.8 的结论）、八轮 k=2，与 bf16 head 对照，各跑一次。
@@ -757,3 +757,14 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - GPU实现/实际微测/最终ID/off NLL/decode/DSpark/条件八轮速度仍未完成；副本662,430,720B必须另计。
 - 原始`draft_head_capture_cpu_route/`、`draft_head_screen_current_cost/`、`draft_head_baseline_micro/`；
   8.4ms历史估算收据保留，不覆盖。公开聚合`draft_head_screening_receipt.json`。
+
+## 30. §4.9 FP8 GPU短门（2026-10-07）
+
+- head微测8.903326→3.539821ms，有效带宽148.689→187.137GB/s；原始温控收据0暂停。
+- 全量编码/scale hash与CPU相同；FP8 logits最大误差0.0000153，两行argmax相同。
+- 显式`CACHEDMOE_DSPARK_HEAD_FP8=1`，默认关；启动配置唯一注册，拒绝mega/无投机组合。
+- 当前100槽slab使实际预算从5500降到5400，不只少理论36槽；384 pin后主模型5016槽。
+  副本662,430,720B；slab预算1,880,883,200B，多出的1,218,452,480B不冒充可用专家。
+- 真实64输出逐位相同，25cycle和38/49接受不变；每cycle一次target，target BF16未改。
+- CPU31/31、工具55/55。一次质量启动被并行CPU CTest的idle检查拒绝，0GPU输出；旧日志保留。
+- off NLL/decode/DSpark及八轮速度仍待完成，不能把短门写成GO或网页默认。

@@ -66,6 +66,7 @@ const char* mgt_stage_name(MgtStage s) {
         case MgtStage::AttnCmFinish:   return "mgt1.attn_cm.finish";
         case MgtStage::EngramGemv:     return "mgt1.engram.gemv";
         case MgtStage::EngramGate:     return "mgt1.engram.gate";
+        case MgtStage::DraftHeadFp8:    return "mgt1.draft_head_fp8";
         case MgtStage::Count:          break;
     }
     return "?";
@@ -283,6 +284,7 @@ constexpr MgtDef kMgt[] = {
     {MgtStage::AttnCmSoftmax,  "mgt1_attn_cm",2, 1, 1},
     {MgtStage::AttnCmPv,       "mgt1_attn_cm",3, 1, 1},
     {MgtStage::AttnCmFinish,   "mgt1_attn_cm",4, 1, 1},
+    {MgtStage::DraftHeadFp8,   "draft_fp8_head",0, 0, 1},
 };
 static_assert(sizeof(kMgt) / sizeof(kMgt[0]) == static_cast<size_t>(MgtStage::Count));
 }  // namespace
@@ -352,6 +354,7 @@ void MgtRunner::destroy() {
 }
 
 Result<void> MgtRunner::make(uint32_t m, MgtStage s) {
+    if (s == MgtStage::DraftHeadFp8 && !spec_.draft_head_fp8) return {};
     if(s>=MgtStage::AttnCmGather && s<=MgtStage::AttnCmFinish && !spec_.attn_cm)return {};
     const MgtDef& d = kMgt[static_cast<uint32_t>(s)];
     PipelineSpec ps;
@@ -402,6 +405,8 @@ uint64_t* MgtRunner::slots(MgtStage s) {
 
 Result<void> MgtRunner::record(CommandBuffer& cmd, uint32_t m, MgtStage s, const void* push,
                                uint32_t push_bytes, uint32_t gx, uint32_t gy) {
+    if (s == MgtStage::DraftHeadFp8 && !spec_.draft_head_fp8)
+        return fail(Err::FailedPrecondition, "draft FP8 head was not enabled");
     if(m<1||m>kMgtMaxM||!per_m_[m].ready)return fail(Err::FailedPrecondition,"M pipelines not built");
     VkDescriptorSet set=per_m_[m].sets[static_cast<uint32_t>(s)];
     if(immutable_){auto snap=pages_.snapshot(per_m_[m].pipes[static_cast<uint32_t>(s)],slots(s));if(!snap)return std::unexpected(snap.error());set=*snap;}
@@ -410,6 +415,8 @@ Result<void> MgtRunner::record(CommandBuffer& cmd, uint32_t m, MgtStage s, const
 
 Result<void> MgtRunner::record_bound(CommandBuffer& cmd, uint32_t m, MgtStage s, const void* push,
                                uint32_t push_bytes, uint32_t gx, uint32_t gy, VkDescriptorSet immutable_set) {
+    if (s == MgtStage::DraftHeadFp8 && !spec_.draft_head_fp8)
+        return fail(Err::FailedPrecondition, "draft FP8 head was not enabled");
     if(s>=MgtStage::AttnCmGather && s<=MgtStage::AttnCmFinish && !spec_.attn_cm)
         return fail(Err::FailedPrecondition,"batch ATTN_CM was not enabled");
     if (m < 1 || m > kMgtMaxM || !per_m_[m].ready)

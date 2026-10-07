@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 
+#include "gpu/vulkan/draft_head.h"
+#include "core/wc_read.h"
+
 #include "gpu/vulkan/cmdbuf.h"
 #include "gpu/vulkan/decode_kernels.h"
 #include "gpu/vulkan/moe_kernels.h"
@@ -31,7 +34,7 @@ void require(Result<void> value) {
 }
 
 int main(int argc, char **argv) try {
-    std::string model, mirror, hidden_path, out;
+    std::string model, mirror, hidden_path, out, format = "native_bf16";
     uint32_t rows = 2, iterations = 8;
     for (int i = 1; i < argc; i += 2) {
         if (i + 1 == argc) throw std::runtime_error("each option requires a value");
@@ -40,12 +43,15 @@ int main(int argc, char **argv) try {
         else if (key == "--mirror") mirror = value;
         else if (key == "--hidden") hidden_path = value;
         else if (key == "--out") out = value;
+        else if (key == "--format") format = value;
         else if (key == "--rows") rows = std::stoul(value);
         else if (key == "--iters") iterations = std::stoul(value);
         else throw std::runtime_error("unknown option: " + key);
     }
     if (model.empty() || mirror.empty() || hidden_path.empty() || out.empty() || !iterations || !rows || rows > 5)
         throw std::runtime_error("require --model --mirror --hidden --out; rows 1..5, positive iterations");
+    if (format != "native_bf16" && format != "row_fp8")
+        throw std::runtime_error("format must be native_bf16 or row_fp8");
     if (fs::exists(out)) throw std::runtime_error("output must be new");
     for (const auto &root : {model, mirror}) {
         const auto relative = fs::weakly_canonical(out).lexically_relative(fs::canonical(root));
@@ -80,14 +86,34 @@ int main(int argc, char **argv) try {
     if (!head || head->dtype != QuantType::Bf16 ||
         head->shape != std::vector<uint64_t>{vocab, dim} || head->data_bytes != uint64_t(vocab) * dim * 2)
         throw std::runtime_error("unexpected native BF16 head geometry");
+    gpu::DraftHeadFp8 copy;
+    uint64_t copy_bytes = 0;
+    if (format == "row_fp8") {
+        require(copy.create(allocator, *head, vocab, dim));
+        copy_bytes = gpu::DraftHeadFp8::copy_bytes(vocab, dim);
+        // Keep encoded hashes auditable without adding derived checkpoint files.
+        for (const auto &[suffix, buffer] :
+             {std::pair{".encoded.u8", &copy.weights()}, std::pair{".scales.f32", &copy.scales()}}) {
+            if (fs::exists(out + suffix)) throw std::runtime_error("derived output must be new");
+            std::vector<std::byte> cached(buffer->bytes);
+            wc_readback(cached.data(), buffer->host_ptr, buffer->bytes);
+            std::ofstream file(out + suffix, std::ios::binary);
+            file.exceptions(std::ios::failbit | std::ios::badbit);
+            file.write(reinterpret_cast<const char *>(cached.data()), cached.size());
+        }
+    }
     auto input = require(allocator.allocate(hidden.size() * sizeof(float), true, true));
     auto logits = require(allocator.allocate(uint64_t(rows) * vocab * sizeof(float), true, true));
     std::memcpy(input.host_ptr, hidden.data(), hidden.size() * sizeof(float));
     gpu::MgtRunner runner;
-    require(runner.create(device, allocator, gpu::default_shader_dir()));
+    gpu::MgtSpec spec;
+    spec.draft_head_fp8 = format == "row_fp8";
+    require(runner.create(device, allocator, gpu::default_shader_dir(), spec));
     require(runner.ensure(rows));
-    auto *slots = runner.slots(gpu::MgtStage::Head);
-    slots[gpu::mslot::kHW] = head->data;
+    const auto stage = spec.draft_head_fp8 ? gpu::MgtStage::DraftHeadFp8 : gpu::MgtStage::Head;
+    auto *slots = runner.slots(stage);
+    slots[gpu::mslot::kHW] = spec.draft_head_fp8 ? copy.weights().dev_addr : head->data;
+    if (spec.draft_head_fp8) slots[gpu::mslot::kHScale] = copy.scales().dev_addr;
     slots[gpu::mslot::kHX] = input.dev_addr;
     slots[gpu::mslot::kHLogits] = logits.dev_addr;
     gpu::MgtHeadPush push;
@@ -102,7 +128,7 @@ int main(int argc, char **argv) try {
     auto record = [&](gpu::CommandBuffer &cmd) {
         for (uint32_t slice = 0; slice < push.slices; ++slice) {
             push.slice = slice;
-            require(runner.record(cmd, rows, gpu::MgtStage::Head, &push, sizeof(push), runner.row_groups(vocab)));
+            require(runner.record(cmd, rows, stage, &push, sizeof(push), runner.row_groups(vocab)));
             require(cmd.barrier());
         }
     };
@@ -122,13 +148,19 @@ int main(int argc, char **argv) try {
     require(gpu::submit_and_wait(device, cmd));
     const double wall = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     const double ms = require(queries.elapsed_seconds(0, 1)) * 1000 / iterations;
+    std::vector<float> cached_logits(size_t(rows) * vocab);
+    wc_readback(cached_logits.data(), logits.host_ptr, logits.bytes);
+    if (fs::exists(out + ".logits.f32")) throw std::runtime_error("logits output must be new");
+    std::ofstream logits_file(out + ".logits.f32", std::ios::binary);
+    logits_file.exceptions(std::ios::failbit | std::ios::badbit);
+    logits_file.write(reinterpret_cast<const char *>(cached_logits.data()), cached_logits.size() * sizeof(float));
     std::ofstream result(out);
     result.exceptions(std::ios::failbit | std::ios::badbit);
-    const auto text = std::format("{{\"format\":\"native_bf16\",\"rows\":{},\"iterations\":{},"
-                                  "\"slices\":{},\"weight_bytes\":{},\"gpu_ms\":{},\"effective_gbps\":{},"
+    const auto text = std::format("{{\"format\":\"{}\",\"rows\":{},\"iterations\":{},"
+                                  "\"slices\":{},\"weight_bytes\":{},\"additional_copy_bytes\":{},\"gpu_ms\":{},\"effective_gbps\":{},"
                                   "\"batch_wall_ms\":{},\"per_dispatch_queries\":false}}\n",
-                                  rows, iterations, push.slices, head->data_bytes, ms,
-                                  head->data_bytes / (ms * 1e6), wall);
+                                  format, rows, iterations, push.slices, spec.draft_head_fp8 ? copy_bytes : head->data_bytes, copy_bytes, ms,
+                                  (spec.draft_head_fp8 ? copy_bytes : head->data_bytes) / (ms * 1e6), wall);
     result << text;
     std::cout << text;
     return 0;

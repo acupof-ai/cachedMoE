@@ -171,6 +171,7 @@ enum class MgtStage : uint32_t {
     EngramGemv, EngramGate,
     HeadRank,                    // original draft token's exact rank, one row per WG
     AttnCmGather, AttnCmScore, AttnCmSoftmax, AttnCmPv, AttnCmFinish,
+    DraftHeadFp8,               // experimental draft copy; target Head stays BF16
     Count,
 };
 
@@ -184,6 +185,7 @@ struct MgtSpec {
     bool pair_dot = false;         // decode one weight pair at a time, exact reduction order
     bool fold_scale = false;       // share UE8M0 factor in the staged activation
     bool attn_cm = false;
+    bool draft_head_fp8 = false;   // opt-in pipeline, never created for target by default
     uint32_t lanes_per_row = 32;
     uint32_t subgroup_size = 32;
     uint32_t ksplit_wq_a = 8;       // 5120 / 8 = 640
@@ -261,7 +263,7 @@ enum : uint32_t { kIQRaw = 0, kIQ = 1, kIQFp4 = 2, kIQScale = 3, kIRope = 4, kIW
                   kIOut = 16, kIBlkKey = 17, kICand = 18 };
 // mgt1_head
 enum : uint32_t { kHW = 0, kHX = 1, kHLogits = 2, kHSample = 3, kHTopOut = 4, kHHist = 5,
-                  kHDraft = 6, kHRank = 7 };
+                  kHDraft = 6, kHRank = 7, kHScale = 8 };
 // mgt1_engram: dslot's engram indices
 }  // namespace mslot
 

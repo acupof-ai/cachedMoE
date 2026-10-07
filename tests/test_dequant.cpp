@@ -277,3 +277,32 @@ CACHEDMOE_TEST(dequant, matches_the_oracle_golden_tables) {
         else                     CHECK_EQ(scale, e8m0[i]);
     }
 }
+
+CACHEDMOE_TEST(dequant, draft_row_fp8_scaling_and_validation) {
+    const std::array<uint16_t, 4> row{float_to_bf16(448.0f), float_to_bf16(-224.0f),
+                                       float_to_bf16(1.0625f), float_to_bf16(1.1875f)};
+    std::array<uint8_t, 4> encoded{};
+    auto scale = quantize_bf16_row_fp8(row, encoded);
+    CHECK(scale);
+    CHECK_EQ(*scale, 1.0f);
+    CHECK_EQ(encoded[0], 0x7e);
+    CHECK_EQ(encoded[1], 0xf6);
+    // Halfway values round to the even mantissa, in opposite directions.
+    CHECK_EQ(encoded[2], 0x38);
+    CHECK_EQ(encoded[3], 0x3a);
+    const std::array<uint16_t, 2> zero{0, 0x8000};
+    std::array<uint8_t, 2> output{};
+    auto zero_scale = quantize_bf16_row_fp8(zero, output);
+    CHECK(zero_scale);
+    CHECK_EQ(*zero_scale, 1.0f);
+    CHECK_EQ(output[0], 0);
+    CHECK_EQ(output[1], 0x80);
+    CHECK(!quantize_bf16_row_fp8(row, output));
+    const std::array<uint16_t, 2> corrupt{0x7f80, 0x7fc0};
+    CHECK(!quantize_bf16_row_fp8(corrupt, output));
+    const std::array<uint16_t, 2> small{1, 0};
+    auto small_scale = quantize_bf16_row_fp8(small, output);
+    CHECK(small_scale);
+    CHECK(*small_scale > 0.0f);
+    CHECK(std::isfinite(fp8_e4m3_to_float(output[0]) * *small_scale));
+}

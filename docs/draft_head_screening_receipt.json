@@ -1,5 +1,5 @@
 {
-  "status": "FP8_OFFLINE_ELIGIBLE_GPU_IMPLEMENTATION_PENDING",
+  "status": "GPU_FP8_MICRO_AND_64_IDS_PASS_BASELINE_AND_SPEED_PENDING",
   "source_commit": "59b2a5fd25819d8267026d4ccb468ec2ab776678",
   "commits": [
     "b60c119",
@@ -334,6 +334,99 @@
     {
       "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/check_results.json",
       "sha256": "1763fb42d6952f3265c8328a06908a5ec2060737b1d92d443e9649efcc02c500"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_fp8_micro_arith/result.json",
+      "sha256": "9f7ccbd8400f302105e92af48cf9dc26e121a2b3e9d824647f1458f66520db88"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_fp8_quality_r2_prepared/output_receipt.json",
+      "sha256": "371904a1e0a764ff0c8dfd639470b50454c3d723cf9e02c3baab959141e31e0e"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_fp8_quality_r2_prepared/check_results.json",
+      "sha256": "17e8ef3846e05893cc9aea3f577d735e2413a3b07bb5e36257b3f9727a767cc6"
     }
-  ]
+  ],
+  "fp8_gpu_micro": {
+    "format": "row_fp8",
+    "rows": 2,
+    "iterations": 8,
+    "slices": 5,
+    "weight_bytes": 662430720,
+    "additional_copy_bytes": 662430720,
+    "gpu_ms": 3.539820703172207,
+    "effective_gbps": 187.13680029227564,
+    "batch_wall_ms": 28.449799,
+    "per_dispatch_queries": false,
+    "cpu_encoding": {
+      "fp8_encoded_sha256": "541c716b2fc524f29d4acb13e610ad7eea92fb798f79e49f07fc4caecb79f94b",
+      "fp8_scale_sha256": "ee0a1fb166a52229b40a1a5cf05742ba2b6460229ed231d163bb195129ae4117"
+    },
+    "cpu_logit_comparison": {
+      "rows": 2,
+      "finite": true,
+      "max_abs_logit_error": 1.52587890625e-05,
+      "rms_logit_error": 1.5997011360013857e-06,
+      "cpu_top1": [
+        10192,
+        10192
+      ],
+      "gpu_top1": [
+        10192,
+        10192
+      ],
+      "max_abs_tolerance": 0.002,
+      "passed": true
+    }
+  },
+  "final_ids_64": {
+    "output_ids_equal": true,
+    "outputs": [
+      64,
+      64
+    ],
+    "first_difference": null,
+    "baseline": {
+      "cycles": 25,
+      "accepted": 38,
+      "verified": 49
+    },
+    "fp8": {
+      "cycles": 25,
+      "accepted": 38,
+      "verified": 49
+    },
+    "source_hashes": [
+      "7a08185458f4591f59441fff94b5b48801d1d164b04d1011d4d4cd5d5319a27e",
+      "fac2f080c75e98f16abb5d42b82f8bc9cdb196789b4820a2116d606d24a090ef"
+    ],
+    "note": "native5500 versus FP8 copy-reserved5400; profiling enabled; not a speed test"
+  },
+  "copy_memory_bill": {
+    "additional_bytes": 662430720,
+    "minimum_whole_slot_equivalents": 36,
+    "slots_per_slab": 100,
+    "reserved_slab_bytes": 1880883200,
+    "baseline_slots": 5500,
+    "candidate_slots": 5400,
+    "main_model_slots_after_384_mtp_pin": 5016,
+    "allocation_padding_vs_payload": 1218452480,
+    "short_hit_rates": {
+      "baseline": 0.8538812785388128,
+      "fp8": 0.8540034978328644
+    },
+    "short_hit_rate_scope": "whole store lookups, includes draft; not eight-turn hit-rate gate"
+  },
+  "gpu_implementation": {
+    "control": "CACHEDMOE_DSPARK_HEAD_FP8=1",
+    "default": false,
+    "route": 0,
+    "onecb": 1,
+    "mega_rejected": true,
+    "target_bf16_untouched": true,
+    "cpu_ctest": 31,
+    "standard_gates": 55,
+    "initial_quality_preflight": "GPU job refused while CPU CTest process still present; zero candidate work. Original supervisor.log kept."
+  }
 }

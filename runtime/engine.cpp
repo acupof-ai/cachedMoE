@@ -1,6 +1,7 @@
 #include <thread>
 #include <chrono>
 #include "runtime/engine.h"
+#include "gpu/vulkan/draft_head.h"
 #include "runtime/decode_boundary.h"
 #include "runtime/mask_wait.h"
 
@@ -547,12 +548,14 @@ Result<void> Engine::init(const RuntimeConfig& cfg) {
     cfg_.io.environment = cfg_.environment;
     cfg_.cache.environment = cfg_.environment;
     resolve_startup_policy();
+    if (cfg_.gpu.draft_head_fp8 && (!cfg_.speculation.enabled || cfg_.gpu.draft_mega))
+        return fail(Err::InvalidArgument, "draft FP8 requires speculation and non-mega execution");
     log_info("GPU config: route {}, engram early {}, readout {}, ONECB {}, mega {}, "
-             "profile {}, diagnostics {}, trim {}, pair dot {}, fold scale {}, ATTN_CM {}",
+             "profile {}, diagnostics {}, trim {}, pair dot {}, fold scale {}, ATTN_CM {}, draft FP8 {}",
              cfg_.gpu.batch_gpu_route, cfg_.gpu.batch_engram_early, cfg_.gpu.spec_gpu_readout,
              cfg_.gpu.draft_onecb, cfg_.gpu.draft_mega, cfg_.gpu.draft_profile,
              cfg_.gpu.draft_diagnostics, cfg_.gpu.draft_trim_tail, cfg_.gpu.mgt_pair_dot,
-             cfg_.gpu.mgt_fold_scale, cfg_.gpu.mgt_attn_cm);
+             cfg_.gpu.mgt_fold_scale, cfg_.gpu.mgt_attn_cm, cfg_.gpu.draft_head_fp8);
     const auto &wait = cfg_.environment->mask_wait;
     if (wait.error)
         return std::unexpected(*wait.error);
@@ -1129,6 +1132,22 @@ Result<void> Engine::init_gpu() {
         }
     }
 
+    if (cfg_.gpu.draft_head_fp8) {
+        const uint64_t copy = gpu::DraftHeadFp8::copy_bytes(model_cfg_.text.vocab_size,
+                                                          model_cfg_.text.hidden_size);
+        const uint64_t before = cache_budget_;
+        if (!cfg_.cache.slots_per_slab)
+            return fail(Err::InvalidArgument, "draft FP8 reservation requires nonzero slab slots");
+        const uint64_t slab_bytes = uint64_t(cfg_.cache.slots_per_slab) * layout::kExpertSlotBytes;
+        const uint64_t reservation = ((copy + slab_bytes - 1) / slab_bytes) * slab_bytes;
+        if (before <= reservation)
+            return fail(Err::ResourceExhausted, "expert-cache budget cannot cover draft FP8 copy");
+        cache_budget_ -= reservation;
+        log_info("engine: draft FP8 copy {}, slab-rounded reservation {}: {} -> {} expert slots; "
+                 "target BF16 remains resident",
+                 human_bytes(copy), human_bytes(reservation), before / layout::kExpertSlotBytes,
+                 cache_budget_ / layout::kExpertSlotBytes);
+    }
     if (auto r = load_pinned(); !r) return r;
     // H1a: auto probes rather than computes -- build, submit once, and back the
     // slot count off if the submit is refused. An explicit --cache-slots /

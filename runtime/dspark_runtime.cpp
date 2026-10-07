@@ -2,6 +2,7 @@
 #include "runtime/rope.h"
 #include "gpu/vulkan/dspark_mega.h"
 #include "gpu/vulkan/dspark_onecb.h"
+#include "gpu/vulkan/draft_head.h"
 #include <cstdlib>
 #include <bit>
 #include "cpu/dequant.h"
@@ -30,6 +31,8 @@ struct DsparkRuntime::Impl {
     TextConfig cfg;
     gpu::DsparkRunner ds;
     gpu::MgtRunner mgt;
+    gpu::DraftHeadFp8 head_copy;
+    bool use_fp8_head = false;
     gpu::GpuScratch scratch;
     GpuMoeBridge moe;
     gpu::DsparkMegaRunner mega;
@@ -223,6 +226,7 @@ struct DsparkRuntime::Impl {
             case gpu::MgtStage::GateTopK:
                 kind = 10;
                 break;
+            case gpu::MgtStage::DraftHeadFp8:
             case gpu::MgtStage::Head:
                 kind = 11;
                 break;
@@ -497,6 +501,9 @@ Result<void> DsparkRuntime::create(gpu::Device &dev, gpu::MemoryAllocator &alloc
         p.profile_cmd = *cb;
     }
     log_info("DSpark draft: GPU timestamps {}", p.profile_gpu ? "on" : "off");
+    if (options.draft_head_fp8 && options.draft_mega)
+        return fail(Err::InvalidArgument, "draft FP8 head is not supported by mega");
+    p.use_fp8_head = options.draft_head_fp8;
     p.use_mega = options.draft_mega;
     p.use_onecb = options.draft_onecb;
     if (p.use_mega && p.use_onecb)
@@ -504,6 +511,13 @@ Result<void> DsparkRuntime::create(gpu::Device &dev, gpu::MemoryAllocator &alloc
     log_info("DSpark draft: one command buffer {}", p.use_onecb ? "on" : "off");
     gpu::MgtSpec spec;
     spec.pair_dot = options.mgt_pair_dot;
+    spec.draft_head_fp8 = options.draft_head_fp8;
+    if (p.use_fp8_head) {
+        const auto *source = pinned.find("head.weight");
+        if (!source) return fail(Err::NotFound, "draft BF16 head is missing");
+        DS_TRY(p.head_copy.create(alloc, *source, cfg.vocab_size, cfg.hidden_size));
+    }
+    log_info("DSpark draft: FP8 head copy {}", p.use_fp8_head ? "on" : "off");
     DS_TRY(p.ds.create(dev, alloc, dev.environment().shader_dir));
     DS_TRY(p.mgt.create(dev, alloc, dev.environment().shader_dir, spec));
     DS_TRY(p.mgt.ensure(M));
@@ -611,6 +625,13 @@ Result<void> DsparkRuntime::set_profile(bool enabled) {
     p.profile_gpu = enabled;
     return {};
 }
+Result<void> DsparkRuntime::set_head_fp8(bool enabled) {
+    if (enabled && (!p_->head_copy.weights().valid() || p_->use_mega))
+        return fail(Err::FailedPrecondition, "FP8 copy requires startup resources and non-mega draft");
+    p_->use_fp8_head = enabled;
+    return {};
+}
+
 void DsparkRuntime::set_onecb(bool enabled) {
     auto &p = *p_;
     if (p.use_onecb && !enabled)
@@ -653,6 +674,8 @@ Result<void> DsparkRuntime::append(uint32_t start, std::span<const float> hidden
     if (p.seeded && start != p.next)
         return fail(Err::FailedPrecondition,
                     "DSpark committed hidden positions are not contiguous");
+    if (p.use_mega && p.use_fp8_head)
+        return fail(Err::InvalidArgument, "draft FP8 head is not supported by mega");
     if (p.use_mega && !p.mega.valid())
         DS_TRY(p.mega.create(*p.device, *p.allocator, p.device->environment().shader_dir));
     struct ResetRecording {
@@ -710,6 +733,8 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos, uint32_t token,
     if (!p.seeded || p.next != pos + 1 || token >= V)
         return fail(Err::FailedPrecondition,
                     "DSpark draft needs committed main KV through position");
+    if (p.use_mega && p.use_fp8_head)
+        return fail(Err::InvalidArgument, "draft FP8 head is not supported by mega");
     if (p.use_mega && !p.mega.valid())
         DS_TRY(p.mega.create(*p.device, *p.allocator, p.device->environment().shader_dir));
     if (p.use_onecb && !p.onecb.valid())
@@ -885,8 +910,10 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos, uint32_t token,
         else
             probe("head_norm_out", {static_cast<float *>(p.u.host), M * D});
     }
-    auto *hs = p.mgt.slots(gpu::MgtStage::Head);
-    hs[gpu::mslot::kHW] = p.A("head.weight");
+    const auto head_stage = p.use_fp8_head ? gpu::MgtStage::DraftHeadFp8 : gpu::MgtStage::Head;
+    auto *hs = p.mgt.slots(head_stage);
+    hs[gpu::mslot::kHW] = p.use_fp8_head ? p.head_copy.weights().dev_addr : p.A("head.weight");
+    if (p.use_fp8_head) hs[gpu::mslot::kHScale] = p.head_copy.scales().dev_addr;
     hs[gpu::mslot::kHX] = p.u.addr;
     hs[gpu::mslot::kHLogits] = p.logits.addr;
     gpu::MgtHeadPush hp{};
@@ -899,7 +926,7 @@ Result<DsparkRuntime::Output> DsparkRuntime::draft(uint32_t pos, uint32_t token,
     const uint32_t head_rows = p.use_mega ? M : output_rows;
     for (uint32_t i = 0; i < hp.slices; ++i) {
         hp.slice = i;
-        DS_TRY(p.run_mgt(head_rows, gpu::MgtStage::Head, &hp, sizeof hp, p.mgt.row_groups(V)));
+        DS_TRY(p.run_mgt(head_rows, head_stage, &hp, sizeof hp, p.mgt.row_groups(V)));
     }
     auto *id = static_cast<uint32_t *>(p.ids.host);
     id[0] = token;

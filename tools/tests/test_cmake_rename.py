@@ -207,7 +207,7 @@ class CMakeCacheRename(unittest.TestCase):
             '"standard=${CACHEDMOE_CXX_STANDARD}\\nshaders=${shader_count}\\n")\n',
             encoding="utf-8")
         values, output = self.configure("-DDEEPMOE_BUILD_TESTS:BOOL=OFF")
-        self.assertEqual(values, {"standard": "23", "shaders": "52"})
+        self.assertEqual(values, {"standard": "23", "shaders": "53"})
         self.assertIn("cachedmoe: tests=OFF", output)
 
 

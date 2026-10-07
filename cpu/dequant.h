@@ -84,6 +84,12 @@ uint16_t float_to_bf16(float f) noexcept;   // round-to-nearest-even
 float    fp16_to_float(uint16_t h) noexcept;
 uint16_t float_to_fp16(float f) noexcept;
 
+// Experimental draft-only copy: E4M3FN RNE, one float32 amax/448 scale
+// per weight row. This does not apply activation quantization.
+inline constexpr float kFp8E4M3Max = 448.0f;
+Result<float> quantize_bf16_row_fp8(std::span<const uint16_t> source,
+                                    std::span<uint8_t> destination);
+
 // Nibble extraction. `i` is the element index along K; even elements are in the
 // low nibble of byte i/2.
 inline uint8_t fp4_nibble(std::span<const uint8_t> packed, size_t i) noexcept {

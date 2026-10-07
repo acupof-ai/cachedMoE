@@ -60,6 +60,7 @@ set(CACHEDMOE_GPU_SOURCES
     gpu/vulkan/moe_kernels.cpp
     gpu/vulkan/attn_kernels.cpp
     gpu/vulkan/decode_kernels.cpp
+    gpu/vulkan/draft_head.cpp
     gpu/vulkan/dspark_onecb.cpp
     gpu/vulkan/dspark_mega.cpp
     gpu/vulkan/dspark_kernels.cpp
@@ -135,6 +136,7 @@ set(CACHEDMOE_SHADERS
     gpu/shaders/mgt1_cmp.slang
     gpu/shaders/mgt1_idx.slang
     gpu/shaders/mgt1_head.slang
+    gpu/shaders/draft_fp8_head.slang
     gpu/shaders/mgt1_engram.slang
     gpu/shaders/prefill_gemm.slang
     gpu/shaders/prefill_coopmat.slang

@@ -104,6 +104,7 @@ struct GpuExecutionConfig {
     bool batch_gpu_route = false;
     bool batch_engram_early = true;
     bool spec_gpu_readout = true;
+    bool draft_head_fp8 = false;  // experiment: reserves copy from the expert-cache budget
     bool draft_onecb = false;
     bool draft_mega = false;
     bool draft_profile = false;
@@ -121,6 +122,8 @@ struct GpuExecutionConfig {
             batch_engram_early = *overrides.batch_engram_early;
         if (overrides.spec_gpu_readout)
             spec_gpu_readout = *overrides.spec_gpu_readout;
+        if (overrides.draft_head_fp8)
+            draft_head_fp8 = *overrides.draft_head_fp8;
         if (overrides.draft_onecb)
             draft_onecb = *overrides.draft_onecb;
         if (overrides.draft_mega)
