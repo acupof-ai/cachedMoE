@@ -397,10 +397,11 @@ CMake 选项 `CACHEDMOE_*`。
   GPU/NVMe 峰值温度、GPU 平均频率（`pp_dpm_sclk` 或 amdgpu 传感器）、接受率、命中、四项重复指标。
 - [x] 决策：原始 ms/token 最低者为默认；与最快者差距 ≤3% 的取更低功耗的那个。
   若短对话最快和持续生成最快不是同一模式，两组数都写清楚，交 owner 决定，不自行做按长度切换。
-- [ ] 结论写进 STATUS 和本文件 §0.1；需要改时更新网页启动器和监督脚本的默认，重启网页后核对 `/api/config`
+- [x] 结论写进 STATUS 和本文件 §0.1；需要改时更新网页启动器和监督脚本的默认，重启网页后核对 `/api/config`
   和 `powerprofilesctl get`。不刷新用户浏览器，不动 transcript。
   v4结论及共享balanced默认已写入；网页/API恢复在§4.9串行GPU步骤之后进行，暂不勾选此项。
   最新owner要求暂做CPU工作；网页引擎也属于GPU作业，当前不启动。恢复/API验收继续待办。
+  2026-10-07补充：owner恢复GPU，现已完成main验收和实际balanced网页/API恢复，见§33；上述待办为历史时点。
 
 ### 4.9 P2：draft head FP8 / vocab 子集（owner 2026-10-06 批准，§4.8 之后做）
 
@@ -739,11 +740,13 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   但session/prefill/生成尚未开始，0输出、无hidden。原失败plan/log/thermal完整保留。
 - [x] 生产配置工厂默认路由修为统一CPUroute=0，17项配置CPU检查通过；显式实验覆盖保留。
   捕获策略校核提前到init_gpu之前。新CPUroute计划/新目录/输入hash已准备，尚未执行。
-- [ ] 64-token k2实际捕获及CPU BF16逐位候选校核、FP8/16K/32K/64K接受率估算。
+- [x] 64-token k2实际捕获及CPU BF16逐位候选校核、FP8/16K/32K/64K接受率估算。
+  2026-10-07结案：见§29～32，FP8过离线门、子集NO-GO；此后原准备描述保持历史原文。
   独立词频输入23,055 tokens、5,123 unique，语料代表性限制已记；没有合格候选或GO结论。
 - [ ] 原§4.9减半收益/接受率门、条件GPU实现、最终ID/off NLL/decode/DSpark质量门、八轮速度门。
   全部保持未勾；top4接受器直接发草稿ID，不能凭target未改就宣称最终输出必然不变。
-- [ ] 双盘散热条件满足且CPU-only阶段结束后，再继续串行GPU任务及balanced网页恢复。
+- [x] 双盘散热条件满足且CPU-only阶段结束后，再继续串行GPU任务及balanced网页恢复。
+  2026-10-07实际恢复完成，见§33。
   最新owner要求之后新GPU作业0；六份用户文件SHA/size/mtime不变，浏览器未刷新。
 - 报告`draft_head_screening.md`、机器收据`draft_head_screening_receipt.json`；
   原始CPU/准备数据`draft_head_cpu_weights/`、`draft_head_cpu_route_prepared/`，旧失败`draft_head_prepared/`。
@@ -788,3 +791,14 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] FP8保留显式实验默认关，子集不实现；副本100槽预算和长期命中成本“未测”写明。原始结果`draft_head_fp8_e2e/e2e_receipt.json`、私有KV正常退出rc0，149温控暂停/19.230911秒，GPU/NVMe峰88/74.85°C。
 - [x] STATUS与dspark_topk结论已更新，当前§4.9决策结案；先前§28～31“待”描述是原始时点，现以本节为准。
 - [ ] 实际main最终构建/CPU/GPU验收、push、balanced网页/API恢复、own工作树清理。
+
+## 33. 实际main验收与balanced网页恢复（2026-10-07）
+
+- [x] 合入main `8157f73`，实际main构建、CPU31/31、tools56/56；53个shader与已测工作树逐字节一致。
+- [x] main新程序off NLL .622784、ONECB full runtime实际GPU通过，0热暂停；未并行网页或其他GPU作业。原始`draft_head_main_validation/`。
+- [x] 网页实际恢复，HTTP config/status都200：balanced/AC、动态mask、5500槽、双盘、1M、4GB disk KV、k2/top4、ONECB1、CPU route0、单主路径target。FP8明确为0，保持原生BF16。
+- [x] guard/server/engine身份已核实为79283/79305/79306；只作为本次观察，禁止用保存PID直接发信号。实际阈值GPU85/77、NVMe80/72、起跑60/65，guard未暂停。
+- [x] 六份原transcript/KV的SHA、size、mtime全部不变；浏览器未刷新。本次只做恢复/API验收，不新增网页速度成绩。收据`docs/draft_head_delivery_receipt.json`。
+- [ ] 推送并核对origin/main、删除本次`cachedmoe-power-draft`工作树与`codex/power-draft`分支。
+
+§4.9最终ID“逐位相同”原验收项保持未勾，表示门未通过；速度项保持未勾，表示按质量NO-GO条件SKIP，**不是待跑任务**。本轮只保留FP8显式实验且默认关，不宣称质量/速度GO。

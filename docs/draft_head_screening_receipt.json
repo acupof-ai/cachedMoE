@@ -560,7 +560,7 @@
     "cache_bill_long_hit_cost": "not measured after quality stop"
   },
   "pending": [
-    "final main validation, push, balanced guarded web restoration"
+    "push and owned worktree cleanup"
   ],
   "final_source_receipts": [
     {
@@ -571,5 +571,26 @@
       "path": "bench/results/mask_quality/draft_head_fp8_default_layout_gates/validation_receipt.json",
       "sha256": "7a659f8e125cd2953601d3c6736d29723f70464eb57b3fad428bf9b537d051cd"
     }
-  ]
+  ],
+  "final_main_validation": {
+    "source_commit": "8157f73",
+    "build_passed": true,
+    "cpu": 31,
+    "tools": 56,
+    "off_nll": 0.622784,
+    "onecb_passed": true,
+    "shaders_match_tested_worktree": 53
+  },
+  "web_restoration": {
+    "balanced": true,
+    "api_config_status": 200,
+    "native_head_fp8": false,
+    "cache_slots": 5500,
+    "read_sources": 2,
+    "spec_k": 2,
+    "accept_top_k": 4,
+    "user_files_unchanged": 6,
+    "browser_refreshed": false,
+    "delivery_receipt": "docs/draft_head_delivery_receipt.json"
+  }
 }

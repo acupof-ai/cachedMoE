@@ -51,7 +51,9 @@ is not attributed exclusively to quantization. The real copy bill is **100 slots
 All subsets fail offline. Off NLL remains **.622784**; existing decode 6/8 + 7/8,
 DSpark and FP8 row-boundary checks pass. CPU31/31 and tools56/56.
 [Decision, matched-acceptance costs and evidence](draft_head_screening.md).
-Web restoration follows final main validation; FP8 is not a web default.
+Final main GPU checks pass; balanced guarded web restored, native BF16, dynamic
+5500-slot mask, k2/top4, CPU routing, two sources, 1M and 4GB disk KV. Six original
+files unchanged; browser not refreshed. [Delivery receipt](draft_head_delivery_receipt.json).
 
 **Earlier follow-up (2026-10-06): v4 started after an owner-confirmed port change.**
 The v3 power-saver / balanced arms finish eight turns at 112.998 / 80.612 raw

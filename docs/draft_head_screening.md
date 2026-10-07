@@ -96,4 +96,7 @@ Raw directories under `bench/results/mask_quality/`:
 `draft_head_fp8_e2e` and their prepared plans/thermal logs. Invalid preflights and
 historical estimates were retained, not overwritten.
 [Machine receipt](draft_head_screening_receipt.json) contains source hashes.
-Web restoration and final main validation follow the serial GPU work.
+Final main build, CPU31/31, tools56/56, off NLL .622784 and ONECB pass.
+The balanced guarded web is restored with native BF16, dynamic 5500-slot mask,
+k2/top4, CPU routing, two sources, 1M and 4 GB disk KV. Six original files retain
+hash/size/mtime; browser not refreshed. [Delivery receipt](draft_head_delivery_receipt.json).

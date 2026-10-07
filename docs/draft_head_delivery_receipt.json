@@ -1,0 +1,285 @@
+{
+  "status": "MAIN_VALIDATED_BALANCED_WEB_RESTORED_FP8_OFF",
+  "checked_unix": 1791348829.799578,
+  "source_commit_at_launch": "8157f73c44002615c01c9bbfd31c2d78557f69ec",
+  "source_binary_sha256": "38e6e893467c0618db02c6efb1225e99d5a3b3f3b9af4c8eb88c1bd9234a834a",
+  "main_validation": {
+    "build_passed": true,
+    "cpu_ctest": 31,
+    "tools": 56,
+    "off_nll": 0.622784,
+    "onecb_full_runtime_passed": true,
+    "shader_count": 53
+  },
+  "web_configuration": {
+    "max_context": 1048576,
+    "ceiling": 1048576,
+    "ready": {
+      "event": "ready",
+      "load_s": 17.1410321,
+      "max_context": 1048576,
+      "vocab": 129280,
+      "cache_gb": 96.3439941,
+      "cache_slots": 5500,
+      "gpu_prefill_min": 16,
+      "check_topk": false,
+      "engram_tables": "derived",
+      "kv_mb": 16.044032,
+      "rollback": true,
+      "max_parked": 8,
+      "reheat": false,
+      "reheat_decay": 0.5,
+      "kv_disk": true,
+      "kv_disk_dir": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv",
+      "state_root": null,
+      "state_root_source": null,
+      "state_root_both_exist": null,
+      "sources": 2,
+      "speculation": {
+        "enabled": true,
+        "draft_tokens": 2,
+        "accept_top_k": 4,
+        "confidence_min": null,
+        "main_paths": 1,
+        "mtp_pinned_experts": 384
+      },
+      "decode_modes": {
+        "available": [
+          "mask-spec",
+          "mask-plain",
+          "off-plain"
+        ],
+        "default": "mask-spec"
+      }
+    },
+    "prefill_ms_per_token": 24.0,
+    "kv_bytes_per_token": 3200,
+    "model": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+    "request_defaults": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "max_tokens": 1024,
+      "reasoning_effort": 75
+    },
+    "request_constraints": {
+      "temperature": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "top_p": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "max_tokens": {
+        "min": 1,
+        "max": 8192,
+        "step": 1
+      },
+      "reasoning_effort": {
+        "min": 1,
+        "max": 100,
+        "step": 1
+      }
+    },
+    "effort_presets": [
+      {
+        "value": 50,
+        "label": "Low \u00b7 50"
+      },
+      {
+        "value": 75,
+        "label": "High \u00b7 75"
+      },
+      {
+        "value": 100,
+        "label": "Max \u00b7 100"
+      }
+    ],
+    "cmd": "/home/chenkailun/projects/cachedMoE/build/cachedmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 1048576 --cache-slots 5500 --gpu-prefill-min 16 --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --resident-only mask --mask-cache dynamic --dspark --spec-k 2 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+    "resident_only": "mask",
+    "mask_cache": "dynamic",
+    "decode_modes": {
+      "available": [
+        "mask-spec",
+        "mask-plain",
+        "off-plain"
+      ],
+      "default": "mask-spec"
+    },
+    "speculation": {
+      "enabled": true,
+      "draft_tokens": 2,
+      "accept_top_k": 4,
+      "confidence_min": null,
+      "main_paths": 1,
+      "mtp_pinned_experts": 384
+    },
+    "speculation_resources_resident": true,
+    "spec_k": 2,
+    "power_profile": "balanced",
+    "platform_profile": "balanced",
+    "thermal_guard": {
+      "enabled": true,
+      "thresholds": {
+        "gpu_pause_c": 85.0,
+        "gpu_resume_c": 77.0,
+        "gpu_start_c": 60.0,
+        "nvme_pause_c": 80.0,
+        "nvme_resume_c": 72.0,
+        "nvme_start_c": 65.0
+      }
+    }
+  },
+  "web_controls": {
+    "CACHEDMOE_DSPARK_HEAD_FP8": "0",
+    "CACHEDMOE_DSPARK_ONECB": "1",
+    "CACHEDMOE_BATCH_GPU_ROUTE": "0",
+    "CACHEDMOE_MASK_DYNAMIC_LRU": "1"
+  },
+  "guard_state": {
+    "guard_pid": 79283,
+    "server_pid": 79305,
+    "engine_pid": 79306,
+    "paused": false,
+    "profile": "balanced",
+    "original_profile": "balanced",
+    "command": [
+      "/usr/bin/python3",
+      "/home/chenkailun/projects/cachedMoE/tools/web/server.py",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/cachedmoe",
+      "--resident-only",
+      "mask",
+      "--mask-cache",
+      "dynamic",
+      "--cache-slots",
+      "5500",
+      "--max-context",
+      "1048576",
+      "--gpu-prefill-min",
+      "16",
+      "--mirror",
+      "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "--kv-dir",
+      "/home/chenkailun/projects/cachedMoE/build/web_mask/kv",
+      "--kv-max-gb",
+      "4",
+      "--dspark",
+      "--spec-k",
+      "2",
+      "--spec-top-k",
+      "4",
+      "--port",
+      "8080",
+      "--log",
+      "/home/chenkailun/projects/cachedMoE/build/web_mask/engine.log",
+      "--thermal-policy-json",
+      "{\"gpu_pause_c\": 85.0, \"gpu_resume_c\": 77.0, \"gpu_start_c\": 60.0, \"nvme_pause_c\": 80.0, \"nvme_resume_c\": 72.0, \"nvme_start_c\": 65.0}"
+    ],
+    "spec_k": 2,
+    "gpu_route": false,
+    "stopped": false,
+    "thermal_thresholds": {
+      "gpu_pause_c": 85.0,
+      "gpu_resume_c": 77.0,
+      "gpu_start_c": 60.0,
+      "nvme_pause_c": 80.0,
+      "nvme_resume_c": 72.0,
+      "nvme_start_c": 65.0
+    },
+    "temperatures": {
+      "nvme:hwmon4": 35.85,
+      "nvme:hwmon13": 62.85,
+      "amdgpu:hwmon5": 53.0
+    },
+    "power_profile": "balanced",
+    "platform_profile": "balanced",
+    "gpu_dpm": "auto",
+    "sampled_unix": 1791348829.4987237,
+    "engine_start_ticks": 3485950
+  },
+  "processes": [
+    {
+      "role": "guard_pid",
+      "pid": 79283,
+      "exe": "/usr/bin/python3.14",
+      "cmdline": "python3 /home/chenkailun/projects/cachedMoE/tools/web/launch_guarded.py --repo /home/chenkailun/projects/cachedMoE --state-dir /home/chenkailun/projects/cachedMoE/build/web_mask --spec-k 2 --gpu-route 0 ",
+      "stat": "79283 (python3) R 1569 79283 79283 0 -1 4194304 3968 372922 0 4 70 288 430 81 12 -8 2 0 3485781 114679808 6009 18446744073709551615 108968322519040 108968322519353 140735161314128 0 0 0 0 16781312 16386 0 0 0 17 18 0 0 0 0 0 108968322530744 108968322531344 108969313480704 140735161317116 140735161317319 140735161317319 140735161327591 0"
+    },
+    {
+      "role": "server_pid",
+      "pid": 79305,
+      "exe": "/usr/bin/python3.14",
+      "cmdline": "/usr/bin/python3 /home/chenkailun/projects/cachedMoE/tools/web/server.py --exe /home/chenkailun/projects/cachedMoE/build/cachedmoe --resident-only mask --mask-cache dynamic --cache-slots 5500 --max-context 1048576 --gpu-prefill-min 16 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --dspark --spec-k 2 --spec-top-k 4 --port 8080 --log /home/chenkailun/projects/cachedMoE/build/web_mask/engine.log --thermal-policy-json {\"gpu_pause_c\": 85.0, \"gpu_resume_c\": 77.0, \"gpu_start_c\": 60.0, \"nvme_pause_c\": 80.0, \"nvme_resume_c\": 72.0, \"nvme_start_c\": 65.0} ",
+      "stat": "79305 (python3) S 79283 79305 79305 0 -1 4194304 5205 4832 3 0 6 17 5 0 12 -8 4 0 3485944 349487104 7228 18446744073709551615 107090185850880 107090185851193 140725167468032 0 0 0 0 16781312 2 0 0 0 17 15 0 0 0 0 0 107090185862584 107090185863184 107090937606144 140725167473546 140725167474177 140725167474177 140725167484903 0"
+    },
+    {
+      "role": "engine_pid",
+      "pid": 79306,
+      "exe": "/home/chenkailun/projects/cachedMoE/build/cachedmoe",
+      "cmdline": "/home/chenkailun/projects/cachedMoE/build/cachedmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 1048576 --cache-slots 5500 --gpu-prefill-min 16 --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --resident-only mask --mask-cache dynamic --dspark --spec-k 2 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash ",
+      "stat": "79306 (cachedmoe) S 79305 79305 79305 0 -1 4194304 2681933 0 1568078 0 783 7194 0 0 12 -8 8 0 3485950 117079130112 64552 18446744073709551615 96296172187648 96296174400297 140722199409584 0 0 0 0 0 0 0 0 0 17 14 0 0 0 0 0 96296174965808 96296174979376 96296648769536 140722199413862 140722199414238 140722199414238 140722199424964 0"
+    }
+  ],
+  "user_files_unchanged": [
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/codex-rename-final-20261006.pkv",
+      "sha256": "307039b81fda81c26a8212935ad3f3ea909474f38f6bc8e04b1c0836e79aa632",
+      "bytes": 58924,
+      "mtime_ns": 1791281442178545141
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/codex-rename-final-20261006.json",
+      "sha256": "060e38208dfdde95c75a2e3f56185e6713b64c6e0720d0acb3fc90103bed8094",
+      "bytes": 1060,
+      "mtime_ns": 1791279718189290742
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/codex-spec5-smoke-20261005.json",
+      "sha256": "9f5fcccb38689774367ac2b905c440f6e60f8c58e9c41d7968400192959ddee4",
+      "bytes": 87,
+      "mtime_ns": 1791184311449538872
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/ctx1m-smoke-20261005.json",
+      "sha256": "30820bb1045a230ef2807375eec4eac4e4631263b87c978dca9e65d791c14349",
+      "bytes": 87735,
+      "mtime_ns": 1791202396997166213
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/readme-demo-20261005.json",
+      "sha256": "f1923bb6c14766d608c7ee9395f2beda5dff8112094f8db652caa382bf92f73e",
+      "bytes": 1307,
+      "mtime_ns": 1791211294154729489
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/web.json",
+      "sha256": "6f30f42260b422f82a323559ee5e75846309208269ce4920daeee74024425afb",
+      "bytes": 48038,
+      "mtime_ns": 1791211951869138495
+    }
+  ],
+  "browser_refreshed": false,
+  "fp8_e2e_decision": "QUALITY_NO_GO; full candidate speed SKIP",
+  "gpu_config_log": "[INF] GPU config: route false, engram early true, readout true, ONECB true, mega false, profile false, diagnostics false, trim true, pair dot false, fold scale false, ATTN_CM false, draft FP8 false",
+  "receipt_hashes": [
+    {
+      "path": "bench/results/mask_quality/draft_head_main_validation/main_validation_receipt.json",
+      "sha256": "342bd8277e825b6683a52f91c395e0439227b8cb348acc689cd257865f31c4e5"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_main_validation/web_config.json",
+      "sha256": "763dd2563d81638056d23dab8bbafcfa2e9ff39b5023ed61071c4f93a0c1d7bb"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_main_validation/web_status.json",
+      "sha256": "0a755695db4dff22a78420674a9dfd9bf56402513c7818e08768e09c331e204a"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_main_validation/web_launch_receipt.json",
+      "sha256": "0fa9c47a7dfe08d67c9a0c688ea6829dc7b2f384eeafa422249db82fd0986928"
+    }
+  ]
+}

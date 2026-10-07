@@ -6,21 +6,25 @@ commands, its %LOCALAPPDATA% paths and its eight restart logs were all Windows, 
 every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
-STATE: STOPPED for serial draft-head GPU experiments (owner resumed 2026-10-07).
-Balanced is selected by the complete power comparison. User 8080/private 8081
-remain stopped. Restore the guarded balanced web after the GPU gates;
-see docs/draft_head_screening.md. Original transcript/KV files are preserved,
-and browser pages have not been refreshed.
-Its earlier acceptance PIDs and API observations below remain historical.
+STATE: RUNNING, balanced guarded main instance restored 2026-10-07.
+Main CPU31/31, tools56/56, off NLL .622784 and ONECB GPU checks pass.
+FP8 head micro was faster but its full-production final-ID gate was NO-GO;
+actual web explicitly uses CACHEDMOE_DSPARK_HEAD_FP8=0 (native BF16).
+API config/status agree on the policy below. Guard/server/engine observed at
+acceptance: 79283/79305/79306. Verify current ownership before signalling.
+Six original transcript/KV files retain SHA/size/mtime; browser not refreshed.
+Current receipt: docs/draft_head_delivery_receipt.json. This API restoration
+is not a new speed result. No benchmark may run while this web engine is alive.
+
 Policy: dynamic mask; 5500 total slots; disk KV 4 GB; 1M capacity; dual RO sources;
 k2/top4, ONECB=1, GPU_ROUTE=0 (CPU routing), one main path per target forward.
-Future power/thermal: AC + balanced (complete comparison selected). GPU pauses/resumes at 85/77 C;
+Active power/thermal: AC + balanced (complete comparison selected). GPU pauses/resumes at 85/77 C;
 NVMe Composite at 80/72 C; start gates GPU <=60 C and NVMe <=65 C. Six configurable
 thresholds have one source in tools/runtime_defaults.py ThermalPolicy; actual values
-are logged and exposed by /api/config. Guard/server/engine identities at acceptance: 17397/17417/17418.
+are logged and exposed by /api/config. Historical 2026-10-06 guard/server/engine identities: 17397/17417/17418.
 These PIDs are observations, never signal targets without fresh ownership checks.
 Actual /api/config/state/log agree on the new thresholds and served policy; six old
-transcript/KV files retain hashes and mtimes. Browser not refreshed. Current receipt:
+transcript/KV files retain hashes and mtimes. Browser not refreshed. Earlier thermal-policy receipt:
 docs/power_profile_web_receipt.json. The earlier numerical/smoke acceptance remains
 in docs/web_restore_receipt.json; this restart is not a new speed/quality measurement.
 
