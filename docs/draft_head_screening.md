@@ -1,8 +1,17 @@
-# Draft-head screening: CPU preparation complete, native capture pending
+# Draft-head screening: FP8 eligible for GPU evaluation
 
-No FP8 or vocabulary-subset candidate has passed the acceptance gate. The owner
-requests CPU work only while additional cooling is unavailable. The web engine
-remains stopped; no GPU job was started after that instruction.
+The owner resumed serial GPU work on 2026-10-07. The production CPU-route
+native capture completed 64 outputs / 25 cycles, with 38/49 accepted draft
+positions. CPU BF16 reproduces all native top-1 proposals. FP8 preserves the
+estimated acceptance; 16K / 32K / 64K vocabulary subsets lose 16.327 / 8.163 /
+4.082 percentage points and are NO-GO. Only FP8 enters GPU evaluation.
+
+An unprofiled balanced M=2 head micro-benchmark measures **8.903326 ms**,
+148.689 effective GB/s: one warmup, one timestamped eight-call batch. The
+bandwidth prediction is 4.448185 ms saved, **2.224093 ms after halving**.
+This passes the 2 ms estimate gate; it is not measured FP8 speed. The capture
+uses profiling only for correctness and is not a speed result. Target math,
+final-token identity, actual FP8 speed and the copy's cache bill remain gates.
 
 The complete power comparison selects **balanced**: 80.944 raw ms/token versus
 113.801 for performance. That selection includes thermal pauses. See
@@ -62,7 +71,7 @@ IDs, from long-context fixtures and earlier MMLU/questions/output traces. It is
 not a representative training corpus and contains no new capture outputs.
 Unseen-token ties use ascending ID. Its hashes and that limitation are recorded.
 
-## Ready next steps
+## Earlier preparation (historical)
 
 A corrected, **unexecuted** CPU-route plan is prepared at
 `bench/results/mask_quality/draft_head_cpu_route_prepared/plan.json`, with a new
@@ -97,8 +106,7 @@ IDs outside the vocabulary subset as misses. Changed proposals change later
 contexts, so that matrix does not prove counterfactual end-to-end quality.
 
 Only a candidate with halved predicted savings **≥2 ms/cycle** and estimated
-acceptance loss **≤3 percentage points** can enter GPU implementation. There
-is no eligible candidate yet. GPU implementation, micro-benchmark, unchanged
+acceptance loss **≤3 percentage points** can enter GPU implementation. FP8 is eligible under the fresh cost above. GPU implementation, micro-benchmark, unchanged
 final-token IDs, off NLL `.622784`, decode/DSpark baselines and same-engine
 balanced eight-turn comparison remain pending. No new runtime quantization
 switch or default was added.

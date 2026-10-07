@@ -40,13 +40,13 @@ cooling, explaining its 70.601 active estimate versus 113.801 raw cost.
 The shared future power default is balanced; old receipts remain literal.
 Normal benchmark shutdown drains private disk KV; 61 inputs and six user files
 remain unchanged. [Complete comparison and result](power_profile_comparison.md).
-Draft-head tooling builds; CPU CTest passes 31/31 and standard gates 55/55.
-CPU weight quantization checks the real head: FP8 plus row scales is 662.431 MB
-(35.219 expert-slot equivalents). Native hidden/acceptance screening is pending:
-the first capture rejected the wrong route before generation, with zero outputs.
-The production factory now uses its CPU-route default. Owner requests CPU work
-only while additional cooling is unavailable; no new GPU jobs or web restart.
-[Prepared tooling, limits and remaining gates](draft_head_screening.md).
+**Draft head (2026-10-07): FP8 passes the offline entry gate.** The owner resumed
+GPU work. The production CPU-route capture completes 64 outputs / 25 cycles;
+CPU BF16 agrees 100%, FP8 acceptance estimate drops 0 points. All vocabulary
+subsets fail the 3-point loss gate. Fresh unprofiled balanced head: 8.903326 ms,
+148.689 GB/s; halved FP8 prediction 2.224093 ms. Actual FP8 kernel speed,
+final-ID identity, numerical gates and copy/cache accounting remain pending.
+Web stays stopped for serial GPU work. [Evidence and remaining gates](draft_head_screening.md).
 
 **Earlier follow-up (2026-10-06): v4 started after an owner-confirmed port change.**
 The v3 power-saver / balanced arms finish eight turns at 112.998 / 80.612 raw

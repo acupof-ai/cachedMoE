@@ -1,5 +1,5 @@
 {
-  "status": "CPU_PREPARATION_COMPLETE_GPU_CAPTURE_PENDING",
+  "status": "FP8_OFFLINE_ELIGIBLE_GPU_IMPLEMENTATION_PENDING",
   "source_commit": "59b2a5fd25819d8267026d4ccb468ec2ab776678",
   "commits": [
     "b60c119",
@@ -174,5 +174,166 @@
     ],
     "gpu_jobs": 0,
     "web_started": false
-  }
+  },
+  "updated": "2026-10-07",
+  "native_capture": {
+    "outputs": 64,
+    "cycles": 25,
+    "verified": 49,
+    "accepted": 38,
+    "acceptance": 0.7755102040816326,
+    "gpu_route": 0,
+    "onecb": 1,
+    "profile": "balanced",
+    "target_forwards_per_cycle": 1,
+    "cpu_bf16_top1_agreement": 1.0,
+    "capture": {
+      "path": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/draft_head_capture_cpu_route",
+      "cycles_sha256": "7a08185458f4591f59441fff94b5b48801d1d164b04d1011d4d4cd5d5319a27e",
+      "hidden_sha256": "b70a6c355216367c1c7bddd1473c181915943e74b98f4007b2a69a9d21ffc625"
+    }
+  },
+  "current_head_micro": {
+    "format": "native_bf16",
+    "rows": 2,
+    "iterations": 8,
+    "slices": 5,
+    "weight_bytes": 1323827200,
+    "gpu_ms": 8.903326430474282,
+    "effective_gbps": 148.6890557521072,
+    "batch_wall_ms": 71.585803,
+    "per_dispatch_queries": false
+  },
+  "offline_candidates": {
+    "fp8": {
+      "metrics": {
+        "top1_agreement": 0.9795918367346939,
+        "top4_set_agreement": 0.9183673469387755,
+        "top4_rows_identical": 0.8367346938775511,
+        "verified": 49,
+        "accepted_fixed_trajectory": 38,
+        "acceptance_fixed_trajectory": 0.7755102040816326,
+        "baseline_native_acceptance": 0.7755102040816326,
+        "acceptance_drop_pp": 0.0,
+        "target_greedy_match": 0.6326530612244898,
+        "recorded_greedy_targets_outside_subset": 0,
+        "recorded_greedy_target_count": 49,
+        "changed_native_accepted_ids": 0
+      },
+      "gain": {
+        "source_bytes": 1323827200,
+        "candidate_read_bytes": 662430720,
+        "measured_effective_gbps": 148.6890557521072,
+        "predicted_saved_ms": 4.448185353350237,
+        "halved_saved_ms": 2.2240926766751183,
+        "gain_gate_pass": true
+      },
+      "derived_copy_bytes": 662430720,
+      "slot_equivalents": 35.219131097560975,
+      "gpu_screen_eligible": true,
+      "final_output_identity_unproven": true
+    },
+    "subset_16384": {
+      "metrics": {
+        "top1_agreement": 0.7755102040816326,
+        "top4_set_agreement": 0.42857142857142855,
+        "top4_rows_identical": 0.42857142857142855,
+        "verified": 49,
+        "accepted_fixed_trajectory": 30,
+        "acceptance_fixed_trajectory": 0.6122448979591837,
+        "baseline_native_acceptance": 0.7755102040816326,
+        "acceptance_drop_pp": 16.3265306122449,
+        "target_greedy_match": 0.4897959183673469,
+        "recorded_greedy_targets_outside_subset": 12,
+        "recorded_greedy_target_count": 49,
+        "changed_native_accepted_ids": 10
+      },
+      "gain": {
+        "source_bytes": 1323827200,
+        "candidate_read_bytes": 167837696,
+        "measured_effective_gbps": 148.6890557521072,
+        "predicted_saved_ms": 7.7745433122344485,
+        "halved_saved_ms": 3.8872716561172242,
+        "gain_gate_pass": true
+      },
+      "derived_copy_bytes": 167837696,
+      "slot_equivalents": 8.923344947735192,
+      "gpu_screen_eligible": false,
+      "final_output_identity_unproven": true
+    },
+    "subset_32768": {
+      "metrics": {
+        "top1_agreement": 0.8571428571428571,
+        "top4_set_agreement": 0.5510204081632653,
+        "top4_rows_identical": 0.5306122448979592,
+        "verified": 49,
+        "accepted_fixed_trajectory": 34,
+        "acceptance_fixed_trajectory": 0.6938775510204082,
+        "baseline_native_acceptance": 0.7755102040816326,
+        "acceptance_drop_pp": 8.16326530612245,
+        "target_greedy_match": 0.5306122448979592,
+        "recorded_greedy_targets_outside_subset": 10,
+        "recorded_greedy_target_count": 49,
+        "changed_native_accepted_ids": 6
+      },
+      "gain": {
+        "source_bytes": 1323827200,
+        "candidate_read_bytes": 335675392,
+        "measured_effective_gbps": 148.6890557521072,
+        "predicted_saved_ms": 6.645760193994615,
+        "halved_saved_ms": 3.3228800969973076,
+        "gain_gate_pass": true
+      },
+      "derived_copy_bytes": 335675392,
+      "slot_equivalents": 17.846689895470384,
+      "gpu_screen_eligible": false,
+      "final_output_identity_unproven": true
+    },
+    "subset_65536": {
+      "metrics": {
+        "top1_agreement": 0.9387755102040817,
+        "top4_set_agreement": 0.8163265306122449,
+        "top4_rows_identical": 0.8163265306122449,
+        "verified": 49,
+        "accepted_fixed_trajectory": 36,
+        "acceptance_fixed_trajectory": 0.7346938775510204,
+        "baseline_native_acceptance": 0.7755102040816326,
+        "acceptance_drop_pp": 4.081632653061225,
+        "target_greedy_match": 0.5918367346938775,
+        "recorded_greedy_targets_outside_subset": 5,
+        "recorded_greedy_target_count": 49,
+        "changed_native_accepted_ids": 3
+      },
+      "gain": {
+        "source_bytes": 1323827200,
+        "candidate_read_bytes": 671350784,
+        "measured_effective_gbps": 148.6890557521072,
+        "predicted_saved_ms": 4.388193957514948,
+        "halved_saved_ms": 2.194096978757474,
+        "gain_gate_pass": true
+      },
+      "derived_copy_bytes": 671350784,
+      "slot_equivalents": 35.69337979094077,
+      "gpu_screen_eligible": false,
+      "final_output_identity_unproven": true
+    }
+  },
+  "new_sources": [
+    {
+      "path": "bench/results/mask_quality/draft_head_screen_current_cost/report.json",
+      "sha256": "1457e71557f4a91d1f4ef6f3a3901bb166dbb826202969ea5518c692a4872f23"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_baseline_micro/result.json",
+      "sha256": "11a2f6ac9c667a174730c576b1e969f5967a7866f4f6bcf674e435b84a305e04"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_baseline_micro/check_results.json",
+      "sha256": "bc71423dfba006f6db0c99bfaca3296b8abeb36d0d15bbc95fe581e5b28c6e81"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/check_results.json",
+      "sha256": "1763fb42d6952f3265c8328a06908a5ec2060737b1d92d443e9649efcc02c500"
+    }
+  ]
 }

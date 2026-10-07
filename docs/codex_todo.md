@@ -417,10 +417,10 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 
 步骤（先离线，后 GPU，每步一个 commit）：
 
-- [ ] **离线估算**：在一次短运行（64 token、k=2）里导出 draft 最终 hidden，用 CPU 分别算 bf16、FP8（per-row scale）、
+- [x] **离线估算**：在一次短运行（64 token、k=2）里导出 draft 最终 hidden，用 CPU 分别算 bf16、FP8（per-row scale）、
   vocab 子集（按语料词频取前 N，N=16K/32K/64K）的 top-1/top-4，对比 bf16 的一致率，
   并用已记录的 target token 估算接受率变化。子集外的 token 记为 draft 必然不中。
-- [ ] **预期收益先算再减半**：FP8 字节减半、子集按 N/129280 缩小，按实测带宽换算每 cycle 省的 ms，减半后
+- [x] **预期收益先算再减半**：FP8 字节减半、子集按 N/129280 缩小，按实测带宽换算每 cycle 省的 ms，减半后
   **≥2ms/cycle 且估算接受率下降 ≤3 个百分点**才进入 GPU 实现；否则 NO-GO，写明数字。
 - [ ] **GPU 实现**（只做通过离线门的那一种，或两者组合）：新 kernel 与 bf16 版并存，micro-bench 报带宽利用率和 ms。
 - [ ] **正确性**：同 prompt 下开关前后最终输出 token 逐位相同（target verify 不变）；l3 off NLL `.622784` 不变；
@@ -746,3 +746,14 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   最新owner要求之后新GPU作业0；六份用户文件SHA/size/mtime不变，浏览器未刷新。
 - 报告`draft_head_screening.md`、机器收据`draft_head_screening_receipt.json`；
   原始CPU/准备数据`draft_head_cpu_weights/`、`draft_head_cpu_route_prepared/`，旧失败`draft_head_prepared/`。
+
+## 29. §4.9 真实捕获与离线入口门（2026-10-07）
+
+- owner已恢复GPU工作；网页继续停止，所有GPU任务串行，balanced和双NVMe温控不变。
+- 64输出、25cycle、49验证位置、38接受；CPU BF16 top1逐位100%。每cycle一个target forward。
+- FP8固定轨迹接受率下降0pp；16K/32K/64K下降16.327/8.163/4.082pp，子集NO-GO。
+- fresh M=2 head微测8.903326ms、148.689GB/s，一次预热/一次8调用批；
+  FP8减半预测2.224093ms，只有FP8符合GPU试做门。仪器化capture时间不当速度。
+- GPU实现/实际微测/最终ID/off NLL/decode/DSpark/条件八轮速度仍未完成；副本662,430,720B必须另计。
+- 原始`draft_head_capture_cpu_route/`、`draft_head_screen_current_cost/`、`draft_head_baseline_micro/`；
+  8.4ms历史估算收据保留，不覆盖。公开聚合`draft_head_screening_receipt.json`。

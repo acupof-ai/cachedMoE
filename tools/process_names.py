@@ -11,7 +11,7 @@ GPU_EXECUTABLE_NAMES = ENGINE_NAMES + (
     "cachedmoe-tested", "deepmoe-tested", "cachedmoe_tests", "deepmoe_tests",
     "nvme_bench", "io_dst_bench", "bw_matrix", "heap_capacity",
     "kernel_bench", "attn_bench", "prefill_bench", "dspark_bench", "dspark_grid_probe",
-    "draft_head_capture",
+    "draft_head_capture", "draft_head_bench",
     "residency_probe", "sharing_probe", "capacity_probe", "hostflag_probe",
     "model_probe", "envcheck", "vulkaninfo",
 )

@@ -1066,3 +1066,12 @@ owner要求散热暂不可增加，先做CPU工作；之后新GPU作业0，网�
 减半收益/接受率、条件GPU实现、最终ID/NLL/decode/DSpark和八轮速度门仍待执行。
 当前top4接受器直接输出接受的草稿ID，不能将target head未改推断成最终ID必然不变。
 [准备情况与后续命令](draft_head_screening.md)，[机器收据](draft_head_screening_receipt.json)。
+
+## 23. Draft-head offline entry gate (2026-10-07)
+
+Balanced CPU-route k2 native capture: 64 outputs, 25 cycles, 38/49 accepted.
+CPU BF16 top1 agreement 100%. FP8 estimated acceptance loss 0pp; frequency
+subsets 16K/32K/64K lose 16.327/8.163/4.082pp and are rejected. Fresh M=2
+native head costs 8.903326ms at 148.689GB/s; halved FP8 prediction 2.224093ms
+passes the entry gate. Only FP8 proceeds; no measured candidate speed or
+final-ID quality result yet. See [screening evidence](draft_head_screening.md).
