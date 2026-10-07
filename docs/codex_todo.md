@@ -837,6 +837,14 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] 六列存储、同三行验证只改常量循环：1.986774897→2.029320735ms/层，逐位一致，0热暂停，无收益。
 - [x] 三列存储加常量循环这一新组合：1.987997219ms/层；不重复计时基线。没有达到减半2ms/cycle入口，不启动完整速度/MMLU门，也不声称提升。
 - [x] 撤掉本轮准备的启动环境开关；只保留显式GPU探针的MoeSpec选项，默认false，没有配置绑定。生产mask/LRU、k2/top4、native BF16与CPU路由不变。
-- 待收尾：实际main编译、CPU及GPU数值门、push、网页恢复和本轮工作树清理。完成后追加收据，不改写owner条目。
+- [x] 实际main编译、CPU及GPU数值门、push、网页恢复和本轮工作树清理；收据见§38。
 - 开放工作仍是有限prefill activation workspace；本轮没有实现，不把简单分段喂入当作正确分块。
 - 报告：`docs/moe_static_columns.md`；机器收据：`docs/moe_static_columns_receipt.json`。
+
+## 38. 常量循环实际main交付（2026-10-07）
+
+- [x] main CPU31/31、tools57/57、GPU MoE14/14无skip；不同列输入/路由权重和三层逐位对拍通过。off NLL .622784，两项GPU验收0热暂停，53shader未变。严格短decode旧6/8+7/8限制保留；不补造MMLU或生产速度结果。
+- [x] `eed7717`探针和`e65000c`测量判定push；远端SHA核对一致。保留最终验收二进制/测试/shader，已删除本轮工作树和分支。
+- [x] guarded balanced网页恢复：k2/top4、native BF16、CPU路由、动态mask/LRU、5500槽、双读源、1M和4GB disk KV。API config/status核对通过，六份用户文件SHA/size/mtime不变，没刷新浏览器。
+- 有限prefill activation workspace仍是开放任务，本轮未实现。其余§4.6关闭项不重开。
+- 收据：`docs/moe_static_columns_delivery_receipt.json`，原始验收目录：`bench/results/mask_quality/static_columns_main_validation/`。

@@ -7,6 +7,13 @@ every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
 STATE: RUNNING, balanced guarded main instance restored 2026-10-07.
+Latest restore after the static-column probes: main e65000c, CPU31/31,
+tools57/57, GPU MoE14/14, off NLL .622784. No runtime static-column switch;
+no default kernel or speculation change. Observed guard/server/engine
+413892/414617/414618; verify ownership before signals. API config/status agree,
+six original files unchanged, browser not refreshed. Current receipt:
+docs/moe_static_columns_delivery_receipt.json. This is not a new speed result.
+
 Latest restore after compare-control track: implementation main eeb3323,
 CPU31/31, tools57/57, actual main off NLL .622784, 53 unchanged shaders.
 Observed guard/server/engine 163114/163873/163874; verify live identity before signals.

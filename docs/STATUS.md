@@ -35,6 +35,8 @@ storage probe is 1.986774897→2.029320735 ms/layer; compact storage plus the
 constant loop is 1.987997219. All checked outputs are bitwise equal, zero
 thermal pauses. Neither passes the entry gate. No new startup switch or default
 kernel change; no full-cycle speed or MMLU claim. [Probe and limits](moe_static_columns.md).
+Actual main CPU31/31, tools57/57, MoE14/14 and off NLL .622784 pass;
+balanced dynamic-mask web restored, owned worktree removed. [Delivery receipt](moe_static_columns_delivery_receipt.json).
 
 **Controlled follow-up (2026-10-07): FP8 final-ID failure is now isolated.**
 Exact-target k2/top4 changes output22 despite identical target routes before

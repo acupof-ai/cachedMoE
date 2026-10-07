@@ -40,3 +40,13 @@ feeding independent chunks would not meet that requirement. This track does
 not implement or validate it.
 
 [Machine receipt](moe_static_columns_receipt.json).
+
+Actual main delivery passes CPU31/31, tools57/57 and MoE14/14 with no skips.
+The untimed varying-column check passes in both storage widths across all three
+fixture layers. Off NLL stays .622784; both GPU validation jobs have zero thermal
+pauses, and 53 shaders are unchanged. No new short-decode or MMLU result is
+claimed. The implementation is pushed with its remote SHA verified. Balanced
+dynamic-mask web is live with k2/top4, native BF16, 5500 slots, two sources and
+the original thermal policy. Six user files retain SHA/size/mtime; the browser
+was not refreshed. Final binaries/shaders are archived, and the owned worktree
+and branch are removed. [Delivery receipt](moe_static_columns_delivery_receipt.json).

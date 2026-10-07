@@ -1,0 +1,471 @@
+{
+  "date": "2026-10-07",
+  "implementation_sha": "e65000c1b06ddb8d86dd4901bdd779ece9357578",
+  "implementation_remote_verified": "e65000c1b06ddb8d86dd4901bdd779ece9357578",
+  "commits": [
+    "eed7717",
+    "e65000c"
+  ],
+  "validation": {
+    "main_build": "passed",
+    "cpu_suites": "31/31",
+    "tools_gates": "57/57",
+    "gpu_moe_cases": "14/14; no skips",
+    "static_distinct_column_checks": "bitwise equal: six/three storage widths, all supported live counts, three fixture layers",
+    "off_nll": 0.622784,
+    "thermal_pauses": 0,
+    "short_decode": "not rerun; previous 6/8 + 7/8 limitation remains",
+    "mmlu57": "not rerun; neither candidate passes speed entry gate"
+  },
+  "source_and_shaders": {
+    "implementation_sha": "e65000c1b06ddb8d86dd4901bdd779ece9357578",
+    "source_sha256": {
+      "gpu/vulkan/moe_kernels.cpp": "846fbfca437c1b302a04ff494e8c1a1a3156f4b6195ce8eb1a1390e45ffd3762",
+      "gpu/vulkan/moe_kernels.h": "447c7e22a8f57fb001dc8cb8e766b1587bd39dd6a61364ea9a02cfb84d78d2ee",
+      "tests/test_gpu_moe.cpp": "1d27c7bc8c023b88a918c02d6d949f55ae88a0cf5eea288c5746e459ba614ca4",
+      "tests/CMakeLists.txt": "50dce507c7773c4406a54e950fd7349e867d9647eddb4db331c401e0e33b7a87"
+    },
+    "unchanged_shader_sha256": {
+      "batch_route.spv": "971a0643cd1925a650b4cb2b2620767b7e371ac3cbf9c2866fd512a5694bf63d",
+      "dspark_onecb.spv": "6529959347f6c2d4adb47a0a47783efd327ce1c61badb7d6c5c6322013605ae7",
+      "moe_gemv_fp4.spv": "dd0e5586585004548ac10c73d0d64a2d00945798771348e09ed1255d99fad0be",
+      "dspark_grid.spv": "08b5d50d62bef71bdc61fec68f639336045d4d6e3e92988e74830b2a00a47488",
+      "rawread.spv": "19bb59d0b8ad408339f6d2beb4807f8ebafc58a4c89412e0e076e84e60f19896",
+      "mega_mhc.spv": "c9db35c649888491d0ef2b7440ceaa629c2f6f1f7b2006d99e2d4fb51d2be33e",
+      "wq_a.spv": "3ab509a810555d9e4933188a541964a985d01d3218a3f656bf07aea80a9be1db",
+      "wq_b.spv": "268311b2a05f8d1ce0ef49df871d55b525063f681f629c9f66f9fc763788255d",
+      "wkv.spv": "c9b90b5e185e13babfb1fbd5291c097700474b369c23d0257745e1da67d17f08",
+      "sparse_attn.spv": "227ec321309fb5d0864ae25a73fc264db67961522642b8efa2d20518b98ed6d5",
+      "dspark_mega.spv": "72dd86e2776c8cffa3967ab8235731fbe3836da9116207eb1bee1bbd2f32d779",
+      "compressor.spv": "e0d87f9864f54ab49299e75714ee334046df777d24be7e5e26190cdb1a93e383",
+      "wo_a.spv": "01a3254041f43fc2bffd64989e821337d11246f06d7b38b83b504eb55d0fc43a",
+      "wo_b.spv": "3ab509a810555d9e4933188a541964a985d01d3218a3f656bf07aea80a9be1db",
+      "indexer.spv": "29f24dce6bcf68203d5044ddd1166d8ed0c34f18900a95074ed16f4334e981da",
+      "gemv_ksplit.spv": "c0d346482cbc305742bd9dc9124a41654a9c5fc754dd5fb871250ddd0a796b3e",
+      "sparse_attn_t.spv": "f8236cbc9d96e98e77a14e007a0a26eaf706797f7390c51254bcf9fdb226be42",
+      "gate.spv": "840461445cbc159d39019b748ecbd19f468b8c4672827441c572d30ca7acb5ee",
+      "decode_attn_cm.spv": "5b5fc18988064f27ece67393fda0ead0c645fc31b363a3262a82ab3a001cc6c6",
+      "moe_xquant.spv": "20f13827e34bb5f20c6cda9e04ef59eb51a3e499ab731cc2205e1ac21f83a8ad",
+      "moe_hquant.spv": "120898f357d7d637d1f2d50288d8f02b45d11b1c8f26eac915348f42e02b02ae",
+      "moe_gateup.spv": "ab7dd0fe262e3c9ac21f9daf2b537a30ad7f3e3759aa7592ad9f71f7c8aff46d",
+      "moe_xact.spv": "bbe2d89b41963cba790d519ecf549e5fbef92fc7f1bcae6e796b57e8e3f235ef",
+      "moe_down.spv": "9beda5ee1ac13dd71c662e34b0b1185e858fc87184da089148e569ba634e2eee",
+      "engram.spv": "2a33a411de6326bb8a27463d28c1e60c9ea024fb7868c78352205cdab77b877c",
+      "head.spv": "e0bf996ce9cd988d34578b69b00f7bef26c494ce22076e899291a62ef2496c79",
+      "sample_topk.spv": "e5c704f9bec800b5b41a7ca8c531e8836d5465e1bf3f4a065ae272ecc2c9d27c",
+      "dspark_gemv.spv": "34f40844f833996386eeac069d74168da04b32d9374c7032a3f66cecb9fb4a7a",
+      "dspark_attn.spv": "0cc01b8b9c15658bb9e4b044ecf1a7716ce77bfbe398e8c2a8d984e4775c69ca",
+      "dspark_verify.spv": "37900c8db61ccef49faa4eb381c5eac37591fdc9eef41d8317de35268391c965",
+      "dspark_head.spv": "01e6cb4da873352f210a4f15a489038cb796630a8c85f938c74ae86ca2fe23c6",
+      "mgt1_gemv.spv": "b79b5cfa041bdf5a9b81df37d1a3a8db5f092588951992d7eddbbedafe12eccb",
+      "mgt1_mhc.spv": "7ffdb8f2cd647e664a53f137f80910374106df4a4ad3b1c948fcad169ccd8da2",
+      "mgt1_attn.spv": "d5d9734dcaa0ba105afeaade5ea698ce7c987bfdca3603a7988308fa4c8570f6",
+      "mgt1_gate.spv": "fb63db34bf3328c9a8da3d8ba2f7c677ba1b7eab234a3f143ee13d8cd13c5cb9",
+      "mgt1_attn_cm.spv": "7688f12d4c1d642aa36463e27551a5a61785cc0a0f4bcd1f7a8dc2de1d02d0ab",
+      "mgt1_cmp.spv": "d8643ce6a9ab15ecaa4ba0a92c4e795c0cce4a8181d970e130c6c8bb0c601ae2",
+      "mgt1_head.spv": "b68db8a088d852289fb8f9e36ea38b9abd6cc39cb2596dbb307cfd2a26b5bf40",
+      "mgt1_idx.spv": "bb7426da79ac5b03f49929326ded40641c2087a60d21c28e507ed34b553af176",
+      "draft_fp8_head.spv": "9c68a01bb9ee84c4aeccc43288378694bac8970a0fe22e678bbbd45050f6ad39",
+      "mgt1_engram.spv": "a5619b9cc840dad193e12c84edba94047688b2ff51ab7b23d8f5e894eb0da046",
+      "prefill_coopmat.spv": "dfbb7a1f68ee7e7209be3a797fb8da10d423ddef3af1f61341b9ef721873a9c3",
+      "prefill_gemm.spv": "09945e50a0147ad8ae86041841d030a0b2e0e02235bb1e4b27c801a4c9ee0ee8",
+      "prefill_topk.spv": "14a5ca5480f0b1f24ba0f333df66efcfabebd7a48b90df62b37200d494873576",
+      "prefill_attn.spv": "bf84891778f735cd63bf27f3293ef567d2ed3275c01cd151da2623f1dd0fc440",
+      "prefill_elem.spv": "9c205b2b282b05be9f2b47b5a665b27ffb6ecec32c2e04e4ce20dd68da4f8ec0",
+      "probe_stream.spv": "a64b7bb37e67614e1c76026d5f15ea359d59019330e1a563feaf3dc4881ae1e7",
+      "probe_resident.spv": "2802df7b0d4ded4bddeb90dd8eb19765f58ccb1044f89d9f7acc9e3c11c3a74c",
+      "prefill_gemm_lds.spv": "80c6f2ce1f80a7061f75eee4001e02edf06f89813d177d7aecb8a9cef0a95ce4",
+      "probe_hostflag.spv": "ab24fce0d43c1b03ee781e8afb44568fbcf4bc74ba4c9b1d4189cae6ecab3bb8",
+      "probe_model.spv": "11971939586baa0e595cc57173b9e2362e3ad81160dc9951c67db3148197a3aa",
+      "probe_mma.spv": "839d7443a301c99c0f92d1edf0842cdcdaba914d75b99f17a33071d15a50cf24",
+      "probe_occ.spv": "f848c5ca0cea9f0b073cbe6b10f3e1122713bc43b681d7f79be12b24237f2375"
+    }
+  },
+  "tested_artifacts": {
+    "bench/results/mask_quality/static_columns_main_validation/tested_artifacts/cachedmoe": "3b9c9199c2695576bee76ea19e6ec7d2efe46ba4c6c589dcd42e2a9528b5ac02",
+    "bench/results/mask_quality/static_columns_main_validation/tested_artifacts/cachedmoe_tests": "8a95ec1f4010656f48f7dc1cfbeabaa6dbefad87d266c4b714b980692f04ae92"
+  },
+  "gpu_checks": [
+    {
+      "name": "main_gpu_moe",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/build/tests/cachedmoe_tests",
+        "gpu_moe."
+      ],
+      "env": {
+        "CACHEDMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+        "CACHEDMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "CACHEDMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders",
+        "CACHEDMOE_MIRROR_AUTO": "0",
+        "CACHEDMOE_DSPARK_HEAD_FP8": "0"
+      },
+      "profile": "balanced",
+      "process_group": 412073,
+      "rc": 0,
+      "failure": null,
+      "start": {
+        "k10temp:hwmon6": 53.0,
+        "nvme:hwmon4": 31.85,
+        "nvme:hwmon13": 59.85,
+        "amdgpu:hwmon5": 52.0,
+        "wall_time_s": 1791366126.9959953,
+        "ac": 1,
+        "power_profile": "balanced",
+        "power_profile_sample_unix": 1791366126.9469264,
+        "platform_profile": "balanced",
+        "gpu_busy_percent": "2",
+        "pp_dpm_sclk": "0: 600Mhz \n1: 724Mhz *\n2: 2900Mhz",
+        "pp_dpm_mclk": "0: 400Mhz \n1: 800Mhz \n2: 1000Mhz",
+        "power_dpm_force_performance_level": "auto"
+      },
+      "end": {
+        "k10temp:hwmon6": 64.875,
+        "nvme:hwmon4": 35.85,
+        "nvme:hwmon13": 59.85,
+        "amdgpu:hwmon5": 57.0,
+        "wall_time_s": 1791366139.2072225,
+        "ac": 1,
+        "power_profile": "balanced",
+        "power_profile_sample_unix": 1791366138.8453462,
+        "platform_profile": "balanced",
+        "gpu_busy_percent": "19",
+        "pp_dpm_sclk": "0: 600Mhz \n1: 1012Mhz *\n2: 2900Mhz",
+        "pp_dpm_mclk": "0: 400Mhz \n1: 800Mhz \n2: 1000Mhz *",
+        "power_dpm_force_performance_level": "auto"
+      },
+      "peak": {
+        "k10temp:hwmon6": 83.5,
+        "nvme:hwmon4": 37.85,
+        "nvme:hwmon13": 59.85,
+        "amdgpu:hwmon5": 67.0
+      },
+      "end_sample_error": null,
+      "finished_unix": 1791366139.2082412,
+      "elapsed_s": 12.211320444999728,
+      "active_elapsed_s": 12.211320444999728,
+      "thermal_paused_s": 0.0,
+      "active_timeout_s": 180,
+      "wall_timeout_s": 1200,
+      "thermal_pauses": 0,
+      "thermal_pause_intervals": [],
+      "thermal_transitions": [],
+      "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/static_columns_main_validation/main_gpu_moe_thermal.jsonl",
+      "thermal_policy": "per-device latched",
+      "thermal_thresholds": {
+        "gpu_pause_c": 85.0,
+        "gpu_resume_c": 77.0,
+        "gpu_start_c": 60.0,
+        "nvme_pause_c": 80.0,
+        "nvme_resume_c": 72.0,
+        "nvme_start_c": 65.0
+      },
+      "sampling_period_s": 0.05,
+      "ac_changed": false,
+      "time": "2026-10-07T17:42:19.208278+08:00"
+    },
+    {
+      "name": "main_l3_static_probe_delivery",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "/home/chenkailun/projects/cachedMoE/tools/l3_ppl.py",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/cachedmoe",
+        "--model",
+        "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+        "--state",
+        "/home/chenkailun/projects/cachedMoE/traces/l3_64",
+        "--modes",
+        "off",
+        "--json",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/static_columns_main_validation/l3.json",
+        "--log-dir",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/static_columns_main_validation/l3_logs"
+      ],
+      "env": {
+        "CACHEDMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+        "CACHEDMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "CACHEDMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders",
+        "CACHEDMOE_MIRROR_AUTO": "0",
+        "CACHEDMOE_DSPARK_HEAD_FP8": "0"
+      },
+      "profile": "balanced",
+      "process_group": 412490,
+      "rc": 0,
+      "failure": null,
+      "start": {
+        "k10temp:hwmon6": 63.875,
+        "nvme:hwmon4": 36.85,
+        "nvme:hwmon13": 59.85,
+        "amdgpu:hwmon5": 55.0,
+        "wall_time_s": 1791366139.4933982,
+        "ac": 1,
+        "power_profile": "balanced",
+        "power_profile_sample_unix": 1791366139.441121,
+        "platform_profile": "balanced",
+        "gpu_busy_percent": "15",
+        "pp_dpm_sclk": "0: 600Mhz \n1: 960Mhz *\n2: 2900Mhz",
+        "pp_dpm_mclk": "0: 400Mhz \n1: 800Mhz \n2: 1000Mhz *",
+        "power_dpm_force_performance_level": "auto"
+      },
+      "end": {
+        "k10temp:hwmon6": 68.5,
+        "nvme:hwmon4": 43.85,
+        "nvme:hwmon13": 74.85,
+        "amdgpu:hwmon5": 62.0,
+        "wall_time_s": 1791366186.998168,
+        "ac": 1,
+        "power_profile": "balanced",
+        "power_profile_sample_unix": 1791366186.0078917,
+        "platform_profile": "balanced",
+        "gpu_busy_percent": "28",
+        "pp_dpm_sclk": "0: 600Mhz \n1: 1454Mhz *\n2: 2900Mhz",
+        "pp_dpm_mclk": "0: 400Mhz \n1: 800Mhz \n2: 1000Mhz",
+        "power_dpm_force_performance_level": "auto"
+      },
+      "peak": {
+        "k10temp:hwmon6": 79.375,
+        "nvme:hwmon4": 49.85,
+        "nvme:hwmon13": 74.85,
+        "amdgpu:hwmon5": 71.0
+      },
+      "end_sample_error": null,
+      "finished_unix": 1791366186.9991133,
+      "elapsed_s": 47.50481047399808,
+      "active_elapsed_s": 47.50481047399808,
+      "thermal_paused_s": 0.0,
+      "active_timeout_s": 300,
+      "wall_timeout_s": 1200,
+      "thermal_pauses": 0,
+      "thermal_pause_intervals": [],
+      "thermal_transitions": [],
+      "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/static_columns_main_validation/main_l3_static_probe_delivery_thermal.jsonl",
+      "thermal_policy": "per-device latched",
+      "thermal_thresholds": {
+        "gpu_pause_c": 85.0,
+        "gpu_resume_c": 77.0,
+        "gpu_start_c": 60.0,
+        "nvme_pause_c": 80.0,
+        "nvme_resume_c": 72.0,
+        "nvme_start_c": 65.0
+      },
+      "sampling_period_s": 0.05,
+      "ac_changed": false,
+      "time": "2026-10-07T17:43:06.999156+08:00"
+    }
+  ],
+  "web_configuration": {
+    "max_context": 1048576,
+    "ceiling": 1048576,
+    "ready": {
+      "event": "ready",
+      "load_s": 18.0340738,
+      "max_context": 1048576,
+      "vocab": 129280,
+      "cache_gb": 96.3439941,
+      "cache_slots": 5500,
+      "gpu_prefill_min": 16,
+      "check_topk": false,
+      "engram_tables": "derived",
+      "kv_mb": 16.044032,
+      "rollback": true,
+      "max_parked": 8,
+      "reheat": false,
+      "reheat_decay": 0.5,
+      "kv_disk": true,
+      "kv_disk_dir": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv",
+      "state_root": null,
+      "state_root_source": null,
+      "state_root_both_exist": null,
+      "sources": 2,
+      "speculation": {
+        "enabled": true,
+        "draft_tokens": 2,
+        "accept_top_k": 4,
+        "confidence_min": null,
+        "main_paths": 1,
+        "mtp_pinned_experts": 384
+      },
+      "decode_modes": {
+        "available": [
+          "mask-spec",
+          "mask-plain",
+          "off-plain"
+        ],
+        "default": "mask-spec"
+      }
+    },
+    "prefill_ms_per_token": 24.0,
+    "kv_bytes_per_token": 3200,
+    "model": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+    "request_defaults": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "max_tokens": 1024,
+      "reasoning_effort": 75
+    },
+    "request_constraints": {
+      "temperature": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "top_p": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "max_tokens": {
+        "min": 1,
+        "max": 8192,
+        "step": 1
+      },
+      "reasoning_effort": {
+        "min": 1,
+        "max": 100,
+        "step": 1
+      }
+    },
+    "effort_presets": [
+      {
+        "value": 50,
+        "label": "Low · 50"
+      },
+      {
+        "value": 75,
+        "label": "High · 75"
+      },
+      {
+        "value": 100,
+        "label": "Max · 100"
+      }
+    ],
+    "cmd": "/home/chenkailun/projects/cachedMoE/build/cachedmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 1048576 --cache-slots 5500 --gpu-prefill-min 16 --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --resident-only mask --mask-cache dynamic --dspark --spec-k 2 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+    "resident_only": "mask",
+    "mask_cache": "dynamic",
+    "decode_modes": {
+      "available": [
+        "mask-spec",
+        "mask-plain",
+        "off-plain"
+      ],
+      "default": "mask-spec"
+    },
+    "speculation": {
+      "enabled": true,
+      "draft_tokens": 2,
+      "accept_top_k": 4,
+      "confidence_min": null,
+      "main_paths": 1,
+      "mtp_pinned_experts": 384
+    },
+    "speculation_resources_resident": true,
+    "spec_k": 2,
+    "power_profile": "balanced",
+    "platform_profile": "balanced",
+    "thermal_guard": {
+      "enabled": true,
+      "thresholds": {
+        "gpu_pause_c": 85.0,
+        "gpu_resume_c": 77.0,
+        "gpu_start_c": 60.0,
+        "nvme_pause_c": 80.0,
+        "nvme_resume_c": 72.0,
+        "nvme_start_c": 65.0
+      }
+    }
+  },
+  "web_status": {
+    "event": "status",
+    "session": "default",
+    "context": 0,
+    "max_context": 1048576,
+    "kv_mb": 16.044032,
+    "kv_capacity": 4096,
+    "kv_slabs": 1,
+    "kv_largest_slab_mb": 16.044032,
+    "cache_fixed": false,
+    "cache_frozen": false,
+    "store": "expert store: 5500 slots (384 resident, 0 filling, 5116 free, 384 pinned)  lookups 384 hits 0 (0.000)  fills 384/384 ok  runs 768/768  evictions 0 (+0 guard-blocked)  path A hits 0 / B 0 (0.0000 A)  fills A 384 / B 0; failed fills 0",
+    "planner": "planner: 3 layers, 384 requests (0 hits, 384 misses, 0.000), 0 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 3 miss layers, 3 expert wait calls (3 miss joins, 1136.800 ms), 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped; P0 failures reserve 0 / submit 0 / IO 0",
+    "io": "io: 2076 req (2076 done, 0 failed, 0 cancelled), 10876 chunks, 17788063312 / 17788071936 bytes, busy 6.281 s, eff 2.83 GB/s, mean lat 2118.242 ms, peak QD 8 / 32.0 MiB\n  p0_blocking      768 req  6888.0 MiB\n  p3_backfill     1308 req  10076.0 MiB\n  P0: 768 req, 6888.0 MiB, lat mean 191.46 / p50 191.41 / p95 360.74 / max 382.63 ms  (queue wait 188.60 + service 2.86)\n  P0: first-of-burst 3 at 0.86 ms, behind 765 at 192.21 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 6.89\n  P0 landing copy: 0.484 ms/request (part of service wall time)\n  in-flight chunks now/peak: P0 0/8 P1 0/0 P2 0/0 P3 0/8\n  src[0] /home/chenkailun/models/DeepSeek-V4.1-Flash  w 4.12 GB/s  1107 req  8.7 GiB (52.7%)  mean lat 1070.31 ms  inflight 0 req / 0.0 MiB  stripe 3819 chunks\n         P0 768 req  3.5 GiB  mean lat 190.97 ms | idle gaps >= 15 ms: 2 (mean 3510.5, max 4913.3 ms) | keep-alive 0 reads, 0 done, 0 refused\n         P0 phases: queue 188.67 + service 2.30 ms/request; landing copy 0.229 ms/request (inside service)\n  src[1] /mnt/deepmoe2/models/DeepSeek-V4.1-Flash  w 3.72 GB/s  1737 req  7.8 GiB (47.3%)  mean lat 1933.79 ms  inflight 0 req / 0.0 MiB  stripe 3477 chunks\n         P0 768 req  3.2 GiB  mean lat 191.04 ms | idle gaps >= 15 ms: 2 (mean 3510.5, max 4913.4 ms) | keep-alive 0 reads, 0 done, 0 refused | 70 C (max 71), rested 0x\n         P0 phases: queue 188.67 + service 2.36 ms/request; landing copy 0.256 ms/request (inside service)\n  dispatcher: 8111 iters, issue 0.24 s / poll 6.02 s / handle 0.01 s (callbacks 0.00 s, 2076 at 1.0 us mean)\n  dispatcher: Backend::submit 0.23 s over 10876 chunks, mean 21.2 us, max 0.64 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.1% of the non-waiting loop; refill gap 0.6 us mean over 7840 reaps\n",
+    "engram": "0 lands, wait 0.000 ms, stage 0.000 ms",
+    "route": "route     resident-only=mask over 0 layer-steps\n  experts requested 0  served 0 (0.0000)  skipped 0\n  gate mass lost    0.0000 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n  weighted mask wait 0 attempts / 0 ready, 0.000 ms total\n",
+    "gate_probe": "",
+    "prefill_ms_per_token": 24.0,
+    "queue": 0
+  },
+  "process_identities": [
+    {
+      "role": "guard_pid",
+      "pid": 413892,
+      "exe": "/usr/bin/python3.14",
+      "cmdline": "python3 /home/chenkailun/projects/cachedMoE/tools/web/launch_guarded.py --repo /home/chenkailun/projects/cachedMoE --state-dir /home/chenkailun/projects/cachedMoE/build/web_mask --spec-k 2 --gpu-route 0 "
+    },
+    {
+      "role": "server_pid",
+      "pid": 414617,
+      "exe": "/usr/bin/python3.14",
+      "cmdline": "/usr/bin/python3 /home/chenkailun/projects/cachedMoE/tools/web/server.py --exe /home/chenkailun/projects/cachedMoE/build/cachedmoe --resident-only mask --mask-cache dynamic --cache-slots 5500 --max-context 1048576 --gpu-prefill-min 16 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --dspark --spec-k 2 --spec-top-k 4 --port 8080 --log /home/chenkailun/projects/cachedMoE/build/web_mask/engine.log --thermal-policy-json {\"gpu_pause_c\": 85.0, \"gpu_resume_c\": 77.0, \"gpu_start_c\": 60.0, \"nvme_pause_c\": 80.0, \"nvme_resume_c\": 72.0, \"nvme_start_c\": 65.0} "
+    },
+    {
+      "role": "engine_pid",
+      "pid": 414618,
+      "exe": "/home/chenkailun/projects/cachedMoE/build/cachedmoe",
+      "cmdline": "/home/chenkailun/projects/cachedMoE/build/cachedmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 1048576 --cache-slots 5500 --gpu-prefill-min 16 --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --resident-only mask --mask-cache dynamic --dspark --spec-k 2 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash "
+    }
+  ],
+  "web_environment": {
+    "CACHEDMOE_DSPARK_HEAD_FP8": "0",
+    "CACHEDMOE_DSPARK_ONECB": "1",
+    "CACHEDMOE_BATCH_GPU_ROUTE": "0",
+    "CACHEDMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+    "CACHEDMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders",
+    "CACHEDMOE_MASK_DYNAMIC_LRU": "1"
+  },
+  "user_files_unchanged": [
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/codex-rename-final-20261006.pkv",
+      "sha256": "307039b81fda81c26a8212935ad3f3ea909474f38f6bc8e04b1c0836e79aa632",
+      "bytes": 58924,
+      "mtime_ns": 1791281442178545141
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/codex-rename-final-20261006.json",
+      "sha256": "060e38208dfdde95c75a2e3f56185e6713b64c6e0720d0acb3fc90103bed8094",
+      "bytes": 1060,
+      "mtime_ns": 1791279718189290742
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/codex-spec5-smoke-20261005.json",
+      "sha256": "9f5fcccb38689774367ac2b905c440f6e60f8c58e9c41d7968400192959ddee4",
+      "bytes": 87,
+      "mtime_ns": 1791184311449538872
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/ctx1m-smoke-20261005.json",
+      "sha256": "30820bb1045a230ef2807375eec4eac4e4631263b87c978dca9e65d791c14349",
+      "bytes": 87735,
+      "mtime_ns": 1791202396997166213
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/readme-demo-20261005.json",
+      "sha256": "f1923bb6c14766d608c7ee9395f2beda5dff8112094f8db652caa382bf92f73e",
+      "bytes": 1307,
+      "mtime_ns": 1791211294154729489
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/web.json",
+      "sha256": "6f30f42260b422f82a323559ee5e75846309208269ce4920daeee74024425afb",
+      "bytes": 48038,
+      "mtime_ns": 1791211951869138495
+    }
+  ],
+  "browser_refreshed": false,
+  "new_web_speed_measurement": false,
+  "owned_worktree_removed": true,
+  "owned_branch_removed": true,
+  "remaining_worktrees": [
+    "/home/chenkailun/projects/cachedMoE"
+  ],
+  "raw_directory": "bench/results/mask_quality/static_columns_main_validation"
+}
