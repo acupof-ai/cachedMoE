@@ -866,3 +866,33 @@ CACHEDMOE_TEST(expert_store, fixed_mask_retains_initial_slots) {
     CHECK(std::equal(before.begin(),before.end(),s.pointer_table()));
     s.set_fixed_cache(false);REQUIRE_OK(s.evict_key({0,0}));
 }
+
+CACHEDMOE_TEST(expert_store, frozen_identity_rejects_partial_and_distinguishes_membership) {
+    ExpertStore store;
+    REQUIRE_OK(store.init(std::make_unique<HostSlabBacking>(), small_cache(2, 1), 1, 4));
+    CHECK_ERR(store.frozen_cache_identity(), Err::FailedPrecondition);
+    store.set_fixed_cache(true);
+    REQUIRE_OK(fill(store, {0, 0}, 10));
+    auto pending = store.begin_fill({0, 1});
+    REQUIRE(pending);
+    CHECK_ERR(store.frozen_cache_identity(), Err::FailedPrecondition);
+    REQUIRE_OK(store.finish_fill(pending->slot, true));
+    REQUIRE_OK(store.pin({0, 0}));
+    auto original = store.frozen_cache_identity();
+    REQUIRE(original);
+    CHECK_EQ(original->size(), 2u);
+    CHECK_EQ((*original)[0][3], 1u);
+    REQUIRE(store.lookup({0, 1}, 999));
+    auto repeated = store.frozen_cache_identity();
+    REQUIRE(repeated);
+    CHECK(*original == *repeated);
+    store.set_fixed_cache(false);
+    CHECK_ERR(store.frozen_cache_identity(), Err::FailedPrecondition);
+    REQUIRE_OK(store.evict_key({0, 1}));
+    REQUIRE_OK(fill(store, {0, 2}, 20));
+    store.set_fixed_cache(true);
+    auto replaced = store.frozen_cache_identity();
+    REQUIRE(replaced);
+    CHECK_EQ(replaced->size(), original->size());
+    CHECK(*original != *replaced);
+}

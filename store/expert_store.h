@@ -33,6 +33,7 @@
 
 #include "core/namespace.h"
 
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -152,6 +153,11 @@ public:
     void set_fixed_cache(bool enabled);
     bool fixed_cache() const;
     bool cache_frozen() const;
+
+    // Benchmark control only: atomically identify a fully settled, immutable
+    // cache by [slot, layer, expert, pinned]. Counts alone cannot establish
+    // equal inputs. Dynamic, partially filled and empty stores are rejected.
+    Result<std::vector<std::array<uint32_t, 4>>> frozen_cache_identity() const;
 
     // --- hot path ---------------------------------------------------------
 

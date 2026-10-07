@@ -90,6 +90,21 @@ void ExpertStore::set_fixed_cache(bool enabled) {
 bool ExpertStore::fixed_cache() const { std::lock_guard lk(mutex_); return fixed_cache_; }
 bool ExpertStore::cache_frozen() const { std::lock_guard lk(mutex_); return cache_frozen_; }
 
+Result<std::vector<std::array<uint32_t, 4>>> ExpertStore::frozen_cache_identity() const {
+    std::lock_guard lk(mutex_);
+    if (!fixed_cache_ || !cache_frozen_ || slots_.empty() || stats_.filling || stats_.free)
+        return fail(Err::FailedPrecondition, "benchmark control requires a full frozen cache");
+    std::vector<std::array<uint32_t, 4>> identity;
+    identity.reserve(slots_.size());
+    for (const auto &slot : slots_) {
+        if (slot.state != SlotState::Resident)
+            return fail(Err::FailedPrecondition, "frozen cache has an unsettled slot");
+        identity.push_back({slot.slot, slot.key.layer, slot.key.expert,
+                            slot.tier == Tier::Pinned ? 1u : 0u});
+    }
+    return identity;
+}
+
 void ExpertStore::publish_locked(uint32_t slot) {
     const ExpertSlot& s = slots_[slot];
     // A host-only backing has no device address; publish the host pointer so

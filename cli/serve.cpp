@@ -468,6 +468,32 @@ int cmd_serve(int argc, char** argv) {
         if (op == "generate" || op == "generate_multi" || op == "reheat")
             gpu_busy.emplace(cfg.environment->gamemode);
         if (op == "quit") break;
+        if (op == "benchmark_cache_state") {
+            if (!allow_spec_switch || streams != 1 || session != pool.active() || pool.active() != "default") {
+                emit_error("cache inspection requires --allow-spec-switch in the default session");
+                continue;
+            }
+            // This synchronous request boundary follows the final GPU fence.
+            // Fixed/full cache prevents further admissions while queued reads
+            // and their callbacks are drained. Never used on the decode path.
+            auto identity = engine.store().frozen_cache_identity();
+            if (!identity) { emit_error(identity.error().str()); continue; }
+            engine.io().drain();
+            const auto stats = engine.store().stats();
+            std::string rows;
+            for (const auto &row : *identity) {
+                if (!rows.empty()) rows += ',';
+                rows += std::format("[{},{},{},{}]", row[0], row[1], row[2], row[3]);
+            }
+            emit(std::format("{{\"event\":\"benchmark_cache_state\",\"frozen\":true,"
+                             "\"resident\":{},\"filling\":{},\"free\":{},"
+                             "\"fills_started\":{},\"fills_failed\":{},\"evictions\":{},"
+                             "\"queued_requests\":{},\"inflight_chunks\":{},\"slots\":[{}]}}",
+                             stats.resident, stats.filling, stats.free, stats.fills_started,
+                             stats.fills_failed, stats.evictions, engine.io().queued_requests(),
+                             engine.io().inflight_chunks(), rows));
+            continue;
+        }
         if (op == "set_draft_head") {
             if (!allow_spec_switch || session != pool.active() || pool.active() != "default") {
                 emit_error("head switching requires --allow-spec-switch in the default session");
