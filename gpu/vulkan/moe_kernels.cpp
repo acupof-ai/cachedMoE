@@ -287,6 +287,19 @@ Result<void> MoeRunner::create(Device& device, MemoryAllocator& alloc,
             }
         }
     }
+    // Unlike the M1 twin, these retain ps.m and the existing h layout. Only
+    // the live loop bound becomes constant; hquant must keep its original M.
+    if (spec.static_m3 && spec.m >= kStaticVerifyColumns) {
+        PipelineSpec ps3 = ps;
+        PipelineSpec ps3_b = ps_b;
+        ps3.extra[6] = ps3_b.extra[6] = kStaticVerifyColumns;
+        if (auto r = gateup_m3_.create(device, shader_dir + "/moe_gateup.spv", la, ps3); !r) {
+            destroy(); return r;
+        }
+        if (auto r = down_m3_.create(device, shader_dir + "/moe_down.spv", lb, ps3_b); !r) {
+            destroy(); return r;
+        }
+    }
     if (auto r = descriptors_.create(device, 12, 96); !r) { destroy(); return r; }
 
     const uint64_t h_elem = spec.h_precision ? 4 : 2;
@@ -416,6 +429,8 @@ void MoeRunner::destroy() {
     gateup_m1_.destroy();
     down_m1_.destroy();
     hquant_m1_.destroy();
+    gateup_m3_.destroy();
+    down_m3_.destroy();
     if (alloc_) {
         for (GpuBuffer* b : {&table_, &ids_, &list_, &routew_, &x_, &h_, &y_, &list_alt_, &list_sh_})
             if (b->valid()) alloc_->free(*b);
@@ -431,8 +446,8 @@ void MoeRunner::destroy() {
 Result<void> MoeRunner::record(uint32_t iterations, MoePhase phase) {
     // Track K1a: one decision for the whole chain -- A, the h quantiser and B
     // must agree on M or the fp8 h plane offsets do not line up.
-    const Pipeline& pipe_a  = use_m1() ? gateup_m1_ : gateup_;
-    const Pipeline& pipe_b  = use_m1() ? down_m1_   : down_;
+    const Pipeline& pipe_a  = gateup_pipeline();
+    const Pipeline& pipe_b  = down_pipeline();
     const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter  / rows_per_wg;
@@ -518,8 +533,8 @@ Result<void> MoeRunner::record_into(CommandBuffer& cmd, MoePhase phase) {
     // path in bench/kernel_bench is byte-for-byte what it was.
     // Track K1a: one decision for the whole chain -- A, the h quantiser and B
     // must agree on M or the fp8 h plane offsets do not line up.
-    const Pipeline& pipe_a  = use_m1() ? gateup_m1_ : gateup_;
-    const Pipeline& pipe_b  = use_m1() ? down_m1_   : down_;
+    const Pipeline& pipe_a  = gateup_pipeline();
+    const Pipeline& pipe_b  = down_pipeline();
     const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter  / rows_per_wg;
@@ -569,7 +584,7 @@ Result<void> MoeRunner::record_gateup_alt(CommandBuffer& cmd, uint32_t count) {
     if (count == 0 || count > dims_.slots) return fail(Err::InvalidArgument, "count must be 1..slots");
     // Track K1a: one decision for the whole chain -- A, the h quantiser and B
     // must agree on M or the fp8 h plane offsets do not line up.
-    const Pipeline& pipe_a  = use_m1() ? gateup_m1_ : gateup_;
+    const Pipeline& pipe_a  = gateup_pipeline();
     const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter / rows_per_wg;
@@ -604,7 +619,7 @@ Result<void> MoeRunner::record_shared_early(CommandBuffer& cmd, uint64_t x_src_a
     if (!device_ || !gateup_.valid() || !xact_.valid() || !set_a_sh_)
         return fail(Err::FailedPrecondition, "runner has no shared-early path (x_mode 6?)");
     if (!x_src_address) return fail(Err::InvalidArgument, "record_shared_early: no x address");
-    const Pipeline& pipe_a  = use_m1() ? gateup_m1_ : gateup_;
+    const Pipeline& pipe_a  = gateup_pipeline();
     const Pipeline& pipe_hq = use_m1() ? hquant_m1_ : hquant_;
     const uint32_t rows_per_wg = (256 / spec_.lanes_per_row) * spec_.rows_per_lane;
     const uint32_t groups_a = dims_.inter / rows_per_wg;
@@ -672,6 +687,8 @@ Result<MoeTiming> MoeRunner::run(uint32_t iterations, MoePhase phase) {
 Result<void> MoeRunner::init_gpu_route(uint32_t layers, const std::string &dir) {
 #if defined(CACHEDMOE_ENABLE_VULKAN)
     if (gpu_layers_) return {};
+    if (spec_.static_m3)
+        return fail(Err::InvalidArgument, "static MoE M3 currently requires CPU routing");
     if (spec_.x_mode == 6 || spec_.h_quant != 3)
         return fail(Err::Unavailable, "GPU union needs exact fp16 x and h_quant=3");
     PipelineSpec ps;

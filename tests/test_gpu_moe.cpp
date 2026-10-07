@@ -20,6 +20,7 @@
 // Gated on CACHEDMOE_MODEL_DIR and on a working Vulkan device; a skip is a pass.
 #include "core/env.h"
 #include <bit>
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -2074,4 +2075,95 @@ CACHEDMOE_TEST(mgt1, live_column_width_probe) {
                     width, live, slots, layers, iterations, timing->seconds_total * 1000,
                     timing->wall_seconds * 1000 / iterations);
     }
+}
+
+// Same six-column buffers in both arms: isolate constant live loops from the
+// array-width probe. Unused columns, the FP8 h plane and its scales retain
+// their original offsets. Check every live width before timing only M=3.
+namespace {
+void constant_loop_probe(cachedmoe::test::Context& _ctx, bool compact,
+                         bool timed = true, bool varied = false) {
+    constexpr uint32_t slots = 12;
+    constexpr uint32_t layers = 3;
+    constexpr uint32_t live = 3;
+    constexpr uint32_t iterations = 8;
+    Rig rig;
+    if (!rig.bring_up(slots * layers)) {
+        CACHEDMOE_SKIP_PRINTF("       SKIP constant-loop probe: %s\n", rig.why.c_str());
+        return;
+    }
+    for (uint16_t layer = 0; layer < layers; ++layer)
+        for (uint16_t expert = 0; expert < slots; ++expert)
+            REQUIRE(rig.fill({layer, expert}));
+    auto golden = load_golden(data_path("l1_layer0_expert0.bin"));
+    REQUIRE_OK(golden);
+    std::array<std::vector<float>, layout::kMoeBatchColumns * layers> reference;
+    for (bool fixed : {false, true}) {
+        gpu::MoeSpec spec;
+        spec.m = fixed && compact ? live : layout::kMoeBatchColumns;
+        spec.h_quant = 3;
+        spec.static_m3 = fixed;
+        gpu::MoeDims dims;
+        dims.slots = slots;
+        dims.layer_cycle = layers;
+        gpu::MoeRunner runner;
+        REQUIRE_OK(runner.create(rig.device, rig.alloc, gpu::default_shader_dir(), spec, dims));
+        std::memcpy(runner.pointer_table(), rig.store.pointer_table(), rig.store.pointer_table_bytes());
+        for (uint32_t slot = 0; slot < slots; ++slot) {
+            runner.ids()[slot] = slot;
+            runner.slot_list()[slot] = slot;
+        }
+        for (uint32_t m = 0; m < spec.m; ++m) {
+            for (uint32_t slot = 0; slot < slots; ++slot)
+                runner.route_weights()[m * slots + slot] =
+                    (varied ? 1.0f + float(m + slot) / 32.0f : 1.0f) / float(slots);
+            for (uint32_t i = 0; i < dims.hidden; ++i)
+                runner.x_fp16()[m * dims.hidden + i] = cpu::float_to_fp16(
+                    golden->x[i] * (varied ? 1.0f - float(m) / 32.0f : 1.0f));
+        }
+        runner.set_list_count(slots);
+        for (uint32_t count = 1; count <= spec.m; ++count) {
+            runner.set_live_columns(count);
+            for (uint32_t layer = 0; layer < (timed ? 1u : layers); ++layer) {
+                // run(n) ends on layer n-1 of this streaming fixture.
+                REQUIRE_OK(runner.run(layer + 1));
+                const size_t bytes = size_t(count) * dims.hidden * sizeof(float);
+                auto& expected = reference[(count - 1) * layers + layer];
+                if (!fixed) {
+                    expected.resize(size_t(count) * dims.hidden);
+                    std::memcpy(expected.data(), runner.y(), bytes);
+                } else {
+                    CHECK(std::memcmp(expected.data(), runner.y(), bytes) == 0);
+                }
+            }
+        }
+        // The compact arm is a distinct configuration. Its reference is
+        // untimed here; do not repeat the earlier six-column measurement.
+        if (!timed || (compact && !fixed)) continue;
+        runner.set_live_columns(live);
+        REQUIRE_OK(runner.run(1));
+        auto timing = runner.run(iterations);
+        REQUIRE_OK(timing);
+        CHECK(timing->gpu_timed);
+        std::printf("constant-loop probe: static=%u width=%u live=%u slots=%u layers=%u iterations=%u GPU_ms=%.9f wall_ms=%.9f\n",
+                    unsigned(fixed), spec.m, live, slots, layers, iterations,
+                    timing->seconds_total * 1000, timing->wall_seconds * 1000 / iterations);
+    }
+}
+} // namespace
+
+CACHEDMOE_TEST(mgt1, constant_live_loop_probe) {
+    if (skip_without_model("mgt1.constant_live_loop_probe")) return;
+    constant_loop_probe(_ctx, false);
+}
+
+CACHEDMOE_TEST(mgt1, constant_compact_loop_probe) {
+    if (skip_without_model("mgt1.constant_compact_loop_probe")) return;
+    constant_loop_probe(_ctx, true);
+}
+
+CACHEDMOE_TEST(gpu_moe, constant_live_columns_have_distinct_inputs_and_routes) {
+    if (skip_without_model("gpu_moe.constant_live_columns_have_distinct_inputs_and_routes")) return;
+    constant_loop_probe(_ctx, false, false, true);
+    constant_loop_probe(_ctx, true, false, true);
 }

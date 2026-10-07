@@ -116,6 +116,16 @@ set_tests_properties("bench.mgt1_live_column_width" PROPERTIES
     LABELS "needs-model;needs-gpu;bench"
     SKIP_RETURN_CODE 77)
 
+add_test(NAME "bench.mgt1_constant_live_loop" COMMAND cachedmoe_tests "mgt1.constant_live_loop_probe")
+set_tests_properties("bench.mgt1_constant_live_loop" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_RETURN_CODE 77)
+
+add_test(NAME "bench.mgt1_constant_compact_loop" COMMAND cachedmoe_tests "mgt1.constant_compact_loop_probe")
+set_tests_properties("bench.mgt1_constant_compact_loop" PROPERTIES
+    LABELS "needs-model;needs-gpu;bench"
+    SKIP_RETURN_CODE 77)
+
 # The whole decode step -- forty layers, the head and the argmax -- against the
 # oracle's L3 tokens. Needs the ~17.7 GB pinned set and tests/data/l3.
 add_test(NAME "suite.decode" COMMAND cachedmoe_tests "decode.")

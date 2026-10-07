@@ -81,6 +81,10 @@ struct MoeSpec {
     // ~185 -- but costs A as much as it saves B when both have to agree.
     uint32_t lanes_b       = 0;
     uint32_t rows_b        = 0;
+    // Benchmark-only constant trip count for three live columns. No startup
+    // control enables this: the measured candidate did not improve speed.
+    // Strides and reduction geometry retain m; other live counts fall back.
+    bool static_m3 = false;
     uint32_t b_lanes() const { return lanes_b ? lanes_b : lanes_per_row; }
     uint32_t b_rows()  const { return rows_b  ? rows_b  : rows_per_lane; }
     std::string name() const;
@@ -296,6 +300,17 @@ private:
     // is already the specialised one) or when x_mode == 6, whose int8 x plane
     // offsets are M-dependent and written by a separate pipeline.
     Pipeline       gateup_m1_, down_m1_, hquant_m1_;
+    static constexpr uint32_t kStaticVerifyColumns = 3;
+    Pipeline       gateup_m3_, down_m3_;
+    bool use_m3() const {
+        return live_columns_ == kStaticVerifyColumns && gateup_m3_.valid();
+    }
+    const Pipeline& gateup_pipeline() const {
+        return use_m1() ? gateup_m1_ : (use_m3() ? gateup_m3_ : gateup_);
+    }
+    const Pipeline& down_pipeline() const {
+        return use_m1() ? down_m1_ : (use_m3() ? down_m3_ : down_);
+    }
     // Whether this dispatch should take them: every M-dependent buffer offset
     // (the fp8 h plane of moe_common.slang hq_value_words, the LDS tile) is
     // consistent only if A, the h quantiser and B agree, so it is one decision
