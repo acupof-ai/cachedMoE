@@ -101,6 +101,12 @@ KV, CED/compressor and Engram state is not a correct implementation.
 explicit measurement limits. Raw data stays under
 `bench/results/mask_quality/compare_control_{exact_target,frozen_cache,prepared}/`,
 `compare_verify_trace{,_prepared}/`, `verify_width_probe_prepared/`.
-CPU gates 31/31, tools 57/57, new control checks 9/9 and nested-accounting
-checks 4/4 pass. Original 53 shader files are unchanged; final main binary,
-push and web-restoration receipt follows after delivery.
+Actual main build, CPU gates 31/31 and tools 57/57 pass; new control checks
+9/9 and nested-accounting checks 4/4 pass. Actual main GPU off NLL remains
+.622784, with zero thermal pauses; 53 shader files match the tested worktree.
+The implementation was pushed and its remote SHA verified. Balanced dynamic
+mask web is restored with k2/top4/native BF16, 5500 slots and two sources;
+config/status both return HTTP200. The browser was not refreshed and six user
+files retain SHA/size/mtime. Tested binaries/shaders are retained in the raw
+validation directory. Owned worktree and branch removed.
+[Delivery receipt](verify_control_delivery_receipt.json).

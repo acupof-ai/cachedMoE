@@ -819,5 +819,15 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] balanced 双盘当前动态 trace：25 target/64输出，0加载失败/热暂停；verify201.262970ms，GPUbusy124.064133、跨提交gap74.875007，Engram host62.179328ms嵌套其中，专家阻塞等待0。不把 record/fence/Engram 重复相加。
 - [x] 未关闭的 MoE 数组宽度探针：6→3列、同3 live/12 FP4专家/3层，逐位一致，1.875508489→1.796428236ms/层；40层减半1.581605ms<2ms入口，止损，不加默认内核。不重开§4.6关闭项。
 - [x] 代码/测试和实验记录分开提交；报告`verify_control.md`和`verify_control_receipt.json`保留原混杂实验历史，不覆盖旧收据。
-- [ ] 实际main最终验收、push、恢复balanced网页、六份原用户文件核对、own工作树清理；完成后追加交付收据。
+- [x] 实际main最终验收、push、恢复balanced网页、六份原用户文件核对、own工作树清理；完成后追加交付收据。
 - 后续有边界的开放工作：真正限制 prefill activation workspace；须保留绝对位置/KV/CED/compressor/Engram连续状态，不把简单分段喂入冒充正确分块。M3常量循环尚未测，不把本次数组宽度止损扩成全部MoE无空间。
+
+
+## 36. 本轮实际main与发布收据（2026-10-07）
+
+- [x] `a644bdc`对照控制、`eabb11c`列宽探针、`eeb3323`决策记录已合main并push，origin/main SHA核对一致。
+- [x] 实际main CPU31/31、tools57/57、off NLL .622784，0热暂停；53 shader与受测工作树完全一致。
+- [x] balanced网页API config/status均200；动态mask/5500槽/双盘/k2/top4/ONECB1/CPUroute0/BF16，FP8明确0。
+- [x] 六份原用户文件SHA/size/mtime不变、浏览器未刷新；此次恢复不新增速度数字。
+- [x] 已保存受测工作树二进制和53 shaders到`compare_main_validation/tested_artifacts/`，删除own工作树`cachedmoe-compare-control`和分支`codex/compare-control`。
+- 报告`verify_control.md`、方法/测量收据`verify_control_receipt.json`、实际交付`verify_control_delivery_receipt.json`。没有把新64-token控制写成完整MMLU或八轮生产加速GO；FP8和列宽候选按门槛止损。

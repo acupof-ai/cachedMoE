@@ -7,6 +7,12 @@ every conclusion in them is already folded into docs/STATUS.md and the per-track
 reports named below. Nothing in here hardcodes a path any more.
 
 STATE: RUNNING, balanced guarded main instance restored 2026-10-07.
+Latest restore after compare-control track: implementation main eeb3323,
+CPU31/31, tools57/57, actual main off NLL .622784, 53 unchanged shaders.
+Observed guard/server/engine 163114/163873/163874; verify live identity before signals.
+Policy below is unchanged; config/status HTTP200, six old files unchanged, no browser refresh.
+Current receipt: docs/verify_control_delivery_receipt.json; this is not a new speed result.
+The following earlier restore records remain historical.
 Main CPU31/31, tools56/56, off NLL .622784 and ONECB GPU checks pass.
 FP8 head micro was faster but its full-production final-ID gate was NO-GO;
 actual web explicitly uses CACHEDMOE_DSPARK_HEAD_FP8=0 (native BF16).

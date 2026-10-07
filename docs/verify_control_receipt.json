@@ -217,7 +217,8 @@
       "no FP8 shared expert in this small probe",
       "extrapolation is not an end-to-end speed result",
       "unchanged dynamic trip-count; constant-loop variants were not tested"
-    ]
+    ],
+    "bitwise_scope": "three live columns at first layer, before timing"
   },
   "decisions": {
     "fp8_default": false,
@@ -233,6 +234,7 @@
     "bench/results/mask_quality/compare_verify_trace/verify_cost.json": "c12876e1faabaa93f1724069069768694f4a7c10138bd145cea6eb3042c8ce94",
     "bench/results/mask_quality/verify_width_probe_prepared/width_probe.log": "8a8fb0d222017e4317e81a2cb1b8a2b8eaf5562362b687251c846a88eee3c6cf",
     "bench/results/mask_quality/verify_width_probe_prepared/check_results.json": "481dd57ec4bd26149f1d1920101d6838b0f7e483830593b4db1ad4470e7f617f",
-    "bench/results/mask_quality/compare_control_prepared/check_results.json": "5a9388d94a14eacac2e2f2fb2315c84a3b9ce5d593455e2663a6a211fc42a709"
+    "bench/results/mask_quality/compare_control_prepared/check_results.json": "5a9388d94a14eacac2e2f2fb2315c84a3b9ce5d593455e2663a6a211fc42a709",
+    "bench/results/mask_quality/verify_width_probe_prepared/input_receipt.json": "bd684afbb3a3527bcfd891b2d8502c9edf4f6b28f1a1da68e29bee01ec4767da"
   }
 }

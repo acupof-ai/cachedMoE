@@ -1,0 +1,246 @@
+{
+  "status": "MAIN_VALIDATED_BALANCED_WEB_RESTORED",
+  "checked_unix": 1791353083.4607158,
+  "source_commit_at_launch": "eeb3323e10a93eb2c003d22b1a7c8c55789ccb0b",
+  "binary_sha256": "8f2663b930327000c77a4687218a33ae9150c097f37bc8682674aa999b6b932f",
+  "validation": {
+    "cpu_ctest": 31,
+    "tools": 57,
+    "off_nll": 0.622784,
+    "main_l3_thermal_pauses": 0,
+    "shader_count": 53,
+    "shader_match_worktree": true
+  },
+  "web_config": {
+    "max_context": 1048576,
+    "ceiling": 1048576,
+    "ready": {
+      "event": "ready",
+      "load_s": 17.7367857,
+      "max_context": 1048576,
+      "vocab": 129280,
+      "cache_gb": 96.3439941,
+      "cache_slots": 5500,
+      "gpu_prefill_min": 16,
+      "check_topk": false,
+      "engram_tables": "derived",
+      "kv_mb": 16.044032,
+      "rollback": true,
+      "max_parked": 8,
+      "reheat": false,
+      "reheat_decay": 0.5,
+      "kv_disk": true,
+      "kv_disk_dir": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv",
+      "state_root": null,
+      "state_root_source": null,
+      "state_root_both_exist": null,
+      "sources": 2,
+      "speculation": {
+        "enabled": true,
+        "draft_tokens": 2,
+        "accept_top_k": 4,
+        "confidence_min": null,
+        "main_paths": 1,
+        "mtp_pinned_experts": 384
+      },
+      "decode_modes": {
+        "available": [
+          "mask-spec",
+          "mask-plain",
+          "off-plain"
+        ],
+        "default": "mask-spec"
+      }
+    },
+    "prefill_ms_per_token": 24.0,
+    "kv_bytes_per_token": 3200,
+    "model": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+    "request_defaults": {
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "max_tokens": 1024,
+      "reasoning_effort": 75
+    },
+    "request_constraints": {
+      "temperature": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "top_p": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "max_tokens": {
+        "min": 1,
+        "max": 8192,
+        "step": 1
+      },
+      "reasoning_effort": {
+        "min": 1,
+        "max": 100,
+        "step": 1
+      }
+    },
+    "effort_presets": [
+      {
+        "value": 50,
+        "label": "Low · 50"
+      },
+      {
+        "value": 75,
+        "label": "High · 75"
+      },
+      {
+        "value": 100,
+        "label": "Max · 100"
+      }
+    ],
+    "cmd": "/home/chenkailun/projects/cachedMoE/build/cachedmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 1048576 --cache-slots 5500 --gpu-prefill-min 16 --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --resident-only mask --mask-cache dynamic --dspark --spec-k 2 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+    "resident_only": "mask",
+    "mask_cache": "dynamic",
+    "decode_modes": {
+      "available": [
+        "mask-spec",
+        "mask-plain",
+        "off-plain"
+      ],
+      "default": "mask-spec"
+    },
+    "speculation": {
+      "enabled": true,
+      "draft_tokens": 2,
+      "accept_top_k": 4,
+      "confidence_min": null,
+      "main_paths": 1,
+      "mtp_pinned_experts": 384
+    },
+    "speculation_resources_resident": true,
+    "spec_k": 2,
+    "power_profile": "balanced",
+    "platform_profile": "balanced",
+    "thermal_guard": {
+      "enabled": true,
+      "thresholds": {
+        "gpu_pause_c": 85.0,
+        "gpu_resume_c": 77.0,
+        "gpu_start_c": 60.0,
+        "nvme_pause_c": 80.0,
+        "nvme_resume_c": 72.0,
+        "nvme_start_c": 65.0
+      }
+    }
+  },
+  "web_status": {
+    "event": "status",
+    "session": "default",
+    "context": 0,
+    "max_context": 1048576,
+    "kv_mb": 16.044032,
+    "kv_capacity": 4096,
+    "kv_slabs": 1,
+    "kv_largest_slab_mb": 16.044032,
+    "cache_fixed": false,
+    "cache_frozen": false,
+    "store": "expert store: 5500 slots (384 resident, 0 filling, 5116 free, 384 pinned)  lookups 384 hits 0 (0.000)  fills 384/384 ok  runs 768/768  evictions 0 (+0 guard-blocked)  path A hits 0 / B 0 (0.0000 A)  fills A 384 / B 0; failed fills 0",
+    "planner": "planner: 3 layers, 384 requests (0 hits, 384 misses, 0.000), 0 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 3 miss layers, 3 expert wait calls (3 miss joins, 1138.452 ms), 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 0 kept / 0 dropped; P0 failures reserve 0 / submit 0 / IO 0",
+    "io": "io: 2076 req (2076 done, 0 failed, 0 cancelled), 10876 chunks, 17788063312 / 17788071936 bytes, busy 6.259 s, eff 2.84 GB/s, mean lat 2121.542 ms, peak QD 8 / 32.0 MiB\n  p0_blocking      768 req  6888.0 MiB\n  p3_backfill     1308 req  10076.0 MiB\n  P0: 768 req, 6888.0 MiB, lat mean 192.09 / p50 194.42 / p95 360.84 / max 390.48 ms  (queue wait 189.27 + service 2.82)\n  P0: first-of-burst 3 at 0.80 ms, behind 765 at 192.84 ms; 0 (0.0%) issued with a non-P0 chunk in flight, mean 0.00; mean QD at issue 6.90\n  P0 landing copy: 0.464 ms/request (part of service wall time)\n  in-flight chunks now/peak: P0 0/8 P1 0/0 P2 0/0 P3 0/8\n  src[0] /home/chenkailun/models/DeepSeek-V4.1-Flash  w 4.14 GB/s  1125 req  8.8 GiB (52.8%)  mean lat 1144.79 ms  inflight 0 req / 0.0 MiB  stripe 3821 chunks\n         P0 768 req  3.5 GiB  mean lat 191.59 ms | idle gaps >= 15 ms: 2 (mean 3366.9, max 4635.2 ms) | keep-alive 0 reads, 0 done, 0 refused\n         P0 phases: queue 189.34 + service 2.25 ms/request; landing copy 0.219 ms/request (inside service)\n  src[1] /mnt/deepmoe2/models/DeepSeek-V4.1-Flash  w 3.72 GB/s  1719 req  7.8 GiB (47.2%)  mean lat 1898.35 ms  inflight 0 req / 0.0 MiB  stripe 3475 chunks\n         P0 768 req  3.2 GiB  mean lat 191.70 ms | idle gaps >= 15 ms: 2 (mean 3366.9, max 4635.2 ms) | keep-alive 0 reads, 0 done, 0 refused | 63 C (max 70), rested 0x\n         P0 phases: queue 189.36 + service 2.34 ms/request; landing copy 0.245 ms/request (inside service)\n  dispatcher: 8144 iters, issue 0.23 s / poll 6.00 s / handle 0.01 s (callbacks 0.00 s, 2076 at 0.9 us mean)\n  dispatcher: Backend::submit 0.23 s over 10876 chunks, mean 20.9 us, max 2.36 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.1% of the non-waiting loop; refill gap 0.6 us mean over 7931 reaps\n",
+    "engram": "0 lands, wait 0.000 ms, stage 0.000 ms",
+    "route": "route     resident-only=mask over 0 layer-steps\n  experts requested 0  served 0 (0.0000)  skipped 0\n  gate mass lost    0.0000 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n  weighted mask wait 0 attempts / 0 ready, 0.000 ms total\n",
+    "gate_probe": "",
+    "prefill_ms_per_token": 24.0,
+    "queue": 0
+  },
+  "process_identities": [
+    {
+      "role": "guard_pid",
+      "pid": 163114,
+      "exe": "/usr/bin/python3.14",
+      "cmdline": "python3 /home/chenkailun/projects/cachedMoE/tools/web/launch_guarded.py --repo /home/chenkailun/projects/cachedMoE --state-dir /home/chenkailun/projects/cachedMoE/build/web_mask --spec-k 2 --gpu-route 0 "
+    },
+    {
+      "role": "server_pid",
+      "pid": 163873,
+      "exe": "/usr/bin/python3.14",
+      "cmdline": "/usr/bin/python3 /home/chenkailun/projects/cachedMoE/tools/web/server.py --exe /home/chenkailun/projects/cachedMoE/build/cachedmoe --resident-only mask --mask-cache dynamic --cache-slots 5500 --max-context 1048576 --gpu-prefill-min 16 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --dspark --spec-k 2 --spec-top-k 4 --port 8080 --log /home/chenkailun/projects/cachedMoE/build/web_mask/engine.log --thermal-policy-json {\"gpu_pause_c\": 85.0, \"gpu_resume_c\": 77.0, \"gpu_start_c\": 60.0, \"nvme_pause_c\": 80.0, \"nvme_resume_c\": 72.0, \"nvme_start_c\": 65.0} "
+    },
+    {
+      "role": "engine_pid",
+      "pid": 163874,
+      "exe": "/home/chenkailun/projects/cachedMoE/build/cachedmoe",
+      "cmdline": "/home/chenkailun/projects/cachedMoE/build/cachedmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 1048576 --cache-slots 5500 --gpu-prefill-min 16 --kv-dir /home/chenkailun/projects/cachedMoE/build/web_mask/kv --kv-max-gb 4 --resident-only mask --mask-cache dynamic --dspark --spec-k 2 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash "
+    }
+  ],
+  "web_environment": {
+    "CACHEDMOE_DSPARK_HEAD_FP8": "0",
+    "CACHEDMOE_DSPARK_ONECB": "1",
+    "CACHEDMOE_BATCH_GPU_ROUTE": "0",
+    "CACHEDMOE_DSPARK_MEGA": "0",
+    "CACHEDMOE_DSPARK_PROFILE": "0",
+    "CACHEDMOE_DSPARK_TRIM_TAIL": "1",
+    "CACHEDMOE_SPEC_GPU_READOUT": "1",
+    "CACHEDMOE_MGT_PAIR_DOT": "0",
+    "CACHEDMOE_MGT_ATTN_CM": "0",
+    "CACHEDMOE_MGT_FOLD_SCALE": "0",
+    "CACHEDMOE_MASK_DYNAMIC_LRU": "1",
+    "CACHEDMOE_MIRROR_AUTO": "0",
+    "CACHEDMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+    "CACHEDMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders"
+  },
+  "user_files_unchanged": [
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/codex-rename-final-20261006.pkv",
+      "sha256": "307039b81fda81c26a8212935ad3f3ea909474f38f6bc8e04b1c0836e79aa632",
+      "bytes": 58924,
+      "mtime_ns": 1791281442178545141
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/codex-rename-final-20261006.json",
+      "sha256": "060e38208dfdde95c75a2e3f56185e6713b64c6e0720d0acb3fc90103bed8094",
+      "bytes": 1060,
+      "mtime_ns": 1791279718189290742
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/codex-spec5-smoke-20261005.json",
+      "sha256": "9f5fcccb38689774367ac2b905c440f6e60f8c58e9c41d7968400192959ddee4",
+      "bytes": 87,
+      "mtime_ns": 1791184311449538872
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/ctx1m-smoke-20261005.json",
+      "sha256": "30820bb1045a230ef2807375eec4eac4e4631263b87c978dca9e65d791c14349",
+      "bytes": 87735,
+      "mtime_ns": 1791202396997166213
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/readme-demo-20261005.json",
+      "sha256": "f1923bb6c14766d608c7ee9395f2beda5dff8112094f8db652caa382bf92f73e",
+      "bytes": 1307,
+      "mtime_ns": 1791211294154729489
+    },
+    {
+      "path": "/home/chenkailun/projects/cachedMoE/build/web_mask/kv/web_chat/web.json",
+      "sha256": "6f30f42260b422f82a323559ee5e75846309208269ce4920daeee74024425afb",
+      "bytes": 48038,
+      "mtime_ns": 1791211951869138495
+    }
+  ],
+  "browser_refreshed": false,
+  "new_web_speed_measurement": false,
+  "tested_artifacts": {
+    "bench/results/mask_quality/compare_main_validation/tested_artifacts/cachedmoe": "4d805556a6d42f43f5a16a9f554f744bfefe371f0070de8cb5dc75a50271c4a6",
+    "bench/results/mask_quality/compare_main_validation/tested_artifacts/cachedmoe_tests": "71e66e84826cbc10aafe73633443ff65497c557a82172bd77c8c4263b545f05e"
+  },
+  "implementation_commits": [
+    "a644bdc",
+    "eabb11c",
+    "eeb3323"
+  ],
+  "implementation_remote_verified": "eeb3323e10a93eb2c003d22b1a7c8c55789ccb0b",
+  "owned_worktree_removed": true,
+  "owned_branch_removed": true,
+  "remaining_worktrees": [
+    "/home/chenkailun/projects/cachedMoE"
+  ]
+}
