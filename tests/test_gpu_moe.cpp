@@ -2019,3 +2019,59 @@ CACHEDMOE_TEST(gpu_moe, hquant_2_and_3_write_identical_planes) {
     CHECK_EQ(bad_scales, 0u);
     CHECK_EQ(bad_values, 0u);
 }
+
+// Isolate the batch's allocation/specialisation width without changing the
+// reduction shape, shader source or runtime policy. Three layers avoid timing
+// a single expert working set repeatedly in the last-level cache.
+CACHEDMOE_TEST(mgt1, live_column_width_probe) {
+    if (skip_without_model("mgt1.live_column_width_probe")) return;
+    constexpr uint32_t live = 3;
+    constexpr uint32_t slots = 12;
+    constexpr uint32_t layers = 3;
+    constexpr uint32_t iterations = 8;
+    Rig rig;
+    if (!rig.bring_up(slots * layers)) {
+        CACHEDMOE_SKIP_PRINTF("       SKIP width probe: %s\n", rig.why.c_str());
+        return;
+    }
+    for (uint16_t layer = 0; layer < layers; ++layer)
+        for (uint16_t expert = 0; expert < slots; ++expert)
+            REQUIRE(rig.fill({layer, expert}));
+    auto golden = load_golden(data_path("l1_layer0_expert0.bin"));
+    REQUIRE_OK(golden);
+    std::vector<float> reference;
+    for (uint32_t width : {layout::kMoeBatchColumns, live}) {
+        gpu::MoeSpec spec;
+        spec.m = width;
+        spec.h_quant = 3;
+        gpu::MoeDims dims;
+        dims.slots = slots;
+        dims.layer_cycle = layers;
+        gpu::MoeRunner runner;
+        REQUIRE_OK(runner.create(rig.device, rig.alloc, gpu::default_shader_dir(), spec, dims));
+        std::memcpy(runner.pointer_table(), rig.store.pointer_table(), rig.store.pointer_table_bytes());
+        for (uint32_t slot = 0; slot < slots; ++slot) {
+            runner.ids()[slot] = slot;
+            runner.slot_list()[slot] = slot;
+        }
+        for (uint32_t m = 0; m < live; ++m) {
+            for (uint32_t slot = 0; slot < slots; ++slot)
+                runner.route_weights()[m * slots + slot] = 1.0f / float(slots);
+            for (uint32_t i = 0; i < dims.hidden; ++i)
+                runner.x_fp16()[m * dims.hidden + i] = cpu::float_to_fp16(golden->x[i]);
+        }
+        runner.set_list_count(slots);
+        runner.set_live_columns(live);
+        REQUIRE_OK(runner.run(1));
+        std::vector<float> y(size_t(live) * dims.hidden);
+        std::memcpy(y.data(), runner.y(), y.size() * sizeof(float));
+        if (reference.empty()) reference = y;
+        else CHECK(std::memcmp(reference.data(), y.data(), y.size() * sizeof(float)) == 0);
+        auto timing = runner.run(iterations);
+        REQUIRE_OK(timing);
+        CHECK(timing->gpu_timed);
+        std::printf("width probe: width=%u live=%u slots=%u layers=%u iterations=%u GPU_ms=%.9f wall_ms=%.9f\n",
+                    width, live, slots, layers, iterations, timing->seconds_total * 1000,
+                    timing->wall_seconds * 1000 / iterations);
+    }
+}
