@@ -790,7 +790,8 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] 归因边界：native起点384 pin、FP8起点5400满缓存；第1cycle target routes已有326/720不同，差异处各自target rank0。因此不能把最终ID变化单独归因FP8。保留动态LRU、top4接受规则和一次target forward。
 - [x] FP8保留显式实验默认关，子集不实现；副本100槽预算和长期命中成本“未测”写明。原始结果`draft_head_fp8_e2e/e2e_receipt.json`、私有KV正常退出rc0，149温控暂停/19.230911秒，GPU/NVMe峰88/74.85°C。
 - [x] STATUS与dspark_topk结论已更新，当前§4.9决策结案；先前§28～31“待”描述是原始时点，现以本节为准。
-- [ ] 实际main最终构建/CPU/GPU验收、push、balanced网页/API恢复、own工作树清理。
+- [x] 实际main最终构建/CPU/GPU验收、push、balanced网页/API恢复、own工作树清理。
+  2026-10-07全部交付步骤完成，见§33～34；质量NO-GO不改写为通过。
 
 ## 33. 实际main验收与balanced网页恢复（2026-10-07）
 
@@ -799,6 +800,13 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] 网页实际恢复，HTTP config/status都200：balanced/AC、动态mask、5500槽、双盘、1M、4GB disk KV、k2/top4、ONECB1、CPU route0、单主路径target。FP8明确为0，保持原生BF16。
 - [x] guard/server/engine身份已核实为79283/79305/79306；只作为本次观察，禁止用保存PID直接发信号。实际阈值GPU85/77、NVMe80/72、起跑60/65，guard未暂停。
 - [x] 六份原transcript/KV的SHA、size、mtime全部不变；浏览器未刷新。本次只做恢复/API验收，不新增网页速度成绩。收据`docs/draft_head_delivery_receipt.json`。
-- [ ] 推送并核对origin/main、删除本次`cachedmoe-power-draft`工作树与`codex/power-draft`分支。
+- [x] 推送并核对origin/main、删除本次`cachedmoe-power-draft`工作树与`codex/power-draft`分支。
+  `b3986c5`已推送、remote SHA一致；工作树/分支已实际删除。
 
 §4.9最终ID“逐位相同”原验收项保持未勾，表示门未通过；速度项保持未勾，表示按质量NO-GO条件SKIP，**不是待跑任务**。本轮只保留FP8显式实验且默认关，不宣称质量/速度GO。
+
+## 34. 本轮发布及清理收据（2026-10-07）
+
+- `37e6367`离线/真实测量，`d5f0ef8`显式GPU副本，`80c5a04`默认布局隔离/比较控制，`8157f73`门槛判定分别提交；`b3986c5`实际main验收和网页恢复已push，origin SHA完全一致。
+- own工作树`../cachedmoe-power-draft`及`codex/power-draft`分支已删除，只剩主工作树；主目录11份原有未追踪结果目录保留。原始GPU/CPU/失败/温控/配置收据均在main结果目录。
+- 本轮§4.8/§4.9按owner门槛结案：balanced默认已验收；FP8生产质量NO-GO、候选完整速度条件SKIP、子集NO-GO。不把未通过项、未测长期命中成本或上游Strata等待合并写成完成/GO。

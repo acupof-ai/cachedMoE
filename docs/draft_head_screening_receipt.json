@@ -559,9 +559,7 @@
     "quantization_as_exclusive_cause": "not isolated",
     "cache_bill_long_hit_cost": "not measured after quality stop"
   },
-  "pending": [
-    "push and owned worktree cleanup"
-  ],
+  "pending": [],
   "final_source_receipts": [
     {
       "path": "bench/results/mask_quality/draft_head_fp8_e2e/e2e_receipt.json",
@@ -592,5 +590,12 @@
     "user_files_unchanged": 6,
     "browser_refreshed": false,
     "delivery_receipt": "docs/draft_head_delivery_receipt.json"
+  },
+  "delivery": {
+    "pushed_verified_commit": "b3986c5e1a358b593b15c35f7cd10d2f0fe56304",
+    "owned_worktree_removed": true,
+    "owned_branch_removed": true,
+    "user_untracked_result_directories_preserved": 11,
+    "quality_no_go_does_not_mean_gate_passed": true
   }
 }
