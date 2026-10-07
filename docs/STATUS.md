@@ -30,6 +30,12 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Constant MoE loops (2026-10-07): no measured gain.** The matched six-column
+storage probe is 1.986774897→2.029320735 ms/layer; compact storage plus the
+constant loop is 1.987997219. All checked outputs are bitwise equal, zero
+thermal pauses. Neither passes the entry gate. No new startup switch or default
+kernel change; no full-cycle speed or MMLU claim. [Probe and limits](moe_static_columns.md).
+
 **Controlled follow-up (2026-10-07): FP8 final-ID failure is now isolated.**
 Exact-target k2/top4 changes output22 despite identical target routes before
 that token; candidates rank3/rank0 both pass the relaxed acceptor. Frozen-cache

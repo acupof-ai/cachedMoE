@@ -831,3 +831,12 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - [x] 六份原用户文件SHA/size/mtime不变、浏览器未刷新；此次恢复不新增速度数字。
 - [x] 已保存受测工作树二进制和53 shaders到`compare_main_validation/tested_artifacts/`，删除own工作树`cachedmoe-compare-control`和分支`codex/compare-control`。
 - 报告`verify_control.md`、方法/测量收据`verify_control_receipt.json`、实际交付`verify_control_delivery_receipt.json`。没有把新64-token控制写成完整MMLU或八轮生产加速GO；FP8和列宽候选按门槛止损。
+
+## 37. MoE 常量循环探针（2026-10-07）
+
+- [x] 六列存储、同三行验证只改常量循环：1.986774897→2.029320735ms/层，逐位一致，0热暂停，无收益。
+- [x] 三列存储加常量循环这一新组合：1.987997219ms/层；不重复计时基线。没有达到减半2ms/cycle入口，不启动完整速度/MMLU门，也不声称提升。
+- [x] 撤掉本轮准备的启动环境开关；只保留显式GPU探针的MoeSpec选项，默认false，没有配置绑定。生产mask/LRU、k2/top4、native BF16与CPU路由不变。
+- 待收尾：实际main编译、CPU及GPU数值门、push、网页恢复和本轮工作树清理。完成后追加收据，不改写owner条目。
+- 开放工作仍是有限prefill activation workspace；本轮没有实现，不把简单分段喂入当作正确分块。
+- 报告：`docs/moe_static_columns.md`；机器收据：`docs/moe_static_columns_receipt.json`。

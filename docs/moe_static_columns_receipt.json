@@ -1,0 +1,220 @@
+{
+  "date": "2026-10-07",
+  "decision": "NO-GO; no startup control or production enablement",
+  "power": "balanced",
+  "ac": true,
+  "entries": [
+    {
+      "static": 0,
+      "width": 6,
+      "live": 3,
+      "slots": 12,
+      "layers": 3,
+      "iterations": 8,
+      "gpu_ms_per_layer": 1.986774897,
+      "wall_ms_per_layer": 2.003014125,
+      "log": "bench/results/mask_quality/static_columns_prepared/constant_loop.log",
+      "log_sha256": "c106e3d5db03f33f076baebfa186ce2e4436cd87d8a3bebac13438e3e5e66dcf"
+    },
+    {
+      "static": 1,
+      "width": 6,
+      "live": 3,
+      "slots": 12,
+      "layers": 3,
+      "iterations": 8,
+      "gpu_ms_per_layer": 2.029320735,
+      "wall_ms_per_layer": 2.048734875,
+      "log": "bench/results/mask_quality/static_columns_prepared/constant_loop.log",
+      "log_sha256": "c106e3d5db03f33f076baebfa186ce2e4436cd87d8a3bebac13438e3e5e66dcf",
+      "delta_gpu_percent": 2.14145236404204,
+      "halved_40_layer_saving_ms": -0.8509167600000023,
+      "decision": "NO-GO"
+    },
+    {
+      "static": 1,
+      "width": 3,
+      "live": 3,
+      "slots": 12,
+      "layers": 3,
+      "iterations": 8,
+      "gpu_ms_per_layer": 1.987997219,
+      "wall_ms_per_layer": 1.99622575,
+      "log": "bench/results/mask_quality/static_columns_prepared/compact/compact_constant_loop.log",
+      "log_sha256": "3d27d0e4f8185009b63e16ce45a171795734cd212f5028b59c4c63bc29c896d3",
+      "delta_gpu_percent": 0.06152292350005695,
+      "halved_40_layer_saving_ms": -0.024446439999996628,
+      "decision": "NO-GO"
+    }
+  ],
+  "configuration": {
+    "live_columns": 3,
+    "routed_fp4_slots": 12,
+    "streaming_layers": 3,
+    "h_quant": 3,
+    "lanes": 32,
+    "rows": 1
+  },
+  "limits": [
+    "resident primary-source FP4 micro, not a dual-source IO throughput comparison",
+    "shared FP8 not present in this timing fixture",
+    "compact configuration measured separately, using the previously recorded baseline rather than a repeat",
+    "original timed binaries were replaced during subsequent builds; raw logs and thermal receipts are retained; final validation artifacts will be archived separately"
+  ],
+  "thermal": [
+    {
+      "name": "constant_loop",
+      "command": [
+        "/home/chenkailun/projects/cachedmoe-static-columns/build/tests/cachedmoe_tests",
+        "mgt1.constant_live_loop_probe"
+      ],
+      "env": {
+        "CACHEDMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+        "CACHEDMOE_SHADER_DIR": "/home/chenkailun/projects/cachedmoe-static-columns/build/shaders",
+        "CACHEDMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "CACHEDMOE_MIRROR_AUTO": "0"
+      },
+      "profile": "balanced",
+      "process_group": 401004,
+      "rc": 0,
+      "failure": null,
+      "start": {
+        "k10temp:hwmon6": 50.375,
+        "nvme:hwmon4": 31.85,
+        "nvme:hwmon13": 61.85,
+        "amdgpu:hwmon5": 49.0,
+        "wall_time_s": 1791365543.0035448,
+        "ac": 1,
+        "power_profile": "balanced",
+        "power_profile_sample_unix": 1791365542.9541726,
+        "platform_profile": "balanced",
+        "gpu_busy_percent": "1",
+        "pp_dpm_sclk": "0: 600Mhz \n1: 650Mhz *\n2: 2900Mhz",
+        "pp_dpm_mclk": "0: 400Mhz \n1: 800Mhz \n2: 1000Mhz",
+        "power_dpm_force_performance_level": "auto"
+      },
+      "end": {
+        "k10temp:hwmon6": 51.125,
+        "nvme:hwmon4": 30.85,
+        "nvme:hwmon13": 61.85,
+        "amdgpu:hwmon5": 52.0,
+        "wall_time_s": 1791365543.7626681,
+        "ac": 1,
+        "power_profile": "balanced",
+        "power_profile_sample_unix": 1791365542.9541726,
+        "platform_profile": "balanced",
+        "gpu_busy_percent": "10",
+        "pp_dpm_sclk": "0: 600Mhz \n1: 901Mhz *\n2: 2900Mhz",
+        "pp_dpm_mclk": "0: 400Mhz \n1: 800Mhz \n2: 1000Mhz",
+        "power_dpm_force_performance_level": "auto"
+      },
+      "peak": {
+        "k10temp:hwmon6": 50.75,
+        "nvme:hwmon4": 31.85,
+        "nvme:hwmon13": 61.85,
+        "amdgpu:hwmon5": 57.0
+      },
+      "end_sample_error": null,
+      "finished_unix": 1791365543.7638962,
+      "elapsed_s": 0.7594058910035528,
+      "active_elapsed_s": 0.7594058910035528,
+      "thermal_paused_s": 0.0,
+      "active_timeout_s": 180,
+      "wall_timeout_s": 1200,
+      "thermal_pauses": 0,
+      "thermal_pause_intervals": [],
+      "thermal_transitions": [],
+      "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/static_columns_prepared/constant_loop_thermal.jsonl",
+      "thermal_policy": "per-device latched",
+      "thermal_thresholds": {
+        "gpu_pause_c": 85.0,
+        "gpu_resume_c": 77.0,
+        "gpu_start_c": 60.0,
+        "nvme_pause_c": 80.0,
+        "nvme_resume_c": 72.0,
+        "nvme_start_c": 65.0
+      },
+      "sampling_period_s": 0.05,
+      "ac_changed": false,
+      "time": "2026-10-07T17:32:23.763942+08:00"
+    },
+    {
+      "name": "compact_constant_loop",
+      "command": [
+        "/home/chenkailun/projects/cachedmoe-static-columns/build/tests/cachedmoe_tests",
+        "mgt1.constant_compact_loop_probe"
+      ],
+      "env": {
+        "CACHEDMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+        "CACHEDMOE_SHADER_DIR": "/home/chenkailun/projects/cachedmoe-static-columns/build/shaders",
+        "CACHEDMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "CACHEDMOE_MIRROR_AUTO": "0"
+      },
+      "profile": "balanced",
+      "process_group": 403891,
+      "rc": 0,
+      "failure": null,
+      "start": {
+        "k10temp:hwmon6": 46.375,
+        "nvme:hwmon4": 30.85,
+        "nvme:hwmon13": 61.85,
+        "amdgpu:hwmon5": 45.0,
+        "wall_time_s": 1791365717.1318333,
+        "ac": 1,
+        "power_profile": "balanced",
+        "power_profile_sample_unix": 1791365717.084167,
+        "platform_profile": "balanced",
+        "gpu_busy_percent": "2",
+        "pp_dpm_sclk": "0: 600Mhz \n1: 776Mhz *\n2: 2900Mhz",
+        "pp_dpm_mclk": "0: 400Mhz \n1: 800Mhz \n2: 1000Mhz",
+        "power_dpm_force_performance_level": "auto"
+      },
+      "end": {
+        "k10temp:hwmon6": 46.625,
+        "nvme:hwmon4": 30.85,
+        "nvme:hwmon13": 61.85,
+        "amdgpu:hwmon5": 46.0,
+        "wall_time_s": 1791365717.8309276,
+        "ac": 1,
+        "power_profile": "balanced",
+        "power_profile_sample_unix": 1791365717.084167,
+        "platform_profile": "balanced",
+        "gpu_busy_percent": "7",
+        "pp_dpm_sclk": "0: 600Mhz \n1: 873Mhz *\n2: 2900Mhz",
+        "pp_dpm_mclk": "0: 400Mhz \n1: 800Mhz \n2: 1000Mhz",
+        "power_dpm_force_performance_level": "auto"
+      },
+      "peak": {
+        "k10temp:hwmon6": 46.5,
+        "nvme:hwmon4": 30.85,
+        "nvme:hwmon13": 61.85,
+        "amdgpu:hwmon5": 49.0
+      },
+      "end_sample_error": null,
+      "finished_unix": 1791365717.8318634,
+      "elapsed_s": 0.6990801540014218,
+      "active_elapsed_s": 0.6990801540014218,
+      "thermal_paused_s": 0.0,
+      "active_timeout_s": 180,
+      "wall_timeout_s": 1200,
+      "thermal_pauses": 0,
+      "thermal_pause_intervals": [],
+      "thermal_transitions": [],
+      "thermal_log": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/static_columns_prepared/compact/compact_constant_loop_thermal.jsonl",
+      "thermal_policy": "per-device latched",
+      "thermal_thresholds": {
+        "gpu_pause_c": 85.0,
+        "gpu_resume_c": 77.0,
+        "gpu_start_c": 60.0,
+        "nvme_pause_c": 80.0,
+        "nvme_resume_c": 72.0,
+        "nvme_start_c": 65.0
+      },
+      "sampling_period_s": 0.05,
+      "ac_changed": false,
+      "time": "2026-10-07T17:35:17.831904+08:00"
+    }
+  ],
+  "mirror_check": "bench/results/mask_quality/static_columns_prepared/mirror48.json",
+  "next_open_work": "bounded prefill activation workspaces with absolute KV/CED/compressor/Engram continuity"
+}
