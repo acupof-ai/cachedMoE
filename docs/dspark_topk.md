@@ -1075,3 +1075,33 @@ subsets 16K/32K/64K lose 16.327/8.163/4.082pp and are rejected. Fresh M=2
 native head costs 8.903326ms at 148.689GB/s; halved FP8 prediction 2.224093ms
 passes the entry gate. Only FP8 proceeds; no measured candidate speed or
 final-ID quality result yet. See [screening evidence](draft_head_screening.md).
+
+## 24. Draft FP8 head：生产方案 NO-GO（2026-10-07）
+
+唯一过离线门的FP8已完成GPU试做：head **8.903326→3.539821ms**，
+有效带宽148.689→187.137GB/s；副本662,430,720B，整100槽slab使5500→5400。
+16K/32K/64K接受率分别低16.327/8.163/4.082个百分点，不实现。
+64-token greedy ID一致，off NLL .622784，当前decode6/8+7/8和DSpark基线保留，
+FP8 M1..5 serial/ONECB逐位一致。
+
+同引擎balanced原始八轮：native2178输出/814cycle，接受83.7338%，
+raw85.991236、active77.353433ms/decode token，decode冷却18.744032秒。
+FP8第一轮第7输出14643≠20968，立即取消，只剩3cycle/10缓冲输出；
+质量门未通过，按止损规则SKIP完整速度门，默认保留BF16。
+
+前2cycle双方接受4/4、前6ID相同，可作相同接受率的局部拆账：
+
+| ms/cycle | native | FP8 |
+|---|---:|---:|
+| draft host wall |23.347569|17.664296|
+| verify host wall |240.296851|146.005231|
+| 互斥项合计 |264.649906|164.753605|
+| 按100%接受、3输出折算ms/token |88.216635|54.917868|
+
+这不是八轮速度赢家。native开头仅384 pin常驻，FP8继承满5400槽，
+第一cycle已有326/720 target路由项不同；差异处两臂自己的token都在自己的target rank0。
+因此动态mask缓存和draft数值混杂，不能把最终ID/verify耗时差单独归因FP8。
+目标BF16未改不代表top4宽松接受器输出必然相同；不为凑速度换接受规则。
+完整5500→5400长期命中代价未测；关闭FP8保持原参数分配，原52shader逐字节不变。
+
+[完整决策及收据](draft_head_screening.md)。原始失败、一次配置测量、温度和命令都保留。

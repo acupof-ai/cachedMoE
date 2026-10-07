@@ -427,7 +427,8 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
   `suite.decode`、DSpark golden 不低于当前基线。
 - [ ] **速度**：同引擎、同电源模式（用 §4.8 的结论）、八轮 k=2，与 bf16 head 对照，各跑一次。
   按同接受率换算 cycle 成本；墙钟 ms/token 提升 <3% 判 NO-GO，开关保留默认关或删除。
-- [ ] 结论写进 `dspark_topk.md` 与 STATUS；GO 才让 owner 决定是否进网页默认。
+- [x] 结论写进 `dspark_topk.md` 与 STATUS；GO 才让 owner 决定是否进网页默认。
+  2026-10-07收据：生产组合最终ID门NO-GO，完整候选速度门SKIP，FP8默认继续关；见§32。
 
 ## 5. Codex 追加收据（2026-10-06 00:23）
 
@@ -777,3 +778,13 @@ tile 调优已判过（减半 1.24ms < 2ms）；pair-dot NO-GO。draft 只产生
 - CPU 31/31，tools 56/56。证据：`bench/results/mask_quality/draft_head_fp8_default_layout_gates/`。
 - 同引擎八轮驱动及受控空上下文 head 切换已准备；两臂都固定5400槽，隔离 head 成本，不把它写成对5500槽默认的完整增益。
 - 最终 ID 若发生差异立即取消候选臂；八轮结果和默认判定仍待完成。
+
+## 32. §4.9 条件八轮判定结案（2026-10-07）
+
+- [x] 同引擎balanced双盘八轮已启动、按首次最终ID差异止损。Native完整8轮2178输出，85.991236 raw ms/decode token；接受83.7338%、命中91.2558%。
+- [x] 最终ID门验收结案但**未通过**：FP8第1轮第7输出14643≠20968，取消后10缓冲输出/3cycle，后7轮不再跑。§4.9原正确性“逐位相同”要求未满足，不冒勾成通过。64-output greedy短门曾通过仍保留。
+- [x] 速度条件门**SKIP AFTER QUALITY NO-GO**，不是≥3%通过或测得无收益；不重复A/B。前2cycle相同4/4接受的cycle账写进报告，不能当完整速度结果。
+- [x] 归因边界：native起点384 pin、FP8起点5400满缓存；第1cycle target routes已有326/720不同，差异处各自target rank0。因此不能把最终ID变化单独归因FP8。保留动态LRU、top4接受规则和一次target forward。
+- [x] FP8保留显式实验默认关，子集不实现；副本100槽预算和长期命中成本“未测”写明。原始结果`draft_head_fp8_e2e/e2e_receipt.json`、私有KV正常退出rc0，149温控暂停/19.230911秒，GPU/NVMe峰88/74.85°C。
+- [x] STATUS与dspark_topk结论已更新，当前§4.9决策结案；先前§28～31“待”描述是原始时点，现以本节为准。
+- [ ] 实际main最终构建/CPU/GPU验收、push、balanced网页/API恢复、own工作树清理。

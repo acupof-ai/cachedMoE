@@ -40,14 +40,18 @@ cooling, explaining its 70.601 active estimate versus 113.801 raw cost.
 The shared future power default is balanced; old receipts remain literal.
 Normal benchmark shutdown drains private disk KV; 61 inputs and six user files
 remain unchanged. [Complete comparison and result](power_profile_comparison.md).
-**Draft head (2026-10-07): FP8 passes the offline entry gate.** The owner resumed
-GPU work. The production CPU-route capture completes 64 outputs / 25 cycles;
-CPU BF16 agrees 100%, FP8 acceptance estimate drops 0 points. All vocabulary
-subsets fail the 3-point loss gate. Fresh unprofiled balanced head: 8.903326 ms,
-148.689 GB/s; halved FP8 prediction 2.224093 ms. FP8 kernel measures 3.539821ms / 187.137GB/s; the 64-output IDs remain identical
-at equal memory budget (copy reservation reduces the existing slab pool from
-5500 to 5400 slots). Off NLL/decode/DSpark and eight-turn gates remain pending.
-Web stays stopped for serial GPU work. [Evidence and remaining gates](draft_head_screening.md).
+**Draft head (2026-10-07): production FP8 NO-GO; default stays native BF16.**
+The head micro falls **8.903326→3.539821 ms**, and the greedy 64-output IDs match,
+but the same-engine eight-turn attempt changes output 7 in the first FP8 turn.
+The candidate is cancelled; its partial speed is not a winner. Native completes
+2178 outputs at **85.991 raw ms/decode token** (a different sampled workload from
+P1). Warm dynamic-cache carryover also changes target routes, so the difference
+is not attributed exclusively to quantization. The real copy bill is **100 slots**,
+5500→5400, and its full long-run hit cost is not measured after quality NO-GO.
+All subsets fail offline. Off NLL remains **.622784**; existing decode 6/8 + 7/8,
+DSpark and FP8 row-boundary checks pass. CPU31/31 and tools56/56.
+[Decision, matched-acceptance costs and evidence](draft_head_screening.md).
+Web restoration follows final main validation; FP8 is not a web default.
 
 **Earlier follow-up (2026-10-06): v4 started after an owner-confirmed port change.**
 The v3 power-saver / balanced arms finish eight turns at 112.998 / 80.612 raw

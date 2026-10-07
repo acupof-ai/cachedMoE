@@ -1,42 +1,5 @@
 {
-  "status": "GPU_FP8_MICRO_AND_64_IDS_PASS_BASELINE_AND_SPEED_PENDING",
-  "source_commit": "59b2a5fd25819d8267026d4ccb468ec2ab776678",
-  "commits": [
-    "b60c119",
-    "8d28c5c",
-    "59b2a5f"
-  ],
-  "cpu_validation": {
-    "build_rc": 0,
-    "ctest_passed": 31,
-    "standard_gates_passed": 55,
-    "offline_reference_tests_passed": 11,
-    "production_factory_tests_passed": 17,
-    "shader_count": 52,
-    "shader_bytes_equal_to_main": true,
-    "logs": [
-      {
-        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_cpu_build_final.log",
-        "sha256": "537a4dbbd2ee1e4484f952ba03f06e8c41bc88f004be0b8b9d1f752461073a0c"
-      },
-      {
-        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_cpu_final.log",
-        "sha256": "597d603baf9a7f9c37e57eea84e9e98740b68825c1f172959afbec45cde26000"
-      },
-      {
-        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_tools_final.log",
-        "sha256": "1538235c1507ce744cf61a1aa8a15397e09fece61c46d5ad9ad9c9774f4c073c"
-      },
-      {
-        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_production_route_cpu.log",
-        "sha256": "becd575d0290462b1308c4976155374a83ce663d32387e41fe3b83c98e413620"
-      }
-    ],
-    "offline_reference_after_model_metadata_check": {
-      "passed": 11,
-      "log_sha256": "795bb78b800cff2cca287505f5bb96981159394a6aa811caff804859db1a7f56"
-    }
-  },
+  "status": "QUALITY_NO_GO_FULL_E2E_SPEED_SKIPPED",
   "native_gpu_observer": {
     "case": "gpu_dspark.adaptive_zero_keeps_one_target_forward",
     "passed": true,
@@ -137,43 +100,6 @@
     "capture_tokens_used": false,
     "scope": "local mixed long-context fixture, prior MMLU57 questions/choices, prior dynamic-mask eight-turn outputs; not a representative training corpus",
     "unseen_frequency_tie": "ID ascending"
-  },
-  "safety": {
-    "new_gpu_jobs_after_cpu_only_instruction": 0,
-    "web_stopped": true,
-    "active_power_profile": "balanced",
-    "original_user_files_unchanged": 6,
-    "checkpoint_writes": 0
-  },
-  "pending": [
-    "native 64-output k2 CPU-route capture",
-    "BF16 native top-1 agreement and candidate acceptance estimates",
-    "halved >=2ms/cycle and <=3pp acceptance gate",
-    "passing candidate only GPU implementation and numerical/quality gates",
-    "same-engine eight-turn comparison",
-    "balanced guarded web restore and actual API acceptance"
-  ],
-  "main_validation": {
-    "source_commit": "c557263",
-    "build_rc": 0,
-    "ctest_passed": 31,
-    "standard_gates_passed": 55,
-    "logs": [
-      {
-        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_build.log",
-        "sha256": "75491c5a0c6d68fd9a0fb82183dd6eac97a937fad4b7bc82936f4367e3348475"
-      },
-      {
-        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_cpu.log",
-        "sha256": "714fa84b1983da2b7d4c79b0e64c6e182a31f9d3d0ecbfd6fea4296bec90ddc2"
-      },
-      {
-        "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_tools.log",
-        "sha256": "301c76d5977366cfd95059d38366734958f925b4a9c283ca03d6a17d0b89eeed"
-      }
-    ],
-    "gpu_jobs": 0,
-    "web_started": false
   },
   "updated": "2026-10-07",
   "native_capture": {
@@ -428,5 +354,222 @@
     "cpu_ctest": 31,
     "standard_gates": 55,
     "initial_quality_preflight": "GPU job refused while CPU CTest process still present; zero candidate work. Original supervisor.log kept."
-  }
+  },
+  "historical_preparation": {
+    "source_commit": "59b2a5fd25819d8267026d4ccb468ec2ab776678",
+    "commits": [
+      "b60c119",
+      "8d28c5c",
+      "59b2a5f"
+    ],
+    "cpu_validation": {
+      "build_rc": 0,
+      "ctest_passed": 31,
+      "standard_gates_passed": 55,
+      "offline_reference_tests_passed": 11,
+      "production_factory_tests_passed": 17,
+      "shader_count": 52,
+      "shader_bytes_equal_to_main": true,
+      "logs": [
+        {
+          "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_cpu_build_final.log",
+          "sha256": "537a4dbbd2ee1e4484f952ba03f06e8c41bc88f004be0b8b9d1f752461073a0c"
+        },
+        {
+          "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_cpu_final.log",
+          "sha256": "597d603baf9a7f9c37e57eea84e9e98740b68825c1f172959afbec45cde26000"
+        },
+        {
+          "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_tools_final.log",
+          "sha256": "1538235c1507ce744cf61a1aa8a15397e09fece61c46d5ad9ad9c9774f4c073c"
+        },
+        {
+          "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_production_route_cpu.log",
+          "sha256": "becd575d0290462b1308c4976155374a83ce663d32387e41fe3b83c98e413620"
+        }
+      ],
+      "offline_reference_after_model_metadata_check": {
+        "passed": 11,
+        "log_sha256": "795bb78b800cff2cca287505f5bb96981159394a6aa811caff804859db1a7f56"
+      }
+    },
+    "safety": {
+      "new_gpu_jobs_after_cpu_only_instruction": 0,
+      "web_stopped": true,
+      "active_power_profile": "balanced",
+      "original_user_files_unchanged": 6,
+      "checkpoint_writes": 0
+    },
+    "pending": [
+      "native 64-output k2 CPU-route capture",
+      "BF16 native top-1 agreement and candidate acceptance estimates",
+      "halved >=2ms/cycle and <=3pp acceptance gate",
+      "passing candidate only GPU implementation and numerical/quality gates",
+      "same-engine eight-turn comparison",
+      "balanced guarded web restore and actual API acceptance"
+    ],
+    "main_validation": {
+      "source_commit": "c557263",
+      "build_rc": 0,
+      "ctest_passed": 31,
+      "standard_gates_passed": 55,
+      "logs": [
+        {
+          "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_build.log",
+          "sha256": "75491c5a0c6d68fd9a0fb82183dd6eac97a937fad4b7bc82936f4367e3348475"
+        },
+        {
+          "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_cpu.log",
+          "sha256": "714fa84b1983da2b7d4c79b0e64c6e182a31f9d3d0ecbfd6fea4296bec90ddc2"
+        },
+        {
+          "path": "bench/results/mask_quality/draft_head_cpu_route_prepared/cpu_validation/cachedmoe_draft_head_main_tools.log",
+          "sha256": "301c76d5977366cfd95059d38366734958f925b4a9c283ca03d6a17d0b89eeed"
+        }
+      ],
+      "gpu_jobs": 0,
+      "web_started": false
+    }
+  },
+  "current_cpu_validation": {
+    "ctest": 31,
+    "tools": 56
+  },
+  "baseline_validation": {
+    "status": "BASELINE_AND_FP8_ROW_GATES_PASS_E2E_PENDING",
+    "off_nll": 0.622784,
+    "decode_loaded_matches": 6,
+    "decode_own_prefill_matches": 7,
+    "decode_total": 8,
+    "strict_8_of_8": false,
+    "cpu_ctest_passed": 31,
+    "tools_gates_passed": 56,
+    "fp8_rows": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "fp8_serial_onecb_bit_identical": true,
+    "earlier_candidate_mega_failure_root_cause": "unproven; original main and final candidate controls pass"
+  },
+  "e2e": {
+    "status": "QUALITY_NO_GO_SPEED_GATE_SKIPPED",
+    "first_difference": {
+      "turn": 0,
+      "first_difference": {
+        "position": 6,
+        "reference": 20968,
+        "candidate": 14643
+      },
+      "expected_count": 228,
+      "actual_count": 10
+    },
+    "cycle_totals": [
+      {
+        "name": "native_bf16",
+        "cycles": 814,
+        "verified": 1623,
+        "accepted": 1359,
+        "tokens": 2170,
+        "draft_ms": 21582.86675,
+        "verify_ms": 163234.35634,
+        "commit_ms": 812.751703,
+        "cpu_ms": 117.930948,
+        "target_rows": 2437,
+        "union_experts": 382029,
+        "miss_bytes": 684284116992,
+        "gpu_readout_cycles": 814,
+        "acceptance_rate": 0.8373382624768947,
+        "decode_ms_per_cycle": 229.2395347297297
+      },
+      {
+        "name": "row_fp8",
+        "cycles": 3,
+        "verified": 6,
+        "accepted": 6,
+        "tokens": 9,
+        "draft_ms": 49.789482,
+        "verify_ms": 485.597934,
+        "commit_ms": 2.55474,
+        "cpu_ms": 0.680974,
+        "target_rows": 9,
+        "union_experts": 1320,
+        "miss_bytes": 2990604288,
+        "gpu_readout_cycles": 3,
+        "acceptance_rate": 1.0,
+        "decode_ms_per_cycle": 180.46157566666668
+      }
+    ],
+    "common_acceptance_prefix_only": [
+      {
+        "name": "native_first_two_cycles",
+        "cycles": 2,
+        "accepted": 4,
+        "verified": 4,
+        "acceptance_rate": 1.0,
+        "mean_cycle_ms": {
+          "draft_ms": 23.3475685,
+          "verify_ms": 240.2968505,
+          "cpu_ms": 0.18939899999999998,
+          "commit_ms": 0.8160875000000001
+        },
+        "accounted_ms_per_cycle": 264.6499055,
+        "normalized_ms_per_token_at_common_100_percent_acceptance": 88.21663516666666
+      },
+      {
+        "name": "fp8_first_two_cycles",
+        "cycles": 2,
+        "accepted": 4,
+        "verified": 4,
+        "acceptance_rate": 1.0,
+        "mean_cycle_ms": {
+          "draft_ms": 17.6642955,
+          "verify_ms": 146.00523099999998,
+          "cpu_ms": 0.230296,
+          "commit_ms": 0.8537825
+        },
+        "accounted_ms_per_cycle": 164.753605,
+        "normalized_ms_per_token_at_common_100_percent_acceptance": 54.91786833333333
+      }
+    ],
+    "target_route_differences_before_output_difference": [
+      326,
+      254,
+      636
+    ],
+    "limits": [
+      "First two cycles only; equal 100% acceptance and identical first six output IDs. Not the requested complete eight-turn speed gate.",
+      "Same process/cache budget but native starts with384 pinned residents and FP8 inherits5400 residents; target routes already differ in first cycle.",
+      "Therefore neither output difference nor verify-speed difference can be attributed exclusively to FP8 quantization.",
+      "Top4 accepts and emits candidate IDs; unchanged target BF16 tensor does not guarantee identical final outputs.",
+      "Candidate cancels immediately on zero-based output6, with three additional tokens already buffered in the completed cycle. No repeat A/B and no full candidate speed claim."
+    ],
+    "shutdown": {
+      "engine_rc": 0,
+      "private_kv_dir": "/home/chenkailun/projects/cachedMoE/bench/results/mask_quality/draft_head_fp8_e2e/kv"
+    }
+  },
+  "final_decision": {
+    "fp8_default": false,
+    "subsets": "NO_GO_OFFLINE",
+    "long_id_gate": "FAIL",
+    "long_speed_gate": "SKIP_AFTER_NO_GO",
+    "quantization_as_exclusive_cause": "not isolated",
+    "cache_bill_long_hit_cost": "not measured after quality stop"
+  },
+  "pending": [
+    "final main validation, push, balanced guarded web restoration"
+  ],
+  "final_source_receipts": [
+    {
+      "path": "bench/results/mask_quality/draft_head_fp8_e2e/e2e_receipt.json",
+      "sha256": "7114dd927c01beacc97da691451febb449d2d828ec4bddcfee418bd27dde5380"
+    },
+    {
+      "path": "bench/results/mask_quality/draft_head_fp8_default_layout_gates/validation_receipt.json",
+      "sha256": "7a659f8e125cd2953601d3c6736d29723f70464eb57b3fad428bf9b537d051cd"
+    }
+  ]
 }
