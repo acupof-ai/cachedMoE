@@ -67,6 +67,8 @@ class Server:
             cmd += ["--kv-dir", args.kv_dir]
             if getattr(args, "kv_max_gb", 0):
                 cmd += ["--kv-max-gb", str(args.kv_max_gb)]
+        if getattr(args, "trace", ""):
+            cmd += ["--trace", args.trace]
         self.log = open(args.log, "ab") if args.log else subprocess.DEVNULL
         self.p = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=self.log, bufsize=0, env=self.config.environment)
@@ -336,6 +338,7 @@ def main():
     ap.add_argument("--kv-dir", default="", help="directory for the SSD parked-session/prefix KV cache")
     ap.add_argument("--kv-max-gb", type=int, default=0, help="disk cache budget in GiB (0 = server default)")
     ap.add_argument("--log", default=os.path.join(REPO, "build", "serve.log"))
+    ap.add_argument("--trace", default="", help="pass --trace through to serve (per-dispatch CSV)")
     ap.add_argument("--script")
     ap.add_argument("--transcript")
     ap.add_argument("--stats")
