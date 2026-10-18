@@ -20,6 +20,14 @@ bool attn_ksplit_on() {
     return override.value_or(g_attn_ksplit_default.load() != 0);
 }
 
+namespace { std::atomic<int> g_attn_tiled_default{0}; }
+void set_attn_tiled_default(bool on) { g_attn_tiled_default.store(on ? 1 : 0); }
+bool attn_tiled_on() {
+    static const auto e = std::getenv("CACHEDMOE_ATTN_TILED");
+    if (e && *e) return std::atoi(e) != 0;
+    return g_attn_tiled_default.load() != 0;
+}
+
 namespace { std::atomic<int> g_attn_cm_default{0}; }
 void set_attn_cm_default(bool on) { g_attn_cm_default.store(on ? 1 : 0); }
 bool attn_cm_on() {
@@ -122,6 +130,8 @@ Result<void> DecodeScratch::create(gpu::GpuScratch& s, const TextConfig& cfg) {
         {&wob,          uint64_t(dim) * 4},
         // 16 slices is gemv_ksplit's ceiling (attn_bench sizes it the same way).
         {&kpart,        uint64_t(16) * std::max<uint64_t>(orows, dim) * 4},
+        // AttnScoreT's 32 tiles x one max per (head, tile).
+        {&tile_max,     uint64_t(cfg.num_attention_heads) * 32 * 4},
         {&cm_g,         uint64_t(score_stride) * cfg.head_dim * 2},
         {&cm_q,         uint64_t(qrows) * 2},
         {&cm_p,         uint64_t(cfg.num_attention_heads) * score_stride * 2},
@@ -169,6 +179,7 @@ Result<void> DecodeLayer::create(gpu::Device& device, gpu::AttnRunner& runner,
     attn_ksplit_ =
         device.environment().attn_ksplit.value_or(radv || g_attn_ksplit_default.load() != 0);
     attn_cm_ = device.environment().attn_cm.value_or(radv || g_attn_cm_default.load() != 0);
+    attn_tiled_ = attn_tiled_on();
     runner_ = &runner;
     cfg_    = &cfg;
     hcdim_  = cfg.hc_mult * cfg.hidden_size;
@@ -317,6 +328,15 @@ Result<void> DecodeLayer::bind(const LayerWeights& w, const LayerStep& st) {
                                  gpu::AttnStage::AttnCmSoftmax, gpu::AttnStage::AttnCmPv,
                                  gpu::AttnStage::AttnCmFinish})
             std::memcpy(runner_->slots(s), at, gpu::kAttnStageStride);
+    }
+
+    if (attn_tiled_) {
+        // Track J's tiled stages share the sparse_attn slots, plus the plane of
+        // per-(head, tile) maxima. AttnPvT runs on the same slot table.
+        std::memcpy(runner_->slots(gpu::AttnStage::AttnScoreT), at, gpu::kAttnStageStride);
+        runner_->slots(gpu::AttnStage::AttnScoreT)[gpu::slot::kAttnTileMax] = b.tile_max.addr;
+        std::memcpy(runner_->slots(gpu::AttnStage::AttnPvT),
+                    runner_->slots(gpu::AttnStage::AttnScoreT), gpu::kAttnStageStride);
     }
 
     uint64_t* wa = runner_->slots(gpu::AttnStage::WoA);
@@ -553,7 +573,21 @@ Result<void> DecodeLayer::record_attention(gpu::CommandBuffer& cmd, const LayerS
     if (auto r = record_ced(cmd, st, 3); !r) return r;
 
     // 5. Sparse attention over the window plus the compressed picks.
-    if (attn_cm_ && runner_->has_attn_cm()) {
+    if (attn_tiled_) {
+        // Track J (docs/p2_attention.md §13): the same attention on a
+        // head-group x KV-tile grid, 32 x 1 by default. pv_tiles == 1, so
+        // AttnPvT writes the final output and AttnFinishT is not dispatched.
+        constexpr uint32_t kNvTiles = 32;
+        const uint32_t nk = st.kv.n_kv;
+        gpu::AttnTPush tp{nk, c.sliding_window, c.head_dim, c.qk_rope_head_dim,
+                          kAttnScoreStride, 1.0f / std::sqrt(static_cast<float>(c.head_dim)),
+                          c.num_attention_heads, kNvTiles, (nk + kNvTiles - 1) / kNvTiles,
+                          c.num_attention_heads * c.head_dim, 1, nk};
+        if (auto r = step(gpu::AttnStage::AttnScoreT, &tp, sizeof tp,
+                          runner_->attn_tile_groups(c.num_attention_heads, kNvTiles)); !r) return r;
+        if (auto r = step(gpu::AttnStage::AttnPvT, &tp, sizeof tp,
+                          runner_->attn_pv_groups(c.num_attention_heads, 1)); !r) return r;
+    } else if (attn_cm_ && runner_->has_attn_cm()) {
         const uint32_t n_kv = st.kv.n_kv;
         const gpu::AttnCmPush cp = runner_->attn_cm_push(
             n_kv, c.sliding_window, c.head_dim, c.qk_rope_head_dim, c.num_attention_heads,

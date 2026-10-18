@@ -87,6 +87,8 @@ struct DecodeScratch {
     gpu::GpuScratch::View kv_raw, kv_partials, kv;
     gpu::GpuScratch::View score, o, woa, wob;
     gpu::GpuScratch::View kpart;   // K-split partial plane for wo_a / wo_b (STATUS §7 item 6)
+    // AttnScoreT's per-tile maxima: n_heads x kAttnTiles floats (Track J's 32 x 1).
+    gpu::GpuScratch::View tile_max;
     // decode_attn_cm's planes: fp16 gathered KV [1024][head_dim], fp16 q, fp16
     // p [heads][1024] and fp32 1/denominator [heads].
     gpu::GpuScratch::View cm_g, cm_q, cm_p, cm_inv, cm_part;
@@ -252,6 +254,11 @@ void write_batch_window_lists(BatchScratch& b, uint32_t window, uint32_t p0, uin
 // to sit inside the spread of equally-right arithmetic (STATUS §7 0j).
 void set_attn_ksplit_default(bool on);
 bool attn_ksplit_on();
+
+// Track J's tiled sparse attention (`sparse_attn_t`): 32 KV tiles x 1 PV tile,
+// replacing sparse_attn's score + combine. Off unless CACHEDMOE_ATTN_TILED=1.
+void set_attn_tiled_default(bool on);
+bool attn_tiled_on();
 
 // The M=1 attention as two cooperative-matrix GEMMs (decode_attn_cm.slang)
 // instead of sparse_attn's score + combine, on a device that has them.
@@ -432,7 +439,7 @@ private:
     // The compressor's and the indexer's part of record_attention's wave `wave`.
     Result<void> record_ced(gpu::CommandBuffer& cmd, const LayerStep& s, uint32_t wave);
 
-    bool attn_ksplit_ = false, attn_cm_ = false;
+    bool attn_ksplit_ = false, attn_cm_ = false, attn_tiled_ = false;
     gpu::Device*      device_ = nullptr;
     gpu::AttnRunner*  runner_ = nullptr;
     const TextConfig* cfg_    = nullptr;
