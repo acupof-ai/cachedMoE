@@ -179,7 +179,13 @@ Result<void> DecodeLayer::create(gpu::Device& device, gpu::AttnRunner& runner,
     attn_ksplit_ =
         device.environment().attn_ksplit.value_or(radv || g_attn_ksplit_default.load() != 0);
     attn_cm_ = device.environment().attn_cm.value_or(radv || g_attn_cm_default.load() != 0);
-    attn_tiled_ = attn_tiled_on();
+    // Track J's tiled stages cost nothing on RADV (they pass suite.decode
+    // against the 0928 oracle) and save ~2.6 ms/token, so they are the default
+    // there; CACHEDMOE_ATTN_TILED=0/1 overrides either way.
+    if (const char* tiled_env = std::getenv("CACHEDMOE_ATTN_TILED"); tiled_env && *tiled_env)
+        attn_tiled_ = std::atoi(tiled_env) != 0;
+    else
+        attn_tiled_ = radv;
     runner_ = &runner;
     cfg_    = &cfg;
     hcdim_  = cfg.hc_mult * cfg.hidden_size;
