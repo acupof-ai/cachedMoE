@@ -1,0 +1,43 @@
+{
+  "health": {
+    "status": "ok",
+    "max_context": 4096,
+    "model": "deepseek-v4.1-flash",
+    "images": false,
+    "api_key": false,
+    "loaded": true,
+    "service": "strata"
+  },
+  "results": [
+    {
+      "path": "/v1/chat/completions",
+      "stream": false,
+      "answer": "2 + 3 equals 5.",
+      "reasoning": "",
+      "wall_s": 7.264489457011223,
+      "kv_path": "/home/chenkailun/projects/cachedMoE/bench/results/kv_async/kv/strata.pkv",
+      "kv_bytes": 48196,
+      "saved_tokens": 26
+    },
+    {
+      "path": "/v1/messages",
+      "stream": false,
+      "answer": "3 + 4 equals 7.",
+      "reasoning": "",
+      "wall_s": 1.947040866012685,
+      "kv_path": "/home/chenkailun/projects/cachedMoE/bench/results/kv_async/kv/strata.pkv",
+      "kv_bytes": 48196,
+      "saved_tokens": 26
+    },
+    {
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "answer": "4 + 5 equals 9.",
+      "reasoning": "We need answer simple. Must one short sentence. \"4 + 5 equals 9.\" Ensure short.",
+      "wall_s": 10.124483849009266,
+      "kv_path": "/home/chenkailun/projects/cachedMoE/bench/results/kv_async/kv/strata.pkv",
+      "kv_bytes": 91468,
+      "saved_tokens": 75
+    }
+  ]
+}

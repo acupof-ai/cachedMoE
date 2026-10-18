@@ -1,0 +1,56 @@
+{
+ "time": "2026-10-05T00:16:30+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "2cd38a349f",
+ "dirty": [],
+ "diff_sha": null,
+ "exe": "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+ "exe_sha": "ee2040d4fec5ceab",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/deepmoe-spec/build/shaders",
+  "count": 50,
+  "sha": "214a8d1c095876be"
+ },
+ "env": {
+  "DEEPMOE_DSPARK_MEGA": "0",
+  "DEEPMOE_DSPARK_PROFILE": "0",
+  "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/deepmoe-spec/traces/longctx",
+  "DEEPMOE_MGT_ATTN_CM": "0",
+  "DEEPMOE_MGT_FOLD_SCALE": "0",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/mask/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 3.8,
+  "gpu_busy_max": 5,
+  "loadavg": [
+   "2.54",
+   "3.74",
+   "3.83"
+  ],
+  "top_cpu": [
+   "git 137%",
+   "ChatGPT 6.1%",
+   "kworker/u130:17-btrfs-endio 5.5%",
+   "ChatGPT 4.9%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791130591.1821692,
+  "nvme0n1": [
+   58598919201,
+   353520377
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 34.3,
+  "nvme0n1": {
+   "read_MB": 63628.0,
+   "write_MB": 44.6
+  }
+ }
+}

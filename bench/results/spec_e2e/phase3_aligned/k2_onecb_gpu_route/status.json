@@ -1,0 +1,16 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 44,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5500 slots (2959 resident, 318 filling, 2223 free, 384 pinned)  lookups 3144 hits 2144 (0.682)  fills 2959/3277 ok  runs 5919/6554  evictions 0 (+0 guard-blocked)  path A hits 2144 / B 0 (1.0000 A)  fills A 2959 / B 0",
+ "planner": "planner: 243 layers, 3144 requests (2144 hits, 1000 misses, 0.682), 0 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 214 stalls, 96 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 2373 kept / 0 dropped",
+ "io": "io: 12150 req (11515 done, 0 failed, 0 cancelled), 64098 chunks, 66247384608 / 72220168192 bytes, busy 20.601 s, eff 3.22 GB/s, mean lat 631.861 ms, peak QD 512 / 32.0 MiB\n  p0_blocking     6554 req  58781.2 MiB\n  p2_engram       4288 req  17.3 MiB\n  p3_backfill     1308 req  10076.0 MiB\n  P2: 4288 req, lat mean 5.23 / max 9.82 ms (queue wait 3.69 + service 1.55), 1248 deadline chunks\n  P0: 5919 req, 53078.1 MiB, lat mean 166.84 / p50 147.09 / p95 436.15 / max 653.56 ms  (queue wait 160.08 + service 6.76)\n  P0: first-of-burst 44 at 1.06 ms, behind 5875 at 168.08 ms; 3 (0.1%) issued with a non-P0 chunk in flight, mean 4.33; mean QD at issue 19.62\n  dispatcher: 57484 iters, issue 0.15 s / poll 20.37 s / handle 0.05 s (callbacks 0.02 s, 11515 at 1.4 us mean)\n  dispatcher: Backend::submit 0.13 s over 64106 chunks, mean 2.0 us, max 0.63 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.2% of the non-waiting loop; refill gap 0.7 us mean over 55870 reaps\n",
+ "engram": "32 lands, wait 16.668 ms, stage 0.160 ms",
+ "route": "route     resident-only=mask over 640 layer-steps\n  experts requested 3840  served 3084 (0.8031)  skipped 756\n  gate mass lost    0.1759 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n",
+ "gate_probe": ""
+}

@@ -1,0 +1,247 @@
+{
+  "cycles": 18,
+  "emitted": 63,
+  "drafted": 90,
+  "accepted": 45,
+  "accept_top_k": 4,
+  "mean_cycle": {
+    "draft_ms": 35.382171444444445,
+    "verify_ms": 464.0767956666666,
+    "cpu_ms": 0.22994955555555555,
+    "commit_ms": 3.3272675555555558
+  },
+  "confidence": {
+    "bins": [
+      {
+        "low": "-inf",
+        "high": "0",
+        "rows": 65,
+        "topk": 29,
+        "reachable": 36,
+        "reachable_topk": 22,
+        "confidence_sum": -58.89702100619998,
+        "acceptance": 0.4461538461538462,
+        "conditional_acceptance": 0.6111111111111112
+      },
+      {
+        "low": "0",
+        "high": "1",
+        "rows": 11,
+        "topk": 9,
+        "reachable": 10,
+        "reachable_topk": 9,
+        "confidence_sum": 3.7581883500000006,
+        "acceptance": 0.8181818181818182,
+        "conditional_acceptance": 0.9
+      },
+      {
+        "low": "1",
+        "high": "2",
+        "rows": 8,
+        "topk": 8,
+        "reachable": 8,
+        "reachable_topk": 8,
+        "confidence_sum": 11.3484895,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "low": "2",
+        "high": "3",
+        "rows": 4,
+        "topk": 4,
+        "reachable": 4,
+        "reachable_topk": 4,
+        "confidence_sum": 9.0912066,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "low": "3",
+        "high": "4",
+        "acceptance": null,
+        "conditional_acceptance": null
+      },
+      {
+        "low": "4",
+        "high": "6",
+        "rows": 1,
+        "topk": 1,
+        "reachable": 1,
+        "reachable_topk": 1,
+        "confidence_sum": 4.1267424,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "low": "6",
+        "high": "inf",
+        "rows": 1,
+        "topk": 1,
+        "reachable": 1,
+        "reachable_topk": 1,
+        "confidence_sum": 8.262186,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      }
+    ],
+    "positions": [
+      {
+        "position": 1,
+        "rows": 18,
+        "topk": 16,
+        "reachable": 18,
+        "reachable_topk": 16,
+        "confidence_sum": 18.527154448799998,
+        "acceptance": 0.8888888888888888,
+        "conditional_acceptance": 0.8888888888888888
+      },
+      {
+        "position": 2,
+        "rows": 18,
+        "topk": 14,
+        "reachable": 16,
+        "reachable_topk": 14,
+        "confidence_sum": 3.1449506099999995,
+        "acceptance": 0.7777777777777778,
+        "conditional_acceptance": 0.875
+      },
+      {
+        "position": 3,
+        "rows": 18,
+        "topk": 8,
+        "reachable": 14,
+        "reachable_topk": 8,
+        "confidence_sum": -9.45920301,
+        "acceptance": 0.4444444444444444,
+        "conditional_acceptance": 0.5714285714285714
+      },
+      {
+        "position": 4,
+        "rows": 18,
+        "topk": 9,
+        "reachable": 8,
+        "reachable_topk": 4,
+        "confidence_sum": -16.265946935000002,
+        "acceptance": 0.5,
+        "conditional_acceptance": 0.5
+      },
+      {
+        "position": 5,
+        "rows": 18,
+        "topk": 5,
+        "reachable": 4,
+        "reachable_topk": 3,
+        "confidence_sum": -18.257163270000003,
+        "acceptance": 0.2777777777777778,
+        "conditional_acceptance": 0.75
+      }
+    ]
+  },
+  "lru": [
+    {
+      "mode": "pinned",
+      "capacity": 5116,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 14053,
+        "misses": 1993,
+        "fill_bytes": 37469675520,
+        "hit_rate": 0.8581797480964919
+      },
+      "draft": {
+        "requests": 302,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "pinned",
+      "capacity": 5116,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 14053,
+        "misses": 1993,
+        "fill_bytes": 37469675520,
+        "hit_rate": 0.8581797480964919
+      },
+      "draft": {
+        "requests": 302,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "lru",
+      "capacity": 5500,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 14053,
+        "misses": 1993,
+        "fill_bytes": 37469675520,
+        "hit_rate": 0.8581797480964919
+      },
+      "draft": {
+        "requests": 302,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "lru",
+      "capacity": 5500,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 14053,
+        "misses": 1993,
+        "fill_bytes": 37469675520,
+        "hit_rate": 0.8581797480964919
+      },
+      "draft": {
+        "requests": 302,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "draft-mask",
+      "capacity": 5500,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 14053,
+        "misses": 1993,
+        "fill_bytes": 37469675520,
+        "hit_rate": 0.8581797480964919
+      },
+      "draft": {
+        "requests": 302,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "draft-mask",
+      "capacity": 5500,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 14053,
+        "misses": 1993,
+        "fill_bytes": 37469675520,
+        "hit_rate": 0.8581797480964919
+      },
+      "draft": {
+        "requests": 302,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    }
+  ],
+  "limitations": [
+    "Small contiguous sampled trajectory; confidence is not calibrated on held-out data.",
+    "Ranks after the first rejection describe the original draft history, not an alternative path.",
+    "Synchronous LRU omits P0 completion timing, background filling, guards, and same-stamp slot ties.",
+    "Initial unpinned MTP experts are assumed newest; forward/reverse union orders bracket only order sensitivity.",
+    "Changing masks changes hidden states and later routes; this fixed-route simulation cannot predict MMLU or speed.",
+    "Draft confidence is available after draft execution; choosing k=0 then does not save the draft cost."
+  ]
+}

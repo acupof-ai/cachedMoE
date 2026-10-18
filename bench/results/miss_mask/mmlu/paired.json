@@ -1,0 +1,15 @@
+{
+  "n": 57,
+  "off_correct": 45,
+  "mask_correct": 44,
+  "correct_to_wrong": 1,
+  "wrong_to_correct": 0,
+  "changed_choices": 2,
+  "accuracy_difference_pp": -1.7543859649122862,
+  "mask_requested": 13680,
+  "mask_skipped": 1381,
+  "mask_skip_percent": 10.095029239766081,
+  "mask_gate_mass_lost_percent": 7.33,
+  "exe_sha": "14ca288dd5b944e0",
+  "shader_sha": "c3d403af6b51e18c"
+}

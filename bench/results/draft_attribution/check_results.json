@@ -1,0 +1,168 @@
+[
+  {
+    "name": "deadline_off",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/draft_attribution/turn16.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/draft_attribution/deadline_off",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4"
+    ],
+    "env": {
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/draft_attribution/deadline_off_cycles.jsonl",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_IO_ENGRAM_DEADLINE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 38.081279869002174,
+    "start": {
+      "k10temp": 50.625,
+      "nvme": 30.85,
+      "amdgpu": 45.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 56.25,
+      "nvme": 51.85,
+      "amdgpu": 53.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 56.875,
+      "nvme": 53.85,
+      "amdgpu": 59.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T23:55:56.221081+08:00"
+  },
+  {
+    "name": "deadline_on",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/draft_attribution/turn16.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/draft_attribution/deadline_on",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4"
+    ],
+    "env": {
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/draft_attribution/deadline_on_cycles.jsonl",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 34.97995573701337,
+    "start": {
+      "k10temp": 56.0,
+      "nvme": 48.85,
+      "amdgpu": 52.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 58.625,
+      "nvme": 51.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 61.0,
+      "nvme": 55.85,
+      "amdgpu": 62.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T23:56:31.490715+08:00"
+  },
+  {
+    "name": "balanced_on",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/draft_attribution/turn16.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/draft_attribution/balanced_on",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4"
+    ],
+    "env": {
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/draft_attribution/balanced_on_cycles.jsonl",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0"
+    },
+    "profile": "balanced",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 30.408702914006426,
+    "start": {
+      "k10temp": 58.375,
+      "nvme": 51.85,
+      "amdgpu": 55.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 71.5,
+      "nvme": 56.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 80.125,
+      "nvme": 56.85,
+      "amdgpu": 71.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T23:57:02.246659+08:00"
+  }
+]

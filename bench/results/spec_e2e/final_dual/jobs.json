@@ -1,0 +1,123 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "mask",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/inputs/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "2",
+        "--out",
+        "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/mask",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mirror",
+        "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"
+      ],
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_MIRROR_AUTO": "0",
+        "DEEPMOE_DSPARK_ONECB": "0",
+        "DEEPMOE_BATCH_GPU_ROUTE": "0"
+      },
+      "profile": "power-saver",
+      "timeout_s": 150,
+      "stop_on_pause": true
+    },
+    {
+      "name": "serial_k2",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/inputs/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "2",
+        "--out",
+        "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/serial_k2",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mirror",
+        "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--serve-arg=--trace",
+        "--serve-arg=/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/serial_k2/trace.bin"
+      ],
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_MIRROR_AUTO": "0",
+        "DEEPMOE_DSPARK_ONECB": "0",
+        "DEEPMOE_BATCH_GPU_ROUTE": "0",
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/serial_k2_cycles.jsonl"
+      },
+      "profile": "power-saver",
+      "timeout_s": 150,
+      "stop_on_pause": true
+    },
+    {
+      "name": "gpu_route_k2",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/inputs/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "2",
+        "--out",
+        "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/gpu_route_k2",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mirror",
+        "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--serve-arg=--trace",
+        "--serve-arg=/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/gpu_route_k2/trace.bin"
+      ],
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_MIRROR_AUTO": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/gpu_route_k2_cycles.jsonl"
+      },
+      "profile": "power-saver",
+      "timeout_s": 150,
+      "stop_on_pause": true
+    }
+  ]
+}

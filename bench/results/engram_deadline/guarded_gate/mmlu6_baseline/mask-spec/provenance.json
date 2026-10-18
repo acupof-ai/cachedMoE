@@ -1,0 +1,103 @@
+{
+ "time": "2026-10-04T19:19:47+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "200dc3f085",
+ "dirty": [
+  "CMakeLists.txt",
+  "bench/results/perf_ledger.jsonl",
+  "cli/deepmoe_main.cpp",
+  "cli/serve.cpp",
+  "cmake/deepmoe_options.cmake",
+  "core/config.h",
+  "docs/STATUS.md",
+  "gpu/shaders/decode_attn_cm.slang",
+  "gpu/shaders/dspark_common.slang",
+  "gpu/shaders/dspark_gemv.slang",
+  "gpu/shaders/mgt1_gemv.slang",
+  "gpu/shaders/mgt1_head.slang",
+  "gpu/shaders/mgt1_mhc.slang",
+  "gpu/shaders/moe_down.slang",
+  "gpu/shaders/moe_gateup.slang",
+  "gpu/vulkan/attn_kernels.h",
+  "gpu/vulkan/decode_kernels.cpp",
+  "gpu/vulkan/decode_kernels.h",
+  "gpu/vulkan/device.cpp",
+  "gpu/vulkan/device.h",
+  "gpu/vulkan/dspark_kernels.h",
+  "gpu/vulkan/moe_kernels.cpp",
+  "runtime/decode_layer.cpp",
+  "runtime/decode_layer.h",
+  "runtime/engine.cpp",
+  "runtime/engine.h",
+  "runtime/engram.cpp",
+  "runtime/engram.h",
+  "runtime/moe_bridge.cpp",
+  "runtime/moe_bridge.h",
+  "runtime/session.cpp",
+  "runtime/session.h",
+  "runtime/speculate.cpp",
+  "runtime/speculate.h",
+  "storage/io_engine.cpp",
+  "storage/io_engine.h",
+  "store/expert_store.cpp",
+  "store/expert_store.h",
+  "store/planner.cpp",
+  "store/planner.h",
+  "tests/test_core.cpp",
+  "tests/test_gpu_dspark.cpp",
+  "tests/test_gpu_moe.cpp",
+  "tests/test_integration.cpp",
+  "tests/test_io.cpp",
+  "tests/test_speculate.cpp",
+  "tests/test_store.cpp",
+  "tools/hitrate_bench.py"
+ ],
+ "diff_sha": "c2d8b976c03a6585",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "1423d089d6464fb8",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 50,
+  "sha": "214a8d1c095876be"
+ },
+ "env": {
+  "DEEPMOE_DSPARK_MEGA": "0",
+  "DEEPMOE_IO_ENGRAM_DEADLINE": "0",
+  "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/cachedMoE/traces/longctx",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/engram_deadline/guarded_gate/mmlu6_baseline/mask-spec/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 11.8,
+  "gpu_busy_max": 16,
+  "loadavg": [
+   "3.96",
+   "3.64",
+   "3.67"
+  ],
+  "top_cpu": [
+   "kworker/u130:4+async 10.6%",
+   "kworker/u130:2-kcryptd-253:0-1 8.9%",
+   "kworker/u130:6-kcryptd-253:0-1 6.8%",
+   "ChatGPT 6.6%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791112788.3640902,
+  "nvme0n1": [
+   44338223722,
+   339820513
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 129.7,
+  "nvme0n1": {
+   "read_MB": 438420.3,
+   "write_MB": 46.0
+  }
+ }
+}

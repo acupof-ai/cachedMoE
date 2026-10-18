@@ -1,0 +1,56 @@
+{
+  "cwd": "/home/chenkailun/projects/deepmoe-spec",
+  "jobs": [
+    {
+      "name": "union_gpu_route_aligned",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+        "gpu_moe.the_verify_batch_runs_its_expert_union_once"
+      ],
+      "env": {
+        "DEEPMOE_TEST_GPU_ROUTE": "1"
+      },
+      "timeout_s": 90,
+      "stop_on_pause": true
+    },
+    {
+      "name": "k2_onecb_gpu_route",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/draft_attribution/turn16.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase3_aligned/k2_onecb_gpu_route",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--serve-arg=--trace",
+        "--serve-arg=/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase3_aligned/k2_onecb_gpu_route/trace.bin"
+      ],
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_DSPARK_PROFILE": "1",
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase3_aligned/k2_onecb_gpu_route_cycles.jsonl",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      },
+      "profile": "power-saver",
+      "timeout_s": 150,
+      "stop_on_pause": true
+    }
+  ]
+}

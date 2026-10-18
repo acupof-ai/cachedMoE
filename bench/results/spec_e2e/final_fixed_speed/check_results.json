@@ -1,0 +1,73 @@
+[
+  {
+    "name": "fixed_spec",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/inputs/turn64.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "2",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/final_fixed_speed/fixed_spec",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--mirror",
+      "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--serve-arg=--trace",
+      "--serve-arg=/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/final_fixed_speed/fixed_spec/trace.bin"
+    ],
+    "env": {
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1",
+      "DEEPMOE_MGT_PAIR_DOT": "0",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+      "DEEPMOE_MIRROR_AUTO": "0",
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/final_fixed_speed/fixed_spec_cycles.jsonl"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 115.99302065899246,
+    "start": {
+      "ac": 1,
+      "k10temp": 60.75,
+      "nvme_hwmon4": 37.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 52.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 62.375,
+      "nvme_hwmon4": 47.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 56.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 64.5,
+      "nvme_hwmon4": 58.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 66.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T01:58:53.269820+08:00"
+  }
+]

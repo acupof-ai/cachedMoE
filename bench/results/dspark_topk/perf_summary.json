@@ -1,0 +1,158 @@
+[
+  {
+    "name": "short_mask_only",
+    "sources_start": 2,
+    "valid_dual_source": true,
+    "turns": 1,
+    "decode_positions": 31,
+    "decode_ms": 4362.56708,
+    "decode_tok_s": 7.105907927953282,
+    "speculation": {
+      "cycles": 0,
+      "verified": 0,
+      "accepted": 0,
+      "tokens": 0,
+      "draft_ms": 0,
+      "verify_ms": 0,
+      "commit_ms": 0
+    },
+    "source": "bench/results/dspark_topk/short_mask_only/turns.json"
+  },
+  {
+    "name": "short_k2_top4",
+    "sources_start": 2,
+    "valid_dual_source": true,
+    "turns": 1,
+    "decode_positions": 31,
+    "decode_ms": 4587.34565,
+    "decode_tok_s": 6.757720556766852,
+    "speculation": {
+      "cycles": 11,
+      "verified": 20,
+      "accepted": 20,
+      "tokens": 31,
+      "draft_ms": 1544.54257,
+      "verify_ms": 2998.27195,
+      "commit_ms": 24.760974
+    },
+    "source": "bench/results/dspark_topk/short_k2_top4/turns.json"
+  },
+  {
+    "name": "short_k5_top4",
+    "sources_start": 2,
+    "valid_dual_source": true,
+    "turns": 1,
+    "decode_positions": 31,
+    "decode_ms": 5295.23375,
+    "decode_tok_s": 5.8543213507807845,
+    "speculation": {
+      "cycles": 8,
+      "verified": 37,
+      "accepted": 23,
+      "tokens": 31,
+      "draft_ms": 1305.47395,
+      "verify_ms": 3945.7927,
+      "commit_ms": 23.225808
+    },
+    "source": "bench/results/dspark_topk/short_k5_top4/turns.json"
+  },
+  {
+    "name": "short_k2_top4_wc",
+    "sources_start": 2,
+    "valid_dual_source": true,
+    "turns": 1,
+    "decode_positions": 31,
+    "decode_ms": 3982.21916,
+    "decode_tok_s": 7.784604200437828,
+    "speculation": {
+      "cycles": 11,
+      "verified": 20,
+      "accepted": 20,
+      "tokens": 31,
+      "draft_ms": 304.261649,
+      "verify_ms": 3635.75391,
+      "commit_ms": 18.294377
+    },
+    "source": "bench/results/dspark_topk/short_k2_top4_wc/turns.json"
+  },
+  {
+    "name": "warm3_k2_top4_wc",
+    "sources_start": 2,
+    "valid_dual_source": true,
+    "turns": 3,
+    "decode_positions": 566,
+    "decode_ms": 48525.52103,
+    "decode_tok_s": 11.663965434808643,
+    "speculation": {
+      "cycles": 220,
+      "verified": 440,
+      "accepted": 347,
+      "tokens": 566,
+      "draft_ms": 7827.68875,
+      "verify_ms": 38842.652709999995,
+      "commit_ms": 632.972666
+    },
+    "source": "bench/results/dspark_topk/warm3_k2_top4_wc/turns.json"
+  },
+  {
+    "name": "warm1_k2_top4_sparse",
+    "sources_start": 2,
+    "valid_dual_source": true,
+    "turns": 1,
+    "decode_positions": 233,
+    "decode_ms": 19049.4058,
+    "decode_tok_s": 12.231352644080898,
+    "speculation": {
+      "cycles": 92,
+      "verified": 184,
+      "accepted": 141,
+      "tokens": 233,
+      "draft_ms": 3151.71785,
+      "verify_ms": 14871.4198,
+      "commit_ms": 275.2927
+    },
+    "source": "bench/results/dspark_topk/warm1_k2_top4_sparse/turns.json"
+  },
+  {
+    "name": "warm1_k2_top4_indexwc",
+    "sources_start": 2,
+    "valid_dual_source": true,
+    "turns": 1,
+    "decode_positions": 233,
+    "decode_ms": 18957.4486,
+    "decode_tok_s": 12.290683462541473,
+    "speculation": {
+      "cycles": 92,
+      "verified": 184,
+      "accepted": 141,
+      "tokens": 233,
+      "draft_ms": 3135.95807,
+      "verify_ms": 14841.1574,
+      "commit_ms": 260.435939
+    },
+    "source": "bench/results/dspark_topk/warm1_k2_top4_indexwc/turns.json"
+  },
+  {
+    "name": "warm1_k5_top4_final",
+    "sources_start": 2,
+    "valid_dual_source": false,
+    "turns": 1,
+    "decode_positions": 245,
+    "decode_ms": 27314.8469,
+    "decode_tok_s": 8.969480989476093,
+    "speculation": {
+      "cycles": 78,
+      "verified": 390,
+      "accepted": 168,
+      "tokens": 245,
+      "draft_ms": 2726.26951,
+      "verify_ms": 23285.3742,
+      "commit_ms": 261.111721,
+      "cpu_ms": 937.573043,
+      "target_rows": 468,
+      "union_experts": 56221,
+      "miss_bytes": 93611556864
+    },
+    "source": "bench/results/dspark_topk/warm1_k5_top4_final/turns.json"
+  }
+]

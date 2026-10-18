@@ -1,0 +1,9 @@
+{
+  "reason": "CLI set_resident_only is called after init; first candidate only configured wait priority during init. Neither first candidate cell activated P2 rescue. Retained as failed integration evidence, not speed gains.",
+  "runs": [
+    "measure/fix_mask",
+    "measure/fix_spec"
+  ],
+  "deadline_chunks": 0,
+  "baseline_spec": "measure/baseline_spec"
+}

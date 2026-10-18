@@ -1,0 +1,67 @@
+{
+ "time": "2026-10-05T01:16:52+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "faf20a4cc7",
+ "dirty": [],
+ "diff_sha": null,
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "0d29187560c31dd0",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 52,
+  "sha": "cf34c71d6c84caaf"
+ },
+ "env": {
+  "DEEPMOE_BATCH_GPU_ROUTE": "0",
+  "DEEPMOE_DSPARK_MEGA": "0",
+  "DEEPMOE_DSPARK_ONECB": "0",
+  "DEEPMOE_DSPARK_PROFILE": "0",
+  "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/cachedMoE/traces/longctx",
+  "DEEPMOE_MGT_ATTN_CM": "0",
+  "DEEPMOE_MGT_FOLD_SCALE": "0",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/serial_k2/route.bin",
+  "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/spec_e2e/final_dual/serial_k2_cycles.jsonl"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 3.6,
+  "gpu_busy_max": 4,
+  "loadavg": [
+   "1.26",
+   "1.72",
+   "2.32"
+  ],
+  "top_cpu": [
+   "kworker/u130:18-events_unbound 7.1%",
+   "ChatGPT 6.0%",
+   "kworker/u130:2-kcryptd-253:0-1 5.4%",
+   "kworker/u130:11-kcryptd-253:0-1 5.0%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791134213.0619402,
+  "nvme0n1": [
+   70159701129,
+   357483593
+  ],
+  "nvme1n1": [
+   88330216,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 35.3,
+  "nvme0n1": {
+   "read_MB": 60996.4,
+   "write_MB": 13.7
+  },
+  "nvme1n1": {
+   "read_MB": 50196.1,
+   "write_MB": 0.0
+  }
+ }
+}

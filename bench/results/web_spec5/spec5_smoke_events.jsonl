@@ -1,0 +1,35 @@
+{"event": "start", "prompt_tokens": 10, "reused": 0, "to_prefill": 10, "eta_s": 0.24, "max_context": 4096}
+{"event": "prefill", "done": 10, "total": 10, "eta_s": 0.0, "ms_per_token": 24.0}
+{"event": "token", "id": 90738, "text": "GPU", "t_ms": 606.562985, "step_ms": 60.027106, "p": 0, "margin": 4.11594391, "nucleus": 0, "hit": 0}
+{"event": "token", "id": 223, "text": " ", "t_ms": 829.793136, "step_ms": 55.803195, "p": 0, "margin": 1.68777084, "nucleus": 0, "hit": 0.605614973}
+{"event": "token", "id": 389, "text": "是", "t_ms": 829.819926, "step_ms": 55.803195, "p": 0, "margin": 0.311231613, "nucleus": 0, "hit": 0.605614973}
+{"event": "token", "id": 2619, "text": " **", "t_ms": 829.823463, "step_ms": 55.803195, "p": 0, "margin": 1.15450668, "nucleus": 0, "hit": 0.605614973}
+{"event": "token", "id": 102649, "text": "Graphics", "t_ms": 829.825808, "step_ms": 55.803195, "p": 0, "margin": 2.55697632, "nucleus": 0, "hit": 0.605614973}
+{"event": "token", "id": 29643, "text": " Processing", "t_ms": 1051.47099, "step_ms": 55.4090342, "p": 0, "margin": 14.1227474, "nucleus": 0, "hit": 0.605228758}
+{"event": "token", "id": 14749, "text": " Unit", "t_ms": 1051.49785, "step_ms": 55.4090342, "p": 0, "margin": 12.5692558, "nucleus": 0, "hit": 0.605228758}
+{"event": "token", "id": 303, "text": "，", "t_ms": 1051.50121, "step_ms": 55.4090342, "p": 0, "margin": 1.1284771, "nucleus": 0, "hit": 0.605228758}
+{"event": "token", "id": 18839, "text": "图形", "t_ms": 1051.50423, "step_ms": 55.4090342, "p": 0, "margin": 7.86465073, "nucleus": 0, "hit": 0.605228758}
+{"event": "token", "id": 43423, "text": "处理器", "t_ms": 1279.69811, "step_ms": 114.092304, "p": 0, "margin": 4.74988174, "nucleus": 0, "hit": 0.566579634}
+{"event": "token", "id": 666, "text": "**", "t_ms": 1279.71515, "step_ms": 114.092304, "p": 0, "margin": 4.0153904, "nucleus": 0, "hit": 0.566579634}
+{"event": "token", "id": 303, "text": "，", "t_ms": 1481.62391, "step_ms": 100.947093, "p": 0, "margin": 2.10890961, "nucleus": 0, "hit": 0.535989717}
+{"event": "token", "id": 22848, "text": "最初", "t_ms": 1481.65889, "step_ms": 100.947093, "p": 0, "margin": 1.50026131, "nucleus": 0, "hit": 0.535989717}
+{"event": "token", "id": 389, "text": "是", "t_ms": 1684.67701, "step_ms": 101.503699, "p": 0, "margin": 2.46931648, "nucleus": 0, "hit": 0.492574257}
+{"event": "token", "id": 15091, "text": "专门", "t_ms": 1684.70358, "step_ms": 101.503699, "p": 0, "margin": 1.66372871, "nucleus": 0, "hit": 0.492574257}
+{"event": "token", "id": 545, "text": "为", "t_ms": 1887.04361, "step_ms": 101.162706, "p": 0, "margin": 1.5032196, "nucleus": 0, "hit": 0.534666667}
+{"event": "token", "id": 18839, "text": "图形", "t_ms": 1887.07547, "step_ms": 101.162706, "p": 0, "margin": 3.28658485, "nucleus": 0, "hit": 0.534666667}
+{"event": "token", "id": 48913, "text": "渲染", "t_ms": 2094.2954, "step_ms": 69.0698187, "p": 0, "margin": 5.38494682, "nucleus": 0, "hit": 0.553137004}
+{"event": "token", "id": 548, "text": "和", "t_ms": 2094.32173, "step_ms": 69.0698187, "p": 0, "margin": 5.40519714, "nucleus": 0, "hit": 0.553137004}
+{"event": "token", "id": 7625, "text": "游戏", "t_ms": 2094.32538, "step_ms": 69.0698187, "p": 0, "margin": 4.17010307, "nucleus": 0, "hit": 0.553137004}
+{"event": "token", "id": 31174, "text": "设计的", "t_ms": 2294.62433, "step_ms": 40.0570368, "p": 0, "margin": 0.537982941, "nucleus": 0, "hit": 0.481617647}
+{"event": "token", "id": 303, "text": "，", "t_ms": 2294.65877, "step_ms": 40.0570368, "p": 0, "margin": 5.65474319, "nucleus": 0, "hit": 0.481617647}
+{"event": "token", "id": 1207, "text": "但", "t_ms": 2294.66261, "step_ms": 40.0570368, "p": 0, "margin": 0.701431274, "nucleus": 0, "hit": 0.481617647}
+{"event": "token", "id": 9632, "text": "后来", "t_ms": 2294.66544, "step_ms": 40.0570368, "p": 0, "margin": 6.34157181, "nucleus": 0, "hit": 0.481617647}
+{"event": "token", "id": 65008, "text": "演化", "t_ms": 2294.66749, "step_ms": 40.0570368, "p": 0, "margin": 0.343517303, "nucleus": 0, "hit": 0.481617647}
+{"event": "token", "id": 7583, "text": "成了", "t_ms": 2500.44362, "step_ms": 51.4402615, "p": 0, "margin": 2.36207581, "nucleus": 0, "hit": 0.513478819}
+{"event": "token", "id": 28756, "text": "通用", "t_ms": 2500.47545, "step_ms": 51.4402615, "p": 0, "margin": 0.484798431, "nucleus": 0, "hit": 0.513478819}
+{"event": "token", "id": 4339, "text": "计算", "t_ms": 2500.47893, "step_ms": 51.4402615, "p": 0, "margin": 2.71207047, "nucleus": 0, "hit": 0.513478819}
+{"event": "token", "id": 18617, "text": "加速", "t_ms": 2500.48151, "step_ms": 51.4402615, "p": 0, "margin": 0.743770599, "nucleus": 0, "hit": 0.513478819}
+{"event": "token", "id": 2073, "text": "器", "t_ms": 2641.5055, "step_ms": 47.004858, "p": 0, "margin": 8.13212776, "nucleus": 0, "hit": 0.569686411}
+{"event": "token", "id": 478, "text": "。\n\n", "t_ms": 2641.53204, "step_ms": 47.004858, "p": 0, "margin": 2.45762634, "nucleus": 0, "hit": 0.569686411}
+{"event": "token", "id": 8301, "text": "它的", "t_ms": 2641.5363, "step_ms": 47.004858, "p": 0, "margin": 0.549957275, "nucleus": 0, "hit": 0.569686411}
+{"event": "done", "session": "codex-spec5-smoke-20261005", "prompt_tokens": 10, "reused_tokens": 0, "prefill_tokens": 10, "generated": 32, "prefill_mode": "decode", "finish": "length", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 606.547305, "prefill_tok_s": 16.4867603, "ttft_ms": 606.562985, "decode_ms": 2034.97793, "decode_steps": 31, "tok_s": 15.2335805, "total_ms": 2641.53885, "prefill_hit_rate": 0.551666667, "decode_hit_rate": 0.544348976, "prefill_nvme_mb": 0, "decode_nvme_mb": 0, "per_token_ms": {"attn": 0, "moe_gpu": 0, "moe_host": 0, "nvme_stall": 0, "engram": 1.0444331, "tail": 0, "other": 64.5855922, "record": 0.301111097, "submit": 0.0262533548, "bind": 0.226211581, "fence_wait": 55.1901282, "submits": 0.322580645, "sample_host": 0}, "sampled_steps": 0, "topk_fallbacks": 0, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 0, "context": 41, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "speculation": {"cycles": 10, "verified": 47, "accepted": 21, "tokens": 31, "draft_ms": 233.930956, "verify_ms": 1777.62556, "commit_ms": 12.334405, "cpu_ms": 0.932626, "target_rows": 57, "union_experts": 4118, "miss_bytes": 0, "gpu_readout_cycles": 10}, "seed": 42, "mode": "chat", "content": "GPU 是 **Graphics Processing Unit，图形处理器**，最初是专门为图形渲染和游戏设计的，但后来演化成了通用计算加速器。\n\n它的", "reasoning": ""}

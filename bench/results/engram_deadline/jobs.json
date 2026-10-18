@@ -1,0 +1,27 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "baseline_mask",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/end_to_end/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "bench/results/engram_deadline/baseline_mask",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask"
+      ],
+      "timeout_s": 180
+    }
+  ]
+}

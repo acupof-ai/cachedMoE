@@ -1,0 +1,8 @@
+{
+  "valid_dual_source": false,
+  "read_errors": 9,
+  "mirror_max_C": 74,
+  "thermal_rests": 0,
+  "kernel_event": "thunderbolt device disconnected / pciehp Link Down",
+  "timestamp": "2026-10-04T09:51:31+08:00"
+}

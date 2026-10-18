@@ -1,0 +1,126 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "engram_planes",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.batch_engram_prefetch_planes"
+      ],
+      "timeout_s": 120
+    },
+    {
+      "name": "decode",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode$",
+        "--output-on-failure"
+      ],
+      "timeout_s": 300,
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0"
+      }
+    },
+    {
+      "name": "decode_longctx",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode_longctx$",
+        "--output-on-failure"
+      ],
+      "timeout_s": 300,
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0"
+      }
+    },
+    {
+      "name": "l3_off",
+      "command": [
+        "/usr/bin/python",
+        "tools/l3_ppl.py",
+        "--state",
+        "traces/l3_64",
+        "--steps",
+        "64",
+        "--modes",
+        "off",
+        "--json",
+        "bench/results/engram_deadline/validation/l3_off.json",
+        "--log-dir",
+        "bench/results/engram_deadline/validation/l3_logs"
+      ],
+      "timeout_s": 240,
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0"
+      }
+    },
+    {
+      "name": "wrap_selected",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.committed_prefix_survives_window_wrap"
+      ],
+      "timeout_s": 180
+    },
+    {
+      "name": "mmlu6_baseline",
+      "command": [
+        "/usr/bin/python",
+        "tools/mmlu_bench.py",
+        "--sample",
+        "bench/results/miss_mask/mmlu_sample.json",
+        "--out",
+        "bench/results/engram_deadline/validation/mmlu6_baseline",
+        "--modes",
+        "mask-spec",
+        "--generation",
+        "--limit",
+        "6",
+        "--max-tokens",
+        "16",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1"
+      ],
+      "timeout_s": 240,
+      "env": {
+        "DEEPMOE_IO_ENGRAM_DEADLINE": "0"
+      }
+    },
+    {
+      "name": "mmlu6_fix",
+      "command": [
+        "/usr/bin/python",
+        "tools/mmlu_bench.py",
+        "--sample",
+        "bench/results/miss_mask/mmlu_sample.json",
+        "--out",
+        "bench/results/engram_deadline/validation/mmlu6_fix",
+        "--modes",
+        "mask-spec",
+        "--generation",
+        "--limit",
+        "6",
+        "--max-tokens",
+        "16",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1"
+      ],
+      "timeout_s": 240,
+      "env": {}
+    }
+  ]
+}

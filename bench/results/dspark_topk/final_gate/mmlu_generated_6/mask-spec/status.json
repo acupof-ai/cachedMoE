@@ -1,0 +1,15 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 104,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5500 slots (5435 resident, 65 filling, 0 free, 384 pinned)  lookups 5006 hits 3858 (0.771)  fills 22612/22677 ok  runs 45225/45354  evictions 17177 (+0 guard-blocked)  path A hits 3858 / B 0 (1.0000 A)  fills A 22612 / B 0",
+ "planner": "planner: 483 layers, 5006 requests (3858 hits, 1148 misses, 0.771), 764 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 341 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 10454 resident / 21529 kept / 64 dropped",
+ "io": "io: 107942 req (107813 done, 0 failed, 0 cancelled), 495581 chunks, 437337147328 / 438555521024 bytes, busy 106.821 s, eff 4.09 GB/s, mean lat 205.005 ms, peak QD 512 / 32.0 MiB\n  p0_blocking    45482 req  407916.7 MiB\n  p2_engram      61152 req  246.4 MiB\n  p3_backfill     1308 req  10076.0 MiB\n  P0: 45353 req, 406751.8 MiB, lat mean 205.39 / p50 182.83 / p95 468.42 / max 791.31 ms  (queue wait 198.03 + service 7.36)\n  P0: first-of-burst 268 at 0.98 ms, behind 45085 at 206.60 ms; 38 (0.1%) issued with a non-P0 chunk in flight, mean 5.21; mean QD at issue 22.08\n  dispatcher: 431617 iters, issue 1.18 s / poll 105.07 s / handle 0.38 s (callbacks 0.12 s, 107813 at 1.1 us mean)\n  dispatcher: Backend::submit 0.98 s over 495589 chunks, mean 2.0 us, max 1.66 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.4% of the non-waiting loop; refill gap 0.6 us mean over 423141 reaps\n",
+ "route": "route     resident-only=mask over 960 layer-steps\n  experts requested 5760  served 4962 (0.8615)  skipped 798\n  gate mass lost    0.1053 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n",
+ "gate_probe": ""
+}

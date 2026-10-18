@@ -1,0 +1,93 @@
+{
+ "time": "2026-10-04T14:26:23+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "200dc3f085",
+ "dirty": [
+  "CMakeLists.txt",
+  "bench/results/perf_ledger.jsonl",
+  "cli/deepmoe_main.cpp",
+  "cli/serve.cpp",
+  "cmake/deepmoe_options.cmake",
+  "core/config.h",
+  "docs/STATUS.md",
+  "gpu/shaders/dspark_common.slang",
+  "gpu/shaders/dspark_gemv.slang",
+  "gpu/shaders/mgt1_head.slang",
+  "gpu/shaders/mgt1_mhc.slang",
+  "gpu/shaders/moe_down.slang",
+  "gpu/shaders/moe_gateup.slang",
+  "gpu/vulkan/attn_kernels.h",
+  "gpu/vulkan/decode_kernels.cpp",
+  "gpu/vulkan/decode_kernels.h",
+  "gpu/vulkan/device.cpp",
+  "gpu/vulkan/device.h",
+  "gpu/vulkan/dspark_kernels.h",
+  "gpu/vulkan/moe_kernels.cpp",
+  "runtime/decode_layer.cpp",
+  "runtime/decode_layer.h",
+  "runtime/engine.cpp",
+  "runtime/engine.h",
+  "runtime/moe_bridge.cpp",
+  "runtime/moe_bridge.h",
+  "runtime/session.cpp",
+  "runtime/session.h",
+  "runtime/speculate.cpp",
+  "runtime/speculate.h",
+  "store/expert_store.cpp",
+  "store/expert_store.h",
+  "store/planner.cpp",
+  "tests/test_core.cpp",
+  "tests/test_gpu_dspark.cpp",
+  "tests/test_gpu_moe.cpp",
+  "tests/test_speculate.cpp",
+  "tests/test_store.cpp",
+  "tools/hitrate_bench.py"
+ ],
+ "diff_sha": "6248bf8bd08227f6",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "8fdf86e6d0fa8e0c",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 49,
+  "sha": "0eed2055369e7bf6"
+ },
+ "env": {
+  "DEEPMOE_DSPARK_MEGA": "0",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/dspark_topk/gpu_readout_selected/short_cpu/route.bin",
+  "DEEPMOE_SPEC_GPU_READOUT": "0"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 6.7,
+  "gpu_busy_max": 9,
+  "loadavg": [
+   "3.76",
+   "3.47",
+   "2.82"
+  ],
+  "top_cpu": [
+   "powerprofilesct 100%",
+   "ChatGPT 14.5%",
+   "python3.12 6.3%",
+   "ChatGPT 6.0%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791095184.2903945,
+  "nvme0n1": [
+   23264972352,
+   325370529
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 28.7,
+  "nvme0n1": {
+   "read_MB": 72202.9,
+   "write_MB": 10.2
+  }
+ }
+}

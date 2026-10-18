@@ -1,0 +1,46 @@
+{
+  "cwd": "/home/chenkailun/projects/deepmoe-spec",
+  "jobs": [
+    {
+      "name": "needle4k17k",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--requests",
+        "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/requests.json",
+        "--exe",
+        "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+        "--cache-slots",
+        "4900",
+        "--max-context",
+        "17408",
+        "--require-sources",
+        "2",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/needle4k17k",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mirror",
+        "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4"
+      ],
+      "env": {
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_MGT_PAIR_DOT": "0",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+        "DEEPMOE_MIRROR_AUTO": "0",
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/cycles.jsonl"
+      },
+      "timeout_s": 420,
+      "stop_on_pause": true
+    }
+  ]
+}

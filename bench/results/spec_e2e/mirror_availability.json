@@ -1,0 +1,246 @@
+{
+  "expected": 48,
+  "holds": 48,
+  "files": [
+    {
+      "name": "model-00001-of-00048.safetensors",
+      "primary": 970533624,
+      "mirror": 970533624
+    },
+    {
+      "name": "model-00002-of-00048.safetensors",
+      "primary": 1323858272,
+      "mirror": 1323858272
+    },
+    {
+      "name": "model-00003-of-00048.safetensors",
+      "primary": 7389759032,
+      "mirror": 7389759032
+    },
+    {
+      "name": "model-00004-of-00048.safetensors",
+      "primary": 7389759032,
+      "mirror": 7389759032
+    },
+    {
+      "name": "model-00005-of-00048.safetensors",
+      "primary": 7405953784,
+      "mirror": 7405953784
+    },
+    {
+      "name": "model-00006-of-00048.safetensors",
+      "primary": 7389759032,
+      "mirror": 7389759032
+    },
+    {
+      "name": "model-00007-of-00048.safetensors",
+      "primary": 7389759032,
+      "mirror": 7389759032
+    },
+    {
+      "name": "model-00008-of-00048.safetensors",
+      "primary": 7389759032,
+      "mirror": 7389759032
+    },
+    {
+      "name": "model-00009-of-00048.safetensors",
+      "primary": 7389759032,
+      "mirror": 7389759032
+    },
+    {
+      "name": "model-00010-of-00048.safetensors",
+      "primary": 7389759032,
+      "mirror": 7389759032
+    },
+    {
+      "name": "model-00011-of-00048.safetensors",
+      "primary": 7405953784,
+      "mirror": 7405953784
+    },
+    {
+      "name": "model-00012-of-00048.safetensors",
+      "primary": 7389759032,
+      "mirror": 7389759032
+    },
+    {
+      "name": "model-00013-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00014-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00015-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00016-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00017-of-00048.safetensors",
+      "primary": 7405956128,
+      "mirror": 7405956128
+    },
+    {
+      "name": "model-00018-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00019-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00020-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00021-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00022-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00023-of-00048.safetensors",
+      "primary": 7400713088,
+      "mirror": 7400713088
+    },
+    {
+      "name": "model-00024-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00025-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00026-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00027-of-00048.safetensors",
+      "primary": 7395337384,
+      "mirror": 7395337384
+    },
+    {
+      "name": "model-00028-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00029-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00030-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00031-of-00048.safetensors",
+      "primary": 7395337384,
+      "mirror": 7395337384
+    },
+    {
+      "name": "model-00032-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00033-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00034-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00035-of-00048.safetensors",
+      "primary": 7395337384,
+      "mirror": 7395337384
+    },
+    {
+      "name": "model-00036-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00037-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00038-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00039-of-00048.safetensors",
+      "primary": 7395337384,
+      "mirror": 7395337384
+    },
+    {
+      "name": "model-00040-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00041-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00042-of-00048.safetensors",
+      "primary": 7389761368,
+      "mirror": 7389761368
+    },
+    {
+      "name": "model-00043-of-00048.safetensors",
+      "primary": 1323837624,
+      "mirror": 1323837624
+    },
+    {
+      "name": "model-00044-of-00048.safetensors",
+      "primary": 2652728736,
+      "mirror": 2652728736
+    },
+    {
+      "name": "model-00045-of-00048.safetensors",
+      "primary": 2573998176,
+      "mirror": 2573998176
+    },
+    {
+      "name": "model-00046-of-00048.safetensors",
+      "primary": 2706402896,
+      "mirror": 2706402896
+    },
+    {
+      "name": "model-00047-of-00048.safetensors",
+      "primary": 101535150936,
+      "mirror": 101535150936
+    },
+    {
+      "name": "model-00048-of-00048.safetensors",
+      "primary": 101537926640,
+      "mirror": 101537926640
+    }
+  ]
+}

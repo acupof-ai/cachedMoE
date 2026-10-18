@@ -1,0 +1,71 @@
+{
+ "time": "2026-10-04T00:29:28+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "200dc3f085",
+ "dirty": [
+  "cli/deepmoe_main.cpp",
+  "cli/serve.cpp",
+  "runtime/engine.cpp",
+  "runtime/engine.h",
+  "runtime/moe_bridge.cpp",
+  "store/expert_store.cpp",
+  "store/expert_store.h",
+  "tests/test_gpu_moe.cpp",
+  "tests/test_store.cpp",
+  "tools/hitrate_bench.py"
+ ],
+ "diff_sha": "6d1257170b765312",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "e8a4b07b07df586b",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 47,
+  "sha": "c3d403af6b51e18c"
+ },
+ "env": {
+  "DEEPMOE_MIRROR_AUTO": "1",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/miss_mask/speed_off/route.bin",
+  "DEEPMOE_ROUTE_RESIDENT_ONLY": "off"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 4.5,
+  "gpu_busy_max": 6,
+  "loadavg": [
+   "1.68",
+   "2.41",
+   "2.11"
+  ],
+  "top_cpu": [
+   "ChatGPT 44.6%",
+   "ChatGPT 13.0%",
+   "codex 12.8%",
+   "ChatGPT 9.9%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791044969.1699739,
+  "nvme0n1": [
+   2732996874,
+   294284862
+  ],
+  "nvme1n1": [
+   202600,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 311.0,
+  "nvme0n1": {
+   "read_MB": 501517.2,
+   "write_MB": 77.6
+  },
+  "nvme1n1": {
+   "read_MB": 397430.6,
+   "write_MB": 0.0
+  }
+ }
+}

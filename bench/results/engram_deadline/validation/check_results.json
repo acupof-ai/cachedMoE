@@ -1,0 +1,190 @@
+[
+  {
+    "name": "engram_planes",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.batch_engram_prefetch_planes"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 2.6687951019994216,
+    "start": {
+      "k10temp": 59.375,
+      "nvme": 36.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 57.125,
+      "nvme": 38.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 59.375,
+      "nvme": 37.85,
+      "amdgpu": 54.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:05:21.535644+08:00"
+  },
+  {
+    "name": "decode",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-j",
+      "1",
+      "-R",
+      "^suite.decode$",
+      "--output-on-failure"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 142.26442419699742,
+    "start": {
+      "k10temp": 57.125,
+      "nvme": 38.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 64.875,
+      "nvme": 63.85,
+      "amdgpu": 61.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 67.25,
+      "nvme": 63.85,
+      "amdgpu": 63.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:07:43.883611+08:00"
+  },
+  {
+    "name": "decode_longctx",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-j",
+      "1",
+      "-R",
+      "^suite.decode_longctx$",
+      "--output-on-failure"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 125.8245720010018,
+    "start": {
+      "k10temp": 63.25,
+      "nvme": 59.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 57.625,
+      "nvme": 41.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 64.0,
+      "nvme": 59.85,
+      "amdgpu": 61.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:09:50.824299+08:00"
+  },
+  {
+    "name": "l3_off",
+    "command": [
+      "/usr/bin/python",
+      "tools/l3_ppl.py",
+      "--state",
+      "traces/l3_64",
+      "--steps",
+      "64",
+      "--modes",
+      "off",
+      "--json",
+      "bench/results/engram_deadline/validation/l3_off.json",
+      "--log-dir",
+      "bench/results/engram_deadline/validation/l3_logs"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 58.14720460399985,
+    "start": {
+      "k10temp": 57.625,
+      "nvme": 41.85,
+      "amdgpu": 55.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 66.75,
+      "nvme": 53.85,
+      "amdgpu": 62.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 66.75,
+      "nvme": 62.85,
+      "amdgpu": 66.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:10:49.068207+08:00"
+  },
+  {
+    "name": "wrap_selected",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.committed_prefix_survives_window_wrap"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 1,
+    "failure": null,
+    "elapsed_s": 23.752387243002886,
+    "start": {
+      "k10temp": 62.875,
+      "nvme": 48.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 63.625,
+      "nvme": 61.85,
+      "amdgpu": 58.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 68.0,
+      "nvme": 61.85,
+      "amdgpu": 70.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:11:14.941197+08:00"
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "time": "2026-10-04T14:12:09.329669+08:00",
+  "test": "gpu_dspark.main_path_gpu_readout",
+  "rc": 0,
+  "m": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "exact_nuclei": 45,
+  "fallback_cases": 81,
+  "coverage": [
+    "rank ties",
+    "original prefix rejection",
+    "flat distribution overflow",
+    "top_p=1 fallback",
+    "invalid token",
+    "cross-wave NaN"
+  ],
+  "test_binary_sha256": "66973b213cfb48618287aee860fc85bcdf36d7b41ddbd740c794d72c52a7dfca"
+}

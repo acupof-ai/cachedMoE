@@ -1,0 +1,88 @@
+{
+ "time": "2026-10-05T01:24:11+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "faf20a4cc7",
+ "dirty": [
+  "README.md",
+  "docs/STATUS.md",
+  "docs/dspark_e2e_plan.md",
+  "docs/dspark_topk.md",
+  "gpu/shaders/mgt1_gemv.slang",
+  "gpu/shaders/mgt1_head.slang",
+  "gpu/vulkan/decode_kernels.cpp",
+  "gpu/vulkan/decode_kernels.h",
+  "runtime/dspark_runtime.cpp",
+  "runtime/engine.cpp",
+  "runtime/engine.h",
+  "store/expert_store.cpp",
+  "store/expert_store.h",
+  "store/planner.cpp",
+  "store/planner.h",
+  "tests/test_gpu_dspark.cpp",
+  "tests/test_spec_forward.cpp",
+  "tests/test_store.cpp",
+  "tools/fuse_dspark.py"
+ ],
+ "diff_sha": "6ee3dd10bd9986f8",
+ "exe": "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+ "exe_sha": "82910e7d5e61982a",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/deepmoe-spec/build/shaders",
+  "count": 52,
+  "sha": "05135cc6eed08746"
+ },
+ "env": {
+  "DEEPMOE_BATCH_GPU_ROUTE": "0",
+  "DEEPMOE_DSPARK_MEGA": "0",
+  "DEEPMOE_DSPARK_ONECB": "0",
+  "DEEPMOE_DSPARK_PROFILE": "0",
+  "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/deepmoe-spec/traces/longctx",
+  "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+  "DEEPMOE_MGT_ATTN_CM": "0",
+  "DEEPMOE_MGT_FOLD_SCALE": "0",
+  "DEEPMOE_MGT_PAIR_DOT": "0",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase4_controls/fixed_mask/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 2.3,
+  "gpu_busy_max": 3,
+  "loadavg": [
+   "1.03",
+   "1.82",
+   "2.20"
+  ],
+  "top_cpu": [
+   "ChatGPT 6.0%",
+   "kworker/u130:18-btrfs-endio 5.7%",
+   "ChatGPT 4.8%",
+   "kworker/u130:2-kcryptd-253:0-1 4.7%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791134652.457735,
+  "nvme0n1": [
+   70549537009,
+   357946913
+  ],
+  "nvme1n1": [
+   381717552,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 33.2,
+  "nvme0n1": {
+   "read_MB": 55567.0,
+   "write_MB": 27.5
+  },
+  "nvme1n1": {
+   "read_MB": 45705.7,
+   "write_MB": 0.0
+  }
+ }
+}

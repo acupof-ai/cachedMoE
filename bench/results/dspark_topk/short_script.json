@@ -1,0 +1,11 @@
+{
+  "comment": "One short cell per config: first prompt from miss_mask speed script, 32 greedy tokens, two sources, cold KV.",
+  "turns": [
+    {
+      "label": "greedy, zh",
+      "user": "你好！请用两三句话介绍一下你自己。",
+      "temperature": 0,
+      "max_tokens": 32
+    }
+  ]
+}

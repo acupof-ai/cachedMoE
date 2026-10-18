@@ -1,0 +1,119 @@
+{
+  "cwd": "/home/chenkailun/projects/deepmoe-spec",
+  "jobs": [
+    {
+      "name": "profile_calibration",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+        "gpu_dspark.full_runtime_chain"
+      ],
+      "env": {
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_DSPARK_TEST_ONECB": "1",
+        "DEEPMOE_DSPARK_PROFILE": "1",
+        "DEEPMOE_DSPARK_MEGA_DIAG": "1",
+        "DEEPMOE_PIPELINE_STATS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/quality_complete/pipeline_stats"
+      },
+      "timeout_s": 120,
+      "stop_on_pause": true
+    },
+    {
+      "name": "l3_off",
+      "command": [
+        "/usr/bin/python",
+        "tools/l3_ppl.py",
+        "--state",
+        "traces/l3_64",
+        "--steps",
+        "64",
+        "--modes",
+        "off",
+        "--json",
+        "bench/results/spec_e2e/quality_complete/l3_off.json",
+        "--log-dir",
+        "bench/results/spec_e2e/quality_complete/l3_logs"
+      ],
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0"
+      },
+      "timeout_s": 300,
+      "stop_on_pause": true
+    },
+    {
+      "name": "decode",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode$",
+        "--output-on-failure",
+        "-V"
+      ],
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0"
+      },
+      "timeout_s": 300,
+      "stop_on_pause": true
+    },
+    {
+      "name": "longctx",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode_longctx$",
+        "--output-on-failure",
+        "-V"
+      ],
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0"
+      },
+      "timeout_s": 300,
+      "stop_on_pause": true
+    },
+    {
+      "name": "mmlu57",
+      "command": [
+        "/usr/bin/python",
+        "tools/mmlu_bench.py",
+        "--sample",
+        "bench/results/miss_mask/mmlu_sample.json",
+        "--out",
+        "bench/results/spec_e2e/quality_complete/mmlu57",
+        "--modes",
+        "mask-spec",
+        "--generation",
+        "--limit",
+        "57",
+        "--max-tokens",
+        "16",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1"
+      ],
+      "env": {
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/quality_complete/mmlu57_cycles.jsonl"
+      },
+      "timeout_s": 1500,
+      "stop_on_pause": true
+    }
+  ]
+}

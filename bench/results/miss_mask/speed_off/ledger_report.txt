@@ -1,0 +1,11 @@
+
+== chat (bench/results/miss_mask/speed_off)
+   decode 9.110 tok/s = 109.8 ms/token, end-to-end 7.755 tok/s, hit 0.9418 (14.0 misses/token)
+   compute 63.3 ms (attn 29.2 moe 25.9 tail 6.3 engram 1.9)  NVMe stall 43.0 ms (nominal floor 31.9 at 8.24 GB/s)  other 3.0
+   stall per missed expert 2.93 ms (+2.09 ms/step);  one expert at 8.24 GB/s: 2.28 ms;  prefill total 44.7 s
+
+== where the time above the floors is (largest first)
+     31.87 ms  NVMe floor itself (fewer misses: cache size / hit)
+     11.09 ms  NVMe stall above its bandwidth floor
+
+recorded as 'miss-mask-off-dual' in /home/chenkailun/projects/cachedMoE/bench/results/perf_ledger.jsonl

@@ -1,0 +1,41 @@
+{
+  "primary_ac_cpu": {
+    "cycles": 92,
+    "tokens": 234,
+    "token_sha256": "6ab53ba709d75befd7587c6c24078988a2754e3e3edab3baae5ab3a194488a2b",
+    "cpu_ms_per_cycle": 12.232663369565216,
+    "sample_ms": 11.9669895,
+    "topk_fallbacks": 93,
+    "accepted": 141,
+    "union_experts": 41606,
+    "hit_rate": 0.913674594,
+    "raw_tok_s": 6.33713919,
+    "valid_speed": false,
+    "speed_limitation": "28 process-group thermal pauses in each cell",
+    "trace_batches": 92,
+    "added_gpu_ms_per_batch": {
+      "mgt1.head.rank": 0,
+      "mgt1.head.topk": 0
+    }
+  },
+  "primary_ac_gpu": {
+    "cycles": 92,
+    "tokens": 234,
+    "token_sha256": "6ab53ba709d75befd7587c6c24078988a2754e3e3edab3baae5ab3a194488a2b",
+    "cpu_ms_per_cycle": 0.13988071739130434,
+    "sample_ms": 0.0768522151,
+    "topk_fallbacks": 1,
+    "accepted": 141,
+    "union_experts": 41606,
+    "hit_rate": 0.913674594,
+    "raw_tok_s": 6.36427766,
+    "valid_speed": false,
+    "speed_limitation": "28 process-group thermal pauses in each cell",
+    "trace_batches": 92,
+    "added_gpu_ms_per_batch": {
+      "mgt1.head.rank": 0.09899715217391301,
+      "mgt1.head.topk": 3.9849780326086988
+    }
+  },
+  "emitted_ids_identical": true
+}

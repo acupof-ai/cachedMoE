@@ -1,0 +1,4 @@
+{
+  "valid": false,
+  "reason": "Stopped before accepting throughput: snapshot descriptor rows require aligned storage offsets. Fixed with padded immutable rows. No performance conclusion."
+}

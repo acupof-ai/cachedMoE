@@ -1,0 +1,71 @@
+{
+  "cwd": "/home/chenkailun/projects/deepmoe-spec",
+  "jobs": [
+    {
+      "name": "golden_onecb_final",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+        "gpu_dspark.full_runtime_chain"
+      ],
+      "env": {
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_DSPARK_TEST_ONECB": "1",
+        "DEEPMOE_DSPARK_PROFILE": "1",
+        "DEEPMOE_DSPARK_MEGA_DIAG": "1"
+      },
+      "timeout_s": 120,
+      "stop_on_pause": true
+    },
+    {
+      "name": "wrap",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+        "gpu_dspark.committed_prefix_survives_window_wrap"
+      ],
+      "env": {
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0"
+      },
+      "timeout_s": 180,
+      "stop_on_pause": true
+    },
+    {
+      "name": "k0",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+        "gpu_dspark.adaptive_zero_keeps_one_target_forward"
+      ],
+      "env": {
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0"
+      },
+      "timeout_s": 120,
+      "stop_on_pause": true
+    },
+    {
+      "name": "batch63",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+        "spec_forward.batch_matches_m1"
+      ],
+      "env": {
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0",
+        "DEEPMOE_TEST_BATCH_MASK": "1",
+        "DEEPMOE_SPEC_BLOCK": "3",
+        "DEEPMOE_SPEC_STEPS": "64"
+      },
+      "timeout_s": 300,
+      "stop_on_pause": true
+    }
+  ]
+}

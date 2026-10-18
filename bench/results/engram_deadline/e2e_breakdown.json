@@ -1,0 +1,179 @@
+{
+  "conditions": {
+    "sources": 1,
+    "profile": "power-saver",
+    "prompt_tokens": 29,
+    "output_limit": 64,
+    "cache_slots": 5500,
+    "temperature": 1,
+    "top_p": 0.95,
+    "seed": 41001
+  },
+  "source_binary_prefix": "1423d089d6464fb8",
+  "units": "milliseconds unless a field ends in _s or _tok_s",
+  "arms": {
+    "mask": {
+      "source": "bench/results/engram_deadline/final_power/fix_mask/turns.json",
+      "load_s": 19.355928,
+      "prefill_s": 11.1560103,
+      "ttft_s": 11.1560294,
+      "decode_s": 5.30297961,
+      "request_total_s": 16.459007399999997,
+      "request_client_wall_s": 16.55937910079956,
+      "request_e2e_tok_s": 3.8884483398433862,
+      "decode_tok_s": 11.8801136,
+      "decode_ms_per_output": 84.17427952380953,
+      "generated": 64,
+      "decode_outputs": 63,
+      "ordinary_per_output": {
+        "attn": 37.7580226,
+        "moe_gpu": 25.8515456,
+        "moe_host": 0.0679863651,
+        "nvme_stall": 0.761779048,
+        "engram": 4.79102952,
+        "tail": 7.90351773,
+        "other": 6.93246971,
+        "record": 0.708712857,
+        "submit": 1.68458398,
+        "bind": 1.44415532,
+        "fence_wait": 75.7777514,
+        "submits": 81,
+        "sample_host": 0.185337562
+      },
+      "ordinary_covered_ms": 84.0663505731,
+      "ordinary_uncovered_ms": 0.10792895070953534,
+      "computed_routed_experts_per_layer": 5.021428572
+    },
+    "spec_k2": {
+      "source": "bench/results/engram_deadline/final_power/fix_spec/turns.json",
+      "load_s": 18.5602527,
+      "prefill_s": 11.4045763,
+      "ttft_s": 11.404596999999999,
+      "decode_s": 5.81714031,
+      "request_total_s": 17.2217348,
+      "request_client_wall_s": 17.318347215652466,
+      "request_e2e_tok_s": 3.7162342088788876,
+      "decode_tok_s": 10.8300637,
+      "decode_ms_per_output": 92.33556047619047,
+      "generated": 64,
+      "decode_outputs": 63,
+      "cycle_count": 28,
+      "output_tokens_per_cycle": 2.25,
+      "target_rows_per_cycle": 2.9642857142857144,
+      "verified_drafts": 55,
+      "accepted_drafts": 35,
+      "cost_per_cycle": {
+        "draft_ms": 38.84742142857142,
+        "verify_ms": 163.57397714285713,
+        "commit_ms": 3.652799642857143,
+        "cpu_ms": 0.20713582142857143,
+        "preparation_and_uncovered_ms": 1.4736770357142828
+      },
+      "cost_per_output": {
+        "draft_ms": 17.265520634920634,
+        "verify_ms": 72.6995453968254,
+        "commit_ms": 1.623466507936508,
+        "cpu_ms": 0.09206036507936508,
+        "preparation_and_uncovered_ms": 0.6549675714285701
+      },
+      "decode_wall_share_percent": {
+        "draft_ms": 18.69866879659294,
+        "verify_ms": 78.7340706244715,
+        "commit_ms": 1.7582245665310419,
+        "cpu_ms": 0.09970196163275971,
+        "preparation_and_uncovered_ms": 0.70933405077176
+      },
+      "verify_gpu_regions_per_cycle": {
+        "attention": 57.87476992857124,
+        "moe": 66.13274724999995,
+        "engram": 5.2661773571428565,
+        "ced": 1.920583035714287,
+        "tail": 11.401921000000002
+      },
+      "verify_gap_per_cycle": {
+        "same_submit": 1.6561088214286013,
+        "cross_submit": 18.428244785714263
+      },
+      "verify_trace_span_per_cycle": 162.68055217857145,
+      "verify_wall_outside_trace_per_cycle": 0.8934249642856855,
+      "verify_trace_source": "bench/results/engram_deadline/final_power/fix_spec/trace.bin",
+      "computed_routed_union_experts_per_layer": 9.948214285714286,
+      "requested_routed_union_experts_per_layer": 12.321428571428571,
+      "p0_fill_requested_mb_per_output": 502.16595911111114,
+      "shared_expert_per_layer": 1
+    },
+    "spec_k3": {
+      "source": "bench/results/engram_deadline/final_power/spec_k3/turns.json",
+      "load_s": 18.5042755,
+      "prefill_s": 11.4245532,
+      "ttft_s": 11.424572399999999,
+      "decode_s": 6.32054056,
+      "request_total_s": 17.7451113,
+      "request_client_wall_s": 17.830750465393066,
+      "request_e2e_tok_s": 3.6066271390475864,
+      "decode_tok_s": 9.9675019,
+      "decode_ms_per_output": 100.32604063492064,
+      "generated": 64,
+      "decode_outputs": 63,
+      "cycle_count": 23,
+      "output_tokens_per_cycle": 2.739130434782609,
+      "target_rows_per_cycle": 3.9565217391304346,
+      "verified_drafts": 68,
+      "accepted_drafts": 40,
+      "cost_per_cycle": {
+        "draft_ms": 37.86564630434783,
+        "verify_ms": 231.61074652173912,
+        "commit_ms": 3.5052756521739132,
+        "cpu_ms": 0.17651856521739132,
+        "preparation_and_uncovered_ms": 1.647924260869608
+      },
+      "cost_per_output": {
+        "draft_ms": 13.82396611111111,
+        "verify_ms": 84.55630428571428,
+        "commit_ms": 1.2797038095238096,
+        "cpu_ms": 0.06444328571428572,
+        "preparation_and_uncovered_ms": 0.6016231428571585
+      },
+      "decode_wall_share_percent": {
+        "draft_ms": 13.77904083887407,
+        "verify_ms": 84.281512307865,
+        "commit_ms": 1.2755450144599656,
+        "cpu_ms": 0.0642338572383119,
+        "preparation_and_uncovered_ms": 0.5996679815626558
+      },
+      "verify_gpu_regions_per_cycle": {
+        "attention": 69.1435264782609,
+        "moe": 80.36325791304337,
+        "engram": 6.869601608695651,
+        "ced": 2.0988750000000005,
+        "tail": 11.127518434782614
+      },
+      "verify_gap_per_cycle": {
+        "same_submit": 1.606003043478227,
+        "cross_submit": 58.99020634782611
+      },
+      "verify_trace_span_per_cycle": 230.19898882608703,
+      "verify_wall_outside_trace_per_cycle": 1.411757695652085,
+      "verify_trace_source": "bench/results/engram_deadline/final_power/spec_k3/trace.bin",
+      "computed_routed_union_experts_per_layer": 11.7,
+      "requested_routed_union_experts_per_layer": 14.839130434782609,
+      "p0_fill_requested_mb_per_output": 555.3083733333333,
+      "shared_expert_per_layer": 1
+    }
+  },
+  "current_acceptance_cycle_budget": {
+    "actual_cycle_ms": 207.75501107142856,
+    "break_even_with_mask_ms": 189.39212892857145,
+    "one_point_six_speedup_ms": 118.37008058035715,
+    "savings_to_break_even_ms": 18.362882142857103,
+    "savings_to_one_point_six_ms": 89.3849304910714
+  },
+  "notes": [
+    "Recorded one-primary-source power-saver measurements; zero thermal pauses. Same prompt/seed but output/routes differ.",
+    "Request total includes prefill and first output, excludes process load. Decode counts the following 63 outputs.",
+    "Verify GPU regions plus trace gaps plus uncovered wall sum to verify wall. CPU fence waits overlap GPU work and cannot be added again.",
+    "Draft is seed + draft wall, not pure GPU kernel time. This run has no per-stage draft trace.",
+    "union_experts counts computed routed experts after miss mask, excludes shared. Decode-hit-rate is a union metric, not per-row served fraction.",
+    "P0 requested fill bytes are asynchronous LRU demand; not GPU DRAM bytes or fully blocking disk time."
+  ]
+}

@@ -1,0 +1,31 @@
+[
+  {
+    "name": "projection_unit",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.batch_projection_fold_scale"
+    ],
+    "rc": 0,
+    "elapsed_s": 2.050640581997868,
+    "start": {
+      "k10temp": 68.25,
+      "nvme": 35.85,
+      "amdgpu": 55.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 86.625,
+      "nvme": 35.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 88.375,
+      "nvme": 35.85,
+      "amdgpu": 57.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:31:14.972177+08:00"
+  }
+]

@@ -1,0 +1,89 @@
+{
+ "time": "2026-10-05T01:22:17+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "faf20a4cc7",
+ "dirty": [
+  "README.md",
+  "docs/STATUS.md",
+  "docs/dspark_e2e_plan.md",
+  "docs/dspark_topk.md",
+  "gpu/shaders/mgt1_gemv.slang",
+  "gpu/shaders/mgt1_head.slang",
+  "gpu/vulkan/decode_kernels.cpp",
+  "gpu/vulkan/decode_kernels.h",
+  "runtime/dspark_runtime.cpp",
+  "runtime/engine.cpp",
+  "runtime/engine.h",
+  "store/expert_store.cpp",
+  "store/expert_store.h",
+  "store/planner.cpp",
+  "store/planner.h",
+  "tests/test_gpu_dspark.cpp",
+  "tests/test_spec_forward.cpp",
+  "tests/test_store.cpp",
+  "tools/fuse_dspark.py"
+ ],
+ "diff_sha": "6ee3dd10bd9986f8",
+ "exe": "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+ "exe_sha": "82910e7d5e61982a",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/deepmoe-spec/build/shaders",
+  "count": 52,
+  "sha": "05135cc6eed08746"
+ },
+ "env": {
+  "DEEPMOE_BATCH_GPU_ROUTE": "1",
+  "DEEPMOE_DSPARK_MEGA": "0",
+  "DEEPMOE_DSPARK_ONECB": "1",
+  "DEEPMOE_DSPARK_PROFILE": "0",
+  "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/deepmoe-spec/traces/longctx",
+  "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+  "DEEPMOE_MGT_ATTN_CM": "0",
+  "DEEPMOE_MGT_FOLD_SCALE": "0",
+  "DEEPMOE_MGT_PAIR_DOT": "0",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase4_controls/dynamic_host_trace/route.bin",
+  "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase4_controls/dynamic_host_trace_cycles.jsonl"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 6.8,
+  "gpu_busy_max": 9,
+  "loadavg": [
+   "1.32",
+   "1.84",
+   "2.23"
+  ],
+  "top_cpu": [
+   "ChatGPT 6.0%",
+   "kworker/u130:18-btrfs-endio-write 5.9%",
+   "kworker/u130:2-kcryptd-253:0-1 4.9%",
+   "ChatGPT 4.8%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791134539.0138068,
+  "nvme0n1": [
+   70431853153,
+   357826513
+  ],
+  "nvme1n1": [
+   285623880,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 38.3,
+  "nvme0n1": {
+   "read_MB": 60214.0,
+   "write_MB": 27.9
+  },
+  "nvme1n1": {
+   "read_MB": 49200.0,
+   "write_MB": 0.0
+  }
+ }
+}

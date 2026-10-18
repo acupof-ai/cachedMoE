@@ -1,0 +1,14 @@
+{
+  "mask": {
+    "decode_ms": 5223.07231,
+    "generated": 64
+  },
+  "serial_k2": {
+    "decode_ms": 5282.91466,
+    "generated": 64
+  },
+  "gpu_route_k2": {
+    "decode_ms": 5082.50537,
+    "generated": 64
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "mode": "mask-spec",
+  "n": 57,
+  "correct": 48,
+  "accuracy": 0.8421052631578947,
+  "invalid": 2,
+  "speculative_cycles": 67,
+  "accepted": 128,
+  "verified": 130,
+  "seconds": 1022.8937178859924,
+  "sources": 1,
+  "cache_slots": 5500,
+  "protocol": "zero-shot generated Answer: X; invalid format counts as incorrect; exact prefix + single-position final prompt token",
+  "sample_source": "https://huggingface.co/datasets/cais/mmlu",
+  "sample_sha256": "74a41822ce7d3def56e1682f958469c04642a5336a5ce912fa375fdb90fb25d7"
+}

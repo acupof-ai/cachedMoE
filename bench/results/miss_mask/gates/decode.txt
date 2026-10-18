@@ -1,0 +1,13 @@
+Test project /home/chenkailun/projects/cachedMoE/build
+    Start 31: suite.decode
+1/2 Test #31: suite.decode .....................   Passed  135.67 sec
+    Start 34: suite.decode_longctx
+2/2 Test #34: suite.decode_longctx .............   Passed  109.21 sec
+
+100% tests passed out of 2
+
+Label Time Summary:
+needs-gpu      = 244.88 sec*proc (2 tests)
+needs-model    = 244.88 sec*proc (2 tests)
+
+Total Test time (real) = 244.88 sec

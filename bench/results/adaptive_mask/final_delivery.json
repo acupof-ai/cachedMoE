@@ -1,0 +1,25 @@
+{
+  "head": "ed24f8d723bd650aaafa031c9ae6c43e8f34ed19",
+  "origin_main": "ed24f8d723bd650aaafa031c9ae6c43e8f34ed19",
+  "worktree_removed": true,
+  "branch_removed": true,
+  "http_config_status": 200,
+  "http_engine_status": 200,
+  "sources": 2,
+  "max_context": 1048576,
+  "speculation": {
+    "enabled": true,
+    "draft_tokens": 5,
+    "accept_top_k": 4,
+    "confidence_min": null,
+    "main_paths": 1,
+    "mtp_pinned_experts": 384
+  },
+  "cache_fixed": false,
+  "cache_frozen": false,
+  "paused": false,
+  "guard_pid": 2687228,
+  "engine_pid": 2687247,
+  "profile": "power-saver",
+  "only_one_engine": true
+}

@@ -1,0 +1,25 @@
+{
+  "cycles": 10,
+  "total_verify_submits": 10,
+  "target_rows": 57,
+  "accepted_per_verified": 0.44680851063829785,
+  "outputs_per_cycle": 3.1,
+  "draft_ms_per_cycle": 23.393095600000002,
+  "verify_ms_per_cycle": 177.762556,
+  "commit_ms_per_cycle": 1.2334405,
+  "cpu_ms_per_cycle": 0.0932626,
+  "cycle_ms": 202.4823547,
+  "thermal_pauses": 0,
+  "maximum_temperatures": {
+    "nvme:hwmon4": 35.85,
+    "nvme:hwmon13": 74.85,
+    "amdgpu:hwmon5": 62.0
+  },
+  "build_sha256": "9e4d44c75ccc6dcdcbb48fcefa808f788c8aa880df7756f30976074c84054542",
+  "engine_env": {
+    "DEEPMOE_DSPARK_ONECB": "1",
+    "DEEPMOE_BATCH_GPU_ROUTE": "1",
+    "DEEPMOE_DSPARK_PROFILE": "0",
+    "DEEPMOE_MASK_DYNAMIC_LRU": "0"
+  }
+}

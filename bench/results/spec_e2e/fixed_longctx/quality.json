@@ -1,0 +1,107 @@
+{
+  "protocol": "independent raw prompt sessions at 4133/17010 tokens; exact prefill; fixed mask + DSpark k2 top4; T0 seed42; 9 outputs per prompt; 4900 total slots to leave workspace for 17K prefill",
+  "sources": 2,
+  "cache_slots": 4900,
+  "cache_fixed": true,
+  "cache_frozen": true,
+  "store": "expert store: 4900 slots (4900 resident, 0 filling, 0 free, 384 pinned)  lookups 3596 hits 1931 (0.537)  fills 4900/4900 ok  runs 9800/9800  evictions 0 (+0 guard-blocked)  path A hits 1931 / B 0 (1.0000 A)  fills A 4900 / B 0; failed fills 0",
+  "rows": [
+    {
+      "session": "ctx4k",
+      "prompt_tokens": 4133,
+      "emitted_ids": [
+        77,
+        416,
+        4419,
+        15,
+        24391,
+        19,
+        15,
+        13749,
+        2701
+      ],
+      "reference_ids": [
+        77,
+        416,
+        4419,
+        15,
+        24391,
+        19,
+        15,
+        13749,
+        2701
+      ],
+      "matching_greedy_prefix": 9,
+      "output": "kestrel-4471-amber\"\n",
+      "needle_recovered": true,
+      "prefill_ms": 28211.0165,
+      "speculation": {
+        "cycles": 3,
+        "verified": 5,
+        "accepted": 5,
+        "tokens": 8,
+        "draft_ms": 90.188561,
+        "verify_ms": 407.258218,
+        "commit_ms": 2.978707,
+        "cpu_ms": 0.291747,
+        "target_rows": 8,
+        "union_experts": 980,
+        "miss_bytes": 0,
+        "gpu_readout_cycles": 3
+      }
+    },
+    {
+      "session": "ctx16k",
+      "prompt_tokens": 17010,
+      "emitted_ids": [
+        77,
+        416,
+        4419,
+        15,
+        24391,
+        19,
+        15,
+        13749,
+        2701
+      ],
+      "reference_ids": [
+        77,
+        416,
+        4419,
+        15,
+        24391,
+        19,
+        15,
+        13749,
+        2701
+      ],
+      "matching_greedy_prefix": 9,
+      "output": "kestrel-4471-amber\"\n",
+      "needle_recovered": true,
+      "prefill_ms": 52232.9608,
+      "speculation": {
+        "cycles": 3,
+        "verified": 5,
+        "accepted": 5,
+        "tokens": 8,
+        "draft_ms": 92.980852,
+        "verify_ms": 592.881053,
+        "commit_ms": 5.098327,
+        "cpu_ms": 1.931798,
+        "target_rows": 8,
+        "union_experts": 951,
+        "miss_bytes": 0,
+        "gpu_readout_cycles": 3
+      }
+    }
+  ],
+  "all_cycles_fixed_frozen": true,
+  "load_failures": {
+    "p0_reserve": 0,
+    "p0_submit": 0,
+    "p0_io": 0,
+    "fill": 0
+  },
+  "both_needles_recovered": true,
+  "limitations": "two retrieval prompts and nine-token free generations; does not establish lossless long-context quality or teacher-forced bitwise identity"
+}

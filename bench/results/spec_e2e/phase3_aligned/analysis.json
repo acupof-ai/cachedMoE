@@ -1,0 +1,699 @@
+{
+  "cycles": 6,
+  "emitted": 15,
+  "drafted": 10,
+  "accepted": 9,
+  "accept_top_k": 4,
+  "mean_cycle": {
+    "draft_ms": 54.3620185,
+    "verify_ms": 145.99899716666667,
+    "cpu_ms": 0.16773649999999998,
+    "commit_ms": 0.8716371666666666
+  },
+  "confidence": {
+    "bins": [
+      {
+        "low": "-inf",
+        "high": "0",
+        "rows": 4,
+        "topk": 3,
+        "reachable": 4,
+        "reachable_topk": 3,
+        "confidence_sum": -3.338160409,
+        "acceptance": 0.75,
+        "conditional_acceptance": 0.75
+      },
+      {
+        "low": "0",
+        "high": "1",
+        "rows": 2,
+        "topk": 2,
+        "reachable": 2,
+        "reachable_topk": 2,
+        "confidence_sum": 0.96702606,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "low": "1",
+        "high": "2",
+        "rows": 2,
+        "topk": 2,
+        "reachable": 2,
+        "reachable_topk": 2,
+        "confidence_sum": 2.2348979,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "low": "2",
+        "high": "3",
+        "rows": 1,
+        "topk": 1,
+        "reachable": 1,
+        "reachable_topk": 1,
+        "confidence_sum": 2.992443,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "low": "3",
+        "high": "4",
+        "acceptance": null,
+        "conditional_acceptance": null
+      },
+      {
+        "low": "4",
+        "high": "6",
+        "acceptance": null,
+        "conditional_acceptance": null
+      },
+      {
+        "low": "6",
+        "high": "inf",
+        "rows": 1,
+        "topk": 1,
+        "reachable": 1,
+        "reachable_topk": 1,
+        "confidence_sum": 8.262186,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      }
+    ],
+    "positions": [
+      {
+        "position": 1,
+        "rows": 5,
+        "topk": 5,
+        "reachable": 5,
+        "reachable_topk": 5,
+        "confidence_sum": 10.03762031,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "position": 2,
+        "rows": 5,
+        "topk": 4,
+        "reachable": 5,
+        "reachable_topk": 4,
+        "confidence_sum": 1.080772241,
+        "acceptance": 0.8,
+        "conditional_acceptance": 0.8
+      },
+      {
+        "position": 3,
+        "acceptance": null,
+        "conditional_acceptance": null
+      },
+      {
+        "position": 4,
+        "acceptance": null,
+        "conditional_acceptance": null
+      },
+      {
+        "position": 5,
+        "acceptance": null,
+        "conditional_acceptance": null
+      }
+    ]
+  },
+  "lru": [
+    {
+      "mode": "pinned",
+      "capacity": 5116,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 2760,
+        "misses": 520,
+        "fill_bytes": 9776332800,
+        "hit_rate": 0.8115942028985508
+      },
+      "draft": {
+        "requests": 79,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "pinned",
+      "capacity": 5116,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 2760,
+        "misses": 520,
+        "fill_bytes": 9776332800,
+        "hit_rate": 0.8115942028985508
+      },
+      "draft": {
+        "requests": 79,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "lru",
+      "capacity": 5500,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 2760,
+        "misses": 520,
+        "fill_bytes": 9776332800,
+        "hit_rate": 0.8115942028985508
+      },
+      "draft": {
+        "requests": 79,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "lru",
+      "capacity": 5500,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 2760,
+        "misses": 520,
+        "fill_bytes": 9776332800,
+        "hit_rate": 0.8115942028985508
+      },
+      "draft": {
+        "requests": 79,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "draft-mask",
+      "capacity": 5500,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 2760,
+        "misses": 520,
+        "fill_bytes": 9776332800,
+        "hit_rate": 0.8115942028985508
+      },
+      "draft": {
+        "requests": 79,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "draft-mask",
+      "capacity": 5500,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 2760,
+        "misses": 520,
+        "fill_bytes": 9776332800,
+        "hit_rate": 0.8115942028985508
+      },
+      "draft": {
+        "requests": 79,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    }
+  ],
+  "limitations": [
+    "Small contiguous sampled trajectory; confidence is not calibrated on held-out data.",
+    "Ranks after the first rejection describe the original draft history, not an alternative path.",
+    "Synchronous LRU omits P0 completion timing, background filling, guards, and same-stamp slot ties.",
+    "Initial snapshot includes ready evictable main slots; in-flight fills and guarded slots are omitted.",
+    "Initial unpinned MTP experts are assumed newest; forward/reverse union orders bracket only order sensitivity.",
+    "Changing masks changes hidden states and later routes; this fixed-route simulation cannot predict MMLU or speed.",
+    "Draft confidence is available after draft execution; choosing k=0 then does not save the draft cost."
+  ],
+  "draft_timing": {
+    "profiled_cycles": 5,
+    "stages": [
+      {
+        "stage": "dspark.confidence",
+        "gpu_ms": 0.028502154446411132,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.028502154446411132
+      },
+      {
+        "stage": "dspark.markov.argmax",
+        "gpu_ms": 0.4266185805862427,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.4266185805862427
+      },
+      {
+        "stage": "dspark.markov.bias",
+        "gpu_ms": 0.6816711836906433,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.6816711836906433
+      },
+      {
+        "stage": "mgt1.head",
+        "gpu_ms": 10.209285769390869,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -10.209285769390869
+      },
+      {
+        "stage": "mgt1.mhc.close",
+        "gpu_ms": 0.008303777279663086,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.008303777279663086
+      },
+      {
+        "stage": "mgt1.mhc.final",
+        "gpu_ms": 0.005947299943542481,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.005947299943542481
+      },
+      {
+        "stage": "mtp.0.attn.dspark.attn.combine",
+        "gpu_ms": 0.04217613517913818,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.04217613517913818
+      },
+      {
+        "stage": "mtp.0.attn.dspark.attn.score",
+        "gpu_ms": 0.021697224996185302,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.021697224996185302
+      },
+      {
+        "stage": "mtp.0.attn.dspark.rmsnorm",
+        "gpu_ms": 0.00919346770248413,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.00919346770248413
+      },
+      {
+        "stage": "mtp.0.attn.dspark.ropequant",
+        "gpu_ms": 0.014018635581207275,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.014018635581207275
+      },
+      {
+        "stage": "mtp.0.attn.dspark.wo_a",
+        "gpu_ms": 0.27473800561294554,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.27473800561294554
+      },
+      {
+        "stage": "mtp.0.attn.mgt1.mhc.final",
+        "gpu_ms": 0.0074942391471862786,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.0074942391471862786
+      },
+      {
+        "stage": "mtp.0.attn.mgt1.mhc.mix",
+        "gpu_ms": 0.016495341352844237,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.016495341352844237
+      },
+      {
+        "stage": "mtp.0.attn.mgt1.mhc.post",
+        "gpu_ms": 0.007357980253601073,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.007357980253601073
+      },
+      {
+        "stage": "mtp.0.attn.wkv.weight",
+        "gpu_ms": 0.02668269745559692,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.02668269745559692
+      },
+      {
+        "stage": "mtp.0.attn.wo_b.weight",
+        "gpu_ms": 0.3869031207206726,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.3869031207206726
+      },
+      {
+        "stage": "mtp.0.attn.wq_a.weight",
+        "gpu_ms": 0.048612364093780516,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.048612364093780516
+      },
+      {
+        "stage": "mtp.0.attn.wq_b.weight",
+        "gpu_ms": 0.3757379066757202,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.3757379066757202
+      },
+      {
+        "stage": "mtp.0.ffn.helper.15",
+        "gpu_ms": 0.008616371212005616,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.008616371212005616
+      },
+      {
+        "stage": "mtp.0.ffn.helper.16",
+        "gpu_ms": 0.007053401550292967,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.007053401550292967
+      },
+      {
+        "stage": "mtp.0.ffn.helper.17",
+        "gpu_ms": 0.9854804250114441,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.9854804250114441
+      },
+      {
+        "stage": "mtp.0.ffn.helper.18",
+        "gpu_ms": 0.005233944559478759,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.005233944559478759
+      },
+      {
+        "stage": "mtp.0.ffn.helper.19",
+        "gpu_ms": 0.7172908615196227,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.7172908615196227
+      },
+      {
+        "stage": "mtp.0.ffn.helper.21",
+        "gpu_ms": 0.0025408276039123536,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.0025408276039123536
+      },
+      {
+        "stage": "mtp.0.ffn.mgt1.gate.score",
+        "gpu_ms": 0.017697625708007814,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.017697625708007814
+      },
+      {
+        "stage": "mtp.0.ffn.mgt1.gate.topk",
+        "gpu_ms": 0.013072838555145263,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.013072838555145263
+      },
+      {
+        "stage": "mtp.0.ffn.mgt1.mhc.final",
+        "gpu_ms": 0.007197675672912597,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.007197675672912597
+      },
+      {
+        "stage": "mtp.0.ffn.mgt1.mhc.mix",
+        "gpu_ms": 0.01533313314285278,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.01533313314285278
+      },
+      {
+        "stage": "mtp.0.ffn.mgt1.mhc.post",
+        "gpu_ms": 0.0055224928047180166,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.0055224928047180166
+      },
+      {
+        "stage": "mtp.1.attn.dspark.attn.combine",
+        "gpu_ms": 0.05346157765960693,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.05346157765960693
+      },
+      {
+        "stage": "mtp.1.attn.dspark.attn.score",
+        "gpu_ms": 0.02731590054931641,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.02731590054931641
+      },
+      {
+        "stage": "mtp.1.attn.dspark.rmsnorm",
+        "gpu_ms": 0.009770564192962647,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.009770564192962647
+      },
+      {
+        "stage": "mtp.1.attn.dspark.ropequant",
+        "gpu_ms": 0.01740106223373413,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.01740106223373413
+      },
+      {
+        "stage": "mtp.1.attn.dspark.wo_a",
+        "gpu_ms": 0.26439034492950436,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.26439034492950436
+      },
+      {
+        "stage": "mtp.1.attn.mgt1.mhc.final",
+        "gpu_ms": 0.0087125539604187,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.0087125539604187
+      },
+      {
+        "stage": "mtp.1.attn.mgt1.mhc.mix",
+        "gpu_ms": 0.016150686504364013,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.016150686504364013
+      },
+      {
+        "stage": "mtp.1.attn.mgt1.mhc.post",
+        "gpu_ms": 0.0059793608596801755,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.0059793608596801755
+      },
+      {
+        "stage": "mtp.1.attn.wkv.weight",
+        "gpu_ms": 0.030842601324462888,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.030842601324462888
+      },
+      {
+        "stage": "mtp.1.attn.wo_b.weight",
+        "gpu_ms": 0.4273720121154785,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.4273720121154785
+      },
+      {
+        "stage": "mtp.1.attn.wq_a.weight",
+        "gpu_ms": 0.05419897873077393,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.05419897873077393
+      },
+      {
+        "stage": "mtp.1.attn.wq_b.weight",
+        "gpu_ms": 0.4513535773864746,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.4513535773864746
+      },
+      {
+        "stage": "mtp.1.ffn.helper.15",
+        "gpu_ms": 0.009401863657379151,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.009401863657379151
+      },
+      {
+        "stage": "mtp.1.ffn.helper.16",
+        "gpu_ms": 0.009594229154205321,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.009594229154205321
+      },
+      {
+        "stage": "mtp.1.ffn.helper.17",
+        "gpu_ms": 1.329173446007538,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -1.329173446007538
+      },
+      {
+        "stage": "mtp.1.ffn.helper.18",
+        "gpu_ms": 0.007766756934356689,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.007766756934356689
+      },
+      {
+        "stage": "mtp.1.ffn.helper.19",
+        "gpu_ms": 0.729417903048706,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.729417903048706
+      },
+      {
+        "stage": "mtp.1.ffn.helper.21",
+        "gpu_ms": 0.0033744114234924316,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.0033744114234924316
+      },
+      {
+        "stage": "mtp.1.ffn.mgt1.gate.score",
+        "gpu_ms": 0.019380823805236817,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.019380823805236817
+      },
+      {
+        "stage": "mtp.1.ffn.mgt1.gate.topk",
+        "gpu_ms": 0.017745717082214355,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.017745717082214355
+      },
+      {
+        "stage": "mtp.1.ffn.mgt1.mhc.final",
+        "gpu_ms": 0.010059112438201904,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.010059112438201904
+      },
+      {
+        "stage": "mtp.1.ffn.mgt1.mhc.mix",
+        "gpu_ms": 0.01873960548248291,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.01873960548248291
+      },
+      {
+        "stage": "mtp.1.ffn.mgt1.mhc.post",
+        "gpu_ms": 0.0065644725791931145,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.0065644725791931145
+      },
+      {
+        "stage": "mtp.2.attn.dspark.attn.combine",
+        "gpu_ms": 0.06934776160583496,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.06934776160583496
+      },
+      {
+        "stage": "mtp.2.attn.dspark.attn.score",
+        "gpu_ms": 0.03493036813201904,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.03493036813201904
+      },
+      {
+        "stage": "mtp.2.attn.dspark.rmsnorm",
+        "gpu_ms": 0.012976655806732176,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.012976655806732176
+      },
+      {
+        "stage": "mtp.2.attn.dspark.ropequant",
+        "gpu_ms": 0.02200981892852783,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.02200981892852783
+      },
+      {
+        "stage": "mtp.2.attn.dspark.wo_a",
+        "gpu_ms": 0.2933974588050842,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.2933974588050842
+      },
+      {
+        "stage": "mtp.2.attn.mgt1.mhc.final",
+        "gpu_ms": 0.010780483051300048,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.010780483051300048
+      },
+      {
+        "stage": "mtp.2.attn.mgt1.mhc.mix",
+        "gpu_ms": 0.019965935524749755,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.019965935524749755
+      },
+      {
+        "stage": "mtp.2.attn.mgt1.mhc.post",
+        "gpu_ms": 0.007261797505187987,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.007261797505187987
+      },
+      {
+        "stage": "mtp.2.attn.wkv.weight",
+        "gpu_ms": 0.03842500799102783,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.03842500799102783
+      },
+      {
+        "stage": "mtp.2.attn.wo_b.weight",
+        "gpu_ms": 0.49312895111389154,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.49312895111389154
+      },
+      {
+        "stage": "mtp.2.attn.wq_a.weight",
+        "gpu_ms": 0.06429015208511353,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.06429015208511353
+      },
+      {
+        "stage": "mtp.2.attn.wq_b.weight",
+        "gpu_ms": 0.5841258463417053,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.5841258463417053
+      },
+      {
+        "stage": "mtp.2.ffn.helper.15",
+        "gpu_ms": 0.011317503396606445,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.011317503396606445
+      },
+      {
+        "stage": "mtp.2.ffn.helper.16",
+        "gpu_ms": 0.012135056758117675,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.012135056758117675
+      },
+      {
+        "stage": "mtp.2.ffn.helper.17",
+        "gpu_ms": 1.4858711736305235,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -1.4858711736305235
+      },
+      {
+        "stage": "mtp.2.ffn.helper.18",
+        "gpu_ms": 0.008664462586212158,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.008664462586212158
+      },
+      {
+        "stage": "mtp.2.ffn.helper.19",
+        "gpu_ms": 0.8497425213134765,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.8497425213134765
+      },
+      {
+        "stage": "mtp.2.ffn.helper.21",
+        "gpu_ms": 0.0042721170753479,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.0042721170753479
+      },
+      {
+        "stage": "mtp.2.ffn.mgt1.gate.score",
+        "gpu_ms": 0.02282737229003906,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.02282737229003906
+      },
+      {
+        "stage": "mtp.2.ffn.mgt1.gate.topk",
+        "gpu_ms": 0.022330428089904784,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.022330428089904784
+      },
+      {
+        "stage": "mtp.2.ffn.mgt1.mhc.final",
+        "gpu_ms": 0.01172628007736206,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.01172628007736206
+      },
+      {
+        "stage": "mtp.2.ffn.mgt1.mhc.mix",
+        "gpu_ms": 0.019917844150543214,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.019917844150543214
+      },
+      {
+        "stage": "mtp.2.ffn.mgt1.mhc.post",
+        "gpu_ms": 0.00751828483428955,
+        "host_ms": 0.0,
+        "host_minus_gpu_ms": -0.00751828483428955
+      }
+    ],
+    "draft_wall_ms": 23.213417200000002,
+    "gpu_sum_ms": 22.011606324602507,
+    "host_uncovered_ms": 23.213417200000002
+  },
+  "verify_timing": {
+    "cycles": 6,
+    "mean_busy_ms": {
+      "attention": 55.00009016666667,
+      "ced": 1.8851551666666666,
+      "engram": 4.763791333333333,
+      "moe": 60.914543333333334,
+      "tail": 10.920095166666668
+    },
+    "mean_cross_submit_gap_ms": 0.0,
+    "mean_same_submit_gap_ms": 2.1734081666666696,
+    "mean_span_ms": 135.65708333333333
+  }
+}

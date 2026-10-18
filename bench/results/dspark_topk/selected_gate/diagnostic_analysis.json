@@ -1,0 +1,255 @@
+{
+  "cycles": 78,
+  "emitted": 245,
+  "drafted": 390,
+  "accepted": 168,
+  "accept_top_k": 4,
+  "mean_cycle": {
+    "draft_ms": 39.72629998717949,
+    "verify_ms": 378.20540450000004,
+    "cpu_ms": 0.2518907948717949,
+    "commit_ms": 3.9572308589743592
+  },
+  "confidence": {
+    "bins": [
+      {
+        "low": "-inf",
+        "high": "0",
+        "rows": 283,
+        "topk": 123,
+        "reachable": 142,
+        "reachable_topk": 79,
+        "confidence_sum": -287.88217062120003,
+        "acceptance": 0.43462897526501765,
+        "conditional_acceptance": 0.5563380281690141
+      },
+      {
+        "low": "0",
+        "high": "1",
+        "rows": 67,
+        "topk": 60,
+        "reachable": 57,
+        "reachable_topk": 53,
+        "confidence_sum": 24.5069515786,
+        "acceptance": 0.8955223880597015,
+        "conditional_acceptance": 0.9298245614035088
+      },
+      {
+        "low": "1",
+        "high": "2",
+        "rows": 21,
+        "topk": 20,
+        "reachable": 19,
+        "reachable_topk": 18,
+        "confidence_sum": 30.212341900000002,
+        "acceptance": 0.9523809523809523,
+        "conditional_acceptance": 0.9473684210526315
+      },
+      {
+        "low": "2",
+        "high": "3",
+        "rows": 9,
+        "topk": 9,
+        "reachable": 9,
+        "reachable_topk": 9,
+        "confidence_sum": 20.7974596,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "low": "3",
+        "high": "4",
+        "rows": 1,
+        "topk": 0,
+        "reachable": 1,
+        "reachable_topk": 0,
+        "confidence_sum": 3.4074218,
+        "acceptance": 0.0,
+        "conditional_acceptance": 0.0
+      },
+      {
+        "low": "4",
+        "high": "6",
+        "rows": 5,
+        "topk": 5,
+        "reachable": 5,
+        "reachable_topk": 5,
+        "confidence_sum": 22.551490799999996,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      },
+      {
+        "low": "6",
+        "high": "inf",
+        "rows": 4,
+        "topk": 4,
+        "reachable": 4,
+        "reachable_topk": 4,
+        "confidence_sum": 32.2555194,
+        "acceptance": 1.0,
+        "conditional_acceptance": 1.0
+      }
+    ],
+    "positions": [
+      {
+        "position": 1,
+        "rows": 78,
+        "topk": 64,
+        "reachable": 78,
+        "reachable_topk": 64,
+        "confidence_sum": 65.32287449580002,
+        "acceptance": 0.8205128205128205,
+        "conditional_acceptance": 0.8205128205128205
+      },
+      {
+        "position": 2,
+        "rows": 78,
+        "topk": 59,
+        "reachable": 64,
+        "reachable_topk": 52,
+        "confidence_sum": -8.133789299000002,
+        "acceptance": 0.7564102564102564,
+        "conditional_acceptance": 0.8125
+      },
+      {
+        "position": 3,
+        "rows": 78,
+        "topk": 40,
+        "reachable": 52,
+        "reachable_topk": 31,
+        "confidence_sum": -45.25029784639999,
+        "acceptance": 0.5128205128205128,
+        "conditional_acceptance": 0.5961538461538461
+      },
+      {
+        "position": 4,
+        "rows": 78,
+        "topk": 30,
+        "reachable": 31,
+        "reachable_topk": 12,
+        "confidence_sum": -77.50222386500002,
+        "acceptance": 0.38461538461538464,
+        "conditional_acceptance": 0.3870967741935484
+      },
+      {
+        "position": 5,
+        "rows": 78,
+        "topk": 28,
+        "reachable": 12,
+        "reachable_topk": 9,
+        "confidence_sum": -88.58754902800004,
+        "acceptance": 0.358974358974359,
+        "conditional_acceptance": 0.75
+      }
+    ]
+  },
+  "lru": [
+    {
+      "mode": "pinned",
+      "capacity": 5116,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 61198,
+        "misses": 4976,
+        "fill_bytes": 93551984640,
+        "hit_rate": 0.9186901532729828
+      },
+      "draft": {
+        "requests": 1327,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "pinned",
+      "capacity": 5116,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 61198,
+        "misses": 4976,
+        "fill_bytes": 93551984640,
+        "hit_rate": 0.9186901532729828
+      },
+      "draft": {
+        "requests": 1327,
+        "misses": 0,
+        "hit_rate": 1.0
+      }
+    },
+    {
+      "mode": "lru",
+      "capacity": 5500,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 61198,
+        "misses": 4842,
+        "fill_bytes": 91032698880,
+        "hit_rate": 0.9208797673126573
+      },
+      "draft": {
+        "requests": 1327,
+        "misses": 6,
+        "fill_bytes": 112803840,
+        "hit_rate": 0.9954785229841748
+      }
+    },
+    {
+      "mode": "lru",
+      "capacity": 5500,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 61198,
+        "misses": 4842,
+        "fill_bytes": 91032698880,
+        "hit_rate": 0.9208797673126573
+      },
+      "draft": {
+        "requests": 1327,
+        "misses": 6,
+        "fill_bytes": 112803840,
+        "hit_rate": 0.9954785229841748
+      }
+    },
+    {
+      "mode": "draft-mask",
+      "capacity": 5500,
+      "reverse_union_order": false,
+      "main": {
+        "requests": 61198,
+        "misses": 4840,
+        "fill_bytes": 90995097600,
+        "hit_rate": 0.9209124481192196
+      },
+      "draft": {
+        "requests": 1327,
+        "misses": 8,
+        "hit_rate": 0.9939713639788997
+      }
+    },
+    {
+      "mode": "draft-mask",
+      "capacity": 5500,
+      "reverse_union_order": true,
+      "main": {
+        "requests": 61198,
+        "misses": 4840,
+        "fill_bytes": 90995097600,
+        "hit_rate": 0.9209124481192196
+      },
+      "draft": {
+        "requests": 1327,
+        "misses": 8,
+        "hit_rate": 0.9939713639788997
+      }
+    }
+  ],
+  "limitations": [
+    "Small contiguous sampled trajectory; confidence is not calibrated on held-out data.",
+    "Ranks after the first rejection describe the original draft history, not an alternative path.",
+    "Synchronous LRU omits P0 completion timing, background filling, guards, and same-stamp slot ties.",
+    "Initial snapshot includes ready evictable main slots; in-flight fills and guarded slots are omitted.",
+    "Initial unpinned MTP experts are assumed newest; forward/reverse union orders bracket only order sensitivity.",
+    "Changing masks changes hidden states and later routes; this fixed-route simulation cannot predict MMLU or speed.",
+    "Draft confidence is available after draft execution; choosing k=0 then does not save the draft cost."
+  ]
+}

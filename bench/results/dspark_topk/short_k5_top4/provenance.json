@@ -1,0 +1,83 @@
+{
+ "time": "2026-10-04T09:00:45+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "200dc3f085",
+ "dirty": [
+  "bench/results/perf_ledger.jsonl",
+  "cli/deepmoe_main.cpp",
+  "cli/serve.cpp",
+  "cmake/deepmoe_options.cmake",
+  "core/config.h",
+  "docs/STATUS.md",
+  "gpu/shaders/dspark_common.slang",
+  "gpu/shaders/dspark_gemv.slang",
+  "gpu/shaders/mgt1_mhc.slang",
+  "gpu/vulkan/dspark_kernels.h",
+  "runtime/engine.cpp",
+  "runtime/engine.h",
+  "runtime/moe_bridge.cpp",
+  "runtime/session.cpp",
+  "runtime/session.h",
+  "runtime/speculate.cpp",
+  "runtime/speculate.h",
+  "store/expert_store.cpp",
+  "store/expert_store.h",
+  "store/planner.cpp",
+  "tests/test_gpu_dspark.cpp",
+  "tests/test_gpu_moe.cpp",
+  "tests/test_speculate.cpp",
+  "tests/test_store.cpp",
+  "tools/hitrate_bench.py"
+ ],
+ "diff_sha": "9686893fb65bd8a8",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "7fabe92197d9c6d8",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 47,
+  "sha": "886dfba1615b744d"
+ },
+ "env": {
+  "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/dspark_topk/short_k5_top4/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 5.0,
+  "gpu_busy_max": 5,
+  "loadavg": [
+   "0.89",
+   "1.16",
+   "1.02"
+  ],
+  "top_cpu": [
+   "gh 9.2%",
+   "ChatGPT 5.6%",
+   "ChatGPT 3.7%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791075646.9265425,
+  "nvme0n1": [
+   12542117987,
+   301334209
+  ],
+  "nvme1n1": [
+   7627511784,
+   0
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 28.6,
+  "nvme0n1": {
+   "read_MB": 53030.4,
+   "write_MB": 9.5
+  },
+  "nvme1n1": {
+   "read_MB": 44355.8,
+   "write_MB": 0.0
+  }
+ }
+}

@@ -1,0 +1,7 @@
+{
+  "aborted": true,
+  "reason": "generation-format failures: score four choice logits instead",
+  "n": 12,
+  "correct": 8,
+  "invalid": 3
+}

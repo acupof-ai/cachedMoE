@@ -1,0 +1,81 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "plain_trace",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/turn32.json",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--require-sources",
+        "2",
+        "--cache-slots",
+        "5500",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mask-cache",
+        "--serve-arg=dynamic",
+        "--serve-arg=--gpu-prefill-min",
+        "--serve-arg=16",
+        "--out",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/plain_trace",
+        "--serve-arg=--trace",
+        "--serve-arg=/home/chenkailun/projects/cachedMoE/bench/results/mask_async/plain_trace/target.bin"
+      ],
+      "timeout_s": 210,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_DSPARK_MEGA": "0"
+      }
+    },
+    {
+      "name": "k5_trace",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/turn32.json",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--require-sources",
+        "2",
+        "--cache-slots",
+        "5500",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mask-cache",
+        "--serve-arg=dynamic",
+        "--serve-arg=--gpu-prefill-min",
+        "--serve-arg=16",
+        "--out",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/k5_trace",
+        "--serve-arg=--trace",
+        "--serve-arg=/home/chenkailun/projects/cachedMoE/bench/results/mask_async/k5_trace/target.bin",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=5",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4"
+      ],
+      "timeout_s": 210,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_DSPARK_MEGA": "0",
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/k5_trace/cycles.jsonl"
+      }
+    }
+  ]
+}

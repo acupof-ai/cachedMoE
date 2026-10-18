@@ -1,0 +1,51 @@
+{
+  "n": 57,
+  "same_predictions": 57,
+  "same_emitted_tokens": 56,
+  "same_correctness": 57,
+  "differences": [
+    {
+      "subject": "college_computer_science",
+      "old": null,
+      "new": null,
+      "old_tokens": [
+        5718,
+        734,
+        4189,
+        566,
+        1910,
+        3132,
+        513,
+        3132,
+        339,
+        2581,
+        611,
+        979,
+        15,
+        223,
+        22,
+        20586
+      ],
+      "new_tokens": [
+        5718,
+        734,
+        4189,
+        566,
+        1910,
+        3132,
+        513,
+        3132,
+        339,
+        2581,
+        611,
+        223,
+        22,
+        20586,
+        21102,
+        16
+      ]
+    }
+  ],
+  "all_speculated": true,
+  "all_exact_prefix": true
+}

@@ -1,0 +1,25 @@
+{
+  "cycles": 24,
+  "mean": {
+    "setup_snapshot": 0.33236387500000003,
+    "input_ced_engram_issue": 0.4158804583333333,
+    "record_layers_tail": 26.315965583333334,
+    "submit_fence": 147.88537725,
+    "queue_submit": 0.09599583333333334,
+    "fence_wait": 147.784217,
+    "engram_issue_land": 5.264539791666667,
+    "finish_routes": 5.196348291666666,
+    "trace_readout": 0.16720266666666667,
+    "route_index_validation": 0.039738125,
+    "route_hidden_carry": 4.241701375,
+    "route_readback": 0.10595925,
+    "route_classify": 0.14009083333333333,
+    "route_planner": 0.6372879166666667
+  },
+  "load_failures": {
+    "p0_reserve": 0,
+    "p0_submit": 0,
+    "p0_io": 0,
+    "fill": 0
+  }
+}

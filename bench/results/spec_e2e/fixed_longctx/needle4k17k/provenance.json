@@ -1,0 +1,63 @@
+{
+ "time": "2026-10-05T01:54:00+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "dc5d8706ea",
+ "dirty": [
+  "README.md",
+  "docs/STATUS.md",
+  "docs/dspark_e2e_plan.md",
+  "docs/dspark_topk.md"
+ ],
+ "diff_sha": "fc0ace76996f2d6a",
+ "exe": "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+ "exe_sha": "62a42a90a128e4dd",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/deepmoe-spec/build/shaders",
+  "count": 52,
+  "sha": "3d4ab3fe2451926c"
+ },
+ "env": {
+  "DEEPMOE_BATCH_GPU_ROUTE": "1",
+  "DEEPMOE_DSPARK_MEGA": "0",
+  "DEEPMOE_DSPARK_ONECB": "1",
+  "DEEPMOE_DSPARK_PROFILE": "0",
+  "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/deepmoe-spec/traces/longctx",
+  "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+  "DEEPMOE_MGT_ATTN_CM": "0",
+  "DEEPMOE_MGT_FOLD_SCALE": "0",
+  "DEEPMOE_MGT_PAIR_DOT": "0",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/needle4k17k/route.bin",
+  "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/cycles.jsonl"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 1.3,
+  "gpu_busy_max": 2,
+  "loadavg": [
+   "0.34",
+   "1.11",
+   "1.74"
+  ],
+  "top_cpu": [
+   "ChatGPT 6.0%",
+   "kworker/u130:8-events_power_efficient 5.6%",
+   "kworker/u130:14-kcryptd-253:0-1 5.2%",
+   "kworker/u130:9-kcryptd-253:0-1 5.1%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791136441.4013782,
+  "nvme0n1": [
+   76162469905,
+   359344497
+  ],
+  "nvme1n1": [
+   4282518904,
+   0
+  ]
+ },
+ "gamemode_lib": true
+}

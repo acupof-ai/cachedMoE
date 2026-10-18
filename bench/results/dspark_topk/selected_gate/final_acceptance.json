@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "verified_at": "2026-10-04T15:37:56.538750+08:00",
+  "selected_gpu_jobs": 7,
+  "all_selected_passed": true,
+  "thermal_pauses": 0,
+  "ac_changed": false,
+  "peak": {
+    "amdgpu": 72.0,
+    "nvme": 71.85,
+    "k10temp": 73.5
+  },
+  "cpu_gate_count": 30,
+  "off64_nll": 0.622784,
+  "mmlu": {
+    "mode": "mask-spec",
+    "n": 57,
+    "correct": 48,
+    "accuracy": 0.8421052631578947,
+    "invalid": 2,
+    "speculative_cycles": 66,
+    "accepted": 129,
+    "verified": 130,
+    "seconds": 1115.1218774040026,
+    "sources": 1,
+    "cache_slots": 5500,
+    "protocol": "zero-shot generated Answer: X; invalid format counts as incorrect; exact prefix + single-position final prompt token",
+    "sample_source": "https://huggingface.co/datasets/cais/mmlu",
+    "sample_sha256": "74a41822ce7d3def56e1682f958469c04642a5336a5ce912fa375fdb90fb25d7"
+  },
+  "same_token_speed": {
+    "stock_tok_s": 7.74516512,
+    "early_tok_s": 8.00609433,
+    "gain_pct": 3.368930241735102,
+    "tokens": 64,
+    "same_ids": true,
+    "same_miss_bytes": true,
+    "sources": 1,
+    "profile": "power-saver"
+  },
+  "profile_restored": {
+    "original": "performance",
+    "final": "performance"
+  },
+  "active_engines": 0,
+  "source_manifest": "source_manifest.json",
+  "limits": [
+    "MMLU is a 57 subject zero-shot generated sample, not canonical full five-shot MMLU.",
+    "Top-4 acceptance is approximate.",
+    "Batch CM failed the long numerical gate; CM, scale fold, mega, and confidence threshold are experimental and default off.",
+    "Runtime MTP pins are retained; unpin and draft mask are offline analyses only.",
+    "No measured next-draft and target-tail overlap; persistent host flag path remains closed.",
+    "Single primary source; no fresh dual-source headline comparison.",
+    "Same-token +3.369 percent is Engram batching benefit, not speculation versus ordinary decode."
+  ]
+}

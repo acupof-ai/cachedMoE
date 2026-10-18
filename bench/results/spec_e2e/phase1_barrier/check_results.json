@@ -1,0 +1,42 @@
+[
+  {
+    "name": "golden_onecb_api_barrier",
+    "command": [
+      "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+      "--suite",
+      "gpu_dspark",
+      "--case",
+      "full_runtime_chain"
+    ],
+    "env": {
+      "DEEPMOE_DSPARK_TEST_ONECB": "1",
+      "DEEPMOE_DSPARK_MEGA_DIAG": "1",
+      "DEEPMOE_DSPARK_PROFILE": "1",
+      "DEEPMOE_DSPARK_ONECB": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 11.958106460006093,
+    "start": {
+      "k10temp": 55.25,
+      "nvme": 32.85,
+      "amdgpu": 47.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 51.125,
+      "nvme": 41.85,
+      "amdgpu": 48.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 55.25,
+      "nvme": 44.85,
+      "amdgpu": 57.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:26:47.523565+08:00"
+  }
+]

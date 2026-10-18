@@ -1,0 +1,57 @@
+[
+  {
+    "name": "power64_on",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/draft_attribution/turn64.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/draft_attribution/power64_on",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4"
+    ],
+    "env": {
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/draft_attribution/power64_on_cycles.jsonl",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 42.694079048000276,
+    "start": {
+      "k10temp": 53.25,
+      "nvme": 34.85,
+      "amdgpu": 50.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 60.875,
+      "nvme": 55.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 63.125,
+      "nvme": 58.85,
+      "amdgpu": 64.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T23:58:22.073071+08:00"
+  }
+]

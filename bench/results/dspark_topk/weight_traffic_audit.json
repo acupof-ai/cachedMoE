@@ -1,0 +1,57 @@
+{
+  "source": "bench/results/dspark_topk/warm1_k2_top4_indexwc/turns.json",
+  "units": "decimal MB=1e6 bytes; GB=1e9 bytes",
+  "scope": "Offline derivation from recorded counters; no GPU run; logical MoE weight payload, not DRAM hardware counters",
+  "startup_excluded": {
+    "planner_layers": 3,
+    "mtp_requests": 384,
+    "mtp_misses": 384,
+    "mtp_hits": 0
+  },
+  "cycles": 92,
+  "target_rows": 276,
+  "emitted_decode_tokens": 233,
+  "per_layer_batch": {
+    "raw_token_expert_requests": 18.0,
+    "distinct_requested_experts": 12.374184782608696,
+    "distinct_computed_routed_experts": 11.305978260869566,
+    "shared_experts": 1,
+    "mean_active_token_columns_per_routed_expert": 1.488006537518627
+  },
+  "per_cycle": {
+    "distinct_computed_routed_layer_expert_pairs": 452.2391304347826,
+    "routed_weight_bytes": 8502385085.217391,
+    "shared_weight_bytes": 1416960000,
+    "moe_weight_bytes": 9919345085.217392,
+    "disk_expert_load_bytes": 803668680.3478261,
+    "same_rows_without_batch_reuse_moe_weight_bytes": 16902484591.304348
+  },
+  "reuse": {
+    "routed_weight_fraction_saved_vs_same_masked_rows": 0.32795994185107413,
+    "moe_weight_fraction_saved_including_shared": 0.4131427819599671
+  },
+  "per_emitted_token": {
+    "moe_weight_bytes": 3916651278.283262,
+    "disk_expert_load_bytes": 317328405.97424895
+  },
+  "bandwidth_model": {
+    "moe_busy_ms": 61.03636503260869,
+    "logical_moe_payload_per_busy_second_GB_s": 162.51533130975247,
+    "time_ms_at_217GB_s": 45.71126767381286,
+    "time_ms_at_160GB_s": 61.9959067826087
+  },
+  "excluded_from_moe_payload": [
+    "attention weights and KV",
+    "router/norm/mHC",
+    "Engram",
+    "output head",
+    "draft",
+    "activation buffers",
+    "physical cache line effects",
+    "I/O bounce copies"
+  ],
+  "static_inventory": {
+    "main_attention_related_tensor_bytes": 5151556608,
+    "output_head_bytes": 1323827200
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "before": {
+    "cycles": 25,
+    "mean_busy_ms": {
+      "attention": 59.75452635999999,
+      "ced": 1.97964728,
+      "engram": 4.9886254,
+      "moe": 70.86567616,
+      "tail": 11.227621
+    },
+    "mean_gap_ms": 128.53133059999988,
+    "mean_span_ms": 277.3474268,
+    "source": "bench/results/engram_deadline/measure/baseline_spec/trace.bin"
+  },
+  "k2": {
+    "cycles": 28,
+    "mean_busy_ms": {
+      "attention": 57.87476992857141,
+      "ced": 1.9205830357142857,
+      "engram": 5.266177357142857,
+      "moe": 66.13274725,
+      "tail": 11.401921
+    },
+    "mean_gap_ms": 20.08435360714285,
+    "mean_span_ms": 162.68055217857142,
+    "source": "bench/results/engram_deadline/final_power/fix_spec/trace.bin"
+  },
+  "k3": {
+    "cycles": 23,
+    "mean_busy_ms": {
+      "attention": 69.14352647826087,
+      "ced": 2.098875,
+      "engram": 6.8696016086956515,
+      "moe": 80.36325791304348,
+      "tail": 11.12751843478261
+    },
+    "mean_gap_ms": 60.59620939130438,
+    "mean_span_ms": 230.19898882608695,
+    "source": "bench/results/engram_deadline/final_power/spec_k3/trace.bin"
+  }
+}

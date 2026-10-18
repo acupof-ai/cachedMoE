@@ -1,0 +1,9 @@
+
+== chat (bench/results/miss_mask/speed_mask)
+   decode 13.028 tok/s = 76.8 ms/token, end-to-end 10.572 tok/s, hit 0.9405 (14.3 misses/token)
+   compute 69.6 ms (attn 31.9 moe 24.9 tail 6.7 engram 6.1)  NVMe stall 1.2 ms (nominal floor 32.6 at 8.24 GB/s)  other 5.8
+   stall per missed expert 0.04 ms (+0.62 ms/step);  one expert at 8.24 GB/s: 2.28 ms;  prefill total 42.1 s
+
+== where the time above the floors is (largest first)
+     32.61 ms  NVMe floor itself (fewer misses: cache size / hit)
+    -31.40 ms  NVMe stall above its bandwidth floor

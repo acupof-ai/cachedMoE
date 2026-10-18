@@ -1,0 +1,82 @@
+[
+  {
+    "name": "decode",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-j",
+      "1",
+      "-R",
+      "^suite.decode$",
+      "--output-on-failure"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 142.78288294198865,
+    "start": {
+      "k10temp": 57.375,
+      "nvme": 36.85,
+      "amdgpu": 52.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 66.0,
+      "nvme": 63.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 67.375,
+      "nvme": 64.85,
+      "amdgpu": 63.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:58:52.622533+08:00"
+  },
+  {
+    "name": "decode_longctx",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-j",
+      "1",
+      "-R",
+      "^suite.decode_longctx$",
+      "--output-on-failure"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 126.84838457099977,
+    "start": {
+      "k10temp": 63.875,
+      "nvme": 59.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 57.75,
+      "nvme": 42.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 64.25,
+      "nvme": 60.85,
+      "amdgpu": 62.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T20:01:00.591511+08:00"
+  }
+]

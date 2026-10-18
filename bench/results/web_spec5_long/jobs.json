@@ -1,0 +1,49 @@
+{
+  "cwd": "/home/chenkailun/projects/deepmoe-spec5-longtest",
+  "jobs": [
+    {
+      "name": "plain",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/web_longtest.py",
+        "--mode",
+        "plain",
+        "--script",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/web_longtest_prompts.json",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/results/web_spec5_long/plain",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--mirror",
+        "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"
+      ],
+      "env": {
+        "DEEPMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders"
+      },
+      "timeout_s": 600,
+      "stop_on_pause": true
+    },
+    {
+      "name": "spec5",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/web_longtest.py",
+        "--mode",
+        "spec5",
+        "--script",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/web_longtest_prompts.json",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-spec5-longtest/bench/results/web_spec5_long/spec5",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--mirror",
+        "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash"
+      ],
+      "env": {
+        "DEEPMOE_SHADER_DIR": "/home/chenkailun/projects/cachedMoE/build/shaders"
+      },
+      "timeout_s": 600,
+      "stop_on_pause": true
+    }
+  ]
+}

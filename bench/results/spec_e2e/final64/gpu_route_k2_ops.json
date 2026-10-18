@@ -1,0 +1,282 @@
+{
+  "moe_gpu_union": {
+    "ms_per_cycle": 63.536584153846206,
+    "geometry": [
+      642,
+      3
+    ]
+  },
+  "mgt1.wq_b.split": {
+    "ms_per_cycle": 17.97015680769232,
+    "geometry": [
+      8192,
+      1
+    ]
+  },
+  "mgt1.wo_b.split": {
+    "ms_per_cycle": 11.950789730769223,
+    "geometry": [
+      5120,
+      1
+    ]
+  },
+  "mgt1.head": {
+    "ms_per_cycle": 10.194289346153845,
+    "geometry": [
+      16160,
+      1
+    ]
+  },
+  "mgt1.wo_a.split": {
+    "ms_per_cycle": 8.353277192307694,
+    "geometry": [
+      4096,
+      1
+    ]
+  },
+  "engram_row": {
+    "ms_per_cycle": 5.130931846153846,
+    "geometry": [
+      3204,
+      2
+    ]
+  },
+  "mgt1.wq_a.split": {
+    "ms_per_cycle": 3.3284678846153777,
+    "geometry": [
+      1280,
+      1
+    ]
+  },
+  "mgt1.attn.score": {
+    "ms_per_cycle": 2.9982631153846153,
+    "geometry": [
+      256,
+      1
+    ]
+  },
+  "mgt1.attn.pv": {
+    "ms_per_cycle": 2.9592348461538434,
+    "geometry": [
+      64,
+      1
+    ]
+  },
+  "mgt1.gate.score": {
+    "ms_per_cycle": 1.9624334230769223,
+    "geometry": [
+      48,
+      1
+    ]
+  },
+  "mgt1.wkv.split": {
+    "ms_per_cycle": 1.3824872307692293,
+    "geometry": [
+      512,
+      1
+    ]
+  },
+  "mgt1.gate.topk": {
+    "ms_per_cycle": 0.9315426538461522,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.mhc.mix": {
+    "ms_per_cycle": 0.7469111153846162,
+    "geometry": [
+      24,
+      1
+    ]
+  },
+  "mgt1.mhc.mix.ffn": {
+    "ms_per_cycle": 0.731235769230768,
+    "geometry": [
+      24,
+      1
+    ]
+  },
+  "mgt1.wkv.finish": {
+    "ms_per_cycle": 0.7088529230769232,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.head.topk": {
+    "ms_per_cycle": 0.5918845384615384,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.indexer.wq_b.split": {
+    "ms_per_cycle": 0.4895516153846153,
+    "geometry": [
+      1024,
+      1
+    ]
+  },
+  "mgt1.mhc.final": {
+    "ms_per_cycle": 0.4001841538461538,
+    "geometry": [
+      20,
+      1
+    ]
+  },
+  "mgt1.mhc.final.ffn": {
+    "ms_per_cycle": 0.39214273076923095,
+    "geometry": [
+      20,
+      1
+    ]
+  },
+  "mgt1.indexer.weights": {
+    "ms_per_cycle": 0.3652464615384617,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.wq_b.finish": {
+    "ms_per_cycle": 0.29675069230769224,
+    "geometry": [
+      128,
+      1
+    ]
+  },
+  "mgt1.mhc.post": {
+    "ms_per_cycle": 0.2833938461538462,
+    "geometry": [
+      20,
+      1
+    ]
+  },
+  "mgt1.indexer.score": {
+    "ms_per_cycle": 0.24416088461538474,
+    "geometry": [
+      12,
+      1
+    ]
+  },
+  "mgt1.q_norm": {
+    "ms_per_cycle": 0.2376106538461539,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.compressor.wkv": {
+    "ms_per_cycle": 0.22002546153846153,
+    "geometry": [
+      64,
+      1
+    ]
+  },
+  "mgt1.head.argmax": {
+    "ms_per_cycle": 0.21149099999999998,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.head.rank": {
+    "ms_per_cycle": 0.16243938461538457,
+    "geometry": [
+      2,
+      1
+    ]
+  },
+  "mgt1.mhc.post.ffn": {
+    "ms_per_cycle": 0.15989842307692298,
+    "geometry": [
+      20,
+      1
+    ]
+  },
+  "mgt1.compressor.wgate": {
+    "ms_per_cycle": 0.15936607692307686,
+    "geometry": [
+      64,
+      1
+    ]
+  },
+  "mgt1.wo_a.combine": {
+    "ms_per_cycle": 0.15153807692307697,
+    "geometry": [
+      32,
+      1
+    ]
+  },
+  "mgt1.indexer.q_finish": {
+    "ms_per_cycle": 0.13175676923076926,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.wq_a.combine": {
+    "ms_per_cycle": 0.12924423076923078,
+    "geometry": [
+      5,
+      1
+    ]
+  },
+  "mgt1.indexer.key": {
+    "ms_per_cycle": 0.1280091153846154,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.wo_b.combine": {
+    "ms_per_cycle": 0.1178875384615384,
+    "geometry": [
+      20,
+      1
+    ]
+  },
+  "mgt1.compressor.store": {
+    "ms_per_cycle": 0.03152015384615385,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.indexer.topk": {
+    "ms_per_cycle": 0.020637615384615372,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.mhc.close": {
+    "ms_per_cycle": 0.018795769230769224,
+    "geometry": [
+      20,
+      1
+    ]
+  },
+  "mgt1.indexer.wq_b.combine": {
+    "ms_per_cycle": 0.018646307692307695,
+    "geometry": [
+      16,
+      1
+    ]
+  },
+  "mgt1.compressor.pool": {
+    "ms_per_cycle": 0.01396161538461538,
+    "geometry": [
+      1,
+      1
+    ]
+  },
+  "mgt1.compressor.state": {
+    "ms_per_cycle": 0.006176307692307694,
+    "geometry": [
+      1,
+      1
+    ]
+  }
+}

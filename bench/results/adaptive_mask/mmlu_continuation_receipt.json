@@ -1,0 +1,11 @@
+{
+  "peak": {
+    "k10temp_hwmon6": 68.375,
+    "nvme_hwmon4": 58.85,
+    "nvme_hwmon13": 74.85,
+    "amdgpu_hwmon5": 71.0
+  },
+  "thermal_pauses": 0,
+  "elapsed_s": 175.29757741698995,
+  "failure": null
+}

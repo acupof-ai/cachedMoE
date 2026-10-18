@@ -1,0 +1,39 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "power64_on",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/draft_attribution/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "bench/results/draft_attribution/power64_on",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4"
+      ],
+      "env": {
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/draft_attribution/power64_on_cycles.jsonl",
+        "DEEPMOE_MGT_ATTN_CM": "0",
+        "DEEPMOE_MGT_FOLD_SCALE": "0"
+      },
+      "profile": "power-saver",
+      "timeout_s": 150,
+      "stop_on_pause": true
+    }
+  ]
+}

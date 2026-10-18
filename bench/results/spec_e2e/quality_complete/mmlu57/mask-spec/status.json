@@ -1,0 +1,16 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 87,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5500 slots (5481 resident, 19 filling, 0 free, 384 pinned)  lookups 48861 hits 39541 (0.809)  fills 208638/208657 ok  runs 417277/417314  evictions 203157 (+0 guard-blocked)  path A hits 39541 / B 0 (1.0000 A)  fills A 208638 / B 0",
+ "planner": "planner: 4963 layers, 48861 requests (39541 hits, 9320 misses, 0.809), 8675 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 3715 stalls, 261 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 113822 resident / 199598 kept / 827 dropped",
+ "io": "io: 1101712 req (1101675 done, 0 failed, 0 cancelled), 4664869 chunks, 3953251306872 / 3953592328192 bytes, busy 911.331 s, eff 4.34 GB/s, mean lat 276.122 ms, peak QD 512 / 32.0 MiB\n  p0_blocking   418968 req  3757619.2 MiB\n  p2_engram     681436 req  2744.2 MiB\n  p3_backfill     1308 req  10076.0 MiB\n  P2: 681436 req, lat mean 314.06 / max 1540.32 ms (queue wait 311.83 + service 2.23), 14712 deadline chunks\n  P0: 418931 req, 3757279.1 MiB, lat mean 200.29 / p50 180.13 / p95 447.14 / max 1412.16 ms  (queue wait 192.97 + service 7.32)\n  P0: first-of-burst 2391 at 0.94 ms, behind 416540 at 201.43 ms; 223 (0.1%) issued with a non-P0 chunk in flight, mean 5.11; mean QD at issue 22.34\n  dispatcher: 3961045 iters, issue 11.50 s / poll 894.26 s / handle 4.86 s (callbacks 1.32 s, 1101675 at 1.2 us mean)\n  dispatcher: Backend::submit 9.46 s over 4664877 chunks, mean 2.0 us, max 2.28 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.5% of the non-waiting loop; refill gap 0.7 us mean over 3896584 reaps\n",
+ "engram": "508 lands, wait 265.334 ms, stage 3.352 ms",
+ "route": "route     resident-only=mask over 10160 layer-steps\n  experts requested 60960  served 51054 (0.8375)  skipped 9906\n  gate mass lost    0.1283 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n",
+ "gate_probe": ""
+}

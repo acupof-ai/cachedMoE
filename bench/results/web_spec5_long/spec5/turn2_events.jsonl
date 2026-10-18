@@ -1,0 +1,514 @@
+{"event": "start", "prompt_tokens": 68, "reused": 0, "to_prefill": 68, "eta_s": 1.632, "max_context": 4096}
+{"event": "token", "id": 5, "text": "#", "t_ms": 7060.33012, "step_ms": 7058.03164, "p": 0.999604641, "margin": 8.43331909, "nucleus": 1, "hit": 0}
+{"event": "token", "id": 11498, "text": " Engineering", "t_ms": 7304.25225, "step_ms": 243.896822, "p": 0.466331716, "margin": 0.140411377, "nucleus": 3, "hit": 0.645885287}
+{"event": "token", "id": 12983, "text": " Guide", "t_ms": 7654.78445, "step_ms": 58.4143977, "p": 0, "margin": 7.47265625, "nucleus": 0, "hit": 0.580275229}
+{"event": "token", "id": 28, "text": ":", "t_ms": 7654.81446, "step_ms": 58.4143977, "p": 0, "margin": 3.59994125, "nucleus": 0, "hit": 0.580275229}
+{"event": "token", "id": 60929, "text": " Measuring", "t_ms": 7654.81848, "step_ms": 58.4143977, "p": 0, "margin": 4.93549156, "nucleus": 0, "hit": 0.580275229}
+{"event": "token", "id": 54186, "text": " GPU", "t_ms": 7654.8213, "step_ms": 58.4143977, "p": 0, "margin": 3.49370575, "nucleus": 0, "hit": 0.580275229}
+{"event": "token", "id": 119012, "text": " Inference", "t_ms": 7654.8243, "step_ms": 58.4143977, "p": 0, "margin": 14.7180061, "nucleus": 0, "hit": 0.580275229}
+{"event": "token", "id": 64933, "text": " Runtime", "t_ms": 7654.82695, "step_ms": 58.4143977, "p": 0.942518124, "margin": 2.80114746, "nucleus": 2, "hit": 0.580275229}
+{"event": "token", "id": 18982, "text": " Performance", "t_ms": 7990.73275, "step_ms": 55.982603, "p": 0, "margin": 0.75560379, "nucleus": 0, "hit": 0.648984199}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 7990.7615, "step_ms": 55.982603, "p": 0, "margin": 5.87257576, "nucleus": 0, "hit": 0.648984199}
+{"event": "token", "id": 372, "text": "##", "t_ms": 7990.76659, "step_ms": 55.982603, "p": 0, "margin": 1.66322327, "nucleus": 0, "hit": 0.648984199}
+{"event": "token", "id": 223, "text": " ", "t_ms": 7990.77036, "step_ms": 55.982603, "p": 0, "margin": 4.02118492, "nucleus": 0, "hit": 0.648984199}
+{"event": "token", "id": 18, "text": "0", "t_ms": 7990.77365, "step_ms": 55.982603, "p": 0, "margin": 0.571817398, "nucleus": 0, "hit": 0.648984199}
+{"event": "token", "id": 16, "text": ".", "t_ms": 7990.77681, "step_ms": 55.982603, "p": 0.999918026, "margin": 10.1223106, "nucleus": 1, "hit": 0.648984199}
+{"event": "token", "id": 58620, "text": " Scope", "t_ms": 8306.94781, "step_ms": 105.386582, "p": 0, "margin": 1.02792358, "nucleus": 0, "hit": 0.545778835}
+{"event": "token", "id": 305, "text": " and", "t_ms": 8306.96976, "step_ms": 105.386582, "p": 0, "margin": 0.0773048401, "nucleus": 0, "hit": 0.545778835}
+{"event": "token", "id": 7553, "text": " mental", "t_ms": 8306.97442, "step_ms": 105.386582, "p": 0.350210177, "margin": 0.281730652, "nucleus": 10, "hit": 0.545778835}
+{"event": "token", "id": 2645, "text": " model", "t_ms": 8586.97901, "step_ms": 46.6648377, "p": 0, "margin": 10.7538681, "nucleus": 0, "hit": 0.449579832}
+{"event": "token", "id": 271, "text": "\n\n", "t_ms": 8587.01798, "step_ms": 46.6648377, "p": 0, "margin": 7.37727165, "nucleus": 0, "hit": 0.449579832}
+{"event": "token", "id": 2337, "text": "This", "t_ms": 8587.02288, "step_ms": 46.6648377, "p": 0, "margin": 0.0500297546, "nucleus": 0, "hit": 0.449579832}
+{"event": "token", "id": 8003, "text": " guide", "t_ms": 8587.02663, "step_ms": 46.6648377, "p": 0, "margin": 2.08352661, "nucleus": 0, "hit": 0.449579832}
+{"event": "token", "id": 344, "text": " is", "t_ms": 8587.02932, "step_ms": 46.6648377, "p": 0, "margin": 0.434514999, "nucleus": 0, "hit": 0.449579832}
+{"event": "token", "id": 260, "text": " a", "t_ms": 8587.03174, "step_ms": 46.6648377, "p": 0.0303398293, "margin": 1.04769897, "nucleus": 10, "hit": 0.449579832}
+{"event": "token", "id": 10200, "text": " practical", "t_ms": 8842.83948, "step_ms": 85.2643947, "p": 0, "margin": 2.89174843, "nucleus": 0, "hit": 0.506387921}
+{"event": "token", "id": 11868, "text": " engineering", "t_ms": 8842.87519, "step_ms": 85.2643947, "p": 0, "margin": 0.175361633, "nucleus": 0, "hit": 0.506387921}
+{"event": "token", "id": 8003, "text": " guide", "t_ms": 8842.8799, "step_ms": 85.2643947, "p": 0.0361344661, "margin": 0.978624344, "nucleus": 12, "hit": 0.506387921}
+{"event": "token", "id": 362, "text": " for", "t_ms": 9121.12592, "step_ms": 46.3718288, "p": 0, "margin": 3.11860657, "nucleus": 0, "hit": 0.556512379}
+{"event": "token", "id": 17663, "text": " measuring", "t_ms": 9121.16207, "step_ms": 46.3718288, "p": 0, "margin": 0.363399506, "nucleus": 0, "hit": 0.556512379}
+{"event": "token", "id": 260, "text": " a", "t_ms": 9121.16691, "step_ms": 46.3718288, "p": 0, "margin": 2.20543671, "nucleus": 0, "hit": 0.556512379}
+{"event": "token", "id": 54186, "text": " GPU", "t_ms": 9121.17001, "step_ms": 46.3718288, "p": 0, "margin": 1.83924675, "nucleus": 0, "hit": 0.556512379}
+{"event": "token", "id": 34788, "text": " inference", "t_ms": 9121.17235, "step_ms": 46.3718288, "p": 0, "margin": 3.33265686, "nucleus": 0, "hit": 0.556512379}
+{"event": "token", "id": 45750, "text": " runtime", "t_ms": 9121.17461, "step_ms": 46.3718288, "p": 0.979193457, "margin": 4.8740387, "nucleus": 1, "hit": 0.556512379}
+{"event": "token", "id": 2136, "text": " —", "t_ms": 9405.61996, "step_ms": 94.81003, "p": 0, "margin": 0.216236115, "nucleus": 0, "hit": 0.603938731}
+{"event": "token", "id": 270, "text": " the", "t_ms": 9405.6551, "step_ms": 94.81003, "p": 0, "margin": 0.93208313, "nucleus": 0, "hit": 0.603938731}
+{"event": "token", "id": 1522, "text": " end", "t_ms": 9405.6595, "step_ms": 94.81003, "p": 0.0450456102, "margin": 1.9350853, "nucleus": 11, "hit": 0.603938731}
+{"event": "token", "id": 6005, "text": "-to", "t_ms": 9687.84385, "step_ms": 94.056102, "p": 0, "margin": 2.53365135, "nucleus": 0, "hit": 0.5917481}
+{"event": "token", "id": 20962, "text": "-end", "t_ms": 9687.87852, "step_ms": 94.056102, "p": 0, "margin": 12.8168564, "nucleus": 0, "hit": 0.5917481}
+{"event": "token", "id": 52636, "text": " latency", "t_ms": 9687.88296, "step_ms": 94.056102, "p": 0.38966452, "margin": 0.941179276, "nucleus": 11, "hit": 0.5917481}
+{"event": "token", "id": 305, "text": " and", "t_ms": 9971.95781, "step_ms": 284.063935, "p": 0.737581062, "margin": 1.66568565, "nucleus": 4, "hit": 0.634032634}
+{"event": "token", "id": 62027, "text": " throughput", "t_ms": 10265.4109, "step_ms": 73.352989, "p": 0, "margin": 6.29055977, "nucleus": 0, "hit": 0.611052072}
+{"event": "token", "id": 294, "text": " of", "t_ms": 10265.4463, "step_ms": 73.352989, "p": 0, "margin": 2.5316925, "nucleus": 0, "hit": 0.611052072}
+{"event": "token", "id": 260, "text": " a", "t_ms": 10265.4508, "step_ms": 73.352989, "p": 0, "margin": 2.53913689, "nucleus": 0, "hit": 0.611052072}
+{"event": "token", "id": 17024, "text": " trained", "t_ms": 10265.4536, "step_ms": 73.352989, "p": 0.0424634032, "margin": 2.99558067, "nucleus": 7, "hit": 0.611052072}
+{"event": "token", "id": 2645, "text": " model", "t_ms": 10552.4771, "step_ms": 143.506272, "p": 0, "margin": 2.82728386, "nucleus": 0, "hit": 0.666666667}
+{"event": "token", "id": 734, "text": "'s", "t_ms": 10552.5077, "step_ms": 143.506272, "p": 0.0156815693, "margin": 0.347990036, "nucleus": 18, "hit": 0.666666667}
+{"event": "token", "id": 6058, "text": " forward", "t_ms": 10842.9718, "step_ms": 145.223519, "p": 0, "margin": 5.79032326, "nucleus": 0, "hit": 0.609936575}
+{"event": "token", "id": 2281, "text": " pass", "t_ms": 10843.0106, "step_ms": 145.223519, "p": 0.970395019, "margin": 3.68775177, "nucleus": 1, "hit": 0.609936575}
+{"event": "token", "id": 1202, "text": " under", "t_ms": 11120.2471, "step_ms": 92.4067203, "p": 0, "margin": 0.0683307648, "nucleus": 0, "hit": 0.592371871}
+{"event": "token", "id": 260, "text": " a", "t_ms": 11120.2851, "step_ms": 92.4067203, "p": 0, "margin": 1.76962852, "nucleus": 0, "hit": 0.592371871}
+{"event": "token", "id": 2910, "text": " given", "t_ms": 11120.2901, "step_ms": 92.4067203, "p": 0.229394033, "margin": 0.510334015, "nucleus": 9, "hit": 0.592371871}
+{"event": "token", "id": 45965, "text": " workload", "t_ms": 11398.226, "step_ms": 55.5850906, "p": 0, "margin": 1.97629929, "nucleus": 0, "hit": 0.526264591}
+{"event": "token", "id": 16, "text": ".", "t_ms": 11398.2559, "step_ms": 55.5850906, "p": 0, "margin": 0.917442322, "nucleus": 0, "hit": 0.526264591}
+{"event": "token", "id": 983, "text": " It", "t_ms": 11398.2603, "step_ms": 55.5850906, "p": 0, "margin": 0.0499305725, "nucleus": 0, "hit": 0.526264591}
+{"event": "token", "id": 344, "text": " is", "t_ms": 11398.2636, "step_ms": 55.5850906, "p": 0, "margin": 0.703136444, "nucleus": 0, "hit": 0.526264591}
+{"event": "token", "id": 9725, "text": " meant", "t_ms": 11398.266, "step_ms": 55.5850906, "p": 0.161133818, "margin": 0.132980347, "nucleus": 19, "hit": 0.526264591}
+{"event": "token", "id": 304, "text": " to", "t_ms": 11647.9627, "step_ms": 41.614395, "p": 0, "margin": 1.32804298, "nucleus": 0, "hit": 0.422324511}
+{"event": "token", "id": 366, "text": " be", "t_ms": 11647.9869, "step_ms": 41.614395, "p": 0, "margin": 0.569925308, "nucleus": 0, "hit": 0.422324511}
+{"event": "token", "id": 1505, "text": " used", "t_ms": 11647.9921, "step_ms": 41.614395, "p": 0, "margin": 0.0259151459, "nucleus": 0, "hit": 0.422324511}
+{"event": "token", "id": 412, "text": " as", "t_ms": 11647.9966, "step_ms": 41.614395, "p": 0, "margin": 2.01595879, "nucleus": 0, "hit": 0.422324511}
+{"event": "token", "id": 260, "text": " a", "t_ms": 11648, "step_ms": 41.614395, "p": 0, "margin": 2.41516876, "nucleus": 0, "hit": 0.422324511}
+{"event": "token", "id": 20211, "text": " diagnostic", "t_ms": 11648.0035, "step_ms": 41.614395, "p": 0.285067964, "margin": 0.580209732, "nucleus": 66, "hit": 0.422324511}
+{"event": "token", "id": 11471, "text": " instrument", "t_ms": 11917.6026, "step_ms": 53.9166466, "p": 0, "margin": 0.228559494, "nucleus": 0, "hit": 0.482222222}
+{"event": "token", "id": 14, "text": ",", "t_ms": 11917.6409, "step_ms": 53.9166466, "p": 0, "margin": 0.520578384, "nucleus": 0, "hit": 0.482222222}
+{"event": "token", "id": 554, "text": " not", "t_ms": 11917.6452, "step_ms": 53.9166466, "p": 0, "margin": 6.18972397, "nucleus": 0, "hit": 0.482222222}
+{"event": "token", "id": 260, "text": " a", "t_ms": 11917.6482, "step_ms": 53.9166466, "p": 0, "margin": 1.40597916, "nucleus": 0, "hit": 0.482222222}
+{"event": "token", "id": 11004, "text": " marketing", "t_ms": 11917.6505, "step_ms": 53.9166466, "p": 0.596828846, "margin": 1.46337128, "nucleus": 21, "hit": 0.482222222}
+{"event": "token", "id": 35312, "text": " benchmark", "t_ms": 12175.5883, "step_ms": 42.9879302, "p": 0, "margin": 1.73637199, "nucleus": 0, "hit": 0.413111342}
+{"event": "token", "id": 16, "text": ".", "t_ms": 12175.6158, "step_ms": 42.9879302, "p": 0, "margin": 1.73054314, "nucleus": 0, "hit": 0.413111342}
+{"event": "token", "id": 455, "text": " The", "t_ms": 12175.62, "step_ms": 42.9879302, "p": 0, "margin": 2.8603611, "nucleus": 0, "hit": 0.413111342}
+{"event": "token", "id": 7076, "text": " goal", "t_ms": 12175.6233, "step_ms": 42.9879302, "p": 0, "margin": 1.07107925, "nucleus": 0, "hit": 0.413111342}
+{"event": "token", "id": 344, "text": " is", "t_ms": 12175.6258, "step_ms": 42.9879302, "p": 0, "margin": 3.85837364, "nucleus": 0, "hit": 0.413111342}
+{"event": "token", "id": 304, "text": " to", "t_ms": 12175.6282, "step_ms": 42.9879302, "p": 0.646144267, "margin": 2.01133728, "nucleus": 23, "hit": 0.413111342}
+{"event": "token", "id": 982, "text": " *", "t_ms": 12434.6821, "step_ms": 259.040062, "p": 0.0342641657, "margin": 1.02694893, "nucleus": 111, "hit": 0.411324786}
+{"event": "token", "id": 23205, "text": "dist", "t_ms": 12712.401, "step_ms": 55.5348282, "p": 0, "margin": 0.073387146, "nucleus": 0, "hit": 0.509846827}
+{"event": "token", "id": 61243, "text": "inguish", "t_ms": 12712.4392, "step_ms": 55.5348282, "p": 0, "margin": 1.63167381, "nucleus": 0, "hit": 0.509846827}
+{"event": "token", "id": 12, "text": "*", "t_ms": 12712.4434, "step_ms": 55.5348282, "p": 0, "margin": 1.97677422, "nucleus": 0, "hit": 0.509846827}
+{"event": "token", "id": 778, "text": " which", "t_ms": 12712.447, "step_ms": 55.5348282, "p": 0, "margin": 0.257162094, "nucleus": 0, "hit": 0.509846827}
+{"event": "token", "id": 4197, "text": " performance", "t_ms": 12712.4499, "step_ms": 55.5348282, "p": 0.0148566496, "margin": 0.891708374, "nucleus": 86, "hit": 0.509846827}
+{"event": "token", "id": 6461, "text": " limit", "t_ms": 12971.2891, "step_ms": 86.2760387, "p": 0, "margin": 0.169996262, "nucleus": 0, "hit": 0.464082098}
+{"event": "token", "id": 344, "text": " is", "t_ms": 12971.3191, "step_ms": 86.2760387, "p": 0, "margin": 0.47555542, "nucleus": 0, "hit": 0.464082098}
+{"event": "token", "id": 778, "text": " which", "t_ms": 12971.3234, "step_ms": 86.2760387, "p": 0.023346737, "margin": 0.0273036957, "nucleus": 63, "hit": 0.464082098}
+{"event": "token", "id": 3576, "text": " kind", "t_ms": 13244.8122, "step_ms": 273.477574, "p": 0.00622185108, "margin": 0.445035934, "nucleus": 238, "hit": 0.459869848}
+{"event": "token", "id": 294, "text": " of", "t_ms": 13509.993, "step_ms": 53.0301528, "p": 0, "margin": 3.52002335, "nucleus": 0, "hit": 0.449477352}
+{"event": "token", "id": 111127, "text": " bottleneck", "t_ms": 13510.0314, "step_ms": 53.0301528, "p": 0, "margin": 0.459474564, "nucleus": 0, "hit": 0.449477352}
+{"event": "token", "id": 344, "text": " is", "t_ms": 13510.0358, "step_ms": 53.0301528, "p": 0, "margin": 0.0808143616, "nucleus": 0, "hit": 0.449477352}
+{"event": "token", "id": 270, "text": " the", "t_ms": 13510.0395, "step_ms": 53.0301528, "p": 0, "margin": 0.388849258, "nucleus": 0, "hit": 0.449477352}
+{"event": "token", "id": 45750, "text": " runtime", "t_ms": 13510.042, "step_ms": 53.0301528, "p": 0.471954962, "margin": 1.00863075, "nucleus": 76, "hit": 0.449477352}
+{"event": "token", "id": 344, "text": " is", "t_ms": 13776.023, "step_ms": 132.985004, "p": 0, "margin": 2.8660717, "nucleus": 0, "hit": 0.467112598}
+{"event": "token", "id": 7491, "text": " currently", "t_ms": 13776.0537, "step_ms": 132.985004, "p": 0.0297306214, "margin": 0.256879807, "nucleus": 111, "hit": 0.467112598}
+{"event": "token", "id": 6556, "text": " bound", "t_ms": 14052.5732, "step_ms": 55.3003692, "p": 0, "margin": 0.161081314, "nucleus": 0, "hit": 0.509635974}
+{"event": "token", "id": 513, "text": " by", "t_ms": 14052.6108, "step_ms": 55.3003692, "p": 0, "margin": 1.01977921, "nucleus": 0, "hit": 0.509635974}
+{"event": "token", "id": 28, "text": ":", "t_ms": 14052.6154, "step_ms": 55.3003692, "p": 0, "margin": 0.209918976, "nucleus": 0, "hit": 0.509635974}
+{"event": "token", "id": 6464, "text": " memory", "t_ms": 14052.6183, "step_ms": 55.3003692, "p": 0, "margin": 0.332633972, "nucleus": 0, "hit": 0.509635974}
+{"event": "token", "id": 34393, "text": " bandwidth", "t_ms": 14052.6208, "step_ms": 55.3003692, "p": 0.981774748, "margin": 5.04334259, "nucleus": 1, "hit": 0.509635974}
+{"event": "token", "id": 14, "text": ",", "t_ms": 14345.1547, "step_ms": 97.5065287, "p": 0, "margin": 3.04395103, "nucleus": 0, "hit": 0.643678161}
+{"event": "token", "id": 23917, "text": " compute", "t_ms": 14345.1905, "step_ms": 97.5065287, "p": 0, "margin": 6.21460342, "nucleus": 0, "hit": 0.643678161}
+{"event": "token", "id": 343, "text": " (", "t_ms": 14345.195, "step_ms": 97.5065287, "p": 0.536322961, "margin": 0.264221191, "nucleus": 3, "hit": 0.643678161}
+{"event": "token", "id": 8418, "text": "arithm", "t_ms": 14652.9468, "step_ms": 51.2893242, "p": 0, "margin": 4.05932808, "nucleus": 0, "hit": 0.685227273}
+{"event": "token", "id": 3596, "text": "etic", "t_ms": 14652.9842, "step_ms": 51.2893242, "p": 0, "margin": 10.7329102, "nucleus": 0, "hit": 0.685227273}
+{"event": "token", "id": 11, "text": ")", "t_ms": 14652.9888, "step_ms": 51.2893242, "p": 0, "margin": 2.18416977, "nucleus": 0, "hit": 0.685227273}
+{"event": "token", "id": 62027, "text": " throughput", "t_ms": 14652.9921, "step_ms": 51.2893242, "p": 0, "margin": 9.94892883, "nucleus": 0, "hit": 0.685227273}
+{"event": "token", "id": 14, "text": ",", "t_ms": 14652.9952, "step_ms": 51.2893242, "p": 0, "margin": 7.55042076, "nucleus": 0, "hit": 0.685227273}
+{"event": "token", "id": 29009, "text": " kernel", "t_ms": 14652.9976, "step_ms": 51.2893242, "p": 0.986770787, "margin": 4.42453575, "nucleus": 1, "hit": 0.685227273}
+{"event": "token", "id": 15020, "text": " launch", "t_ms": 14944.3707, "step_ms": 72.840798, "p": 0, "margin": 1.49477386, "nucleus": 0, "hit": 0.681462141}
+{"event": "token", "id": 52636, "text": " latency", "t_ms": 14944.4008, "step_ms": 72.840798, "p": 0, "margin": 0.624376297, "nucleus": 0, "hit": 0.681462141}
+{"event": "token", "id": 14, "text": ",", "t_ms": 14944.405, "step_ms": 72.840798, "p": 0, "margin": 4.77920532, "nucleus": 0, "hit": 0.681462141}
+{"event": "token", "id": 5908, "text": " host", "t_ms": 14944.4083, "step_ms": 72.840798, "p": 0.29014479, "margin": 0.737033844, "nucleus": 3, "hit": 0.681462141}
+{"event": "token", "id": 17, "text": "/", "t_ms": 15246.1796, "step_ms": 301.756249, "p": 0.243933813, "margin": 0.794841766, "nucleus": 4, "hit": 0.661445783}
+{"event": "token", "id": 32351, "text": "device", "t_ms": 15545.3198, "step_ms": 59.8181236, "p": 0, "margin": 7.73727608, "nucleus": 0, "hit": 0.68504902}
+{"event": "token", "id": 55276, "text": " synchronization", "t_ms": 15545.3564, "step_ms": 59.8181236, "p": 0, "margin": 5.60152435, "nucleus": 0, "hit": 0.68504902}
+{"event": "token", "id": 14, "text": ",", "t_ms": 15545.3612, "step_ms": 59.8181236, "p": 0, "margin": 3.23270226, "nucleus": 0, "hit": 0.68504902}
+{"event": "token", "id": 469, "text": " or", "t_ms": 15545.3649, "step_ms": 59.8181236, "p": 0, "margin": 1.51937103, "nucleus": 0, "hit": 0.68504902}
+{"event": "token", "id": 1499, "text": " data", "t_ms": 15545.3675, "step_ms": 59.8181236, "p": 0.418549484, "margin": 0.0337772369, "nucleus": 4, "hit": 0.68504902}
+{"event": "token", "id": 6418, "text": " transfer", "t_ms": 15852.6072, "step_ms": 61.444749, "p": 0, "margin": 2.29962349, "nucleus": 0, "hit": 0.69476082}
+{"event": "token", "id": 343, "text": " (", "t_ms": 15852.6431, "step_ms": 61.444749, "p": 0, "margin": 1.45434952, "nucleus": 0, "hit": 0.69476082}
+{"event": "token", "id": 115086, "text": "PCI", "t_ms": 15852.648, "step_ms": 61.444749, "p": 0, "margin": 4.27878571, "nucleus": 0, "hit": 0.69476082}
+{"event": "token", "id": 71, "text": "e", "t_ms": 15852.6512, "step_ms": 61.444749, "p": 0, "margin": 6.00328636, "nucleus": 0, "hit": 0.69476082}
+{"event": "token", "id": 24159, "text": "/N", "t_ms": 15852.6539, "step_ms": 61.444749, "p": 0.931171457, "margin": 3.09510231, "nucleus": 2, "hit": 0.69476082}
+{"event": "token", "id": 56, "text": "V", "t_ms": 16168.6932, "step_ms": 63.2057144, "p": 0, "margin": 6.59093857, "nucleus": 0, "hit": 0.627928772}
+{"event": "token", "id": 14668, "text": "Link", "t_ms": 16168.7215, "step_ms": 63.2057144, "p": 0, "margin": 15.4918251, "nucleus": 0, "hit": 0.627928772}
+{"event": "token", "id": 797, "text": ").", "t_ms": 16168.7261, "step_ms": 63.2057144, "p": 0, "margin": 0.760242462, "nucleus": 0, "hit": 0.627928772}
+{"event": "token", "id": 455, "text": " The", "t_ms": 16168.7289, "step_ms": 63.2057144, "p": 0, "margin": 0.203008652, "nucleus": 0, "hit": 0.627928772}
+{"event": "token", "id": 8668, "text": " core", "t_ms": 16168.7315, "step_ms": 63.2057144, "p": 0.0137341646, "margin": 0.0287322998, "nucleus": 247, "hit": 0.627928772}
+{"event": "token", "id": 7231, "text": " task", "t_ms": 16428.5991, "step_ms": 259.856031, "p": 0.00216774928, "margin": 0.631603241, "nucleus": 27, "hit": 0.401639344}
+{"event": "token", "id": 344, "text": " is", "t_ms": 16705.642, "step_ms": 92.3354703, "p": 0, "margin": 2.98370934, "nucleus": 0, "hit": 0.44768069}
+{"event": "token", "id": 304, "text": " to", "t_ms": 16705.6668, "step_ms": 92.3354703, "p": 0, "margin": 0.402965546, "nucleus": 0, "hit": 0.44768069}
+{"event": "token", "id": 260, "text": " a", "t_ms": 16705.6708, "step_ms": 92.3354703, "p": 0.00718220473, "margin": 1.14808083, "nucleus": 237, "hit": 0.44768069}
+{"event": "token", "id": 982, "text": " *", "t_ms": 16978.7852, "step_ms": 136.551542, "p": 0, "margin": 0.620788574, "nucleus": 0, "hit": 0.503554502}
+{"event": "token", "id": 45036, "text": "counter", "t_ms": 16978.8139, "step_ms": 136.551542, "p": 0.0285602533, "margin": 0.573854446, "nucleus": 354, "hit": 0.503554502}
+{"event": "token", "id": 36792, "text": "fact", "t_ms": 17270.6281, "step_ms": 72.9495485, "p": 0, "margin": 0.198059082, "nucleus": 0, "hit": 0.550113895}
+{"event": "token", "id": 814, "text": "ual", "t_ms": 17270.6657, "step_ms": 72.9495485, "p": 0, "margin": 3.96623993, "nucleus": 0, "hit": 0.550113895}
+{"event": "token", "id": 12, "text": "*", "t_ms": 17270.6704, "step_ms": 72.9495485, "p": 0, "margin": 1.92584801, "nucleus": 0, "hit": 0.550113895}
+{"event": "token", "id": 6331, "text": " experiment", "t_ms": 17270.6738, "step_ms": 72.9495485, "p": 0.218474605, "margin": 0.357460022, "nucleus": 87, "hit": 0.550113895}
+{"event": "token", "id": 28, "text": ":", "t_ms": 17564.8582, "step_ms": 147.084272, "p": 0, "margin": 1.34416962, "nucleus": 0, "hit": 0.56302521}
+{"event": "token", "id": 260, "text": " a", "t_ms": 17564.8967, "step_ms": 147.084272, "p": 0.0247343085, "margin": 1.31459427, "nucleus": 113, "hit": 0.56302521}
+{"event": "token", "id": 12092, "text": " controlled", "t_ms": 17842.6512, "step_ms": 277.73738, "p": 0.0899784153, "margin": 0.115974426, "nucleus": 311, "hit": 0.502252252}
+{"event": "token", "id": 6331, "text": " experiment", "t_ms": 18131.7084, "step_ms": 48.1684377, "p": 0, "margin": 0.153129578, "nucleus": 0, "hit": 0.443855932}
+{"event": "token", "id": 1479, "text": " where", "t_ms": 18131.729, "step_ms": 48.1684377, "p": 0, "margin": 1.21989632, "nucleus": 0, "hit": 0.443855932}
+{"event": "token", "id": 440, "text": " you", "t_ms": 18131.733, "step_ms": 48.1684377, "p": 0, "margin": 0.328739166, "nucleus": 0, "hit": 0.443855932}
+{"event": "token", "id": 588, "text": " can", "t_ms": 18131.736, "step_ms": 48.1684377, "p": 0, "margin": 0.824411392, "nucleus": 0, "hit": 0.443855932}
+{"event": "token", "id": 366, "text": " be", "t_ms": 18131.7383, "step_ms": 48.1684377, "p": 0, "margin": 0.35597229, "nucleus": 0, "hit": 0.443855932}
+{"event": "token", "id": 611, "text": " have", "t_ms": 18131.7405, "step_ms": 48.1684377, "p": 0.00212655005, "margin": 0.925918579, "nucleus": 1454, "hit": 0.443855932}
+{"event": "token", "id": 260, "text": " a", "t_ms": 18412.3701, "step_ms": 93.5381757, "p": 0, "margin": 0.371793747, "nucleus": 0, "hit": 0.474654378}
+{"event": "token", "id": 4031, "text": " single", "t_ms": 18412.4061, "step_ms": 93.5381757, "p": 0, "margin": 0.00305747986, "nucleus": 0, "hit": 0.474654378}
+{"event": "token", "id": 111127, "text": " bottleneck", "t_ms": 18412.4112, "step_ms": 93.5381757, "p": 0.0625772521, "margin": 0.290176392, "nucleus": 146, "hit": 0.474654378}
+{"event": "token", "id": 778, "text": " which", "t_ms": 18687.719, "step_ms": 275.296211, "p": 0.0102611306, "margin": 0.990371704, "nucleus": 407, "hit": 0.48255814}
+{"event": "token", "id": 344, "text": " is", "t_ms": 18952.8067, "step_ms": 88.350476, "p": 0, "margin": 0.651210785, "nucleus": 0, "hit": 0.432773109}
+{"event": "token", "id": 270, "text": " the", "t_ms": 18952.8321, "step_ms": 88.350476, "p": 0, "margin": 0.414304733, "nucleus": 0, "hit": 0.432773109}
+{"event": "token", "id": 45750, "text": " runtime", "t_ms": 18952.8359, "step_ms": 88.350476, "p": 0.38998075, "margin": 1.56090927, "nucleus": 556, "hit": 0.432773109}
+{"event": "token", "id": 344, "text": " is", "t_ms": 19213.7267, "step_ms": 52.1743584, "p": 0, "margin": 2.68544388, "nucleus": 0, "hit": 0.426436782}
+{"event": "token", "id": 7491, "text": " currently", "t_ms": 19213.7622, "step_ms": 52.1743584, "p": 0, "margin": 1.79522896, "nucleus": 0, "hit": 0.426436782}
+{"event": "token", "id": 6556, "text": " bound", "t_ms": 19213.7663, "step_ms": 52.1743584, "p": 0, "margin": 5.9646225, "nucleus": 0, "hit": 0.426436782}
+{"event": "token", "id": 304, "text": " to", "t_ms": 19213.7692, "step_ms": 52.1743584, "p": 0, "margin": 3.50709915, "nucleus": 0, "hit": 0.426436782}
+{"event": "token", "id": 270, "text": " the", "t_ms": 19213.7716, "step_ms": 52.1743584, "p": 0.0439548882, "margin": 0.404073715, "nucleus": 98, "hit": 0.426436782}
+{"event": "token", "id": 915, "text": " other", "t_ms": 19484.9352, "step_ms": 135.573981, "p": 0, "margin": 0.486745834, "nucleus": 0, "hit": 0.504961411}
+{"event": "token", "id": 5949, "text": " parts", "t_ms": 19484.9733, "step_ms": 135.573981, "p": 0.013235808, "margin": 0.0173950195, "nucleus": 178, "hit": 0.504961411}
+{"event": "token", "id": 14, "text": ",", "t_ms": 19775.6813, "step_ms": 72.6724423, "p": 0, "margin": 1.34824181, "nucleus": 0, "hit": 0.464635473}
+{"event": "token", "id": 305, "text": " and", "t_ms": 19775.716, "step_ms": 72.6724423, "p": 0, "margin": 1.15838242, "nucleus": 0, "hit": 0.464635473}
+{"event": "token", "id": 270, "text": " the", "t_ms": 19775.7205, "step_ms": 72.6724423, "p": 0, "margin": 0.725849152, "nucleus": 0, "hit": 0.464635473}
+{"event": "token", "id": 81920, "text": " attribution", "t_ms": 19775.7237, "step_ms": 72.6724423, "p": 0.00442652025, "margin": 0.633359909, "nucleus": 1059, "hit": 0.464635473}
+{"event": "token", "id": 294, "text": " of", "t_ms": 20032.235, "step_ms": 85.4982057, "p": 0, "margin": 0.813468933, "nucleus": 0, "hit": 0.471631206}
+{"event": "token", "id": 270, "text": " the", "t_ms": 20032.2753, "step_ms": 85.4982057, "p": 0, "margin": 1.73753548, "nucleus": 0, "hit": 0.471631206}
+{"event": "token", "id": 2595, "text": " sum", "t_ms": 20032.2798, "step_ms": 85.4982057, "p": 0.00151655492, "margin": 0.899555206, "nucleus": 704, "hit": 0.471631206}
+{"event": "token", "id": 294, "text": " of", "t_ms": 20302.9954, "step_ms": 90.234691, "p": 0, "margin": 1.6891861, "nucleus": 0, "hit": 0.481971154}
+{"event": "token", "id": 270, "text": " the", "t_ms": 20303.025, "step_ms": 90.234691, "p": 0, "margin": 1.92719269, "nucleus": 0, "hit": 0.481971154}
+{"event": "token", "id": 73918, "text": " achievable", "t_ms": 20303.0298, "step_ms": 90.234691, "p": 0.000409803256, "margin": 0.0605163574, "nucleus": 376, "hit": 0.481971154}
+{"event": "token", "id": 1014, "text": " time", "t_ms": 20605.3056, "step_ms": 75.5659953, "p": 0, "margin": 0.708826065, "nucleus": 0, "hit": 0.550837989}
+{"event": "token", "id": 344, "text": " is", "t_ms": 20605.3342, "step_ms": 75.5659953, "p": 0, "margin": 0.0293731689, "nucleus": 0, "hit": 0.550837989}
+{"event": "token", "id": 260, "text": " a", "t_ms": 20605.3387, "step_ms": 75.5659953, "p": 0, "margin": 0.0227336884, "nucleus": 0, "hit": 0.550837989}
+{"event": "token", "id": 8250, "text": " distinct", "t_ms": 20605.3415, "step_ms": 75.5659953, "p": 0.000981751842, "margin": 1.16404915, "nucleus": 1217, "hit": 0.550837989}
+{"event": "token", "id": 14, "text": ",", "t_ms": 20881.0221, "step_ms": 91.8884837, "p": 0, "margin": 0.804841995, "nucleus": 0, "hit": 0.51626898}
+{"event": "token", "id": 53521, "text": " measurable", "t_ms": 20881.061, "step_ms": 91.8884837, "p": 0, "margin": 0.716171265, "nucleus": 0, "hit": 0.51626898}
+{"event": "token", "id": 14, "text": ",", "t_ms": 20881.0655, "step_ms": 91.8884837, "p": 0.316033937, "margin": 1.48701096, "nucleus": 269, "hit": 0.51626898}
+{"event": "token", "id": 305, "text": " and", "t_ms": 21159.8642, "step_ms": 55.7576114, "p": 0, "margin": 1.47301102, "nucleus": 0, "hit": 0.4751693}
+{"event": "token", "id": 57851, "text": " attributable", "t_ms": 21159.895, "step_ms": 55.7576114, "p": 0, "margin": 0.708404541, "nucleus": 0, "hit": 0.4751693}
+{"event": "token", "id": 304, "text": " to", "t_ms": 21159.8995, "step_ms": 55.7576114, "p": 0, "margin": 0.402599335, "nucleus": 0, "hit": 0.4751693}
+{"event": "token", "id": 270, "text": " the", "t_ms": 21159.9023, "step_ms": 55.7576114, "p": 0, "margin": 0.011920929, "nucleus": 0, "hit": 0.4751693}
+{"event": "token", "id": 45965, "text": " workload", "t_ms": 21159.9053, "step_ms": 55.7576114, "p": 0.0103912931, "margin": 0.952819824, "nucleus": 912, "hit": 0.4751693}
+{"event": "token", "id": 339, "text": ".\n\n", "t_ms": 21443.1132, "step_ms": 94.3991873, "p": 0, "margin": 0.661811829, "nucleus": 0, "hit": 0.487830688}
+{"event": "token", "id": 671, "text": "The", "t_ms": 21443.1421, "step_ms": 94.3991873, "p": 0, "margin": 1.40628242, "nucleus": 0, "hit": 0.487830688}
+{"event": "token", "id": 7553, "text": " mental", "t_ms": 21443.1465, "step_ms": 94.3991873, "p": 0.670181237, "margin": 2.74196625, "nucleus": 82, "hit": 0.487830688}
+{"event": "token", "id": 2645, "text": " model", "t_ms": 21727.8816, "step_ms": 71.1810153, "p": 0, "margin": 5.88404465, "nucleus": 0, "hit": 0.504464286}
+{"event": "token", "id": 344, "text": " is", "t_ms": 21727.91, "step_ms": 71.1810153, "p": 0, "margin": 1.22130394, "nucleus": 0, "hit": 0.504464286}
+{"event": "token", "id": 260, "text": " a", "t_ms": 21727.9142, "step_ms": 71.1810153, "p": 0, "margin": 0.00887489319, "nucleus": 0, "hit": 0.504464286}
+{"event": "token", "id": 1234, "text": " two", "t_ms": 21727.9175, "step_ms": 71.1810153, "p": 0.01599611, "margin": 0.181726456, "nucleus": 828, "hit": 0.504464286}
+{"event": "token", "id": 12675, "text": "-level", "t_ms": 22019.8112, "step_ms": 145.941647, "p": 0, "margin": 0.196117401, "nucleus": 0, "hit": 0.553571429}
+{"event": "token", "id": 32857, "text": " hierarchy", "t_ms": 22019.8392, "step_ms": 145.941647, "p": 0.16573594, "margin": 0.784116745, "nucleus": 132, "hit": 0.553571429}
+{"event": "token", "id": 16, "text": ".", "t_ms": 22319.4141, "step_ms": 74.8897312, "p": 0, "margin": 0.24723053, "nucleus": 0, "hit": 0.576604555}
+{"event": "token", "id": 455, "text": " The", "t_ms": 22319.453, "step_ms": 74.8897312, "p": 0, "margin": 1.39974594, "nucleus": 0, "hit": 0.576604555}
+{"event": "token", "id": 1257, "text": " first", "t_ms": 22319.4575, "step_ms": 74.8897312, "p": 0, "margin": 0.955198288, "nucleus": 0, "hit": 0.576604555}
+{"event": "token", "id": 2192, "text": " level", "t_ms": 22319.4606, "step_ms": 74.8897312, "p": 0.870421471, "margin": 2.60067368, "nucleus": 5, "hit": 0.576604555}
+{"event": "token", "id": 344, "text": " is", "t_ms": 22620.2509, "step_ms": 75.1948655, "p": 0, "margin": 4.90375137, "nucleus": 0, "hit": 0.599318956}
+{"event": "token", "id": 270, "text": " the", "t_ms": 22620.2803, "step_ms": 75.1948655, "p": 0, "margin": 1.02180672, "nucleus": 0, "hit": 0.599318956}
+{"event": "token", "id": 982, "text": " *", "t_ms": 22620.2847, "step_ms": 75.1948655, "p": 0, "margin": 1.87849617, "nucleus": 0, "hit": 0.599318956}
+{"event": "token", "id": 928, "text": "de", "t_ms": 22620.2875, "step_ms": 75.1948655, "p": 0.00296657659, "margin": 1.41394234, "nucleus": 196, "hit": 0.599318956}
+{"event": "token", "id": 74413, "text": "composition", "t_ms": 22920.4576, "step_ms": 50.0256933, "p": 0, "margin": 4.17689228, "nucleus": 0, "hit": 0.575982997}
+{"event": "token", "id": 12, "text": "*", "t_ms": 22920.4931, "step_ms": 50.0256933, "p": 0, "margin": 1.24681282, "nucleus": 0, "hit": 0.575982997}
+{"event": "token", "id": 28, "text": ":", "t_ms": 22920.4977, "step_ms": 50.0256933, "p": 0, "margin": 0.214626312, "nucleus": 0, "hit": 0.575982997}
+{"event": "token", "id": 270, "text": " the", "t_ms": 22920.5003, "step_ms": 50.0256933, "p": 0, "margin": 0.869415283, "nucleus": 0, "hit": 0.575982997}
+{"event": "token", "id": 45965, "text": " workload", "t_ms": 22920.5031, "step_ms": 50.0256933, "p": 0, "margin": 0.94149971, "nucleus": 0, "hit": 0.575982997}
+{"event": "token", "id": 344, "text": " is", "t_ms": 22920.5058, "step_ms": 50.0256933, "p": 0.694699752, "margin": 1.68387794, "nucleus": 22, "hit": 0.575982997}
+{"event": "token", "id": 260, "text": " a", "t_ms": 23212.443, "step_ms": 48.6544727, "p": 0, "margin": 0.974859238, "nucleus": 0, "hit": 0.551767677}
+{"event": "token", "id": 1341, "text": " set", "t_ms": 23212.4613, "step_ms": 48.6544727, "p": 0, "margin": 0.642169952, "nucleus": 0, "hit": 0.551767677}
+{"event": "token", "id": 294, "text": " of", "t_ms": 23212.4652, "step_ms": 48.6544727, "p": 0, "margin": 5.12204933, "nucleus": 0, "hit": 0.551767677}
+{"event": "token", "id": 260, "text": " a", "t_ms": 23212.4677, "step_ms": 48.6544727, "p": 0, "margin": 0.203290939, "nucleus": 0, "hit": 0.551767677}
+{"event": "token", "id": 982, "text": " *", "t_ms": 23212.4702, "step_ms": 48.6544727, "p": 0, "margin": 0.0130271912, "nucleus": 0, "hit": 0.551767677}
+{"event": "token", "id": 2739, "text": "work", "t_ms": 23212.4731, "step_ms": 48.6544727, "p": 0.0887204327, "margin": 0.518686295, "nucleus": 315, "hit": 0.551767677}
+{"event": "token", "id": 12, "text": "*", "t_ms": 23531.6328, "step_ms": 106.381475, "p": 0, "margin": 0.396749496, "nucleus": 0, "hit": 0.648984199}
+{"event": "token", "id": 343, "text": " (", "t_ms": 23531.6715, "step_ms": 106.381475, "p": 0, "margin": 1.22716522, "nucleus": 0, "hit": 0.648984199}
+{"event": "token", "id": 12973, "text": "FL", "t_ms": 23531.676, "step_ms": 106.381475, "p": 0.508521293, "margin": 1.95124435, "nucleus": 41, "hit": 0.648984199}
+{"event": "token", "id": 7819, "text": "OP", "t_ms": 23845.3691, "step_ms": 78.4193745, "p": 0, "margin": 8.44164085, "nucleus": 0, "hit": 0.72851296}
+{"event": "token", "id": 85, "text": "s", "t_ms": 23845.4075, "step_ms": 78.4193745, "p": 0, "margin": 4.98117828, "nucleus": 0, "hit": 0.72851296}
+{"event": "token", "id": 14, "text": ",", "t_ms": 23845.412, "step_ms": 78.4193745, "p": 0, "margin": 3.2653141, "nucleus": 0, "hit": 0.72851296}
+{"event": "token", "id": 20711, "text": " bytes", "t_ms": 23845.4146, "step_ms": 78.4193745, "p": 0.993575413, "margin": 6.86460876, "nucleus": 1, "hit": 0.72851296}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24160.0309, "step_ms": 157.300199, "p": 0, "margin": 0.283153534, "nucleus": 0, "hit": 0.68705036}
+{"event": "token", "id": 29009, "text": " kernel", "t_ms": 24160.0689, "step_ms": 157.300199, "p": 0.500856276, "margin": 0.655082703, "nucleus": 12, "hit": 0.68705036}
+{"event": "token", "id": 64280, "text": " launches", "t_ms": 24481.8489, "step_ms": 107.247089, "p": 0, "margin": 0.866718292, "nucleus": 0, "hit": 0.694063927}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24481.8887, "step_ms": 107.247089, "p": 0, "margin": 2.80992126, "nucleus": 0, "hit": 0.694063927}
+{"event": "token", "id": 45473, "text": " sync", "t_ms": 24481.8933, "step_ms": 107.247089, "p": 0.31189686, "margin": 0.0411319733, "nucleus": 7, "hit": 0.694063927}
+{"event": "token", "id": 4365, "text": " points", "t_ms": 24799.2408, "step_ms": 105.778529, "p": 0, "margin": 0.0784244537, "nucleus": 0, "hit": 0.662569832}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24799.2692, "step_ms": 105.778529, "p": 0, "margin": 1.52356339, "nucleus": 0, "hit": 0.662569832}
+{"event": "token", "id": 35666, "text": " transfers", "t_ms": 24799.2737, "step_ms": 105.778529, "p": 0.570029019, "margin": 0.913833618, "nucleus": 6, "hit": 0.662569832}
+{"event": "token", "id": 11, "text": ")", "t_ms": 25118.3913, "step_ms": 63.820301, "p": 0, "margin": 1.55801964, "nucleus": 0, "hit": 0.625641026}
+{"event": "token", "id": 305, "text": " and", "t_ms": 25118.4296, "step_ms": 63.820301, "p": 0, "margin": 0.982460022, "nucleus": 0, "hit": 0.625641026}
+{"event": "token", "id": 270, "text": " the", "t_ms": 25118.4339, "step_ms": 63.820301, "p": 0, "margin": 0.3314991, "nucleus": 0, "hit": 0.625641026}
+{"event": "token", "id": 982, "text": " *", "t_ms": 25118.437, "step_ms": 63.820301, "p": 0, "margin": 1.19161224, "nucleus": 0, "hit": 0.625641026}
+{"event": "token", "id": 53047, "text": "resource", "t_ms": 25118.4395, "step_ms": 63.820301, "p": 0.136184111, "margin": 0.167667389, "nucleus": 73, "hit": 0.625641026}
+{"event": "token", "id": 12, "text": "*", "t_ms": 25408.7811, "step_ms": 48.387895, "p": 0, "margin": 4.09967995, "nucleus": 0, "hit": 0.55567806}
+{"event": "token", "id": 344, "text": " is", "t_ms": 25408.814, "step_ms": 48.387895, "p": 0, "margin": 0.536619186, "nucleus": 0, "hit": 0.55567806}
+{"event": "token", "id": 260, "text": " a", "t_ms": 25408.8182, "step_ms": 48.387895, "p": 0, "margin": 1.62401009, "nucleus": 0, "hit": 0.55567806}
+{"event": "token", "id": 1341, "text": " set", "t_ms": 25408.8211, "step_ms": 48.387895, "p": 0, "margin": 4.65398979, "nucleus": 0, "hit": 0.55567806}
+{"event": "token", "id": 294, "text": " of", "t_ms": 25408.8234, "step_ms": 48.387895, "p": 0, "margin": 6.63947868, "nucleus": 0, "hit": 0.55567806}
+{"event": "token", "id": 411, "text": " an", "t_ms": 25408.8253, "step_ms": 48.387895, "p": 0.013298508, "margin": 2.33792114, "nucleus": 5, "hit": 0.55567806}
+{"event": "token", "id": 982, "text": " *", "t_ms": 25709.8463, "step_ms": 150.505151, "p": 0, "margin": 2.63895416, "nucleus": 0, "hit": 0.62545018}
+{"event": "token", "id": 17237, "text": "cap", "t_ms": 25709.8743, "step_ms": 150.505151, "p": 0.21899511, "margin": 0.2884655, "nucleus": 36, "hit": 0.62545018}
+{"event": "token", "id": 2178, "text": "ability", "t_ms": 26011.2408, "step_ms": 75.3375923, "p": 0, "margin": 1.6480732, "nucleus": 0, "hit": 0.617214043}
+{"event": "token", "id": 12, "text": "*", "t_ms": 26011.2784, "step_ms": 75.3375923, "p": 0, "margin": 6.02836609, "nucleus": 0, "hit": 0.617214043}
+{"event": "token", "id": 343, "text": " (", "t_ms": 26011.2831, "step_ms": 75.3375923, "p": 0, "margin": 4.60109329, "nucleus": 0, "hit": 0.617214043}
+{"event": "token", "id": 61181, "text": "peak", "t_ms": 26011.2864, "step_ms": 75.3375923, "p": 0.204164749, "margin": 0.302768707, "nucleus": 13, "hit": 0.617214043}
+{"event": "token", "id": 447, "text": " F", "t_ms": 26330.2654, "step_ms": 63.7928012, "p": 0, "margin": 1.05201721, "nucleus": 0, "hit": 0.716216216}
+{"event": "token", "id": 10973, "text": "LO", "t_ms": 26330.304, "step_ms": 63.7928012, "p": 0, "margin": 1.00999832, "nucleus": 0, "hit": 0.716216216}
+{"event": "token", "id": 6446, "text": "PS", "t_ms": 26330.3094, "step_ms": 63.7928012, "p": 0, "margin": 4.75518799, "nucleus": 0, "hit": 0.716216216}
+{"event": "token", "id": 14, "text": ",", "t_ms": 26330.313, "step_ms": 63.7928012, "p": 0, "margin": 2.17522812, "nucleus": 0, "hit": 0.716216216}
+{"event": "token", "id": 20711, "text": " bytes", "t_ms": 26330.3166, "step_ms": 63.7928012, "p": 0.0350193179, "margin": 2.51838303, "nucleus": 4, "hit": 0.716216216}
+{"event": "token", "id": 2283, "text": "/s", "t_ms": 26645.9426, "step_ms": 105.202721, "p": 0, "margin": 2.04974365, "nucleus": 0, "hit": 0.75802139}
+{"event": "token", "id": 14, "text": ",", "t_ms": 26645.9823, "step_ms": 105.202721, "p": 0, "margin": 3.38256454, "nucleus": 0, "hit": 0.75802139}
+{"event": "token", "id": 64280, "text": " launches", "t_ms": 26645.9877, "step_ms": 105.202721, "p": 0.736013271, "margin": 1.12081718, "nucleus": 2, "hit": 0.75802139}
+{"event": "token", "id": 2283, "text": "/s", "t_ms": 26961.9636, "step_ms": 78.9898805, "p": 0, "margin": 4.94403839, "nucleus": 0, "hit": 0.725490196}
+{"event": "token", "id": 14, "text": ",", "t_ms": 26962.0022, "step_ms": 78.9898805, "p": 0, "margin": 7.39411736, "nucleus": 0, "hit": 0.725490196}
+{"event": "token", "id": 45473, "text": " sync", "t_ms": 26962.0073, "step_ms": 78.9898805, "p": 0, "margin": 1.54203033, "nucleus": 0, "hit": 0.725490196}
+{"event": "token", "id": 52636, "text": " latency", "t_ms": 26962.0108, "step_ms": 78.9898805, "p": 0.542811242, "margin": 1.1727314, "nucleus": 9, "hit": 0.725490196}
+{"event": "token", "id": 14, "text": ",", "t_ms": 27278.3334, "step_ms": 105.437311, "p": 0, "margin": 3.75977898, "nucleus": 0, "hit": 0.643533123}
+{"event": "token", "id": 6418, "text": " transfer", "t_ms": 27278.3654, "step_ms": 105.437311, "p": 0, "margin": 0.424516678, "nucleus": 0, "hit": 0.643533123}
+{"event": "token", "id": 20711, "text": " bytes", "t_ms": 27278.3699, "step_ms": 105.437311, "p": 0.390380462, "margin": 0.371923447, "nucleus": 2, "hit": 0.643533123}
+{"event": "token", "id": 2283, "text": "/s", "t_ms": 27592.7106, "step_ms": 52.3878792, "p": 0, "margin": 6.13882065, "nucleus": 0, "hit": 0.594117647}
+{"event": "token", "id": 797, "text": ").", "t_ms": 27592.7413, "step_ms": 52.3878792, "p": 0, "margin": 3.41684532, "nucleus": 0, "hit": 0.594117647}
+{"event": "token", "id": 455, "text": " The", "t_ms": 27592.7457, "step_ms": 52.3878792, "p": 0, "margin": 3.08388519, "nucleus": 0, "hit": 0.594117647}
+{"event": "token", "id": 1957, "text": " second", "t_ms": 27592.7488, "step_ms": 52.3878792, "p": 0, "margin": 3.30982971, "nucleus": 0, "hit": 0.594117647}
+{"event": "token", "id": 2192, "text": " level", "t_ms": 27592.7512, "step_ms": 52.3878792, "p": 0, "margin": 3.44533348, "nucleus": 0, "hit": 0.594117647}
+{"event": "token", "id": 344, "text": " is", "t_ms": 27592.7535, "step_ms": 52.3878792, "p": 0.998476805, "margin": 7.77456284, "nucleus": 1, "hit": 0.594117647}
+{"event": "token", "id": 270, "text": " the", "t_ms": 27893.6948, "step_ms": 50.1544558, "p": 0, "margin": 2.55493355, "nucleus": 0, "hit": 0.564948454}
+{"event": "token", "id": 982, "text": " *", "t_ms": 27893.7332, "step_ms": 50.1544558, "p": 0, "margin": 5.06177139, "nucleus": 0, "hit": 0.564948454}
+{"event": "token", "id": 2313, "text": "att", "t_ms": 27893.7372, "step_ms": 50.1544558, "p": 0, "margin": 2.02476311, "nucleus": 0, "hit": 0.564948454}
+{"event": "token", "id": 12812, "text": "ribution", "t_ms": 27893.7401, "step_ms": 50.1544558, "p": 0, "margin": 6.00751114, "nucleus": 0, "hit": 0.564948454}
+{"event": "token", "id": 12, "text": "*", "t_ms": 27893.743, "step_ms": 50.1544558, "p": 0, "margin": 4.37425423, "nucleus": 0, "hit": 0.564948454}
+{"event": "token", "id": 28, "text": ":", "t_ms": 27893.7455, "step_ms": 50.1544558, "p": 0.96814625, "margin": 4.42001343, "nucleus": 1, "hit": 0.564948454}
+{"event": "token", "id": 270, "text": " the", "t_ms": 28197.3798, "step_ms": 151.812208, "p": 0, "margin": 1.57411194, "nucleus": 0, "hit": 0.528816987}
+{"event": "token", "id": 982, "text": " *", "t_ms": 28197.3984, "step_ms": 151.812208, "p": 0.0886802547, "margin": 1.07609177, "nucleus": 34, "hit": 0.528816987}
+{"event": "token", "id": 100418, "text": "observed", "t_ms": 28506.4726, "step_ms": 103.020603, "p": 0, "margin": 0.122531891, "nucleus": 0, "hit": 0.574766355}
+{"event": "token", "id": 12, "text": "*", "t_ms": 28506.5027, "step_ms": 103.020603, "p": 0, "margin": 2.19692039, "nucleus": 0, "hit": 0.574766355}
+{"event": "token", "id": 1014, "text": " time", "t_ms": 28506.507, "step_ms": 103.020603, "p": 0.621283499, "margin": 0.919212341, "nucleus": 5, "hit": 0.574766355}
+{"event": "token", "id": 344, "text": " is", "t_ms": 28796.1397, "step_ms": 48.2695687, "p": 0, "margin": 3.15436554, "nucleus": 0, "hit": 0.53217012}
+{"event": "token", "id": 270, "text": " the", "t_ms": 28796.1732, "step_ms": 48.2695687, "p": 0, "margin": 1.07996368, "nucleus": 0, "hit": 0.53217012}
+{"event": "token", "id": 982, "text": " *", "t_ms": 28796.1772, "step_ms": 48.2695687, "p": 0, "margin": 0.0101490021, "nucleus": 0, "hit": 0.53217012}
+{"event": "token", "id": 5674, "text": "sum", "t_ms": 28796.1813, "step_ms": 48.2695687, "p": 0, "margin": 1.68726158, "nucleus": 0, "hit": 0.53217012}
+{"event": "token", "id": 294, "text": " of", "t_ms": 28796.1842, "step_ms": 48.2695687, "p": 0, "margin": 1.82190895, "nucleus": 0, "hit": 0.53217012}
+{"event": "token", "id": 270, "text": " the", "t_ms": 28796.1864, "step_ms": 48.2695687, "p": 0.696261617, "margin": 1.54927444, "nucleus": 3, "hit": 0.53217012}
+{"event": "token", "id": 12, "text": "*", "t_ms": 29091.474, "step_ms": 147.638865, "p": 0, "margin": 1.63575363, "nucleus": 0, "hit": 0.587750294}
+{"event": "token", "id": 2595, "text": " sum", "t_ms": 29091.5045, "step_ms": 147.638865, "p": 0.00580414916, "margin": 0.779941559, "nucleus": 141, "hit": 0.587750294}
+{"event": "token", "id": 294, "text": " of", "t_ms": 29400.2178, "step_ms": 77.1742182, "p": 0, "margin": 4.9803257, "nucleus": 0, "hit": 0.608536585}
+{"event": "token", "id": 270, "text": " the", "t_ms": 29400.256, "step_ms": 77.1742182, "p": 0, "margin": 2.70084572, "nucleus": 0, "hit": 0.608536585}
+{"event": "token", "id": 982, "text": " *", "t_ms": 29400.2605, "step_ms": 77.1742182, "p": 0, "margin": 3.22384834, "nucleus": 0, "hit": 0.608536585}
+{"event": "token", "id": 38065, "text": "each", "t_ms": 29400.2633, "step_ms": 77.1742182, "p": 0.0148095603, "margin": 0.0630130768, "nucleus": 185, "hit": 0.608536585}
+{"event": "token", "id": 12, "text": "*", "t_ms": 29691.5341, "step_ms": 145.629823, "p": 0, "margin": 1.76276398, "nucleus": 0, "hit": 0.576587796}
+{"event": "token", "id": 1660, "text": " each", "t_ms": 29691.5626, "step_ms": 145.629823, "p": 0.116865744, "margin": 0.393041611, "nucleus": 29, "hit": 0.576587796}
+{"event": "token", "id": 982, "text": " *", "t_ms": 30002.2209, "step_ms": 62.1281908, "p": 0, "margin": 0.619524002, "nucleus": 0, "hit": 0.583433373}
+{"event": "token", "id": 2739, "text": "work", "t_ms": 30002.2591, "step_ms": 62.1281908, "p": 0, "margin": 1.14660263, "nucleus": 0, "hit": 0.583433373}
+{"event": "token", "id": 734, "text": "'s", "t_ms": 30002.2637, "step_ms": 62.1281908, "p": 0, "margin": 2.03111649, "nucleus": 0, "hit": 0.583433373}
+{"event": "token", "id": 982, "text": " *", "t_ms": 30002.2664, "step_ms": 62.1281908, "p": 0, "margin": 3.56873703, "nucleus": 0, "hit": 0.583433373}
+{"event": "token", "id": 729, "text": "con", "t_ms": 30002.2689, "step_ms": 62.1281908, "p": 0.00174345549, "margin": 1.42663383, "nucleus": 171, "hit": 0.583433373}
+{"event": "token", "id": 30911, "text": "verted", "t_ms": 30288.7331, "step_ms": 286.450673, "p": 0.0602615098, "margin": 0.0213241577, "nucleus": 244, "hit": 0.530023095}
+{"event": "token", "id": 12, "text": "*", "t_ms": 30579.0954, "step_ms": 58.0586434, "p": 0, "margin": 1.13632393, "nucleus": 0, "hit": 0.56505102}
+{"event": "token", "id": 982, "text": " *", "t_ms": 30579.1342, "step_ms": 58.0586434, "p": 0, "margin": 0.519189835, "nucleus": 0, "hit": 0.56505102}
+{"event": "token", "id": 53047, "text": "resource", "t_ms": 30579.1393, "step_ms": 58.0586434, "p": 0, "margin": 0.740550995, "nucleus": 0, "hit": 0.56505102}
+{"event": "token", "id": 12, "text": "*", "t_ms": 30579.1422, "step_ms": 58.0586434, "p": 0, "margin": 0.282377243, "nucleus": 0, "hit": 0.56505102}
+{"event": "token", "id": 982, "text": " *", "t_ms": 30579.1443, "step_ms": 58.0586434, "p": 0.691099306, "margin": 1.81845093, "nucleus": 25, "hit": 0.56505102}
+{"event": "token", "id": 17237, "text": "cap", "t_ms": 30880.3936, "step_ms": 75.3086632, "p": 0, "margin": 1.00439072, "nucleus": 0, "hit": 0.612393682}
+{"event": "token", "id": 2178, "text": "ability", "t_ms": 30880.4307, "step_ms": 75.3086632, "p": 0, "margin": 4.51966095, "nucleus": 0, "hit": 0.612393682}
+{"event": "token", "id": 12, "text": "*", "t_ms": 30880.4354, "step_ms": 75.3086632, "p": 0, "margin": 1.07862282, "nucleus": 0, "hit": 0.612393682}
+{"event": "token", "id": 982, "text": " *", "t_ms": 30880.4387, "step_ms": 75.3086632, "p": 0.72936202, "margin": 2.86102486, "nucleus": 23, "hit": 0.612393682}
+{"event": "token", "id": 16386, "text": "plus", "t_ms": 31173.5578, "step_ms": 58.6215232, "p": 0, "margin": 0.59438324, "nucleus": 0, "hit": 0.582210243}
+{"event": "token", "id": 12, "text": "*", "t_ms": 31173.588, "step_ms": 58.6215232, "p": 0, "margin": 3.2626915, "nucleus": 0, "hit": 0.582210243}
+{"event": "token", "id": 270, "text": " the", "t_ms": 31173.5921, "step_ms": 58.6215232, "p": 0, "margin": 1.19882774, "nucleus": 0, "hit": 0.582210243}
+{"event": "token", "id": 982, "text": " *", "t_ms": 31173.5953, "step_ms": 58.6215232, "p": 0, "margin": 6.01642418, "nucleus": 0, "hit": 0.582210243}
+{"event": "token", "id": 58616, "text": "serial", "t_ms": 31173.5979, "step_ms": 58.6215232, "p": 0.0671462832, "margin": 0.764560699, "nucleus": 60, "hit": 0.582210243}
+{"event": "token", "id": 1878, "text": "ization", "t_ms": 31477.0301, "step_ms": 60.6842694, "p": 0, "margin": 2.20983124, "nucleus": 0, "hit": 0.637910085}
+{"event": "token", "id": 12, "text": "*", "t_ms": 31477.0573, "step_ms": 60.6842694, "p": 0, "margin": 3.86894798, "nucleus": 0, "hit": 0.637910085}
+{"event": "token", "id": 982, "text": " *", "t_ms": 31477.0618, "step_ms": 60.6842694, "p": 0, "margin": 1.93206787, "nucleus": 0, "hit": 0.637910085}
+{"event": "token", "id": 3063, "text": "over", "t_ms": 31477.065, "step_ms": 60.6842694, "p": 0, "margin": 0.992536545, "nucleus": 0, "hit": 0.637910085}
+{"event": "token", "id": 12, "text": "*", "t_ms": 31477.0674, "step_ms": 60.6842694, "p": 0.757144749, "margin": 2.29712296, "nucleus": 33, "hit": 0.637910085}
+{"event": "token", "id": 982, "text": " *", "t_ms": 31769.6353, "step_ms": 73.1382823, "p": 0, "margin": 0.757398605, "nucleus": 0, "hit": 0.55396619}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 31769.6707, "step_ms": 73.1382823, "p": 0, "margin": 2.10706329, "nucleus": 0, "hit": 0.55396619}
+{"event": "token", "id": 982, "text": " *", "t_ms": 31769.6751, "step_ms": 73.1382823, "p": 0, "margin": 3.36853981, "nucleus": 0, "hit": 0.55396619}
+{"event": "token", "id": 30293, "text": "mut", "t_ms": 31769.6781, "step_ms": 73.1382823, "p": 0.00150398338, "margin": 0.252189636, "nucleus": 221, "hit": 0.55396619}
+{"event": "token", "id": 814, "text": "ual", "t_ms": 32070.1674, "step_ms": 75.119524, "p": 0, "margin": 1.55253983, "nucleus": 0, "hit": 0.604624277}
+{"event": "token", "id": 12, "text": "*", "t_ms": 32070.1977, "step_ms": 75.119524, "p": 0, "margin": 1.89273643, "nucleus": 0, "hit": 0.604624277}
+{"event": "token", "id": 982, "text": " *", "t_ms": 32070.202, "step_ms": 75.119524, "p": 0, "margin": 3.82975388, "nucleus": 0, "hit": 0.604624277}
+{"event": "token", "id": 3063, "text": "over", "t_ms": 32070.2054, "step_ms": 75.119524, "p": 0.0587508609, "margin": 0.753919601, "nucleus": 102, "hit": 0.604624277}
+{"event": "token", "id": 12, "text": "*", "t_ms": 32378.1833, "step_ms": 307.966907, "p": 0.839101401, "margin": 2.46349144, "nucleus": 5, "hit": 0.627610209}
+{"event": "token", "id": 982, "text": " *", "t_ms": 32677.2953, "step_ms": 49.8457932, "p": 0, "margin": 1.10367584, "nucleus": 0, "hit": 0.594315245}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 32677.3234, "step_ms": 49.8457932, "p": 0, "margin": 3.37252235, "nucleus": 0, "hit": 0.594315245}
+{"event": "token", "id": 12, "text": "*", "t_ms": 32677.3276, "step_ms": 49.8457932, "p": 0, "margin": 2.13906479, "nucleus": 0, "hit": 0.594315245}
+{"event": "token", "id": 982, "text": " *", "t_ms": 32677.3304, "step_ms": 49.8457932, "p": 0, "margin": 4.44045067, "nucleus": 0, "hit": 0.594315245}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 32677.3327, "step_ms": 49.8457932, "p": 0, "margin": 0.748569489, "nucleus": 0, "hit": 0.594315245}
+{"event": "token", "id": 982, "text": " *", "t_ms": 32677.3351, "step_ms": 49.8457932, "p": 0.507624538, "margin": 0.0782089233, "nucleus": 2, "hit": 0.594315245}
+{"event": "token", "id": 3063, "text": "over", "t_ms": 32978.8927, "step_ms": 150.770924, "p": 0, "margin": 1.48221016, "nucleus": 0, "hit": 0.56937799}
+{"event": "token", "id": 12, "text": "*", "t_ms": 32978.931, "step_ms": 150.770924, "p": 0.861287379, "margin": 2.55406189, "nucleus": 3, "hit": 0.56937799}
+{"event": "token", "id": 982, "text": " *", "t_ms": 33292.8115, "step_ms": 52.3113827, "p": 0, "margin": 1.55369186, "nucleus": 0, "hit": 0.601864181}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 33292.8337, "step_ms": 52.3113827, "p": 0, "margin": 3.68232346, "nucleus": 0, "hit": 0.601864181}
+{"event": "token", "id": 12, "text": "*", "t_ms": 33292.8379, "step_ms": 52.3113827, "p": 0, "margin": 2.49259758, "nucleus": 0, "hit": 0.601864181}
+{"event": "token", "id": 982, "text": " *", "t_ms": 33292.8406, "step_ms": 52.3113827, "p": 0, "margin": 3.97573662, "nucleus": 0, "hit": 0.601864181}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 33292.8428, "step_ms": 52.3113827, "p": 0, "margin": 1.07820702, "nucleus": 0, "hit": 0.601864181}
+{"event": "token", "id": 982, "text": " *", "t_ms": 33292.845, "step_ms": 52.3113827, "p": 0.920032469, "margin": 2.91386223, "nucleus": 2, "hit": 0.601864181}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 33594.8369, "step_ms": 100.659097, "p": 0, "margin": 0.220445633, "nucleus": 0, "hit": 0.55878929}
+{"event": "token", "id": 982, "text": " *", "t_ms": 33594.8769, "step_ms": 100.659097, "p": 0, "margin": 2.91645622, "nucleus": 0, "hit": 0.55878929}
+{"event": "token", "id": 3063, "text": "over", "t_ms": 33594.8812, "step_ms": 100.659097, "p": 0.159570801, "margin": 1.59109879, "nucleus": 3, "hit": 0.55878929}
+{"event": "token", "id": 12, "text": "*", "t_ms": 33895.1505, "step_ms": 50.0425182, "p": 0, "margin": 2.78610611, "nucleus": 0, "hit": 0.576608187}
+{"event": "token", "id": 982, "text": " *", "t_ms": 33895.1808, "step_ms": 50.0425182, "p": 0, "margin": 2.2356987, "nucleus": 0, "hit": 0.576608187}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 33895.185, "step_ms": 50.0425182, "p": 0, "margin": 4.78381348, "nucleus": 0, "hit": 0.576608187}
+{"event": "token", "id": 982, "text": " *", "t_ms": 33895.188, "step_ms": 50.0425182, "p": 0, "margin": 3.30690384, "nucleus": 0, "hit": 0.576608187}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 33895.1901, "step_ms": 50.0425182, "p": 0, "margin": 2.06864166, "nucleus": 0, "hit": 0.576608187}
+{"event": "token", "id": 982, "text": " *", "t_ms": 33895.1922, "step_ms": 50.0425182, "p": 0.962896774, "margin": 3.7375145, "nucleus": 1, "hit": 0.576608187}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34175.2563, "step_ms": 46.6746343, "p": 0, "margin": 0.650192261, "nucleus": 0, "hit": 0.559294872}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34175.2925, "step_ms": 46.6746343, "p": 0, "margin": 3.94356155, "nucleus": 0, "hit": 0.559294872}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34175.2967, "step_ms": 46.6746343, "p": 0, "margin": 0.0509586334, "nucleus": 0, "hit": 0.559294872}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34175.2999, "step_ms": 46.6746343, "p": 0, "margin": 4.01799202, "nucleus": 0, "hit": 0.559294872}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34175.3024, "step_ms": 46.6746343, "p": 0, "margin": 1.24318695, "nucleus": 0, "hit": 0.559294872}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34175.3049, "step_ms": 46.6746343, "p": 0.9761872, "margin": 4.47648621, "nucleus": 1, "hit": 0.559294872}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34462.6087, "step_ms": 47.8819745, "p": 0, "margin": 1.87319756, "nucleus": 0, "hit": 0.550793651}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34462.6398, "step_ms": 47.8819745, "p": 0, "margin": 4.59248543, "nucleus": 0, "hit": 0.550793651}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34462.6437, "step_ms": 47.8819745, "p": 0, "margin": 2.54753304, "nucleus": 0, "hit": 0.550793651}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34462.6467, "step_ms": 47.8819745, "p": 0, "margin": 4.61568069, "nucleus": 0, "hit": 0.550793651}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34462.6493, "step_ms": 47.8819745, "p": 0, "margin": 2.84638023, "nucleus": 0, "hit": 0.550793651}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34462.6513, "step_ms": 47.8819745, "p": 0.980814366, "margin": 4.60233688, "nucleus": 1, "hit": 0.550793651}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34745.2144, "step_ms": 47.0913293, "p": 0, "margin": 3.16615868, "nucleus": 0, "hit": 0.552845528}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34745.2517, "step_ms": 47.0913293, "p": 0, "margin": 5.12991333, "nucleus": 0, "hit": 0.552845528}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34745.2562, "step_ms": 47.0913293, "p": 0, "margin": 3.55612183, "nucleus": 0, "hit": 0.552845528}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34745.2587, "step_ms": 47.0913293, "p": 0, "margin": 5.38098526, "nucleus": 0, "hit": 0.552845528}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 34745.2606, "step_ms": 47.0913293, "p": 0, "margin": 3.32377434, "nucleus": 0, "hit": 0.552845528}
+{"event": "token", "id": 982, "text": " *", "t_ms": 34745.2626, "step_ms": 47.0913293, "p": 0.989849378, "margin": 5.29483604, "nucleus": 1, "hit": 0.552845528}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35034.4966, "step_ms": 48.2031675, "p": 0, "margin": 3.45085335, "nucleus": 0, "hit": 0.553191489}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35034.5431, "step_ms": 48.2031675, "p": 0, "margin": 5.02455902, "nucleus": 0, "hit": 0.553191489}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35034.5486, "step_ms": 48.2031675, "p": 0, "margin": 3.50601959, "nucleus": 0, "hit": 0.553191489}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35034.5523, "step_ms": 48.2031675, "p": 0, "margin": 5.72203445, "nucleus": 0, "hit": 0.553191489}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35034.5552, "step_ms": 48.2031675, "p": 0, "margin": 3.87671471, "nucleus": 0, "hit": 0.553191489}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35034.5581, "step_ms": 48.2031675, "p": 0.990844348, "margin": 5.74288177, "nucleus": 1, "hit": 0.553191489}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35320.0692, "step_ms": 47.582868, "p": 0, "margin": 4.24826431, "nucleus": 0, "hit": 0.518881119}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35320.1118, "step_ms": 47.582868, "p": 0, "margin": 5.4682045, "nucleus": 0, "hit": 0.518881119}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35320.1161, "step_ms": 47.582868, "p": 0, "margin": 4.55492401, "nucleus": 0, "hit": 0.518881119}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35320.1188, "step_ms": 47.582868, "p": 0, "margin": 6.0655117, "nucleus": 0, "hit": 0.518881119}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35320.121, "step_ms": 47.582868, "p": 0, "margin": 3.81316948, "nucleus": 0, "hit": 0.518881119}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35320.1232, "step_ms": 47.582868, "p": 0.993035637, "margin": 6.02965164, "nucleus": 1, "hit": 0.518881119}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35602.293, "step_ms": 47.025748, "p": 0, "margin": 4.60616684, "nucleus": 0, "hit": 0.548117155}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35602.3323, "step_ms": 47.025748, "p": 0, "margin": 6.06213951, "nucleus": 0, "hit": 0.548117155}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35602.3369, "step_ms": 47.025748, "p": 0, "margin": 4.58071136, "nucleus": 0, "hit": 0.548117155}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35602.3394, "step_ms": 47.025748, "p": 0, "margin": 6.49184799, "nucleus": 0, "hit": 0.548117155}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35602.3414, "step_ms": 47.025748, "p": 0, "margin": 4.30802345, "nucleus": 0, "hit": 0.548117155}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35602.3434, "step_ms": 47.025748, "p": 0.994310694, "margin": 6.37177658, "nucleus": 1, "hit": 0.548117155}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35883.8014, "step_ms": 46.9071747, "p": 0, "margin": 4.77433395, "nucleus": 0, "hit": 0.522189349}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35883.8404, "step_ms": 46.9071747, "p": 0, "margin": 5.69755936, "nucleus": 0, "hit": 0.522189349}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35883.8447, "step_ms": 46.9071747, "p": 0, "margin": 4.69667053, "nucleus": 0, "hit": 0.522189349}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35883.8472, "step_ms": 46.9071747, "p": 0, "margin": 6.52462006, "nucleus": 0, "hit": 0.522189349}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 35883.8494, "step_ms": 46.9071747, "p": 0, "margin": 4.94096375, "nucleus": 0, "hit": 0.522189349}
+{"event": "token", "id": 982, "text": " *", "t_ms": 35883.8514, "step_ms": 46.9071747, "p": 0.994576771, "margin": 6.14756775, "nucleus": 1, "hit": 0.522189349}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36174.9993, "step_ms": 48.5222283, "p": 0, "margin": 5.41333771, "nucleus": 0, "hit": 0.55785124}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36175.0365, "step_ms": 48.5222283, "p": 0, "margin": 6.55836105, "nucleus": 0, "hit": 0.55785124}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36175.0408, "step_ms": 48.5222283, "p": 0, "margin": 5.43984795, "nucleus": 0, "hit": 0.55785124}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36175.0436, "step_ms": 48.5222283, "p": 0, "margin": 6.41960526, "nucleus": 0, "hit": 0.55785124}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36175.046, "step_ms": 48.5222283, "p": 0, "margin": 5.1654377, "nucleus": 0, "hit": 0.55785124}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36175.048, "step_ms": 48.5222283, "p": 0.995475335, "margin": 6.56787872, "nucleus": 1, "hit": 0.55785124}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36463.0188, "step_ms": 47.9928772, "p": 0, "margin": 5.19151497, "nucleus": 0, "hit": 0.562211982}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36463.049, "step_ms": 47.9928772, "p": 0, "margin": 6.36513901, "nucleus": 0, "hit": 0.562211982}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36463.0533, "step_ms": 47.9928772, "p": 0, "margin": 5.20201111, "nucleus": 0, "hit": 0.562211982}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36463.0561, "step_ms": 47.9928772, "p": 0, "margin": 6.62420654, "nucleus": 0, "hit": 0.562211982}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36463.0584, "step_ms": 47.9928772, "p": 0, "margin": 5.37981415, "nucleus": 0, "hit": 0.562211982}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36463.0604, "step_ms": 47.9928772, "p": 0.995841166, "margin": 6.69176674, "nucleus": 1, "hit": 0.562211982}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36748.6111, "step_ms": 47.5892532, "p": 0, "margin": 5.24549103, "nucleus": 0, "hit": 0.568990043}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36748.6479, "step_ms": 47.5892532, "p": 0, "margin": 6.90209961, "nucleus": 0, "hit": 0.568990043}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36748.6517, "step_ms": 47.5892532, "p": 0, "margin": 5.88334656, "nucleus": 0, "hit": 0.568990043}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36748.6544, "step_ms": 47.5892532, "p": 0, "margin": 6.79604912, "nucleus": 0, "hit": 0.568990043}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 36748.6566, "step_ms": 47.5892532, "p": 0, "margin": 5.59783745, "nucleus": 0, "hit": 0.568990043}
+{"event": "token", "id": 982, "text": " *", "t_ms": 36748.6586, "step_ms": 47.5892532, "p": 0.994098203, "margin": 6.26958466, "nucleus": 1, "hit": 0.568990043}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37028.6766, "step_ms": 46.6679217, "p": 0, "margin": 5.54760933, "nucleus": 0, "hit": 0.531981279}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37028.7054, "step_ms": 46.6679217, "p": 0, "margin": 6.72243881, "nucleus": 0, "hit": 0.531981279}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37028.7092, "step_ms": 46.6679217, "p": 0, "margin": 5.5253334, "nucleus": 0, "hit": 0.531981279}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37028.7119, "step_ms": 46.6679217, "p": 0, "margin": 6.7631855, "nucleus": 0, "hit": 0.531981279}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37028.7144, "step_ms": 46.6679217, "p": 0, "margin": 5.77900314, "nucleus": 0, "hit": 0.531981279}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37028.7164, "step_ms": 46.6679217, "p": 0.99619804, "margin": 6.51511955, "nucleus": 1, "hit": 0.531981279}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37320.3573, "step_ms": 48.6045508, "p": 0, "margin": 5.86230659, "nucleus": 0, "hit": 0.581944444}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37320.3903, "step_ms": 48.6045508, "p": 0, "margin": 6.70952988, "nucleus": 0, "hit": 0.581944444}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37320.3944, "step_ms": 48.6045508, "p": 0, "margin": 5.81001472, "nucleus": 0, "hit": 0.581944444}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37320.3969, "step_ms": 48.6045508, "p": 0, "margin": 6.65021133, "nucleus": 0, "hit": 0.581944444}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37320.3989, "step_ms": 48.6045508, "p": 0, "margin": 5.52418137, "nucleus": 0, "hit": 0.581944444}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37320.4009, "step_ms": 48.6045508, "p": 0.996933904, "margin": 6.89725304, "nucleus": 1, "hit": 0.581944444}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37609.2383, "step_ms": 48.137094, "p": 0, "margin": 5.89650726, "nucleus": 0, "hit": 0.578723404}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37609.273, "step_ms": 48.137094, "p": 0, "margin": 6.64105225, "nucleus": 0, "hit": 0.578723404}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37609.2777, "step_ms": 48.137094, "p": 0, "margin": 6.08088684, "nucleus": 0, "hit": 0.578723404}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37609.2805, "step_ms": 48.137094, "p": 0, "margin": 6.7139225, "nucleus": 0, "hit": 0.578723404}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37609.2831, "step_ms": 48.137094, "p": 0, "margin": 6.06925774, "nucleus": 0, "hit": 0.578723404}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37609.285, "step_ms": 48.137094, "p": 0.996839702, "margin": 6.7891922, "nucleus": 1, "hit": 0.578723404}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37904.7738, "step_ms": 49.2457063, "p": 0, "margin": 6.40263557, "nucleus": 0, "hit": 0.560810811}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37904.8064, "step_ms": 49.2457063, "p": 0, "margin": 6.61804199, "nucleus": 0, "hit": 0.560810811}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37904.8105, "step_ms": 49.2457063, "p": 0, "margin": 6.17717361, "nucleus": 0, "hit": 0.560810811}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37904.8133, "step_ms": 49.2457063, "p": 0, "margin": 6.68281174, "nucleus": 0, "hit": 0.560810811}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 37904.8155, "step_ms": 49.2457063, "p": 0, "margin": 6.28433418, "nucleus": 0, "hit": 0.560810811}
+{"event": "token", "id": 982, "text": " *", "t_ms": 37904.8174, "step_ms": 49.2457063, "p": 0.995841524, "margin": 6.55668259, "nucleus": 1, "hit": 0.560810811}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38211.0295, "step_ms": 51.033769, "p": 0, "margin": 6.58698273, "nucleus": 0, "hit": 0.581117021}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38211.047, "step_ms": 51.033769, "p": 0, "margin": 6.90711403, "nucleus": 0, "hit": 0.581117021}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38211.0511, "step_ms": 51.033769, "p": 0, "margin": 6.82159042, "nucleus": 0, "hit": 0.581117021}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38211.0537, "step_ms": 51.033769, "p": 0, "margin": 6.81725883, "nucleus": 0, "hit": 0.581117021}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38211.0557, "step_ms": 51.033769, "p": 0, "margin": 6.10346222, "nucleus": 0, "hit": 0.581117021}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38211.0577, "step_ms": 51.033769, "p": 0.996286837, "margin": 6.80909348, "nucleus": 1, "hit": 0.581117021}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38511.3912, "step_ms": 50.0532667, "p": 0, "margin": 6.19342041, "nucleus": 0, "hit": 0.586357039}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38511.4228, "step_ms": 50.0532667, "p": 0, "margin": 6.86433411, "nucleus": 0, "hit": 0.586357039}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38511.4272, "step_ms": 50.0532667, "p": 0, "margin": 6.09292412, "nucleus": 0, "hit": 0.586357039}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38511.4298, "step_ms": 50.0532667, "p": 0, "margin": 6.85045242, "nucleus": 0, "hit": 0.586357039}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38511.432, "step_ms": 50.0532667, "p": 0, "margin": 6.44511032, "nucleus": 0, "hit": 0.586357039}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38511.434, "step_ms": 50.0532667, "p": 0.997140658, "margin": 7.04952621, "nucleus": 1, "hit": 0.586357039}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38806.6033, "step_ms": 49.1931963, "p": 0, "margin": 6.22872543, "nucleus": 0, "hit": 0.566617862}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38806.6326, "step_ms": 49.1931963, "p": 0, "margin": 7.03529167, "nucleus": 0, "hit": 0.566617862}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38806.6364, "step_ms": 49.1931963, "p": 0, "margin": 6.44520378, "nucleus": 0, "hit": 0.566617862}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38806.6388, "step_ms": 49.1931963, "p": 0, "margin": 7.14401245, "nucleus": 0, "hit": 0.566617862}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 38806.6409, "step_ms": 49.1931963, "p": 0, "margin": 6.62265205, "nucleus": 0, "hit": 0.566617862}
+{"event": "token", "id": 982, "text": " *", "t_ms": 38806.6431, "step_ms": 49.1931963, "p": 0.994630487, "margin": 6.31597328, "nucleus": 1, "hit": 0.566617862}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39095.8111, "step_ms": 48.1921453, "p": 0, "margin": 6.5785675, "nucleus": 0, "hit": 0.558103976}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39095.845, "step_ms": 48.1921453, "p": 0, "margin": 7.05310631, "nucleus": 0, "hit": 0.558103976}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39095.8493, "step_ms": 48.1921453, "p": 0, "margin": 6.54959679, "nucleus": 0, "hit": 0.558103976}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39095.852, "step_ms": 48.1921453, "p": 0, "margin": 7.248806, "nucleus": 0, "hit": 0.558103976}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39095.8545, "step_ms": 48.1921453, "p": 0, "margin": 6.59664345, "nucleus": 0, "hit": 0.558103976}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39095.8567, "step_ms": 48.1921453, "p": 0.997113926, "margin": 7.04534912, "nucleus": 1, "hit": 0.558103976}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39388.923, "step_ms": 48.8419368, "p": 0, "margin": 6.62526703, "nucleus": 0, "hit": 0.580209895}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39388.9618, "step_ms": 48.8419368, "p": 0, "margin": 7.31077576, "nucleus": 0, "hit": 0.580209895}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39388.9661, "step_ms": 48.8419368, "p": 0, "margin": 6.31824493, "nucleus": 0, "hit": 0.580209895}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39388.969, "step_ms": 48.8419368, "p": 0, "margin": 6.66350555, "nucleus": 0, "hit": 0.580209895}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39388.9713, "step_ms": 48.8419368, "p": 0, "margin": 6.63748741, "nucleus": 0, "hit": 0.580209895}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39388.9733, "step_ms": 48.8419368, "p": 0.997448065, "margin": 7.20858574, "nucleus": 1, "hit": 0.580209895}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39679.2132, "step_ms": 48.3715113, "p": 0, "margin": 6.6019249, "nucleus": 0, "hit": 0.549715909}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39679.2373, "step_ms": 48.3715113, "p": 0, "margin": 7.13819313, "nucleus": 0, "hit": 0.549715909}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39679.2412, "step_ms": 48.3715113, "p": 0, "margin": 6.539711, "nucleus": 0, "hit": 0.549715909}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39679.2439, "step_ms": 48.3715113, "p": 0, "margin": 7.0594635, "nucleus": 0, "hit": 0.549715909}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39679.246, "step_ms": 48.3715113, "p": 0, "margin": 6.78915024, "nucleus": 0, "hit": 0.549715909}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39679.2482, "step_ms": 48.3715113, "p": 0.997488624, "margin": 7.18510437, "nucleus": 1, "hit": 0.549715909}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39968.0032, "step_ms": 48.1242315, "p": 0, "margin": 6.66861725, "nucleus": 0, "hit": 0.558599696}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39968.029, "step_ms": 48.1242315, "p": 0, "margin": 7.39317513, "nucleus": 0, "hit": 0.558599696}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39968.0334, "step_ms": 48.1242315, "p": 0, "margin": 6.94198608, "nucleus": 0, "hit": 0.558599696}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39968.0361, "step_ms": 48.1242315, "p": 0, "margin": 7.29377747, "nucleus": 0, "hit": 0.558599696}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 39968.0385, "step_ms": 48.1242315, "p": 0, "margin": 7.01460266, "nucleus": 0, "hit": 0.558599696}
+{"event": "token", "id": 982, "text": " *", "t_ms": 39968.0406, "step_ms": 48.1242315, "p": 0.99726675, "margin": 7.20496941, "nucleus": 1, "hit": 0.558599696}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40264.0389, "step_ms": 49.3310425, "p": 0, "margin": 7.07251358, "nucleus": 0, "hit": 0.540381791}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40264.0675, "step_ms": 49.3310425, "p": 0, "margin": 7.10563278, "nucleus": 0, "hit": 0.540381791}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40264.0786, "step_ms": 49.3310425, "p": 0, "margin": 7.09369469, "nucleus": 0, "hit": 0.540381791}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40264.0811, "step_ms": 49.3310425, "p": 0, "margin": 7.3127861, "nucleus": 0, "hit": 0.540381791}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40264.0832, "step_ms": 49.3310425, "p": 0, "margin": 6.74728966, "nucleus": 0, "hit": 0.540381791}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40264.0854, "step_ms": 49.3310425, "p": 0.997337508, "margin": 7.07004738, "nucleus": 1, "hit": 0.540381791}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40552.2307, "step_ms": 48.0225262, "p": 0, "margin": 7.20020294, "nucleus": 0, "hit": 0.546042003}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40552.2591, "step_ms": 48.0225262, "p": 0, "margin": 7.34587097, "nucleus": 0, "hit": 0.546042003}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40552.2633, "step_ms": 48.0225262, "p": 0, "margin": 6.9912262, "nucleus": 0, "hit": 0.546042003}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40552.2658, "step_ms": 48.0225262, "p": 0, "margin": 7.1560154, "nucleus": 0, "hit": 0.546042003}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40552.2679, "step_ms": 48.0225262, "p": 0, "margin": 7.06830406, "nucleus": 0, "hit": 0.546042003}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40552.2698, "step_ms": 48.0225262, "p": 0.997815749, "margin": 7.39751434, "nucleus": 1, "hit": 0.546042003}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40844.7166, "step_ms": 48.7394683, "p": 0, "margin": 7.20295334, "nucleus": 0, "hit": 0.528718704}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40844.7438, "step_ms": 48.7394683, "p": 0, "margin": 7.17027092, "nucleus": 0, "hit": 0.528718704}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40844.7477, "step_ms": 48.7394683, "p": 0, "margin": 7.06150436, "nucleus": 0, "hit": 0.528718704}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40844.7503, "step_ms": 48.7394683, "p": 0, "margin": 7.44726944, "nucleus": 0, "hit": 0.528718704}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 40844.7527, "step_ms": 48.7394683, "p": 0, "margin": 7.83205795, "nucleus": 0, "hit": 0.528718704}
+{"event": "token", "id": 982, "text": " *", "t_ms": 40844.7547, "step_ms": 48.7394683, "p": 0.998102964, "margin": 7.62865448, "nucleus": 1, "hit": 0.528718704}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41133.9991, "step_ms": 48.2056257, "p": 0, "margin": 7.42625618, "nucleus": 0, "hit": 0.562700965}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41134.0274, "step_ms": 48.2056257, "p": 0, "margin": 7.26303101, "nucleus": 0, "hit": 0.562700965}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41134.0317, "step_ms": 48.2056257, "p": 0, "margin": 7.26441956, "nucleus": 0, "hit": 0.562700965}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41134.0343, "step_ms": 48.2056257, "p": 0, "margin": 7.37976265, "nucleus": 0, "hit": 0.562700965}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41134.0364, "step_ms": 48.2056257, "p": 0, "margin": 7.39933014, "nucleus": 0, "hit": 0.562700965}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41134.0384, "step_ms": 48.2056257, "p": 0.997996945, "margin": 7.54019737, "nucleus": 1, "hit": 0.562700965}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41428.4318, "step_ms": 49.0633098, "p": 0, "margin": 7.57149696, "nucleus": 0, "hit": 0.55}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41428.4693, "step_ms": 49.0633098, "p": 0, "margin": 7.41586113, "nucleus": 0, "hit": 0.55}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41428.4737, "step_ms": 49.0633098, "p": 0, "margin": 7.54320717, "nucleus": 0, "hit": 0.55}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41428.4763, "step_ms": 49.0633098, "p": 0, "margin": 7.34678078, "nucleus": 0, "hit": 0.55}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41428.4783, "step_ms": 49.0633098, "p": 0, "margin": 7.56250191, "nucleus": 0, "hit": 0.55}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41428.4803, "step_ms": 49.0633098, "p": 0.99763729, "margin": 7.30252647, "nucleus": 1, "hit": 0.55}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41729.2857, "step_ms": 50.1319422, "p": 0, "margin": 7.57845497, "nucleus": 0, "hit": 0.565349544}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41729.3159, "step_ms": 50.1319422, "p": 0, "margin": 7.37988663, "nucleus": 0, "hit": 0.565349544}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41729.3203, "step_ms": 50.1319422, "p": 0, "margin": 7.7021389, "nucleus": 0, "hit": 0.565349544}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41729.3231, "step_ms": 50.1319422, "p": 0, "margin": 7.45262718, "nucleus": 0, "hit": 0.565349544}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 41729.3252, "step_ms": 50.1319422, "p": 0, "margin": 7.85440445, "nucleus": 0, "hit": 0.565349544}
+{"event": "token", "id": 982, "text": " *", "t_ms": 41729.3272, "step_ms": 50.1319422, "p": 0.997993894, "margin": 7.4312706, "nucleus": 1, "hit": 0.565349544}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 42032.0193, "step_ms": 50.446458, "p": 0, "margin": 7.43968582, "nucleus": 0, "hit": 0.593093093}
+{"event": "token", "id": 982, "text": " *", "t_ms": 42032.0504, "step_ms": 50.446458, "p": 0, "margin": 7.43552017, "nucleus": 0, "hit": 0.593093093}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 42032.0547, "step_ms": 50.446458, "p": 0, "margin": 7.90794563, "nucleus": 0, "hit": 0.593093093}
+{"event": "token", "id": 982, "text": " *", "t_ms": 42032.0574, "step_ms": 50.446458, "p": 0, "margin": 7.59264374, "nucleus": 0, "hit": 0.593093093}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 42032.0594, "step_ms": 50.446458, "p": 0, "margin": 7.9997406, "nucleus": 0, "hit": 0.593093093}
+{"event": "token", "id": 982, "text": " *", "t_ms": 42032.0615, "step_ms": 50.446458, "p": 0.997768174, "margin": 7.37208366, "nucleus": 1, "hit": 0.593093093}
+{"event": "token", "id": 1805, "text": "the", "t_ms": 42197.1633, "step_ms": 82.5431375, "p": 0, "margin": 8.139534, "nucleus": 0, "hit": 0.626373626}
+{"event": "token", "id": 982, "text": " *", "t_ms": 42197.2025, "step_ms": 82.5431375, "p": 0.996980944, "margin": 7.03279114, "nucleus": 1, "hit": 0.626373626}
+{"event": "done", "session": "longtest", "prompt_tokens": 68, "reused_tokens": 0, "prefill_tokens": 68, "generated": 512, "prefill_mode": "gpu", "finish": "length", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 7060.31482, "prefill_tok_s": 9.63129856, "ttft_ms": 7060.33012, "decode_ms": 35136.8798, "decode_steps": 511, "tok_s": 14.543124, "total_ms": 42197.208, "prefill_hit_rate": 0, "decode_hit_rate": 0.562564984, "prefill_nvme_mb": 0, "decode_nvme_mb": 0, "per_token_ms": {"attn": 0, "moe_gpu": 0, "moe_host": 0, "nvme_stall": 0, "engram": 1.02405081, "tail": 0, "other": 67.7241242, "record": 0.227706352, "submit": 0.02275091, "bind": 0.179244159, "fence_wait": 59.2542298, "submits": 0.236790607, "sample_host": 0.641804844}, "sampled_steps": 122, "topk_fallbacks": 4, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 104.909836, "context": 579, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "speculation": {"cycles": 121, "verified": 601, "accepted": 390, "tokens": 511, "draft_ms": 3415.78293, "verify_ms": 31240.7759, "commit_ms": 255.923318, "cpu_ms": 87.961112, "target_rows": 722, "union_experts": 56270, "miss_bytes": 0, "gpu_readout_cycles": 121}, "seed": 51003, "mode": "chat", "content": "# Engineering Guide: Measuring GPU Inference Runtime Performance\n\n## 0. Scope and mental model\n\nThis guide is a practical engineering guide for measuring a GPU inference runtime — the end-to-end latency and throughput of a trained model's forward pass under a given workload. It is meant to be used as a diagnostic instrument, not a marketing benchmark. The goal is to *distinguish* which performance limit is which kind of bottleneck is the runtime is currently bound by: memory bandwidth, compute (arithmetic) throughput, kernel launch latency, host/device synchronization, or data transfer (PCIe/NVLink). The core task is to a *counterfactual* experiment: a controlled experiment where you can be have a single bottleneck which is the runtime is currently bound to the other parts, and the attribution of the sum of the achievable time is a distinct, measurable, and attributable to the workload.\n\nThe mental model is a two-level hierarchy. The first level is the *decomposition*: the workload is a set of a *work* (FLOPs, bytes, kernel launches, sync points, transfers) and the *resource* is a set of an *capability* (peak FLOPS, bytes/s, launches/s, sync latency, transfer bytes/s). The second level is the *attribution*: the *observed* time is the *sum of the* sum of the *each* each *work's *converted* *resource* *capability* *plus* the *serialization* *over* *the *mutual* *over* *the* *the *over* *the* *the *the *over* *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *the *", "reasoning": ""}

@@ -1,0 +1,13 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "prefix_golden",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.full_runtime_chain"
+      ],
+      "timeout_s": 180
+    }
+  ]
+}

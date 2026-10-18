@@ -1,0 +1,91 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "engram_planes_unit_fixed",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.batch_engram_prefetch_planes"
+      ],
+      "timeout_s": 120
+    },
+    {
+      "name": "stock",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/end_to_end/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "bench/results/dspark_topk/engram_early/stock",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--serve-arg=--trace",
+        "--serve-arg=bench/results/dspark_topk/engram_early/stock/trace.bin"
+      ],
+      "env": {
+        "DEEPMOE_BATCH_ENGRAM_EARLY": "0"
+      },
+      "timeout_s": 150
+    },
+    {
+      "name": "early",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/end_to_end/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "bench/results/dspark_topk/engram_early/early",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--serve-arg=--trace",
+        "--serve-arg=bench/results/dspark_topk/engram_early/early/trace.bin"
+      ],
+      "env": {
+        "DEEPMOE_BATCH_ENGRAM_EARLY": "1"
+      },
+      "timeout_s": 150
+    },
+    {
+      "name": "cm_batch_quality",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "spec_forward.batch_matches_m1"
+      ],
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "1",
+        "DEEPMOE_BATCH_ENGRAM_EARLY": "1",
+        "DEEPMOE_SPEC_STEPS": "12",
+        "DEEPMOE_SPEC_BLOCK": "3"
+      },
+      "timeout_s": 240
+    }
+  ]
+}

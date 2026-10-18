@@ -1,0 +1,181 @@
+[
+  {
+    "name": "engram_planes_unit_fixed",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.batch_engram_prefetch_planes"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 2.680373071001668,
+    "start": {
+      "k10temp": 72.375,
+      "nvme": 35.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 60.625,
+      "nvme": 37.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 72.375,
+      "nvme": 37.85,
+      "amdgpu": 56.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:49:40.476402+08:00"
+  },
+  {
+    "name": "stock",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/dspark_topk/end_to_end/turn64.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/dspark_topk/engram_early/stock",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--serve-arg=--trace",
+      "--serve-arg=bench/results/dspark_topk/engram_early/stock/trace.bin"
+    ],
+    "env": {
+      "DEEPMOE_BATCH_ENGRAM_EARLY": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 43.698365132004255,
+    "start": {
+      "k10temp": 60.375,
+      "nvme": 37.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 65.0,
+      "nvme": 54.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 66.0,
+      "nvme": 59.85,
+      "amdgpu": 67.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:50:24.265449+08:00"
+  },
+  {
+    "name": "early",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/dspark_topk/end_to_end/turn64.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/dspark_topk/engram_early/early",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--serve-arg=--trace",
+      "--serve-arg=bench/results/dspark_topk/engram_early/early/trace.bin"
+    ],
+    "env": {
+      "DEEPMOE_BATCH_ENGRAM_EARLY": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 40.11374538900418,
+    "start": {
+      "k10temp": 64.875,
+      "nvme": 54.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 67.375,
+      "nvme": 58.85,
+      "amdgpu": 62.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 68.625,
+      "nvme": 61.85,
+      "amdgpu": 70.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:51:04.472338+08:00"
+  },
+  {
+    "name": "cm_batch_quality",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "spec_forward.batch_matches_m1"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "1",
+      "DEEPMOE_BATCH_ENGRAM_EARLY": "1",
+      "DEEPMOE_SPEC_STEPS": "12",
+      "DEEPMOE_SPEC_BLOCK": "3"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 43.19560014200397,
+    "start": {
+      "k10temp": 63.375,
+      "nvme": 53.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 66.875,
+      "nvme": 56.85,
+      "amdgpu": 61.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 66.75,
+      "nvme": 64.85,
+      "amdgpu": 67.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:51:49.774443+08:00"
+  }
+]

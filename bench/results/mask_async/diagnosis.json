@@ -1,0 +1,382 @@
+{
+  "plain_trace": {
+    "tok_s": 12.5958688,
+    "decode_ms": 2461.12439,
+    "decode_steps": 31,
+    "hit_rate": 0.845698925,
+    "speculation": {
+      "cycles": 0,
+      "verified": 0,
+      "accepted": 0,
+      "tokens": 0,
+      "draft_ms": 0,
+      "verify_ms": 0,
+      "commit_ms": 0,
+      "cpu_ms": 0,
+      "target_rows": 0,
+      "union_experts": 0,
+      "miss_bytes": 0,
+      "gpu_readout_cycles": 0
+    },
+    "trace": {
+      "cycles": 31,
+      "mean_busy_ms": {
+        "attention": 31.49477683870968,
+        "ced": 1.6527169032258064,
+        "engram": 1.7930623870967741,
+        "moe": 31.146528677419354,
+        "tail": 7.527882677419354
+      },
+      "mean_cross_submit_gap_ms": 3.3093706774193543,
+      "mean_same_submit_gap_ms": 1.7572747419354857,
+      "mean_span_ms": 78.68161290322581
+    },
+    "engram": "62 lands, wait 73.748 ms, stage 0.878 ms",
+    "planner": "planner: 1240 layers, 7440 requests (6292 hits, 1148 misses, 0.846), 0 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 756 stalls, 173 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 2373 kept / 0 dropped; P0 failures reserve 0 / submit 0 / IO 0",
+    "route": "route     resident-only=mask over 1240 layer-steps\n  experts requested 7440  served 6292 (0.8457)  skipped 1148\n  gate mass lost    0.1297 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n"
+  },
+  "k5_trace": {
+    "tok_s": 13.39856,
+    "decode_ms": 2313.68146,
+    "decode_steps": 31,
+    "hit_rate": 0.745003028,
+    "speculation": {
+      "cycles": 9,
+      "verified": 41,
+      "accepted": 22,
+      "tokens": 31,
+      "draft_ms": 232.036273,
+      "verify_ms": 2058.43686,
+      "commit_ms": 10.208628,
+      "cpu_ms": 1.440645,
+      "target_rows": 50,
+      "union_experts": 4920,
+      "miss_bytes": 22476554240,
+      "gpu_readout_cycles": 9
+    },
+    "trace": {
+      "cycles": 9,
+      "mean_busy_ms": {
+        "attention": 86.51532566666668,
+        "ced": 2.449542888888889,
+        "engram": 9.83255788888889,
+        "moe": 106.80779444444444,
+        "tail": 11.363520000000001
+      },
+      "mean_cross_submit_gap_ms": 0.0,
+      "mean_same_submit_gap_ms": 1.9271728888888937,
+      "mean_span_ms": 218.89591377777776
+    },
+    "engram": "100 lands, wait 44.413 ms, stage 0.474 ms",
+    "planner": "planner: 363 layers, 6988 requests (5070 hits, 1918 misses, 0.726), 0 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 350 stalls, 339 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 2373 kept / 0 dropped; P0 failures reserve 0 / submit 0 / IO 0",
+    "route": "route     resident-only=mask over 2000 layer-steps\n  experts requested 12000  served 9805 (0.8171)  skipped 2195\n  gate mass lost    0.1511 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n",
+    "cycle_means": {
+      "draft_ms": 25.78180811111111,
+      "verify_ms": 228.7152062222222,
+      "cpu_ms": 0.16007166666666667,
+      "commit_ms": 1.134292,
+      "emitted": 3.4444444444444446,
+      "accepted": 2.4444444444444446
+    },
+    "verify_host_ms": {
+      "setup_snapshot": 0.40270255555555556,
+      "input_ced_engram_issue": 0.6000852222222223,
+      "record_layers_tail": 7.065117111111111,
+      "submit_fence": 219.16299733333332,
+      "queue_submit": 0.08630711111111111,
+      "fence_wait": 219.07239,
+      "engram_issue_land": 5.266818000000001,
+      "finish_routes": 1.3122636666666667,
+      "trace_readout": 0.16957288888888888,
+      "route_index_validation": 0.05357077777777777,
+      "route_hidden_carry": 0.06917688888888887,
+      "route_readback": 0.10255866666666666,
+      "route_classify": 0.19654188888888888,
+      "route_planner": 0.8628632222222222
+    },
+    "full_k5_cycle_means": {
+      "draft_ms": 26.017765571428573,
+      "verify_ms": 240.80352471428571,
+      "emitted": 3.7142857142857144,
+      "accepted": 2.7142857142857144
+    },
+    "all_cycle_k": [
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      4,
+      2
+    ]
+  },
+  "code_baseline": "ed24f8d",
+  "code_wait_counters": "45ee3ab",
+  "short_instrumentation": "Target GPU trace and k5 host diagnostics on; draft GPU profiler off. Not an uninstrumented long-run speed claim.",
+  "gpu_receipt": [
+    {
+      "name": "plain_trace",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/turn32.json",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--require-sources",
+        "2",
+        "--cache-slots",
+        "5500",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mask-cache",
+        "--serve-arg=dynamic",
+        "--serve-arg=--gpu-prefill-min",
+        "--serve-arg=16",
+        "--out",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/plain_trace",
+        "--serve-arg=--trace",
+        "--serve-arg=/home/chenkailun/projects/cachedMoE/bench/results/mask_async/plain_trace/target.bin"
+      ],
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_DSPARK_MEGA": "0"
+      },
+      "profile": "power-saver",
+      "rc": 0,
+      "failure": null,
+      "elapsed_s": 35.40488139100489,
+      "start": {
+        "ac": 1,
+        "k10temp": 48.75,
+        "nvme_hwmon4": 32.85,
+        "nvme_hwmon13": 59.85,
+        "amdgpu": 45.0,
+        "missing_sensors": []
+      },
+      "end": {
+        "ac": 1,
+        "k10temp": 58.0,
+        "nvme_hwmon4": 49.85,
+        "nvme_hwmon13": 73.85,
+        "amdgpu": 53.0,
+        "missing_sensors": []
+      },
+      "peak": {
+        "k10temp": 59.375,
+        "nvme_hwmon4": 50.85,
+        "nvme_hwmon13": 74.85,
+        "amdgpu": 60.0
+      },
+      "thermal_pauses": 0,
+      "ac_changed": false,
+      "mirror_holds": 48,
+      "time": "2026-10-05T22:08:16.384255+08:00"
+    },
+    {
+      "name": "k5_trace",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/turn32.json",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--require-sources",
+        "2",
+        "--cache-slots",
+        "5500",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mask-cache",
+        "--serve-arg=dynamic",
+        "--serve-arg=--gpu-prefill-min",
+        "--serve-arg=16",
+        "--out",
+        "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/k5_trace",
+        "--serve-arg=--trace",
+        "--serve-arg=/home/chenkailun/projects/cachedMoE/bench/results/mask_async/k5_trace/target.bin",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=5",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4"
+      ],
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_DSPARK_MEGA": "0",
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/k5_trace/cycles.jsonl"
+      },
+      "profile": "power-saver",
+      "rc": 0,
+      "failure": null,
+      "elapsed_s": 70.95987857997534,
+      "start": {
+        "ac": 1,
+        "k10temp": 57.5,
+        "nvme_hwmon4": 46.85,
+        "nvme_hwmon13": 73.85,
+        "amdgpu": 53.0,
+        "missing_sensors": []
+      },
+      "end": {
+        "ac": 1,
+        "k10temp": 59.5,
+        "nvme_hwmon4": 49.85,
+        "nvme_hwmon13": 74.85,
+        "amdgpu": 54.0,
+        "missing_sensors": []
+      },
+      "peak": {
+        "k10temp": 61.875,
+        "nvme_hwmon4": 53.85,
+        "nvme_hwmon13": 74.85,
+        "amdgpu": 63.0
+      },
+      "thermal_pauses": 0,
+      "ac_changed": false,
+      "mirror_holds": 48,
+      "time": "2026-10-05T22:09:27.655016+08:00"
+    }
+  ],
+  "cpu_gates": 32,
+  "cpu_log_sha256": "7fe0c171d72152635bbecc144ce69c870c94b838c7b6a1d98b9cf9cca897ed18",
+  "long8_context": {
+    "raw": "bench/results/adaptive_mask/long8_spec5/status.json",
+    "decode_tok_s": 9.521827386239869,
+    "ms_per_decode_token": 105.0218576158096,
+    "cycle_components_ms": {
+      "draft_ms": 33.19862624747475,
+      "verify_ms": 379.4514523063973,
+      "commit_ms": 1.8336323888888888,
+      "cpu_ms": 0.1973158265993266
+    },
+    "routed_union_per_cycle": 740.5622895622896,
+    "miss_gb_per_cycle": 1.488747551030303,
+    "engram_wait_total_ms": 3929.596,
+    "engram_wait_if_all_charged_to_decode_percent": 1.5901799749111196,
+    "per_op_trace": false
+  },
+  "changes": [
+    "No computation, acceptance, cache or read scheduling policy changed.",
+    "Count classified miss layers separately from actual Planner::wait_layer joins, including timeout wall time.",
+    "Spec diagnostics expose per-target expert_io_wait.calls, miss_joins and ms; legacy gate/nvme_stall includes planner bookkeeping."
+  ],
+  "wait_counter_validation": {
+    "cycles": 4,
+    "all_expert_wait_calls_zero": true,
+    "all_expert_miss_joins_zero": true,
+    "all_expert_wait_ms_zero": true,
+    "planner_status": "planner: 163 layers, 3383 requests (2359 hits, 1024 misses, 0.697), 0 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 159 miss layers, 3 expert wait calls (3 miss joins, 954.045 ms), 85 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 2373 kept / 0 dropped; P0 failures reserve 0 / submit 0 / IO 0",
+    "speculation": {
+      "cycles": 4,
+      "verified": 18,
+      "accepted": 11,
+      "tokens": 15,
+      "draft_ms": 108.198027,
+      "verify_ms": 912.868933,
+      "commit_ms": 4.559432,
+      "cpu_ms": 1.01472,
+      "target_rows": 22,
+      "union_experts": 2310,
+      "miss_bytes": 10438901760,
+      "gpu_readout_cycles": 4
+    },
+    "gpu_receipt": [
+      {
+        "name": "k5",
+        "command": [
+          "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+          "tools/hitrate_bench.py",
+          "--script",
+          "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/verify_wait/turn16.json",
+          "--out",
+          "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/verify_wait/k5",
+          "--exe",
+          "/home/chenkailun/projects/deepmoe-mask-async/build/deepmoe",
+          "--require-sources",
+          "2",
+          "--cache-slots",
+          "5500",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask",
+          "--serve-arg=--mask-cache",
+          "--serve-arg=dynamic",
+          "--serve-arg=--gpu-prefill-min",
+          "--serve-arg=16",
+          "--serve-arg=--dspark",
+          "--serve-arg=--spec-k",
+          "--serve-arg=5",
+          "--serve-arg=--spec-top-k",
+          "--serve-arg=4",
+          "--serve-arg=--trace",
+          "--serve-arg=/home/chenkailun/projects/cachedMoE/bench/results/mask_async/verify_wait/k5/target.bin"
+        ],
+        "env": {
+          "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+          "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+          "DEEPMOE_DSPARK_PROFILE": "0",
+          "DEEPMOE_DSPARK_ONECB": "1",
+          "DEEPMOE_BATCH_GPU_ROUTE": "1",
+          "DEEPMOE_DSPARK_MEGA": "0",
+          "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/mask_async/verify_wait/k5/cycles.jsonl"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 62.59697025001515,
+        "start": {
+          "ac": 1,
+          "k10temp": 58.625,
+          "nvme_hwmon4": 32.85,
+          "nvme_hwmon13": 72.85,
+          "amdgpu": 50.0,
+          "missing_sensors": []
+        },
+        "end": {
+          "ac": 1,
+          "k10temp": 57.0,
+          "nvme_hwmon4": 49.85,
+          "nvme_hwmon13": 73.85,
+          "amdgpu": 53.0,
+          "missing_sensors": []
+        },
+        "peak": {
+          "k10temp": 58.75,
+          "nvme_hwmon4": 49.85,
+          "nvme_hwmon13": 74.85,
+          "amdgpu": 60.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "mirror_holds": 48,
+        "time": "2026-10-05T22:14:25.354067+08:00"
+      }
+    ],
+    "exe_sha256": "50a635e729856c5c1446f6b9a6a6f1404b634f0700a9659fafd5b2985a9a83e1",
+    "trace": {
+      "cycles": 4,
+      "mean_busy_ms": {
+        "attention": 84.42677574999993,
+        "ced": 2.4013237500000004,
+        "engram": 9.6350375,
+        "moe": 109.7073965,
+        "tail": 10.97196825
+      },
+      "mean_cross_submit_gap_ms": 0.0,
+      "mean_same_submit_gap_ms": 1.8658767500000049,
+      "mean_span_ms": 219.0083785
+    },
+    "performance_verdict": "16-token instrumentation check only; not a measured speed optimization."
+  }
+}

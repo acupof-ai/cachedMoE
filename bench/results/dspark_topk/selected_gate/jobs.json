@@ -1,0 +1,135 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "batch_quality_64",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "spec_forward.batch_matches_m1"
+      ],
+      "env": {
+        "DEEPMOE_SPEC_STEPS": "64",
+        "DEEPMOE_SPEC_BLOCK": "3",
+        "DEEPMOE_MGT_ATTN_CM": "0"
+      },
+      "timeout_s": 300
+    },
+    {
+      "name": "decode",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode$",
+        "--output-on-failure"
+      ],
+      "timeout_s": 300,
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0"
+      }
+    },
+    {
+      "name": "decode_longctx",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode_longctx$",
+        "--output-on-failure"
+      ],
+      "timeout_s": 300,
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0"
+      }
+    },
+    {
+      "name": "l3_off",
+      "command": [
+        "/usr/bin/python",
+        "tools/l3_ppl.py",
+        "--state",
+        "traces/l3_64",
+        "--steps",
+        "64",
+        "--modes",
+        "off",
+        "--json",
+        "bench/results/dspark_topk/selected_gate/l3_off.json",
+        "--log-dir",
+        "bench/results/dspark_topk/selected_gate/l3_logs"
+      ],
+      "timeout_s": 240,
+      "env": {
+        "DEEPMOE_MGT_ATTN_CM": "0"
+      }
+    },
+    {
+      "name": "diagnostics_long",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/hitrate/long_turns.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=5",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--out",
+        "bench/results/dspark_topk/selected_gate/diagnostics_long"
+      ],
+      "env": {
+        "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/cachedMoE/bench/results/dspark_topk/selected_gate/diagnostics_long.jsonl",
+        "DEEPMOE_MGT_ATTN_CM": "0"
+      },
+      "timeout_s": 180
+    },
+    {
+      "name": "wrap_selected",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.committed_prefix_survives_window_wrap"
+      ],
+      "timeout_s": 180
+    },
+    {
+      "name": "mmlu_generated_57",
+      "command": [
+        "/usr/bin/python",
+        "tools/mmlu_bench.py",
+        "--sample",
+        "bench/results/miss_mask/mmlu_sample.json",
+        "--out",
+        "bench/results/dspark_topk/selected_gate/mmlu_generated_57",
+        "--modes",
+        "mask-spec",
+        "--generation",
+        "--limit",
+        "57",
+        "--max-tokens",
+        "16",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1"
+      ],
+      "timeout_s": 1800
+    }
+  ]
+}

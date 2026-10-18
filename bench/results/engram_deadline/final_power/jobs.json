@@ -1,0 +1,88 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "fix_mask",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/end_to_end/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "bench/results/engram_deadline/final_power/fix_mask",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask"
+      ],
+      "timeout_s": 180,
+      "env": {}
+    },
+    {
+      "name": "fix_spec",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/end_to_end/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "bench/results/engram_deadline/final_power/fix_spec",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--serve-arg=--trace",
+        "--serve-arg=bench/results/engram_deadline/final_power/fix_spec/trace.bin"
+      ],
+      "timeout_s": 180,
+      "env": {}
+    },
+    {
+      "name": "spec_k3",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/end_to_end/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "bench/results/engram_deadline/final_power/spec_k3",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=3",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--serve-arg=--trace",
+        "--serve-arg=bench/results/engram_deadline/final_power/spec_k3/trace.bin"
+      ],
+      "timeout_s": 180,
+      "env": {}
+    }
+  ]
+}

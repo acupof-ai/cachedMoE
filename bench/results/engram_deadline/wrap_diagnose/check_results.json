@@ -1,0 +1,34 @@
+[
+  {
+    "name": "wrap_selected",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.committed_prefix_survives_window_wrap"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 28.889633034996223,
+    "start": {
+      "k10temp": 58.625,
+      "nvme": 36.85,
+      "amdgpu": 53.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 60.5,
+      "nvme": 60.85,
+      "amdgpu": 57.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 64.625,
+      "nvme": 60.85,
+      "amdgpu": 65.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:13:06.798168+08:00"
+  }
+]

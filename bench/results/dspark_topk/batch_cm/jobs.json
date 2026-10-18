@@ -1,0 +1,13 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "cm_unit_fixed",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.batch_cm_causal_rows_match_decode"
+      ],
+      "timeout_s": 120
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+ "time": "2026-10-04T14:42:43+0800",
+ "host": "x",
+ "os": "Linux 7.2.5-3-omarchy",
+ "commit": "200dc3f085",
+ "dirty": [
+  "CMakeLists.txt",
+  "bench/results/perf_ledger.jsonl",
+  "cli/deepmoe_main.cpp",
+  "cli/serve.cpp",
+  "cmake/deepmoe_options.cmake",
+  "core/config.h",
+  "docs/STATUS.md",
+  "gpu/shaders/decode_attn_cm.slang",
+  "gpu/shaders/dspark_common.slang",
+  "gpu/shaders/dspark_gemv.slang",
+  "gpu/shaders/mgt1_gemv.slang",
+  "gpu/shaders/mgt1_head.slang",
+  "gpu/shaders/mgt1_mhc.slang",
+  "gpu/shaders/moe_down.slang",
+  "gpu/shaders/moe_gateup.slang",
+  "gpu/vulkan/attn_kernels.h",
+  "gpu/vulkan/decode_kernels.cpp",
+  "gpu/vulkan/decode_kernels.h",
+  "gpu/vulkan/device.cpp",
+  "gpu/vulkan/device.h",
+  "gpu/vulkan/dspark_kernels.h",
+  "gpu/vulkan/moe_kernels.cpp",
+  "runtime/decode_layer.cpp",
+  "runtime/decode_layer.h",
+  "runtime/engine.cpp",
+  "runtime/engine.h",
+  "runtime/moe_bridge.cpp",
+  "runtime/moe_bridge.h",
+  "runtime/session.cpp",
+  "runtime/session.h",
+  "runtime/speculate.cpp",
+  "runtime/speculate.h",
+  "store/expert_store.cpp",
+  "store/expert_store.h",
+  "store/planner.cpp",
+  "tests/test_core.cpp",
+  "tests/test_gpu_dspark.cpp",
+  "tests/test_gpu_moe.cpp",
+  "tests/test_speculate.cpp",
+  "tests/test_store.cpp",
+  "tools/hitrate_bench.py"
+ ],
+ "diff_sha": "bdc7d8078c6e65b8",
+ "exe": "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+ "exe_sha": "e28e62ce9ced6844",
+ "shaders": {
+  "dir": "/home/chenkailun/projects/cachedMoE/build/shaders",
+  "count": 50,
+  "sha": "214a8d1c095876be"
+ },
+ "env": {
+  "DEEPMOE_DSPARK_MEGA": "0",
+  "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/cachedMoE/traces/longctx",
+  "DEEPMOE_MGT_ATTN_CM": "0",
+  "DEEPMOE_MGT_FOLD_SCALE": "0",
+  "DEEPMOE_MIRROR_AUTO": "0",
+  "DEEPMOE_MODEL_DIR": "/home/chenkailun/models/DeepSeek-V4.1-Flash",
+  "DEEPMOE_ROUTE_DUMP": "bench/results/dspark_topk/end_to_end/readout_trim/route.bin"
+ },
+ "gpu_dpm": "auto",
+ "idle": {
+  "gpu_busy_mean": 7.0,
+  "gpu_busy_max": 9,
+  "loadavg": [
+   "4.04",
+   "3.30",
+   "3.11"
+  ],
+  "top_cpu": [
+   "ChatGPT 10.2%",
+   "ChatGPT 9.4%",
+   "kworker/u130:9-kcryptd-253:0-1 7.6%",
+   "kworker/u130:2-kcryptd-253:0-1 4.8%"
+  ]
+ },
+ "disks_start": {
+  "t": 1791096164.156978,
+  "nvme0n1": [
+   23766330344,
+   326614201
+  ]
+ },
+ "gamemode_lib": true,
+ "disks_during_run": {
+  "seconds": 34.0,
+  "nvme0n1": {
+   "read_MB": 94323.5,
+   "write_MB": 31.9
+  }
+ }
+}

@@ -105,3 +105,22 @@ bench/results/**/isa_dec3/
 # Mask quality runs contain frozen executables and large diagnostic traces.
 # Keep their compact decisions/receipts in docs; local raw evidence stays here.
 /bench/results/mask_quality/
+
+# Additional machine output that must not enter git: Vulkan pipeline ISA dumps,
+# compiled shaders, web-session state, frozen test binaries and datasets.
+# The per-run records that stay tracked are status.json and transcript.md.
+bench/results/**/pipeline_stats/
+bench/results/**/binaries/
+bench/results/**/final_binaries/
+bench/results/**/saved_validated/
+bench/results/**/bootstrap/
+bench/results/**/radv_builtin_shaders/
+bench/results/dspark_topk/mega/
+bench/results/**/*.db
+bench/results/**/*.idx
+bench/results/**/*.spv
+bench/results/**/*.parquet
+bench/results/**/*.binaries.txt
+bench/results/kv_async/deepmoe-tested
+bench/results/**/*.pkv
+bench/results/spec_e2e/integration_backup/

@@ -1,0 +1,6 @@
+{
+  "tokens": 64,
+  "max_same_token_run": 1,
+  "max_trigram_count": 1,
+  "tail_exact_period_32": null
+}

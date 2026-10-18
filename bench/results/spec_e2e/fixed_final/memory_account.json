@@ -1,0 +1,11 @@
+{
+  "routed_union_items": 3539,
+  "outputs": 63,
+  "cycles": 28,
+  "expert_bytes": 18800640,
+  "routed_weight_bytes_per_cycle": 2376266605.714286,
+  "routed_weight_bytes_per_output": 1056118491.4285715,
+  "routed_weight_gb_per_output": 1.0561184914285715,
+  "routed_weight_gib_per_output": 0.9835869925362724,
+  "note": "Logical routed expert weight volume only; excludes shared/dense/activations and is not a DRAM counter."
+}

@@ -1,0 +1,6 @@
+{"ac": 1, "k10temp": 51.125, "nvme_hwmon4": 33.85, "nvme_hwmon13": 69.85, "amdgpu": 48.0, "missing_sensors": [], "elapsed_s": 0.024744009002461098}
+{"ac": 1, "k10temp": 50.75, "nvme_hwmon4": 33.85, "nvme_hwmon13": 69.85, "amdgpu": 49.0, "missing_sensors": [], "elapsed_s": 0.5490453660022467}
+{"ac": 1, "k10temp": 51.0, "nvme_hwmon4": 33.85, "nvme_hwmon13": 69.85, "amdgpu": 49.0, "missing_sensors": [], "elapsed_s": 1.0720892590034055}
+{"ac": 1, "k10temp": 51.25, "nvme_hwmon4": 34.85, "nvme_hwmon13": 69.85, "amdgpu": 49.0, "missing_sensors": [], "elapsed_s": 1.595905127003789}
+{"ac": 1, "k10temp": 51.25, "nvme_hwmon4": 36.85, "nvme_hwmon13": 69.85, "amdgpu": 48.0, "missing_sensors": [], "elapsed_s": 2.121871823008405}
+{"ac": 1, "k10temp": 51.125, "nvme_hwmon4": 36.85, "nvme_hwmon13": 69.85, "amdgpu": 48.0, "missing_sensors": [], "elapsed_s": 2.6449133709975285}

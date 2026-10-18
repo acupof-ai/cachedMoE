@@ -1,0 +1,169 @@
+{
+  "verify_model": {
+    "intercept_ms": 91.93349943999999,
+    "per_extra_row_ms": 21.143005560000006,
+    "measured": [
+      {
+        "m": 1,
+        "samples": 1,
+        "mean_ms": 113.076505
+      },
+      {
+        "m": 3,
+        "samples": 25,
+        "mean_ms": 155.36251612
+      }
+    ],
+    "interpolated_m": [
+      2
+    ]
+  },
+  "paid_draft_ms": 23.8028848,
+  "commit_cpu_ms": 1.1738338,
+  "plain_ms_per_token": 81.1030914,
+  "policies": [
+    {
+      "threshold": "-inf",
+      "cycles": 25,
+      "selected_k": {
+        "2": 25
+      },
+      "modeled_outputs": 62,
+      "modeled_ms_per_token": 72.71743335483872,
+      "modeled_gain_vs_plain": 0.11531839970536151
+    },
+    {
+      "threshold": "-2",
+      "cycles": 25,
+      "selected_k": {
+        "2": 24,
+        "1": 1
+      },
+      "modeled_outputs": 62,
+      "modeled_ms_per_token": 72.37641713612904,
+      "modeled_gain_vs_plain": 0.120573449324763
+    },
+    {
+      "threshold": "-1",
+      "cycles": 25,
+      "selected_k": {
+        "2": 16,
+        "1": 5,
+        "0": 4
+      },
+      "modeled_outputs": 56,
+      "modeled_ms_per_token": 75.60038920928572,
+      "modeled_gain_vs_plain": 0.07278669128912885
+    },
+    {
+      "threshold": "0",
+      "cycles": 25,
+      "selected_k": {
+        "2": 6,
+        "1": 7,
+        "0": 12
+      },
+      "modeled_outputs": 42,
+      "modeled_ms_per_token": 91.73923084857144,
+      "modeled_gain_vs_plain": -0.11593883391204673
+    },
+    {
+      "threshold": "0.5",
+      "cycles": 25,
+      "selected_k": {
+        "2": 1,
+        "1": 5,
+        "0": 19
+      },
+      "modeled_outputs": 31,
+      "modeled_ms_per_token": 116.10747190064517,
+      "modeled_gain_vs_plain": -0.30148258271094663
+    },
+    {
+      "threshold": "1",
+      "cycles": 25,
+      "selected_k": {
+        "2": 1,
+        "1": 5,
+        "0": 19
+      },
+      "modeled_outputs": 31,
+      "modeled_ms_per_token": 116.10747190064517,
+      "modeled_gain_vs_plain": -0.30148258271094663
+    },
+    {
+      "threshold": "2",
+      "cycles": 25,
+      "selected_k": {
+        "1": 4,
+        "0": 21
+      },
+      "modeled_outputs": 29,
+      "modeled_ms_per_token": 121.92767628413793,
+      "modeled_gain_vs_plain": -0.3348262357514392
+    },
+    {
+      "threshold": "3",
+      "cycles": 25,
+      "selected_k": {
+        "1": 3,
+        "0": 22
+      },
+      "modeled_outputs": 28,
+      "modeled_ms_per_token": 125.52712881000001,
+      "modeled_gain_vs_plain": -0.35389989264584376
+    },
+    {
+      "threshold": "4",
+      "cycles": 25,
+      "selected_k": {
+        "1": 1,
+        "0": 24
+      },
+      "modeled_outputs": 26,
+      "modeled_ms_per_token": 133.55667675230768,
+      "modeled_gain_vs_plain": -0.3927440142104416
+    },
+    {
+      "threshold": "6",
+      "cycles": 25,
+      "selected_k": {
+        "1": 1,
+        "0": 24
+      },
+      "modeled_outputs": 26,
+      "modeled_ms_per_token": 133.55667675230768,
+      "modeled_gain_vs_plain": -0.3927440142104416
+    },
+    {
+      "threshold": "inf",
+      "cycles": 25,
+      "selected_k": {
+        "0": 25
+      },
+      "modeled_outputs": 25,
+      "modeled_ms_per_token": 138.0532236,
+      "modeled_gain_vs_plain": -0.4125230162318354
+    }
+  ],
+  "best_observational_policy": {
+    "threshold": "-2",
+    "cycles": 25,
+    "selected_k": {
+      "2": 24,
+      "1": 1
+    },
+    "modeled_outputs": 62,
+    "modeled_ms_per_token": 72.37641713612904,
+    "modeled_gain_vs_plain": 0.120573449324763
+  },
+  "modeled_gain_over_fixed": 0.00471170351066541,
+  "limitations": [
+    "M=2 may be interpolated; M above the recorded draft length is not modeled.",
+    "A single end-of-generation M=1 sample is not a calibrated row-cost curve.",
+    "Policies pay full draft cost even if selected k=0; confidence is post-draft.",
+    "After the first rejection, ranks refer to the original draft prefix only.",
+    "Changing output changes KV, cache, acceptance, and future routes; this is not a replay.",
+    "Fit is in-sample and not validated on held-out prompts; do not enable a default from it."
+  ]
+}

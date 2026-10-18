@@ -1,0 +1,34 @@
+[
+  {
+    "name": "engram_planes_unit",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.batch_engram_prefetch_planes"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 1,
+    "failure": null,
+    "elapsed_s": 2.7079952040003263,
+    "start": {
+      "k10temp": 61.875,
+      "nvme": 35.85,
+      "amdgpu": 55.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 58.125,
+      "nvme": 38.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 61.875,
+      "nvme": 36.85,
+      "amdgpu": 55.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:48:16.258027+08:00"
+  }
+]

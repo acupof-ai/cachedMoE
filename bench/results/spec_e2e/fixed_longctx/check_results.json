@@ -1,0 +1,71 @@
+[
+  {
+    "name": "needle4k17k",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--requests",
+      "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/requests.json",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+      "--cache-slots",
+      "4900",
+      "--max-context",
+      "17408",
+      "--require-sources",
+      "2",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/needle4k17k",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--mirror",
+      "--serve-arg=/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4"
+    ],
+    "env": {
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1",
+      "DEEPMOE_MGT_PAIR_DOT": "0",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_MASK_DYNAMIC_LRU": "0",
+      "DEEPMOE_MIRROR_AUTO": "0",
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/fixed_longctx/cycles.jsonl"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 217.1880417529901,
+    "start": {
+      "ac": 1,
+      "k10temp": 62.75,
+      "nvme_hwmon4": 40.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 55.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 70.375,
+      "nvme_hwmon4": 51.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 64.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 71.5,
+      "nvme_hwmon4": 59.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 71.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T01:55:59.894886+08:00"
+  }
+]

@@ -1,0 +1,216 @@
+{
+  "cwd": "/home/chenkailun/projects/deepmoe-adaptive-mask",
+  "jobs": [
+    {
+      "name": "mask_kernel",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/build/tests/deepmoe_tests",
+        "gpu_moe.masked_missing_slots_and_shared_only"
+      ],
+      "timeout_s": 240,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      }
+    },
+    {
+      "name": "nll_off",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/l3_ppl.py",
+        "--state",
+        "/home/chenkailun/projects/cachedMoE/traces/l3_64",
+        "--exe",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/build/deepmoe",
+        "--modes",
+        "off",
+        "--json",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/off_nll.json",
+        "--log-dir",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/nll"
+      ],
+      "timeout_s": 240,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      }
+    },
+    {
+      "name": "nll_mask",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/l3_ppl.py",
+        "--state",
+        "/home/chenkailun/projects/cachedMoE/traces/l3_64",
+        "--exe",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/build/deepmoe",
+        "--modes",
+        "mask",
+        "--json",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/mask_nll.json",
+        "--log-dir",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/nll"
+      ],
+      "timeout_s": 240,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      }
+    },
+    {
+      "name": "decode_gates",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode(_longctx)?$",
+        "--output-on-failure"
+      ],
+      "timeout_s": 300,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1",
+        "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/cachedMoE/traces/longctx"
+      }
+    },
+    {
+      "name": "spec_prefix",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/build/tests/deepmoe_tests",
+        "gpu_dspark.committed_prefix_survives_window_wrap"
+      ],
+      "timeout_s": 240,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      }
+    },
+    {
+      "name": "turn64",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/turn64.json",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/turn64",
+        "--exe",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/build/deepmoe",
+        "--require-sources",
+        "2",
+        "--cache-slots",
+        "5500",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mask-cache",
+        "--serve-arg=dynamic",
+        "--serve-arg=--gpu-prefill-min",
+        "--serve-arg=16"
+      ],
+      "timeout_s": 240,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      }
+    },
+    {
+      "name": "mmlu57_spec5",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/mmlu_bench.py",
+        "--sample",
+        "/home/chenkailun/projects/cachedMoE/bench/results/miss_mask/mmlu_sample.json",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/mmlu57_spec5",
+        "--modes",
+        "mask-spec",
+        "--generation",
+        "--spec-k",
+        "5",
+        "--spec-top-k",
+        "4",
+        "--cache-slots",
+        "5500",
+        "--limit",
+        "57",
+        "--require-sources",
+        "2"
+      ],
+      "timeout_s": 1300,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      }
+    },
+    {
+      "name": "long8_spec5",
+      "command": [
+        "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "/home/chenkailun/projects/cachedMoE/bench/results/hitrate/long_turns.json",
+        "--out",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/long8_spec5",
+        "--exe",
+        "/home/chenkailun/projects/deepmoe-adaptive-mask/build/deepmoe",
+        "--require-sources",
+        "2",
+        "--cache-slots",
+        "5500",
+        "--max-context",
+        "4096",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--mask-cache",
+        "--serve-arg=dynamic",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=5",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--serve-arg=--gpu-prefill-min",
+        "--serve-arg=16"
+      ],
+      "timeout_s": 600,
+      "stop_on_pause": true,
+      "env": {
+        "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+        "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+        "DEEPMOE_DSPARK_PROFILE": "0",
+        "DEEPMOE_DSPARK_ONECB": "1",
+        "DEEPMOE_BATCH_GPU_ROUTE": "1"
+      }
+    }
+  ]
+}

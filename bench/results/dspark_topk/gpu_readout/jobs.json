@@ -1,0 +1,160 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "wrap",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.committed_prefix_survives_window_wrap"
+      ],
+      "timeout_s": 240
+    },
+    {
+      "name": "primary_ac_cpu",
+      "command": [
+        "/home/chenkailun/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/hitrate/long_turns.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--env",
+        "DEEPMOE_MIRROR_AUTO=0",
+        "--env",
+        "DEEPMOE_DSPARK_MEGA=0",
+        "--require-sources",
+        "1",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--env",
+        "DEEPMOE_SPEC_GPU_READOUT=0",
+        "--out",
+        "bench/results/dspark_topk/gpu_readout/primary_ac_cpu",
+        "--serve-arg=--trace",
+        "--serve-arg=bench/results/dspark_topk/gpu_readout/primary_ac_cpu/trace.bin"
+      ],
+      "timeout_s": 180
+    },
+    {
+      "name": "primary_ac_gpu",
+      "command": [
+        "/home/chenkailun/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/hitrate/long_turns.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--env",
+        "DEEPMOE_MIRROR_AUTO=0",
+        "--env",
+        "DEEPMOE_DSPARK_MEGA=0",
+        "--require-sources",
+        "1",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--env",
+        "DEEPMOE_SPEC_GPU_READOUT=1",
+        "--out",
+        "bench/results/dspark_topk/gpu_readout/primary_ac_gpu",
+        "--serve-arg=--trace",
+        "--serve-arg=bench/results/dspark_topk/gpu_readout/primary_ac_gpu/trace.bin"
+      ],
+      "timeout_s": 180
+    },
+    {
+      "name": "dspark_chain",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.full_runtime_chain"
+      ],
+      "timeout_s": 180
+    },
+    {
+      "name": "decode",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode$",
+        "--output-on-failure"
+      ],
+      "timeout_s": 300
+    },
+    {
+      "name": "decode_longctx",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-j",
+        "1",
+        "-R",
+        "^suite.decode_longctx$",
+        "--output-on-failure"
+      ],
+      "timeout_s": 300
+    },
+    {
+      "name": "l3_off",
+      "command": [
+        "/home/chenkailun/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+        "tools/l3_ppl.py",
+        "--state",
+        "traces/l3_64",
+        "--steps",
+        "64",
+        "--modes",
+        "off",
+        "--json",
+        "bench/results/dspark_topk/gpu_readout/l3_off.json",
+        "--log-dir",
+        "bench/results/dspark_topk/gpu_readout/l3_logs"
+      ],
+      "timeout_s": 240
+    },
+    {
+      "name": "mmlu_smoke",
+      "command": [
+        "/home/chenkailun/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+        "tools/mmlu_bench.py",
+        "--sample",
+        "bench/results/miss_mask/mmlu_sample.json",
+        "--out",
+        "bench/results/dspark_topk/gpu_readout/mmlu_generation_primary",
+        "--modes",
+        "mask-spec",
+        "--generation",
+        "--limit",
+        "6",
+        "--max-tokens",
+        "16",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1"
+      ],
+      "timeout_s": 360
+    }
+  ]
+}

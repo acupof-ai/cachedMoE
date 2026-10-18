@@ -1,0 +1,12 @@
+{
+  "mode": "mask",
+  "n": 57,
+  "correct": 44,
+  "accuracy": 0.7719298245614035,
+  "seconds": 890.0278977540002,
+  "sources": 2,
+  "cache_slots": 5500,
+  "protocol": "zero-shot argmax of A/B/C/D logits; exact prefix + single-position final prompt token",
+  "sample_source": "https://huggingface.co/datasets/cais/mmlu",
+  "sample_sha256": "74a41822ce7d3def56e1682f958469c04642a5336a5ce912fa375fdb90fb25d7"
+}

@@ -1,0 +1,514 @@
+{"event": "start", "prompt_tokens": 675, "reused": 99, "to_prefill": 576, "eta_s": 13.824, "max_context": 4096}
+{"event": "token", "id": 2581, "text": "We", "t_ms": 17193.7634, "step_ms": 17181.5541, "p": 0.731359058, "margin": 1.05446053, "nucleus": 2, "hit": 0}
+{"event": "token", "id": 1309, "text": " need", "t_ms": 17434.6396, "step_ms": 40.142521, "p": 0, "margin": 4.27134705, "nucleus": 0, "hit": 0.338942308}
+{"event": "token", "id": 3287, "text": " answer", "t_ms": 17434.6592, "step_ms": 40.142521, "p": 0, "margin": 1.25377464, "nucleus": 0, "hit": 0.338942308}
+{"event": "token", "id": 295, "text": " in", "t_ms": 17434.6627, "step_ms": 40.142521, "p": 0, "margin": 0.519227982, "nucleus": 0, "hit": 0.338942308}
+{"event": "token", "id": 7891, "text": " Chinese", "t_ms": 17434.6652, "step_ms": 40.142521, "p": 0, "margin": 3.94704056, "nucleus": 0, "hit": 0.338942308}
+{"event": "token", "id": 16, "text": ".", "t_ms": 17434.667, "step_ms": 40.142521, "p": 0, "margin": 0.22205162, "nucleus": 0, "hit": 0.338942308}
+{"event": "token", "id": 10037, "text": " User", "t_ms": 17434.6691, "step_ms": 40.142521, "p": 0.611087943, "margin": 1.37341499, "nucleus": 5, "hit": 0.338942308}
+{"event": "token", "id": 20407, "text": " asks", "t_ms": 17646.4888, "step_ms": 70.602053, "p": 0, "margin": 1.33113098, "nucleus": 0, "hit": 0.408284024}
+{"event": "token", "id": 5448, "text": " continue", "t_ms": 17646.5254, "step_ms": 70.602053, "p": 0, "margin": 0.015953064, "nucleus": 0, "hit": 0.408284024}
+{"event": "token", "id": 10659, "text": " detailed", "t_ms": 17646.5306, "step_ms": 70.602053, "p": 0.875232784, "margin": 2.87010956, "nucleus": 3, "hit": 0.408284024}
+{"event": "token", "id": 9162, "text": " discussion", "t_ms": 17927.6021, "step_ms": 70.2649952, "p": 0, "margin": 1.8729744, "nucleus": 0, "hit": 0.570397112}
+{"event": "token", "id": 2395, "text": " small", "t_ms": 17927.6311, "step_ms": 70.2649952, "p": 0, "margin": 1.57119751, "nucleus": 0, "hit": 0.570397112}
+{"event": "token", "id": 64285, "text": " decode", "t_ms": 17927.6354, "step_ms": 70.2649952, "p": 0, "margin": 1.55707169, "nucleus": 0, "hit": 0.570397112}
+{"event": "token", "id": 8062, "text": " vs", "t_ms": 17927.6383, "step_ms": 70.2649952, "p": 0.966921804, "margin": 3.3986187, "nucleus": 1, "hit": 0.570397112}
+{"event": "token", "id": 26359, "text": " batch", "t_ms": 18376.5472, "step_ms": 74.8157003, "p": 0, "margin": 1.30276299, "nucleus": 0, "hit": 0.546536797}
+{"event": "token", "id": 22891, "text": " validation", "t_ms": 18376.5817, "step_ms": 74.8157003, "p": 0, "margin": 0.456674576, "nucleus": 0, "hit": 0.546536797}
+{"event": "token", "id": 16, "text": ".", "t_ms": 18376.5854, "step_ms": 74.8157003, "p": 0, "margin": 0.118141174, "nucleus": 0, "hit": 0.546536797}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 18376.5882, "step_ms": 74.8157003, "p": 0, "margin": 0.383384705, "nucleus": 0, "hit": 0.546536797}
+{"event": "token", "id": 3475, "text": " give", "t_ms": 18376.5903, "step_ms": 74.8157003, "p": 0, "margin": 0.171667099, "nucleus": 0, "hit": 0.546536797}
+{"event": "token", "id": 15360, "text": " concrete", "t_ms": 18376.5923, "step_ms": 74.8157003, "p": 0.847121147, "margin": 1.74152756, "nucleus": 2, "hit": 0.546536797}
+{"event": "token", "id": 8452, "text": " matrix", "t_ms": 18613.0666, "step_ms": 47.2918312, "p": 0, "margin": 6.58815193, "nucleus": 0, "hit": 0.589307412}
+{"event": "token", "id": 7633, "text": " shape", "t_ms": 18613.1047, "step_ms": 47.2918312, "p": 0, "margin": 2.99982071, "nucleus": 0, "hit": 0.589307412}
+{"event": "token", "id": 2511, "text": " example", "t_ms": 18613.1094, "step_ms": 47.2918312, "p": 0, "margin": 4.11113739, "nucleus": 0, "hit": 0.589307412}
+{"event": "token", "id": 14, "text": ",", "t_ms": 18613.1124, "step_ms": 47.2918312, "p": 0, "margin": 5.72424698, "nucleus": 0, "hit": 0.589307412}
+{"event": "token", "id": 3132, "text": " step", "t_ms": 18613.1155, "step_ms": 47.2918312, "p": 0.979928634, "margin": 4.52230453, "nucleus": 1, "hit": 0.589307412}
+{"event": "token", "id": 10531, "text": "-by", "t_ms": 18939.1907, "step_ms": 108.686748, "p": 0, "margin": 0.124723434, "nucleus": 0, "hit": 0.620994475}
+{"event": "token", "id": 15537, "text": "-step", "t_ms": 18939.2287, "step_ms": 108.686748, "p": 0, "margin": 11.7597389, "nucleus": 0, "hit": 0.620994475}
+{"event": "token", "id": 9352, "text": " calculate", "t_ms": 18939.2328, "step_ms": 108.686748, "p": 0.447387929, "margin": 0.188350677, "nucleus": 2, "hit": 0.620994475}
+{"event": "token", "id": 5288, "text": " weight", "t_ms": 19356.4485, "step_ms": 83.440798, "p": 0, "margin": 6.31639099, "nucleus": 0, "hit": 0.613207547}
+{"event": "token", "id": 3278, "text": " access", "t_ms": 19356.477, "step_ms": 83.440798, "p": 0, "margin": 3.59077454, "nucleus": 0, "hit": 0.613207547}
+{"event": "token", "id": 14, "text": ",", "t_ms": 19356.4813, "step_ms": 83.440798, "p": 0, "margin": 2.78286934, "nucleus": 0, "hit": 0.613207547}
+{"event": "token", "id": 16277, "text": " activation", "t_ms": 19356.4843, "step_ms": 83.440798, "p": 0, "margin": 10.7091579, "nucleus": 0, "hit": 0.613207547}
+{"event": "token", "id": 49229, "text": " reuse", "t_ms": 19356.4871, "step_ms": 83.440798, "p": 0.999990885, "margin": 11.8027229, "nucleus": 1, "hit": 0.613207547}
+{"event": "token", "id": 14, "text": ",", "t_ms": 19608.6522, "step_ms": 84.0513737, "p": 0, "margin": 12.4891891, "nucleus": 0, "hit": 0.596534653}
+{"event": "token", "id": 43359, "text": " tile", "t_ms": 19608.6844, "step_ms": 84.0513737, "p": 0, "margin": 12.5013351, "nucleus": 0, "hit": 0.596534653}
+{"event": "token", "id": 9581, "text": " selection", "t_ms": 19608.6896, "step_ms": 84.0513737, "p": 0.934473916, "margin": 2.71543503, "nucleus": 2, "hit": 0.596534653}
+{"event": "token", "id": 14, "text": ",", "t_ms": 19919.6265, "step_ms": 51.820956, "p": 0, "margin": 9.67985153, "nucleus": 0, "hit": 0.590268886}
+{"event": "token", "id": 45473, "text": " sync", "t_ms": 19919.6561, "step_ms": 51.820956, "p": 0, "margin": 2.70672989, "nucleus": 0, "hit": 0.590268886}
+{"event": "token", "id": 30433, "text": " overhead", "t_ms": 19919.6606, "step_ms": 51.820956, "p": 0, "margin": 8.42977142, "nucleus": 0, "hit": 0.590268886}
+{"event": "token", "id": 14, "text": ",", "t_ms": 19919.6632, "step_ms": 51.820956, "p": 0, "margin": 7.46385574, "nucleus": 0, "hit": 0.590268886}
+{"event": "token", "id": 28499, "text": " pipeline", "t_ms": 19919.6656, "step_ms": 51.820956, "p": 0, "margin": 9.4294548, "nucleus": 0, "hit": 0.590268886}
+{"event": "token", "id": 9335, "text": " depth", "t_ms": 19919.668, "step_ms": 51.820956, "p": 0.999998701, "margin": 13.6432228, "nucleus": 1, "hit": 0.590268886}
+{"event": "token", "id": 14, "text": ",", "t_ms": 20181.9494, "step_ms": 87.421964, "p": 0, "margin": 2.36021423, "nucleus": 0, "hit": 0.507009346}
+{"event": "token", "id": 8470, "text": " explain", "t_ms": 20182.0065, "step_ms": 87.421964, "p": 0, "margin": 2.71717262, "nucleus": 0, "hit": 0.507009346}
+{"event": "token", "id": 855, "text": " if", "t_ms": 20182.0115, "step_ms": 87.421964, "p": 0.409451227, "margin": 0.345819473, "nucleus": 4, "hit": 0.507009346}
+{"event": "token", "id": 4197, "text": " performance", "t_ms": 20416.9586, "step_ms": 78.311865, "p": 0, "margin": 2.95144653, "nucleus": 0, "hit": 0.407272727}
+{"event": "token", "id": 4167, "text": " below", "t_ms": 20416.9975, "step_ms": 78.311865, "p": 0, "margin": 2.79930115, "nucleus": 0, "hit": 0.407272727}
+{"event": "token", "id": 18888, "text": " predicted", "t_ms": 20417.0018, "step_ms": 78.311865, "p": 0.615118108, "margin": 0.47984314, "nucleus": 2, "hit": 0.407272727}
+{"event": "token", "id": 1192, "text": " how", "t_ms": 20652.0892, "step_ms": 47.0142236, "p": 0, "margin": 4.20955849, "nucleus": 0, "hit": 0.396061269}
+{"event": "token", "id": 33147, "text": " locate", "t_ms": 20652.1304, "step_ms": 47.0142236, "p": 0, "margin": 1.70279121, "nucleus": 0, "hit": 0.396061269}
+{"event": "token", "id": 16, "text": ".", "t_ms": 20652.1356, "step_ms": 47.0142236, "p": 0, "margin": 8.34000778, "nucleus": 0, "hit": 0.396061269}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 20652.1395, "step_ms": 47.0142236, "p": 0, "margin": 0.904813766, "nucleus": 0, "hit": 0.396061269}
+{"event": "token", "id": 8068, "text": " fully", "t_ms": 20652.1423, "step_ms": 47.0142236, "p": 0.33540274, "margin": 0.146757126, "nucleus": 6, "hit": 0.396061269}
+{"event": "token", "id": 8013, "text": " expand", "t_ms": 20895.1535, "step_ms": 60.7500705, "p": 0, "margin": 2.45157242, "nucleus": 0, "hit": 0.404384896}
+{"event": "token", "id": 14, "text": ",", "t_ms": 20895.1828, "step_ms": 60.7500705, "p": 0, "margin": 0.101306915, "nucleus": 0, "hit": 0.404384896}
+{"event": "token", "id": 554, "text": " not", "t_ms": 20895.1881, "step_ms": 60.7500705, "p": 0, "margin": 3.70750618, "nucleus": 0, "hit": 0.404384896}
+{"event": "token", "id": 1438, "text": " just", "t_ms": 20895.1922, "step_ms": 60.7500705, "p": 0.598960152, "margin": 0.595035553, "nucleus": 3, "hit": 0.404384896}
+{"event": "token", "id": 23749, "text": " conclusions", "t_ms": 21134.9245, "step_ms": 39.9528792, "p": 0, "margin": 1.73558807, "nucleus": 0, "hit": 0.374325782}
+{"event": "token", "id": 16, "text": ".", "t_ms": 21134.9589, "step_ms": 39.9528792, "p": 0, "margin": 4.36968613, "nucleus": 0, "hit": 0.374325782}
+{"event": "token", "id": 1350, "text": " We", "t_ms": 21134.9795, "step_ms": 39.9528792, "p": 0, "margin": 0.689987183, "nucleus": 0, "hit": 0.374325782}
+{"event": "token", "id": 1309, "text": " need", "t_ms": 21134.9844, "step_ms": 39.9528792, "p": 0, "margin": 0.932430267, "nucleus": 0, "hit": 0.374325782}
+{"event": "token", "id": 5448, "text": " continue", "t_ms": 21134.9879, "step_ms": 39.9528792, "p": 0, "margin": 0.689720154, "nucleus": 0, "hit": 0.374325782}
+{"event": "token", "id": 538, "text": " from", "t_ms": 21134.9909, "step_ms": 39.9528792, "p": 0.412474002, "margin": 0.121303558, "nucleus": 4, "hit": 0.374325782}
+{"event": "token", "id": 4412, "text": " previous", "t_ms": 21367.1448, "step_ms": 46.4273628, "p": 0, "margin": 2.95024681, "nucleus": 0, "hit": 0.373589165}
+{"event": "token", "id": 33, "text": "?", "t_ms": 21367.1837, "step_ms": 46.4273628, "p": 0, "margin": 1.19829178, "nucleus": 0, "hit": 0.373589165}
+{"event": "token", "id": 1350, "text": " We", "t_ms": 21367.1893, "step_ms": 46.4273628, "p": 0, "margin": 1.90113068, "nucleus": 0, "hit": 0.373589165}
+{"event": "token", "id": 1309, "text": " need", "t_ms": 21367.1928, "step_ms": 46.4273628, "p": 0, "margin": 0.716796875, "nucleus": 0, "hit": 0.373589165}
+{"event": "token", "id": 10796, "text": " maybe", "t_ms": 21367.1958, "step_ms": 46.4273628, "p": 0.194113664, "margin": 0.0688476562, "nucleus": 34, "hit": 0.373589165}
+{"event": "token", "id": 1955, "text": " >", "t_ms": 21603.1133, "step_ms": 235.905651, "p": 0.0579387056, "margin": 0.411785126, "nucleus": 56, "hit": 0.417360285}
+{"event": "token", "id": 792, "text": "200", "t_ms": 21856.3467, "step_ms": 42.1985473, "p": 0, "margin": 1.65212059, "nucleus": 0, "hit": 0.529411765}
+{"event": "token", "id": 18, "text": "0", "t_ms": 21856.3784, "step_ms": 42.1985473, "p": 0, "margin": 11.6692429, "nucleus": 0, "hit": 0.529411765}
+{"event": "token", "id": 7891, "text": " Chinese", "t_ms": 21856.3836, "step_ms": 42.1985473, "p": 0, "margin": 0.98500824, "nucleus": 0, "hit": 0.529411765}
+{"event": "token", "id": 74752, "text": " chars", "t_ms": 21856.3896, "step_ms": 42.1985473, "p": 0, "margin": 0.262252808, "nucleus": 0, "hit": 0.529411765}
+{"event": "token", "id": 16, "text": ".", "t_ms": 21856.3929, "step_ms": 42.1985473, "p": 0, "margin": 0.430233002, "nucleus": 0, "hit": 0.529411765}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 21856.3958, "step_ms": 42.1985473, "p": 0.406018271, "margin": 0.312906265, "nucleus": 2, "hit": 0.529411765}
+{"event": "token", "id": 10659, "text": " detailed", "t_ms": 22096.7177, "step_ms": 48.0612878, "p": 0, "margin": 0.867889404, "nucleus": 0, "hit": 0.423267327}
+{"event": "token", "id": 16, "text": ".", "t_ms": 22096.7588, "step_ms": 48.0612878, "p": 0, "margin": 0.229911804, "nucleus": 0, "hit": 0.423267327}
+{"event": "token", "id": 1350, "text": " We", "t_ms": 22096.7635, "step_ms": 48.0612878, "p": 0, "margin": 0.943382263, "nucleus": 0, "hit": 0.423267327}
+{"event": "token", "id": 1309, "text": " need", "t_ms": 22096.7663, "step_ms": 48.0612878, "p": 0, "margin": 0.142114639, "nucleus": 0, "hit": 0.423267327}
+{"event": "token", "id": 24953, "text": " incorporate", "t_ms": 22096.7688, "step_ms": 48.0612878, "p": 0.0187457204, "margin": 1.2341423, "nucleus": 40, "hit": 0.423267327}
+{"event": "token", "id": 538, "text": " from", "t_ms": 22345.6593, "step_ms": 248.875432, "p": 0.0308818541, "margin": 0.0726051331, "nucleus": 14, "hit": 0.443729904}
+{"event": "token", "id": 4412, "text": " previous", "t_ms": 22587.9336, "step_ms": 40.372004, "p": 0, "margin": 0.670036316, "nucleus": 0, "hit": 0.394707828}
+{"event": "token", "id": 33, "text": "?", "t_ms": 22587.9694, "step_ms": 40.372004, "p": 0, "margin": 0.767379761, "nucleus": 0, "hit": 0.394707828}
+{"event": "token", "id": 1350, "text": " We", "t_ms": 22587.9737, "step_ms": 40.372004, "p": 0, "margin": 1.76860428, "nucleus": 0, "hit": 0.394707828}
+{"event": "token", "id": 588, "text": " can", "t_ms": 22587.977, "step_ms": 40.372004, "p": 0, "margin": 1.46991348, "nucleus": 0, "hit": 0.394707828}
+{"event": "token", "id": 5085, "text": " write", "t_ms": 22587.98, "step_ms": 40.372004, "p": 0, "margin": 0.32743454, "nucleus": 0, "hit": 0.394707828}
+{"event": "token", "id": 339, "text": ".\n\n", "t_ms": 22587.9836, "step_ms": 40.372004, "p": 0.403845802, "margin": 0.50806427, "nucleus": 17, "hit": 0.394707828}
+{"event": "token", "id": 2581, "text": "We", "t_ms": 22830.1445, "step_ms": 80.7153443, "p": 0, "margin": 0.694345474, "nucleus": 0, "hit": 0.432727273}
+{"event": "token", "id": 1309, "text": " need", "t_ms": 22830.1801, "step_ms": 80.7153443, "p": 0, "margin": 4.21012497, "nucleus": 0, "hit": 0.432727273}
+{"event": "token", "id": 7891, "text": " Chinese", "t_ms": 22830.1848, "step_ms": 80.7153443, "p": 0.00308935242, "margin": 1.78481483, "nucleus": 36, "hit": 0.432727273}
+{"event": "token", "id": 16, "text": ".", "t_ms": 23075.4807, "step_ms": 61.3197422, "p": 0, "margin": 2.17070007, "nucleus": 0, "hit": 0.479908152}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 23075.5192, "step_ms": 61.3197422, "p": 0, "margin": 0.65304184, "nucleus": 0, "hit": 0.479908152}
+{"event": "token", "id": 3502, "text": " discuss", "t_ms": 23075.5245, "step_ms": 61.3197422, "p": 0, "margin": 0.960672379, "nucleus": 0, "hit": 0.479908152}
+{"event": "token", "id": 2395, "text": " small", "t_ms": 23075.5277, "step_ms": 61.3197422, "p": 0.755397661, "margin": 1.59884453, "nucleus": 5, "hit": 0.479908152}
+{"event": "token", "id": 26359, "text": " batch", "t_ms": 23346.8265, "step_ms": 135.644217, "p": 0, "margin": 1.77119827, "nucleus": 0, "hit": 0.614190687}
+{"event": "token", "id": 64285, "text": " decode", "t_ms": 23346.8545, "step_ms": 135.644217, "p": 0.99991648, "margin": 9.41409302, "nucleus": 1, "hit": 0.614190687}
+{"event": "token", "id": 8062, "text": " vs", "t_ms": 23621.1037, "step_ms": 45.7057518, "p": 0, "margin": 0.657634735, "nucleus": 0, "hit": 0.592827004}
+{"event": "token", "id": 26359, "text": " batch", "t_ms": 23621.1337, "step_ms": 45.7057518, "p": 0, "margin": 3.17503548, "nucleus": 0, "hit": 0.592827004}
+{"event": "token", "id": 22891, "text": " validation", "t_ms": 23621.1387, "step_ms": 45.7057518, "p": 0, "margin": 2.15527916, "nucleus": 0, "hit": 0.592827004}
+{"event": "token", "id": 16, "text": ".", "t_ms": 23621.144, "step_ms": 45.7057518, "p": 0, "margin": 0.246570587, "nucleus": 0, "hit": 0.592827004}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 23621.1475, "step_ms": 45.7057518, "p": 0, "margin": 0.262674332, "nucleus": 0, "hit": 0.592827004}
+{"event": "token", "id": 31862, "text": " matrices", "t_ms": 23621.1505, "step_ms": 45.7057518, "p": 0.00392381576, "margin": 1.70845985, "nucleus": 21, "hit": 0.592827004}
+{"event": "token", "id": 7633, "text": " shape", "t_ms": 23889.7837, "step_ms": 53.7241844, "p": 0, "margin": 0.589588165, "nucleus": 0, "hit": 0.60961313}
+{"event": "token", "id": 16, "text": ".", "t_ms": 23889.811, "step_ms": 53.7241844, "p": 0, "margin": 2.1721611, "nucleus": 0, "hit": 0.60961313}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 23889.8155, "step_ms": 53.7241844, "p": 0, "margin": 1.00986862, "nucleus": 0, "hit": 0.60961313}
+{"event": "token", "id": 23917, "text": " compute", "t_ms": 23889.8186, "step_ms": 53.7241844, "p": 0, "margin": 0.0654754639, "nucleus": 0, "hit": 0.60961313}
+{"event": "token", "id": 5288, "text": " weight", "t_ms": 23889.822, "step_ms": 53.7241844, "p": 0.809819342, "margin": 2.14432144, "nucleus": 3, "hit": 0.60961313}
+{"event": "token", "id": 3278, "text": " access", "t_ms": 24163.9217, "step_ms": 45.6810573, "p": 0, "margin": 3.97024155, "nucleus": 0, "hit": 0.632704403}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24163.9574, "step_ms": 45.6810573, "p": 0, "margin": 2.02423859, "nucleus": 0, "hit": 0.632704403}
+{"event": "token", "id": 16277, "text": " activation", "t_ms": 24163.9618, "step_ms": 45.6810573, "p": 0, "margin": 5.35199165, "nucleus": 0, "hit": 0.632704403}
+{"event": "token", "id": 49229, "text": " reuse", "t_ms": 24163.9749, "step_ms": 45.6810573, "p": 0, "margin": 12.4180393, "nucleus": 0, "hit": 0.632704403}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24163.9774, "step_ms": 45.6810573, "p": 0, "margin": 3.00176239, "nucleus": 0, "hit": 0.632704403}
+{"event": "token", "id": 43359, "text": " tile", "t_ms": 24163.9798, "step_ms": 45.6810573, "p": 0.998539756, "margin": 6.92526054, "nucleus": 1, "hit": 0.632704403}
+{"event": "token", "id": 9581, "text": " selection", "t_ms": 24447.7275, "step_ms": 47.2891798, "p": 0, "margin": 1.93158913, "nucleus": 0, "hit": 0.614622057}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24447.7576, "step_ms": 47.2891798, "p": 0, "margin": 6.27441406, "nucleus": 0, "hit": 0.614622057}
+{"event": "token", "id": 45473, "text": " sync", "t_ms": 24447.7615, "step_ms": 47.2891798, "p": 0, "margin": 3.99320602, "nucleus": 0, "hit": 0.614622057}
+{"event": "token", "id": 30433, "text": " overhead", "t_ms": 24447.7648, "step_ms": 47.2891798, "p": 0, "margin": 1.73482704, "nucleus": 0, "hit": 0.614622057}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24447.7671, "step_ms": 47.2891798, "p": 0, "margin": 4.78204727, "nucleus": 0, "hit": 0.614622057}
+{"event": "token", "id": 28499, "text": " pipeline", "t_ms": 24447.7695, "step_ms": 47.2891798, "p": 0.999300384, "margin": 7.67167473, "nucleus": 1, "hit": 0.614622057}
+{"event": "token", "id": 9335, "text": " depth", "t_ms": 24744.3109, "step_ms": 49.4217208, "p": 0, "margin": 5.39001083, "nucleus": 0, "hit": 0.551470588}
+{"event": "token", "id": 16, "text": ".", "t_ms": 24744.3411, "step_ms": 49.4217208, "p": 0, "margin": 4.7000351, "nucleus": 0, "hit": 0.551470588}
+{"event": "token", "id": 28231, "text": " Explain", "t_ms": 24744.3455, "step_ms": 49.4217208, "p": 0, "margin": 2.74682426, "nucleus": 0, "hit": 0.551470588}
+{"event": "token", "id": 4197, "text": " performance", "t_ms": 24744.3489, "step_ms": 49.4217208, "p": 0, "margin": 2.16094208, "nucleus": 0, "hit": 0.551470588}
+{"event": "token", "id": 4167, "text": " below", "t_ms": 24744.3513, "step_ms": 49.4217208, "p": 0, "margin": 3.04112053, "nucleus": 0, "hit": 0.551470588}
+{"event": "token", "id": 18888, "text": " predicted", "t_ms": 24744.3535, "step_ms": 49.4217208, "p": 0.914282343, "margin": 2.4204216, "nucleus": 2, "hit": 0.551470588}
+{"event": "token", "id": 75928, "text": " debugging", "t_ms": 25011.9289, "step_ms": 267.564955, "p": 0.0319157574, "margin": 1.08409309, "nucleus": 13, "hit": 0.476079347}
+{"event": "token", "id": 339, "text": ".\n\n", "t_ms": 25277.2642, "step_ms": 66.3228943, "p": 0, "margin": 0.427349091, "nucleus": 0, "hit": 0.445369407}
+{"event": "token", "id": 2581, "text": "We", "t_ms": 25277.2989, "step_ms": 66.3228943, "p": 0, "margin": 0.479722977, "nucleus": 0, "hit": 0.445369407}
+{"event": "token", "id": 1309, "text": " need", "t_ms": 25277.3033, "step_ms": 66.3228943, "p": 0, "margin": 3.40874863, "nucleus": 0, "hit": 0.445369407}
+{"event": "token", "id": 10796, "text": " maybe", "t_ms": 25277.3066, "step_ms": 66.3228943, "p": 0.242089989, "margin": 0.457511902, "nucleus": 57, "hit": 0.445369407}
+{"event": "token", "id": 223, "text": " ", "t_ms": 25566.0763, "step_ms": 288.758805, "p": 0.413686872, "margin": 0.768941879, "nucleus": 40, "hit": 0.603813559}
+{"event": "token", "id": 4314, "text": "300", "t_ms": 25841.1331, "step_ms": 45.8365702, "p": 0, "margin": 1.2542038, "nucleus": 0, "hit": 0.550396376}
+{"event": "token", "id": 18, "text": "0", "t_ms": 25841.1663, "step_ms": 45.8365702, "p": 0, "margin": 9.83952904, "nucleus": 0, "hit": 0.550396376}
+{"event": "token", "id": 13, "text": "+", "t_ms": 25841.1799, "step_ms": 45.8365702, "p": 0, "margin": 1.36226463, "nucleus": 0, "hit": 0.550396376}
+{"event": "token", "id": 3345, "text": " words", "t_ms": 25841.1848, "step_ms": 45.8365702, "p": 0, "margin": 0.593170166, "nucleus": 0, "hit": 0.550396376}
+{"event": "token", "id": 16, "text": ".", "t_ms": 25841.1886, "step_ms": 45.8365702, "p": 0, "margin": 2.38552856, "nucleus": 0, "hit": 0.550396376}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 25841.1914, "step_ms": 45.8365702, "p": 0.645664755, "margin": 0.744829178, "nucleus": 2, "hit": 0.550396376}
+{"event": "token", "id": 10659, "text": " detailed", "t_ms": 26118.884, "step_ms": 46.2796465, "p": 0, "margin": 0.606548309, "nucleus": 0, "hit": 0.450867052}
+{"event": "token", "id": 339, "text": ".\n\n", "t_ms": 26118.9202, "step_ms": 46.2796465, "p": 0, "margin": 0.0249900818, "nucleus": 0, "hit": 0.450867052}
+{"event": "token", "id": 2581, "text": "We", "t_ms": 26118.9263, "step_ms": 46.2796465, "p": 0, "margin": 1.30259323, "nucleus": 0, "hit": 0.450867052}
+{"event": "token", "id": 1309, "text": " need", "t_ms": 26118.9304, "step_ms": 46.2796465, "p": 0, "margin": 2.35395813, "nucleus": 0, "hit": 0.450867052}
+{"event": "token", "id": 10796, "text": " maybe", "t_ms": 26118.9336, "step_ms": 46.2796465, "p": 0, "margin": 0.838796616, "nucleus": 0, "hit": 0.450867052}
+{"event": "token", "id": 3287, "text": " answer", "t_ms": 26118.9372, "step_ms": 46.2796465, "p": 0.00571038433, "margin": 3.30269623, "nucleus": 21, "hit": 0.450867052}
+{"event": "token", "id": 295, "text": " in", "t_ms": 26370.9602, "step_ms": 42.0017437, "p": 0, "margin": 0.937980652, "nucleus": 0, "hit": 0.390271493}
+{"event": "token", "id": 7891, "text": " Chinese", "t_ms": 26370.9894, "step_ms": 42.0017437, "p": 0, "margin": 3.5102005, "nucleus": 0, "hit": 0.390271493}
+{"event": "token", "id": 16, "text": ".", "t_ms": 26370.994, "step_ms": 42.0017437, "p": 0, "margin": 2.92649078, "nucleus": 0, "hit": 0.390271493}
+{"event": "token", "id": 1350, "text": " We", "t_ms": 26370.9969, "step_ms": 42.0017437, "p": 0, "margin": 0.617485046, "nucleus": 0, "hit": 0.390271493}
+{"event": "token", "id": 588, "text": " can", "t_ms": 26370.9997, "step_ms": 42.0017437, "p": 0, "margin": 0.869754791, "nucleus": 0, "hit": 0.390271493}
+{"event": "token", "id": 3052, "text": " provide", "t_ms": 26371.0021, "step_ms": 42.0017437, "p": 0.020843425, "margin": 1.27856636, "nucleus": 27, "hit": 0.390271493}
+{"event": "token", "id": 339, "text": ".\n\n", "t_ms": 26624.7581, "step_ms": 63.4362975, "p": 0, "margin": 1.26809883, "nucleus": 0, "hit": 0.434330299}
+{"event": "token", "id": 50249, "text": "Need", "t_ms": 26624.7919, "step_ms": 63.4362975, "p": 0, "margin": 0.798343658, "nucleus": 0, "hit": 0.434330299}
+{"event": "token", "id": 10796, "text": " maybe", "t_ms": 26624.7961, "step_ms": 63.4362975, "p": 0, "margin": 0.0641365051, "nucleus": 0, "hit": 0.434330299}
+{"event": "token", "id": 3394, "text": " include", "t_ms": 26624.8001, "step_ms": 63.4362975, "p": 0.0740813243, "margin": 0.07462883, "nucleus": 80, "hit": 0.434330299}
+{"event": "token", "id": 1137, "text": ":\n", "t_ms": 26909.128, "step_ms": 94.770653, "p": 0, "margin": 0.287649155, "nucleus": 0, "hit": 0.605263158}
+{"event": "token", "id": 15, "text": "-", "t_ms": 26909.1706, "step_ms": 94.770653, "p": 0, "margin": 6.31381607, "nucleus": 0, "hit": 0.605263158}
+{"event": "token", "id": 28225, "text": " Context", "t_ms": 26909.1753, "step_ms": 94.770653, "p": 0.0196539305, "margin": 0.0129718781, "nucleus": 14, "hit": 0.605263158}
+{"event": "token", "id": 28, "text": ":", "t_ms": 27198.8187, "step_ms": 48.271115, "p": 0, "margin": 5.2063427, "nucleus": 0, "hit": 0.646153846}
+{"event": "token", "id": 2395, "text": " small", "t_ms": 27198.8568, "step_ms": 48.271115, "p": 0, "margin": 0.834554672, "nucleus": 0, "hit": 0.646153846}
+{"event": "token", "id": 26359, "text": " batch", "t_ms": 27198.8614, "step_ms": 48.271115, "p": 0, "margin": 0.5194664, "nucleus": 0, "hit": 0.646153846}
+{"event": "token", "id": 64285, "text": " decode", "t_ms": 27198.8644, "step_ms": 48.271115, "p": 0, "margin": 8.42166138, "nucleus": 0, "hit": 0.646153846}
+{"event": "token", "id": 343, "text": " (", "t_ms": 27198.8669, "step_ms": 48.271115, "p": 0, "margin": 1.07910728, "nucleus": 0, "hit": 0.646153846}
+{"event": "token", "id": 71, "text": "e", "t_ms": 27198.8693, "step_ms": 48.271115, "p": 0.13219494, "margin": 0.956428528, "nucleus": 8, "hit": 0.646153846}
+{"event": "token", "id": 3588, "text": ".g", "t_ms": 27492.7467, "step_ms": 48.9772522, "p": 0, "margin": 11.4543972, "nucleus": 0, "hit": 0.672036824}
+{"event": "token", "id": 1042, "text": ".,", "t_ms": 27492.7831, "step_ms": 48.9772522, "p": 0, "margin": 2.22366905, "nucleus": 0, "hit": 0.672036824}
+{"event": "token", "id": 373, "text": " M", "t_ms": 27492.7872, "step_ms": 48.9772522, "p": 0, "margin": 1.18993187, "nucleus": 0, "hit": 0.672036824}
+{"event": "token", "id": 31, "text": "=", "t_ms": 27492.7904, "step_ms": 48.9772522, "p": 0, "margin": 5.33229828, "nucleus": 0, "hit": 0.672036824}
+{"event": "token", "id": 19, "text": "1", "t_ms": 27492.7929, "step_ms": 48.9772522, "p": 0, "margin": 8.75345421, "nucleus": 0, "hit": 0.672036824}
+{"event": "token", "id": 14, "text": ",", "t_ms": 27492.7952, "step_ms": 48.9772522, "p": 0.546868184, "margin": 0.843540192, "nucleus": 4, "hit": 0.672036824}
+{"event": "token", "id": 471, "text": " N", "t_ms": 27787.5375, "step_ms": 58.9461796, "p": 0, "margin": 2.61005974, "nucleus": 0, "hit": 0.697823303}
+{"event": "token", "id": 31, "text": "=", "t_ms": 27787.5671, "step_ms": 58.9461796, "p": 0, "margin": 4.9852581, "nucleus": 0, "hit": 0.697823303}
+{"event": "token", "id": 19, "text": "1", "t_ms": 27787.5713, "step_ms": 58.9461796, "p": 0, "margin": 1.89557457, "nucleus": 0, "hit": 0.697823303}
+{"event": "token", "id": 14, "text": ",", "t_ms": 27787.574, "step_ms": 58.9461796, "p": 0, "margin": 0.453805923, "nucleus": 0, "hit": 0.697823303}
+{"event": "token", "id": 657, "text": " K", "t_ms": 27787.5765, "step_ms": 58.9461796, "p": 0.993175376, "margin": 5.95942307, "nucleus": 1, "hit": 0.697823303}
+{"event": "token", "id": 31, "text": "=", "t_ms": 28079.5065, "step_ms": 48.652741, "p": 0, "margin": 5.73426437, "nucleus": 0, "hit": 0.625134264}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 28079.5414, "step_ms": 48.652741, "p": 0, "margin": 2.3578434, "nucleus": 0, "hit": 0.625134264}
+{"event": "token", "id": 24, "text": "6", "t_ms": 28079.5456, "step_ms": 48.652741, "p": 0, "margin": 12.904047, "nucleus": 0, "hit": 0.625134264}
+{"event": "token", "id": 33, "text": "?", "t_ms": 28079.5486, "step_ms": 48.652741, "p": 0, "margin": 0.856506348, "nucleus": 0, "hit": 0.625134264}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 28079.5513, "step_ms": 48.652741, "p": 0, "margin": 0.739833832, "nucleus": 0, "hit": 0.625134264}
+{"event": "token", "id": 38895, "text": " GE", "t_ms": 28079.5541, "step_ms": 48.652741, "p": 0.076313102, "margin": 0.548112869, "nucleus": 21, "hit": 0.625134264}
+{"event": "token", "id": 4799, "text": "MM", "t_ms": 28382.1169, "step_ms": 151.27589, "p": 0, "margin": 4.82626915, "nucleus": 0, "hit": 0.656455142}
+{"event": "token", "id": 362, "text": " for", "t_ms": 28382.1463, "step_ms": 151.27589, "p": 0.125424983, "margin": 0.100982666, "nucleus": 12, "hit": 0.656455142}
+{"event": "token", "id": 33792, "text": " LL", "t_ms": 28676.3162, "step_ms": 294.152975, "p": 0.0573075301, "margin": 2.19972992, "nucleus": 14, "hit": 0.672727273}
+{"event": "token", "id": 47, "text": "M", "t_ms": 28979.276, "step_ms": 50.4857648, "p": 0, "margin": 10.2032433, "nucleus": 0, "hit": 0.680826636}
+{"event": "token", "id": 64285, "text": " decode", "t_ms": 28979.3138, "step_ms": 50.4857648, "p": 0, "margin": 0.558452606, "nucleus": 0, "hit": 0.680826636}
+{"event": "token", "id": 28, "text": ":", "t_ms": 28979.3184, "step_ms": 50.4857648, "p": 0, "margin": 5.25138474, "nucleus": 0, "hit": 0.680826636}
+{"event": "token", "id": 373, "text": " M", "t_ms": 28979.3213, "step_ms": 50.4857648, "p": 0, "margin": 2.55230331, "nucleus": 0, "hit": 0.680826636}
+{"event": "token", "id": 31, "text": "=", "t_ms": 28979.3237, "step_ms": 50.4857648, "p": 0, "margin": 1.51787949, "nucleus": 0, "hit": 0.680826636}
+{"event": "token", "id": 19, "text": "1", "t_ms": 28979.3256, "step_ms": 50.4857648, "p": 0.968801122, "margin": 3.79545975, "nucleus": 1, "hit": 0.680826636}
+{"event": "token", "id": 14, "text": ",", "t_ms": 29264.7452, "step_ms": 47.568356, "p": 0, "margin": 0.16387558, "nucleus": 0, "hit": 0.639324487}
+{"event": "token", "id": 471, "text": " N", "t_ms": 29264.772, "step_ms": 47.568356, "p": 0, "margin": 6.09400749, "nucleus": 0, "hit": 0.639324487}
+{"event": "token", "id": 31, "text": "=", "t_ms": 29264.7762, "step_ms": 47.568356, "p": 0, "margin": 4.58897209, "nucleus": 0, "hit": 0.639324487}
+{"event": "token", "id": 19, "text": "1", "t_ms": 29264.7789, "step_ms": 47.568356, "p": 0, "margin": 0.2215271, "nucleus": 0, "hit": 0.639324487}
+{"event": "token", "id": 14, "text": ",", "t_ms": 29264.7815, "step_ms": 47.568356, "p": 0, "margin": 0.726249695, "nucleus": 0, "hit": 0.639324487}
+{"event": "token", "id": 657, "text": " K", "t_ms": 29264.784, "step_ms": 47.568356, "p": 0.999927501, "margin": 11.461319, "nucleus": 1, "hit": 0.639324487}
+{"event": "token", "id": 31, "text": "=", "t_ms": 29557.489, "step_ms": 48.7823053, "p": 0, "margin": 7.49026299, "nucleus": 0, "hit": 0.58997955}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 29557.517, "step_ms": 48.7823053, "p": 0, "margin": 2.5114212, "nucleus": 0, "hit": 0.58997955}
+{"event": "token", "id": 24, "text": "6", "t_ms": 29557.5209, "step_ms": 48.7823053, "p": 0, "margin": 13.8573256, "nucleus": 0, "hit": 0.58997955}
+{"event": "token", "id": 33, "text": "?", "t_ms": 29557.5237, "step_ms": 48.7823053, "p": 0, "margin": 2.63308716, "nucleus": 0, "hit": 0.58997955}
+{"event": "token", "id": 1884, "text": " For", "t_ms": 29557.5261, "step_ms": 48.7823053, "p": 0, "margin": 0.572450638, "nucleus": 0, "hit": 0.58997955}
+{"event": "token", "id": 260, "text": " a", "t_ms": 29557.5288, "step_ms": 48.7823053, "p": 0.00757102843, "margin": 0.294672012, "nucleus": 19, "hit": 0.58997955}
+{"event": "token", "id": 17840, "text": " token", "t_ms": 29844.1266, "step_ms": 143.293409, "p": 0, "margin": 0.977869034, "nucleus": 0, "hit": 0.640787949}
+{"event": "token", "id": 14, "text": ",", "t_ms": 29844.1554, "step_ms": 143.293409, "p": 0.71346564, "margin": 1.93008041, "nucleus": 5, "hit": 0.640787949}
+{"event": "token", "id": 5288, "text": " weight", "t_ms": 30126.6581, "step_ms": 282.486981, "p": 0.380900668, "margin": 1.49842644, "nucleus": 18, "hit": 0.634864547}
+{"event": "token", "id": 8452, "text": " matrix", "t_ms": 30406.4851, "step_ms": 279.784682, "p": 0.884861745, "margin": 3.36139297, "nucleus": 4, "hit": 0.620238095}
+{"event": "token", "id": 764, "text": " [", "t_ms": 30690.3774, "step_ms": 56.7703374, "p": 0, "margin": 0.321094513, "nucleus": 0, "hit": 0.629719854}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 30690.4153, "step_ms": 56.7703374, "p": 0, "margin": 0.343967438, "nucleus": 0, "hit": 0.629719854}
+{"event": "token", "id": 24, "text": "6", "t_ms": 30690.4198, "step_ms": 56.7703374, "p": 0, "margin": 13.1220322, "nucleus": 0, "hit": 0.629719854}
+{"event": "token", "id": 14, "text": ",", "t_ms": 30690.4229, "step_ms": 56.7703374, "p": 0, "margin": 1.6031456, "nucleus": 0, "hit": 0.629719854}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 30690.425, "step_ms": 56.7703374, "p": 0.452744262, "margin": 0.167007446, "nucleus": 2, "hit": 0.629719854}
+{"event": "token", "id": 24, "text": "6", "t_ms": 30991.1521, "step_ms": 50.1196092, "p": 0, "margin": 10.7494812, "nucleus": 0, "hit": 0.587552743}
+{"event": "token", "id": 63, "text": "]", "t_ms": 30991.1818, "step_ms": 50.1196092, "p": 0, "margin": 1.19548798, "nucleus": 0, "hit": 0.587552743}
+{"event": "token", "id": 33, "text": "?", "t_ms": 30991.1853, "step_ms": 50.1196092, "p": 0, "margin": 2.55495453, "nucleus": 0, "hit": 0.587552743}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 30991.1882, "step_ms": 50.1196092, "p": 0, "margin": 0.206569672, "nucleus": 0, "hit": 0.587552743}
+{"event": "token", "id": 373, "text": " M", "t_ms": 30991.191, "step_ms": 50.1196092, "p": 0, "margin": 0.428750992, "nucleus": 0, "hit": 0.587552743}
+{"event": "token", "id": 31, "text": "=", "t_ms": 30991.1934, "step_ms": 50.1196092, "p": 0.993340737, "margin": 5.38441849, "nucleus": 1, "hit": 0.587552743}
+{"event": "token", "id": 19, "text": "1", "t_ms": 31292.2406, "step_ms": 50.1715898, "p": 0, "margin": 7.52553177, "nucleus": 0, "hit": 0.64495114}
+{"event": "token", "id": 14, "text": ",", "t_ms": 31292.2788, "step_ms": 50.1715898, "p": 0, "margin": 2.17449188, "nucleus": 0, "hit": 0.64495114}
+{"event": "token", "id": 471, "text": " N", "t_ms": 31292.284, "step_ms": 50.1715898, "p": 0, "margin": 5.38256264, "nucleus": 0, "hit": 0.64495114}
+{"event": "token", "id": 31, "text": "=", "t_ms": 31292.2877, "step_ms": 50.1715898, "p": 0, "margin": 6.20099068, "nucleus": 0, "hit": 0.64495114}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 31292.2907, "step_ms": 50.1715898, "p": 0, "margin": 0.203777313, "nucleus": 0, "hit": 0.64495114}
+{"event": "token", "id": 24, "text": "6", "t_ms": 31292.2941, "step_ms": 50.1715898, "p": 0.999987096, "margin": 12.3769302, "nucleus": 1, "hit": 0.64495114}
+{"event": "token", "id": 14, "text": ",", "t_ms": 31577.1054, "step_ms": 47.4664533, "p": 0, "margin": 0.691249847, "nucleus": 0, "hit": 0.624708625}
+{"event": "token", "id": 657, "text": " K", "t_ms": 31577.1396, "step_ms": 47.4664533, "p": 0, "margin": 11.7007713, "nucleus": 0, "hit": 0.624708625}
+{"event": "token", "id": 31, "text": "=", "t_ms": 31577.144, "step_ms": 47.4664533, "p": 0, "margin": 8.14917374, "nucleus": 0, "hit": 0.624708625}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 31577.1472, "step_ms": 47.4664533, "p": 0, "margin": 4.24320221, "nucleus": 0, "hit": 0.624708625}
+{"event": "token", "id": 24, "text": "6", "t_ms": 31577.1498, "step_ms": 47.4664533, "p": 0, "margin": 13.9087105, "nucleus": 0, "hit": 0.624708625}
+{"event": "token", "id": 33, "text": "?", "t_ms": 31577.1522, "step_ms": 47.4664533, "p": 0.919905741, "margin": 2.76692963, "nucleus": 2, "hit": 0.624708625}
+{"event": "token", "id": 4480, "text": " Let", "t_ms": 31858.7439, "step_ms": 281.581207, "p": 0.0427675818, "margin": 1.61742973, "nucleus": 23, "hit": 0.557905337}
+{"event": "token", "id": 734, "text": "'s", "t_ms": 32128.9984, "step_ms": 135.10866, "p": 0, "margin": 0.472232819, "nucleus": 0, "hit": 0.540189125}
+{"event": "token", "id": 33, "text": "?", "t_ms": 32129.0281, "step_ms": 135.10866, "p": 0.733158002, "margin": 1.91537285, "nucleus": 12, "hit": 0.540189125}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 32395.7226, "step_ms": 133.341091, "p": 0, "margin": 0.044418335, "nucleus": 0, "hit": 0.528497409}
+{"event": "token", "id": 603, "text": ".\n", "t_ms": 32395.7525, "step_ms": 133.341091, "p": 0.051949343, "margin": 0.029586792, "nucleus": 29, "hit": 0.528497409}
+{"event": "token", "id": 15, "text": "-", "t_ms": 32680.8538, "step_ms": 71.2723165, "p": 0, "margin": 6.717453, "nucleus": 0, "hit": 0.603896104}
+{"event": "token", "id": 1884, "text": " For", "t_ms": 32680.8842, "step_ms": 71.2723165, "p": 0, "margin": 0.983280182, "nucleus": 0, "hit": 0.603896104}
+{"event": "token", "id": 26359, "text": " batch", "t_ms": 32680.8889, "step_ms": 71.2723165, "p": 0, "margin": 0.0921993256, "nucleus": 0, "hit": 0.603896104}
+{"event": "token", "id": 22891, "text": " validation", "t_ms": 32680.8923, "step_ms": 71.2723165, "p": 0.994697172, "margin": 5.96626282, "nucleus": 1, "hit": 0.603896104}
+{"event": "token", "id": 28, "text": ":", "t_ms": 32980, "step_ms": 49.8495922, "p": 0, "margin": 1.61090469, "nucleus": 0, "hit": 0.690246517}
+{"event": "token", "id": 373, "text": " M", "t_ms": 32980.0247, "step_ms": 49.8495922, "p": 0, "margin": 3.45469666, "nucleus": 0, "hit": 0.690246517}
+{"event": "token", "id": 31, "text": "=", "t_ms": 32980.029, "step_ms": 49.8495922, "p": 0, "margin": 2.22785378, "nucleus": 0, "hit": 0.690246517}
+{"event": "token", "id": 2111, "text": "32", "t_ms": 32980.032, "step_ms": 49.8495922, "p": 0, "margin": 0.254413605, "nucleus": 0, "hit": 0.690246517}
+{"event": "token", "id": 14, "text": ",", "t_ms": 32980.0345, "step_ms": 49.8495922, "p": 0, "margin": 0.654401779, "nucleus": 0, "hit": 0.690246517}
+{"event": "token", "id": 471, "text": " N", "t_ms": 32980.0367, "step_ms": 49.8495922, "p": 0.998971534, "margin": 7.96848488, "nucleus": 1, "hit": 0.690246517}
+{"event": "token", "id": 31, "text": "=", "t_ms": 33262.0687, "step_ms": 47.003707, "p": 0, "margin": 6.60106659, "nucleus": 0, "hit": 0.595210946}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 33262.0921, "step_ms": 47.003707, "p": 0, "margin": 1.86019135, "nucleus": 0, "hit": 0.595210946}
+{"event": "token", "id": 24, "text": "6", "t_ms": 33262.0963, "step_ms": 47.003707, "p": 0, "margin": 12.2103596, "nucleus": 0, "hit": 0.595210946}
+{"event": "token", "id": 14, "text": ",", "t_ms": 33262.0992, "step_ms": 47.003707, "p": 0, "margin": 3.14942932, "nucleus": 0, "hit": 0.595210946}
+{"event": "token", "id": 657, "text": " K", "t_ms": 33262.1014, "step_ms": 47.003707, "p": 0, "margin": 11.8601265, "nucleus": 0, "hit": 0.595210946}
+{"event": "token", "id": 31, "text": "=", "t_ms": 33262.1041, "step_ms": 47.003707, "p": 0.99999502, "margin": 12.8597164, "nucleus": 1, "hit": 0.595210946}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 33554.8382, "step_ms": 48.7867252, "p": 0, "margin": 12.2338982, "nucleus": 0, "hit": 0.57254902}
+{"event": "token", "id": 24, "text": "6", "t_ms": 33554.8723, "step_ms": 48.7867252, "p": 0, "margin": 15.8147087, "nucleus": 0, "hit": 0.57254902}
+{"event": "token", "id": 33, "text": "?", "t_ms": 33554.8763, "step_ms": 48.7867252, "p": 0, "margin": 3.38181305, "nucleus": 0, "hit": 0.57254902}
+{"event": "token", "id": 2709, "text": " Or", "t_ms": 33554.8795, "step_ms": 48.7867252, "p": 0, "margin": 0.89304924, "nucleus": 0, "hit": 0.57254902}
+{"event": "token", "id": 373, "text": " M", "t_ms": 33554.8823, "step_ms": 48.7867252, "p": 0, "margin": 3.5036602, "nucleus": 0, "hit": 0.57254902}
+{"event": "token", "id": 31, "text": "=", "t_ms": 33554.8847, "step_ms": 48.7867252, "p": 0.998855595, "margin": 7.16978073, "nucleus": 1, "hit": 0.57254902}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 33853.5063, "step_ms": 49.768572, "p": 0, "margin": 0.159973145, "nucleus": 0, "hit": 0.622583927}
+{"event": "token", "id": 14, "text": ",", "t_ms": 33853.5345, "step_ms": 49.768572, "p": 0, "margin": 1.02872849, "nucleus": 0, "hit": 0.622583927}
+{"event": "token", "id": 471, "text": " N", "t_ms": 33853.5385, "step_ms": 49.768572, "p": 0, "margin": 4.05112648, "nucleus": 0, "hit": 0.622583927}
+{"event": "token", "id": 31, "text": "=", "t_ms": 33853.5417, "step_ms": 49.768572, "p": 0, "margin": 8.60727501, "nucleus": 0, "hit": 0.622583927}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 33853.5442, "step_ms": 49.768572, "p": 0, "margin": 4.18552208, "nucleus": 0, "hit": 0.622583927}
+{"event": "token", "id": 24, "text": "6", "t_ms": 33853.5468, "step_ms": 49.768572, "p": 0.999981398, "margin": 12.0849342, "nucleus": 1, "hit": 0.622583927}
+{"event": "token", "id": 14, "text": ",", "t_ms": 34149.7591, "step_ms": 49.3664072, "p": 0, "margin": 3.90401077, "nucleus": 0, "hit": 0.624458874}
+{"event": "token", "id": 657, "text": " K", "t_ms": 34149.7937, "step_ms": 49.3664072, "p": 0, "margin": 10.0393105, "nucleus": 0, "hit": 0.624458874}
+{"event": "token", "id": 31, "text": "=", "t_ms": 34149.7982, "step_ms": 49.3664072, "p": 0, "margin": 12.5918255, "nucleus": 0, "hit": 0.624458874}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 34149.8011, "step_ms": 49.3664072, "p": 0, "margin": 7.647686, "nucleus": 0, "hit": 0.624458874}
+{"event": "token", "id": 24, "text": "6", "t_ms": 34149.8038, "step_ms": 49.3664072, "p": 0, "margin": 13.7751675, "nucleus": 0, "hit": 0.624458874}
+{"event": "token", "id": 33, "text": "?", "t_ms": 34149.8061, "step_ms": 49.3664072, "p": 0.589254485, "margin": 0.69733429, "nucleus": 3, "hit": 0.624458874}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 34411.3079, "step_ms": 43.5820357, "p": 0, "margin": 0.685026169, "nucleus": 0, "hit": 0.460629921}
+{"event": "token", "id": 339, "text": ".\n\n", "t_ms": 34411.3375, "step_ms": 43.5820357, "p": 0, "margin": 0.486480713, "nucleus": 0, "hit": 0.460629921}
+{"event": "token", "id": 50249, "text": "Need", "t_ms": 34411.3419, "step_ms": 43.5820357, "p": 0, "margin": 1.18031311, "nucleus": 0, "hit": 0.460629921}
+{"event": "token", "id": 10796, "text": " maybe", "t_ms": 34411.3448, "step_ms": 43.5820357, "p": 0, "margin": 0.444976807, "nucleus": 0, "hit": 0.460629921}
+{"event": "token", "id": 11348, "text": " define", "t_ms": 34411.3473, "step_ms": 43.5820357, "p": 0, "margin": 0.368934631, "nucleus": 0, "hit": 0.460629921}
+{"event": "token", "id": 1137, "text": ":\n", "t_ms": 34411.3497, "step_ms": 43.5820357, "p": 0.161914344, "margin": 0.28383255, "nucleus": 18, "hit": 0.460629921}
+{"event": "token", "id": 15, "text": "-", "t_ms": 34699.6406, "step_ms": 72.069992, "p": 0, "margin": 3.39720726, "nucleus": 0, "hit": 0.686934023}
+{"event": "token", "id": 64285, "text": " decode", "t_ms": 34699.6699, "step_ms": 72.069992, "p": 0, "margin": 0.946456909, "nucleus": 0, "hit": 0.686934023}
+{"event": "token", "id": 28, "text": ":", "t_ms": 34699.6746, "step_ms": 72.069992, "p": 0, "margin": 4.64242744, "nucleus": 0, "hit": 0.686934023}
+{"event": "token", "id": 373, "text": " M", "t_ms": 34699.6774, "step_ms": 72.069992, "p": 0.706564035, "margin": 1.75048447, "nucleus": 11, "hit": 0.686934023}
+{"event": "token", "id": 31, "text": "=", "t_ms": 35001.7188, "step_ms": 50.3378092, "p": 0, "margin": 4.45601463, "nucleus": 0, "hit": 0.694774347}
+{"event": "token", "id": 19, "text": "1", "t_ms": 35001.7535, "step_ms": 50.3378092, "p": 0, "margin": 8.47459793, "nucleus": 0, "hit": 0.694774347}
+{"event": "token", "id": 343, "text": " (", "t_ms": 35001.7575, "step_ms": 50.3378092, "p": 0, "margin": 0.881717682, "nucleus": 0, "hit": 0.694774347}
+{"event": "token", "id": 81143, "text": "batch", "t_ms": 35001.7614, "step_ms": 50.3378092, "p": 0, "margin": 0.99213028, "nucleus": 0, "hit": 0.694774347}
+{"event": "token", "id": 31, "text": "=", "t_ms": 35001.7642, "step_ms": 50.3378092, "p": 0, "margin": 0.11066246, "nucleus": 0, "hit": 0.694774347}
+{"event": "token", "id": 19, "text": "1", "t_ms": 35001.7667, "step_ms": 50.3378092, "p": 0.999947984, "margin": 11.548851, "nucleus": 1, "hit": 0.694774347}
+{"event": "token", "id": 754, "text": "),", "t_ms": 35307.0936, "step_ms": 50.8855232, "p": 0, "margin": 0.356412888, "nucleus": 0, "hit": 0.664146868}
+{"event": "token", "id": 471, "text": " N", "t_ms": 35307.1268, "step_ms": 50.8855232, "p": 0, "margin": 4.40899086, "nucleus": 0, "hit": 0.664146868}
+{"event": "token", "id": 31, "text": "=", "t_ms": 35307.1307, "step_ms": 50.8855232, "p": 0, "margin": 4.45089912, "nucleus": 0, "hit": 0.664146868}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 35307.1338, "step_ms": 50.8855232, "p": 0, "margin": 0.0401268005, "nucleus": 0, "hit": 0.664146868}
+{"event": "token", "id": 24, "text": "6", "t_ms": 35307.1371, "step_ms": 50.8855232, "p": 0, "margin": 11.7119064, "nucleus": 0, "hit": 0.664146868}
+{"event": "token", "id": 33, "text": "?", "t_ms": 35307.1398, "step_ms": 50.8855232, "p": 0.118342165, "margin": 1.24419594, "nucleus": 3, "hit": 0.664146868}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 35585.3719, "step_ms": 92.7390527, "p": 0, "margin": 0.0292549133, "nucleus": 0, "hit": 0.554621849}
+{"event": "token", "id": 5238, "text": " output", "t_ms": 35585.4091, "step_ms": 92.7390527, "p": 0, "margin": 0.192951202, "nucleus": 0, "hit": 0.554621849}
+{"event": "token", "id": 5381, "text": " features", "t_ms": 35585.4135, "step_ms": 92.7390527, "p": 0.218473016, "margin": 0.0505580902, "nucleus": 11, "hit": 0.554621849}
+{"event": "token", "id": 471, "text": " N", "t_ms": 35878.1595, "step_ms": 48.7892167, "p": 0, "margin": 0.617275238, "nucleus": 0, "hit": 0.616740088}
+{"event": "token", "id": 31, "text": "=", "t_ms": 35878.1793, "step_ms": 48.7892167, "p": 0, "margin": 3.41135788, "nucleus": 0, "hit": 0.616740088}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 35878.1831, "step_ms": 48.7892167, "p": 0, "margin": 7.51940155, "nucleus": 0, "hit": 0.616740088}
+{"event": "token", "id": 24, "text": "6", "t_ms": 35878.1866, "step_ms": 48.7892167, "p": 0, "margin": 13.9650116, "nucleus": 0, "hit": 0.616740088}
+{"event": "token", "id": 33, "text": "?", "t_ms": 35878.1894, "step_ms": 48.7892167, "p": 0, "margin": 1.05871582, "nucleus": 0, "hit": 0.616740088}
+{"event": "token", "id": 657, "text": " K", "t_ms": 35878.1918, "step_ms": 48.7892167, "p": 0.715161009, "margin": 1.71580124, "nucleus": 9, "hit": 0.616740088}
+{"event": "token", "id": 31, "text": "=", "t_ms": 36187.6277, "step_ms": 51.5701015, "p": 0, "margin": 8.49996376, "nucleus": 0, "hit": 0.61875}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 36187.6636, "step_ms": 51.5701015, "p": 0, "margin": 10.2859287, "nucleus": 0, "hit": 0.61875}
+{"event": "token", "id": 24, "text": "6", "t_ms": 36187.6684, "step_ms": 51.5701015, "p": 0, "margin": 12.9006481, "nucleus": 0, "hit": 0.61875}
+{"event": "token", "id": 33, "text": "?", "t_ms": 36187.6714, "step_ms": 51.5701015, "p": 0, "margin": 1.81568909, "nucleus": 0, "hit": 0.61875}
+{"event": "token", "id": 19334, "text": " Input", "t_ms": 36187.6739, "step_ms": 51.5701015, "p": 0, "margin": 1.14109421, "nucleus": 0, "hit": 0.61875}
+{"event": "token", "id": 2207, "text": " activ", "t_ms": 36187.6767, "step_ms": 51.5701015, "p": 0.144479309, "margin": 0.286273956, "nucleus": 8, "hit": 0.61875}
+{"event": "token", "id": 706, "text": "ations", "t_ms": 36519.3554, "step_ms": 165.831747, "p": 0, "margin": 4.55514145, "nucleus": 0, "hit": 0.648125756}
+{"event": "token", "id": 764, "text": " [", "t_ms": 36519.3872, "step_ms": 165.831747, "p": 0.708480776, "margin": 2.10965347, "nucleus": 7, "hit": 0.648125756}
+{"event": "token", "id": 19, "text": "1", "t_ms": 36804.3945, "step_ms": 47.4992215, "p": 0, "margin": 1.68136978, "nucleus": 0, "hit": 0.619668246}
+{"event": "token", "id": 14, "text": ",", "t_ms": 36804.423, "step_ms": 47.4992215, "p": 0, "margin": 1.43702316, "nucleus": 0, "hit": 0.619668246}
+{"event": "token", "id": 657, "text": " K", "t_ms": 36804.4272, "step_ms": 47.4992215, "p": 0, "margin": 2.42494392, "nucleus": 0, "hit": 0.619668246}
+{"event": "token", "id": 31, "text": "=", "t_ms": 36804.4303, "step_ms": 47.4992215, "p": 0, "margin": 0.243442535, "nucleus": 0, "hit": 0.619668246}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 36804.4328, "step_ms": 47.4992215, "p": 0, "margin": 7.80856133, "nucleus": 0, "hit": 0.619668246}
+{"event": "token", "id": 24, "text": "6", "t_ms": 36804.4354, "step_ms": 47.4992215, "p": 0.999995678, "margin": 14.082531, "nucleus": 1, "hit": 0.619668246}
+{"event": "token", "id": 3031, "text": "],", "t_ms": 37088.2763, "step_ms": 47.305173, "p": 0, "margin": 0.591773987, "nucleus": 0, "hit": 0.635294118}
+{"event": "token", "id": 23997, "text": " weights", "t_ms": 37088.305, "step_ms": 47.305173, "p": 0, "margin": 0.811717987, "nucleus": 0, "hit": 0.635294118}
+{"event": "token", "id": 764, "text": " [", "t_ms": 37088.3096, "step_ms": 47.305173, "p": 0, "margin": 9.94917297, "nucleus": 0, "hit": 0.635294118}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 37088.3126, "step_ms": 47.305173, "p": 0, "margin": 0.480789185, "nucleus": 0, "hit": 0.635294118}
+{"event": "token", "id": 24, "text": "6", "t_ms": 37088.3151, "step_ms": 47.305173, "p": 0, "margin": 11.3811512, "nucleus": 0, "hit": 0.635294118}
+{"event": "token", "id": 14, "text": ",", "t_ms": 37088.3176, "step_ms": 47.305173, "p": 0.935802656, "margin": 3.25503731, "nucleus": 2, "hit": 0.635294118}
+{"event": "token", "id": 657, "text": " K", "t_ms": 37383.4883, "step_ms": 49.1934887, "p": 0, "margin": 0.446455002, "nucleus": 0, "hit": 0.598060345}
+{"event": "token", "id": 31, "text": "=", "t_ms": 37383.5164, "step_ms": 49.1934887, "p": 0, "margin": 2.48707581, "nucleus": 0, "hit": 0.598060345}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 37383.5204, "step_ms": 49.1934887, "p": 0, "margin": 9.09742546, "nucleus": 0, "hit": 0.598060345}
+{"event": "token", "id": 24, "text": "6", "t_ms": 37383.5239, "step_ms": 49.1934887, "p": 0, "margin": 12.5023479, "nucleus": 0, "hit": 0.598060345}
+{"event": "token", "id": 63, "text": "]", "t_ms": 37383.5264, "step_ms": 49.1934887, "p": 0, "margin": 1.82230377, "nucleus": 0, "hit": 0.598060345}
+{"event": "token", "id": 33, "text": "?", "t_ms": 37383.5285, "step_ms": 49.1934887, "p": 0.907202154, "margin": 2.84457588, "nucleus": 2, "hit": 0.598060345}
+{"event": "token", "id": 21017, "text": " Need", "t_ms": 37660.4685, "step_ms": 276.929447, "p": 0.0972487573, "margin": 0.767877579, "nucleus": 16, "hit": 0.518878101}
+{"event": "token", "id": 33, "text": "?", "t_ms": 37941.3462, "step_ms": 280.841972, "p": 0.0571332577, "margin": 0.132030487, "nucleus": 7, "hit": 0.543879908}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 38210.56, "step_ms": 53.8348114, "p": 0, "margin": 0.0717945099, "nucleus": 0, "hit": 0.504651163}
+{"event": "token", "id": 38895, "text": " GE", "t_ms": 38210.596, "step_ms": 53.8348114, "p": 0, "margin": 0.967941284, "nucleus": 0, "hit": 0.504651163}
+{"event": "token", "id": 4799, "text": "MM", "t_ms": 38210.6005, "step_ms": 53.8348114, "p": 0, "margin": 8.01436138, "nucleus": 0, "hit": 0.504651163}
+{"event": "token", "id": 28, "text": ":", "t_ms": 38210.6042, "step_ms": 53.8348114, "p": 0, "margin": 2.55778885, "nucleus": 0, "hit": 0.504651163}
+{"event": "token", "id": 334, "text": " A", "t_ms": 38210.6071, "step_ms": 53.8348114, "p": 0.698307298, "margin": 1.41029549, "nucleus": 3, "hit": 0.504651163}
+{"event": "token", "id": 764, "text": " [", "t_ms": 38491.8054, "step_ms": 46.8641192, "p": 0, "margin": 2.34834099, "nucleus": 0, "hit": 0.624834875}
+{"event": "token", "id": 47, "text": "M", "t_ms": 38491.837, "step_ms": 46.8641192, "p": 0, "margin": 2.97877884, "nucleus": 0, "hit": 0.624834875}
+{"event": "token", "id": 58607, "text": ",K", "t_ms": 38491.8422, "step_ms": 46.8641192, "p": 0, "margin": 1.44795036, "nucleus": 0, "hit": 0.624834875}
+{"event": "token", "id": 63, "text": "]", "t_ms": 38491.8462, "step_ms": 46.8641192, "p": 0, "margin": 0.499263763, "nucleus": 0, "hit": 0.624834875}
+{"event": "token", "id": 343, "text": " (", "t_ms": 38491.8492, "step_ms": 46.8641192, "p": 0, "margin": 4.11408615, "nucleus": 0, "hit": 0.624834875}
+{"event": "token", "id": 52254, "text": "activ", "t_ms": 38491.8524, "step_ms": 46.8641192, "p": 0.159173769, "margin": 0.139238358, "nucleus": 3, "hit": 0.624834875}
+{"event": "token", "id": 706, "text": "ations", "t_ms": 38774.991, "step_ms": 47.1879037, "p": 0, "margin": 9.00949669, "nucleus": 0, "hit": 0.613317757}
+{"event": "token", "id": 754, "text": "),", "t_ms": 38775.0195, "step_ms": 47.1879037, "p": 0, "margin": 0.435913086, "nucleus": 0, "hit": 0.613317757}
+{"event": "token", "id": 406, "text": " B", "t_ms": 38775.0237, "step_ms": 47.1879037, "p": 0, "margin": 5.2836628, "nucleus": 0, "hit": 0.613317757}
+{"event": "token", "id": 764, "text": " [", "t_ms": 38775.0262, "step_ms": 47.1879037, "p": 0, "margin": 10.3475208, "nucleus": 0, "hit": 0.613317757}
+{"event": "token", "id": 45, "text": "K", "t_ms": 38775.0287, "step_ms": 47.1879037, "p": 0, "margin": 1.07389259, "nucleus": 0, "hit": 0.613317757}
+{"event": "token", "id": 35648, "text": ",N", "t_ms": 38775.0313, "step_ms": 47.1879037, "p": 0.999719618, "margin": 8.20522499, "nucleus": 1, "hit": 0.613317757}
+{"event": "token", "id": 63, "text": "]", "t_ms": 39060.0519, "step_ms": 47.50108, "p": 0, "margin": 7.33486748, "nucleus": 0, "hit": 0.573825503}
+{"event": "token", "id": 343, "text": " (", "t_ms": 39060.0856, "step_ms": 47.50108, "p": 0, "margin": 2.78116226, "nucleus": 0, "hit": 0.573825503}
+{"event": "token", "id": 40300, "text": "weights", "t_ms": 39060.09, "step_ms": 47.50108, "p": 0, "margin": 5.7456665, "nucleus": 0, "hit": 0.573825503}
+{"event": "token", "id": 797, "text": ").", "t_ms": 39060.0931, "step_ms": 47.50108, "p": 0, "margin": 1.24427223, "nucleus": 0, "hit": 0.573825503}
+{"event": "token", "id": 1884, "text": " For", "t_ms": 39060.0955, "step_ms": 47.50108, "p": 0, "margin": 0.222171783, "nucleus": 0, "hit": 0.573825503}
+{"event": "token", "id": 9548, "text": " linear", "t_ms": 39060.0979, "step_ms": 47.50108, "p": 0.250372063, "margin": 0.556367874, "nucleus": 9, "hit": 0.573825503}
+{"event": "token", "id": 28, "text": ":", "t_ms": 39334.303, "step_ms": 68.547572, "p": 0, "margin": 2.13076782, "nucleus": 0, "hit": 0.577836412}
+{"event": "token", "id": 334, "text": " A", "t_ms": 39334.3368, "step_ms": 68.547572, "p": 0, "margin": 0.172164917, "nucleus": 0, "hit": 0.577836412}
+{"event": "token", "id": 28, "text": ":", "t_ms": 39334.341, "step_ms": 68.547572, "p": 0, "margin": 2.77262878, "nucleus": 0, "hit": 0.577836412}
+{"event": "token", "id": 373, "text": " M", "t_ms": 39334.3439, "step_ms": 68.547572, "p": 0.207720539, "margin": 1.27605247, "nucleus": 2, "hit": 0.577836412}
+{"event": "token", "id": 1527, "text": " x", "t_ms": 39606.3695, "step_ms": 45.3358945, "p": 0, "margin": 1.27050591, "nucleus": 0, "hit": 0.563093623}
+{"event": "token", "id": 657, "text": " K", "t_ms": 39606.3958, "step_ms": 45.3358945, "p": 0, "margin": 8.26822281, "nucleus": 0, "hit": 0.563093623}
+{"event": "token", "id": 14, "text": ",", "t_ms": 39606.3998, "step_ms": 45.3358945, "p": 0, "margin": 2.31660843, "nucleus": 0, "hit": 0.563093623}
+{"event": "token", "id": 406, "text": " B", "t_ms": 39606.4029, "step_ms": 45.3358945, "p": 0, "margin": 4.23502922, "nucleus": 0, "hit": 0.563093623}
+{"event": "token", "id": 28, "text": ":", "t_ms": 39606.4054, "step_ms": 45.3358945, "p": 0, "margin": 5.82585335, "nucleus": 0, "hit": 0.563093623}
+{"event": "token", "id": 657, "text": " K", "t_ms": 39606.4076, "step_ms": 45.3358945, "p": 0.916009581, "margin": 2.38960648, "nucleus": 2, "hit": 0.563093623}
+{"event": "token", "id": 1527, "text": " x", "t_ms": 39881.0547, "step_ms": 45.7720427, "p": 0, "margin": 9.30009651, "nucleus": 0, "hit": 0.542475728}
+{"event": "token", "id": 471, "text": " N", "t_ms": 39881.0893, "step_ms": 45.7720427, "p": 0, "margin": 12.3283062, "nucleus": 0, "hit": 0.542475728}
+{"event": "token", "id": 16, "text": ".", "t_ms": 39881.0935, "step_ms": 45.7720427, "p": 0, "margin": 0.0879173279, "nucleus": 0, "hit": 0.542475728}
+{"event": "token", "id": 24800, "text": " Output", "t_ms": 39881.0969, "step_ms": 45.7720427, "p": 0, "margin": 0.554899216, "nucleus": 0, "hit": 0.542475728}
+{"event": "token", "id": 28, "text": ":", "t_ms": 39881.0998, "step_ms": 45.7720427, "p": 0, "margin": 2.41782379, "nucleus": 0, "hit": 0.542475728}
+{"event": "token", "id": 373, "text": " M", "t_ms": 39881.1024, "step_ms": 45.7720427, "p": 0.999686527, "margin": 8.1818161, "nucleus": 1, "hit": 0.542475728}
+{"event": "token", "id": 1527, "text": " x", "t_ms": 40157.487, "step_ms": 46.0617952, "p": 0, "margin": 7.0164566, "nucleus": 0, "hit": 0.532293987}
+{"event": "token", "id": 471, "text": " N", "t_ms": 40157.5191, "step_ms": 46.0617952, "p": 0, "margin": 11.022522, "nucleus": 0, "hit": 0.532293987}
+{"event": "token", "id": 16, "text": ".", "t_ms": 40157.5233, "step_ms": 46.0617952, "p": 0, "margin": 3.0736866, "nucleus": 0, "hit": 0.532293987}
+{"event": "token", "id": 1884, "text": " For", "t_ms": 40157.5264, "step_ms": 46.0617952, "p": 0, "margin": 2.15341187, "nucleus": 0, "hit": 0.532293987}
+{"event": "token", "id": 64285, "text": " decode", "t_ms": 40157.5291, "step_ms": 46.0617952, "p": 0, "margin": 1.9416523, "nucleus": 0, "hit": 0.532293987}
+{"event": "token", "id": 373, "text": " M", "t_ms": 40157.5317, "step_ms": 46.0617952, "p": 0.4724952, "margin": 0.0298728943, "nucleus": 3, "hit": 0.532293987}
+{"event": "token", "id": 31, "text": "=", "t_ms": 40443.2523, "step_ms": 47.6183943, "p": 0, "margin": 12.0482311, "nucleus": 0, "hit": 0.584562997}
+{"event": "token", "id": 19, "text": "1", "t_ms": 40443.2822, "step_ms": 47.6183943, "p": 0, "margin": 12.1780663, "nucleus": 0, "hit": 0.584562997}
+{"event": "token", "id": 14, "text": ",", "t_ms": 40443.2862, "step_ms": 47.6183943, "p": 0, "margin": 5.82981491, "nucleus": 0, "hit": 0.584562997}
+{"event": "token", "id": 657, "text": " K", "t_ms": 40443.289, "step_ms": 47.6183943, "p": 0, "margin": 1.43914795, "nucleus": 0, "hit": 0.584562997}
+{"event": "token", "id": 31, "text": "=", "t_ms": 40443.2914, "step_ms": 47.6183943, "p": 0, "margin": 10.9996395, "nucleus": 0, "hit": 0.584562997}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 40443.294, "step_ms": 47.6183943, "p": 0.999713161, "margin": 9.04722595, "nucleus": 1, "hit": 0.584562997}
+{"event": "token", "id": 24, "text": "6", "t_ms": 40732.422, "step_ms": 48.1855982, "p": 0, "margin": 12.9557886, "nucleus": 0, "hit": 0.60800843}
+{"event": "token", "id": 14, "text": ",", "t_ms": 40732.4567, "step_ms": 48.1855982, "p": 0, "margin": 6.11445618, "nucleus": 0, "hit": 0.60800843}
+{"event": "token", "id": 471, "text": " N", "t_ms": 40732.4605, "step_ms": 48.1855982, "p": 0, "margin": 12.3836136, "nucleus": 0, "hit": 0.60800843}
+{"event": "token", "id": 31, "text": "=", "t_ms": 40732.4638, "step_ms": 48.1855982, "p": 0, "margin": 11.3887501, "nucleus": 0, "hit": 0.60800843}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 40732.4665, "step_ms": 48.1855982, "p": 0, "margin": 8.97591591, "nucleus": 0, "hit": 0.60800843}
+{"event": "token", "id": 24, "text": "6", "t_ms": 40732.469, "step_ms": 48.1855982, "p": 0.999996088, "margin": 14.3763485, "nucleus": 1, "hit": 0.60800843}
+{"event": "token", "id": 16, "text": ".", "t_ms": 41047.2923, "step_ms": 104.936503, "p": 0, "margin": 1.94393158, "nucleus": 0, "hit": 0.613009923}
+{"event": "token", "id": 1884, "text": " For", "t_ms": 41047.3258, "step_ms": 104.936503, "p": 0, "margin": 0.265878677, "nucleus": 0, "hit": 0.613009923}
+{"event": "token", "id": 852, "text": " pre", "t_ms": 41047.3305, "step_ms": 104.936503, "p": 0.176936441, "margin": 0.27148819, "nucleus": 3, "hit": 0.613009923}
+{"event": "token", "id": 27472, "text": "fill", "t_ms": 41345.9153, "step_ms": 74.642431, "p": 0, "margin": 5.73544693, "nucleus": 0, "hit": 0.65961945}
+{"event": "token", "id": 373, "text": " M", "t_ms": 41345.9531, "step_ms": 74.642431, "p": 0, "margin": 1.61928558, "nucleus": 0, "hit": 0.65961945}
+{"event": "token", "id": 31, "text": "=", "t_ms": 41345.9577, "step_ms": 74.642431, "p": 0, "margin": 5.73412132, "nucleus": 0, "hit": 0.65961945}
+{"event": "token", "id": 16006, "text": "512", "t_ms": 41345.9604, "step_ms": 74.642431, "p": 0.58709373, "margin": 0.877696991, "nucleus": 6, "hit": 0.65961945}
+{"event": "token", "id": 14, "text": ",", "t_ms": 41638.0248, "step_ms": 48.6719055, "p": 0, "margin": 1.11185074, "nucleus": 0, "hit": 0.610446137}
+{"event": "token", "id": 657, "text": " K", "t_ms": 41638.0563, "step_ms": 48.6719055, "p": 0, "margin": 5.09542084, "nucleus": 0, "hit": 0.610446137}
+{"event": "token", "id": 31, "text": "=", "t_ms": 41638.0606, "step_ms": 48.6719055, "p": 0, "margin": 10.9115238, "nucleus": 0, "hit": 0.610446137}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 41638.0637, "step_ms": 48.6719055, "p": 0, "margin": 11.3454342, "nucleus": 0, "hit": 0.610446137}
+{"event": "token", "id": 24, "text": "6", "t_ms": 41638.0662, "step_ms": 48.6719055, "p": 0, "margin": 15.2126789, "nucleus": 0, "hit": 0.610446137}
+{"event": "token", "id": 14, "text": ",", "t_ms": 41638.0685, "step_ms": 48.6719055, "p": 0.996694237, "margin": 5.79915428, "nucleus": 1, "hit": 0.610446137}
+{"event": "token", "id": 471, "text": " N", "t_ms": 41934.0025, "step_ms": 49.3201055, "p": 0, "margin": 14.1308937, "nucleus": 0, "hit": 0.605421687}
+{"event": "token", "id": 31, "text": "=", "t_ms": 41934.0324, "step_ms": 49.3201055, "p": 0, "margin": 13.8616772, "nucleus": 0, "hit": 0.605421687}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 41934.0365, "step_ms": 49.3201055, "p": 0, "margin": 11.7110481, "nucleus": 0, "hit": 0.605421687}
+{"event": "token", "id": 24, "text": "6", "t_ms": 41934.0397, "step_ms": 49.3201055, "p": 0, "margin": 14.2677574, "nucleus": 0, "hit": 0.605421687}
+{"event": "token", "id": 16, "text": ".", "t_ms": 41934.0424, "step_ms": 49.3201055, "p": 0, "margin": 1.22270966, "nucleus": 0, "hit": 0.605421687}
+{"event": "token", "id": 88908, "text": " Batch", "t_ms": 41934.0451, "step_ms": 49.3201055, "p": 0.0453877413, "margin": 2.9595108, "nucleus": 4, "hit": 0.605421687}
+{"event": "token", "id": 22891, "text": " validation", "t_ms": 42235.6503, "step_ms": 75.3973592, "p": 0, "margin": 7.98037529, "nucleus": 0, "hit": 0.68246968}
+{"event": "token", "id": 373, "text": " M", "t_ms": 42235.6789, "step_ms": 75.3973592, "p": 0, "margin": 0.0545005798, "nucleus": 0, "hit": 0.68246968}
+{"event": "token", "id": 31, "text": "=", "t_ms": 42235.6834, "step_ms": 75.3973592, "p": 0, "margin": 4.85740852, "nucleus": 0, "hit": 0.68246968}
+{"event": "token", "id": 2111, "text": "32", "t_ms": 42235.6867, "step_ms": 75.3973592, "p": 0.705225446, "margin": 1.07496452, "nucleus": 3, "hit": 0.68246968}
+{"event": "token", "id": 14, "text": ",", "t_ms": 42529.5484, "step_ms": 48.9751665, "p": 0, "margin": 0.145824432, "nucleus": 0, "hit": 0.623940678}
+{"event": "token", "id": 657, "text": " K", "t_ms": 42529.5764, "step_ms": 48.9751665, "p": 0, "margin": 5.87229538, "nucleus": 0, "hit": 0.623940678}
+{"event": "token", "id": 31, "text": "=", "t_ms": 42529.5806, "step_ms": 48.9751665, "p": 0, "margin": 10.9283409, "nucleus": 0, "hit": 0.623940678}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 42529.584, "step_ms": 48.9751665, "p": 0, "margin": 9.62619972, "nucleus": 0, "hit": 0.623940678}
+{"event": "token", "id": 24, "text": "6", "t_ms": 42529.5866, "step_ms": 48.9751665, "p": 0, "margin": 14.9297199, "nucleus": 0, "hit": 0.623940678}
+{"event": "token", "id": 14, "text": ",", "t_ms": 42529.589, "step_ms": 48.9751665, "p": 0.997891539, "margin": 6.27042389, "nucleus": 1, "hit": 0.623940678}
+{"event": "token", "id": 471, "text": " N", "t_ms": 42832.0908, "step_ms": 50.4145012, "p": 0, "margin": 14.7806702, "nucleus": 0, "hit": 0.614844534}
+{"event": "token", "id": 31, "text": "=", "t_ms": 42832.1259, "step_ms": 50.4145012, "p": 0, "margin": 13.5168171, "nucleus": 0, "hit": 0.614844534}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 42832.13, "step_ms": 50.4145012, "p": 0, "margin": 11.5599632, "nucleus": 0, "hit": 0.614844534}
+{"event": "token", "id": 24, "text": "6", "t_ms": 42832.1332, "step_ms": 50.4145012, "p": 0, "margin": 13.421751, "nucleus": 0, "hit": 0.614844534}
+{"event": "token", "id": 16, "text": ".", "t_ms": 42832.1355, "step_ms": 50.4145012, "p": 0, "margin": 0.623077393, "nucleus": 0, "hit": 0.614844534}
+{"event": "token", "id": 437, "text": " H", "t_ms": 42832.1377, "step_ms": 50.4145012, "p": 0.0137057277, "margin": 1.77469635, "nucleus": 12, "hit": 0.614844534}
+{"event": "token", "id": 6002, "text": "mm", "t_ms": 43103.1629, "step_ms": 54.2018306, "p": 0, "margin": 5.01679993, "nucleus": 0, "hit": 0.517435321}
+{"event": "token", "id": 339, "text": ".\n\n", "t_ms": 43103.2014, "step_ms": 54.2018306, "p": 0, "margin": 1.76470757, "nucleus": 0, "hit": 0.517435321}
+{"event": "token", "id": 50249, "text": "Need", "t_ms": 43103.2065, "step_ms": 54.2018306, "p": 0, "margin": 3.20282173, "nucleus": 0, "hit": 0.517435321}
+{"event": "token", "id": 23917, "text": " compute", "t_ms": 43103.2096, "step_ms": 54.2018306, "p": 0, "margin": 1.86496162, "nucleus": 0, "hit": 0.517435321}
+{"event": "token", "id": 5288, "text": " weight", "t_ms": 43103.2122, "step_ms": 54.2018306, "p": 0.561590445, "margin": 0.362190247, "nucleus": 2, "hit": 0.517435321}
+{"event": "token", "id": 3278, "text": " access", "t_ms": 43395.5284, "step_ms": 48.7177362, "p": 0, "margin": 4.22403908, "nucleus": 0, "hit": 0.615933413}
+{"event": "token", "id": 1137, "text": ":\n", "t_ms": 43395.5565, "step_ms": 48.7177362, "p": 0, "margin": 0.336750031, "nucleus": 0, "hit": 0.615933413}
+{"event": "token", "id": 15, "text": "-", "t_ms": 43395.5609, "step_ms": 48.7177362, "p": 0, "margin": 3.92963028, "nucleus": 0, "hit": 0.615933413}
+{"event": "token", "id": 1884, "text": " For", "t_ms": 43395.5643, "step_ms": 48.7177362, "p": 0, "margin": 0.582696915, "nucleus": 0, "hit": 0.615933413}
+{"event": "token", "id": 1660, "text": " each", "t_ms": 43395.5666, "step_ms": 48.7177362, "p": 0, "margin": 0.553470612, "nucleus": 0, "hit": 0.615933413}
+{"event": "token", "id": 38895, "text": " GE", "t_ms": 43395.5693, "step_ms": 48.7177362, "p": 0.526918378, "margin": 0.943283081, "nucleus": 5, "hit": 0.615933413}
+{"event": "token", "id": 4799, "text": "MM", "t_ms": 43683.6217, "step_ms": 72.010303, "p": 0, "margin": 5.83161736, "nucleus": 0, "hit": 0.615288221}
+{"event": "token", "id": 14, "text": ",", "t_ms": 43683.6518, "step_ms": 72.010303, "p": 0, "margin": 0.883174896, "nucleus": 0, "hit": 0.615288221}
+{"event": "token", "id": 5288, "text": " weight", "t_ms": 43683.6562, "step_ms": 72.010303, "p": 0, "margin": 0.15625, "nucleus": 0, "hit": 0.615288221}
+{"event": "token", "id": 8452, "text": " matrix", "t_ms": 43683.6595, "step_ms": 72.010303, "p": 0.4769599, "margin": 0.317798615, "nucleus": 5, "hit": 0.615288221}
+{"event": "token", "id": 406, "text": " B", "t_ms": 43969.4569, "step_ms": 47.6311485, "p": 0, "margin": 0.474594116, "nucleus": 0, "hit": 0.601466993}
+{"event": "token", "id": 344, "text": " is", "t_ms": 43969.4857, "step_ms": 47.6311485, "p": 0, "margin": 0.899572372, "nucleus": 0, "hit": 0.601466993}
+{"event": "token", "id": 657, "text": " K", "t_ms": 43969.4892, "step_ms": 47.6311485, "p": 0, "margin": 2.62983322, "nucleus": 0, "hit": 0.601466993}
+{"event": "token", "id": 1527, "text": " x", "t_ms": 43969.4918, "step_ms": 47.6311485, "p": 0, "margin": 0.00639152527, "nucleus": 0, "hit": 0.601466993}
+{"event": "token", "id": 223, "text": " ", "t_ms": 43969.495, "step_ms": 47.6311485, "p": 0, "margin": 13.1501884, "nucleus": 0, "hit": 0.601466993}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 43969.4983, "step_ms": 47.6311485, "p": 0.716308455, "margin": 1.35663605, "nucleus": 4, "hit": 0.601466993}
+{"event": "token", "id": 24, "text": "6", "t_ms": 44248.2038, "step_ms": 46.4486128, "p": 0, "margin": 10.0693741, "nucleus": 0, "hit": 0.637142857}
+{"event": "token", "id": 438, "text": " =", "t_ms": 44248.2402, "step_ms": 46.4486128, "p": 0, "margin": 0.38256073, "nucleus": 0, "hit": 0.637142857}
+{"event": "token", "id": 223, "text": " ", "t_ms": 44248.2444, "step_ms": 46.4486128, "p": 0, "margin": 5.35900879, "nucleus": 0, "hit": 0.637142857}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 44248.2476, "step_ms": 46.4486128, "p": 0, "margin": 3.46574593, "nucleus": 0, "hit": 0.637142857}
+{"event": "token", "id": 24, "text": "6", "t_ms": 44248.2503, "step_ms": 46.4486128, "p": 0, "margin": 11.3982143, "nucleus": 0, "hit": 0.637142857}
+{"event": "token", "id": 90, "text": "x", "t_ms": 44248.2528, "step_ms": 46.4486128, "p": 0.141618039, "margin": 1.7056694, "nucleus": 3, "hit": 0.637142857}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 44533.2404, "step_ms": 47.495613, "p": 0, "margin": 4.91591454, "nucleus": 0, "hit": 0.604708798}
+{"event": "token", "id": 24, "text": "6", "t_ms": 44533.276, "step_ms": 47.495613, "p": 0, "margin": 11.6917439, "nucleus": 0, "hit": 0.604708798}
+{"event": "token", "id": 438, "text": " =", "t_ms": 44533.28, "step_ms": 47.495613, "p": 0, "margin": 1.00114059, "nucleus": 0, "hit": 0.604708798}
+{"event": "token", "id": 223, "text": " ", "t_ms": 44533.2836, "step_ms": 47.495613, "p": 0, "margin": 4.46214676, "nucleus": 0, "hit": 0.604708798}
+{"event": "token", "id": 926, "text": "16", "t_ms": 44533.2861, "step_ms": 47.495613, "p": 0, "margin": 0.4947052, "nucleus": 0, "hit": 0.604708798}
+{"event": "token", "id": 47, "text": "M", "t_ms": 44533.2884, "step_ms": 47.495613, "p": 0.67487826, "margin": 1.05456352, "nucleus": 4, "hit": 0.604708798}
+{"event": "token", "id": 5486, "text": " elements", "t_ms": 44817.9386, "step_ms": 47.439942, "p": 0, "margin": 3.96240425, "nucleus": 0, "hit": 0.614645858}
+{"event": "token", "id": 33, "text": "?", "t_ms": 44817.9727, "step_ms": 47.439942, "p": 0, "margin": 0.118671417, "nucleus": 0, "hit": 0.614645858}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 44817.977, "step_ms": 47.439942, "p": 0, "margin": 0.163362503, "nucleus": 0, "hit": 0.614645858}
+{"event": "token", "id": 223, "text": " ", "t_ms": 44817.98, "step_ms": 47.439942, "p": 0, "margin": 1.22777939, "nucleus": 0, "hit": 0.614645858}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 44817.9825, "step_ms": 47.439942, "p": 0, "margin": 3.32954788, "nucleus": 0, "hit": 0.614645858}
+{"event": "token", "id": 24, "text": "6", "t_ms": 44817.9849, "step_ms": 47.439942, "p": 0.999951077, "margin": 10.9722462, "nucleus": 1, "hit": 0.614645858}
+{"event": "token", "id": 12, "text": "*", "t_ms": 45102.2774, "step_ms": 47.3796392, "p": 0, "margin": 2.54759407, "nucleus": 0, "hit": 0.629011553}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 45102.3109, "step_ms": 47.3796392, "p": 0, "margin": 8.50255013, "nucleus": 0, "hit": 0.629011553}
+{"event": "token", "id": 24, "text": "6", "t_ms": 45102.3157, "step_ms": 47.3796392, "p": 0, "margin": 13.6371975, "nucleus": 0, "hit": 0.629011553}
+{"event": "token", "id": 438, "text": " =", "t_ms": 45102.3187, "step_ms": 47.3796392, "p": 0, "margin": 1.30008698, "nucleus": 0, "hit": 0.629011553}
+{"event": "token", "id": 223, "text": " ", "t_ms": 45102.3213, "step_ms": 47.3796392, "p": 0, "margin": 6.11803818, "nucleus": 0, "hit": 0.629011553}
+{"event": "token", "id": 926, "text": "16", "t_ms": 45102.3237, "step_ms": 47.3796392, "p": 0.868876478, "margin": 2.43461609, "nucleus": 3, "hit": 0.629011553}
+{"event": "token", "id": 14, "text": ",", "t_ms": 45392.9498, "step_ms": 48.4359568, "p": 0, "margin": 0.946063995, "nucleus": 0, "hit": 0.612413793}
+{"event": "token", "id": 22199, "text": "777", "t_ms": 45392.9916, "step_ms": 48.4359568, "p": 0, "margin": 4.18598175, "nucleus": 0, "hit": 0.612413793}
+{"event": "token", "id": 14, "text": ",", "t_ms": 45392.9959, "step_ms": 48.4359568, "p": 0, "margin": 6.61644554, "nucleus": 0, "hit": 0.612413793}
+{"event": "token", "id": 13822, "text": "216", "t_ms": 45392.9985, "step_ms": 48.4359568, "p": 0, "margin": 7.40779495, "nucleus": 0, "hit": 0.612413793}
+{"event": "token", "id": 5486, "text": " elements", "t_ms": 45393.0009, "step_ms": 48.4359568, "p": 0, "margin": 1.8669014, "nucleus": 0, "hit": 0.612413793}
+{"event": "token", "id": 16, "text": ".", "t_ms": 45393.004, "step_ms": 48.4359568, "p": 0.669082399, "margin": 1.59936142, "nucleus": 5, "hit": 0.612413793}
+{"event": "token", "id": 3256, "text": " At", "t_ms": 45683.1877, "step_ms": 48.362239, "p": 0, "margin": 0.0639228821, "nucleus": 0, "hit": 0.618181818}
+{"event": "token", "id": 223, "text": " ", "t_ms": 45683.217, "step_ms": 48.362239, "p": 0, "margin": 0.690761566, "nucleus": 0, "hit": 0.618181818}
+{"event": "token", "id": 22, "text": "4", "t_ms": 45683.2206, "step_ms": 48.362239, "p": 0, "margin": 2.30821037, "nucleus": 0, "hit": 0.618181818}
+{"event": "token", "id": 20711, "text": " bytes", "t_ms": 45683.2239, "step_ms": 48.362239, "p": 0, "margin": 5.76121521, "nucleus": 0, "hit": 0.618181818}
+{"event": "token", "id": 438, "text": " =", "t_ms": 45683.2269, "step_ms": 48.362239, "p": 0, "margin": 0.0201244354, "nucleus": 0, "hit": 0.618181818}
+{"event": "token", "id": 223, "text": " ", "t_ms": 45683.2291, "step_ms": 48.362239, "p": 0.997066777, "margin": 7.08834839, "nucleus": 1, "hit": 0.618181818}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 45982.6499, "step_ms": 49.9017812, "p": 0, "margin": 1.09552193, "nucleus": 0, "hit": 0.578341014}
+{"event": "token", "id": 16443, "text": "MB", "t_ms": 45982.6795, "step_ms": 49.9017812, "p": 0, "margin": 0.991390228, "nucleus": 0, "hit": 0.578341014}
+{"event": "token", "id": 33, "text": "?", "t_ms": 45982.6839, "step_ms": 49.9017812, "p": 0, "margin": 1.27308655, "nucleus": 0, "hit": 0.578341014}
+{"event": "token", "id": 37157, "text": " Wait", "t_ms": 45982.6869, "step_ms": 49.9017812, "p": 0, "margin": 0.563009262, "nucleus": 0, "hit": 0.578341014}
+{"event": "token", "id": 223, "text": " ", "t_ms": 45982.6898, "step_ms": 49.9017812, "p": 0, "margin": 0.517114639, "nucleus": 0, "hit": 0.578341014}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 45982.692, "step_ms": 49.9017812, "p": 0.535848954, "margin": 0.433181763, "nucleus": 3, "hit": 0.578341014}
+{"event": "token", "id": 24, "text": "6", "t_ms": 46268.8826, "step_ms": 47.6967245, "p": 0, "margin": 11.2755775, "nucleus": 0, "hit": 0.622841965}
+{"event": "token", "id": 12, "text": "*", "t_ms": 46268.9069, "step_ms": 47.6967245, "p": 0, "margin": 2.41846466, "nucleus": 0, "hit": 0.622841965}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 46268.9106, "step_ms": 47.6967245, "p": 0, "margin": 8.98900223, "nucleus": 0, "hit": 0.622841965}
+{"event": "token", "id": 24, "text": "6", "t_ms": 46268.9137, "step_ms": 47.6967245, "p": 0, "margin": 13.3499403, "nucleus": 0, "hit": 0.622841965}
+{"event": "token", "id": 12, "text": "*", "t_ms": 46268.9158, "step_ms": 47.6967245, "p": 0, "margin": 0.153186798, "nucleus": 0, "hit": 0.622841965}
+{"event": "token", "id": 22, "text": "4", "t_ms": 46268.9178, "step_ms": 47.6967245, "p": 0.956220247, "margin": 3.16809845, "nucleus": 1, "hit": 0.622841965}
+{"event": "token", "id": 438, "text": " =", "t_ms": 46560.2088, "step_ms": 48.5461915, "p": 0, "margin": 2.09514999, "nucleus": 0, "hit": 0.608591885}
+{"event": "token", "id": 223, "text": " ", "t_ms": 46560.2417, "step_ms": 48.5461915, "p": 0, "margin": 7.38127518, "nucleus": 0, "hit": 0.608591885}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 46560.2457, "step_ms": 48.5461915, "p": 0, "margin": 2.15373993, "nucleus": 0, "hit": 0.608591885}
+{"event": "token", "id": 16443, "text": "MB", "t_ms": 46560.2487, "step_ms": 48.5461915, "p": 0, "margin": 1.86365318, "nucleus": 0, "hit": 0.608591885}
+{"event": "token", "id": 16, "text": ".", "t_ms": 46560.2509, "step_ms": 48.5461915, "p": 0, "margin": 1.1881485, "nucleus": 0, "hit": 0.608591885}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 46560.2535, "step_ms": 48.5461915, "p": 0.161229045, "margin": 0.55014801, "nucleus": 12, "hit": 0.608591885}
+{"event": "token", "id": 223, "text": " ", "t_ms": 46848.0537, "step_ms": 47.9647832, "p": 0, "margin": 3.37284851, "nucleus": 0, "hit": 0.569844789}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 46848.0817, "step_ms": 47.9647832, "p": 0, "margin": 1.90007591, "nucleus": 0, "hit": 0.569844789}
+{"event": "token", "id": 24, "text": "6", "t_ms": 46848.0859, "step_ms": 47.9647832, "p": 0, "margin": 11.5655479, "nucleus": 0, "hit": 0.569844789}
+{"event": "token", "id": 12, "text": "*", "t_ms": 46848.0887, "step_ms": 47.9647832, "p": 0, "margin": 2.65068817, "nucleus": 0, "hit": 0.569844789}
+{"event": "token", "id": 20282, "text": "409", "t_ms": 46848.0907, "step_ms": 47.9647832, "p": 0, "margin": 8.64395142, "nucleus": 0, "hit": 0.569844789}
+{"event": "token", "id": 24, "text": "6", "t_ms": 46848.093, "step_ms": 47.9647832, "p": 0.999982555, "margin": 12.7061577, "nucleus": 1, "hit": 0.569844789}
+{"event": "token", "id": 438, "text": " =", "t_ms": 47125.2694, "step_ms": 46.1943517, "p": 0, "margin": 0.274448395, "nucleus": 0, "hit": 0.569796954}
+{"event": "token", "id": 223, "text": " ", "t_ms": 47125.2975, "step_ms": 46.1943517, "p": 0, "margin": 7.95912552, "nucleus": 0, "hit": 0.569796954}
+{"event": "token", "id": 926, "text": "16", "t_ms": 47125.3014, "step_ms": 46.1943517, "p": 0, "margin": 3.12135315, "nucleus": 0, "hit": 0.569796954}
+{"event": "token", "id": 14, "text": ",", "t_ms": 47125.3042, "step_ms": 46.1943517, "p": 0, "margin": 0.32690239, "nucleus": 0, "hit": 0.569796954}
+{"event": "token", "id": 22199, "text": "777", "t_ms": 47125.3069, "step_ms": 46.1943517, "p": 0, "margin": 5.36005783, "nucleus": 0, "hit": 0.569796954}
+{"event": "token", "id": 14, "text": ",", "t_ms": 47125.3094, "step_ms": 46.1943517, "p": 0.999871605, "margin": 9.31533623, "nucleus": 1, "hit": 0.569796954}
+{"event": "token", "id": 13822, "text": "216", "t_ms": 47426.4645, "step_ms": 50.1909477, "p": 0, "margin": 7.22176552, "nucleus": 0, "hit": 0.674224344}
+{"event": "token", "id": 5486, "text": " elements", "t_ms": 47426.4844, "step_ms": 50.1909477, "p": 0, "margin": 2.43255615, "nucleus": 0, "hit": 0.674224344}
+{"event": "token", "id": 982, "text": " *", "t_ms": 47426.4886, "step_ms": 50.1909477, "p": 0, "margin": 0.793235779, "nucleus": 0, "hit": 0.674224344}
+{"event": "token", "id": 223, "text": " ", "t_ms": 47426.4914, "step_ms": 50.1909477, "p": 0, "margin": 0.320968628, "nucleus": 0, "hit": 0.674224344}
+{"event": "token", "id": 22, "text": "4", "t_ms": 47426.4939, "step_ms": 50.1909477, "p": 0, "margin": 3.304842, "nucleus": 0, "hit": 0.674224344}
+{"event": "token", "id": 438, "text": " =", "t_ms": 47426.4964, "step_ms": 50.1909477, "p": 0.774794107, "margin": 1.27239418, "nucleus": 2, "hit": 0.674224344}
+{"event": "token", "id": 223, "text": " ", "t_ms": 47581.4571, "step_ms": 77.4752895, "p": 0, "margin": 8.54585648, "nucleus": 0, "hit": 0.615925059}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 47581.4793, "step_ms": 77.4752895, "p": 0.732168211, "margin": 1.15681076, "nucleus": 2, "hit": 0.615925059}
+{"event": "done", "session": "longtest", "prompt_tokens": 675, "reused_tokens": 0, "prefill_tokens": 675, "generated": 512, "prefill_mode": "gpu", "finish": "length", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 17193.6133, "prefill_tok_s": 39.2587635, "ttft_ms": 17193.7634, "decode_ms": 30387.7224, "decode_steps": 511, "tok_s": 16.816002, "total_ms": 47581.4839, "prefill_hit_rate": 0, "decode_hit_rate": 0.573198912, "prefill_nvme_mb": 0, "decode_nvme_mb": 0, "per_token_ms": {"attn": 0, "moe_gpu": 0, "moe_host": 0, "nvme_stall": 0, "engram": 2.3238465, "tail": 0, "other": 57.1317715, "record": 0.201427988, "submit": 0.0202994149, "bind": 0.165652456, "fence_wait": 50.0434582, "submits": 0.211350294, "sample_host": 0.166627991}, "sampled_steps": 109, "topk_fallbacks": 1, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 8.43119266, "context": 1186, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "speculation": {"cycles": 108, "verified": 536, "accepted": 403, "tokens": 511, "draft_ms": 2888.90028, "verify_ms": 27138.0296, "commit_ms": 223.402942, "cpu_ms": 17.663507, "target_rows": 644, "union_experts": 53331, "miss_bytes": 0, "gpu_readout_cycles": 108}, "seed": 51002, "mode": "thinking", "content": "We need answer in Chinese. User asks continue detailed discussion small decode vs batch validation. Need give concrete matrix shape example, step-by-step calculate weight access, activation reuse, tile selection, sync overhead, pipeline depth, explain if performance below predicted how locate. Need fully expand, not just conclusions. We need continue from previous? We need maybe >2000 Chinese chars. Need detailed. We need incorporate from previous? We can write.\n\nWe need Chinese. Need discuss small batch decode vs batch validation. Need matrices shape. Need compute weight access, activation reuse, tile selection, sync overhead, pipeline depth. Explain performance below predicted debugging.\n\nWe need maybe 3000+ words. Need detailed.\n\nWe need maybe answer in Chinese. We can provide.\n\nNeed maybe include:\n- Context: small batch decode (e.g., M=1, N=1, K=4096? Actually GEMM for LLM decode: M=1, N=1, K=4096? For a token, weight matrix [4096,4096]? Actually M=1, N=4096, K=4096? Let's? Need.\n- For batch validation: M=32, N=4096, K=4096? Or M=64, N=4096, K=4096? Need.\n\nNeed maybe define:\n- decode: M=1 (batch=1), N=4096? Actually output features N=4096? K=4096? Input activations [1, K=4096], weights [4096, K=4096]? Need? Actually GEMM: A [M,K] (activations), B [K,N] (weights). For linear: A: M x K, B: K x N. Output: M x N. For decode M=1, K=4096, N=4096. For prefill M=512, K=4096, N=4096. Batch validation M=32, K=4096, N=4096. Hmm.\n\nNeed compute weight access:\n- For each GEMM, weight matrix B is K x 4096 = 4096x4096 = 16M elements? Actually 4096*4096 = 16,777,216 elements. At 4 bytes = 64MB? Wait 4096*4096*4 = 64MB. Actually 4096*4096 = 16,777,216 elements * 4 = 64", "reasoning": ""}

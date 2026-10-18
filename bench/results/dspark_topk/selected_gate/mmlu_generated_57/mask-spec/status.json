@@ -1,0 +1,15 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 87,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5500 slots (5500 resident, 0 filling, 0 free, 384 pinned)  lookups 48557 hits 39512 (0.814)  fills 208564/208564 ok  runs 417128/417128  evictions 203064 (+0 guard-blocked)  path A hits 39512 / B 0 (1.0000 A)  fills A 208564 / B 0",
+ "planner": "planner: 4923 layers, 48557 requests (39512 hits, 9045 misses, 0.814), 8661 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 3658 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 113901 resident / 199519 kept / 827 dropped",
+ "io": "io: 1101430 req (1101430 done, 0 failed, 0 cancelled), 4663349 chunks, 3951842282704 / 3951842709504 bytes, busy 1019.839 s, eff 3.87 GB/s, mean lat 246.223 ms, peak QD 512 / 32.0 MiB\n  p0_blocking   418782 req  3755951.1 MiB\n  p2_engram     681340 req  2743.8 MiB\n  p3_backfill     1308 req  10076.0 MiB\n  P0: 418782 req, 3755950.7 MiB, lat mean 216.88 / p50 195.49 / p95 492.14 / max 1081.09 ms  (queue wait 208.78 + service 8.10)\n  P0: first-of-burst 2524 at 1.86 ms, behind 416258 at 218.18 ms; 366 (0.1%) issued with a non-P0 chunk in flight, mean 8.28; mean QD at issue 22.22\n  dispatcher: 4082557 iters, issue 13.65 s / poll 999.39 s / handle 4.42 s (callbacks 1.22 s, 1101430 at 1.1 us mean)\n  dispatcher: Backend::submit 11.80 s over 4663349 chunks, mean 2.5 us, max 529.51 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.4% of the non-waiting loop; refill gap 0.7 us mean over 3931884 reaps\n",
+ "route": "route     resident-only=mask over 10120 layer-steps\n  experts requested 60720  served 51390 (0.8463)  skipped 9330\n  gate mass lost    0.1206 mean over those layer-steps\n  shared-expert-only layer-steps 0\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n",
+ "gate_probe": ""
+}

@@ -1,0 +1,49 @@
+[
+  {
+    "name": "mmlu57",
+    "command": [
+      "/usr/bin/python",
+      "tools/mmlu_bench.py",
+      "--sample",
+      "bench/results/miss_mask/mmlu_sample.json",
+      "--out",
+      "bench/results/engram_deadline/mmlu57/evaluation",
+      "--modes",
+      "mask-spec",
+      "--generation",
+      "--limit",
+      "57",
+      "--max-tokens",
+      "16",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 1045.8684958189988,
+    "start": {
+      "k10temp": 56.75,
+      "nvme": 35.85,
+      "amdgpu": 51.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 68.875,
+      "nvme": 61.85,
+      "amdgpu": 64.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 72.625,
+      "nvme": 69.85,
+      "amdgpu": 71.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:53:58.973053+08:00"
+  }
+]

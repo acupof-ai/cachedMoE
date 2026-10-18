@@ -1,0 +1,226 @@
+[
+  {
+    "name": "mask",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/draft_attribution/turn16.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/mask",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_DSPARK_PROFILE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 36.031103699991945,
+    "start": {
+      "k10temp": 66.125,
+      "nvme": 33.85,
+      "amdgpu": 49.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 56.375,
+      "nvme": 53.85,
+      "amdgpu": 53.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 66.125,
+      "nvme": 54.85,
+      "amdgpu": 59.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:17:06.101926+08:00"
+  },
+  {
+    "name": "k2_unprofiled",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/draft_attribution/turn16.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k2_unprofiled",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--serve-arg=--trace",
+      "--serve-arg=/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k2_unprofiled/trace.bin"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k2_unprofiled_cycles.jsonl"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 34.48546737199649,
+    "start": {
+      "k10temp": 56.25,
+      "nvme": 49.85,
+      "amdgpu": 53.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 60.125,
+      "nvme": 56.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 61.625,
+      "nvme": 57.85,
+      "amdgpu": 64.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:17:40.880097+08:00"
+  },
+  {
+    "name": "k2_profiled",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/draft_attribution/turn16.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k2_profiled",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--serve-arg=--trace",
+      "--serve-arg=/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k2_profiled/trace.bin"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_DSPARK_PROFILE": "1",
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k2_profiled_cycles.jsonl"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 34.98866280799848,
+    "start": {
+      "k10temp": 59.75,
+      "nvme": 56.85,
+      "amdgpu": 55.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 62.0,
+      "nvme": 58.85,
+      "amdgpu": 57.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 64.0,
+      "nvme": 58.85,
+      "amdgpu": 65.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:18:16.155571+08:00"
+  },
+  {
+    "name": "k3_profiled",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/draft_attribution/turn16.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-spec/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k3_profiled",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=3",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--serve-arg=--trace",
+      "--serve-arg=/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k3_profiled/trace.bin"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_DSPARK_PROFILE": "1",
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/phase0/k3_profiled_cycles.jsonl"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 34.474531379004475,
+    "start": {
+      "k10temp": 61.625,
+      "nvme": 53.85,
+      "amdgpu": 58.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 62.25,
+      "nvme": 57.85,
+      "amdgpu": 58.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 64.375,
+      "nvme": 59.85,
+      "amdgpu": 67.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:18:50.916239+08:00"
+  }
+]

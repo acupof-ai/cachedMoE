@@ -1,0 +1,83 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "readout_unit",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.main_path_gpu_readout"
+      ],
+      "timeout_s": 90
+    },
+    {
+      "name": "short_cpu",
+      "command": [
+        "/home/chenkailun/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/gpu_readout_selected/short_turn.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--env",
+        "DEEPMOE_MIRROR_AUTO=0",
+        "--env",
+        "DEEPMOE_DSPARK_MEGA=0",
+        "--require-sources",
+        "1",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--env",
+        "DEEPMOE_SPEC_GPU_READOUT=0",
+        "--out",
+        "bench/results/dspark_topk/gpu_readout_selected/short_cpu",
+        "--serve-arg=--trace",
+        "--serve-arg=bench/results/dspark_topk/gpu_readout_selected/short_cpu/trace.bin"
+      ],
+      "timeout_s": 120
+    },
+    {
+      "name": "short_gpu",
+      "command": [
+        "/home/chenkailun/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/gpu_readout_selected/short_turn.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--env",
+        "DEEPMOE_MIRROR_AUTO=0",
+        "--env",
+        "DEEPMOE_DSPARK_MEGA=0",
+        "--require-sources",
+        "1",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask",
+        "--serve-arg=--dspark",
+        "--serve-arg=--spec-k",
+        "--serve-arg=2",
+        "--serve-arg=--spec-top-k",
+        "--serve-arg=4",
+        "--env",
+        "DEEPMOE_SPEC_GPU_READOUT=1",
+        "--out",
+        "bench/results/dspark_topk/gpu_readout_selected/short_gpu",
+        "--serve-arg=--trace",
+        "--serve-arg=bench/results/dspark_topk/gpu_readout_selected/short_gpu/trace.bin"
+      ],
+      "timeout_s": 120
+    }
+  ]
+}

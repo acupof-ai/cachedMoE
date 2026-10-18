@@ -1,0 +1,101 @@
+[
+  {
+    "name": "fix_mask",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/dspark_topk/end_to_end/turn64.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/engram_deadline/final_performance/fix_mask",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask"
+    ],
+    "env": {},
+    "profile": "performance",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 33.975177412008634,
+    "start": {
+      "k10temp": 65.0,
+      "nvme": 40.85,
+      "amdgpu": 58.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 80.0,
+      "nvme": 57.85,
+      "amdgpu": 65.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 86.625,
+      "nvme": 59.85,
+      "amdgpu": 81.0
+    },
+    "thermal_pauses": 5,
+    "ac_changed": false,
+    "time": "2026-10-04T19:25:13.243207+08:00"
+  },
+  {
+    "name": "fix_spec",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/dspark_topk/end_to_end/turn64.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/engram_deadline/final_performance/fix_spec",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--serve-arg=--trace",
+      "--serve-arg=bench/results/engram_deadline/final_performance/fix_spec/trace.bin"
+    ],
+    "env": {},
+    "profile": "performance",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 38.073154291996616,
+    "start": {
+      "k10temp": 71.0,
+      "nvme": 43.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 78.75,
+      "nvme": 56.85,
+      "amdgpu": 65.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 89.375,
+      "nvme": 59.85,
+      "amdgpu": 85.0
+    },
+    "thermal_pauses": 7,
+    "ac_changed": false,
+    "time": "2026-10-04T19:26:02.554218+08:00"
+  }
+]

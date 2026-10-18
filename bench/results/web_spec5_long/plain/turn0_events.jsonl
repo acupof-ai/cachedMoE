@@ -1,0 +1,514 @@
+{"event": "start", "prompt_tokens": 100, "reused": 0, "to_prefill": 100, "eta_s": 2.4, "max_context": 4096}
+{"event": "token", "id": 39932, "text": "我们需要", "t_ms": 9684.00642, "step_ms": 9669.63934, "p": 0.781207996, "margin": 1.36447525, "nucleus": 2, "hit": 0}
+{"event": "token", "id": 2935, "text": "写", "t_ms": 9741.16487, "step_ms": 57.129683, "p": 0.0833658221, "margin": 0.307706833, "nucleus": 6, "hit": 0.420833333}
+{"event": "token", "id": 20515, "text": "一份", "t_ms": 9800.33235, "step_ms": 59.149735, "p": 0.729422741, "margin": 1.48835945, "nucleus": 4, "hit": 0.55}
+{"event": "token", "id": 12201, "text": "详细", "t_ms": 9859.21188, "step_ms": 58.867266, "p": 0.849429339, "margin": 2.01576996, "nucleus": 2, "hit": 0.529166667}
+{"event": "token", "id": 9343, "text": "的高", "t_ms": 9917.74069, "step_ms": 58.51678, "p": 0.362730625, "margin": 0.261617661, "nucleus": 3, "hit": 0.529166667}
+{"event": "token", "id": 10861, "text": "性能", "t_ms": 9979.15024, "step_ms": 61.397724, "p": 0.988492398, "margin": 5.65369225, "nucleus": 1, "hit": 0.666666667}
+{"event": "token", "id": 72025, "text": " HIP", "t_ms": 10043.5315, "step_ms": 64.368436, "p": 0.978642648, "margin": 3.82673264, "nucleus": 1, "hit": 0.704166667}
+{"event": "token", "id": 223, "text": " ", "t_ms": 10108.7677, "step_ms": 65.216253, "p": 0.989968808, "margin": 5.53502464, "nucleus": 1, "hit": 0.804166667}
+{"event": "token", "id": 121089, "text": "算子", "t_ms": 10169.3377, "step_ms": 60.550628, "p": 0.997832969, "margin": 6.5279007, "nucleus": 1, "hit": 0.6375}
+{"event": "token", "id": 3774, "text": "设计", "t_ms": 10232.0725, "step_ms": 62.716332, "p": 0.999942667, "margin": 10.3594093, "nucleus": 1, "hit": 0.745833333}
+{"event": "token", "id": 6977, "text": "说明", "t_ms": 10291.9569, "step_ms": 59.870565, "p": 0.99898536, "margin": 7.01687813, "nucleus": 1, "hit": 0.6}
+{"event": "token", "id": 303, "text": "，", "t_ms": 10349.5794, "step_ms": 57.609521, "p": 0.939244547, "margin": 3.6994915, "nucleus": 2, "hit": 0.504166667}
+{"event": "token", "id": 21134, "text": "中文", "t_ms": 10407.8387, "step_ms": 58.240653, "p": 0.526573268, "margin": 0.394817352, "nucleus": 3, "hit": 0.520833333}
+{"event": "token", "id": 320, "text": "。", "t_ms": 10465.7003, "step_ms": 57.846635, "p": 0.239941871, "margin": 1.13746071, "nucleus": 2, "hit": 0.504166667}
+{"event": "token", "id": 2386, "text": "需要", "t_ms": 10523.9415, "step_ms": 58.224622, "p": 0.103504033, "margin": 1.67359352, "nucleus": 7, "hit": 0.525}
+{"event": "token", "id": 15994, "text": "覆盖", "t_ms": 10581.3782, "step_ms": 57.418825, "p": 0.0601149066, "margin": 1.32018089, "nucleus": 3, "hit": 0.5125}
+{"event": "token", "id": 38895, "text": " GE", "t_ms": 10642.5693, "step_ms": 61.178414, "p": 0.920183298, "margin": 2.47360229, "nucleus": 2, "hit": 0.658333333}
+{"event": "token", "id": 4799, "text": "MM", "t_ms": 10707.4339, "step_ms": 64.848514, "p": 0.99976699, "margin": 8.98287582, "nucleus": 1, "hit": 0.8625}
+{"event": "token", "id": 410, "text": "、", "t_ms": 10769.6441, "step_ms": 62.192152, "p": 0.925854769, "margin": 2.555336, "nucleus": 2, "hit": 0.7375}
+{"event": "token", "id": 80279, "text": "attention", "t_ms": 10831.1225, "step_ms": 61.46502, "p": 0.997604046, "margin": 6.0853138, "nucleus": 1, "hit": 0.704166667}
+{"event": "token", "id": 410, "text": "、", "t_ms": 10893.712, "step_ms": 62.576691, "p": 0.999922992, "margin": 9.81548309, "nucleus": 1, "hit": 0.766666667}
+{"event": "token", "id": 28608, "text": "Mo", "t_ms": 10958.89, "step_ms": 65.164055, "p": 0.999932413, "margin": 9.8352356, "nucleus": 1, "hit": 0.829166667}
+{"event": "token", "id": 39, "text": "E", "t_ms": 11022.9118, "step_ms": 64.004825, "p": 0.999984239, "margin": 11.4976597, "nucleus": 1, "hit": 0.8125}
+{"event": "token", "id": 410, "text": "、", "t_ms": 11087.1309, "step_ms": 64.206603, "p": 0.99991262, "margin": 10.4015121, "nucleus": 1, "hit": 0.791666667}
+{"event": "token", "id": 101801, "text": "RMS", "t_ms": 11148.8617, "step_ms": 61.716371, "p": 0.999868564, "margin": 9.56602859, "nucleus": 1, "hit": 0.7125}
+{"event": "token", "id": 53016, "text": "Norm", "t_ms": 11213.7931, "step_ms": 64.913457, "p": 0.999986364, "margin": 11.5237217, "nucleus": 1, "hit": 0.866666667}
+{"event": "token", "id": 223, "text": " ", "t_ms": 11276.4492, "step_ms": 62.6402, "p": 0.811459764, "margin": 1.84794998, "nucleus": 3, "hit": 0.754166667}
+{"event": "token", "id": 116504, "text": "各组", "t_ms": 11337.0207, "step_ms": 60.555016, "p": 0.87772571, "margin": 2.61507797, "nucleus": 3, "hit": 0.658333333}
+{"event": "token", "id": 22900, "text": "件的", "t_ms": 11398.1492, "step_ms": 61.115034, "p": 0.998462996, "margin": 7.21087837, "nucleus": 1, "hit": 0.695833333}
+{"event": "token", "id": 43359, "text": " tile", "t_ms": 11459.5505, "step_ms": 61.380622, "p": 0.998783876, "margin": 6.72509193, "nucleus": 1, "hit": 0.720833333}
+{"event": "token", "id": 223, "text": " ", "t_ms": 11522.7324, "step_ms": 63.161847, "p": 0.961359679, "margin": 3.81359673, "nucleus": 1, "hit": 0.816666667}
+{"event": "token", "id": 12052, "text": "大小", "t_ms": 11593.9835, "step_ms": 71.232126, "p": 0.999605685, "margin": 8.46585083, "nucleus": 1, "hit": 0.833333333}
+{"event": "token", "id": 548, "text": "和", "t_ms": 11654.2858, "step_ms": 60.282596, "p": 0.985540263, "margin": 4.49372101, "nucleus": 1, "hit": 0.666666667}
+{"event": "token", "id": 34408, "text": "流水", "t_ms": 11714.2192, "step_ms": 59.914797, "p": 0.995122705, "margin": 5.33303642, "nucleus": 1, "hit": 0.658333333}
+{"event": "token", "id": 1728, "text": "线", "t_ms": 11777.232, "step_ms": 62.994323, "p": 0.997046104, "margin": 5.8423481, "nucleus": 1, "hit": 0.816666667}
+{"event": "token", "id": 17180, "text": "深度", "t_ms": 11842.1325, "step_ms": 64.882388, "p": 0.999931108, "margin": 9.98716164, "nucleus": 1, "hit": 0.825}
+{"event": "token", "id": 320, "text": "。", "t_ms": 11904.8911, "step_ms": 62.736721, "p": 0.894795713, "margin": 2.36773872, "nucleus": 2, "hit": 0.645833333}
+{"event": "token", "id": 5668, "text": "逐", "t_ms": 11966.2297, "step_ms": 61.318856, "p": 0.90162441, "margin": 2.63666153, "nucleus": 2, "hit": 0.558333333}
+{"event": "token", "id": 1846, "text": "项", "t_ms": 12027.5915, "step_ms": 61.340436, "p": 0.997722031, "margin": 6.61169434, "nucleus": 1, "hit": 0.583333333}
+{"event": "token", "id": 9068, "text": "解释", "t_ms": 12089.1743, "step_ms": 61.563805, "p": 0.999743162, "margin": 8.69661331, "nucleus": 1, "hit": 0.5875}
+{"event": "token", "id": 61817, "text": "寄存器", "t_ms": 12151.2438, "step_ms": 62.051217, "p": 0.998395661, "margin": 7.23176193, "nucleus": 1, "hit": 0.6}
+{"event": "token", "id": 410, "text": "、", "t_ms": 12217.0862, "step_ms": 65.824211, "p": 0.999569938, "margin": 8.23193741, "nucleus": 1, "hit": 0.720833333}
+{"event": "token", "id": 46, "text": "L", "t_ms": 12282.3959, "step_ms": 65.291314, "p": 0.999934912, "margin": 10.223505, "nucleus": 1, "hit": 0.666666667}
+{"event": "token", "id": 10525, "text": "DS", "t_ms": 12351.1616, "step_ms": 68.747374, "p": 0.999999058, "margin": 14.7742825, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 410, "text": "、", "t_ms": 12420.6487, "step_ms": 69.469336, "p": 0.997762112, "margin": 6.21265221, "nucleus": 1, "hit": 0.795833333}
+{"event": "token", "id": 42829, "text": "占用", "t_ms": 12490.7903, "step_ms": 70.123331, "p": 0.999435007, "margin": 7.72773361, "nucleus": 1, "hit": 0.775}
+{"event": "token", "id": 52980, "text": "率和", "t_ms": 12563.3193, "step_ms": 72.509168, "p": 0.718601799, "margin": 0.937654495, "nucleus": 2, "hit": 0.7375}
+{"event": "token", "id": 6678, "text": "访", "t_ms": 12633.1042, "step_ms": 69.764328, "p": 0.999847699, "margin": 9.1204567, "nucleus": 1, "hit": 0.691666667}
+{"event": "token", "id": 53464, "text": "存的", "t_ms": 12702.2156, "step_ms": 69.082782, "p": 0.813552358, "margin": 1.54154587, "nucleus": 2, "hit": 0.7375}
+{"event": "token", "id": 22858, "text": "约束", "t_ms": 12771.7726, "step_ms": 69.536482, "p": 0.999981033, "margin": 11.5480576, "nucleus": 1, "hit": 0.7625}
+{"event": "token", "id": 320, "text": "。", "t_ms": 12837.7346, "step_ms": 65.944306, "p": 0.819878571, "margin": 1.52153778, "nucleus": 2, "hit": 0.566666667}
+{"event": "token", "id": 32200, "text": "给出", "t_ms": 12902.8831, "step_ms": 65.126665, "p": 0.986211665, "margin": 4.3745327, "nucleus": 1, "hit": 0.5375}
+{"event": "token", "id": 3461, "text": "选择", "t_ms": 12968.0418, "step_ms": 65.141323, "p": 0.999985501, "margin": 12.1953697, "nucleus": 1, "hit": 0.5125}
+{"event": "token", "id": 12323, "text": "步骤", "t_ms": 13037.7472, "step_ms": 69.687114, "p": 0.999992655, "margin": 12.9373093, "nucleus": 1, "hit": 0.7375}
+{"event": "token", "id": 410, "text": "、", "t_ms": 13104.5305, "step_ms": 66.765694, "p": 0.993773015, "margin": 5.07823181, "nucleus": 1, "hit": 0.575}
+{"event": "token", "id": 4339, "text": "计算", "t_ms": 13172.9371, "step_ms": 68.388072, "p": 0.999912587, "margin": 10.1305199, "nucleus": 1, "hit": 0.666666667}
+{"event": "token", "id": 20602, "text": "例子", "t_ms": 13241.8629, "step_ms": 68.906743, "p": 0.99739819, "margin": 6.1899395, "nucleus": 1, "hit": 0.6625}
+{"event": "token", "id": 548, "text": "和", "t_ms": 13308.6612, "step_ms": 66.77929, "p": 0.838004388, "margin": 1.82725143, "nucleus": 2, "hit": 0.5625}
+{"event": "token", "id": 4382, "text": "如何", "t_ms": 13378.5026, "step_ms": 69.816385, "p": 0.772048637, "margin": 1.22407913, "nucleus": 2, "hit": 0.675}
+{"event": "token", "id": 20495, "text": "验证", "t_ms": 13447.2569, "step_ms": 68.735702, "p": 0.999969191, "margin": 11.6924801, "nucleus": 1, "hit": 0.616666667}
+{"event": "token", "id": 10861, "text": "性能", "t_ms": 13516.8085, "step_ms": 69.531473, "p": 0.999818653, "margin": 8.68504333, "nucleus": 1, "hit": 0.5875}
+{"event": "token", "id": 9939, "text": "的方法", "t_ms": 13592.0858, "step_ms": 75.246392, "p": 0.920830812, "margin": 2.46589851, "nucleus": 2, "hit": 0.604166667}
+{"event": "token", "id": 320, "text": "。", "t_ms": 13657.8529, "step_ms": 65.740234, "p": 0.999583275, "margin": 7.97677422, "nucleus": 1, "hit": 0.491666667}
+{"event": "token", "id": 11732, "text": "至少", "t_ms": 13724.4902, "step_ms": 66.612748, "p": 0.941176808, "margin": 3.34431458, "nucleus": 2, "hit": 0.533333333}
+{"event": "token", "id": 68364, "text": "两千", "t_ms": 13791.2723, "step_ms": 66.754233, "p": 0.836257707, "margin": 1.71384621, "nucleus": 2, "hit": 0.545833333}
+{"event": "token", "id": 2024, "text": "字", "t_ms": 13862.3831, "step_ms": 71.090612, "p": 0.999718046, "margin": 9.1372509, "nucleus": 1, "hit": 0.733333333}
+{"event": "token", "id": 303, "text": "，", "t_ms": 13928.6368, "step_ms": 66.233808, "p": 0.434041711, "margin": 0.237775803, "nucleus": 2, "hit": 0.508333333}
+{"event": "token", "id": 7474, "text": "充分", "t_ms": 13995.2449, "step_ms": 66.589354, "p": 0.863253076, "margin": 2.45381355, "nucleus": 3, "hit": 0.520833333}
+{"event": "token", "id": 17265, "text": "展开", "t_ms": 14059.9925, "step_ms": 64.7287, "p": 0.999636357, "margin": 8.73290253, "nucleus": 1, "hit": 0.454166667}
+{"event": "token", "id": 320, "text": "。", "t_ms": 14125.2159, "step_ms": 65.204802, "p": 0.74971577, "margin": 1.10131264, "nucleus": 2, "hit": 0.4625}
+{"event": "token", "id": 2431, "text": "可能", "t_ms": 14192.9306, "step_ms": 67.696377, "p": 0.0327265791, "margin": 1.08361435, "nucleus": 21, "hit": 0.491666667}
+{"event": "token", "id": 3099, "text": "要求", "t_ms": 14258.0477, "step_ms": 65.09742, "p": 0.182440653, "margin": 0.38359642, "nucleus": 80, "hit": 0.5125}
+{"event": "token", "id": 3907, "text": "非常", "t_ms": 14322.7543, "step_ms": 64.687403, "p": 0.115399704, "margin": 0.651935577, "nucleus": 189, "hit": 0.479166667}
+{"event": "token", "id": 12201, "text": "详细", "t_ms": 14387.6579, "step_ms": 64.885604, "p": 0.647387669, "margin": 1.60276222, "nucleus": 9, "hit": 0.475}
+{"event": "token", "id": 320, "text": "。", "t_ms": 14453.7384, "step_ms": 66.061816, "p": 0.650510692, "margin": 0.745515823, "nucleus": 2, "hit": 0.520833333}
+{"event": "token", "id": 2386, "text": "需要", "t_ms": 14520.1385, "step_ms": 66.381595, "p": 0.409682314, "margin": 0.267364502, "nucleus": 15, "hit": 0.516666667}
+{"event": "token", "id": 6617, "text": "理解", "t_ms": 14586.5483, "step_ms": 66.392154, "p": 0.0148920632, "margin": 0.0373191833, "nucleus": 114, "hit": 0.520833333}
+{"event": "token", "id": 57694, "text": " AMD", "t_ms": 14654.7156, "step_ms": 68.149244, "p": 0.478164074, "margin": 0.0233821869, "nucleus": 3, "hit": 0.5625}
+{"event": "token", "id": 72025, "text": " HIP", "t_ms": 14729.1419, "step_ms": 74.40658, "p": 0.547602763, "margin": 0.205524445, "nucleus": 2, "hit": 0.825}
+{"event": "token", "id": 303, "text": "，", "t_ms": 14803.36, "step_ms": 74.196747, "p": 0.29550933, "margin": 0.0253829956, "nucleus": 6, "hit": 0.816666667}
+{"event": "token", "id": 90738, "text": "GPU", "t_ms": 14875.124, "step_ms": 71.744315, "p": 0.519200188, "margin": 1.34777641, "nucleus": 8, "hit": 0.695833333}
+{"event": "token", "id": 223, "text": " ", "t_ms": 14949.0937, "step_ms": 73.950216, "p": 0.969926985, "margin": 4.59123993, "nucleus": 1, "hit": 0.795833333}
+{"event": "token", "id": 35991, "text": "架构", "t_ms": 15023.8131, "step_ms": 74.701211, "p": 0.988790971, "margin": 5.72866249, "nucleus": 1, "hit": 0.783333333}
+{"event": "token", "id": 1237, "text": "（", "t_ms": 15097.9611, "step_ms": 74.127628, "p": 0.383589469, "margin": 0.208812714, "nucleus": 5, "hit": 0.783333333}
+{"event": "token", "id": 883, "text": "如", "t_ms": 15171.8471, "step_ms": 73.868091, "p": 0.201864513, "margin": 1.1902771, "nucleus": 4, "hit": 0.766666667}
+{"event": "token", "id": 8888, "text": " CD", "t_ms": 15243.0262, "step_ms": 71.162396, "p": 0.839465548, "margin": 1.84922791, "nucleus": 2, "hit": 0.691666667}
+{"event": "token", "id": 3794, "text": "NA", "t_ms": 15319.5191, "step_ms": 76.477548, "p": 0.999980742, "margin": 11.0368366, "nucleus": 1, "hit": 0.816666667}
+{"event": "token", "id": 303, "text": "，", "t_ms": 15392.7172, "step_ms": 73.181446, "p": 0.388285451, "margin": 0.439006805, "nucleus": 7, "hit": 0.766666667}
+{"event": "token", "id": 52, "text": "R", "t_ms": 15466.4308, "step_ms": 73.696049, "p": 0.665411302, "margin": 0.82153511, "nucleus": 2, "hit": 0.783333333}
+{"event": "token", "id": 23164, "text": "DNA", "t_ms": 15539.4095, "step_ms": 72.955703, "p": 0.999986415, "margin": 11.7728405, "nucleus": 1, "hit": 0.770833333}
+{"event": "token", "id": 14164, "text": "）。", "t_ms": 15616.3794, "step_ms": 76.949301, "p": 0.141901716, "margin": 1.37493706, "nucleus": 5, "hit": 0.825}
+{"event": "token", "id": 10051, "text": "讨论", "t_ms": 15686.3412, "step_ms": 69.944596, "p": 0.100941337, "margin": 0.224658966, "nucleus": 71, "hit": 0.658333333}
+{"event": "token", "id": 8452, "text": " matrix", "t_ms": 15758.6878, "step_ms": 72.328088, "p": 0.00449998795, "margin": 2.10038757, "nucleus": 30, "hit": 0.654166667}
+{"event": "token", "id": 47102, "text": " cores", "t_ms": 15832.6789, "step_ms": 73.962478, "p": 0.307615533, "margin": 0.810523987, "nucleus": 2, "hit": 0.870833333}
+{"event": "token", "id": 1237, "text": "（", "t_ms": 15907.1853, "step_ms": 74.478746, "p": 0.459623636, "margin": 0.648801804, "nucleus": 6, "hit": 0.845833333}
+{"event": "token", "id": 22877, "text": "MF", "t_ms": 15983.9663, "step_ms": 76.76214, "p": 0.995162321, "margin": 5.7630291, "nucleus": 1, "hit": 0.8}
+{"event": "token", "id": 8564, "text": "MA", "t_ms": 16059.2253, "step_ms": 75.240041, "p": 0.999873998, "margin": 9.1467495, "nucleus": 1, "hit": 0.866666667}
+{"event": "token", "id": 7417, "text": "），", "t_ms": 16135.5836, "step_ms": 76.33516, "p": 0.778090113, "margin": 2.00526237, "nucleus": 4, "hit": 0.879166667}
+{"event": "token", "id": 57, "text": "W", "t_ms": 16209.2753, "step_ms": 73.670241, "p": 0.294508989, "margin": 0.792636871, "nucleus": 3, "hit": 0.795833333}
+{"event": "token", "id": 22877, "text": "MF", "t_ms": 16286.0058, "step_ms": 76.706757, "p": 0.791894097, "margin": 2.50166321, "nucleus": 8, "hit": 0.795833333}
+{"event": "token", "id": 8564, "text": "MA", "t_ms": 16358.7514, "step_ms": 72.725353, "p": 0.640722875, "margin": 2.04496765, "nucleus": 12, "hit": 0.8125}
+{"event": "token", "id": 33, "text": "?", "t_ms": 16434.8115, "step_ms": 76.041812, "p": 0.434379564, "margin": 0.0144577026, "nucleus": 3, "hit": 0.85}
+{"event": "token", "id": 462, "text": " L", "t_ms": 16503.4231, "step_ms": 68.594468, "p": 0.0815764, "margin": 0.460077286, "nucleus": 16, "hit": 0.5875}
+{"event": "token", "id": 10525, "text": "DS", "t_ms": 16572.1554, "step_ms": 68.715454, "p": 0.999994636, "margin": 13.2994747, "nucleus": 1, "hit": 0.6375}
+{"event": "token", "id": 223, "text": " ", "t_ms": 16647.4654, "step_ms": 75.2937, "p": 0.379553495, "margin": 0.0370750427, "nucleus": 5, "hit": 0.829166667}
+{"event": "token", "id": 12052, "text": "大小", "t_ms": 16722.8968, "step_ms": 75.414347, "p": 0.495882867, "margin": 1.19065666, "nucleus": 6, "hit": 0.8375}
+{"event": "token", "id": 223, "text": " ", "t_ms": 16798.3006, "step_ms": 75.386575, "p": 0.227852302, "margin": 1.10739899, "nucleus": 4, "hit": 0.8}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 16874.56, "step_ms": 76.240764, "p": 0.999793681, "margin": 8.57790375, "nucleus": 1, "hit": 0.8375}
+{"event": "token", "id": 40770, "text": "KB", "t_ms": 16951.9201, "step_ms": 77.332388, "p": 0.928629682, "margin": 2.56686783, "nucleus": 2, "hit": 0.866666667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 17028.4587, "step_ms": 76.484711, "p": 0.446249118, "margin": 0.163360596, "nucleus": 6, "hit": 0.858333333}
+{"event": "token", "id": 223, "text": " ", "t_ms": 17101.5023, "step_ms": 73.020555, "p": 0.878197279, "margin": 2.89109612, "nucleus": 4, "hit": 0.704166667}
+{"event": "token", "id": 61817, "text": "寄存器", "t_ms": 17172.9863, "step_ms": 71.456847, "p": 0.954290061, "margin": 4.00190926, "nucleus": 1, "hit": 0.6875}
+{"event": "token", "id": 223, "text": " ", "t_ms": 17253.8571, "step_ms": 80.851156, "p": 0.800035542, "margin": 2.17695045, "nucleus": 5, "hit": 0.816666667}
+{"event": "token", "id": 9636, "text": "256", "t_ms": 17327.1363, "step_ms": 73.259393, "p": 0.69187692, "margin": 1.17970848, "nucleus": 3, "hit": 0.8375}
+{"event": "token", "id": 721, "text": " V", "t_ms": 17403.5924, "step_ms": 76.436511, "p": 0.760347731, "margin": 1.48736, "nucleus": 3, "hit": 0.8375}
+{"event": "token", "id": 41, "text": "G", "t_ms": 17477.7319, "step_ms": 74.114243, "p": 0.999902491, "margin": 9.39030647, "nucleus": 1, "hit": 0.895833333}
+{"event": "token", "id": 10750, "text": "PR", "t_ms": 17554.3706, "step_ms": 76.615505, "p": 0.999550158, "margin": 9.43728638, "nucleus": 1, "hit": 0.858333333}
+{"event": "token", "id": 716, "text": " per", "t_ms": 17631.0407, "step_ms": 76.645682, "p": 0.586622221, "margin": 0.492881775, "nucleus": 3, "hit": 0.875}
+{"event": "token", "id": 12625, "text": " thread", "t_ms": 17704.9662, "step_ms": 73.8938, "p": 0.935896131, "margin": 2.98543167, "nucleus": 2, "hit": 0.75}
+{"event": "token", "id": 3979, "text": " max", "t_ms": 17783.6843, "step_ms": 78.689619, "p": 0.0218724983, "margin": 3.75788689, "nucleus": 2, "hit": 0.770833333}
+{"event": "token", "id": 14, "text": ",", "t_ms": 17858.7081, "step_ms": 74.996565, "p": 0.110223894, "margin": 2.01912498, "nucleus": 3, "hit": 0.758333333}
+{"event": "token", "id": 72650, "text": " occupancy", "t_ms": 17927.9461, "step_ms": 69.216563, "p": 0.809351023, "margin": 1.53716087, "nucleus": 2, "hit": 0.75}
+{"event": "token", "id": 16, "text": ".", "t_ms": 18001.4336, "step_ms": 73.46655, "p": 0.330911675, "margin": 0.393127441, "nucleus": 12, "hit": 0.770833333}
+{"event": "token", "id": 43409, "text": " Wave", "t_ms": 18069.7303, "step_ms": 68.270101, "p": 0.114275809, "margin": 0.422523499, "nucleus": 14, "hit": 0.65}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 18141.6587, "step_ms": 71.908553, "p": 0.402108751, "margin": 0.311120987, "nucleus": 2, "hit": 0.791666667}
+{"event": "token", "id": 8062, "text": " vs", "t_ms": 18216.2563, "step_ms": 74.579314, "p": 0.132800295, "margin": 0.798591614, "nucleus": 8, "hit": 0.85}
+{"event": "token", "id": 9605, "text": " wave", "t_ms": 18289.6444, "step_ms": 73.360812, "p": 0.830425561, "margin": 1.59584999, "nucleus": 2, "hit": 0.729166667}
+{"event": "token", "id": 2111, "text": "32", "t_ms": 18362.378, "step_ms": 72.716084, "p": 0.999968025, "margin": 10.4302788, "nucleus": 1, "hit": 0.745833333}
+{"event": "token", "id": 16, "text": ".", "t_ms": 18441.1587, "step_ms": 78.762806, "p": 0.906026255, "margin": 2.89900208, "nucleus": 2, "hit": 0.808333333}
+{"event": "token", "id": 223, "text": " ", "t_ms": 18511.9902, "step_ms": 70.803264, "p": 0.419330306, "margin": 0.888057709, "nucleus": 35, "hit": 0.691666667}
+{"event": "token", "id": 445, "text": "在", "t_ms": 18587.233, "step_ms": 75.211647, "p": 0.0966091204, "margin": 0.927055359, "nucleus": 29, "hit": 0.683333333}
+{"event": "token", "id": 8888, "text": " CD", "t_ms": 18659.5012, "step_ms": 72.238641, "p": 0.284226553, "margin": 0.530044556, "nucleus": 3, "hit": 0.629166667}
+{"event": "token", "id": 3794, "text": "NA", "t_ms": 18736.3183, "step_ms": 76.789021, "p": 0.999979204, "margin": 11.9753838, "nucleus": 1, "hit": 0.841666667}
+{"event": "token", "id": 223, "text": " ", "t_ms": 18812.4264, "step_ms": 76.080133, "p": 0.800580299, "margin": 2.41109848, "nucleus": 4, "hit": 0.783333333}
+{"event": "token", "id": 572, "text": "上", "t_ms": 18888.5118, "step_ms": 76.065015, "p": 0.484710274, "margin": 0.0173473358, "nucleus": 2, "hit": 0.825}
+{"event": "token", "id": 9605, "text": " wave", "t_ms": 18960.9777, "step_ms": 72.446189, "p": 0.518573598, "margin": 0.884511948, "nucleus": 11, "hit": 0.716666667}
+{"event": "token", "id": 2892, "text": "64", "t_ms": 19034.5439, "step_ms": 73.546309, "p": 0.985623362, "margin": 4.22955704, "nucleus": 1, "hit": 0.758333333}
+{"event": "token", "id": 320, "text": "。", "t_ms": 19109.9274, "step_ms": 75.355316, "p": 0.379354477, "margin": 0.411647797, "nucleus": 5, "hit": 0.816666667}
+{"event": "token", "id": 86, "text": "t", "t_ms": 19181.5327, "step_ms": 71.584216, "p": 0.0527427609, "margin": 0.368095398, "nucleus": 84, "hit": 0.658333333}
+{"event": "token", "id": 806, "text": "ile", "t_ms": 19256.3085, "step_ms": 74.755814, "p": 0.97695523, "margin": 4.37342262, "nucleus": 1, "hit": 0.825}
+{"event": "token", "id": 3701, "text": " size", "t_ms": 19332.9593, "step_ms": 76.631145, "p": 0.0915843213, "margin": 0.662937164, "nucleus": 3, "hit": 0.8}
+{"event": "token", "id": 223, "text": " ", "t_ms": 19411.0887, "step_ms": 78.106026, "p": 0.261538046, "margin": 0.39408493, "nucleus": 24, "hit": 0.820833333}
+{"event": "token", "id": 3412, "text": "影响", "t_ms": 19484.5961, "step_ms": 73.485655, "p": 0.0542713005, "margin": 0.0724906921, "nucleus": 32, "hit": 0.8}
+{"event": "token", "id": 61817, "text": "寄存器", "t_ms": 19556.4843, "step_ms": 71.86933, "p": 0.425614396, "margin": 0.812810898, "nucleus": 8, "hit": 0.7125}
+{"event": "token", "id": 2541, "text": "使用", "t_ms": 19632.1727, "step_ms": 75.669735, "p": 0.0346962785, "margin": 0.756744385, "nucleus": 13, "hit": 0.745833333}
+{"event": "token", "id": 320, "text": "。", "t_ms": 19704.077, "step_ms": 71.886221, "p": 0.289602491, "margin": 0.275978088, "nucleus": 5, "hit": 0.729166667}
+{"event": "token", "id": 3660, "text": "对于", "t_ms": 19774.7048, "step_ms": 70.60923, "p": 0.0293873319, "margin": 0.627399445, "nucleus": 43, "hit": 0.654166667}
+{"event": "token", "id": 38895, "text": " GE", "t_ms": 19844.1179, "step_ms": 69.393394, "p": 0.988387728, "margin": 5.24736595, "nucleus": 1, "hit": 0.6375}
+{"event": "token", "id": 4799, "text": "MM", "t_ms": 19918.2084, "step_ms": 74.070611, "p": 0.986925874, "margin": 4.43352318, "nucleus": 1, "hit": 0.791666667}
+{"event": "token", "id": 303, "text": "，", "t_ms": 19992.7145, "step_ms": 74.4867, "p": 0.4993024, "margin": 0.93621254, "nucleus": 5, "hit": 0.770833333}
+{"event": "token", "id": 22877, "text": "MF", "t_ms": 20065.8204, "step_ms": 73.087771, "p": 0.0221007577, "margin": 0.505912781, "nucleus": 29, "hit": 0.6875}
+{"event": "token", "id": 8564, "text": "MA", "t_ms": 20143.1786, "step_ms": 77.335524, "p": 0.999851497, "margin": 10.4207211, "nucleus": 1, "hit": 0.858333333}
+{"event": "token", "id": 223, "text": " ", "t_ms": 20220.6074, "step_ms": 77.401708, "p": 0.874366804, "margin": 2.34742737, "nucleus": 2, "hit": 0.845833333}
+{"event": "token", "id": 23153, "text": "指令", "t_ms": 20297.1561, "step_ms": 76.529895, "p": 0.824353159, "margin": 1.69094849, "nucleus": 2, "hit": 0.795833333}
+{"event": "token", "id": 303, "text": "，", "t_ms": 20373.925, "step_ms": 76.75139, "p": 0.106354871, "margin": 0.75220108, "nucleus": 13, "hit": 0.825}
+{"event": "token", "id": 883, "text": "如", "t_ms": 20448.2127, "step_ms": 74.268882, "p": 0.231319729, "margin": 0.713014603, "nucleus": 5, "hit": 0.725}
+{"event": "token", "id": 223, "text": " ", "t_ms": 20520.632, "step_ms": 72.396086, "p": 0.60071822, "margin": 0.553920746, "nucleus": 3, "hit": 0.6875}
+{"event": "token", "id": 2111, "text": "32", "t_ms": 20596.0054, "step_ms": 75.352451, "p": 0.529216737, "margin": 0.117113113, "nucleus": 2, "hit": 0.8125}
+{"event": "token", "id": 90, "text": "x", "t_ms": 20672.5575, "step_ms": 76.534715, "p": 0.999999621, "margin": 15.2469234, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 2111, "text": "32", "t_ms": 20747.4739, "step_ms": 74.898851, "p": 0.917279044, "margin": 2.77205849, "nucleus": 2, "hit": 0.775}
+{"event": "token", "id": 90, "text": "x", "t_ms": 20821.8641, "step_ms": 74.370382, "p": 0.999739988, "margin": 8.60424805, "nucleus": 1, "hit": 0.775}
+{"event": "token", "id": 26, "text": "8", "t_ms": 20894.5845, "step_ms": 72.68098, "p": 0.999432251, "margin": 7.88043594, "nucleus": 1, "hit": 0.729166667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 20968.6472, "step_ms": 74.037118, "p": 0.275322019, "margin": 0.553352356, "nucleus": 4, "hit": 0.775}
+{"event": "token", "id": 285, "text": " f", "t_ms": 21040.2291, "step_ms": 71.55466, "p": 0.0345988979, "margin": 1.00787354, "nucleus": 10, "hit": 0.633333333}
+{"event": "token", "id": 2111, "text": "32", "t_ms": 21116.0229, "step_ms": 75.774351, "p": 0.858192962, "margin": 1.80044556, "nucleus": 2, "hit": 0.791666667}
+{"event": "token", "id": 223, "text": " ", "t_ms": 21191.1552, "step_ms": 75.113153, "p": 0.240895281, "margin": 0.104661942, "nucleus": 5, "hit": 0.858333333}
+{"event": "token", "id": 926, "text": "16", "t_ms": 21268.1151, "step_ms": 76.939522, "p": 0.98063368, "margin": 5.01742554, "nucleus": 1, "hit": 0.858333333}
+{"event": "token", "id": 90, "text": "x", "t_ms": 21345.5485, "step_ms": 77.406407, "p": 0.991946148, "margin": 4.83211517, "nucleus": 1, "hit": 0.8375}
+{"event": "token", "id": 926, "text": "16", "t_ms": 21420.1748, "step_ms": 74.604451, "p": 0.999657905, "margin": 8.34741592, "nucleus": 1, "hit": 0.733333333}
+{"event": "token", "id": 90, "text": "x", "t_ms": 21494.5193, "step_ms": 74.319076, "p": 0.997783979, "margin": 6.13191414, "nucleus": 1, "hit": 0.754166667}
+{"event": "token", "id": 926, "text": "16", "t_ms": 21567.9967, "step_ms": 73.457884, "p": 0.897207136, "margin": 2.16769791, "nucleus": 2, "hit": 0.75}
+{"event": "token", "id": 33, "text": "?", "t_ms": 21643.9538, "step_ms": 75.937787, "p": 0.941778339, "margin": 3.97493744, "nucleus": 2, "hit": 0.795833333}
+{"event": "token", "id": 223, "text": " ", "t_ms": 21715.5603, "step_ms": 71.588213, "p": 0.520298299, "margin": 1.34014511, "nucleus": 17, "hit": 0.666666667}
+{"event": "token", "id": 2386, "text": "需要", "t_ms": 21788.7253, "step_ms": 73.14586, "p": 0.104246858, "margin": 0.18894577, "nucleus": 93, "hit": 0.625}
+{"event": "token", "id": 4339, "text": "计算", "t_ms": 21859.646, "step_ms": 70.901918, "p": 0.103290348, "margin": 0.213245392, "nucleus": 131, "hit": 0.575}
+{"event": "token", "id": 61817, "text": "寄存器", "t_ms": 21931.3938, "step_ms": 71.728607, "p": 0.186430545, "margin": 0.167762756, "nucleus": 15, "hit": 0.770833333}
+{"event": "token", "id": 320, "text": "。", "t_ms": 22005.2101, "step_ms": 73.796879, "p": 0.316326991, "margin": 0.293661118, "nucleus": 19, "hit": 0.791666667}
+{"event": "token", "id": 108558, "text": "Attention", "t_ms": 22078.0471, "step_ms": 72.817565, "p": 0.0542137146, "margin": 1.09799004, "nucleus": 56, "hit": 0.670833333}
+{"event": "token", "id": 303, "text": "，", "t_ms": 22152.5669, "step_ms": 74.499103, "p": 0.137254397, "margin": 1.07071495, "nucleus": 5, "hit": 0.808333333}
+{"event": "token", "id": 92636, "text": "flash", "t_ms": 22226.8389, "step_ms": 74.245148, "p": 0.869208778, "margin": 2.16172791, "nucleus": 2, "hit": 0.758333333}
+{"event": "token", "id": 5671, "text": " attention", "t_ms": 22303.2293, "step_ms": 76.369245, "p": 0.999963579, "margin": 10.956543, "nucleus": 1, "hit": 0.820833333}
+{"event": "token", "id": 303, "text": "，", "t_ms": 22379.1514, "step_ms": 75.900627, "p": 0.595616228, "margin": 1.01602554, "nucleus": 7, "hit": 0.8125}
+{"event": "token", "id": 86, "text": "t", "t_ms": 22454.7425, "step_ms": 75.571421, "p": 0.624801763, "margin": 1.81298828, "nucleus": 15, "hit": 0.779166667}
+{"event": "token", "id": 806, "text": "ile", "t_ms": 22528.9885, "step_ms": 74.22479, "p": 0.389636584, "margin": 0.234195709, "nucleus": 3, "hit": 0.7375}
+{"event": "token", "id": 1646, "text": " Q", "t_ms": 22609.8596, "step_ms": 80.846547, "p": 0.776238195, "margin": 2.43571472, "nucleus": 6, "hit": 0.825}
+{"event": "token", "id": 14, "text": ",", "t_ms": 22682.8934, "step_ms": 73.003042, "p": 0.536893631, "margin": 0.575149536, "nucleus": 6, "hit": 0.75}
+{"event": "token", "id": 126664, "text": " KV", "t_ms": 22755.2447, "step_ms": 72.330042, "p": 0.123788617, "margin": 1.95648193, "nucleus": 2, "hit": 0.729166667}
+{"event": "token", "id": 14, "text": ",", "t_ms": 22829.8676, "step_ms": 74.60416, "p": 0.500662593, "margin": 0.787679672, "nucleus": 5, "hit": 0.8125}
+{"event": "token", "id": 2578, "text": " head", "t_ms": 22907.3927, "step_ms": 77.505853, "p": 0.853521174, "margin": 2.08664131, "nucleus": 2, "hit": 0.770833333}
+{"event": "token", "id": 5662, "text": " dim", "t_ms": 22983.5051, "step_ms": 76.092266, "p": 0.982188816, "margin": 4.33982468, "nucleus": 1, "hit": 0.8}
+{"event": "token", "id": 16, "text": ".", "t_ms": 23056.1441, "step_ms": 72.619133, "p": 0.289035253, "margin": 0.278007507, "nucleus": 4, "hit": 0.775}
+{"event": "token", "id": 10192, "text": " Mo", "t_ms": 23128.56, "step_ms": 72.397268, "p": 0.536394811, "margin": 1.27337837, "nucleus": 8, "hit": 0.675}
+{"event": "token", "id": 39, "text": "E", "t_ms": 23204.8604, "step_ms": 76.281209, "p": 0.999974974, "margin": 12.1266708, "nucleus": 1, "hit": 0.795833333}
+{"event": "token", "id": 303, "text": "，", "t_ms": 23278.2773, "step_ms": 73.39715, "p": 0.640979849, "margin": 1.10739136, "nucleus": 5, "hit": 0.791666667}
+{"event": "token", "id": 13140, "text": "group", "t_ms": 23351.9693, "step_ms": 73.672746, "p": 0.883951571, "margin": 2.57149124, "nucleus": 2, "hit": 0.75}
+{"event": "token", "id": 284, "text": "ed", "t_ms": 23427.8222, "step_ms": 75.834143, "p": 0.995193666, "margin": 5.48723602, "nucleus": 1, "hit": 0.8375}
+{"event": "token", "id": 38895, "text": " GE", "t_ms": 23505.2317, "step_ms": 77.388543, "p": 0.938902806, "margin": 2.73402405, "nucleus": 2, "hit": 0.804166667}
+{"event": "token", "id": 4799, "text": "MM", "t_ms": 23589.3113, "step_ms": 84.049925, "p": 0.999916637, "margin": 9.83618546, "nucleus": 1, "hit": 0.825}
+{"event": "token", "id": 1492, "text": " /", "t_ms": 23668.1625, "step_ms": 78.821596, "p": 0.189611185, "margin": 0.12046051, "nucleus": 4, "hit": 0.8375}
+{"event": "token", "id": 8739, "text": " expert", "t_ms": 23746.9592, "step_ms": 78.765651, "p": 0.634707249, "margin": 1.35699081, "nucleus": 6, "hit": 0.841666667}
+{"event": "token", "id": 36283, "text": " routing", "t_ms": 23825.4718, "step_ms": 78.486789, "p": 0.44861381, "margin": 0.807041168, "nucleus": 13, "hit": 0.829166667}
+{"event": "token", "id": 14, "text": ",", "t_ms": 23902.501, "step_ms": 77.006888, "p": 0.317660521, "margin": 0.192838669, "nucleus": 4, "hit": 0.845833333}
+{"event": "token", "id": 17840, "text": " token", "t_ms": 23980.9211, "step_ms": 78.400468, "p": 0.495698572, "margin": 1.45464706, "nucleus": 11, "hit": 0.766666667}
+{"event": "token", "id": 73056, "text": " permutation", "t_ms": 24060.7206, "step_ms": 79.780261, "p": 0.811586518, "margin": 2.85320282, "nucleus": 7, "hit": 0.816666667}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24134.5918, "step_ms": 73.85109, "p": 0.370136391, "margin": 0.436433792, "nucleus": 3, "hit": 0.854166667}
+{"event": "token", "id": 43359, "text": " tile", "t_ms": 24208.4615, "step_ms": 73.848936, "p": 0.127651007, "margin": 1.27571106, "nucleus": 18, "hit": 0.804166667}
+{"event": "token", "id": 373, "text": " M", "t_ms": 24284.5397, "step_ms": 76.05681, "p": 0.434508209, "margin": 0.106843948, "nucleus": 6, "hit": 0.820833333}
+{"event": "token", "id": 24159, "text": "/N", "t_ms": 24359.1971, "step_ms": 74.629878, "p": 0.672665724, "margin": 1.67727089, "nucleus": 6, "hit": 0.766666667}
+{"event": "token", "id": 36056, "text": "/K", "t_ms": 24434.0009, "step_ms": 74.782073, "p": 0.839746205, "margin": 2.05709267, "nucleus": 3, "hit": 0.775}
+{"event": "token", "id": 16, "text": ".", "t_ms": 24508.2125, "step_ms": 74.189654, "p": 0.605631443, "margin": 1.01959229, "nucleus": 5, "hit": 0.7625}
+{"event": "token", "id": 98666, "text": " RMS", "t_ms": 24581.2511, "step_ms": 73.008793, "p": 0.999525945, "margin": 7.87111664, "nucleus": 1, "hit": 0.716666667}
+{"event": "token", "id": 53016, "text": "Norm", "t_ms": 24657.7368, "step_ms": 76.457921, "p": 0.999957897, "margin": 10.6969662, "nucleus": 1, "hit": 0.816666667}
+{"event": "token", "id": 303, "text": "，", "t_ms": 24735.3849, "step_ms": 77.622161, "p": 0.849659794, "margin": 2.67103958, "nucleus": 3, "hit": 0.8375}
+{"event": "token", "id": 266, "text": "re", "t_ms": 24809.7096, "step_ms": 74.295963, "p": 0.275993641, "margin": 0.342758179, "nucleus": 21, "hit": 0.725}
+{"event": "token", "id": 8096, "text": "duction", "t_ms": 24886.7677, "step_ms": 77.036705, "p": 0.997914503, "margin": 6.94847107, "nucleus": 1, "hit": 0.825}
+{"event": "token", "id": 14, "text": ",", "t_ms": 24962.8526, "step_ms": 76.064795, "p": 0.54011865, "margin": 0.782375336, "nucleus": 8, "hit": 0.791666667}
+{"event": "token", "id": 8568, "text": " vector", "t_ms": 25037.6166, "step_ms": 74.743771, "p": 0.884148306, "margin": 3.46382141, "nucleus": 4, "hit": 0.7625}
+{"event": "token", "id": 1878, "text": "ization", "t_ms": 25115.3033, "step_ms": 77.665582, "p": 0.41108326, "margin": 0.168327332, "nucleus": 4, "hit": 0.8875}
+{"event": "token", "id": 14, "text": ",", "t_ms": 25192.3059, "step_ms": 76.97576, "p": 0.932464086, "margin": 3.50345421, "nucleus": 2, "hit": 0.808333333}
+{"event": "token", "id": 462, "text": " L", "t_ms": 25266.1858, "step_ms": 73.85656, "p": 0.702548822, "margin": 2.15739059, "nucleus": 6, "hit": 0.691666667}
+{"event": "token", "id": 10525, "text": "DS", "t_ms": 25338.2373, "step_ms": 72.031243, "p": 0.999989846, "margin": 12.5299702, "nucleus": 1, "hit": 0.666666667}
+{"event": "token", "id": 14, "text": ",", "t_ms": 25415.3353, "step_ms": 77.078362, "p": 0.450317756, "margin": 1.04567146, "nucleus": 11, "hit": 0.825}
+{"event": "token", "id": 72650, "text": " occupancy", "t_ms": 25493.0438, "step_ms": 77.679839, "p": 0.404176966, "margin": 0.0851650238, "nucleus": 8, "hit": 0.75}
+{"event": "token", "id": 16, "text": ".", "t_ms": 25566.553, "step_ms": 73.480256, "p": 0.328731291, "margin": 0.271535873, "nucleus": 4, "hit": 0.7375}
+{"event": "token", "id": 223, "text": " ", "t_ms": 25637.7475, "step_ms": 71.165272, "p": 0.583122613, "margin": 0.572544098, "nucleus": 4, "hit": 0.6125}
+{"event": "token", "id": 34408, "text": "流水", "t_ms": 25708.821, "step_ms": 71.045467, "p": 0.946035574, "margin": 3.57771683, "nucleus": 2, "hit": 0.604166667}
+{"event": "token", "id": 1728, "text": "线", "t_ms": 25783.1889, "step_ms": 74.343983, "p": 0.991599922, "margin": 4.92626381, "nucleus": 1, "hit": 0.791666667}
+{"event": "token", "id": 17180, "text": "深度", "t_ms": 25857.8191, "step_ms": 74.612275, "p": 0.990663171, "margin": 5.35051537, "nucleus": 1, "hit": 0.8}
+{"event": "token", "id": 303, "text": "，", "t_ms": 25932.61, "step_ms": 74.773828, "p": 0.219869439, "margin": 0.940950394, "nucleus": 6, "hit": 0.775}
+{"event": "token", "id": 3548, "text": "pre", "t_ms": 26006.7126, "step_ms": 74.08588, "p": 0.54919275, "margin": 1.04731369, "nucleus": 9, "hit": 0.754166667}
+{"event": "token", "id": 70698, "text": "fetch", "t_ms": 26083.382, "step_ms": 76.652405, "p": 0.997907029, "margin": 6.37665939, "nucleus": 1, "hit": 0.825}
+{"event": "token", "id": 13656, "text": " stages", "t_ms": 26160.3776, "step_ms": 76.977474, "p": 0.474996007, "margin": 0.604198456, "nucleus": 5, "hit": 0.833333333}
+{"event": "token", "id": 14, "text": ",", "t_ms": 26237.7655, "step_ms": 77.370279, "p": 0.658278563, "margin": 0.898292542, "nucleus": 3, "hit": 0.854166667}
+{"event": "token", "id": 16377, "text": " async", "t_ms": 26313.5702, "step_ms": 75.787015, "p": 0.205646441, "margin": 1.1379261, "nucleus": 5, "hit": 0.795833333}
+{"event": "token", "id": 7610, "text": " copy", "t_ms": 26389.5486, "step_ms": 75.958847, "p": 0.964417193, "margin": 3.30550003, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 26465.8369, "step_ms": 76.266392, "p": 0.602332658, "margin": 1.51510048, "nucleus": 6, "hit": 0.808333333}
+{"event": "token", "id": 57694, "text": " AMD", "t_ms": 26538.4719, "step_ms": 72.607972, "p": 0.527680966, "margin": 1.04501724, "nucleus": 7, "hit": 0.670833333}
+{"event": "token", "id": 223, "text": " ", "t_ms": 26613.6253, "step_ms": 75.13288, "p": 0.315983863, "margin": 0.688909531, "nucleus": 3, "hit": 0.8}
+{"event": "token", "id": 450, "text": "有", "t_ms": 26693.6399, "step_ms": 79.99344, "p": 0.852089021, "margin": 2.76003265, "nucleus": 4, "hit": 0.816666667}
+{"event": "token", "id": 5217, "text": " global", "t_ms": 26771.7568, "step_ms": 78.087111, "p": 0.760300724, "margin": 1.15666962, "nucleus": 2, "hit": 0.6875}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 26842.9601, "step_ms": 71.183586, "p": 0.73417878, "margin": 1.26086617, "nucleus": 3, "hit": 0.791666667}
+{"event": "token", "id": 65, "text": "_", "t_ms": 26920.4771, "step_ms": 77.497407, "p": 0.989367636, "margin": 5.28247643, "nucleus": 1, "hit": 0.829166667}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 26995.1083, "step_ms": 74.602818, "p": 0.999974738, "margin": 10.9987221, "nucleus": 1, "hit": 0.841666667}
+{"event": "token", "id": 85, "text": "s", "t_ms": 27071.5907, "step_ms": 76.451979, "p": 0.999996302, "margin": 13.8583527, "nucleus": 1, "hit": 0.85}
+{"event": "token", "id": 33, "text": "?", "t_ms": 27148.647, "step_ms": 77.026785, "p": 0.989016266, "margin": 5.42027664, "nucleus": 1, "hit": 0.841666667}
+{"event": "token", "id": 17437, "text": " buffer", "t_ms": 27222.462, "step_ms": 73.78689, "p": 0.965914816, "margin": 3.83766937, "nucleus": 1, "hit": 0.708333333}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 27304.5877, "step_ms": 82.106156, "p": 0.999246153, "margin": 7.20009232, "nucleus": 1, "hit": 0.870833333}
+{"event": "token", "id": 4084, "text": "_d", "t_ms": 27377.1858, "step_ms": 72.572727, "p": 0.835784462, "margin": 1.81129456, "nucleus": 2, "hit": 0.804166667}
+{"event": "token", "id": 3899, "text": "word", "t_ms": 27454.3937, "step_ms": 77.186965, "p": 0.997751247, "margin": 7.02607155, "nucleus": 1, "hit": 0.85}
+{"event": "token", "id": 33, "text": "?", "t_ms": 27529.6724, "step_ms": 75.257753, "p": 0.810096502, "margin": 2.46785545, "nucleus": 4, "hit": 0.833333333}
+{"event": "token", "id": 223, "text": " ", "t_ms": 27602.7232, "step_ms": 73.023791, "p": 0.82133041, "margin": 3.07440186, "nucleus": 6, "hit": 0.695833333}
+{"event": "token", "id": 450, "text": "有", "t_ms": 27676.5624, "step_ms": 73.816205, "p": 0.106464219, "margin": 0.57989502, "nucleus": 41, "hit": 0.691666667}
+{"event": "token", "id": 35721, "text": " scheduling", "t_ms": 27747.6434, "step_ms": 71.059914, "p": 0.00519913374, "margin": 0.548666, "nucleus": 17, "hit": 0.625}
+{"event": "token", "id": 16, "text": ".", "t_ms": 27825.7944, "step_ms": 78.131334, "p": 0.623721761, "margin": 1.11922646, "nucleus": 5, "hit": 0.825}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 27895.3808, "step_ms": 69.566368, "p": 0.00754159958, "margin": 2.23556519, "nucleus": 11, "hit": 0.6125}
+{"event": "token", "id": 8888, "text": " CD", "t_ms": 27965.3791, "step_ms": 69.969773, "p": 0.666686995, "margin": 0.964084625, "nucleus": 3, "hit": 0.604166667}
+{"event": "token", "id": 3794, "text": "NA", "t_ms": 28039.2534, "step_ms": 73.855248, "p": 0.999993675, "margin": 13.0600357, "nucleus": 1, "hit": 0.745833333}
+{"event": "token", "id": 21, "text": "3", "t_ms": 28113.9244, "step_ms": 74.650977, "p": 0.181205372, "margin": 1.40511703, "nucleus": 3, "hit": 0.7625}
+{"event": "token", "id": 14, "text": ",", "t_ms": 28188.7176, "step_ms": 74.772796, "p": 0.623727375, "margin": 0.84695816, "nucleus": 4, "hit": 0.7625}
+{"event": "token", "id": 16377, "text": " async", "t_ms": 28261.5228, "step_ms": 72.775877, "p": 0.470290755, "margin": 0.446641922, "nucleus": 8, "hit": 0.658333333}
+{"event": "token", "id": 7610, "text": " copy", "t_ms": 28338.3141, "step_ms": 76.772219, "p": 0.944176317, "margin": 2.83527374, "nucleus": 2, "hit": 0.808333333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 28415.8102, "step_ms": 77.476217, "p": 0.872017612, "margin": 2.41886139, "nucleus": 3, "hit": 0.8125}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 28490.3864, "step_ms": 74.556511, "p": 0.131450939, "margin": 0.195608139, "nucleus": 19, "hit": 0.591666667}
+{"event": "token", "id": 70718, "text": "buffer", "t_ms": 28572.2284, "step_ms": 81.812466, "p": 0.746272087, "margin": 1.21875381, "nucleus": 2, "hit": 0.833333333}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 28651.0109, "step_ms": 78.75389, "p": 0.999999689, "margin": 15.8758545, "nucleus": 1, "hit": 0.833333333}
+{"event": "token", "id": 4084, "text": "_d", "t_ms": 28728.6292, "step_ms": 77.58987, "p": 0.536826687, "margin": 0.26146698, "nucleus": 2, "hit": 0.791666667}
+{"event": "token", "id": 3899, "text": "word", "t_ms": 28808.366, "step_ms": 79.708657, "p": 0.999952084, "margin": 10.1142616, "nucleus": 1, "hit": 0.841666667}
+{"event": "token", "id": 66, "text": "`", "t_ms": 28884.9837, "step_ms": 76.595518, "p": 0.898054129, "margin": 2.27825165, "nucleus": 2, "hit": 0.85}
+{"event": "token", "id": 418, "text": " with", "t_ms": 28960.4377, "step_ms": 75.431779, "p": 0.224714273, "margin": 0.307844162, "nucleus": 14, "hit": 0.770833333}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 29033.2897, "step_ms": 72.823026, "p": 0.730288175, "margin": 1.0788765, "nucleus": 2, "hit": 0.704166667}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 29111.3249, "step_ms": 78.009286, "p": 0.886935615, "margin": 2.25201035, "nucleus": 2, "hit": 0.841666667}
+{"event": "token", "id": 85, "text": "s", "t_ms": 29189.663, "step_ms": 78.314026, "p": 0.999992775, "margin": 11.9693527, "nucleus": 1, "hit": 0.820833333}
+{"event": "token", "id": 66, "text": "`", "t_ms": 29273.441, "step_ms": 83.754883, "p": 0.999346686, "margin": 7.84432602, "nucleus": 1, "hit": 0.825}
+{"event": "token", "id": 33, "text": "?", "t_ms": 29346.7432, "step_ms": 73.279791, "p": 0.931018087, "margin": 3.33221436, "nucleus": 2, "hit": 0.845833333}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 29415.5547, "step_ms": 68.783422, "p": 0.612570805, "margin": 2.12374115, "nucleus": 16, "hit": 0.566666667}
+{"event": "token", "id": 5217, "text": " global", "t_ms": 29484.022, "step_ms": 68.444387, "p": 0.231748027, "margin": 0.0871315002, "nucleus": 15, "hit": 0.4625}
+{"event": "token", "id": 304, "text": " to", "t_ms": 29556.1969, "step_ms": 72.145086, "p": 0.803520643, "margin": 2.08291245, "nucleus": 4, "hit": 0.758333333}
+{"event": "token", "id": 462, "text": " L", "t_ms": 29627.8743, "step_ms": 71.65036, "p": 0.991813922, "margin": 5.02451324, "nucleus": 1, "hit": 0.65}
+{"event": "token", "id": 10525, "text": "DS", "t_ms": 29701.3215, "step_ms": 73.422698, "p": 0.999943587, "margin": 10.5884037, "nucleus": 1, "hit": 0.666666667}
+{"event": "token", "id": 5566, "text": " via", "t_ms": 29781.2661, "step_ms": 79.921866, "p": 0.700956803, "margin": 1.20942497, "nucleus": 5, "hit": 0.804166667}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 29854.3601, "step_ms": 73.075849, "p": 0.992413442, "margin": 5.24023438, "nucleus": 1, "hit": 0.733333333}
+{"event": "token", "id": 70718, "text": "buffer", "t_ms": 29928.527, "step_ms": 74.148096, "p": 0.949609019, "margin": 3.74115372, "nucleus": 2, "hit": 0.791666667}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 30003.6207, "step_ms": 75.06837, "p": 0.999998753, "margin": 14.3129997, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 4084, "text": "_d", "t_ms": 30079.6849, "step_ms": 76.036422, "p": 0.845785985, "margin": 1.7740593, "nucleus": 2, "hit": 0.791666667}
+{"event": "token", "id": 3899, "text": "word", "t_ms": 30151.2635, "step_ms": 71.55448, "p": 0.999985062, "margin": 12.0097656, "nucleus": 1, "hit": 0.591666667}
+{"event": "token", "id": 66, "text": "`", "t_ms": 30231.4104, "step_ms": 80.120248, "p": 0.925390984, "margin": 2.91741943, "nucleus": 2, "hit": 0.833333333}
+{"event": "token", "id": 304, "text": " to", "t_ms": 30307.3578, "step_ms": 75.927909, "p": 0.0954976235, "margin": 0.815353394, "nucleus": 15, "hit": 0.779166667}
+{"event": "token", "id": 721, "text": " V", "t_ms": 30380.0611, "step_ms": 72.677012, "p": 0.918898891, "margin": 3.00703812, "nucleus": 2, "hit": 0.675}
+{"event": "token", "id": 41, "text": "G", "t_ms": 30459.5718, "step_ms": 79.489276, "p": 0.99999902, "margin": 15.1289978, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 10750, "text": "PR", "t_ms": 30534.0601, "step_ms": 74.47072, "p": 0.999476601, "margin": 8.2242527, "nucleus": 1, "hit": 0.783333333}
+{"event": "token", "id": 1539, "text": " then", "t_ms": 30609.1066, "step_ms": 75.028965, "p": 0.945865622, "margin": 3.1653595, "nucleus": 2, "hit": 0.75}
+{"event": "token", "id": 7580, "text": " store", "t_ms": 30683.8124, "step_ms": 74.688628, "p": 0.691669365, "margin": 1.46950531, "nucleus": 3, "hit": 0.679166667}
+{"event": "token", "id": 304, "text": " to", "t_ms": 30767.3445, "step_ms": 83.513541, "p": 0.38806741, "margin": 0.25144577, "nucleus": 3, "hit": 0.745833333}
+{"event": "token", "id": 462, "text": " L", "t_ms": 30834.1292, "step_ms": 66.76847, "p": 0.999916471, "margin": 10.0885887, "nucleus": 1, "hit": 0.604166667}
+{"event": "token", "id": 10525, "text": "DS", "t_ms": 30907.66, "step_ms": 73.514139, "p": 0.999986142, "margin": 12.1502094, "nucleus": 1, "hit": 0.783333333}
+{"event": "token", "id": 29, "text": ";", "t_ms": 30981.7249, "step_ms": 74.044442, "p": 0.164376909, "margin": 0.14679718, "nucleus": 4, "hit": 0.758333333}
+{"event": "token", "id": 1119, "text": " no", "t_ms": 31053.7453, "step_ms": 71.990476, "p": 0.295143788, "margin": 0.335308075, "nucleus": 19, "hit": 0.65}
+{"event": "token", "id": 63200, "text": " cp", "t_ms": 31133.5114, "step_ms": 79.738844, "p": 0.0608743345, "margin": 1.12832642, "nucleus": 4, "hit": 0.6}
+{"event": "token", "id": 27734, "text": ".as", "t_ms": 31211.4299, "step_ms": 77.898999, "p": 0.999995051, "margin": 12.2239914, "nucleus": 1, "hit": 0.825}
+{"event": "token", "id": 7632, "text": "ync", "t_ms": 31289.4018, "step_ms": 77.954523, "p": 0.999999999, "margin": 21.9724655, "nucleus": 1, "hit": 0.7875}
+{"event": "token", "id": 33, "text": "?", "t_ms": 31361.5317, "step_ms": 72.113046, "p": 0.588365305, "margin": 1.17141342, "nucleus": 5, "hit": 0.741666667}
+{"event": "token", "id": 2275, "text": " But", "t_ms": 31428.9511, "step_ms": 67.401835, "p": 0.0502879822, "margin": 1.68329811, "nucleus": 13, "hit": 0.558333333}
+{"event": "token", "id": 1031, "text": " there", "t_ms": 31496.5292, "step_ms": 67.555843, "p": 0.0789030456, "margin": 0.22183609, "nucleus": 15, "hit": 0.475}
+{"event": "token", "id": 33, "text": "?", "t_ms": 31563.8276, "step_ms": 67.268065, "p": 0.101637706, "margin": 0.769922256, "nucleus": 18, "hit": 0.454166667}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 31630.7679, "step_ms": 66.911758, "p": 0.403486441, "margin": 1.73108673, "nucleus": 23, "hit": 0.45}
+{"event": "token", "id": 57694, "text": " AMD", "t_ms": 31698.8355, "step_ms": 68.03982, "p": 0.0838096544, "margin": 0.500444412, "nucleus": 5, "hit": 0.558333333}
+{"event": "token", "id": 21845, "text": " GP", "t_ms": 31771.8515, "step_ms": 72.986181, "p": 0.0797252047, "margin": 2.1257019, "nucleus": 6, "hit": 0.6875}
+{"event": "token", "id": 8095, "text": "Us", "t_ms": 31848.6059, "step_ms": 76.726463, "p": 0.999999237, "margin": 14.5026131, "nucleus": 1, "hit": 0.783333333}
+{"event": "token", "id": 14, "text": ",", "t_ms": 31921.4531, "step_ms": 72.82569, "p": 0.804071458, "margin": 2.11725044, "nucleus": 5, "hit": 0.708333333}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 31989.4605, "step_ms": 67.985959, "p": 0.483707588, "margin": 0.732419968, "nucleus": 7, "hit": 0.541666667}
+{"event": "token", "id": 31754, "text": "global", "t_ms": 32063.8838, "step_ms": 74.391572, "p": 0.673915492, "margin": 0.824020386, "nucleus": 2, "hit": 0.75}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 32140.7719, "step_ms": 76.868269, "p": 0.999825355, "margin": 9.15460968, "nucleus": 1, "hit": 0.783333333}
+{"event": "token", "id": 65, "text": "_", "t_ms": 32217.3328, "step_ms": 76.541437, "p": 0.992124416, "margin": 4.85861588, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 32296.0602, "step_ms": 78.708194, "p": 0.998795135, "margin": 7.31464767, "nucleus": 1, "hit": 0.795833333}
+{"event": "token", "id": 85, "text": "s", "t_ms": 32371.0546, "step_ms": 74.97267, "p": 0.999991198, "margin": 12.0783367, "nucleus": 1, "hit": 0.825}
+{"event": "token", "id": 66, "text": "`", "t_ms": 32447.891, "step_ms": 76.79946, "p": 0.999971139, "margin": 10.8695526, "nucleus": 1, "hit": 0.833333333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 32523.354, "step_ms": 75.434084, "p": 0.733216097, "margin": 1.36794472, "nucleus": 4, "hit": 0.758333333}
+{"event": "token", "id": 1119, "text": " no", "t_ms": 32599.1794, "step_ms": 75.805439, "p": 0.00630464981, "margin": 0.0532646179, "nucleus": 33, "hit": 0.504166667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 32664.7565, "step_ms": 65.554517, "p": 0.74497666, "margin": 1.6635952, "nucleus": 8, "hit": 0.483333333}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 32730.2172, "step_ms": 65.430434, "p": 0.0866277943, "margin": 0.284637451, "nucleus": 32, "hit": 0.433333333}
+{"event": "token", "id": 8888, "text": " CD", "t_ms": 32797.3889, "step_ms": 67.145896, "p": 0.399851623, "margin": 0.703979492, "nucleus": 5, "hit": 0.508333333}
+{"event": "token", "id": 3794, "text": "NA", "t_ms": 32871.5972, "step_ms": 74.189383, "p": 0.999714578, "margin": 9.36168098, "nucleus": 1, "hit": 0.779166667}
+{"event": "token", "id": 21, "text": "3", "t_ms": 32946.517, "step_ms": 74.898411, "p": 0.142191045, "margin": 0.223672867, "nucleus": 5, "hit": 0.754166667}
+{"event": "token", "id": 14, "text": ",", "t_ms": 33021.6063, "step_ms": 75.070553, "p": 0.204776813, "margin": 0.116527557, "nucleus": 7, "hit": 0.733333333}
+{"event": "token", "id": 1031, "text": " there", "t_ms": 33092.4075, "step_ms": 70.773929, "p": 0.136455458, "margin": 1.600317, "nucleus": 6, "hit": 0.595833333}
+{"event": "token", "id": 344, "text": " is", "t_ms": 33161.4952, "step_ms": 69.067193, "p": 0.0606486174, "margin": 1.94267464, "nucleus": 8, "hit": 0.533333333}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 33229.2529, "step_ms": 67.728747, "p": 0.789181102, "margin": 1.70093536, "nucleus": 3, "hit": 0.5}
+{"event": "token", "id": 70718, "text": "buffer", "t_ms": 33307.3402, "step_ms": 78.064459, "p": 0.908132594, "margin": 2.39569473, "nucleus": 2, "hit": 0.758333333}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 33383.2105, "step_ms": 75.84317, "p": 0.999994945, "margin": 13.3301163, "nucleus": 1, "hit": 0.8125}
+{"event": "token", "id": 4084, "text": "_d", "t_ms": 33459.245, "step_ms": 76.006386, "p": 0.971808335, "margin": 3.91046906, "nucleus": 1, "hit": 0.770833333}
+{"event": "token", "id": 3899, "text": "word", "t_ms": 33537.3123, "step_ms": 78.042086, "p": 0.999997891, "margin": 15.1327782, "nucleus": 1, "hit": 0.754166667}
+{"event": "token", "id": 66, "text": "`", "t_ms": 33620.0274, "step_ms": 82.684609, "p": 0.957364225, "margin": 3.4190979, "nucleus": 1, "hit": 0.841666667}
+{"event": "token", "id": 305, "text": " and", "t_ms": 33698.7115, "step_ms": 78.654533, "p": 0.4355532, "margin": 0.63574791, "nucleus": 15, "hit": 0.729166667}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 33773.1869, "step_ms": 74.44384, "p": 0.721071805, "margin": 1.76935959, "nucleus": 5, "hit": 0.670833333}
+{"event": "token", "id": 7562, "text": "ds", "t_ms": 33849.5024, "step_ms": 76.288082, "p": 0.942466977, "margin": 3.32664108, "nucleus": 2, "hit": 0.779166667}
+{"event": "token", "id": 98100, "text": "_write", "t_ms": 33929.6108, "step_ms": 80.085262, "p": 0.998966763, "margin": 7.28040695, "nucleus": 1, "hit": 0.85}
+{"event": "token", "id": 37419, "text": "`.", "t_ms": 34005.3401, "step_ms": 75.700823, "p": 0.924035571, "margin": 2.71876144, "nucleus": 2, "hit": 0.7625}
+{"event": "token", "id": 72025, "text": " HIP", "t_ms": 34078.09, "step_ms": 72.721144, "p": 0.00288065539, "margin": 0.724983215, "nucleus": 53, "hit": 0.629166667}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 34155.3662, "step_ms": 77.249182, "p": 0.0471222406, "margin": 0.88866806, "nucleus": 9, "hit": 0.845833333}
+{"event": "token", "id": 848, "text": "__", "t_ms": 34231.9801, "step_ms": 76.590238, "p": 0.978219841, "margin": 4.64650726, "nucleus": 1, "hit": 0.820833333}
+{"event": "token", "id": 75565, "text": "built", "t_ms": 34310.7063, "step_ms": 78.699067, "p": 0.718413939, "margin": 0.938446045, "nucleus": 2, "hit": 0.879166667}
+{"event": "token", "id": 261, "text": "in", "t_ms": 34388.3133, "step_ms": 77.588407, "p": 0.999999695, "margin": 15.8278809, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 65, "text": "_", "t_ms": 34465.0842, "step_ms": 76.75165, "p": 0.97562689, "margin": 4.12400627, "nucleus": 1, "hit": 0.804166667}
+{"event": "token", "id": 356, "text": "am", "t_ms": 34539.3886, "step_ms": 74.283289, "p": 0.995141416, "margin": 5.72409058, "nucleus": 1, "hit": 0.6875}
+{"event": "token", "id": 82829, "text": "dg", "t_ms": 34617.3592, "step_ms": 77.944784, "p": 0.999998059, "margin": 13.8212929, "nucleus": 1, "hit": 0.816666667}
+{"event": "token", "id": 16333, "text": "cn", "t_ms": 34695.958, "step_ms": 78.575556, "p": 0.99993659, "margin": 10.381649, "nucleus": 1, "hit": 0.8}
+{"event": "token", "id": 65, "text": "_", "t_ms": 34773.47, "step_ms": 77.490804, "p": 0.975868746, "margin": 4.02987671, "nucleus": 1, "hit": 0.7875}
+{"event": "token", "id": 31754, "text": "global", "t_ms": 34850.8149, "step_ms": 77.323432, "p": 0.949160863, "margin": 3.06329346, "nucleus": 2, "hit": 0.804166667}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 34926.3955, "step_ms": 75.552646, "p": 0.999992808, "margin": 12.5370369, "nucleus": 1, "hit": 0.75}
+{"event": "token", "id": 65, "text": "_", "t_ms": 35003.1691, "step_ms": 76.752222, "p": 0.999957732, "margin": 10.9136543, "nucleus": 1, "hit": 0.791666667}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 35079.7998, "step_ms": 76.60165, "p": 0.99989764, "margin": 9.24734879, "nucleus": 1, "hit": 0.7875}
+{"event": "token", "id": 85, "text": "s", "t_ms": 35159.1055, "step_ms": 79.276528, "p": 0.999994119, "margin": 13.6929913, "nucleus": 1, "hit": 0.829166667}
+{"event": "token", "id": 66, "text": "`", "t_ms": 35236.4507, "step_ms": 77.317099, "p": 0.9993775, "margin": 7.8438797, "nucleus": 1, "hit": 0.8}
+{"event": "token", "id": 33, "text": "?", "t_ms": 35312.0915, "step_ms": 75.621495, "p": 0.889570208, "margin": 2.12836456, "nucleus": 2, "hit": 0.7375}
+{"event": "token", "id": 10796, "text": " maybe", "t_ms": 35380.8003, "step_ms": 68.690699, "p": 0.30841809, "margin": 0.404684067, "nucleus": 36, "hit": 0.495833333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 35447.8703, "step_ms": 67.050077, "p": 0.453192188, "margin": 0.291204453, "nucleus": 14, "hit": 0.458333333}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 35514.7245, "step_ms": 66.822701, "p": 0.294258954, "margin": 0.768278122, "nucleus": 37, "hit": 0.433333333}
+{"event": "token", "id": 433, "text": " R", "t_ms": 35583.0607, "step_ms": 68.315906, "p": 0.229571062, "margin": 0.536094666, "nucleus": 4, "hit": 0.529166667}
+{"event": "token", "id": 23164, "text": "DNA", "t_ms": 35657.7409, "step_ms": 74.658912, "p": 0.999999672, "margin": 15.5198174, "nucleus": 1, "hit": 0.75}
+{"event": "token", "id": 33, "text": "?", "t_ms": 35735.4399, "step_ms": 77.678707, "p": 0.739882464, "margin": 1.37426758, "nucleus": 3, "hit": 0.758333333}
+{"event": "token", "id": 2454, "text": " There", "t_ms": 35805.1968, "step_ms": 69.731006, "p": 0.237054628, "margin": 0.0249271393, "nucleus": 25, "hit": 0.558333333}
+{"event": "token", "id": 582, "text": " \"", "t_ms": 35870.6268, "step_ms": 65.408864, "p": 0.0105307019, "margin": 1.16852188, "nucleus": 18, "hit": 0.391666667}
+{"event": "token", "id": 41072, "text": "async", "t_ms": 35941.9049, "step_ms": 71.257614, "p": 0.44518325, "margin": 0.0246677399, "nucleus": 3, "hit": 0.654166667}
+{"event": "token", "id": 7610, "text": " copy", "t_ms": 36017.4886, "step_ms": 75.564908, "p": 0.950961717, "margin": 3.06697845, "nucleus": 1, "hit": 0.791666667}
+{"event": "token", "id": 4, "text": "\"", "t_ms": 36094.7742, "step_ms": 77.267196, "p": 0.963508122, "margin": 3.35694885, "nucleus": 1, "hit": 0.7875}
+{"event": "token", "id": 5566, "text": " via", "t_ms": 36169.2571, "step_ms": 74.463506, "p": 0.359989144, "margin": 1.11160851, "nucleus": 20, "hit": 0.683333333}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 36242.6982, "step_ms": 73.413611, "p": 0.966997104, "margin": 3.63556671, "nucleus": 1, "hit": 0.691666667}
+{"event": "token", "id": 31754, "text": "global", "t_ms": 36320.699, "step_ms": 77.979149, "p": 0.196034817, "margin": 0.139785767, "nucleus": 4, "hit": 0.8375}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 36396.973, "step_ms": 76.251815, "p": 0.999222017, "margin": 7.35048866, "nucleus": 1, "hit": 0.754166667}
+{"event": "token", "id": 65, "text": "_", "t_ms": 36474.7987, "step_ms": 77.805984, "p": 0.999796987, "margin": 9.03220177, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 36545.0427, "step_ms": 70.22464, "p": 0.999837893, "margin": 8.83689499, "nucleus": 1, "hit": 0.545833333}
+{"event": "token", "id": 85, "text": "s", "t_ms": 36622.7591, "step_ms": 77.696679, "p": 0.999989792, "margin": 13.2728939, "nucleus": 1, "hit": 0.841666667}
+{"event": "token", "id": 66, "text": "`", "t_ms": 36700.5376, "step_ms": 77.757755, "p": 0.997142452, "margin": 6.11372375, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 36778.3733, "step_ms": 77.816715, "p": 0.593934917, "margin": 1.78496742, "nucleus": 10, "hit": 0.725}
+{"event": "token", "id": 342, "text": " I", "t_ms": 36846.6484, "step_ms": 68.256656, "p": 0.0545062776, "margin": 0.136449814, "nucleus": 43, "hit": 0.5}
+{"event": "token", "id": 5429, "text": " believe", "t_ms": 36913.3476, "step_ms": 66.675916, "p": 0.104569242, "margin": 1.55850792, "nucleus": 20, "hit": 0.425}
+{"event": "token", "id": 33, "text": "?", "t_ms": 36976.2041, "step_ms": 62.828032, "p": 0.368770314, "margin": 0.195320129, "nucleus": 16, "hit": 0.325}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 37040.2277, "step_ms": 64.000517, "p": 0.231663177, "margin": 0.540159225, "nucleus": 30, "hit": 0.358333333}
+{"event": "token", "id": 8888, "text": " CD", "t_ms": 37107.5802, "step_ms": 67.32427, "p": 0.630588, "margin": 1.3329258, "nucleus": 4, "hit": 0.5}
+{"event": "token", "id": 3794, "text": "NA", "t_ms": 37183.8541, "step_ms": 76.248148, "p": 0.999844632, "margin": 9.10416222, "nucleus": 1, "hit": 0.791666667}
+{"event": "token", "id": 21, "text": "3", "t_ms": 37262.2869, "step_ms": 78.41232, "p": 0.436172482, "margin": 0.607517242, "nucleus": 5, "hit": 0.733333333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 37334.7887, "step_ms": 72.485473, "p": 0.127930344, "margin": 0.949073792, "nucleus": 7, "hit": 0.729166667}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 37402.6254, "step_ms": 67.820158, "p": 0.11034829, "margin": 0.681659698, "nucleus": 35, "hit": 0.475}
+{"event": "token", "id": 31754, "text": "global", "t_ms": 37476.1344, "step_ms": 73.492158, "p": 0.0867903444, "margin": 1.31655884, "nucleus": 4, "hit": 0.741666667}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 37551.5713, "step_ms": 75.419226, "p": 0.990096143, "margin": 4.60554504, "nucleus": 1, "hit": 0.754166667}
+{"event": "token", "id": 65, "text": "_", "t_ms": 37627.3143, "step_ms": 75.72567, "p": 0.999955233, "margin": 10.1038704, "nucleus": 1, "hit": 0.775}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 37705.1066, "step_ms": 77.774165, "p": 0.999977433, "margin": 10.9689941, "nucleus": 1, "hit": 0.804166667}
+{"event": "token", "id": 85, "text": "s", "t_ms": 37781.9119, "step_ms": 76.787247, "p": 0.999979642, "margin": 11.6255341, "nucleus": 1, "hit": 0.8}
+{"event": "token", "id": 66, "text": "`", "t_ms": 37858.1711, "step_ms": 76.2385, "p": 0.99551823, "margin": 5.47457886, "nucleus": 1, "hit": 0.791666667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 37936.5211, "step_ms": 78.320358, "p": 0.314575976, "margin": 0.65732193, "nucleus": 18, "hit": 0.745833333}
+{"event": "token", "id": 1119, "text": " no", "t_ms": 38007.3984, "step_ms": 70.848598, "p": 0.0844518026, "margin": 0.164331436, "nucleus": 56, "hit": 0.475}
+{"event": "token", "id": 33, "text": "?", "t_ms": 38074.956, "step_ms": 67.530697, "p": 0.913010142, "margin": 2.74918365, "nucleus": 2, "hit": 0.4375}
+{"event": "token", "id": 2454, "text": " There", "t_ms": 38141.3092, "step_ms": 66.333846, "p": 0.130631228, "margin": 0.368619919, "nucleus": 26, "hit": 0.391666667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 38207.6894, "step_ms": 66.361016, "p": 0.479609648, "margin": 0.919895172, "nucleus": 12, "hit": 0.4375}
+{"event": "token", "id": 342, "text": " I", "t_ms": 38274.1635, "step_ms": 66.456105, "p": 0.0349827447, "margin": 0.2453022, "nucleus": 33, "hit": 0.408333333}
+{"event": "token", "id": 2118, "text": " think", "t_ms": 38341.291, "step_ms": 67.108636, "p": 0.143844573, "margin": 1.06887245, "nucleus": 45, "hit": 0.441666667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 38405.5301, "step_ms": 64.221671, "p": 0.369947027, "margin": 0.712993622, "nucleus": 22, "hit": 0.329166667}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 38470.4883, "step_ms": 64.94202, "p": 0.221526991, "margin": 0.328401566, "nucleus": 34, "hit": 0.379166667}
+{"event": "token", "id": 33691, "text": " MI", "t_ms": 38541.564, "step_ms": 71.055346, "p": 0.237219306, "margin": 0.408946991, "nucleus": 5, "hit": 0.508333333}
+{"event": "token", "id": 4314, "text": "300", "t_ms": 38622.2939, "step_ms": 80.701216, "p": 0.987512929, "margin": 4.67361832, "nucleus": 1, "hit": 0.758333333}
+{"event": "token", "id": 14, "text": ",", "t_ms": 38702.6925, "step_ms": 80.375816, "p": 0.244077249, "margin": 1.09098053, "nucleus": 2, "hit": 0.7125}
+{"event": "token", "id": 769, "text": " has", "t_ms": 38776.0239, "step_ms": 73.303495, "p": 0.240863704, "margin": 0.0525302887, "nucleus": 10, "hit": 0.625}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 38851.6284, "step_ms": 75.580959, "p": 0.825190512, "margin": 2.24430847, "nucleus": 3, "hit": 0.608333333}
+{"event": "token", "id": 70718, "text": "buffer", "t_ms": 38925.2527, "step_ms": 73.603466, "p": 0.901543184, "margin": 2.26482773, "nucleus": 2, "hit": 0.808333333}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 39001.4635, "step_ms": 76.189267, "p": 0.999997493, "margin": 13.8412838, "nucleus": 1, "hit": 0.8}
+{"event": "token", "id": 4084, "text": "_d", "t_ms": 39077.613, "step_ms": 76.128453, "p": 0.973208822, "margin": 3.99983215, "nucleus": 1, "hit": 0.766666667}
+{"event": "token", "id": 3899, "text": "word", "t_ms": 39155.1441, "step_ms": 77.512185, "p": 0.99999599, "margin": 14.284296, "nucleus": 1, "hit": 0.775}
+{"event": "token", "id": 66, "text": "`", "t_ms": 39234.26, "step_ms": 79.09612, "p": 0.975319835, "margin": 4.54986572, "nucleus": 1, "hit": 0.841666667}
+{"event": "token", "id": 418, "text": " with", "t_ms": 39310.8149, "step_ms": 76.529275, "p": 0.221582468, "margin": 0.628929138, "nucleus": 14, "hit": 0.729166667}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 39384.0113, "step_ms": 73.169794, "p": 0.553620198, "margin": 0.516967773, "nucleus": 4, "hit": 0.633333333}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 39460.7065, "step_ms": 76.668124, "p": 0.99419719, "margin": 5.66218185, "nucleus": 1, "hit": 0.791666667}
+{"event": "token", "id": 85, "text": "s", "t_ms": 39537.985, "step_ms": 77.253931, "p": 0.999994294, "margin": 12.5299625, "nucleus": 1, "hit": 0.779166667}
+{"event": "token", "id": 66, "text": "`", "t_ms": 39616.2745, "step_ms": 78.269442, "p": 0.997928957, "margin": 6.2986908, "nucleus": 1, "hit": 0.841666667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 39694.5265, "step_ms": 78.232112, "p": 0.7870974, "margin": 1.41317368, "nucleus": 2, "hit": 0.791666667}
+{"event": "token", "id": 48837, "text": " Actually", "t_ms": 39764.4131, "step_ms": 69.867782, "p": 0.332224969, "margin": 0.510072708, "nucleus": 22, "hit": 0.479166667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 39832.4892, "step_ms": 68.058665, "p": 0.360810162, "margin": 0.615505219, "nucleus": 13, "hit": 0.454166667}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 39899.4671, "step_ms": 66.958345, "p": 0.107374217, "margin": 1.09135246, "nucleus": 29, "hit": 0.420833333}
+{"event": "token", "id": 57694, "text": " AMD", "t_ms": 39967.7701, "step_ms": 68.273667, "p": 0.262651164, "margin": 0.513395309, "nucleus": 7, "hit": 0.508333333}
+{"event": "token", "id": 21845, "text": " GP", "t_ms": 40040.4045, "step_ms": 72.605017, "p": 0.236767476, "margin": 0.798809052, "nucleus": 9, "hit": 0.666666667}
+{"event": "token", "id": 8095, "text": "Us", "t_ms": 40119.3272, "step_ms": 78.893531, "p": 0.999884596, "margin": 9.97802734, "nucleus": 1, "hit": 0.833333333}
+{"event": "token", "id": 14, "text": ",", "t_ms": 40195.6334, "step_ms": 76.272684, "p": 0.958407532, "margin": 4.07453537, "nucleus": 1, "hit": 0.633333333}
+{"event": "token", "id": 1119, "text": " no", "t_ms": 40266.0609, "step_ms": 70.397954, "p": 0.0441841544, "margin": 1.18187141, "nucleus": 6, "hit": 0.495833333}
+{"event": "token", "id": 63200, "text": " cp", "t_ms": 40335.0795, "step_ms": 68.993084, "p": 0.514374269, "margin": 1.25449753, "nucleus": 8, "hit": 0.491666667}
+{"event": "token", "id": 27734, "text": ".as", "t_ms": 40410.4182, "step_ms": 75.310071, "p": 0.999666879, "margin": 8.02641487, "nucleus": 1, "hit": 0.75}
+{"event": "token", "id": 7632, "text": "ync", "t_ms": 40488.0451, "step_ms": 77.603005, "p": 0.999999941, "margin": 16.8425331, "nucleus": 1, "hit": 0.804166667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 40565.4168, "step_ms": 77.351404, "p": 0.414853318, "margin": 1.12895775, "nucleus": 9, "hit": 0.745833333}
+{"event": "token", "id": 2454, "text": " There", "t_ms": 40635.2138, "step_ms": 69.77102, "p": 0.217810055, "margin": 0.624065399, "nucleus": 31, "hit": 0.504166667}
+{"event": "token", "id": 582, "text": " \"", "t_ms": 40702.0071, "step_ms": 66.770643, "p": 0.104474123, "margin": 1.98431778, "nucleus": 4, "hit": 0.391666667}
+{"event": "token", "id": 31754, "text": "global", "t_ms": 40773.0419, "step_ms": 70.991076, "p": 0.744813808, "margin": 1.71639252, "nucleus": 3, "hit": 0.604166667}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 40847.5134, "step_ms": 74.450021, "p": 0.997108941, "margin": 6.29392624, "nucleus": 1, "hit": 0.725}
+{"event": "token", "id": 65, "text": "_", "t_ms": 40922.7869, "step_ms": 75.253696, "p": 0.999662648, "margin": 8.29349136, "nucleus": 1, "hit": 0.745833333}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 40992.4827, "step_ms": 69.679199, "p": 0.999985768, "margin": 12.3391476, "nucleus": 1, "hit": 0.525}
+{"event": "token", "id": 85, "text": "s", "t_ms": 41069.2095, "step_ms": 76.710152, "p": 0.999983988, "margin": 12.6763802, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 4, "text": "\"", "t_ms": 41147.075, "step_ms": 77.848284, "p": 0.848582122, "margin": 1.77615738, "nucleus": 2, "hit": 0.770833333}
+{"event": "token", "id": 12036, "text": " exists", "t_ms": 41223.0839, "step_ms": 75.984274, "p": 0.105867238, "margin": 1.05748749, "nucleus": 23, "hit": 0.675}
+{"event": "token", "id": 33, "text": "?", "t_ms": 41293.2437, "step_ms": 70.140202, "p": 0.653886168, "margin": 1.09077072, "nucleus": 3, "hit": 0.575}
+{"event": "token", "id": 342, "text": " I", "t_ms": 41358.948, "step_ms": 65.686924, "p": 0.159130472, "margin": 0.87735939, "nucleus": 28, "hit": 0.391666667}
+{"event": "token", "id": 2118, "text": " think", "t_ms": 41423.973, "step_ms": 65.002984, "p": 0.220178132, "margin": 1.06292534, "nucleus": 14, "hit": 0.375}
+{"event": "token", "id": 33, "text": "?", "t_ms": 41487.5456, "step_ms": 63.55344, "p": 0.925920681, "margin": 3.34389114, "nucleus": 2, "hit": 0.329166667}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 41551.7166, "step_ms": 64.146871, "p": 0.577204236, "margin": 1.79770088, "nucleus": 21, "hit": 0.35}
+{"event": "token", "id": 8888, "text": " CD", "t_ms": 41619.3002, "step_ms": 67.565351, "p": 0.587920999, "margin": 1.40385628, "nucleus": 5, "hit": 0.475}
+{"event": "token", "id": 3794, "text": "NA", "t_ms": 41695.8468, "step_ms": 76.530446, "p": 0.998976691, "margin": 8.04982567, "nucleus": 1, "hit": 0.758333333}
+{"event": "token", "id": 21, "text": "3", "t_ms": 41771.6473, "step_ms": 75.7849, "p": 0.784728815, "margin": 1.80926132, "nucleus": 3, "hit": 0.725}
+{"event": "token", "id": 14, "text": ",", "t_ms": 41847.0754, "step_ms": 75.409037, "p": 0.32499962, "margin": 0.699703217, "nucleus": 2, "hit": 0.725}
+{"event": "token", "id": 1031, "text": " there", "t_ms": 41917.1779, "step_ms": 70.07508, "p": 0.500101551, "margin": 0.86687851, "nucleus": 8, "hit": 0.5125}
+{"event": "token", "id": 344, "text": " is", "t_ms": 41988.9152, "step_ms": 71.717225, "p": 0.52562139, "margin": 0.83810997, "nucleus": 4, "hit": 0.575}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 42057.642, "step_ms": 68.707279, "p": 0.817223154, "margin": 2.15247345, "nucleus": 3, "hit": 0.4875}
+{"event": "token", "id": 70718, "text": "buffer", "t_ms": 42133.5978, "step_ms": 75.93386, "p": 0.732730231, "margin": 1.08520126, "nucleus": 2, "hit": 0.766666667}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 42210.3902, "step_ms": 76.775135, "p": 0.999997124, "margin": 13.5804729, "nucleus": 1, "hit": 0.75}
+{"event": "token", "id": 4084, "text": "_d", "t_ms": 42285.8364, "step_ms": 75.42699, "p": 0.997133238, "margin": 6.05801773, "nucleus": 1, "hit": 0.733333333}
+{"event": "token", "id": 3899, "text": "word", "t_ms": 42364.7277, "step_ms": 78.872501, "p": 0.999972044, "margin": 12.3063774, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 66, "text": "`", "t_ms": 42441.9176, "step_ms": 77.16226, "p": 0.997301873, "margin": 6.93236542, "nucleus": 1, "hit": 0.775}
+{"event": "token", "id": 305, "text": " and", "t_ms": 42517.7216, "step_ms": 75.777526, "p": 0.837100852, "margin": 1.89934158, "nucleus": 2, "hit": 0.716666667}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 42590.5149, "step_ms": 72.773983, "p": 0.993449802, "margin": 6.65660667, "nucleus": 1, "hit": 0.620833333}
+{"event": "token", "id": 7562, "text": "ds", "t_ms": 42667.3794, "step_ms": 76.842822, "p": 0.991172038, "margin": 5.43180084, "nucleus": 1, "hit": 0.758333333}
+{"event": "token", "id": 98100, "text": "_write", "t_ms": 42743.8898, "step_ms": 76.482557, "p": 0.999730969, "margin": 8.72461891, "nucleus": 1, "hit": 0.775}
+{"event": "token", "id": 37419, "text": "`.", "t_ms": 42819.4399, "step_ms": 75.530104, "p": 0.98610153, "margin": 4.52011108, "nucleus": 1, "hit": 0.733333333}
+{"event": "token", "id": 2275, "text": " But", "t_ms": 42891.0858, "step_ms": 71.628469, "p": 0.0191186908, "margin": 3.83214951, "nucleus": 7, "hit": 0.525}
+{"event": "token", "id": 72025, "text": " HIP", "t_ms": 42957.8197, "step_ms": 66.712234, "p": 0.0164397701, "margin": 2.08065987, "nucleus": 21, "hit": 0.425}
+{"event": "token", "id": 81547, "text": " exposes", "t_ms": 43033.9181, "step_ms": 76.078811, "p": 0.00976472263, "margin": 0.585607529, "nucleus": 9, "hit": 0.770833333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 43107.3448, "step_ms": 73.399695, "p": 0.478234905, "margin": 0.038684845, "nucleus": 2, "hit": 0.679166667}
+{"event": "token", "id": 4165, "text": " Not", "t_ms": 43175.5106, "step_ms": 68.138524, "p": 0.0127522945, "margin": 0.263799667, "nucleus": 23, "hit": 0.45}
+{"event": "token", "id": 3645, "text": " sure", "t_ms": 43242.6773, "step_ms": 67.144463, "p": 0.301688169, "margin": 0.174749374, "nucleus": 20, "hit": 0.429166667}
+{"event": "token", "id": 16, "text": ".", "t_ms": 43306.5572, "step_ms": 63.85791, "p": 0.840858513, "margin": 1.95477867, "nucleus": 2, "hit": 0.329166667}
+{"event": "token", "id": 1350, "text": " We", "t_ms": 43374.9038, "step_ms": 68.325534, "p": 0.0486408781, "margin": 0.247644424, "nucleus": 31, "hit": 0.433333333}
+{"event": "token", "id": 1142, "text": " may", "t_ms": 43437.376, "step_ms": 62.44763, "p": 0.0161189633, "margin": 0.444480896, "nucleus": 39, "hit": 0.304166667}
+{"event": "token", "id": 1347, "text": " use", "t_ms": 43502.9525, "step_ms": 65.552543, "p": 0.276819613, "margin": 0.452684402, "nucleus": 45, "hit": 0.3125}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 43576.6754, "step_ms": 73.694677, "p": 0.598836612, "margin": 1.3128891, "nucleus": 15, "hit": 0.5625}
+{"event": "token", "id": 848, "text": "__", "t_ms": 43652.1274, "step_ms": 75.423444, "p": 0.95916872, "margin": 3.93169022, "nucleus": 1, "hit": 0.766666667}
+{"event": "token", "id": 75565, "text": "built", "t_ms": 43733.169, "step_ms": 81.014452, "p": 0.791729128, "margin": 1.34807587, "nucleus": 2, "hit": 0.85}
+{"event": "token", "id": 261, "text": "in", "t_ms": 43810.5447, "step_ms": 77.354038, "p": 0.999999172, "margin": 14.3659401, "nucleus": 1, "hit": 0.7625}
+{"event": "token", "id": 65, "text": "_", "t_ms": 43888.8188, "step_ms": 78.250186, "p": 0.997886815, "margin": 6.4396534, "nucleus": 1, "hit": 0.804166667}
+{"event": "token", "id": 356, "text": "am", "t_ms": 43962.7125, "step_ms": 73.873612, "p": 0.999990607, "margin": 11.6044235, "nucleus": 1, "hit": 0.641666667}
+{"event": "token", "id": 82829, "text": "dg", "t_ms": 44037.7735, "step_ms": 75.040016, "p": 0.999958091, "margin": 10.1146469, "nucleus": 1, "hit": 0.7}
+{"event": "token", "id": 16333, "text": "cn", "t_ms": 44116.1887, "step_ms": 78.391701, "p": 0.999271085, "margin": 8.42878723, "nucleus": 1, "hit": 0.7875}
+{"event": "token", "id": 65, "text": "_", "t_ms": 44193.6304, "step_ms": 77.422386, "p": 0.983915177, "margin": 4.90267563, "nucleus": 1, "hit": 0.783333333}
+{"event": "token", "id": 31754, "text": "global", "t_ms": 44272.0135, "step_ms": 78.36457, "p": 0.999656987, "margin": 8.51267433, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 44347.9338, "step_ms": 75.903192, "p": 0.999995181, "margin": 13.011982, "nucleus": 1, "hit": 0.725}
+{"event": "token", "id": 65, "text": "_", "t_ms": 44425.0225, "step_ms": 77.070638, "p": 0.999916282, "margin": 9.71034622, "nucleus": 1, "hit": 0.779166667}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 44499.328, "step_ms": 74.287627, "p": 0.999993888, "margin": 13.4635601, "nucleus": 1, "hit": 0.6875}
+{"event": "token", "id": 85, "text": "s", "t_ms": 44577.9286, "step_ms": 78.580064, "p": 0.999991918, "margin": 12.7035313, "nucleus": 1, "hit": 0.833333333}
+{"event": "token", "id": 66, "text": "`", "t_ms": 44655.5034, "step_ms": 77.546869, "p": 0.955197261, "margin": 3.16031456, "nucleus": 1, "hit": 0.795833333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 44733.7026, "step_ms": 78.173152, "p": 0.935121462, "margin": 3.46779633, "nucleus": 2, "hit": 0.741666667}
+{"event": "token", "id": 1884, "text": " For", "t_ms": 44802.7766, "step_ms": 69.055101, "p": 0.00917237483, "margin": 0.603557587, "nucleus": 40, "hit": 0.45}
+{"event": "token", "id": 336, "text": " g", "t_ms": 44871.7957, "step_ms": 68.99575, "p": 0.3359549, "margin": 0.212478638, "nucleus": 9, "hit": 0.520833333}
+{"event": "token", "id": 58599, "text": "fx", "t_ms": 44947.2118, "step_ms": 75.38967, "p": 0.999998883, "margin": 13.8433437, "nucleus": 1, "hit": 0.775}
+{"event": "token", "id": 27, "text": "9", "t_ms": 45023.0026, "step_ms": 75.771425, "p": 0.505805973, "margin": 0.333820343, "nucleus": 3, "hit": 0.741666667}
+{"event": "token", "id": 33, "text": "?", "t_ms": 45098.7244, "step_ms": 75.702236, "p": 0.989063307, "margin": 4.66739845, "nucleus": 1, "hit": 0.733333333}
+{"event": "token", "id": 17519, "text": " Maybe", "t_ms": 45169.4238, "step_ms": 70.672499, "p": 0.0970191222, "margin": 0.290512085, "nucleus": 31, "hit": 0.533333333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 45236.3272, "step_ms": 66.883425, "p": 0.574486405, "margin": 1.27313805, "nucleus": 14, "hit": 0.429166667}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 45302.5453, "step_ms": 66.196238, "p": 0.3036217, "margin": 0.890644073, "nucleus": 27, "hit": 0.375}
+{"event": "token", "id": 336, "text": " g", "t_ms": 45371.7675, "step_ms": 69.202336, "p": 0.378534692, "margin": 0.375404358, "nucleus": 5, "hit": 0.508333333}
+{"event": "token", "id": 58599, "text": "fx", "t_ms": 45447.4871, "step_ms": 75.700683, "p": 0.999511016, "margin": 9.04627991, "nucleus": 1, "hit": 0.754166667}
+{"event": "token", "id": 27, "text": "9", "t_ms": 45523.3316, "step_ms": 75.819626, "p": 0.0742183138, "margin": 0.452835083, "nucleus": 4, "hit": 0.720833333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 45598.0515, "step_ms": 74.698576, "p": 0.757504872, "margin": 1.2874012, "nucleus": 2, "hit": 0.683333333}
+{"event": "token", "id": 3608, "text": " `", "t_ms": 45672.5186, "step_ms": 74.445933, "p": 0.142051167, "margin": 0.762937546, "nucleus": 25, "hit": 0.483333333}
+{"event": "token", "id": 31754, "text": "global", "t_ms": 45743.6576, "step_ms": 71.112433, "p": 0.969215267, "margin": 3.75809479, "nucleus": 1, "hit": 0.733333333}
+{"event": "token", "id": 114119, "text": "_load", "t_ms": 45817.5131, "step_ms": 73.8354, "p": 0.999985032, "margin": 11.1634693, "nucleus": 1, "hit": 0.745833333}
+{"event": "token", "id": 65, "text": "_", "t_ms": 45893.7266, "step_ms": 76.194407, "p": 0.997674439, "margin": 6.06409454, "nucleus": 1, "hit": 0.758333333}
+{"event": "token", "id": 514, "text": "ld", "t_ms": 45966.0543, "step_ms": 72.300457, "p": 0.999997591, "margin": 13.5983086, "nucleus": 1, "hit": 0.608333333}
+{"event": "token", "id": 85, "text": "s", "t_ms": 46042.6012, "step_ms": 76.520588, "p": 0.999989668, "margin": 13.0491066, "nucleus": 1, "hit": 0.775}
+{"event": "token", "id": 66, "text": "`", "t_ms": 46120.0913, "step_ms": 77.468062, "p": 0.998908582, "margin": 7.40670776, "nucleus": 1, "hit": 0.808333333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 46197.2089, "step_ms": 77.0986, "p": 0.778151122, "margin": 2.8182354, "nucleus": 7, "hit": 0.766666667}
+{"event": "token", "id": 4480, "text": " Let", "t_ms": 46267.0857, "step_ms": 69.852613, "p": 0.0047082309, "margin": 0.240732193, "nucleus": 31, "hit": 0.495833333}
+{"event": "token", "id": 734, "text": "'s", "t_ms": 46332.8446, "step_ms": 65.736737, "p": 0.586783259, "margin": 0.783464432, "nucleus": 4, "hit": 0.370833333}
+{"event": "token", "id": 33, "text": "?", "t_ms": 46396.2927, "step_ms": 63.424328, "p": 0.491897788, "margin": 2.18993759, "nucleus": 42, "hit": 0.304166667}
+{"event": "token", "id": 2483, "text": " On", "t_ms": 46462.4345, "step_ms": 66.12297, "p": 0.156278508, "margin": 0.514421463, "nucleus": 31, "hit": 0.408333333}
+{"event": "token", "id": 33691, "text": " MI", "t_ms": 46532.259, "step_ms": 69.804443, "p": 0.122485016, "margin": 0.106035233, "nucleus": 6, "hit": 0.466666667}
+{"event": "token", "id": 6793, "text": "250", "t_ms": 46605.8728, "step_ms": 73.59468, "p": 0.23286582, "margin": 0.837617874, "nucleus": 4, "hit": 0.7125}
+{"event": "token", "id": 33, "text": "?", "t_ms": 46682.2068, "step_ms": 76.310023, "p": 0.915032332, "margin": 2.47469902, "nucleus": 2, "hit": 0.725}
+{"event": "token", "id": 2454, "text": " There", "t_ms": 46753.2754, "step_ms": 71.043884, "p": 0.172005584, "margin": 0.269741058, "nucleus": 27, "hit": 0.5125}
+{"event": "token", "id": 33, "text": "?", "t_ms": 46821.2989, "step_ms": 68.005275, "p": 0.715103267, "margin": 1.72860718, "nucleus": 5, "hit": 0.433333333}
+{"event": "done", "session": "longtest", "prompt_tokens": 100, "reused_tokens": 0, "prefill_tokens": 100, "generated": 512, "prefill_mode": "gpu", "finish": "length", "rollback_dropped": 0, "replay_steps": 0, "replay_ms": 0, "prefill_ms": 9683.98541, "prefill_tok_s": 10.326327, "ttft_ms": 9684.00642, "decode_ms": 37137.3023, "decode_steps": 511, "tok_s": 13.7597501, "total_ms": 46821.3063, "prefill_hit_rate": 0, "decode_hit_rate": 0.699812459, "prefill_nvme_mb": 0, "decode_nvme_mb": 0, "per_token_ms": {"attn": 34.8854788, "moe_gpu": 20.754151, "moe_host": 0.0420634325, "nvme_stall": 0.356840219, "engram": 2.26393793, "tail": 6.75734487, "other": 7.59391401, "record": 0.377025765, "submit": 0.979925718, "bind": 1.3702023, "fence_wait": 67.9918652, "submits": 81, "sample_host": 0.260004578}, "sampled_steps": 512, "topk_fallbacks": 1, "topk_checked": 0, "topk_mismatches": 0, "mean_nucleus": 7.76171875, "context": 611, "reheat": {"turn": 0, "keys": 0, "free_slots": 0}, "speculation": {"cycles": 0, "verified": 0, "accepted": 0, "tokens": 0, "draft_ms": 0, "verify_ms": 0, "commit_ms": 0, "cpu_ms": 0, "target_rows": 0, "union_experts": 0, "miss_bytes": 0, "gpu_readout_cycles": 0}, "seed": 51001, "mode": "thinking", "content": "我们需要写一份详细的高性能 HIP 算子设计说明，中文。需要覆盖 GEMM、attention、MoE、RMSNorm 各组件的 tile 大小和流水线深度。逐项解释寄存器、LDS、占用率和访存的约束。给出选择步骤、计算例子和如何验证性能的方法。至少两千字，充分展开。可能要求非常详细。需要理解 AMD HIP，GPU 架构（如 CDNA，RDNA）。讨论 matrix cores（MFMA），WMFMA? LDS 大小 64KB? 寄存器 256 VGPR per thread max, occupancy. Wave64 vs wave32. 在 CDNA 上 wave64。tile size 影响寄存器使用。对于 GEMM，MFMA 指令，如 32x32x8? f32 16x16x16? 需要计算寄存器。Attention，flash attention，tile Q, KV, head dim. MoE，grouped GEMM / expert routing, token permutation, tile M/N/K. RMSNorm，reduction, vectorization, LDS, occupancy. 流水线深度，prefetch stages, async copy? AMD 有 global_load_lds? buffer_load_dword? 有 scheduling. On CDNA3, async copy? `buffer_load_dword` with `lds`? Actually global to LDS via `buffer_load_dword` to VGPR then store to LDS; no cp.async? But there? On AMD GPUs, `global_load_lds`? no? On CDNA3, there is `buffer_load_dword` and `ds_write`. HIP `__builtin_amdgcn_global_load_lds`? maybe? On RDNA? There \"async copy\" via `global_load_lds`? I believe? On CDNA3? `global_load_lds`? no? There? I think? On MI300, has `buffer_load_dword` with `lds`? Actually? On AMD GPUs, no cp.async? There \"global_load_lds\" exists? I think? On CDNA3, there is `buffer_load_dword` and `ds_write`. But HIP exposes? Not sure. We may use `__builtin_amdgcn_global_load_lds`? For gfx9? Maybe? On gfx9? `global_load_lds`? Let's? On MI250? There?", "reasoning": ""}

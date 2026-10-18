@@ -1,0 +1,62 @@
+{
+  "tokens_ranks_routes_equal": true,
+  "tok_s": 18.49290904666594,
+  "ms_output": 54.07478063492063,
+  "cycle_ms": 121.66825642857142,
+  "draft_ms_cycle": 20.817177750000003,
+  "verify_ms_cycle": 98.69446107142858,
+  "commit_ms_cycle": 1.0142352857142858,
+  "cpu_ms_cycle": 0.18188764285714284,
+  "speculation": {
+    "cycles": 28,
+    "verified": 54,
+    "accepted": 35,
+    "tokens": 63,
+    "draft_ms": 582.880977,
+    "verify_ms": 2763.44491,
+    "commit_ms": 28.398588,
+    "cpu_ms": 5.092854,
+    "target_rows": 82,
+    "union_experts": 3539,
+    "miss_bytes": 0,
+    "gpu_readout_cycles": 28
+  },
+  "load_failures": {
+    "p0_reserve": 0,
+    "p0_submit": 0,
+    "p0_io": 0,
+    "fill": 0
+  },
+  "cache_fixed_frozen": true,
+  "served_speed_change_vs_plain": 0.02218521500845294,
+  "note": "plain emits different text/routes; observed throughput change 2.22% is inside 3% jitter; no default promotion",
+  "verify_timing": {
+    "cycles": 28,
+    "mean_busy_ms": {
+      "attention": 48.98037346428572,
+      "ced": 1.647919607142857,
+      "engram": 4.423058071428572,
+      "moe": 26.694576071428575,
+      "tail": 9.528852071428572
+    },
+    "mean_cross_submit_gap_ms": 0.0,
+    "mean_same_submit_gap_ms": 1.8983021428571434,
+    "mean_span_ms": 93.17308142857144
+  },
+  "mean_verify_host_ms": {
+    "setup_snapshot": 0.2721098928571429,
+    "input_ced_engram_issue": 0.3435338571428571,
+    "record_layers_tail": 3.6629583214285715,
+    "submit_fence": 93.64513389285715,
+    "queue_submit": 0.08163128571428571,
+    "fence_wait": 93.55929489285714,
+    "engram_issue_land": 2.1897755,
+    "finish_routes": 0.5978552857142858,
+    "trace_readout": 0.17059521428571428,
+    "route_index_validation": 0.03335728571428571,
+    "route_hidden_carry": 0.03326989285714286,
+    "route_readback": 0.14617892857142856,
+    "route_classify": 0.09003582142857143,
+    "route_planner": 0.27442775
+  }
+}

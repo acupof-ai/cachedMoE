@@ -1,0 +1,15 @@
+{
+  "reason": "serve applied mask after begin_session; these runs admit only free slots but never reach a full frozen cache",
+  "invalid_for_fixed_cache_speed": [
+    "fixed_mask",
+    "fixed_spec_old"
+  ],
+  "cancelled": [
+    "fixed_spec_pair"
+  ],
+  "valid": [
+    "projection_pair",
+    "golden_pair",
+    "dynamic_host_trace"
+  ]
+}

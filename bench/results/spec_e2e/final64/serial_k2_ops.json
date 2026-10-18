@@ -1,0 +1,282 @@
+{
+  "moe_union": {
+    "ms_per_cycle": 63.966965320000014,
+    "geometry": [
+      4406,
+      3
+    ]
+  },
+  "mgt1.wq_b.split": {
+    "ms_per_cycle": 17.928056160000036,
+    "geometry": [
+      8192,
+      1
+    ]
+  },
+  "mgt1.wo_b.split": {
+    "ms_per_cycle": 12.115558600000002,
+    "geometry": [
+      5120,
+      1
+    ]
+  },
+  "mgt1.head": {
+    "ms_per_cycle": 10.220851519999998,
+    "geometry": [
+      16160,
+      1
+    ]
+  },
+  "mgt1.wo_a.split": {
+    "ms_per_cycle": 8.406533719999995,
+    "geometry": [
+      4096,
+      1
+    ]
+  },
+  "engram_row": {
+    "ms_per_cycle": 5.268650599999998,
+    "geometry": [
+      3204,
+      2
+    ]
+  },
+  "mgt1.wq_a.split": {
+    "ms_per_cycle": 3.3604940400000016,
+    "geometry": [
+      1280,
+      1
+    ]
+  },
+  "mgt1.attn.score": {
+    "ms_per_cycle": 3.0195241199999994,
+    "geometry": [
+      768,
+      1
+    ]
+  },
+  "mgt1.attn.pv": {
+    "ms_per_cycle": 2.9518997599999977,
+    "geometry": [
+      192,
+      1
+    ]
+  },
+  "mgt1.gate.score": {
+    "ms_per_cycle": 1.9938017999999982,
+    "geometry": [
+      144,
+      1
+    ]
+  },
+  "mgt1.wkv.split": {
+    "ms_per_cycle": 1.3802957199999997,
+    "geometry": [
+      512,
+      1
+    ]
+  },
+  "mgt1.gate.topk": {
+    "ms_per_cycle": 0.9650777599999981,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.mhc.mix": {
+    "ms_per_cycle": 0.7841745999999991,
+    "geometry": [
+      72,
+      1
+    ]
+  },
+  "mgt1.mhc.mix.ffn": {
+    "ms_per_cycle": 0.768070839999999,
+    "geometry": [
+      72,
+      1
+    ]
+  },
+  "mgt1.wkv.finish": {
+    "ms_per_cycle": 0.6711682399999997,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.head.topk": {
+    "ms_per_cycle": 0.5850171599999999,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.indexer.wq_b.split": {
+    "ms_per_cycle": 0.50422064,
+    "geometry": [
+      1024,
+      1
+    ]
+  },
+  "mgt1.mhc.final.ffn": {
+    "ms_per_cycle": 0.43616744000000024,
+    "geometry": [
+      60,
+      1
+    ]
+  },
+  "mgt1.mhc.final": {
+    "ms_per_cycle": 0.4306190000000001,
+    "geometry": [
+      60,
+      1
+    ]
+  },
+  "mgt1.indexer.weights": {
+    "ms_per_cycle": 0.36032136000000003,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.mhc.post": {
+    "ms_per_cycle": 0.35612344000000024,
+    "geometry": [
+      60,
+      1
+    ]
+  },
+  "mgt1.wq_b.finish": {
+    "ms_per_cycle": 0.2970313999999996,
+    "geometry": [
+      384,
+      1
+    ]
+  },
+  "mgt1.q_norm": {
+    "ms_per_cycle": 0.2723880400000003,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.indexer.score": {
+    "ms_per_cycle": 0.2441854800000001,
+    "geometry": [
+      36,
+      1
+    ]
+  },
+  "mgt1.compressor.wkv": {
+    "ms_per_cycle": 0.23136431999999993,
+    "geometry": [
+      192,
+      1
+    ]
+  },
+  "mgt1.head.argmax": {
+    "ms_per_cycle": 0.20678651999999997,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.wo_a.combine": {
+    "ms_per_cycle": 0.1754171200000003,
+    "geometry": [
+      96,
+      1
+    ]
+  },
+  "mgt1.head.rank": {
+    "ms_per_cycle": 0.16664791999999995,
+    "geometry": [
+      2,
+      1
+    ]
+  },
+  "mgt1.compressor.wgate": {
+    "ms_per_cycle": 0.16356532,
+    "geometry": [
+      192,
+      1
+    ]
+  },
+  "mgt1.mhc.post.ffn": {
+    "ms_per_cycle": 0.16296195999999977,
+    "geometry": [
+      60,
+      1
+    ]
+  },
+  "mgt1.wq_a.combine": {
+    "ms_per_cycle": 0.1520203200000003,
+    "geometry": [
+      15,
+      1
+    ]
+  },
+  "mgt1.indexer.q_finish": {
+    "ms_per_cycle": 0.13854331999999997,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.indexer.key": {
+    "ms_per_cycle": 0.12505039999999998,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.wo_b.combine": {
+    "ms_per_cycle": 0.11547088000000004,
+    "geometry": [
+      60,
+      1
+    ]
+  },
+  "mgt1.compressor.store": {
+    "ms_per_cycle": 0.03523479999999998,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.indexer.topk": {
+    "ms_per_cycle": 0.026241879999999974,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.indexer.wq_b.combine": {
+    "ms_per_cycle": 0.02355888,
+    "geometry": [
+      48,
+      1
+    ]
+  },
+  "mgt1.mhc.close": {
+    "ms_per_cycle": 0.022992519999999992,
+    "geometry": [
+      60,
+      1
+    ]
+  },
+  "mgt1.compressor.pool": {
+    "ms_per_cycle": 0.01169116,
+    "geometry": [
+      3,
+      1
+    ]
+  },
+  "mgt1.compressor.state": {
+    "ms_per_cycle": 0.006453919999999999,
+    "geometry": [
+      1,
+      1
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+ "event": "status",
+ "session": "default",
+ "context": 92,
+ "max_context": 4096,
+ "kv_mb": 16.044032,
+ "kv_capacity": 4096,
+ "kv_slabs": 1,
+ "kv_largest_slab_mb": 16.044032,
+ "store": "expert store: 5500 slots (4722 resident, 28 filling, 750 free, 384 pinned)  lookups 14437 hits 12060 (0.835)  fills 4722/4750 ok  runs 9445/9500  evictions 0 (+0 guard-blocked)  path A hits 12060 / B 0 (1.0000 A)  fills A 4722 / B 0",
+ "planner": "planner: 723 layers, 14437 requests (12060 hits, 2377 misses, 0.835), 0 evictions (+0 refused), prefetch 0 issued / 0 used / 0 wasted, 637 stalls, 0 joined; backfill 0 issued / 0 done / 0 failed; prefill handoff 0 resident / 2373 kept / 0 dropped",
+ "io": "io: 23928 req (23873 done, 0 failed, 0 cancelled), 106429 chunks, 99446669256 / 99962798080 bytes, busy 25.599 s, eff 3.88 GB/s, mean lat 231.674 ms, peak QD 512 / 32.0 MiB\n  p0_blocking     9500 req  85203.1 MiB\n  p2_engram      13120 req  52.8 MiB\n  p3_backfill     1308 req  10076.0 MiB\n  P0: 9445 req, 84701.9 MiB, lat mean 127.95 / p50 105.92 / p95 331.91 / max 521.25 ms  (queue wait 122.36 + service 5.59)\n  P0: first-of-burst 91 at 0.76 ms, behind 9354 at 129.19 ms; 4 (0.0%) issued with a non-P0 chunk in flight, mean 13.00; mean QD at issue 14.90\n  dispatcher: 98771 iters, issue 0.19 s / poll 25.30 s / handle 0.06 s (callbacks 0.02 s, 23873 at 0.8 us mean)\n  dispatcher: Backend::submit 0.16 s over 106437 chunks, mean 1.5 us, max 0.52 ms  <- synchronous, on the only issuing thread\n  dispatcher: handle is 0.2% of the non-waiting loop; refill gap 0.5 us mean over 89305 reaps\n",
+ "route": "route     resident-only=mask over 4320 layer-steps\n  experts requested 25920  served 23585 (0.9099)  skipped 2335\n  gate mass lost    0.0701 mean over those layer-steps\n  shared-expert-only layer-steps 1\n  background enqueued 0  refused 0  dropped stale 0\n  background queue depth mean 0.0 peak 0 (window 2 steps, cap 24 experts)\n  background fetch latency mean 0.0 ms over 0 completions\n  stall1 P0 fetches 0  0.0 ms total\n",
+ "gate_probe": ""
+}

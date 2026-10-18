@@ -1,0 +1,98 @@
+{
+  "cwd": "/home/chenkailun/projects/deepmoe-spec",
+  "binary_sha256": "1aeb2426e1f6c7898655aedcbee39dd91311ada5ff4bb4774aa8d39cb3ee8af7",
+  "tests_sha256": "33c1445ef47ed50985fd71187c27a1d5c0c36d0fc696b6b2bf6b116695213088",
+  "configuration": {
+    "profile": "power-saver",
+    "ac": 1,
+    "sources": 1,
+    "slots": 5500,
+    "prompt_tokens": 29,
+    "output_tokens": 64,
+    "seed": 41001,
+    "temperature": 1,
+    "top_p": 0.95
+  },
+  "measurements": [
+    {
+      "name": "mask",
+      "ms_per_token": 81.10309142857142,
+      "tok_s": 12.32998622353025,
+      "hit": 0.83452381,
+      "spec": {
+        "cycles": 0,
+        "verified": 0,
+        "accepted": 0,
+        "tokens": 0,
+        "draft_ms": 0,
+        "verify_ms": 0,
+        "commit_ms": 0,
+        "cpu_ms": 0,
+        "target_rows": 0,
+        "union_experts": 0,
+        "miss_bytes": 0,
+        "gpu_readout_cycles": 0
+      }
+    },
+    {
+      "name": "serial_k2",
+      "ms_per_token": 80.45042206349206,
+      "tok_s": 12.430015584141904,
+      "hit": 0.784001937,
+      "spec": {
+        "cycles": 25,
+        "verified": 50,
+        "accepted": 38,
+        "tokens": 63,
+        "draft_ms": 929.097632,
+        "verify_ms": 4006.97059,
+        "commit_ms": 86.258807,
+        "cpu_ms": 5.276419,
+        "target_rows": 75,
+        "union_experts": 9713,
+        "miss_bytes": 32821411840,
+        "gpu_readout_cycles": 25
+      }
+    },
+    {
+      "name": "onecb_k2",
+      "ms_per_token": 84.05177285714286,
+      "tok_s": 11.897429001285108,
+      "hit": 0.801637786,
+      "spec": {
+        "cycles": 28,
+        "verified": 55,
+        "accepted": 35,
+        "tokens": 63,
+        "draft_ms": 687.019586,
+        "verify_ms": 4531.05335,
+        "commit_ms": 27.749552,
+        "cpu_ms": 5.524194,
+        "target_rows": 83,
+        "union_experts": 10964,
+        "miss_bytes": 32219529216,
+        "gpu_readout_cycles": 28
+      }
+    },
+    {
+      "name": "gpu_route_k2",
+      "ms_per_token": 74.1184692063492,
+      "tok_s": 13.491913833459705,
+      "hit": 0.764645508,
+      "spec": {
+        "cycles": 26,
+        "verified": 50,
+        "accepted": 37,
+        "tokens": 63,
+        "draft_ms": 600.019028,
+        "verify_ms": 3997.13941,
+        "commit_ms": 26.007799,
+        "cpu_ms": 4.771062,
+        "target_rows": 76,
+        "union_experts": 9685,
+        "miss_bytes": 32859029504,
+        "gpu_readout_cycles": 26
+      }
+    }
+  ]
+}

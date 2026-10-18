@@ -1,0 +1,23 @@
+{
+  "cwd": "/home/chenkailun/projects/deepmoe-spec",
+  "jobs": [
+    {
+      "name": "golden_onecb_api_barrier",
+      "command": [
+        "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+        "--suite",
+        "gpu_dspark",
+        "--case",
+        "full_runtime_chain"
+      ],
+      "env": {
+        "DEEPMOE_DSPARK_TEST_ONECB": "1",
+        "DEEPMOE_DSPARK_MEGA_DIAG": "1",
+        "DEEPMOE_DSPARK_PROFILE": "1",
+        "DEEPMOE_DSPARK_ONECB": "0"
+      },
+      "timeout_s": 180,
+      "stop_on_pause": true
+    }
+  ]
+}

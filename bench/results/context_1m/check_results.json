@@ -1,0 +1,132 @@
+[
+  {
+    "name": "gpu_attn",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-R",
+      "^suite.gpu_attn$",
+      "-V"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 26.32876389598823,
+    "start": {
+      "ac": 1,
+      "k10temp": 74.625,
+      "nvme_hwmon4": 31.85,
+      "nvme_hwmon13": 58.85,
+      "amdgpu": 52.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 51.625,
+      "nvme_hwmon4": 33.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 50.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 74.625,
+      "nvme_hwmon4": 33.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 55.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T20:08:26.759785+08:00"
+  },
+  {
+    "name": "off64",
+    "command": [
+      ".venv/bin/python",
+      "tools/l3_ppl.py",
+      "--state",
+      "traces/l3_64",
+      "--modes",
+      "off",
+      "--json",
+      "bench/results/context_1m/off64.json",
+      "--log-dir",
+      "bench/results/context_1m/off64"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 60.9040454600181,
+    "start": {
+      "ac": 1,
+      "k10temp": 51.875,
+      "nvme_hwmon4": 33.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 51.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 61.25,
+      "nvme_hwmon4": 47.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 57.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 62.5,
+      "nvme_hwmon4": 59.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 64.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T20:09:28.128651+08:00"
+  },
+  {
+    "name": "decode",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-R",
+      "^suite.decode$",
+      "-V"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 142.69366370799253,
+    "start": {
+      "ac": 1,
+      "k10temp": 60.5,
+      "nvme_hwmon4": 47.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 57.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 62.25,
+      "nvme_hwmon4": 62.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 59.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 63.125,
+      "nvme_hwmon4": 62.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 63.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T20:11:51.282719+08:00"
+  }
+]

@@ -1,0 +1,48 @@
+[
+  {
+    "name": "baseline_mask",
+    "command": [
+      "/usr/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/dspark_topk/end_to_end/turn64.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1",
+      "--out",
+      "bench/results/engram_deadline/baseline_mask",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 40.13069787299901,
+    "start": {
+      "k10temp": 69.375,
+      "nvme": 31.85,
+      "amdgpu": 57.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 64.625,
+      "nvme": 53.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 69.375,
+      "nvme": 54.85,
+      "amdgpu": 66.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T18:57:29.008374+08:00"
+  }
+]

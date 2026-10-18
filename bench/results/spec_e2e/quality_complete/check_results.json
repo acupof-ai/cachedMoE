@@ -1,0 +1,226 @@
+[
+  {
+    "name": "profile_calibration",
+    "command": [
+      "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+      "gpu_dspark.full_runtime_chain"
+    ],
+    "env": {
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_DSPARK_TEST_ONECB": "1",
+      "DEEPMOE_DSPARK_PROFILE": "1",
+      "DEEPMOE_DSPARK_MEGA_DIAG": "1",
+      "DEEPMOE_PIPELINE_STATS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/quality_complete/pipeline_stats"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 15.7783539880038,
+    "start": {
+      "k10temp": 61.0,
+      "nvme": 66.85,
+      "amdgpu": 53.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 58.125,
+      "nvme": 67.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 61.25,
+      "nvme": 67.85,
+      "amdgpu": 54.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:50:11.189728+08:00"
+  },
+  {
+    "name": "l3_off",
+    "command": [
+      "/usr/bin/python",
+      "tools/l3_ppl.py",
+      "--state",
+      "traces/l3_64",
+      "--steps",
+      "64",
+      "--modes",
+      "off",
+      "--json",
+      "bench/results/spec_e2e/quality_complete/l3_off.json",
+      "--log-dir",
+      "bench/results/spec_e2e/quality_complete/l3_logs"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 58.06358582399844,
+    "start": {
+      "k10temp": 57.375,
+      "nvme": 67.85,
+      "amdgpu": 53.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 63.25,
+      "nvme": 69.85,
+      "amdgpu": 58.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 64.25,
+      "nvme": 69.85,
+      "amdgpu": 65.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:51:09.618095+08:00"
+  },
+  {
+    "name": "decode",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-j",
+      "1",
+      "-R",
+      "^suite.decode$",
+      "--output-on-failure",
+      "-V"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 140.42545680700277,
+    "start": {
+      "k10temp": 62.5,
+      "nvme": 69.85,
+      "amdgpu": 58.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 62.875,
+      "nvme": 67.85,
+      "amdgpu": 59.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 67.5,
+      "nvme": 70.85,
+      "amdgpu": 64.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:53:30.446670+08:00"
+  },
+  {
+    "name": "longctx",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-j",
+      "1",
+      "-R",
+      "^suite.decode_longctx$",
+      "--output-on-failure",
+      "-V"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 125.61295822699321,
+    "start": {
+      "k10temp": 62.375,
+      "nvme": 59.85,
+      "amdgpu": 59.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 55.25,
+      "nvme": 59.85,
+      "amdgpu": 54.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 62.75,
+      "nvme": 59.85,
+      "amdgpu": 60.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:55:36.468973+08:00"
+  },
+  {
+    "name": "mmlu57",
+    "command": [
+      "/usr/bin/python",
+      "tools/mmlu_bench.py",
+      "--sample",
+      "bench/results/miss_mask/mmlu_sample.json",
+      "--out",
+      "bench/results/spec_e2e/quality_complete/mmlu57",
+      "--modes",
+      "mask-spec",
+      "--generation",
+      "--limit",
+      "57",
+      "--max-tokens",
+      "16",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1"
+    ],
+    "env": {
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_SPEC_DIAGNOSTICS": "/home/chenkailun/projects/deepmoe-spec/bench/results/spec_e2e/quality_complete/mmlu57_cycles.jsonl"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 1025.2989627119969,
+    "start": {
+      "k10temp": 55.125,
+      "nvme": 59.85,
+      "amdgpu": 53.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 68.5,
+      "nvme": 59.85,
+      "amdgpu": 63.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 75.25,
+      "nvme": 61.85,
+      "amdgpu": 73.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T01:12:42.168353+08:00"
+  }
+]

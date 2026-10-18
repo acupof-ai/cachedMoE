@@ -1,0 +1,59 @@
+{
+  "health": {
+    "status": "ok",
+    "max_context": 4096,
+    "model": "deepseek-v4.1-flash",
+    "images": false,
+    "api_key": false,
+    "loaded": true,
+    "service": "strata"
+  },
+  "results": [
+    {
+      "path": "/v1/chat/completions",
+      "stream": false,
+      "answer": "2 + 3 equals 5.",
+      "reasoning": "",
+      "wall_s": 7.264489457011223,
+      "kv_path": "/home/chenkailun/projects/cachedMoE/bench/results/kv_async/kv/strata.pkv",
+      "kv_bytes": 48196,
+      "saved_tokens": 26
+    },
+    {
+      "path": "/v1/messages",
+      "stream": false,
+      "answer": "3 + 4 equals 7.",
+      "reasoning": "",
+      "wall_s": 1.947040866012685,
+      "kv_path": "/home/chenkailun/projects/cachedMoE/bench/results/kv_async/kv/strata.pkv",
+      "kv_bytes": 48196,
+      "saved_tokens": 26
+    },
+    {
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "answer": "4 + 5 equals 9.",
+      "reasoning": "We need answer simple. Must one short sentence. \"4 + 5 equals 9.\" Ensure short.",
+      "wall_s": 10.124483849009266,
+      "kv_path": "/home/chenkailun/projects/cachedMoE/bench/results/kv_async/kv/strata.pkv",
+      "kv_bytes": 91468,
+      "saved_tokens": 75
+    }
+  ],
+  "binary_sha256": "a208d4b09ecb79698d27e56c82812298d5c6e624cdb18cdf42b9bbb77b4463b3",
+  "pack_ms": [
+    "1.51",
+    "2.14",
+    "6.02"
+  ],
+  "thermal_pauses": 0,
+  "cpu_ctest": "25/25",
+  "python_gates": "32/32",
+  "disk_tests": "5/5",
+  "initial_config_failure": "Native top_k=0 was rejected by the Qwen config validator; fixed before the successful native run.",
+  "restore": {
+    "answer": "2 + 3 equals 5.",
+    "loaded_tokens": 75,
+    "bounded_replay": true
+  }
+}

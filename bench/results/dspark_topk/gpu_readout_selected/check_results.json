@@ -1,0 +1,143 @@
+[
+  {
+    "name": "readout_unit",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.main_path_gpu_readout"
+    ],
+    "rc": 0,
+    "elapsed_s": 1.5521110120025696,
+    "start": {
+      "k10temp": 60.125,
+      "nvme": 35.85,
+      "amdgpu": 55.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 72.5,
+      "nvme": 35.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 75.125,
+      "nvme": 35.85,
+      "amdgpu": 57.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:26:23.117265+08:00"
+  },
+  {
+    "name": "short_cpu",
+    "command": [
+      "/home/chenkailun/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/dspark_topk/gpu_readout_selected/short_turn.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--env",
+      "DEEPMOE_MIRROR_AUTO=0",
+      "--env",
+      "DEEPMOE_DSPARK_MEGA=0",
+      "--require-sources",
+      "1",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--env",
+      "DEEPMOE_SPEC_GPU_READOUT=0",
+      "--out",
+      "bench/results/dspark_topk/gpu_readout_selected/short_cpu",
+      "--serve-arg=--trace",
+      "--serve-arg=bench/results/dspark_topk/gpu_readout_selected/short_cpu/trace.bin"
+    ],
+    "rc": 0,
+    "elapsed_s": 30.291717772000993,
+    "start": {
+      "k10temp": 72.5,
+      "nvme": 35.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 79.125,
+      "nvme": 55.85,
+      "amdgpu": 64.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 86.25,
+      "nvme": 57.85,
+      "amdgpu": 74.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:26:53.477213+08:00"
+  },
+  {
+    "name": "short_gpu",
+    "command": [
+      "/home/chenkailun/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+      "tools/hitrate_bench.py",
+      "--script",
+      "bench/results/dspark_topk/gpu_readout_selected/short_turn.json",
+      "--max-turns",
+      "1",
+      "--exe",
+      "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+      "--cache-slots",
+      "5500",
+      "--env",
+      "DEEPMOE_MIRROR_AUTO=0",
+      "--env",
+      "DEEPMOE_DSPARK_MEGA=0",
+      "--require-sources",
+      "1",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=2",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--env",
+      "DEEPMOE_SPEC_GPU_READOUT=1",
+      "--out",
+      "bench/results/dspark_topk/gpu_readout_selected/short_gpu",
+      "--serve-arg=--trace",
+      "--serve-arg=bench/results/dspark_topk/gpu_readout_selected/short_gpu/trace.bin"
+    ],
+    "rc": 0,
+    "elapsed_s": 29.265893496994977,
+    "start": {
+      "k10temp": 77.0,
+      "nvme": 43.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 79.0,
+      "nvme": 56.85,
+      "amdgpu": 67.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 90.125,
+      "nvme": 59.85,
+      "amdgpu": 73.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T14:27:30.942177+08:00"
+  }
+]

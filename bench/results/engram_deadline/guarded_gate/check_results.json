@@ -1,0 +1,206 @@
+[
+  {
+    "name": "wrap_selected",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.committed_prefix_survives_window_wrap"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 28.890793168990058,
+    "start": {
+      "k10temp": 59.625,
+      "nvme": 33.85,
+      "amdgpu": 52.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 59.25,
+      "nvme": 56.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 63.625,
+      "nvme": 58.85,
+      "amdgpu": 64.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:18:36.326911+08:00"
+  },
+  {
+    "name": "adaptive_zero",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu_dspark.adaptive_zero_keeps_one_target_forward"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 11.93785315900459,
+    "start": {
+      "k10temp": 59.125,
+      "nvme": 56.85,
+      "amdgpu": 56.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 60.875,
+      "nvme": 54.85,
+      "amdgpu": 57.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 60.875,
+      "nvme": 56.85,
+      "amdgpu": 63.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:18:48.371498+08:00"
+  },
+  {
+    "name": "l3_off",
+    "command": [
+      "/usr/bin/python",
+      "tools/l3_ppl.py",
+      "--state",
+      "traces/l3_64",
+      "--steps",
+      "64",
+      "--modes",
+      "off",
+      "--json",
+      "bench/results/engram_deadline/guarded_gate/l3_off.json",
+      "--log-dir",
+      "bench/results/engram_deadline/guarded_gate/l3_logs"
+    ],
+    "env": {
+      "DEEPMOE_MGT_ATTN_CM": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 58.6403144950018,
+    "start": {
+      "k10temp": 60.625,
+      "nvme": 54.85,
+      "amdgpu": 57.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 65.5,
+      "nvme": 49.85,
+      "amdgpu": 61.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 66.375,
+      "nvme": 62.85,
+      "amdgpu": 67.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:19:47.107422+08:00"
+  },
+  {
+    "name": "mmlu6_baseline",
+    "command": [
+      "/usr/bin/python",
+      "tools/mmlu_bench.py",
+      "--sample",
+      "bench/results/miss_mask/mmlu_sample.json",
+      "--out",
+      "bench/results/engram_deadline/guarded_gate/mmlu6_baseline",
+      "--modes",
+      "mask-spec",
+      "--generation",
+      "--limit",
+      "6",
+      "--max-tokens",
+      "16",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1"
+    ],
+    "env": {
+      "DEEPMOE_IO_ENGRAM_DEADLINE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 131.49446533799346,
+    "start": {
+      "k10temp": 65.25,
+      "nvme": 49.85,
+      "amdgpu": 61.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 66.625,
+      "nvme": 60.85,
+      "amdgpu": 62.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 67.875,
+      "nvme": 65.85,
+      "amdgpu": 67.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:21:58.701117+08:00"
+  },
+  {
+    "name": "mmlu6_fix",
+    "command": [
+      "/usr/bin/python",
+      "tools/mmlu_bench.py",
+      "--sample",
+      "bench/results/miss_mask/mmlu_sample.json",
+      "--out",
+      "bench/results/engram_deadline/guarded_gate/mmlu6_fix",
+      "--modes",
+      "mask-spec",
+      "--generation",
+      "--limit",
+      "6",
+      "--max-tokens",
+      "16",
+      "--cache-slots",
+      "5500",
+      "--require-sources",
+      "1"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 128.91338089099736,
+    "start": {
+      "k10temp": 62.375,
+      "nvme": 53.85,
+      "amdgpu": 60.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 67.5,
+      "nvme": 62.85,
+      "amdgpu": 63.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 68.75,
+      "nvme": 65.85,
+      "amdgpu": 68.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-04T19:24:10.734860+08:00"
+  }
+]

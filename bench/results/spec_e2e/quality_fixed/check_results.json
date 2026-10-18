@@ -1,0 +1,79 @@
+[
+  {
+    "name": "k0",
+    "command": [
+      "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+      "gpu_dspark.adaptive_zero_keeps_one_target_forward"
+    ],
+    "env": {
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 12.458606366009917,
+    "start": {
+      "k10temp": 51.375,
+      "nvme": 33.85,
+      "amdgpu": 46.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 51.25,
+      "nvme": 47.85,
+      "amdgpu": 49.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 51.5,
+      "nvme": 46.85,
+      "amdgpu": 54.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:48:03.765400+08:00"
+  },
+  {
+    "name": "batch63",
+    "command": [
+      "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+      "spec_forward.batch_matches_m1"
+    ],
+    "env": {
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1",
+      "DEEPMOE_MGT_ATTN_CM": "0",
+      "DEEPMOE_MGT_FOLD_SCALE": "0",
+      "DEEPMOE_TEST_BATCH_MASK": "1",
+      "DEEPMOE_SPEC_BLOCK": "3",
+      "DEEPMOE_SPEC_STEPS": "64"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 60.71374865699909,
+    "start": {
+      "k10temp": 50.875,
+      "nvme": 47.85,
+      "amdgpu": 48.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 63.25,
+      "nvme": 48.85,
+      "amdgpu": 58.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 64.75,
+      "nvme": 60.85,
+      "amdgpu": 65.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:49:04.870914+08:00"
+  }
+]

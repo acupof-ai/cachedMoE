@@ -1,0 +1,647 @@
+{
+  "time": "2026-10-04T20:01:24.215466+08:00",
+  "final_binary_sha256": "1423d089d6464fb8f7a75bd995f054874f63cda673607cde0a81f9b084d99609",
+  "tests_sha256": "ec7ecb4e23fb8104a18317a34557173d01b733e3852fd47779f3e0b2b6c65937",
+  "source_sha256": "c56df16e14fbe60faaa96c43a3de1c4713e6bd960d8fd5b658cce20a3e4b5f12",
+  "source_files_verified": 259,
+  "shader_files_verified": 50,
+  "provenance_paths": [
+    "final_power/fix_mask/provenance.json",
+    "final_power/fix_spec/provenance.json",
+    "final_power/spec_k3/provenance.json",
+    "balanced/fix_mask/provenance.json",
+    "mmlu57/evaluation/mask-spec/provenance.json"
+  ],
+  "cpu_ctest": "25/25",
+  "cpu_and_tools": "30/30",
+  "off64": {
+    "nll": 0.622784,
+    "top1": 56,
+    "steps": 64
+  },
+  "gpu_receipts": {
+    "guarded_gate": [
+      {
+        "name": "wrap_selected",
+        "command": [
+          "build/tests/deepmoe_tests",
+          "gpu_dspark.committed_prefix_survives_window_wrap"
+        ],
+        "env": {},
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 28.890793168990058,
+        "start": {
+          "k10temp": 59.625,
+          "nvme": 33.85,
+          "amdgpu": 52.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 59.25,
+          "nvme": 56.85,
+          "amdgpu": 56.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 63.625,
+          "nvme": 58.85,
+          "amdgpu": 64.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:18:36.326911+08:00"
+      },
+      {
+        "name": "adaptive_zero",
+        "command": [
+          "build/tests/deepmoe_tests",
+          "gpu_dspark.adaptive_zero_keeps_one_target_forward"
+        ],
+        "env": {},
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 11.93785315900459,
+        "start": {
+          "k10temp": 59.125,
+          "nvme": 56.85,
+          "amdgpu": 56.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 60.875,
+          "nvme": 54.85,
+          "amdgpu": 57.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 60.875,
+          "nvme": 56.85,
+          "amdgpu": 63.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:18:48.371498+08:00"
+      },
+      {
+        "name": "l3_off",
+        "command": [
+          "/usr/bin/python",
+          "tools/l3_ppl.py",
+          "--state",
+          "traces/l3_64",
+          "--steps",
+          "64",
+          "--modes",
+          "off",
+          "--json",
+          "bench/results/engram_deadline/guarded_gate/l3_off.json",
+          "--log-dir",
+          "bench/results/engram_deadline/guarded_gate/l3_logs"
+        ],
+        "env": {
+          "DEEPMOE_MGT_ATTN_CM": "0"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 58.6403144950018,
+        "start": {
+          "k10temp": 60.625,
+          "nvme": 54.85,
+          "amdgpu": 57.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 65.5,
+          "nvme": 49.85,
+          "amdgpu": 61.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 66.375,
+          "nvme": 62.85,
+          "amdgpu": 67.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:19:47.107422+08:00"
+      },
+      {
+        "name": "mmlu6_baseline",
+        "command": [
+          "/usr/bin/python",
+          "tools/mmlu_bench.py",
+          "--sample",
+          "bench/results/miss_mask/mmlu_sample.json",
+          "--out",
+          "bench/results/engram_deadline/guarded_gate/mmlu6_baseline",
+          "--modes",
+          "mask-spec",
+          "--generation",
+          "--limit",
+          "6",
+          "--max-tokens",
+          "16",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "1"
+        ],
+        "env": {
+          "DEEPMOE_IO_ENGRAM_DEADLINE": "0"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 131.49446533799346,
+        "start": {
+          "k10temp": 65.25,
+          "nvme": 49.85,
+          "amdgpu": 61.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 66.625,
+          "nvme": 60.85,
+          "amdgpu": 62.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 67.875,
+          "nvme": 65.85,
+          "amdgpu": 67.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:21:58.701117+08:00"
+      },
+      {
+        "name": "mmlu6_fix",
+        "command": [
+          "/usr/bin/python",
+          "tools/mmlu_bench.py",
+          "--sample",
+          "bench/results/miss_mask/mmlu_sample.json",
+          "--out",
+          "bench/results/engram_deadline/guarded_gate/mmlu6_fix",
+          "--modes",
+          "mask-spec",
+          "--generation",
+          "--limit",
+          "6",
+          "--max-tokens",
+          "16",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "1"
+        ],
+        "env": {},
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 128.91338089099736,
+        "start": {
+          "k10temp": 62.375,
+          "nvme": 53.85,
+          "amdgpu": 60.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 67.5,
+          "nvme": 62.85,
+          "amdgpu": 63.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 68.75,
+          "nvme": 65.85,
+          "amdgpu": 68.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:24:10.734860+08:00"
+      }
+    ],
+    "final_decode_gate": [
+      {
+        "name": "decode",
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build",
+          "-j",
+          "1",
+          "-R",
+          "^suite.decode$",
+          "--output-on-failure"
+        ],
+        "env": {
+          "DEEPMOE_MGT_ATTN_CM": "0"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 142.78288294198865,
+        "start": {
+          "k10temp": 57.375,
+          "nvme": 36.85,
+          "amdgpu": 52.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 66.0,
+          "nvme": 63.85,
+          "amdgpu": 60.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 67.375,
+          "nvme": 64.85,
+          "amdgpu": 63.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:58:52.622533+08:00"
+      },
+      {
+        "name": "decode_longctx",
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build",
+          "-j",
+          "1",
+          "-R",
+          "^suite.decode_longctx$",
+          "--output-on-failure"
+        ],
+        "env": {
+          "DEEPMOE_MGT_ATTN_CM": "0"
+        },
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 126.84838457099977,
+        "start": {
+          "k10temp": 63.875,
+          "nvme": 59.85,
+          "amdgpu": 60.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 57.75,
+          "nvme": 42.85,
+          "amdgpu": 56.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 64.25,
+          "nvme": 60.85,
+          "amdgpu": 62.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T20:01:00.591511+08:00"
+      }
+    ],
+    "final_power": [
+      {
+        "name": "fix_mask",
+        "command": [
+          "/usr/bin/python",
+          "tools/hitrate_bench.py",
+          "--script",
+          "bench/results/dspark_topk/end_to_end/turn64.json",
+          "--max-turns",
+          "1",
+          "--exe",
+          "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "1",
+          "--out",
+          "bench/results/engram_deadline/final_power/fix_mask",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask"
+        ],
+        "env": {},
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 39.60397628300416,
+        "start": {
+          "k10temp": 53.625,
+          "nvme": 33.85,
+          "amdgpu": 48.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 59.25,
+          "nvme": 58.85,
+          "amdgpu": 55.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 62.125,
+          "nvme": 58.85,
+          "amdgpu": 63.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:33:41.012134+08:00"
+      },
+      {
+        "name": "fix_spec",
+        "command": [
+          "/usr/bin/python",
+          "tools/hitrate_bench.py",
+          "--script",
+          "bench/results/dspark_topk/end_to_end/turn64.json",
+          "--max-turns",
+          "1",
+          "--exe",
+          "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "1",
+          "--out",
+          "bench/results/engram_deadline/final_power/fix_spec",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask",
+          "--serve-arg=--dspark",
+          "--serve-arg=--spec-k",
+          "--serve-arg=2",
+          "--serve-arg=--spec-top-k",
+          "--serve-arg=4",
+          "--serve-arg=--trace",
+          "--serve-arg=bench/results/engram_deadline/final_power/fix_spec/trace.bin"
+        ],
+        "env": {},
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 39.61028855200857,
+        "start": {
+          "k10temp": 59.25,
+          "nvme": 53.85,
+          "amdgpu": 55.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 63.625,
+          "nvme": 57.85,
+          "amdgpu": 59.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 66.5,
+          "nvme": 60.85,
+          "amdgpu": 67.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:34:20.705830+08:00"
+      },
+      {
+        "name": "spec_k3",
+        "command": [
+          "/usr/bin/python",
+          "tools/hitrate_bench.py",
+          "--script",
+          "bench/results/dspark_topk/end_to_end/turn64.json",
+          "--max-turns",
+          "1",
+          "--exe",
+          "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "1",
+          "--out",
+          "bench/results/engram_deadline/final_power/spec_k3",
+          "--serve-arg=--resident-only",
+          "--serve-arg=mask",
+          "--serve-arg=--dspark",
+          "--serve-arg=--spec-k",
+          "--serve-arg=3",
+          "--serve-arg=--spec-top-k",
+          "--serve-arg=4",
+          "--serve-arg=--trace",
+          "--serve-arg=bench/results/engram_deadline/final_power/spec_k3/trace.bin"
+        ],
+        "env": {},
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 41.65618925400486,
+        "start": {
+          "k10temp": 63.5,
+          "nvme": 57.85,
+          "amdgpu": 59.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 64.75,
+          "nvme": 58.85,
+          "amdgpu": 60.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 67.5,
+          "nvme": 61.85,
+          "amdgpu": 68.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:35:02.445772+08:00"
+      }
+    ],
+    "mmlu57": [
+      {
+        "name": "mmlu57",
+        "command": [
+          "/usr/bin/python",
+          "tools/mmlu_bench.py",
+          "--sample",
+          "bench/results/miss_mask/mmlu_sample.json",
+          "--out",
+          "bench/results/engram_deadline/mmlu57/evaluation",
+          "--modes",
+          "mask-spec",
+          "--generation",
+          "--limit",
+          "57",
+          "--max-tokens",
+          "16",
+          "--cache-slots",
+          "5500",
+          "--require-sources",
+          "1"
+        ],
+        "env": {},
+        "profile": "power-saver",
+        "rc": 0,
+        "failure": null,
+        "elapsed_s": 1045.8684958189988,
+        "start": {
+          "k10temp": 56.75,
+          "nvme": 35.85,
+          "amdgpu": 51.0,
+          "ac": 1
+        },
+        "end": {
+          "k10temp": 68.875,
+          "nvme": 61.85,
+          "amdgpu": 64.0,
+          "ac": 1
+        },
+        "peak": {
+          "k10temp": 72.625,
+          "nvme": 69.85,
+          "amdgpu": 71.0
+        },
+        "thermal_pauses": 0,
+        "ac_changed": false,
+        "time": "2026-10-04T19:53:58.973053+08:00"
+      }
+    ],
+    "balanced_mask_only": {
+      "name": "fix_mask",
+      "command": [
+        "/usr/bin/python",
+        "tools/hitrate_bench.py",
+        "--script",
+        "bench/results/dspark_topk/end_to_end/turn64.json",
+        "--max-turns",
+        "1",
+        "--exe",
+        "/home/chenkailun/projects/cachedMoE/build/deepmoe",
+        "--cache-slots",
+        "5500",
+        "--require-sources",
+        "1",
+        "--out",
+        "bench/results/engram_deadline/balanced/fix_mask",
+        "--serve-arg=--resident-only",
+        "--serve-arg=mask"
+      ],
+      "env": {},
+      "profile": "balanced",
+      "rc": 0,
+      "failure": null,
+      "elapsed_s": 32.4061479660013,
+      "start": {
+        "k10temp": 59.375,
+        "nvme": 36.85,
+        "amdgpu": 53.0,
+        "ac": 1
+      },
+      "end": {
+        "k10temp": 75.0,
+        "nvme": 56.85,
+        "amdgpu": 62.0,
+        "ac": 1
+      },
+      "peak": {
+        "k10temp": 84.375,
+        "nvme": 60.85,
+        "amdgpu": 75.0
+      },
+      "thermal_pauses": 0,
+      "ac_changed": false,
+      "time": "2026-10-04T19:28:08.120871+08:00"
+    }
+  },
+  "mmlu": {
+    "mode": "mask-spec",
+    "n": 57,
+    "correct": 48,
+    "accuracy": 0.8421052631578947,
+    "invalid": 2,
+    "speculative_cycles": 67,
+    "accepted": 128,
+    "verified": 130,
+    "seconds": 1022.8937178859924,
+    "sources": 1,
+    "cache_slots": 5500,
+    "protocol": "zero-shot generated Answer: X; invalid format counts as incorrect; exact prefix + single-position final prompt token",
+    "sample_source": "https://huggingface.co/datasets/cais/mmlu",
+    "sample_sha256": "74a41822ce7d3def56e1682f958469c04642a5336a5ce912fa375fdb90fb25d7"
+  },
+  "mmlu_comparison": {
+    "n": 57,
+    "same_predictions": 57,
+    "same_emitted_tokens": 56,
+    "same_correctness": 57,
+    "differences": [
+      {
+        "subject": "college_computer_science",
+        "old": null,
+        "new": null,
+        "old_tokens": [
+          5718,
+          734,
+          4189,
+          566,
+          1910,
+          3132,
+          513,
+          3132,
+          339,
+          2581,
+          611,
+          979,
+          15,
+          223,
+          22,
+          20586
+        ],
+        "new_tokens": [
+          5718,
+          734,
+          4189,
+          566,
+          1910,
+          3132,
+          513,
+          3132,
+          339,
+          2581,
+          611,
+          223,
+          22,
+          20586,
+          21102,
+          16
+        ]
+      }
+    ],
+    "all_speculated": true,
+    "all_exact_prefix": true
+  },
+  "performance_comparison": "comparison.json",
+  "target_trace_analysis": "verify_trace.json",
+  "excluded_speed_cells": {
+    "final_performance/fix_mask": "5 thermal pauses",
+    "final_performance/fix_spec": "7 thermal pauses",
+    "balanced/fix_spec": "GPU reached 80 C; deliberately stopped on first thermal pause",
+    "measure/fix_mask": "policy inactive: 0 deadline chunks",
+    "measure/fix_spec": "policy inactive: 0 deadline chunks"
+  },
+  "profile_restored": "performance",
+  "no_engine_processes": true,
+  "notes": [
+    "One primary read source; absent external mirror. Native FP4/FP8, total cache 5500.",
+    "New GPU receipts use this final binary. Earlier validation/ failed wrap receipt is preserved.",
+    "Speed controls and final runs differ in output/routes and masked mass; not bit-identical kernel comparisons.",
+    "Speculation remains a single main path and one target forward; no 1.6x or losslessness claim.",
+    "MMLU is 57-subject zero-shot generated sample, not full canonical five-shot evaluation.",
+    "Short decode oracle passes existing gate with 6/8 loaded and 7/8 own-prefill; no threshold change."
+  ]
+}

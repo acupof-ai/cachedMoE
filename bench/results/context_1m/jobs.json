@@ -1,0 +1,45 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "gpu_attn",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-R",
+        "^suite.gpu_attn$",
+        "-V"
+      ],
+      "timeout_s": 180
+    },
+    {
+      "name": "off64",
+      "command": [
+        ".venv/bin/python",
+        "tools/l3_ppl.py",
+        "--state",
+        "traces/l3_64",
+        "--modes",
+        "off",
+        "--json",
+        "bench/results/context_1m/off64.json",
+        "--log-dir",
+        "bench/results/context_1m/off64"
+      ],
+      "timeout_s": 240
+    },
+    {
+      "name": "decode",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-R",
+        "^suite.decode$",
+        "-V"
+      ],
+      "timeout_s": 180
+    }
+  ]
+}

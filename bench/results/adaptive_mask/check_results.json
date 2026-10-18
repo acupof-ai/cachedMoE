@@ -1,0 +1,437 @@
+[
+  {
+    "name": "mask_kernel",
+    "command": [
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/build/tests/deepmoe_tests",
+      "gpu_moe.masked_missing_slots_and_shared_only"
+    ],
+    "env": {
+      "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+      "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 3.2657611539762,
+    "start": {
+      "ac": 1,
+      "k10temp": 54.75,
+      "nvme_hwmon4": 33.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 49.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 51.625,
+      "nvme_hwmon4": 35.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 49.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 54.75,
+      "nvme_hwmon4": 35.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 50.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T21:05:50.539154+08:00"
+  },
+  {
+    "name": "nll_off",
+    "command": [
+      "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+      "tools/l3_ppl.py",
+      "--state",
+      "/home/chenkailun/projects/cachedMoE/traces/l3_64",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/build/deepmoe",
+      "--modes",
+      "off",
+      "--json",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/off_nll.json",
+      "--log-dir",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/nll"
+    ],
+    "env": {
+      "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+      "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 50.33850707300007,
+    "start": {
+      "ac": 1,
+      "k10temp": 51.5,
+      "nvme_hwmon4": 35.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 49.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 60.625,
+      "nvme_hwmon4": 44.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 55.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 62.375,
+      "nvme_hwmon4": 53.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 62.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T21:06:41.232887+08:00"
+  },
+  {
+    "name": "nll_mask",
+    "command": [
+      "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+      "tools/l3_ppl.py",
+      "--state",
+      "/home/chenkailun/projects/cachedMoE/traces/l3_64",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/build/deepmoe",
+      "--modes",
+      "mask",
+      "--json",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/mask_nll.json",
+      "--log-dir",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/nll"
+    ],
+    "env": {
+      "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+      "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 42.10357941800612,
+    "start": {
+      "ac": 1,
+      "k10temp": 59.875,
+      "nvme_hwmon4": 44.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 55.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 61.875,
+      "nvme_hwmon4": 53.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 57.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 63.125,
+      "nvme_hwmon4": 57.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 63.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T21:07:23.774537+08:00"
+  },
+  {
+    "name": "decode_gates",
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "-j",
+      "1",
+      "-R",
+      "^suite.decode(_longctx)?$",
+      "--output-on-failure"
+    ],
+    "env": {
+      "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+      "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1",
+      "DEEPMOE_LONGCTX_DIR": "/home/chenkailun/projects/cachedMoE/traces/longctx"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 223.80520317397895,
+    "start": {
+      "ac": 1,
+      "k10temp": 61.0,
+      "nvme_hwmon4": 53.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 57.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 54.875,
+      "nvme_hwmon4": 37.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 54.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 65.375,
+      "nvme_hwmon4": 58.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 64.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T21:11:08.007254+08:00"
+  },
+  {
+    "name": "spec_prefix",
+    "command": [
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/build/tests/deepmoe_tests",
+      "gpu_dspark.committed_prefix_survives_window_wrap"
+    ],
+    "env": {
+      "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+      "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 29.590600007999456,
+    "start": {
+      "ac": 1,
+      "k10temp": 54.875,
+      "nvme_hwmon4": 37.85,
+      "nvme_hwmon13": 72.85,
+      "amdgpu": 54.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 59.25,
+      "nvme_hwmon4": 54.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 56.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 64.75,
+      "nvme_hwmon4": 56.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 65.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T21:11:38.037083+08:00"
+  },
+  {
+    "name": "turn64",
+    "command": [
+      "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/turn64.json",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/turn64",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/build/deepmoe",
+      "--require-sources",
+      "2",
+      "--cache-slots",
+      "5500",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--mask-cache",
+      "--serve-arg=dynamic",
+      "--serve-arg=--gpu-prefill-min",
+      "--serve-arg=16"
+    ],
+    "env": {
+      "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+      "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 149.6296727109875,
+    "start": {
+      "ac": 1,
+      "k10temp": 58.75,
+      "nvme_hwmon4": 54.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 56.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 59.375,
+      "nvme_hwmon4": 47.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 54.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 60.875,
+      "nvme_hwmon4": 54.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 62.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T21:14:08.104544+08:00"
+  },
+  {
+    "name": "mmlu57_spec5",
+    "command": [
+      "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+      "tools/mmlu_bench.py",
+      "--sample",
+      "/home/chenkailun/projects/cachedMoE/bench/results/miss_mask/mmlu_sample.json",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/mmlu57_spec5",
+      "--modes",
+      "mask-spec",
+      "--generation",
+      "--spec-k",
+      "5",
+      "--spec-top-k",
+      "4",
+      "--cache-slots",
+      "5500",
+      "--limit",
+      "57",
+      "--require-sources",
+      "2"
+    ],
+    "env": {
+      "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+      "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 974.116261180985,
+    "start": {
+      "ac": 1,
+      "k10temp": 58.875,
+      "nvme_hwmon4": 47.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 54.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 66.5,
+      "nvme_hwmon4": 56.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 62.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 71.5,
+      "nvme_hwmon4": 61.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 72.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T21:30:22.527503+08:00"
+  },
+  {
+    "name": "long8_spec5",
+    "command": [
+      "/home/chenkailun/projects/cachedMoE/.venv/bin/python",
+      "tools/hitrate_bench.py",
+      "--script",
+      "/home/chenkailun/projects/cachedMoE/bench/results/hitrate/long_turns.json",
+      "--out",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/bench/results/adaptive_mask/long8_spec5",
+      "--exe",
+      "/home/chenkailun/projects/deepmoe-adaptive-mask/build/deepmoe",
+      "--require-sources",
+      "2",
+      "--cache-slots",
+      "5500",
+      "--max-context",
+      "4096",
+      "--serve-arg=--resident-only",
+      "--serve-arg=mask",
+      "--serve-arg=--mask-cache",
+      "--serve-arg=dynamic",
+      "--serve-arg=--dspark",
+      "--serve-arg=--spec-k",
+      "--serve-arg=5",
+      "--serve-arg=--spec-top-k",
+      "--serve-arg=4",
+      "--serve-arg=--gpu-prefill-min",
+      "--serve-arg=16"
+    ],
+    "env": {
+      "DEEPMOE_MASK_DYNAMIC_LRU": "1",
+      "DEEPMOE_MODEL_MIRRORS": "/mnt/deepmoe2/models/DeepSeek-V4.1-Flash",
+      "DEEPMOE_DSPARK_PROFILE": "0",
+      "DEEPMOE_DSPARK_ONECB": "1",
+      "DEEPMOE_BATCH_GPU_ROUTE": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 448.1729486649856,
+    "start": {
+      "ac": 1,
+      "k10temp": 62.875,
+      "nvme_hwmon4": 54.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 60.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 68.875,
+      "nvme_hwmon4": 49.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 65.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 72.375,
+      "nvme_hwmon4": 60.85,
+      "nvme_hwmon13": 74.85,
+      "amdgpu": 73.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T21:37:53.044034+08:00"
+  }
+]

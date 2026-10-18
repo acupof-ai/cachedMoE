@@ -1,0 +1,13 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "projection_unit",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu_dspark.batch_projection_fold_scale"
+      ],
+      "timeout_s": 90
+    }
+  ]
+}

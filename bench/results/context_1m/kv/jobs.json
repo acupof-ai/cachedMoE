@@ -1,0 +1,13 @@
+{
+  "cwd": "/home/chenkailun/projects/cachedMoE",
+  "jobs": [
+    {
+      "name": "kv_1m",
+      "command": [
+        "build/tests/deepmoe_tests",
+        "gpu.kvstore_measured_bytes_and_64k_slabs"
+      ],
+      "timeout_s": 90
+    }
+  ]
+}

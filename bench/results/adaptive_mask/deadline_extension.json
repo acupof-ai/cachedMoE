@@ -1,0 +1,8 @@
+{
+  "job": "mmlu57_spec5",
+  "old_seconds": 900,
+  "new_seconds": 1300,
+  "mechanism": "temporary continuation thermal guard; original supervisor resumes after the same benchmark exits",
+  "job_pid": 2653730,
+  "reason": "57 exact prefix prefills exceeded the initial budget; no model configuration change or repeated run"
+}

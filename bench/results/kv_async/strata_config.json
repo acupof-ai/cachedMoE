@@ -1,0 +1,11 @@
+{
+ "exe":"/home/chenkailun/projects/deepmoe-kv-async/build/deepmoe",
+ "cwd":"/home/chenkailun/projects/deepmoe-kv-async",
+ "model":"/home/chenkailun/models/DeepSeek-V4.1-Flash",
+ "model_name":"deepseek-v4.1-flash",
+ "backend":"vulkan",
+ "args":["--max-context","4096","--cache-slots","5000","--gpu-prefill-min","16","--mirror","/mnt/deepmoe2/models/DeepSeek-V4.1-Flash","--kv-dir","/home/chenkailun/projects/cachedMoE/bench/results/kv_async/kv"],
+ "sampling":{"temperature":1.0,"top_p":0.95,"top_k":0},
+ "anthropic_thinking":"on_request",
+ "log":"/home/chenkailun/projects/cachedMoE/bench/results/kv_async/strata_engine.log"
+}

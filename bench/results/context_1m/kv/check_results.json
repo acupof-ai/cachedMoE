@@ -1,0 +1,40 @@
+[
+  {
+    "name": "kv_1m",
+    "command": [
+      "build/tests/deepmoe_tests",
+      "gpu.kvstore_measured_bytes_and_64k_slabs"
+    ],
+    "env": {},
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 5.8756411759823095,
+    "start": {
+      "ac": 1,
+      "k10temp": 61.875,
+      "nvme_hwmon4": 44.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 56.0,
+      "missing_sensors": []
+    },
+    "end": {
+      "ac": 1,
+      "k10temp": 59.25,
+      "nvme_hwmon4": 41.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 56.0,
+      "missing_sensors": []
+    },
+    "peak": {
+      "k10temp": 61.875,
+      "nvme_hwmon4": 44.85,
+      "nvme_hwmon13": 59.85,
+      "amdgpu": 58.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "mirror_holds": 48,
+    "time": "2026-10-05T20:12:06.785573+08:00"
+  }
+]

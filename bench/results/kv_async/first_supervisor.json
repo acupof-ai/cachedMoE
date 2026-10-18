@@ -1,0 +1,1 @@
+{"supervisor": 2759693, "server": 2759715, "command": ["/home/chenkailun/projects/strata-deepmoe/.venv/bin/python", "-m", "serve.server", "--engine", "deepmoe", "--config", "/home/chenkailun/projects/cachedMoE/bench/results/kv_async/strata_config.json", "--port", "8095"]}

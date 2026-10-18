@@ -1,0 +1,36 @@
+[
+  {
+    "name": "union_gpu_route",
+    "command": [
+      "/home/chenkailun/projects/deepmoe-spec/build/tests/deepmoe_tests",
+      "gpu_moe.the_verify_batch_runs_its_expert_union_once"
+    ],
+    "env": {
+      "DEEPMOE_TEST_GPU_ROUTE": "1"
+    },
+    "profile": "power-saver",
+    "rc": 0,
+    "failure": null,
+    "elapsed_s": 4.224286338008824,
+    "start": {
+      "k10temp": 52.5,
+      "nvme": 31.85,
+      "amdgpu": 47.0,
+      "ac": 1
+    },
+    "end": {
+      "k10temp": 49.875,
+      "nvme": 34.85,
+      "amdgpu": 48.0,
+      "ac": 1
+    },
+    "peak": {
+      "k10temp": 52.5,
+      "nvme": 34.85,
+      "amdgpu": 48.0
+    },
+    "thermal_pauses": 0,
+    "ac_changed": false,
+    "time": "2026-10-05T00:35:07.165026+08:00"
+  }
+]

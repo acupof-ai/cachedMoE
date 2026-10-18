@@ -1,0 +1,13 @@
+{
+  "comment": "docs/p4_hitrate.md §1: chat-like prompts back to back in one serve process, sampled (T 1.0, top_p 0.95, fixed seeds so every run emits the same tokens). Two follow-ups reuse the KV state; the resets drop only the context, never the expert cache.",
+  "turns": [
+    {
+      "label": "zh essay",
+      "user": "请写一篇三百字左右的短文，谈谈城市里的夜跑为什么越来越流行，以及夜跑时需要注意的安全问题。",
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "seed": 41001,
+      "max_tokens": 32
+    }
+  ]
+}

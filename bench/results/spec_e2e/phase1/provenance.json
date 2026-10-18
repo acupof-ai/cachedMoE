@@ -1,0 +1,11 @@
+{
+  "exe_sha256": "e3083f1f16028beef5892bea93059ba04fea4f37db74df81706a1c7743faec74",
+  "head": "2cd38a349f55bf13ef9b63bb734c998e8159b2e6",
+  "diff_sha256": "b7fcd25a988d868e041ca5e40692d3fb5bc10d46fbcf43aab95fbf92ab1811ff",
+  "env": {
+    "DEEPMOE_DSPARK_TEST_ONECB": "1",
+    "DEEPMOE_DSPARK_MEGA_DIAG": "1",
+    "DEEPMOE_DSPARK_PROFILE": "1",
+    "DEEPMOE_DSPARK_ONECB": "0"
+  }
+}
