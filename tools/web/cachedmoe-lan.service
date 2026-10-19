@@ -1,0 +1,14 @@
+[Unit]
+Description=cachedMoE LAN web and API
+[Service]
+WorkingDirectory=/home/chenkailun/projects/cachedMoE
+ExecStart=/home/chenkailun/projects/cachedMoE/tools/web/run-web.sh
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=150
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/chenkailun/projects/cachedMoE/build/web_mask/lan.log
+StandardError=append:/home/chenkailun/projects/cachedMoE/build/web_mask/lan.log
+[Install]
+WantedBy=default.target

@@ -35,6 +35,6 @@ exec .venv/bin/python tools/web/server.py \
   --kv-dir build/web_mask/kv \
   --kv-max-gb 8 \
   --dspark --spec-k 2 --spec-top-k 4 \
-  --port 8080 \
+  --api-audit-dir /home/chenkailun/cmoeapi/api-audit --host 0.0.0.0 --port 8080 \
   --log build/web_mask/engine.log \
   --thermal-policy-json '{"gpu_pause_c":85.0,"gpu_resume_c":77.0,"gpu_start_c":60.0,"nvme_pause_c":82.0,"nvme_resume_c":78.0,"nvme_start_c":76.0}'

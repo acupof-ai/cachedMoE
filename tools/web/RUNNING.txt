@@ -1,3 +1,12 @@
+Current LAN/API service (2026-10-19)
+------------------------------------
+Managed by systemd --user: cachedmoe-lan.service, linger enabled.
+Listener 0.0.0.0:8080; local HTTP/API pass, LAN blocked by root-owned UFW.
+Authoritative commands and limits: docs/lan_api.md.
+Acceptance and hard-blocker evidence: docs/lan_api_receipt.json.
+This service owns the sole GPU engine. Stop it using the documented unit
+before any GPU test or bench. Historical launch commands below are not current.
+
 cachedMoE web UI -- the running instance
 =====================================
 

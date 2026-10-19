@@ -67,6 +67,7 @@ import runtime_env
 import runtime_defaults
 import provenance
 import state_paths
+import api
 
 sys.dont_write_bytecode = True
 
@@ -710,6 +711,13 @@ class Bridge:
                 traceback.print_exc()
                 job.out.put({"event": "error", "message": str(e)})
             finally:
+                if "api_messages" in job.body:
+                    try:
+                        self.serve.reset(job.session)
+                    except Exception:
+                        traceback.print_exc()
+                    with self.states_lock:
+                        self.states.pop(job.session, None)
                 job.out.put(None)
                 with self.jobs_cv:
                     if self.jobs and self.jobs[0] is job:
@@ -727,7 +735,11 @@ class Bridge:
             return
         with st.lock:
             st.settings(b)
-            ids, full = st.prompt_ids(serve, user_text)
+            if "api_messages" in b:
+                full = self.enc.encode_messages(b["api_messages"], thinking_mode="chat", drop_thinking=True)
+                ids = serve.tokenize(full)
+            else:
+                ids, full = st.prompt_ids(serve, user_text)
         if len(ids) >= serve.max_context:
             job.out.put({"event": "error", "message":
                          f"Prompt has {len(ids)} tokens; engine limit is {serve.max_context}"})
@@ -797,7 +809,10 @@ class Bridge:
                                        "decode_mode": ev.get("decode_mode"),
                                        "speculation_enabled": ev.get("speculation_enabled"),
                                        "finish": ev.get("finish"), "context": ev.get("context"), "seed": seed}
-                        st.save()
+                        if "api_messages" in b:
+                            ev["api_message"] = msg
+                        else:
+                            st.save()
                     ev["seed"] = seed
                     ev["mode"] = st.mode()
                     ev["content"] = msg.get("content") or ""
@@ -848,6 +863,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         try:
+            if u.path == "/v1/models":
+                return self._send(200, {"object": "list", "data": [{"id": api.MODEL, "object": "model", "created": 0, "owned_by": "cachedmoe"}]})
             if u.path in ("/", "/index.html"):
                 with open(os.path.join(HERE, "index.html"), "rb") as f:
                     return self._send(200, f.read(), "text/html; charset=utf-8")
@@ -884,6 +901,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         try:
             body = self._json_body()
+            if u.path in ("/v1/chat/completions", "/v1/messages", "/v1/responses"):
+                return api.handle(self, u.path, body)
             if u.path in ("/api/preview", "/api/chat") and "reasoning_effort" in body:
                 try:
                     reasoning_effort(body["reasoning_effort"])
@@ -983,6 +1002,7 @@ def main():
     ap.add_argument("--exe", default=runtime_defaults.executable(REPO))
     ap.add_argument("--model", default=None)
     ap.add_argument("--port", type=int, default=runtime_defaults.WEB_PORT)
+    ap.add_argument("--api-audit-dir", default=None, help="opt-in request/response text receipts; no HTTP credentials")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--max-context", type=int, default=K_MAX_INDEX_POSITIONS)
     ap.add_argument("--cache-gb", type=int, default=0)
