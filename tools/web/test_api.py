@@ -3,12 +3,50 @@ import copy
 import io
 import json
 import queue
+import threading
 import unittest
 from types import SimpleNamespace
 import api
 
 
 class ApiTest(unittest.TestCase):
+    def test_anthropic_text_arrives_before_completion(self):
+        q = queue.Queue()
+        flushed = queue.Queue()
+
+        class Sink(io.BytesIO):
+            def flush(self):
+                flushed.put(self.getvalue())
+
+        h = SimpleNamespace(bridge=SimpleNamespace(args=SimpleNamespace(), submit=lambda *a: SimpleNamespace(out=q)),
+                            wfile=Sink(), send_response=lambda *a: None,
+                            send_header=lambda *a: None, end_headers=lambda: None)
+        errors = []
+        def request():
+            try:
+                api.handle(h, '/v1/messages', {'messages': [{'role': 'user', 'content': 'Hello'}], 'stream': True})
+            except Exception as e:
+                errors.append(e)
+        worker = threading.Thread(target=request, daemon=True)
+        worker.start()
+        try:
+            initial = flushed.get(timeout=2)
+            self.assertIn(b'message_start', initial)
+            self.assertNotIn(b'content_block_start', initial)
+            q.put({'event': 'token', 'text': 'Hi'})
+            self.assertIn(b'content_block_start', flushed.get(timeout=2))
+            partial = flushed.get(timeout=2)
+            self.assertIn(b'"text": "Hi"', partial)
+            self.assertNotIn(b'message_stop', partial)
+            self.assertTrue(worker.is_alive())
+        finally:
+            q.put({'event': 'done', 'api_message': {'content': 'Hi'}, 'finish': 'stop'})
+            q.put(None)
+            worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIn(b'message_stop', h.wfile.getvalue())
+
     def test_responses_tool_history(self):
         body = {'input': [{'type': 'function_call', 'call_id': 'c1', 'name': 'shell', 'arguments': '{"cmd":"pwd"}'}, {'type': 'function_call_output', 'call_id': 'c1', 'output': '/tmp'}], 'tools': [{'type': 'function', 'name': 'shell', 'parameters': {'type': 'object'}}]}
         req, tools = api.normalize('/v1/responses', body)

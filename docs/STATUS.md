@@ -30,6 +30,19 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Claude client Round 3 (2026-10-19): GPU prefill fits; no speed gain.** Real
+flora Claude 2.1.302 uses GPU prefill for 1499/1505/1490 input tokens, after
+24.376/22.472/22.616 s. Keep 5000 slots/min16/1M context. The historical
+5500-slot workspace refusal was a 6208-token request. A separate exactly
+2000-token fixture also reports GPU prefill. Cold start 21.535 s.
+Client wire confirms incremental text before and after; the adapter now delays
+empty text-block start until real text and audits first/last flush times.
+Claude JSON `ttft_ms` measures the complete assistant message and remains near
+total time; no improvement claimed. Python client-observed decode is
+12.702→11.731 tok/s; Chinese after 8.731. Expert IO dominates these GPU
+prefills. 58/58 gates, web/OpenAI/Anthropic, real Codex write and Claude Read
+checks pass; numerical code unchanged. [Measurement and limits](claude_client_latency.md).
+
 **Constant MoE loops (2026-10-07): no measured gain.** The matched six-column
 storage probe is 1.986774897→2.029320735 ms/layer; compact storage plus the
 constant loop is 1.987997219. All checked outputs are bitwise equal, zero

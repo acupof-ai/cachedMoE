@@ -101,3 +101,15 @@ This trusted LAN listener has no auth or TLS. 58/58 tools gates passed.
 Existing dynamic-mask quality limits remain; no numerical quality gate was
 rerun because numerical code and executable are unchanged. Final publication
 proof is `~/cmoeapi/published-followup.json`, written after the push.
+
+## Round 3 client timing
+
+[Real Claude client latency](claude_client_latency.md) records the three fixed
+flora prompts, before/after counters and incremental SSE arrival times. The
+5000-slot launcher stays unchanged: these prompts already used GPU prefill.
+No speed improvement is claimed. `first_content_frame_ms` now starts with real
+text; Claude JSON `ttft_ms` still timestamps a complete assistant message.
+The adapter audits first/last text flush and completion times. 58/58 gates,
+web/OpenAI/Anthropic, a fresh Codex file-write loop and a small Claude Read tool
+loop pass. Raw JSON and exact commands: `~/cmoeapi/report3.md` and
+`~/cmoeapi/round3/`, outside git.

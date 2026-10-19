@@ -108,6 +108,9 @@ def result(path, msg, usage, finish, ident):
 
 
 def handle(h, path, body):
+    started = time.monotonic()
+    first_text_ms = None
+    last_text_ms = None
     session = uid("api_")
     audit = getattr(h.bridge.args, "api_audit_dir", None)
     if audit:
@@ -142,6 +145,7 @@ def handle(h, path, body):
     prompt, generated, done = 0, 0, None
     chat = path.endswith("completions")
     anthropic = path.endswith("messages")
+    text_started = False
     def delta(value):
         if chat:
             emit({"id": ident, "object": "chat.completion.chunk", "created": int(time.time()), "model": MODEL, "choices": [{"index": 0, "delta": value, "finish_reason": None}]})
@@ -150,8 +154,6 @@ def handle(h, path, body):
             delta({"role": "assistant"})
         if stream and anthropic:
             emit({"type": "message_start", "message": {"id": ident, "type": "message", "role": "assistant", "model": MODEL, "content": [], "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 0, "output_tokens": 0}}}, "message_start")
-            if not has_tools:
-                emit({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}, "content_block_start")
         if stream and not chat and not anthropic:
             emit({"response": {"id": ident, "object": "response", "status": "in_progress", "output": []}}, "response.created")
         while True:
@@ -166,17 +168,30 @@ def handle(h, path, body):
                 generated += 1
                 if stream and not has_tools:
                     value = ev["text"].replace("<｜end▁of▁sentence｜>", "")
+                    if not value:
+                        continue
+                    if anthropic and not text_started:
+                        # Claude records content_block_start as its first content
+                        # frame. Do not send an empty block before GPU prefill.
+                        emit({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}, "content_block_start")
+                        text_started = True
                     if chat:
                         delta({"content": value})
                     elif anthropic:
                         emit({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": value}}, "content_block_delta")
+                    if chat or anthropic:
+                        last_text_ms = (time.monotonic() - started) * 1000
+                        if first_text_ms is None:
+                            first_text_ms = last_text_ms
             elif ev["event"] == "done":
                 done = ev
         if done is None:
             raise RuntimeError("Engine returned no completion")
         obj = result(path, done["api_message"], (prompt, generated), done.get("finish"), ident)
         if audit:
-            Path(audit, session + ".response.json").write_text(json.dumps({"body": obj, "engine": done}, ensure_ascii=False, indent=2))
+            Path(audit, session + ".response.json").write_text(json.dumps({"body": obj, "engine": done,
+                "stream_timing": {"first_text_flush_ms": first_text_ms, "last_text_flush_ms": last_text_ms,
+                                  "completion_ms": (time.monotonic() - started) * 1000}}, ensure_ascii=False, indent=2))
         if not stream:
             return h._send(200, obj)
         if chat:
@@ -194,6 +209,8 @@ def handle(h, path, body):
                     emit({"type": "content_block_delta", "index": i, "delta": d}, "content_block_delta")
                     emit({"type": "content_block_stop", "index": i}, "content_block_stop")
             else:
+                if not text_started:
+                    emit({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}, "content_block_start")
                 emit({"type": "content_block_stop", "index": 0}, "content_block_stop")
             emit({"type": "message_delta", "delta": {"stop_reason": obj["stop_reason"], "stop_sequence": None}, "usage": obj["usage"]}, "message_delta")
             emit({"type": "message_stop"}, "message_stop")
