@@ -33,7 +33,7 @@ Anything with no source is marked `not measured`.
 **Round 9 independent pinned verification (2026-10-19): reuse PASS; warm decode reaches13, cold targets unfinished.**
 Fresh `f1892ad` Python cold/repeat/history outputs each91 IDs: A/B and A/C have
 no divergence, reuse100%/97.989950%. CPU31/31, tools58/58 (initial concurrent
-scratch-file collision retained, serial correction passes), strict decode
+suite.io failure retained, serial correction passes), strict decode
 unchanged6/8+7/8/exit1, real Codex write/Claude Read, webHello, exact2000-token
 GPU prefill and both API JSON/SSE schemas all freshly verified. Restore the
 already-selected balanced profile from observed performance: actual Claude

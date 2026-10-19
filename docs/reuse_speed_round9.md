@@ -13,7 +13,7 @@ A/B/C client totals **37.750157/8.088107/15.896911 s**.
 These are fresh runs, not Round8 results. Fixture input is the captured real Claude code request, normalized through the pinned API adapter; its source SHA is saved privately. The historical environment text is fixture data.
 
 - Build PASS; CPU CTest **31/31 PASS**.
-- Tools **58/58 PASS**, checkpoint metadata gates actually run. Initial simultaneous CPU/tools invocation produced57/58 (suite.io). Both suites manipulate identical fixed scratch paths (`tests/test_io.cpp:117,477`); concurrent execution was a harness error. Serial rerun passes. Both attempts retained; no test threshold/source change.
+- Tools **58/58 PASS**, checkpoint metadata gates actually run. Initial simultaneous CPU/tools invocation produced57/58 (suite.io). Both suites manipulate identical fixed scratch paths (`tests/test_io.cpp:117,477`); These shared mutable paths make concurrent execution a harness error; a collision is a plausible cause of the failure, not proved by the retained summary. Serial rerun passes. Both attempts retained; no test threshold/source change.
 - Production strict decode **6/8 and own-prefill7/8**, unchanged; **exit1**, six assertions. Own-prefill free-running is6/8. This is preservation of known failures, not an8/8 certification.
 - Fresh acceptance **10/10 PASS**: real Codex shell-write and exact disk bytes, real Claude Read→tool_result→final (two requests), exact webHello, actual cold **2000/2000** prompt/prefill tokens on GPU, OpenAI/Anthropic non-stream and SSE schema checks, readiness/models.
 - Actual Codex loop wall54.916987s; Claude Read loop47.432697s including SSH wrapper. These tool-enabled gates are separate from the tools-disabled speed clients.
