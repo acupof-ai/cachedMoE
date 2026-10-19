@@ -30,6 +30,22 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Correctness Round 7 (2026-10-19): mandatory stop; no runtime/speed change.**
+Production1017 and its mirror are a different revision from the preserved0928
+checkpoint; the historical exports are **not a matched production validation
+pair**, not proof of corrupt1017 weights. One fresh original0928/CM strict
+short-decode check prints **6/8**, not8/8; stopped at65.783 s after that
+conclusive failure (SIGTERM, exit-15; own-prefill sections incomplete).
+Historical original off64 **.622784** reproduction from Round6 is retained,
+not rerun or rebaselined; restoring old weights alone cannot satisfy strict
+8/8+8/8. Prime reuse correctness remains unresolved; no unsupported claim of
+KV corruption or fix. CPU31/31 and tools58/58 pass. Speed/client/2000-token
+acceptance is **SKIP after correctness stop**, not fresh passes. Existing1017
+service restored enabled/active on8080 with one engine, healthHTTP200 and exact
+webHello (3.871 s client wall; liveness only). No checkpoint, threshold,
+fixture, runtime or production-policy change.
+[Trust classification, exact failure and gate accounting](correctness_round7.md).
+
 **Engine latency Round 6 (2026-10-19): blocked, no new runtime optimisation accepted.**
 Nine serial cold/repeat/continuation requests finish HTTP200 with no retries;
 all three repeats reuse100%, first wire text62–75 ms. **Code repeat and

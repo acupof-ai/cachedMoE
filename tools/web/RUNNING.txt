@@ -1,5 +1,12 @@
 Current LAN/API service (2026-10-19)
 ------------------------------------
+Round 7: service restored after the bounded original0928 strict-decode check
+failed 6/8 (required 8/8; remaining sections incomplete). No correctness or
+speed fix accepted; existing production1017 weights/policy unchanged. Unit
+enabled/active, sole engine, config/status/models HTTP200, exact web Hello
+restoration smoke passes. Numerical acceptance and reuse correctness remain
+blocked; CPU31/31 and tools58/58 pass. docs/correctness_round7.md has the gate
+accounting; machine closure receipt: ~/cmoeapi/round7/publication.json.
 Managed by systemd --user: cachedmoe-lan.service, linger enabled.
 Listener 0.0.0.0:8080; local HTTP/API and all three LAN peers pass.
 Current cache: 5000 slots (5500 previously); 1M context, GPU prefill min 16.
