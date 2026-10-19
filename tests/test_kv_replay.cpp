@@ -963,3 +963,32 @@ CACHEDMOE_TEST(kv_replay, retained_prompt_is_bit_exact) {
     CHECK_EQ(e.kv_store().recover_prompt_ring(base), 0u);
     std::printf("    retained window: original ring bytes + 7/7 token/top1/top2 bit-exact; reset invalidates\n");
 }
+
+// Full boundaries must reject stale identities, truncation and bit damage before GPU use.
+#include "runtime/baked_prompt.h"
+#include <fstream>
+CACHEDMOE_TEST(kvdisk, baked_boundary_integrity) {
+    namespace fs = std::filesystem;
+    const auto path = fs::temp_directory_path() / "cachedmoe-baked-codec-test.bkv";
+    runtime::BakedPrompt p;
+    p.tokens = {11, 22, 33}; p.first.token = 44; p.first.position = 2;
+    p.rows.first_pos = 0; p.rows.end_pos = 3;
+    p.rows.planes.resize(1); p.rows.planes[0].cmp = {0x1234, 0x5678};
+    p.ring.latent_dim = 2; p.ring.layer = {0}; p.ring.slot = {0};
+    p.ring.position = {2}; p.ring.val = {0, 255}; p.ring.scale = {7};
+    CHECK(runtime::write_baked_prompt(path, 123, p).has_value());
+    auto q = runtime::read_baked_prompt(path, 123);
+    CHECK(q.has_value());
+    if (q) {
+        CHECK(q->tokens == p.tokens); CHECK(q->first.token == 44);
+        CHECK(q->rows.planes[0].cmp == p.rows.planes[0].cmp);
+        CHECK(q->ring.val == p.ring.val); CHECK(q->ring.position == p.ring.position);
+    }
+    CHECK(!runtime::read_baked_prompt(path, 124).has_value());
+    { std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
+      f.seekp(40); char changed = 0x7f; f.write(&changed, 1); }
+    CHECK(!runtime::read_baked_prompt(path, 123).has_value());
+    fs::resize_file(path, 16);
+    CHECK(!runtime::read_baked_prompt(path, 123).has_value());
+    fs::remove(path);
+}

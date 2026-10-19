@@ -75,6 +75,7 @@ set(CACHEDMOE_RUNTIME_SOURCES
     runtime/decode_state.cpp
     runtime/engram.cpp
     runtime/sampling.cpp
+    runtime/baked_prompt.cpp
     runtime/session.cpp
     runtime/dspark_runtime.cpp
     runtime/speculate.cpp

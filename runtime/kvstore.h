@@ -314,6 +314,7 @@ public:
     // Writes back the rows that the step at `position` completes, if the backup
     // holds them.
     Result<void> restore_rows(const KvRowBackup& b, uint32_t position);
+    Result<void> restore_exact_rows(const KvRowBackup& b, uint32_t positions);
     Result<void> restore_carry(const KvRowBackup& b);
 
     // --- speculation: the window ring's rollback (docs/p3_dspark.md §3.5) ---

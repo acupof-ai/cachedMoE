@@ -462,6 +462,12 @@ public:
   // Track R2 (runtime/session.h): rollback, parking and window replay write
   // the store between steps.
   KvStore &kv_store() { return cur_->kvs_; }
+  // Full exact greedy boundaries, shared by token identity across named sessions.
+  void configure_baked_prompts(const std::string& dir, uint64_t budget);
+  bool has_baked_prompt(std::span<const uint32_t> tokens, const SamplingParams& sampling) const;
+  Result<void> bake_prompt(const DecodeStepResult& first);
+  Result<std::optional<DecodeStepResult>> restore_baked_prompt(
+      std::span<const uint32_t> tokens, const SamplingParams& sampling);
   Result<void> retain_prompt_state(const DecodeStepResult* first = nullptr);
   Result<std::optional<DecodeStepResult>> reuse_prompt(std::span<const uint32_t> tokens,
                                                      const SamplingParams& sampling);
@@ -1062,6 +1068,9 @@ private:
     std::FILE*            spec_diagnostics_ = nullptr;
     bool spec_diagnostics_started_ = false;
     uint32_t reuse_diagnostic_cycle_ = 0;
+    std::string baked_dir_;
+    uint64_t baked_identity_ = 0, baked_budget_ = 0;
+    std::string baked_path(std::span<const uint32_t> tokens) const;
     void write_prompt_diagnostics(const char* phase, uint32_t keep);
     std::vector<uint16_t> batch_route_requests_;
     MsSched               ms_sched_ = MsSched::Pipeline;

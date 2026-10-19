@@ -30,6 +30,27 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Round 10 exact disk bake (2026-10-20): same-prompt restart TTFT target PASS.**
+Persist the full greedy prompt boundary (raw compressed/index rows, carry, ring
+bytes+ownership and first-step result) separately from legacy `.pkv`; exact
+matches across new named sessions skip window replay. Captured real Claude
+flora prompt1470: cold first/total **23.953/37.679s**; restart/new-session
+**0.056/18.603s**, **91/91 IDs identical**, reuse1470/1470,0 replay.
+Full boundary7,546,352B, bake36.426ms, disk restore10.677ms; prompt-only
+legacy pack1,339,132B/59.09ms. Memory repeats0.040/0.053s first; actual
+Anthropic SSE repeat0.108s. Prefill avoids165.448914GiB expert reads
+(156.812988GiB required); full-request net132.849609GiB after colder decode.
+Other real clients x/mac/cachyos miss:0/1660,0/1651,0/1667, first
+22.316/21.844/22.333s. Their earliest break is rendered line11's extra
+`pasted_content` rule, common221 tokens, before environment lines.
+This is full exact-request caching, not arbitrary-prefix extension or a
+cold-text speed claim.5500 slots96.343994GiB; cold code expert hit88.587963%
+means515.153MB/token. Another500 slots costs8.758545GiB; no unmeasured capacity
+recommendation. CPU31/31, tools58/58, client/API10/10 PASS; strict decode
+unchanged6/8+7/8/exit1. Profiling removed, service enabled/healthy, one engine
+on8080; final existing-session restart also0.053s/91 equal IDs.
+[Implementation, four-client table, capacity arithmetic and all29 requests](harness_bake_round10.md).
+
 **Round 9 independent pinned verification (2026-10-19): reuse PASS; warm decode reaches13, cold targets unfinished.**
 Fresh `f1892ad` Python cold/repeat/history outputs each91 IDs: A/B and A/C have
 no divergence, reuse100%/97.989950%. CPU31/31, tools58/58 (initial concurrent
@@ -1073,6 +1094,17 @@ steps, and the reference continuation has to be produced step by step.**
 ---
 
 ## 7. Next, in order
+
+**Round10 disk-boundary scope:** full identical rendered prompts now restore
+exactly across restart/new sessions; preserve ring bytes and tags, raw rows,
+carry and first-step result. Full snapshots have a build/model/shader/runtime
+identity and share the existing KV quota. Different messages/harnesses miss;
+do not count common221 tokens as full reuse or strip client instructions.
+Measured full restart state7.55MB replaces165.45GiB prefill expert IO; SSD KV
+bandwidth itself was not the cold bottleneck. Unbakeable text still needs fewer
+expert bytes/token; current code decode88.588% hit costs515.153MB/token and
++500 slots costs8.759GiB, beyond present headroom. No slot increase or cold
+miss speedup is accepted. See [Round10](harness_bake_round10.md).
 
 **Round9 measured boundary:** pinned reuse and client gates are independently
 verified; balanced warm code/Chinese decode exceeds13tok/s, but cold remains

@@ -786,6 +786,30 @@ Result<void> KvStore::restore_rows(const KvRowBackup& b, uint32_t position) {
     return {};
 }
 
+Result<void> KvStore::restore_exact_rows(const KvRowBackup& b, uint32_t positions) {
+    if (b.planes.size() != owners_.size()) return fail(Err::Corrupt, "baked plane count");
+    for (size_t i = 0; i < owners_.size(); ++i) {
+        const auto& p = b.planes[i];
+        if (p.layer != owners_[i] || p.ratio != cfg_.plane_ratio(p.layer) || p.first_row != 0 ||
+            p.rows != positions / p.ratio || p.cmp.size() != size_t(p.rows) * cfg_.latent_dim ||
+            p.key.size() != size_t(p.rows) * cfg_.index_dim ||
+            p.carry_kv.size() != size_t(cfg_.max_ratio) * cfg_.latent_dim ||
+            p.carry_score.size() != p.carry_kv.size()) return fail(Err::Corrupt, "baked plane shape");
+    }
+    if (auto r = reserve(positions); !r) return r;
+    for (size_t i = 0; i < owners_.size(); ++i) {
+        const auto& p = b.planes[i];
+        std::memcpy(at(lay_.off_cmp[i]), p.cmp.data(), p.cmp.size() * 2);
+        std::memcpy(at(lay_.off_idx[i]), p.key.data(), p.key.size() * 2);
+        rows_hw_[i] = p.rows;
+    }
+    for (uint32_t l = 0; l < cfg_.layers; ++l) {
+        auto oi = owner_index(l);
+        n_cmp_[l] = oi == KvStoreConfig::kNoPlane ? 0 : positions / cfg_.plane_ratio(owners_[oi]);
+    }
+    return restore_carry(b);
+}
+
 Result<void> KvStore::restore_carry(const KvRowBackup& b) {
     if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     const KvStoreConfig& c = cfg_;

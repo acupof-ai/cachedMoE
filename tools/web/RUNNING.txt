@@ -1,5 +1,18 @@
-Current LAN/API service (2026-10-19)
+Current LAN/API service (2026-10-20)
 ------------------------------------
+Round10: exact full prompt boundaries persist under the configured KV directory's
+boundaries/*.bkv (legacy *.pkv retained; shared byte quota). Captured real Claude
+1470-token cold first23.953s -> restart/new-session0.056s,91/91 IDs equal,
+0 replay,1470/1470 reuse; final profiling-off existing session0.053s/91 equal.
+Different harnesses x/mac/cachyos share only221 tokens and miss; no generic
+partial-prefix speed claim. Full file7,546,352B, restore10.677ms;
+165.448914GiB prefill expert IO avoided. CPU31/31, tools58/58,
+strict unchanged6/8+7/8/exit1; all10 real-client/API gates PASS.
+Final unit enabled/active, one engine, exactHello and HTTP health PASS on8080,
+no temporary profiling. docs/harness_bake_round10.md has the full invocation
+ledger and capacity analysis; private report ~/cmoeapi/report10.md.
+
+Round9 below is the prior delivery receipt.
 Round 9 independently verifies pinned f1892ad: Python A/B/C91/91 IDs,
 no divergence, repeat100%/history97.989950% reuse. CPU31/31, tools58/58,
 strict decode unchanged6/8+7/8/exit1; fresh real tool loops, schemas,

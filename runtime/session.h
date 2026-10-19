@@ -160,6 +160,7 @@ struct KvDiskOptions {
 
 // Writes `p` atomically (`<name>.pkv.tmp` -> rename) and evicts old files past
 // `opt.max_bytes`. Missing/empty dir is InvalidArgument; IO failures are Io.
+void enforce_kv_disk_budget(const KvDiskOptions& opt);
 Result<void> save_parked_context(const ParkedContext& p, const KvDiskOptions& opt,
                                  const std::string& name);
 // Missing file, model-tag mismatch or bad version returns NotFound/Corrupt.
@@ -396,7 +397,7 @@ public:
                 SessionPoolOptions pool = {});
 
     // Makes `name` live (creating it empty if it does not exist).
-    Result<ReplayStats> activate(const std::string& name);
+    Result<ReplayStats> activate(const std::string& name, bool exact_boundary = false);
     // Track R2 SSD cache: park/save the live session (clean shutdown), and try
     // to load the active name from disk into an empty engine (fresh process).
     // `restore_active_from_disk` returns NotFound when there is no file.

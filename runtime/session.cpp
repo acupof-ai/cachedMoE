@@ -284,6 +284,14 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
     auto cached = req.reuse && opt.rollback ? e.reuse_prompt(prompt, req.sampling)
                             : Result<std::optional<DecodeStepResult>>(std::optional<DecodeStepResult>{});
     if (!cached) return std::unexpected(cached.error());
+    if (!*cached && req.reuse && opt.rollback) {
+        auto disk = e.restore_baked_prompt(prompt, req.sampling);
+        if (disk) cached = std::move(disk);
+        else {
+            log_warn("baked-prefix: restore declined: {}; starting cold", disk.error().str());
+            e.reset_context();
+        }
+    }
     uint32_t reuse = *cached ? static_cast<uint32_t>(prompt.size()) : 0;
     uint32_t hist_n = 0, common_n = 0;
     const char* reuse_why = "cold";
@@ -337,7 +345,7 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
     } else {
         hist_n = history_before;
         common_n = reuse;
-        st.rollback_dropped = history_before - reuse;
+        st.rollback_dropped = history_before > reuse ? history_before - reuse : 0;
         reuse_why = "prompt-snapshot";
     }
     log_info("session: prompt {} tokens, history {}, common prefix {} -> reuse {} ({}), {} to "
@@ -407,6 +415,10 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
         log_warn("session: could not retain prompt ring: {}", r.error().str());
     else
         log_info("session: retained prompt window in {:.3f} ms", ms_since(tr));
+    if (!*cached) {
+        if (auto r = e.bake_prompt(first); !r)
+            log_warn("baked-prefix: save declined: {}", r.error().str());
+    }
     ts.sd = std::make_unique<text::StreamDecoder>(tok, /*skip_special=*/true);
     account_sample(st, first);
     ts.cur = first;
@@ -739,9 +751,10 @@ SessionPool::SessionPool(Engine& engine, const text::Tokenizer& tok, SessionOpti
                          SessionPoolOptions pool)
     : engine_(&engine), session_(engine, tok, opt), pool_(pool) {
     if (!pool_.disk.dir.empty()) disk_writer_ = std::make_unique<KvDiskWriter>(pool_.disk);
+    engine.configure_baked_prompts(pool_.disk.dir, pool_.disk.max_bytes);
 }
 
-Result<ReplayStats> SessionPool::activate(const std::string& name) {
+Result<ReplayStats> SessionPool::activate(const std::string& name, bool exact_boundary) {
     if (name == active_) return ReplayStats{};
     Engine& e = *engine_;
     // Park the live context (an empty one is simply forgotten).
@@ -758,8 +771,9 @@ Result<ReplayStats> SessionPool::activate(const std::string& name) {
         }
     }
     ReplayStats st;
+    if (exact_boundary) { parked_.erase(name); lru_.remove(name); }
     auto it = parked_.find(name);
-    if (it == parked_.end() && !pool_.disk.dir.empty()) {
+    if (it == parked_.end() && !exact_boundary && !pool_.disk.dir.empty()) {
         disk_writer_->flush();
         auto loaded = load_parked_context(pool_.disk, name);
         if (loaded) {
@@ -971,9 +985,9 @@ void enforce_disk_budget(const KvDiskOptions& opt) {
     std::error_code ec;
     std::vector<std::pair<fs::file_time_type, fs::path>> files;
     uint64_t total = 0;
-    for (fs::directory_iterator it(opt.dir, ec), end; !ec && it != end; it.increment(ec)) {
+    for (fs::recursive_directory_iterator it(opt.dir, ec), end; !ec && it != end; it.increment(ec)) {
         const fs::path& p = it->path();
-        if (p.extension() != ".pkv") continue;
+        if (p.extension() != ".pkv" && p.extension() != ".bkv") continue;
         std::error_code e2;
         const auto sz = fs::file_size(p, e2);
         if (e2) continue;
@@ -991,6 +1005,7 @@ void enforce_disk_budget(const KvDiskOptions& opt) {
 }
 
 }  // namespace
+void enforce_kv_disk_budget(const KvDiskOptions& opt) { enforce_disk_budget(opt); }
 Result<void> save_parked_context(const ParkedContext& p, const KvDiskOptions& opt,
                                  const std::string& name) {
     namespace fs = std::filesystem;

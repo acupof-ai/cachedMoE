@@ -437,9 +437,9 @@ int cmd_serve(int argc, char** argv) {
     Inbox inbox;
     std::thread reader([&] { inbox.run(); });
 
-    auto switch_to = [&](const std::string& name) -> bool {
+    auto switch_to = [&](const std::string& name, bool exact_boundary = false) -> bool {
         if (name == pool.active()) return true;
-        auto r = pool.activate(name);
+        auto r = pool.activate(name, exact_boundary);
         if (!r) {
             emit_error("session '" + name + "': " + r.error().str());
             return false;
@@ -756,8 +756,6 @@ int cmd_serve(int argc, char** argv) {
             emit("{\"event\":\"done\",\"session\":" + json_quote(session) + "," + gs.json_fields() + "}");
             continue;
         }
-        if (!switch_to(session)) continue;
-
         runtime::GenerateRequest req;
         req.decode_mode = decode_mode;
         if (const JsonValue* ids = doc->find("prompt_ids"); ids && ids->is_array())
@@ -766,6 +764,7 @@ int cmd_serve(int argc, char** argv) {
             req.prompt_ids = tok->encode(doc->string_or("text", ""));
         cli::apply_generate_options(*doc, req);
         req.cancel = cancelled;
+        if (!switch_to(session, req.reuse && so.rollback && engine.has_baked_prompt(req.prompt_ids, req.sampling))) continue;
 
         auto st = pool.live().generate(
             req,
