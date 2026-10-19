@@ -1,22 +1,31 @@
 Current LAN/API service (2026-10-19)
 ------------------------------------
-Round 7: service restored after the bounded original0928 strict-decode check
-failed 6/8 (required 8/8; remaining sections incomplete). No correctness or
-speed fix accepted; existing production1017 weights/policy unchanged. Unit
-enabled/active, sole engine, config/status/models HTTP200, exact web Hello
-restoration smoke passes. Numerical acceptance and reuse correctness remain
-blocked; CPU31/31 and tools58/58 pass. docs/correctness_round7.md has the gate
-accounting; machine closure receipt: ~/cmoeapi/round7/publication.json.
+Round 8: retained-ring restoration/ownership fixed. LAN correctness default
+is now unmasked off-plain, no DSpark; approximate mask/top4 was rejected after
+restored ring bytes matched but repeated greedy output still diverged.
+Python three repeats+C match364/364 IDs at5000 and5500slots; repeat reuse100%.
+Full-history fresh controls match Python91/91 and Chinese91/91 continuation IDs.
+CPU31/31, tools58/58, Vulkan KV7/7 and real batch/session1/1 pass. Strict decode
+counts6/8+7/8 unchanged (suite exit1); historical0928/CM NLL.622784 reproduced,
+not production1017 certification. Cold37.605s and warm9.60–10.45tok/s fail speed
+targets. Final5500 real Codex write, Claude Read, exact webHello,2000-token GPU
+prefill and OpenAI/Anthropic JSON+SSE pass. Failed startup-race acceptance is
+retained separately. Current evidence/defaults and all client attempts:
+docs/reuse_consistency_round8.md; private delivery: ~/cmoeapi/report8.md.
 Managed by systemd --user: cachedmoe-lan.service, linger enabled.
-Listener 0.0.0.0:8080; local HTTP/API and all three LAN peers pass.
-Current cache: 5000 slots (5500 previously); 1M context, GPU prefill min 16.
-Round 4: GPU prefill speedup 12; stable API session KV, status/usage/UI prefix
-and expert-decode rates. Limits and receipts: docs/api_prefix_cache.md.
-Real Codex file-write loop and Claude Hello pass; one engine owns the GPU.
-Authoritative commands and limits: docs/lan_api.md.
-Acceptance and raw-evidence index: docs/lan_api_receipt.json.
-This service owns the sole GPU engine. Stop it using the documented unit
-before any GPU test or bench. Historical launch commands below are not current.
+Listener 0.0.0.0:8080; one engine. Launch: tools/web/run-web.sh.
+Current cache: 5500 exact expert slots; 1M context, GPU prefill min16/speedup12.
+Disk KV: build/web_exact/kv,8GB cap; old build/web_mask/kv preserved, no migration.
+Two read sources, production1017 and its standard read-only mirror. Temporary
+CACHEDMOE_SPEC_DIAGNOSTICS / CACHEDMOE_PF_OPS_JSON are off for final service.
+Stop: systemctl --user stop cachedmoe-lan.service; verify no cachedmoe serve
+before another GPU job. Start: systemctl --user start cachedmoe-lan.service.
+Live ownership: systemctl --user status cachedmoe-lan.service;
+  pgrep -af 'tools/web/server.py|cachedmoe serve'
+Never signal historical PIDs without checking live ownership.
+Round4 API prefix reuse/session accounting remains; docs/api_prefix_cache.md.
+Historical LAN/peer acceptance: docs/lan_api.md and docs/lan_api_receipt.json.
+This service owns the sole GPU engine. Historical commands below are NOT current.
 
 cachedMoE web UI -- the running instance
 =====================================

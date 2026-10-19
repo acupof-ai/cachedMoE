@@ -1061,6 +1061,8 @@ private:
     std::FILE*            route_dump_ = nullptr;
     std::FILE*            spec_diagnostics_ = nullptr;
     bool spec_diagnostics_started_ = false;
+    uint32_t reuse_diagnostic_cycle_ = 0;
+    void write_prompt_diagnostics(const char* phase, uint32_t keep);
     std::vector<uint16_t> batch_route_requests_;
     MsSched               ms_sched_ = MsSched::Pipeline;
     void write_route_record(uint32_t position);

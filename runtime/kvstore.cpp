@@ -387,6 +387,12 @@ void KvStore::resolve_ring(uint32_t n) {
     }
 }
 
+void KvStore::mark_ring_written(uint32_t first, uint32_t count) {
+    if (slot_pos_.empty()) return;
+    for (uint32_t j = 0; j < count; ++j)
+        slot_pos_[(first + j) % cfg_.window] = int64_t(first) + j;
+}
+
 bool KvStore::ring_holds(uint32_t position) const {
     if (slot_pos_.empty() || position < win_lo_) return false;
     return slot_pos_[position % cfg_.window] == int64_t(position);
@@ -813,13 +819,42 @@ void KvStore::truncate_prompt_ring(uint32_t keep) {
         if (p >= int64_t(keep)) p = kSlotEmpty;
 }
 
+KvStore::PromptRingDiff KvStore::compare_prompt_ring(uint32_t keep) const {
+    PromptRingDiff out;
+    if (!has_prompt_ring()) return out;
+    const uint32_t lo = keep >= cfg_.window ? keep - cfg_.window + 1 : 0;
+    for (uint32_t p = lo; p < keep; ++p) {
+        const uint32_t s = p % cfg_.window;
+        if (prompt_slot_pos_[s] != int64_t(p)) continue;
+        for (uint32_t l = 0; l < cfg_.layers; ++l) {
+            const size_t i = size_t(l) * cfg_.window + s;
+            uint64_t different = 0;
+            auto count = [&](uint64_t off, const uint8_t* saved, uint32_t size) {
+                const auto* current = reinterpret_cast<const uint8_t*>(at(off));
+                for (uint32_t j = 0; j < size; ++j) different += current[j] != saved[j];
+            };
+            count(lay_.off_win_val + i * cfg_.latent_dim,
+                  prompt_ring_.val.data() + i * cfg_.latent_dim, cfg_.latent_dim);
+            count(lay_.off_win_scale + i * cfg_.window_scales(),
+                  prompt_ring_.scale.data() + i * cfg_.window_scales(), cfg_.window_scales());
+            if (!different) continue;
+            if (!out.rows) { out.first_position = p; out.first_layer = l; }
+            ++out.rows;
+            out.bytes += different;
+            if (ring_holds(p)) out.falsely_present_bytes += different;
+        }
+    }
+    return out;
+}
+
 uint32_t KvStore::recover_prompt_ring(uint32_t keep) {
     if (prompt_slot_pos_.size() != cfg_.window) return 0;
     const uint32_t lo = keep >= cfg_.window ? keep - cfg_.window + 1 : 0;
     const uint64_t row = cfg_.latent_dim, sc = cfg_.window_scales();
     uint32_t recovered = 0;
     for (uint32_t p = lo; p < keep; ++p) {
-        if (ring_holds(p)) continue;
+        // A retained boundary owns its bytes, even if stale write metadata
+        // claims the slot still holds this position.
         const uint32_t s = p % cfg_.window;
         if (prompt_slot_pos_[s] != int64_t(p)) continue;
         for (uint32_t l = 0; l < cfg_.layers; ++l) {
@@ -851,6 +886,7 @@ Result<KvStore::RingSnapshot> KvStore::snapshot_ring(std::span<const uint32_t> s
     for (uint32_t sl : slots)
         if (sl >= c.window)
             return fail(Err::OutOfRange, std::format("ring slot {} of {}", sl, c.window));
+    for (uint32_t sl : slots) s.position.push_back(slot_pos_[sl]);
     const size_t n = s.layer.size() * s.slot.size();
     s.val.resize(n * c.latent_dim);
     s.scale.resize(n * c.window_scales());
@@ -872,7 +908,7 @@ Result<KvStore::RingSnapshot> KvStore::snapshot_ring(std::span<const uint32_t> s
 Result<void> KvStore::restore_ring(const RingSnapshot& s) {
     if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     const KvStoreConfig& c = cfg_;
-    if (s.latent_dim != c.latent_dim)
+    if (s.latent_dim != c.latent_dim || (!s.position.empty() && s.position.size() != s.slot.size()))
         return fail(Err::InvalidArgument, "ring snapshot of another store");
     for (uint32_t l : s.layer)
         if (l >= c.layers) return fail(Err::InvalidArgument, "ring snapshot of another store");
@@ -889,6 +925,15 @@ Result<void> KvStore::restore_ring(const RingSnapshot& s) {
             std::memcpy(at(lay_.off_win_scale + (uint64_t(l) * c.window + sl) * srow),
                         s.scale.data() + o * srow, srow);
         }
+    }
+    if (!s.position.empty()) {
+        bool all_layers = true;
+        for (uint32_t l = 0; l < c.layers; ++l)
+            all_layers &= std::find(s.layer.begin(), s.layer.end(), l) != s.layer.end();
+        // Ownership is store-wide. A partial-layer restore leaves a mixed slot
+        // that must not claim to hold either generation in every layer.
+        for (size_t si = 0; si < s.slot.size(); ++si)
+            slot_pos_[s.slot[si]] = all_layers ? s.position[si] : kSlotEmpty;
     }
     return {};
 }

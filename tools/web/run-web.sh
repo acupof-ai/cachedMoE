@@ -3,8 +3,9 @@
 # (~/models/DeepSeek-V4.1-Flash and its /mnt/deepmoe2 mirror). Refreshing the
 # weights means replacing those directories; this script and the systemd unit
 # never name a version.
-# Baseline: dynamic 5000-slot mask (client prefill headroom), k2/top4, CPU routing, native BF16, two read
-# sources, 1M context, 8 GB disk KV.
+# Correctness default: unmasked plain decode. Dynamic residency masking and
+# relaxed top4 speculation change greedy output across identical reused turns.
+# 5500 expert slots, CPU routing, native BF16, two read sources, 1M context.
 set -eu
 cd /home/chenkailun/projects/cachedMoE
 
@@ -26,16 +27,15 @@ export PYTHONUNBUFFERED=1
 
 exec .venv/bin/python tools/web/server.py \
   --exe build/cachedmoe \
-  --resident-only mask \
+  --resident-only off \
   --mask-cache dynamic \
-  --cache-slots 5000 \
+  --cache-slots 5500 \
   --max-context 1048576 \
   --gpu-prefill-min 16 \
   --gpu-prefill-speedup 12 \
   --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash \
-  --kv-dir build/web_mask/kv \
+  --kv-dir build/web_exact/kv \
   --kv-max-gb 8 \
-  --dspark --spec-k 2 --spec-top-k 4 \
   --api-audit-dir /home/chenkailun/cmoeapi/api-audit --host 0.0.0.0 --port 8080 \
   --log build/web_mask/engine.log \
   --thermal-policy-json '{"gpu_pause_c":85.0,"gpu_resume_c":77.0,"gpu_start_c":60.0,"nvme_pause_c":82.0,"nvme_resume_c":78.0,"nvme_start_c":76.0}'

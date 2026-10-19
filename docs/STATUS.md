@@ -30,6 +30,28 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Reuse self-consistency Round 8 (2026-10-19): cause fixed; exact default, speed targets still fail.**
+Speculative batches overwrote ring bytes without tagging every written row;
+old prompt restoration trusted stale tags and left **1,466,197 wrong bytes**
+in2,880 rows (first position1343/layer0 at boundary1470). Restore saved rows
+unconditionally, track all batch ownership and restore rejected tags with bytes.
+All instrumented restores now have0 ring/DSpark-hidden differences. The old
+dynamic-mask/top4 policy still diverges, so LAN default is **off-plain/no DSpark**,
+not a relabelled approximate path. Python three repeats+C match **364/364 IDs**
+at5000 and again5500 slots,100% repeat reuse; C97.98995%. Chinese repeat104/104;
+its different-history C differs at19, but identical-full-history cold controls
+match both Python/Chinese C91/91. Keep5500 for decode reads46.56→43.18 GiB
+(cold),31.51→23.26 GiB (C), not for small timing noise. Cold **37.605 s**;
+Python repeat engine/wire **9.60–10.45 tok/s**, so **≤15 s / ≥13 remain unmet**.
+CPU31/31, tools58/58, Vulkan KV7/7 and real batch/session1/1 pass. Production
+strict decode stays6/8+7/8 (**suite exit1**, six assertions); historical0928/CM
+NLL.622784 reproduced, not production1017 certification. Final5500 real Codex
+write/Claude Read, exact webHello,2000-token GPU prefill and OpenAI/Anthropic
+JSON+SSE all pass (10/10 acceptance gates after fixing a readiness race;
+failed attempt retained). Full client/service acceptance and all failed attempts
+are recorded in the
+[report and invocation ledger](reuse_consistency_round8.md).
+
 **Correctness Round 7 (2026-10-19): mandatory stop; no runtime/speed change.**
 Production1017 and its mirror are a different revision from the preserved0928
 checkpoint; the historical exports are **not a matched production validation
@@ -1034,6 +1056,25 @@ steps, and the reference continuation has to be produced step by step.**
 ---
 
 ## 7. Next, in order
+
+**Round8 current boundary (2026-10-19; supersedes historical pending/default notes below).**
+The demonstrated retained-ring bug is fixed, with raw-token self-consistency
+and full-history controls in [reuse_consistency_round8.md](reuse_consistency_round8.md).
+Default service is off-plain/no DSpark/5500slots, two sources,1M context;
+2000-token GPU headroom is measured. Do not return dynamic residency masking
+or relaxed top4 to an exact default: fixed ring bytes alone still diverged
+at67/47/28, while raw route weights matched but hit masks differed. Top1 alone
+is not a serial/batch equivalence proof; that question is already closed by
+prior measurements. No new historical oracle is required for same-input reuse
+checks; no production1017 oracle certification follows from old0928 exports.
+Next speed work must target the **17.723 s cold expert-IO bucket /165.45 GiB**
+and the exact warm GPU path (B1 attention49.46 +MoE29.29 ms/token), preserving
+same-input IDs. Cold37.605 s and repeat9.60–10.45tok/s fail15s/13tok/s targets.
+Do not rerun read-ahead-off (Round5:8.64GiB saved,1.5% wall only), speculate
+that every cold read is redundant, add overlapping fence/read-ahead times, or
+select the old lossy15.68tok/s repeat as a valid speed success.5500's retained
+gain is measured fewer decode bytes; it is not a cold-prefill optimisation.
+Strict decode remains6/8+7/8 and exits1; do not silently rebaseline it.
 
 0ch. **2026-10-06：owner main展示名已合入工作树并复验；本地main交付仍在整合。**
    `0ed4cb4`合入owner main `0f637f9`；CPU27/27、工具41/41，52 shader和runtime/tests两个exe

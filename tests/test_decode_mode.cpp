@@ -312,7 +312,7 @@ CACHEDMOE_TEST(gpu_request_policy, retained_window_sessions_and_exact_plain) {
     auto continued = request;
     continued.decode_mode = DecodeMode::MaskSpec;
     continued.prompt_ids.insert(continued.prompt_ids.end(), completion.begin(), completion.end());
-    continued.max_tokens = 3;
+    continued.max_tokens = 4;
     calls = engine.batch_forward_calls();
     auto spec = pool.live().generate(continued, {});
     REQUIRE_OK(spec);
@@ -321,6 +321,15 @@ CACHEDMOE_TEST(gpu_request_policy, retained_window_sessions_and_exact_plain) {
     CHECK_EQ(engine.batch_forward_calls() - calls, spec->speculation.cycles);
     CHECK(spec->speculation_enabled);
     CHECK_EQ(spec->decode_mode, std::string("mask-spec"));
+    // Real batched writes must update every slot's ownership, not only the
+    // last verification row. This boundary is beyond the first ring wrap.
+    const uint32_t end = engine.context_length();
+    for (uint32_t p = end - layout::kSlidingWindow + 1; p < end; ++p)
+        CHECK(engine.kv_store().ring_holds(p));
+    auto restored_prompt = engine.reuse_prompt(continued.prompt_ids, continued.sampling);
+    REQUIRE_OK(restored_prompt);
+    REQUIRE(restored_prompt->has_value());
+    CHECK_EQ(engine.kv_store().compare_prompt_ring(uint32_t(continued.prompt_ids.size())).bytes, 0ull);
 
     // Match the CLI ordering: establish policy before session activation.
     const auto default_history = engine.history();

@@ -284,6 +284,7 @@ public:
     // position below n in its residue class. A slot is only ever overwritten by
     // a later position, so this is exact.
     void resolve_ring(uint32_t n);
+    void mark_ring_written(uint32_t first, uint32_t count);
     // The same arithmetic as a pure function, so a CPU test can pin it without
     // a device: slot `s` of a `window`-slot ring, after a context of `n`
     // tokens, holds the last position below n congruent to s, or -1 (empty)
@@ -333,6 +334,7 @@ public:
     struct RingSnapshot {
         std::vector<uint32_t> layer;     // one plane a layer, in `slots` order
         std::vector<uint32_t> slot;
+        std::vector<int64_t> position;   // host ownership travels with the bytes
         std::vector<uint8_t>  val;       // [layer][slot][latent_dim]
         std::vector<uint8_t>  scale;     // [layer][slot][latent_dim / 32]
         uint32_t latent_dim = 0;
@@ -350,6 +352,11 @@ public:
     // serialized; clear/unpack invalidate it along with the context identity.
     Result<void> retain_prompt_ring(uint32_t positions);
     uint32_t recover_prompt_ring(uint32_t keep);
+    struct PromptRingDiff {
+        uint64_t bytes = 0, falsely_present_bytes = 0;
+        uint32_t rows = 0, first_position = UINT32_MAX, first_layer = UINT32_MAX;
+    };
+    PromptRingDiff compare_prompt_ring(uint32_t keep) const;
     void truncate_prompt_ring(uint32_t keep);
     bool has_prompt_ring() const { return prompt_slot_pos_.size() == cfg_.window; }
 

@@ -549,6 +549,245 @@ CACHEDMOE_TEST(gpu, kvstore_ring_snapshot_restores_the_rejected_slots) {
     alloc.shutdown();
 }
 
+// A GPU batch can overwrite a retained prompt's ring without updating the
+// host's slot-position map. A matching tag is not proof the saved bytes survived.
+CACHEDMOE_TEST(gpu, kvstore_retained_ring_restores_bytes_despite_stale_tags) {
+    gpu::Device dev;
+    if (skip_without_gpu(dev)) return;
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(dev, MemoryPath::DeviceLocalHostVisible));
+
+    KvStoreConfig cfg;
+    cfg.layers = 2;
+    cfg.window = 4;
+    cfg.latent_dim = 32;
+    cfg.index_dim = 32;
+    cfg.max_context = 12;
+    cfg.max_ratio = 1;
+    cfg.index_topk = 0;
+    runtime::KvStore kv;
+    REQUIRE_OK(kv.create(alloc, cfg));
+
+    const uint32_t keep = 8, original = 5, overwritten_by = original + cfg.window;
+    const uint32_t slot = original % cfg.window;
+    const uint32_t scales = cfg.window_scales();
+    const std::vector<uint32_t> slots = {0, 1, 2, 3}, layers = {0, 1};
+    // Exercise both stale tags (the GPU-only write defect) and explicitly
+    // committed batch metadata. Neither path may lose the retained bytes.
+    for (bool update_tag : {false, true}) {
+        kv.clear();
+        for (uint32_t l : layers) {
+            auto v = kv.layer(l);
+            REQUIRE_OK(v);
+            for (uint32_t p = keep - cfg.window; p < keep; ++p) {
+                const uint32_t s = p % cfg.window;
+                std::memset(v->win_val_host + size_t(s) * cfg.latent_dim,
+                            0x20 + l * 8 + s, cfg.latent_dim);
+                std::memset(v->win_scale_host + size_t(s) * scales,
+                            0x70 + l * 8 + s, scales);
+                REQUIRE_OK(kv.set_decode_topk(l, p, 0, 0));
+            }
+        }
+        auto before = kv.snapshot_ring(slots, layers);
+        REQUIRE_OK(before);
+        REQUIRE_OK(kv.retain_prompt_ring(keep));
+        REQUIRE(kv.ring_holds(original));
+
+        // Simulate the batch's completed GPU writes, not a seed or restore:
+        // those would also change metadata and hide the stale-tag failure.
+        for (uint32_t l : layers) {
+            auto v = kv.layer(l);
+            REQUIRE_OK(v);
+            std::memset(v->win_val_host + size_t(slot) * cfg.latent_dim, 0xEE, cfg.latent_dim);
+            std::memset(v->win_scale_host + size_t(slot) * scales, 0x55, scales);
+        }
+        if (update_tag) kv.mark_ring_written(overwritten_by, 1);
+        CHECK_EQ(kv.ring_holds(original), !update_tag);
+        CHECK_EQ(kv.ring_holds(overwritten_by), update_tag);
+        auto overwritten = kv.snapshot_ring(slots, layers);
+        REQUIRE_OK(overwritten);
+        REQUIRE(overwritten->val != before->val);
+        REQUIRE(overwritten->scale != before->scale);
+
+        kv.recover_prompt_ring(keep);
+        CHECK(kv.ring_holds(original));
+        CHECK(!kv.ring_holds(overwritten_by));
+        auto restored = kv.snapshot_ring(slots, layers);
+        REQUIRE_OK(restored);
+        // Compare entire rings: restore every overwritten value/scale byte in
+        // both layers and leave the other slots (including position 4) alone.
+        CHECK(restored->val == before->val);
+        CHECK(restored->scale == before->scale);
+    }
+    kv.destroy();
+    alloc.shutdown();
+}
+
+CACHEDMOE_TEST(gpu, kvstore_ring_snapshot_restores_only_rejected_position_metadata) {
+    gpu::Device dev;
+    if (skip_without_gpu(dev)) return;
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(dev, MemoryPath::DeviceLocalHostVisible));
+
+    KvStoreConfig cfg;
+    cfg.layers = 1;
+    cfg.window = 4;
+    cfg.latent_dim = 32;
+    cfg.index_dim = 32;
+    cfg.max_context = 12;
+    cfg.max_ratio = 1;
+    cfg.index_topk = 0;
+    runtime::KvStore kv;
+    REQUIRE_OK(kv.create(alloc, cfg));
+    auto v = kv.layer(0);
+    REQUIRE_OK(v);
+    const uint32_t scales = cfg.window_scales();
+    const std::vector<uint32_t> slots = {1, 2}, layers = {0};
+    for (uint32_t s : slots) {
+        std::memset(v->win_val_host + size_t(s) * cfg.latent_dim, 0x20 + s, cfg.latent_dim);
+        std::memset(v->win_scale_host + size_t(s) * scales, 0x70 + s, scales);
+    }
+    kv.mark_ring_written(5, 2);
+    auto before = kv.snapshot_ring(slots, layers);
+    REQUIRE_OK(before);
+    REQUIRE(before->position == std::vector<int64_t>({5, 6}));
+
+    // Both batch positions write, but only position 9 will be committed.
+    for (uint32_t s : slots) {
+        std::memset(v->win_val_host + size_t(s) * cfg.latent_dim, 0xEE, cfg.latent_dim);
+        std::memset(v->win_scale_host + size_t(s) * scales, 0x55, scales);
+    }
+    kv.mark_ring_written(9, 2);
+    REQUIRE(kv.ring_holds(9));
+    REQUIRE(kv.ring_holds(10));
+    CHECK(!kv.ring_holds(5));
+    CHECK(!kv.ring_holds(6));
+
+    // Slice the original snapshot down to rejected position 10's slot. Its
+    // ownership metadata must follow the saved bytes, not the committed slot.
+    auto rejected = *before;
+    rejected.slot.erase(rejected.slot.begin());
+    rejected.position.erase(rejected.position.begin());
+    rejected.val.erase(rejected.val.begin(), rejected.val.begin() + cfg.latent_dim);
+    rejected.scale.erase(rejected.scale.begin(), rejected.scale.begin() + scales);
+    REQUIRE_OK(kv.restore_ring(rejected));
+    CHECK(kv.ring_holds(9));
+    CHECK(kv.ring_holds(6));
+    CHECK(!kv.ring_holds(5));
+    CHECK(!kv.ring_holds(10));
+
+    auto expected = *before;
+    expected.position[0] = 9;
+    std::fill_n(expected.val.begin(), cfg.latent_dim, uint8_t(0xEE));
+    std::fill_n(expected.scale.begin(), scales, uint8_t(0x55));
+    auto after = kv.snapshot_ring(slots, layers);
+    REQUIRE_OK(after);
+    CHECK(after->position == expected.position);
+    CHECK(after->val == expected.val);
+    CHECK(after->scale == expected.scale);
+    kv.destroy();
+    alloc.shutdown();
+}
+
+CACHEDMOE_TEST(gpu, kvstore_partial_layer_ring_restore_invalidates_position) {
+    gpu::Device dev;
+    if (skip_without_gpu(dev)) return;
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(dev, MemoryPath::DeviceLocalHostVisible));
+    KvStoreConfig cfg;
+    cfg.layers = 2;
+    cfg.window = 4;
+    cfg.latent_dim = 32;
+    cfg.index_dim = 32;
+    cfg.max_context = 12;
+    cfg.max_ratio = 1;
+    cfg.index_topk = 0;
+    runtime::KvStore kv;
+    REQUIRE_OK(kv.create(alloc, cfg));
+    const std::vector<uint32_t> slots = {1}, layers = {0, 1}, partial_layers = {0};
+    for (uint32_t l : layers) {
+        auto v = kv.layer(l);
+        REQUIRE_OK(v);
+        std::memset(v->win_val_host + cfg.latent_dim, 0x20 + l, cfg.latent_dim);
+        std::memset(v->win_scale_host + cfg.window_scales(), 0x70 + l, cfg.window_scales());
+    }
+    kv.mark_ring_written(5, 1);
+    auto partial = kv.snapshot_ring(slots, partial_layers);
+    REQUIRE_OK(partial);
+    REQUIRE(partial->position == std::vector<int64_t>({5}));
+    for (uint32_t l : layers) {
+        auto v = kv.layer(l);
+        REQUIRE_OK(v);
+        std::memset(v->win_val_host + cfg.latent_dim, 0xEE, cfg.latent_dim);
+        std::memset(v->win_scale_host + cfg.window_scales(), 0x55, cfg.window_scales());
+    }
+    kv.mark_ring_written(9, 1);
+    REQUIRE(kv.ring_holds(9));
+    REQUIRE_OK(kv.restore_ring(*partial));
+    // Layer 0 now holds position 5's bytes, layer 1 still position 9's:
+    // global ownership must claim neither generation for this mixed slot.
+    CHECK(!kv.ring_holds(5));
+    CHECK(!kv.ring_holds(9));
+    auto after = kv.snapshot_ring(slots, layers);
+    REQUIRE_OK(after);
+    auto expected_val = partial->val, expected_scale = partial->scale;
+    expected_val.insert(expected_val.end(), cfg.latent_dim, uint8_t(0xEE));
+    expected_scale.insert(expected_scale.end(), cfg.window_scales(), uint8_t(0x55));
+    CHECK(after->val == expected_val);
+    CHECK(after->scale == expected_scale);
+    kv.destroy();
+    alloc.shutdown();
+}
+
+CACHEDMOE_TEST(gpu, kvstore_short_prompt_recovery_respects_truncated_prefix) {
+    gpu::Device dev;
+    if (skip_without_gpu(dev)) return;
+    gpu::MemoryAllocator alloc;
+    REQUIRE_OK(alloc.init(dev, MemoryPath::DeviceLocalHostVisible));
+    KvStoreConfig cfg;
+    cfg.layers = 1;
+    cfg.window = 4;
+    cfg.latent_dim = 32;
+    cfg.index_dim = 32;
+    cfg.max_context = 8;
+    cfg.max_ratio = 1;
+    cfg.index_topk = 0;
+    runtime::KvStore kv;
+    REQUIRE_OK(kv.create(alloc, cfg));
+    auto v = kv.layer(0);
+    REQUIRE_OK(v);
+    const std::vector<uint32_t> slots = {0, 1, 2, 3}, layers = {0};
+    std::memset(v->win_val_host, 0x20, cfg.window * cfg.latent_dim);
+    std::memset(v->win_scale_host, 0x70, cfg.window * cfg.window_scales());
+    kv.mark_ring_written(0, 3);
+    REQUIRE(!kv.ring_holds(3));
+    REQUIRE_OK(kv.retain_prompt_ring(3));
+    auto expected = kv.snapshot_ring(slots, layers);
+    REQUIRE_OK(expected);
+
+    std::memset(v->win_val_host, 0xEE, cfg.window * cfg.latent_dim);
+    std::memset(v->win_scale_host, 0x55, cfg.window * cfg.window_scales());
+    kv.mark_ring_written(4, 4);
+    kv.truncate_prompt_ring(2);
+    // Asking for the original boundary cannot resurrect truncated position 2
+    // or the never-retained position 3. Only prefix positions 0 and 1 return.
+    CHECK_EQ(kv.recover_prompt_ring(3), 2u);
+    for (uint32_t p : slots) {
+        CHECK_EQ(kv.ring_holds(p), p < 2);
+        CHECK_EQ(kv.ring_holds(p + cfg.window), p >= 2);
+    }
+    std::fill(expected->val.begin() + 2 * cfg.latent_dim, expected->val.end(), uint8_t(0xEE));
+    std::fill(expected->scale.begin() + 2 * cfg.window_scales(), expected->scale.end(), uint8_t(0x55));
+    expected->position = {0, 1, 6, 7};
+    auto after = kv.snapshot_ring(slots, layers);
+    REQUIRE_OK(after);
+    CHECK(after->position == expected->position);
+    CHECK(after->val == expected->val);
+    CHECK(after->scale == expected->scale);
+    kv.destroy();
+    alloc.shutdown();
+}
+
 // ADDITIVE (Track W): the window ring's slot -> position map.
 //
 // The mutation audit (tests/mutate.py) found this uncovered: a one-generation

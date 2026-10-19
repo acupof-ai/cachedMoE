@@ -3183,6 +3183,14 @@ Result<void> Engine::run_layer_batch(uint32_t L, uint32_t p0, uint32_t M, bool &
                     const size_t at = size_t(m) * topk + i;
                     total += bwts[at];
                     const ExpertKey key{static_cast<uint16_t>(L), static_cast<uint16_t>(bids[at])};
+                    if (spec_diagnostics_ && spec_inflight_ && reuse_diagnostic_cycle_ < 2) {
+                        const auto line = std::format(
+                            "{{\"event\":\"effective_route\",\"cycle\":{},\"layer\":{},\"row\":{},"
+                            "\"expert\":{},\"weight_bits\":{},\"hit\":{}}}\n",
+                            reuse_diagnostic_cycle_, L, m, bids[at], std::bit_cast<uint32_t>(bwts[at]),
+                            std::find(plan->hits.begin(), plan->hits.end(), key) != plan->hits.end());
+                        std::fwrite(line.data(), 1, line.size(), spec_diagnostics_);
+                    }
                     if (std::find(plan->hits.begin(), plan->hits.end(), key) == plan->hits.end())
                         bwts[at] = 0.0f;
                     else
@@ -3528,12 +3536,14 @@ Result<void> Engine::forward_batch(uint32_t p0, std::span<const uint32_t> tokens
         batch_expert_wait_ms_ = (ps.wait_ns - planner_before.wait_ns) / 1e6;
     }
     (void)t_start;
+    cur_->kvs_.mark_ring_written(p0, M);
     return {};
 }
 
 Result<void> Engine::snapshot_batch_ring(uint32_t p0, uint32_t m) {
     const TextConfig &c = model_cfg_.text;
     if (m == 0 || m > gpu::kMgtMaxM) return fail(Err::InvalidArgument, "snapshot of 0 positions");
+    cur_->kvs_.resolve_ring(p0);
     std::vector<uint32_t> slots(m), layers(c.num_hidden_layers);
     for (uint32_t i = 0; i < m; ++i)
         slots[i] = (p0 + i) % c.sliding_window;
@@ -3564,7 +3574,10 @@ Result<void> Engine::restore_batch_ring(uint32_t p0, uint32_t accepted, uint32_t
     const uint32_t srow = row / 32;
     std::vector<uint32_t> take;
     for (uint32_t i = accepted + 1; i < m; ++i) take.push_back(i);
-    for (uint32_t i : take) sub.slot.push_back(batch_snap_.slot[i]);
+    for (uint32_t i : take) {
+        sub.slot.push_back(batch_snap_.slot[i]);
+        sub.position.push_back(batch_snap_.position[i]);
+    }
     sub.val.resize(size_t(sub.layer.size()) * take.size() * row);
     sub.scale.resize(size_t(sub.layer.size()) * take.size() * srow);
     for (size_t li = 0; li < sub.layer.size(); ++li)
@@ -3928,6 +3941,32 @@ Result<void> Engine::seed_from_prefill(const gpu::PrefillHandoff& h) {
     return {};
 }
 
+void Engine::write_prompt_diagnostics(const char* phase, uint32_t keep) {
+    if (!spec_diagnostics_) return;
+    const auto ring = cur_->kvs_.compare_prompt_ring(keep);
+    uint64_t hidden_bytes = 0, position_differences = 0, mask_differences = 0;
+    const uint32_t lo = keep >= layout::kSlidingWindow ? keep - layout::kSlidingWindow : 0;
+    for (uint32_t s = 0; s < layout::kSlidingWindow; ++s) {
+        const auto p = cur_->prompt_draft_position_[s];
+        if (p < int64_t(lo) || p >= int64_t(keep) || cur_->prompt_draft_hidden_.empty()) continue;
+        position_differences += cur_->draft_position_[s] != p;
+        mask_differences += cur_->draft_mask_[s] != cur_->prompt_draft_mask_[s];
+        const size_t off = size_t(s) * layout::kDsparkCaptureWidth * sizeof(float);
+        const auto* a = reinterpret_cast<const uint8_t*>(cur_->draft_hidden_.data()) + off;
+        const auto* b = reinterpret_cast<const uint8_t*>(cur_->prompt_draft_hidden_.data()) + off;
+        for (size_t i = 0; i < layout::kDsparkCaptureWidth * sizeof(float); ++i)
+            hidden_bytes += a[i] != b[i];
+    }
+    const auto line = std::format(
+        "{{\"event\":\"prompt_state\",\"phase\":\"{}\",\"position\":{},\"ring_bytes\":{},"
+        "\"falsely_present_bytes\":{},\"ring_rows\":{},\"first_position\":{},\"first_layer\":{},"
+        "\"hidden_bytes\":{},\"hidden_positions\":{},\"hidden_masks\":{}}}\n",
+        phase, keep, ring.bytes, ring.falsely_present_bytes, ring.rows, ring.first_position,
+        ring.first_layer, hidden_bytes, position_differences, mask_differences);
+    std::fwrite(line.data(), 1, line.size(), spec_diagnostics_);
+    std::fflush(spec_diagnostics_);
+}
+
 Result<void> Engine::retain_prompt_state(const DecodeStepResult* first) {
     cur_->prompt_first_.reset();
     // Bound the auxiliary history, although the engine's context can be 1M.
@@ -3942,6 +3981,8 @@ Result<void> Engine::retain_prompt_state(const DecodeStepResult* first) {
     cur_->prompt_carry_ = std::move(*carry);
     cur_->prompt_tokens_ = cur_->history_;
     cur_->prompt_first_ = *first;
+    reuse_diagnostic_cycle_ = 0;
+    write_prompt_diagnostics("retained", context_length());
     return {};
 }
 
@@ -3954,7 +3995,9 @@ Result<std::optional<DecodeStepResult>> Engine::reuse_prompt(
         return std::optional<DecodeStepResult>{};
     const TimePoint t0 = Clock::now();
     DecodeStepResult first = *cur_->prompt_first_;
+    write_prompt_diagnostics("before_restore", uint32_t(tokens.size()));
     (void)recover_prompt_state(static_cast<uint32_t>(tokens.size()));
+    write_prompt_diagnostics("after_restore", uint32_t(tokens.size()));
     // Generated positions append compressed rows. None of the completed rows
     // below this identical prefix is overwritten; only the carried group must
     // be restored. Counts/top-k are rebound at the next real decode step.
@@ -5082,6 +5125,9 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
             draft_stages, draft_gpu_stages, out.cycle.verify_ms, out.cycle.cpu_ms,
             out.cycle.rollback_ms);
         line.resize(line.size() - 2);
+        std::vector<uint32_t> target_argmax;
+        for (const auto& row : rows) target_argmax.push_back(row.argmax);
+        line += std::format(",\"target_argmax\":{}", array(target_argmax));
         line += ",\"verify_host_ms\":{";
         for (size_t i = 0; i < batch_host_ms_.size(); ++i) {
             if (i)
@@ -5106,6 +5152,7 @@ Result<Engine::SpecStep> Engine::speculative_step(uint32_t root, uint32_t max_ne
         for (auto &r : out.rows)
             r.wall_ms = (wall + diagnostic_ms) / n;
     }
+    ++reuse_diagnostic_cycle_;
     return out;
 }
 } // namespace cachedmoe::runtime
