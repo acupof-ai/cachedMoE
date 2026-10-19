@@ -3,8 +3,8 @@
 # (~/models/DeepSeek-V4.1-Flash and its /mnt/deepmoe2 mirror). Refreshing the
 # weights means replacing those directories; this script and the systemd unit
 # never name a version.
-# Baseline: dynamic 5500-slot mask, k2/top4, CPU routing, native BF16, two read
-# sources, 1M context, 4 GB disk KV.
+# Baseline: dynamic 5000-slot mask (client prefill headroom), k2/top4, CPU routing, native BF16, two read
+# sources, 1M context, 8 GB disk KV.
 set -eu
 cd /home/chenkailun/projects/cachedMoE
 
@@ -28,7 +28,7 @@ exec .venv/bin/python tools/web/server.py \
   --exe build/cachedmoe \
   --resident-only mask \
   --mask-cache dynamic \
-  --cache-slots 5500 \
+  --cache-slots 5000 \
   --max-context 1048576 \
   --gpu-prefill-min 16 \
   --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash \
