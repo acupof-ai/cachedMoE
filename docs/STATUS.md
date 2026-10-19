@@ -30,6 +30,22 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Engine latency Round 6 (2026-10-19): blocked, no new runtime optimisation accepted.**
+Nine serial cold/repeat/continuation requests finish HTTP200 with no retries;
+all three repeats reuse100%, first wire text62–75 ms. **Code repeat and
+continuation fail `is_prime(3)`**, despite the fast complete streams. Cold totals
+31.766/24.971/34.516 s, code/Chinese engine12.580/8.184 tok/s: targets still fail.
+Cold expert hit82.241–86.967%, but short arithmetic continuation77.429% fails
+81.78% per-invocation floor. CPU31/31, tools58/58, real Codex write/Claude Read,
+API schemas, webHello and exact2000-token GPU web9511.675 ms pass.
+Historical NLL **.622784 is reproduced** with original0928 weights and original
+CM attention; production1017/default remains.660034, production1017/CM.693887.
+Bounded weight hashes prove checkpoint bytes changed while oracle exports did
+not; this is not permission to accept a new baseline. Strict decode still
+6/8+7/8; retained-ring7-step bitwise check passes but is narrower than production
+speculative/mask free-running correctness. Service restored; runtime/defaults,
+checkpoint and thresholds unchanged. [Full matrix, attribution and blocker](engine_latency_round6.md).
+
 **Engine latency Round 5 (2026-10-19): exact-repeat replay removed; cold/decode targets unmet.**
 Memory-only exact greedy prompt boundary (≤8192 tokens) retains original ring,
 compressor carry, DSpark hidden state and first result. Repeat reuse100%, replay

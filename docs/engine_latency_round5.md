@@ -1,5 +1,11 @@
 # Engine latency Round 5 (2026-10-19)
 
+Historical round receipt. [Round 6](engine_latency_round6.md) subsequently found
+repeat/continuation prime failures in the same retained implementation and
+reproduced .622784 with the original checkpoint/attention settings. Its
+checkpoint-provenance diagnosis supersedes the unexplained-drift interpretation
+below; Round-5 measurements remain recorded as they occurred.
+
 Exact repeated prompts now avoid rollback replay. Cold total ≤15 s and cold
 code/Chinese decode ≥13 tok/s were **not achieved**. The historical numerical
 baseline also fails on untouched current main; this is not full acceptance.
