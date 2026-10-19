@@ -345,6 +345,14 @@ public:
                                        std::span<const uint32_t> layers) const;
     Result<void> restore_ring(const RingSnapshot& s);
 
+    // One memory-only prompt window. Unlike replay, recovering these bytes
+    // does not recompute a token with an incomplete attention window. Never
+    // serialized; clear/unpack invalidate it along with the context identity.
+    Result<void> retain_prompt_ring(uint32_t positions);
+    uint32_t recover_prompt_ring(uint32_t keep);
+    void truncate_prompt_ring(uint32_t keep);
+    bool has_prompt_ring() const { return prompt_slot_pos_.size() == cfg_.window; }
+
 private:
     // Offsets are in one flat space that the slabs tile in order; every region
     // lies wholly inside one slab, so `at` / `dev` map an offset (and any row
@@ -380,6 +388,8 @@ private:
     uint32_t              win_lo_ = 0;
     static constexpr int64_t kSlotEmpty = -1, kSlotUnknown = -2;
     std::vector<int64_t>  slot_pos_;     // [window]
+    RingSnapshot prompt_ring_;
+    std::vector<int64_t> prompt_slot_pos_;
 };
 
 }  // namespace cachedmoe::runtime

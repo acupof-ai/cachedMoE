@@ -346,6 +346,8 @@ Result<void> KvStore::create(gpu::MemoryAllocator& alloc, const KvStoreConfig& c
 }
 
 void KvStore::clear() {
+    prompt_ring_ = {};
+    prompt_slot_pos_.clear();
     if (!valid()) return;
     const KvStoreConfig& c = cfg_;
     std::memset(at(lay_.off_win_val), 0, size_t(c.layers) * c.window * c.latent_dim);
@@ -391,6 +393,8 @@ bool KvStore::ring_holds(uint32_t position) const {
 }
 
 void KvStore::destroy() {
+    prompt_ring_ = {};
+    prompt_slot_pos_.clear();
     free_slabs(alloc_, bufs_);
     alloc_ = nullptr;
     lay_ = Layout{};
@@ -485,6 +489,8 @@ Result<KvLayerView> KvStore::layer(uint32_t l) const {
 }
 
 Result<void> KvStore::seed_window(uint32_t layer, const float* values, uint32_t rows) {
+    prompt_ring_ = {};
+    prompt_slot_pos_.clear();
     auto v = this->layer(layer);
     if (!v) return std::unexpected(v.error());
     if (rows > cfg_.window)
@@ -680,6 +686,8 @@ Result<KvPacked> KvStore::pack(uint32_t positions) const {
 }
 
 Result<void> KvStore::unpack(const KvPacked& pk) {
+    prompt_ring_ = {};
+    prompt_slot_pos_.clear();
     if (!valid()) return fail(Err::FailedPrecondition, "KV store is not created");
     if (auto r = reserve(std::max<uint32_t>(pk.positions, 1)); !r) return r;
     const KvStoreConfig& c = cfg_;
@@ -784,6 +792,48 @@ Result<void> KvStore::restore_carry(const KvRowBackup& b) {
         std::memcpy(at(score_base + oi * stp), p.carry_score.data(), p.carry_score.size() * 4);
     }
     return {};
+}
+
+Result<void> KvStore::retain_prompt_ring(uint32_t positions) {
+    resolve_ring(positions);
+    std::vector<uint32_t> slots(cfg_.window), layers(cfg_.layers);
+    for (uint32_t i = 0; i < slots.size(); ++i) slots[i] = i;
+    for (uint32_t i = 0; i < layers.size(); ++i) layers[i] = i;
+    auto s = snapshot_ring(slots, layers);
+    if (!s) return std::unexpected(s.error());
+    prompt_ring_ = std::move(*s);
+    prompt_slot_pos_ = slot_pos_;
+    for (auto& p : prompt_slot_pos_)
+        if (p >= 0 && uint64_t(p) < win_lo_) p = kSlotEmpty;
+    return {};
+}
+
+void KvStore::truncate_prompt_ring(uint32_t keep) {
+    for (auto& p : prompt_slot_pos_)
+        if (p >= int64_t(keep)) p = kSlotEmpty;
+}
+
+uint32_t KvStore::recover_prompt_ring(uint32_t keep) {
+    if (prompt_slot_pos_.size() != cfg_.window) return 0;
+    const uint32_t lo = keep >= cfg_.window ? keep - cfg_.window + 1 : 0;
+    const uint64_t row = cfg_.latent_dim, sc = cfg_.window_scales();
+    uint32_t recovered = 0;
+    for (uint32_t p = lo; p < keep; ++p) {
+        if (ring_holds(p)) continue;
+        const uint32_t s = p % cfg_.window;
+        if (prompt_slot_pos_[s] != int64_t(p)) continue;
+        for (uint32_t l = 0; l < cfg_.layers; ++l) {
+            const size_t i = size_t(l) * cfg_.window + s;
+            std::memcpy(at(lay_.off_win_val + i * row), prompt_ring_.val.data() + i * row, row);
+            std::memcpy(at(lay_.off_win_scale + i * sc), prompt_ring_.scale.data() + i * sc, sc);
+        }
+        slot_pos_[s] = p;
+        ++recovered;
+    }
+    // Recovered rows are original bytes at the exact prompt boundary,
+    // so they need no replay floor masking.
+    if (recovered) win_lo_ = std::min(win_lo_, lo);
+    return recovered;
 }
 
 Result<KvStore::RingSnapshot> KvStore::snapshot_ring(std::span<const uint32_t> slots,

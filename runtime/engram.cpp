@@ -241,6 +241,9 @@ Result<void> EngramRunner::create(gpu::Device& device, gpu::MemoryAllocator& all
 }
 
 void EngramRunner::destroy() {
+    row_cache_.clear();
+    row_fifo_.clear();
+    row_cache_hits_ = 0;
     pool_.destroy();
     cmd_ = gpu::CommandBuffer{};
     device_ = nullptr;
@@ -291,6 +294,17 @@ Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> histo
     auto* base = static_cast<std::byte*>(staging_.ptr) + pl->staging;
     pl->fetched_position = ~0ull;
     for (uint32_t r = 0; r < layout::kEngramRowsPerToken; ++r) {
+        pl->rows[r] = rows[r];
+        if (auto it = row_cache_.find({layer, rows[r]}); it != row_cache_.end()) {
+            std::memcpy(base + pl->pending.size() * kStagingPerRead,
+                        it->second.value.data(), it->second.value.size());
+            pl->pending.emplace_back(std::future<storage::IoResult>{}, 0u);
+            std::memcpy(base + pl->pending.size() * kStagingPerRead,
+                        it->second.scale.data(), it->second.scale.size());
+            pl->pending.emplace_back(std::future<storage::IoResult>{}, 0u);
+            ++row_cache_hits_;
+            continue;
+        }
         auto plan = manifest_->engram_row(layer, rows[r]);
         if (!plan) return std::unexpected(plan.error());
         for (const AlignedRead& a : {plan->value, plan->scale}) {
@@ -326,6 +340,9 @@ Result<void> EngramRunner::fetch(uint32_t layer, std::span<const uint32_t> histo
 
 Result<void> EngramRunner::land(Planes& pl) {
     if (pl.pending.empty()) return {};
+    // A failed fetch may leave only a prefix in flight. Drain it, but never
+    // cache an unissued value/scale pair as if it had been read successfully.
+    const size_t completed_rows = pl.pending.size() / 2;
     const auto land_start = Clock::now();
     uint64_t wait = 0;
     const auto* base = static_cast<const std::byte*>(staging_.ptr) + pl.staging;
@@ -357,6 +374,19 @@ Result<void> EngramRunner::land(Planes& pl) {
     if (failed.code != Err::Ok) {
         pl.fetched_position = ~0ull;
         return fail(failed.code, std::format("engram layer {}: {}", pl.layer, failed.message));
+    }
+    for (size_t r = 0; r < completed_rows; ++r) {
+        const RowKey key{pl.layer, pl.rows[r]};
+        if (row_cache_.contains(key)) continue;
+        if (row_cache_.size() == kRowCacheLimit) {
+            row_cache_.erase(row_fifo_.front());
+            row_fifo_.pop_front();
+        }
+        CachedRow row;
+        std::memcpy(row.value.data(), vals.data() + r * row.value.size(), row.value.size());
+        std::memcpy(row.scale.data(), scs.data() + r * row.scale.size(), row.scale.size());
+        row_cache_.emplace(key, row);
+        row_fifo_.push_back(key);
     }
     std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + pl.off_val, vals.data(), vals.size());
     std::memcpy(static_cast<std::byte*>(buf_.host_ptr) + pl.off_sc, scs.data(), scs.size());

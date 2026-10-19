@@ -390,6 +390,8 @@ struct PrefillTimes {
     double embed = 0, engram_io = 0, engram = 0, mhc = 0, attention = 0, gate = 0;
     double shared_expert = 0, expert_io = 0, expert_gpu = 0, host = 0, head = 0, total = 0;
     uint64_t expert_bytes = 0, engram_reads = 0;
+    uint64_t expert_union_bytes = 0, blind_unused_bytes = 0;
+    uint32_t expert_union_count = 0, blind_unused_count = 0;
     uint32_t experts_read = 0, dispatches = 0, submits = 0;
     // One per_op entry: milliseconds, calls, and the analytic work of those
     // calls from the shapes at dispatch -- FLOPs and the bytes the op must

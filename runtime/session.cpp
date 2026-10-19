@@ -280,10 +280,14 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
     // (docs/p3_chat.md §8.4), so until it can, this is how a continuation gets
     // off the decode path. Output is unaffected either way: a cold GPU prefill of p is exactly
     // what the turn would have done with an empty store.
-    uint32_t reuse = 0;
+    const uint32_t history_before = e.context_length();
+    auto cached = req.reuse && opt.rollback ? e.reuse_prompt(prompt, req.sampling)
+                            : Result<std::optional<DecodeStepResult>>(std::optional<DecodeStepResult>{});
+    if (!cached) return std::unexpected(cached.error());
+    uint32_t reuse = *cached ? static_cast<uint32_t>(prompt.size()) : 0;
     uint32_t hist_n = 0, common_n = 0;
     const char* reuse_why = "cold";
-    {
+    if (!*cached) {
         const std::vector<uint32_t>& hist = e.history();
         const size_t common = common_context_prefix(hist, prompt);
         hist_n = static_cast<uint32_t>(hist.size());
@@ -330,6 +334,11 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
             e.reset_context();
             reuse_why = "reset";
         }
+    } else {
+        hist_n = history_before;
+        common_n = reuse;
+        st.rollback_dropped = history_before - reuse;
+        reuse_why = "prompt-snapshot";
     }
     log_info("session: prompt {} tokens, history {}, common prefix {} -> reuse {} ({}), {} to "
              "prefill (gpu_prefill_min {})", prompt.size(), hist_n, common_n, reuse, reuse_why,
@@ -339,10 +348,11 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
 
     const std::span<const uint32_t> suffix(prompt.data() + reuse, prompt.size() - reuse);
     st.prefilled_tokens = static_cast<uint32_t>(suffix.size());
-    DecodeStepResult first{};
+    DecodeStepResult first = *cached ? **cached : DecodeStepResult{};
     const TimePoint tp = Clock::now();
-    bool done_prefill = false;
-    if (reuse == 0 && opt.gpu_prefill_min && suffix.size() >= opt.gpu_prefill_min) {
+    bool done_prefill = cached->has_value();
+    if (done_prefill) st.prefill_mode = "snapshot";
+    if (!done_prefill && reuse == 0 && opt.gpu_prefill_min && suffix.size() >= opt.gpu_prefill_min) {
         auto r = e.gpu_prefill(suffix, opt.replay);
         if (r) {
             first = *r;
@@ -389,7 +399,14 @@ Result<void> turn_prepare(Engine& e, const text::Tokenizer& tok, const SessionOp
             first = *r;
         }
     }
-    st.prefill_ms = ms_since(tp);
+    st.prefill_ms = ms_since(tp) + (*cached ? first.wall_ms : 0.0);
+    // Preserve the original prompt window before generated positions overwrite
+    // it. Best effort: replay remains the fallback, with its full window.
+    const TimePoint tr = Clock::now();
+    if (auto r = e.retain_prompt_state(&first); !r)
+        log_warn("session: could not retain prompt ring: {}", r.error().str());
+    else
+        log_info("session: retained prompt window in {:.3f} ms", ms_since(tr));
     ts.sd = std::make_unique<text::StreamDecoder>(tok, /*skip_special=*/true);
     account_sample(st, first);
     ts.cur = first;

@@ -1157,6 +1157,9 @@ std::string PrefillTimes::json(uint32_t n, std::string_view mode, std::string_vi
         "\"ops\":[",
         n, mode, load, total, expert_bytes, experts_read, dispatches, submits, embed, engram_io, engram, mhc,
         attention, gate, shared_expert, expert_io, expert_gpu, head, host);
+    js.insert(js.find("\"buckets\""), std::format(
+        "\"expert_union_bytes\":{},\"expert_union_count\":{},\"blind_unused_bytes\":{},\"blind_unused_count\":{},",
+        expert_union_bytes, expert_union_count, blind_unused_bytes, blind_unused_count));
     for (size_t i = 0; i < ops.size(); ++i)
         js += std::format("{}{{\"op\":\"{}\",\"ms\":{:.3f},\"calls\":{},\"flop\":{:.6g},"
                           "\"bytes\":{:.6g},\"reads\":{:.0f}}}", i ? "," : "", ops[i].first,
@@ -1690,6 +1693,15 @@ Result<void> Prefill::run_moe(uint32_t L, uint32_t rows, uint64_t x, uint64_t xq
         auto ent = manifest_->require_expert({static_cast<uint16_t>(L), static_cast<uint16_t>(e)});
         if (!ent) return std::unexpected(ent.error());
         ents[e] = *ent;
+        ++times_.expert_union_count;
+        for (const Run& r : ents[e]->runs) times_.expert_union_bytes += r.aligned_bytes;
+    }
+    for (uint32_t e = 0; e < E; ++e) {
+        if (count[e] || ahead[e] == ~0u) continue;
+        auto ent = manifest_->require_expert({static_cast<uint16_t>(L), static_cast<uint16_t>(e)});
+        if (!ent) return std::unexpected(ent.error());
+        ++times_.blind_unused_count;
+        for (const Run& r : (*ent)->runs) times_.blind_unused_bytes += r.aligned_bytes;
     }
     std::sort(used.begin(), used.end(), [&](uint32_t a, uint32_t b) { return shard_order(ents[a], ents[b]); });
     // the read-ahead ones first: read_ahead gave slots in shard order too

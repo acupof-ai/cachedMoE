@@ -897,3 +897,69 @@ CACHEDMOE_TEST(kvdisk, stale_snapshot_checks_transcript_prefix) {
     CHECK_EQ(runtime::common_context_prefix(loaded->tokens, extended), 4u);
     fs::remove_all(dir, ec);
 }
+
+// A retained prompt window must restore the actual original bytes, not merely
+// produce a plausible answer. Exercise overwritten slots on a wrapped ring.
+CACHEDMOE_TEST(kv_replay, retained_prompt_is_bit_exact) {
+    if (skip_without_model("kv_replay")) return;
+    const std::string root = longctx_root() + "/ctx4k";
+    if (!exists(root + "/index.json")) {
+        CACHEDMOE_SKIP_PRINTF("      SKIP: no 4k export\n"); return;
+    }
+    runtime::Engine e;
+    std::string why;
+    REQUIRE(bring_up(e, root, why));
+    runtime::SamplingParams greedy;
+    greedy.temperature = 0;
+    e.set_sampling(greedy);
+    const uint32_t initial = e.context_length();
+    auto first = e.decode_step(e.decode_state()->greedy_tokens()[0], initial, -1);
+    REQUIRE_OK(first);
+    const uint32_t base = e.context_length();
+    REQUIRE((base & 1u) == 0);
+    const auto ids = e.decode_state()->greedy_tokens();
+    REQUIRE(ids.size() >= 9);
+    auto original = ring_bytes(e, base - 127, base);
+    const auto prompt = e.history();
+    REQUIRE_OK(e.retain_prompt_state(&*first));
+    std::vector<Step> before;
+    for (uint32_t i = 0; i < 7; ++i) {
+        auto r = e.decode_step(ids[i + 1], base + i, -1);
+        REQUIRE_OK(r);
+        before.push_back({r->token, r->top1, r->top2});
+    }
+    auto rb = e.reuse_prompt(prompt, greedy);
+    REQUIRE_OK(rb);
+    REQUIRE(rb->has_value());
+    CHECK_EQ((**rb).token, first->token);
+    CHECK_EQ((**rb).top1, first->top1);
+    CHECK_EQ((**rb).top2, first->top2);
+    CHECK(ring_bytes(e, base - 127, base) == original);
+    for (uint32_t i = 0; i < 7; ++i) {
+        auto r = e.decode_step(ids[i + 1], base + i, -1);
+        REQUIRE_OK(r);
+        CHECK_EQ(r->token, before[i].token);
+        CHECK_EQ(r->top1, before[i].top1);
+        CHECK_EQ(r->top2, before[i].top2);
+    }
+    auto different = prompt;
+    different.back() ^= 1;
+    auto miss = e.reuse_prompt(different, greedy);
+    REQUIRE_OK(miss);
+    CHECK(!miss->has_value());
+    runtime::SamplingParams sampled;
+    sampled.temperature = 1;
+    miss = e.reuse_prompt(prompt, sampled);
+    REQUIRE_OK(miss);
+    CHECK(!miss->has_value());
+    e.kv_store().clear();
+    miss = e.reuse_prompt(prompt, greedy);
+    REQUIRE_OK(miss);
+    CHECK(!miss->has_value());
+    e.reset_context();
+    miss = e.reuse_prompt(prompt, greedy);
+    REQUIRE_OK(miss);
+    CHECK(!miss->has_value());
+    CHECK_EQ(e.kv_store().recover_prompt_ring(base), 0u);
+    std::printf("    retained window: original ring bytes + 7/7 token/top1/top2 bit-exact; reset invalidates\n");
+}

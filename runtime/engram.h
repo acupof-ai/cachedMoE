@@ -36,6 +36,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <span>
@@ -144,6 +145,7 @@ public:
     // What the last `run` fetched, for the profiler and the report.
     uint64_t rows_fetched() const { return rows_fetched_; }
     uint64_t bytes_read()   const { return bytes_read_; }
+    uint64_t row_cache_hits() const { return row_cache_hits_; }
     uint64_t land_calls() const { return land_calls_; }
     uint64_t wait_ns() const { return wait_ns_; }
     uint64_t stage_ns() const { return stage_ns_; }
@@ -176,6 +178,7 @@ private:
         // `fetch`'s reads not yet landed, one per (row, value | scale), with
         // the payload's skew inside its aligned read
         std::vector<std::pair<std::future<storage::IoResult>, uint32_t>> pending;
+        std::array<uint64_t, layout::kEngramRowsPerToken> rows{};
     };
     std::vector<Planes>   planes_;
     Planes*               planes_for(uint32_t layer, uint32_t batch_row = 0);
@@ -183,6 +186,17 @@ private:
     gpu::HostAllocInfo    staging_{};    // 4 KiB-aligned, independent per (layer, batch row)
     uint64_t              rows_fetched_ = 0, bytes_read_ = 0;
     uint64_t              land_calls_ = 0, wait_ns_ = 0, stage_ns_ = 0;
+    // Immutable checkpoint row payloads, after removing sector padding. FIFO
+    // bound is 2.1 MiB of payload per stream; independent of expert residency.
+    using RowKey = std::pair<uint32_t, uint64_t>;
+    struct CachedRow {
+        std::array<std::byte, layout::kEngramValueRowBytes> value;
+        std::array<std::byte, layout::kEngramScaleRowBytes> scale;
+    };
+    static constexpr size_t kRowCacheLimit = 8192;
+    std::map<RowKey, CachedRow> row_cache_;
+    std::deque<RowKey> row_fifo_;
+    uint64_t row_cache_hits_ = 0;
     // `run`'s own command buffer, acquired once: DecodeRunner::dispatch_now
     // allocates one per call and never frees it.
     gpu::CommandPool      pool_;

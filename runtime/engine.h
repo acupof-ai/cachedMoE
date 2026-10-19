@@ -309,6 +309,12 @@ struct Stream {
     std::vector<float> draft_hidden_;
     std::array<int64_t, layout::kSlidingWindow> draft_position_{};
     std::array<uint8_t, layout::kSlidingWindow> draft_mask_{};
+    std::vector<float> prompt_draft_hidden_;
+    std::array<int64_t, layout::kSlidingWindow> prompt_draft_position_{};
+    std::array<uint8_t, layout::kSlidingWindow> prompt_draft_mask_{};
+    std::vector<uint32_t> prompt_tokens_;
+    KvRowBackup prompt_carry_;
+    std::optional<DecodeStepResult> prompt_first_;
     // The stream's own token counter. It numbers the residency timeline
     // (`gpu::timeline_value(token_, L)`), which is per stream because the
     // timeline is; the cache's LRU clock is the process-wide `Engine::clock_`,
@@ -456,6 +462,10 @@ public:
   // Track R2 (runtime/session.h): rollback, parking and window replay write
   // the store between steps.
   KvStore &kv_store() { return cur_->kvs_; }
+  Result<void> retain_prompt_state(const DecodeStepResult* first = nullptr);
+  Result<std::optional<DecodeStepResult>> reuse_prompt(std::span<const uint32_t> tokens,
+                                                     const SamplingParams& sampling);
+  uint32_t recover_prompt_state(uint32_t keep);
   const std::vector<uint32_t> &history() const { return cur_->history_; }
 
   // What layer `l` actually read at the last step: its own window ring, and

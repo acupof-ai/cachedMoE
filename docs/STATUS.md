@@ -30,6 +30,20 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Engine latency Round 5 (2026-10-19): exact-repeat replay removed; cold/decode targets unmet.**
+Memory-only exact greedy prompt boundary (≤8192 tokens) retains original ring,
+compressor carry, DSpark hidden state and first result. Repeat reuse100%, replay
+18.128 s→0, Claude first content18.4 s→0.079 s (wire0.057 s); general divergent
+suffixes retain normal replay. Prefill already reads the per-layer expert union;
+151–165 GiB cold reads remain. Read-ahead-off avoided8.64 GiB but gained only
+1.5% and was reverted. Kept exact Engram row cache adds no arithmetic change.
+Cold totals33.491/25.338/33.788 s; code/Chinese engine11.944/8.861 tok/s:
+**≤15 s and ≥13 tok/s not met**. CPU31/31, tools58/58, real tool loops and
+API/web checks pass. **Historical numerical gates fail on untouched current main
+as well as candidate**: off NLL0.660034 (required0.622784), decode6/8+7/8.
+Final64 token IDs/NLL match baseline; new wrapped-ring7-step bitwise check passes.
+This is not full numerical acceptance. [Attribution, rejected attempts and limits](engine_latency_round5.md).
+
 **API KV prefix cache Round 4 (2026-10-19): real reuse, bounded latency gain.**
 Stable API sessions retain existing parked/disk KV; Claude billing telemetry no
 longer splits the prefix, and later system updates do not split tool sessions.

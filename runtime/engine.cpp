@@ -3788,6 +3788,8 @@ Result<void> Engine::begin_session_on(uint32_t stream, const SessionConfig& sc) 
     s.kvs_.clear();
     s.history_.clear();
     s.draft_hidden_.clear();s.draft_position_.fill(-1);s.draft_mask_.fill(0);
+    s.prompt_draft_hidden_.clear();
+    s.prompt_first_.reset();
     if(dspark_)dspark_->reset();
     s.prefill_loaded_ = false;
     log_info("engine: stream {} -- KV store {} in {} slab(s) (largest {}) for {} positions at "
@@ -3845,11 +3847,20 @@ Result<void> Engine::set_context_tokens(std::span<const uint32_t> tokens) {
     if (tokens.size() > max_context())
         return fail(Err::ResourceExhausted,
                     std::format("{} tokens against a {}-position context", tokens.size(), max_context()));
+    size_t common = 0;
+    while (common < tokens.size() && common < cur_->history_.size() &&
+           tokens[common] == cur_->history_[common]) ++common;
+    cur_->kvs_.truncate_prompt_ring(static_cast<uint32_t>(common));
+    if (common < cur_->prompt_tokens_.size()) cur_->prompt_first_.reset();
+    for (auto& p : cur_->prompt_draft_position_)
+        if (p >= int64_t(common)) p = -1;
     cur_->history_.assign(tokens.begin(), tokens.end());
     return {};
 }
 
 void Engine::reset_context() {
+    cur_->prompt_draft_hidden_.clear();
+    cur_->prompt_first_.reset();
     cur_->kvs_.clear();
     cur_->history_.clear();
     cur_->draft_hidden_.clear();
@@ -3884,6 +3895,8 @@ Result<DecodeStepResult> Engine::feed(
 }
 
 Result<void> Engine::seed_from_prefill(const gpu::PrefillHandoff& h) {
+    cur_->prompt_draft_hidden_.clear();
+    cur_->prompt_first_.reset();
     if (!gpu_ready_) return fail(Err::FailedPrecondition, "call init_gpu() first");
     const TextConfig& c = model_cfg_.text;
     if (h.layers.size() != c.num_hidden_layers)
@@ -3913,6 +3926,61 @@ Result<void> Engine::seed_from_prefill(const gpu::PrefillHandoff& h) {
     produce_ced_ = true;
     cur_->prefill_loaded_ = false;
     return {};
+}
+
+Result<void> Engine::retain_prompt_state(const DecodeStepResult* first) {
+    cur_->prompt_first_.reset();
+    // Bound the auxiliary history, although the engine's context can be 1M.
+    // Other prompts retain the original replay path and disk format.
+    if (!first || !sampling_.greedy() || context_length() > 8192) return {};
+    auto carry = cur_->kvs_.backup_rows(context_length(), context_length());
+    if (!carry) return std::unexpected(carry.error());
+    if (auto r = cur_->kvs_.retain_prompt_ring(context_length()); !r) return r;
+    cur_->prompt_draft_hidden_ = cur_->draft_hidden_;
+    cur_->prompt_draft_position_ = cur_->draft_position_;
+    cur_->prompt_draft_mask_ = cur_->draft_mask_;
+    cur_->prompt_carry_ = std::move(*carry);
+    cur_->prompt_tokens_ = cur_->history_;
+    cur_->prompt_first_ = *first;
+    return {};
+}
+
+Result<std::optional<DecodeStepResult>> Engine::reuse_prompt(
+    std::span<const uint32_t> tokens, const SamplingParams& sampling) {
+    if (!sampling.greedy() || !cur_->prompt_first_ || !cur_->kvs_.has_prompt_ring() ||
+        tokens.size() != cur_->prompt_tokens_.size() || tokens.size() > cur_->history_.size() ||
+        !std::equal(tokens.begin(), tokens.end(), cur_->prompt_tokens_.begin()) ||
+        !std::equal(tokens.begin(), tokens.end(), cur_->history_.begin()))
+        return std::optional<DecodeStepResult>{};
+    const TimePoint t0 = Clock::now();
+    DecodeStepResult first = *cur_->prompt_first_;
+    (void)recover_prompt_state(static_cast<uint32_t>(tokens.size()));
+    // Generated positions append compressed rows. None of the completed rows
+    // below this identical prefix is overwritten; only the carried group must
+    // be restored. Counts/top-k are rebound at the next real decode step.
+    if (auto r = cur_->kvs_.restore_carry(cur_->prompt_carry_); !r)
+        return std::unexpected(r.error());
+    if (auto r = set_context_tokens(tokens); !r) return std::unexpected(r.error());
+    first.wall_ms = ms_since(t0);
+    log_info("session: restored exact {}-token prompt boundary in {:.3f} ms", tokens.size(), first.wall_ms);
+    return std::optional<DecodeStepResult>{first};
+}
+
+uint32_t Engine::recover_prompt_state(uint32_t keep) {
+    if (!cur_->prompt_draft_hidden_.empty()) {
+        const uint32_t lo = keep >= layout::kSlidingWindow ? keep - layout::kSlidingWindow : 0;
+        for (uint32_t s = 0; s < layout::kSlidingWindow; ++s) {
+            const int64_t p = cur_->prompt_draft_position_[s];
+            if (p < int64_t(lo) || p >= int64_t(keep)) continue;
+            std::memcpy(cur_->draft_hidden_.data() + size_t(s) * layout::kDsparkCaptureWidth,
+                        cur_->prompt_draft_hidden_.data() + size_t(s) * layout::kDsparkCaptureWidth,
+                        size_t(layout::kDsparkCaptureWidth) * sizeof(float));
+            cur_->draft_position_[s] = p;
+            cur_->draft_mask_[s] = cur_->prompt_draft_mask_[s];
+        }
+        if (dspark_) dspark_->reset();
+    }
+    return cur_->kvs_.recover_prompt_ring(keep);
 }
 
 Result<DecodeStepResult> Engine::gpu_prefill(std::span<const uint32_t> prompt, uint32_t replay) {
@@ -4600,8 +4668,9 @@ std::string Engine::gate_probe_report() const {
 std::string Engine::engram_status() const {
     if (!cur_) return {};
     const auto& eg = cur_->engram_;
-    return std::format("{} lands, wait {:.3f} ms, stage {:.3f} ms",
-                       eg.land_calls(), eg.wait_ns() / 1e6, eg.stage_ns() / 1e6);
+    return std::format("{} lands, wait {:.3f} ms, stage {:.3f} ms; {} row-cache hits / {} rows, {} bytes read",
+                       eg.land_calls(), eg.wait_ns() / 1e6, eg.stage_ns() / 1e6,
+                       eg.row_cache_hits(), eg.rows_fetched(), eg.bytes_read());
 }
 
 std::string Engine::status() const {
