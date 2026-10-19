@@ -1,4 +1,5 @@
 """Text/tool adapters over the web bridge's single engine queue."""
+import hashlib
 import json
 import time
 import uuid
@@ -56,7 +57,19 @@ def normalize(path, body):
             add_tool(t)
     elif path == "/v1/messages":
         if body.get("system"):
-            messages.append({"role": "system", "content": text(body["system"])})
+            system = body["system"]
+            # Claude Code prepends request-varying billing telemetry to system.
+            # It is vendor transport metadata, not an instruction for this model.
+            def without_billing(value):
+                return "\n".join(line for line in value.split("\n")
+                                 if not line.startswith("x-anthropic-billing-header:"))
+            if isinstance(system, list):
+                system = [dict(b, text=without_billing(b.get("text", "")))
+                          if b.get("type") == "text" else b for b in system]
+                system = [b for b in system if b.get("type") != "text" or b.get("text")]
+            elif isinstance(system, str):
+                system = without_billing(system)
+            messages.append({"role": "system", "content": text(system)})
         for m in body.get("messages", []):
             msg = {"role": m["role"], "content": text(m.get("content"))}
             blocks = m.get("content", [])
@@ -81,6 +94,40 @@ def normalize(path, body):
         raise ValueError("Output limit must be 1..32768")
     return {"api_messages": messages, "text": "API request", "think": False, "max_tokens": limit,
             "temperature": body.get("temperature", 0), "seed": body.get("seed", 42)}, bool(tools)
+
+
+def cache_session(path, body, req):
+    """Route compatible requests to the existing bounded engine session pool.
+
+    Callers can isolate conversations with prompt_cache_key (or cache_session).
+    Otherwise share a leading system/tools bucket; token-level rollback validates every
+    reused token, including when the user history diverges. No response cache.
+    """
+    key = body.get("cache_session") or body.get("prompt_cache_key")
+    if key is not None and not isinstance(key, str):
+        raise ValueError("cache_session/prompt_cache_key must be a string")
+    prefix = []
+    for message in req["api_messages"]:
+        if message["role"] != "system":
+            break
+        prefix.append(message)
+    value = [path, key, prefix]
+    return "api_" + hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:40]
+
+
+def attach_cache(obj, path, cache):
+    last = cache["last_turn"]
+    obj["cache"] = cache
+    usage = obj["usage"]
+    reused, prompt = last["reused_tokens"], last["prompt_tokens"]
+    if path == "/v1/messages":
+        # Anthropic input_tokens excludes cache reads; sum both for full prompt.
+        usage.update(input_tokens=prompt - reused, cache_read_input_tokens=reused,
+                     cache_creation_input_tokens=0)
+    elif path == "/v1/responses":
+        usage["input_tokens_details"] = {"cached_tokens": reused}
+    else:
+        usage["prompt_tokens_details"] = {"cached_tokens": reused}
 
 
 def result(path, msg, usage, finish, ident):
@@ -112,16 +159,18 @@ def handle(h, path, body):
     first_text_ms = None
     last_text_ms = None
     session = uid("api_")
+    audit_id = session
     audit = getattr(h.bridge.args, "api_audit_dir", None)
     if audit:
         Path(audit).mkdir(parents=True, exist_ok=True)
-        Path(audit, session + ".request.json").write_text(json.dumps({"path": path, "body": body}, ensure_ascii=False, indent=2))
+        Path(audit, audit_id + ".request.json").write_text(json.dumps({"path": path, "body": body}, ensure_ascii=False, indent=2))
     try:
         req, has_tools = normalize(path, body)
+        session = cache_session(path, body, req)
     except (ValueError, KeyError, TypeError) as e:
         error = {"type": "error", "error": {"type": "invalid_request_error", "message": str(e)}}
         if audit:
-            Path(audit, session + ".response.json").write_text(json.dumps({"status": 400, "body": error}, indent=2))
+            Path(audit, audit_id + ".response.json").write_text(json.dumps({"status": 400, "body": error}, indent=2))
         return h._send(400, error)
     job = h.bridge.submit(session, req)
     stream = bool(body.get("stream"))
@@ -188,8 +237,10 @@ def handle(h, path, body):
         if done is None:
             raise RuntimeError("Engine returned no completion")
         obj = result(path, done["api_message"], (prompt, generated), done.get("finish"), ident)
+        if "cache" in done:
+            attach_cache(obj, path, done["cache"])
         if audit:
-            Path(audit, session + ".response.json").write_text(json.dumps({"body": obj, "engine": done,
+            Path(audit, audit_id + ".response.json").write_text(json.dumps({"body": obj, "engine": done,
                 "stream_timing": {"first_text_flush_ms": first_text_ms, "last_text_flush_ms": last_text_ms,
                                   "completion_ms": (time.monotonic() - started) * 1000}}, ensure_ascii=False, indent=2))
         if not stream:
@@ -199,7 +250,7 @@ def handle(h, path, body):
                 delta({k: v for k, v in obj["choices"][0]["message"].items() if k != "role" and k != "tool_calls"})
                 for i, c in enumerate(obj["choices"][0]["message"].get("tool_calls", [])):
                     delta({"tool_calls": [dict(c, index=i)]})
-            emit({"id": ident, "object": "chat.completion.chunk", "created": int(time.time()), "model": MODEL, "choices": [{"index": 0, "delta": {}, "finish_reason": obj["choices"][0]["finish_reason"]}], "usage": obj["usage"]})
+            emit({"id": ident, "object": "chat.completion.chunk", "created": int(time.time()), "model": MODEL, "choices": [{"index": 0, "delta": {}, "finish_reason": obj["choices"][0]["finish_reason"]}], "usage": obj["usage"], "cache": obj.get("cache")})
             emit("[DONE]")
         elif anthropic:
             if has_tools:
@@ -212,7 +263,7 @@ def handle(h, path, body):
                 if not text_started:
                     emit({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}, "content_block_start")
                 emit({"type": "content_block_stop", "index": 0}, "content_block_stop")
-            emit({"type": "message_delta", "delta": {"stop_reason": obj["stop_reason"], "stop_sequence": None}, "usage": obj["usage"]}, "message_delta")
+            emit({"type": "message_delta", "delta": {"stop_reason": obj["stop_reason"], "stop_sequence": None}, "usage": obj["usage"], "cache": obj.get("cache")}, "message_delta")
             emit({"type": "message_stop"}, "message_stop")
         else:
             for i, item in enumerate(obj["output"]):
@@ -231,7 +282,7 @@ def handle(h, path, body):
         h.wfile.write(b"0\r\n\r\n")
         h.wfile.flush()
     except (BrokenPipeError, ConnectionResetError):
-        h.bridge.cancel(session)
+        h.bridge.cancel_job(job)
     except Exception as e:
         if stream:
             emit({"error": {"message": str(e)}}, "error")

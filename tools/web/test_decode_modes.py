@@ -25,6 +25,7 @@ def ready(default="mask-spec", available=None):
 
 def bridge_without_worker(policy):
     bridge = server.Bridge.__new__(server.Bridge)
+    bridge.cache_metrics = server.CacheMetrics()
     bridge.serve = Mock()
     bridge.serve.ready = policy
     bridge.serve.max_context = 64
@@ -36,6 +37,19 @@ def bridge_without_worker(policy):
 
 
 class DecodeModes(unittest.TestCase):
+    def test_api_disconnect_cancels_only_its_job_in_shared_bucket(self):
+        bridge = bridge_without_worker(ready())
+        first = bridge.submit("shared", {"text": "one"})
+        first.started = True
+        second = bridge.submit("shared", {"text": "two"})
+        self.assertTrue(bridge.cancel_job(second))
+        self.assertEqual(bridge.jobs, [first])
+        self.assertFalse(first.cancelled)
+        bridge.serve.cancel.assert_not_called()
+        self.assertFalse(bridge.cancel_job(second))
+        self.assertTrue(bridge.cancel_job(first))
+        bridge.serve.cancel.assert_called_once()
+
     def test_config_separates_resident_resources_and_selectable_modes(self):
         bridge = SimpleNamespace(
             serve=SimpleNamespace(config=SimpleNamespace(model="/selected/model"), ready=ready(), max_context=64, cmd=["mock"]),

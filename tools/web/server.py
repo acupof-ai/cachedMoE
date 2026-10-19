@@ -44,6 +44,7 @@ anything is spent on it.
 """
 from __future__ import annotations
 
+from cache_metrics import CacheMetrics
 import argparse
 import collections
 import glob
@@ -631,6 +632,7 @@ class Bridge:
         self.serve = serve
         self.enc = enc
         self.args = args
+        self.cache_metrics = CacheMetrics()
         self.states: dict[str, ChatState] = {}
         self.states_lock = threading.Lock()
         self.jobs: list[Job] = []                  # [0] is running once started
@@ -696,6 +698,21 @@ class Bridge:
             self.serve.cancel()
         return hit
 
+    def cancel_job(self, job):
+        """A disconnected API request must not cancel other prefix-bucket users."""
+        with self.jobs_cv:
+            if job not in self.jobs:
+                return False
+            job.cancelled = True
+            if not job.started:
+                self.jobs.remove(job)
+                job.out.put({"event": "done", "finish": "cancel", "queued_drop": True})
+                job.out.put(None)
+            else:
+                self.serve.cancel()
+            self._broadcast_positions()
+            return True
+
     def _worker(self):
         while True:
             with self.jobs_cv:
@@ -711,13 +728,6 @@ class Bridge:
                 traceback.print_exc()
                 job.out.put({"event": "error", "message": str(e)})
             finally:
-                if "api_messages" in job.body:
-                    try:
-                        self.serve.reset(job.session)
-                    except Exception:
-                        traceback.print_exc()
-                    with self.states_lock:
-                        self.states.pop(job.session, None)
                 job.out.put(None)
                 with self.jobs_cv:
                     if self.jobs and self.jobs[0] is job:
@@ -727,7 +737,9 @@ class Bridge:
 
     # -- one turn ----------------------------------------------------------
     def _run(self, job):
-        serve, st = self.serve, self.state(job.session)
+        serve = self.serve
+        # API history is supplied by the caller; do not load/save a transcript.
+        st = ChatState(self.enc, self.args.system) if "api_messages" in job.body else self.state(job.session)
         b = job.body
         user_text = b.get("text", "")
         if not user_text.strip():
@@ -797,6 +809,7 @@ class Bridge:
                         st.reset()
                     return
                 if kind == "done":
+                    ev["cache"] = self.cache_metrics.record(ev)
                     completion = serve.detokenize(gen) if gen else ""
                     with st.lock:
                         msg = st.commit(user_text, full, ids, gen, completion)
@@ -882,6 +895,7 @@ class Handler(BaseHTTPRequestHandler):
                 ev = {"busy": True} if busy else b.serve.status(s)
                 ev["prefill_ms_per_token"] = b.prefill_ms_per_token
                 ev["queue"] = depth
+                ev["cache"] = b.cache_metrics.snapshot()
                 return self._send(200, ev)
             if u.path == "/api/sessions":
                 return self._send(200, self.bridge.serve.sessions())

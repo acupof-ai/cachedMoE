@@ -31,6 +31,7 @@ exec .venv/bin/python tools/web/server.py \
   --cache-slots 5000 \
   --max-context 1048576 \
   --gpu-prefill-min 16 \
+  --gpu-prefill-speedup 12 \
   --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash \
   --kv-dir build/web_mask/kv \
   --kv-max-gb 8 \

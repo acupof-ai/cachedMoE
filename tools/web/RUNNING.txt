@@ -3,6 +3,8 @@ Current LAN/API service (2026-10-19)
 Managed by systemd --user: cachedmoe-lan.service, linger enabled.
 Listener 0.0.0.0:8080; local HTTP/API and all three LAN peers pass.
 Current cache: 5000 slots (5500 previously); 1M context, GPU prefill min 16.
+Round 4: GPU prefill speedup 12; stable API session KV, status/usage/UI prefix
+and expert-decode rates. Limits and receipts: docs/api_prefix_cache.md.
 Real Codex file-write loop and Claude Hello pass; one engine owns the GPU.
 Authoritative commands and limits: docs/lan_api.md.
 Acceptance and raw-evidence index: docs/lan_api_receipt.json.

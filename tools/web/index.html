@@ -111,7 +111,8 @@ footer{border-top:1px solid var(--line);background:var(--card);padding:9px 14px}
 <div id="bar">
   <span>Context <b id="s_ctx">–</b></span>
   <span>Speed <b id="s_tps">–</b></span>
-  <span>Hit rate <b id="s_hit">–</b></span>
+  <span>KV prefix <b id="s_prefix">–</b></span>
+  <span>Expert decode <b id="s_hit">–</b></span>
   <span>Disk wait <b id="s_stall">–</b></span>
   <span>First token <b id="s_ttft">–</b></span>
   <span>Prefill <b id="s_pf">–</b></span>
@@ -395,9 +396,18 @@ async function loadConfig(){
   refreshStatus();
 }
 
+function renderCache(cache){
+  const t = cache?.last_turn;
+  if (!t) return;
+  $("s_prefix").textContent = (100*t.prefix_hit_rate).toFixed(1) + "% (" + t.reused_tokens + "/" + t.prompt_tokens + ")";
+  $("s_prefix").title = "Cumulative " + (100*cache.cumulative.prefix_hit_rate).toFixed(1) + "%";
+  $("s_hit").textContent = (100*t.expert_decode_hit_rate).toFixed(1) + "%";
+}
+
 async function refreshStatus(){
   try{
     const s = await (await fetch("/api/status?session=" + encodeURIComponent($("sess").value))).json();
+    renderCache(s.cache);
     if (s.context !== undefined)
       $("s_ctx").textContent = s.context.toLocaleString() + " / " + s.max_context.toLocaleString();
     $("s_pf").textContent = (s.prefill_ms_per_token||0).toFixed(1) + " ms/tok";
@@ -615,7 +625,7 @@ async function send(){
           }
           body.push(ev.text, ev);
           $("s_tps").textContent = (1000/Math.max(1, ev.step_ms)).toFixed(2) + " tok/s";
-          $("s_hit").textContent = ev.hit.toFixed(3);
+
         }
         else if (ev.event === "done"){
           prog.style.display = "none";
@@ -625,7 +635,7 @@ async function send(){
           body.finish(ev.reasoning || "", ev.content || "");
           const pt = ev.per_token_ms || {};
           $("s_tps").textContent = (ev.tok_s||0).toFixed(2) + " tok/s";
-          $("s_hit").textContent = (ev.decode_hit_rate||0).toFixed(3);
+          renderCache(ev.cache);
           $("s_stall").textContent = (pt.nvme_stall||0).toFixed(0) + " ms";
           $("s_ttft").textContent = ((ev.ttft_ms||0)/1000).toFixed(1) + " s";
           $("s_ctx").textContent = (ev.context||0).toLocaleString() + " / " + CFG.max_context.toLocaleString();

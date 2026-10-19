@@ -30,6 +30,20 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**API KV prefix cache Round 4 (2026-10-19): real reuse, bounded latency gain.**
+Stable API sessions retain existing parked/disk KV; Claude billing telemetry no
+longer splits the prefix, and later system updates do not split tool sessions.
+One completed-turn accounting source feeds status, API usage/metadata and UI
+KV-prefix versus expert-decode labels. Repeat: **0 -> 99.86%**, 1499 -> 2 prefill
+tokens; first content 23.065 -> 18.435 s, still 18.128 s rollback replay.
+True history continuation: **98.02%, 32 tokens, 4.269 s first text**, 12.744 tok/s.
+Real Claude Read second turn:98.12%,43 tokens,4.303 s engine TTFT. Codex sees6268
+cached tokens. Keep speedup12 to avoid expensive divergent suffix reuse.
+Independent three-prompt latency/decode non-regression is **not met**; cold GPU
+prefill and IO remain, with full before/after numbers and rejected attempts
+[recorded here](api_prefix_cache.md). 58/58 tools,31/31 CPU,2000-token GPU web,
+incremental Anthropic SSE and real tool loops pass. Engine/numerics unchanged.
+
 **Claude client Round 3 (2026-10-19): GPU prefill fits; no speed gain.** Real
 flora Claude 2.1.302 uses GPU prefill for 1499/1505/1490 input tokens, after
 24.376/22.472/22.616 s. Keep 5000 slots/min16/1M context. The historical

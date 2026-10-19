@@ -7,9 +7,53 @@ import threading
 import unittest
 from types import SimpleNamespace
 import api
+from cache_metrics import CacheMetrics
 
 
 class ApiTest(unittest.TestCase):
+    def test_prefix_routing_and_accounting(self):
+        body = {"system": "stable", "messages": [{"role": "user", "content": "one"}]}
+        req, _ = api.normalize("/v1/messages", body)
+        key = api.cache_session("/v1/messages", body, req)
+        # Claude appends token-budget/system updates during a tool loop. They
+        # belong to the evolving history, not to the stable bucket identity.
+        extended = dict(body, messages=body["messages"] + [{"role": "system", "content": "budget update"}])
+        self.assertEqual(key, api.cache_session("/v1/messages", extended, api.normalize("/v1/messages", extended)[0]))
+        other = dict(body, messages=[{"role": "user", "content": "two"}])
+        self.assertEqual(key, api.cache_session("/v1/messages", other, api.normalize("/v1/messages", other)[0]))
+        for changed in (dict(body, system="different"), dict(body, cache_session="isolated")):
+            self.assertNotEqual(key, api.cache_session("/v1/messages", changed, api.normalize("/v1/messages", changed)[0]))
+        metrics = CacheMetrics()
+        self.assertIsNone(metrics.snapshot()["last_turn"])
+        metrics.record({"prompt_tokens": 100, "reused_tokens": 0, "decode_hit_rate": .5})
+        cache = metrics.record({"prompt_tokens": 900, "reused_tokens": 800, "prefill_tokens": 100, "decode_hit_rate": .9})
+        self.assertEqual(cache["cumulative"]["prefix_hit_rate"], .8)
+        self.assertEqual(cache["last_turn"]["prefix_hit_rate"], 800/900)
+        self.assertEqual(cache["last_turn"]["expert_decode_hit_rate"], .9)
+        cache["last_turn"]["prompt_tokens"] = -1
+        self.assertEqual(metrics.snapshot()["last_turn"]["prompt_tokens"], 900)
+        for path in ("/v1/messages", "/v1/responses", "/v1/chat/completions"):
+            obj = api.result(path, {"content": "hi"}, (900, 2), "stop", "r")
+            api.attach_cache(obj, path, metrics.snapshot())
+            if path.endswith("messages"):
+                self.assertEqual(obj["usage"]["input_tokens"], 100)
+                self.assertEqual(obj["usage"]["cache_read_input_tokens"], 800)
+            elif path.endswith("responses"):
+                self.assertEqual(obj["usage"]["input_tokens_details"]["cached_tokens"], 800)
+            else:
+                self.assertEqual(obj["usage"]["prompt_tokens_details"]["cached_tokens"], 800)
+
+    def test_claude_billing_telemetry_does_not_change_prompt(self):
+        prompts = []
+        for suffix in ("abc", "def"):
+            body = {"system": [{"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1." + suffix},
+                               {"type": "text", "text": "Keep these instructions exactly."}],
+                    "messages": [{"role": "user", "content": "Hello"}]}
+            req, _ = api.normalize("/v1/messages", body)
+            prompts.append(req)
+            self.assertEqual(req["api_messages"][0]["content"], "Keep these instructions exactly.")
+        self.assertEqual(prompts[0], prompts[1])
+
     def test_anthropic_text_arrives_before_completion(self):
         q = queue.Queue()
         flushed = queue.Queue()
