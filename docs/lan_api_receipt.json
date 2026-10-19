@@ -1,0 +1,269 @@
+{
+  "status": "blocked",
+  "date": "2026-10-19",
+  "revisions": {
+    "original_origin_main": "dc69b03",
+    "original_local_main": "9e9409bc2e296f659562f7c1ad585f9a4d153fe3",
+    "published_original_commits": [
+      "9e9409bc2e296f659562f7c1ad585f9a4d153fe3 chat.py: pass --trace through to serve",
+      "f10b23fbb7cec08299d7fd1fba9595446a86ad55 Default Track J's tiled attention on RADV",
+      "06f6a3987f3e957eb1ac5c0657d0c4011896a5cc Add Track J's tiled sparse attention to the M=1 decode path (off by default)",
+      "0cdcae5ac6f00ffa5a0bb0ccf4c790b845d0f53c Add a one-command system bench: MoE, attention, NVMe, destination memory",
+      "dc4a89ea2e49f3144512581c6407e6dd59431a49 Record experiment tracks; keep machine artefacts out of git"
+    ],
+    "implementation": "cd4fd9a3fe15508cef6340e0993515b7b536156a",
+    "implementation_publication": {
+      "command": "git ls-remote origin refs/heads/main; git rev-parse HEAD",
+      "remote": "cd4fd9a3fe15508cef6340e0993515b7b536156a\trefs/heads/main",
+      "local": "cd4fd9a3fe15508cef6340e0993515b7b536156a",
+      "matches": true
+    },
+    "receipt_revision_note": "This receipt is added in a subsequent main commit. Final publication equality is saved at /home/chenkailun/cmoeapi/published-final.json to avoid a self-referential git hash."
+  },
+  "endpoints": {
+    "ui": "http://192.168.31.111:8080/",
+    "openai_base": "http://192.168.31.111:8080/v1",
+    "anthropic_base": "http://192.168.31.111:8080",
+    "model": "deepseek-v4.1-flash"
+  },
+  "acceptance": {
+    "A": "original five commits published; implementation remote/local equality true",
+    "B": "0.0.0.0 bind and self-address HTTP 200 pass; all three LAN peers fail",
+    "C": "local non-stream, SSE [DONE], models pass; raw bodies in commands below",
+    "D": "local non-stream schema and complete SSE event sequence pass",
+    "E": "NOT PASSED: Codex cancelled before a file write; Claude not attempted after hard blocker",
+    "F": "user service enabled and linger=yes; active under systemd user manager; physical logout not independently exercised",
+    "G": "receipt, implementation and documentation committed and pushed; overall goal remains blocked"
+  },
+  "commands": [
+    {
+      "name": "bind",
+      "command": "ss -lntp",
+      "exit_code": 0,
+      "stdout": "State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess\nLISTEN 0      128          0.0.0.0:22         0.0.0.0:*   \nLISTEN 0      4096      127.0.0.54:53         0.0.0.0:*   \nLISTEN 0      5            0.0.0.0:8080       0.0.0.0:*    users:((\"python\",pid=3715303,fd=8))\nLISTEN 0      4096      172.17.0.1:53         0.0.0.0:*   \nLISTEN 0      4096       127.0.0.1:43641      0.0.0.0:*    users:((\"monocloud\",pid=2280,fd=51))\nLISTEN 0      4096       127.0.0.1:33351      0.0.0.0:*    users:((\"monocloud_core\",pid=4488,fd=7))\nLISTEN 0      4096   127.0.0.53%lo:53         0.0.0.0:*   \nLISTEN 0      4096       127.0.0.1:10801      0.0.0.0:*    users:((\"monocloud\",pid=2280,fd=50))\nLISTEN 0      4096       127.0.0.1:631        0.0.0.0:*   \nLISTEN 0      128             [::]:22            [::]:*   \nLISTEN 0      4096           [::1]:631           [::]:*   \n",
+      "stderr": ""
+    },
+    {
+      "name": "index",
+      "command": "curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' http://192.168.31.111:8080/",
+      "exit_code": 0,
+      "stdout": "200",
+      "stderr": ""
+    },
+    {
+      "name": "models",
+      "command": "curl --noproxy '*' -sS http://192.168.31.111:8080/v1/models",
+      "exit_code": 0,
+      "stdout": "{\"object\": \"list\", \"data\": [{\"id\": \"deepseek-v4.1-flash\", \"object\": \"model\", \"created\": 0, \"owned_by\": \"cachedmoe\"}]}",
+      "stderr": ""
+    },
+    {
+      "name": "openai",
+      "command": "curl --noproxy '*' --max-time 240 -sS -N -H 'Content-Type: application/json' -d @/home/chenkailun/cmoeapi/openai.request.json http://192.168.31.111:8080/v1/chat/completions",
+      "exit_code": 0,
+      "stdout": "{\"id\": \"chatcmpl_081fcb8c04b841eeb624e12bbff8e897\", \"object\": \"chat.completion\", \"created\": 1792379711, \"model\": \"deepseek-v4.1-flash\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"Hello\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 11, \"completion_tokens\": 2, \"total_tokens\": 13}}",
+      "stderr": ""
+    },
+    {
+      "name": "openai-stream",
+      "command": "curl --noproxy '*' --max-time 240 -sS -N -H 'Content-Type: application/json' -d @/home/chenkailun/cmoeapi/openai-stream.request.json http://192.168.31.111:8080/v1/chat/completions",
+      "exit_code": 0,
+      "stdout": "data: {\"id\": \"chatcmpl_058af31e7c9045108613b85dcf99c321\", \"object\": \"chat.completion.chunk\", \"created\": 1792379711, \"model\": \"deepseek-v4.1-flash\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"chatcmpl_058af31e7c9045108613b85dcf99c321\", \"object\": \"chat.completion.chunk\", \"created\": 1792379713, \"model\": \"deepseek-v4.1-flash\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"Hello\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"chatcmpl_058af31e7c9045108613b85dcf99c321\", \"object\": \"chat.completion.chunk\", \"created\": 1792379713, \"model\": \"deepseek-v4.1-flash\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"chatcmpl_058af31e7c9045108613b85dcf99c321\", \"object\": \"chat.completion.chunk\", \"created\": 1792379713, \"model\": \"deepseek-v4.1-flash\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 11, \"completion_tokens\": 2, \"total_tokens\": 13}}\n\ndata: [DONE]\n\n",
+      "stderr": ""
+    },
+    {
+      "name": "anthropic",
+      "command": "curl --noproxy '*' --max-time 240 -sS -N -H 'Content-Type: application/json' -d @/home/chenkailun/cmoeapi/anthropic.request.json http://192.168.31.111:8080/v1/messages",
+      "exit_code": 0,
+      "stdout": "{\"id\": \"msg_6280d7d440a3442aa767f0143f391aa8\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"deepseek-v4.1-flash\", \"content\": [{\"type\": \"text\", \"text\": \"Hello\"}], \"stop_reason\": \"end_turn\", \"stop_sequence\": null, \"usage\": {\"input_tokens\": 11, \"output_tokens\": 2}}",
+      "stderr": ""
+    },
+    {
+      "name": "anthropic-stream",
+      "command": "curl --noproxy '*' --max-time 240 -sS -N -H 'Content-Type: application/json' -d @/home/chenkailun/cmoeapi/anthropic-stream.request.json http://192.168.31.111:8080/v1/messages",
+      "exit_code": 0,
+      "stdout": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg_e4a620dba9cc4e3a9744a9f20bd38f0a\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"deepseek-v4.1-flash\", \"content\": [], \"stop_reason\": null, \"stop_sequence\": null, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}}}\n\nevent: content_block_start\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"\"}}\n\nevent: content_block_delta\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"Hello\"}}\n\nevent: content_block_delta\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"\"}}\n\nevent: content_block_stop\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\nevent: message_delta\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\", \"stop_sequence\": null}, \"usage\": {\"input_tokens\": 11, \"output_tokens\": 2}}\n\nevent: message_stop\ndata: {\"type\": \"message_stop\"}\n\n",
+      "stderr": ""
+    },
+    {
+      "name": "final-bind",
+      "command": "ss -lntp",
+      "exit_code": 0,
+      "stdout": "State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess\nLISTEN 0      128          0.0.0.0:22         0.0.0.0:*   \nLISTEN 0      4096      127.0.0.54:53         0.0.0.0:*   \nLISTEN 0      5            0.0.0.0:8099       0.0.0.0:*    users:((\"python3\",pid=3735291,fd=3))\nLISTEN 0      5            0.0.0.0:8080       0.0.0.0:*    users:((\"python\",pid=3729259,fd=8))\nLISTEN 0      4096      172.17.0.1:53         0.0.0.0:*   \nLISTEN 0      4096       127.0.0.1:43641      0.0.0.0:*    users:((\"monocloud\",pid=2280,fd=51))\nLISTEN 0      4096       127.0.0.1:33351      0.0.0.0:*    users:((\"monocloud_core\",pid=4488,fd=7))\nLISTEN 0      4096   127.0.0.53%lo:53         0.0.0.0:*   \nLISTEN 0      4096       127.0.0.1:10801      0.0.0.0:*    users:((\"monocloud\",pid=2280,fd=50))\nLISTEN 0      4096       127.0.0.1:631        0.0.0.0:*   \nLISTEN 0      128             [::]:22            [::]:*   \nLISTEN 0      4096           [::1]:631           [::]:*   \n",
+      "stderr": ""
+    },
+    {
+      "name": "final-local-http",
+      "command": "curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' http://192.168.31.111:8080/",
+      "exit_code": 0,
+      "stdout": "200",
+      "stderr": ""
+    },
+    {
+      "name": "final-durable",
+      "command": "systemctl --user status cachedmoe-lan.service --no-pager",
+      "exit_code": 0,
+      "stdout": "● cachedmoe-lan.service - cachedMoE LAN web and API\n     Loaded: loaded (/home/chenkailun/.config/systemd/user/cachedmoe-lan.service; enabled; preset: enabled)\n     Active: active (running) since Mon 2026-10-19 11:17:36 CST; 4min 52s ago\n Invocation: 453a666d3a714fe6a4a6cf342a276ba9\n   Main PID: 3729259 (python)\n      Tasks: 12 (limit: 149212)\n     Memory: 472.7M (peak: 96.7G)\n        CPU: 1min 58.088s\n     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/cachedmoe-lan.service\n             ├─3729259 .venv/bin/python tools/web/server.py --exe build/cachedmoe --resident-only mask --mask-cache dynamic --cache-slots 5500 --max-context 1048576 --gpu-prefill-min 16 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash --kv-dir build/web_mask/kv --kv-max-gb 8 --dspark --spec-k 2 --spec-top-k 4 --api-audit-dir /home/chenkailun/cmoeapi/api-audit --host 0.0.0.0 --port 8080 --log build/web_mask/engine.log --thermal-policy-json \"{\\\"gpu_pause_c\\\":85.0,\\\"gpu_resume_c\\\":77.0,\\\"gpu_start_c\\\":60.0,\\\"nvme_pause_c\\\":82.0,\\\"nvme_resume_c\\\":78.0,\\\"nvme_start_c\\\":76.0}\"\n             └─3729263 build/cachedmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 1048576 --cache-slots 5500 --gpu-prefill-min 16 --kv-dir build/web_mask/kv --kv-max-gb 8 --resident-only mask --mask-cache dynamic --dspark --spec-k 2 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash\n\nOct 19 11:17:36 x systemd[1482]: Started cachedMoE LAN web and API.\n",
+      "stderr": ""
+    }
+  ],
+  "raw_body_paths": {
+    "openai": "/home/chenkailun/cmoeapi/openai.txt",
+    "openai-stream": "/home/chenkailun/cmoeapi/openai-stream.txt",
+    "anthropic": "/home/chenkailun/cmoeapi/anthropic.txt",
+    "anthropic-stream": "/home/chenkailun/cmoeapi/anthropic-stream.txt",
+    "models": "/home/chenkailun/cmoeapi/models.txt"
+  },
+  "clients": {
+    "codex_version": "0.160.0",
+    "claude_version": "2.1.283",
+    "codex_transcripts": [
+      "/home/chenkailun/cmoeapi/codex-transcript.jsonl",
+      "/home/chenkailun/cmoeapi/codex-transcript-2.jsonl",
+      "/home/chenkailun/cmoeapi/codex-transcript-3.jsonl"
+    ],
+    "codex_command_script": "/home/chenkailun/cmoeapi/run-codex.sh",
+    "claude_command_script": "/home/chenkailun/cmoeapi/run-claude.sh",
+    "claude_transcript": null,
+    "claude_status": "not attempted after confirmed firewall hard blocker",
+    "codex_file_write": false,
+    "tool_template": "present in read-only checkpoint encoding/encoding.py; native DSML",
+    "failing_request_response_pairs": [
+      {
+        "request": "/home/chenkailun/cmoeapi/api-audit/api_1d6ddb2db80142f892688bedcc1de281.request.json",
+        "response": "/home/chenkailun/cmoeapi/api-audit/api_1d6ddb2db80142f892688bedcc1de281.response.json",
+        "output": {
+          "status": 400,
+          "body": {
+            "type": "error",
+            "error": {
+              "type": "invalid_request_error",
+              "message": "Only function tools are supported; disable custom/freeform tools"
+            }
+          }
+        }
+      }
+    ],
+    "codex_followup_request": "/home/chenkailun/cmoeapi/api-audit/api_3b2eb98b0f1c4522ab37f51bbab8cf16.request.json",
+    "codex_followup_boundary": "6208-token GPU prefill requires 7.13 GiB, only 7.03 GiB available beside 5500-slot cache; falls back to decode. Cancelled through /api/cancel once firewall was confirmed."
+  },
+  "cold_start": {
+    "service_start_to_http_ready_seconds": 22.073528027001885,
+    "note": "engine fully unloaded first; OS page cache not dropped (no sudo)"
+  },
+  "acceptance_turn_metrics": [
+    {
+      "receipt": "/home/chenkailun/cmoeapi/api-audit/api_a8a22b0298864af688e06b228a8d3f42.response.json",
+      "tok_s": 4.26315048,
+      "generated": 2,
+      "prefill_tokens": 11,
+      "total_ms": 3851.28147
+    },
+    {
+      "receipt": "/home/chenkailun/cmoeapi/api-audit/api_9b5023277c4f41969cd404246cc8f32d.response.json",
+      "tok_s": 6.81846999,
+      "generated": 2,
+      "prefill_tokens": 11,
+      "total_ms": 1967.31108
+    },
+    {
+      "receipt": "/home/chenkailun/cmoeapi/api-audit/api_ab37e626a547425ba259eda8590ebfa2.response.json",
+      "tok_s": 6.24176606,
+      "generated": 2,
+      "prefill_tokens": 11,
+      "total_ms": 1357.45885
+    },
+    {
+      "receipt": "/home/chenkailun/cmoeapi/api-audit/api_f75aa25d41164f38ab07abdcaad71dd6.response.json",
+      "tok_s": 6.36142125,
+      "generated": 2,
+      "prefill_tokens": 11,
+      "total_ms": 886.458124
+    }
+  ],
+  "metrics_note": "Four fixed Hello prompts, 11 input tokens and 2 generated tokens including EOS each. tok_s is the engine-reported decode statistic for only one decode step, NOT a sustained throughput benchmark.",
+  "blocker": {
+    "reason": "Root-owned UFW drops LAN TCP/8080; no sudo/root per task; user cannot change firewall",
+    "peer_commands": [
+      {
+        "peer": "flora",
+        "ip": "192.168.31.102",
+        "command": "ssh -o BatchMode=yes -o ConnectTimeout=5 flora \"hostname; curl --noproxy '*' --max-time 8 -sS -o /dev/null -w '%{http_code}' http://192.168.31.111:8080/\"",
+        "output": "bogon\ncurl: (28) Failed to connect to 192.168.31.111 port 8080 after 7792 ms: Couldn't connect to server\n000",
+        "passed": false
+      },
+      {
+        "peer": "mac",
+        "ip": "192.168.31.104",
+        "command": "ssh -o BatchMode=yes -o ConnectTimeout=5 mac \"hostname; curl --noproxy '*' --max-time 8 -sS -o /dev/null -w '%{http_code}' http://192.168.31.111:8080/\"",
+        "output": "bogon\n000curl: (28) Failed to connect to 192.168.31.111 port 8080 after 7797 ms: Couldn't connect to server\n",
+        "passed": false
+      },
+      {
+        "peer": "cachyos",
+        "ip": "192.168.31.109",
+        "command": "ssh -o BatchMode=yes -o ConnectTimeout=5 cachyos \"hostname; curl --noproxy '*' --max-time 8 -sS -o /dev/null -w '%{http_code}' http://192.168.31.111:8080/\"",
+        "output": "cachyos-x8664\n000curl: (28) Connection timed out after 8005 milliseconds\n",
+        "passed": false
+      }
+    ],
+    "kernel_command": "journalctl -k --since '15 minutes ago' --no-pager | rg 'UFW.*DPT=8080'",
+    "kernel_output": "Oct 19 11:17:13 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 CWR ECE SYN URGP=0 \nOct 19 11:17:13 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:13 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:13 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:13 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:14 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:14 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:14 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:14 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:14 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60613 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:34 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=48 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60627 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0 \nOct 19 11:17:56 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60651 DPT=8080 WINDOW=65535 RES=0x00 CWR ECE SYN URGP=0 \nOct 19 11:18:40 x kernel: [UFW BLOCK] IN=wlp194s0 OUT= MAC=f8:3d:c6:23:96:50:96:fb:5d:f2:57:6b:08:00 SRC=192.168.31.102 DST=192.168.31.111 LEN=64 TOS=0x00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=60692 DPT=8080 WINDOW=65535 RES=0x00 CWR ECE SYN URGP=0 \n",
+    "diagnostic_commands": [
+      {
+        "command": "cat /etc/ufw/ufw.conf",
+        "exit_code": 0,
+        "stdout": "# /etc/ufw/ufw.conf\n#\n\n# Set to yes to start on boot. If setting this remotely, be sure to add a rule\n# to allow your remote connection before starting ufw. Eg: 'ufw allow 22/tcp'\nENABLED=yes\n\n# Please use the 'ufw' command to set the loglevel. Eg: 'ufw logging medium'.\n# See 'man ufw' for details.\nLOGLEVEL=low\n",
+        "stderr": ""
+      },
+      {
+        "command": "cat /etc/ufw/user.rules",
+        "exit_code": 0,
+        "stdout": "*filter\n:ufw-user-input - [0:0]\n:ufw-user-output - [0:0]\n:ufw-user-forward - [0:0]\n:ufw-before-logging-input - [0:0]\n:ufw-before-logging-output - [0:0]\n:ufw-before-logging-forward - [0:0]\n:ufw-user-logging-input - [0:0]\n:ufw-user-logging-output - [0:0]\n:ufw-user-logging-forward - [0:0]\n:ufw-after-logging-input - [0:0]\n:ufw-after-logging-output - [0:0]\n:ufw-after-logging-forward - [0:0]\n:ufw-logging-deny - [0:0]\n:ufw-logging-allow - [0:0]\n:ufw-user-limit - [0:0]\n:ufw-user-limit-accept - [0:0]\n### RULES ###\n\n### tuple ### allow udp 53317 0.0.0.0/0 any 0.0.0.0/0 in\n-A ufw-user-input -p udp --dport 53317 -j ACCEPT\n\n### tuple ### allow tcp 53317 0.0.0.0/0 any 0.0.0.0/0 in\n-A ufw-user-input -p tcp --dport 53317 -j ACCEPT\n\n### tuple ### allow udp 53 172.17.0.1 any 172.16.0.0/12 in comment=616c6c6f772d646f636b65722d646e73\n-A ufw-user-input -p udp -d 172.17.0.1 --dport 53 -s 172.16.0.0/12 -j ACCEPT\n\n### tuple ### allow udp 53 172.17.0.1 any 192.168.0.0/16 in comment=616c6c6f772d646f636b65722d646e73\n-A ufw-user-input -p udp -d 172.17.0.1 --dport 53 -s 192.168.0.0/16 -j ACCEPT\n\n### tuple ### allow any 22 0.0.0.0/0 any 0.0.0.0/0 in\n-A ufw-user-input -p tcp --dport 22 -j ACCEPT\n-A ufw-user-input -p udp --dport 22 -j ACCEPT\n\n### END RULES ###\n\n### LOGGING ###\n-A ufw-after-logging-input -j LOG --log-prefix \"[UFW BLOCK] \" -m limit --limit 3/min --limit-burst 10\n-A ufw-after-logging-forward -j LOG --log-prefix \"[UFW BLOCK] \" -m limit --limit 3/min --limit-burst 10\n-I ufw-logging-deny -m conntrack --ctstate INVALID -j RETURN -m limit --limit 3/min --limit-burst 10\n-A ufw-logging-deny -j LOG --log-prefix \"[UFW BLOCK] \" -m limit --limit 3/min --limit-burst 10\n-A ufw-logging-allow -j LOG --log-prefix \"[UFW ALLOW] \" -m limit --limit 3/min --limit-burst 10\n### END LOGGING ###\n\n### RATE LIMITING ###\n-A ufw-user-limit -m limit --limit 3/minute -j LOG --log-prefix \"[UFW LIMIT BLOCK] \"\n-A ufw-user-limit -j REJECT\n-A ufw-user-limit-accept -j ACCEPT\n### END RATE LIMITING ###\nCOMMIT\n",
+        "stderr": ""
+      },
+      {
+        "command": "ufw status",
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "ERROR: You need to be root to run this script\n"
+      },
+      {
+        "command": "nft list ruleset",
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "netlink: Error: cache initialization failed: Operation not permitted\nError: Operation not permitted (perhaps you must be root?)\n"
+      },
+      {
+        "command": "systemctl --user status cachedmoe-lan.service --no-pager",
+        "exit_code": 0,
+        "stdout": "● cachedmoe-lan.service - cachedMoE LAN web and API\n     Loaded: loaded (/home/chenkailun/.config/systemd/user/cachedmoe-lan.service; enabled; preset: enabled)\n     Active: active (running) since Mon 2026-10-19 11:17:36 CST; 1min 57s ago\n Invocation: 453a666d3a714fe6a4a6cf342a276ba9\n   Main PID: 3729259 (python)\n      Tasks: 15 (limit: 149212)\n     Memory: 471.8M (peak: 96.7G)\n        CPU: 1min 55.066s\n     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/cachedmoe-lan.service\n             ├─3729259 .venv/bin/python tools/web/server.py --exe build/cachedmoe --resident-only mask --mask-cache dynamic --cache-slots 5500 --max-context 1048576 --gpu-prefill-min 16 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash --kv-dir build/web_mask/kv --kv-max-gb 8 --dspark --spec-k 2 --spec-top-k 4 --api-audit-dir /home/chenkailun/cmoeapi/api-audit --host 0.0.0.0 --port 8080 --log build/web_mask/engine.log --thermal-policy-json \"{\\\"gpu_pause_c\\\":85.0,\\\"gpu_resume_c\\\":77.0,\\\"gpu_start_c\\\":60.0,\\\"nvme_pause_c\\\":82.0,\\\"nvme_resume_c\\\":78.0,\\\"nvme_start_c\\\":76.0}\"\n             └─3729263 build/cachedmoe serve --model /home/chenkailun/models/DeepSeek-V4.1-Flash --max-context 1048576 --cache-slots 5500 --gpu-prefill-min 16 --kv-dir build/web_mask/kv --kv-max-gb 8 --resident-only mask --mask-cache dynamic --dspark --spec-k 2 --spec-top-k 4 --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash\n\nOct 19 11:17:36 x systemd[1482]: Started cachedMoE LAN web and API.\n",
+        "stderr": ""
+      },
+      {
+        "command": "loginctl show-user chenkailun -p Linger",
+        "exit_code": 0,
+        "stdout": "Linger=yes\n",
+        "stderr": ""
+      }
+    ],
+    "required_external_change": "Administrator permits inbound TCP 8080 from 192.168.31.0/24; no workaround substituted"
+  },
+  "durability": {
+    "start_command": "systemctl --user start cachedmoe-lan.service",
+    "stop_command": "systemctl --user stop cachedmoe-lan.service",
+    "unit": "tools/web/cachedmoe-lan.service",
+    "installed_unit": "/home/chenkailun/.config/systemd/user/cachedmoe-lan.service",
+    "linger": "yes",
+    "service_state": "active",
+    "unit_verify_output": ""
+  },
+  "validation": {
+    "command": ".venv/bin/python tests/run_all.py",
+    "output_path": "/home/chenkailun/cmoeapi/tests-final.txt",
+    "output": "\n  PASS  suite.align                              passed   (0.1s)\n  PASS  suite.layout                             passed   (0.1s)\n  PASS  suite.types                              passed   (0.1s)\n  PASS  suite.json                               passed   (0.1s)\n  PASS  suite.profiler                           passed   (0.1s)\n  PASS  suite.status                             passed   (0.1s)\n  PASS  suite.bytes                              passed   (0.1s)\n  PASS  suite.dequant                            passed   (0.1s)\n  PASS  suite.gate                               passed   (0.1s)\n  PASS  suite.slab                               passed   (0.1s)\n  PASS  suite.expert_store                       passed   (0.1s)\n  PASS  suite.planner                            passed   (0.1s)\n  PASS  suite.resident_route                     passed   (0.1s)\n  PASS  suite.io                                 passed   (1.5s)\n  PASS  suite.v41_config                         passed   (0.1s)\n  PASS  suite.manifest                           passed   (0.1s)\n  PASS  suite.block_info                         passed   (0.1s)\n  PASS  suite.kvcache                            passed   (0.1s)\n  PASS  suite.kvstore                            passed   (0.1s)\n  PASS  suite.trace                              passed   (0.1s)\n  PASS  suite.cache_cap                          passed   (0.1s)\n  PASS  suite.runtime_config                     passed   (0.1s)\n  PASS  suite.runtime_environment                passed   (0.1s)\n  PASS  suite.serve_options                      passed   (0.1s)\n  PASS  suite.decode_mode                        passed   (0.1s)\n  PASS  suite.env_alias                          passed   (0.1s)\n  PASS  suite.state_paths                        passed   (0.1s)\n  PASS  suite.speculate                          passed   (0.1s)\n  PASS  suite.dspark_tree                        passed   (0.4s)\n  PASS  suite.sampling                           passed   (1.2s)\n  PASS  suite.kvdisk                             passed   (0.1s)\n  PASS  suite.tokenizer                          skipped: set CACHEDMOE_MODEL_DIR\n  PASS  suite.engram_tables                      skipped: set CACHEDMOE_MODEL_DIR\n  PASS  tools/tests/test_runtime_env.py          OK   (0.1s)\n  PASS  tools/tests/test_runtime_facts.py        OK   (0.1s)\n  PASS  tools/tests/test_runtime_defaults.py     OK   (0.4s)\n  PASS  tools/tests/test_cmake_rename.py         OK   (1.0s)\n  PASS  tools/tests/test_process_names.py        OK   (0.0s)\n  PASS  tools/tests/test_state_paths.py          OK   (0.1s)\n  PASS  tools/tests/test_rename_audit.py         OK   (0.2s)\n  PASS  tools/trace_timeline.py                  self-test: OK   (0.0s)\n  PASS  tests/mutate.py --list                   40 mutations   (0.0s)\n  PASS  tools/perf_ledger.py --check                (0.0s)\n  PASS  tools/web/test_api.py                    OK   (0.0s)\n  PASS  tools/web/test_server.py                 OK   (0.1s)\n  PASS  tools/web/test_decode_modes.py           OK   (0.1s)\n  PASS  tools/tests/test_mask_freeze_sim.py      OK   (0.1s)\n  PASS  tools/tests/test_repetition_metrics.py   OK   (0.0s)\n  PASS  tools/tests/test_thermal_guard.py        OK   (0.5s)\n  PASS  tools/tests/test_web_launch_guarded.py   OK   (0.1s)\n  PASS  tools/tests/test_mask_quality_report.py  OK   (0.1s)\n  PASS  bench/test_power_profile_report.py       OK   (0.0s)\n  PASS  bench/test_power_profile_compare.py      OK   (0.2s)\n  PASS  bench/test_draft_head_compare.py         OK   (0.0s)\n  PASS  bench/test_verify_cost_report.py         OK   (0.0s)\n  PASS  bench/test_draft_head_offline.py         OK   (1.1s)\n  PASS  tests/test_spec_compare.py               OK   (0.0s)\n  PASS  tests/test_serve_decode_clock.py         OK   (0.0s)\n\n58/58 gates passed\n(add --mutate to require the suite to catch injected regressions)\n",
+    "native_gpu_smoke": "Four live acceptance requests used existing build/cachedmoe; no binary or numerical code changed",
+    "numeric_baseline_gate": "not rerun: no numerical changes"
+  },
+  "preserved": "No checkpoint, kernels, quantization, tokenizer golden data or global Codex/Claude configuration changed. One engine. No benchmark. main only."
+}
