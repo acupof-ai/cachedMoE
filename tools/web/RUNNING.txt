@@ -1,5 +1,16 @@
 Current LAN/API service (2026-10-19)
 ------------------------------------
+Round 9 independently verifies pinned f1892ad: Python A/B/C91/91 IDs,
+no divergence, repeat100%/history97.989950% reuse. CPU31/31, tools58/58,
+strict decode unchanged6/8+7/8/exit1; fresh real tool loops, schemas,
+webHello and exact2000-token GPU request pass. Balanced restored from
+performance; warm code/Chinese engine13.592/13.819tok/s, cold targets
+remain unfinished (cold wire38.074s,156.813GiB required expert union).
+Final enabled/active service has one engine, no temporary profiling;
+LAN status and exactHello pass. docs/reuse_speed_round9.md contains the
+complete invocation ledger and current-path bandwidth blocker;
+private final report ~/cmoeapi/report9.md. Round8 below is historical.
+
 Round 8: retained-ring restoration/ownership fixed. LAN correctness default
 is now unmasked off-plain, no DSpark; approximate mask/top4 was rejected after
 restored ring bytes matched but repeated greedy output still diverged.

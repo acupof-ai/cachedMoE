@@ -30,6 +30,23 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Round 9 independent pinned verification (2026-10-19): reuse PASS; warm decode reaches13, cold targets unfinished.**
+Fresh `f1892ad` Python cold/repeat/history outputs each91 IDs: A/B and A/C have
+no divergence, reuse100%/97.989950%. CPU31/31, tools58/58 (initial concurrent
+scratch-file collision retained, serial correction passes), strict decode
+unchanged6/8+7/8/exit1, real Codex write/Claude Read, webHello, exact2000-token
+GPU prefill and both API JSON/SSE schemas all freshly verified. Restore the
+already-selected balanced profile from observed performance: actual Claude
+warm code engine/wire13.592/13.609tok/s, Chinese13.819/13.841; their cold
+decode stays6.558/7.862 engine. Real Claude cold/second process wall38.804/7.576s;
+cold wire first/total24.249/38.074s. Fresh native prefill reads165.449GiB,
+including156.813GiB required union; expert IO17.696s. At this run's combined
+8.25GB/s source probes, union transfer alone estimates20.409s: an empirical
+current-path floor, not a universal physical impossibility proof. No cold
+runtime optimisation kept;15s remains unmet. Final balanced A/B/C also matches
+all91 IDs and pinned A.22 model invocations retained; service enabled/healthy,
+one exact5500-slot engine, profiling off. [Table, all attempts and blocker](reuse_speed_round9.md).
+
 **Reuse self-consistency Round 8 (2026-10-19): cause fixed; exact default, speed targets still fail.**
 Speculative batches overwrote ring bytes without tagging every written row;
 old prompt restoration trusted stale tags and left **1,466,197 wrong bytes**
@@ -1056,6 +1073,14 @@ steps, and the reference continuation has to be produced step by step.**
 ---
 
 ## 7. Next, in order
+
+**Round9 measured boundary:** pinned reuse and client gates are independently
+verified; balanced warm code/Chinese decode exceeds13tok/s, but cold remains
+storage-volume limited on this path. Preserve the156.813GiB required-union
+versus8.636GiB blind-read distinction; no cold saving is claimed. The20.409s
+transfer estimate uses measured source probes, not a physical upper-bound
+proof. Warm speed must not stand in for cold6.558/7.862tok/s or cold38.074s.
+No runtime/threshold/checkpoint changes. See [Round9](reuse_speed_round9.md).
 
 **Round8 current boundary (2026-10-19; supersedes historical pending/default notes below).**
 The demonstrated retained-ring bug is fixed, with raw-token self-consistency
