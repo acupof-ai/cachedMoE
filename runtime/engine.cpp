@@ -1420,6 +1420,7 @@ void Engine::shutdown() {
     batch_ready_ = false;
     batch_cap_ = 0;
     store_.reset();      // the slabs came from alloc_a_/alloc_b_; give them back first
+    expert_cache_restored_ = false;
     pinned_.reset();
     io_.stop();
     shards_.close();
@@ -3827,7 +3828,7 @@ Result<void> Engine::begin_session(const SessionConfig& sc) {
     if (store_.fixed_cache()) {
         auto warm=warm_cache_from_heat();if(!warm)return std::unexpected(warm.error());
         if(!store_.cache_frozen())return fail(Err::FailedPrecondition,"mask initial cache did not fully load; refusing partial fixed cache");
-    } else if (backfill && store_.free_slots() > 0) {
+    } else if (backfill && !expert_cache_restored_ && store_.free_slots() > 0) {
         std::vector<ExpertKey> order = heat_order_;
         if (auto r = planner_.start_backfill(std::move(order)); !r)
             log_warn("engine: backfill: {}", r.error().str());

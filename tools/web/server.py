@@ -327,6 +327,8 @@ class Serve:
             cmd += ["--no-kv-disk"]
         if args.kv_max_gb:
             cmd += ["--kv-max-gb", str(args.kv_max_gb)]
+        if getattr(args, "expert_cache_state", ""):
+            cmd += ["--expert-cache-state", args.expert_cache_state]
         if args.max_parked:
             cmd += ["--max-parked", str(args.max_parked)]
         if args.resident_only != "off":
@@ -1027,6 +1029,8 @@ def main():
     ap.add_argument("--kv-dir", default="", help="SSD .pkv prefix/parked KV cache directory")
     ap.add_argument("--kv-max-gb", type=int, default=0)
     ap.add_argument("--no-kv-disk", action="store_true")
+    ap.add_argument("--expert-cache-state", default="",
+                    help="opt-in resident expert ID snapshot; reload native weights before ready (adds startup IO)")
     ap.add_argument("--max-parked", type=int, default=0)
     ap.add_argument("--resident-only", choices=("off", "mask"), default="off",
                     help="skip missing routed MoE experts; lossy, default cache uses dynamic LRU")

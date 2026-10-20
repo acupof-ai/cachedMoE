@@ -6,6 +6,7 @@
 # Correctness default: unmasked plain decode. Dynamic residency masking and
 # relaxed top4 speculation change greedy output across identical reused turns.
 # 5500 expert slots, CPU routing, native BF16, two read sources, 1M context.
+# Restore resident IDs before READY: extra startup IO, no change to native weights.
 set -eu
 cd /home/chenkailun/projects/cachedMoE
 
@@ -35,6 +36,7 @@ exec .venv/bin/python tools/web/server.py \
   --gpu-prefill-speedup 12 \
   --mirror /mnt/deepmoe2/models/DeepSeek-V4.1-Flash \
   --kv-dir build/web_exact/kv \
+  --expert-cache-state build/web_exact/resident-ids.bin \
   --kv-max-gb 8 \
   --api-audit-dir /home/chenkailun/cmoeapi/api-audit --host 0.0.0.0 --port 8080 \
   --log build/web_mask/engine.log \

@@ -231,6 +231,19 @@ class WebSettings(unittest.TestCase):
         # Keep the web preflight bound consistent with the compiled engine cap.
         self.assertEqual(server.K_MAX_INDEX_POSITIONS, 1 << 20)
 
+    def test_expert_cache_restart_is_explicit_and_keeps_literal_path(self):
+        args = SimpleNamespace(exe="cachedmoe", max_context=4096, cache_slots=5500,
+            cache_gb=0, gpu_prefill_min=16, gpu_prefill_speedup=None, kv_dir="",
+            no_kv_disk=False, kv_max_gb=0, max_parked=0, resident_only="off",
+            dspark=False, mirror=[], no_mirror_auto=True, mask_cache="dynamic")
+        self.assertNotIn("--expert-cache-state", server.Serve.command(args))
+        args.expert_cache_state = "/private/cache state/residents.bin"
+        command = server.Serve.command(args)
+        self.assertEqual(command[command.index("--expert-cache-state") + 1],
+                         args.expert_cache_state)
+        self.assertNotIn("--resident-only", command)
+        self.assertNotIn("--dspark", command)
+
     def test_speculation_is_explicit_and_passes_length(self):
         args = SimpleNamespace(exe="cachedmoe", max_context=4096, cache_slots=5500,
             cache_gb=0, gpu_prefill_min=16, gpu_prefill_speedup=None, kv_dir="",

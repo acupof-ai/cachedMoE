@@ -179,6 +179,8 @@ int cmd_serve(int argc, char** argv) {
     std::string mask_cache;
     uint32_t    streams = 1;     // Track MS: docs/p4_multistream.md
     bool        warm_cache = false;
+    std::string expert_cache_state;
+    bool expert_cache_used = false;
     std::string ms_sched;
     cli::KvCommandLineOptions kv_cli;
     for (int i = 2; i < argc; ++i) {
@@ -230,6 +232,7 @@ int cmd_serve(int argc, char** argv) {
         // every free slot from the static heat order, so a measurement starts
         // from a full cache instead of racing the fill.
         else if (a == "--warm-cache")      warm_cache = true;
+        else if (a == "--expert-cache-state") expert_cache_state = value_of(argc, argv, i);
         else {
             std::fprintf(stderr, "unknown option %.*s\n", int(a.size()), a.data());
             return 2;
@@ -237,6 +240,11 @@ int cmd_serve(int argc, char** argv) {
     }
     if (!mask_cache.empty() && mask_cache != "dynamic" && mask_cache != "fixed") {
         std::fputs("--mask-cache takes dynamic|fixed\n", stderr); return 2;
+    }
+    if (!expert_cache_state.empty() && (streams != 1 || cfg.speculation.enabled || warm_cache ||
+        allow_route_switch || allow_spec_switch || mask_cache == "fixed")) {
+        std::fputs("--expert-cache-state requires single-stream off-plain without warm-cache or mode switching\n", stderr);
+        return 2;
     }
     if (cfg.model_dir.empty()) {
         std::fputs("serve needs --model DIR (or CACHEDMOE_MODEL_DIR)\n", stderr);
@@ -344,6 +352,13 @@ int cmd_serve(int argc, char** argv) {
         else if (resident_only == "mask") engine.set_resident_only(runtime::Engine::ResidentOnly::Mask);
         else if (resident_only == "off") engine.set_resident_only(runtime::Engine::ResidentOnly::Off);
         else { std::fprintf(stderr, "--resident-only takes off|all|stall1|verify|mask, got '%s'\n", resident_only.c_str()); return 1; }
+    }
+    if (!expert_cache_state.empty()) {
+        if (engine.resident_only() != runtime::Engine::ResidentOnly::Off) {
+            emit_error("--expert-cache-state requires off-plain routing"); return 2;
+        }
+        if (auto r = engine.restore_expert_cache(expert_cache_state); !r)
+            log_warn("serve: expert-cache restore: {}; normal demand loading retained", r.error().str());
     }
     if (auto r = engine.begin_session(sc); !r) { emit_error("session: " + r.error().str()); return 1; }
     // Track MS: the extra streams, and the session each of them starts from.
@@ -784,6 +799,7 @@ int cmd_serve(int argc, char** argv) {
             pool.reset_live();
             continue;
         }
+        expert_cache_used = true;
         score_ready = st->decode_steps > 0 || st->prefill_mode == "decode";
         score_session = session;
         if (auto saved = pool.checkpoint_active(); !saved)
@@ -800,6 +816,10 @@ int cmd_serve(int argc, char** argv) {
     // Drain and release GPU resources even after a required save failed;
     // callers must still be able to distinguish that failure from success.
     pool.flush_disk();
+    if (!expert_cache_state.empty() && expert_cache_used) {
+        if (auto saved = engine.save_expert_cache(expert_cache_state); !saved)
+            log_warn("serve: optional expert-cache snapshot failed: {}", saved.error().str());
+    }
     // The reader may still be blocked on stdin; it owns nothing the engine needs.
     reader.detach();
     engine.shutdown();

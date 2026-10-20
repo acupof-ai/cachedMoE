@@ -30,6 +30,25 @@ Anything with no source is marked `not measured`.
 
 ## 1. Today's numbers
 
+**Round 11 (2026-10-21): restored decode target met after explicit startup reload; cold target still FAIL.**
+An opt-in resident-ID snapshot rereads original native weights before READY;
+no weights/answers are serialized and normal LRU/routing remain. Fresh baseline
+→candidate disk-restored decode **4.873→13.547tok/s**, first content
+**0.051421→0.051121s**, request total18.612→6.807s; decode expert reads
+75.779→0GiB. The cost is **96.344GiB reloaded in13.799s before READY**:
+restart21.090→34.969s, and **restart-through-completion39.702→41.776s is slower**.
+This is ready-service latency, not a total restart or IO-volume win. Memory
+repeats already meet13: candidate13.441–13.454tok/s. Cold total
+**37.699s FAILS≤15s by22.699s**; prefill165.449GiB unchanged, no cold gain claimed.
+Both arms preserve364/364 repeat+continuation IDs; all15 measured completions
+match the91-ID reference. CPU31/31, tools58/58, KV7/7, wrapped1/1 PASS;
+strict unchanged6/8+7/8,exit1/six assertions; all53 shaders unchanged.
+Real-client/API gates PASS, including real Codex write and Claude Read loops;
+initial Codex stdin hang retained, corrected Codex-only invocation passes.
+Production enabled/active on0.0.0.0:8080, one engine, profiling off; deployed
+5500-ID reload verified, final restart34.465s and exactHello2.143s.
+[Trade-off, all attempts and flag](expert_cache_restart_round11.md).
+
 **Round 10 exact disk bake (2026-10-20): same-prompt restart TTFT target PASS.**
 Persist the full greedy prompt boundary (raw compressed/index rows, carry, ring
 bytes+ownership and first-step result) separately from legacy `.pkv`; exact
@@ -1094,6 +1113,17 @@ steps, and the reference continuation has to be produced step by step.**
 ---
 
 ## 7. Next, in order
+
+**Round11 boundary:** exact resident-ID restart reload is opt-in and runs before
+READY; never call its96.344GiB startup read an IO saving. It moves disk-restored
+decode4.873→13.547tok/s while full restart-to-response39.702→41.776s gets slower.
+Absent/stale hints or a different intervening workload do not guarantee13tok/s.
+True cold37.699s remains22.699s above15;165.449GiB prefill reads are unchanged.
+Padding is0.04355%, not a hidden large-volume reduction. Final-layer-only dead
+FFN pruning was inspected but not run: bounded~2.277GiB scope, accumulation-order
+hazards and unknown net effect; not a target-closing claim. No closed prefetch,
+LRU, read-ahead-off or lossy/speculation track was reopened. Preserve exact
+IDs and the known strict6/8+7/8 failures. [Round11 evidence](expert_cache_restart_round11.md).
 
 **Round10 disk-boundary scope:** full identical rendered prompts now restore
 exactly across restart/new sessions; preserve ring bytes and tags, raw rows,

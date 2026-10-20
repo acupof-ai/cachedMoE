@@ -992,3 +992,102 @@ CACHEDMOE_TEST(kvdisk, baked_boundary_integrity) {
     CHECK(!runtime::read_baked_prompt(path, 123).has_value());
     fs::remove(path);
 }
+
+#include "runtime/expert_cache_state.h"
+CACHEDMOE_TEST(kvdisk, expert_cache_state_integrity) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cachedmoe-expert-cache-state-test";
+    fs::create_directories(dir);
+    const auto path = dir / "residents.bin";
+    const std::vector<ExpertKey> keys{{39, 383}, {0, 17}, {12, 45}};
+    CHECK(runtime::write_expert_cache_state(path, 123, 8, keys).has_value());
+    auto read = runtime::read_expert_cache_state(path, 123, 8);
+    REQUIRE_OK(read);
+    CHECK(*read == keys);
+    CHECK_EQ(fs::file_size(path), 6 * sizeof(uint64_t) + keys.size() * sizeof(uint32_t));
+    CHECK(!runtime::read_expert_cache_state(path, 124, 8).has_value());
+    CHECK(!runtime::read_expert_cache_state(path, 123, 9).has_value());
+    CHECK(!runtime::write_expert_cache_state(path, 123, 2, keys).has_value());
+    CHECK(!runtime::write_expert_cache_state(path, 123, 8, {}).has_value());
+    for (const std::vector<ExpertKey> bad : {
+             std::vector<ExpertKey>{{0, 0}, {0, 0}},
+             std::vector<ExpertKey>{{40, 0}}, std::vector<ExpertKey>{{0, 384}}}) {
+        CHECK(!runtime::write_expert_cache_state(path, 123, 8, bad).has_value());
+    }
+    // A rejected write preserves the previous valid snapshot.
+    read = runtime::read_expert_cache_state(path, 123, 8);
+    REQUIRE_OK(read);
+    CHECK(*read == keys);
+    // Exclusive temporary creation must not follow or remove somebody else's file.
+    auto tmp = path; tmp += ".tmp";
+    { std::ofstream f(tmp); f << "existing temporary"; }
+    CHECK(!runtime::write_expert_cache_state(path, 123, 8, keys).has_value());
+    { std::ifstream f(tmp); std::string text; std::getline(f, text); CHECK(text == "existing temporary"); }
+    fs::remove(tmp);
+#if !defined(_WIN32)
+    const auto victim = dir / "private-target.bin";
+    { std::ofstream f(victim); f << "do not change"; }
+    fs::create_symlink(victim, tmp);
+    CHECK(!runtime::write_expert_cache_state(path, 123, 8, keys).has_value());
+    CHECK(fs::is_symlink(tmp));
+    { std::ifstream f(victim); std::string text; std::getline(f, text); CHECK(text == "do not change"); }
+    fs::remove(tmp);
+    fs::remove(victim);
+#endif
+    // Failure after this call created a temporary file cleans only that file.
+    const auto blocked = dir / "destination-directory";
+    fs::create_directory(blocked);
+    CHECK(!runtime::write_expert_cache_state(blocked, 123, 8, keys).has_value());
+    CHECK(!fs::exists(blocked.string() + ".tmp"));
+    CHECK(fs::is_directory(blocked));
+    fs::remove(blocked);
+    read = runtime::read_expert_cache_state(path, 123, 8);
+    REQUIRE_OK(read);
+    CHECK(*read == keys);
+    // Test malformed payloads even with a freshly recomputed checksum.
+    auto forge = [&](std::vector<uint32_t> payload, uint64_t count) {
+        uint64_t hash = 1469598103934665603ull;
+        for (unsigned char b : std::span(reinterpret_cast<const char*>(payload.data()),
+                                         payload.size() * sizeof(uint32_t))) {
+            hash ^= b; hash *= 1099511628211ull;
+        }
+        const uint64_t header[]{0x31444952454d4343ull, 1, 123, 8, count, hash};
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char*>(header), sizeof header);
+        f.write(reinterpret_cast<const char*>(payload.data()), payload.size() * sizeof(uint32_t));
+    };
+    forge({17, 17}, 2);
+    CHECK(!runtime::read_expert_cache_state(path, 123, 8).has_value());
+    forge({40u << 16}, 1);
+    CHECK(!runtime::read_expert_cache_state(path, 123, 8).has_value());
+    forge({384}, 1);
+    CHECK(!runtime::read_expert_cache_state(path, 123, 8).has_value());
+    forge({}, UINT64_MAX);
+    CHECK(!runtime::read_expert_cache_state(path, 123, 8).has_value());
+    CHECK(runtime::write_expert_cache_state(path, 123, 8, keys).has_value());
+    { std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
+      f.seekg(48); char byte = 0; f.read(&byte, 1); byte ^= 1;
+      f.seekp(48); f.write(&byte, 1); }
+    CHECK(!runtime::read_expert_cache_state(path, 123, 8).has_value());
+    CHECK(runtime::write_expert_cache_state(path, 123, 8, keys).has_value());
+    { std::ofstream f(path, std::ios::binary | std::ios::app); f.put('x'); }
+    CHECK(!runtime::read_expert_cache_state(path, 123, 8).has_value());
+    fs::resize_file(path, 16);
+    CHECK(!runtime::read_expert_cache_state(path, 123, 8).has_value());
+    fs::remove(path);
+    CHECK(!runtime::read_expert_cache_state(path, 123, 8).has_value());
+    // Model identity changes with checkpoint metadata, independently of a relink.
+    CHECK(!runtime::expert_cache_identity(dir).has_value());
+    { std::ofstream f(dir / "weights.bin"); f << "original"; }
+    auto a = runtime::expert_cache_identity(dir);
+    REQUIRE_OK(a);
+    auto b = runtime::expert_cache_identity(dir);
+    REQUIRE_OK(b);
+    CHECK_EQ(*a, *b);
+    { std::ofstream f(dir / "weights.bin", std::ios::app); f << "changed"; }
+    b = runtime::expert_cache_identity(dir);
+    REQUIRE_OK(b);
+    CHECK(*a != *b);
+    fs::remove(dir / "weights.bin");
+    fs::remove(dir);
+}

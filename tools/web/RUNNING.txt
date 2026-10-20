@@ -1,5 +1,21 @@
-Current LAN/API service (2026-10-20)
+Current LAN/API service (2026-10-21)
 ------------------------------------
+Round11: opt-in expert-ID snapshot at build/web_exact/resident-ids.bin restores
+native checkpoint weights before READY; no weight/answer serialization or route
+change. Disk-restored ready-service decode4.873->13.547tok/s, first0.051s;
+warm13.441-13.454tok/s, all364/364 repeat+continuation IDs preserved.
+Cold37.699s still FAILS15s; no cold speedup claimed. Startup adds13.879s:
+full restart-through-completion39.702->41.776s is SLOWER. Other prompts may miss.
+CPU31/31, tools58/58, KV7/7, wrapped1/1; strict unchanged6/8+7/8,exit1.
+All real-client/API requirements pass; initial Codex inherited-stdin hang is
+retained separately, Codex-only closed-stdin retry passes with exact disk bytes.
+Production shutdown saved5500 IDs; final restart34.465s restored5500/5500 in
+13.658s. Unit enabled/active, one engine,0.0.0.0:8080, profiling off;
+config/status/models healthy and fresh-session exactHello2.143s. Launch and
+ownership commands below remain current; do not use historical PIDs.
+Report: docs/expert_cache_restart_round11.md; private ~/cmoeapi/report11.md.
+
+Round10 below is the prior delivery receipt.
 Round10: exact full prompt boundaries persist under the configured KV directory's
 boundaries/*.bkv (legacy *.pkv retained; shared byte quota). Captured real Claude
 1470-token cold first23.953s -> restart/new-session0.056s,91/91 IDs equal,

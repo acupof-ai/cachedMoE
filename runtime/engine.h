@@ -468,6 +468,9 @@ public:
   Result<void> bake_prompt(const DecodeStepResult& first);
   Result<std::optional<DecodeStepResult>> restore_baked_prompt(
       std::span<const uint32_t> tokens, const SamplingParams& sampling);
+  // Optional restart residency: IDs only; restore original weights before begin_session.
+  Result<uint32_t> restore_expert_cache(const std::string& path);
+  Result<void> save_expert_cache(const std::string& path);
   Result<void> retain_prompt_state(const DecodeStepResult* first = nullptr);
   Result<std::optional<DecodeStepResult>> reuse_prompt(std::span<const uint32_t> tokens,
                                                      const SamplingParams& sampling);
@@ -1068,6 +1071,7 @@ private:
     std::FILE*            spec_diagnostics_ = nullptr;
     bool spec_diagnostics_started_ = false;
     uint32_t reuse_diagnostic_cycle_ = 0;
+    bool expert_cache_restored_ = false;
     std::string baked_dir_;
     uint64_t baked_identity_ = 0, baked_budget_ = 0;
     std::string baked_path(std::span<const uint32_t> tokens) const;
