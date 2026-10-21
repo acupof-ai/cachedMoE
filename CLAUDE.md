@@ -53,9 +53,10 @@ reporting basis.
 - One worktree, one build directory, one toolchain cache — concurrent builds in a shared cache race.
 - `failed to write output` on the engine binary means an engine is still running.
 - Quality gate for anything touching numerics: `tools/l3_ppl.py` in mode `off` must reproduce
-  the platform's current NLL on `traces/l3_64` bit for bit — **0.622784** here on Linux RADV
-  (2026-09-29; the latest STATUS §7 entry that moved it says why; the Windows zig build's figure
-  was **0.630051**) — plus `suite.decode` 8/8 + 8/8.
+  the platform's current NLL on `traces/l3_64` bit for bit — **0.693887** here on Linux RADV
+  (2026-10-21; owner-authorised rebaseline when coopmat attention became the default,
+  STATUS §3 101; before that the 1017 checkpoint's tiled figure was 0.660034, and 0.622784
+  was the older 0928 checkpoint's) — plus `suite.decode` 8/8 + 8/8.
 - The Windows recipe (zig cross-compile, `cmake/zig-toolchain.cmake`, the MSYS2 and Vulkan SDK
   paths) is on the `windows` branch.
 
