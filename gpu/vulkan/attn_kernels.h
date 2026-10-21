@@ -176,7 +176,7 @@ struct AttnSpec {
     // decode_attn_cm's K splits (AttnCmPush). s_split 1, 2 or 4 slices of
     // head_dim for the score GEMM; pv_split 1..8 slices of the list for P.V.
     uint32_t cm_s_split = 1;
-    uint32_t cm_pv_split = 4;   // attn_bench --kv 640: pv 18.5 us at 1, 10.9 at 2, 8.0 at 4, 7.3-7.9 at 6-8 (+0.5-0.9 finish)
+    uint32_t cm_pv_split = 4;   // attn_bench --kv 640: pv 18.5 us at 1, 10.9 at 2, 8.0 at 4, 7.3-7.9 at 6-8 (+0.5-0.9 finish); split 6 measured 2026-10-21 at kv 722 (pv+finish 10.6 vs 11.2 us) but reorders the fp32 partial sum and moves l3_ppl, so 4 stays
     // Rows per lane for the *KSplit stages only, because the K-split changes
     // the trade: the slice is narrower, so the LDS a workgroup holds is
     // smaller, so it can afford to retire more rows against one staged

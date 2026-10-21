@@ -105,6 +105,7 @@ uint64_t cm_ptr(uint slot) {
     return base;
 }
 groupshared float gRedF[kWg];
+groupshared float gSRow[1024];  // one head's score row, cached for stage_softmax
 
 int top_idx(uint t) {
     return (t < pc.n_kv) ? (int)load_u32(cm_ptr(kTopIdx) + (uint64_t)t * 4) : -1;
@@ -239,9 +240,16 @@ float score_at(uint h, uint t) {
 
 void stage_softmax(uint h, uint tid) {
     half* P = (half*)cm_ptr(kP16) + (uint64_t)h * pc.e;
+    // Cache the row in LDS once (e <= 1024 on this path) so the max and exp
+    // passes do not each re-read S from global memory.
+    const bool cached = pc.e <= 1024u;
+    if (cached) {
+        for (uint t = tid; t < pc.e; t += kWg) gSRow[t] = score_at(h, t);
+        GroupMemoryBarrierWithGroupSync();
+    }
     float local = -3.0e38f;
     for (uint t = tid; t < pc.n_kv; t += kWg)
-        if (top_idx(t) >= 0) local = max(local, score_at(h, t) * pc.softmax_scale);
+        if (top_idx(t) >= 0) local = max(local, (cached ? gSRow[t] : score_at(h, t)) * pc.softmax_scale);
     // The reference clamps the row max at a finite -1e30 so an all-empty row
     // comes out zero instead of NaN.
     const float mx = max(wg_max_f(local, tid), -1.0e30f);
@@ -249,7 +257,7 @@ void stage_softmax(uint h, uint tid) {
     for (uint t = tid; t < pc.e; t += kWg) {
         float p = 0.0f;
         if (t < pc.n_kv && top_idx(t) >= 0)
-            p = bf16_round(exp(score_at(h, t) * pc.softmax_scale - mx));
+            p = bf16_round(exp((cached ? gSRow[t] : score_at(h, t)) * pc.softmax_scale - mx));
         P[t] = half(p * kPScale);
         lsum += p;
     }
