@@ -232,7 +232,6 @@ def test_static_pin_never_evicts_pinned():
     n = 500
     rng = np.random.default_rng(17)
     top6 = rng.integers(0, 30, size=(n, 6))
-    trace = make_trace(top6, np.zeros(n, dtype=np.int32), n_experts=30)
     pinned = {0, 1, 2}
     p = cs.StaticPinLRU(10, pinned)
     for row in top6:

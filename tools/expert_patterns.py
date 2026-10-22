@@ -89,7 +89,6 @@ def turn_stability(run):
             if x.sum() and y.sum():
                 cos_adj.append(float((x @ y) / (np.linalg.norm(x) * np.linalg.norm(y))))
     out["adjacent_cos"] = float(np.mean(cos_adj)) if cos_adj else 0.0
-    allf = sum(freqs.values())
     out["cos_first_last"] = 0.0
     if len(turns) >= 2 and turns[0] in freqs and turns[-1] in freqs:
         a, b = freqs[turns[0]].ravel(), freqs[turns[-1]].ravel()

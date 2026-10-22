@@ -854,7 +854,7 @@ def cmd_lossless(args) -> int:
         print(K, res[K], flush=True)
     # exact variant: treat the stored top-256 row as the whole vocabulary (the
     # procedure is exact for any distribution), so the target is softmax over 256
-    ids256 = vids_full = ver["top_ids"][0].astype(np.int64)
+    ids256 = ver["top_ids"][0].astype(np.int64)
     l256 = ver["top_logits"][0].astype(np.float64)
     lse256 = float(np.logaddexp.reduce(l256))
     p256 = np.exp(l256 - lse256)

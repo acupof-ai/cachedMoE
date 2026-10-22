@@ -1104,7 +1104,6 @@ def run(args: argparse.Namespace) -> int:
     pos = pos0 + 1                    # position of `cur`
     cur = tok1
     pending = drafts0                 # drafts for positions pos+1 .. pos+K
-    cur_mh = mh1                      # main_hidden at `pos - 1`... refreshed below
     produced = [tok0, tok1]
     cycles: list[dict] = []
     thin_exports = 0

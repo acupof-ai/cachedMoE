@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import tempfile
 import threading
 import unittest
-from unittest.mock import Mock, call, mock_open, patch
+from unittest.mock import Mock, call, patch
 
 import server
 

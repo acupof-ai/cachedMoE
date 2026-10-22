@@ -18,7 +18,6 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "tools"), str(ROOT / "tools/web"), str(ROOT)]
 import runtime_defaults as defaults
-import runtime_env
 import chat
 import hitrate_bench
 import ms_bench

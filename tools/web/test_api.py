@@ -1,7 +1,5 @@
 """Protocol mappings: tool histories and terminal events must survive adapters."""
-import copy
 import io
-import json
 import queue
 import threading
 import unittest

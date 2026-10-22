@@ -493,7 +493,7 @@ def task_tables(src, tasks, split_halves, min_count, ratio_min):
     names = list(tasks)
     cnt = {n: counts_of(tasks[n]) for n in names}
     ntok = {n: len(tasks[n]) for n in names}
-    stat_rows, top_rows, spec_rows, ov_rows = [], [], [], []
+    stat_rows, spec_rows, ov_rows = [], [], []
     wd = {n: mean_distinct_window(tasks[n], 128) for n in names}
     for n in names:
         for l in range(L):
@@ -1351,7 +1351,7 @@ def main():
                      max((r for r in tt["spec_rows"] if r["task"] == k), key=lambda r: r["share_task"]))
                      for k in KINDS if any(r["task"] == k for r in tt["spec_rows"])) + "。")
     # switch cost
-    offd, diag64, diagN = [], [], []
+    offd = []
     for b in KINDS:
         dg = sim["switch"][f"{b}->{b}"][c0]
         for a_ in KINDS:
